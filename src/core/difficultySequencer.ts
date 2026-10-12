@@ -253,6 +253,8 @@ function resolveBaseConfig(candidate: CandidateGroup): EnemyConfig {
     return {
       key: candidate.enemyKey,
       displayName: candidate.enemyKey,
+      movementClass: 'formation',
+      attackClass: 'projectile',
       formationKind: 'v' as EnemyFormationKind,
       count: candidate.baseCount,
       spacingX: 30,

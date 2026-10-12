@@ -494,6 +494,16 @@ The dynamic archetypes are gated behind per-wave opt-ins (`ghosts`,
 `centipede`, `horde`, `laneTraffic`) so the shipped campaign wave data is
 unchanged; the `orbital-strike` hazard is enabled for regular waves.
 
+**Behavioural classification (AH-0MV29NWI1007NKN7).** Every CSV archetype
+carries two coarse, descriptive fields for wave-design and balance tooling:
+`movementClass` (`formation | diver | chaser | patroller | roamer`) and
+`attackClass` (`contact | projectile | beam | area`). Because every enemy
+damages the player on contact, `attackClass` describes only the ranged/special
+attack — `contact` is contact-only, so there is deliberately no `none` value.
+The classification is data-only today; the wave-generation/balance consumer is
+the follow-up item AH-0MV29XQ0H009P9WP. See the enemy guide §1.4 for the full
+archetype mapping and the codec defaults.
+
 ### 4.2 Wave / Formation Structures
 
 Each level consists of one or more **waves** of enemies. A wave is a set of

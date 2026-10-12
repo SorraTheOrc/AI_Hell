@@ -13,16 +13,16 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 
 ## 1. Enemy catalog (GDD §4.1 / §4.3)
 
-| ID | Name | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
-|----|------|-----|-----------|------------|---------------------|
-| E1 | Scout | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
-| E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
-| E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
-| E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
-| E6 | Asteroid | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
-| E7 | Harvester | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
-| Boss | The Central AI | §4.3 | 4 attack phases, 50 hits per phase (200 total; 4-phase screen-fixed bar), figure-of-eight movement, per-hit SFX/VFX | Large neon geometric structure with core | complex patterns per phase |
+| ID | Name | Movement | Attack | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
+|----|------|----------|--------|-----|-----------|------------|---------------------|
+| E1 | Scout | `formation` | `projectile` | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
+| E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E3 | Tank | `formation` | `projectile` | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
+| E4 | Phaser | `formation` | `projectile` | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
+| E5 | Swarm | `formation` | `projectile` | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
+| E6 | Asteroid | `roamer` | `contact` | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
+| E7 | Harvester | `roamer` | `contact` | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
+| Boss | The Central AI | `formation` | `projectile` | §4.3 | 4 attack phases, 50 hits per phase (200 total; 4-phase screen-fixed bar), figure-of-eight movement, per-hit SFX/VFX | Large neon geometric structure with core | complex patterns per phase |
 
 Regular-enemy health is **data-driven** (`EnemyConfig.health`, default **1**):
 E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
@@ -291,6 +291,59 @@ as a bare scene. Legacy
 `GymScout`/`GymDiver`/… scenes have been
 retired; their formation/bullet assertions now live in `GymFodderEnemies.test.ts`
 keyed by `enemyKey`.
+
+### 1.4 Behavioural classification (AH-0MV29NWI1007NKN7)
+
+Every CSV archetype carries two coarse, **descriptive** behavioural fields
+that sit above the low-level `formationKind` / `shotPattern` axes and exist so
+wave composition can be reasoned about and validated for balance:
+
+- **`movementClass`** — how the archetype moves:
+  `formation` (coordinated/patterned, no independent pursuit), `diver` (a
+  formation that breaks off into a targeted dive), `chaser` (homes on the
+  player), `patroller` (independent path that may commit to an attack run),
+  `roamer` (independent trajectory/hazard that ignores the player).
+- **`attackClass`** — the archetype's *ranged/special* attack: `contact`
+  (contact-only), `projectile` (fires projectiles), `beam` (tractor beam),
+  `area` (telegraphed area detonation).
+
+**Contact invariant:** *every* enemy damages the player on contact, so
+`attackClass` describes only the additional ranged/special attack — `contact`
+means contact-only. There is deliberately no `none` value.
+
+Both fields are validated (`validateEnemyConfig`) and coerced
+(`coerceEnemyConfig`) by the CSV codec. Absent values fall back to the
+documented defaults — `movementClass` → `formation`, `attackClass` derived
+from the effective `shotPattern` (`none` → `contact`, otherwise `projectile`) —
+so legacy files without the columns still parse. The classification is
+**data-only**: no gameplay code reads it yet; the wave-generation/balance
+consumer is the follow-up item AH-0MV29XQ0H009P9WP.
+
+The agreed mapping for all 18 CSV archetypes:
+
+| Config key | movementClass | attackClass |
+|------------|---------------|-------------|
+| `scout` | `formation` | `projectile` |
+| `diver` | `diver` | `projectile` |
+| `tank` | `formation` | `projectile` |
+| `phaser` | `formation` | `projectile` |
+| `swarm` | `formation` | `projectile` |
+| `boss` | `formation` | `projectile` |
+| `march` | `formation` | `projectile` |
+| `capturer` | `formation` | `beam` |
+| `ghost-chase` | `chaser` | `contact` |
+| `ghost-ambush` | `chaser` | `contact` |
+| `ghost-flank` | `chaser` | `contact` |
+| `ghost-wander` | `chaser` | `contact` |
+| `grunt` | `chaser` | `contact` |
+| `raider` | `patroller` | `projectile` |
+| `asteroid` | `roamer` | `contact` |
+| `harvester` | `roamer` | `contact` |
+| `lane-traffic` | `roamer` | `contact` |
+| `orbital-strike` | `roamer` | `area` |
+
+The `centipede` linked chain (AH-0MV01EJ92008ZZ86) is a dedicated entity, not
+a CSV row, so it carries no classification pair; it is a contact-only chaser.
 
 ---
 
@@ -1155,6 +1208,8 @@ animated by the shared `FormationGlide` helper
 | `color` | `number` | Body colour `0xRRGGBB`. |
 | `bulletColor` / `bulletSize` | `number` | Bullet colour / radius. |
 | `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
+| `movementClass` | `EnemyMovementClass` | `'formation' \| 'diver' \| 'chaser' \| 'patroller' \| 'roamer'` — coarse behavioural movement class for wave-design/balance tooling (AH-0MV29NWI1007NKN7). Validated by `validateEnemyConfig`; an absent/invalid value falls back to `formation` (see §1.4). |
+| `attackClass` | `EnemyAttackClass` | `'contact' \| 'projectile' \| 'beam' \| 'area'` — coarse behavioural attack class; `contact` is contact-only (every enemy still damages on contact). Validated by `validateEnemyConfig`; an absent/invalid value is derived from the effective `shotPattern` (`none` → `contact`, otherwise `projectile`). See §1.4. |
 | `fireInterval` | `number` | ms between volleys. |
 | `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
 | `bulletSpeed` | `number` | Bullet velocity (px/s). Enemy archetype values were halved by AH-0MUWZ5GST003NMFQ (Scout **90**, Diver **110**, Tank **75**, Phaser **90**, Swarm **90**, Boss **80**, Asteroid **50**, Harvester **50**); because `bulletLifetime` is unchanged, each enemy's effective range (`bulletSpeed × lifetime`) is halved too. The player's `PLAYER_BULLET_SPEED` (350 px/s) is unchanged. |
@@ -1191,6 +1246,12 @@ The CSV files are the **single source of truth** for enemy and ship tuning:
   game's `planGroupSpawns` and the gym's `GymFormationScene` draw a random base
   within it through the **shared** `resolveSpawnRange` / `pickInRange` helpers
   in `src/core/configTypes.ts`; reversed bounds are normalised so `min ≤ max`.
+- **Behavioural classification (AH-0MV29NWI1007NKN7):** `enemy-configs.csv`
+  carries two further columns, `movementClass` and `attackClass`, emitted last in
+  `ENEMY_COLUMN_ORDER`. They are the coarse wave-design groupings documented in
+  §1.4; both are optional for backward compatibility (absent/invalid values fall
+  back to the documented defaults via `coerceEnemyConfig`), and the committed
+  CSV always carries explicit values.
 
 Supporting modules:
 
@@ -1306,7 +1367,9 @@ file.
 The **editor panel** (`src/scenes/gym/GymFodderEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
 `count/spacingX/spacingY/driftSpeed/startX/startY/startXMin/startXMax/startYMin/startYMax/size/bulletSize/fireInterval/shotProbability/bulletSpeed/bulletLifetime/burstCount`,
-colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
+colour pickers for `color/bulletColor`, selects for
+`formationKind`/`shotPattern`/`movementClass`/`attackClass` (the last two are
+persisted through the same CSV save path — AH-0MV29NWI1007NKN7),
 plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
 plugin) and **Save As…** (sanitize → validate → duplicate check via
 `listEnemyConfigKeys()`, displayName = raw input; appends a new CSV row).

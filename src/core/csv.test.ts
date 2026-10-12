@@ -1480,3 +1480,113 @@ describe('Enemy spawn-position ranges (AC2/AC6)', () => {
     expect(m.validateEnemyConfig(baseRow, DEFAULT_ENEMY_CONFIGS).ok).toBe(true);
   });
 });
+
+// ── Behavioural classification (AH-0MV29NWI1007NKN7) ────────────────
+
+describe('Enemy behavioural classification (AH-0MV29NWI1007NKN7)', () => {
+  const baseRow: Record<string, string> = {
+    key: 'scout', displayName: 'Scout', formationKind: 'v',
+    count: '6', spacingX: '26', spacingY: '22', driftSpeed: '40',
+    startX: '240', startY: '270', size: '16',
+    color: '0x00ff00', bulletColor: '0xff4444', bulletSize: '3',
+    shotPattern: 'aimed', fireInterval: '1200', bulletSpeed: '90',
+    bulletLifetime: '1.5', burstCount: '1', shotProbability: '1',
+  };
+
+  it('exposes movementClass and attackClass in the stable column order', async () => {
+    const m = await loadCsvModule();
+    expect(m.ENEMY_COLUMN_ORDER).toContain('movementClass');
+    expect(m.ENEMY_COLUMN_ORDER).toContain('attackClass');
+  });
+
+  it('coerces explicit movementClass / attackClass values', async () => {
+    const m = await loadCsvModule();
+    const config = m.coerceEnemyConfig(
+      { ...baseRow, movementClass: 'chaser', attackClass: 'beam' },
+      DEFAULT_ENEMY_CONFIGS,
+    );
+    expect(config.movementClass).toBe('chaser');
+    expect(config.attackClass).toBe('beam');
+  });
+
+  it('defaults an absent movementClass to formation', async () => {
+    const m = await loadCsvModule();
+    const config = m.coerceEnemyConfig({ ...baseRow, key: 'unknown-key' }, DEFAULT_ENEMY_CONFIGS);
+    expect(config.movementClass).toBe('formation');
+  });
+
+  it('derives an absent attackClass from the effective shot pattern', async () => {
+    const m = await loadCsvModule();
+    expect(
+      m.coerceEnemyConfig({ ...baseRow, key: 'unknown-a', shotPattern: 'none' }, DEFAULT_ENEMY_CONFIGS).attackClass,
+    ).toBe('contact');
+    expect(
+      m.coerceEnemyConfig({ ...baseRow, key: 'unknown-b', shotPattern: 'aimed' }, DEFAULT_ENEMY_CONFIGS).attackClass,
+    ).toBe('projectile');
+    expect(
+      m.coerceEnemyConfig({ ...baseRow, key: 'unknown-c', shotPattern: 'radial' }, DEFAULT_ENEMY_CONFIGS).attackClass,
+    ).toBe('projectile');
+  });
+
+  it('falls back to the documented defaults for malformed classification values', async () => {
+    const m = await loadCsvModule();
+    const config = m.coerceEnemyConfig(
+      { ...baseRow, key: 'unknown-d', movementClass: 'warp', attackClass: 'laser', shotPattern: 'none' },
+      DEFAULT_ENEMY_CONFIGS,
+    );
+    expect(config.movementClass).toBe('formation');
+    expect(config.attackClass).toBe('contact');
+  });
+
+  it('validateEnemyConfig rejects unknown classification values', async () => {
+    const m = await loadCsvModule();
+    const mv = m.validateEnemyConfig({ ...baseRow, movementClass: 'warp' }, DEFAULT_ENEMY_CONFIGS);
+    expect(mv.ok).toBe(false);
+    expect(mv.errors.join(' ')).toContain('movementClass');
+
+    const atk = m.validateEnemyConfig({ ...baseRow, attackClass: 'laser' }, DEFAULT_ENEMY_CONFIGS);
+    expect(atk.ok).toBe(false);
+    expect(atk.errors.join(' ')).toContain('attackClass');
+  });
+
+  it('validateEnemyConfig accepts valid values and legacy rows without the columns', async () => {
+    const m = await loadCsvModule();
+    expect(
+      m.validateEnemyConfig(
+        { ...baseRow, movementClass: 'roamer', attackClass: 'area' },
+        DEFAULT_ENEMY_CONFIGS,
+      ).ok,
+    ).toBe(true);
+    expect(m.validateEnemyConfig(baseRow, DEFAULT_ENEMY_CONFIGS).ok).toBe(true);
+  });
+
+  it('serialises both columns and round-trips them explicitly', async () => {
+    const m = await loadCsvModule();
+    const config = { ...DEFAULT_ENEMY_CONFIGS.capturer };
+    const csvString = m.serializeEnemyConfigs([config]);
+    expect(csvString).toContain('movementClass');
+    expect(csvString).toContain('attackClass');
+    const coerced = m.coerceEnemyConfig(m.parseCsvRows(csvString)[0], DEFAULT_ENEMY_CONFIGS);
+    expect(coerced.movementClass).toBe('formation');
+    expect(coerced.attackClass).toBe('beam');
+  });
+
+  it('every seed archetype round-trips its classification pair', async () => {
+    const m = await loadCsvModule();
+    const seeds = Object.values(DEFAULT_ENEMY_CONFIGS);
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs(seeds));
+    seeds.forEach((seed, i) => {
+      const coerced = m.coerceEnemyConfig(rows[i], DEFAULT_ENEMY_CONFIGS);
+      expect(coerced.movementClass, seed.key).toBe(seed.movementClass);
+      expect(coerced.attackClass, seed.key).toBe(seed.attackClass);
+    });
+  });
+
+  it('preserves the special capturer (beam) and orbital-strike (area) classes', async () => {
+    const m = await loadCsvModule();
+    const seeds = [DEFAULT_ENEMY_CONFIGS.capturer, DEFAULT_ENEMY_CONFIGS['orbital-strike']];
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs(seeds));
+    expect(m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS).attackClass).toBe('beam');
+    expect(m.coerceEnemyConfig(rows[1], DEFAULT_ENEMY_CONFIGS).attackClass).toBe('area');
+  });
+});

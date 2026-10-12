@@ -48,6 +48,27 @@ describe('enemy-configs.csv seed data', () => {
     const csv = readCsvFile('enemy-configs.csv');
     expect(csv).toMatch(/\n$/);
   });
+
+  it('every row carries the seed classification pair (AH-0MV29NWI1007NKN7)', () => {
+    const csv = readCsvFile('enemy-configs.csv');
+    const rows = parseCsvRows(csv);
+    const movement = ['formation', 'diver', 'chaser', 'patroller', 'roamer'];
+    const attack = ['contact', 'projectile', 'beam', 'area'];
+    for (const row of rows) {
+      const seed = DEFAULT_ENEMY_CONFIGS[row.key];
+      expect(seed, row.key).toBeDefined();
+      expect(movement, row.key).toContain(row.movementClass);
+      expect(attack, row.key).toContain(row.attackClass);
+      expect(row.movementClass, row.key).toBe(seed.movementClass);
+      expect(row.attackClass, row.key).toBe(seed.attackClass);
+    }
+  });
+
+  it('documents the classification columns in the header comment', () => {
+    const csv = readCsvFile('enemy-configs.csv');
+    expect(csv).toContain('movementClass');
+    expect(csv).toContain('attackClass');
+  });
 });
 
 describe('ship-config.csv seed data', () => {

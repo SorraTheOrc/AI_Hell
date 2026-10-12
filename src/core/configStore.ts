@@ -255,6 +255,8 @@ function genericEnemyDefault(key: string): EnemyConfig {
   return {
     key,
     displayName: key,
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: 'v',
     count: 6,
     spacingX: 26,

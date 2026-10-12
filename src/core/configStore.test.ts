@@ -57,7 +57,7 @@ function difficultyCsvFixture(firstTarget = 5): string {
 /** Build a valid enemy CSV with a distinguishable scout value. */
 function enemyCsvFixture(scoutCount = 99): string {
   const header =
-    'key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability';
+    'key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability,movementClass,attackClass';
   const rows = Object.values(DEFAULT_ENEMY_CONFIGS).map((cfg) => {
     const count = cfg.key === 'scout' ? scoutCount : cfg.count;
     return [
@@ -67,6 +67,7 @@ function enemyCsvFixture(scoutCount = 99): string {
       `0x${cfg.bulletColor.toString(16).padStart(6, '0')}`,
       cfg.bulletSize, cfg.shotPattern, cfg.fireInterval, cfg.bulletSpeed,
       cfg.bulletLifetime, cfg.burstCount, cfg.shotProbability,
+      cfg.movementClass, cfg.attackClass,
     ].join(',');
   });
   return [header, ...rows].join('\n') + '\n';
@@ -182,6 +183,19 @@ describe('Boot load (AC1)', () => {
     expect(listEnemyConfigKeys()).toEqual(
       Object.keys(DEFAULT_ENEMY_CONFIGS).sort(),
     );
+  });
+
+  it('loads the movementClass / attackClass columns from the CSV (AH-0MV29NWI1007NKN7)', async () => {
+    const server = defaultServer();
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+
+    expect(loadEnemyConfig('ghost-chase').movementClass).toBe('chaser');
+    expect(loadEnemyConfig('ghost-chase').attackClass).toBe('contact');
+    expect(loadEnemyConfig('capturer').attackClass).toBe('beam');
+    expect(loadEnemyConfig('raider').movementClass).toBe('patroller');
+    expect(loadEnemyConfig('orbital-strike').attackClass).toBe('area');
   });
 
   it('is idempotent — calling loadConfigs twice does not corrupt the registry', async () => {

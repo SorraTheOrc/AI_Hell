@@ -16,6 +16,8 @@ import {
   type EnemyConfig,
   type EnemyFormationKind,
   type EnemyShotPattern,
+  type EnemyMovementClass,
+  type EnemyAttackClass,
   type ShipConfig,
   type ControlScheme,
   type DifficultyCurveRow,
@@ -32,6 +34,16 @@ const VALID_FORMATION_KINDS: EnemyFormationKind[] = [
 
 const VALID_SHOT_PATTERNS: EnemyShotPattern[] = [
   'none', 'aimed', 'spread', 'radial', 'orbital', 'coordinated',
+];
+
+/** Valid behavioural movement classes (AH-0MV29NWI1007NKN7). */
+const VALID_MOVEMENT_CLASSES: EnemyMovementClass[] = [
+  'formation', 'diver', 'chaser', 'patroller', 'roamer',
+];
+
+/** Valid behavioural attack classes (AH-0MV29NWI1007NKN7). */
+const VALID_ATTACK_CLASSES: EnemyAttackClass[] = [
+  'contact', 'projectile', 'beam', 'area',
 ];
 
 const VALID_CONTROL_SCHEMES: ControlScheme[] = [
@@ -78,10 +90,34 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   // Frogger lane-traffic tuning (AH-0MV01EPM40008N8T): number of lanes and the
   // vertical gap between them; neutral for other archetypes.
   'laneCount', 'laneSpacing',
+  // Behavioural classification (AH-0MV29NWI1007NKN7): coarse movement and
+  // attack roles used by wave-design/balance tooling. Appended at the end so
+  // existing CSV files remain byte-compatible on the leading columns.
+  'movementClass', 'attackClass',
 ];
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
 export const DEFAULT_ENEMY_HEALTH = 1;
+
+/**
+ * Documented default `movementClass` when the column is absent/invalid
+ * (AH-0MV29NWI1007NKN7): the formation behaviours are the largest family.
+ */
+export const DEFAULT_ENEMY_MOVEMENT_CLASS: EnemyMovementClass = 'formation';
+
+/**
+ * Derive the documented default `attackClass` from a shot pattern
+ * (AH-0MV29NWI1007NKN7): a non-firing archetype (`none`) is contact-only,
+ * every firing archetype defaults to `projectile`. Used only when the
+ * `attackClass` column is absent or invalid; the committed CSV always
+ * carries explicit values, so `capturer` (`beam`) and `orbital-strike`
+ * (`area`) keep their special classes.
+ */
+export function deriveDefaultAttackClass(
+  pattern: EnemyShotPattern,
+): EnemyAttackClass {
+  return pattern === 'none' ? 'contact' : 'projectile';
+}
 
 // ── Ship config column order (for serialization) ───────────────────
 
@@ -314,6 +350,16 @@ export function validateEnemyConfig(
     errors.push(`Invalid shotPattern: "${row.shotPattern}". Valid values: ${VALID_SHOT_PATTERNS.join(', ')}`);
   }
 
+  // Validate the behavioural classification enums (AH-0MV29NWI1007NKN7).
+  // Both columns are optional for backward compatibility; when present they
+  // must carry a recognised value.
+  if (row.movementClass && !VALID_MOVEMENT_CLASSES.includes(row.movementClass as EnemyMovementClass)) {
+    errors.push(`Invalid movementClass: "${row.movementClass}". Valid values: ${VALID_MOVEMENT_CLASSES.join(', ')}`);
+  }
+  if (row.attackClass && !VALID_ATTACK_CLASSES.includes(row.attackClass as EnemyAttackClass)) {
+    errors.push(`Invalid attackClass: "${row.attackClass}". Valid values: ${VALID_ATTACK_CLASSES.join(', ')}`);
+  }
+
   // Validate key format (basic check).
   if (row.key && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(row.key)) {
     errors.push(`Invalid key format: "${row.key}" — must be lowercase, numbers, hyphens only`);
@@ -485,6 +531,23 @@ export function coerceEnemyConfig(
   merged.bulletSize = coerceNumber(row.bulletSize, merged.bulletSize);
   merged.formationKind = coerceEnum(row.formationKind, VALID_FORMATION_KINDS, merged.formationKind);
   merged.shotPattern = coerceEnum(row.shotPattern, VALID_SHOT_PATTERNS, merged.shotPattern);
+  // Behavioural classification (AH-0MV29NWI1007NKN7). Both columns are
+  // optional for backward compatibility: an absent/invalid `movementClass`
+  // falls back to `formation`, and an absent/invalid `attackClass` is
+  // derived from the effective shot pattern (`none` → contact, otherwise
+  // projectile). The committed CSV carries explicit values, so the special
+  // `capturer` (beam) / `orbital-strike` (area) classes are preserved on
+  // round-trip.
+  merged.movementClass = coerceEnum(
+    row.movementClass,
+    VALID_MOVEMENT_CLASSES,
+    DEFAULT_ENEMY_MOVEMENT_CLASS,
+  );
+  merged.attackClass = coerceEnum(
+    row.attackClass,
+    VALID_ATTACK_CLASSES,
+    deriveDefaultAttackClass(merged.shotPattern),
+  );
   merged.fireInterval = coerceNumber(row.fireInterval, merged.fireInterval);
   merged.bulletSpeed = coerceNumber(row.bulletSpeed, merged.bulletSpeed);
   merged.bulletLifetime = coerceNumber(row.bulletLifetime, merged.bulletLifetime);

@@ -26,6 +26,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   scout: {
     key: 'scout',
     displayName: 'Scout',
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: 'v',
     count: 6,
     spacingX: 26,
@@ -52,6 +54,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   diver: {
     key: 'diver',
     displayName: 'Diver',
+    movementClass: 'diver',
+    attackClass: 'projectile',
     formationKind: 'diver',
     count: 6,
     spacingX: 30,
@@ -78,6 +82,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   tank: {
     key: 'tank',
     displayName: 'Tank',
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: 'rect',
     count: 6,
     spacingX: 50,
@@ -104,6 +110,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   phaser: {
     key: 'phaser',
     displayName: 'Phaser',
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: 'orbital',
     count: 4,
     spacingX: 80,
@@ -130,6 +138,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   swarm: {
     key: 'swarm',
     displayName: 'Swarm',
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: 'swarm',
     count: 15,
     spacingX: 28,
@@ -158,6 +168,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     key: 'boss',
     // Plain single-enemy archetype — NOT the multi-phase Central AI.
     displayName: 'Boss Swarm',
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -184,6 +196,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   asteroid: {
     key: 'asteroid',
     displayName: 'Asteroid',
+    movementClass: 'roamer',
+    attackClass: 'contact',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -215,6 +229,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   march: {
     key: 'march',
     displayName: 'Invader',
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: 'march',
     count: 11,
     spacingX: 26,
@@ -246,6 +262,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   capturer: {
     key: 'capturer',
     displayName: 'Capturer',
+    movementClass: 'formation',
+    attackClass: 'beam',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -281,6 +299,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   grunt: {
     key: 'grunt',
     displayName: 'Grunt Horde',
+    movementClass: 'chaser',
+    attackClass: 'contact',
     formationKind: 'swarm',
     count: 16,
     spacingX: 30,
@@ -313,6 +333,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   'ghost-chase': {
     key: 'ghost-chase',
     displayName: 'Ghost (Chase)',
+    movementClass: 'chaser',
+    attackClass: 'contact',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -339,6 +361,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   'ghost-ambush': {
     key: 'ghost-ambush',
     displayName: 'Ghost (Ambush)',
+    movementClass: 'chaser',
+    attackClass: 'contact',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -365,6 +389,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   'ghost-flank': {
     key: 'ghost-flank',
     displayName: 'Ghost (Flank)',
+    movementClass: 'chaser',
+    attackClass: 'contact',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -391,6 +417,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   'ghost-wander': {
     key: 'ghost-wander',
     displayName: 'Ghost (Wander)',
+    movementClass: 'chaser',
+    attackClass: 'contact',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -424,6 +452,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   raider: {
     key: 'raider',
     displayName: 'Raider',
+    movementClass: 'patroller',
+    attackClass: 'projectile',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -457,6 +487,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   'orbital-strike': {
     key: 'orbital-strike',
     displayName: 'Orbital Strike',
+    movementClass: 'roamer',
+    attackClass: 'area',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -483,6 +515,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   harvester: {
     key: 'harvester',
     displayName: 'Harvester',
+    movementClass: 'roamer',
+    attackClass: 'contact',
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -517,6 +551,8 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
   'lane-traffic': {
     key: 'lane-traffic',
     displayName: 'Lane Traffic',
+    movementClass: 'roamer',
+    attackClass: 'contact',
     // `rect` so the gym displays the lane as a row of `count` hazards (the
     // game's `LaneTrafficSpawner` places the same count per lane). A `single`
     // formation would show only one member in the gym, hiding the lane.

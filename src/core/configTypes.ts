@@ -28,6 +28,44 @@ export type EnemyFormationKind =
   | 'single'
   | 'march';
 
+// ── Enemy classification enums (AH-0MV29NWI1007NKN7) ───────────────
+// Two orthogonal, wave-design-facing groupings that sit above the
+// low-level `formationKind` / `shotPattern` axes. They are descriptive
+// (no gameplay code reads them yet) and are consumed by wave composition
+// and balance tooling (follow-up AH-0MV29XQ0H009P9WP).
+
+/**
+ * Coarse behavioural movement class of an enemy archetype
+ * (AH-0MV29NWI1007NKN7):
+ *
+ * - `formation` — coordinated/patterned movement, no independent pursuit.
+ * - `diver` — a formation that breaks off into a targeted dive.
+ * - `chaser` — homes on the live player.
+ * - `patroller` — independent path that may commit to an attack run.
+ * - `roamer` — independent trajectory/hazard that ignores the player.
+ */
+export type EnemyMovementClass =
+  | 'formation'
+  | 'diver'
+  | 'chaser'
+  | 'patroller'
+  | 'roamer';
+
+/**
+ * Coarse behavioural attack class of an enemy archetype
+ * (AH-0MV29NWI1007NKN7).
+ *
+ * **Contact invariant:** every enemy damages the player on contact, so this
+ * field describes the archetype's *ranged/special* attack only — `contact`
+ * means contact-only (no ranged/special attack), while the others name the
+ * ranged/special weapon the archetype uses.
+ */
+export type EnemyAttackClass =
+  | 'contact'
+  | 'projectile'
+  | 'beam'
+  | 'area';
+
 /**
  * JSON-serializable enemy archetype. Only persisted fields are present
  * here; per-entity animation/runtime state (e.g. wiggle phase, dive
@@ -171,6 +209,24 @@ export interface EnemyConfig {
   burstCount: number;
   /** Chance (fraction `0.0`–`1.0`) that an individual enemy fires per cycle. */
   shotProbability: number;
+
+  // Behavioural classification (AH-0MV29NWI1007NKN7)
+  /**
+   * Coarse behavioural movement class used by wave-design/balance tooling —
+   * one of `formation | diver | chaser | patroller | roamer`. Descriptive
+   * only (no gameplay code reads it yet); see {@link EnemyMovementClass}.
+   * An absent CSV value coerces to `formation`.
+   */
+  movementClass: EnemyMovementClass;
+  /**
+   * Coarse behavioural attack class — one of
+   * `contact | projectile | beam | area`. Descriptive only; the contact
+   * invariant means every enemy still damages the player on contact, so
+   * `contact` denotes contact-only. An absent CSV value is derived from the
+   * effective `shotPattern` (`none` → `contact`, otherwise `projectile`);
+   * see {@link EnemyAttackClass}.
+   */
+  attackClass: EnemyAttackClass;
 
   /**
    * Extensible passthrough — future tuning axes can be added here without

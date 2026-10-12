@@ -542,6 +542,8 @@ describe('GymFodderEnemies — single reusable enemy gym', () => {
     expect(panel!.querySelector('input[data-config="bulletSpeed"]')).not.toBeNull();
     expect(panel!.querySelector('select[data-config="formationKind"]')).not.toBeNull();
     expect(panel!.querySelector('select[data-config="shotPattern"]')).not.toBeNull();
+    expect(panel!.querySelector('select[data-config="movementClass"]')).not.toBeNull();
+    expect(panel!.querySelector('select[data-config="attackClass"]')).not.toBeNull();
     expect(panel!.querySelector('input[data-config="color"]')).not.toBeNull();
     expect(document.getElementById('enemy-gym-save')).not.toBeNull();
     expect(document.getElementById('enemy-gym-save-as')).not.toBeNull();
@@ -563,6 +565,50 @@ describe('GymFodderEnemies — single reusable enemy gym', () => {
     groupSlider!.value = '6';
     groupSlider!.dispatchEvent(new Event('input', { bubbles: true }));
     expect(scene.currentConfig.hordeGroupSize).toBe(6);
+  });
+
+  it('exposes movementClass / attackClass selects seeded from the active config (AH-0MV29NWI1007NKN7)', async () => {
+    const scene = await bootWithKey('ghost-chase');
+    const panel = document.getElementById('enemy-gym-panel')!;
+    const movement = panel.querySelector<HTMLSelectElement>('select[data-config="movementClass"]');
+    const attack = panel.querySelector<HTMLSelectElement>('select[data-config="attackClass"]');
+    expect(movement, 'movementClass select missing').not.toBeNull();
+    expect(attack, 'attackClass select missing').not.toBeNull();
+
+    expect(Array.from(movement!.options).map((o) => o.value)).toEqual([
+      'formation', 'diver', 'chaser', 'patroller', 'roamer',
+    ]);
+    expect(Array.from(attack!.options).map((o) => o.value)).toEqual([
+      'contact', 'projectile', 'beam', 'area',
+    ]);
+    // Seeded from the active ghost-chase config.
+    expect(movement!.value).toBe('chaser');
+    expect(attack!.value).toBe('contact');
+
+    // Live change updates the in-memory config (no Save required).
+    movement!.value = 'roamer';
+    movement!.dispatchEvent(new Event('change', { bubbles: true }));
+    attack!.value = 'area';
+    attack!.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(scene.currentConfig.movementClass).toBe('roamer');
+    expect(scene.currentConfig.attackClass).toBe('area');
+  });
+
+  it('Save persists the classification pair through the CSV path (AH-0MV29NWI1007NKN7)', async () => {
+    const { loadEnemyConfig: lec } = await import('../../core/enemyConfig');
+    await bootWithKey('scout');
+    const movement = document.querySelector<HTMLSelectElement>('select[data-config="movementClass"]')!;
+    const attack = document.querySelector<HTMLSelectElement>('select[data-config="attackClass"]')!;
+    movement.value = 'patroller';
+    movement.dispatchEvent(new Event('change', { bubbles: true }));
+    attack.value = 'beam';
+    attack.dispatchEvent(new Event('change', { bubbles: true }));
+    (document.getElementById('enemy-gym-save') as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(document.getElementById('enemy-gym-save-status')!.textContent).toContain('Saved'),
+    );
+    expect(lec('scout').movementClass).toBe('patroller');
+    expect(lec('scout').attackClass).toBe('beam');
   });
 
   it('renders a collapsible header and toggles the panel body (AH-0MUDYFMUX007Q0W3)', async () => {
