@@ -404,7 +404,7 @@ interface PlayDrop {
 }
 
 /**
- * The playable game scene — manages the 5 levels + boss encounter.
+ * The playable game scene — manages the 10 levels + boss encounter.
  */
 export class PlayScene extends CombatScene<
   EnemyEntity,

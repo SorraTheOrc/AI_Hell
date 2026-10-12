@@ -138,10 +138,22 @@ describe('Level definitions — GDD §3.2 structure (AH-0MU72ZK3P006CH9G)', () =
     }
   });
 
-  it('AC3/AC4 — Level 5 has fewer enemies than Level 4 (and earlier levels)', () => {
+  it('AC3/AC4 — Level 5 remains the sparse memorisable-pattern level', () => {
     expect(enemyCountForLevel(5)).toBeLessThan(enemyCountForLevel(4));
     expect(enemyCountForLevel(5)).toBeLessThan(enemyCountForLevel(3));
     expect(enemyCountForLevel(5)).toBeGreaterThan(0);
+  });
+
+  it('AC3/AC4 — the ten-level campaign finale is denser than the onboarding levels', () => {
+    // The old "final sparse level" assertion now describes Level 5's design
+    // (Predictable Death); the new finale (Level 10) closes the campaign with
+    // the densest composition (AH-0MV39AGIM007RGVF).
+    expect(enemyCountForLevel(LEVEL_COUNT)).toBeGreaterThan(
+      enemyCountForLevel(1),
+    );
+    expect(enemyCountForLevel(LEVEL_COUNT)).toBeGreaterThanOrEqual(
+      enemyCountForLevel(5),
+    );
   });
 
   it('boundary — unknown levels report zero enemies and no definition', () => {
@@ -289,7 +301,7 @@ describe('WaveManager — progression (AH-0MU72ZK3P006CH9G)', () => {
     }
   });
 
-  it('AC5 — clearing Level 5 triggers the boss, and the boss is inactive until beginBoss', () => {
+  it('AC5 — clearing the final level triggers the boss, and the boss is inactive until beginBoss', () => {
     // One level only → its clear is the final-level clear.
     const wm = new WaveManager([level(5, 'Final', [wave('phaser', 'orbital', 2, true)])]);
     wm.beginGame();

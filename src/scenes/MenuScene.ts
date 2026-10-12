@@ -33,6 +33,7 @@ import {
   type TelemetryConsentState,
   type TelemetryEnv,
 } from '../telemetry';
+import { LEVEL_COUNT } from '../waves/Formations';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
 const MENU_TEXT_COLOR = '#00ffff';
@@ -324,7 +325,7 @@ export class MenuScene extends Phaser.Scene {
     this.controls.push({ label: '⚙  Gym Scene Index (dev)', text: devButton });
 
     // ── Subtitle ─────────────────────────────────────────────────
-    this.add.text(GAME_WIDTH / 2, 450, 'Defeat 5 levels then the Central AI', {
+    this.add.text(GAME_WIDTH / 2, 450, `Defeat ${LEVEL_COUNT} levels then the Central AI`, {
       fontFamily: 'monospace',
       fontSize: '14px',
       color: '#444444',

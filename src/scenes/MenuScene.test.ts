@@ -16,6 +16,7 @@ import Phaser from 'phaser';
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { addEntry } from '../core/Leaderboard';
 import { GAME_HEIGHT } from '../core/constants';
+import { LEVEL_COUNT } from '../waves/Formations';
 import { GITHUB_REPO_URL, MenuScene, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { PauseScene } from './PauseScene';
@@ -51,7 +52,7 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
     const scene = await bootMenu();
     expect(scene.sys.isActive()).toBe(true);
     expect(findText(scene, 'AI HELL')).toBeDefined();
-    expect(findText(scene, 'Defeat 5 levels then the Central AI')).toBeDefined();
+    expect(findText(scene, `Defeat ${LEVEL_COUNT} levels then the Central AI`)).toBeDefined();
   });
 
   it('AC1 — renders a Play Game button and a Gym Scene Index (dev) button', async () => {

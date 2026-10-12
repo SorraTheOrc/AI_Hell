@@ -191,7 +191,7 @@ function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
 }
 
 /**
- * Walks the run to the boss encounter (Level 5 cleared).
+ * Walks the run to the boss encounter (the final level cleared).
  *
  * Exit condition uses `bossActive` / `bossTriggered` on the WaveManager
  * rather than `scene.getBoss()`.  The boss entity is only created when
@@ -1629,7 +1629,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     return scene;
   }
 
-  it('AC1 — the Central AI spawns after Level 5 is cleared, with Phase-1 minions', async () => {
+  it('AC1 — the Central AI spawns after the final level is cleared, with Phase-1 minions', async () => {
     const scene = await bootPlay();
     reachBoss(scene);
 
