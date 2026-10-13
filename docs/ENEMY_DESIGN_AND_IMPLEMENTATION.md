@@ -876,7 +876,7 @@ only legitimate difference is a disabled feature — never a divergent copy.
 Every shared behaviour therefore lives once: the core template methods and
 hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
-`asteroidSplit`), the shared dispatcher
+`asteroidSplit`, `enemyTargeting`), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
 helpers `resolveSpawnRange` / `pickInRange` in `src/core/configTypes.ts`
@@ -1058,10 +1058,20 @@ exercised in the gym by `GymMinerals.test.ts`.
 
 ### 7.3 Live aim tracking
 
-The base scene pushes the player's live position into every alive enemy each
-frame (`entity.setAimTarget?.(player.x, player.y)` — an optional seam,
-forward-compatible with entities that have no target concept) **before**
-collecting bullets, so that frame's shots use the current position:
+Every player-bearing enemy base scene — `PlayScene`, `GymFormationScene` and
+the Level Gym (`GymLevel`, and therefore the Bot Tuning gym built on it) —
+pushes the player's live position into every alive enemy each frame through
+the single shared helper `pushAimTargets` in
+`src/scenes/core/enemyTargeting.ts` (an optional seam, forward-compatible
+with entities that have no target concept). The push runs **before** that
+frame's bullets are collected in all three scenes — `PlayScene._collectEnemyFire`,
+`GymFormationScene`'s entity loop and `GymLevel.tick` (immediately before
+`fireLiveEnemies`) — so that frame's shots use the current position and the
+ordering can never drift between game and gyms (AH-0MV4XFQ0J0082BN6). The
+same file's `pushSeekTargets` forwards each scene's **live mineral field** to
+roaming seekers (Harvester) in the same passes; `GymLevel._moveEnemies`
+passes its live field, not the empty array it previously sent, so Harvesters
+seek minerals exactly as they do in the game:
 
 - **Scout / Swarm** — retarget `target`/burst aim continuously; bullets arc
   toward the player's live position at fire time.
