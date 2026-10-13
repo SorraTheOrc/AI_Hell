@@ -252,19 +252,13 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
   // ── Live-aim & mineral-seek regressions (AH-0MV5SDMMF008O55Q) ──────
 
   /**
-   * Test-first reconciliation (AH-0MV5SDMMF008O55Q): the work item's AC2
-   * requires these regressions to be red before the shared live-targeting
-   * helper is adopted in `GymLevel` (AH-0MV5SDNI2008RWQ2). The project's
-   * build → test → commit gate forbids committing a failing suite, so the
-   * assertions are wrapped in Vitest's `it.fails(...)` — an **expected
-   * failure**, red today because `GymLevel.tick` fires enemies without the
-   * `setAimTarget` push and `GymLevel._moveEnemies` pushes an empty mineral
-   * field. Once AH-0MV5SDNI2008RWQ2 lands, the assertions stop throwing and
-   * `it.fails` reports "expected test to fail, but it passed" — the adoption
-   * item must then remove `.fails` to turn these into hard gates.
+   * Test-first reconciliation (AH-0MV5SDMMF008O55Q): these regressions were
+   * written red-first under Vitest's `it.fails(...)` and the adoption item
+   * AH-0MV5SDNI2008RWQ2 removed the expected-failure wrapper once `GymLevel`
+   * adopted the shared live-targeting helper — they are now hard gates.
    */
 
-  it.fails('AH-0MV5SDMMF008O55Q — a Diver\'s aim target tracks the live player in bot-tuning gym', async () => {
+  it('AH-0MV5SDMMF008O55Q — a Diver\'s aim target tracks the live player in bot-tuning gym', async () => {
     const scene = await bootTuning({
       seed: 42,
       level: makeLevel('Aim', [
@@ -293,17 +287,23 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
 
     const ship = scene.getShip()!;
 
+    // The aim push runs at the start of `tick`, before the bot drives the
+    // ship that frame, so capture the ship position first. The aim target
+    // must equal the ship position at the moment of the push.
+    const beforeX = ship.x;
+    const beforeY = ship.y;
+
     // Advance one frame — this is where the live-aim push must fire.
     scene.tick(1 / 60);
 
-    // After the push, the Diver\'s aimTarget must equal the ship position,
-    // NOT the bottom-centre default.
+    // After the push, the Diver\'s aimTarget equals the ship position at push
+    // time, NOT the bottom-centre default.
     const aim = diver!.aimTarget;
-    expect(aim.x).toBe(ship.getMovementState().x);
-    expect(aim.y).toBe(ship.getMovementState().y);
+    expect(aim.x).toBeCloseTo(beforeX, 5);
+    expect(aim.y).toBeCloseTo(beforeY, 5);
   });
 
-  it.fails('AH-0MV5SDMMF008O55Q — a Harvester receives the live mineral field in bot-tuning gym', async () => {
+  it('AH-0MV5SDMMF008O55Q — a Harvester receives the live mineral field in bot-tuning gym', async () => {
     const scene = await bootTuning({
       seed: 123,
       level: makeLevel('Seek', [

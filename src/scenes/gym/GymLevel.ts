@@ -41,6 +41,7 @@
 import Phaser from 'phaser';
 
 import { CombatScene, type CombatDrop } from '../core/CombatScene';
+import { pushAimTargets, pushSeekTargets } from '../core/enemyTargeting';
 import { advancePlayerBullets, advanceWrappingBullets } from '../core/bulletLifecycle';
 import { Player } from '../../entities/Player';
 import { PlayerBullet } from '../../entities/PlayerBullet';
@@ -646,6 +647,18 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       this.driftDir = 1;
     }
 
+    // Live mineral-seek: push the scene's live mineral field so roaming
+    // seekers (Harvester) steer toward the nearest live mineral — parity with
+    // PlayScene._moveEnemies, which passes its live field. The previous empty
+    // array silently diverged (Harvesters held station) in every
+    // GymLevel-based gym (shared helper, AH-0MV5SDNI2008RWQ2).
+    pushSeekTargets(
+      this.spawned
+        .filter((spawn) => spawn.entity.alive)
+        .map((spawn) => spawn.entity),
+      this.minerals,
+    );
+
     for (const spawn of this.spawned) {
       if (!spawn.entity.alive) continue;
       const entity = spawn.entity;
@@ -653,7 +666,6 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       // Asteroids and other roaming entities advance their own motion and
       // ignore the formation drift (matches the game).
       if (spawn.key === 'asteroid' || entity.updatePosition) {
-        entity.setSeekTargets?.([]);
         entity.updatePosition?.(dt);
         continue;
       }
@@ -710,6 +722,19 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
 
     // Enemy bullets: wrap + lifetime expiry (shared helper).
     advanceWrappingBullets(this.enemyBullets, dt, GAME_WIDTH, GAME_HEIGHT);
+
+    // Live aim tracking: push the ship's live position into every alive
+    // aimed enemy BEFORE this frame's fire is collected — the identical seam
+    // and ordering PlayScene._collectEnemyFire uses (shared helper,
+    // AH-0MV5SDNI2008RWQ2). This fixes the bot/level gyms, where aimed
+    // archetypes (Diver, Scout, …) previously kept the constructor's fixed
+    // bottom-centre stand-in target.
+    pushAimTargets(
+      this.spawned
+        .filter((spawn) => spawn.entity.alive)
+        .map((spawn) => spawn.entity),
+      this.player,
+    );
 
     // Live enemies fire through the shared dispatcher (firing waves only).
     this.enemyBullets.push(

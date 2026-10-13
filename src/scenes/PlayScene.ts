@@ -60,6 +60,7 @@ import {
 } from '../audio/effects';
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
+import { pushAimTargets, pushSeekTargets } from './core/enemyTargeting';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
 import {
   computeFormationReanchorDelta,
@@ -1906,6 +1907,15 @@ export class PlayScene extends CombatScene<
     // same frame.
     const reanchorApplied = this._applyFormationReanchor();
 
+    // Live mineral-seek: push the scene's live mineral field so roaming
+    // seekers (Harvester) steer toward the nearest live mineral — the same
+    // shared helper the gyms call (AH-0MV5SDNI2008RWQ2). The seeker advances
+    // its own motion in the loop below.
+    pushSeekTargets(
+      this.spawned.filter((s) => s.entity.alive).map((s) => s.entity),
+      this.minerals,
+    );
+
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
       // Non-blocking world hazards (Asteroid, Frogger lane traffic) advance
@@ -1931,11 +1941,9 @@ export class PlayScene extends CombatScene<
         }
         continue;
       }
-      // Live mineral-seek: push the scene's live mineral field so roaming
-      // seekers (Harvester) steer toward the nearest mineral, then advance
-      // their own motion. The gym's shared tick calls the same seam (F4).
+      // Roaming seekers (Harvester) advance their own motion — the scene's
+      // live mineral field was pushed above by the shared helper (F4 parity).
       if (s.entity.setSeekTargets) {
-        s.entity.setSeekTargets(this.minerals);
         s.entity.updatePosition?.(dt);
         continue;
       }
@@ -2539,14 +2547,15 @@ export class PlayScene extends CombatScene<
 
   /** Collects any bullets fired by the formation this frame. */
   private _collectEnemyFire(): void {
+    // Live aim tracking: push the live player position into every alive
+    // aimed enemy BEFORE this frame's fire is collected — single-sourced with
+    // the gyms through the shared helper (AH-0MV5SDNI2008RWQ2).
+    pushAimTargets(
+      this.spawned.filter((s) => s.entity.alive).map((s) => s.entity),
+      this.player,
+    );
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
-      if (this.player) {
-        const target = s.entity as unknown as {
-          setAimTarget?: (x: number, y: number) => void;
-        };
-        target.setAimTarget?.(this.player.x, this.player.y);
-      }
       // Shared archetype→tryFire dispatch, driven by the scene clock
       // (AH-0MUII3BBW000XZ46): no local switch, so a new enemy is wired once.
       this.enemyBullets.push(

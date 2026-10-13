@@ -316,19 +316,13 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
   // ── Live-aim & mineral-seek regressions (AH-0MV5SDMMF008O55Q) ──────
 
   /**
-   * Test-first reconciliation (AH-0MV5SDMMF008O55Q): the work item's AC2
-   * requires these regressions to be red before the shared live-targeting
-   * helper is adopted in `GymLevel` (AH-0MV5SDNI2008RWQ2). The project's
-   * build → test → commit gate forbids committing a failing suite, so the
-   * assertions are wrapped in Vitest's `it.fails(...)` — an **expected
-   * failure**, red today because `GymLevel.tick` fires enemies without the
-   * `setAimTarget` push and `GymLevel._moveEnemies` pushes an empty mineral
-   * field. Once AH-0MV5SDNI2008RWQ2 lands, the assertions stop throwing and
-   * `it.fails` reports "expected test to fail, but it passed" — the adoption
-   * item must then remove `.fails` to turn these into hard gates.
+   * Test-first reconciliation (AH-0MV5SDMMF008O55Q): these regressions were
+   * written red-first under Vitest's `it.fails(...)` and the adoption item
+   * AH-0MV5SDNI2008RWQ2 removed the expected-failure wrapper once `GymLevel`
+   * adopted the shared live-targeting helper — they are now hard gates.
    */
 
-  it.fails('AH-0MV5SDMMF008O55Q — a Diver\'s aim target tracks the live player', async () => {
+  it('AH-0MV5SDMMF008O55Q — a Diver\'s aim target tracks the live player', async () => {
     const scene = await bootWith({
       level: makeLevel('Aim', [
         {
@@ -370,7 +364,7 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     expect(aim.y).toBe(playerY);
   });
 
-  it.fails('AH-0MV5SDMMF008O55Q — a Harvester receives the live mineral field (not empty)', async () => {
+  it('AH-0MV5SDMMF008O55Q — a Harvester receives the live mineral field (not empty)', async () => {
     const scene = await bootWith({
       level: makeLevel('Seek', [
         {

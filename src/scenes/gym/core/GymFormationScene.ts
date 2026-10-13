@@ -52,6 +52,10 @@ import Phaser from 'phaser';
 
 import { CombatScene } from '../../../scenes/core/CombatScene';
 import {
+  pushAimTargets,
+  pushSeekTargets,
+} from '../../../scenes/core/enemyTargeting';
+import {
   FormationGlide,
 } from '../../../scenes/core/formationGlide';
 import {
@@ -1473,14 +1477,17 @@ export class GymFormationScene<
     // enemy is unaffected (AH-0MUL15N63003PUDB).
     const reanchorApplied = this._applyFormationReanchor();
 
+    // Live mineral-seek: push the scene's live mineral field so a roaming
+    // seeker (Harvester) steers toward the nearest live mineral, and push
+    // the live player position so aimed enemies target the ship — both
+    // through the single shared helper used by PlayScene and GymLevel
+    // (AH-0MV5SDNI2008RWQ2). The pushes run before the entity loop so the
+    // fire collected below uses the fresh aim.
+    pushSeekTargets(this.entities, this.minerals);
+    pushAimTargets(this.entities, this.player);
+
     // Position each enemy from the formation base + its own offset.
     for (const entity of this.entities) {
-      // Live mineral-seek: push the scene's live mineral field BEFORE the
-      // entity advances its own motion, so a roaming seeker (Harvester)
-      // steers on the same frame it receives a target — matching the game's
-      // `PlayScene._moveEnemies` ordering exactly (F4 parity).
-      entity.setSeekTargets?.(this.minerals);
-
       // Roaming enemies (e.g. Asteroid) advance their own straight-line
       // motion + wrap + rotation; a no-op for formation enemies.
       entity.updatePosition?.(dt);
@@ -1496,13 +1503,6 @@ export class GymFormationScene<
         config.spacingX,
         config.spacingY,
       );
-
-      // Live aim tracking: when a player is on screen, push its current
-      // position so aimed enemies target the player this frame (instead of
-      // the fixed stand-in). Entities without the seam are skipped.
-      if (this.player) {
-        entity.setAimTarget?.(this.player.x, this.player.y);
-      }
 
       // Collect any bullets the entity fired this frame (uses the fresh aim).
       this.bullets.push(...config.collectBullets(entity, this.time.now));

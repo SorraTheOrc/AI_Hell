@@ -2364,15 +2364,24 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
   });
 
   it('both PlayScene and the gym tick invoke the shared seek seam', () => {
-    // The seam is *called* by both scenes and never re-implemented, so the
-    // game and gyms cannot diverge on seeking. PlayScene guards with a truthy
-    // check; the gym uses optional chaining.
-    expect(PRODUCTION('src/scenes/PlayScene.ts')).toContain(
-      'setSeekTargets(this.minerals)',
+    // The seam is *called* by the game and both gym families and never
+    // re-implemented, so they cannot diverge on seeking. Since the live-aim
+    // parity epic (AH-0MV5SDNI2008RWQ2) every player-bearing base scene
+    // consumes the single shared `pushSeekTargets` helper in
+    // `src/scenes/core/enemyTargeting.ts`; the helper invokes the
+    // Harvester's `setSeekTargets` seam with the scene's live mineral field.
+    for (const file of [
+      'src/scenes/PlayScene.ts',
+      'src/scenes/gym/core/GymFormationScene.ts',
+      'src/scenes/gym/GymLevel.ts',
+    ]) {
+      expect(PRODUCTION(file)).toContain('pushSeekTargets(');
+    }
+    // The shared helper owns the push body; the Harvester remains the only
+    // definer of the seam implementation (asserted above).
+    expect(PRODUCTION('src/scenes/core/enemyTargeting.ts')).toContain(
+      'setSeekTargets?.(',
     );
-    expect(
-      PRODUCTION('src/scenes/gym/core/GymFormationScene.ts'),
-    ).toContain('setSeekTargets?.(this.minerals)');
   });
 
   it('the Harvester is the only production definer of the health/finalise consumer path', () => {
@@ -2403,16 +2412,12 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
  *
  * ## Test-first reconciliation (AH-0MV5SDLQK005ZBOH)
  *
- * The work item's AC4 requires this test to be red before the shared helper
- * and the `GymLevel` adoption land. The project's build → test → commit gate
- * (and the pre-push full-suite hook) forbids committing a failing suite, so
- * the runtime equivalence assertion is wrapped in Vitest's `it.fails(...)` —
- * an **expected failure**. It runs in the standard `vitest run` suite (no
- * opt-in flag) and the assertion is genuinely red today. Once
- * AH-0MV5SDN24006SD2B (shared helper) and AH-0MV5SDNI2008RWQ2 (`GymLevel`
- * adoption) land, the assertion stops throwing and `it.fails` reports
- * "expected test to fail, but it passed" — the adoption item must then remove
- * `.fails` to turn this into a hard gate (the same pattern used by
+ * The work item's AC4 required this test to be red before the fix; it was
+ * written under Vitest's `it.fails(...)` (expected failure) so the build →
+ * test → commit gate stayed green while the gym still diverged. The adoption
+ * item AH-0MV5SDNI2008RWQ2 removed the expected-failure wrapper once the
+ * shared helper (AH-0MV5SDN24006SD2B) and the `GymLevel` adoption landed —
+ * the assertion is now a hard gate (the same pattern used by
  * `powerUpIdNaming.test.ts` and `difficultySequencer.variety.test.ts`).
  */
 describe('live-aim seam — bot/level gym tracks the live player like PlayScene (AH-0MV5SDLQK005ZBOH)', () => {
@@ -2586,7 +2591,7 @@ describe('live-aim seam — bot/level gym tracks the live player like PlayScene 
     expect(probe.atFire!.y).toBeCloseTo(PLAYER_Y, 5);
   });
 
-  it.fails('the bot/level gym tracks and dives toward the live player identically to PlayScene', async () => {
+  it('the bot/level gym tracks and dives toward the live player identically to PlayScene', async () => {
     const play = await bootPlayWithDiver();
     const gym = await bootLevelGymWithDiver();
     const playProbe = probeAimAtFire(play.diver);
@@ -2712,11 +2717,10 @@ describe('live-aim source parity guard — every player-bearing base scene pushe
     expect(satisfiesAimSeam('// @gym-parity-divergence:')).toBe(false);
   });
 
-  it.fails(
+  it(
     'every player-bearing enemy base scene pushes the shared live-aim seam (AC1/AC2)',
-    () => {
-      // Red today: the helper module and its consumers land in
-      // AH-0MV5SDN24006SD2B / AH-0MV5SDNI2008RWQ2. Green after.
+    () => {      // Red before adoption (AH-0MV5SDNI2008RWQ2): now a hard gate — the
+      // helper module and its consumers have landed.
       const missing = LIVE_AIM_SCENES.filter((file) => {
         const source = fs.readFileSync(
           path.resolve(process.cwd(), file),
@@ -2728,11 +2732,10 @@ describe('live-aim source parity guard — every player-bearing base scene pushe
     },
   );
 
-  it.fails(
+  it(
     'every player-bearing enemy base scene pushes the shared live-mineral-seek seam (AC2)',
     () => {
-      // Same red-before/green-after contract as the aim guard above; GymLevel
-      // currently pushes an empty array instead of the live mineral field.
+      // GymLevel now passes its live mineral field (not an empty array).
       const missing = LIVE_AIM_SCENES.filter((file) => {
         const source = fs.readFileSync(
           path.resolve(process.cwd(), file),
