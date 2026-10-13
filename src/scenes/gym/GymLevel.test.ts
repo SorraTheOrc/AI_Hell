@@ -22,6 +22,8 @@ import {
   GymLevel,
   type GymLevelData,
 } from './GymLevel';
+import { Diver } from '../../entities/Diver';
+import { Harvester } from '../../entities/Harvester';
 
 /** Waits for Phaser scene transitions to settle. */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
@@ -309,5 +311,98 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(scene.sys.isActive()).toBe(false);
+  });
+
+  // ── Live-aim & mineral-seek regressions (AH-0MV5SDMMF008O55Q) ──────
+
+  /**
+   * Test-first reconciliation (AH-0MV5SDMMF008O55Q): the work item's AC2
+   * requires these regressions to be red before the shared live-targeting
+   * helper is adopted in `GymLevel` (AH-0MV5SDNI2008RWQ2). The project's
+   * build → test → commit gate forbids committing a failing suite, so the
+   * assertions are wrapped in Vitest's `it.fails(...)` — an **expected
+   * failure**, red today because `GymLevel.tick` fires enemies without the
+   * `setAimTarget` push and `GymLevel._moveEnemies` pushes an empty mineral
+   * field. Once AH-0MV5SDNI2008RWQ2 lands, the assertions stop throwing and
+   * `it.fails` reports "expected test to fail, but it passed" — the adoption
+   * item must then remove `.fails` to turn these into hard gates.
+   */
+
+  it.fails('AH-0MV5SDMMF008O55Q — a Diver\'s aim target tracks the live player', async () => {
+    const scene = await bootWith({
+      level: makeLevel('Aim', [
+        {
+          groups: [
+            {
+              enemyKey: 'diver',
+              formation: 'v',
+              count: 1,
+              spacingX: 30,
+              spacingY: 26,
+              startX: 200,
+              startY: 100,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ]),
+    });
+
+    const diver = scene.getEnemies().find(
+      (e): e is Diver => e instanceof Diver,
+    );
+    expect(diver, 'Diver not spawned').toBeDefined();
+
+    const player = scene.getShip();
+    expect(player).not.toBeNull();
+
+    // Record the player position before tick.
+    const playerX = player!.x;
+    const playerY = player!.y;
+
+    // Advance one frame — this is where the live-aim push must fire.
+    scene.tick(0.016);
+
+    // After the push, the Diver\'s aimTarget must equal the player position,
+    // NOT the bottom-centre default that the constructor sets.
+    const aim = diver!.aimTarget;
+    expect(aim.x).toBe(playerX);
+    expect(aim.y).toBe(playerY);
+  });
+
+  it.fails('AH-0MV5SDMMF008O55Q — a Harvester receives the live mineral field (not empty)', async () => {
+    const scene = await bootWith({
+      level: makeLevel('Seek', [
+        {
+          groups: [
+            {
+              enemyKey: 'harvester',
+              formation: 'v',
+              count: 1,
+              spacingX: 30,
+              spacingY: 26,
+              startX: 200,
+              startY: 100,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ]),
+    });
+
+    const harvester = scene.getEnemies().find(
+      (e): e is Harvester => e instanceof Harvester,
+    );
+    expect(harvester, 'Harvester not spawned').toBeDefined();
+
+    const minerals = scene.getMinerals();
+    expect(minerals.length, 'no minerals seeded').toBeGreaterThan(0);
+
+    // Advance one frame — the mineral-seek push must fire.
+    scene.tick(0.016);
+
+    // The Harvester must have selected a live mineral as its target.
+    expect(harvester!.seekTargetX).not.toBeNull();
+    expect(harvester!.seekTargetY).not.toBeNull();
   });
 });

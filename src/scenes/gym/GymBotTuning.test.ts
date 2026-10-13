@@ -31,6 +31,8 @@ import {
 } from '../../core/botTuningStore';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { GYM_LEVEL_MINERAL_SEED_COUNT } from './GymLevel';
+import { Diver } from '../../entities/Diver';
+import { Harvester } from '../../entities/Harvester';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 
 /** A single-group, non-firing scout wave. */
@@ -245,5 +247,97 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
 
     const after = scene.getMinerals();
     expect(after.length).toBeLessThan(before.size);
+  });
+
+  // ── Live-aim & mineral-seek regressions (AH-0MV5SDMMF008O55Q) ──────
+
+  /**
+   * Test-first reconciliation (AH-0MV5SDMMF008O55Q): the work item's AC2
+   * requires these regressions to be red before the shared live-targeting
+   * helper is adopted in `GymLevel` (AH-0MV5SDNI2008RWQ2). The project's
+   * build → test → commit gate forbids committing a failing suite, so the
+   * assertions are wrapped in Vitest's `it.fails(...)` — an **expected
+   * failure**, red today because `GymLevel.tick` fires enemies without the
+   * `setAimTarget` push and `GymLevel._moveEnemies` pushes an empty mineral
+   * field. Once AH-0MV5SDNI2008RWQ2 lands, the assertions stop throwing and
+   * `it.fails` reports "expected test to fail, but it passed" — the adoption
+   * item must then remove `.fails` to turn these into hard gates.
+   */
+
+  it.fails('AH-0MV5SDMMF008O55Q — a Diver\'s aim target tracks the live player in bot-tuning gym', async () => {
+    const scene = await bootTuning({
+      seed: 42,
+      level: makeLevel('Aim', [
+        {
+          groups: [
+            {
+              enemyKey: 'diver',
+              formation: 'v',
+              count: 1,
+              spacingX: 30,
+              spacingY: 26,
+              startX: 200,
+              startY: 100,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ]),
+    });
+    booted!.game.loop.stop();
+
+    const diver = scene.getEnemies().find(
+      (e): e is Diver => e instanceof Diver,
+    );
+    expect(diver, 'Diver not spawned').toBeDefined();
+
+    const ship = scene.getShip()!;
+
+    // Advance one frame — this is where the live-aim push must fire.
+    scene.tick(1 / 60);
+
+    // After the push, the Diver\'s aimTarget must equal the ship position,
+    // NOT the bottom-centre default.
+    const aim = diver!.aimTarget;
+    expect(aim.x).toBe(ship.getMovementState().x);
+    expect(aim.y).toBe(ship.getMovementState().y);
+  });
+
+  it.fails('AH-0MV5SDMMF008O55Q — a Harvester receives the live mineral field in bot-tuning gym', async () => {
+    const scene = await bootTuning({
+      seed: 123,
+      level: makeLevel('Seek', [
+        {
+          groups: [
+            {
+              enemyKey: 'harvester',
+              formation: 'v',
+              count: 1,
+              spacingX: 30,
+              spacingY: 26,
+              startX: 200,
+              startY: 100,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ]),
+    });
+    booted!.game.loop.stop();
+
+    const harvester = scene.getEnemies().find(
+      (e): e is Harvester => e instanceof Harvester,
+    );
+    expect(harvester, 'Harvester not spawned').toBeDefined();
+
+    const minerals = scene.getMinerals();
+    expect(minerals.length, 'no minerals seeded').toBeGreaterThan(0);
+
+    // Advance one frame — the mineral-seek push must fire.
+    scene.tick(1 / 60);
+
+    // The Harvester must have selected a live mineral as its target.
+    expect(harvester!.seekTargetX).not.toBeNull();
+    expect(harvester!.seekTargetY).not.toBeNull();
   });
 });
