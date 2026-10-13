@@ -74,6 +74,15 @@ const NON_COMBAT_ORDER: readonly PowerUpId[] = [
 /** Number of minerals seeded on the gym's demonstration mineral field. */
 export const UTILITY_MINERAL_SEED_COUNT = 40;
 
+/**
+ * Clearance radius, in pixels, that seeded minerals keep away from the
+ * ship's start position. Well above the pickup threshold
+ * (`MINERAL_SIZE + SHIP_SIZE/2` = 15 px) so a mineral is never silently
+ * collected the moment the gym opens, and below the nearest play-area edge
+ * from the centre (150 px) so a radially-pushed sample stays in bounds.
+ */
+export const MINERAL_SEED_CLEARANCE = 60;
+
 /** Deterministic spawn positions (cycling) — never under the ship start. */
 const SPAWN_POSITIONS: readonly { x: number; y: number }[] = [
   { x: 720, y: 135 },
@@ -162,7 +171,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
 
     // Mineral field: seeded so the Mineral Scoop runs the same shared
     // attraction + collection pass as the game and the formation gyms (AC5).
-    this._seedMinerals(UTILITY_MINERAL_SEED_COUNT);
+    this.seedMinerals(UTILITY_MINERAL_SEED_COUNT);
 
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).
@@ -347,15 +356,40 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   }
 
   /**
-   * Seeds `count` minerals scattered across the play area, away from the
-   * ship's start position, so the Mineral Scoop scoop has a field to attract.
+   * Seeds `count` minerals scattered across the play area, clear of the
+   * ship's start position (the disc around the centre bounded by
+   * {@link MINERAL_SEED_CLEARANCE}), so the gym never opens with a mineral
+   * already overlapping the ship and instantly collected into the hold.
+   * Public so tests can verify the clearance contract (mirrors
+   * `GymFormationScene.seedMinerals` / `GymLevel.seedMinerals`).
    */
-  private _seedMinerals(count: number): void {
+  seedMinerals(count: number): Mineral[] {
+    const cx = GAME_WIDTH / 2;
+    const cy = GAME_HEIGHT / 2;
+    const seeded: Mineral[] = [];
     for (let i = 0; i < count; i++) {
       const x = 20 + Math.random() * (GAME_WIDTH - 40);
       const y = 20 + Math.random() * (GAME_HEIGHT - 120);
-      this.minerals.push(new Mineral(this, { x, y }));
+      let px = x;
+      let py = y;
+      const distance = Math.hypot(x - cx, y - cy);
+      if (distance < MINERAL_SEED_CLEARANCE) {
+        // Push the sample radially out onto the clearance ring instead of
+        // re-drawing: deterministic, and always in bounds because the ring
+        // radius stays under the nearest play-area edge from the centre.
+        if (distance === 0) {
+          px = cx + MINERAL_SEED_CLEARANCE;
+        } else {
+          const scale = MINERAL_SEED_CLEARANCE / distance;
+          px = cx + (x - cx) * scale;
+          py = cy + (y - cy) * scale;
+        }
+      }
+      const mineral = new Mineral(this, { x: px, y: py });
+      this.minerals.push(mineral);
+      seeded.push(mineral);
     }
+    return seeded;
   }
 
   /** Places a mineral at an exact position (public test/demo seam). */
