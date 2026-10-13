@@ -522,6 +522,20 @@ added by AH-0MUWTNPYJ0031FQE):
   decodes the recorded **Opus audio** (track count, peak, RMS), then **exits
   non-zero** if the clip is black/static **or** has no non-silent audio track,
   so it can gate a future job.
+- **Discover dev scenarios (`--list-scenarios`):**
+  `npm run capture -- --list-scenarios` prints every implemented
+  `--scenario` value plus its one-line effect, straight from the shared
+  registry (`scripts/capture-scenarios.mjs`) that the game resolver also
+  reads — so the list can never drift from what the game accepts. It boots
+  **no browser or server** and exits `0`; add `--json` for a machine-readable
+  array `[ { "name": …, "effect": … } ]`.
+- **Batch clips (`--count n` / `-n`):** `npm run capture -- --count 3` records
+  **3 clips in one process** — one Vite dev server and one browser, a fresh
+  page per iteration, no state leaking between clips. With `--output
+  demo.webm` the clips are `demo-1.webm`, `demo-2.webm`, `demo-3.webm`; with
+  no `--output` each clip appends a 1-based index to one batch timestamp. A
+  failed iteration does not abort the rest, and the process exits non-zero if
+  any clip failed.
 - **Batch scenarios (`--all-scenarios`):** `npm run capture -- --all-scenarios`
   records **one video per registered dev scenario** in a single process — one
   Vite dev server and one browser, a fresh page per scenario, per-item failure
