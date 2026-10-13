@@ -371,7 +371,25 @@ npm run capture -- --all-scenarios
 
 # write into a directory: <dir>/<scenario>.webm
 npm run capture -- --all-scenarios --output clips
+
+# N videos of EVERY scenario in one process (N x all)
+npm run capture -- --count 3 --all-scenarios
 ```
+
+### Combining with `--count` (N x all)
+
+`--count n` combines with `--all-scenarios` to record **n clips of every
+registered scenario** in a single process (producer decision Q3=b,
+AH-0MV6JGQSA0054CYY): `--count 3 --all-scenarios` yields `3 x all` clips —
+one batch of N-video-per-scenario evidence. The standalone `--count n`
+behaviour (with or without `--scenario`) is unchanged.
+
+Ordering across the combined batch is **scenario-major**: all `n` repeats of
+the first registered scenario, then all `n` of the second, and so on — the
+per-scenario iteration index resets at each scenario (`boss-1, boss-2, …,
+boss-four-hits-1, …`). The plan positions (`#1 … #(n × scenarios)`) run
+across the whole batch, and every iteration is attributable by scenario and
+iteration in the batch report and `--json` aggregate.
 
 ### Output naming
 
@@ -381,21 +399,26 @@ npm run capture -- --all-scenarios --output clips
 |---|---|
 | `--all-scenarios` | `capture-output/<scenario>-<ISO-timestamp>.webm` (one timestamp per batch) |
 | `--all-scenarios --output clips` | `clips/<scenario>.webm` |
+| `--count 3 --all-scenarios` | `capture-output/<scenario>-<ISO-timestamp>-1.webm`, `…-2.webm`, `…-3.webm` (per scenario) |
+| `--count 3 --all-scenarios --output clips` | `clips/<scenario>-1.webm`, `clips/<scenario>-2.webm`, `clips/<scenario>-3.webm` (per scenario) |
 
-Names are **deterministic and collision-free** within a batch (one item per
-scenario, one batch timestamp), and an existing file is **never silently
-overwritten**: if a target name is already in use — by an earlier item in the
-plan or on disk — a `-<n>` suffix is inserted before the extension
-(`boss.webm` → `boss-2.webm`), resolved by the pure `uniquifyOutputPath`
-helper. The batch report and `--json` aggregate name the scenario per item
-(`#1 [boss] ok …`), so results are attributable without parsing paths.
+With `--count > 1` every name carries a **per-scenario 1-based iteration
+suffix**, so `n` repeats of one scenario can never collide; `--count 1` (and
+omitting `--count`) is byte-for-byte the plain `--all-scenarios` naming.
+Names are **deterministic and collision-free** within a batch, and an existing
+file is **never silently overwritten**: if a target name is already in use —
+by an earlier item in the plan or on disk — a `-<n>` suffix is inserted
+before the extension (`boss.webm` → `boss-2.webm`), resolved by the pure
+`uniquifyOutputPath` helper. The batch report and `--json` aggregate name the
+scenario per item (`#1 [boss] ok …`), so results are attributable without
+parsing paths.
 
 ### Validation and exit codes
 
 - `--all-scenarios` takes no value and cannot be combined with `--scenario`
-  (it already selects every scenario); the `--count` × `--all-scenarios`
-  combination (`N x all`) is rejected with a clear message until it lands
-  (tracked by AH-0MV6JGQSA0054CYY).
+  (it already selects every scenario).
+- `--count` keeps its positive-integer-only validation (`0`, missing or
+  non-numeric values fail fast) whether or not `--all-scenarios` is present.
 - The aggregate summary prints every item and the process exits **non-zero**
   if any scenario failed or hit the `--max-duration` cap; a single-scenario
   failure does not abort the remaining scenarios (AC6).

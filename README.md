@@ -529,8 +529,11 @@ added by AH-0MUWTNPYJ0031FQE):
   scenario failed or hit the `--max-duration` cap (AH-0MV6JGQFK007MXGX). The
   set is read from the shared registry, so it matches
   `npm run capture -- --list-scenarios`; the default no-scenario demo run is
-  **not** included. `--output <dir>` is a directory
-  (`<dir>/<scenario>.webm`); without it files default to
+  **not** included. Combine with **`--count n`** for **`N x all`**: n clips of
+  every registered scenario in one process, scenario-major order, each named
+  with a per-scenario iteration suffix. `--output <dir>` is a directory
+  (`<dir>/<scenario>.webm`, or `<dir>/<scenario>-<n>.webm` with `--count > 1`);
+  without it files default to
   `capture-output/<scenario>-<timestamp>.webm` and an existing file is never
   silently overwritten (a `-<n>` suffix is used).
 - **How it works:** `scripts/capture-gameplay.mjs` starts the Vite dev server

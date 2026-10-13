@@ -1931,10 +1931,129 @@ describe('--all-scenarios batch capture (AH-0MV6JGQFK007MXGX)', () => {
     expect(single.items[0].scenario).toBe('defeat');
   });
 
-  it('rejects --count > 1 with --all-scenarios until the N x all child lands', () => {
-    expect(() =>
-      planCaptureRun({ allScenarios: true, count: 3 }, { exists: () => false }),
-    ).toThrow(/AH-0MV6JGQSA0054CYY/);
+  it('combines --count with --all-scenarios into N repeats per scenario (scenario-major order)', () => {
+    const plan = planCaptureRun(
+      { allScenarios: true, count: 3, output: 'clips' },
+      { exists: () => false },
+    );
+
+    expect(plan.allScenarios).toBe(true);
+    expect(plan.batch).toBe(true);
+    // N x all (AH-0MV6JGQSA0054CYY): every registered scenario appears
+    // exactly N times — all repeats of scenario 1, then all of scenario 2, …
+    // (scenario-major order), one clip each.
+    const expected = CAPTURE_SCENARIOS.flatMap((scenario) =>
+      [1, 2, 3].map(() => scenario.name),
+    );
+    expect(plan.items.map((item) => item.scenario)).toEqual(expected);
+    expect(plan.items).toHaveLength(CAPTURE_SCENARIOS.length * 3);
+    // 1-based plan positions run across the whole combined batch.
+    expect(plan.items.map((item) => item.index)).toEqual(
+      Array.from(
+        { length: CAPTURE_SCENARIOS.length * 3 },
+        (_, i) => i + 1,
+      ),
+    );
+    // Every item names a registered scenario and carries its effect.
+    for (const item of plan.items) {
+      expect(CAPTURE_SCENARIOS.map((scenario) => scenario.name)).toContain(
+        item.scenario,
+      );
+      expect(item.effect).toBeTruthy();
+    }
+  });
+
+  it('names N x all items deterministically per scenario and iteration (collision-free)', () => {
+    const items = buildScenarioCapturePlan({
+      count: 2,
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+
+    expect(items.map((item) => basename(item.outputPath))).toEqual(
+      CAPTURE_SCENARIOS.flatMap((scenario) => [
+        `${scenario.name}-STAMP-1.webm`,
+        `${scenario.name}-STAMP-2.webm`,
+      ]),
+    );
+    expect(new Set(items.map((item) => item.outputPath)).size).toBe(
+      items.length,
+    );
+  });
+
+  it('treats --output as a directory for N x all, with a per-scenario iteration suffix', () => {
+    const items = buildScenarioCapturePlan({
+      count: 2,
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+
+    for (const item of items) {
+      expect(dirname(item.outputPath)).toBe(resolve(process.cwd(), 'clips'));
+    }
+    expect(items.map((item) => basename(item.outputPath))).toEqual(
+      CAPTURE_SCENARIOS.flatMap((scenario) => [
+        `${scenario.name}-1.webm`,
+        `${scenario.name}-2.webm`,
+      ]),
+    );
+  });
+
+  it('count = 1 keeps the plain --all-scenarios naming byte-identical', () => {
+    const single = buildScenarioCapturePlan({
+      count: 1,
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+    const baseline = buildScenarioCapturePlan({
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+
+    expect(single.map((item) => item.outputPath)).toEqual(
+      baseline.map((item) => item.outputPath),
+    );
+  });
+
+  it('aggregates a combined N x all run per iteration with scenario attribution', async () => {
+    const items = buildScenarioCapturePlan({
+      count: 2,
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+
+    const batch = await runCaptureIterations({
+      outputPaths: items.map((item) => item.outputPath),
+      items,
+      captureOne: async ({ outputPath, item }) => ({
+        output: outputPath,
+        scenario: item.scenario,
+        bytes: 1024,
+        durationMs: 1000,
+        nonTrivial: true,
+        capHit: false,
+        reasons: [],
+        pageErrors: [],
+      }),
+    });
+
+    expect(batch).toMatchObject({
+      count: items.length,
+      succeeded: items.length,
+      failed: 0,
+    });
+    expect(batch.iterations.map((it) => it.scenario)).toEqual(
+      CAPTURE_SCENARIOS.flatMap((scenario) => [
+        scenario.name,
+        scenario.name,
+      ]),
+    );
+    expect(batch.iterations[0]).toMatchObject({ index: 1, ok: true });
+    expect(captureExitCode(batch)).toBe(0);
   });
 
   it('runCaptureSession boots exactly one server and one browser, with a fresh page per item', async () => {

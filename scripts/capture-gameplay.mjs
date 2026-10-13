@@ -747,28 +747,42 @@ export function uniquifyOutputPath(candidate, exists = () => false) {
 
 /**
  * Builds the ordered capture item list for `--all-scenarios`
- * (AH-0MV6JGQFK007MXGX): **one item per registered dev scenario**, in
- * registry order, each with a deterministic, collision-free output path.
+ * (AH-0MV6JGQFK007MXGX), optionally repeated `count` times per scenario
+ * (`N x all`, AH-0MV6JGQSA0054CYY): **`count` items per registered dev
+ * scenario**, in registry order, each with a deterministic, collision-free
+ * output path.
+ *
+ * Ordering is **scenario-major**: all `count` repeats of the first
+ * registered scenario come first, then all repeats of the second, and so
+ * on — so the iteration index resets per scenario and the plan reads
+ * `[scenario-1-1, scenario-1-2, …, scenario-2-1, …]` (the choice between
+ * scenario-major and iteration-major is cosmetic; scenario-major is
+ * documented and fixed).
  *
  * `--output` is a **directory** for a batch (producer decision Q2): each
- * scenario writes `<dir>/<scenario>.webm` inside it. Without `--output` the
- * default directory is `capture-output/` and names are
- * `<scenario>-<ts>.webm`, where one batch timestamp keeps separate runs from
- * colliding while staying deterministic within a run. `exists` (default:
- * never) feeds {@link uniquifyOutputPath} so an already-taken name — on disk
- * or already assigned to an earlier item in this plan — is de-duplicated
- * rather than silently overwritten. The default no-scenario demo run is
- * deliberately **not** an item (producer decision Q1).
+ * scenario writes `<dir>/<scenario>.webm` inside it (with a `-<n>` iteration
+ * suffix when `count > 1`, so `count` repeats of one scenario never collide).
+ * Without `--output` the default directory is `capture-output/` and names are
+ * `<scenario>-<ts>.webm` (`<scenario>-<ts>-<n>.webm` when `count > 1`), where
+ * one batch timestamp keeps separate runs from colliding while staying
+ * deterministic within a run. `count === 1` reproduces the pre-`count` naming
+ * byte-for-byte. `exists` (default: never) feeds {@link uniquifyOutputPath}
+ * so an already-taken name — on disk or already assigned to an earlier item
+ * in this plan — is de-duplicated rather than silently overwritten. The
+ * default no-scenario demo run is deliberately **not** an item (producer
+ * decision Q1).
  *
- * @param {{ scenarios?: Array<{ name: string, effect: string }>, output?: string | null, timestamp?: string, exists?: (path: string) => boolean }} [params]
+ * @param {{ scenarios?: Array<{ name: string, effect: string }>, output?: string | null, count?: number, timestamp?: string, exists?: (path: string) => boolean }} [params]
  * @returns {Array<{ index: number, scenario: string, effect: string, outputPath: string }>}
  */
 export function buildScenarioCapturePlan({
   scenarios = listScenarios(),
   output = null,
+  count = DEFAULT_CAPTURE_COUNT,
   timestamp = new Date().toISOString().replace(/[:.]/g, '-'),
   exists = () => false,
 } = {}) {
+  const total = parseCaptureCount(count);
   const requested =
     typeof output === 'string' && output.length > 0 ? output : null;
   const outputDir = requested
@@ -779,31 +793,45 @@ export function buildScenarioCapturePlan({
   const assigned = new Set();
   const isTaken = (path) => assigned.has(path) || exists(path);
 
-  return scenarios.map((scenario, index) => {
-    const baseName = requested
-      ? `${scenario.name}.webm`
-      : `${scenario.name}-${timestamp}.webm`;
-    const outputPath = uniquifyOutputPath(resolve(outputDir, baseName), isTaken);
-    assigned.add(outputPath);
-    return {
-      index: index + 1,
-      scenario: scenario.name,
-      effect: scenario.effect,
-      outputPath,
-    };
-  });
+  const items = [];
+  let planIndex = 0;
+  // Scenario-major expansion (AH-0MV6JGQSA0054CYY): for each scenario in
+  // registry order, all `count` repeats — the iteration index resets per
+  // scenario so a repeated name (`<scenario>-<n>.webm`) is deterministic and
+  // collision-free across the whole batch.
+  for (const scenario of scenarios) {
+    for (let iteration = 1; iteration <= total; iteration += 1) {
+      const baseName = requested
+        ? total > 1
+          ? `${scenario.name}-${iteration}.webm`
+          : `${scenario.name}.webm`
+        : total > 1
+          ? `${scenario.name}-${timestamp}-${iteration}.webm`
+          : `${scenario.name}-${timestamp}.webm`;
+      const outputPath = uniquifyOutputPath(
+        resolve(outputDir, baseName),
+        isTaken,
+      );
+      assigned.add(outputPath);
+      planIndex += 1;
+      items.push({
+        index: planIndex,
+        scenario: scenario.name,
+        effect: scenario.effect,
+        outputPath,
+      });
+    }
+  }
+  return items;
 }
 
 /**
  * Resolves the ordered capture items for one invocation
  * (AH-0MV6JGQFK007MXGX). `--all-scenarios` expands the shared registry into
- * one item per scenario (see {@link buildScenarioCapturePlan}); otherwise the
- * existing single-clip / `--count` path is resolved unchanged, so a single
- * `--scenario` invocation behaves exactly as today (AC backwards-compat).
- *
- * The `--count` × `--all-scenarios` combination (`N x all`) is **not** part
- * of this item — it is tracked by AH-0MV6JGQSA0054CYY and rejected here with
- * an actionable message until that child lands.
+ * `count` items **per scenario** (`N x all`, scenario-major order — see
+ * {@link buildScenarioCapturePlan}); otherwise the existing single-clip /
+ * `--count` path is resolved unchanged, so a single `--scenario` invocation
+ * behaves exactly as today (AC backwards-compat).
  *
  * @param {object} [options]
  * @param {{ exists?: (path: string) => boolean }} [deps]
@@ -811,14 +839,10 @@ export function buildScenarioCapturePlan({
  */
 export function planCaptureRun(options = {}, deps = {}) {
   if (options.allScenarios === true) {
-    if (typeof options.count === 'number' && options.count > 1) {
-      throw new Error(
-        '--count with --all-scenarios (N x all) is not supported yet; tracked by AH-0MV6JGQSA0054CYY.',
-      );
-    }
     const items = buildScenarioCapturePlan({
       scenarios: listScenarios(),
       output: options.output ?? null,
+      count: options.count,
       exists: typeof deps.exists === 'function' ? deps.exists : existsSync,
     });
     return { items, batch: true, allScenarios: true };
@@ -1819,6 +1843,9 @@ async function main() {
     );
     console.log(
       'Batch scenarios: --all-scenarios records one clip per registered dev scenario in a single process (one dev server + one browser, a fresh page per scenario); the default no-scenario demo run is NOT included. `--output <dir>` is treated as a directory (`<dir>/<scenario>.webm`); without it names default to capture-output/<scenario>-<timestamp>.webm. It prints an aggregate summary and exits non-zero if any scenario failed or hit the --max-duration cap.',
+    );
+    console.log(
+      'Combined: --count n with --all-scenarios records n clips of EVERY registered scenario (N x all) in one process, in scenario-major order (all repeats of each scenario in registry order); names carry a per-scenario iteration suffix (`<scenario>-<timestamp>-<n>.webm`, or `<dir>/<scenario>-<n>.webm` with --output <dir>). --count n alone or with --scenario is unchanged.',
     );
     return;
   }

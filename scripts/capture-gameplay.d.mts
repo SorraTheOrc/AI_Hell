@@ -119,19 +119,24 @@ export interface CapturePlanItem {
 }
 
 /**
- * Builds the ordered `--all-scenarios` item list: one item per registered dev
- * scenario, deterministic and collision-free (`--output` is a directory).
+ * Builds the ordered `--all-scenarios` item list: `count` items per
+ * registered dev scenario (scenario-major order, `count` defaults to 1),
+ * deterministic and collision-free (`--output` is a directory; `count > 1`
+ * adds a per-scenario iteration suffix to the names).
  */
 export function buildScenarioCapturePlan(params?: {
   scenarios?: Array<{ name: string; effect: string }>;
   output?: string | null;
+  /** Repeats per scenario (`N x all`); defaults to `DEFAULT_CAPTURE_COUNT`. */
+  count?: number;
   timestamp?: string;
   exists?: (path: string) => boolean;
 }): CapturePlanItem[];
 
 /**
  * Resolves the capture items for an invocation: `--all-scenarios` expands the
- * registry, otherwise the single-clip / `--count` path is used unchanged.
+ * registry into `count` items per scenario (`N x all`, scenario-major);
+ * otherwise the single-clip / `--count` path is used unchanged.
  */
 export function planCaptureRun(
   options?: {
