@@ -30,6 +30,10 @@ import {
   resetBotTuningStore,
 } from '../../core/botTuningStore';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
+import {
+  GYM_TOOLTIP_CLASS,
+  GYM_TOOLTIP_VISIBLE_CLASS,
+} from '../../utils/gymTooltip';
 import { GYM_LEVEL_MINERAL_SEED_COUNT } from './GymLevel';
 import { Diver } from '../../entities/Diver';
 import { Harvester } from '../../entities/Harvester';
@@ -340,4 +344,63 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     expect(harvester!.seekTargetX).not.toBeNull();
     expect(harvester!.seekTargetY).not.toBeNull();
   });
+
+  // ── Per-parameter tooltips (AH-0MV4XGXVL001GSB2) ────────────────
+
+  it('associates every slider and toggle with a tooltip holding its description', async () => {
+    await bootTuning({ seed: 77 });
+
+    const panel = document.getElementById(BOT_TUNING_PANEL_ID)!;
+    for (const field of BOT_TUNING_NUMERIC_FIELDS) {
+      const input = panel.querySelector<HTMLInputElement>(
+        `input[${BOT_TUNING_SLIDER_ATTR}="${field.key}"]`,
+      )!;
+      assertTooltip(input, field.description, field.key);
+    }
+    for (const toggle of BOT_TUNING_TOGGLES) {
+      const input = panel.querySelector<HTMLInputElement>(
+        `input[${BOT_TUNING_TOGGLE_ATTR}="${toggle.key}"]`,
+      )!;
+      assertTooltip(input, toggle.description, toggle.key);
+    }
+  });
+
+  it('reveals the tooltip on hover and keyboard focus, hidden by default', async () => {
+    await bootTuning({ seed: 78 });
+
+    const input = document.querySelector<HTMLInputElement>(
+      `input[${BOT_TUNING_SLIDER_ATTR}="powerUpSeekRange"]`,
+    )!;
+    const tooltip = document.getElementById(input.getAttribute('aria-describedby')!)!;
+
+    // Hidden until the designer hovers or focuses the control.
+    expect(tooltip.classList.contains(GYM_TOOLTIP_VISIBLE_CLASS)).toBe(false);
+    input.dispatchEvent(new Event('pointerenter'));
+    expect(tooltip.classList.contains(GYM_TOOLTIP_VISIBLE_CLASS)).toBe(true);
+    input.dispatchEvent(new Event('pointerleave'));
+    expect(tooltip.classList.contains(GYM_TOOLTIP_VISIBLE_CLASS)).toBe(false);
+
+    // Keyboard users get the same help without a mouse.
+    input.dispatchEvent(new Event('focus'));
+    expect(tooltip.classList.contains(GYM_TOOLTIP_VISIBLE_CLASS)).toBe(true);
+    input.dispatchEvent(new Event('blur'));
+    expect(tooltip.classList.contains(GYM_TOOLTIP_VISIBLE_CLASS)).toBe(false);
+  });
+
+  /**
+   * Asserts `control` is wired to a `.gym-tooltip` via `aria-describedby`
+   * and that the tooltip text is exactly the spec's description.
+   */
+  function assertTooltip(
+    control: HTMLInputElement,
+    expectedText: string,
+    key: string,
+  ): void {
+    const describedBy = control.getAttribute('aria-describedby');
+    expect(describedBy, `${key} aria-describedby`).toBeTruthy();
+    const tooltip = document.getElementById(describedBy!);
+    expect(tooltip, `${key} tooltip exists`).not.toBeNull();
+    expect(tooltip!.classList.contains(GYM_TOOLTIP_CLASS), `${key} class`).toBe(true);
+    expect(tooltip!.textContent, `${key} text`).toBe(expectedText);
+  }
 });
