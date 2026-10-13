@@ -22,7 +22,7 @@ import { bootScene } from '../test/gameHarness';
 import { RULES_STORAGE_KEY } from '../core/rules';
 import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
-import { PlayScene } from './PlayScene';
+import { LEVEL_TRANSITION_SECONDS, PlayScene } from './PlayScene';
 import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
@@ -122,6 +122,94 @@ function navigateTo(
 ): void {
   clickText(from, label);
   stepUntil(game, `${target} active`, () => game!.scene.isActive(target));
+}
+
+/**
+ * Completes the wormhole spawn sequence (open 1 s + grow 1.5 s + close 0.5 s)
+ * for the current wave so every enemy is fully spawned and collidable
+ * (AH-0MURBER4L00821RR). Uses the scene's test seam rather than ticking, so
+ * wave timers and asteroid spawns are not advanced.
+ */
+function finishSpawnSequence(scene: PlayScene): void {
+  scene.finishSpawnAnimations();
+  scene.tick(0.001);
+}
+
+/** Destroys every live enemy via player bullets (deterministic). */
+function killAllEnemies(scene: PlayScene): void {
+  finishSpawnSequence(scene);
+  for (let guard = 0; guard < 500 && scene.getAliveCount() > 0; guard++) {
+    const enemy = scene.getEnemies().find((e) => e.alive);
+    if (!enemy) break;
+    scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+    scene.tick(0.016);
+  }
+}
+
+/**
+ * Advances past the transition pause, spawning the next wave, then past that
+ * wave's wormhole spawn sequence so its enemies are fully spawned.
+ */
+function finishTransition(scene: PlayScene): void {
+  if (scene.isTransitioning()) scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
+  finishSpawnSequence(scene);
+}
+
+/**
+ * Resolves an open hold-full power-up choice, if any.
+ *
+ * Long deterministic boss walks tick the auto-fire through many waves; the
+ * resulting mineral drops eventually fill the hold and `PlayScene` pauses for
+ * the hold-full choice overlay (`openMineralChoice()` → `setPaused(true)`).
+ * A paused scene ignores `tick()` entirely, so a walk would stall in its
+ * iteration guard. Selecting the first option resumes play, exactly as a
+ * player would (AH-0MV5L6BVN005DP4I).
+ *
+ * @returns `true` when a choice was open and has been resolved so the caller
+ *   can retry the step.
+ */
+function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
+  if (!scene.isMineralChoiceOpen()) return false;
+  scene.selectMineralChoice(0);
+  return true;
+}
+
+/**
+ * Walks the run to the boss encounter (the final level cleared).
+ *
+ * Exit condition uses `bossActive` / `bossTriggered` on the WaveManager
+ * rather than `scene.getBoss()`: the boss entity is only created when
+ * `_onTransitionComplete()` fires *after* the transition timer elapses; under
+ * high concurrency that tick may arrive a step or two later, so polling
+ * `getBoss()` alone can exit the loop prematurely (AH-0MUNVVWWC0015JTM).
+ */
+function reachBoss(scene: PlayScene): void {
+  scene.getGameState().lives = 99; // survive incidental enemy fire while clearing levels.
+  for (let guard = 0; guard < 200; guard++) {
+    const wm = scene.getWaveManager();
+    if (wm.bossTriggered || wm.bossActive) break;
+    // A hold-full pause freezes `tick()`; resolve it before walking on
+    // (AH-0MV5L6BVN005DP4I).
+    if (resolveMineralChoiceIfOpen(scene)) continue;
+    killAllEnemies(scene);
+    finishTransition(scene);
+  }
+  // If the loop exited because `bossTriggered` was detected but the
+  // transition hasn't been advanced yet (e.g. the boss was triggered between
+  // iterations), resolve any hold-full pause that opened on that tick and
+  // complete the transition so the entity spawns (AH-0MV5L6BVN005DP4I).
+  resolveMineralChoiceIfOpen(scene);
+  if (scene.isTransitioning()) finishTransition(scene);
+  // Hard assertion — if we exhausted the guard the boss was never reached.
+  const boss = scene.getBoss();
+  if (!boss) {
+    const wm = scene.getWaveManager();
+    throw new Error(
+      `Failed to reach boss: bossTriggered=${wm.bossTriggered} ` +
+        `bossActive=${wm.bossActive} level=${wm.level} wave=${wm.waveNumber} ` +
+        `enemiesAlive=${wm.enemiesAlive} aliveCount=${scene.getAliveCount()}`,
+    );
+  }
 }
 
 /** Kills the player in PlayScene, landing on GameOverScene. */
@@ -258,36 +346,16 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     navigateTo(game, menu, '▶  Play Game', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
-    const gs = play.getGameState();
-    gs.lives = 99;
 
-    // Walk to the boss and defeat it. Exit on the WaveManager's boss state
-    // (not the later-spawned entity) and fail loudly if it is never reached.
-    for (let guard = 0; guard < 300; guard++) {
-      const wm = play.getWaveManager();
-      if (wm.bossTriggered || wm.bossActive) break;
-      for (let g = 0; g < 200 && play.getAliveCount() > 0; g++) {
-        const enemy = play.getEnemies().find((e) => e.alive);
-        if (!enemy) break;
-        play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
-        play.tick(0.016);
-      }
-      if (play.isTransitioning()) play.tick(1.6);
-    }
-    if (play.isTransitioning()) play.tick(1.6);
-    const boss = play.getBoss();
-    if (!boss) {
-      const wm = play.getWaveManager();
-      throw new Error(
-        `Failed to reach boss: bossTriggered=${wm.bossTriggered} ` +
-          `bossActive=${wm.bossActive} level=${wm.level} wave=${wm.waveNumber} ` +
-          `enemiesAlive=${wm.enemiesAlive} aliveCount=${play.getAliveCount()}`,
-      );
-    }
+    // Walk to the boss deterministically: resolve any hold-full pause (a
+    // paused scene ignores tick()), complete spawn sequences before killing,
+    // and advance transitions — then fail loudly if the boss is never reached.
+    reachBoss(play);
+    const boss = play.getBoss()!;
     expect(boss).not.toBeNull();
     // 4 phases, BOSS_HIT_POINTS_PER_PHASE hits each (200 total).
     for (let i = 0; i < 4 * BOSS_HIT_POINTS_PER_PHASE; i++) {
-      play.spawnPlayerBullet(boss!.x, boss!.y, 0, 0);
+      play.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       play.tick(0.016);
     }
     stepUntil(game, 'GameOverScene active', () =>
