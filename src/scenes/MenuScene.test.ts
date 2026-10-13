@@ -19,7 +19,7 @@ import { addEntry } from '../core/Leaderboard';
 import { GAME_HEIGHT } from '../core/constants';
 import { GAME_VERSION } from '../core/version';
 import { LEVEL_COUNT } from '../waves/Formations';
-import { GITHUB_REPO_URL, MenuScene, resumeAudioContext } from './MenuScene';
+import { GITHUB_REPO_URL, GITHUB_LOGO_TEXTURE_KEY, MenuScene, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { PauseScene } from './PauseScene';
 import { SettingsScene } from './SettingsScene';
@@ -34,6 +34,20 @@ function findText(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
       child instanceof Phaser.GameObjects.Text && child.text === label,
   );
   expect(found, `text "${label}" not found`).toBeDefined();
+  return found!;
+}
+
+/** Finds an on-screen image by texture key (AH-0MV1BI9I70048V7M). */
+function findImage(
+  scene: Phaser.Scene,
+  textureKey: string,
+): Phaser.GameObjects.Image {
+  const found = scene.children.list.find(
+    (child): child is Phaser.GameObjects.Image =>
+      child instanceof Phaser.GameObjects.Image &&
+      child.texture.key === textureKey,
+  );
+  expect(found, `image "${textureKey}" not found`).toBeDefined();
   return found!;
 }
 
@@ -282,7 +296,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
 
     pressKey(scene, { key: 'Tab' });
-    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+    expect(scene.getFocusedLabel()).toBe('GitHub');
 
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
@@ -305,7 +319,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
 
     pressKey(scene, { key: 'ArrowDown' });
-    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+    expect(scene.getFocusedLabel()).toBe('GitHub');
 
     pressKey(scene, { key: 'ArrowDown' });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
@@ -320,7 +334,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
 
     pressKey(scene, { key: 'Tab', shiftKey: true });
-    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+    expect(scene.getFocusedLabel()).toBe('GitHub');
 
     pressKey(scene, { key: 'Tab', shiftKey: true });
     expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
@@ -691,9 +705,14 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
     } as KeyboardEvent);
   }
 
-  it('AC1 — renders an interactive "🐙  GitHub" link in the bottom-left corner', async () => {
+  it('AC1 — renders the official GitHub mark next to an interactive "GitHub" link in the bottom-left corner', async () => {
     const scene = await bootMenu();
-    const link = findText(scene, '🐙  GitHub');
+
+    // The official logo asset is genuinely registered through the image
+    // loader (AH-0MV1BI9I70048V7M AC1) — not a placeholder emoji.
+    expect(scene.textures.exists(GITHUB_LOGO_TEXTURE_KEY)).toBe(true);
+
+    const link = findText(scene, 'GitHub');
 
     // Interactive click target.
     expect(link.input?.enabled).toBe(true);
@@ -704,13 +723,49 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
     expect(link.y).toBe(GAME_HEIGHT - 36);
     // Shares the neon-cyan menu palette.
     expect(link.style.color).toBe('#00ffff');
+
+    // The official logo image renders alongside the label: an Image under the
+    // official-mark texture key, tinted to the menu palette, sitting in the
+    // label's left padding zone just above the anchor (logo + label read as
+    // one link).
+    const logo = findImage(scene, GITHUB_LOGO_TEXTURE_KEY);
+    expect(logo.texture.key).toBe(GITHUB_LOGO_TEXTURE_KEY);
+    expect(logo.x).toBe(16 + 9);
+    // Vertically centred on the label's padded box (metric-independent).
+    expect(logo.y).toBe(link.y - link.height / 2);
+    expect(logo.tintTopLeft).toBe(0x00ffff);
+
+    // AC1 — the placeholder octopus emoji is gone from the menu.
+    const octopus = scene.children.list.filter(
+      (c) =>
+        c instanceof Phaser.GameObjects.Text && c.text.includes('🐙'),
+    );
+    expect(octopus).toHaveLength(0);
+  });
+
+  it('AC3 — the combined hit target covers the logo region', async () => {
+    const scene = await bootMenu();
+    const logo = findImage(scene, GITHUB_LOGO_TEXTURE_KEY);
+    const link = findText(scene, 'GitHub');
+
+    // Real hit-test through the input plugin at the logo's screen position:
+    // the interactive text (whose padded hit area spans the logo zone) must
+    // be the object under the pointer there — clicking the logo is clicking
+    // the link.
+    const pointer = scene.input.mousePointer;
+    pointer.position.set(logo.x, logo.y);
+    if (typeof pointer.updateWorldPoint === 'function') {
+      pointer.updateWorldPoint(scene.cameras.main);
+    }
+    const hits = scene.input.hitTestPointer(pointer);
+    expect(hits).toContain(link);
   });
 
   it('AC2 — pointer-down opens the repository in a new tab', async () => {
     const scene = await bootMenu();
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 
-    findText(scene, '🐙  GitHub').emit('pointerdown');
+    findText(scene, 'GitHub').emit('pointerdown');
 
     expect(openSpy).toHaveBeenCalledWith(
       GITHUB_REPO_URL,
@@ -720,15 +775,18 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
     openSpy.mockRestore();
   });
 
-  it('AC3 — pointerover highlights in #88ffff and pointerout restores the menu colour', async () => {
+  it('AC3 — pointerover highlights link + logo in #88ffff and pointerout restores the menu colour', async () => {
     const scene = await bootMenu();
-    const link = findText(scene, '🐙  GitHub');
+    const link = findText(scene, 'GitHub');
+    const logo = findImage(scene, GITHUB_LOGO_TEXTURE_KEY);
 
     link.emit('pointerover');
     expect(link.style.color).toBe('#88ffff');
+    expect(logo.tintTopLeft).toBe(0x88ffff);
 
     link.emit('pointerout');
     expect(link.style.color).toBe('#00ffff');
+    expect(logo.tintTopLeft).toBe(0x00ffff);
   });
 
   it('AC3 — GitHub sits between Leaderboard and Gym Scene Index in the Tab order', async () => {
@@ -739,7 +797,7 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
     expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
 
     pressKey(scene, { key: 'Tab' });
-    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+    expect(scene.getFocusedLabel()).toBe('GitHub');
 
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
@@ -753,7 +811,7 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
     pressKey(scene, { key: 'Tab' }); // Settings
     pressKey(scene, { key: 'Tab' }); // Leaderboard
     pressKey(scene, { key: 'Tab' }); // GitHub
-    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+    expect(scene.getFocusedLabel()).toBe('GitHub');
 
     pressKey(scene, { key: 'Enter' });
 
@@ -773,7 +831,7 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
-    expect(scene.getFocusedLabel()).toBe('🐙  GitHub');
+    expect(scene.getFocusedLabel()).toBe('GitHub');
 
     pressKey(scene, { key: ' ' });
 
@@ -843,7 +901,7 @@ describe('MenuScene — version label (AH-0MUZM9053008YXOZ)', () => {
   it('AC1 — anchored in the bottom-left, beneath the GitHub link', async () => {
     const scene = await bootMenu();
     const version = findText(scene, GAME_VERSION);
-    const github = findText(scene, '🐙  GitHub');
+    const github = findText(scene, 'GitHub');
 
     expect(version.x).toBe(16);
     expect(version.originX).toBe(0);
