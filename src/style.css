@@ -223,3 +223,28 @@ body {
   border-color: #4a8c4a;
   color: #8fdb8f;
 }
+/* ── Gym-panel tooltip (AH-0MV4XGXVL001GSB2) ──────────────────────
+ * Reusable hover/keyboard-focus description for gym-panel controls.
+ * src/utils/gymTooltip.ts appends each tooltip to <body> and pins it
+ * with `position: fixed` so the panel's `overflow-y: auto` can never
+ * clip it. Hidden by default and revealed by adding
+ * `.gym-tooltip-visible`; styled to match the `.gym-panel` surface.  */
+.gym-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 280px;
+  padding: 6px 8px;
+  background: rgba(10, 10, 10, 0.95);
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #ccc;
+  font: 12px/1.4 system-ui, sans-serif;
+  text-align: left;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.08s ease-in;
+}
+
+.gym-tooltip-visible {
+  opacity: 1;
+}
