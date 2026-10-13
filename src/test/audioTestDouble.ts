@@ -80,6 +80,12 @@ export class RecordingAudioContext {
   gains: RecordedGain[] = [];
   /** Every biquad filter created, in creation order (frequency/Q events recorded). */
   filters: RecordedFilter[] = [];
+  /**
+   * Every buffer-source node created on this context (the nodes themselves,
+   * so tests can read `playbackRate.value`). Used to assert per-play rate
+   * application (the rising countdown tick, AH-0MV722WJS0075UTZ).
+   */
+  bufferSources: Array<{ playbackRate: { value: number } }> = [];
   /** Every target passed to `connect()` on this context's nodes. */
   connections: unknown[] = [];
 
@@ -166,9 +172,13 @@ export class RecordingAudioContext {
   createBufferSource(): unknown {
     const rec = this.recordSource('bufferSource', 'noise');
     const self = this;
-    return {
+    const node = {
       buffer: null as unknown,
       loop: false,
+      // Per-play rate (pitch/speed) — the rising countdown tick sets it
+      // (AH-0MV722WJS0075UTZ); the contract suite asserts the provider
+      // applies it to the shared source node.
+      playbackRate: { value: 1 },
       connect: (target: unknown) => {
         self.connections.push(target);
         return {
@@ -185,6 +195,8 @@ export class RecordingAudioContext {
         rec.stops.push(t);
       },
     };
+    this.bufferSources.push(node);
+    return node;
   }
 
   createBiquadFilter(): unknown {
@@ -284,6 +296,12 @@ export interface RecordedSfxPlay {
   volume: number;
   /** Whether the play loops, normalised from `options.loop` (default false). */
   loop: boolean;
+  /**
+   * Per-play playback rate, normalised from `options.rate` (default 1).
+   * > 1 = faster/higher; used by the rising countdown tick
+   * (AH-0MV722WJS0075UTZ).
+   */
+  rate: number;
 }
 
 /**
@@ -322,6 +340,7 @@ export class RecordingSfxProvider implements SfxSoundProvider {
       delay: options.delay ?? 0,
       volume: options.volume ?? 1,
       loop: options.loop ?? false,
+      rate: options.rate ?? 1,
     });
     return {
       stop: () => {

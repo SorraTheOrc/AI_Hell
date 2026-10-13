@@ -489,9 +489,37 @@ export function playWeaponFireSound(
  * distinct tick on a beat, so the player hears the beat they will resume
  * on underneath the reduced-volume metronomic fire. Baked via the ToneForge
  * pipeline (`aihell-countdown-tick`, seed 32264).
+ *
+ * The tone **rises with each beat** (AH-0MV722WJS0075UTZ): the single baked
+ * asset is played at a rising playback rate so count 3 is the base pitch,
+ * count 2 a major third above and count 1 a perfect fifth above (a C6→E6→G6
+ * major-triad rise). `step` is the 0-based countdown step (0 = first count);
+ * out-of-range steps clamp to the highest baked step so a bad value can
+ * never fall silent.
+ *
+ * @param step - 0-based countdown step (0, 1, 2, …); defaults to 0.
  */
-export function playCountdownTickSound(): void {
-  playCue('playCountdownTickSound');
+export function playCountdownTickSound(step = 0): void {
+  playCue('playCountdownTickSound', { rate: countdownTickRate(step) });
+}
+
+/**
+ * Semitone offsets above the base countdown tick, one per countdown step:
+ * count 3 = 0 (base), count 2 = +4 (major third), count 1 = +7 (perfect
+ * fifth) — a rising major-triad cue. Tunable in one place.
+ */
+export const COUNTDOWN_TICK_SEMITONES: readonly number[] = [0, 4, 7];
+
+/**
+ * The playback rate for countdown `step`: `2^(semitones/12)` from
+ * {@link COUNTDOWN_TICK_SEMITONES}. A negative/out-of-range step clamps to
+ * the highest step; a non-integer step floors.
+ */
+export function countdownTickRate(step: number): number {
+  const index = Number.isFinite(step)
+    ? Math.min(Math.max(Math.floor(step), 0), COUNTDOWN_TICK_SEMITONES.length - 1)
+    : 0;
+  return 2 ** (COUNTDOWN_TICK_SEMITONES[index] / 12);
 }
 
 // ── Pickup activation cues ──────────────────────────────────────────

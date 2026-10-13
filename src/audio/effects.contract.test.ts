@@ -252,6 +252,27 @@ describe('contract — advance cues', () => {
       expect(entry!.seeds).toHaveLength(1);
     }
   });
+
+  it('the countdown tick applies the rising per-play rate to the buffer source (AH-0MV722WJS0075UTZ)', () => {
+    installRecordingContext();
+
+    effects.playCountdownTickSound(0);
+    effects.playCountdownTickSound(1);
+
+    const ctx = latestRecordingContext()!;
+    expect(ctx).toBeDefined();
+    expect(ctx.bufferSources).toHaveLength(2);
+    expect(ctx.bufferSources[0].playbackRate.value).toBe(
+      effects.countdownTickRate(0),
+    );
+    expect(ctx.bufferSources[1].playbackRate.value).toBe(
+      effects.countdownTickRate(1),
+    );
+    // Rising: the second beat plays the same asset faster/higher.
+    expect(ctx.bufferSources[1].playbackRate.value).toBeGreaterThan(
+      ctx.bufferSources[0].playbackRate.value,
+    );
+  });
 });
 
 // ── 6. Cue → asset mapping ──────────────────────────────────────────

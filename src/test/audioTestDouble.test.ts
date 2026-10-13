@@ -23,7 +23,7 @@ describe('RecordingSfxProvider', () => {
     ]);
   });
 
-  it('normalises delay, volume and loop defaults when options are omitted', () => {
+  it('normalises delay, volume, loop and rate defaults when options are omitted', () => {
     const provider = new RecordingSfxProvider();
     provider.play('audio/sfx/weapon-laser-zap.1.wav');
     expect(provider.plays[0]).toEqual({
@@ -31,21 +31,24 @@ describe('RecordingSfxProvider', () => {
       delay: 0,
       volume: 1,
       loop: false,
+      rate: 1,
     });
   });
 
-  it('records the explicit per-play options verbatim', () => {
+  it('records the explicit per-play options verbatim (incl. the rising countdown rate)', () => {
     const provider = new RecordingSfxProvider();
     provider.play('audio/sfx/weapon-laser-zap.1.wav', {
       delay: 0.375,
       volume: 0.3,
       loop: true,
+      rate: 1.26,
     });
     expect(provider.plays[0]).toEqual({
       url: 'audio/sfx/weapon-laser-zap.1.wav',
       delay: 0.375,
       volume: 0.3,
       loop: true,
+      rate: 1.26,
     });
   });
 

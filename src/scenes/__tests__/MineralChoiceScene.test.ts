@@ -571,5 +571,75 @@ describe('MineralChoiceScene', () => {
       // One distinct cue per count: 3 total.
       expect(countdownTicks()).toHaveLength(3);
     });
+
+    it('rises the tick tone with each beat (recording provider) (AH-0MV722WJS0075UTZ)', async () => {
+      const recording = new RecordingSfxProvider();
+      effects.setSfxSoundProvider(recording);
+      booted = await bootScene([HarnessScene, MineralChoiceScene], {
+        deterministicBoot: true,
+      });
+      booted!.game.loop.stop();
+      booted!.game.scene.start('MineralChoiceScene', {
+        options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
+      });
+      let time = 0;
+      const dt = 1000 / 60;
+      const scene = booted!.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      for (let i = 0; i < 3; i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+      scene.select(0);
+      // Two more beats of countdown (count 2 then count 1).
+      for (let i = 0; i < Math.ceil(HOLD_FULL_COUNTDOWN_DURATION_MS / dt); i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+      const rates = recording.plays
+        .filter((p) => p.url.includes('aihell-countdown-tick'))
+        .map((p) => p.rate);
+      // Count 3 base (1.0), count 2 and count 1 strictly rising.
+      expect(rates).toHaveLength(3);
+      expect(rates[0]).toBe(1);
+      expect(rates[1]).toBeGreaterThan(rates[0]);
+      expect(rates[2]).toBeGreaterThan(rates[1]);
+    });
+
+    it('removes the choice screen the moment the countdown starts (AH-0MV722WJS0075UTZ)', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene], {
+        deterministicBoot: true,
+      });
+      booted!.game.loop.stop();
+      booted!.game.scene.start('MineralChoiceScene', {
+        options: [
+          { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+          { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
+          { id: 'magnet', name: 'Magnet', kind: 'powerup' },
+        ],
+      });
+      let time = 0;
+      const dt = 1000 / 60;
+      const scene = booted!.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      for (let i = 0; i < 3; i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+      // Before selection the choice screen is visible.
+      expect(scene.isChoiceScreenVisible()).toBe(true);
+      expect(scene.getOptionLabels()).toHaveLength(3);
+
+      scene.select(1);
+
+      // Selecting tears the choice UI down immediately: no options remain,
+      // only the countdown numeral is on screen.
+      expect(scene.isChoiceScreenVisible()).toBe(false);
+      expect(scene.getOptionLabels()).toHaveLength(0);
+      expect(scene.isCountdownActive()).toBe(true);
+      expect(scene.getCountdownText()).toBe('3');
+    });
   });
 });

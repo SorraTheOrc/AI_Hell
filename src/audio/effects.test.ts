@@ -103,6 +103,32 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playCountdownTickSound rises in pitch with each beat (AH-0MV722WJS0075UTZ)', () => {
+    // Count 3 (step 0) is the base rate, 2 and 1 rise above it.
+    effects.playCountdownTickSound(0);
+    effects.playCountdownTickSound(1);
+    effects.playCountdownTickSound(2);
+    expect(recording.plays.map((p) => p.rate)).toEqual([
+      1,
+      effects.countdownTickRate(1),
+      effects.countdownTickRate(2),
+    ]);
+    // Strictly rising: base < +major third < +perfect fifth.
+    expect(recording.plays[1].rate).toBeGreaterThan(recording.plays[0].rate);
+    expect(recording.plays[2].rate).toBeGreaterThan(recording.plays[1].rate);
+    // Same baked asset for every beat — only the rate (pitch) changes.
+    for (const play of recording.plays) {
+      expect(play.url).toBe('audio/sfx/aihell-countdown-tick.32264.wav');
+    }
+  });
+
+  it('countdownTickRate clamps bad steps to the base / highest baked step', () => {
+    expect(effects.countdownTickRate(0)).toBe(1);
+    expect(effects.countdownTickRate(-1)).toBe(1);
+    expect(effects.countdownTickRate(99)).toBe(effects.countdownTickRate(2));
+    expect(effects.countdownTickRate(Number.NaN)).toBe(1);
+  });
+
   it('multi-seed cues vary across invocations', () => {
     const spy = vi
       .spyOn(Math, 'random')

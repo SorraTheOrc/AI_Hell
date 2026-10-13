@@ -36,7 +36,10 @@ import {
   type HoldFullFireMetronome,
   type HoldFullFireSchedule,
 } from './core/holdFullFire';
-import { createHoldFullCountdown } from './core/holdFullCountdown';
+import {
+  HOLD_FULL_COUNTDOWN_COUNTS,
+  createHoldFullCountdown,
+} from './core/holdFullCountdown';
 import { playCountdownTickSound, playWeaponFireSound } from '../audio/effects';
 
 /** Neon-gold heading colour (matches the mineral palette). */
@@ -77,6 +80,12 @@ export class MineralChoiceScene extends Phaser.Scene {
   private details: Phaser.GameObjects.Text[] = [];
   /** Description-line text objects (one per option that carries a description). */
   private descriptions: Phaser.GameObjects.Text[] = [];
+  /** The full-screen backdrop rectangle (destroyed when the countdown starts). */
+  private backdrop: Phaser.GameObjects.Rectangle | null = null;
+  /** The "HOLD FULL — CHOOSE A POWER-UP" heading (destroyed with the choice UI). */
+  private heading: Phaser.GameObjects.Text | null = null;
+  /** The bound keydown listener (removed when the countdown starts). */
+  private keydownHandler: ((event: KeyboardEvent) => void) | null = null;
   /** Optional generic selection handler supplied by the launcher. */
   private onSelect: ((index: number, option: ChoiceOption) => void) | null = null;
   /**
@@ -158,6 +167,9 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.countdown = null;
     this.countdownText = null;
     this.overlayElapsedMs = 0;
+    this.backdrop = null;
+    this.heading = null;
+    this.keydownHandler = null;
   }
 
   create(): void {
@@ -165,17 +177,22 @@ export class MineralChoiceScene extends Phaser.Scene {
     // covers the entire screen (GDD §4.5, AH-0MUDYSIRY0036EDC).
     this.scene.bringToTop();
 
-    this.add
+    const backdrop = this.add
       .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, CHOICE_BACKDROP_ALPHA)
       .setOrigin(0);
 
-    this.add
+    const heading = this.add
       .text(GAME_WIDTH / 2, 120, 'HOLD FULL — CHOOSE A POWER-UP', {
         fontFamily: 'monospace',
         fontSize: '24px',
         color: CHOICE_HEADING_COLOR,
       })
       .setOrigin(0.5);
+
+    // Keep references to the choice UI so a selection can tear it down the
+    // moment the countdown starts (AH-0MV722WJS0075UTZ).
+    this.backdrop = backdrop;
+    this.heading = heading;
 
     this.controls = [];
     this.details = [];
@@ -234,11 +251,14 @@ export class MineralChoiceScene extends Phaser.Scene {
       }
     });
 
-    // Number keys 1..n select the matching option.
-    this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
+    // Number keys 1..n select the matching option. The handler is stored so
+    // it can be removed when the countdown starts.
+    const keydownHandler = (event: KeyboardEvent) => {
       const n = Number.parseInt(event.key, 10);
       if (n >= 1 && n <= this.options.length) this.select(n - 1);
-    });
+    };
+    this.keydownHandler = keydownHandler;
+    this.input.keyboard?.on('keydown', keydownHandler);
 
     // Demo/attract mode: pick an option automatically after a human-like
     // delay so the run never stalls on the overlay
@@ -282,7 +302,9 @@ export class MineralChoiceScene extends Phaser.Scene {
     if (countdown === null) return;
     for (const count of countdown.advance(delta)) {
       this.showCountdownNumeral(count);
-      playCountdownTickSound();
+      // The tone rises with each beat: count 3→step 0 (base), 2→step 1,
+      // 1→step 2 (highest) (AH-0MV722WJS0075UTZ).
+      playCountdownTickSound(HOLD_FULL_COUNTDOWN_COUNTS - count);
     }
     if (countdown.isComplete()) this.completeSelection();
   }
@@ -357,11 +379,11 @@ export class MineralChoiceScene extends Phaser.Scene {
   }
 
   /**
-   * Selects option `index`: records the choice and starts the beat-locked
-   * 3-2-1 countdown. The choice is applied through the `onSelect` callback
-   * when the countdown completes (on the beat after "1"); the reduced-volume
-   * metronomic fire continues underneath. Returns the chosen option, or null
-   * for an out-of-range index.
+   * Selects option `index`: records the choice, tears down the choice screen
+   * and starts the beat-locked 3-2-1 countdown. The choice is applied through
+   * the `onSelect` callback when the countdown completes (on the beat after
+   * "1"); the reduced-volume metronomic fire continues underneath. Returns
+   * the chosen option, or null for an out-of-range index.
    */
   select(index: number): ChoiceOption | null {
     const option = this.options[index];
@@ -370,6 +392,10 @@ export class MineralChoiceScene extends Phaser.Scene {
     // Cancel any pending demo auto-select so it cannot fire twice.
     this.autoSelectTimer?.remove(false);
     this.autoSelectTimer = null;
+    // The player has chosen: remove the choice UI (backdrop, heading,
+    // options, keydown listener) so only the countdown numeral remains
+    // (AH-0MV722WJS0075UTZ).
+    this._teardownChoiceUi();
     // Record the pending selection and start the 3-2-1 countdown — one count
     // per beat of the shared grid, with the metronome continuing underneath
     // (AH-0MV55OAQT004NMSN · AC4/AC3).
@@ -378,8 +404,27 @@ export class MineralChoiceScene extends Phaser.Scene {
       this.fireSchedule?.bpm ?? loadRules().beatBpm,
     );
     this.showCountdownNumeral(3);
-    playCountdownTickSound();
+    // First count "3": the base (step 0) pitch of the rising tick.
+    playCountdownTickSound(0);
     return option;
+  }
+
+  /** Destroys the choice screen objects and unregisters the keydown listener. */
+  private _teardownChoiceUi(): void {
+    this.backdrop?.destroy();
+    this.backdrop = null;
+    this.heading?.destroy();
+    this.heading = null;
+    for (const item of [...this.controls, ...this.details, ...this.descriptions]) {
+      item.destroy();
+    }
+    this.controls = [];
+    this.details = [];
+    this.descriptions = [];
+    if (this.keydownHandler !== null) {
+      this.input.keyboard?.off('keydown', this.keydownHandler);
+      this.keydownHandler = null;
+    }
   }
 
   /** Total overlay-relative elapsed time (ms) since the scene started. */
@@ -398,5 +443,14 @@ export class MineralChoiceScene extends Phaser.Scene {
   /** True while the beat-locked 3-2-1 countdown is running. */
   isCountdownActive(): boolean {
     return this.countdown !== null;
+  }
+
+  /**
+   * True while the choice screen (backdrop/heading/options) is on screen.
+   * Becomes false the moment the countdown starts, since `select()` tears
+   * the choice UI down (AH-0MV722WJS0075UTZ).
+   */
+  isChoiceScreenVisible(): boolean {
+    return this.backdrop !== null || this.heading !== null;
   }
 }
