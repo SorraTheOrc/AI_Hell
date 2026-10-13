@@ -38,6 +38,24 @@ export interface RecordedGain {
   connectTargets: unknown[];
 }
 
+/** A single scheduled `AudioParam` automation event on a filter parameter. */
+export interface RecordedParamEvent {
+  method:
+    | 'setValueAtTime'
+    | 'exponentialRampToValueAtTime'
+    | 'linearRampToValueAtTime'
+    | 'cancelScheduledValues';
+  value: number;
+  time: number;
+}
+
+/** A recorded biquad filter: its frequency/Q automation events. */
+export interface RecordedFilter {
+  type: string;
+  frequencyEvents: RecordedParamEvent[];
+  qEvents: RecordedParamEvent[];
+}
+
 /** A recorded oscillator / buffer source with its scheduled start/stop times. */
 export interface RecordedSource {
   kind: 'oscillator' | 'bufferSource';
@@ -60,6 +78,8 @@ export class RecordingAudioContext {
 
   oscillators: RecordedSource[] = [];
   gains: RecordedGain[] = [];
+  /** Every biquad filter created, in creation order (frequency/Q events recorded). */
+  filters: RecordedFilter[] = [];
   /** Every target passed to `connect()` on this context's nodes. */
   connections: unknown[] = [];
 
@@ -168,15 +188,41 @@ export class RecordingAudioContext {
   }
 
   createBiquadFilter(): unknown {
+    const rec: RecordedFilter = {
+      type: 'lowpass',
+      frequencyEvents: [],
+      qEvents: [],
+    };
     const self = this;
+    this.filters.push(rec);
+    const frequency: RecordedParamEvent[] = rec.frequencyEvents;
+    const qEvents: RecordedParamEvent[] = rec.qEvents;
+    const push = (list: RecordedParamEvent[]) =>
+      (method: RecordedParamEvent['method']) =>
+      (value: number, time: number) => {
+        list.push({ method, value, time });
+      };
+    const freqPush = push(frequency);
+    const qPush = push(qEvents);
     return {
-      type: 'lowpass' as const,
-      frequency: {
-        setValueAtTime: () => {},
-        exponentialRampToValueAtTime: () => {},
-        linearRampToValueAtTime: () => {},
+      get type(): string {
+        return rec.type;
       },
-      Q: { setValueAtTime: () => {} },
+      set type(v: string) {
+        rec.type = v;
+      },
+      frequency: {
+        setValueAtTime: freqPush('setValueAtTime'),
+        exponentialRampToValueAtTime: freqPush('exponentialRampToValueAtTime'),
+        linearRampToValueAtTime: freqPush('linearRampToValueAtTime'),
+        cancelScheduledValues: freqPush('cancelScheduledValues'),
+      },
+      Q: {
+        setValueAtTime: qPush('setValueAtTime'),
+        exponentialRampToValueAtTime: qPush('exponentialRampToValueAtTime'),
+        linearRampToValueAtTime: qPush('linearRampToValueAtTime'),
+        cancelScheduledValues: qPush('cancelScheduledValues'),
+      },
       connect: (target: unknown) => {
         self.connections.push(target);
         return {};
@@ -204,6 +250,16 @@ export function masterGain(): RecordedGain | undefined {
 /** The most recent non-automation gain value scheduled on *gain*. */
 export function lastGainValue(gain: RecordedGain): number | undefined {
   for (const ev of [...gain.gainEvents].reverse()) {
+    if (ev.method === 'setValueAtTime' || ev.method === 'linearRampToValueAtTime') {
+      return ev.value;
+    }
+  }
+  return undefined;
+}
+
+/** The most recent non-automation frequency scheduled on *filter*. */
+export function lastFilterFrequency(filter: RecordedFilter): number | undefined {
+  for (const ev of [...filter.frequencyEvents].reverse()) {
     if (ev.method === 'setValueAtTime' || ev.method === 'linearRampToValueAtTime') {
       return ev.value;
     }

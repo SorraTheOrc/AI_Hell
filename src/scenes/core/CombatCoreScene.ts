@@ -121,7 +121,7 @@ import {
 import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
-import { setExplosionBeatClock } from '../../audio/effects';
+import { setExplosionBeatClock, setThrusterBeatClock } from '../../audio/effects';
 import { BeatClock, createBeatClock } from '../../utils/beat';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
@@ -1291,6 +1291,10 @@ export class CombatCoreScene<
     // note of this clock, identically in the game and every gym. A reset
     // also opens a fresh accent window for the new run.
     setExplosionBeatClock(this.beatClock);
+    // Phase-lock the thruster hum to the same clock's cannon cadence
+    // (AH-0MV01G4NL009JK92): game and gyms pulse identically, and the reset
+    // re-anchors the hum's beat to the new run start.
+    setThrusterBeatClock(this.beatClock);
     // Bind the registry to this scene's live player store, then reset both
     // the timing state and the level store together (AC6). The dynamic
     // resolver means a player created later in `create()` is picked up with
@@ -1361,5 +1365,7 @@ export class CombatCoreScene<
     // Detach the beat-synced explosion schedule so a stopped scene cannot
     // leak its clock into the next one (AH-0MV01HNLU008S5E3).
     setExplosionBeatClock(null);
+    // Detach the thruster-hum beat pulse the same way (AH-0MV01G4NL009JK92).
+    setThrusterBeatClock(null);
   }
 }

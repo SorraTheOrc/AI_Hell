@@ -44,6 +44,7 @@ import {
 import {
   configureThrusterShim,
   resetThrusterHumForTests,
+  setThrusterBeatClock,
   stopThrusterHum,
   updateThrusterHum,
 } from './thrusterShim';
@@ -52,7 +53,9 @@ import type { BeatClock } from '../utils/beat';
 // Re-exported thruster-hum reference constants + test seams (moved to the shim
 // module, kept exported from here so consumers/tests are unchanged).
 export {
+  THRUSTER_HUM_AMPLITUDE_MODULATION_DEPTH,
   THRUSTER_HUM_BASE_FREQ,
+  THRUSTER_HUM_CANNON_SUBDIVISIONS,
   THRUSTER_HUM_GROWTH_TIME,
   THRUSTER_HUM_MAX_VOLUME,
   THRUSTER_HUM_NOISE_FILTER_MAX,
@@ -205,6 +208,28 @@ export function setExplosionBeatClock(clock: BeatClock | null): void {
   accentTickMs = null;
   accentCount = 0;
 }
+
+// ── Thruster-hum beat pulse (AH-0MV01G4NL009JK92) ───────────────────
+//
+// The player thruster hum is phase-locked to the same shared beat clock and
+// modulated on the cannon cadence (2 subdivisions/beat) while thrusting: an
+// amplitude tremolo (the loudness "beat") plus a counter-phase band-pass
+// sweep on the noise filter. The clock is forwarded unchanged to the runtime
+// shim (see the re-exported {@link setThrusterBeatClock}), so the game and
+// every gym pulse identically with no per-scene copy (AGENTS.md gym↔game
+// parity). `CombatCoreScene` registers/detaches it in the same lifecycle
+// calls as {@link setExplosionBeatClock}. No clock registered ⇒ the shim
+// skips modulation (flat level-scaled hum) and stays a safe no-op.
+
+/**
+ * Forwards the scene's shared beat clock to the thruster-hum shim so the
+ * hum pulses on the cannon cadence (`THRUSTER_HUM_CANNON_SUBDIVISIONS`
+ * subdivisions per beat = 375 ms at the default 80 BPM) while thrusting:
+ * an amplitude tremolo plus a counter-phase band-pass sweep on the same
+ * grid. Pass `null` to detach (scene teardown) and restore the plain
+ * level-scaled hum. Safe no-op in both directions (AC4).
+ */
+export { setThrusterBeatClock };
 
 /**
  * Resolves the `delay` (seconds) for an explosion cue: the **game-time**
@@ -586,4 +611,5 @@ export function _resetAudioContextForTests(): void {
   accentClock = null;
   accentTickMs = null;
   accentCount = 0;
+  setThrusterBeatClock(null);
 }

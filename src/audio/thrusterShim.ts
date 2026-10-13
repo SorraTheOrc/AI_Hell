@@ -11,8 +11,14 @@
  * The hum is driven once per frame from `Player.preUpdate` via
  * `updateThrusterSound(level)` where `level` is the `getEngineSoundLevel`
  * value in [0, 1]. It reuses one gain node and never exceeds
- * {@link THRUSTER_HUM_MAX_VOLUME}. In an environment without an
- * `AudioContext` every entry point is a safe no-op.
+ * {@link THRUSTER_HUM_MAX_VOLUME}. While thrusting it is phase-locked to the
+ * shared beat clock's **cannon cadence** (`THRUSTER_HUM_CANNON_SUBDIVISIONS`
+ * subdivisions per beat — 375 ms at the default 80 BPM): an amplitude tremolo
+ * (`THRUSTER_HUM_AMPLITUDE_MODULATION_DEPTH`) plus a counter-phase band-pass
+ * sweep on the noise filter, both derived from the clock's game time so they
+ * pause with the game and are identical in the game and every gym
+ * (AH-0MV01G4NL009JK92). With no clock registered, no `AudioContext`, or in a
+ * headless test every entry point is a safe no-op (no throw, no nodes).
  *
  * Context and master-gain access are injected by `effects.ts` so the shim
  * routes through the same shared context/master gain as the baked cues and
@@ -31,8 +37,10 @@
  * nodes after stop — is met by this implementation.
  */
 
+import { beatSubdivisionMs, type BeatClock } from '../utils/beat';
+
 /** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "all player cues"). */
-export const THRUSTER_HUM_MAX_VOLUME = 0.075;
+export const THRUSTER_HUM_MAX_VOLUME = 0.05;
 /** Base thruster hum frequency — soft triangle hum (GDD §7.3 continuous hum). */
 export const THRUSTER_HUM_BASE_FREQ = 60;
 /** Undertone frequency (sine) — adds body to the low jet rumble. */
@@ -40,6 +48,20 @@ export const THRUSTER_HUM_UNDERTONE_FREQ = 35;
 /** Noise filter centre range for jet texture (band-pass). */
 export const THRUSTER_HUM_NOISE_FILTER_MIN = 700;
 export const THRUSTER_HUM_NOISE_FILTER_MAX = 1100;
+/**
+ * Cannon cadence for the beat-locked pulse: subdivisions per beat.
+ * The permanent cannon fires 2 shots/beat, so this is the hum's rhythmic
+ * grid (`beatSubdivisionMs(THRUSTER_HUM_CANNON_SUBDIVISIONS, bpm)` — 375 ms
+ * at the default 80 BPM). Derived from the shared beat clock, never a
+ * hard-coded interval (AH-0MV01G4NL009JK92).
+ */
+export const THRUSTER_HUM_CANNON_SUBDIVISIONS = 2;
+/**
+ * Amplitude-tremolo depth (0–1): how far the hum gain dips below its peak
+ * between cannon pulses. The loudness pulse is the primary, unmistakable
+ * "beat"; the depth is tunable in one place (AC2).
+ */
+export const THRUSTER_HUM_AMPLITUDE_MODULATION_DEPTH = 0.35;
 /** Gain ramp time at reference thrust: mirrors the flame growth time. */
 export const THRUSTER_HUM_GROWTH_TIME = 0.03;
 /** Decay is ~4× growth (quick silence on release). */
@@ -67,6 +89,23 @@ let deps: ThrusterShimDeps = NO_CONTEXT;
 /** Injects the shared context/master-gain accessors (called by effects.ts). */
 export function configureThrusterShim(next: ThrusterShimDeps): void {
   deps = next;
+}
+
+/**
+ * The shared beat clock driving the hum's cannon-cadence pulse, or null when
+ * no clock is registered (no modulation). Registered/detached by the shared
+ * combat core alongside {@link setExplosionBeatClock} so the game and every
+ * gym sound identical.
+ */
+let beatClock: BeatClock | null = null;
+
+/**
+ * Registers the shared beat clock whose cannon cadence modulates the hum
+ * while thrusting. Pass `null` to detach (scene teardown) and restore the
+ * plain level-scaled hum. Safe no-op in both directions.
+ */
+export function setThrusterBeatClock(clock: BeatClock | null): void {
+  beatClock = clock;
 }
 
 /** Live thruster hum nodes (one shared voice). */
@@ -193,16 +232,43 @@ function ensureThrusterHum(ctx: AudioContext): ThrusterHumState | null {
 }
 
 /**
+ * The cannon-grid pulse value in [0, 1] for the current clock phase: a smooth
+ * raised-cosine "beat" peaking at 1 on each cannon tick (phase 0) and
+ * dipping to 0 mid-subdivision. Derived from `clock.now()` (game time), so
+ * it pauses with the game and follows the configurable `beatBpm`. Returns
+ * `null` when no clock is registered (caller falls back to no modulation).
+ */
+function cannonPulseValue(): number | null {
+  if (beatClock === null) return null;
+  const intervalMs = beatSubdivisionMs(
+    THRUSTER_HUM_CANNON_SUBDIVISIONS,
+    beatClock.bpm,
+  );
+  if (!(intervalMs > 0)) return null;
+  const phase = (((beatClock.now() - beatClock.anchorMs) % intervalMs) +
+    intervalMs) %
+    intervalMs /
+    intervalMs;
+  return 0.5 * (1 + Math.cos(2 * Math.PI * phase));
+}
+
+/**
  * Sustained thruster hum — the continuous player SFX (GDD §7.3).
  *
  * `level` in [0, 1] comes from `MovementModel.getEngineSoundLevel`; the gain
- * target is `level * THRUSTER_HUM_MAX_VOLUME` (≤ 0.075). Call once per frame
- * from `Player.preUpdate`; 0 silences the hum, > 0 reuses the same nodes and
- * ramps the gain. Safe no-op without an `AudioContext` (never throws).
+ * target is `level * THRUSTER_HUM_MAX_VOLUME` (≤ 0.05), modulated on the
+ * shared beat clock's cannon cadence while thrusting (amplitude tremolo +
+ * counter-phase band-pass sweep). Call once per frame from
+ * `Player.preUpdate`; 0 silences the hum, > 0 reuses the same nodes and
+ * ramps the gain. Safe no-op without an `AudioContext` (never throws);
+ * without a registered clock the modulation is skipped (AC4).
  */
 export function updateThrusterHum(level: number): void {
   const clamped = clampLevel(level);
-  const targetGain = clamped * THRUSTER_HUM_MAX_VOLUME;
+  const pulse = cannonPulseValue();
+  const amplitudeMod =
+    pulse === null ? 1 : 1 - THRUSTER_HUM_AMPLITUDE_MODULATION_DEPTH * (1 - pulse);
+  const targetGain = clamped * THRUSTER_HUM_MAX_VOLUME * amplitudeMod;
 
   const ctx = deps.getContext();
   if (ctx === null) return;
@@ -253,9 +319,16 @@ export function updateThrusterHum(level: number): void {
     /* detune not supported */
   }
   try {
+    // Counter-phase band-pass sweep on the cannon grid: the jet whoosh
+    // brightens as the gain dips (and darkens at the loud pulse), adding
+    // movement without harshness. No clock → the original random jitter.
     const cutoff =
-      THRUSTER_HUM_NOISE_FILTER_MIN +
-      Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN);
+      pulse === null
+        ? THRUSTER_HUM_NOISE_FILTER_MIN +
+          Math.random() * (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN)
+        : THRUSTER_HUM_NOISE_FILTER_MIN +
+          (THRUSTER_HUM_NOISE_FILTER_MAX - THRUSTER_HUM_NOISE_FILTER_MIN) *
+            (1 - pulse);
     hum.noiseFilter.frequency.setValueAtTime(cutoff, ctx.currentTime);
   } catch {
     /* filter params not supported */

@@ -239,6 +239,27 @@ describe('thruster hum (runtime shim)', () => {
     expect(effects._getThrusterHumStateForTests()).toBeNull();
   });
 
+  it('forwards the shared beat clock so the hum pulses on the cannon grid', () => {
+    const clock = createBeatClock();
+    effects.setThrusterBeatClock(clock);
+    clock.advance(
+      beatSubdivisionMs(effects.THRUSTER_HUM_CANNON_SUBDIVISIONS) / 2,
+    );
+
+    effects.updateThrusterSound(1);
+    const hum = effects._getThrusterHumStateForTests()!;
+    expect(hum.currentGain).toBeCloseTo(
+      effects.THRUSTER_HUM_MAX_VOLUME *
+        (1 - effects.THRUSTER_HUM_AMPLITUDE_MODULATION_DEPTH),
+      6,
+    );
+
+    // Detaching the clock restores the flat ceiling (no modulation).
+    effects.setThrusterBeatClock(null);
+    effects.updateThrusterSound(1);
+    expect(hum.currentGain).toBeCloseTo(effects.THRUSTER_HUM_MAX_VOLUME, 6);
+  });
+
   it('is a safe no-op without an AudioContext', () => {
     delete (window as unknown as { AudioContext?: unknown }).AudioContext;
     effects._resetAudioContextForTests();

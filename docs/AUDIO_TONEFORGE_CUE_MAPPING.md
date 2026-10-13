@@ -120,7 +120,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playVictorySparkleSound` | Bright sine 1400→600 Hz + HP shimmer, ~0.12 s | Victory firework sparkle | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-sparkle` |
 | `playDefeatStingSound` | Five-note descent G4-F4-D4-B3-G3 + sinking 98→73.42 Hz drone + LP rumble tail, ~2.9 s, ≤ 0.2 | Defeat | `GameOverScene` | new | `aihell-defeat-sting` (sequence + stack) |
 | `playVolumeFeedback` | Player hull-breach cue at selected gain, pitch unchanged | Settings volume feedback | `SettingsScene` | **existing** | `aihell-player-hull-breach` (gain-scaled) |
-| `updateThrusterSound` | Continuous: triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz, thrust-scaled, ≤ 0.075 | Thruster hum (held thrust) | `Player`, `movementModel` | new | `aihell-thruster-hum` (runtime shim delivery) |
+| `updateThrusterSound` | Continuous: triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz, thrust-scaled (≤ 0.05) with an amplitude tremolo + counter-phase filter sweep on the shared beat clock's cannon cadence (2 subdivisions/beat) while thrusting | Thruster hum (held thrust) | `Player`, `movementModel` | new | `aihell-thruster-hum` (runtime shim delivery) |
 | `stopThrusterSound` | Stops/releases the thruster hum nodes | Thruster hum | `Player` | control | (companion to `aihell-thruster-hum`) |
 
 ### Beat-synced explosion accents (AH-0MV01HNLU008S5E3)
