@@ -216,6 +216,33 @@ The stop/cap decision is the pure `evaluateRunStop` / `waitForRunEnd` pair in
 `scripts/capture-run-lifecycle.mjs`, unit-tested with a fake clock and a
 stubbed signal source.
 
+### Bot-tuning configuration (`--bot-config`)
+
+The recorded demo flies whatever bot-tuning configuration the recording page
+sees. The Bot Tuning gym persists that configuration to `localStorage`
+(`ai-hell-bot-tuning`), and `PlayScene` demo mode reads it when the demo
+starts (AH-0MV6MFDYG001E6PL). The capture tool launches a **fresh** browser
+with an empty profile, so it cannot see a designer's saved configuration by
+itself — pass the gym's **Export** output to seed it:
+
+```bash
+# In the Bot Tuning gym: tune, tweak, then click Export → bot-tuning.json
+npm run capture -- --bot-config bot-tuning.json
+```
+
+`--bot-config <file>` installs a page-side `addInitScript` (the same pre-boot
+pattern as the run-end listener) that writes the exported store state into
+`localStorage` before the game boots, so the demo reads it and flies the saved
+tuning. The file is the exact JSON the gym's Export button produces
+(`{ version, current, configs }`). A missing, unreadable, or malformed file
+fails fast with an actionable message **before** the server or browser
+launches. Without the flag the demo uses the built-in defaults, exactly as
+before.
+
+The pure `installBotTuningConfig` / `loadBotTuningConfigFile` helpers live in
+`scripts/capture-gameplay.mjs` and are unit-tested in
+`scripts/capture-gameplay.test.ts` (no browser needed).
+
 ### Demo game-over dwell
 
 For the captured tail to show the outcome, the demo/attract mode holds on the

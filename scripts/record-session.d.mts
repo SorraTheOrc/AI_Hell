@@ -18,6 +18,8 @@ export interface RecordArgs {
   maxDurationMs: number;
   pollMs: number;
   json: boolean;
+  /** `--bot-config` file path holding exported bot-tuning state, or null. */
+  botConfig: string | null;
   help?: boolean;
 }
 

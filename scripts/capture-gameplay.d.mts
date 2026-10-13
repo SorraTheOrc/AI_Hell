@@ -26,6 +26,10 @@ export interface CaptureOptions {
   scenario: string | null;
   /** True when `--list-scenarios` was passed: list and exit without booting. */
   listScenarios: boolean;
+  /** `--bot-config` file path holding exported bot-tuning state, or null. */
+  botConfig: string | null;
+  /** Resolved bot-tuning state to inject (filled in by `runCapture`). */
+  botTuningState?: BotTuningStoreState;
   help?: boolean;
 }
 
@@ -49,6 +53,16 @@ export const RUN_ENDED_EVENT: string;
 export const RUN_ENDED_STATE_KEY: string;
 /** Where the installed listener parks the latest captured event detail. */
 export const RUN_ENDED_STORE_KEY: string;
+
+/** Store key the bot-tuning gym persists under (AH-0MV6MFDYG001E6PL). */
+export const BOT_TUNING_STORAGE_KEY: string;
+
+/** Exported bot-tuning store state injected into the recording page. */
+export interface BotTuningStoreState {
+  version: number;
+  current: string;
+  configs: Array<{ name: string; values: unknown }>;
+}
 
 /** The event/flag/store names the run-end listener plan carries. */
 export interface RunEndedListenerPlan {
@@ -103,6 +117,14 @@ export function readRunEndedSignal(
   plan?: RunEndedListenerPlan,
   scope?: object,
 ): unknown;
+/** Writes exported bot-tuning state into the page's localStorage pre-boot. */
+export function installBotTuningConfig(
+  state: BotTuningStoreState,
+  storageKey?: string,
+  scope?: { localStorage?: { setItem(key: string, value: string): void } },
+): BotTuningStoreState | null;
+/** Reads and validates a `--bot-config` file, failing fast on bad input. */
+export function loadBotTuningConfigFile(filePath: string): BotTuningStoreState;
 /** A superficial per-iteration record in a batch summary. */
 export interface CaptureIterationRecord {
   index: number;

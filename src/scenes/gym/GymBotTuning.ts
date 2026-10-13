@@ -26,7 +26,12 @@
  * - Supports **Save** (overwrite the current named configuration),
  *   **Save As…** (create a named configuration), and a selector to **load**
  *   any saved configuration. Configurations persist via
- *   {@link ../core/botTuningStore} (localStorage).
+ *   {@link ../core/botTuningStore} (localStorage) and the shipped **Watch
+ *   Demo** (`PlayScene` demo mode) reads that same store, so a saved tuning is
+ *   what the attract demo — and any recording of it — actually flies
+ *   (AH-0MV6MFDYG001E6PL).
+ * - **Export** downloads every saved configuration as JSON for the gameplay
+ *   recorders' `--bot-config` flag.
  *
  * ## Divergence
  *
@@ -66,6 +71,7 @@ import {
   saveBotTuningAs,
   saveBotTuningCurrent,
   selectBotTuning,
+  serialiseBotTuningState,
 } from '../../core/botTuningStore';
 import { normaliseSeed, randomSeed, createSeededRng } from '../../core/rng';
 import { makeCollapsible } from '../../utils/gymPanel';
@@ -92,6 +98,8 @@ export const BOT_TUNING_SAVE_AS_ID = 'gym-bot-tuning-save-as';
 export const BOT_TUNING_NEW_LEVEL_ID = 'gym-bot-tuning-new-level';
 /** DOM id of the "Reset to Defaults" button. */
 export const BOT_TUNING_RESET_ID = 'gym-bot-tuning-reset';
+/** DOM id of the "Export" button (AH-0MV6MFDYG001E6PL). */
+export const BOT_TUNING_EXPORT_ID = 'gym-bot-tuning-export';
 /** DOM id of the status readout. */
 export const BOT_TUNING_STATUS_ID = 'gym-bot-tuning-status';
 /** Data attribute (value = field key) identifying a numeric slider. */
@@ -352,10 +360,21 @@ export class GymBotTuning extends GymLevel {
     reset.textContent = 'Reset to Defaults';
     reset.addEventListener('click', () => this._onReset());
 
+    const exportButton = document.createElement('button');
+    exportButton.id = BOT_TUNING_EXPORT_ID;
+    exportButton.type = 'button';
+    exportButton.textContent = 'Export';
+    attachTooltip(
+      exportButton,
+      'Download every saved configuration as JSON. Pass the file to the gameplay ' +
+        'recorders (--bot-config) so a recorded demo flies the same tuning.',
+    );
+    exportButton.addEventListener('click', () => this._onExport());
+
     const status = document.createElement('span');
     status.id = BOT_TUNING_STATUS_ID;
 
-    row.append(save, nameInput, saveAs, newLevel, reset, status);
+    row.append(save, nameInput, saveAs, newLevel, reset, exportButton, status);
     return row;
   }
 
@@ -527,6 +546,27 @@ export class GymBotTuning extends GymLevel {
     this._applyPanelValues(this.tuningValues);
     this._applyTuning();
     this._updateStatus('Reset to defaults');
+  }
+
+  /**
+   * Downloads every persisted configuration as a JSON file
+   * (AH-0MV6MFDYG001E6PL). The file is the exact store blob the gameplay
+   * recorders inject with `--bot-config`, so a recorded demo flies the
+   * designer's tuning.
+   */
+  private _onExport(): void {
+    try {
+      const blob = new Blob([serialiseBotTuningState()], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'bot-tuning.json';
+      anchor.click();
+      URL.revokeObjectURL?.(url);
+      this._updateStatus('Exported bot-tuning.json');
+    } catch (error) {
+      this._updateStatus(`Export failed: ${String(error)}`);
+    }
   }
 
   /** Updates the panel's status readout. */

@@ -119,6 +119,12 @@ import {
   BOT_MINERAL_CHOICE_DELAY_MS,
   BotInputGovernor,
 } from '../ai/botHumanLike';
+import {
+  coerceTuningValues,
+  toCompetentOverrides,
+  toHumanOverrides,
+} from '../ai/tuningFields';
+import { getCurrentBotTuningConfig } from '../core/botTuningStore';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
@@ -453,6 +459,12 @@ export class PlayScene extends CombatScene<
   private botGovernor = new BotInputGovernor();
   /** The structured competent bot's committed policy (AC1–AC4). */
   private botBrain = createCompetentBotBrain();
+  /**
+   * Name of the persisted bot-tuning configuration the demo bot is currently
+   * flying with (AH-0MV6MFDYG001E6PL). `null` outside demo mode: human
+   * sessions never consult the tuning store.
+   */
+  private appliedBotTuningName: string | null = null;
 
   /** Session state (lives, score, level). */
   private gameState: GameState;
@@ -701,6 +713,10 @@ export class PlayScene extends CombatScene<
    */
   init(data?: { demo?: boolean; seed?: number; demoDwellMs?: number }): void {
     this.demoMode = data?.demo === true;
+    // The bot seam is inert outside demo mode; clear any name applied by a
+    // previous demo so a normal (re)start never reports a stale config
+    // (AH-0MV6MFDYG001E6PL).
+    if (!this.demoMode) this.appliedBotTuningName = null;
     this.demoDwellMs = data?.demoDwellMs;
     if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
   }
@@ -713,6 +729,11 @@ export class PlayScene extends CombatScene<
     this.botGovernor.reset();
     // Fresh competent-bot commitment/scratch for this run (AC1).
     this.botBrain.reset();
+    // Demo runs fly the *persisted* bot-tuning configuration — the same store
+    // the Bot Tuning gym edits (AH-0MV6MFDYG001E6PL). No-op outside demo
+    // mode; corrupt/absent storage falls back to the built-in Default, so
+    // behaviour is unchanged when nothing has been saved.
+    this._applyBotTuning();
     // Resolve and seed the per-run RNG before anything draws from it
     // (AH-0MUY08V6W001SJJN). Must run before the player/drop spawner/enemies
     // are created so every gameplay draw comes from the seeded stream.
@@ -2453,6 +2474,44 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Applies the persisted bot-tuning configuration to the demo brain and
+   * governor (AH-0MV6MFDYG001E6PL).
+   *
+   * The Bot Tuning gym (`GymBotTuning`) edits and persists these values; when
+   * a demo run starts (and when demo mode is re-enabled mid-session) this
+   * rebuilds `botBrain`/`botGovernor` from the currently-selected config so
+   * **Watch Demo** — and the gameplay recording tools that drive it — fly the
+   * tuned bot. The reconstruction mirrors `GymBotTuning._applyTuning()`
+   * exactly (same `toCompetentOverrides`/`toHumanOverrides` mapping), keeping
+   * gym↔game parity. Outside demo mode the bot seam is inert, so human
+   * sessions never consult the store. The store is corrupt-safe: absent or
+   * invalid persisted data falls back to the built-in `Default`, which
+   * numerically equals the constructor defaults, so behaviour is unchanged
+   * when nothing has been saved.
+   */
+  private _applyBotTuning(): void {
+    if (!this.demoMode) return;
+    const config = getCurrentBotTuningConfig();
+    this.appliedBotTuningName = config.name;
+    const values = coerceTuningValues(config.values);
+    this.botBrain = createCompetentBotBrain({ tunables: toCompetentOverrides(values) });
+    this.botGovernor = new BotInputGovernor(toHumanOverrides(values));
+  }
+
+  /**
+   * Name of the persisted bot-tuning configuration the demo bot is currently
+   * flying with, or `null` outside demo mode (AH-0MV6MFDYG001E6PL).
+   */
+  getBotTuningConfigName(): string | null {
+    return this.appliedBotTuningName;
+  }
+
+  /** The live demo bot governor (test/telemetry seam, AH-0MV6MFDYG001E6PL). */
+  getBotGovernor(): BotInputGovernor {
+    return this.botGovernor;
+  }
+
+  /**
    * Samples the pure bot decision and feeds it to the human-like input
    * governor (AH-0MUXXQ1MN002RXGB). Called once per tick, before the shared
    * player-control step reads the seam, so the committed input the governor
@@ -3306,6 +3365,10 @@ export class PlayScene extends CombatScene<
   setDemoMode(demo: boolean): void {
     this.demoMode = demo;
     if (demo) {
+      // Rebuild the brain/governor from the persisted bot-tuning config so a
+      // mid-session re-enable flies the saved tuning (AH-0MV6MFDYG001E6PL,
+      // AC3).
+      this._applyBotTuning();
       // Start the human-like input layer from a clean slate. The demo keeps
       // the ship's configured control scheme (default `asteroids`); the
       // governor resolves the bot's steering intent to it
@@ -3314,6 +3377,7 @@ export class PlayScene extends CombatScene<
       this.botGovernor.reset();
       this._enableDemoTakeOver();
     } else {
+      this.appliedBotTuningName = null;
       this._disableDemoTakeOver();
     }
   }

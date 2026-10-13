@@ -654,6 +654,18 @@ and adjust its parameters in real time.
   versioned, corrupt-safe JSON blob in `localStorage` (the same
   browser-native pattern as `src/core/rules.ts`); a missing or malformed blob
   falls back to the built-in `Default`.
+- **Watch Demo and recordings fly the saved config.** The shipped attract
+  demo (`PlayScene` demo mode) reads the same store when it starts — and when
+  the demo is re-enabled mid-session — and rebuilds its `BotBrain` /
+  `BotInputGovernor` from the currently-selected configuration through the
+  same `toCompetentOverrides` / `toHumanOverrides` mapping the gym uses
+  (AH-0MV6MFDYG001E6PL). Outside demo mode the bot seam is inert, so a human
+  run never consults the store. Because the recording tools launch a fresh
+  browser, the gym's **Export** button downloads the store as JSON for
+  `npm run capture -- --bot-config file.json` (and
+  `npm run record -- --bot --bot-config file.json`), which injects that state
+  into the recording page before the game boots — so a recorded demo flies the
+  designer's tuning.
 
 The tuning surface is a curated subset of `COMPETENT_BOT_TUNABLES` /
 `BOT_HUMAN_INPUT_TUNABLES`; `tuningFields.ts` reconstructs the nested

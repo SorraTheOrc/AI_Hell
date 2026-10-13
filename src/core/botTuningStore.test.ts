@@ -21,6 +21,7 @@ import {
   saveBotTuningAs,
   saveBotTuningCurrent,
   selectBotTuning,
+  serialiseBotTuningState,
 } from './botTuningStore';
 
 /** Loads a fresh module instance so the store's cache is empty. */
@@ -127,5 +128,32 @@ describe('bot tuning store (AH-0MV4D7LAD009XYR0)', () => {
     expect(values.competent['engagementRange']).toBe(
       defaultBotTuningValues().competent['engagementRange'],
     );
+  });
+
+  it('serialises the full state as a JSON blob the store can reload (AH-0MV6MFDYG001E6PL)', async () => {
+    saveBotTuningAs('Recorder', markedValues(4321));
+    saveBotTuningAs('Other', markedValues(7));
+    selectBotTuning('Recorder');
+
+    const blob = serialiseBotTuningState();
+    expect(() => JSON.parse(blob)).not.toThrow();
+    const parsed = JSON.parse(blob);
+    expect(parsed.version).toBe(BOT_TUNING_SCHEMA_VERSION);
+    expect(parsed.current).toBe('Recorder');
+    expect(parsed.configs.map((c: { name: string }) => c.name)).toEqual(
+      expect.arrayContaining([DEFAULT_BOT_TUNING_NAME, 'Recorder', 'Other']),
+    );
+    expect(
+      parsed.configs.find((c: { name: string }) => c.name === 'Recorder').values.competent[
+        'mineralSeekRange'
+      ],
+    ).toBe(4321);
+
+    // Round-trip: a fresh store loading this exact blob (the path the
+    // recording tools use to inject a config) reproduces the state.
+    window.localStorage.setItem(BOT_TUNING_STORAGE_KEY, blob);
+    const fresh = await loadFreshStore();
+    expect(fresh.getCurrentBotTuningName()).toBe('Recorder');
+    expect(fresh.getCurrentBotTuningConfig().values.competent['mineralSeekRange']).toBe(4321);
   });
 });

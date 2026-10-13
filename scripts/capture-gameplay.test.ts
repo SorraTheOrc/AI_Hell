@@ -54,6 +54,7 @@ import {
   formatScenarioList,
   installRunEndedListener,
   listScenarios,
+  loadBotTuningConfigFile,
   parseCaptureArgs,
   parseCaptureCount,
   readRunEndedSignal,
@@ -63,6 +64,8 @@ import {
   runCaptureIterations,
   summariseCaptureBatch,
   START_KEY_GAP_MS,
+  BOT_TUNING_STORAGE_KEY,
+  installBotTuningConfig,
 } from './capture-gameplay.mjs';
 import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
 import {
@@ -1021,6 +1024,13 @@ describe('full-run capture arguments (AH-0MUXZ4CNS009RV40)', () => {
     expect(options.durationMs).toBe(8000);
     expect(options.fixedDuration).toBe(true);
   });
+
+  it('parses --bot-config into a file path (default null)', () => {
+    expect(parseCaptureArgs([]).botConfig).toBeNull();
+    expect(parseCaptureArgs(['--bot-config', 'bot-tuning.json']).botConfig).toBe(
+      'bot-tuning.json',
+    );
+  });
 });
 
 describe('run-end listener (AH-0MUXZ4CNS009RV40)', () => {
@@ -1711,5 +1721,79 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
       CAPTURE_SCENARIOS.map((scenario) => scenario.name),
     );
     expect(parsed).not.toHaveProperty('iterations');
+  });
+});
+
+describe('bot-tuning config injection (AH-0MV6MFDYG001E6PL)', () => {
+  it('names the store key the gym persists under', () => {
+    expect(BOT_TUNING_STORAGE_KEY).toBe('ai-hell-bot-tuning');
+  });
+
+  it('installBotTuningConfig writes the exported state into localStorage', () => {
+    const entries = new Map<string, string>();
+    const scope = {
+      localStorage: {
+        setItem: (key: string, value: string) => entries.set(key, value),
+      },
+    };
+    const state = { version: 1, current: 'Aggro', configs: [] };
+
+    const result = installBotTuningConfig(state, BOT_TUNING_STORAGE_KEY, scope);
+
+    expect(result).toBe(state);
+    expect(entries.get(BOT_TUNING_STORAGE_KEY)).toBe(JSON.stringify(state));
+  });
+
+  it('is a no-op when the scope cannot hold localStorage', () => {
+    const state = { version: 1, current: 'Default', configs: [] as Array<{ name: string; values: unknown }> };
+    expect(installBotTuningConfig(state, BOT_TUNING_STORAGE_KEY, {})).toBeNull();
+  });
+
+  it('loadBotTuningConfigFile reads a valid exported store state', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bot-tuning-'));
+    const file = join(dir, 'bot-tuning.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        current: 'Default',
+        configs: [{ name: 'Default', values: { competent: {}, human: {} } }],
+      }),
+    );
+    try {
+      const state = loadBotTuningConfigFile(file);
+      expect(state.current).toBe('Default');
+      expect(state.configs[0].name).toBe('Default');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loadBotTuningConfigFile fails fast on a missing file', () => {
+    expect(() => loadBotTuningConfigFile(join(tmpdir(), 'definitely-missing.json'))).toThrow(
+      /--bot-config/,
+    );
+  });
+
+  it('loadBotTuningConfigFile fails fast on an invalid blob', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bot-tuning-'));
+    const file = join(dir, 'bad.json');
+    writeFileSync(file, JSON.stringify({ nope: true }));
+    try {
+      expect(() => loadBotTuningConfigFile(file)).toThrow(/version|configs/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('loadBotTuningConfigFile fails fast on invalid config entries', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bot-tuning-'));
+    const file = join(dir, 'bad-configs.json');
+    writeFileSync(file, JSON.stringify({ version: 1, current: 'X', configs: [{ name: '' }] }));
+    try {
+      expect(() => loadBotTuningConfigFile(file)).toThrow(/configs/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

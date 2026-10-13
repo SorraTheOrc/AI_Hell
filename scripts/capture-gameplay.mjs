@@ -45,7 +45,7 @@
  */
 
 import { createServer } from 'vite';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, extname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -106,6 +106,13 @@ export const RUN_ENDED_STATE_KEY = '__aiHellRunState';
 
 /** Where the installed listener parks the latest captured event detail. */
 export const RUN_ENDED_STORE_KEY = '__aiHellRunEndedSignal';
+
+/**
+ * Store key the bot-tuning gym persists under (AH-0MV6MFDYG001E6PL). The
+ * capture injects the exported state under this key, mirroring
+ * `src/core/botTuningStore.ts`. Written pre-boot so the game's demo reads it.
+ */
+export const BOT_TUNING_STORAGE_KEY = 'ai-hell-bot-tuning';
 
 /**
  * Poll interval, in milliseconds, while waiting for the run-end signal. The
@@ -264,6 +271,7 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     scripted: false,
     scenario: null,
     listScenarios: false,
+    botConfig: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -324,6 +332,12 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         // Print the implemented dev scenarios then exit (AH-0MV6JGELV001FAX1)
         // without booting Vite or Chromium — pure formatter only.
         options.listScenarios = true;
+        break;
+      case '--bot-config':
+        // Exported bot-tuning state (gym Export button) injected into the
+        // recording browser so the demo flies the saved tuning
+        // (AH-0MV6MFDYG001E6PL).
+        options.botConfig = next();
         break;
       case '--help':
         options.help = true;
@@ -550,6 +564,89 @@ export function readRunEndedSignal(
 
   const fromFlag = scope[plan.stateKey];
   return fromFlag === undefined ? null : fromFlag;
+}
+
+/**
+ * Self-contained pre-boot init script that seeds the page's `localStorage`
+ * with an exported bot-tuning store state (AH-0MV6MFDYG001E6PL, AC4).
+ *
+ * Installed through `page.addInitScript` **before the game boots** (like
+ * {@link installRunEndedListener}) so the game's bot-tuning store reads the
+ * injected configuration and the recorded demo flies it. Self-contained with
+ * inline-literal defaults so Playwright can serialise it for the page; the
+ * unit tests assert the same shape.
+ *
+ * @param {object} [state] — exported `{ version, current, configs }` state.
+ * @param {string} [storageKey]
+ * @param {object} [scope]
+ * @returns {object | null} the injected state, or `null` when it cannot be set.
+ */
+export function installBotTuningConfig(
+  state,
+  storageKey = BOT_TUNING_STORAGE_KEY,
+  scope = globalThis,
+) {
+  if (!scope || !scope.localStorage || state === null || state === undefined) {
+    return null;
+  }
+  try {
+    scope.localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch {
+    return null;
+  }
+  return state;
+}
+
+/**
+ * Reads and validates an exported bot-tuning state file for `--bot-config`
+ * (AH-0MV6MFDYG001E6PL, AC4). The store is corrupt-safe, so this only enforces
+ * the minimum shape the export always produces (`version`, `current`,
+ * non-empty `configs` with `name`/`values`); anything else fails fast with an
+ * actionable message before a browser launches.
+ *
+ * @param {string} filePath
+ * @returns {object} the parsed state to inject into the page.
+ */
+export function loadBotTuningConfigFile(filePath) {
+  let raw;
+  try {
+    raw = readFileSync(filePath, 'utf8');
+  } catch (err) {
+    throw new Error(
+      `--bot-config: cannot read "${filePath}": ${err instanceof Error ? err.message : err}`,
+    );
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`--bot-config: "${filePath}" is not valid JSON`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`--bot-config: "${filePath}" must contain an object (exported bot-tuning state)`);
+  }
+  if (typeof parsed.version !== 'number' || !Array.isArray(parsed.configs)) {
+    throw new Error(
+      `--bot-config: "${filePath}" is missing the bot-tuning store fields (version, configs)`,
+    );
+  }
+  if (
+    parsed.configs.length === 0 ||
+    parsed.configs.some(
+      (config) =>
+        config === null ||
+        typeof config !== 'object' ||
+        typeof config.name !== 'string' ||
+        config.name === '' ||
+        config.values === null ||
+        typeof config.values !== 'object',
+    )
+  ) {
+    throw new Error(
+      `--bot-config: "${filePath}" configs must be non-empty objects with a name and values`,
+    );
+  }
+  return parsed;
 }
 
 /** Resolves the output path, defaulting to `capture-output/gameplay-<ts>.webm`. */
@@ -791,6 +888,13 @@ async function captureClip({ browser, url, outputPath, options, reporter }) {
     // `readRunEndedSignal` reads as a race fallback.
     if (fullRun) {
       await page.addInitScript(installRunEndedListener);
+    }
+
+    // Seed the exported bot-tuning state *before* the game boots so the demo
+    // bot flies the saved tuning (AH-0MV6MFDYG001E6PL). Resolved once by the
+    // caller; a null/absent state leaves the fresh profile's defaults in place.
+    if (options.botTuningState) {
+      await page.addInitScript(installBotTuningConfig, options.botTuningState);
     }
 
     // Stream encoded chunks to Node as they are produced (avoids one huge
@@ -1037,6 +1141,12 @@ export async function runCapture(
   reporter = createReporter(),
 ) {
   const outputPaths = resolveOutputPaths(options.output, options.count);
+
+  // Fail fast on an unusable `--bot-config` file before launching the server
+  // or a browser (AH-0MV6MFDYG001E6PL).
+  if (options.botConfig !== null && options.botConfig !== undefined) {
+    options.botTuningState = loadBotTuningConfigFile(options.botConfig);
+  }
 
   let server;
   let browser;
@@ -1485,10 +1595,13 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--list-scenarios]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--list-scenarios] [--bot-config file]',
     );
     console.log(
       'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',
+    );
+    console.log(
+      'Bot tuning: --bot-config file loads an exported bot-tuning JSON (the Bot Tuning gym Export button) into the recording browser before the game boots, so the demo flies the saved configuration. Without it the demo uses the built-in defaults.',
     );
     console.log(
       'Scenarios: --scenario boss-four-hits loads the game with a dev scenario URL that jumps straight to the boss with 4 hits remaining (dev builds only); --scenario defeat clears the wave and ends the run in defeat on release (dev builds only).',

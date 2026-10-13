@@ -24,6 +24,12 @@ import * as leaderboardModule from '../core/Leaderboard';
 import { DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
 import {
+  DEFAULT_BOT_TUNING_NAME,
+  resetBotTuningStore,
+  saveBotTuningAs,
+} from '../core/botTuningStore';
+import { defaultBotTuningValues } from '../ai/tuningFields';
+import {
   buildBotSnapshot,
   type BotSnapshotScene,
 } from '../ai/botSnapshot';
@@ -714,5 +720,90 @@ describe('snapshot builder → decision integration (AC4/AC5)', () => {
       }),
     );
     expect(decideBotInput(quiet).up).toBe(true);
+  });
+
+});
+
+describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    resetBotTuningStore();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene(
+      [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
+      { deterministicBoot: true },
+    );
+    return booted.scene as MenuScene;
+  }
+
+  it('AC1 — the demo bot is built from the currently-selected tuning config', async () => {
+    const values = defaultBotTuningValues();
+    values.human['skill'] = 0.2;
+    values.competent['mineralSeekRange'] = 900;
+    saveBotTuningAs('AggroRecruit', values);
+
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getBotTuningConfigName()).toBe('AggroRecruit');
+    // The governor received the human overrides from the saved config.
+    const governor = play.getBotGovernor();
+    expect(
+      (governor as unknown as { tunables: { skill: number } }).tunables.skill,
+    ).toBeCloseTo(0.2);
+  });
+
+  it('AC1 — an empty store keeps the factory defaults (behaviour unchanged)', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getBotTuningConfigName()).toBe(DEFAULT_BOT_TUNING_NAME);
+  });
+
+  it('AC2 — a normal (non-demo) run never consults the tuning store', async () => {
+    const values = defaultBotTuningValues();
+    values.competent['mineralSeekRange'] = 999;
+    saveBotTuningAs('ShouldNotApply', values);
+
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+      deterministicBoot: true,
+    });
+    const play = booted.scene as PlayScene;
+    expect(play.isDemoMode()).toBe(false);
+    expect(play.getBotTuningConfigName()).toBeNull();
+    expect(botInputOf(play)).toBeNull();
+  });
+
+  it('AC3 — re-enabling the demo mid-session applies the saved config again', async () => {
+    const values = defaultBotTuningValues();
+    values.human['skill'] = 0.4;
+    saveBotTuningAs('MidSession', values);
+
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+      deterministicBoot: true,
+    });
+    const play = booted.scene as PlayScene;
+    expect(play.getBotTuningConfigName()).toBeNull();
+
+    play.setDemoMode(true);
+    expect(play.getBotTuningConfigName()).toBe('MidSession');
+    const governor = play.getBotGovernor();
+    expect(
+      (governor as unknown as { tunables: { skill: number } }).tunables.skill,
+    ).toBeCloseTo(0.4);
   });
 });

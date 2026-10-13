@@ -33,7 +33,9 @@ import { createServer } from 'vite';
 import {
   CaptureSetupError,
   createReporter,
+  installBotTuningConfig,
   installRunEndedListener,
+  loadBotTuningConfigFile,
   readRunEndedSignal,
 } from './capture-gameplay.mjs';
 import { decodeRunEndedDetail } from './capture-run-lifecycle.mjs';
@@ -66,6 +68,7 @@ export function parseRecordArgs(argv = process.argv.slice(2)) {
     maxDurationMs: DEFAULT_RECORD_MAX_DURATION_MS,
     pollMs: DEFAULT_RECORD_POLL_MS,
     json: false,
+    botConfig: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -93,6 +96,12 @@ export function parseRecordArgs(argv = process.argv.slice(2)) {
         break;
       case '--bot':
         options.bot = true;
+        break;
+      case '--bot-config':
+        // Exported bot-tuning state (gym Export button) injected into the
+        // recording browser so a `--bot` recording flies the saved tuning
+        // (AH-0MV6MFDYG001E6PL).
+        options.botConfig = next();
         break;
       case '--headless':
         options.headed = false;
@@ -177,7 +186,8 @@ async function main(argv) {
   if (options.help) {
     process.stdout.write(
       'Usage: node scripts/record-session.mjs [--output FILE] [--seed N] [--bot] [--headless]\n' +
-        '                                       [--auto] [--max-duration MS] [--poll MS] [--json]\n',
+        '                                       [--auto] [--max-duration MS] [--poll MS] [--json]\n' +
+        '                                       [--bot-config FILE]\n',
     );
     return 0;
   }
@@ -217,6 +227,12 @@ async function main(argv) {
     });
     const page = await browser.newPage({ viewport: VIEWPORT });
     await page.addInitScript(installRunEndedListener);
+    // Seed the exported bot-tuning state before the game boots so a `--bot`
+    // recording flies the saved tuning (AH-0MV6MFDYG001E6PL). Resolved and
+    // validated now (fail-fast); absent flag → fresh-profile defaults.
+    if (options.botConfig !== null && options.botConfig !== undefined) {
+      await page.addInitScript(installBotTuningConfig, loadBotTuningConfigFile(options.botConfig));
+    }
     page.on('pageerror', (error) => reporter.step(`page error: ${error.message}`));
 
     reporter.step(`Loading ${url}…`);

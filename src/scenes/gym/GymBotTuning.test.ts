@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import {
   BOT_TUNING_CONFIG_SELECT_ID,
+  BOT_TUNING_EXPORT_ID,
   BOT_TUNING_PANEL_ID,
   BOT_TUNING_SAVE_AS_ID,
   BOT_TUNING_SAVE_AS_INPUT_ID,
@@ -346,6 +347,42 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
   });
 
   // ── Per-parameter tooltips (AH-0MV4XGXVL001GSB2) ────────────────
+
+  // ── Config export (AH-0MV6MFDYG001E6PL) ──────────────────────────
+
+  it('Export downloads the persisted store state as JSON (AH-0MV6MFDYG001E6PL)', async () => {
+    await bootTuning({ seed: 42 });
+
+    const input = document.querySelector<HTMLInputElement>(
+      `input[${BOT_TUNING_SLIDER_ATTR}="powerUpSeekRange"]`,
+    )!;
+    input.value = '825';
+    input.dispatchEvent(new Event('input'));
+    const nameInput = document.getElementById(BOT_TUNING_SAVE_AS_INPUT_ID) as HTMLInputElement;
+    nameInput.value = 'Exportable';
+    document.getElementById(BOT_TUNING_SAVE_AS_ID)!.dispatchEvent(new MouseEvent('click'));
+
+    // Capture the Blob the Export button hands to a download link.
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+
+    document
+      .getElementById(BOT_TUNING_EXPORT_ID)!
+      .dispatchEvent(new MouseEvent('click'));
+    await tick();
+
+    expect(clickSpy).toHaveBeenCalled();
+    expect(createSpy).toHaveBeenCalled();
+    const blob = createSpy.mock.calls[0][0] as Blob;
+    const parsed = JSON.parse(await blob.text());
+    expect(parsed.current).toBe('Exportable');
+    const exported = parsed.configs.find(
+      (config: { name: string }) => config.name === 'Exportable',
+    );
+    expect(exported.values.competent['powerUpSeekRange']).toBe(825);
+  });
 
   it('associates every slider and toggle with a tooltip holding its description', async () => {
     await bootTuning({ seed: 77 });
