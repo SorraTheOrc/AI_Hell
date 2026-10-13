@@ -156,3 +156,23 @@ describe('bot rotation skills knobs (AH-0MV1DUSM2005HL98 AC4)', () => {
     expect(iterations.min).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('bot tuning tooltip descriptions (AH-0MV4XGXVL001GSB2)', () => {
+  it('gives every declared numeric field a non-empty description', () => {
+    const missing = BOT_TUNING_NUMERIC_FIELDS.filter(
+      (field) =>
+        typeof field.description !== 'string' ||
+        field.description.trim().length === 0,
+    ).map((field) => field.key);
+    expect(missing).toEqual([]);
+  });
+
+  it('gives every declared toggle a non-empty description', () => {
+    const missing = BOT_TUNING_TOGGLES.filter(
+      (toggle) =>
+        typeof toggle.description !== 'string' ||
+        toggle.description.trim().length === 0,
+    ).map((toggle) => toggle.key);
+    expect(missing).toEqual([]);
+  });
+});
