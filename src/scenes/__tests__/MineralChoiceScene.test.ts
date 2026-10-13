@@ -11,8 +11,10 @@ import Phaser from 'phaser';
 
 import * as effects from '../../audio/effects';
 import { HOLD_FULL_FIRE_VOLUME_SCALE } from '../../core/rules';
+import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
 import { bootScene, BootedGame } from '../../test/gameHarness';
 import { RecordingSfxProvider } from '../../test/audioTestDouble';
+import type { ChoiceOption } from '../../powerups/choice';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 
 /** Minimal scene used as the boot target for isolated overlay tests. */
@@ -279,6 +281,13 @@ describe('MineralChoiceScene', () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 250));
 
+      // The auto-select records the choice and starts the 3-2-1 countdown;
+      // the choice is applied when the countdown completes. Drive the
+      // countdown deterministically (one big frame).
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      scene.update(0, HOLD_FULL_COUNTDOWN_DURATION_MS);
       expect(calls).toEqual([0]);
     });
 
@@ -297,6 +306,10 @@ describe('MineralChoiceScene', () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 250));
 
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      scene.update(0, HOLD_FULL_COUNTDOWN_DURATION_MS);
       expect(calls).toEqual([2]);
     });
 
@@ -334,6 +347,9 @@ describe('MineralChoiceScene', () => {
         'MineralChoiceScene',
       ) as MineralChoiceScene;
       scene.select(1);
+      // The manual selection starts the countdown; complete it, then ensure
+      // the cancelled auto-select timer does not fire a second selection.
+      scene.update(0, HOLD_FULL_COUNTDOWN_DURATION_MS);
       await new Promise((resolve) => setTimeout(resolve, 300));
 
       // The late timer must not fire a second selection.
@@ -355,6 +371,7 @@ describe('MineralChoiceScene', () => {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
         fireSchedule: {
           anchorMs: 0,
+          bpm: 80,
           startMs: 0,
           weapons: [
             { weaponId: 'cannon', intervalMs: 375 },
@@ -414,7 +431,7 @@ describe('MineralChoiceScene', () => {
       expect(recording.plays).toHaveLength(0);
     });
 
-    it('a selection stops the metronome (ghost fire ends with the overlay)', async () => {
+    it('a selection keeps the metronome running under the countdown, then it ends when the overlay closes', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
       booted = await bootScene([HarnessScene, MineralChoiceScene], {
@@ -425,6 +442,7 @@ describe('MineralChoiceScene', () => {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
         fireSchedule: {
           anchorMs: 0,
+          bpm: 80,
           startMs: 0,
           weapons: [{ weaponId: 'cannon', intervalMs: 375 }],
         },
@@ -443,12 +461,115 @@ describe('MineralChoiceScene', () => {
       ) as MineralChoiceScene;
       const before = recording.plays.length;
       scene.select(0);
-      // Further frames drive no ghost fire after the selection.
+      // The reduced-volume fire continues underneath the 3-2-1 countdown
+      // (producer decision) until the countdown completes and the overlay
+      // closes.
+      for (let i = 0; i < Math.ceil(HOLD_FULL_COUNTDOWN_DURATION_MS / dt) + 2; i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+      expect(recording.plays.length).toBeGreaterThan(before);
+      // The overlay closed after the countdown (scene no longer active).
+      expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
+      // No further ghost fire once the overlay (and its metronome) is gone.
+      const after = recording.plays.length;
       for (let i = 0; i < 25; i += 1) {
         time += dt;
         booted!.game.step(time, dt);
       }
-      expect(recording.plays.length).toBe(before);
+      expect(recording.plays.length).toBe(after);
+    });
+  });
+
+  describe('beat-locked 3-2-1 countdown (AH-0MV55OAQT004NMSN)', () => {
+    it('selecting starts a 3-2-1 countdown and defers onSelect until it completes', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene], {
+        deterministicBoot: true,
+      });
+      booted!.game.loop.stop();
+      const calls: Array<{ index: number; option: ChoiceOption }> = [];
+      booted!.game.scene.start('MineralChoiceScene', {
+        options: [
+          { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+          { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
+        ],
+        onSelect: (index: number, option: ChoiceOption) => {
+          calls.push({ index, option });
+        },
+      });
+      let time = 0;
+      const dt = 1000 / 60;
+      const stepInto = (n: number) => {
+        for (let i = 0; i < n; i += 1) {
+          time += dt;
+          booted!.game.step(time, dt);
+        }
+      };
+      stepInto(2);
+
+      const scene = booted!.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      scene.select(1); // "Spread Shot", index 1
+
+      // Immediately after selecting, the countdown begins ("3" shown) and
+      // onSelect has NOT fired yet.
+      expect(scene.getCountdownText()).toBe('3');
+      expect(calls).toHaveLength(0);
+      expect(scene.isCountdownActive()).toBe(true);
+
+      // One beat later (750 ms at 80 BPM): "2".
+      stepInto(Math.ceil(750 / dt));
+      expect(scene.getCountdownText()).toBe('2');
+      expect(calls).toHaveLength(0);
+
+      // Two beats: "1".
+      stepInto(Math.ceil(750 / dt));
+      expect(scene.getCountdownText()).toBe('1');
+      expect(calls).toHaveLength(0);
+
+      // The beat after "1" (three beats total): the choice is applied and
+      // the overlay closes.
+      stepInto(Math.ceil(750 / dt) + 2);
+      expect(calls).toEqual([
+        { index: 1, option: scene.getOptions()[1] },
+      ]);
+      expect(scene.isCountdownActive()).toBe(false);
+      expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
+    });
+
+    it('plays the countdown tick cue once per count (recording provider)', async () => {
+      const recording = new RecordingSfxProvider();
+      effects.setSfxSoundProvider(recording);
+      booted = await bootScene([HarnessScene, MineralChoiceScene], {
+        deterministicBoot: true,
+      });
+      booted!.game.loop.stop();
+      booted!.game.scene.start('MineralChoiceScene', {
+        options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
+      });
+      let time = 0;
+      const dt = 1000 / 60;
+      const scene = booted!.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      // Boot + start the countdown with a live selection.
+      for (let i = 0; i < 3; i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+      scene.select(0);
+      const countdownTicks = () =>
+        recording.plays.filter((p) => p.url.includes('aihell-countdown-tick'));
+      // The first count's tick plays immediately on selection.
+      expect(countdownTicks()).toHaveLength(1);
+      // Advance through the two remaining counts.
+      for (let i = 0; i < Math.ceil(HOLD_FULL_COUNTDOWN_DURATION_MS / dt); i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+      // One distinct cue per count: 3 total.
+      expect(countdownTicks()).toHaveLength(3);
     });
   });
 });

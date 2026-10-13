@@ -29,14 +29,15 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
-import { HOLD_FULL_FIRE_VOLUME_SCALE } from '../core/rules';
+import { HOLD_FULL_FIRE_VOLUME_SCALE, loadRules } from '../core/rules';
 import { randomChoiceStrategy, type ChoiceOption, type ChoiceStrategy } from '../powerups/choice';
 import {
   createHoldFullFireMetronome,
   type HoldFullFireMetronome,
   type HoldFullFireSchedule,
 } from './core/holdFullFire';
-import { playWeaponFireSound } from '../audio/effects';
+import { createHoldFullCountdown } from './core/holdFullCountdown';
+import { playCountdownTickSound, playWeaponFireSound } from '../audio/effects';
 
 /** Neon-gold heading colour (matches the mineral palette). */
 const CHOICE_HEADING_COLOR = '#ffdd44';
@@ -62,6 +63,12 @@ const CHOICE_ROW_PITCH = 84;
 const CHOICE_DESCRIPTION_OFFSET = 28;
 /** Y offset (px) of the change-summary / `★ New` line beneath the description. */
 const CHOICE_DETAIL_OFFSET = 48;
+/** Neon-cyan colour of the large countdown numeral. */
+const COUNTDOWN_COLOR = '#00ffff';
+/** Vertical centre (px) of the large 3-2-1 countdown numeral. */
+const COUNTDOWN_Y = 270;
+/** Font size (px) of the large 3-2-1 countdown numeral. */
+const COUNTDOWN_FONT_SIZE = '96px';
 
 export class MineralChoiceScene extends Phaser.Scene {
   private options: ChoiceOption[] = [];
@@ -90,6 +97,23 @@ export class MineralChoiceScene extends Phaser.Scene {
   private fireSchedule: HoldFullFireSchedule | null = null;
   /** Live metronome emitting the reduced-volume ghost ticks. */
   private metronome: HoldFullFireMetronome | null = null;
+  /**
+   * The pending selection (index + option) chosen by the player, held while
+   * the 3-2-1 countdown plays and applied via `onSelect` when it completes
+   * (AH-0MV55OAQT004NMSN · AC4). Null while awaiting a selection.
+   */
+  private pendingSelection: { index: number; option: ChoiceOption } | null =
+    null;
+  /**
+   * The current 3-2-1 countdown scheduler (non-null while counting down).
+   * Advances one count per beat with this scene's elapsed time; the
+   * reduced-volume metronomic fire continues underneath.
+   */
+  private countdown: ReturnType<typeof createHoldFullCountdown> | null = null;
+  /** The large on-screen countdown numeral ("3"/"2"/"1"). */
+  private countdownText: Phaser.GameObjects.Text | null = null;
+  /** Total overlay elapsed time (ms) — used to re-base the beat clock on resume. */
+  private overlayElapsedMs = 0;
 
   constructor() {
     super('MineralChoiceScene');
@@ -130,6 +154,10 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.autoSelectMs = data.autoSelectMs ?? 0;
     this.autoSelectIndex = data.autoSelectIndex ?? 0;
     this.fireSchedule = data.fireSchedule ?? null;
+    this.pendingSelection = null;
+    this.countdown = null;
+    this.countdownText = null;
+    this.overlayElapsedMs = 0;
   }
 
   create(): void {
@@ -234,17 +262,66 @@ export class MineralChoiceScene extends Phaser.Scene {
   /**
    * Drives the hold-full metronome with this scene's elapsed time: every
    * frame advances the ghost-fire scheduler and plays a reduced-volume fire
-   * cue for each active weapon whose beat tick was reached. Pure timing — no
-   * projectiles, no gameplay simulation (AH-0MV55O9R5005W6J0 · AC1).
+   * cue for each active weapon whose beat tick was reached, then (once a
+   * selection is made) advances the 3-2-1 countdown — one count per beat,
+   * each with its cue and on-screen numeral — and completes the selection on
+   * the beat after "1". Pure timing: no projectiles, no gameplay simulation
+   * (AH-0MV55O9R5005W6J0 · AC1; AH-0MV55OAQT004NMSN · AC4).
    */
   override update(_time: number, delta: number): void {
+    this.overlayElapsedMs += Math.max(0, delta);
     const metronome = this.metronome;
-    if (metronome === null) return;
-    for (const weaponId of metronome.advance(delta)) {
-      playWeaponFireSound(weaponId, {
-        volume: HOLD_FULL_FIRE_VOLUME_SCALE,
-      });
+    if (metronome !== null) {
+      for (const weaponId of metronome.advance(delta)) {
+        playWeaponFireSound(weaponId, {
+          volume: HOLD_FULL_FIRE_VOLUME_SCALE,
+        });
+      }
     }
+    const countdown = this.countdown;
+    if (countdown === null) return;
+    for (const count of countdown.advance(delta)) {
+      this.showCountdownNumeral(count);
+      playCountdownTickSound();
+    }
+    if (countdown.isComplete()) this.completeSelection();
+  }
+
+  /** Renders (or replaces) the large countdown numeral, e.g. "3". */
+  private showCountdownNumeral(count: number): void {
+    if (this.countdownText === null) {
+      this.countdownText = this.add
+        .text(GAME_WIDTH / 2, COUNTDOWN_Y, '', {
+          fontFamily: 'monospace',
+          fontSize: COUNTDOWN_FONT_SIZE,
+          color: COUNTDOWN_COLOR,
+        })
+        .setOrigin(0.5);
+    }
+    this.countdownText.setText(String(count));
+  }
+
+  /**
+   * Applies the pending selection when the 3-2-1 countdown completes: the
+   * metronomic ghost fire stops, the single `onSelect` contract hands the
+   * choice to the launcher (which applies it, resumes play and resets the
+   * hold) and the overlay closes. The ghost fire continues underneath the
+   * countdown (producer decision) and only ends here with play.
+   */
+  private completeSelection(): void {
+    const pending = this.pendingSelection;
+    if (pending === null) return;
+    this.pendingSelection = null;
+    this.countdown = null;
+    this.countdownText?.destroy();
+    this.countdownText = null;
+    this.metronome = null;
+    this.autoSelectTimer?.remove(false);
+    this.autoSelectTimer = null;
+    const handler = this.onSelect;
+    this.onSelect = null;
+    handler?.(pending.index, pending.option);
+    this.scene.stop();
   }
 
   /** The options currently presented (copy). */
@@ -280,25 +357,46 @@ export class MineralChoiceScene extends Phaser.Scene {
   }
 
   /**
-   * Selects option `index`: forwards the choice to the launcher through the
-   * `onSelect` callback (which applies it, resumes and resets the hold) and
-   * closes this overlay. Returns the chosen option, or null for an
-   * out-of-range index.
+   * Selects option `index`: records the choice and starts the beat-locked
+   * 3-2-1 countdown. The choice is applied through the `onSelect` callback
+   * when the countdown completes (on the beat after "1"); the reduced-volume
+   * metronomic fire continues underneath. Returns the chosen option, or null
+   * for an out-of-range index.
    */
   select(index: number): ChoiceOption | null {
     const option = this.options[index];
-    if (!option) return null;
+    if (!option || this.pendingSelection !== null) return null;
 
     // Cancel any pending demo auto-select so it cannot fire twice.
     this.autoSelectTimer?.remove(false);
     this.autoSelectTimer = null;
-    // Stop the metronomic ghost fire — the selection (and the launcher's
-    // resume) hands back to live fire (AH-0MV55O9R5005W6J0).
-    this.metronome = null;
-    const handler = this.onSelect;
-    this.onSelect = null;
-    handler?.(index, option);
-    this.scene.stop();
+    // Record the pending selection and start the 3-2-1 countdown — one count
+    // per beat of the shared grid, with the metronome continuing underneath
+    // (AH-0MV55OAQT004NMSN · AC4/AC3).
+    this.pendingSelection = { index, option };
+    this.countdown = createHoldFullCountdown(
+      this.fireSchedule?.bpm ?? loadRules().beatBpm,
+    );
+    this.showCountdownNumeral(3);
+    playCountdownTickSound();
     return option;
+  }
+
+  /** Total overlay-relative elapsed time (ms) since the scene started. */
+  getOverlayElapsedMs(): number {
+    return this.overlayElapsedMs;
+  }
+
+  /**
+   * The countdown numeral currently on screen ("3"), or null when the
+   * overlay is not counting down (awaiting input or already applied).
+   */
+  getCountdownText(): string | null {
+    return this.countdownText?.text ?? null;
+  }
+
+  /** True while the beat-locked 3-2-1 countdown is running. */
+  isCountdownActive(): boolean {
+    return this.countdown !== null;
   }
 }

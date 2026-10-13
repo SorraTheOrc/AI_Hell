@@ -39,6 +39,7 @@ const RAPID_INTERVAL_MS = 60000 / DEFAULT_BPM / 6; // 125
 function cannonAndRapidSchedule(overrides: Partial<HoldFullFireSchedule> = {}): HoldFullFireSchedule {
   return {
     anchorMs: 0,
+    bpm: DEFAULT_BPM,
     startMs: 0,
     weapons: [
       { weaponId: 'cannon', intervalMs: CANNON_INTERVAL_MS },
@@ -69,6 +70,7 @@ describe('createHoldFullFireMetronome', () => {
   it('AC1 — cannon cues on its exact 2-shots-per-beat cadence from a frozen clock at 0', () => {
     const metronome = createHoldFullFireMetronome({
       anchorMs: 0,
+      bpm: DEFAULT_BPM,
       startMs: 0,
       weapons: [{ weaponId: 'cannon', intervalMs: CANNON_INTERVAL_MS }],
     });
@@ -149,6 +151,7 @@ describe('createHoldFullFireMetronome', () => {
   it('AC2 — only the supplied active weapons emit (cannon alone → no rapid)', () => {
     const metronome = createHoldFullFireMetronome({
       anchorMs: 0,
+      bpm: DEFAULT_BPM,
       startMs: 0,
       weapons: [{ weaponId: 'cannon', intervalMs: CANNON_INTERVAL_MS }],
     });
@@ -172,6 +175,7 @@ describe('createHoldFullFireMetronome', () => {
   it('a non-positive advance is a no-op (time never runs backwards)', () => {
     const metronome = createHoldFullFireMetronome({
       anchorMs: 0,
+      bpm: DEFAULT_BPM,
       startMs: 0,
       weapons: [{ weaponId: 'cannon', intervalMs: CANNON_INTERVAL_MS }],
     });
@@ -184,6 +188,7 @@ describe('createHoldFullFireMetronome', () => {
   it('empty active-weapon schedule emits nothing', () => {
     const metronome = createHoldFullFireMetronome({
       anchorMs: 0,
+      bpm: DEFAULT_BPM,
       startMs: 0,
       weapons: [],
     });
@@ -200,12 +205,22 @@ describe('buildHoldFullFireSchedule', () => {
     const schedule = buildHoldFullFireSchedule(player);
     expect(schedule).toEqual({
       anchorMs: 0,
+      bpm: DEFAULT_BPM,
       startMs: 0,
       weapons: [
         { weaponId: 'cannon', intervalMs: CANNON_INTERVAL_MS },
         { weaponId: 'rapid', intervalMs: RAPID_INTERVAL_MS },
       ],
     });
+  });
+
+  it('propagates the countdown tempo (bpm) from the beat clock', () => {
+    const player = fakePlayer(
+      [{ weaponId: 'cannon', intervalMs: CANNON_INTERVAL_MS }],
+      0,
+    );
+    const schedule = buildHoldFullFireSchedule(player);
+    expect(schedule?.bpm).toBe(DEFAULT_BPM);
   });
 
   it('propagates the frozen beat-clock elapsed time (startMs)', () => {

@@ -50,6 +50,12 @@ export interface HoldFullFireSchedule {
   /** Grid origin in ms (the shared beat clock's anchor). */
   anchorMs: number;
   /**
+   * Tempo in beats per minute for the shared beat grid — one beat of the
+   * 3-2-1 restart countdown (AH-0MV55OAQT004NMSN). Mirrors the beat clock
+   * that produced the schedule.
+   */
+  bpm: number;
+  /**
    * Frozen game-time (ms) when the overlay opened — `beatClock.now()` at
    * launch. The metronome continues the grid from here, so the first ghost
    * tick is the tick the next real shot would have used (AC3).
@@ -63,7 +69,7 @@ export interface HoldFullFireSchedule {
 export interface HoldFullFirePlayerSource {
   getActiveWeapons(): WeaponId[];
   getFireInterval(weaponId: WeaponId): number;
-  getBeatClock(): { now(): number; anchorMs: number };
+  getBeatClock(): { now(): number; anchorMs: number; bpm: number };
 }
 
 // ── Tunables / grid constants ───────────────────────────────────────
@@ -174,6 +180,7 @@ export function buildHoldFullFireSchedule(
   const clock = player.getBeatClock();
   return {
     anchorMs: clock.anchorMs,
+    bpm: clock.bpm,
     startMs: clock.now(),
     weapons: player.getActiveWeapons().map((weaponId) => ({
       weaponId,

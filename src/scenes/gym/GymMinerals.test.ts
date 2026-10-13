@@ -12,6 +12,7 @@ import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { GymMinerals } from './GymMinerals';
 import { GymFodderEnemies } from './GymFodderEnemies';
 import { MineralChoiceScene } from '../MineralChoiceScene';
+import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { ChoiceContext, ChoiceOption } from '../../powerups/choice';
 import type { FormationSceneBullet } from './core/GymFormationScene';
@@ -260,7 +261,9 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     ) as MineralChoiceScene;
     expect(overlay.getOptions()).toEqual(drawn);
 
+    // The countdown defers the choice: apply it by completing the countdown.
     overlay.select(0);
+    overlay.update(0, HOLD_FULL_COUNTDOWN_DURATION_MS);
     expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
   });
 

@@ -46,6 +46,7 @@ import {
   playWeaponFireSound,
 } from '../../audio/effects';
 import { buildHoldFullFireSchedule } from '../core/holdFullFire';
+import type { MineralChoiceScene } from '../MineralChoiceScene';
 import { WasdKeysLike } from '../../utils/input';
 import {
   addBackToIndexButton,
@@ -391,6 +392,12 @@ export class GymWeaponLeveling extends CombatScene<
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
     this.hold.resolve();
+    // Re-base the frozen beat clock across the overlay + countdown pause so
+    // the gym's real fire resumes phase-locked (AH-0MV55OAQT004NMSN · AC3).
+    const overlay = this.scene.manager.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene | null;
+    this.rebaseBeatClockForHoldFullResume(overlay?.getOverlayElapsedMs() ?? 0);
     if (this.scene.manager.getScene('MineralChoiceScene')) {
       this.scene.resume();
     }

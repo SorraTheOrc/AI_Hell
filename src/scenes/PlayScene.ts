@@ -47,6 +47,7 @@ import { GameState, MAX_LIVES } from '../core/GameState';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
 import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
+import type { MineralChoiceScene } from './MineralChoiceScene';
 import {
   playDestructionSound,
   playSpawnSound,
@@ -3615,6 +3616,13 @@ export class PlayScene extends CombatScene<
     this.mineralChoiceOptions = [];
     this.gameState.resolveHold();
     this._syncMineralHud();
+    // Re-base the frozen beat clock across the overlay + countdown pause so
+    // the ship's real fire resumes phase-locked on the grid the metronome
+    // ghosted (AH-0MV55OAQT004NMSN · AC3).
+    const overlay = this.scene.manager.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene | null;
+    this.rebaseBeatClockForHoldFullResume(overlay?.getOverlayElapsedMs() ?? 0);
     this.setPaused(false);
     // Resume the SceneManager-level pause that accompanied the overlay.
     if (this.scene.manager.getScene('MineralChoiceScene')) {

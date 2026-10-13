@@ -80,6 +80,7 @@ import {
   type FormationReanchorRequest,
 } from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
+import type { MineralChoiceScene } from '../../MineralChoiceScene';
 import { buildHoldFullFireSchedule } from '../../core/holdFullFire';
 import { PlayerBullet } from '../../../entities/PlayerBullet';
 import {
@@ -1328,6 +1329,12 @@ export class GymFormationScene<
     this.mineralChoiceOptions = [];
     this.mineralHoldModel.resolve();
     this._syncMineralHud();
+    // Re-base the frozen beat clock across the overlay + countdown pause so
+    // the gym's real fire resumes phase-locked (AH-0MV55OAQT004NMSN · AC3).
+    const overlay = this.scene.manager.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene | null;
+    this.rebaseBeatClockForHoldFullResume(overlay?.getOverlayElapsedMs() ?? 0);
     this.scene.resume();
     return option;
   }

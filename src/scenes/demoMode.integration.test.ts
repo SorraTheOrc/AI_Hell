@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
+import { HOLD_FULL_COUNTDOWN_DURATION_MS } from './core/holdFullCountdown';
 import * as leaderboardModule from '../core/Leaderboard';
 import { DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
@@ -255,7 +256,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     // The overlay auto-selects after the human-like delay, applies the choice
     // and resumes play — the run never stalls.
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     expect(play.isMineralChoiceOpen()).toBe(false);
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
@@ -282,7 +283,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const selected = vi.spyOn(play, 'selectMineralChoice');
     play.openMineralChoice();
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     // The bot took the Extra Life (index 2) rather than the first option.
     expect(selected).toHaveBeenCalledWith(2);
@@ -307,7 +308,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const selected = vi.spyOn(play, 'selectMineralChoice');
     play.openMineralChoice();
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     expect(selected).toHaveBeenCalledWith(0);
     expect(play.isMineralChoiceOpen()).toBe(false);
@@ -330,7 +331,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const selected = vi.spyOn(play, 'selectMineralChoice');
     play.openMineralChoice();
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     expect(selected).toHaveBeenCalledWith(0);
     expect(play.isMineralChoiceOpen()).toBe(false);

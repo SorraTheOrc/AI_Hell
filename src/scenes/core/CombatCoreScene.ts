@@ -341,6 +341,32 @@ export class CombatCoreScene<
   }
 
   /**
+   * Re-bases the shared beat clock across a hold-full overlay pause so the
+   * ship's real fire resumes phase-locked on the same grid the metronome
+   * ghosted (AH-0MV55OAQT004NMSN · AC3).
+   *
+   * While the overlay is open this scene is paused at the SceneManager
+   * level, so the clock froze at launch (`clock.now() === startMs`). The
+   * overlay's metronome kept ticking on the same grid for its whole
+   * duration; on resume the frozen clock must be advanced by exactly that
+   * wall-clock elapsed time, and every active weapon re-scheduled on it, so
+   * the next real shot lands on the first grid tick after the last ghost
+   * tick — no phase jump or restart.
+   *
+   * A no-op when the overlay was open for no time at all (e.g. isolated
+   * launcher tests that resolve immediately).
+   *
+   * @param overlayElapsedMs - Total overlay-relative elapsed time (ms) —
+   *   `MineralChoiceScene.getOverlayElapsedMs()`. Non-positive values are
+   *   ignored.
+   */
+  protected rebaseBeatClockForHoldFullResume(overlayElapsedMs: number): void {
+    if (!Number.isFinite(overlayElapsedMs) || overlayElapsedMs <= 0) return;
+    this.beatClock.advance(overlayElapsedMs);
+    this.getPlayer()?.setBeatClock(this.beatClock);
+  }
+
+  /**
    * The shared active-effect registry (default implementation). Binds the
    * registry to this scene's live player store (dynamic resolver) so a stub
    * scene that does not override this accessor still consumes the single
