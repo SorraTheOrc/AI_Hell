@@ -44,6 +44,10 @@ npm run capture -- --list-scenarios --json
 # record a batch of 3 clips in one process (one dev server + one browser)
 npm run capture -- --count 3          # or the short alias: -n 3
 npm run capture -- --count 3 --output clips/demo.webm   # clips/demo-1..3.webm
+
+# record EVERY dev scenario in one process (one video per scenario, no demo)
+npm run capture -- --all-scenarios
+npm run capture -- --all-scenarios --output clips          # clips/<scenario>.webm
 ```
 
 This was proven end to end on 2026-10-06: a 12 s clip recorded at
@@ -349,6 +353,52 @@ emits an aggregate object:
 Each `iterations[]` entry carries the 1-based `index`, the absolute `output`
 path and an `ok` flag; a failed iteration adds `error` and omits the clip
 fields. `succeeded`/`failed` tally the batch.
+
+## Batch scenarios (`--all-scenarios`)
+
+`--all-scenarios` records **one video per registered dev scenario** in a
+single process (AH-0MV6JGQFK007MXGX). It reuses the exact batch machinery
+above — one Vite dev server and one headless Chromium browser booted once,
+a fresh page per item, per-item failure isolation, an aggregate summary and a
+non-zero exit code. Per the producer decision, the default no-scenario demo
+run is deliberately **not** included: only the shared registry
+(`scripts/capture-scenarios.mjs`) is expanded, so the set cannot drift from
+what `--list-scenarios` shows.
+
+```bash
+# one video per registered scenario (boss, boss-four-hits, defeat) in one process
+npm run capture -- --all-scenarios
+
+# write into a directory: <dir>/<scenario>.webm
+npm run capture -- --all-scenarios --output clips
+```
+
+### Output naming
+
+`--output` is treated as a **directory** for a batch (producer decision Q2):
+
+| Invocation | Output files |
+|---|---|
+| `--all-scenarios` | `capture-output/<scenario>-<ISO-timestamp>.webm` (one timestamp per batch) |
+| `--all-scenarios --output clips` | `clips/<scenario>.webm` |
+
+Names are **deterministic and collision-free** within a batch (one item per
+scenario, one batch timestamp), and an existing file is **never silently
+overwritten**: if a target name is already in use — by an earlier item in the
+plan or on disk — a `-<n>` suffix is inserted before the extension
+(`boss.webm` → `boss-2.webm`), resolved by the pure `uniquifyOutputPath`
+helper. The batch report and `--json` aggregate name the scenario per item
+(`#1 [boss] ok …`), so results are attributable without parsing paths.
+
+### Validation and exit codes
+
+- `--all-scenarios` takes no value and cannot be combined with `--scenario`
+  (it already selects every scenario); the `--count` × `--all-scenarios`
+  combination (`N x all`) is rejected with a clear message until it lands
+  (tracked by AH-0MV6JGQSA0054CYY).
+- The aggregate summary prints every item and the process exits **non-zero**
+  if any scenario failed or hit the `--max-duration` cap; a single-scenario
+  failure does not abort the remaining scenarios (AC6).
 
 ## Progress output & dependency preflight
 

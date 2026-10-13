@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import {
   AUDIO_SILENCE_PEAK_FLOOR,
@@ -47,6 +47,7 @@ import {
   RUN_ENDED_STORE_KEY,
   buildIterationRecord,
   buildRunEndedListenerPlan,
+  buildScenarioCapturePlan,
   captureExitCode,
   captureStartKeys,
   captureStartPlan,
@@ -57,12 +58,15 @@ import {
   loadBotTuningConfigFile,
   parseCaptureArgs,
   parseCaptureCount,
+  planCaptureRun,
   readRunEndedSignal,
   renderScenarioListing,
   resolveCaptureMode,
   resolveOutputPaths,
   runCaptureIterations,
+  runCaptureSession,
   summariseCaptureBatch,
+  uniquifyOutputPath,
   START_KEY_GAP_MS,
   BOT_TUNING_STORAGE_KEY,
   installBotTuningConfig,
@@ -1785,7 +1789,6 @@ describe('bot-tuning config injection (AH-0MV6MFDYG001E6PL)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-
   it('loadBotTuningConfigFile fails fast on invalid config entries', () => {
     const dir = mkdtempSync(join(tmpdir(), 'bot-tuning-'));
     const file = join(dir, 'bad-configs.json');
@@ -1795,5 +1798,367 @@ describe('bot-tuning config injection (AH-0MV6MFDYG001E6PL)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+
+describe('--all-scenarios batch capture (AH-0MV6JGQFK007MXGX)', () => {
+  it('parseCaptureArgs recognises --all-scenarios (takes no value)', () => {
+    expect(parseCaptureArgs([]).allScenarios).toBe(false);
+    expect(parseCaptureArgs(['--all-scenarios']).allScenarios).toBe(true);
+    // Coexists with the shared flags; the value is a boolean, not a path.
+    const options = parseCaptureArgs([
+      '--all-scenarios',
+      '--json',
+      '--output',
+      'clips',
+    ]);
+    expect(options.allScenarios).toBe(true);
+    expect(options.json).toBe(true);
+    expect(options.output).toBe('clips');
+  });
+
+  it('buildScenarioCapturePlan yields one item per registered scenario, in order, no demo', () => {
+    const items = buildScenarioCapturePlan({
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+
+    expect(items.map((item) => item.scenario)).toEqual(
+      CAPTURE_SCENARIOS.map((scenario) => scenario.name),
+    );
+    expect(items).toHaveLength(CAPTURE_SCENARIOS.length);
+    expect(items.map((item) => item.index)).toEqual([1, 2, 3]);
+    // No default no-scenario demo item: every item names a registered scenario.
+    for (const item of items) {
+      expect(CAPTURE_SCENARIOS.map((scenario) => scenario.name)).toContain(
+        item.scenario,
+      );
+      expect(item.effect).toBeTruthy();
+    }
+  });
+
+  it('default names are deterministic, timestamped and collision-free', () => {
+    const a = buildScenarioCapturePlan({ timestamp: 'STAMP', exists: () => false });
+    const b = buildScenarioCapturePlan({ timestamp: 'STAMP', exists: () => false });
+
+    expect(a.map((item) => item.outputPath)).toEqual(
+      b.map((item) => item.outputPath),
+    );
+    expect(new Set(a.map((item) => item.outputPath)).size).toBe(a.length);
+    for (const item of a) {
+      expect(basename(item.outputPath)).toBe(`${item.scenario}-STAMP.webm`);
+    }
+  });
+
+  it('treats --output as a directory for a batch', () => {
+    const items = buildScenarioCapturePlan({
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+
+    for (const item of items) {
+      expect(dirname(item.outputPath)).toBe(resolve(process.cwd(), 'clips'));
+    }
+    expect(items.map((item) => basename(item.outputPath))).toEqual(
+      CAPTURE_SCENARIOS.map((scenario) => `${scenario.name}.webm`),
+    );
+  });
+
+  it('never silently overwrites an existing file (a taken name gets -n), and not even a different item collides', () => {
+    const items = buildScenarioCapturePlan({
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+    const taken = new Set([items[0].outputPath, items[1].outputPath]);
+
+    const second = buildScenarioCapturePlan({
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: (path) => taken.has(path),
+    });
+
+    // The taken names moved; the free third name is untouched; all distinct.
+    expect(second.map((item) => item.outputPath)).not.toContain(
+      items[0].outputPath,
+    );
+    expect(second.map((item) => item.outputPath)).not.toContain(
+      items[1].outputPath,
+    );
+    expect(basename(second[0].outputPath)).toBe('boss-2.webm');
+    expect(basename(second[1].outputPath)).toBe('boss-four-hits-2.webm');
+    expect(basename(second[2].outputPath)).toBe('defeat.webm');
+    expect(new Set(second.map((item) => item.outputPath)).size).toBe(
+      second.length,
+    );
+  });
+
+  it('uniquifyOutputPath inserts -n before the extension (and handles no extension)', () => {
+    const taken = new Set(['/x/demo.webm', '/x/demo-2.webm']);
+    expect(uniquifyOutputPath('/x/demo.webm', (p) => taken.has(p))).toBe(
+      '/x/demo-3.webm',
+    );
+    expect(uniquifyOutputPath('/x/demo.webm', () => false)).toBe(
+      '/x/demo.webm',
+    );
+    expect(uniquifyOutputPath('/x/demo', () => false)).toBe('/x/demo');
+    const taken2 = new Set(['/x/demo']);
+    expect(uniquifyOutputPath('/x/demo', (p) => taken2.has(p))).toBe(
+      '/x/demo-2',
+    );
+  });
+
+  it('planCaptureRun expands the registry for --all-scenarios and keeps the single path unchanged', () => {
+    const all = planCaptureRun(
+      { allScenarios: true, count: 1, output: 'clips', scenario: null },
+      { exists: () => false },
+    );
+    expect(all.allScenarios).toBe(true);
+    expect(all.batch).toBe(true);
+    expect(all.items.map((item) => item.scenario)).toEqual(
+      CAPTURE_SCENARIOS.map((scenario) => scenario.name),
+    );
+
+    const single = planCaptureRun(
+      { allScenarios: false, count: 1, output: null, scenario: 'defeat' },
+      { exists: () => false },
+    );
+    expect(single.batch).toBe(false);
+    expect(single.allScenarios).toBe(false);
+    expect(single.items).toHaveLength(1);
+    expect(single.items[0].scenario).toBe('defeat');
+  });
+
+  it('rejects --count > 1 with --all-scenarios until the N x all child lands', () => {
+    expect(() =>
+      planCaptureRun({ allScenarios: true, count: 3 }, { exists: () => false }),
+    ).toThrow(/AH-0MV6JGQSA0054CYY/);
+  });
+
+  it('runCaptureSession boots exactly one server and one browser, with a fresh page per item', async () => {
+    let serverBoots = 0;
+    let browserLaunches = 0;
+    const pages: Array<{ id: number }> = [];
+    const items = buildScenarioCapturePlan({
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+
+    const fakeServer = {
+      listen: async () => {},
+      httpServer: { address: () => ({ port: 4321 }) },
+      close: async () => {},
+    };
+    const fakeBrowser = {
+      newPage: async () => {
+        const page = { id: pages.length + 1, close: async () => {} };
+        pages.push(page);
+        return page;
+      },
+      close: async () => {},
+    };
+
+    const seen: Array<{
+      scenario: string | null;
+      outputPath: string;
+      pageId: number;
+    }> = [];
+    const { batch } = await runCaptureSession({
+      items,
+      options: {},
+      reporter: { step() {}, progress() {}, done() {} },
+      createViteServer: async () => {
+        serverBoots += 1;
+        return fakeServer;
+      },
+      launchBrowser: async () => {
+        browserLaunches += 1;
+        return fakeBrowser;
+      },
+      captureOne: async ({ item, outputPath, page }) => {
+        seen.push({
+          scenario: item.scenario,
+          outputPath,
+          pageId: (page as { id: number }).id,
+        });
+        return {
+          output: outputPath,
+          scenario: item.scenario,
+          bytes: 1024,
+          durationMs: 1000,
+          nonTrivial: true,
+          capHit: false,
+          reasons: [],
+          pageErrors: [],
+        };
+      },
+    });
+
+    // AC2/AC5 instrumentation: one Vite server and one Chromium per batch.
+    expect(serverBoots).toBe(1);
+    expect(browserLaunches).toBe(1);
+    expect(seen).toHaveLength(items.length);
+    expect(seen.map((entry) => entry.scenario)).toEqual(
+      CAPTURE_SCENARIOS.map((scenario) => scenario.name),
+    );
+    // A fresh page per item — no reuse, no shared state channel.
+    expect(new Set(seen.map((entry) => entry.pageId)).size).toBe(items.length);
+    expect(batch).toMatchObject({
+      count: items.length,
+      succeeded: items.length,
+      failed: 0,
+    });
+    expect(captureExitCode(batch)).toBe(0);
+  });
+
+  it('continues after a failed scenario and exits non-zero when any item fails or hits the cap', async () => {
+    const items = buildScenarioCapturePlan({
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+    const attempted: Array<string | null> = [];
+    const fakeServer = {
+      listen: async () => {},
+      httpServer: { address: () => ({ port: 4321 }) },
+      close: async () => {},
+    };
+    const fakeBrowser = {
+      newPage: async () => ({ close: async () => {} }),
+      close: async () => {},
+    };
+
+    const { batch } = await runCaptureSession({
+      items,
+      options: {},
+      reporter: { step() {}, progress() {}, done() {} },
+      createViteServer: async () => fakeServer,
+      launchBrowser: async () => fakeBrowser,
+      captureOne: async ({ item, outputPath, index }) => {
+        attempted.push(item.scenario);
+        if (index === 2) throw new Error('codec exploded');
+        if (index === items.length) {
+          // The last scenario runs but hits the cap without a run-end signal.
+          return {
+            output: outputPath,
+            scenario: item.scenario,
+            bytes: 1,
+            durationMs: 1,
+            nonTrivial: true,
+            fullRun: true,
+            capHit: true,
+            reasons: [],
+            pageErrors: [],
+          };
+        }
+        return {
+          output: outputPath,
+          scenario: item.scenario,
+          bytes: 1024,
+          durationMs: 1000,
+          nonTrivial: true,
+          capHit: false,
+          reasons: [],
+          pageErrors: [],
+        };
+      },
+    });
+
+    // A single-item failure did NOT abort the remaining items.
+    expect(attempted).toEqual(
+      CAPTURE_SCENARIOS.map((scenario) => scenario.name),
+    );
+    // The thrown item and the capped item both count as failures.
+    expect(batch.failed).toBeGreaterThanOrEqual(2);
+    expect(batch.iterations[1]).toMatchObject({
+      scenario: CAPTURE_SCENARIOS[1].name,
+      ok: false,
+      error: 'codec exploded',
+    });
+    expect(batch.iterations[2]).toMatchObject({
+      scenario: CAPTURE_SCENARIOS[2].name,
+      ok: false,
+      capHit: true,
+    });
+    expect(captureExitCode(batch)).toBe(1);
+  });
+
+  it('writes one distinct file per scenario and round-trips scenario names through JSON', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aihell-all-scenarios-e2e-'));
+    try {
+      const items = buildScenarioCapturePlan({
+        output: dir,
+        timestamp: 'STAMP',
+        exists: () => false,
+      });
+      const fakeServer = {
+        listen: async () => {},
+        httpServer: { address: () => ({ port: 4321 }) },
+        close: async () => {},
+      };
+      const fakeBrowser = {
+        newPage: async () => ({ close: async () => {} }),
+        close: async () => {},
+      };
+
+      const { batch } = await runCaptureSession({
+        items,
+        options: {},
+        reporter: { step() {}, progress() {}, done() {} },
+        createViteServer: async () => fakeServer,
+        launchBrowser: async () => fakeBrowser,
+        captureOne: async ({ item, outputPath }) => {
+          writeFileSync(outputPath, Buffer.alloc(256, 1));
+          return {
+            output: outputPath,
+            scenario: item.scenario,
+            bytes: 256,
+            durationMs: 100,
+            nonTrivial: true,
+            capHit: false,
+            reasons: [],
+            pageErrors: [],
+          };
+        },
+      });
+
+      expect(new Set(items.map((item) => basename(item.outputPath))).size).toBe(
+        items.length,
+      );
+      for (const item of items) expect(existsSync(item.outputPath)).toBe(true);
+      expect(batch).toMatchObject({
+        count: items.length,
+        succeeded: items.length,
+        failed: 0,
+      });
+      const payload = JSON.parse(JSON.stringify(batch));
+      expect(
+        payload.iterations.map(
+          (it: { scenario?: string | null }) => it.scenario,
+        ),
+      ).toEqual(CAPTURE_SCENARIOS.map((scenario) => scenario.name));
+      expect(captureExitCode(batch)).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it('keeps a single --scenario invocation byte-for-byte unchanged (backwards compat)', () => {
+    const options = parseCaptureArgs(['--scenario', 'defeat']);
+    const plan = planCaptureRun(options, { exists: () => false });
+
+    expect(plan.batch).toBe(false);
+    expect(plan.allScenarios).toBe(false);
+    expect(plan.items).toHaveLength(1);
+    expect(plan.items[0].scenario).toBe('defeat');
+    expect(captureUrl('http://127.0.0.1:1/', options)).toBe(
+      'http://127.0.0.1:1/?scenario=defeat',
+    );
+
+    // The single-clip output resolution is untouched by the new flags.
+    const [single] = resolveOutputPaths(null, 1);
+    expect(basename(single)).toMatch(/^gameplay-.*\.webm$/);
   });
 });

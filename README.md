@@ -522,6 +522,17 @@ added by AH-0MUWTNPYJ0031FQE):
   decodes the recorded **Opus audio** (track count, peak, RMS), then **exits
   non-zero** if the clip is black/static **or** has no non-silent audio track,
   so it can gate a future job.
+- **Batch scenarios (`--all-scenarios`):** `npm run capture -- --all-scenarios`
+  records **one video per registered dev scenario** in a single process — one
+  Vite dev server and one browser, a fresh page per scenario, per-item failure
+  isolation — and prints an aggregate summary that exits **non-zero** if any
+  scenario failed or hit the `--max-duration` cap (AH-0MV6JGQFK007MXGX). The
+  set is read from the shared registry, so it matches
+  `npm run capture -- --list-scenarios`; the default no-scenario demo run is
+  **not** included. `--output <dir>` is a directory
+  (`<dir>/<scenario>.webm`); without it files default to
+  `capture-output/<scenario>-<timestamp>.webm` and an existing file is never
+  silently overwritten (a `-<n>` suffix is used).
 - **How it works:** `scripts/capture-gameplay.mjs` starts the Vite dev server
   programmatically, installs a page-side Web Audio tap (wrapping
   `AudioNode.prototype.connect` so the game's shared master gain is mirrored

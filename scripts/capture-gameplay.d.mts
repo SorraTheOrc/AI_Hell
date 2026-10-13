@@ -30,6 +30,8 @@ export interface CaptureOptions {
   botConfig: string | null;
   /** Resolved bot-tuning state to inject (filled in by `runCapture`). */
   botTuningState?: BotTuningStoreState;
+  /** True when `--all-scenarios` was passed: one clip per registered scenario. */
+  allScenarios: boolean;
   help?: boolean;
 }
 
@@ -95,6 +97,51 @@ export function resolveOutputPaths(
   requested: string | null | undefined,
   count?: number,
 ): string[];
+/**
+ * Returns a collision-free variant of a target output path: a `-<n>` suffix is
+ * inserted before the extension until `exists` reports the path free.
+ */
+export function uniquifyOutputPath(
+  candidate: string,
+  exists?: (path: string) => boolean,
+): string;
+
+/** One item of an `--all-scenarios` capture plan. */
+export interface CapturePlanItem {
+  /** 1-based position in the plan. */
+  index: number;
+  /** Registered scenario name (`null` for a non-scenario single/count item). */
+  scenario: string | null;
+  /** The scenario's one-line effect (all-scenarios items only). */
+  effect?: string;
+  /** Absolute output path for this item. */
+  outputPath: string;
+}
+
+/**
+ * Builds the ordered `--all-scenarios` item list: one item per registered dev
+ * scenario, deterministic and collision-free (`--output` is a directory).
+ */
+export function buildScenarioCapturePlan(params?: {
+  scenarios?: Array<{ name: string; effect: string }>;
+  output?: string | null;
+  timestamp?: string;
+  exists?: (path: string) => boolean;
+}): CapturePlanItem[];
+
+/**
+ * Resolves the capture items for an invocation: `--all-scenarios` expands the
+ * registry, otherwise the single-clip / `--count` path is used unchanged.
+ */
+export function planCaptureRun(
+  options?: {
+    allScenarios?: boolean;
+    count?: number;
+    output?: string | null;
+    scenario?: string | null;
+  },
+  deps?: { exists?: (path: string) => boolean },
+): { items: CapturePlanItem[]; batch: boolean; allScenarios: boolean };
 export function resolveCaptureMode(options?: {
   scripted?: boolean;
   scenario?: string | null;
@@ -129,6 +176,8 @@ export function loadBotTuningConfigFile(filePath: string): BotTuningStoreState;
 export interface CaptureIterationRecord {
   index: number;
   output: string;
+  /** The dev scenario this clip belongs to, or null. */
+  scenario?: string | null;
   ok: boolean;
   exitCode?: number;
   bytes?: number;
@@ -165,10 +214,33 @@ export function summariseCaptureBatch(
 ): CaptureBatchSummary;
 export function runCaptureIterations(params: {
   outputPaths: string[];
+  items?: CapturePlanItem[];
   captureOne: (args: {
     index: number;
     outputPath: string;
+    item: CapturePlanItem;
   }) => Promise<Record<string, unknown>>;
   reporter?: object;
   onIteration?: (record: CaptureIterationRecord) => void;
 }): Promise<CaptureBatchSummary>;
+
+/**
+ * Boots one Vite server + one browser, records every item (a fresh page per
+ * item) and tears both down once. Factories are injectable for hermetic
+ * single-boot tests.
+ */
+export function runCaptureSession(params: {
+  items: CapturePlanItem[];
+  options?: object;
+  reporter?: object;
+  captureOne: (args: {
+    item: CapturePlanItem;
+    index: number;
+    outputPath: string;
+    page: object;
+    session: { browser: object; baseUrl: string };
+  }) => Promise<Record<string, unknown>>;
+  createViteServer?: Function;
+  launchBrowser?: Function;
+  createPage?: Function;
+}): Promise<{ batch: CaptureBatchSummary; clips: object[]; baseUrl: string }>;
