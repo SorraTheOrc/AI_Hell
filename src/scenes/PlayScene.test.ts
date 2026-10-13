@@ -2242,6 +2242,9 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
+    // Base (un-boosted) movement config, captured before activation.
+    const baseConfig = player.getMovementConfig();
+
     // Activate Speed Boost.
     const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
@@ -2251,15 +2254,28 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.speedMultiplier()).toBe(1.5);
 
-    // Advance past the 10 s duration.
-    for (let i = 0; i < 600; i++) scene.tick(0.016); // ~9.6 s
-    scene.tick(0.5); // past 10 s
+    // Advance to just inside the resolved window, then comfortably past it
+    // (AH-0MV6T0HU0001IS71). The level-0 Speed Boost window resolves to
+    // exactly 10 s, so the old fixed 10.1 s advance (600 × 0.016 + 0.5)
+    // left only ~0.1 s of margin and flaked under full-suite load; deriving
+    // the advance from the registry's actual remaining window keeps the
+    // expiry assertion deterministic regardless of tuning.
+    const remaining = registry.remaining('speed_boost')!;
+    expect(remaining).toBeGreaterThan(0);
+    const insideWindow = Math.max(1, Math.floor(remaining / 0.016) - 10);
+    for (let i = 0; i < insideWindow; i++) scene.tick(0.016);
+    expect(registry.isActive('speed_boost')).toBe(true);
+    expect(registry.speedMultiplier()).toBe(1.5);
+
+    // 2 s past the window — the effect has expired and the movement config
+    // is back to the un-boosted base.
+    for (let i = 0; i < Math.ceil(2 / 0.016); i++) scene.tick(0.016);
 
     expect(registry.isActive('speed_boost')).toBe(false);
     expect(registry.speedMultiplier()).toBe(1);
-    expect(player.getMovementConfig().thrust).toBeCloseTo(
-      player.getMovementConfig().thrust, // back to base
-    );
+    const after = player.getMovementConfig();
+    expect(after.thrust).toBeCloseTo(baseConfig.thrust);
+    expect(after.maxSpeed).toBeCloseTo(baseConfig.maxSpeed);
   });
 
   it('re-collecting P5 refreshes the duration', async () => {
@@ -2330,9 +2346,20 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     scene.tick(0.016);
     expect(player.getFireRateMultiplier()).toBe(1.5);
 
-    // Advance past the 10 s duration.
-    for (let i = 0; i < 600; i++) scene.tick(0.016); // ~9.6 s
-    scene.tick(0.5); // past 10 s
+    // Advance to just inside the resolved window, then comfortably past it
+    // (AH-0MV6T0HU0001IS71). The old fixed 10.1 s advance sat only ~0.1 s
+    // past the level-0 10 s window and flaked under full-suite load; the
+    // window is derived from the registry so the expiry assertion is
+    // deterministic regardless of tuning.
+    const remaining = registry.remaining('speed_boost')!;
+    expect(remaining).toBeGreaterThan(0);
+    const insideWindow = Math.max(1, Math.floor(remaining / 0.016) - 10);
+    for (let i = 0; i < insideWindow; i++) scene.tick(0.016);
+    expect(registry.isActive('speed_boost')).toBe(true);
+
+    // 2 s past the window — the effect has expired and the fire-rate
+    // multiplier is back to 1.
+    for (let i = 0; i < Math.ceil(2 / 0.016); i++) scene.tick(0.016);
 
     expect(registry.isActive('speed_boost')).toBe(false);
     expect(player.getFireRateMultiplier()).toBe(1);
