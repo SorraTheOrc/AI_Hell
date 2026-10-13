@@ -27,6 +27,8 @@ function makeConfig(overrides: Partial<EnemyConfig> = {}): EnemyConfig {
   return {
     key: overrides.key ?? 'scout',
     displayName: overrides.displayName ?? 'Scout',
+    movementClass: overrides.movementClass ?? 'formation',
+    attackClass: overrides.attackClass ?? 'projectile',
     formationKind: overrides.formationKind ?? 'v',
     count: overrides.count ?? 6,
     spacingX: overrides.spacingX ?? 26,

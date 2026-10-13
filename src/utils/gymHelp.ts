@@ -123,6 +123,22 @@ export function getHelpEntries(drops: readonly HelpDropId[]): HelpEntry[] {
   return drops.map((id) => getHelpEntry(id));
 }
 
+/**
+ * Resolves the shared one-line player-facing description for a drop id, using
+ * the same catalogue lookup as {@link getHelpEntry}.
+ *
+ * Exposed so a non-help consumer — the hold-full choice overlay
+ * (`src/powerups/choice.ts`) — can reuse the single source of truth for item
+ * copy instead of duplicating any catalogue text, keeping the overlay and the
+ * gym help identical (AH-0MV2N2591007UGPD · AC4).
+ *
+ * @param id — a drop id (`DropId`) or the permanent `'cannon'`.
+ * @throws Error if the id is not present in any catalogue.
+ */
+export function getHelpDescription(id: HelpDropId): string {
+  return getHelpEntry(id).description;
+}
+
 /** Configuration for {@link addHelpButton}. */
 export interface GymHelpConfig {
   /** Scene key of the gym the help belongs to (resumed on close). */

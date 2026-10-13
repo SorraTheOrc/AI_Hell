@@ -41,6 +41,28 @@
  * turn is closed-loop: a held "aim at the mineral" intent tracks the target
  * precisely and never overshoots the way an open-loop held turn key would.
  *
+ * ## Inertia-aware turn hold (AH-0MV1DUSM2005HL98 · AC1)
+ *
+ * Because the Asteroids model now ramps angular velocity, releasing the turn
+ * on the *instantaneous* heading error lets the hull coast a few degrees past
+ * (or short of) the target bearing.  {@link toAsteroidsInput} therefore
+ * releases against the ship's **predicted stop heading** — current facing plus
+ * the closed-form coast to zero spin ({@link angularStopDisplacement}) at the
+ * ship's live `rotationDeceleration` — and brakes with the opposite turn when
+ * that coast would overshoot.  The ship's live `angularVelocity` and rotation
+ * config reach the actuator through {@link BotControlContext}; with no angular
+ * velocity the prediction is zero and the release reduces exactly to the
+ * legacy rule.
+ *
+ * ## Aim skill (AH-0MV1DUSM2005HL98 · AC3)
+ *
+ * The `skill` tunable (default `1.0`) lets a designer trade aim precision for
+ * a more fallible, human-looking pilot: the governor perturbs each committed
+ * **aim** intent's bearing by a seeded random error bounded by
+ * `maxAimErrorRad × (1 - skill)`.  Non-aim (survival/evade) intents are never
+ * perturbed, so lowering skill degrades aim without degrading collision
+ * avoidance.
+ *
  * ## Human-like thrust presses (AC15/AC16)
  *
  * The forward-model throttle can flip the thrust key every tick near the
@@ -71,6 +93,10 @@ import type {
   ControlInput,
   ControlSchemeType,
   FourDirectionalInput,
+} from '../utils/movementModel';
+import {
+  DEFAULT_ROTATION_DECELERATION,
+  angularStopDisplacement,
 } from '../utils/movementModel';
 
 /** All-false four-directional intent (the bot holds station). */
@@ -159,6 +185,21 @@ export interface BotHumanInputTunables {
    * reverse-thrust press duration, mirroring the forward gentle reduction.
    */
   reversePressGentleMaxPct: number;
+  /**
+   * Aim skill in `[0, 1]` (AC3): a single knob that trades aim precision for
+   * "human" fallibility. At `skill = 1` (the default) the bot aims exactly as
+   * before and consumes no random draw; as skill falls the governor perturbs
+   * the committed aim bearing by a seeded random error whose magnitude scales
+   * with `(1 - skill)` up to {@link maxAimErrorRad}. Survival/evade intents
+   * are never perturbed — `skill` only degrades aim.
+   */
+  skill: number;
+  /**
+   * Maximum aim error (radians) added at `skill = 0` (AC3). At an intermediate
+   * skill the error is drawn uniformly from `[-maxAimErrorRad·(1-skill),
+   * +maxAimErrorRad·(1-skill)]`. Default 0.35 rad (≈ 20°).
+   */
+  maxAimErrorRad: number;
 }
 
 /** Default human-like constraints (AC1/AC2). */
@@ -175,6 +216,8 @@ export const BOT_HUMAN_INPUT_TUNABLES: BotHumanInputTunables = {
   reversePressMaxMs: 260,
   reversePressGentleMinPct: 0.02,
   reversePressGentleMaxPct: 0.06,
+  skill: 1,
+  maxAimErrorRad: 0.35,
 };
 
 /** Default seed for the governor's press-duration RNG (deterministic). */
@@ -225,6 +268,13 @@ export interface SteeredIntent extends FourDirectionalInput {
    * enabled.
    */
   readonly reverse?: boolean;
+  /**
+   * Whether this intent is an **aim** intent — the ship is holding its weapon
+   * axis on a target (AH-0MV1DUSM2005HL98 · AC3). Only aim intents are
+   * perturbed by the `skill` aim error; survival/evade/travel intents are left
+   * exact so lowering `skill` never degrades collision avoidance.
+   */
+  readonly aim?: boolean;
 }
 
 /** The ship context the governor needs to execute a steering intent. */
@@ -241,12 +291,50 @@ export interface BotControlContext {
    * on it (intent AND flag, defence in depth).
    */
   reverseEnabled?: boolean;
+  /**
+   * The ship's signed angular velocity (rad/s; positive = clockwise) at the
+   * start of this tick (AH-0MV1DUSM2005HL98 · AC1).  The inertia-aware turn
+   * release uses it (with {@link rotationDeceleration}) to predict the heading
+   * the hull will settle on once the turn input is released.  Defaults to `0`,
+   * which reduces the release exactly to the legacy instantaneous-error rule.
+   */
+  angularVelocity?: number;
+  /**
+   * The ship's live rotation top speed (rad/s) from its `AsteroidsConfig`
+   * (AH-0MV1DUSM2005HL98 · AC1).  Carried for completeness so the bot layer
+   * never hard-codes ship rotation constants.
+   */
+  rotationSpeed?: number;
+  /**
+   * The ship's live rotation spin-up rate (rad/s²) from its `AsteroidsConfig`
+   * (AH-0MV1DUSM2005HL98 · AC1).
+   */
+  rotationAcceleration?: number;
+  /**
+   * The ship's live rotation spin-down rate (rad/s²) from its
+   * `AsteroidsConfig` (AH-0MV1DUSM2005HL98 · AC1).  This is the rate the
+   * predicted stop heading coasts at; it defaults to the shared
+   * `DEFAULT_ROTATION_DECELERATION` when omitted.
+   */
+  rotationDeceleration?: number;
 }
 
 /**
  * Resolves a scheme-agnostic four-directional steering intent into the
  * ship's `AsteroidsInput` (W/A/D): rotate toward the desired direction until
- * the ship is within `toleranceRad` of it, then thrust forward.
+ * the ship's **predicted stop heading** is within `toleranceRad` of it, then
+ * thrust forward.
+ *
+ * The release is **inertia-aware** (AH-0MV1DUSM2005HL98 · AC1): because the
+ * Asteroids model ramps angular velocity, releasing the turn on the
+ * *instantaneous* error leaves the hull a few degrees off the target as the
+ * spin coasts down. Instead the turn is held while the heading the ship will
+ * coast to (current facing plus {@link angularStopDisplacement}) is still more
+ * than `toleranceRad` from the bearing, and the opposite turn is applied when
+ * that coast would overshoot. The check is re-run every tick against the live
+ * facing, so the turn stays closed-loop. With `angularVelocity = 0` (the
+ * default, and any ship without a spin ramp) this reduces exactly to the
+ * legacy instantaneous-error release.
  *
  * When the intent requests **reverse** and reverse is allowed, the ship
  * reverses toward the desired bearing instead: if the nose is already aligned
@@ -260,6 +348,10 @@ export interface BotControlContext {
  * @param facing — the ship's current facing angle in radians.
  * @param toleranceRad — heading error within which forward thrust begins.
  * @param reverseAllowed — the ship's reverse-thruster enable flag (AC4).
+ * @param angularVelocity — the ship's signed angular velocity (rad/s); `0`
+ *   disables the inertia prediction (AC1).
+ * @param rotationDeceleration — the ship's live spin-down rate (rad/s²);
+ *   defaults to the shared `DEFAULT_ROTATION_DECELERATION` (AC1).
  * @returns the `AsteroidsInput` for the current tick.
  */
 export function toAsteroidsInput(
@@ -267,6 +359,8 @@ export function toAsteroidsInput(
   facing: number,
   toleranceRad: number = BOT_HUMAN_INPUT_TUNABLES.alignmentToleranceRad,
   reverseAllowed = true,
+  angularVelocity = 0,
+  rotationDeceleration: number = DEFAULT_ROTATION_DECELERATION,
 ): AsteroidsInput {
   const precise = preciseDirection(intent);
   const dx = precise ? precise.dx : (intent.right ? 1 : 0) - (intent.left ? 1 : 0);
@@ -283,7 +377,7 @@ export function toAsteroidsInput(
   );
 
   if (intent.reverse === true && reverseAllowed) {
-    if (Math.abs(error) <= toleranceRad) {
+    if (resolveTurn(error, angularVelocity, rotationDeceleration, toleranceRad) === 0) {
       // Nose already on the travel bearing: reverse decelerates / backs the
       // ship straight up (brake-assist / kiting).
       return {
@@ -299,7 +393,13 @@ export function toAsteroidsInput(
       Math.sin(error - Math.PI),
       Math.cos(error - Math.PI),
     );
-    if (Math.abs(reverseError) <= toleranceRad) {
+    const reverseTurn = resolveTurn(
+      reverseError,
+      angularVelocity,
+      rotationDeceleration,
+      toleranceRad,
+    );
+    if (reverseTurn === 0) {
       return {
         forward: false,
         turnLeft: false,
@@ -309,13 +409,19 @@ export function toAsteroidsInput(
     }
     return {
       forward: false,
-      turnLeft: reverseError < 0,
-      turnRight: reverseError > 0,
+      turnLeft: reverseTurn < 0,
+      turnRight: reverseTurn > 0,
       reverse: false,
     };
   }
 
-  if (Math.abs(error) <= toleranceRad) {
+  const turn = resolveTurn(
+    error,
+    angularVelocity,
+    rotationDeceleration,
+    toleranceRad,
+  );
+  if (turn === 0) {
     // Aimed at the target: thrust unless the forward model says coasting
     // (braking) is required to avoid overshooting.
     return {
@@ -327,10 +433,50 @@ export function toAsteroidsInput(
   }
   return {
     forward: false,
-    turnLeft: error < 0,
-    turnRight: error > 0,
+    turnLeft: turn < 0,
+    turnRight: turn > 0,
     reverse: false,
   };
+}
+
+/**
+ * Resolves the turn command for a heading `error` given the ship's current
+ * angular momentum (AH-0MV1DUSM2005HL98 · AC1).
+ *
+ * The predicted **stop heading** is the live error minus the closed-form coast
+ * to zero spin ({@link angularStopDisplacement}); the turn is released when
+ * that predicted heading is within `toleranceRad` of the bearing, and the
+ * direction is chosen to drive the *stop* heading onto the bearing (so a
+ * coast that would overshoot commands the opposite turn, braking the spin).
+ * With zero angular velocity the coast is zero and this is exactly the legacy
+ * `sign(error)` release.
+ *
+ * @returns `-1` (turn left), `0` (release) or `+1` (turn right).
+ */
+function resolveTurn(
+  error: number,
+  angularVelocity: number,
+  rotationDeceleration: number,
+  toleranceRad: number,
+): -1 | 0 | 1 {
+  const coast = angularStopDisplacement(angularVelocity, rotationDeceleration);
+  const stopError = Math.atan2(
+    Math.sin(error - coast),
+    Math.cos(error - coast),
+  );
+  if (Math.abs(stopError) <= toleranceRad) return 0;
+  return stopError > 0 ? 1 : -1;
+}
+
+/** Cardinal booleans nearest to a unit bearing (matches `buildIntent`). */
+function cardinalOf(dx: number, dy: number): FourDirectionalInput {
+  return Math.abs(dx) >= Math.abs(dy)
+    ? dx >= 0
+      ? { up: false, down: false, left: false, right: true }
+      : { up: false, down: false, left: true, right: false }
+    : dy >= 0
+      ? { up: false, down: true, left: false, right: false }
+      : { up: true, down: false, left: false, right: false };
 }
 
 /**
@@ -385,6 +531,12 @@ export class BotInputGovernor {
   private reverseRandom: () => number;
   /** Separate RNG stream for the reverse gentle reduction (AC5). */
   private reverseGentleRandom: () => number;
+  /**
+   * Separate RNG stream for the seeded `skill` aim error
+   * (AH-0MV1DUSM2005HL98 · AC3).  A dedicated stream keeps the press-length
+   * sequences unchanged by the extra skill draw.
+   */
+  private aimRandom: () => number;
 
   /** Milliseconds left in the current forward-thrust press (0 = none). */
   private thrustPressRemainingMs = 0;
@@ -405,6 +557,7 @@ export class BotInputGovernor {
     this.gentleRandom = mulberry32(seed + 1);
     this.reverseRandom = mulberry32(seed + 2);
     this.reverseGentleRandom = mulberry32(seed + 3);
+    this.aimRandom = mulberry32(seed + 4);
   }
 
   /**
@@ -418,6 +571,7 @@ export class BotInputGovernor {
     this.gentleRandom = mulberry32(value + 1);
     this.reverseRandom = mulberry32(value + 2);
     this.reverseGentleRandom = mulberry32(value + 3);
+    this.aimRandom = mulberry32(value + 4);
   }
 
   /**
@@ -456,7 +610,7 @@ export class BotInputGovernor {
     const dtMs = Math.max(0, dtSeconds) * 1000;
     this.sinceCommitMs += dtMs;
     if (this.sinceCommitMs >= this.tunables.reactionTimeMs) {
-      this.committed = { ...decision };
+      this.committed = this.applySkillError(decision);
       this.sinceCommitMs = 0;
     } else if (typeof decision.thrust === 'boolean') {
       // Throttle/braking is a fast reflex: re-evaluate the thrust flag every
@@ -591,6 +745,42 @@ export class BotInputGovernor {
     return { ...this.committed };
   }
 
+  /**
+   * Applies the seeded `skill` aim error to a freshly committed decision
+   * (AH-0MV1DUSM2005HL98 · AC3).
+   *
+   * Only **aim** intents (`SteeredIntent.aim === true` — the ship holding its
+   * weapon axis on a target) are perturbed, so lowering `skill` degrades aim
+   * without ever degrading the survival/evade tier. The error is drawn from a
+   * dedicated RNG stream and rotates the precise bearing by a signed angle in
+   * `[-maxAimErrorRad·(1-skill), +maxAimErrorRad·(1-skill)]`; at `skill = 1`
+   * (or an intent with no usable bearing) the decision is returned unchanged
+   * and no draw is consumed. The cardinal booleans are re-derived from the
+   * perturbed bearing so the perturbation is scheme-agnostic (the
+   * four-directional scheme consumes the cardinals).
+   */
+  private applySkillError(decision: SteeredIntent): SteeredIntent {
+    if (decision.aim !== true) return { ...decision };
+    const maxError =
+      this.tunables.maxAimErrorRad * (1 - Math.max(0, this.tunables.skill));
+    if (!(maxError > 0)) return { ...decision };
+    const rawX = decision.dirX;
+    const rawY = decision.dirY;
+    if (typeof rawX !== 'number' || typeof rawY !== 'number') {
+      return { ...decision };
+    }
+    const len = Math.hypot(rawX, rawY);
+    if (!Number.isFinite(len) || len < 1e-9) return { ...decision };
+    const unitX = rawX / len;
+    const unitY = rawY / len;
+    const error = (this.aimRandom() * 2 - 1) * maxError;
+    const cos = Math.cos(error);
+    const sin = Math.sin(error);
+    const dx = unitX * cos - unitY * sin;
+    const dy = unitX * sin + unitY * cos;
+    return { ...decision, ...cardinalOf(dx, dy), dirX: dx, dirY: dy };
+  }
+
   /** Resolves a steering intent to the ship's scheme input. */
   private resolve(
     decision: SteeredIntent,
@@ -602,6 +792,8 @@ export class BotInputGovernor {
         context.facing,
         this.tunables.alignmentToleranceRad,
         context.reverseEnabled ?? false,
+        context.angularVelocity ?? 0,
+        context.rotationDeceleration,
       );
     }
     if (decision.thrust === false) return { ...IDLE_INPUT };

@@ -71,7 +71,6 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     { id: 'phase_shift', value: 1 },
     { id: 'magnet', value: 1 },
     { id: 'mineral_scoop', value: 1 },
-    { id: 'power_pellet', value: 1.3 },
     // The Smart Bomb is a rare but potent screen-clearing panic button: value
     // it highly so the bot prioritises it over ordinary drops
     // (AH-0MV1BIWP9003EHRQ).

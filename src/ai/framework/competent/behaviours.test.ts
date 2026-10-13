@@ -337,3 +337,55 @@ describe('engage behaviour — aim-preserving retreat / kiting (AC3)', () => {
     expect(intent!.reverse).toBe(false);
   });
 });
+
+// ── Lead prediction (AH-0MV1DUSM2005HL98 · AC2) ─────────────────────
+
+describe('engage behaviour — lead prediction (AH-0MV1DUSM2005HL98 AC2)', () => {
+  it('aims at the intercept of a crossing enemy, not its current position', () => {
+    // Enemy due right but climbing (negative y velocity): the intercept is
+    // above the current position, so the aim must gain a negative Y.
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [
+        { x: 620, y: 270, alive: true, archetype: 'scout', vx: 0, vy: -90 },
+      ],
+    });
+    const intent = engage.run(
+      context(snapshot, COMPETENT_GOAL_IDS.engageEnemy),
+    );
+    expect(intent).not.toBeNull();
+    // Not the current-position bearing (straight right)...
+    expect(intent!.dirY).toBeLessThan(-0.1);
+    // ...and the intent is flagged as an aim intent for the skill governor.
+    expect(intent!.aim).toBe(true);
+  });
+
+  it('reduces to the current position for a stationary enemy (zero velocity)', () => {
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [enemy(620, 270, 'scout')],
+    });
+    const intent = engage.run(
+      context(snapshot, COMPETENT_GOAL_IDS.engageEnemy),
+    );
+    expect(intent!.dirX).toBeCloseTo(1, 6);
+    expect(intent!.dirY).toBeCloseTo(0, 6);
+  });
+
+  it('does not lead when aimLeadEnabled is false (designer toggle)', () => {
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [
+        { x: 620, y: 270, alive: true, archetype: 'scout', vx: 0, vy: -90 },
+      ],
+    });
+    const disabled = createCompetentBehaviours({
+      ...T,
+      aimLeadEnabled: false,
+    }).require('engage');
+    const intent = disabled.run(
+      context(snapshot, COMPETENT_GOAL_IDS.engageEnemy),
+    );
+    expect(intent!.dirY).toBeCloseTo(0, 6);
+  });
+});

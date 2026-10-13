@@ -1,14 +1,24 @@
 /**
- * Reusable headless Web Audio test double (AH-0MUTYV8RJ009MWKJ).
+ * Reusable headless Web Audio test doubles (AH-0MUTYV8RJ009MWKJ,
+ * AH-0MV55O991003XOT8).
  *
- * A recording `AudioContext` implementation used by the audio contract
- * tests. It records the nodes, gain automation events and scheduled start
- * times that the production cue code requests, so tests can assert the
+ * A recording `AudioContext` implementation and a recording
+ * `SfxSoundProvider` used by the audio suites. They record the nodes, gain
+ * automation events and cue dispatch decisions (asset URL, delay, volume,
+ * loop) that the production cue code requests, so tests can assert the
  * playback contract without any real audio hardware.
  *
- * Extracted so the master volume/mute checks and the cue-contract suite
- * (`src/audio/effects.contract.test.ts`) share one double.
+ * `RecordingAudioContext` is shared by the master volume/mute checks and the
+ * cue-contract suite (`src/audio/effects.contract.test.ts`).
+ * `RecordingSfxProvider` is the cue-layer seam consumed by
+ * `src/audio/effects.test.ts` and the hold-full overlay suites.
  */
+
+import type {
+  SfxPlayOptions,
+  SfxSoundHandle,
+  SfxSoundProvider,
+} from '../audio/sfxPlayback';
 
 /** A single scheduled `AudioParam` automation event. */
 export interface RecordedGainEvent {
@@ -26,6 +36,24 @@ export interface RecordedGain {
   gainEvents: RecordedGainEvent[];
   node?: unknown;
   connectTargets: unknown[];
+}
+
+/** A single scheduled `AudioParam` automation event on a filter parameter. */
+export interface RecordedParamEvent {
+  method:
+    | 'setValueAtTime'
+    | 'exponentialRampToValueAtTime'
+    | 'linearRampToValueAtTime'
+    | 'cancelScheduledValues';
+  value: number;
+  time: number;
+}
+
+/** A recorded biquad filter: its frequency/Q automation events. */
+export interface RecordedFilter {
+  type: string;
+  frequencyEvents: RecordedParamEvent[];
+  qEvents: RecordedParamEvent[];
 }
 
 /** A recorded oscillator / buffer source with its scheduled start/stop times. */
@@ -50,6 +78,14 @@ export class RecordingAudioContext {
 
   oscillators: RecordedSource[] = [];
   gains: RecordedGain[] = [];
+  /** Every biquad filter created, in creation order (frequency/Q events recorded). */
+  filters: RecordedFilter[] = [];
+  /**
+   * Every buffer-source node created on this context (the nodes themselves,
+   * so tests can read `playbackRate.value`). Used to assert per-play rate
+   * application (the rising countdown tick, AH-0MV722WJS0075UTZ).
+   */
+  bufferSources: Array<{ playbackRate: { value: number } }> = [];
   /** Every target passed to `connect()` on this context's nodes. */
   connections: unknown[] = [];
 
@@ -136,9 +172,13 @@ export class RecordingAudioContext {
   createBufferSource(): unknown {
     const rec = this.recordSource('bufferSource', 'noise');
     const self = this;
-    return {
+    const node = {
       buffer: null as unknown,
       loop: false,
+      // Per-play rate (pitch/speed) — the rising countdown tick sets it
+      // (AH-0MV722WJS0075UTZ); the contract suite asserts the provider
+      // applies it to the shared source node.
+      playbackRate: { value: 1 },
       connect: (target: unknown) => {
         self.connections.push(target);
         return {
@@ -155,18 +195,46 @@ export class RecordingAudioContext {
         rec.stops.push(t);
       },
     };
+    this.bufferSources.push(node);
+    return node;
   }
 
   createBiquadFilter(): unknown {
+    const rec: RecordedFilter = {
+      type: 'lowpass',
+      frequencyEvents: [],
+      qEvents: [],
+    };
     const self = this;
+    this.filters.push(rec);
+    const frequency: RecordedParamEvent[] = rec.frequencyEvents;
+    const qEvents: RecordedParamEvent[] = rec.qEvents;
+    const push = (list: RecordedParamEvent[]) =>
+      (method: RecordedParamEvent['method']) =>
+      (value: number, time: number) => {
+        list.push({ method, value, time });
+      };
+    const freqPush = push(frequency);
+    const qPush = push(qEvents);
     return {
-      type: 'lowpass' as const,
-      frequency: {
-        setValueAtTime: () => {},
-        exponentialRampToValueAtTime: () => {},
-        linearRampToValueAtTime: () => {},
+      get type(): string {
+        return rec.type;
       },
-      Q: { setValueAtTime: () => {} },
+      set type(v: string) {
+        rec.type = v;
+      },
+      frequency: {
+        setValueAtTime: freqPush('setValueAtTime'),
+        exponentialRampToValueAtTime: freqPush('exponentialRampToValueAtTime'),
+        linearRampToValueAtTime: freqPush('linearRampToValueAtTime'),
+        cancelScheduledValues: freqPush('cancelScheduledValues'),
+      },
+      Q: {
+        setValueAtTime: qPush('setValueAtTime'),
+        exponentialRampToValueAtTime: qPush('exponentialRampToValueAtTime'),
+        linearRampToValueAtTime: qPush('linearRampToValueAtTime'),
+        cancelScheduledValues: qPush('cancelScheduledValues'),
+      },
       connect: (target: unknown) => {
         self.connections.push(target);
         return {};
@@ -201,7 +269,99 @@ export function lastGainValue(gain: RecordedGain): number | undefined {
   return undefined;
 }
 
+/** The most recent non-automation frequency scheduled on *filter*. */
+export function lastFilterFrequency(filter: RecordedFilter): number | undefined {
+  for (const ev of [...filter.frequencyEvents].reverse()) {
+    if (ev.method === 'setValueAtTime' || ev.method === 'linearRampToValueAtTime') {
+      return ev.value;
+    }
+  }
+  return undefined;
+}
+
 /** Clears recorded instances/events without touching the module cache. */
 export function resetRecordingAudioContext(): void {
   RecordingAudioContext.instances.length = 0;
+}
+
+// ── Recording SFX provider ──────────────────────────────────────────
+
+/** A single `play()` call recorded by {@link RecordingSfxProvider}. */
+export interface RecordedSfxPlay {
+  /** Baked asset URL passed to `play()` (e.g. `audio/sfx/card-token-earn.1.wav`). */
+  url: string;
+  /** Scheduled start delay in seconds, normalised from `options.delay` (default 0). */
+  delay: number;
+  /** Per-play gain in [0, 1], normalised from `options.volume` (default 1). */
+  volume: number;
+  /** Whether the play loops, normalised from `options.loop` (default false). */
+  loop: boolean;
+  /**
+   * Per-play playback rate, normalised from `options.rate` (default 1).
+   * > 1 = faster/higher; used by the rising countdown tick
+   * (AH-0MV722WJS0075UTZ).
+   */
+  rate: number;
+}
+
+/**
+ * In-memory {@link SfxSoundProvider} that records every cue dispatch instead
+ * of touching Web Audio. Inject it with
+ * `setSfxSoundProvider(new RecordingSfxProvider())` to assert the cue layer's
+ * decisions — resolved asset URL, per-play delay/volume/loop — and the master
+ * volume/mute/stop lifecycle.
+ *
+ * It is a faithful no-op substitute (no real audio, no `AudioContext`), so it
+ * is safe in headless environments and deterministic across runs.
+ */
+export class RecordingSfxProvider implements SfxSoundProvider {
+  /** Every recorded `play()` call, in dispatch order. */
+  readonly plays: RecordedSfxPlay[] = [];
+  /** Every value passed to `setVolume()`, in call order. */
+  readonly volumes: number[] = [];
+  /** Every value passed to `setMuted()`, in call order. */
+  readonly mutes: boolean[] = [];
+  /** How many returned handles have been stopped. */
+  stops = 0;
+
+  private context: AudioContext | null = null;
+
+  getAudioContext(): AudioContext | null {
+    return this.context;
+  }
+
+  useAudioContext(context: AudioContext | null): void {
+    this.context = context;
+  }
+
+  play(url: string, options: SfxPlayOptions = {}): SfxSoundHandle {
+    this.plays.push({
+      url,
+      delay: options.delay ?? 0,
+      volume: options.volume ?? 1,
+      loop: options.loop ?? false,
+      rate: options.rate ?? 1,
+    });
+    return {
+      stop: () => {
+        this.stops += 1;
+      },
+    };
+  }
+
+  setVolume(value: number): void {
+    this.volumes.push(value);
+  }
+
+  setMuted(muted: boolean): void {
+    this.mutes.push(muted);
+  }
+
+  reset(): void {
+    this.plays.length = 0;
+    this.volumes.length = 0;
+    this.mutes.length = 0;
+    this.stops = 0;
+    this.context = null;
+  }
 }

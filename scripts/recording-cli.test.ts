@@ -95,6 +95,13 @@ describe('record-session CLI', () => {
     });
   });
 
+  it('parses --bot-config into a file path (default null)', () => {
+    expect(parseRecordArgs([]).botConfig).toBeNull();
+    expect(parseRecordArgs(['--bot', '--bot-config', 'bot-tuning.json']).botConfig).toBe(
+      'bot-tuning.json',
+    );
+  });
+
   it('appends the dev seed to the game URL', () => {
     expect(recordUrl('http://localhost:5173/', { seed: 42 })).toBe('http://localhost:5173/?seed=42');
     expect(recordUrl('http://localhost:5173/?x=1', { seed: 42 })).toBe(

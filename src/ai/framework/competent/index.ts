@@ -57,6 +57,7 @@ export {
   chooseSteeringDirection,
   evaluateDirection,
   idleIntent,
+  interceptPoint,
   mayThrust,
   normalise,
   planSteering,

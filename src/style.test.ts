@@ -121,3 +121,40 @@ describe('gym-panel anchoring stylesheet (AH-0MUAYB7O4009LWBF)', () => {
     expect(getComputedStyle(header).display).not.toBe('none');
   });
 });
+
+describe('gym tooltip stylesheet (AH-0MV4XGXVL001GSB2)', () => {
+  afterEach(() => {
+    document.head
+      .querySelectorAll('style[data-test="gym-panel-anchoring"]')
+      .forEach((el) => el.remove());
+    document.body.innerHTML = '';
+  });
+
+  it('hides the tooltip by default and reveals it on the visible class', () => {
+    injectStylesheet();
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'gym-tooltip';
+    document.body.appendChild(tooltip);
+
+    const hidden = getComputedStyle(tooltip);
+    expect(hidden.position).toBe('fixed');
+    expect(hidden.opacity).toBe('0');
+    expect(hidden.pointerEvents).toBe('none');
+
+    tooltip.classList.add('gym-tooltip-visible');
+    expect(getComputedStyle(tooltip).opacity).toBe('1');
+  });
+
+  it('stacks the tooltip above the gym panels', () => {
+    injectStylesheet();
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'gym-tooltip';
+    document.body.appendChild(tooltip);
+
+    // `.gym-panel` sits at z-index 10; the tooltip must float above it (and
+    // the canvas) while `pointer-events: none` keeps it from eating clicks.
+    expect(Number(getComputedStyle(tooltip).zIndex)).toBeGreaterThan(10);
+  });
+});

@@ -297,6 +297,8 @@ function groupEnemyConfig(
   const base: EnemyConfig = seed ?? {
     key: group.enemyKey,
     displayName: group.enemyKey,
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: group.formation,
     count: group.count,
     spacingX: group.spacingX,

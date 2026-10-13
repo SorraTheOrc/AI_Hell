@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.1.12 (2026-10-13)
+> **Release focus:** This release focuses on improving the demo bot's aiming and piloting behaviour while giving designers live tuning tools with explanatory tooltips, alongside clearer upgrade choices and a more informative main menu. It also expands the campaign to 10 levels with classic-arcade enemies from level 6, refines enemy roles and movement, and fixes several gameplay issues including speed boost duration, cluster missile splitting, and reliable test results.
+### Features
+- Upgrade choices now explain what each weapon or power-up does before you pick. (AH-0MV2N2591007UGPD)
+- Bot tuning sliders now show helpful tooltips explaining what each setting does. (AH-0MV4XGXVL001GSB2)
+- The demo bot now aims more accurately, leading moving targets and landing its shots. (AH-0MV1DUSM2005HL98)
+- The demo bot now uses reverse thrusters like a skilled human pilot. (AH-0MV1J0OHP0072XA5)
+- Designers can now tune the bot's behavior live and save their settings. (AH-0MV4D7LAD009XYR0)
+- The Power Pellet power-up has been removed, so enemies no longer flee or stop firing. (AH-0MV5CB6KO0079N08)
+- The campaign now has 10 levels, with classic-arcade enemies appearing from level 6. (AH-0MV29SBAQ000HQR2)
+- Enemies now have clear movement and attack roles, helping designers build fairer, more balanced waves. (AH-0MV29NWI1007NKN7)
+- The countdown now clears the choice menu and its ticks rise in pitch for a more exciting restart. (AH-0MV722WJS0075UTZ)
+- The power-up choice now keeps your weapon rhythm going, then counts you back in. (AH-0MV0QPO4N009KWVT)
+- The main menu now shows the real GitHub logo, making the repository link easier to spot. (AH-0MV1BI9I70048V7M)
+- The main menu now shows the game version so you can easily report bugs. (AH-0MUZM9053008YXOZ)
+- Thruster hum is quieter and now pulses in time with your cannon fire. (AH-0MV01G4NL009JK92)
+- Watch Demo and video recordings now use your saved bot tuning settings. (AH-0MV6MFDYG001E6PL)
+- Capture multiple gameplay videos in one run, with a list of available scenarios. (AH-0MUZM8ATZ002AKFP)
+### Bug Fixes
+- Enemies in the bot tuning gym now aim at your ship instead of a fixed spot. (AH-0MV4XFQ0J0082BN6)
+- Centipede movement is now smooth and reliable during heavy action. (AH-0MV5JRAH90034PKR)
+- Speed boost now reliably expires after its full duration instead of lingering. (AH-0MV6T0HU0001IS71)
+- Cluster missiles now split sideways instead of firing one warhead backwards. (AH-0MV6LFTA4001R35Z)
+- The engine hum now fades out when the hold-full choice appears, so the pause feels clean instead of a stuck drone. (AH-0MV70Y2XY005J2HI)
+### Other
+- Test results are now trustworthy, so a green run truly means your game's tests passed. (AH-0MV53ABBU008FKE0)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.11 (2026-10-12)
 > **Release focus:** This release focuses on making combat and demo mode feel more rhythmic and human-like, with explosions landing on the beat, a smarter demo bot, and a shorter, more intense Central AI boss fight. It also adds classic arcade-inspired weapons, enemies, and power-ups, alongside quality-of-life improvements like automatic teleporting, reverse thrust, and full playthrough recording.
 ### Features

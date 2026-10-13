@@ -69,7 +69,7 @@ import { RULES_STORAGE_KEY } from '../core/rules';
 // is too tight and the heaviest boss-encounter test reports a spurious
 // timeout (AH-0MUIPP1UU000UT88). Give the file headroom so a slow parallel
 // run does not fail on timing alone.
-vi.setConfig({ testTimeout: 20000 });
+vi.setConfig({ testTimeout: 60000 });
 
 // These gameplay tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -172,7 +172,26 @@ function expectTransitionStarted(scene: PlayScene, maxTicks = 8): void {
 }
 
 /**
- * Walks the run to the boss encounter (Level 5 cleared).
+ * Resolves an open hold-full power-up choice, if any.
+ *
+ * Long deterministic boss walks tick the auto-fire through many waves; the
+ * resulting mineral drops eventually fill the hold and `PlayScene` pauses for
+ * the hold-full choice overlay (`openMineralChoice()` → `setPaused(true)`).
+ * A paused scene ignores `tick()` entirely, so a walk would stall in its
+ * iteration guard. Selecting the first option resumes play, exactly as a
+ * player would (AH-0MV5L6BVN005DP4I).
+ *
+ * @returns `true` when a choice was open and has been resolved so the caller
+ *   can retry the step.
+ */
+function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
+  if (!scene.isMineralChoiceOpen()) return false;
+  scene.selectMineralChoice(0);
+  return true;
+}
+
+/**
+ * Walks the run to the boss encounter (the final level cleared).
  *
  * Exit condition uses `bossActive` / `bossTriggered` on the WaveManager
  * rather than `scene.getBoss()`.  The boss entity is only created when
@@ -186,12 +205,18 @@ function reachBoss(scene: PlayScene): void {
   for (let guard = 0; guard < 200; guard++) {
     const wm = scene.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
+    // A hold-full pause freezes `tick()`; resolve it before walking on
+    // (AH-0MV5L6BVN005DP4I).
+    if (resolveMineralChoiceIfOpen(scene)) continue;
     killAllEnemies(scene);
     finishTransition(scene);
   }
   // If the loop exited because `bossTriggered` was detected but the
   // transition hasn't been advanced yet (e.g. the boss was triggered
-  // between iterations), complete the transition so the entity spawns.
+  // between iterations), resolve any hold-full pause that opened on that
+  // tick and complete the transition so the entity spawns
+  // (AH-0MV5L6BVN005DP4I).
+  resolveMineralChoiceIfOpen(scene);
   if (scene.isTransitioning()) finishTransition(scene);
   // Hard assertion — if we exhausted the guard the boss was never reached.
   const boss = scene.getBoss();
@@ -277,9 +302,13 @@ function isolateEnemyForKill(scene: PlayScene, enemy: unknown): () => void {
 function timeOutToBoss(scene: PlayScene): void {
   const gs = scene.getGameState();
   gs.lives = 99; // absorb incidental enemy fire while timeouts advance the run.
-  for (let guard = 0; guard < 200; guard++) {
+  for (let guard = 0; guard < 1000; guard++) {
     const wm = scene.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
+    // A hold-full pause freezes `tick()`; resolve it before the transition
+    // check so `finishTransition` never ticks against a paused scene
+    // (AH-0MV5L6BVN005DP4I).
+    if (resolveMineralChoiceIfOpen(scene)) continue;
     if (scene.isTransitioning()) {
       finishTransition(scene);
       continue;
@@ -289,14 +318,19 @@ function timeOutToBoss(scene: PlayScene): void {
   }
   // Boss entity is only created when the transition timer elapses.
   // If the boss was triggered via timeout we still need to complete
-  // the transition so that _onTransitionComplete() spawns it.
+  // the transition so that _onTransitionComplete() spawns it. Resolve any
+  // hold-full pause that opened on the trigger tick first, otherwise the
+  // transition would tick against a paused scene (AH-0MV5L6BVN005DP4I).
+  resolveMineralChoiceIfOpen(scene);
   if (scene.isTransitioning()) finishTransition(scene);
   const boss = scene.getBoss();
   if (!boss) {
     const wm = scene.getWaveManager();
     throw new Error(
-      `Failed to reach boss encounter via timeout after 200 iterations: ` +
-        `bossTriggered=${wm.bossTriggered} bossActive=${wm.bossActive}`,
+      `Failed to reach boss encounter via timeout after 1000 iterations: ` +
+        `bossTriggered=${wm.bossTriggered} bossActive=${wm.bossActive} ` +
+        `level=${wm.level} wave=${wm.waveNumber} ` +
+        `enemiesAlive=${wm.enemiesAlive} aliveCount=${scene.getAliveCount()}`,
     );
   }
 }
@@ -933,7 +967,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     scene.setAsteroidSpawnerEnabled(false);
 
     const wm = scene.getWaveManager();
-    const expected = `Level 1 of 5, Wave 1 of ${wm.waveCount}`;
+    const expected = `Level 1 of 10, Wave 1 of ${wm.waveCount}`;
     expect(wm.levelName).toBe('');
     expect(scene.getLevelText()).toBe(expected);
     expect(scene.getBannerText()).toBe(expected);
@@ -1595,7 +1629,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     return scene;
   }
 
-  it('AC1 — the Central AI spawns after Level 5 is cleared, with Phase-1 minions', async () => {
+  it('AC1 — the Central AI spawns after the final level is cleared, with Phase-1 minions', async () => {
     const scene = await bootPlay();
     reachBoss(scene);
 
@@ -1886,6 +1920,33 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // The asteroid carried over into the next wave.
     expect(findAsteroids(scene).length).toBe(asteroidsBefore.length);
     expect(scene.getWaveManager().bossActive).toBe(false);
+  });
+
+  // ── Hold-full pause resilience for the boss-walk helpers (AH-0MV5L6BVN005DP4I) ──
+
+  it('AH-0MV5L6BVN005DP4I — timeOutToBoss resolves an open hold-full choice', async () => {
+    const scene = await bootPlay();
+    // The carried-over pile generates enough mineral drops that the hold
+    // fills mid-walk; open the overlay here to pin the regression
+    // deterministically (it pauses the simulation exactly as real play does).
+    scene.openMineralChoice();
+    expect(scene.isMineralChoiceOpen()).toBe(true);
+
+    timeOutToBoss(scene);
+
+    expect(scene.getBoss()).not.toBeNull();
+    expect(scene.getWaveManager().bossActive).toBe(true);
+  });
+
+  it('AH-0MV5L6BVN005DP4I — reachBoss resolves an open hold-full choice', async () => {
+    const scene = await bootPlay();
+    scene.openMineralChoice();
+    expect(scene.isMineralChoiceOpen()).toBe(true);
+
+    reachBoss(scene);
+
+    expect(scene.getBoss()).not.toBeNull();
+    expect(scene.getWaveManager().bossActive).toBe(true);
   });
 });
 
@@ -2181,6 +2242,9 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
 
+    // Base (un-boosted) movement config, captured before activation.
+    const baseConfig = player.getMovementConfig();
+
     // Activate Speed Boost.
     const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
@@ -2190,15 +2254,28 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.speedMultiplier()).toBe(1.5);
 
-    // Advance past the 10 s duration.
-    for (let i = 0; i < 600; i++) scene.tick(0.016); // ~9.6 s
-    scene.tick(0.5); // past 10 s
+    // Advance to just inside the resolved window, then comfortably past it
+    // (AH-0MV6T0HU0001IS71). The level-0 Speed Boost window resolves to
+    // exactly 10 s, so the old fixed 10.1 s advance (600 × 0.016 + 0.5)
+    // left only ~0.1 s of margin and flaked under full-suite load; deriving
+    // the advance from the registry's actual remaining window keeps the
+    // expiry assertion deterministic regardless of tuning.
+    const remaining = registry.remaining('speed_boost')!;
+    expect(remaining).toBeGreaterThan(0);
+    const insideWindow = Math.max(1, Math.floor(remaining / 0.016) - 10);
+    for (let i = 0; i < insideWindow; i++) scene.tick(0.016);
+    expect(registry.isActive('speed_boost')).toBe(true);
+    expect(registry.speedMultiplier()).toBe(1.5);
+
+    // 2 s past the window — the effect has expired and the movement config
+    // is back to the un-boosted base.
+    for (let i = 0; i < Math.ceil(2 / 0.016); i++) scene.tick(0.016);
 
     expect(registry.isActive('speed_boost')).toBe(false);
     expect(registry.speedMultiplier()).toBe(1);
-    expect(player.getMovementConfig().thrust).toBeCloseTo(
-      player.getMovementConfig().thrust, // back to base
-    );
+    const after = player.getMovementConfig();
+    expect(after.thrust).toBeCloseTo(baseConfig.thrust);
+    expect(after.maxSpeed).toBeCloseTo(baseConfig.maxSpeed);
   });
 
   it('re-collecting P5 refreshes the duration', async () => {
@@ -2269,9 +2346,20 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     scene.tick(0.016);
     expect(player.getFireRateMultiplier()).toBe(1.5);
 
-    // Advance past the 10 s duration.
-    for (let i = 0; i < 600; i++) scene.tick(0.016); // ~9.6 s
-    scene.tick(0.5); // past 10 s
+    // Advance to just inside the resolved window, then comfortably past it
+    // (AH-0MV6T0HU0001IS71). The old fixed 10.1 s advance sat only ~0.1 s
+    // past the level-0 10 s window and flaked under full-suite load; the
+    // window is derived from the registry so the expiry assertion is
+    // deterministic regardless of tuning.
+    const remaining = registry.remaining('speed_boost')!;
+    expect(remaining).toBeGreaterThan(0);
+    const insideWindow = Math.max(1, Math.floor(remaining / 0.016) - 10);
+    for (let i = 0; i < insideWindow; i++) scene.tick(0.016);
+    expect(registry.isActive('speed_boost')).toBe(true);
+
+    // 2 s past the window — the effect has expired and the fire-rate
+    // multiplier is back to 1.
+    for (let i = 0; i < Math.ceil(2 / 0.016); i++) scene.tick(0.016);
 
     expect(registry.isActive('speed_boost')).toBe(false);
     expect(player.getFireRateMultiplier()).toBe(1);
@@ -2492,7 +2580,13 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   it('P4 blast does not damage enemies (bullets cleared only)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
-    const aliveBefore = scene.getAliveCount();
+    // Capture the enemies that must survive the blast. The default campaign
+    // is sequenced from a fresh per-run seed and the asteroid spawner can
+    // release a scheduled offscreen asteroid during the blast ticks, so the
+    // raw live count is not a stable probe; assert on the enemies present
+    // before the blast instead.
+    const enemiesBefore = scene.getEnemies().filter((e) => e.alive);
+    expect(enemiesBefore.length).toBeGreaterThan(0);
 
     // Collect a Bomb bomb.
     const drop = scene.spawnPowerUpDrop('bomb', player.x, player.y)!;
@@ -2502,14 +2596,16 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     scene.tick(0.016);
 
     // No enemies harmed by the bomb.
-    expect(scene.getAliveCount()).toBe(aliveBefore);
+    expect(enemiesBefore.every((enemy) => enemy.alive)).toBe(true);
   });
 
   // ── Per-weapon fire audio (AH-0MU8QVQQV006T0KI) ──────────────────
+  // Player fire cues route through the shared playWeaponFireSound
+  // dispatcher (AH-0MV55O9R5005W6J0), so these tests observe the weapon id
+  // it is called with rather than the per-weapon cue functions.
 
-  it('auto-firing the cannon plays the cannon cue once per volley', async () => {
-    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
-    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
+  it('auto-firing the cannon plays the shared fire cue once per volley', async () => {
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     // Reset the scene's shared beat clock to a deterministic anchor so
@@ -2521,16 +2617,12 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     scene.tick(0.5); // one 375 ms cannon grid tick elapses → fires once
 
-    expect(cannonSound).toHaveBeenCalledTimes(1);
-    // No other weapon's cue plays while the cannon is the only weapon.
-    expect(spreadSound).not.toHaveBeenCalled();
+    expect(fireSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('cannon');
   });
 
-  it('equipping spread/dual/rapid plays the corresponding per-weapon cue', async () => {
-    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
-    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
-    const dualSound = vi.spyOn(effectsModule, 'playDualFireSound');
-    const rapidSound = vi.spyOn(effectsModule, 'playRapidFireSound');
+  it('equipping spread/dual/rapid plays the corresponding shared fire cue', async () => {
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     vi.clearAllMocks();
@@ -2545,8 +2637,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('spread');
     scene.tick(0.05);
-    expect(spreadSound).toHaveBeenCalledTimes(1);
-    expect(cannonSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('spread');
+    expect(fireSound).toHaveBeenCalledWith('cannon');
     vi.clearAllMocks();
 
     // Dual.
@@ -2554,7 +2646,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('dual');
     scene.tick(0.05);
-    expect(dualSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('dual');
     vi.clearAllMocks();
 
     // Rapid.
@@ -2562,7 +2654,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('rapid');
     scene.tick(0.05);
-    expect(rapidSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('rapid');
   });
 
   // ── Per-type pickup activation audio (AH-0MU8QVX9G008P8ML) ──────
@@ -3587,9 +3679,10 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
     const scene = await bootToggleScene();
     const wm = scene.getWaveManager();
     expect(wm.started).toBe(true);
-    // The shipped default campaign keeps the static skeleton, so the level
-    // count matches and level 1 is the fixed onboarding static wave.
-    expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
+    // The shipped default campaign now spans the full ten-level campaign
+    // (AH-0MV395QHS004SCOR): the five static levels plus the five configured
+    // extensions. Level 1 is the fixed onboarding static wave.
+    expect(wm.levelCount).toBe(10);
     expect(wm.currentLevel()?.name).toBe('Entry');
     expect(wm.currentWave()!.groups.length).toBeGreaterThan(0);
   });
@@ -4678,6 +4771,10 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
     const scene = booted.scene as PlayScene;
     scene.getWaveManager().setLevels(levels);
     scene.setCentipedeSpawnerEnabled(true);
+    // Isolate the centipede accounting from the random asteroid spawner (the
+    // same isolation `bootSceneWithLevels` applies for the asteroid suite): a
+    // released asteroid can absorb a player bullet meant for a segment.
+    scene.setAsteroidSpawnerEnabled(false);
     scene.scene.restart();
     await new Promise((resolve) => setTimeout(resolve, 200));
     return scene;
@@ -4688,12 +4785,36 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
   }
 
   /**
-   * Advances the wave timer past the whole spawn window in one tick, then
-   * ticks once more to position the freshly released chain. Collisions run
-   * before the release step, so the chain is alive when this returns.
+   * Smallest clearance (px) between `victim` and every other live enemy:
+   * `distance - victimRadius - otherRadius`. A player bullet overlaps an
+   * enemy when this is `<= PLAYER_BULLET_RADIUS`. The weave folds
+   * neighbouring segments close together at direction reversals, so a kill
+   * test must wait for a clear gap before firing (AH-0MV5SZRI4001WK89).
+   */
+  function nearestClearance(scene: PlayScene, victim: Centipede): number {
+    let min = Infinity;
+    for (const enemy of scene.getEnemies()) {
+      if (!enemy.alive || enemy === victim) continue;
+      const gap =
+        Math.hypot(enemy.x - victim.x, enemy.y - victim.y) -
+        victim.getHitRadius() -
+        enemy.getHitRadius();
+      min = Math.min(min, gap);
+    }
+    return min;
+  }
+
+  /**
+   * Advances the wave timer past the whole spawn window, then ticks once more
+   * to position the freshly released chain. Collisions run before the release
+   * step, so the chain is alive when this returns.
+   *
+   * Stepped in small increments: a single giant `tick(20)` integrates the
+   * chain's weave over the whole window in one frame, which can overshoot the
+   * arena bounds and make this test flaky (AH-0MV396OK0001FX14).
    */
   function releaseCentipede(scene: PlayScene): void {
-    scene.tick(20);
+    for (let elapsed = 0; elapsed < 20; elapsed += 0.05) scene.tick(0.05);
     scene.tick(0.001);
   }
 
@@ -4739,6 +4860,16 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
     expect(chain.subChainCount()).toBe(1);
 
     const victim = segments[2];
+    // Wait until segment #2 is clear of every other segment by more than the
+    // bullet radius. The chain weave folds neighbours close together at
+    // direction reversals; without this the shot can be absorbed by a folded
+    // neighbour (the flake in AH-0MV5SZRI4001WK89). Bounded so a broken chain
+    // fails loudly instead of looping.
+    for (let guard = 0; guard < 100 && nearestClearance(scene, victim) <= 6; guard++) {
+      scene.tick(0.05);
+    }
+    expect(nearestClearance(scene, victim)).toBeGreaterThan(6);
+
     const before = wm.enemiesAlive;
     scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
     scene.tick(0.001);

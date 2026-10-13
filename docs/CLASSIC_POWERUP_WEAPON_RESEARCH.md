@@ -39,6 +39,11 @@ registry), and (c) adds a behaviour the existing nine weapons and eight
 power-ups do **not** already cover. The pool deliberately mixes four weapons
 and four power-ups so the arsenal grows on both axes.
 
+> **Removal note (AH-0MV5CB6KO0079N08):** one of the eight selected concepts,
+the **Pac-Man power pellet**, has since been removed from the game. Its entry
+below (§5) records the removal, the reason and the recovery path; the other
+seven concepts remain shipped.
+
 **Engine-constraint validation.** Each concept was reviewed against the epic's
 constraints before selection:
 
@@ -198,11 +203,17 @@ spray of short-lived warheads rather than independent tracking warheads.
   `AoEDescriptor`: the split is a projectile seam, not an area effect. The
   shared core tags the spawned shell, and at expiry/impact it splits it once
   into `splits` radial warheads (each an ordinary player bullet that damages
-  enemies on contact) and spawns the shared split-burst VFX. The seam lives in
+  enemies on contact) and spawns the shared split-burst VFX. The warheads fan
+  **evenly around the full 360° circle** with a constant **+90° phase offset**
+  from the parent heading — the base count of 2 splits to **90°/270°**
+  (perpendicular to the direction of travel, never straight ahead or 180°
+  backwards), and each extra warhead divides the circle evenly (count 3 →
+  90°/210°/330°). The seam lives in
   shared core so game and gyms agree on fragment count and spread.
 - `weaponLevels.ts` variables: **Split** (`splitCount`, base 0 → cap 3,
   k=0.20 — the planned variable this weapon exercises, growing the effective
-  warhead count from the base 2 toward the cap), **Fire rate** (`fireRate`,
+  warhead count from the base 2 toward the cap — always divided **evenly**
+  around the full 360° circle with a constant +90° phase offset), **Fire rate** (`fireRate`,
   MVP) and **Damage** (`damage`).
 
 **Balance / coverage:** Spreads damage rather than concentrating it, so a
@@ -266,57 +277,47 @@ visible around the ship; the shared emitter update is identical in the game.
 
 ## Power-ups
 
-### 5. Pac-Man power pellet — frightened enemies
+### 5. Pac-Man power pellet — REMOVED
+
+**Status: removed from the game (2026-10-12, AH-0MV5CB6KO0079N08).**
 
 **Source game:** *Pac-Man* (Namco, 1980).
 
 **Original behaviour:** Eating a power pellet turns the four ghosts blue and
-frightened for a timed window: they reverse, flee the player and (in AI_Hell's
-translation) stop attacking, while the player can destroy them.
+frightened for a timed window: they reverse, flee the player and stop
+attacking, while the player can destroy them.
 
-**AI_Hell adaptation:** A timed field power-up that puts every live enemy into a
-**frightened state for a short window**: enemies flee the player instead of
-approaching and **stop firing** (their weapon fire is suppressed for the
-window). Ramming a frightened enemy **destroys it without damaging the ship**
-(the "eat the ghost" beat), while enemy bullets are **not** cleared — so the
-power-up is a breathing-space and repositioning tool rather than an instant
-board clear.
+**AI_Hell adaptation (historical):** A timed field power-up that put every live
+enemy into a **frightened state for a short window**: enemies fled the player
+instead of approaching and **stopped firing**; ramming a frightened enemy
+**destroyed it without damaging the ship**. Enemy bullets were **not** cleared,
+so the power-up was a breathing-space and repositioning tool rather than an
+instant board clear. It was the first **enemy-behaviour** power-up.
 
-**Divergence from original:** No maze, no ghost house and no per-ghost
-personality — the state is a uniform timed debuff on all live enemies. Unlike
-the original the destroyed frightened enemy awards no bonus score (ramming
-always awarded none in AI_Hell). Enemy–enemy collisions remain disabled
-(GDD §2.6); fleeing enemies pass through one another.
+**Reason for removal:** The producer decided the fright mechanic was no longer
+wanted and that it should be removed **wholesale** rather than hidden or
+retained (intake decision Q1=A, Q3="See 1"): the catalogue entry, drop weight,
+hold-full choice entry, level specs, HUD/icon surfaces, competent-bot valuation
+and the entire shared **frightened-enemy status layer**
+(`src/scenes/core/frightenedState.ts`, the `EffectsRegistry` fright accessors,
+the combat-core flee/suppression hooks and the `fireForEnemy` suppression
+parameter) were deleted in one change. Multi-step options (player-only with
+documented gym divergence; disabled-by-default retaining the code) were
+rejected because they would have left a half-removed feature and a divergent
+gym.
 
-**Type:** power-up.
+**Recovery:** No git-history rewrite — the feature and its tests were deleted
+in the normal way (original feature AH-0MV1BIW95004POSX; captured-flee-heading
+refinement AH-0MV4BXUWT005MWAJ), so git history remains the recovery path if a
+future power-up needs the mechanic.
 
-**Pipeline fit:**
+**Unaffected:** The Pac-Man **ghost enemy family** (`src/entities/Ghost.ts`,
+`src/scenes/core/ghostSteering.ts`, `src/waves/GhostSpawner.ts` and the
+`ghost-chase`/`ghost-ambush`/`ghost-flank`/`ghost-wander` configs) is a separate
+archetype and never depended on the fright layer; its personality steering and
+scatter/chase cycle are unchanged.
 
-- `PowerUpId`: `'power_pellet'`; a new `POWER_UP_CATALOGUE` entry.
-- Semantics: **timed** — a single field pickup applies a temporary window (the
-  frightened state is cleared when the window expires). A hold-full reward
-  raises the permanent level, extending the window, matching the
-  temporary/permanent split (AH-0MUX802450085VZZ).
-- `powerUpLevels.ts` variables: **Frighten time** (`frightenDuration`, base 6 s
-  → cap 14 s, k=0.2) and **Frighten flee** (`frightenSpeedMultiplier`, base 1×
-  → cap 1.8×, k=0.2) — a new `PowerUpLevelVariable` pair.
-- Code-drawn icon: a glowing neon pellet ring (a small circle with an outer
-  glow arc) added to `src/powerups/icons.ts`.
-- `powerUpWeights` drop weight: **3** (rarer than standard 4 — the state is a
-  strong defensive tool) in `src/core/rules.ts`.
-- Seam: **new shared combat-core enemy-status seam** in `src/scenes/core/`
-  (a shared frightened timer plus a flee-steering policy) so the state behaves
-  identically in `PlayScene` and every gym, enforced by the duplicate-body
-  guard.
-
-**Balance / coverage:** The first enemy-behaviour power-up. The flee window is
-short and does not make enemies harmless (body contact still kills), and it
-does not clear bullets, so it complements Bomb/Shield rather than replacing
-them.
-
-**Gym scene:** `GymPowerUpsCombat` (live scout threats) — the frightened flee
-and fire suppression are observable against real enemies, running the shared
-status seam.
+**Type:** power-up (removed).
 
 ---
 
@@ -507,7 +508,7 @@ one-line deferral reason so the pool can be revisited.
 | Centipede ricochet shot | weapon | `WeaponId: 'ricochet'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared bullet-bounce seam | `bounce`, `fireRate`, `bulletSize`, `damage` | `GymWeapons` |
 | Missile Command cluster/MIRV missile | weapon | `WeaponId: 'cluster'` / `WEAPON_CATALOGUE` | 1 shot / 2 beats (1500 ms) | New shared split seam (`WeaponDefinition.splits`, not AoE) | `splitCount`, `fireRate`, `damage` | `GymWeapons` |
 | Gradius Options orbiting satellites | weapon | `WeaponId: 'options'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared orbit-emitter seam | `projectileCount`, `fireRate`, `bulletSize`, `homing` | `GymWeapons` |
-| Pac-Man power pellet | power-up | `PowerUpId: 'power_pellet'` / `POWER_UP_CATALOGUE` | — | New shared enemy-status (frightened) seam | `frightenDuration`, `frightenSpeedMultiplier` | `GymPowerUpsCombat` |
+| Pac-Man power pellet | power-up | — (removed, AH-0MV5CB6KO0079N08) | — | — (removed) | — (removed) | — (removed) |
 | Defender smart bomb | power-up | `PowerUpId: 'smart_bomb'` / `POWER_UP_CATALOGUE` | — | Existing `AoEDescriptor`/`AoETrigger` seam (`screenPulse`) | `aoeRadius`, `smartBombDamage`, `smartBombFrequency` | `GymPowerUpsCombat` |
 | Gradius force field | power-up | `PowerUpId: 'force_field'` / `POWER_UP_CATALOGUE` | — | New shared bullet-reflection seam | `forceFieldDuration`, `forceFieldReflects` | `GymPowerUpsCombat` |
 | Space Invaders mystery UFO | power-up | `PowerUpId: 'mystery_ufo'` / `POWER_UP_CATALOGUE` | — | None — catalogue entry + `EffectsRegistry` | `mysteryUfoMinerals`, `mysteryUfoScore` | `GymPowerUpsUtility` |
@@ -519,9 +520,10 @@ curve, the `WeightedRandomSpawner` drop pipeline and `src/powerups/icons.ts`.
 
 **New seams to be created (per child work item):** shared piercing-collision,
 shared bullet-bounce, shared missile-split, shared orbit-emitter, shared
-frightened-enemy status, shared screen-wide pulse and shared bullet-reflection
-— all in `src/scenes/core/` (or shared pure policies alongside it) so the game
-and every gym run the same code.
+screen-wide pulse and shared bullet-reflection — all in `src/scenes/core/` (or
+shared pure policies alongside it) so the game and every gym run the same code.
+(The shared frightened-enemy status seam was created with the Pac-Man power
+pellet and deleted with it in AH-0MV5CB6KO0079N08.)
 
 ---
 
@@ -530,9 +532,9 @@ and every gym run the same code.
 | Gym scene | Concepts exercised |
 |-----------|--------------------|
 | `GymWeapons` | R-Type wave laser, Centipede ricochet shot, Missile Command cluster/MIRV missile, Gradius Options orbiting satellites |
-| `GymPowerUpsCombat` | Pac-Man power pellet, Defender smart bomb, Gradius force field |
+| `GymPowerUpsCombat` | Defender smart bomb, Gradius force field |
 | `GymPowerUpsUtility` | Space Invaders mystery UFO |
-| `GymFormationScene`-derived gyms | Formations remain the parity venue for enemy-behaviour changes; the frightened-enemy state must run in the shared core they inherit |
+| `GymFormationScene`-derived gyms | Formations remain the parity venue for enemy-behaviour changes; any such state must run in the shared core they inherit |
 
 No new gym scene is required: each concept maps onto an existing tuning gym,
 and each enemy/projectile behaviour change is implemented in shared core so the
@@ -552,7 +554,7 @@ parity + docs). All children reference this document as their design brief.
 | Centipede ricochet shot | AH-0MV1BIV5L005NJAI |
 | Missile Command cluster/MIRV missile | AH-0MV1BIVIJ007KYXU |
 | Gradius Options orbiting satellites | AH-0MV1BIVVK0043TEM |
-| Pac-Man power pellet | AH-0MV1BIW95004POSX |
+| Pac-Man power pellet — **removed** (AH-0MV5CB6KO0079N08) | AH-0MV1BIW95004POSX |
 | Defender smart bomb | AH-0MV1BIWP9003EHRQ |
 | Gradius force field | AH-0MV1BIX1W006XF95 |
 | Space Invaders mystery UFO | AH-0MV1BIXFO006Z1I7 |

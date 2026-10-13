@@ -68,6 +68,13 @@ const ALL_MAPPED_CUES: readonly string[] = [
 
 const KNOWN_CUE_SET = new Set<string>([...ALL_MAPPED_CUES, ...RETIRED_CUES]);
 
+// `playWeaponFireSound` is a shared **dispatcher** over the baked player-weapon
+// fire cues (AH-0MV55O9R5005W6J0), not itself a baked cue: it routes a weapon
+// id to the cue name in the manifest, so it is deliberately absent from
+// CUE_MANIFEST while every cue it dispatches is present. Known to the
+// coverage check so it is not mistaken for an unwired cue.
+KNOWN_CUE_SET.add('playWeaponFireSound');
+
 function resolveCue(name: string): CueFn | undefined {
   const fromEffects = (effects as unknown as Record<string, unknown>)[name];
   if (typeof fromEffects === 'function') return fromEffects as CueFn;
@@ -244,6 +251,27 @@ describe('contract — advance cues', () => {
       expect(entry!.delivery).toBe('baked');
       expect(entry!.seeds).toHaveLength(1);
     }
+  });
+
+  it('the countdown tick applies the rising per-play rate to the buffer source (AH-0MV722WJS0075UTZ)', () => {
+    installRecordingContext();
+
+    effects.playCountdownTickSound(0);
+    effects.playCountdownTickSound(1);
+
+    const ctx = latestRecordingContext()!;
+    expect(ctx).toBeDefined();
+    expect(ctx.bufferSources).toHaveLength(2);
+    expect(ctx.bufferSources[0].playbackRate.value).toBe(
+      effects.countdownTickRate(0),
+    );
+    expect(ctx.bufferSources[1].playbackRate.value).toBe(
+      effects.countdownTickRate(1),
+    );
+    // Rising: the second beat plays the same asset faster/higher.
+    expect(ctx.bufferSources[1].playbackRate.value).toBeGreaterThan(
+      ctx.bufferSources[0].playbackRate.value,
+    );
   });
 });
 

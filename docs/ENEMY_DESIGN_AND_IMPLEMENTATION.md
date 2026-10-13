@@ -13,16 +13,16 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 
 ## 1. Enemy catalog (GDD §4.1 / §4.3)
 
-| ID | Name | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
-|----|------|-----|-----------|------------|---------------------|
-| E1 | Scout | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
-| E3 | Tank | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
-| E4 | Phaser | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
-| E5 | Swarm | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
-| E6 | Asteroid | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
-| E7 | Harvester | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
-| Boss | The Central AI | §4.3 | 4 attack phases, 50 hits per phase (200 total; 4-phase screen-fixed bar), figure-of-eight movement, per-hit SFX/VFX | Large neon geometric structure with core | complex patterns per phase |
+| ID | Name | Movement | Attack | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
+|----|------|----------|--------|-----|-----------|------------|---------------------|
+| E1 | Scout | `formation` | `projectile` | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
+| E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E3 | Tank | `formation` | `projectile` | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
+| E4 | Phaser | `formation` | `projectile` | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
+| E5 | Swarm | `formation` | `projectile` | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
+| E6 | Asteroid | `roamer` | `contact` | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
+| E7 | Harvester | `roamer` | `contact` | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
+| Boss | The Central AI | `formation` | `projectile` | §4.3 | 4 attack phases, 50 hits per phase (200 total; 4-phase screen-fixed bar), figure-of-eight movement, per-hit SFX/VFX | Large neon geometric structure with core | complex patterns per phase |
 
 Regular-enemy health is **data-driven** (`EnemyConfig.health`, default **1**):
 E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
@@ -291,6 +291,59 @@ as a bare scene. Legacy
 `GymScout`/`GymDiver`/… scenes have been
 retired; their formation/bullet assertions now live in `GymFodderEnemies.test.ts`
 keyed by `enemyKey`.
+
+### 1.4 Behavioural classification (AH-0MV29NWI1007NKN7)
+
+Every CSV archetype carries two coarse, **descriptive** behavioural fields
+that sit above the low-level `formationKind` / `shotPattern` axes and exist so
+wave composition can be reasoned about and validated for balance:
+
+- **`movementClass`** — how the archetype moves:
+  `formation` (coordinated/patterned, no independent pursuit), `diver` (a
+  formation that breaks off into a targeted dive), `chaser` (homes on the
+  player), `patroller` (independent path that may commit to an attack run),
+  `roamer` (independent trajectory/hazard that ignores the player).
+- **`attackClass`** — the archetype's *ranged/special* attack: `contact`
+  (contact-only), `projectile` (fires projectiles), `beam` (tractor beam),
+  `area` (telegraphed area detonation).
+
+**Contact invariant:** *every* enemy damages the player on contact, so
+`attackClass` describes only the additional ranged/special attack — `contact`
+means contact-only. There is deliberately no `none` value.
+
+Both fields are validated (`validateEnemyConfig`) and coerced
+(`coerceEnemyConfig`) by the CSV codec. Absent values fall back to the
+documented defaults — `movementClass` → `formation`, `attackClass` derived
+from the effective `shotPattern` (`none` → `contact`, otherwise `projectile`) —
+so legacy files without the columns still parse. The classification is
+**data-only**: no gameplay code reads it yet; the wave-generation/balance
+consumer is the follow-up item AH-0MV29XQ0H009P9WP.
+
+The agreed mapping for all 18 CSV archetypes:
+
+| Config key | movementClass | attackClass |
+|------------|---------------|-------------|
+| `scout` | `formation` | `projectile` |
+| `diver` | `diver` | `projectile` |
+| `tank` | `formation` | `projectile` |
+| `phaser` | `formation` | `projectile` |
+| `swarm` | `formation` | `projectile` |
+| `boss` | `formation` | `projectile` |
+| `march` | `formation` | `projectile` |
+| `capturer` | `formation` | `beam` |
+| `ghost-chase` | `chaser` | `contact` |
+| `ghost-ambush` | `chaser` | `contact` |
+| `ghost-flank` | `chaser` | `contact` |
+| `ghost-wander` | `chaser` | `contact` |
+| `grunt` | `chaser` | `contact` |
+| `raider` | `patroller` | `projectile` |
+| `asteroid` | `roamer` | `contact` |
+| `harvester` | `roamer` | `contact` |
+| `lane-traffic` | `roamer` | `contact` |
+| `orbital-strike` | `roamer` | `area` |
+
+The `centipede` linked chain (AH-0MV01EJ92008ZZ86) is a dedicated entity, not
+a CSV row, so it carries no classification pair; it is a contact-only chaser.
 
 ---
 
@@ -823,7 +876,7 @@ only legitimate difference is a disabled feature — never a divergent copy.
 Every shared behaviour therefore lives once: the core template methods and
 hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
-`asteroidSplit`), the shared dispatcher
+`asteroidSplit`, `enemyTargeting`), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
 helpers `resolveSpawnRange` / `pickInRange` in `src/core/configTypes.ts`
@@ -842,8 +895,7 @@ The classic-arcade power-up and weapon roster
 epic AH-0MV14SO0G0095IJ4) follows the same rule: every behaviour it adds runs
 in shared code — the shared piercing-collision, bullet-bounce and
 missile-split seams (`src/scenes/core/CombatCoreScene.ts`), the pure
-`src/scenes/core/optionsEscort.ts` orbit geometry, the pure
-`src/scenes/core/frightenedState.ts` flee policy, the screen-wide
+`src/scenes/core/optionsEscort.ts` orbit geometry, the screen-wide
 `AoEDescriptor` (`screenPulse`) pulse, and the shared `_reflectEnemyBullet`
 Force Field seam — so the game and every gym (`GymWeapons`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`) run identical arsenal behaviour.
@@ -1006,10 +1058,20 @@ exercised in the gym by `GymMinerals.test.ts`.
 
 ### 7.3 Live aim tracking
 
-The base scene pushes the player's live position into every alive enemy each
-frame (`entity.setAimTarget?.(player.x, player.y)` — an optional seam,
-forward-compatible with entities that have no target concept) **before**
-collecting bullets, so that frame's shots use the current position:
+Every player-bearing enemy base scene — `PlayScene`, `GymFormationScene` and
+the Level Gym (`GymLevel`, and therefore the Bot Tuning gym built on it) —
+pushes the player's live position into every alive enemy each frame through
+the single shared helper `pushAimTargets` in
+`src/scenes/core/enemyTargeting.ts` (an optional seam, forward-compatible
+with entities that have no target concept). The push runs **before** that
+frame's bullets are collected in all three scenes — `PlayScene._collectEnemyFire`,
+`GymFormationScene`'s entity loop and `GymLevel.tick` (immediately before
+`fireLiveEnemies`) — so that frame's shots use the current position and the
+ordering can never drift between game and gyms (AH-0MV4XFQ0J0082BN6). The
+same file's `pushSeekTargets` forwards each scene's **live mineral field** to
+roaming seekers (Harvester) in the same passes; `GymLevel._moveEnemies`
+passes its live field, not the empty array it previously sent, so Harvesters
+seek minerals exactly as they do in the game:
 
 - **Scout / Swarm** — retarget `target`/burst aim continuously; bullets arc
   toward the player's live position at fire time.
@@ -1155,6 +1217,8 @@ animated by the shared `FormationGlide` helper
 | `color` | `number` | Body colour `0xRRGGBB`. |
 | `bulletColor` / `bulletSize` | `number` | Bullet colour / radius. |
 | `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
+| `movementClass` | `EnemyMovementClass` | `'formation' \| 'diver' \| 'chaser' \| 'patroller' \| 'roamer'` — coarse behavioural movement class for wave-design/balance tooling (AH-0MV29NWI1007NKN7). Validated by `validateEnemyConfig`; an absent/invalid value falls back to `formation` (see §1.4). |
+| `attackClass` | `EnemyAttackClass` | `'contact' \| 'projectile' \| 'beam' \| 'area'` — coarse behavioural attack class; `contact` is contact-only (every enemy still damages on contact). Validated by `validateEnemyConfig`; an absent/invalid value is derived from the effective `shotPattern` (`none` → `contact`, otherwise `projectile`). See §1.4. |
 | `fireInterval` | `number` | ms between volleys. |
 | `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
 | `bulletSpeed` | `number` | Bullet velocity (px/s). Enemy archetype values were halved by AH-0MUWZ5GST003NMFQ (Scout **90**, Diver **110**, Tank **75**, Phaser **90**, Swarm **90**, Boss **80**, Asteroid **50**, Harvester **50**); because `bulletLifetime` is unchanged, each enemy's effective range (`bulletSpeed × lifetime`) is halved too. The player's `PLAYER_BULLET_SPEED` (350 px/s) is unchanged. |
@@ -1191,6 +1255,12 @@ The CSV files are the **single source of truth** for enemy and ship tuning:
   game's `planGroupSpawns` and the gym's `GymFormationScene` draw a random base
   within it through the **shared** `resolveSpawnRange` / `pickInRange` helpers
   in `src/core/configTypes.ts`; reversed bounds are normalised so `min ≤ max`.
+- **Behavioural classification (AH-0MV29NWI1007NKN7):** `enemy-configs.csv`
+  carries two further columns, `movementClass` and `attackClass`, emitted last in
+  `ENEMY_COLUMN_ORDER`. They are the coarse wave-design groupings documented in
+  §1.4; both are optional for backward compatibility (absent/invalid values fall
+  back to the documented defaults via `coerceEnemyConfig`), and the committed
+  CSV always carries explicit values.
 
 Supporting modules:
 
@@ -1306,7 +1376,9 @@ file.
 The **editor panel** (`src/scenes/gym/GymFodderEnemies.ts`, plain-DOM under
 `#game-container`, id `enemy-gym-panel`) mirrors `GymPlayer`: sliders for
 `count/spacingX/spacingY/driftSpeed/startX/startY/startXMin/startXMax/startYMin/startYMax/size/bulletSize/fireInterval/shotProbability/bulletSpeed/bulletLifetime/burstCount`,
-colour pickers for `color/bulletColor`, selects for `formationKind`/`shotPattern`,
+colour pickers for `color/bulletColor`, selects for
+`formationKind`/`shotPattern`/`movementClass`/`attackClass` (the last two are
+persisted through the same CSV save path — AH-0MV29NWI1007NKN7),
 plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
 plugin) and **Save As…** (sanitize → validate → duplicate check via
 `listEnemyConfigKeys()`, displayName = raw input; appends a new CSV row).
@@ -1429,7 +1501,10 @@ campaign ordering, and a regression test pins the intended progression.
   `shotPattern === 'none'` independence, health factor (monotonicity and
   non-firing independence), Asteroid split chain, wave mix).
 - **Calibration test:** `src/waves/enemyDifficulty.campaign.test.ts` (pins the
-  non-decreasing ordering of the five built-in `LEVELS`).
+  non-decreasing ten-level configured curve and the real `LEVELS`), plus
+  `src/waves/campaignInvariants.test.ts` (style variety, difficulty continuity,
+  authoring mix) and `src/waves/campaignRoster.test.ts` (roster coverage and
+  player-targeter pairing).
 
 ### 9.1 The three functions
 
@@ -1502,16 +1577,28 @@ archetype or wave whose firing is suppressed.
 ### 9.4 Recomputed campaign table (GDD §3.2)
 
 Scores computed from the real `LEVELS` in `src/waves/Formations.ts`. The
-ordering is **non-decreasing** and enforced by
-`src/waves/enemyDifficulty.campaign.test.ts` (AC4):
+campaign is **ten levels**: Levels 1–3 are the no-fire onboarding section,
+Levels 4–5 introduce enemy fire, and Levels 6–10 interleave the classic-arcade
+roster as hand-authored showcase waves. The **configured target curve**
+(`defaultDifficultyCurves()`) is non-decreasing across all ten levels and is
+enforced by `src/waves/enemyDifficulty.campaign.test.ts` and
+`src/waves/campaignInvariants.test.ts`. The **computed** `levelDifficulty` mean
+below is a composition property, not the calibrated guarantee: a `fixed`
+showcase wave can deliberately feature a weaker archetype, so the computed means
+are not strictly monotonic across Levels 6–10.
 
 | Level | Theme | Difficulty (0–100) |
 |-------|-------|-------------------:|
 | 1 | Entry | 6.01 |
 | 2 | Descent | 10.95 |
 | 3 | The Core | 12.30 |
-| 4 | Firestorm | 21.57 |
-| 5 | Predictable Death | 29.26 |
+| 4 | Firestorm | 20.87 |
+| 5 | Predictable Death | 28.56 |
+| 6 | Invasion | 19.36 |
+| 7 | Segmented Assault | 22.43 |
+| 8 | Gridlock | 19.80 |
+| 9 | Orbital Siege | 23.15 |
+| 10 | The Gauntlet | 22.12 |
 
 Per-archetype scores for the seed enemies (with firing where the archetype
 fires): Scout 13.57, Diver 21.46, Tank 27.08, Phaser 29.20, Swarm 18.87,
@@ -1524,6 +1611,44 @@ Asteroid's split-chain contribution).
 > and *monotonicity*, not the magic numbers. Any weight change must be
 > re-checked against both the per-axis monotonicity tests and the campaign
 > calibration test.
+
+#### Campaign structure and design rules (10 levels)
+
+The ten-level campaign (parent epic AH-0MV29SBAQ000HQR2) interleaves the
+classic-arcade roster with the existing archetypes:
+
+| Level | Theme | Featured showcase |
+|-------|-------|-------------------|
+| 1 | Entry | V-formation drift (no fire) |
+| 2 | Descent | Diver/swarm drift (no fire) |
+| 3 | The Core | Rect + V pairs (no fire) |
+| 4 | Firestorm | First enemy fire (aimed/spread/radial) |
+| 5 | Predictable Death | Fixed orbital Phasers (memorisable radial) |
+| 6 | Invasion | Space-Invaders `march` + Galaga `capturer` tractor pull |
+| 7 | Segmented Assault | Centipede `centipede` chain + Pac-Man `ghosts` pursuit |
+| 8 | Gridlock | Frogger `laneTraffic` lanes + Robotron `horde` + Defender `raider` dive |
+| 9 | Orbital Siege | Missile-Command `orbital-strike` arcs + orbital Phasers + `ghosts` |
+| 10 | The Gauntlet | Dense mixed finale of the remaining roster |
+
+Three design rules are enforced by tests:
+
+1. **Roster coverage** — every classic-arcade archetype appears at least once
+   across the merged campaign (`src/waves/campaignRoster.test.ts`). `march`,
+   `capturer` and `raider` ship as wave groups; `ghosts`, `centipede`, `horde`
+   and `laneTraffic` are spawner-delivered via per-wave opt-in flags;
+   `orbital-strike` is the campaign-wide telegraphed hazard armed by the strike
+   planner from global wave index 3.
+2. **Player-targeter pairing** — every wave that fields a player-targeting
+   archetype (`capturer`, `ghost-*`, `grunt`, `raider`) also fields at least one
+   non-player-targeting kind, so a targeter is never the sole threat in a wave
+   (`src/waves/campaignRoster.test.ts`).
+3. **Style variety** — adjacent levels differ in their dominant movement/attack
+   style, and the configured target curve is non-decreasing
+   (`src/waves/campaignInvariants.test.ts`).
+
+Levels 1–3 stay `shootEnabled: false` (GDD §2.4); Levels 4–10 fire (GDD §2.5).
+Each featured archetype debuts on a hand-authored `fixed` wave so its showcase
+is guaranteed for a given run seed; the remaining waves are generated (`curve`).
 
 ### 9.5 Where it surfaces
 

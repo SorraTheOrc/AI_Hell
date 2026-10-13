@@ -23,7 +23,6 @@ import {
   assetUrlFor,
   type CueManifestEntry,
 } from './cueManifest';
-import type { SfxPlayOptions, SfxSoundHandle, SfxSoundProvider } from './sfxPlayback';
 import {
   SIXTEENTH_NOTE_SUBDIVISIONS,
   beatSubdivisionMs,
@@ -31,52 +30,9 @@ import {
 } from '../utils/beat';
 import {
   RecordingAudioContext,
+  RecordingSfxProvider,
   resetRecordingAudioContext,
 } from '../test/audioTestDouble';
-
-// ── Recording provider ──────────────────────────────────────────────
-
-interface RecordedPlay {
-  url: string;
-  options: SfxPlayOptions | undefined;
-}
-
-class RecordingProvider implements SfxSoundProvider {
-  readonly plays: RecordedPlay[] = [];
-  readonly volumes: number[] = [];
-  readonly mutes: boolean[] = [];
-  stops = 0;
-  private context: AudioContext | null = null;
-
-  getAudioContext(): AudioContext | null {
-    return this.context;
-  }
-
-  useAudioContext(context: AudioContext | null): void {
-    this.context = context;
-  }
-
-  play(url: string, options?: SfxPlayOptions): SfxSoundHandle {
-    this.plays.push({ url, options });
-    return { stop: () => (this.stops += 1) };
-  }
-
-  setVolume(value: number): void {
-    this.volumes.push(value);
-  }
-
-  setMuted(muted: boolean): void {
-    this.mutes.push(muted);
-  }
-
-  reset(): void {
-    this.plays.length = 0;
-    this.volumes.length = 0;
-    this.mutes.length = 0;
-    this.stops = 0;
-    this.context = null;
-  }
-}
 
 /** Non-empty argument lists for the cues that take parameters. */
 const CUE_ARGS: Record<string, unknown[]> = {
@@ -99,10 +55,12 @@ function allowedUrls(entry: CueManifestEntry): string[] {
     : [assetUrlFor(entry)];
 }
 
-let recording: RecordingProvider;
+// The shared recording `SfxSoundProvider` double (records asset URL, delay,
+// volume and loop; exposes the master volume/mute/stop lifecycle).
+let recording: RecordingSfxProvider;
 
 beforeEach(() => {
-  recording = new RecordingProvider();
+  recording = new RecordingSfxProvider();
   effects.setSfxSoundProvider(recording);
 });
 
@@ -134,6 +92,41 @@ describe('cue → baked asset mapping', () => {
     expect(recording.plays[1].url).toBe('audio/sfx/card-token-earn.1.wav');
     effects.playScoutFireSound();
     expect(recording.plays[2].url).toBe('audio/sfx/weapon-laser-zap.1.wav');
+  });
+
+  it('playCountdownTickSound resolves to the baked countdown-tick asset (AH-0MV55OA93008OUL1)', () => {
+    effects.playCountdownTickSound();
+    expect(recording.plays).toHaveLength(1);
+    // New recipe, single seed 32264 — resolves deterministically.
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-countdown-tick.32264.wav',
+    );
+  });
+
+  it('playCountdownTickSound rises in pitch with each beat (AH-0MV722WJS0075UTZ)', () => {
+    // Count 3 (step 0) is the base rate, 2 and 1 rise above it.
+    effects.playCountdownTickSound(0);
+    effects.playCountdownTickSound(1);
+    effects.playCountdownTickSound(2);
+    expect(recording.plays.map((p) => p.rate)).toEqual([
+      1,
+      effects.countdownTickRate(1),
+      effects.countdownTickRate(2),
+    ]);
+    // Strictly rising: base < +major third < +perfect fifth.
+    expect(recording.plays[1].rate).toBeGreaterThan(recording.plays[0].rate);
+    expect(recording.plays[2].rate).toBeGreaterThan(recording.plays[1].rate);
+    // Same baked asset for every beat — only the rate (pitch) changes.
+    for (const play of recording.plays) {
+      expect(play.url).toBe('audio/sfx/aihell-countdown-tick.32264.wav');
+    }
+  });
+
+  it('countdownTickRate clamps bad steps to the base / highest baked step', () => {
+    expect(effects.countdownTickRate(0)).toBe(1);
+    expect(effects.countdownTickRate(-1)).toBe(1);
+    expect(effects.countdownTickRate(99)).toBe(effects.countdownTickRate(2));
+    expect(effects.countdownTickRate(Number.NaN)).toBe(1);
   });
 
   it('multi-seed cues vary across invocations', () => {
@@ -204,9 +197,9 @@ describe('advance cues (parent AC8)', () => {
 
   it.each(cases)('%s → %s has no gap', (advance, fire, duration) => {
     invokeCue(advance);
-    expect(recording.plays[0].options?.delay ?? 0).toBe(0);
+    expect(recording.plays[0].delay).toBe(0);
     invokeCue(fire);
-    expect(recording.plays[1].options?.delay).toBe(duration);
+    expect(recording.plays[1].delay).toBe(duration);
   });
 });
 
@@ -215,14 +208,14 @@ describe('advance cues (parent AC8)', () => {
 describe('volume and mute', () => {
   it('playPlayerDestructionSound scales its playback volume', () => {
     effects.playPlayerDestructionSound(0.3);
-    expect(recording.plays[0].options?.volume).toBe(0.3);
+    expect(recording.plays[0].volume).toBe(0.3);
     effects.playPlayerDestructionSound();
-    expect(recording.plays[1].options?.volume).toBe(1);
+    expect(recording.plays[1].volume).toBe(1);
   });
 
   it('playVolumeFeedback forwards the selected volume', () => {
     effects.playVolumeFeedback(0.5);
-    expect(recording.plays[0].options?.volume).toBe(0.5);
+    expect(recording.plays[0].volume).toBe(0.5);
   });
 
   it('setSfxVolume and setSfxMuted delegate to the provider', () => {
@@ -230,6 +223,47 @@ describe('volume and mute', () => {
     effects.setSfxMuted(true);
     expect(recording.volumes).toEqual([0.4]);
     expect(recording.mutes).toEqual([true]);
+  });
+});
+
+// ── 3b. Shared player-weapon fire dispatcher (AH-0MV55O9R5005W6J0) ──
+
+describe('playWeaponFireSound — shared player-fire path', () => {
+  it('routes every active player weapon to its baked fire cue', () => {
+    const cases: Array<[string, string]> = [
+      ['cannon', 'playCannonFireSound'],
+      ['spread', 'playSpreadFireSound'],
+      ['dual', 'playDualFireSound'],
+      ['rapid', 'playRapidFireSound'],
+      ['nova', 'playNovaFireSound'],
+      ['mortar', 'playMortarFireSound'],
+      ['arc', 'playArcFireSound'],
+    ];
+    for (const [weaponId, cue] of cases) {
+      recording.plays.length = 0;
+      effects.playWeaponFireSound(weaponId as never);
+      expect(recording.plays.length, `${weaponId} should play`).toBe(1);
+      expect(recording.plays[0].url, `${weaponId}`).toBe(
+        assetUrlFor(cueEntry(cue)),
+      );
+    }
+  });
+
+  it('passes the metronome reduced-volume option through to playback', () => {
+    effects.playWeaponFireSound('cannon', { volume: 0.3 });
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('defaults to full volume when the overlay omits the option', () => {
+    effects.playWeaponFireSound('cannon');
+    expect(recording.plays[0].volume).toBe(1);
+  });
+
+  it('is a no-op for catalogue-only weapon ids without a baked fire cue', () => {
+    expect(() =>
+      effects.playWeaponFireSound('wave_laser' as never),
+    ).not.toThrow();
+    expect(recording.plays).toHaveLength(0);
   });
 });
 
@@ -281,6 +315,27 @@ describe('thruster hum (runtime shim)', () => {
     expect(effects._getThrusterHumStateForTests()).toBeNull();
   });
 
+  it('forwards the shared beat clock so the hum pulses on the cannon grid', () => {
+    const clock = createBeatClock();
+    effects.setThrusterBeatClock(clock);
+    clock.advance(
+      beatSubdivisionMs(effects.THRUSTER_HUM_CANNON_SUBDIVISIONS) / 2,
+    );
+
+    effects.updateThrusterSound(1);
+    const hum = effects._getThrusterHumStateForTests()!;
+    expect(hum.currentGain).toBeCloseTo(
+      effects.THRUSTER_HUM_MAX_VOLUME *
+        (1 - effects.THRUSTER_HUM_AMPLITUDE_MODULATION_DEPTH),
+      6,
+    );
+
+    // Detaching the clock restores the flat ceiling (no modulation).
+    effects.setThrusterBeatClock(null);
+    effects.updateThrusterSound(1);
+    expect(hum.currentGain).toBeCloseTo(effects.THRUSTER_HUM_MAX_VOLUME, 6);
+  });
+
   it('is a safe no-op without an AudioContext', () => {
     delete (window as unknown as { AudioContext?: unknown }).AudioContext;
     effects._resetAudioContextForTests();
@@ -311,10 +366,10 @@ describe('beat-synchronised explosion accents', () => {
 
     expect(recording.plays).toHaveLength(3);
     for (const play of recording.plays) {
-      expect(play.options?.delay).toBeCloseTo((SIXTEENTH_MS - 100) / 1000, 6);
+      expect(play.delay).toBeCloseTo((SIXTEENTH_MS - 100) / 1000, 6);
     }
     // Player destruction keeps its volume scaling alongside the delay.
-    expect(recording.plays[2].options?.volume).toBe(0.5);
+    expect(recording.plays[2].volume).toBe(0.5);
   });
 
   it('fires immediately when the request is already on a tick', () => {
@@ -322,7 +377,7 @@ describe('beat-synchronised explosion accents', () => {
     effects.setExplosionBeatClock(clock);
     clock.advance(SIXTEENTH_MS);
     effects.playDestructionSound();
-    expect(recording.plays[0].options?.delay).toBe(0);
+    expect(recording.plays[0].delay).toBe(0);
   });
 
   it('stacks several kills in one window onto the same tick (one accent)', () => {
@@ -333,7 +388,7 @@ describe('beat-synchronised explosion accents', () => {
       effects.playDestructionSound();
     }
     expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP);
-    const delays = recording.plays.map((p) => p.options?.delay ?? 0);
+    const delays = recording.plays.map((p) => p.delay);
     expect(new Set(delays).size).toBe(1);
     expect(delays[0]).toBeCloseTo((SIXTEENTH_MS - 100) / 1000, 6);
   });
@@ -361,7 +416,7 @@ describe('beat-synchronised explosion accents', () => {
     clock.advance(SIXTEENTH_MS - 100 + 1);
     effects.playDestructionSound();
     expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 1);
-    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].options?.delay).toBeCloseTo(
+    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].delay).toBeCloseTo(
       (2 * SIXTEENTH_MS - (SIXTEENTH_MS + 1)) / 1000,
       6,
     );
@@ -380,7 +435,7 @@ describe('beat-synchronised explosion accents', () => {
 
     expect(recording.plays.length).toBeGreaterThan(0);
     for (const play of recording.plays) {
-      expect(play.options?.delay ?? 0).toBe(0);
+      expect(play.delay).toBe(0);
     }
   });
 
@@ -400,7 +455,7 @@ describe('beat-synchronised explosion accents', () => {
 
     // Back on the origin tick: immediate, with a fresh (not inherited) cap.
     expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 1);
-    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].options?.delay).toBe(0);
+    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].delay).toBe(0);
   });
 
   it('does not queue audio into the future for a frozen clock', () => {
@@ -415,15 +470,15 @@ describe('beat-synchronised explosion accents', () => {
     // 16th note so a paused scene leaks no open-ended scheduling.
     expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP);
     for (const play of recording.plays) {
-      expect(play.options?.delay ?? 0).toBeGreaterThanOrEqual(0);
-      expect(play.options?.delay ?? 0).toBeLessThanOrEqual(SIXTEENTH_MS / 1000);
+      expect(play.delay).toBeGreaterThanOrEqual(0);
+      expect(play.delay).toBeLessThanOrEqual(SIXTEENTH_MS / 1000);
     }
   });
 
   it('plays immediately when no beat clock is registered', () => {
     effects.setExplosionBeatClock(null);
     effects.playDestructionSound();
-    expect(recording.plays[0].options?.delay).toBe(0);
+    expect(recording.plays[0].delay).toBe(0);
   });
 });
 

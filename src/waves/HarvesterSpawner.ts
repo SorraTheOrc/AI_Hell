@@ -3,7 +3,8 @@
  * levels (parent AH-0MUI820PM0038HS2, feature F6).
  *
  * The Harvester is a memorable mineral-denial threat, not constant noise, so
- * it is spawned rarely and only in the two hardest regular levels. Unlike the
+ * it is spawned rarely and only in the later campaign levels (Level 4
+ * onward). Unlike the
  * Asteroid spawner, Harvester spawns **are** registered with the WaveManager
  * (they gate wave completion), so the planner must never produce a spawn that
  * cannot be reached — hence an on-screen edge inset rather than a fully
@@ -21,7 +22,7 @@
 export const HARVESTER_MIN_LEVEL = 4;
 
 /** Last level in which the Harvester may appear (inclusive). */
-export const HARVESTER_MAX_LEVEL = 5;
+export const HARVESTER_MAX_LEVEL = 10;
 
 /** Maximum Harvesters per wave (rare, bounded). */
 export const HARVESTER_MAX_PER_WAVE = 1;
@@ -58,7 +59,7 @@ export interface HarvesterSpawnEvent {
  * Computes the Harvester spawn events for one wave.
  *
  * Rules:
- * 1. **Level gate** — no spawns outside Levels 4–5.
+ * 1. **Level gate** — no spawns outside Levels 4–10.
  * 2. **Rarity** — a single bounded roll per wave; at most one Harvester.
  * 3. **Placement** — a random screen edge, inset inside the play area so the
  *    spawn is always reachable and wave-accounted (never stalls offscreen).

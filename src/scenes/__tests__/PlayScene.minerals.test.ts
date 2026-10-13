@@ -11,14 +11,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { bootScene, type BootedGame } from '../../test/gameHarness';
+import * as effectsModule from '../../audio/effects';
 import { PlayScene } from '../PlayScene';
 import { MineralChoiceScene } from '../MineralChoiceScene';
+import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
 import { Asteroid } from '../../entities/Asteroid';
 import * as mineralLayer from '../core/mineralLayer';
 import * as mineralScoop from '../../powerups/mineralScoop';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
+import { nextTick, isOnGrid } from '../../utils/beat';
 
 /** Builds a strategy that always offers the supplied options. */
 function fixedStrategy(options: ChoiceOption[]): ChoiceStrategy {
@@ -157,8 +160,10 @@ describe('PlayScene mineral wiring', () => {
     expect(overlay.getOptions()).toEqual(drawn);
     expect(overlay.getOptionLabels()[0]).toContain('Dual Shot');
 
-    // Selecting the displayed "Dual Shot" applies Dual Shot.
+    // Selecting the displayed "Dual Shot" starts the 3-2-1 countdown; the
+    // choice is applied when it completes (AH-0MV55OAQT004NMSN).
     overlay.select(0);
+    overlay.update(0, HOLD_FULL_COUNTDOWN_DURATION_MS);
     expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
   });
 
@@ -472,5 +477,113 @@ describe('PlayScene mineral wiring', () => {
     expect(scene.isPaused()).toBe(false);
     expect(scene.isTransitioning()).toBe(true);
     expect(scene.getTransitionRemaining()).toBeCloseTo(remainingBefore, 5);
+  });
+
+  it('AC3 — the countdown resume re-bases the frozen beat clock so real fire continues phase-locked on the grid', async () => {
+    // Boot deterministically so the beat clock and overlay timing are
+    // driven only by fixed game steps.
+    const bootedGame = await bootScene(
+      [PlayScene, MineralChoiceScene, GameOverScene, MenuScene],
+      { deterministicBoot: true },
+    );
+    booted = bootedGame;
+    booted!.game.loop.stop();
+    const scene = booted!.scene as PlayScene;
+    const player = scene.getPlayer()!;
+    // Deterministic anchor: the run's beat clock starts at exactly 0.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+
+    const dt = 1000 / 60;
+    let time = 0;
+    const step = (n: number) => {
+      for (let i = 0; i < n; i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+    };
+    step(2);
+
+    // A power-up that does not change the cannon's fire rate, so the
+    // resumed grid interval is unchanged and directly comparable.
+    const startMs = scene.getBeatClock().now();
+    scene.setMineralChoiceStrategy(
+      fixedStrategy([
+        { id: 'shield', name: 'Shield', kind: 'powerup' },
+        { id: 'magnet', name: 'Magnet', kind: 'powerup' },
+        { id: 'phase_shift', name: 'Phase Shift', kind: 'powerup' },
+      ]),
+    );
+    scene.openMineralChoice();
+    // The overlay launches asynchronously; let it boot.
+    step(3);
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+    expect(overlay).toBeTruthy();
+
+    // While the overlay is open the shared clock is frozen (the scene is
+    // paused at the SceneManager level): its elapsed matches launch.
+    expect(scene.getBeatClock().now()).toBeCloseTo(startMs, 6);
+
+    // Select and run the full 3-2-1 countdown (3 beats ≈ 2250 ms).
+    overlay.select(0);
+    step(Math.ceil(HOLD_FULL_COUNTDOWN_DURATION_MS / dt) + 2);
+
+    // The choice applied, the overlay closed, and the game resumed.
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
+    expect(scene.isPaused()).toBe(false);
+
+    const interval = player.getFireInterval('cannon');
+    // The resume re-based the frozen clock forward by the overlay duration
+    // (the countdown), so the clock no longer sits at the launch instant.
+    expect(scene.getBeatClock().now()).toBeGreaterThan(startMs);
+    // The first real shot after resume is scheduled on the same grid, at the
+    // first tick at/after the re-based clock — no phase restart.
+    const nextShot = player.getNextShotTime('cannon')!;
+    expect(isOnGrid(nextShot, interval)).toBe(true);
+    expect(nextShot).toBeGreaterThanOrEqual(
+      nextTick(scene.getBeatClock().now(), interval),
+    );
+
+    // Drive real fire for ~2 s: every emitted cannon shot stays an exact
+    // grid tick and consecutive shots keep the exact interval spacing
+    // (continuous cadence, no jump after the pause).
+    const shots: number[] = [];
+    let last = -1;
+    for (let i = 0; i < 120; i += 1) {
+      step(1);
+      const t = player.getLastShotTime('cannon');
+      if (t !== undefined && t !== last) {
+        shots.push(t);
+        last = t;
+      }
+    }
+    expect(shots.length).toBeGreaterThan(2);
+    for (let i = 0; i < shots.length; i += 1) {
+      expect(isOnGrid(shots[i], interval)).toBe(true);
+      if (i > 0) expect(shots[i] - shots[i - 1]).toBeCloseTo(interval, 4);
+    }
+  });
+
+  it('opening the hold-full overlay fades the thruster hum out (AH-0MV70Y2XY005J2HI)', async () => {
+    const scene = await bootPlay();
+    // The player is thrusting, so the hum would otherwise be sustained.
+    scene.getPlayer()!.setInput({
+      up: true, down: false, left: false, right: false,
+      reverse: false,
+    });
+    scene.tick(0.016);
+
+    const fade = vi.spyOn(effectsModule, 'updateThrusterSound');
+    scene.openMineralChoice();
+
+    // Opening the overlay drives the shared fade seam with level 0 (ramped
+    // to silence) so the engine does not freeze at its last gain.
+    expect(
+      fade.mock.calls.some((args) => args[0] === 0),
+    ).toBe(true);
+    fade.mockRestore();
   });
 });

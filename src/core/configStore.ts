@@ -142,7 +142,52 @@ const DEFAULT_TARGET_OVERRIDES: Readonly<Record<number, readonly number[]>> = {
   2: [9, 10],
   4: [14, 22, 27.5],
   5: [43.5, 62],
+  // Levels 6–10 continue the non-decreasing curve beyond level 5's final
+  // target of 62 (AH-0MV395QHS004SCOR). The values are the per-wave
+  // sequencer targets on the same scale as levels 4–5 (the sum of the
+  // composed groups' `enemyDifficulty` scores, not the saturating wave
+  // index); `defaultDifficultyCurves` records them verbatim for `curve` and
+  // `fixed` waves. Level 10's final target (97) is the campaign peak, and the
+  // schedule was chosen so the merged campaign's scored difficulty stays
+  // non-decreasing across all ten levels.
+  6: [71, 74, 77, 80],
+  7: [80, 82, 84, 86],
+  8: [87, 89, 91],
+  9: [91, 93, 95],
+  10: [95, 97],
 };
+
+/**
+ * Shape of the campaign levels that exist in the difficulty-curve config but
+ * not yet in the static `LEVELS` skeleton (AH-0MV395QHS004SCOR).
+ *
+ * The default curve is derived from `LEVELS` so that the hand-authored
+ * onboarding calibration is preserved, but the extended campaign (levels
+ * 6–10) is declared first in the curve config. A descriptor here gives the
+ * default curve the level's name and wave count until `Formations.ts` defines
+ * the matching static level; once a level number exists in `LEVELS` the
+ * descriptor is skipped, so the static definition always wins and the two
+ * never double up. Wave counts must match the static definitions so `fixed`
+ * showcase waves map to the intended authored composition.
+ */
+interface DefaultLevelSpec {
+  readonly level: number;
+  readonly name: string;
+  readonly waveCount: number;
+}
+
+/**
+ * Default shape of levels 6–10 (AH-0MV395QHS004SCOR). Names match the GDD
+ * campaign table; wave counts cover each level's featured-archetype showcase
+ * waves plus the generated tail.
+ */
+const DEFAULT_EXTENDED_LEVELS: readonly DefaultLevelSpec[] = [
+  { level: 6, name: 'Invasion', waveCount: 4 },
+  { level: 7, name: 'Segmented Assault', waveCount: 4 },
+  { level: 8, name: 'Gridlock', waveCount: 3 },
+  { level: 9, name: 'Orbital Siege', waveCount: 3 },
+  { level: 10, name: 'The Gauntlet', waveCount: 2 },
+];
 
 /**
  * Per-wave generation-mode overrides for the baked-in default curve
@@ -161,6 +206,16 @@ const DEFAULT_MODE_OVERRIDES: Readonly<
   1: { 1: 'dynamic', 2: 'dynamic' },
   2: { 1: 'dynamic', 2: 'dynamic' },
   5: { 2: 'dynamic' },
+  // Levels 6–10 (AH-0MV395QHS004SCOR): each featured archetype debuts on a
+  // hand-authored `fixed` wave so its showcase is guaranteed for a given run
+  // seed, while the level tail is generated (`curve`) from the targets above.
+  // `fixed` waves with no static counterpart yet fall back to `curve` safely
+  // until Formations.ts supplies them.
+  6: { 1: 'fixed', 2: 'fixed', 3: 'curve', 4: 'curve' },
+  7: { 1: 'fixed', 2: 'fixed', 3: 'curve', 4: 'curve' },
+  8: { 1: 'fixed', 2: 'fixed', 3: 'fixed' },
+  9: { 1: 'fixed', 2: 'fixed', 3: 'curve' },
+  10: { 1: 'fixed', 2: 'curve' },
 };
 
 /**
@@ -174,8 +229,11 @@ const DEFAULT_MODE_OVERRIDES: Readonly<
  * static `LEVELS` composition). Levels 4–5 are `curve` with hand-tuned targets
  * in {@link DEFAULT_TARGET_OVERRIDES} that keep the generated compositions
  * non-degenerate and the difficulty rising, except the level-5 wave 2
- * `dynamic` mixed-programme wave. Targets are non-decreasing within and across
- * levels.
+ * `dynamic` mixed-programme wave. Levels 6–10 are appended from
+ * {@link DEFAULT_EXTENDED_LEVELS} so the default curve covers the full
+ * 10-level campaign (AH-0MV395QHS004SCOR); their featured showcase waves are
+ * `fixed` and the tail waves `curve`. Targets are non-decreasing within and
+ * across levels.
  *
  * Deterministic and pure: the same static campaign always yields the same
  * curve. Used as the fallback whenever the CSV config is missing or
@@ -220,6 +278,33 @@ export function defaultDifficultyCurves(): DifficultyCurveRow[] {
     previous = last;
   }
 
+  // Levels declared in the curve config but not yet present in the static
+  // `LEVELS` skeleton (AH-0MV395QHS004SCOR). Once Formations.ts defines a
+  // matching level it is handled by the loop above and its descriptor is
+  // skipped here, so the static definition always wins.
+  const definedLevels = new Set(LEVELS.map((level) => level.level));
+  for (const spec of DEFAULT_EXTENDED_LEVELS) {
+    if (definedLevels.has(spec.level)) continue;
+    const override = DEFAULT_TARGET_OVERRIDES[spec.level];
+    let last = previous;
+
+    for (let wi = 0; wi < spec.waveCount; wi++) {
+      // Keep the curve non-decreasing even if a hand-tuned override is ever
+      // omitted for a wave.
+      const target = Math.max(previous, override?.[wi] ?? previous);
+      last = target;
+      rows.push({
+        level: spec.level,
+        levelName: spec.name,
+        wave: wi + 1,
+        targetDifficulty: target,
+        generation: DEFAULT_MODE_OVERRIDES[spec.level]?.[wi + 1] ?? 'curve',
+      });
+    }
+
+    previous = last;
+  }
+
   return rows;
 }
 
@@ -255,6 +340,8 @@ function genericEnemyDefault(key: string): EnemyConfig {
   return {
     key,
     displayName: key,
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: 'v',
     count: 6,
     spacingX: 26,

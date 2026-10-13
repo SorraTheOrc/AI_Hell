@@ -26,14 +26,22 @@
  * - Supports **Save** (overwrite the current named configuration),
  *   **Save As…** (create a named configuration), and a selector to **load**
  *   any saved configuration. Configurations persist via
- *   {@link ../core/botTuningStore} (localStorage).
+ *   {@link ../core/botTuningStore} (localStorage) and the shipped **Watch
+ *   Demo** (`PlayScene` demo mode) reads that same store, so a saved tuning is
+ *   what the attract demo — and any recording of it — actually flies
+ *   (AH-0MV6MFDYG001E6PL).
+ * - **Export** downloads every saved configuration as JSON for the gameplay
+ *   recorders' `--bot-config` flag.
  *
  * ## Divergence
  *
  * The scene is a gym-only dev tool: it is reached from the gym index only and
  * never shipped in normal play. The bot's *behaviour* is the shared code; only
- * the scenario (random waves with no boss/minerals/power-ups) and the tuning
- * UI are gym-specific.
+ * the scenario (random waves with the shared mineral/power-up/weapon supply
+ * layer, no boss) and the tuning UI are gym-specific. The supply behaviour
+ * itself is shared (inherited from `GymLevel`), so the bot sees and reacts to
+ * minerals, power-ups and weapons exactly as it does in the game
+ * (AH-0MV4D7LAD009XYR0 producer-audit fix).
  *
  * @module src/scenes/gym/GymBotTuning
  */
@@ -63,9 +71,11 @@ import {
   saveBotTuningAs,
   saveBotTuningCurrent,
   selectBotTuning,
+  serialiseBotTuningState,
 } from '../../core/botTuningStore';
-import { normaliseSeed, randomSeed } from '../../core/rng';
+import { normaliseSeed, randomSeed, createSeededRng } from '../../core/rng';
 import { makeCollapsible } from '../../utils/gymPanel';
+import { attachTooltip } from '../../utils/gymTooltip';
 import { generateRandomLevel } from '../../utils/randomLevel';
 import type { ControlInput } from '../../utils/movementModel';
 import type { LevelDefinition } from '../../waves/Formations';
@@ -88,6 +98,8 @@ export const BOT_TUNING_SAVE_AS_ID = 'gym-bot-tuning-save-as';
 export const BOT_TUNING_NEW_LEVEL_ID = 'gym-bot-tuning-new-level';
 /** DOM id of the "Reset to Defaults" button. */
 export const BOT_TUNING_RESET_ID = 'gym-bot-tuning-reset';
+/** DOM id of the "Export" button (AH-0MV6MFDYG001E6PL). */
+export const BOT_TUNING_EXPORT_ID = 'gym-bot-tuning-export';
 /** DOM id of the status readout. */
 export const BOT_TUNING_STATUS_ID = 'gym-bot-tuning-status';
 /** Data attribute (value = field key) identifying a numeric slider. */
@@ -147,6 +159,9 @@ export class GymBotTuning extends GymLevel {
    */
   override init(data?: GymBotTuningData): void {
     this.seed = normaliseSeed(data?.seed ?? randomSeed());
+    // Seed the inherited supply layer (minerals + drop placement) from the
+    // same seed, so a seed reproduces the mineral field and drop sequence too.
+    this.supplyRng = createSeededRng(this.seed);
     this.tuningValues = coerceTuningValues(getCurrentBotTuningConfig().values);
     this.completionDwell = 0;
     const level = data?.level ?? generateRandomLevel({ seed: this.seed });
@@ -182,21 +197,32 @@ export class GymBotTuning extends GymLevel {
   private _advanceBot(dt: number): void {
     const player = this.getPlayer();
     if (!player) return;
+    const movement = player.getMovementState();
+    const rotation = player.getRotationConfig();
     this.botGovernor.update(
       this.botBrain.decide(this._buildSnapshot(), dt),
       dt,
       {
         scheme: player.getScheme() ?? 'asteroids',
-        facing: player.getMovementState().facing ?? 0,
+        facing: movement.facing ?? 0,
+        // Same inertia-aware turn config the shipped PlayScene demo supplies,
+        // so the gym and the game fly the bot identically
+        // (AH-0MV1DUSM2005HL98 · AC1).
+        angularVelocity: movement.angularVelocity ?? 0,
+        rotationSpeed: rotation.rotationSpeed,
+        rotationAcceleration: rotation.rotationAcceleration,
+        rotationDeceleration: rotation.rotationDeceleration,
         reverseEnabled: player.isReverseEnabled() ?? true,
       },
     );
   }
 
   /**
-   * Builds the bot snapshot from the gym's live state. The gym has no boss,
-   * drops, minerals or timed waves, so those read as empty/inactive; the bot
-   * core handles the empty collections unchanged.
+   * Builds the bot snapshot from the gym's live state. The supply layer
+   * inherits from `GymLevel`, so the bot sees the live power-up/weapon drops
+   * and minerals (the `collect-powerup`, `collect-mineral` and `secure-life`
+   * goals). The gym has no boss and no timed waves, so those read as
+   * null/inactive; the bot core handles the empty collections unchanged.
    */
   private _buildSnapshot(): BotSnapshot {
     const source: BotSnapshotScene = {
@@ -206,8 +232,8 @@ export class GymBotTuning extends GymLevel {
       getEnemies: () => this.getEnemies(),
       getEnemyBullets: () => this.getEnemyBullets(),
       getPlayerBullets: () => this.getPlayerBullets(),
-      getDrops: () => [],
-      getMinerals: () => [],
+      getDrops: () => this.getDrops(),
+      getMinerals: () => this.getMinerals(),
       getAliveCount: () => this.getEnemies().filter((enemy) => enemy.alive).length,
       getWaveState: () => inactiveWaveState(),
       getRunSeed: () => this.seed,
@@ -215,6 +241,14 @@ export class GymBotTuning extends GymLevel {
       getLivesCap: () => BOT_TUNING_LIVES_CAP,
     };
     return buildBotSnapshot(source);
+  }
+
+  /**
+   * Read-only snapshot of the state the bot decides from — the live supply
+   * layer included. Exposed for tests to assert the bot sees drops/minerals.
+   */
+  getBotSnapshot(): BotSnapshot {
+    return this._buildSnapshot();
   }
 
   // ── Tick / level cycling ─────────────────────────────────────────
@@ -326,10 +360,21 @@ export class GymBotTuning extends GymLevel {
     reset.textContent = 'Reset to Defaults';
     reset.addEventListener('click', () => this._onReset());
 
+    const exportButton = document.createElement('button');
+    exportButton.id = BOT_TUNING_EXPORT_ID;
+    exportButton.type = 'button';
+    exportButton.textContent = 'Export';
+    attachTooltip(
+      exportButton,
+      'Download every saved configuration as JSON. Pass the file to the gameplay ' +
+        'recorders (--bot-config) so a recorded demo flies the same tuning.',
+    );
+    exportButton.addEventListener('click', () => this._onExport());
+
     const status = document.createElement('span');
     status.id = BOT_TUNING_STATUS_ID;
 
-    row.append(save, nameInput, saveAs, newLevel, reset, status);
+    row.append(save, nameInput, saveAs, newLevel, reset, exportButton, status);
     return row;
   }
 
@@ -349,6 +394,8 @@ export class GymBotTuning extends GymLevel {
     input.max = String(field.max);
     input.step = String(field.step);
     input.addEventListener('input', () => this._onControlInput());
+    // Designer-facing tooltip: `aria-describedby` + hover/focus reveal.
+    attachTooltip(input, field.description);
 
     const value = document.createElement('output');
     value.setAttribute(BOT_TUNING_SLIDER_VALUE_ATTR, field.key);
@@ -370,6 +417,8 @@ export class GymBotTuning extends GymLevel {
     input.type = 'checkbox';
     input.setAttribute(BOT_TUNING_TOGGLE_ATTR, toggle.key);
     input.addEventListener('change', () => this._onControlInput());
+    // Designer-facing tooltip: `aria-describedby` + hover/focus reveal.
+    attachTooltip(input, toggle.description);
 
     row.append(label, input);
     return row;
@@ -497,6 +546,27 @@ export class GymBotTuning extends GymLevel {
     this._applyPanelValues(this.tuningValues);
     this._applyTuning();
     this._updateStatus('Reset to defaults');
+  }
+
+  /**
+   * Downloads every persisted configuration as a JSON file
+   * (AH-0MV6MFDYG001E6PL). The file is the exact store blob the gameplay
+   * recorders inject with `--bot-config`, so a recorded demo flies the
+   * designer's tuning.
+   */
+  private _onExport(): void {
+    try {
+      const blob = new Blob([serialiseBotTuningState()], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'bot-tuning.json';
+      anchor.click();
+      URL.revokeObjectURL?.(url);
+      this._updateStatus('Exported bot-tuning.json');
+    } catch (error) {
+      this._updateStatus(`Export failed: ${String(error)}`);
+    }
   }
 
   /** Updates the panel's status readout. */

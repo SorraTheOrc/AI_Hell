@@ -42,6 +42,7 @@ npm run record -- --auto --output recordings/human.jsonl
 | `--output FILE` | Output `.jsonl` path | `recordings/session-<seed-><timestamp>.jsonl` |
 | `--seed N` | Force a deterministic run seed (dev builds; `?seed=N`) | random per run |
 | `--bot` | Record the in-game demo bot (Watch Demo) instead of a human | human |
+| `--bot-config FILE` | Exported bot-tuning JSON (the Bot Tuning gym's Export button) injected into the recording browser before boot, so a `--bot` recording flies the saved tuning (AH-0MV6MFDYG001E6PL) | none → built-in defaults |
 | `--headless` | Run headless (the default is headed, for human play) | headed |
 | `--auto` | Stop as soon as the run ends (no Ctrl+C needed) | wait for Ctrl+C |
 | `--max-duration MS` | Safety cap on recording length | 30 min |

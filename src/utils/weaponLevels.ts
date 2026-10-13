@@ -613,8 +613,11 @@ export function expandWeaponPattern(
  *   upgrade and clamped to its spec cap (weapons with a base `bounce` only,
  *   e.g. the ricochet; AH-0MV1BIV5L005NJAI),
  * - `splits` — the base split warhead count grown by the level's `splitCount`
- *   upgrade and clamped to its spec cap (weapons with a base `splits` only,
- *   e.g. the cluster missile; AH-0MV1BIVIJ007KYXU),
+ *   upgrade and clamped to its spec cap so the **total** warhead count
+ *   (base + extras) never exceeds the finite spec cap of 3 (weapons with a
+ *   base `splits` only, e.g. the cluster missile; AH-0MV1BIVIJ007KYXU); the
+ *   shared `splitProjectile` seam fans the resolved count evenly around the
+ *   full 360° circle with a constant +90° phase offset from the heading,
  * - `orbit.pods` — the base pod count grown by the level's `projectileCount`
  *   upgrade and clamped to `OPTIONS_MAX_PODS` (weapons with a base `orbit`
  *   only, e.g. the Gradius Options escort; AH-0MV1BIVVK0043TEM),
@@ -672,8 +675,11 @@ export function resolveWeaponDefinition(
   // Split weapons (the Missile Command cluster missile) opt in with a base
   // warhead count. Their effective count grows with the level-resolved
   // `splitCount` upgrade, clamped to that variable's finite spec cap so the
-  // radial spray (and per-frame cost) stays bounded (AH-0MV1BIVIJ007KYXU).
-  // Weapons without a base count never split.
+  // radial spray (and per-frame cost) stays bounded — the cap bounds the
+  // *total* warhead count (base 2 + up to 1 extra = max 3), and the shared
+  // `splitProjectile` seam fans that count evenly around the heading with a
+  // constant +90° phase offset (AH-0MV1BIVIJ007KYXU). Weapons without a base
+  // count never split.
   if (base.splits !== undefined) {
     leveled.splits = Math.min(
       WEAPON_UPGRADE_SPECS.splitCount.cap,

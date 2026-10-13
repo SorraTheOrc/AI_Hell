@@ -86,6 +86,57 @@ export function bearingTo(
 }
 
 /**
+ * Solves the **intercept point** for a moving target and a finite-speed
+ * projectile (AH-0MV1DUSM2005HL98 · AC2).
+ *
+ * The classic lead rule: the target advances by its velocity over the total
+ * engagement time — the ship's estimated time-to-align (`alignSeconds`) plus
+ * the projectile's time-of-flight to the predicted point — and the flight
+ * time is re-estimated from the predicted point each iteration, so the
+ * solution converges. Returns the enemy position unchanged when its velocity
+ * is zero (so a stationary target reduces exactly to the legacy aim).
+ *
+ * Pure and deterministic: the same inputs always yield the same point.
+ * `projectileSpeed <= 0` (unknown) leaves the target at its current position
+ * after accounting only for `alignSeconds`.
+ *
+ * @param shooter — the firing ship's position.
+ * @param target — the target's current position.
+ * @param targetVelocity — the target's velocity (px/s).
+ * @param projectileSpeed — the projectile's speed (px/s).
+ * @param alignSeconds — estimated time for the ship to finish its turn.
+ * @param iterations — refine passes; one or more (clamped).
+ */
+export function interceptPoint(
+  shooter: BotWorldPoint,
+  target: BotWorldPoint,
+  targetVelocity: BotWorldPoint,
+  projectileSpeed: number,
+  alignSeconds: number,
+  iterations: number,
+): BotWorldPoint {
+  const align = Math.max(0, Number.isFinite(alignSeconds) ? alignSeconds : 0);
+  const steps = Math.max(1, Math.floor(iterations));
+  const hasSpeed = Number.isFinite(projectileSpeed) && projectileSpeed > EPS;
+  let t = align;
+  for (let i = 0; i < steps; i += 1) {
+    const predicted = {
+      x: target.x + targetVelocity.x * t,
+      y: target.y + targetVelocity.y * t,
+    };
+    if (!hasSpeed) return predicted;
+    const flight =
+      Math.hypot(predicted.x - shooter.x, predicted.y - shooter.y) /
+      projectileSpeed;
+    t = align + flight;
+  }
+  return {
+    x: target.x + targetVelocity.x * t,
+    y: target.y + targetVelocity.y * t,
+  };
+}
+
+/**
  * Closest approach between the player (moving with velocity `pv`) and a body
  * (moving with velocity `qv`) over `horizon` seconds.
  */
@@ -313,6 +364,13 @@ export interface SteerPlanOptions {
    * assist; AH-0MV1J0OHP0072XA5). Defaults to `false`.
    */
   readonly reverse?: boolean;
+  /**
+   * Whether this plan is an **aim** plan — the ship is holding its weapon axis
+   * on a target (AH-0MV1DUSM2005HL98 · AC3). The governor perturbs aim plans
+   * with the seeded `skill` error and leaves every other plan exact. Defaults
+   * to `false`.
+   */
+  readonly aim?: boolean;
 }
 
 /**
@@ -341,6 +399,7 @@ export function planSteering(
     options.thrust || !aligned,
     options.longTravel,
     options.reverse === true,
+    options.aim === true,
   );
 }
 
@@ -355,6 +414,7 @@ export function buildIntent(
   thrust = true,
   longTravel = false,
   reverse = false,
+  aim = false,
 ): BotSteeringIntent {
   const unit = normalise(dirX, dirY);
   const cardinal =
@@ -365,5 +425,5 @@ export function buildIntent(
       : unit.y >= 0
         ? { up: false, down: true, left: false, right: false }
         : { up: true, down: false, left: false, right: false };
-  return { ...cardinal, dirX: unit.x, dirY: unit.y, thrust, longTravel, reverse };
+  return { ...cardinal, dirX: unit.x, dirY: unit.y, thrust, longTravel, reverse, aim };
 }

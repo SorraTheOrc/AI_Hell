@@ -52,6 +52,10 @@ import Phaser from 'phaser';
 
 import { CombatScene } from '../../../scenes/core/CombatScene';
 import {
+  pushAimTargets,
+  pushSeekTargets,
+} from '../../../scenes/core/enemyTargeting';
+import {
   FormationGlide,
 } from '../../../scenes/core/formationGlide';
 import {
@@ -76,6 +80,8 @@ import {
   type FormationReanchorRequest,
 } from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
+import type { MineralChoiceScene } from '../../MineralChoiceScene';
+import { buildHoldFullFireSchedule } from '../../core/holdFullFire';
 import { PlayerBullet } from '../../../entities/PlayerBullet';
 import {
   WasdKeysLike,
@@ -1297,8 +1303,16 @@ export class GymFormationScene<
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
     });
     this.mineralChoiceOpen = true;
+    // Fade the gym player's engine hum out across the pause; it ramps back
+    // in on resume — the same shared seam as PlayScene
+    // (AH-0MV70Y2XY005J2HI · gym↔game parity).
+    this.fadeThrusterHumForHoldFull();
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Frozen player-fire schedule so the reduced-volume ghost fire
+      // continues on the same grid while paused — same payload as PlayScene
+      // (AH-0MV55O9R5005W6J0 · gym↔game parity).
+      fireSchedule: buildHoldFullFireSchedule(this.player),
       onSelect: (index: number) => this.selectMineralChoice(index),
     });
     this.scene.pause();
@@ -1319,6 +1333,12 @@ export class GymFormationScene<
     this.mineralChoiceOptions = [];
     this.mineralHoldModel.resolve();
     this._syncMineralHud();
+    // Re-base the frozen beat clock across the overlay + countdown pause so
+    // the gym's real fire resumes phase-locked (AH-0MV55OAQT004NMSN · AC3).
+    const overlay = this.scene.manager.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene | null;
+    this.rebaseBeatClockForHoldFullResume(overlay?.getOverlayElapsedMs() ?? 0);
     this.scene.resume();
     return option;
   }
@@ -1473,14 +1493,17 @@ export class GymFormationScene<
     // enemy is unaffected (AH-0MUL15N63003PUDB).
     const reanchorApplied = this._applyFormationReanchor();
 
+    // Live mineral-seek: push the scene's live mineral field so a roaming
+    // seeker (Harvester) steers toward the nearest live mineral, and push
+    // the live player position so aimed enemies target the ship — both
+    // through the single shared helper used by PlayScene and GymLevel
+    // (AH-0MV5SDNI2008RWQ2). The pushes run before the entity loop so the
+    // fire collected below uses the fresh aim.
+    pushSeekTargets(this.entities, this.minerals);
+    pushAimTargets(this.entities, this.player);
+
     // Position each enemy from the formation base + its own offset.
     for (const entity of this.entities) {
-      // Live mineral-seek: push the scene's live mineral field BEFORE the
-      // entity advances its own motion, so a roaming seeker (Harvester)
-      // steers on the same frame it receives a target — matching the game's
-      // `PlayScene._moveEnemies` ordering exactly (F4 parity).
-      entity.setSeekTargets?.(this.minerals);
-
       // Roaming enemies (e.g. Asteroid) advance their own straight-line
       // motion + wrap + rotation; a no-op for formation enemies.
       entity.updatePosition?.(dt);
@@ -1497,27 +1520,8 @@ export class GymFormationScene<
         config.spacingY,
       );
 
-      // Live aim tracking: when a player is on screen, push its current
-      // position so aimed enemies target the player this frame (instead of
-      // the fixed stand-in). Entities without the seam are skipped.
-      if (this.player) {
-        entity.setAimTarget?.(this.player.x, this.player.y);
-      }
-
-      // Power Pellet fright (AH-0MV1BIW95004POSX): offset the enemy away
-      // from the ship using the shared pure flee maths, then suppress its
-      // fire while the window is active. The game applies the identical
-      // shared helper, so the flee is gym↔game identical.
-      const flee = this._frightenedFleeOffset(entity);
-      if (flee.x !== 0 || flee.y !== 0) {
-        entity.x += flee.x;
-        entity.y += flee.y;
-      }
-
       // Collect any bullets the entity fired this frame (uses the fresh aim).
-      if (!this.isEnemyFrightened()) {
-        this.bullets.push(...config.collectBullets(entity, this.time.now));
-      }
+      this.bullets.push(...config.collectBullets(entity, this.time.now));
     }
 
     // If a re-anchor fired (now or on an earlier frame), ease every entity

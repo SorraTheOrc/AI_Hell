@@ -459,6 +459,31 @@ to warrant a child work item in this research round.
 
 ---
 
+## Campaign level showcase (10-level campaign)
+
+The ten-level campaign (parent epic AH-0MV29SBAQ000HQR2) showcases each
+archetype on a dedicated level, with every player-targeter paired alongside a
+non-player-targeting kind:
+
+| Archetype | Showcase level | Delivery seam |
+|-----------|----------------|---------------|
+| Space Invaders `march` | Level 6 — Invasion | wave group (`march` formation) |
+| Galaga `capturer` | Level 6 — Invasion | wave group (`single`) |
+| Centipede | Level 7 — Segmented Assault | per-wave `centipede: true` flag |
+| Pac-Man `ghosts` | Level 7 — Segmented Assault (also 9 and 10) | per-wave `ghosts: true` flag |
+| Frogger `lane-traffic` | Level 8 — Gridlock | per-wave `laneTraffic: true` flag |
+| Robotron `grunt` horde | Level 8 — Gridlock (also 10) | per-wave `horde: true` flag |
+| Defender `raider` | Level 8 — Gridlock (also 10) | wave group (`single`) |
+| Missile Command `orbital-strike` | Level 9 — Orbital Siege | campaign-wide telegraphed hazard (`StrikeSpawner`) |
+
+The player-targeting archetypes are `capturer`, `ghost-*`, `grunt` and
+`raider`; the campaign invariant tests
+(`src/waves/campaignRoster.test.ts`, `src/waves/campaignInvariants.test.ts`)
+enforce roster coverage, the targeter-pairing rule, and style variety between
+adjacent levels.
+
+---
+
 ## Child work items
 
 Each selected archetype has its own child work item that implements the full

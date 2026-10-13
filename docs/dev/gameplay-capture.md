@@ -37,9 +37,17 @@ npm run capture -- --scripted    # fallback: replay the fixed scripted plan
 # record the dev boss scenario: jump straight to a boss with 4 hits remaining
 npm run capture -- --scenario boss-four-hits
 
+# discover every implemented dev scenario (no browser or server booted)
+npm run capture -- --list-scenarios
+npm run capture -- --list-scenarios --json
+
 # record a batch of 3 clips in one process (one dev server + one browser)
 npm run capture -- --count 3          # or the short alias: -n 3
 npm run capture -- --count 3 --output clips/demo.webm   # clips/demo-1..3.webm
+
+# record EVERY dev scenario in one process (one video per scenario, no demo)
+npm run capture -- --all-scenarios
+npm run capture -- --all-scenarios --output clips          # clips/<scenario>.webm
 ```
 
 This was proven end to end on 2026-10-06: a 12 s clip recorded at
@@ -131,6 +139,28 @@ Supported values:
 | `boss` | The same jump, with the hits tunable via `&bossHits=N` (e.g. `?scenario=boss&bossHits=12`). |
 | `defeat` | Clear the wave and end the run in **defeat** on release (the defeat-path demo for full-run capture verification). |
 
+### Listing the implemented scenarios
+
+`--list-scenarios` prints every implemented scenario — the `--scenario` value
+plus its one-line effect — straight from the **shared registry**
+(`scripts/capture-scenarios.mjs`, the same single source the game resolver
+reads), so the CLI list can never drift from what the game accepts. The
+listing path is **pure**: it exits **0** and boots neither Vite nor Chromium,
+making it the cheap way to discover scenarios before a capture run
+(AH-0MV6JGELV001FAX1).
+
+```bash
+# human-readable, one line per scenario (value — effect)
+npm run capture -- --list-scenarios
+
+# machine-readable array [ { "name": ..., "effect": ... } ]
+npm run capture -- --list-scenarios --json
+```
+
+When `--list-scenarios` is passed, every other flag is ignored: all other
+options describe a capture run, and the listing returns instead without
+starting one.
+
 The boss scenario clears the opening wave, spawns the boss in its final phase
 with no minions and its attacks disabled, and places the ship to the boss's
 left facing it, so the auto-fire lands without input. The defeat scenario
@@ -189,6 +219,33 @@ bundle stays inert (`npm run check-bundle` still passes).
 The stop/cap decision is the pure `evaluateRunStop` / `waitForRunEnd` pair in
 `scripts/capture-run-lifecycle.mjs`, unit-tested with a fake clock and a
 stubbed signal source.
+
+### Bot-tuning configuration (`--bot-config`)
+
+The recorded demo flies whatever bot-tuning configuration the recording page
+sees. The Bot Tuning gym persists that configuration to `localStorage`
+(`ai-hell-bot-tuning`), and `PlayScene` demo mode reads it when the demo
+starts (AH-0MV6MFDYG001E6PL). The capture tool launches a **fresh** browser
+with an empty profile, so it cannot see a designer's saved configuration by
+itself — pass the gym's **Export** output to seed it:
+
+```bash
+# In the Bot Tuning gym: tune, tweak, then click Export → bot-tuning.json
+npm run capture -- --bot-config bot-tuning.json
+```
+
+`--bot-config <file>` installs a page-side `addInitScript` (the same pre-boot
+pattern as the run-end listener) that writes the exported store state into
+`localStorage` before the game boots, so the demo reads it and flies the saved
+tuning. The file is the exact JSON the gym's Export button produces
+(`{ version, current, configs }`). A missing, unreadable, or malformed file
+fails fast with an actionable message **before** the server or browser
+launches. Without the flag the demo uses the built-in defaults, exactly as
+before.
+
+The pure `installBotTuningConfig` / `loadBotTuningConfigFile` helpers live in
+`scripts/capture-gameplay.mjs` and are unit-tested in
+`scripts/capture-gameplay.test.ts` (no browser needed).
 
 ### Demo game-over dwell
 
@@ -296,6 +353,75 @@ emits an aggregate object:
 Each `iterations[]` entry carries the 1-based `index`, the absolute `output`
 path and an `ok` flag; a failed iteration adds `error` and omits the clip
 fields. `succeeded`/`failed` tally the batch.
+
+## Batch scenarios (`--all-scenarios`)
+
+`--all-scenarios` records **one video per registered dev scenario** in a
+single process (AH-0MV6JGQFK007MXGX). It reuses the exact batch machinery
+above — one Vite dev server and one headless Chromium browser booted once,
+a fresh page per item, per-item failure isolation, an aggregate summary and a
+non-zero exit code. Per the producer decision, the default no-scenario demo
+run is deliberately **not** included: only the shared registry
+(`scripts/capture-scenarios.mjs`) is expanded, so the set cannot drift from
+what `--list-scenarios` shows.
+
+```bash
+# one video per registered scenario (boss, boss-four-hits, defeat) in one process
+npm run capture -- --all-scenarios
+
+# write into a directory: <dir>/<scenario>.webm
+npm run capture -- --all-scenarios --output clips
+
+# N videos of EVERY scenario in one process (N x all)
+npm run capture -- --count 3 --all-scenarios
+```
+
+### Combining with `--count` (N x all)
+
+`--count n` combines with `--all-scenarios` to record **n clips of every
+registered scenario** in a single process (producer decision Q3=b,
+AH-0MV6JGQSA0054CYY): `--count 3 --all-scenarios` yields `3 x all` clips —
+one batch of N-video-per-scenario evidence. The standalone `--count n`
+behaviour (with or without `--scenario`) is unchanged.
+
+Ordering across the combined batch is **scenario-major**: all `n` repeats of
+the first registered scenario, then all `n` of the second, and so on — the
+per-scenario iteration index resets at each scenario (`boss-1, boss-2, …,
+boss-four-hits-1, …`). The plan positions (`#1 … #(n × scenarios)`) run
+across the whole batch, and every iteration is attributable by scenario and
+iteration in the batch report and `--json` aggregate.
+
+### Output naming
+
+`--output` is treated as a **directory** for a batch (producer decision Q2):
+
+| Invocation | Output files |
+|---|---|
+| `--all-scenarios` | `capture-output/<scenario>-<ISO-timestamp>.webm` (one timestamp per batch) |
+| `--all-scenarios --output clips` | `clips/<scenario>.webm` |
+| `--count 3 --all-scenarios` | `capture-output/<scenario>-<ISO-timestamp>-1.webm`, `…-2.webm`, `…-3.webm` (per scenario) |
+| `--count 3 --all-scenarios --output clips` | `clips/<scenario>-1.webm`, `clips/<scenario>-2.webm`, `clips/<scenario>-3.webm` (per scenario) |
+
+With `--count > 1` every name carries a **per-scenario 1-based iteration
+suffix**, so `n` repeats of one scenario can never collide; `--count 1` (and
+omitting `--count`) is byte-for-byte the plain `--all-scenarios` naming.
+Names are **deterministic and collision-free** within a batch, and an existing
+file is **never silently overwritten**: if a target name is already in use —
+by an earlier item in the plan or on disk — a `-<n>` suffix is inserted
+before the extension (`boss.webm` → `boss-2.webm`), resolved by the pure
+`uniquifyOutputPath` helper. The batch report and `--json` aggregate name the
+scenario per item (`#1 [boss] ok …`), so results are attributable without
+parsing paths.
+
+### Validation and exit codes
+
+- `--all-scenarios` takes no value and cannot be combined with `--scenario`
+  (it already selects every scenario).
+- `--count` keeps its positive-integer-only validation (`0`, missing or
+  non-numeric values fail fast) whether or not `--all-scenarios` is present.
+- The aggregate summary prints every item and the process exits **non-zero**
+  if any scenario failed or hit the `--max-duration` cap; a single-scenario
+  failure does not abort the remaining scenarios (AC6).
 
 ## Progress output & dependency preflight
 

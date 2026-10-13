@@ -44,15 +44,19 @@ import {
 import {
   configureThrusterShim,
   resetThrusterHumForTests,
+  setThrusterBeatClock,
   stopThrusterHum,
   updateThrusterHum,
 } from './thrusterShim';
 import type { BeatClock } from '../utils/beat';
+import type { WeaponId } from '../utils/weapons';
 
 // Re-exported thruster-hum reference constants + test seams (moved to the shim
 // module, kept exported from here so consumers/tests are unchanged).
 export {
+  THRUSTER_HUM_AMPLITUDE_MODULATION_DEPTH,
   THRUSTER_HUM_BASE_FREQ,
+  THRUSTER_HUM_CANNON_SUBDIVISIONS,
   THRUSTER_HUM_GROWTH_TIME,
   THRUSTER_HUM_MAX_VOLUME,
   THRUSTER_HUM_NOISE_FILTER_MAX,
@@ -205,6 +209,28 @@ export function setExplosionBeatClock(clock: BeatClock | null): void {
   accentTickMs = null;
   accentCount = 0;
 }
+
+// ── Thruster-hum beat pulse (AH-0MV01G4NL009JK92) ───────────────────
+//
+// The player thruster hum is phase-locked to the same shared beat clock and
+// modulated on the cannon cadence (2 subdivisions/beat) while thrusting: an
+// amplitude tremolo (the loudness "beat") plus a counter-phase band-pass
+// sweep on the noise filter. The clock is forwarded unchanged to the runtime
+// shim (see the re-exported {@link setThrusterBeatClock}), so the game and
+// every gym pulse identically with no per-scene copy (AGENTS.md gym↔game
+// parity). `CombatCoreScene` registers/detaches it in the same lifecycle
+// calls as {@link setExplosionBeatClock}. No clock registered ⇒ the shim
+// skips modulation (flat level-scaled hum) and stays a safe no-op.
+
+/**
+ * Forwards the scene's shared beat clock to the thruster-hum shim so the
+ * hum pulses on the cannon cadence (`THRUSTER_HUM_CANNON_SUBDIVISIONS`
+ * subdivisions per beat = 375 ms at the default 80 BPM) while thrusting:
+ * an amplitude tremolo plus a counter-phase band-pass sweep on the same
+ * grid. Pass `null` to detach (scene teardown) and restore the plain
+ * level-scaled hum. Safe no-op in both directions (AC4).
+ */
+export { setThrusterBeatClock };
 
 /**
  * Resolves the `delay` (seconds) for an explosion cue: the **game-time**
@@ -404,6 +430,98 @@ export function playArcFireSound(): void {
   playCue('playArcFireSound');
 }
 
+/**
+ * The per-weapon fire cue for a player weapon id, routed through the one
+ * shared player-fire path (AH-0MV55O9R5005W6J0 · AC1/AC2).
+ *
+ * Every player weapon's fire cue (cannon, spread, dual, rapid, nova,
+ * mortar, arc) resolves through this single switch, so live fire
+ * (`_playShootCue` in `PlayScene`/gyms) and the reduced-volume hold-full
+ * metronome play the **same** cue through the **same** code path — the
+ * metronome passes `options.volume` (see `HOLD_FULL_FIRE_VOLUME_SCALE`)
+ * while live fire relies on the default.
+ *
+ * The AOE-family cues are intentionally included: they are active player
+ * weapons and their metronomic ghosts must sound identical to live fire
+ * (AC2 — *every* active player weapon). A weapon id without a baked fire
+ * cue (e.g. catalogue-only ids) degrades to a no-op, matching the existing
+ * `_playShootCue` switch.
+ *
+ * @param weaponId - The firing weapon id.
+ * @param options - Per-play options (e.g. `{ volume }` for the metronome).
+ */
+export function playWeaponFireSound(
+  weaponId: WeaponId,
+  options: SfxPlayOptions = {},
+): void {
+  switch (weaponId) {
+    case 'cannon':
+      playCue('playCannonFireSound', options);
+      break;
+    case 'spread':
+      playCue('playSpreadFireSound', options);
+      break;
+    case 'dual':
+      playCue('playDualFireSound', options);
+      break;
+    case 'rapid':
+      playCue('playRapidFireSound', options);
+      break;
+    case 'nova':
+      playCue('playNovaFireSound', options);
+      break;
+    case 'mortar':
+      playCue('playMortarFireSound', options);
+      break;
+    case 'arc':
+      playCue('playArcFireSound', options);
+      break;
+    default:
+      // Catalogue-only weapon ids with no baked fire cue — no-op (matches
+      // the per-weapon `_playShootCue` switch behaviour).
+      break;
+  }
+}
+
+/**
+ * Short bright two-note blip — one beat of the 3-2-1 restart countdown
+ * (AH-0MV55OA93008OUL1). Each count of the hold-full restart plays one
+ * distinct tick on a beat, so the player hears the beat they will resume
+ * on underneath the reduced-volume metronomic fire. Baked via the ToneForge
+ * pipeline (`aihell-countdown-tick`, seed 32264).
+ *
+ * The tone **rises with each beat** (AH-0MV722WJS0075UTZ): the single baked
+ * asset is played at a rising playback rate so count 3 is the base pitch,
+ * count 2 a major third above and count 1 a perfect fifth above (a C6→E6→G6
+ * major-triad rise). `step` is the 0-based countdown step (0 = first count);
+ * out-of-range steps clamp to the highest baked step so a bad value can
+ * never fall silent.
+ *
+ * @param step - 0-based countdown step (0, 1, 2, …); defaults to 0.
+ */
+export function playCountdownTickSound(step = 0): void {
+  playCue('playCountdownTickSound', { rate: countdownTickRate(step) });
+}
+
+/**
+ * Semitone offsets above the base countdown tick, one per countdown step:
+ * count 3 = 0 (base), count 2 = +4 (major third), count 1 = +7 (perfect
+ * fifth) — a rising major-triad cue. Tunable in one place.
+ */
+export const COUNTDOWN_TICK_SEMITONES: readonly number[] = [0, 4, 7];
+
+/**
+ * The playback rate for countdown `step`: `2^(semitones/12)` from
+ * {@link COUNTDOWN_TICK_SEMITONES}. A negative/out-of-range step clamps to
+ * the highest step; a non-integer step floors.
+ */
+export function countdownTickRate(step: number): number {
+  const index = Number.isFinite(step)
+    ? Math.min(Math.max(Math.floor(step), 0), COUNTDOWN_TICK_SEMITONES.length - 1)
+    : 0;
+  return 2 ** (COUNTDOWN_TICK_SEMITONES[index] / 12);
+}
+
 // ── Pickup activation cues ──────────────────────────────────────────
 
 /** Cheerful two-tone chime — power-up collection. */
@@ -586,4 +704,5 @@ export function _resetAudioContextForTests(): void {
   accentClock = null;
   accentTickMs = null;
   accentCount = 0;
+  setThrusterBeatClock(null);
 }

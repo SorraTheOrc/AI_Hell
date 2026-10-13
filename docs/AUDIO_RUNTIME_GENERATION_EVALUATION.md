@@ -37,7 +37,7 @@ cues benefit (next sections).
 
 | Cue | Why it is dynamic | Current delivery |
 |-----|-------------------|------------------|
-| Thruster hum (`updateThrusterSound`/`stopThrusterSound`) | Continuous, pitch/gain-coupled to `getEngineSoundLevel` every frame | **Runtime shim** (`src/audio/thrusterShim.ts`) — a shared Web Audio voice (triangle + sine + band-passed noise), gain ≤ 0.075 |
+| Thruster hum (`updateThrusterSound`/`stopThrusterSound`) | Continuous, pitch/gain-coupled to `getEngineSoundLevel` every frame | **Runtime shim** (`src/audio/thrusterShim.ts`) — a shared Web Audio voice (triangle + sine + band-passed noise), gain ≤ 0.05, pulsed on the shared beat clock's cannon cadence while thrusting |
 | Enemy / Diver destruction (`playDestructionSound`, `playDiverDestructionSound`) | Per-invocation pitch jitter (±15 %) so repeated kills differ | **Baked** — a 3-seed variant range (`aihell-enemy-destruction` 32110–32112, `aihell-diver-destruction` 32193–32195), one chosen at random per play |
 | Diver dive loop (`playDiveSound`) | Continuous ~2 s whoosh | **Baked** (`aihell-diver-dive-loop.32191.wav`) |
 

@@ -14,6 +14,7 @@ import type {
   AsteroidsInput,
   FourDirectionalInput,
 } from '../utils/movementModel';
+import { AsteroidsModel } from '../utils/movementModel';
 import {
   BOT_HUMAN_INPUT_TUNABLES,
   BotInputGovernor,
@@ -906,5 +907,275 @@ describe('reverse thrust (AH-0MV2WJSY70070HK2)', () => {
       }) as AsteroidsInput;
       expect(out.reverse).toBe(false);
     });
+  });
+});
+
+// ── Inertia-aware turn hold (AH-0MV1DUSM2005HL98 · AC1) ─────────────
+
+describe('toAsteroidsInput — inertia-aware turn hold (AH-0MV1DUSM2005HL98 AC1)', () => {
+  /** A precise intent aimed at `bearing` (no thrust — aim only). */
+  function aimIntent(bearing: number) {
+    return {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+      thrust: false,
+      aim: true,
+    };
+  }
+
+  it('reduces to the legacy instantaneous release when the ship is not spinning', () => {
+    // Error 0.2 > tolerance: keep turning. Error 0.1 < tolerance: release
+    // (no turn command; the coast/intent's own thrust flag is irrelevant here).
+    const turning = toAsteroidsInput(
+      aimIntent(0.2),
+      0,
+      0.15,
+      false,
+      0,
+      60,
+    ) as AsteroidsInput;
+    expect(turning.turnRight).toBe(true);
+    expect(turning.turnLeft).toBe(false);
+    const released = toAsteroidsInput(
+      aimIntent(0.1),
+      0,
+      0.15,
+      false,
+      0,
+      60,
+    ) as AsteroidsInput;
+    expect(released.turnRight).toBe(false);
+    expect(released.turnLeft).toBe(false);
+  });
+
+  it('brakes a coast that would overshoot instead of releasing on the instantaneous error', () => {
+    // Instantaneous error -0.10 (inside the 0.15 tolerance) but the ship is
+    // spinning clockwise at +3 rad/s, so releasing would coast ~0.075 rad
+    // further clockwise — a predicted stop error of ~-0.175, outside
+    // tolerance. The inertia-aware release must brake the spin instead.
+    const out = toAsteroidsInput(
+      aimIntent(-0.1),
+      0,
+      0.15,
+      false,
+      3,
+      60,
+    ) as AsteroidsInput;
+    expect(out.turnLeft).toBe(true);
+    expect(out.turnRight).toBe(false);
+    expect(out.forward).toBe(false);
+    // The same instantaneous error without the spin releases (no turn).
+    const legacy = toAsteroidsInput(
+      aimIntent(-0.1),
+      0,
+      0.15,
+      false,
+      0,
+      60,
+    ) as AsteroidsInput;
+    expect(legacy.turnLeft).toBe(false);
+    expect(legacy.turnRight).toBe(false);
+  });
+
+  it('reads the live deceleration it is handed (no hard-coded rotation constant)', () => {
+    // Error -0.05, spin +3. With the shipped 60 rad/s² the coast is 0.075 and
+    // the predicted stop is within tolerance (release). With a gentle
+    // 5 rad/s² the coast is 0.9 and the release must brake.
+    const shipped = toAsteroidsInput(
+      aimIntent(-0.05),
+      0,
+      0.15,
+      false,
+      3,
+      60,
+    ) as AsteroidsInput;
+    expect(shipped.turnLeft).toBe(false);
+    expect(shipped.turnRight).toBe(false);
+    const gentle = toAsteroidsInput(
+      aimIntent(-0.05),
+      0,
+      0.15,
+      false,
+      3,
+      5,
+    ) as AsteroidsInput;
+    expect(gentle.turnLeft).toBe(true);
+    expect(gentle.turnRight).toBe(false);
+  });
+
+  it('settles on a static bearing within the tolerance (shipped physics)', () => {
+    const DT = 1 / 60;
+    const config = {
+      thrust: 300,
+      maxSpeed: 175,
+      friction: 100,
+      rotationSpeed: 3,
+      rotationAcceleration: 12,
+      rotationDeceleration: 60,
+    } as unknown as Parameters<AsteroidsModel['tick']>[5];
+    const model = new AsteroidsModel();
+    const governor = new BotInputGovernor({
+      reactionTimeMs: 0,
+      alignmentToleranceRad: 0.15,
+    });
+    const bearing = 1.1;
+    const intent = aimIntent(bearing);
+    let state = {
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+      angularVelocity: 0,
+    };
+
+    for (let i = 0; i < 300; i += 1) {
+      const committed = governor.update(intent, DT, {
+        scheme: 'asteroids',
+        facing: state.facing,
+        angularVelocity: state.angularVelocity,
+        rotationDeceleration: 60,
+        reverseEnabled: false,
+      }) as AsteroidsInput;
+      state = model.tick(
+        state,
+        committed,
+        DT,
+        960,
+        540,
+        config,
+      ) as typeof state;
+    }
+
+    const settledError = Math.abs(
+      Math.atan2(
+        Math.sin(bearing - state.facing),
+        Math.cos(bearing - state.facing),
+      ),
+    );
+    expect(settledError).toBeLessThanOrEqual(0.15 + 1e-6);
+    // It actually came to rest (no residual spin).
+    expect(Math.abs(state.angularVelocity)).toBeLessThan(1e-3);
+  });
+});
+
+// ── Skill aim error (AH-0MV1DUSM2005HL98 · AC3) ─────────────────────
+
+describe('BotInputGovernor — skill aim error (AH-0MV1DUSM2005HL98 AC3)', () => {
+  /** A precise aim intent at `bearing`. */
+  function aimIntent(bearing: number) {
+    return {
+      ...input(),
+      dirX: Math.cos(bearing),
+      dirY: Math.sin(bearing),
+      thrust: false,
+      aim: true,
+    };
+  }
+
+  /** The bearing of the governor's committed aim intent. */
+  function committedBearing(governor: BotInputGovernor): number {
+    const intent = governor.currentIntent();
+    return Math.atan2(intent.dirY ?? 0, intent.dirX ?? 0);
+  }
+
+  it('is exactly zero at skill = 1 (no draw, no change)', () => {
+    const bearing = 0.5;
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, skill: 1, maxAimErrorRad: 0.5 },
+      7,
+    );
+    for (let i = 0; i < 6; i += 1) {
+      governor.update(aimIntent(bearing), 1 / 60, {
+        scheme: 'asteroids',
+        facing: 0,
+      });
+      expect(committedBearing(governor)).toBeCloseTo(bearing, 12);
+    }
+  });
+
+  it('adds a non-zero error bounded by maxAimErrorRad·(1 - skill)', () => {
+    const skill = 0.5;
+    const maxAimErrorRad = 0.4;
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, skill, maxAimErrorRad },
+      3,
+    );
+    let maxAbs = 0;
+    let sawNonZero = false;
+    for (let i = 0; i < 25; i += 1) {
+      governor.update(aimIntent(0), 1 / 60, {
+        scheme: 'asteroids',
+        facing: 0,
+      });
+      const error = committedBearing(governor);
+      maxAbs = Math.max(maxAbs, Math.abs(error));
+      if (Math.abs(error) > 1e-9) sawNonZero = true;
+    }
+    expect(sawNonZero).toBe(true);
+    expect(maxAbs).toBeLessThanOrEqual(maxAimErrorRad * (1 - skill) + 1e-9);
+  });
+
+  it('is reproducible for a run seed and differs across seeds', () => {
+    const run = (seed: number): number[] => {
+      const governor = new BotInputGovernor(
+        { reactionTimeMs: 0, skill: 0, maxAimErrorRad: 0.4 },
+        seed,
+      );
+      const errors: number[] = [];
+      for (let i = 0; i < 8; i += 1) {
+        governor.update(aimIntent(0), 1 / 60, {
+          scheme: 'asteroids',
+          facing: 0,
+        });
+        errors.push(committedBearing(governor));
+      }
+      return errors;
+    };
+    expect(run(42)).toEqual(run(42));
+    expect(run(42)).not.toEqual(run(43));
+  });
+
+  it('grows the error monotonically as skill falls', () => {
+    const sample = (skill: number): number => {
+      const governor = new BotInputGovernor(
+        { reactionTimeMs: 0, skill, maxAimErrorRad: 1 },
+        9,
+      );
+      let max = 0;
+      for (let i = 0; i < 40; i += 1) {
+        governor.update(aimIntent(0), 1 / 60, {
+          scheme: 'asteroids',
+          facing: 0,
+        });
+        max = Math.max(max, Math.abs(committedBearing(governor)));
+      }
+      return max;
+    };
+    const high = sample(0.8);
+    const mid = sample(0.4);
+    const low = sample(0);
+    expect(mid).toBeGreaterThan(high);
+    expect(low).toBeGreaterThan(mid);
+  });
+
+  it('never perturbs a non-aim (survival/evade) intent', () => {
+    const governor = new BotInputGovernor(
+      { reactionTimeMs: 0, skill: 0, maxAimErrorRad: 0.4 },
+      5,
+    );
+    const evade = {
+      ...input('left'),
+      dirX: -1,
+      dirY: 0,
+      thrust: true,
+      aim: false,
+    };
+    for (let i = 0; i < 6; i += 1) {
+      governor.update(evade, 1 / 60, { scheme: 'asteroids', facing: 0 });
+      expect(governor.currentIntent().dirX).toBe(-1);
+      expect(governor.currentIntent().dirY).toBe(0);
+    }
   });
 });

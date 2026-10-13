@@ -37,6 +37,12 @@ export interface BotTuningFieldSpec {
   readonly key: string;
   /** Human-readable label shown above/beside the slider. */
   readonly label: string;
+  /**
+   * Plain-English explanation of what the parameter controls, surfaced as the
+   * slider's tooltip. Authored once here so the registry stays the single
+   * source of the designer-facing tuning surface (AH-0MV4XGXVL001GSB2).
+   */
+  readonly description: string;
   readonly min: number;
   readonly max: number;
   readonly step: number;
@@ -47,6 +53,8 @@ export interface BotTuningToggleSpec {
   readonly group: BotTuningGroup;
   readonly key: string;
   readonly label: string;
+  /** Plain-English explanation surfaced as the toggle's tooltip. */
+  readonly description: string;
 }
 
 /**
@@ -63,75 +71,82 @@ export interface BotTuningValues {
 /** Numeric sliders, in panel order. */
 export const BOT_TUNING_NUMERIC_FIELDS: readonly BotTuningFieldSpec[] = [
   // Priority / utility bands (what the bot values).
-  { group: 'competent', key: 'survivalBase', label: 'survivalBase', min: 0, max: 40, step: 0.5 },
-  { group: 'competent', key: 'survivalUrgencyPort', label: 'survivalUrgencyPort', min: 0, max: 20, step: 0.5 },
-  { group: 'competent', key: 'lifeBase', label: 'lifeBase', min: 0, max: 20, step: 0.5 },
-  { group: 'competent', key: 'mineralBase', label: 'mineralBase', min: 0, max: 20, step: 0.5 },
-  { group: 'competent', key: 'powerUpBase', label: 'powerUpBase', min: 0, max: 20, step: 0.5 },
-  { group: 'competent', key: 'enemyBase', label: 'enemyBase', min: 0, max: 20, step: 0.5 },
-  { group: 'competent', key: 'asteroidBase', label: 'asteroidBase', min: 0, max: 20, step: 0.5 },
-  { group: 'competent', key: 'repositionBase', label: 'repositionBase', min: 0, max: 5, step: 0.05 },
-  { group: 'competent', key: 'prioritySpan', label: 'prioritySpan', min: 0, max: 3, step: 0.05 },
-  { group: 'competent', key: 'enemyWavePressurePort', label: 'enemyWavePressurePort', min: 0, max: 5, step: 0.05 },
+  { group: 'competent', key: 'survivalBase', label: 'survivalBase', min: 0, max: 40, step: 0.5, description: 'Base utility of the hard-constraint survival goal. It sits far above the objective bands so an urgent threat outranks every objective; the steering safety filter is the actual never-suicide guarantee.' },
+  { group: 'competent', key: 'survivalUrgencyPort', label: 'survivalUrgencyPort', min: 0, max: 20, step: 0.5, description: 'Utility added per unit of (0..1) survival urgency.' },
+  { group: 'competent', key: 'lifeBase', label: 'lifeBase', min: 0, max: 20, step: 0.5, description: 'Base utility of the secure-life band: an offered or on-screen Extra Life while below the life cap. It sits below survival and above minerals so a free life is never traded for another objective.' },
+  { group: 'competent', key: 'mineralBase', label: 'mineralBase', min: 0, max: 20, step: 0.5, description: 'Base utility of the mineral-collection band.' },
+  { group: 'competent', key: 'powerUpBase', label: 'powerUpBase', min: 0, max: 20, step: 0.5, description: 'Base utility of the power-up band (below minerals in the priority order).' },
+  { group: 'competent', key: 'enemyBase', label: 'enemyBase', min: 0, max: 20, step: 0.5, description: 'Base utility of the enemy-engagement band.' },
+  { group: 'competent', key: 'asteroidBase', label: 'asteroidBase', min: 0, max: 20, step: 0.5, description: 'Base utility of the asteroid-engagement band (the lowest combat band).' },
+  { group: 'competent', key: 'repositionBase', label: 'repositionBase', min: 0, max: 5, step: 0.05, description: 'Base utility of the reposition/idle fallback band, used when no objective is worth pursuing.' },
+  { group: 'competent', key: 'prioritySpan', label: 'prioritySpan', min: 0, max: 3, step: 0.05, description: 'Utility span across a band: a nearer target scores higher within its band, but the span stays below one band so the priority order (minerals > power-ups > enemies > asteroids) is never violated.' },
+  { group: 'competent', key: 'enemyWavePressurePort', label: 'enemyWavePressurePort', min: 0, max: 5, step: 0.05, description: 'Extra enemy-band utility at full wave pressure, so the bot focuses fire late in a timed wave.' },
 
   // Seek ranges (px).
-  { group: 'competent', key: 'lifeSeekRange', label: 'lifeSeekRange', min: 0, max: 1500, step: 25 },
-  { group: 'competent', key: 'mineralSeekRange', label: 'mineralSeekRange', min: 0, max: 1500, step: 25 },
-  { group: 'competent', key: 'powerUpSeekRange', label: 'powerUpSeekRange', min: 0, max: 1500, step: 25 },
-  { group: 'competent', key: 'enemySeekRange', label: 'enemySeekRange', min: 0, max: 1500, step: 25 },
-  { group: 'competent', key: 'asteroidSeekRange', label: 'asteroidSeekRange', min: 0, max: 1500, step: 25 },
-  { group: 'competent', key: 'engagementRange', label: 'engagementRange', min: 0, max: 600, step: 5 },
-  { group: 'competent', key: 'collectArrivalRadius', label: 'collectArrivalRadius', min: 1, max: 100, step: 1 },
-  { group: 'competent', key: 'dangerMargin', label: 'dangerMargin', min: 0, max: 300, step: 5 },
-  { group: 'competent', key: 'wallMargin', label: 'wallMargin', min: 0, max: 200, step: 5 },
-  { group: 'competent', key: 'threatRadius', label: 'threatRadius', min: 0, max: 300, step: 5 },
-  { group: 'competent', key: 'longTravelDistance', label: 'longTravelDistance', min: 0, max: 1000, step: 10 },
-  { group: 'competent', key: 'repositionRadius', label: 'repositionRadius', min: 0, max: 600, step: 5 },
+  { group: 'competent', key: 'lifeSeekRange', label: 'lifeSeekRange', min: 0, max: 1500, step: 25, description: 'Radius (px) within which a live Extra Life drop is pursued.' },
+  { group: 'competent', key: 'mineralSeekRange', label: 'mineralSeekRange', min: 0, max: 1500, step: 25, description: 'Radius (px) within which a mineral is pursued.' },
+  { group: 'competent', key: 'powerUpSeekRange', label: 'powerUpSeekRange', min: 0, max: 1500, step: 25, description: 'Radius (px) within which a power-up is pursued.' },
+  { group: 'competent', key: 'enemySeekRange', label: 'enemySeekRange', min: 0, max: 1500, step: 25, description: 'Radius (px) within which a live enemy is pursued.' },
+  { group: 'competent', key: 'asteroidSeekRange', label: 'asteroidSeekRange', min: 0, max: 1500, step: 25, description: 'Radius (px) within which an asteroid is engaged.' },
+  { group: 'competent', key: 'engagementRange', label: 'engagementRange', min: 0, max: 600, step: 5, description: 'Preferred standoff (px) for combat targets. Inside it the engage behaviour holds its fire axis (aims and coasts) rather than closing further.' },
+  { group: 'competent', key: 'collectArrivalRadius', label: 'collectArrivalRadius', min: 1, max: 100, step: 1, description: 'Distance (px) within which a collection target counts as reached.' },
+  { group: 'competent', key: 'dangerMargin', label: 'dangerMargin', min: 0, max: 300, step: 5, description: 'Distance (px) the bot keeps from a hazard (keep-away clearance).' },
+  { group: 'competent', key: 'wallMargin', label: 'wallMargin', min: 0, max: 200, step: 5, description: 'Distance (px) from an edge treated as a wall hazard.' },
+  { group: 'competent', key: 'threatRadius', label: 'threatRadius', min: 0, max: 300, step: 5, description: "Distance (px) within which the ship's centre is at risk from a shot." },
+  { group: 'competent', key: 'longTravelDistance', label: 'longTravelDistance', min: 0, max: 1000, step: 10, description: 'Distance (px) beyond which the steer objective is treated as a long-travel leg (which lengthens thrust bursts).' },
+  { group: 'competent', key: 'repositionRadius', label: 'repositionRadius', min: 0, max: 600, step: 5, description: 'Distance (px) from the playfield centre within which the reposition fallback idles.' },
 
   // Motion / prediction.
-  { group: 'competent', key: 'playerSpeed', label: 'playerSpeed', min: 0, max: 600, step: 5 },
-  { group: 'competent', key: 'firePredictionHorizon', label: 'firePredictionHorizon', min: 0, max: 3, step: 0.05 },
-  { group: 'competent', key: 'assumedBulletSpeed', label: 'assumedBulletSpeed', min: 0, max: 800, step: 10 },
-  { group: 'competent', key: 'frictionDeceleration', label: 'frictionDeceleration', min: 0, max: 500, step: 5 },
-  { group: 'competent', key: 'survivalUrgencyHorizon', label: 'survivalUrgencyHorizon', min: 0, max: 3, step: 0.05 },
+  { group: 'competent', key: 'playerSpeed', label: 'playerSpeed', min: 0, max: 600, step: 5, description: 'Assumed player speed (px/s) used for candidate-direction prediction.' },
+  { group: 'competent', key: 'firePredictionHorizon', label: 'firePredictionHorizon', min: 0, max: 3, step: 0.05, description: 'Look-ahead window (seconds) for incoming-fire prediction.' },
+  { group: 'competent', key: 'assumedBulletSpeed', label: 'assumedBulletSpeed', min: 0, max: 800, step: 10, description: 'Assumed enemy-bullet speed (px/s) used for fire-tell shots.' },
+  { group: 'competent', key: 'frictionDeceleration', label: 'frictionDeceleration', min: 0, max: 500, step: 5, description: "The ship's coasting deceleration (px/s²) used by the forward model." },
+  { group: 'competent', key: 'survivalUrgencyHorizon', label: 'survivalUrgencyHorizon', min: 0, max: 3, step: 0.05, description: 'Time window (seconds) within which a threatening shot counts as urgent.' },
+
+  // Aim lead prediction (AH-0MV1DUSM2005HL98).
+  { group: 'competent', key: 'aimLeadAlignSeconds', label: 'aimLeadAlignSeconds', min: 0, max: 2, step: 0.05, description: 'Estimated time (seconds) for the ship to finish its turn onto the target bearing, used as the alignment term in the intercept solve.' },
+  { group: 'competent', key: 'aimLeadIterations', label: 'aimLeadIterations', min: 1, max: 8, step: 1, description: 'Iteration count for the intercept solve (≥1); more iterations converge the lead point more precisely.' },
 
   // Reverse thruster.
-  { group: 'competent', key: 'reverseImminentOvershootGap', label: 'reverseImminentOvershootGap', min: 0, max: 200, step: 2 },
-  { group: 'competent', key: 'reverseRetreatRange', label: 'reverseRetreatRange', min: 0, max: 400, step: 5 },
+  { group: 'competent', key: 'reverseImminentOvershootGap', label: 'reverseImminentOvershootGap', min: 0, max: 200, step: 2, description: 'Gap (px) within which reverse braking fires — the imminent-overshoot threshold. On a normal approach the ship coasts on friction until the remaining gap falls below this value, then reverse is requested to shed the remaining speed.' },
+  { group: 'competent', key: 'reverseRetreatRange', label: 'reverseRetreatRange', min: 0, max: 400, step: 5, description: 'Standoff distance (px) inside which an engaged target is too close and the bot retreats under reverse thrust while keeping its nose on the aim target (kiting). Kiting only fires when a genuine threat is present.' },
 
   // Steering scoring.
-  { group: 'competent', key: 'progressWeight', label: 'progressWeight', min: 0, max: 5, step: 0.05 },
-  { group: 'competent', key: 'clearanceWeight', label: 'clearanceWeight', min: 0, max: 5, step: 0.05 },
-  { group: 'competent', key: 'clearanceCap', label: 'clearanceCap', min: 0, max: 1500, step: 10 },
+  { group: 'competent', key: 'progressWeight', label: 'progressWeight', min: 0, max: 5, step: 0.05, description: 'Weight of objective progress in the candidate steering score.' },
+  { group: 'competent', key: 'clearanceWeight', label: 'clearanceWeight', min: 0, max: 5, step: 0.05, description: 'Weight of clearance in the candidate steering score.' },
+  { group: 'competent', key: 'clearanceCap', label: 'clearanceCap', min: 0, max: 1500, step: 10, description: 'Clearance (px) above which extra clearance earns no more steering score.' },
 
   // Commitment / hysteresis.
-  { group: 'competent', key: 'commitment.minCommitSeconds', label: 'minCommitSeconds', min: 0, max: 3, step: 0.05 },
-  { group: 'competent', key: 'commitment.switchMargin', label: 'switchMargin', min: 0, max: 3, step: 0.05 },
-  { group: 'competent', key: 'commitment.challengerPersistenceSeconds', label: 'challengerPersistenceSeconds', min: 0, max: 3, step: 0.05 },
+  { group: 'competent', key: 'commitment.minCommitSeconds', label: 'minCommitSeconds', min: 0, max: 3, step: 0.05, description: 'Minimum time (seconds) a committed goal is held before a challenger may take over. 0 allows an immediate switch (still subject to the margin).' },
+  { group: 'competent', key: 'commitment.switchMargin', label: 'switchMargin', min: 0, max: 3, step: 0.05, description: 'Utility margin a challenger must beat the incumbent by to take over. A larger margin is stickier (fewer switches).' },
+  { group: 'competent', key: 'commitment.challengerPersistenceSeconds', label: 'challengerPersistenceSeconds', min: 0, max: 3, step: 0.05, description: 'Time (seconds) a challenger must consistently outrank the incumbent after the minimum hold before it takes over. 0 switches as soon as the hold and margin are satisfied; a positive value debounces a one-tick spike.' },
 
   // World-model overrides.
-  { group: 'competent', key: 'world.horizon', label: 'world.horizon', min: 0, max: 3, step: 0.05 },
-  { group: 'competent', key: 'world.threatRadius', label: 'world.threatRadius', min: 0, max: 300, step: 5 },
-  { group: 'competent', key: 'world.assumedBulletSpeed', label: 'world.assumedBulletSpeed', min: 0, max: 800, step: 10 },
+  { group: 'competent', key: 'world.horizon', label: 'world.horizon', min: 0, max: 3, step: 0.05, description: 'Look-ahead window (seconds) for incoming-fire prediction (world-model override).' },
+  { group: 'competent', key: 'world.threatRadius', label: 'world.threatRadius', min: 0, max: 300, step: 5, description: "Separation (px) within which a predicted shot counts as a threat — the radius of the ship's hit bubble (world-model override)." },
+  { group: 'competent', key: 'world.assumedBulletSpeed', label: 'world.assumedBulletSpeed', min: 0, max: 800, step: 10, description: 'Assumed enemy-bullet speed (px/s) used to model the shot an enemy inside a fire tell is about to fire (world-model override).' },
 
   // Human-like input cadence.
-  { group: 'human', key: 'reactionTimeMs', label: 'reactionTimeMs', min: 0, max: 1000, step: 10 },
-  { group: 'human', key: 'alignmentToleranceRad', label: 'alignmentToleranceRad', min: 0, max: 1, step: 0.01 },
-  { group: 'human', key: 'thrustPressMinMs', label: 'thrustPressMinMs', min: 0, max: 1000, step: 5 },
-  { group: 'human', key: 'thrustPressMaxMs', label: 'thrustPressMaxMs', min: 0, max: 1000, step: 5 },
-  { group: 'human', key: 'thrustPressMaxMsLong', label: 'thrustPressMaxMsLong', min: 0, max: 1500, step: 5 },
-  { group: 'human', key: 'thrustPressGentleMinPct', label: 'thrustPressGentleMinPct', min: 0, max: 0.5, step: 0.01 },
-  { group: 'human', key: 'thrustPressGentleMaxPct', label: 'thrustPressGentleMaxPct', min: 0, max: 0.5, step: 0.01 },
-  { group: 'human', key: 'reversePressMinMs', label: 'reversePressMinMs', min: 0, max: 1000, step: 5 },
-  { group: 'human', key: 'reversePressMaxMs', label: 'reversePressMaxMs', min: 0, max: 1500, step: 5 },
-  { group: 'human', key: 'reversePressGentleMinPct', label: 'reversePressGentleMinPct', min: 0, max: 0.5, step: 0.01 },
-  { group: 'human', key: 'reversePressGentleMaxPct', label: 'reversePressGentleMaxPct', min: 0, max: 0.5, step: 0.01 },
+  { group: 'human', key: 'reactionTimeMs', label: 'reactionTimeMs', min: 0, max: 1000, step: 10, description: 'Minimum time (ms) between committed input changes. Approximates an average human reaction time on a mechanical keyboard; the committed input is held for at least this long.' },
+  { group: 'human', key: 'alignmentToleranceRad', label: 'alignmentToleranceRad', min: 0, max: 1, step: 0.01, description: 'Heading error (radians) within which the asteroids actuator stops turning and thrusts forward instead, avoiding oscillation around the target heading.' },
+  { group: 'human', key: 'skill', label: 'skill', min: 0, max: 1, step: 0.01, description: 'Aim skill in [0, 1]: trades aim precision for human fallibility. At 1 the bot aims exactly; as it falls the committed aim bearing is perturbed by a seeded random error scaling with (1 - skill) up to maxAimErrorRad. Survival/evade intents are never perturbed.' },
+  { group: 'human', key: 'maxAimErrorRad', label: 'maxAimErrorRad', min: 0, max: 1.5, step: 0.01, description: 'Maximum aim error (radians) added at skill = 0. At intermediate skill the error is drawn uniformly from [-maxAimErrorRad·(1-skill), +maxAimErrorRad·(1-skill)].' },
+  { group: 'human', key: 'thrustPressMinMs', label: 'thrustPressMinMs', min: 0, max: 1000, step: 5, description: 'Minimum duration (ms) of a forward-thrust press. Each press is drawn from [thrustPressMinMs, thrustPressMaxMs] so the bot holds the key in human-like bursts instead of toggling every tick.' },
+  { group: 'human', key: 'thrustPressMaxMs', label: 'thrustPressMaxMs', min: 0, max: 1000, step: 5, description: 'Maximum duration (ms) of a forward-thrust press on a normal-length leg.' },
+  { group: 'human', key: 'thrustPressMaxMsLong', label: 'thrustPressMaxMsLong', min: 0, max: 1500, step: 5, description: 'Maximum duration (ms) of a forward-thrust press when travelling far (the chosen target lies beyond longTravelDistance), so long legs get longer bursts.' },
+  { group: 'human', key: 'thrustPressGentleMinPct', label: 'thrustPressGentleMinPct', min: 0, max: 0.5, step: 0.01, description: 'Minimum fractional reduction (e.g. 0.01 = 1%) applied to each forward-thrust press duration to make the demo bot gentler on the thrusters.' },
+  { group: 'human', key: 'thrustPressGentleMaxPct', label: 'thrustPressGentleMaxPct', min: 0, max: 0.5, step: 0.01, description: 'Maximum fractional reduction (e.g. 0.05 = 5%) applied to each forward-thrust press duration to make the demo bot gentler on the thrusters.' },
+  { group: 'human', key: 'reversePressMinMs', label: 'reversePressMinMs', min: 0, max: 1000, step: 5, description: 'Minimum duration (ms) of a reverse-thrust press. Each reverse press is drawn from [reversePressMinMs, reversePressMaxMs] so the bot never toggles the retro-thruster every frame.' },
+  { group: 'human', key: 'reversePressMaxMs', label: 'reversePressMaxMs', min: 0, max: 1500, step: 5, description: 'Maximum duration (ms) of a reverse-thrust press.' },
+  { group: 'human', key: 'reversePressGentleMinPct', label: 'reversePressGentleMinPct', min: 0, max: 0.5, step: 0.01, description: 'Minimum fractional reduction (e.g. 0.02 = 2%) applied to each reverse-thrust press duration, mirroring the forward gentle reduction.' },
+  { group: 'human', key: 'reversePressGentleMaxPct', label: 'reversePressGentleMaxPct', min: 0, max: 0.5, step: 0.01, description: 'Maximum fractional reduction (e.g. 0.06 = 6%) applied to each reverse-thrust press duration, mirroring the forward gentle reduction.' },
 ];
 
 /** Boolean toggles, in panel order. */
 export const BOT_TUNING_TOGGLES: readonly BotTuningToggleSpec[] = [
-  { group: 'competent', key: 'reverseBrakeEnabled', label: 'reverseBrakeEnabled' },
-  { group: 'human', key: 'allowDown', label: 'allowDown' },
+  { group: 'competent', key: 'reverseBrakeEnabled', label: 'reverseBrakeEnabled', description: 'Whether the bot may use reverse thrust to brake.' },
+  { group: 'competent', key: 'aimLeadEnabled', label: 'aimLeadEnabled', description: "Whether the engage behaviour leads a moving target. When enabled the aim objective is the iterated intercept point rather than the enemy's current position; a stationary enemy is unaffected either way, so it is safe to leave on." },
+  { group: 'human', key: 'allowDown', label: 'allowDown', description: 'Whether the bot may use the down (S) direction in four-directional mode. Humans drive with W/A/D only, so this defaults to false. In asteroids mode the reverse (S) control is gated on the reverse-thruster enable flag instead.' },
 ];
 
 // ── Defaults ────────────────────────────────────────────────────────

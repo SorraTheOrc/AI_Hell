@@ -273,7 +273,6 @@ describe('drop visuals (AH-0MTG5MGPZ00986B4): glowing bubble', () => {
       'extra_life',
       'magnet',
       'mineral_scoop',
-      'power_pellet',
       'smart_bomb',
       'force_field',
       'mystery_ufo',

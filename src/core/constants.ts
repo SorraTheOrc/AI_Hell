@@ -119,8 +119,9 @@ export const HUD_DEPTH = 1000;
 /**
  * Canonical URL of the project's public GitHub repository
  * (AH-0MUZI83EO003WVTG). Single source of truth for the main-menu GitHub
- * link's click target; the displayed label is `🐙  GitHub`. Fork
- * maintainers point this at their own repository.
+ * link's click target; the link displays the official GitHub mark plus the
+ * "GitHub" label (AH-0MV1BI9I70048V7M). Fork maintainers point this at
+ * their own repository.
  */
 export const GITHUB_REPO_URL = 'https://github.com/SorraTheOrc/AI_Hell';
 

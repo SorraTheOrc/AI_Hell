@@ -44,6 +44,23 @@ describe('EnemyConfig schema', () => {
     }
   });
 
+  it('every seed carries a valid movementClass / attackClass pair (AH-0MV29NWI1007NKN7)', () => {
+    const movements = ['formation', 'diver', 'chaser', 'patroller', 'roamer'];
+    const attacks = ['contact', 'projectile', 'beam', 'area'];
+    for (const config of Object.values(DEFAULT_ENEMY_CONFIGS)) {
+      expect(movements, config.key).toContain(config.movementClass);
+      expect(attacks, config.key).toContain(config.attackClass);
+    }
+    // Spot-check the agreed mapping for the special archetypes.
+    expect(DEFAULT_ENEMY_CONFIGS.diver.movementClass).toBe('diver');
+    expect(DEFAULT_ENEMY_CONFIGS['ghost-chase'].movementClass).toBe('chaser');
+    expect(DEFAULT_ENEMY_CONFIGS.raider.movementClass).toBe('patroller');
+    expect(DEFAULT_ENEMY_CONFIGS.asteroid.movementClass).toBe('roamer');
+    expect(DEFAULT_ENEMY_CONFIGS.capturer.attackClass).toBe('beam');
+    expect(DEFAULT_ENEMY_CONFIGS['orbital-strike'].attackClass).toBe('area');
+    expect(DEFAULT_ENEMY_CONFIGS.grunt.attackClass).toBe('contact');
+  });
+
   it('exposes the agreed per-enemy bullet lifetimes (AC3/AC4)', () => {
     // Guard for AH-0MUU131PU006O7ZD AC5: the player-weapon range reduction is
     // player-only — these enemy lifetimes must stay unchanged.

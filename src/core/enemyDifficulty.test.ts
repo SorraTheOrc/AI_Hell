@@ -22,6 +22,8 @@ function makeConfig(overrides: Partial<EnemyConfig>): EnemyConfig {
   return {
     key: 'test',
     displayName: 'Test',
+    movementClass: 'formation',
+    attackClass: 'projectile',
     formationKind: 'v',
     count: 6,
     spacingX: 26,
@@ -284,6 +286,8 @@ describe('enemyDifficulty — Asteroid split chain', () => {
     const cfg: EnemyConfig = {
       key: 'asteroid',
       displayName: 'Asteroid',
+      movementClass: 'roamer',
+      attackClass: 'contact',
       formationKind: 'single',
       count: 1,
       spacingX: 0,
@@ -319,6 +323,8 @@ describe('enemyDifficulty — Asteroid split chain', () => {
     const cfg: EnemyConfig = {
       key: 'asteroid',
       displayName: 'Asteroid',
+      movementClass: 'roamer',
+      attackClass: 'contact',
       formationKind: 'single',
       count: 1,
       spacingX: 0,

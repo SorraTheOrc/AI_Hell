@@ -229,15 +229,13 @@ export class GymBoss extends GymFormationScene<
           entity as { setAimTarget?(x: number, y: number): void }
         ).setAimTarget?.(player.x, player.y);
       }
-      if (!this.isEnemyFrightened()) {
-        this.bullets.push(
-          ...fireForEnemy<BossBullet | PulseWaveBullet>(
-            entity,
-            minion.enemyKey,
-            this.time.now,
-          ),
-        );
-      }
+      this.bullets.push(
+        ...fireForEnemy<BossBullet | PulseWaveBullet>(
+          entity,
+          minion.enemyKey,
+          this.time.now,
+        ),
+      );
     }
   }
 
