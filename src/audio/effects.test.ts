@@ -94,6 +94,15 @@ describe('cue → baked asset mapping', () => {
     expect(recording.plays[2].url).toBe('audio/sfx/weapon-laser-zap.1.wav');
   });
 
+  it('playCountdownTickSound resolves to the baked countdown-tick asset (AH-0MV55OA93008OUL1)', () => {
+    effects.playCountdownTickSound();
+    expect(recording.plays).toHaveLength(1);
+    // New recipe, single seed 32264 — resolves deterministically.
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-countdown-tick.32264.wav',
+    );
+  });
+
   it('multi-seed cues vary across invocations', () => {
     const spy = vi
       .spyOn(Math, 'random')

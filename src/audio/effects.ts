@@ -483,6 +483,17 @@ export function playWeaponFireSound(
   }
 }
 
+/**
+ * Short bright two-note blip — one beat of the 3-2-1 restart countdown
+ * (AH-0MV55OA93008OUL1). Each count of the hold-full restart plays one
+ * distinct tick on a beat, so the player hears the beat they will resume
+ * on underneath the reduced-volume metronomic fire. Baked via the ToneForge
+ * pipeline (`aihell-countdown-tick`, seed 32264).
+ */
+export function playCountdownTickSound(): void {
+  playCue('playCountdownTickSound');
+}
+
 // ── Pickup activation cues ──────────────────────────────────────────
 
 /** Cheerful two-tone chime — power-up collection. */

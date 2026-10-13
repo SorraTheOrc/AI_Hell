@@ -202,6 +202,7 @@ repeated kills still vary.
 | `aihell-victory-crack` | `playVictoryCrackSound` | Quick saw + HP crack transient | 32255–32257 |
 | `aihell-victory-pop` | `playVictoryPopSound` | Short sine pop | 32258–32260 |
 | `aihell-victory-sparkle` | `playVictorySparkleSound` | Bright sine + HP shimmer | 32261–32263 |
+| `aihell-countdown-tick` | `playCountdownTickSound` | Bright square blip 1046→784 Hz (C6→G5), ~0.12 s — one beat of the 3-2-1 restart countdown (AH-0MV55OA93008OUL1) | 32264 |
 | `aihell-defeat-sting` | `playDefeatStingSound` | Descending five-note line + sinking drone + LP tail | 32241 |
 | `aihell-thruster-hum` | `updateThrusterSound` | Continuous triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz (runtime shim delivery, not baked) | — |
 

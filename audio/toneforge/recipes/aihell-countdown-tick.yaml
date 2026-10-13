@@ -1,0 +1,50 @@
+# AI Hell cue: aihell-countdown-tick — restart countdown count — bright square blip 1046 (C6) to 784 (G5) Hz.
+# (AH-0MV55OA93008OUL1) The 3-2-1 restart countdown plays one clearly
+# audible tick per beat on the shared grid. The tone is a short, bright
+# square two-note fall (C6 → G5) so it cuts through the reduced-volume
+# metronomic fire underneath without masking it, and reads clearly as a
+# "count" rather than a weapon or pickup cue.
+version: "0.1"
+meta:
+  name: aihell-countdown-tick
+  description: Restart countdown tick — bright square blip 1046 to 784 Hz, ~0.12 s.
+  category: AIHell
+  tags:
+    - countdown
+    - ui
+  duration: 0.12
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 1046
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1046
+        - kind: exponentialRamp
+          time: 0.115
+          value: 784
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.112
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.15
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out
