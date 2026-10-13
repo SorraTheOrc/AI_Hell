@@ -191,6 +191,47 @@ describe('volume and mute', () => {
   });
 });
 
+// ── 3b. Shared player-weapon fire dispatcher (AH-0MV55O9R5005W6J0) ──
+
+describe('playWeaponFireSound — shared player-fire path', () => {
+  it('routes every active player weapon to its baked fire cue', () => {
+    const cases: Array<[string, string]> = [
+      ['cannon', 'playCannonFireSound'],
+      ['spread', 'playSpreadFireSound'],
+      ['dual', 'playDualFireSound'],
+      ['rapid', 'playRapidFireSound'],
+      ['nova', 'playNovaFireSound'],
+      ['mortar', 'playMortarFireSound'],
+      ['arc', 'playArcFireSound'],
+    ];
+    for (const [weaponId, cue] of cases) {
+      recording.plays.length = 0;
+      effects.playWeaponFireSound(weaponId as never);
+      expect(recording.plays.length, `${weaponId} should play`).toBe(1);
+      expect(recording.plays[0].url, `${weaponId}`).toBe(
+        assetUrlFor(cueEntry(cue)),
+      );
+    }
+  });
+
+  it('passes the metronome reduced-volume option through to playback', () => {
+    effects.playWeaponFireSound('cannon', { volume: 0.3 });
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('defaults to full volume when the overlay omits the option', () => {
+    effects.playWeaponFireSound('cannon');
+    expect(recording.plays[0].volume).toBe(1);
+  });
+
+  it('is a no-op for catalogue-only weapon ids without a baked fire cue', () => {
+    expect(() =>
+      effects.playWeaponFireSound('wave_laser' as never),
+    ).not.toThrow();
+    expect(recording.plays).toHaveLength(0);
+  });
+});
+
 // ── 4. Dive-sound lifecycle ─────────────────────────────────────────
 
 describe('sustained dive sound', () => {

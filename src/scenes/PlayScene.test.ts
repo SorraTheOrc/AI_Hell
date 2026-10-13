@@ -2573,10 +2573,12 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   // ── Per-weapon fire audio (AH-0MU8QVQQV006T0KI) ──────────────────
+  // Player fire cues route through the shared playWeaponFireSound
+  // dispatcher (AH-0MV55O9R5005W6J0), so these tests observe the weapon id
+  // it is called with rather than the per-weapon cue functions.
 
-  it('auto-firing the cannon plays the cannon cue once per volley', async () => {
-    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
-    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
+  it('auto-firing the cannon plays the shared fire cue once per volley', async () => {
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     // Reset the scene's shared beat clock to a deterministic anchor so
@@ -2588,16 +2590,12 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
 
     scene.tick(0.5); // one 375 ms cannon grid tick elapses → fires once
 
-    expect(cannonSound).toHaveBeenCalledTimes(1);
-    // No other weapon's cue plays while the cannon is the only weapon.
-    expect(spreadSound).not.toHaveBeenCalled();
+    expect(fireSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('cannon');
   });
 
-  it('equipping spread/dual/rapid plays the corresponding per-weapon cue', async () => {
-    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
-    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
-    const dualSound = vi.spyOn(effectsModule, 'playDualFireSound');
-    const rapidSound = vi.spyOn(effectsModule, 'playRapidFireSound');
+  it('equipping spread/dual/rapid plays the corresponding shared fire cue', async () => {
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     vi.clearAllMocks();
@@ -2612,8 +2610,8 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('spread');
     scene.tick(0.05);
-    expect(spreadSound).toHaveBeenCalledTimes(1);
-    expect(cannonSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('spread');
+    expect(fireSound).toHaveBeenCalledWith('cannon');
     vi.clearAllMocks();
 
     // Dual.
@@ -2621,7 +2619,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('dual');
     scene.tick(0.05);
-    expect(dualSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('dual');
     vi.clearAllMocks();
 
     // Rapid.
@@ -2629,7 +2627,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     player.setBeatClock(scene.getBeatClock());
     player.equipWeapon('rapid');
     scene.tick(0.05);
-    expect(rapidSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('rapid');
   });
 
   // ── Per-type pickup activation audio (AH-0MU8QVX9G008P8ML) ──────

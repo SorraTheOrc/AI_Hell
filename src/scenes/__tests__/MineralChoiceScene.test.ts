@@ -9,7 +9,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
+import * as effects from '../../audio/effects';
+import { HOLD_FULL_FIRE_VOLUME_SCALE } from '../../core/rules';
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import { RecordingSfxProvider } from '../../test/audioTestDouble';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 
 /** Minimal scene used as the boot target for isolated overlay tests. */
@@ -25,6 +28,7 @@ describe('MineralChoiceScene', () => {
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
+    effects._resetAudioContextForTests();
   });
 
   it('presents three distinct options with numbered labels', async () => {
@@ -334,6 +338,117 @@ describe('MineralChoiceScene', () => {
 
       // The late timer must not fire a second selection.
       expect(calls).toEqual([1]);
+    });
+  });
+
+  describe('hold-full metronome (AH-0MV55O9R5005W6J0)', () => {
+    it('AC1/AC2 — a fire schedule plays reduced-volume ghost fire on the beat grid, active weapons only', async () => {
+      const recording = new RecordingSfxProvider();
+      effects.setSfxSoundProvider(recording);
+      booted = await bootScene([HarnessScene, MineralChoiceScene], {
+        deterministicBoot: true,
+      });
+      // Stop the live loop: drive the game with fixed-delta steps so the
+      // metronome advances by a known, deterministic amount.
+      booted!.game.loop.stop();
+      booted!.game.scene.start('MineralChoiceScene', {
+        options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
+        fireSchedule: {
+          anchorMs: 0,
+          startMs: 0,
+          weapons: [
+            { weaponId: 'cannon', intervalMs: 375 },
+            { weaponId: 'rapid', intervalMs: 125 },
+          ],
+        },
+      });
+      // ~500 ms of deterministic ~60 fps frames: cannon's first ghost tick
+      // is at 375 ms; rapid ticks every 125 ms.
+      let time = 0;
+      const dt = 1000 / 60;
+      for (let i = 0; i < 30; i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+
+      const scene = booted!.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      expect(scene).toBeTruthy();
+
+      const cannon = recording.plays.filter(
+        (p) => p.volume === HOLD_FULL_FIRE_VOLUME_SCALE && p.url.includes('aihell-cannon-fire'),
+      );
+      const rapid = recording.plays.filter(
+        (p) => p.volume === HOLD_FULL_FIRE_VOLUME_SCALE && p.url.includes('aihell-rapid-fire'),
+      );
+      // Reduced volume on every ghost tick (AC1).
+      expect(cannon.length).toBeGreaterThanOrEqual(1);
+      // Rapid (125 ms) ticks twice before cannon's first 375 ms tick.
+      expect(rapid.length).toBeGreaterThanOrEqual(2);
+      // Every play is a reduced-volume player-weapon fire cue (AC2 — no
+      // enemy or other gameplay cue).
+      expect(recording.plays.length).toBeGreaterThan(0);
+      for (const play of recording.plays) {
+        expect(play.volume).toBe(HOLD_FULL_FIRE_VOLUME_SCALE);
+        expect(play.url).toMatch(/aihell-(cannon|rapid|spread|dual|nova|mortar|arc)-fire\./);
+      }
+    });
+
+    it('AC2 — omitting a fire schedule keeps the overlay silent (no ghost fire)', async () => {
+      const recording = new RecordingSfxProvider();
+      effects.setSfxSoundProvider(recording);
+      booted = await bootScene([HarnessScene, MineralChoiceScene], {
+        deterministicBoot: true,
+      });
+      booted!.game.loop.stop();
+      booted!.game.scene.start('MineralChoiceScene', {
+        options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
+      });
+      let time = 0;
+      const dt = 1000 / 60;
+      for (let i = 0; i < 30; i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+      expect(recording.plays).toHaveLength(0);
+    });
+
+    it('a selection stops the metronome (ghost fire ends with the overlay)', async () => {
+      const recording = new RecordingSfxProvider();
+      effects.setSfxSoundProvider(recording);
+      booted = await bootScene([HarnessScene, MineralChoiceScene], {
+        deterministicBoot: true,
+      });
+      booted!.game.loop.stop();
+      booted!.game.scene.start('MineralChoiceScene', {
+        options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
+        fireSchedule: {
+          anchorMs: 0,
+          startMs: 0,
+          weapons: [{ weaponId: 'cannon', intervalMs: 375 }],
+        },
+      });
+      let time = 0;
+      const dt = 1000 / 60;
+      // A beat of ghost fire.
+      for (let i = 0; i < 25; i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+      expect(recording.plays.length).toBeGreaterThan(0);
+
+      const scene = booted!.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      const before = recording.plays.length;
+      scene.select(0);
+      // Further frames drive no ghost fire after the selection.
+      for (let i = 0; i < 25; i += 1) {
+        time += dt;
+        booted!.game.step(time, dt);
+      }
+      expect(recording.plays.length).toBe(before);
     });
   });
 });

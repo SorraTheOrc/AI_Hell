@@ -680,11 +680,8 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
     scene.tick(0.6);
   }
 
-  it('auto-firing the cannon plays playCannonFireSound exactly once per shot', async () => {
-    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
-    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
-    const dualSound = vi.spyOn(effectsModule, 'playDualFireSound');
-    const rapidSound = vi.spyOn(effectsModule, 'playRapidFireSound');
+  it('auto-firing the cannon plays the shared fire cue exactly once per shot', async () => {
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
     const scene = await bootWeapons();
     // Boot auto-fires the default cannon; clear so we assert only the
     // shots fired below.
@@ -692,16 +689,12 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
 
     fireOnce(scene, 'cannon');
 
-    expect(cannonSound).toHaveBeenCalledTimes(1);
-    // No other weapon's cue plays.
-    expect(spreadSound).not.toHaveBeenCalled();
-    expect(dualSound).not.toHaveBeenCalled();
-    expect(rapidSound).not.toHaveBeenCalled();
+    expect(fireSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('cannon');
   });
 
-  it('auto-firing the spread weapon plays playSpreadFireSound (one per shot, not per bullet)', async () => {
-    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
-    const spreadSound = vi.spyOn(effectsModule, 'playSpreadFireSound');
+  it('auto-firing the spread weapon plays its fire cue once per shot, not per bullet', async () => {
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
     const scene = await bootWeapons();
     vi.clearAllMocks();
 
@@ -710,32 +703,31 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
     // Spread fires 3 bullets per shot but the cue plays once. With the
     // cumulative model the permanently-active cannon fires too, so both
     // the spread cue and the cannon cue play once per volley.
-    expect(spreadSound).toHaveBeenCalledTimes(1);
-    expect(cannonSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledTimes(2);
+    expect(fireSound).toHaveBeenCalledWith('spread');
+    expect(fireSound).toHaveBeenCalledWith('cannon');
   });
 
-  it('auto-firing the dual weapon plays playDualFireSound (one per shot, not per bullet)', async () => {
-    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
-    const dualSound = vi.spyOn(effectsModule, 'playDualFireSound');
+  it('auto-firing the dual weapon plays its fire cue once per shot, not per bullet', async () => {
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
     const scene = await bootWeapons();
     vi.clearAllMocks();
 
     fireOnce(scene, 'dual');
 
-    expect(dualSound).toHaveBeenCalledTimes(1);
-    expect(cannonSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('dual');
+    expect(fireSound).toHaveBeenCalledWith('cannon');
   });
 
-  it('auto-firing the rapid weapon plays playRapidFireSound (one per shot)', async () => {
-    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
-    const rapidSound = vi.spyOn(effectsModule, 'playRapidFireSound');
+  it('auto-firing the rapid weapon plays its fire cue once per shot', async () => {
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
     const scene = await bootWeapons();
     vi.clearAllMocks();
 
     fireOnce(scene, 'rapid');
 
-    expect(rapidSound).toHaveBeenCalledTimes(1);
-    expect(cannonSound).toHaveBeenCalledTimes(1);
+    expect(fireSound).toHaveBeenCalledWith('rapid');
+    expect(fireSound).toHaveBeenCalledWith('cannon');
   });
 
   it('weapon pickup collection plays the unique per-weapon activation cue (AC6c)', async () => {

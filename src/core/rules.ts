@@ -115,6 +115,14 @@ export const DEFAULT_POWER_UP_SPAWN_INTERVAL = 12.5;
 export const DEFAULT_BEAT_BPM = DEFAULT_BPM;
 
 /**
+ * Reduced-volume scale applied to the player's fire cues while the
+ * hold-full choice overlay is open (AH-0MV55O9R5005W6J0 · AC1): the
+ * metronomic ghost fire plays at this fraction of normal volume. Single
+ * named tunable — no scattered magic numbers.
+ */
+export const HOLD_FULL_FIRE_VOLUME_SCALE = 0.3;
+
+/**
  * Builds a fresh default per-weapon subdivision table (cannon 2, spread 1,
  * dual 1, rapid 6).
  */

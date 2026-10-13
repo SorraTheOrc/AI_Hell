@@ -49,6 +49,7 @@ import {
   updateThrusterHum,
 } from './thrusterShim';
 import type { BeatClock } from '../utils/beat';
+import type { WeaponId } from '../utils/weapons';
 
 // Re-exported thruster-hum reference constants + test seams (moved to the shim
 // module, kept exported from here so consumers/tests are unchanged).
@@ -427,6 +428,59 @@ export function playMortarDetonationSound(): void {
 /** Bright electric zap — Arc fire. */
 export function playArcFireSound(): void {
   playCue('playArcFireSound');
+}
+
+/**
+ * The per-weapon fire cue for a player weapon id, routed through the one
+ * shared player-fire path (AH-0MV55O9R5005W6J0 · AC1/AC2).
+ *
+ * Every player weapon's fire cue (cannon, spread, dual, rapid, nova,
+ * mortar, arc) resolves through this single switch, so live fire
+ * (`_playShootCue` in `PlayScene`/gyms) and the reduced-volume hold-full
+ * metronome play the **same** cue through the **same** code path — the
+ * metronome passes `options.volume` (see `HOLD_FULL_FIRE_VOLUME_SCALE`)
+ * while live fire relies on the default.
+ *
+ * The AOE-family cues are intentionally included: they are active player
+ * weapons and their metronomic ghosts must sound identical to live fire
+ * (AC2 — *every* active player weapon). A weapon id without a baked fire
+ * cue (e.g. catalogue-only ids) degrades to a no-op, matching the existing
+ * `_playShootCue` switch.
+ *
+ * @param weaponId - The firing weapon id.
+ * @param options - Per-play options (e.g. `{ volume }` for the metronome).
+ */
+export function playWeaponFireSound(
+  weaponId: WeaponId,
+  options: SfxPlayOptions = {},
+): void {
+  switch (weaponId) {
+    case 'cannon':
+      playCue('playCannonFireSound', options);
+      break;
+    case 'spread':
+      playCue('playSpreadFireSound', options);
+      break;
+    case 'dual':
+      playCue('playDualFireSound', options);
+      break;
+    case 'rapid':
+      playCue('playRapidFireSound', options);
+      break;
+    case 'nova':
+      playCue('playNovaFireSound', options);
+      break;
+    case 'mortar':
+      playCue('playMortarFireSound', options);
+      break;
+    case 'arc':
+      playCue('playArcFireSound', options);
+      break;
+    default:
+      // Catalogue-only weapon ids with no baked fire cue — no-op (matches
+      // the per-weapon `_playShootCue` switch behaviour).
+      break;
+  }
 }
 
 // ── Pickup activation cues ──────────────────────────────────────────

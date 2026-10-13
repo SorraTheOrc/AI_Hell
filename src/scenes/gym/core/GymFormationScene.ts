@@ -80,6 +80,7 @@ import {
   type FormationReanchorRequest,
 } from '../../../utils/formations';
 import { Player } from '../../../entities/Player';
+import { buildHoldFullFireSchedule } from '../../core/holdFullFire';
 import { PlayerBullet } from '../../../entities/PlayerBullet';
 import {
   WasdKeysLike,
@@ -1303,6 +1304,10 @@ export class GymFormationScene<
     this.mineralChoiceOpen = true;
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Frozen player-fire schedule so the reduced-volume ghost fire
+      // continues on the same grid while paused — same payload as PlayScene
+      // (AH-0MV55O9R5005W6J0 · gym↔game parity).
+      fireSchedule: buildHoldFullFireSchedule(this.player),
       onSelect: (index: number) => this.selectMineralChoice(index),
     });
     this.scene.pause();

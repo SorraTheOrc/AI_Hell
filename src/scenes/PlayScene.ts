@@ -46,17 +46,12 @@ import {
 import { GameState, MAX_LIVES } from '../core/GameState';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
+import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
 import {
-  playArcFireSound,
-  playCannonFireSound,
   playDestructionSound,
-  playDualFireSound,
-  playMortarFireSound,
-  playNovaFireSound,
-  playRapidFireSound,
   playSpawnSound,
-  playSpreadFireSound,
   playVictoryFanfareSound,
+  playWeaponFireSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
@@ -2553,29 +2548,9 @@ export class PlayScene extends CombatScene<
 
   /** Plays the shoot cue for one firing weapon (one per shot, keyed off id). */
   private _playShootCue(weaponId: WeaponId): void {
-    switch (weaponId) {
-      case 'cannon':
-        playCannonFireSound();
-        break;
-      case 'spread':
-        playSpreadFireSound();
-        break;
-      case 'dual':
-        playDualFireSound();
-        break;
-      case 'rapid':
-        playRapidFireSound();
-        break;
-      case 'nova':
-        playNovaFireSound();
-        break;
-      case 'mortar':
-        playMortarFireSound();
-        break;
-      case 'arc':
-        playArcFireSound();
-        break;
-    }
+    // Shared player-fire path: the metronomic hold-full ghost fire and live
+    // fire play the same cue through the same switch (AH-0MV55O9R5005W6J0).
+    playWeaponFireSound(weaponId);
   }
 
   /**
@@ -3587,6 +3562,10 @@ export class PlayScene extends CombatScene<
       this.scene.launch('MineralChoiceScene', {
         origin: 'PlayScene',
         options: [...this.mineralChoiceOptions],
+        // Frozen player-fire schedule: the active player weapons + beat-grid
+        // phase at the moment the overlay opens, so the reduced-volume ghost
+        // fire continues on the same grid while paused (AH-0MV55O9R5005W6J0).
+        fireSchedule: buildHoldFullFireSchedule(this.player),
         // Demo mode auto-selects after a human-like delay so the bot never
         // stalls on the overlay; normal play waits for a real selection
         // (AH-0MUXXQ1MN002RXGB · AC4/AC5). Below the life cap the bot takes

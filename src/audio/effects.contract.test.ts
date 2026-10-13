@@ -68,6 +68,13 @@ const ALL_MAPPED_CUES: readonly string[] = [
 
 const KNOWN_CUE_SET = new Set<string>([...ALL_MAPPED_CUES, ...RETIRED_CUES]);
 
+// `playWeaponFireSound` is a shared **dispatcher** over the baked player-weapon
+// fire cues (AH-0MV55O9R5005W6J0), not itself a baked cue: it routes a weapon
+// id to the cue name in the manifest, so it is deliberately absent from
+// CUE_MANIFEST while every cue it dispatches is present. Known to the
+// coverage check so it is not mistaken for an unwired cue.
+KNOWN_CUE_SET.add('playWeaponFireSound');
+
 function resolveCue(name: string): CueFn | undefined {
   const fromEffects = (effects as unknown as Record<string, unknown>)[name];
   if (typeof fromEffects === 'function') return fromEffects as CueFn;

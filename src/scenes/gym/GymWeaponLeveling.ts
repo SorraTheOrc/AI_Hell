@@ -43,14 +43,9 @@ import { drawWeaponDrop, type WeaponDropIconId } from '../../powerups/icons';
 import {
   playPowerUpSpawnSound,
   playPowerUpDespawnSound,
-  playCannonFireSound,
-  playSpreadFireSound,
-  playDualFireSound,
-  playRapidFireSound,
-  playNovaFireSound,
-  playMortarFireSound,
-  playArcFireSound,
+  playWeaponFireSound,
 } from '../../audio/effects';
+import { buildHoldFullFireSchedule } from '../core/holdFullFire';
 import { WasdKeysLike } from '../../utils/input';
 import {
   addBackToIndexButton,
@@ -280,29 +275,9 @@ export class GymWeaponLeveling extends CombatScene<
   }
 
   protected override onWeaponFired(weaponId: WeaponId): void {
-    switch (weaponId) {
-      case 'cannon':
-        playCannonFireSound();
-        break;
-      case 'spread':
-        playSpreadFireSound();
-        break;
-      case 'dual':
-        playDualFireSound();
-        break;
-      case 'rapid':
-        playRapidFireSound();
-        break;
-      case 'nova':
-        playNovaFireSound();
-        break;
-      case 'mortar':
-        playMortarFireSound();
-        break;
-      case 'arc':
-        playArcFireSound();
-        break;
-    }
+    // Shared player-fire path (AH-0MV55O9R5005W6J0) — one switch for live
+    // fire in the game and every gym.
+    playWeaponFireSound(weaponId);
   }
 
   // ── Spawning / lifecycle ─────────────────────────────────────────
@@ -399,6 +374,9 @@ export class GymWeaponLeveling extends CombatScene<
     this.mineralChoiceOpen = true;
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Reduced-volume ghost fire on the frozen beat grid, matching PlayScene
+      // and the formation gym (AH-0MV55O9R5005W6J0 · gym↔game parity).
+      fireSchedule: buildHoldFullFireSchedule(this.player),
       onSelect: (index: number) => this.selectMineralChoice(index),
     });
     this.scene.pause();

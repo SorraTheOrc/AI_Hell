@@ -29,7 +29,14 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { HOLD_FULL_FIRE_VOLUME_SCALE } from '../core/rules';
 import { randomChoiceStrategy, type ChoiceOption, type ChoiceStrategy } from '../powerups/choice';
+import {
+  createHoldFullFireMetronome,
+  type HoldFullFireMetronome,
+  type HoldFullFireSchedule,
+} from './core/holdFullFire';
+import { playWeaponFireSound } from '../audio/effects';
 
 /** Neon-gold heading colour (matches the mineral palette). */
 const CHOICE_HEADING_COLOR = '#ffdd44';
@@ -74,6 +81,15 @@ export class MineralChoiceScene extends Phaser.Scene {
   private autoSelectTimer: Phaser.Time.TimerEvent | null = null;
   /** Demo-only option index the auto-select picks (default 0, the first). */
   private autoSelectIndex = 0;
+  /**
+   * Frozen player-fire schedule passed by the launcher: drives the
+   * reduced-volume metronomic ghost fire while the overlay is open
+   * (AH-0MV55O9R5005W6J0). Null when the launcher supplies none (isolated
+   * tests) — then the overlay is silent as before.
+   */
+  private fireSchedule: HoldFullFireSchedule | null = null;
+  /** Live metronome emitting the reduced-volume ghost ticks. */
+  private metronome: HoldFullFireMetronome | null = null;
 
   constructor() {
     super('MineralChoiceScene');
@@ -93,6 +109,10 @@ export class MineralChoiceScene extends Phaser.Scene {
    *   picks (default `0`, the first option). The demo launcher passes the
    *   preferred option (e.g. the offered Extra Life below the life cap);
    *   normal play never sets it (AH-0MV03GXZQ00801T4 · AC1).
+   * @param data.fireSchedule — the frozen player-fire schedule captured at
+   *   launch; when present the overlay plays each active weapon's fire cue
+   *   on the beat grid at {@link HOLD_FULL_FIRE_VOLUME_SCALE} until a
+   *   selection closes it (AH-0MV55O9R5005W6J0 · AC1/AC2).
    */
   init(
     data: {
@@ -101,6 +121,7 @@ export class MineralChoiceScene extends Phaser.Scene {
       onSelect?: (index: number, option: ChoiceOption) => void;
       autoSelectMs?: number;
       autoSelectIndex?: number;
+      fireSchedule?: HoldFullFireSchedule;
     } = {},
   ): void {
     const strategy = data.strategy ?? randomChoiceStrategy;
@@ -108,6 +129,7 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.onSelect = data.onSelect ?? null;
     this.autoSelectMs = data.autoSelectMs ?? 0;
     this.autoSelectIndex = data.autoSelectIndex ?? 0;
+    this.fireSchedule = data.fireSchedule ?? null;
   }
 
   create(): void {
@@ -201,6 +223,28 @@ export class MineralChoiceScene extends Phaser.Scene {
         this.select(this.autoSelectIndex),
       );
     }
+    // Start the reduced-volume metronomic ghost fire from the frozen
+    // player-fire schedule (AC1/AC2). The overlay scene keeps running while
+    // the launcher is paused, so its own update loop drives the metronome.
+    this.metronome = this.fireSchedule
+      ? createHoldFullFireMetronome(this.fireSchedule)
+      : null;
+  }
+
+  /**
+   * Drives the hold-full metronome with this scene's elapsed time: every
+   * frame advances the ghost-fire scheduler and plays a reduced-volume fire
+   * cue for each active weapon whose beat tick was reached. Pure timing — no
+   * projectiles, no gameplay simulation (AH-0MV55O9R5005W6J0 · AC1).
+   */
+  override update(_time: number, delta: number): void {
+    const metronome = this.metronome;
+    if (metronome === null) return;
+    for (const weaponId of metronome.advance(delta)) {
+      playWeaponFireSound(weaponId, {
+        volume: HOLD_FULL_FIRE_VOLUME_SCALE,
+      });
+    }
   }
 
   /** The options currently presented (copy). */
@@ -248,6 +292,9 @@ export class MineralChoiceScene extends Phaser.Scene {
     // Cancel any pending demo auto-select so it cannot fire twice.
     this.autoSelectTimer?.remove(false);
     this.autoSelectTimer = null;
+    // Stop the metronomic ghost fire — the selection (and the launcher's
+    // resume) hands back to live fire (AH-0MV55O9R5005W6J0).
+    this.metronome = null;
     const handler = this.onSelect;
     this.onSelect = null;
     handler?.(index, option);
