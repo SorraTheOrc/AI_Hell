@@ -3415,3 +3415,122 @@ describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7
     );
   });
 });
+
+// ── Hold-full overlay metronome + countdown parity (AH-0MV55OB5Q000C9L1) ──
+//
+// The reduced-volume metronomic fire and the beat-locked 3-2-1 countdown
+// live in the shared overlay (`MineralChoiceScene`), the pure schedulers
+// (`src/scenes/core/holdFullFire.ts`, `holdFullCountdown.ts`) and the shared
+// resume re-base in `CombatCoreScene`. The game and every gym launcher
+// supply the SAME payload and consume the SAME shared functions — an
+// enabled gameplay object runs the same code in a gym and the game
+// (AGENTS.md gym↔game parity).
+
+/** Every production scene that launches the shared `MineralChoiceScene`. */
+const HOLDFULL_LAUNCHERS = [
+  'src/scenes/PlayScene.ts',
+  'src/scenes/gym/core/GymFormationScene.ts',
+  'src/scenes/gym/GymWeaponLeveling.ts',
+] as const;
+
+/** The shared hold-full pure helpers, each defined once in its module. */
+const HOLDFULL_SHARED_HELPERS: Array<[string, string]> = [
+  ['buildHoldFullFireSchedule', 'src/scenes/core/holdFullFire.ts'],
+  ['createHoldFullFireMetronome', 'src/scenes/core/holdFullFire.ts'],
+  ['createHoldFullCountdown', 'src/scenes/core/holdFullCountdown.ts'],
+] as const;
+
+describe('hold-full overlay metronome + countdown — gym↔game parity (AC5)', () => {
+  it('every launcher passes the common overlay payload: options + fireSchedule + onSelect', () => {
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(
+        path.resolve(process.cwd(), file),
+        'utf8',
+      );
+      // The overlay launch must carry the exact options the launcher will
+      // apply (options), the frozen player-fire schedule (fireSchedule) and
+      // the single selection contract (onSelect).
+      expect(
+        source.includes("scene.launch('MineralChoiceScene'"),
+        `${file} must launch the overlay`,
+      ).toBe(true);
+      expect(
+        source.includes('options: [...this.mineralChoiceOptions]'),
+        `${file} passes the exact options`,
+      ).toBe(true);
+      expect(
+        source.includes('fireSchedule: buildHoldFullFireSchedule(this.player)'),
+        `${file} passes the shared frozen fire schedule`,
+      ).toBe(true);
+      expect(
+        source.includes('onSelect: (index: number) => this.selectMineralChoice(index)'),
+        `${file} passes the single selection contract`,
+      ).toBe(true);
+    }
+  });
+
+  it('every launcher resumes through the shared beat-clock re-base', () => {
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(
+        path.resolve(process.cwd(), file),
+        'utf8',
+      );
+      expect(
+        source.includes('this.rebaseBeatClockForHoldFullResume('),
+        `${file} re-bases the frozen beat clock on resume`,
+      ).toBe(true);
+    }
+  });
+
+  it('the shared hold-full functions are defined exactly once, in the shared core', () => {
+    const files = productionSceneFiles();
+    for (const [fn, expectedFile] of HOLDFULL_SHARED_HELPERS) {
+      const definers = files
+        .filter((file) => definesFunction(fs.readFileSync(file, 'utf8'), fn))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers, `${fn} should be defined once`).toEqual([expectedFile]);
+    }
+  });
+
+  it('rebaseBeatClockForHoldFullResume is defined once in the shared CombatCoreScene', () => {
+    const files = productionSceneFiles();
+    const definers = files
+      .filter((file) =>
+        definesMethod(fs.readFileSync(file, 'utf8'), 'rebaseBeatClockForHoldFullResume'),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+    expect(definers).toEqual(['src/scenes/core/CombatCoreScene.ts']);
+  });
+
+  it('PlayScene and every hold-full gym inherit the same overlay selection flow', () => {
+    // The overlay itself resolves every selection through the countdown;
+    // the launchers must not re-introduce a divergent immediate-select copy.
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(
+        path.resolve(process.cwd(), file),
+        'utf8',
+      );
+      // The single `onSelect` contract answers through selectMineralChoice —
+      // the resume entry point that re-bases the clock. No other selection
+      // callback is wired.
+      expect(
+        source.includes(
+          "onSelect: (index: number) => this.selectMineralChoice(index)",
+        ),
+        `${file} selection contract via selectMineralChoice`,
+      ).toBe(true);
+      // The launcher never applies the choice inline at the launch site (no
+      // divergent immediate-resume copy).
+      const launchBlock = source.match(
+        /scene\.launch\('MineralChoiceScene',\s*\{[\s\S]*?\}\);/,
+      )?.[0];
+      expect(launchBlock, `${file} launch block`).toBeDefined();
+      expect(
+        launchBlock?.includes('selectMineralChoice'),
+        `${file} defers to selectMineralChoice`,
+      ).toBe(true);
+    }
+  });
+});
