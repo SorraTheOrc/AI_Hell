@@ -23,7 +23,6 @@ import {
   assetUrlFor,
   type CueManifestEntry,
 } from './cueManifest';
-import type { SfxPlayOptions, SfxSoundHandle, SfxSoundProvider } from './sfxPlayback';
 import {
   SIXTEENTH_NOTE_SUBDIVISIONS,
   beatSubdivisionMs,
@@ -31,52 +30,9 @@ import {
 } from '../utils/beat';
 import {
   RecordingAudioContext,
+  RecordingSfxProvider,
   resetRecordingAudioContext,
 } from '../test/audioTestDouble';
-
-// ── Recording provider ──────────────────────────────────────────────
-
-interface RecordedPlay {
-  url: string;
-  options: SfxPlayOptions | undefined;
-}
-
-class RecordingProvider implements SfxSoundProvider {
-  readonly plays: RecordedPlay[] = [];
-  readonly volumes: number[] = [];
-  readonly mutes: boolean[] = [];
-  stops = 0;
-  private context: AudioContext | null = null;
-
-  getAudioContext(): AudioContext | null {
-    return this.context;
-  }
-
-  useAudioContext(context: AudioContext | null): void {
-    this.context = context;
-  }
-
-  play(url: string, options?: SfxPlayOptions): SfxSoundHandle {
-    this.plays.push({ url, options });
-    return { stop: () => (this.stops += 1) };
-  }
-
-  setVolume(value: number): void {
-    this.volumes.push(value);
-  }
-
-  setMuted(muted: boolean): void {
-    this.mutes.push(muted);
-  }
-
-  reset(): void {
-    this.plays.length = 0;
-    this.volumes.length = 0;
-    this.mutes.length = 0;
-    this.stops = 0;
-    this.context = null;
-  }
-}
 
 /** Non-empty argument lists for the cues that take parameters. */
 const CUE_ARGS: Record<string, unknown[]> = {
@@ -99,10 +55,12 @@ function allowedUrls(entry: CueManifestEntry): string[] {
     : [assetUrlFor(entry)];
 }
 
-let recording: RecordingProvider;
+// The shared recording `SfxSoundProvider` double (records asset URL, delay,
+// volume and loop; exposes the master volume/mute/stop lifecycle).
+let recording: RecordingSfxProvider;
 
 beforeEach(() => {
-  recording = new RecordingProvider();
+  recording = new RecordingSfxProvider();
   effects.setSfxSoundProvider(recording);
 });
 
@@ -204,9 +162,9 @@ describe('advance cues (parent AC8)', () => {
 
   it.each(cases)('%s → %s has no gap', (advance, fire, duration) => {
     invokeCue(advance);
-    expect(recording.plays[0].options?.delay ?? 0).toBe(0);
+    expect(recording.plays[0].delay).toBe(0);
     invokeCue(fire);
-    expect(recording.plays[1].options?.delay).toBe(duration);
+    expect(recording.plays[1].delay).toBe(duration);
   });
 });
 
@@ -215,14 +173,14 @@ describe('advance cues (parent AC8)', () => {
 describe('volume and mute', () => {
   it('playPlayerDestructionSound scales its playback volume', () => {
     effects.playPlayerDestructionSound(0.3);
-    expect(recording.plays[0].options?.volume).toBe(0.3);
+    expect(recording.plays[0].volume).toBe(0.3);
     effects.playPlayerDestructionSound();
-    expect(recording.plays[1].options?.volume).toBe(1);
+    expect(recording.plays[1].volume).toBe(1);
   });
 
   it('playVolumeFeedback forwards the selected volume', () => {
     effects.playVolumeFeedback(0.5);
-    expect(recording.plays[0].options?.volume).toBe(0.5);
+    expect(recording.plays[0].volume).toBe(0.5);
   });
 
   it('setSfxVolume and setSfxMuted delegate to the provider', () => {
@@ -311,10 +269,10 @@ describe('beat-synchronised explosion accents', () => {
 
     expect(recording.plays).toHaveLength(3);
     for (const play of recording.plays) {
-      expect(play.options?.delay).toBeCloseTo((SIXTEENTH_MS - 100) / 1000, 6);
+      expect(play.delay).toBeCloseTo((SIXTEENTH_MS - 100) / 1000, 6);
     }
     // Player destruction keeps its volume scaling alongside the delay.
-    expect(recording.plays[2].options?.volume).toBe(0.5);
+    expect(recording.plays[2].volume).toBe(0.5);
   });
 
   it('fires immediately when the request is already on a tick', () => {
@@ -322,7 +280,7 @@ describe('beat-synchronised explosion accents', () => {
     effects.setExplosionBeatClock(clock);
     clock.advance(SIXTEENTH_MS);
     effects.playDestructionSound();
-    expect(recording.plays[0].options?.delay).toBe(0);
+    expect(recording.plays[0].delay).toBe(0);
   });
 
   it('stacks several kills in one window onto the same tick (one accent)', () => {
@@ -333,7 +291,7 @@ describe('beat-synchronised explosion accents', () => {
       effects.playDestructionSound();
     }
     expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP);
-    const delays = recording.plays.map((p) => p.options?.delay ?? 0);
+    const delays = recording.plays.map((p) => p.delay);
     expect(new Set(delays).size).toBe(1);
     expect(delays[0]).toBeCloseTo((SIXTEENTH_MS - 100) / 1000, 6);
   });
@@ -361,7 +319,7 @@ describe('beat-synchronised explosion accents', () => {
     clock.advance(SIXTEENTH_MS - 100 + 1);
     effects.playDestructionSound();
     expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 1);
-    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].options?.delay).toBeCloseTo(
+    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].delay).toBeCloseTo(
       (2 * SIXTEENTH_MS - (SIXTEENTH_MS + 1)) / 1000,
       6,
     );
@@ -380,7 +338,7 @@ describe('beat-synchronised explosion accents', () => {
 
     expect(recording.plays.length).toBeGreaterThan(0);
     for (const play of recording.plays) {
-      expect(play.options?.delay ?? 0).toBe(0);
+      expect(play.delay).toBe(0);
     }
   });
 
@@ -400,7 +358,7 @@ describe('beat-synchronised explosion accents', () => {
 
     // Back on the origin tick: immediate, with a fresh (not inherited) cap.
     expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 1);
-    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].options?.delay).toBe(0);
+    expect(recording.plays[effects.EXPLOSION_PER_TICK_CAP].delay).toBe(0);
   });
 
   it('does not queue audio into the future for a frozen clock', () => {
@@ -415,15 +373,15 @@ describe('beat-synchronised explosion accents', () => {
     // 16th note so a paused scene leaks no open-ended scheduling.
     expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP);
     for (const play of recording.plays) {
-      expect(play.options?.delay ?? 0).toBeGreaterThanOrEqual(0);
-      expect(play.options?.delay ?? 0).toBeLessThanOrEqual(SIXTEENTH_MS / 1000);
+      expect(play.delay).toBeGreaterThanOrEqual(0);
+      expect(play.delay).toBeLessThanOrEqual(SIXTEENTH_MS / 1000);
     }
   });
 
   it('plays immediately when no beat clock is registered', () => {
     effects.setExplosionBeatClock(null);
     effects.playDestructionSound();
-    expect(recording.plays[0].options?.delay).toBe(0);
+    expect(recording.plays[0].delay).toBe(0);
   });
 });
 

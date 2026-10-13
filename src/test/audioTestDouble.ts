@@ -1,14 +1,24 @@
 /**
- * Reusable headless Web Audio test double (AH-0MUTYV8RJ009MWKJ).
+ * Reusable headless Web Audio test doubles (AH-0MUTYV8RJ009MWKJ,
+ * AH-0MV55O991003XOT8).
  *
- * A recording `AudioContext` implementation used by the audio contract
- * tests. It records the nodes, gain automation events and scheduled start
- * times that the production cue code requests, so tests can assert the
+ * A recording `AudioContext` implementation and a recording
+ * `SfxSoundProvider` used by the audio suites. They record the nodes, gain
+ * automation events and cue dispatch decisions (asset URL, delay, volume,
+ * loop) that the production cue code requests, so tests can assert the
  * playback contract without any real audio hardware.
  *
- * Extracted so the master volume/mute checks and the cue-contract suite
- * (`src/audio/effects.contract.test.ts`) share one double.
+ * `RecordingAudioContext` is shared by the master volume/mute checks and the
+ * cue-contract suite (`src/audio/effects.contract.test.ts`).
+ * `RecordingSfxProvider` is the cue-layer seam consumed by
+ * `src/audio/effects.test.ts` and the hold-full overlay suites.
  */
+
+import type {
+  SfxPlayOptions,
+  SfxSoundHandle,
+  SfxSoundProvider,
+} from '../audio/sfxPlayback';
 
 /** A single scheduled `AudioParam` automation event. */
 export interface RecordedGainEvent {
@@ -204,4 +214,79 @@ export function lastGainValue(gain: RecordedGain): number | undefined {
 /** Clears recorded instances/events without touching the module cache. */
 export function resetRecordingAudioContext(): void {
   RecordingAudioContext.instances.length = 0;
+}
+
+// ── Recording SFX provider ──────────────────────────────────────────
+
+/** A single `play()` call recorded by {@link RecordingSfxProvider}. */
+export interface RecordedSfxPlay {
+  /** Baked asset URL passed to `play()` (e.g. `audio/sfx/card-token-earn.1.wav`). */
+  url: string;
+  /** Scheduled start delay in seconds, normalised from `options.delay` (default 0). */
+  delay: number;
+  /** Per-play gain in [0, 1], normalised from `options.volume` (default 1). */
+  volume: number;
+  /** Whether the play loops, normalised from `options.loop` (default false). */
+  loop: boolean;
+}
+
+/**
+ * In-memory {@link SfxSoundProvider} that records every cue dispatch instead
+ * of touching Web Audio. Inject it with
+ * `setSfxSoundProvider(new RecordingSfxProvider())` to assert the cue layer's
+ * decisions — resolved asset URL, per-play delay/volume/loop — and the master
+ * volume/mute/stop lifecycle.
+ *
+ * It is a faithful no-op substitute (no real audio, no `AudioContext`), so it
+ * is safe in headless environments and deterministic across runs.
+ */
+export class RecordingSfxProvider implements SfxSoundProvider {
+  /** Every recorded `play()` call, in dispatch order. */
+  readonly plays: RecordedSfxPlay[] = [];
+  /** Every value passed to `setVolume()`, in call order. */
+  readonly volumes: number[] = [];
+  /** Every value passed to `setMuted()`, in call order. */
+  readonly mutes: boolean[] = [];
+  /** How many returned handles have been stopped. */
+  stops = 0;
+
+  private context: AudioContext | null = null;
+
+  getAudioContext(): AudioContext | null {
+    return this.context;
+  }
+
+  useAudioContext(context: AudioContext | null): void {
+    this.context = context;
+  }
+
+  play(url: string, options: SfxPlayOptions = {}): SfxSoundHandle {
+    this.plays.push({
+      url,
+      delay: options.delay ?? 0,
+      volume: options.volume ?? 1,
+      loop: options.loop ?? false,
+    });
+    return {
+      stop: () => {
+        this.stops += 1;
+      },
+    };
+  }
+
+  setVolume(value: number): void {
+    this.volumes.push(value);
+  }
+
+  setMuted(muted: boolean): void {
+    this.mutes.push(muted);
+  }
+
+  reset(): void {
+    this.plays.length = 0;
+    this.volumes.length = 0;
+    this.mutes.length = 0;
+    this.stops = 0;
+    this.context = null;
+  }
 }
