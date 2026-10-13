@@ -373,6 +373,10 @@ export class GymWeaponLeveling extends CombatScene<
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
     });
     this.mineralChoiceOpen = true;
+    // Fade the gym player's engine hum out across the pause; it ramps back
+    // in on resume — the same shared seam as PlayScene
+    // (AH-0MV70Y2XY005J2HI · gym↔game parity).
+    this.fadeThrusterHumForHoldFull();
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
       // Reduced-volume ghost fire on the frozen beat grid, matching PlayScene

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../../test/gameHarness';
+import * as effectsModule from '../../audio/effects';
 import { GymMinerals } from './GymMinerals';
 import { GymFodderEnemies } from './GymFodderEnemies';
 import { MineralChoiceScene } from '../MineralChoiceScene';
@@ -265,6 +266,18 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     overlay.select(0);
     overlay.update(0, HOLD_FULL_COUNTDOWN_DURATION_MS);
     expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
+  });
+
+  it('opening the hold-full overlay fades the gym player thruster hum out (AH-0MV70Y2XY005J2HI)', async () => {
+    const scene = await bootMinerals();
+    const fade = vi.spyOn(effectsModule, 'updateThrusterSound');
+
+    scene.openMineralChoice();
+
+    // The gym launcher consumes the same shared fade seam as PlayScene, so
+    // the engine hum fades out identically (gym↔game parity).
+    expect(fade.mock.calls.some((args) => args[0] === 0)).toBe(true);
+    fade.mockRestore();
   });
 
   it('the hold-full choice receives the player permanent weapon levels (AC1/AC2)', async () => {

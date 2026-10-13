@@ -3553,6 +3553,9 @@ export class PlayScene extends CombatScene<
     this.mineralChoiceOpen = true;
     this.runTelemetry.holdFull(this.mineralChoiceOptions.map((o) => o.id));
     this.setPaused(true);
+    // Fade the ship's engine hum out across the pause (the ship is idle
+    // behind the overlay); it ramps back in on resume (AH-0MV70Y2XY005J2HI).
+    this.fadeThrusterHumForHoldFull();
     if (this.scene.manager.getScene('MineralChoiceScene')) {
       this.scene.pause();
       // Pass the exact options (and the active strategy) the overlay must

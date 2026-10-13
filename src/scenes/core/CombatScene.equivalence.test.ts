@@ -3504,6 +3504,27 @@ describe('hold-full overlay metronome + countdown — gym↔game parity (AC5)', 
     expect(definers).toEqual(['src/scenes/core/CombatCoreScene.ts']);
   });
 
+  it('fadeThrusterHumForHoldFull is defined once in the shared core and consumed by every launcher', () => {
+    // The engine-hum fade on overlay open (AH-0MV70Y2XY005J2HI) is one
+    // shared seam, so the game and every gym fade identically.
+    const files = productionSceneFiles();
+    const definers = files
+      .filter((file) =>
+        definesMethod(fs.readFileSync(file, 'utf8'), 'fadeThrusterHumForHoldFull'),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+    expect(definers).toEqual(['src/scenes/core/CombatCoreScene.ts']);
+
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      expect(
+        source.includes('this.fadeThrusterHumForHoldFull()'),
+        `${file} must fade the thruster hum on overlay open`,
+      ).toBe(true);
+    }
+  });
+
   it('PlayScene and every hold-full gym inherit the same overlay selection flow', () => {
     // The overlay itself resolves every selection through the countdown;
     // the launchers must not re-introduce a divergent immediate-select copy.

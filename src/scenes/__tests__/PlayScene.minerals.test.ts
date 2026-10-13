@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { bootScene, type BootedGame } from '../../test/gameHarness';
+import * as effectsModule from '../../audio/effects';
 import { PlayScene } from '../PlayScene';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
@@ -564,5 +565,25 @@ describe('PlayScene mineral wiring', () => {
       expect(isOnGrid(shots[i], interval)).toBe(true);
       if (i > 0) expect(shots[i] - shots[i - 1]).toBeCloseTo(interval, 4);
     }
+  });
+
+  it('opening the hold-full overlay fades the thruster hum out (AH-0MV70Y2XY005J2HI)', async () => {
+    const scene = await bootPlay();
+    // The player is thrusting, so the hum would otherwise be sustained.
+    scene.getPlayer()!.setInput({
+      up: true, down: false, left: false, right: false,
+      reverse: false,
+    });
+    scene.tick(0.016);
+
+    const fade = vi.spyOn(effectsModule, 'updateThrusterSound');
+    scene.openMineralChoice();
+
+    // Opening the overlay drives the shared fade seam with level 0 (ramped
+    // to silence) so the engine does not freeze at its last gain.
+    expect(
+      fade.mock.calls.some((args) => args[0] === 0),
+    ).toBe(true);
+    fade.mockRestore();
   });
 });

@@ -121,7 +121,11 @@ import {
 import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
-import { setExplosionBeatClock, setThrusterBeatClock } from '../../audio/effects';
+import {
+  setExplosionBeatClock,
+  setThrusterBeatClock,
+  updateThrusterSound,
+} from '../../audio/effects';
 import { BeatClock, createBeatClock } from '../../utils/beat';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
@@ -364,6 +368,26 @@ export class CombatCoreScene<
     if (!Number.isFinite(overlayElapsedMs) || overlayElapsedMs <= 0) return;
     this.beatClock.advance(overlayElapsedMs);
     this.getPlayer()?.setBeatClock(this.beatClock);
+  }
+
+  /**
+   * Fades the ship's thruster/engine hum out across a hold-full overlay
+   * pause (AH-0MV70Y2XY005J2HI).
+   *
+   * The hum is driven per-frame from `Player.preUpdate` →
+   * `updateThrusterSound(level)`. Opening the overlay pauses this scene at
+   * the SceneManager level, so `preUpdate` stops firing and the hum would
+   * otherwise freeze at its last gain (a sustained mid-volume drone).
+   * Driving level 0 routes the runtime shim's fade path (a linear ramp to
+   * silence that keeps the hum nodes alive), so once play resumes
+   * `Player.preUpdate` re-drives the live level and ramps the hum back in —
+   * no separate resume hook is needed.
+   *
+   * A single shared seam so the game and every gym launcher fade
+   * identically (AGENTS.md gym↔game parity).
+   */
+  protected fadeThrusterHumForHoldFull(): void {
+    updateThrusterSound(0);
   }
 
   /**
