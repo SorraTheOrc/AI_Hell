@@ -636,6 +636,18 @@ and adjust its parameters in real time.
   `aimLeadIterations` (`aimLeadEnabled` toggle)
   (AH-0MV1DUSM2005HL98 · AC4). Moving a slider rebuilds the live brain and
   governor immediately.
+- **Per-parameter tooltips.** Every slider and toggle carries a plain-English
+  `description` in its `BotTuningFieldSpec`/`BotTuningToggleSpec`
+  (`src/ai/tuningFields.ts`), authored in lockstep with the tunables' JSDoc.
+  The gym attaches each description through the reusable `attachTooltip`
+  helper (`src/utils/gymTooltip.ts`, styles in `src/style.css`): hover a
+  control to read what it does, or tab-focus it — keyboard and screen-reader
+  users get the same help because each control's `aria-describedby` points at
+  its tooltip (which is appended to `<body>` and `position: fixed`, so the
+  panel's scroll container never clips it). Adding a new tunable requires a
+  non-empty `description` on its spec — a unit test in
+  `src/ai/tuningFields.test.ts` fails otherwise, so no future slider can
+  ship unlabelled.
 - **Named configurations.** **Save** overwrites the current configuration,
   **Save As…** creates a named one, and the selector loads any saved
   configuration. Presets are persisted by `src/core/botTuningStore.ts` as a
