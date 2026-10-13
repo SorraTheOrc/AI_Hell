@@ -22,6 +22,9 @@ import {
 } from '../choice';
 import { summariseWeaponLevelChange } from '../../utils/weaponLevels';
 import { summarisePowerUpLevelChange } from '../powerUpLevels';
+import { getHelpDescription } from '../../utils/gymHelp';
+import { WEAPON_CATALOGUE } from '../../utils/weapons';
+import { POWER_UP_CATALOGUE } from '../types';
 
 describe('power-up choice strategy', () => {
   it('offers the full drop pool: P3–P10 plus the collectable weapon drops', () => {
@@ -35,7 +38,6 @@ describe('power-up choice strategy', () => {
         'extra_life',
         'magnet',
         'mineral_scoop',
-        'power_pellet',
         'smart_bomb',
         'force_field',
         'mystery_ufo',
@@ -57,10 +59,6 @@ describe('power-up choice strategy', () => {
 
   it('includes P10 Mineral Scoop in the hold-full choice pool (AH-0MUPMR9TX00756BQ AC1)', () => {
     expect(CHOICE_POOL).toContain('mineral_scoop');
-  });
-
-  it('includes the Power Pellet in the hold-full choice pool (AH-0MV1BIW95004POSX)', () => {
-    expect(CHOICE_POOL).toContain('power_pellet');
   });
 
   it('includes the Smart Bomb in the hold-full choice pool (AH-0MV1BIWP9003EHRQ)', () => {
@@ -499,6 +497,73 @@ describe('power-up choice strategy', () => {
       }
       for (const count of counts.values()) {
         expect(Math.abs(count / 10_000 - 1 / 3)).toBeLessThan(0.03);
+      }
+    });
+  });
+
+  describe('option descriptions (AH-0MV2N2591007UGPD)', () => {
+    // A context that yields all four option kinds in one candidate list:
+    // an owned weapon → `weapon-level`, an owned power-up → `power-up-level`,
+    // and every unowned entry → `weapon` / `powerup`.
+    const context = {
+      weaponLevels: [{ id: 'spread' as const, level: 2 }],
+      powerUpLevels: [{ id: 'shield' as const, level: 1 }],
+    };
+
+    it('AC1 — populates a non-empty description for all four option kinds', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const kinds = new Set(candidates.map((o) => o.kind));
+      expect(kinds).toEqual(
+        new Set(['weapon', 'powerup', 'weapon-level', 'power-up-level']),
+      );
+      for (const option of candidates) {
+        expect(option.description, `${option.kind}:${option.id}`).toBeTruthy();
+        expect(
+          option.description!.trim().length,
+          `${option.kind}:${option.id}`,
+        ).toBeGreaterThan(0);
+      }
+    });
+
+    it('AC4 — every description resolves from the shared catalogue (no duplication)', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      for (const option of candidates) {
+        // The shared resolver used by the gym help overlay is the single
+        // source of truth for the copy.
+        expect(option.description, `${option.kind}:${option.id}`).toBe(
+          getHelpDescription(option.id),
+        );
+      }
+
+      const weaponLevel = candidates.find(
+        (o) => o.kind === 'weapon-level' && o.id === 'spread',
+      )!;
+      expect(weaponLevel.description).toBe(WEAPON_CATALOGUE.spread.description);
+
+      const powerUpLevel = candidates.find(
+        (o) => o.kind === 'power-up-level' && o.id === 'shield',
+      )!;
+      expect(powerUpLevel.description).toBe(
+        POWER_UP_CATALOGUE.shield.description,
+      );
+
+      const newWeapon = candidates.find(
+        (o) => o.kind === 'weapon' && o.id === 'dual',
+      )!;
+      expect(newWeapon.description).toBe(WEAPON_CATALOGUE.dual.description);
+    });
+
+    it('AC3 — catalogue descriptions are level-neutral (no temporary pickup window)', () => {
+      // A field pickup's timed window (e.g. "for 10 s") must not leak into
+      // the item description, which is also shown for a permanent hold-full
+      // reward. Per-level deltas live in `changeSummary` instead.
+      const temporaryDuration = /\bfor \d+(?:\.\d+)?\s*s(?:ec(?:onds?)?)?\b/i;
+      const entries = [
+        ...Object.values(POWER_UP_CATALOGUE),
+        ...Object.values(WEAPON_CATALOGUE),
+      ];
+      for (const entry of entries) {
+        expect(entry.description, entry.id).not.toMatch(temporaryDuration);
       }
     });
   });

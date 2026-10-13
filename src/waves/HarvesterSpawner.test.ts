@@ -35,17 +35,45 @@ describe('HarvesterSpawner — level gating', () => {
     }
   });
 
-  it('never spawns beyond Level 5', () => {
-    const events = computeHarvesterSpawns(6, W, H, WAVE_TIME, () => 0);
+  it('never spawns beyond the final regular level (AH-0MV399SEB00095K1)', () => {
+    const events = computeHarvesterSpawns(
+      HARVESTER_MAX_LEVEL + 1,
+      W,
+      H,
+      WAVE_TIME,
+      () => 0,
+    );
     expect(events).toEqual([]);
   });
 
-  it('may spawn in Levels 4 and 5', () => {
-    for (const level of [HARVESTER_MIN_LEVEL, HARVESTER_MAX_LEVEL]) {
+  it('may spawn from Level 4 through the final regular level', () => {
+    // The later campaign levels (Levels 4–10) are all eligible.
+    for (const level of [HARVESTER_MIN_LEVEL, 5, 6, 7, 8, 9, HARVESTER_MAX_LEVEL]) {
       // First rng draw (the rarity roll) is 0 → always passes.
-      const events = computeHarvesterSpawns(level, W, H, WAVE_TIME, seqRng([0, 0, 0.5, 0.4]));
+      const events = computeHarvesterSpawns(
+        level,
+        W,
+        H,
+        WAVE_TIME,
+        seqRng([0, 0, 0.5, 0.4]),
+      );
       expect(events, `level ${level}`).toHaveLength(1);
     }
+  });
+
+  it('extends the eligible range to the ten-level campaign final level', () => {
+    expect(HARVESTER_MIN_LEVEL).toBe(4);
+    expect(HARVESTER_MAX_LEVEL).toBe(10);
+    // Level 11 is beyond the campaign and must never spawn.
+    expect(
+      computeHarvesterSpawns(
+        HARVESTER_MAX_LEVEL + 1,
+        W,
+        H,
+        WAVE_TIME,
+        seqRng([0, 0, 0.5, 0.4]),
+      ),
+    ).toEqual([]);
   });
 });
 

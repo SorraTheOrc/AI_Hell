@@ -1,7 +1,7 @@
 /**
  * Playable game scene (GDD §3 — Level structure, §4 — Boss).
  *
- * Owns the playable run: the `WaveManager` drives Level 1–5 progression
+ * Owns the playable run: the `WaveManager` drives Level 1–10 progression
  * and the boss trigger; this scene spawns the wave's enemies in their
  * formations, integrates the player ship (auto-fire, weapons, effects),
  * resolves collisions, applies power-up collection, and advances levels
@@ -46,20 +46,17 @@ import {
 import { GameState, MAX_LIVES } from '../core/GameState';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
+import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
+import type { MineralChoiceScene } from './MineralChoiceScene';
 import {
-  playArcFireSound,
-  playCannonFireSound,
   playDestructionSound,
-  playDualFireSound,
-  playMortarFireSound,
-  playNovaFireSound,
-  playRapidFireSound,
   playSpawnSound,
-  playSpreadFireSound,
   playVictoryFanfareSound,
+  playWeaponFireSound,
 } from '../audio/effects';
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
+import { pushAimTargets, pushSeekTargets } from './core/enemyTargeting';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
 import {
   computeFormationReanchorDelta,
@@ -118,6 +115,12 @@ import {
   BOT_MINERAL_CHOICE_DELAY_MS,
   BotInputGovernor,
 } from '../ai/botHumanLike';
+import {
+  coerceTuningValues,
+  toCompetentOverrides,
+  toHumanOverrides,
+} from '../ai/tuningFields';
+import { getCurrentBotTuningConfig } from '../core/botTuningStore';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
@@ -404,7 +407,7 @@ interface PlayDrop {
 }
 
 /**
- * The playable game scene — manages the 5 levels + boss encounter.
+ * The playable game scene — manages the 10 levels + boss encounter.
  */
 export class PlayScene extends CombatScene<
   EnemyEntity,
@@ -452,6 +455,12 @@ export class PlayScene extends CombatScene<
   private botGovernor = new BotInputGovernor();
   /** The structured competent bot's committed policy (AC1–AC4). */
   private botBrain = createCompetentBotBrain();
+  /**
+   * Name of the persisted bot-tuning configuration the demo bot is currently
+   * flying with (AH-0MV6MFDYG001E6PL). `null` outside demo mode: human
+   * sessions never consult the tuning store.
+   */
+  private appliedBotTuningName: string | null = null;
 
   /** Session state (lives, score, level). */
   private gameState: GameState;
@@ -479,7 +488,7 @@ export class PlayScene extends CombatScene<
   /** Pluggable policy that selects the offered options. */
   private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
 
-  /** The Central AI boss, spawned after Level 5 (null until then). */
+  /** The Central AI boss, spawned after the final level (null until then). */
   private boss: Boss | null = null;
 
   /** Resolved DOM key name that toggles pause (from the bindings). */
@@ -606,7 +615,7 @@ export class PlayScene extends CombatScene<
   private pendingAsteroidSpawns: SpawnEvent[] = [];
 
   /**
-   * Planned Harvester spawns for the active regular wave (Levels 4–5 only),
+   * Planned Harvester spawns for the active regular wave (Levels 4–10 only),
    * computed once per wave by `planHarvesterSpawns()`. Each released spawn is
    * registered with the WaveManager (they gate wave completion — unlike
    * asteroids).
@@ -700,6 +709,10 @@ export class PlayScene extends CombatScene<
    */
   init(data?: { demo?: boolean; seed?: number; demoDwellMs?: number }): void {
     this.demoMode = data?.demo === true;
+    // The bot seam is inert outside demo mode; clear any name applied by a
+    // previous demo so a normal (re)start never reports a stale config
+    // (AH-0MV6MFDYG001E6PL).
+    if (!this.demoMode) this.appliedBotTuningName = null;
     this.demoDwellMs = data?.demoDwellMs;
     if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
   }
@@ -712,6 +725,11 @@ export class PlayScene extends CombatScene<
     this.botGovernor.reset();
     // Fresh competent-bot commitment/scratch for this run (AC1).
     this.botBrain.reset();
+    // Demo runs fly the *persisted* bot-tuning configuration — the same store
+    // the Bot Tuning gym edits (AH-0MV6MFDYG001E6PL). No-op outside demo
+    // mode; corrupt/absent storage falls back to the built-in Default, so
+    // behaviour is unchanged when nothing has been saved.
+    this._applyBotTuning();
     // Resolve and seed the per-run RNG before anything draws from it
     // (AH-0MUY08V6W001SJJN). Must run before the player/drop spawner/enemies
     // are created so every gameplay draw comes from the seeded stream.
@@ -1059,7 +1077,7 @@ export class PlayScene extends CombatScene<
       // Release any asteroid spawns whose planned time has passed — before
       // the timer advances so a wave-timeout cannot release the whole plan.
       this._releaseDueAsteroidSpawns();
-      // Release any planned Harvester spawns (Levels 4–5 only) whose time
+      // Release any planned Harvester spawns (Levels 4–10 only) whose time
       // has passed; each is registered with the WaveManager so wave-clear
       // accounting stays correct (F6).
       this._releaseDueHarvesterSpawns();
@@ -1147,7 +1165,7 @@ export class PlayScene extends CombatScene<
     // Plan the random offscreen asteroid spawns for this wave. Empty during
     // the boss encounter (see `planAsteroidSpawns`).
     this.planAsteroidSpawns();
-    // Plan the rare Harvester spawns (Levels 4–5 only; empty elsewhere).
+    // Plan the rare Harvester spawns (Levels 4–10 only; empty elsewhere).
     this.planHarvesterSpawns();
     // Plan the Pac-Man ghost-pursuer group for waves that opted in
     // (AH-0MV01EH2U008XT3Q); empty for every other wave.
@@ -1427,7 +1445,7 @@ export class PlayScene extends CombatScene<
 
   /**
    * Plans the rare Harvester spawns for the active regular wave. Only
-   * Levels 4–5 are eligible; Levels 1–3 and the boss encounter produce no
+   * Levels 4–10 are eligible; Levels 1–3 and the boss encounter produce no
    * plan. Called once per wave from `spawnWave()` so the scene rng stream
    * advances only at wave boundaries (F6).
    */
@@ -1906,6 +1924,15 @@ export class PlayScene extends CombatScene<
     // same frame.
     const reanchorApplied = this._applyFormationReanchor();
 
+    // Live mineral-seek: push the scene's live mineral field so roaming
+    // seekers (Harvester) steer toward the nearest live mineral — the same
+    // shared helper the gyms call (AH-0MV5SDNI2008RWQ2). The seeker advances
+    // its own motion in the loop below.
+    pushSeekTargets(
+      this.spawned.filter((s) => s.entity.alive).map((s) => s.entity),
+      this.minerals,
+    );
+
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
       // Non-blocking world hazards (Asteroid, Frogger lane traffic) advance
@@ -1931,11 +1958,9 @@ export class PlayScene extends CombatScene<
         }
         continue;
       }
-      // Live mineral-seek: push the scene's live mineral field so roaming
-      // seekers (Harvester) steer toward the nearest mineral, then advance
-      // their own motion. The gym's shared tick calls the same seam (F4).
+      // Roaming seekers (Harvester) advance their own motion — the scene's
+      // live mineral field was pushed above by the shared helper (F4 parity).
       if (s.entity.setSeekTargets) {
-        s.entity.setSeekTargets(this.minerals);
         s.entity.updatePosition?.(dt);
         continue;
       }
@@ -1955,16 +1980,6 @@ export class PlayScene extends CombatScene<
         s.spacingX,
         s.spacingY,
       );
-      // Power Pellet fright (AH-0MV1BIW95004POSX): offset the enemy away
-      // from the ship with the same shared pure flee maths every gym uses,
-      // so the retreat is game↔gym identical. Self-advancing hazards and
-      // seekers are excluded (they integrate their own motion and would
-      // double-count an additive offset).
-      const flee = this._frightenedFleeOffset(s.entity);
-      if (flee.x !== 0 || flee.y !== 0) {
-        s.entity.x += flee.x;
-        s.entity.y += flee.y;
-      }
     }
 
     // If a re-anchor fired (now or on an earlier frame), ease all living
@@ -2067,7 +2082,7 @@ export class PlayScene extends CombatScene<
    * (`WaveManager.levelName` → `LevelDefinition.name`); with static
    * `LEVELS` it is the `LevelDefinition.name` property. When the name is
    * empty the label falls back to a name-free numeric form
-   * (`Level N of 5, Wave M of K`) so no blank label or crash occurs.
+   * (`Level N of 10, Wave M of K`) so no blank label or crash occurs.
    */
   private _progressLabel(): string {
     const wm = this.waveManager;
@@ -2455,6 +2470,44 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Applies the persisted bot-tuning configuration to the demo brain and
+   * governor (AH-0MV6MFDYG001E6PL).
+   *
+   * The Bot Tuning gym (`GymBotTuning`) edits and persists these values; when
+   * a demo run starts (and when demo mode is re-enabled mid-session) this
+   * rebuilds `botBrain`/`botGovernor` from the currently-selected config so
+   * **Watch Demo** — and the gameplay recording tools that drive it — fly the
+   * tuned bot. The reconstruction mirrors `GymBotTuning._applyTuning()`
+   * exactly (same `toCompetentOverrides`/`toHumanOverrides` mapping), keeping
+   * gym↔game parity. Outside demo mode the bot seam is inert, so human
+   * sessions never consult the store. The store is corrupt-safe: absent or
+   * invalid persisted data falls back to the built-in `Default`, which
+   * numerically equals the constructor defaults, so behaviour is unchanged
+   * when nothing has been saved.
+   */
+  private _applyBotTuning(): void {
+    if (!this.demoMode) return;
+    const config = getCurrentBotTuningConfig();
+    this.appliedBotTuningName = config.name;
+    const values = coerceTuningValues(config.values);
+    this.botBrain = createCompetentBotBrain({ tunables: toCompetentOverrides(values) });
+    this.botGovernor = new BotInputGovernor(toHumanOverrides(values));
+  }
+
+  /**
+   * Name of the persisted bot-tuning configuration the demo bot is currently
+   * flying with, or `null` outside demo mode (AH-0MV6MFDYG001E6PL).
+   */
+  getBotTuningConfigName(): string | null {
+    return this.appliedBotTuningName;
+  }
+
+  /** The live demo bot governor (test/telemetry seam, AH-0MV6MFDYG001E6PL). */
+  getBotGovernor(): BotInputGovernor {
+    return this.botGovernor;
+  }
+
+  /**
    * Samples the pure bot decision and feeds it to the human-like input
    * governor (AH-0MUXXQ1MN002RXGB). Called once per tick, before the shared
    * player-control step reads the seam, so the committed input the governor
@@ -2463,12 +2516,21 @@ export class PlayScene extends CombatScene<
   private _advanceDemoBot(dt: number): void {
     if (!this.demoMode) return;
     const player = this.getPlayer();
+    const movement = player?.getMovementState();
+    const rotation = player?.getRotationConfig();
     this.botGovernor.update(
       this.botBrain.decide(buildBotSnapshot(this), dt),
       dt,
       {
         scheme: player?.getScheme() ?? 'asteroids',
-        facing: player?.getMovementState().facing ?? 0,
+        facing: movement?.facing ?? 0,
+        // Inertia-aware turn release (AH-0MV1DUSM2005HL98 · AC1): the bot
+        // needs the ship's live spin and rotation config to predict the
+        // heading it will coast to once the turn input is released.
+        angularVelocity: movement?.angularVelocity ?? 0,
+        rotationSpeed: rotation?.rotationSpeed,
+        rotationAcceleration: rotation?.rotationAcceleration,
+        rotationDeceleration: rotation?.rotationDeceleration,
         // Respect the player's reverse-thruster configuration: when the
         // player switched it off, the demo bot emits `reverse: false` on
         // every input (AH-0MV1J0OHP0072XA5 · AC4).
@@ -2487,29 +2549,9 @@ export class PlayScene extends CombatScene<
 
   /** Plays the shoot cue for one firing weapon (one per shot, keyed off id). */
   private _playShootCue(weaponId: WeaponId): void {
-    switch (weaponId) {
-      case 'cannon':
-        playCannonFireSound();
-        break;
-      case 'spread':
-        playSpreadFireSound();
-        break;
-      case 'dual':
-        playDualFireSound();
-        break;
-      case 'rapid':
-        playRapidFireSound();
-        break;
-      case 'nova':
-        playNovaFireSound();
-        break;
-      case 'mortar':
-        playMortarFireSound();
-        break;
-      case 'arc':
-        playArcFireSound();
-        break;
-    }
+    // Shared player-fire path: the metronomic hold-full ghost fire and live
+    // fire play the same cue through the same switch (AH-0MV55O9R5005W6J0).
+    playWeaponFireSound(weaponId);
   }
 
   /**
@@ -2540,24 +2582,22 @@ export class PlayScene extends CombatScene<
 
   /** Collects any bullets fired by the formation this frame. */
   private _collectEnemyFire(): void {
+    // Live aim tracking: push the live player position into every alive
+    // aimed enemy BEFORE this frame's fire is collected — single-sourced with
+    // the gyms through the shared helper (AH-0MV5SDNI2008RWQ2).
+    pushAimTargets(
+      this.spawned.filter((s) => s.entity.alive).map((s) => s.entity),
+      this.player,
+    );
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
-      if (this.player) {
-        const target = s.entity as unknown as {
-          setAimTarget?: (x: number, y: number) => void;
-        };
-        target.setAimTarget?.(this.player.x, this.player.y);
-      }
       // Shared archetype→tryFire dispatch, driven by the scene clock
       // (AH-0MUII3BBW000XZ46): no local switch, so a new enemy is wired once.
-      // The Power Pellet fright window suppresses all enemy fire through the
-      // same shared dispatcher (AH-0MV1BIW95004POSX).
       this.enemyBullets.push(
         ...fireForEnemy<PlayEnemyBullet>(
           s.entity,
           s.enemyKey,
           this.time.now,
-          this.isEnemyFrightened(),
         ),
       );
     }
@@ -3123,12 +3163,6 @@ export class PlayScene extends CombatScene<
           )
         ) {
           this.onPlayerRamsEnemy(s.entity);
-          // Power Pellet fright (AH-0MV1BIW95004POSX): a frightened enemy is
-          // destroyed by the ram without damaging the ship (parity with the
-          // shared `CombatScene._handleCollisions` path).
-          if (this.isEnemyFrightened()) {
-            continue;
-          }
           this._hitPlayer();
           break;
         }
@@ -3307,6 +3341,10 @@ export class PlayScene extends CombatScene<
   setDemoMode(demo: boolean): void {
     this.demoMode = demo;
     if (demo) {
+      // Rebuild the brain/governor from the persisted bot-tuning config so a
+      // mid-session re-enable flies the saved tuning (AH-0MV6MFDYG001E6PL,
+      // AC3).
+      this._applyBotTuning();
       // Start the human-like input layer from a clean slate. The demo keeps
       // the ship's configured control scheme (default `asteroids`); the
       // governor resolves the bot's steering intent to it
@@ -3315,6 +3353,7 @@ export class PlayScene extends CombatScene<
       this.botGovernor.reset();
       this._enableDemoTakeOver();
     } else {
+      this.appliedBotTuningName = null;
       this._disableDemoTakeOver();
     }
   }
@@ -3514,6 +3553,9 @@ export class PlayScene extends CombatScene<
     this.mineralChoiceOpen = true;
     this.runTelemetry.holdFull(this.mineralChoiceOptions.map((o) => o.id));
     this.setPaused(true);
+    // Fade the ship's engine hum out across the pause (the ship is idle
+    // behind the overlay); it ramps back in on resume (AH-0MV70Y2XY005J2HI).
+    this.fadeThrusterHumForHoldFull();
     if (this.scene.manager.getScene('MineralChoiceScene')) {
       this.scene.pause();
       // Pass the exact options (and the active strategy) the overlay must
@@ -3524,6 +3566,10 @@ export class PlayScene extends CombatScene<
       this.scene.launch('MineralChoiceScene', {
         origin: 'PlayScene',
         options: [...this.mineralChoiceOptions],
+        // Frozen player-fire schedule: the active player weapons + beat-grid
+        // phase at the moment the overlay opens, so the reduced-volume ghost
+        // fire continues on the same grid while paused (AH-0MV55O9R5005W6J0).
+        fireSchedule: buildHoldFullFireSchedule(this.player),
         // Demo mode auto-selects after a human-like delay so the bot never
         // stalls on the overlay; normal play waits for a real selection
         // (AH-0MUXXQ1MN002RXGB · AC4/AC5). Below the life cap the bot takes
@@ -3573,6 +3619,13 @@ export class PlayScene extends CombatScene<
     this.mineralChoiceOptions = [];
     this.gameState.resolveHold();
     this._syncMineralHud();
+    // Re-base the frozen beat clock across the overlay + countdown pause so
+    // the ship's real fire resumes phase-locked on the grid the metronome
+    // ghosted (AH-0MV55OAQT004NMSN · AC3).
+    const overlay = this.scene.manager.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene | null;
+    this.rebaseBeatClockForHoldFullResume(overlay?.getOverlayElapsedMs() ?? 0);
     this.setPaused(false);
     // Resume the SceneManager-level pause that accompanied the overlay.
     if (this.scene.manager.getScene('MineralChoiceScene')) {
@@ -3632,7 +3685,7 @@ export class PlayScene extends CombatScene<
 
   /**
    * The persistent level/wave progress readout text, e.g.
-   * `Level 1 of 5, Wave 1 of 2` (or `Boss` during the boss encounter).
+   * `Level 1 of 10, Wave 1 of 2` (or `Boss` during the boss encounter).
    */
   getLevelText(): string {
     return this.levelText?.text ?? '';

@@ -246,6 +246,13 @@ export interface BotSteeringIntent extends FourDirectionalInput {
    * opposite the travel, or brakes when the nose is already aligned).
    */
   readonly reverse?: boolean;
+  /**
+   * Whether this intent is an **aim** intent — the ship is holding its weapon
+   * axis on a target (AH-0MV1DUSM2005HL98 · AC3). Only aim intents are
+   * perturbed by the governor's `skill` error, so lowering `skill` degrades
+   * aim without degrading collision avoidance.
+   */
+  readonly aim?: boolean;
 }
 
 // ── Direction primitives ────────────────────────────────────────────

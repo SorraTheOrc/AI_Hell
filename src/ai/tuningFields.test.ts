@@ -107,3 +107,72 @@ describe('bot tuning fields (AH-0MV4D7LAD009XYR0)', () => {
     expect(values.competent['engagementRange']).toBe(COMPETENT_BOT_TUNABLES.engagementRange);
   });
 });
+
+describe('bot rotation skills knobs (AH-0MV1DUSM2005HL98 AC4)', () => {
+  it('exposes the skill and aim-lead controls with shipped defaults', () => {
+    const values = defaultBotTuningValues();
+    expect(readTuningNumber(values, numericField('skill'))).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.skill,
+    );
+    expect(readTuningNumber(values, numericField('maxAimErrorRad'))).toBe(
+      BOT_HUMAN_INPUT_TUNABLES.maxAimErrorRad,
+    );
+    expect(readTuningNumber(values, numericField('aimLeadAlignSeconds'))).toBe(
+      COMPETENT_BOT_TUNABLES.aimLeadAlignSeconds,
+    );
+    expect(readTuningNumber(values, numericField('aimLeadIterations'))).toBe(
+      COMPETENT_BOT_TUNABLES.aimLeadIterations,
+    );
+    const toggle = BOT_TUNING_TOGGLES.find((t) => t.key === 'aimLeadEnabled');
+    expect(toggle).toBeDefined();
+    expect(readTuningBoolean(values, toggle!)).toBe(true);
+  });
+
+  it('round-trips the new knobs into the brain and governor overrides', () => {
+    const values = defaultBotTuningValues();
+    values.competent['aimLeadEnabled'] = false;
+    values.competent['aimLeadIterations'] = 5;
+    values.human['skill'] = 0.25;
+    values.human['maxAimErrorRad'] = 0.6;
+
+    const competent = toCompetentOverrides(values);
+    expect(competent.aimLeadEnabled).toBe(false);
+    expect(competent.aimLeadIterations).toBe(5);
+    const human = toHumanOverrides(values);
+    expect(human.skill).toBe(0.25);
+    expect(human.maxAimErrorRad).toBe(0.6);
+  });
+
+  it('keeps the new sliders inside sensible declared bounds', () => {
+    // A designer must be able to dial skill to 0 and 1, and the aim error cap
+    // must be able to reach zero (no error) and a meaningful maximum.
+    const skill = numericField('skill');
+    expect(skill.min).toBe(0);
+    expect(skill.max).toBe(1);
+    const maxError = numericField('maxAimErrorRad');
+    expect(maxError.min).toBe(0);
+    expect(maxError.max).toBeGreaterThan(0);
+    const iterations = numericField('aimLeadIterations');
+    expect(iterations.min).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('bot tuning tooltip descriptions (AH-0MV4XGXVL001GSB2)', () => {
+  it('gives every declared numeric field a non-empty description', () => {
+    const missing = BOT_TUNING_NUMERIC_FIELDS.filter(
+      (field) =>
+        typeof field.description !== 'string' ||
+        field.description.trim().length === 0,
+    ).map((field) => field.key);
+    expect(missing).toEqual([]);
+  });
+
+  it('gives every declared toggle a non-empty description', () => {
+    const missing = BOT_TUNING_TOGGLES.filter(
+      (toggle) =>
+        typeof toggle.description !== 'string' ||
+        toggle.description.trim().length === 0,
+    ).map((toggle) => toggle.key);
+    expect(missing).toEqual([]);
+  });
+});

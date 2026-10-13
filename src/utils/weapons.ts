@@ -462,6 +462,11 @@ export const AOE_PROJECTILE_SPEEDS = {
  * un-upgraded cluster size. The `splitCount` weapon-level variable grows the
  * effective count toward its finite spec cap (3). A cluster always spawns at
  * least two warheads, so the base weapon already reads as a split payload.
+ *
+ * The warheads fan **evenly around the full 360° circle** with a constant
+ * +90° phase offset from the missile's heading (shared `splitProjectile`
+ * seam): at this base count of 2 they split to 90°/270° — perpendicular,
+ * never straight ahead (0°) or backwards (180°).
  */
 export const CLUSTER_BASE_WARHEADS = 2;
 
@@ -662,7 +667,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   spread: {
     id: 'spread',
     name: 'Spread',
-    description: 'Adds a 3-bullet fan (−30°/0°/+30°) for 10 s.',
+    description: 'Adds a 3-bullet fan (−30°/0°/+30°).',
     offsets: [(-30 * Math.PI) / 180, 0, (30 * Math.PI) / 180],
     fireRateMs: WEAPON_SPREAD_FIRE_RATE,
     bulletColor: BULLET_COLORS.spread,
@@ -673,7 +678,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   dual: {
     id: 'dual',
     name: 'Dual',
-    description: 'Adds two side-by-side bullets for 10 s.',
+    description: 'Adds two side-by-side bullets.',
     // Two parallel bullets, side-by-side across the direction of travel:
     // both fly at heading + 0° but are launched offset perpendicular to
     // the heading by ±DUAL_SIDE_OFFSET px.
@@ -688,7 +693,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   rapid: {
     id: 'rapid',
     name: 'Rapid',
-    description: 'Adds single bullets at a much higher fire rate for 10 s.',
+    description: 'Adds single bullets at a much higher fire rate.',
     offsets: [0],
     fireRateMs: WEAPON_RAPID_FIRE_RATE,
     bulletColor: BULLET_COLORS.rapid,
@@ -700,7 +705,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'wave_laser',
     name: 'Wave Laser',
     description:
-      'Adds a slow, long-range piercing beam that passes through several enemies for 10 s.',
+      'Adds a slow, long-range piercing beam that passes through several enemies.',
     // A single aimed beam along the ship's heading.
     offsets: [0],
     fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
@@ -719,7 +724,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'ricochet',
     name: 'Ricochet',
     description:
-      'Adds edge-bouncing shots that ricochet off the arena walls for 10 s.',
+      'Adds edge-bouncing shots that ricochet off the arena walls.',
     // A single aimed pellet along the ship's heading; it reflects at the edges.
     offsets: [0],
     fireRateMs: WEAPON_RICOCHET_FIRE_RATE,
@@ -736,7 +741,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'cluster',
     name: 'Cluster Missile',
     description:
-      'Adds a missile that splits into a radial cluster of warheads for 10 s.',
+      'Adds a missile that splits into a radial cluster of warheads.',
     // A single aimed missile along the ship's heading; it splits once.
     offsets: [0],
     fireRateMs: WEAPON_CLUSTER_FIRE_RATE,
@@ -745,15 +750,17 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.cluster,
     // Base split payload: the missile bursts into two radial warheads on the
-    // first impact/expiry. The `splitCount` level variable grows the warhead
-    // count toward its spec cap (3).
+    // first impact/expiry. The shared split seam fans them perpendicular to
+    // the heading (90°/270° at this base count) and the `splitCount` level
+    // variable grows the warhead count toward its spec cap (3), dividing the
+    // full 360° circle evenly at every level.
     splits: CLUSTER_BASE_WARHEADS,
   },
   options: {
     id: 'options',
     name: 'Options',
     description:
-      'Adds orbiting satellite pods that each fire along your heading for 10 s.',
+      'Adds orbiting satellite pods that each fire along your heading.',
     // The orbit descriptor drives pod firing; the single `[0]` offset is a
     // harmless fallback (the shared core never reads the pattern for an
     // orbit weapon).

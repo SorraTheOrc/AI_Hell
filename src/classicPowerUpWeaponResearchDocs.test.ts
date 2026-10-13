@@ -47,7 +47,6 @@ const SELECTED_WEAPONS = [
 
 /** The four selected power-ups. */
 const SELECTED_POWER_UPS = [
-  'Pac-Man power pellet',
   'Defender smart bomb',
   'Gradius force field',
   'Space Invaders mystery UFO',
@@ -95,6 +94,17 @@ describe('Classic power-up & weapon research is documented (AH-0MV1BIUGE005BJO8)
     );
     expect(found.length).toBeGreaterThanOrEqual(5);
     expect(found.length).toBeLessThanOrEqual(8);
+  });
+
+  it('records the Pac-Man power pellet as removed with a reason (AH-0MV5CB6KO0079N08)', () => {
+    // The Pac-Man power pellet was removed from the game (full removal,
+    // producer decision Q1=A). The research catalogue must record the removal,
+    // the reason and the recovery path rather than silently dropping it.
+    const removalIdx = doc.search(/#+\s*5\.\s*Pac-Man power pellet[^\n]*remov/i);
+    expect(removalIdx).toBeGreaterThan(-1);
+    const snippet = doc.slice(Math.max(0, removalIdx - 200), removalIdx + 1800);
+    expect(/reason for removal/i.test(snippet)).toBe(true);
+    expect(/git history|recovery/i.test(snippet)).toBe(true);
   });
 
   // ── AC2: Considered-but-not-selected section ────────────────────────

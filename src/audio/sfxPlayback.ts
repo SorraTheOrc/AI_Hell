@@ -31,6 +31,13 @@ export interface SfxPlayOptions {
   readonly loop?: boolean;
   /** Per-play gain in [0, 1] (default 1); the master gain still applies. */
   readonly volume?: number;
+  /**
+   * Per-play playback rate (default 1). Values > 1 play the asset faster and
+   * higher-pitched, < 1 slower and lower — used by the rising countdown tick
+   * (AH-0MV722WJS0075UTZ). Clamped to a small positive floor so a corrupt
+   * value cannot silence or reverse the cue.
+   */
+  readonly rate?: number;
 }
 
 /** A playing cue that can be stopped (used by continuous cues). */
@@ -132,6 +139,16 @@ export class WebAudioSfxProvider implements SfxSoundProvider {
     const gain = context.createGain();
     source.buffer = buffer;
     source.loop = options.loop ?? false;
+    // Per-play rate (pitch/speed). `AudioBufferSourceNode` has no detune, so
+    // rate is the only pitch control; a small positive floor keeps a corrupt
+    // value from silencing or reversing the cue (AH-0MV722WJS0075UTZ).
+    const rate =
+      typeof options.rate === 'number' && Number.isFinite(options.rate) && options.rate > 0
+        ? options.rate
+        : 1;
+    if ('playbackRate' in source) {
+      source.playbackRate.value = rate;
+    }
     gain.gain.setValueAtTime(clamp01(options.volume ?? 1), context.currentTime);
     source.connect(gain);
     gain.connect(this.ensureMaster(context));
@@ -144,7 +161,9 @@ export class WebAudioSfxProvider implements SfxSoundProvider {
           typeof buffer.duration === 'number' && Number.isFinite(buffer.duration)
             ? buffer.duration
             : 0;
-        source.stop(startAt + duration + 0.02);
+        // A faster rate shortens the audible duration; scale the stop time so
+        // a quick cue does not ring trailing silence.
+        source.stop(startAt + duration / rate + 0.02);
       }
     } catch {
       /* Dead context — degrade to a no-op rather than throw. */

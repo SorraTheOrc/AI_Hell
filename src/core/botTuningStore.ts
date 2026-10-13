@@ -226,3 +226,16 @@ export function resetBotTuningStore(): void {
     // Ignore unavailable storage.
   }
 }
+
+/**
+ * Serialises the full persisted state (every named config plus the current
+ * selection) as pretty-printed JSON (AH-0MV6MFDYG001E6PL).
+ *
+ * This is the exact blob {@link parseState} accepts, so the export round-trips
+ * through {@link window.localStorage} — the gym's **Export** action hands this
+ * to the user, and the recording tools inject it into a fresh page before the
+ * game boots so the demo plays the saved tuning.
+ */
+export function serialiseBotTuningState(): string {
+  return JSON.stringify(loadBotTuningState(), null, 2);
+}

@@ -15,8 +15,10 @@
  * - `engage` (enemy / asteroid): pick the best target (nearest, weighted by
  *   each archetype's registered threat), line it up inside its preferred
  *   engagement range, then hold the aim axis and coast so the forward-firing
- *   weapon stays on target (AC3). An archetype whose content profile declares
- *   `aim: 'none'` is closed on without aim reasoning.
+ *   weapon stays on target (AC3).  A target whose velocity is exposed is
+ *   **led**: the aim objective is the iterated intercept, not the current
+ *   position (AH-0MV1DUSM2005HL98 · AC2).  An archetype whose content profile
+ *   declares `aim: 'none'` is closed on without aim reasoning.
  * - `evade`: predictive path away from the threats (away from the weighted
  *   centroid of threatening shots), with the steering fan pathing around
  *   anything else in the way (AC2).
@@ -44,7 +46,7 @@ import {
   nearestTarget,
   type ContentTarget,
 } from './goals';
-import { idleIntent, mayReverse, mayThrust, planSteering } from './steering';
+import { idleIntent, interceptPoint, mayReverse, mayThrust, planSteering } from './steering';
 import type { CompetentBotTunables } from './tunables';
 
 /** The collect targets for a goal: minerals or power-ups as content targets. */
@@ -144,12 +146,29 @@ function engageBehaviour(
       const profile = content.resolveEnemy(best.point.contentId);
       const engagementRange = profile.engagementRange ?? t.engagementRange;
       const distance = best.distance;
-      const objective = {
-        x: best.point.x - player.x,
-        y: best.point.y - player.y,
-      };
       const inRange = distance <= engagementRange;
       const holdAim = profile.aim !== 'none';
+      // Lead prediction (AC2): aim at where a moving target will be when the
+      // forward-firing shot arrives, accounting for the ship's estimated turn
+      // time plus the shot's time of flight, iterated to a stable intercept.
+      // A target that exposes no (or zero) velocity falls back to its current
+      // position — exactly the pre-lead behaviour.
+      const targetVx = best.point.vx ?? 0;
+      const targetVy = best.point.vy ?? 0;
+      const objective =
+        t.aimLeadEnabled && (targetVx !== 0 || targetVy !== 0)
+          ? (() => {
+              const intercept = interceptPoint(
+                player,
+                best.point,
+                { x: targetVx, y: targetVy },
+                t.assumedBulletSpeed,
+                t.aimLeadAlignSeconds,
+                t.aimLeadIterations,
+              );
+              return { x: intercept.x - player.x, y: intercept.y - player.y };
+            })()
+          : { x: best.point.x - player.x, y: best.point.y - player.y };
       // Kiting (AC3): inside the standoff and needing more separation, hold
       // reverse while keeping the nose on the aim target (the objective still
       // points at the target, so the actuator backs away).  Only fires on a
@@ -191,6 +210,9 @@ function engageBehaviour(
         thrust,
         longTravel: distance >= t.longTravelDistance,
         reverse: kite || brake,
+        // Mark the intent as an aim intent so the governor's `skill` error can
+        // perturb it (and only it) when the designer lowers skill (AC3).
+        aim: holdAim,
       });
     },
   };

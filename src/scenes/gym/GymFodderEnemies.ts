@@ -158,6 +158,10 @@ export function normaliseSpawnRanges(config: EnemyConfig): EnemyConfig {
 
 const FORMATION_KINDS = ['v', 'diver', 'rect', 'swarm', 'orbital', 'single', 'march'] as const;
 const SHOT_PATTERNS = ['none', 'aimed', 'spread', 'radial', 'orbital', 'coordinated'] as const;
+// Behavioural classification enums (AH-0MV29NWI1007NKN7): coarse
+// movement/attack roles consumed by wave-design balance tooling.
+const MOVEMENT_CLASSES = ['formation', 'diver', 'chaser', 'patroller', 'roamer'] as const;
+const ATTACK_CLASSES = ['contact', 'projectile', 'beam', 'area'] as const;
 
 // ── Colour helpers (mirrors GymPlayer) ───────────────────────────
 
@@ -302,6 +306,11 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     // Formation / shot enums as selects.
     panel.appendChild(this._selectRow('formationKind', [...FORMATION_KINDS]));
     panel.appendChild(this._selectRow('shotPattern', [...SHOT_PATTERNS]));
+
+    // Behavioural classification selects (AH-0MV29NWI1007NKN7): persisted
+    // through the same CSV save path as every other control.
+    panel.appendChild(this._selectRow('movementClass', [...MOVEMENT_CLASSES]));
+    panel.appendChild(this._selectRow('attackClass', [...ATTACK_CLASSES]));
 
     // Respawn + Player toggle row (controls that affect the live scene, not persistence).
     const utilRow = document.createElement('div');
@@ -482,7 +491,7 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
       const input = this.panel?.querySelector<HTMLInputElement>(`input[data-config="${field}"]`);
       if (input) (next as unknown as Record<string, unknown>)[field] = hexToColor(input.value);
     }
-    for (const field of ['formationKind', 'shotPattern'] as const) {
+    for (const field of ['formationKind', 'shotPattern', 'movementClass', 'attackClass'] as const) {
       const sel = this.panel?.querySelector<HTMLSelectElement>(`select[data-config="${field}"]`);
       if (sel) (next as unknown as Record<string, unknown>)[field] = sel.value;
     }
@@ -502,7 +511,7 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
       const input = this.panel.querySelector<HTMLInputElement>(`input[data-config="${field}"]`);
       if (input) input.value = colorToHex((config as unknown as Record<string, unknown>)[field] as number);
     }
-    for (const field of ['formationKind', 'shotPattern'] as const) {
+    for (const field of ['formationKind', 'shotPattern', 'movementClass', 'attackClass'] as const) {
       const sel = this.panel.querySelector<HTMLSelectElement>(`select[data-config="${field}"]`);
       if (sel) sel.value = String((config as unknown as Record<string, unknown>)[field] ?? '');
     }

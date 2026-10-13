@@ -62,13 +62,7 @@ import { drawWeaponDrop, WeaponDropIconId } from '../../powerups/icons';
 import {
   playPowerUpSpawnSound,
   playPowerUpDespawnSound,
-  playCannonFireSound,
-  playSpreadFireSound,
-  playDualFireSound,
-  playRapidFireSound,
-  playNovaFireSound,
-  playMortarFireSound,
-  playArcFireSound,
+  playWeaponFireSound,
 } from '../../audio/effects';
 import { WasdKeysLike } from '../../utils/input';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
@@ -362,29 +356,10 @@ export class GymWeapons extends CombatScene<
    */
   private _playShootCue(weaponId: WeaponId): void {
     if (!this.player) return;
-    switch (weaponId) {
-      case 'cannon':
-        playCannonFireSound();
-        break;
-      case 'spread':
-        playSpreadFireSound();
-        break;
-      case 'dual':
-        playDualFireSound();
-        break;
-      case 'rapid':
-        playRapidFireSound();
-        break;
-      case 'nova':
-        playNovaFireSound();
-        break;
-      case 'mortar':
-        playMortarFireSound();
-        break;
-      case 'arc':
-        playArcFireSound();
-        break;
-    }
+    // Shared player-fire path (AH-0MV55O9R5005W6J0) — one switch for live
+    // fire in the game and every gym, also reused by the hold-full ghost
+    // metronome.
+    playWeaponFireSound(weaponId);
   }
 
   /** Advances all bullets by `dt` and removes those whose lifetime elapsed. */

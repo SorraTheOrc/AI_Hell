@@ -45,7 +45,7 @@
  */
 
 import { createServer } from 'vite';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, extname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -74,6 +74,7 @@ import {
   formatProgress,
   setupHint,
 } from './capture-progress.mjs';
+import { listCaptureScenarios } from './capture-scenarios.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VIEWPORT = { width: 960, height: 540 };
@@ -105,6 +106,13 @@ export const RUN_ENDED_STATE_KEY = '__aiHellRunState';
 
 /** Where the installed listener parks the latest captured event detail. */
 export const RUN_ENDED_STORE_KEY = '__aiHellRunEndedSignal';
+
+/**
+ * Store key the bot-tuning gym persists under (AH-0MV6MFDYG001E6PL). The
+ * capture injects the exported state under this key, mirroring
+ * `src/core/botTuningStore.ts`. Written pre-boot so the game's demo reads it.
+ */
+export const BOT_TUNING_STORAGE_KEY = 'ai-hell-bot-tuning';
 
 /**
  * Poll interval, in milliseconds, while waiting for the run-end signal. The
@@ -262,6 +270,9 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     json: false,
     scripted: false,
     scenario: null,
+    listScenarios: false,
+    botConfig: null,
+    allScenarios: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -318,6 +329,23 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         // (AH-0MUWZ5HCV0034H44), e.g. `boss-four-hits`.
         options.scenario = next();
         break;
+      case '--list-scenarios':
+        // Print the implemented dev scenarios then exit (AH-0MV6JGELV001FAX1)
+        // without booting Vite or Chromium — pure formatter only.
+        options.listScenarios = true;
+        break;
+      case '--bot-config':
+        // Exported bot-tuning state (gym Export button) injected into the
+        // recording browser so the demo flies the saved tuning
+        // (AH-0MV6MFDYG001E6PL).
+        options.botConfig = next();
+        break;
+      case '--all-scenarios':
+        // Record one clip per registered dev scenario in one session
+        // (AH-0MV6JGQFK007MXGX). Takes no value; the default no-scenario demo
+        // run is deliberately not included (producer decision Q1).
+        options.allScenarios = true;
+        break;
       case '--help':
         options.help = true;
         break;
@@ -327,6 +355,57 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
   }
 
   return options;
+}
+
+/**
+ * Lists the implemented dev capture scenarios from the shared registry.
+ *
+ * Thin consumer of {@link listCaptureScenarios} (`./capture-scenarios.mjs`,
+ * the single source of truth shared with the game resolver), returning fresh
+ * copies so formatters can never mutate the frozen registry. The CLI listing
+ * reads exactly this list, so `--list-scenarios` cannot drift from the values
+ * `--scenario` accepts (AH-0MV6JGELV001FAX1, AC1).
+ *
+ * @returns {Array<{ name: string, effect: string }>}
+ */
+export function listScenarios() {
+  return listCaptureScenarios();
+}
+
+/**
+ * Formats the registered scenarios as readable human lines.
+ *
+ * One line per scenario in registry order: the value a maintainer passes to
+ * `--scenario` plus that scenario's one-line effect, e.g.
+ *
+ *   boss — Jump straight to the boss with a tunable hit count (&bossHits=N).
+ *
+ * @param {Array<{ name: string, effect: string }>} [scenarios]
+ * @returns {string}
+ */
+export function formatScenarioList(scenarios = listScenarios()) {
+  const lines = ['Implemented dev capture scenarios:', ''];
+  for (const scenario of scenarios) {
+    lines.push(`  ${scenario.name} — ${scenario.effect}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Renders the scenario listing for `main()`: a machine-readable JSON array
+ * under `--json`, otherwise the human-readable form. Pure — no browser, no
+ * server — so the listing path shares the registry without boot cost.
+ *
+ * @param {{ json?: boolean }} [options]
+ * @param {Array<{ name: string, effect: string }>} [scenarios]
+ * @returns {string}
+ */
+export function renderScenarioListing(
+  options = {},
+  scenarios = listScenarios(),
+) {
+  if (options.json === true) return JSON.stringify(scenarios, null, 2);
+  return formatScenarioList(scenarios);
 }
 
 /**
@@ -494,6 +573,89 @@ export function readRunEndedSignal(
   return fromFlag === undefined ? null : fromFlag;
 }
 
+/**
+ * Self-contained pre-boot init script that seeds the page's `localStorage`
+ * with an exported bot-tuning store state (AH-0MV6MFDYG001E6PL, AC4).
+ *
+ * Installed through `page.addInitScript` **before the game boots** (like
+ * {@link installRunEndedListener}) so the game's bot-tuning store reads the
+ * injected configuration and the recorded demo flies it. Self-contained with
+ * inline-literal defaults so Playwright can serialise it for the page; the
+ * unit tests assert the same shape.
+ *
+ * @param {object} [state] — exported `{ version, current, configs }` state.
+ * @param {string} [storageKey]
+ * @param {object} [scope]
+ * @returns {object | null} the injected state, or `null` when it cannot be set.
+ */
+export function installBotTuningConfig(
+  state,
+  storageKey = BOT_TUNING_STORAGE_KEY,
+  scope = globalThis,
+) {
+  if (!scope || !scope.localStorage || state === null || state === undefined) {
+    return null;
+  }
+  try {
+    scope.localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch {
+    return null;
+  }
+  return state;
+}
+
+/**
+ * Reads and validates an exported bot-tuning state file for `--bot-config`
+ * (AH-0MV6MFDYG001E6PL, AC4). The store is corrupt-safe, so this only enforces
+ * the minimum shape the export always produces (`version`, `current`,
+ * non-empty `configs` with `name`/`values`); anything else fails fast with an
+ * actionable message before a browser launches.
+ *
+ * @param {string} filePath
+ * @returns {object} the parsed state to inject into the page.
+ */
+export function loadBotTuningConfigFile(filePath) {
+  let raw;
+  try {
+    raw = readFileSync(filePath, 'utf8');
+  } catch (err) {
+    throw new Error(
+      `--bot-config: cannot read "${filePath}": ${err instanceof Error ? err.message : err}`,
+    );
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`--bot-config: "${filePath}" is not valid JSON`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`--bot-config: "${filePath}" must contain an object (exported bot-tuning state)`);
+  }
+  if (typeof parsed.version !== 'number' || !Array.isArray(parsed.configs)) {
+    throw new Error(
+      `--bot-config: "${filePath}" is missing the bot-tuning store fields (version, configs)`,
+    );
+  }
+  if (
+    parsed.configs.length === 0 ||
+    parsed.configs.some(
+      (config) =>
+        config === null ||
+        typeof config !== 'object' ||
+        typeof config.name !== 'string' ||
+        config.name === '' ||
+        config.values === null ||
+        typeof config.values !== 'object',
+    )
+  ) {
+    throw new Error(
+      `--bot-config: "${filePath}" configs must be non-empty objects with a name and values`,
+    );
+  }
+  return parsed;
+}
+
 /** Resolves the output path, defaulting to `capture-output/gameplay-<ts>.webm`. */
 function resolveOutputPath(requested) {
   if (!requested) {
@@ -555,6 +717,144 @@ export function resolveOutputPaths(requested, count = DEFAULT_CAPTURE_COUNT) {
     }
     return withIndexSuffix(base, iteration);
   });
+}
+
+/**
+ * Resolves a collision-free variant of a target output path
+ * (AH-0MV6JGQFK007MXGX, AC3).
+ *
+ * If `exists(candidate)` reports true, a `-<n>` suffix (`<n>` starting at 2)
+ * is inserted **before the extension** (`demo.webm` → `demo-2.webm`; a path
+ * with no extension gains `-2`) until a path the predicate reports free is
+ * found. The predicate is injected so the helper is pure and hermetically
+ * testable; the real batch plan passes `fs.existsSync`, so an existing file
+ * is never silently overwritten and two items can never resolve to the same
+ * path.
+ *
+ * @param {string} candidate — the initially preferred (possibly taken) path.
+ * @param {(path: string) => boolean} [exists] — reports whether a path is
+ *   already in use; defaults to never (pure default for tests).
+ * @returns {string} — a path `exists` reports free.
+ */
+export function uniquifyOutputPath(candidate, exists = () => false) {
+  if (!exists(candidate)) return candidate;
+  const extension = extname(candidate);
+  const stem = extension ? candidate.slice(0, -extension.length) : candidate;
+  let suffix = 2;
+  while (exists(`${stem}-${suffix}${extension}`)) suffix += 1;
+  return `${stem}-${suffix}${extension}`;
+}
+
+/**
+ * Builds the ordered capture item list for `--all-scenarios`
+ * (AH-0MV6JGQFK007MXGX), optionally repeated `count` times per scenario
+ * (`N x all`, AH-0MV6JGQSA0054CYY): **`count` items per registered dev
+ * scenario**, in registry order, each with a deterministic, collision-free
+ * output path.
+ *
+ * Ordering is **scenario-major**: all `count` repeats of the first
+ * registered scenario come first, then all repeats of the second, and so
+ * on — so the iteration index resets per scenario and the plan reads
+ * `[scenario-1-1, scenario-1-2, …, scenario-2-1, …]` (the choice between
+ * scenario-major and iteration-major is cosmetic; scenario-major is
+ * documented and fixed).
+ *
+ * `--output` is a **directory** for a batch (producer decision Q2): each
+ * scenario writes `<dir>/<scenario>.webm` inside it (with a `-<n>` iteration
+ * suffix when `count > 1`, so `count` repeats of one scenario never collide).
+ * Without `--output` the default directory is `capture-output/` and names are
+ * `<scenario>-<ts>.webm` (`<scenario>-<ts>-<n>.webm` when `count > 1`), where
+ * one batch timestamp keeps separate runs from colliding while staying
+ * deterministic within a run. `count === 1` reproduces the pre-`count` naming
+ * byte-for-byte. `exists` (default: never) feeds {@link uniquifyOutputPath}
+ * so an already-taken name — on disk or already assigned to an earlier item
+ * in this plan — is de-duplicated rather than silently overwritten. The
+ * default no-scenario demo run is deliberately **not** an item (producer
+ * decision Q1).
+ *
+ * @param {{ scenarios?: Array<{ name: string, effect: string }>, output?: string | null, count?: number, timestamp?: string, exists?: (path: string) => boolean }} [params]
+ * @returns {Array<{ index: number, scenario: string, effect: string, outputPath: string }>}
+ */
+export function buildScenarioCapturePlan({
+  scenarios = listScenarios(),
+  output = null,
+  count = DEFAULT_CAPTURE_COUNT,
+  timestamp = new Date().toISOString().replace(/[:.]/g, '-'),
+  exists = () => false,
+} = {}) {
+  const total = parseCaptureCount(count);
+  const requested =
+    typeof output === 'string' && output.length > 0 ? output : null;
+  const outputDir = requested
+    ? isAbsolute(requested)
+      ? requested
+      : resolve(process.cwd(), requested)
+    : resolve(REPO_ROOT, 'capture-output');
+  const assigned = new Set();
+  const isTaken = (path) => assigned.has(path) || exists(path);
+
+  const items = [];
+  let planIndex = 0;
+  // Scenario-major expansion (AH-0MV6JGQSA0054CYY): for each scenario in
+  // registry order, all `count` repeats — the iteration index resets per
+  // scenario so a repeated name (`<scenario>-<n>.webm`) is deterministic and
+  // collision-free across the whole batch.
+  for (const scenario of scenarios) {
+    for (let iteration = 1; iteration <= total; iteration += 1) {
+      const baseName = requested
+        ? total > 1
+          ? `${scenario.name}-${iteration}.webm`
+          : `${scenario.name}.webm`
+        : total > 1
+          ? `${scenario.name}-${timestamp}-${iteration}.webm`
+          : `${scenario.name}-${timestamp}.webm`;
+      const outputPath = uniquifyOutputPath(
+        resolve(outputDir, baseName),
+        isTaken,
+      );
+      assigned.add(outputPath);
+      planIndex += 1;
+      items.push({
+        index: planIndex,
+        scenario: scenario.name,
+        effect: scenario.effect,
+        outputPath,
+      });
+    }
+  }
+  return items;
+}
+
+/**
+ * Resolves the ordered capture items for one invocation
+ * (AH-0MV6JGQFK007MXGX). `--all-scenarios` expands the shared registry into
+ * `count` items **per scenario** (`N x all`, scenario-major order — see
+ * {@link buildScenarioCapturePlan}); otherwise the existing single-clip /
+ * `--count` path is resolved unchanged, so a single `--scenario` invocation
+ * behaves exactly as today (AC backwards-compat).
+ *
+ * @param {object} [options]
+ * @param {{ exists?: (path: string) => boolean }} [deps]
+ * @returns {{ items: Array<{ index: number, outputPath: string, scenario: string | null, effect?: string }>, batch: boolean, allScenarios: boolean }}
+ */
+export function planCaptureRun(options = {}, deps = {}) {
+  if (options.allScenarios === true) {
+    const items = buildScenarioCapturePlan({
+      scenarios: listScenarios(),
+      output: options.output ?? null,
+      count: options.count,
+      exists: typeof deps.exists === 'function' ? deps.exists : existsSync,
+    });
+    return { items, batch: true, allScenarios: true };
+  }
+
+  const outputPaths = resolveOutputPaths(options.output, options.count);
+  const items = outputPaths.map((outputPath, index) => ({
+    index: index + 1,
+    scenario: options.scenario ?? null,
+    outputPath,
+  }));
+  return { items, batch: outputPaths.length > 1, allScenarios: false };
 }
 
 /**
@@ -661,6 +961,7 @@ export function buildIterationRecord(index, clip) {
   return {
     index,
     output: clip.output,
+    scenario: clip.scenario ?? null,
     ok: exitCode === 0,
     exitCode,
     bytes: clip.bytes,
@@ -694,15 +995,15 @@ export function summariseCaptureBatch(iterations = []) {
 }
 
 /**
- * Captures exactly one clip on a **fresh page** from an already-running
- * browser/server pair (AH-0MUYTK941005E2M4). A fresh page per iteration means
- * the audio tap and run-end listener are re-installed before each run and no
- * game state leaks between iterations.
+ * Captures exactly one clip on the supplied **fresh page** from an
+ * already-running browser/server session (AH-0MUYTK941005E2M4). The session
+ * creates one page per item and this function closes it in `finally`, so no
+ * game state (audio tap, run-end listener) leaks between iterations.
  *
- * @param {{ browser: import('playwright').Browser, url: string, outputPath: string, options: object, reporter: object }} params
+ * @param {{ page: import('playwright').Page, url: string, outputPath: string, options: object, reporter: object }} params
  * @returns {Promise<object>}
  */
-async function captureClip({ browser, url, outputPath, options, reporter }) {
+async function captureClip({ page, url, outputPath, options, reporter }) {
   const mode = resolveCaptureMode(options);
   // The default demo path records a **complete run**: it waits for the game's
   // run-end signal and stops one `--tail` later (bounded by
@@ -719,8 +1020,6 @@ async function captureClip({ browser, url, outputPath, options, reporter }) {
       ? planDurationMs(plan) + plan.length * INTER_STEP_MS
       : options.durationMs;
 
-  const page = await browser.newPage({ viewport: VIEWPORT });
-
   try {
     // Install the page-side Web Audio tap *before* any game script runs, so
     // the wrapper is in place when the game first connects its master gain to
@@ -733,6 +1032,13 @@ async function captureClip({ browser, url, outputPath, options, reporter }) {
     // `readRunEndedSignal` reads as a race fallback.
     if (fullRun) {
       await page.addInitScript(installRunEndedListener);
+    }
+
+    // Seed the exported bot-tuning state *before* the game boots so the demo
+    // bot flies the saved tuning (AH-0MV6MFDYG001E6PL). Resolved once by the
+    // caller; a null/absent state leaves the fresh profile's defaults in place.
+    if (options.botTuningState) {
+      await page.addInitScript(installBotTuningConfig, options.botTuningState);
     }
 
     // Stream encoded chunks to Node as they are produced (avoids one huge
@@ -901,6 +1207,7 @@ async function captureClip({ browser, url, outputPath, options, reporter }) {
     });
     return {
       output: outputPath,
+      scenario: options.scenario ?? null,
       bytes: video.length,
       durationMs: recordingMs,
       captureStarted,
@@ -924,11 +1231,12 @@ async function captureClip({ browser, url, outputPath, options, reporter }) {
  * thrown error becomes an `{ ok: false, error }` iteration record rather than
  * aborting the batch, so partial results are still captured and attributable.
  *
- * @param {{ outputPaths: string[], captureOne: (args: { index: number, outputPath: string }) => Promise<object>, reporter?: object, onIteration?: (record: object) => void }} params
+ * @param {{ outputPaths: string[], items?: Array<{ index: number, outputPath: string, scenario?: string | null }>, captureOne: (args: { index: number, outputPath: string, item: object }) => Promise<object>, reporter?: object, onIteration?: (record: object) => void }} params
  * @returns {Promise<{ count: number, succeeded: number, failed: number, iterations: object[] }>}
  */
 export async function runCaptureIterations({
   outputPaths,
+  items = null,
   captureOne,
   reporter,
   onIteration,
@@ -936,9 +1244,13 @@ export async function runCaptureIterations({
   const iterations = [];
   for (let index = 0; index < outputPaths.length; index += 1) {
     const iteration = index + 1;
+    const item = items
+      ? items[index]
+      : { index: iteration, outputPath: outputPaths[index], scenario: null };
     if (reporter && typeof reporter.step === 'function') {
+      const label = item && item.scenario ? ` [${item.scenario}]` : '';
       reporter.step(
-        `Capturing clip ${iteration}/${outputPaths.length} → ${outputPaths[index]}…`,
+        `Capturing clip ${iteration}/${outputPaths.length}${label} → ${outputPaths[index]}…`,
       );
     }
     let record;
@@ -946,6 +1258,7 @@ export async function runCaptureIterations({
       const clip = await captureOne({
         index: iteration,
         outputPath: outputPaths[index],
+        item,
       });
       record = buildIterationRecord(iteration, clip);
     } catch (error) {
@@ -958,6 +1271,7 @@ export async function runCaptureIterations({
       record = {
         index: iteration,
         output: outputPaths[index],
+        scenario: (item && item.scenario) ?? null,
         ok: false,
         error: message,
       };
@@ -969,23 +1283,51 @@ export async function runCaptureIterations({
 }
 
 /**
- * Resolves the whole capture: boot **one** Vite dev server and **one** browser,
- * then record `--count` clips through {@link captureClip} (a single clip when
- * `--count` is omitted), and tear the server/browser down once. Reusing one
- * server/browser is what makes batch capture fast (AH-0MUYTK941005E2M4, AC5).
+ * Launches the capture browser lazily, converting a missing Playwright
+ * dependency or Chromium build into an actionable setup error.
+ *
+ * @param {object} launchOptions
+ * @returns {Promise<import('playwright').Browser>}
  */
-export async function runCapture(
-  options = parseCaptureArgs(),
-  reporter = createReporter(),
-) {
-  const outputPaths = resolveOutputPaths(options.output, options.count);
+async function launchCaptureBrowser(launchOptions) {
+  const chromium = await loadChromium();
+  try {
+    return await chromium.launch(launchOptions);
+  } catch (error) {
+    throw asSetupError(error);
+  }
+}
 
+/**
+ * Boots **one** Vite dev server and **one** browser, runs `captureOne` over
+ * the supplied items, and tears both down once (AH-0MV6JGQFK007MXGX, AC2).
+ * A fresh page is created per item via `createPage`, so a failed clip cannot
+ * poison the next; `captureClip` closes that page in its own `finally`.
+ *
+ * The server/browser/page factories are injected so a hermetic test can count
+ * boot attempts (exactly one server + one browser per batch) without a real
+ * browser (AC2/AC5). Returns the aggregate `batch` plus the raw per-item
+ * `clips`, so `runCapture` can hand a single clip back unchanged.
+ *
+ * @param {{ items: Array<object>, options?: object, reporter?: object, captureOne: (args: { item: object, index: number, outputPath: string, page: object, session: { browser: object, baseUrl: string } }) => Promise<object>, createViteServer?: Function, launchBrowser?: Function, createPage?: Function }} params
+ * @returns {Promise<{ batch: object, clips: object[], baseUrl: string }>}
+ */
+export async function runCaptureSession({
+  items,
+  options = {},
+  reporter = createReporter(),
+  captureOne,
+  createViteServer = createServer,
+  launchBrowser = launchCaptureBrowser,
+  createPage = (browser) => browser.newPage({ viewport: VIEWPORT }),
+}) {
   let server;
   let browser;
+  const clips = [];
 
   try {
     reporter.step('Starting Vite dev server…');
-    server = await createServer({
+    server = await createViteServer({
       root: REPO_ROOT,
       logLevel: 'warn',
       server: { port: options.port, strictPort: false, open: false },
@@ -995,55 +1337,99 @@ export async function runCapture(
     const port =
       address && typeof address === 'object' ? address.port : options.port;
     const baseUrl = `http://127.0.0.1:${port}/`;
-    const url = captureUrl(baseUrl, options);
 
     reporter.step('Launching headless Chromium…');
-    const chromium = await loadChromium();
-    try {
-      browser = await chromium.launch({
-        headless: !options.headed,
-        args: [
-          '--no-sandbox',
-          // Phaser.AUTO picks WebGL; headless Chromium needs this flag to use
-          // the software (SwiftShader) WebGL backend.
-          '--enable-unsafe-swiftshader',
-          // The demo path sends no input during recording, so without these
-          // Chromium throttles the requestAnimationFrame loop for a
-          // backgrounded/occluded page — the canvas stops redrawing and the
-          // recorded clip comes out static. Keep the loop running at full
-          // rate so the in-game demo is recorded faithfully.
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding',
-        ],
-      });
-    } catch (error) {
-      throw asSetupError(error);
-    }
-
-    // `--count 1` (the default) returns the exact single-clip result object so
-    // the existing `--json` shape cannot regress (AC3).
-    if (outputPaths.length === 1) {
-      return await captureClip({
-        browser,
-        url,
-        outputPath: outputPaths[0],
-        options,
-        reporter,
-      });
-    }
-
-    return await runCaptureIterations({
-      outputPaths,
-      reporter,
-      captureOne: ({ outputPath }) =>
-        captureClip({ browser, url, outputPath, options, reporter }),
+    browser = await launchBrowser({
+      headless: !options.headed,
+      args: [
+        '--no-sandbox',
+        // Phaser.AUTO picks WebGL; headless Chromium needs this flag to use
+        // the software (SwiftShader) WebGL backend.
+        '--enable-unsafe-swiftshader',
+        // The demo path sends no input during recording, so without these
+        // Chromium throttles the requestAnimationFrame loop for a
+        // backgrounded/occluded page — the canvas stops redrawing and the
+        // recorded clip comes out static. Keep the loop running at full
+        // rate so the in-game demo is recorded faithfully.
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+      ],
     });
+
+    const batch = await runCaptureIterations({
+      outputPaths: items.map((item) => item.outputPath),
+      items,
+      reporter,
+      captureOne: async ({ index, outputPath, item }) => {
+        // One fresh page per item: the audio tap and run-end listener are
+        // re-installed before each run, and a per-item failure is isolated.
+        const page = await createPage(browser);
+        const clip = await captureOne({
+          item,
+          index,
+          outputPath,
+          page,
+          session: { browser, baseUrl },
+        });
+        clips[index - 1] = clip;
+        return clip;
+      },
+    });
+
+    return { batch, clips, baseUrl };
   } finally {
     reporter.done();
     if (browser && !options.keepServer) await browser.close().catch(() => {});
     if (server && !options.keepServer) await server.close().catch(() => {});
   }
+}
+
+/**
+ * Resolves and runs the whole capture. The item list comes from
+ * {@link planCaptureRun} (`--all-scenarios` expands the registry, otherwise
+ * the single-clip / `--count` path is unchanged); one Vite server and one
+ * browser are booted per invocation (AH-0MUYTK941005E2M4, AC5).
+ *
+ * A **single** item returns the raw clip result object exactly as before so
+ * the `--json` shape cannot regress; a batch returns the aggregate summary.
+ */
+export async function runCapture(
+  options = parseCaptureArgs(),
+  reporter = createReporter(),
+) {
+  // Fail fast on an unusable `--bot-config` file before launching the server
+  // or a browser (AH-0MV6MFDYG001E6PL).
+  if (options.botConfig !== null && options.botConfig !== undefined) {
+    options.botTuningState = loadBotTuningConfigFile(options.botConfig);
+  }
+
+  const plan = planCaptureRun(options);
+
+  const { batch, clips } = await runCaptureSession({
+    items: plan.items,
+    options,
+    reporter,
+    captureOne: ({ item, outputPath, page, session }) => {
+      const scenario = item.scenario ?? options.scenario ?? null;
+      const url = captureUrl(session.baseUrl, { scenario });
+      const itemOptions =
+        scenario === (options.scenario ?? null)
+          ? options
+          : { ...options, scenario };
+      return captureClip({
+        page,
+        url,
+        outputPath,
+        options: itemOptions,
+        reporter,
+      });
+    },
+  });
+
+  // `--count 1` / the single-clip default returns the exact single-clip result
+  // object so the existing `--json` shape cannot regress (AC3).
+  return plan.batch ? batch : clips[0];
 }
 
 /**
@@ -1360,8 +1746,20 @@ export function captureExitCode(result = {}) {
   return 0;
 }
 
+/** A one-line reason for a failed batch iteration, for reports and stderr. */
+function describeIterationFailure(iteration) {
+  if (iteration.error) return iteration.error;
+  if (iteration.capHit === true) {
+    return 'hit the --max-duration cap without a run-end signal (incomplete run)';
+  }
+  const reasons = (iteration.reasons ?? []).join('; ');
+  return reasons ? `failed verdict (${reasons})` : 'failed verdict';
+}
+
 /** Renders the human-readable summary for a multi-clip batch. */
 function formatBatchReport(batch) {
+  const label = (iteration) =>
+    iteration.scenario ? ` [${iteration.scenario}]` : '';
   const lines = [
     'AI_Hell automated gameplay capture — batch',
     '=========================================',
@@ -1371,15 +1769,14 @@ function formatBatchReport(batch) {
   for (const iteration of batch.iterations) {
     if (iteration.ok) {
       lines.push(
-        `  #${iteration.index} ok   ${iteration.output}  ` +
+        `  #${iteration.index}${label(iteration)} ok   ${iteration.output}  ` +
           `${((iteration.bytes ?? 0) / 1024).toFixed(1)} KiB  ` +
           `${formatDuration(iteration.durationMs ?? 0)}`,
       );
     } else {
-      const detail =
-        iteration.error ??
-        `failed verdict (${(iteration.reasons ?? []).join('; ')})`;
-      lines.push(`  #${iteration.index} FAIL ${iteration.output}  ${detail}`);
+      lines.push(
+        `  #${iteration.index}${label(iteration)} FAIL ${iteration.output}  ${describeIterationFailure(iteration)}`,
+      );
     }
   }
 
@@ -1427,10 +1824,13 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--all-scenarios] [--list-scenarios] [--bot-config file]',
     );
     console.log(
       'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',
+    );
+    console.log(
+      'Bot tuning: --bot-config file loads an exported bot-tuning JSON (the Bot Tuning gym Export button) into the recording browser before the game boots, so the demo flies the saved configuration. Without it the demo uses the built-in defaults.',
     );
     console.log(
       'Scenarios: --scenario boss-four-hits loads the game with a dev scenario URL that jumps straight to the boss with 4 hits remaining (dev builds only); --scenario defeat clears the wave and ends the run in defeat on release (dev builds only).',
@@ -1438,6 +1838,22 @@ async function main() {
     console.log(
       'Count: --count n (alias -n) records n clips in one process, reusing a single dev server and browser session. Each clip gets a 1-based index; `--output demo.webm` with --count 3 writes demo-1.webm, demo-2.webm, demo-3.webm.',
     );
+    console.log(
+      'Listing: --list-scenarios prints every implemented dev scenario (value + one-line effect) from the shared registry and exits 0 booting no browser or server; add --json for a machine-readable array.',
+    );
+    console.log(
+      'Batch scenarios: --all-scenarios records one clip per registered dev scenario in a single process (one dev server + one browser, a fresh page per scenario); the default no-scenario demo run is NOT included. `--output <dir>` is treated as a directory (`<dir>/<scenario>.webm`); without it names default to capture-output/<scenario>-<timestamp>.webm. It prints an aggregate summary and exits non-zero if any scenario failed or hit the --max-duration cap.',
+    );
+    console.log(
+      'Combined: --count n with --all-scenarios records n clips of EVERY registered scenario (N x all) in one process, in scenario-major order (all repeats of each scenario in registry order); names carry a per-scenario iteration suffix (`<scenario>-<timestamp>-<n>.webm`, or `<dir>/<scenario>-<n>.webm` with --output <dir>). --count n alone or with --scenario is unchanged.',
+    );
+    return;
+  }
+
+  if (options.listScenarios) {
+    // Pure listing path (AH-0MV6JGELV001FAX1): resolved before `runCapture`
+    // is even constructed, so neither Vite nor Chromium is ever booted.
+    console.log(renderScenarioListing(options));
     return;
   }
 
@@ -1454,10 +1870,9 @@ async function main() {
           `Capture iterations failed (${failures.length}/${result.count}):`,
         );
         for (const failure of failures) {
-          const detail =
-            failure.error ??
-            `failed verdict (${(failure.reasons ?? []).join('; ')})`;
-          console.error(`  - #${failure.index} ${failure.output}: ${detail}`);
+          console.error(
+            `  - #${failure.index} ${failure.output}: ${describeIterationFailure(failure)}`,
+          );
         }
       }
     } else if (result.pageErrors.length > 0) {

@@ -92,6 +92,22 @@ export interface CompetentBotTunables {
   /** Time window (seconds) within which a threatening shot is "urgent". */
   survivalUrgencyHorizon: number;
 
+  // ── Aim lead prediction (AH-0MV1DUSM2005HL98) ────────────────────
+  /**
+   * Whether the engage behaviour leads a moving target (AC2). When enabled
+   * the aim objective is the iterated intercept point rather than the enemy's
+   * current position; a stationary enemy is unaffected either way, so this is
+   * safe to leave on.
+   */
+  aimLeadEnabled: boolean;
+  /**
+   * Estimated time (seconds) for the ship to finish its turn onto the target
+   * bearing, used as the alignment term in the intercept solve (AC2).
+   */
+  aimLeadAlignSeconds: number;
+  /** Iteration count for the intercept solve (AC2); ≥1. */
+  aimLeadIterations: number;
+
   // ── Reverse thruster (AH-0MV1J0OHP0072XA5) ──────────────────────
   /** Whether the bot may use reverse thrust to brake (AC1). */
   reverseBrakeEnabled: boolean;
@@ -168,6 +184,10 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   assumedBulletSpeed: 200,
   frictionDeceleration: 100,
   survivalUrgencyHorizon: 0.5,
+
+  aimLeadEnabled: true,
+  aimLeadAlignSeconds: 0.25,
+  aimLeadIterations: 3,
 
   reverseBrakeEnabled: true,
   reverseImminentOvershootGap: 36, // 2 × collectArrivalRadius (18)

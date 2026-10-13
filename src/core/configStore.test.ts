@@ -57,7 +57,7 @@ function difficultyCsvFixture(firstTarget = 5): string {
 /** Build a valid enemy CSV with a distinguishable scout value. */
 function enemyCsvFixture(scoutCount = 99): string {
   const header =
-    'key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability';
+    'key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability,movementClass,attackClass';
   const rows = Object.values(DEFAULT_ENEMY_CONFIGS).map((cfg) => {
     const count = cfg.key === 'scout' ? scoutCount : cfg.count;
     return [
@@ -67,6 +67,7 @@ function enemyCsvFixture(scoutCount = 99): string {
       `0x${cfg.bulletColor.toString(16).padStart(6, '0')}`,
       cfg.bulletSize, cfg.shotPattern, cfg.fireInterval, cfg.bulletSpeed,
       cfg.bulletLifetime, cfg.burstCount, cfg.shotProbability,
+      cfg.movementClass, cfg.attackClass,
     ].join(',');
   });
   return [header, ...rows].join('\n') + '\n';
@@ -182,6 +183,19 @@ describe('Boot load (AC1)', () => {
     expect(listEnemyConfigKeys()).toEqual(
       Object.keys(DEFAULT_ENEMY_CONFIGS).sort(),
     );
+  });
+
+  it('loads the movementClass / attackClass columns from the CSV (AH-0MV29NWI1007NKN7)', async () => {
+    const server = defaultServer();
+    vi.stubGlobal('fetch', server.fetchMock);
+
+    await loadConfigs();
+
+    expect(loadEnemyConfig('ghost-chase').movementClass).toBe('chaser');
+    expect(loadEnemyConfig('ghost-chase').attackClass).toBe('contact');
+    expect(loadEnemyConfig('capturer').attackClass).toBe('beam');
+    expect(loadEnemyConfig('raider').movementClass).toBe('patroller');
+    expect(loadEnemyConfig('orbital-strike').attackClass).toBe('area');
   });
 
   it('is idempotent — calling loadConfigs twice does not corrupt the registry', async () => {
@@ -688,6 +702,16 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
 
   it('ships a mixed-mode default: dynamic opening, fixed onboarding, curve + dynamic later levels', () => {
     const opening = new Set(['1:1', '1:2', '2:1', '2:2']);
+    // Levels 6–10 debut each featured classic-arcade archetype on a `fixed`
+    // showcase wave; every other wave in those levels is `curve`-generated
+    // (AH-0MV395QHS004SCOR).
+    const showcase = new Set([
+      '6:1', '6:2',
+      '7:1', '7:2',
+      '8:1', '8:2', '8:3',
+      '9:1', '9:2',
+      '10:1',
+    ]);
     const modes = new Set<string>();
     for (const row of defaultDifficultyCurves()) {
       const expected =
@@ -697,7 +721,9 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
             ? 'fixed'
             : row.level === 5 && row.wave === 2
               ? 'dynamic'
-              : 'curve';
+              : showcase.has(`${row.level}:${row.wave}`)
+                ? 'fixed'
+                : 'curve';
       expect(row.generation).toBe(expected);
       modes.add(String(row.generation));
     }
@@ -741,7 +767,48 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
       [4, 3, 'curve', 27.5],
       [5, 1, 'curve', 43.5],
       [5, 2, 'dynamic', 62],
+      [6, 1, 'fixed', 71],
+      [6, 2, 'fixed', 74],
+      [6, 3, 'curve', 77],
+      [6, 4, 'curve', 80],
+      [7, 1, 'fixed', 80],
+      [7, 2, 'fixed', 82],
+      [7, 3, 'curve', 84],
+      [7, 4, 'curve', 86],
+      [8, 1, 'fixed', 87],
+      [8, 2, 'fixed', 89],
+      [8, 3, 'fixed', 91],
+      [9, 1, 'fixed', 91],
+      [9, 2, 'fixed', 93],
+      [9, 3, 'curve', 95],
+      [10, 1, 'fixed', 95],
+      [10, 2, 'curve', 97],
     ]);
+  });
+
+  it('extends the default curve across all ten campaign levels (AH-0MV395QHS004SCOR)', () => {
+    const curves = defaultDifficultyCurves();
+    const levels = [...new Set(curves.map((row) => row.level))].sort((a, b) => a - b);
+    expect(levels).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+    // Levels 6–10 carry the GDD campaign names in order.
+    const names = new Map<number, string>();
+    for (const row of curves) names.set(row.level, row.levelName);
+    expect(names.get(6)).toBe('Invasion');
+    expect(names.get(7)).toBe('Segmented Assault');
+    expect(names.get(8)).toBe('Gridlock');
+    expect(names.get(9)).toBe('Orbital Siege');
+    expect(names.get(10)).toBe('The Gauntlet');
+
+    // The full ten-level target curve is non-decreasing and peaks at level 10
+    // beyond the old five-level campaign's final target of 62.
+    const targets = [...curves]
+      .sort((a, b) => a.level - b.level || a.wave - b.wave)
+      .map((row) => row.targetDifficulty);
+    for (let i = 1; i < targets.length; i++) {
+      expect(targets[i]).toBeGreaterThanOrEqual(targets[i - 1]);
+    }
+    expect(targets[targets.length - 1]).toBeGreaterThan(62);
   });
 
   it('the onboarding (fixed) targets follow the measured LEVELS calibration', () => {

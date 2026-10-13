@@ -10,6 +10,11 @@
  * permanently for the run, resumes play, and resets the hold with any
  * overflow) and closes the overlay.
  *
+ * Each option renders as a three-line block: the option name, a one-line
+ * description of what the item does (from `ChoiceOption.description`, resolved
+ * from the shared catalogues) and then the existing change summary / `★ New`
+ * line, so an unfamiliar offer is self-explanatory (AH-0MV2N2591007UGPD).
+ *
  * The overlay deliberately knows nothing about its launcher (`PlayScene`,
  * `GymFormationScene`, …): the only selection contract is the `onSelect`
  * callback, so the game and every gym drive it identically.
@@ -24,7 +29,18 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { HOLD_FULL_FIRE_VOLUME_SCALE, loadRules } from '../core/rules';
 import { randomChoiceStrategy, type ChoiceOption, type ChoiceStrategy } from '../powerups/choice';
+import {
+  createHoldFullFireMetronome,
+  type HoldFullFireMetronome,
+  type HoldFullFireSchedule,
+} from './core/holdFullFire';
+import {
+  HOLD_FULL_COUNTDOWN_COUNTS,
+  createHoldFullCountdown,
+} from './core/holdFullCountdown';
+import { playCountdownTickSound, playWeaponFireSound } from '../audio/effects';
 
 /** Neon-gold heading colour (matches the mineral palette). */
 const CHOICE_HEADING_COLOR = '#ffdd44';
@@ -32,16 +48,44 @@ const CHOICE_HEADING_COLOR = '#ffdd44';
 const CHOICE_OPTION_COLOR = '#00ffff';
 /** Secondary / muted colour for change summaries. */
 const CHOICE_DETAIL_COLOR = '#aaaaaa';
+/** Muted colour for the one-line item description. */
+const CHOICE_DESCRIPTION_COLOR = '#cccccc';
 /** Accent colour for the "New" badge. */
 const CHOICE_NEW_COLOR = '#ff8800';
 /** Fully opaque backdrop, blanking the screen behind the choice dialog. */
 const CHOICE_BACKDROP_ALPHA = 1.0;
+/** Vertical centre (px) of the first option row. */
+const CHOICE_FIRST_ROW_Y = 200;
+/**
+ * Vertical pitch (px) between option rows. Widened from the two-line 64 px so
+ * the three-line block (name → description → detail) never collides with the
+ * next option (AH-0MV2N2591007UGPD · AC2).
+ */
+const CHOICE_ROW_PITCH = 84;
+/** Y offset (px) of the description line beneath an option name. */
+const CHOICE_DESCRIPTION_OFFSET = 28;
+/** Y offset (px) of the change-summary / `★ New` line beneath the description. */
+const CHOICE_DETAIL_OFFSET = 48;
+/** Neon-cyan colour of the large countdown numeral. */
+const COUNTDOWN_COLOR = '#00ffff';
+/** Vertical centre (px) of the large 3-2-1 countdown numeral. */
+const COUNTDOWN_Y = 270;
+/** Font size (px) of the large 3-2-1 countdown numeral. */
+const COUNTDOWN_FONT_SIZE = '96px';
 
 export class MineralChoiceScene extends Phaser.Scene {
   private options: ChoiceOption[] = [];
   private controls: Phaser.GameObjects.Text[] = [];
   /** Detail-line text objects (one per option). */
   private details: Phaser.GameObjects.Text[] = [];
+  /** Description-line text objects (one per option that carries a description). */
+  private descriptions: Phaser.GameObjects.Text[] = [];
+  /** The full-screen backdrop rectangle (destroyed when the countdown starts). */
+  private backdrop: Phaser.GameObjects.Rectangle | null = null;
+  /** The "HOLD FULL — CHOOSE A POWER-UP" heading (destroyed with the choice UI). */
+  private heading: Phaser.GameObjects.Text | null = null;
+  /** The bound keydown listener (removed when the countdown starts). */
+  private keydownHandler: ((event: KeyboardEvent) => void) | null = null;
   /** Optional generic selection handler supplied by the launcher. */
   private onSelect: ((index: number, option: ChoiceOption) => void) | null = null;
   /**
@@ -53,6 +97,32 @@ export class MineralChoiceScene extends Phaser.Scene {
   private autoSelectTimer: Phaser.Time.TimerEvent | null = null;
   /** Demo-only option index the auto-select picks (default 0, the first). */
   private autoSelectIndex = 0;
+  /**
+   * Frozen player-fire schedule passed by the launcher: drives the
+   * reduced-volume metronomic ghost fire while the overlay is open
+   * (AH-0MV55O9R5005W6J0). Null when the launcher supplies none (isolated
+   * tests) — then the overlay is silent as before.
+   */
+  private fireSchedule: HoldFullFireSchedule | null = null;
+  /** Live metronome emitting the reduced-volume ghost ticks. */
+  private metronome: HoldFullFireMetronome | null = null;
+  /**
+   * The pending selection (index + option) chosen by the player, held while
+   * the 3-2-1 countdown plays and applied via `onSelect` when it completes
+   * (AH-0MV55OAQT004NMSN · AC4). Null while awaiting a selection.
+   */
+  private pendingSelection: { index: number; option: ChoiceOption } | null =
+    null;
+  /**
+   * The current 3-2-1 countdown scheduler (non-null while counting down).
+   * Advances one count per beat with this scene's elapsed time; the
+   * reduced-volume metronomic fire continues underneath.
+   */
+  private countdown: ReturnType<typeof createHoldFullCountdown> | null = null;
+  /** The large on-screen countdown numeral ("3"/"2"/"1"). */
+  private countdownText: Phaser.GameObjects.Text | null = null;
+  /** Total overlay elapsed time (ms) — used to re-base the beat clock on resume. */
+  private overlayElapsedMs = 0;
 
   constructor() {
     super('MineralChoiceScene');
@@ -72,6 +142,10 @@ export class MineralChoiceScene extends Phaser.Scene {
    *   picks (default `0`, the first option). The demo launcher passes the
    *   preferred option (e.g. the offered Extra Life below the life cap);
    *   normal play never sets it (AH-0MV03GXZQ00801T4 · AC1).
+   * @param data.fireSchedule — the frozen player-fire schedule captured at
+   *   launch; when present the overlay plays each active weapon's fire cue
+   *   on the beat grid at {@link HOLD_FULL_FIRE_VOLUME_SCALE} until a
+   *   selection closes it (AH-0MV55O9R5005W6J0 · AC1/AC2).
    */
   init(
     data: {
@@ -80,6 +154,7 @@ export class MineralChoiceScene extends Phaser.Scene {
       onSelect?: (index: number, option: ChoiceOption) => void;
       autoSelectMs?: number;
       autoSelectIndex?: number;
+      fireSchedule?: HoldFullFireSchedule;
     } = {},
   ): void {
     const strategy = data.strategy ?? randomChoiceStrategy;
@@ -87,6 +162,14 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.onSelect = data.onSelect ?? null;
     this.autoSelectMs = data.autoSelectMs ?? 0;
     this.autoSelectIndex = data.autoSelectIndex ?? 0;
+    this.fireSchedule = data.fireSchedule ?? null;
+    this.pendingSelection = null;
+    this.countdown = null;
+    this.countdownText = null;
+    this.overlayElapsedMs = 0;
+    this.backdrop = null;
+    this.heading = null;
+    this.keydownHandler = null;
   }
 
   create(): void {
@@ -94,11 +177,11 @@ export class MineralChoiceScene extends Phaser.Scene {
     // covers the entire screen (GDD §4.5, AH-0MUDYSIRY0036EDC).
     this.scene.bringToTop();
 
-    this.add
+    const backdrop = this.add
       .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000, CHOICE_BACKDROP_ALPHA)
       .setOrigin(0);
 
-    this.add
+    const heading = this.add
       .text(GAME_WIDTH / 2, 120, 'HOLD FULL — CHOOSE A POWER-UP', {
         fontFamily: 'monospace',
         fontSize: '24px',
@@ -106,10 +189,16 @@ export class MineralChoiceScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
+    // Keep references to the choice UI so a selection can tear it down the
+    // moment the countdown starts (AH-0MV722WJS0075UTZ).
+    this.backdrop = backdrop;
+    this.heading = heading;
+
     this.controls = [];
     this.details = [];
+    this.descriptions = [];
     this.options.forEach((option, index) => {
-      const y = 210 + index * 64;
+      const y = CHOICE_FIRST_ROW_Y + index * CHOICE_ROW_PITCH;
 
       // Primary label: "1.  Spread Shot Lv.3"
       const label = this.add
@@ -125,8 +214,25 @@ export class MineralChoiceScene extends Phaser.Scene {
       label.on('pointerdown', () => this.select(index));
       this.controls.push(label);
 
-      // Detail line: change summary or "New" badge.
-      const detailY = y + 28;
+      // Description line: what the item actually does, resolved from the
+      // shared catalogue. Rendered as its own line beneath the name so a new
+      // or unfamiliar offer is self-explanatory (AH-0MV2N2591007UGPD · AC2).
+      // Omitted entirely when an option carries no description — never an
+      // empty text object.
+      const description = option.description?.trim();
+      if (description) {
+        const descriptionLine = this.add
+          .text(GAME_WIDTH / 2, y + CHOICE_DESCRIPTION_OFFSET, description, {
+            fontFamily: 'monospace',
+            fontSize: '13px',
+            color: CHOICE_DESCRIPTION_COLOR,
+          })
+          .setOrigin(0.5);
+        this.descriptions.push(descriptionLine);
+      }
+
+      // Detail line: change summary or "New" badge, beneath the description.
+      const detailY = y + CHOICE_DETAIL_OFFSET;
       let detailText = '';
       if (option.isNew) {
         detailText = '★ New';
@@ -145,11 +251,14 @@ export class MineralChoiceScene extends Phaser.Scene {
       }
     });
 
-    // Number keys 1..n select the matching option.
-    this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
+    // Number keys 1..n select the matching option. The handler is stored so
+    // it can be removed when the countdown starts.
+    const keydownHandler = (event: KeyboardEvent) => {
       const n = Number.parseInt(event.key, 10);
       if (n >= 1 && n <= this.options.length) this.select(n - 1);
-    });
+    };
+    this.keydownHandler = keydownHandler;
+    this.input.keyboard?.on('keydown', keydownHandler);
 
     // Demo/attract mode: pick an option automatically after a human-like
     // delay so the run never stalls on the overlay
@@ -162,6 +271,79 @@ export class MineralChoiceScene extends Phaser.Scene {
         this.select(this.autoSelectIndex),
       );
     }
+    // Start the reduced-volume metronomic ghost fire from the frozen
+    // player-fire schedule (AC1/AC2). The overlay scene keeps running while
+    // the launcher is paused, so its own update loop drives the metronome.
+    this.metronome = this.fireSchedule
+      ? createHoldFullFireMetronome(this.fireSchedule)
+      : null;
+  }
+
+  /**
+   * Drives the hold-full metronome with this scene's elapsed time: every
+   * frame advances the ghost-fire scheduler and plays a reduced-volume fire
+   * cue for each active weapon whose beat tick was reached, then (once a
+   * selection is made) advances the 3-2-1 countdown — one count per beat,
+   * each with its cue and on-screen numeral — and completes the selection on
+   * the beat after "1". Pure timing: no projectiles, no gameplay simulation
+   * (AH-0MV55O9R5005W6J0 · AC1; AH-0MV55OAQT004NMSN · AC4).
+   */
+  override update(_time: number, delta: number): void {
+    this.overlayElapsedMs += Math.max(0, delta);
+    const metronome = this.metronome;
+    if (metronome !== null) {
+      for (const weaponId of metronome.advance(delta)) {
+        playWeaponFireSound(weaponId, {
+          volume: HOLD_FULL_FIRE_VOLUME_SCALE,
+        });
+      }
+    }
+    const countdown = this.countdown;
+    if (countdown === null) return;
+    for (const count of countdown.advance(delta)) {
+      this.showCountdownNumeral(count);
+      // The tone rises with each beat: count 3→step 0 (base), 2→step 1,
+      // 1→step 2 (highest) (AH-0MV722WJS0075UTZ).
+      playCountdownTickSound(HOLD_FULL_COUNTDOWN_COUNTS - count);
+    }
+    if (countdown.isComplete()) this.completeSelection();
+  }
+
+  /** Renders (or replaces) the large countdown numeral, e.g. "3". */
+  private showCountdownNumeral(count: number): void {
+    if (this.countdownText === null) {
+      this.countdownText = this.add
+        .text(GAME_WIDTH / 2, COUNTDOWN_Y, '', {
+          fontFamily: 'monospace',
+          fontSize: COUNTDOWN_FONT_SIZE,
+          color: COUNTDOWN_COLOR,
+        })
+        .setOrigin(0.5);
+    }
+    this.countdownText.setText(String(count));
+  }
+
+  /**
+   * Applies the pending selection when the 3-2-1 countdown completes: the
+   * metronomic ghost fire stops, the single `onSelect` contract hands the
+   * choice to the launcher (which applies it, resumes play and resets the
+   * hold) and the overlay closes. The ghost fire continues underneath the
+   * countdown (producer decision) and only ends here with play.
+   */
+  private completeSelection(): void {
+    const pending = this.pendingSelection;
+    if (pending === null) return;
+    this.pendingSelection = null;
+    this.countdown = null;
+    this.countdownText?.destroy();
+    this.countdownText = null;
+    this.metronome = null;
+    this.autoSelectTimer?.remove(false);
+    this.autoSelectTimer = null;
+    const handler = this.onSelect;
+    this.onSelect = null;
+    handler?.(pending.index, pending.option);
+    this.scene.stop();
   }
 
   /** The options currently presented (copy). */
@@ -177,29 +359,98 @@ export class MineralChoiceScene extends Phaser.Scene {
   /**
    * The rendered detail lines beneath each option (e.g.
    * `["+1 Projectiles", "★ New", ...]`).  Returns an empty array when no
-   * detail lines are present.
+   * detail lines are present. The change-summary / `★ New` contract is
+   * unchanged; the description is a separate line (see
+   * {@link getDescriptionLines}).
    */
   getDetailLines(): string[] {
     return this.details.map((d) => d.text);
   }
 
   /**
-   * Selects option `index`: forwards the choice to the launcher through the
-   * `onSelect` callback (which applies it, resumes and resets the hold) and
-   * closes this overlay. Returns the chosen option, or null for an
-   * out-of-range index.
+   * The rendered description lines beneath each option name (e.g.
+   * `["Adds a 3-bullet fan (−30°/0°/+30°).", ...]`). One entry per option
+   * that carries a non-empty `description`; empty when none do. Exposed so
+   * tests can assert the overlay shows the shared catalogue copy
+   * (AH-0MV2N2591007UGPD · AC2/AC6).
+   */
+  getDescriptionLines(): string[] {
+    return this.descriptions.map((d) => d.text);
+  }
+
+  /**
+   * Selects option `index`: records the choice, tears down the choice screen
+   * and starts the beat-locked 3-2-1 countdown. The choice is applied through
+   * the `onSelect` callback when the countdown completes (on the beat after
+   * "1"); the reduced-volume metronomic fire continues underneath. Returns
+   * the chosen option, or null for an out-of-range index.
    */
   select(index: number): ChoiceOption | null {
     const option = this.options[index];
-    if (!option) return null;
+    if (!option || this.pendingSelection !== null) return null;
 
     // Cancel any pending demo auto-select so it cannot fire twice.
     this.autoSelectTimer?.remove(false);
     this.autoSelectTimer = null;
-    const handler = this.onSelect;
-    this.onSelect = null;
-    handler?.(index, option);
-    this.scene.stop();
+    // The player has chosen: remove the choice UI (backdrop, heading,
+    // options, keydown listener) so only the countdown numeral remains
+    // (AH-0MV722WJS0075UTZ).
+    this._teardownChoiceUi();
+    // Record the pending selection and start the 3-2-1 countdown — one count
+    // per beat of the shared grid, with the metronome continuing underneath
+    // (AH-0MV55OAQT004NMSN · AC4/AC3).
+    this.pendingSelection = { index, option };
+    this.countdown = createHoldFullCountdown(
+      this.fireSchedule?.bpm ?? loadRules().beatBpm,
+    );
+    this.showCountdownNumeral(3);
+    // First count "3": the base (step 0) pitch of the rising tick.
+    playCountdownTickSound(0);
     return option;
+  }
+
+  /** Destroys the choice screen objects and unregisters the keydown listener. */
+  private _teardownChoiceUi(): void {
+    this.backdrop?.destroy();
+    this.backdrop = null;
+    this.heading?.destroy();
+    this.heading = null;
+    for (const item of [...this.controls, ...this.details, ...this.descriptions]) {
+      item.destroy();
+    }
+    this.controls = [];
+    this.details = [];
+    this.descriptions = [];
+    if (this.keydownHandler !== null) {
+      this.input.keyboard?.off('keydown', this.keydownHandler);
+      this.keydownHandler = null;
+    }
+  }
+
+  /** Total overlay-relative elapsed time (ms) since the scene started. */
+  getOverlayElapsedMs(): number {
+    return this.overlayElapsedMs;
+  }
+
+  /**
+   * The countdown numeral currently on screen ("3"), or null when the
+   * overlay is not counting down (awaiting input or already applied).
+   */
+  getCountdownText(): string | null {
+    return this.countdownText?.text ?? null;
+  }
+
+  /** True while the beat-locked 3-2-1 countdown is running. */
+  isCountdownActive(): boolean {
+    return this.countdown !== null;
+  }
+
+  /**
+   * True while the choice screen (backdrop/heading/options) is on screen.
+   * Becomes false the moment the countdown starts, since `select()` tears
+   * the choice UI down (AH-0MV722WJS0075UTZ).
+   */
+  isChoiceScreenVisible(): boolean {
+    return this.backdrop !== null || this.heading !== null;
   }
 }

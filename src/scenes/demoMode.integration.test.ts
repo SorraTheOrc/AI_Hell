@@ -20,9 +20,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
+import { HOLD_FULL_COUNTDOWN_DURATION_MS } from './core/holdFullCountdown';
 import * as leaderboardModule from '../core/Leaderboard';
 import { DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
+import {
+  DEFAULT_BOT_TUNING_NAME,
+  resetBotTuningStore,
+  saveBotTuningAs,
+} from '../core/botTuningStore';
+import { defaultBotTuningValues } from '../ai/tuningFields';
 import {
   buildBotSnapshot,
   type BotSnapshotScene,
@@ -249,10 +256,46 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     // The overlay auto-selects after the human-like delay, applies the choice
     // and resumes play — the run never stalls.
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     expect(play.isMineralChoiceOpen()).toBe(false);
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
+  });
+
+  it('AC6 — the demo auto-select routes through the 3-2-1 countdown and resumes on the beat', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+    play.openMineralChoice();
+    await wait(80);
+
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+    expect(overlay).toBeTruthy();
+
+    // The bot auto-selects after the human-like delay: the choice is made but
+    // NOT yet applied — the beat-locked 3-2-1 countdown is running ("3"
+    // shown), and play stays paused.
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 120);
+    expect(overlay.getCountdownText()).toBe('3');
+    expect(play.isMineralChoiceOpen()).toBe(true);
+    expect(play.isPaused()).toBe(true);
+
+    // After one beat the countdown advances to "2", still not applied.
+    await wait(800);
+    expect(overlay.getCountdownText()).toBe('2');
+    expect(play.isMineralChoiceOpen()).toBe(true);
+
+    // The countdown completes and the run resumes on the beat after "1" —
+    // same selection → countdown → resume path as a human choice.
+    await wait(HOLD_FULL_COUNTDOWN_DURATION_MS);
+    expect(play.isMineralChoiceOpen()).toBe(false);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
+    expect(play.isPaused()).toBe(false);
   });
 
   it('AC1 — the demo bot takes an offered Extra Life below the cap', async () => {
@@ -276,7 +319,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const selected = vi.spyOn(play, 'selectMineralChoice');
     play.openMineralChoice();
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     // The bot took the Extra Life (index 2) rather than the first option.
     expect(selected).toHaveBeenCalledWith(2);
@@ -301,7 +344,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const selected = vi.spyOn(play, 'selectMineralChoice');
     play.openMineralChoice();
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     expect(selected).toHaveBeenCalledWith(0);
     expect(play.isMineralChoiceOpen()).toBe(false);
@@ -324,7 +367,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const selected = vi.spyOn(play, 'selectMineralChoice');
     play.openMineralChoice();
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 400);
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     expect(selected).toHaveBeenCalledWith(0);
     expect(play.isMineralChoiceOpen()).toBe(false);
@@ -714,5 +757,90 @@ describe('snapshot builder → decision integration (AC4/AC5)', () => {
       }),
     );
     expect(decideBotInput(quiet).up).toBe(true);
+  });
+
+});
+
+describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    resetBotTuningStore();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene(
+      [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
+      { deterministicBoot: true },
+    );
+    return booted.scene as MenuScene;
+  }
+
+  it('AC1 — the demo bot is built from the currently-selected tuning config', async () => {
+    const values = defaultBotTuningValues();
+    values.human['skill'] = 0.2;
+    values.competent['mineralSeekRange'] = 900;
+    saveBotTuningAs('AggroRecruit', values);
+
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getBotTuningConfigName()).toBe('AggroRecruit');
+    // The governor received the human overrides from the saved config.
+    const governor = play.getBotGovernor();
+    expect(
+      (governor as unknown as { tunables: { skill: number } }).tunables.skill,
+    ).toBeCloseTo(0.2);
+  });
+
+  it('AC1 — an empty store keeps the factory defaults (behaviour unchanged)', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getBotTuningConfigName()).toBe(DEFAULT_BOT_TUNING_NAME);
+  });
+
+  it('AC2 — a normal (non-demo) run never consults the tuning store', async () => {
+    const values = defaultBotTuningValues();
+    values.competent['mineralSeekRange'] = 999;
+    saveBotTuningAs('ShouldNotApply', values);
+
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+      deterministicBoot: true,
+    });
+    const play = booted.scene as PlayScene;
+    expect(play.isDemoMode()).toBe(false);
+    expect(play.getBotTuningConfigName()).toBeNull();
+    expect(botInputOf(play)).toBeNull();
+  });
+
+  it('AC3 — re-enabling the demo mid-session applies the saved config again', async () => {
+    const values = defaultBotTuningValues();
+    values.human['skill'] = 0.4;
+    saveBotTuningAs('MidSession', values);
+
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+      deterministicBoot: true,
+    });
+    const play = booted.scene as PlayScene;
+    expect(play.getBotTuningConfigName()).toBeNull();
+
+    play.setDemoMode(true);
+    expect(play.getBotTuningConfigName()).toBe('MidSession');
+    const governor = play.getBotGovernor();
+    expect(
+      (governor as unknown as { tunables: { skill: number } }).tunables.skill,
+    ).toBeCloseTo(0.4);
   });
 });

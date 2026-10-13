@@ -45,14 +45,22 @@ import { ENEMY_FIRE_METHODS, fireForEnemy } from '../../entities/enemyFire';
 import { createEnemyFromConfig } from '../../entities/enemyFactory';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import { GymBoss } from '../gym/GymBoss';
+import { GymLevel } from '../gym/GymLevel';
 import { Harvester } from '../../entities/Harvester';
 import { Mineral } from '../../entities/Mineral';
+import {
+  DIVER_HOLD_FORMATION_SECONDS,
+  Diver,
+  type DiverBullet,
+} from '../../entities/Diver';
+import type { Player } from '../../entities/Player';
+import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 
 // These equivalence tests boot full Phaser games and walk PlayScene to the
 // boss encounter; under full-suite parallel load the Vitest default 5 s
 // timeout is too tight (AH-0MUIPP1UU000UT88). Give the file headroom so a
 // slow parallel run does not fail on timing alone (AH-0MUII3GOO001XEBB).
-vi.setConfig({ testTimeout: 20000 });
+vi.setConfig({ testTimeout: 60000 });
 
 /** The nine shared combat/lifecycle template methods (parent AC1/AC2). */
 const SHARED_METHODS = [
@@ -233,45 +241,6 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
       .map((file) => path.relative(process.cwd(), file))
       .sort();
     expect(definers).toEqual([]);
-  });
-
-  it('AH-0MV4BXUWT005MWAJ — the frightened flee helper is defined once and inherited by every consumer (AC3)', () => {
-    // The captured-heading flee maths (and the per-enemy heading cache it
-    // consumes) must live in the shared core so the game and the gyms cannot
-    // diverge — the fix for the "enemies arc around the moving player" bug.
-    const files = productionSceneFiles();
-    const definers = files
-      .filter((file) =>
-        definesMethod(
-          fs.readFileSync(file, 'utf8'),
-          '_frightenedFleeOffset',
-        ),
-      )
-      .map((file) => path.relative(process.cwd(), file))
-      .sort();
-    expect(definers).toEqual(['src/scenes/core/CombatCoreScene.ts']);
-
-    const helper = (
-      CombatCoreScene.prototype as unknown as Record<string, unknown>
-    )['_frightenedFleeOffset'];
-    expect(typeof helper).toBe('function');
-    for (const prototype of [
-      PlayScene.prototype,
-      GymFormationScene.prototype,
-      GymPowerUpsCombat.prototype,
-    ]) {
-      expect(
-        Object.prototype.hasOwnProperty.call(
-          prototype,
-          '_frightenedFleeOffset',
-        ),
-      ).toBe(false);
-      expect(
-        (prototype as unknown as Record<string, unknown>)[
-          '_frightenedFleeOffset'
-        ],
-      ).toBe(helper);
-    }
   });
 
   it('P3/P6 gating resolves to the same shared hooks on all three scenes (no own overrides)', () => {
@@ -1749,24 +1718,32 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
 // ── Shared boss integration (AH-0MUII3E5E006A93F, gap 6) ───────────
 
 /**
- * Walks the PlayScene run to the boss encounter (Level 5 cleared) by
- * destroying every enemy deterministically.
+ * Walks the PlayScene run to the boss encounter (the final level cleared) by
+ * destroying every enemy deterministically. Robust to the ten-level campaign:
+ * it advances spawned enemies past their spawn animation, and ticks the scene
+ * to release any dynamically scheduled enemies (horde/ghosts) when nothing is
+ * currently alive but the wave still has accounted enemies.
  */
 function reachPlayBoss(play: PlayScene): void {
   play.getGameState().lives = 99;
-  for (let guard = 0; guard < 300; guard++) {
+  for (let guard = 0; guard < 1200; guard++) {
     const wm = play.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
-    for (let inner = 0; inner < 500 && play.getAliveCount() > 0; inner++) {
+    play.finishSpawnAnimations();
+    for (let inner = 0; inner < 500; inner++) {
       const enemy = play.getEnemies().find((e) => e.alive);
       if (!enemy) break;
       play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
       play.tick(0.016);
     }
+    // Nothing alive but the wave still has accounted enemies: advance the
+    // scene so pending dynamic spawns are released and the wave timer runs.
+    if (wm.enemiesAlive > 0 && play.getAliveCount() === 0) play.tick(0.25);
     if (play.isTransitioning()) play.tick(3.0);
   }
   // The boss entity only exists once the transition completes.
   if (play.isTransitioning()) play.tick(3.0);
+  play.finishSpawnAnimations();
   if (!play.getBoss()) {
     const wm = play.getWaveManager();
     throw new Error(
@@ -2080,6 +2057,15 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['resolveMineralKillDrops', 'src/scenes/core/mineralKillDrops.ts'],
   ['mapControlInput', 'src/utils/movementModel.ts'],
   ['splitAsteroid', 'src/scenes/core/asteroidSplit.ts'],
+  // Live-aim / live-mineral-seek seam (AH-0MV5SDM6G003A0US). The shared
+  // helper lives in `src/scenes/core/enemyTargeting.ts` (created by
+  // AH-0MV5SDN24006SD2B) and is consumed by PlayScene, GymFormationScene and
+  // GymLevel in AH-0MV5SDNI2008RWQ2; registering it here means the moment a
+  // scene re-introduces a copy the repo-wide duplicate-body guard fails.
+  // The module now exists, so the single-definer guard below is a hard gate
+  // and the temporary PENDING red-first wrapper has been removed.
+  ['pushAimTargets', 'src/scenes/core/enemyTargeting.ts'],
+  ['pushSeekTargets', 'src/scenes/core/enemyTargeting.ts'],
 ];
 
 /**
@@ -2378,15 +2364,24 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
   });
 
   it('both PlayScene and the gym tick invoke the shared seek seam', () => {
-    // The seam is *called* by both scenes and never re-implemented, so the
-    // game and gyms cannot diverge on seeking. PlayScene guards with a truthy
-    // check; the gym uses optional chaining.
-    expect(PRODUCTION('src/scenes/PlayScene.ts')).toContain(
-      'setSeekTargets(this.minerals)',
+    // The seam is *called* by the game and both gym families and never
+    // re-implemented, so they cannot diverge on seeking. Since the live-aim
+    // parity epic (AH-0MV5SDNI2008RWQ2) every player-bearing base scene
+    // consumes the single shared `pushSeekTargets` helper in
+    // `src/scenes/core/enemyTargeting.ts`; the helper invokes the
+    // Harvester's `setSeekTargets` seam with the scene's live mineral field.
+    for (const file of [
+      'src/scenes/PlayScene.ts',
+      'src/scenes/gym/core/GymFormationScene.ts',
+      'src/scenes/gym/GymLevel.ts',
+    ]) {
+      expect(PRODUCTION(file)).toContain('pushSeekTargets(');
+    }
+    // The shared helper owns the push body; the Harvester remains the only
+    // definer of the seam implementation (asserted above).
+    expect(PRODUCTION('src/scenes/core/enemyTargeting.ts')).toContain(
+      'setSeekTargets?.(',
     );
-    expect(
-      PRODUCTION('src/scenes/gym/core/GymFormationScene.ts'),
-    ).toContain('setSeekTargets?.(this.minerals)');
   });
 
   it('the Harvester is the only production definer of the health/finalise consumer path', () => {
@@ -2399,6 +2394,358 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
       definesMethod(PRODUCTION('src/entities/Harvester.ts'), 'takeDamage'),
     ).toBe(false);
   });
+});
+
+// ── Live-aim seam — bot/level gym ↔ PlayScene equivalence ───────────
+
+/**
+ * Cross-scene equivalence for the live-aim seam (child
+ * AH-0MV5SDLQK005ZBOH of the live-aim parity epic AH-0MV4XFQ0J0082BN6).
+ *
+ * `PlayScene._collectEnemyFire` pushes the live player position into every
+ * alive enemy through the `setAimTarget(x, y)` seam **before** it dispatches
+ * that frame's fire, so an aimed archetype (Diver, Scout, …) tracks the ship.
+ * `GymLevel.tick` calls `fireLiveEnemies(...)` with no push, so in every
+ * `GymLevel`-based gym (`GymBotTuning`, the dedicated Level Gym) an aimed
+ * enemy keeps its constructor default target — the bottom-centre stand-in —
+ * instead of the live player.
+ *
+ * ## Test-first reconciliation (AH-0MV5SDLQK005ZBOH)
+ *
+ * The work item's AC4 required this test to be red before the fix; it was
+ * written under Vitest's `it.fails(...)` (expected failure) so the build →
+ * test → commit gate stayed green while the gym still diverged. The adoption
+ * item AH-0MV5SDNI2008RWQ2 removed the expected-failure wrapper once the
+ * shared helper (AH-0MV5SDN24006SD2B) and the `GymLevel` adoption landed —
+ * the assertion is now a hard gate (the same pattern used by
+ * `powerUpIdNaming.test.ts` and `difficultySequencer.variety.test.ts`).
+ */
+describe('live-aim seam — bot/level gym tracks the live player like PlayScene (AH-0MV5SDLQK005ZBOH)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+    localStorage.clear();
+  });
+
+  /** The live player position used in both scenes (not the constructor default). */
+  const PLAYER_X = 120;
+  const PLAYER_Y = 90;
+
+  /** The aim target captured at the instant the enemy's fire is dispatched. */
+  interface AimAtFireProbe {
+    atFire: Phaser.Math.Vector2 | null;
+  }
+
+  /**
+   * Wraps the Diver's shared fire method so the aim target is captured at the
+   * exact moment that frame's fire is dispatched. When the scene pushes the
+   * live player *before* collecting fire, `atFire` is the player position; when
+   * the push is missing or ordered after, it is the stale constructor default.
+   */
+  function probeAimAtFire(diver: Diver): AimAtFireProbe {
+    const probe: AimAtFireProbe = { atFire: null };
+    const fire = diver.tryFireSpreadBurst.bind(diver);
+    diver.tryFireSpreadBurst = (now: number): DiverBullet[] => {
+      probe.atFire = diver.aimTarget;
+      return fire(now);
+    };
+    return probe;
+  }
+
+  /** A one-Diver wave launched through the real `GymLevel` contract. */
+  function diverWave(): WaveDefinition {
+    return {
+      groups: [
+        {
+          enemyKey: 'diver',
+          formation: 'v',
+          count: 1,
+          spacingX: 0,
+          spacingY: 0,
+          startX: 300,
+          startY: 150,
+        },
+      ],
+      shootEnabled: false,
+    };
+  }
+
+  /** Pins a player at (x, y) without the next `physicsTick` snapping it back. */
+  function placePlayer(player: Player, x: number, y: number): void {
+    player.setPosition(x, y);
+    // Keep the internal movement state in sync so `physicsTick` does not reset
+    // the ship to its spawn position (same pattern as the teleport tests).
+    const state = player.getMovementState();
+    (
+      player as unknown as {
+        _movementState: ReturnType<Player['getMovementState']>;
+      }
+    )._movementState = { ...state, x, y, vx: 0, vy: 0 };
+  }
+
+  /** Boots `PlayScene` and registers one deterministic aimed Diver. */
+  async function bootPlayWithDiver(): Promise<{
+    scene: PlayScene;
+    diver: Diver;
+  }> {
+    const booted = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'aim-equiv-play-host',
+    );
+    games.push(booted);
+    const scene = booted.scene as PlayScene;
+    placePlayer(scene.getPlayer()!, PLAYER_X, PLAYER_Y);
+    const diver = new Diver(scene, {
+      x: 300,
+      y: 150,
+      formationOffset: { row: 0, col: 0 },
+    });
+    scene.registerEnemy(diver, 'diver');
+    return { scene, diver };
+  }
+
+  /** Boots the real Level Gym with a one-Diver wave and returns its Diver. */
+  async function bootLevelGymWithDiver(): Promise<{
+    scene: GymLevel;
+    diver: Diver;
+  }> {
+    const booted = await bootScene([GymLevel], 'aim-equiv-gym-host');
+    games.push(booted);
+    const manager = booted.game.scene;
+    const level: LevelDefinition = {
+      level: 1,
+      name: 'Aim Equivalence',
+      waves: [diverWave()],
+    };
+    manager.start('GymLevel', { level });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const scene = manager.getScene('GymLevel') as GymLevel;
+    placePlayer(scene.getShip()!, PLAYER_X, PLAYER_Y);
+    const diver = scene.getEnemies()[0] as Diver;
+    return { scene, diver };
+  }
+
+  /** Forces the Diver's formation hold to elapse on its next tick. */
+  function forceDive(diver: Diver): void {
+    (diver as unknown as { _holdTimer: number })._holdTimer =
+      DIVER_HOLD_FORMATION_SECONDS;
+  }
+
+  /** The position the Diver's in-flight dive was snapshotted toward. */
+  function diveTarget(diver: Diver): { x: number; y: number } {
+    const fields = diver as unknown as {
+      _diveTargetX: number;
+      _diveTargetY: number;
+    };
+    return { x: fields._diveTargetX, y: fields._diveTargetY };
+  }
+
+  it('boots the level gym with the aimed archetype reachable (setup gate)', async () => {
+    const { scene, diver } = await bootLevelGymWithDiver();
+    expect(diver).toBeInstanceOf(Diver);
+    expect(diver.alive).toBe(true);
+    expect(scene.getEnemies()).toContain(diver);
+    expect(diver.aimTarget).toBeDefined();
+  });
+
+  it('PlayScene pushes the live player into an aimed enemy before that frame fire is collected', async () => {
+    const { scene, diver } = await bootPlayWithDiver();
+    const probe = probeAimAtFire(diver);
+    scene.tick(1 / 60);
+
+    // The target is the live player, not the constructor's bottom-centre default.
+    expect(diver.aimTarget.x).toBeCloseTo(PLAYER_X, 5);
+    expect(diver.aimTarget.y).toBeCloseTo(PLAYER_Y, 5);
+    // The push ran before fire collection: the target seen at fire time is live.
+    expect(probe.atFire).not.toBeNull();
+    expect(probe.atFire!.x).toBeCloseTo(PLAYER_X, 5);
+    expect(probe.atFire!.y).toBeCloseTo(PLAYER_Y, 5);
+  });
+
+  it('GymFormationScene pushes the live player before fire, matching PlayScene', async () => {
+    // The other player-bearing base scene (AC2) — `GymFodderEnemies` extends
+    // `GymFormationScene` — must order the push the same way. Restart it on the
+    // Diver roster so its `collectBullets` dispatch calls the same fire method
+    // probed below.
+    const booted = await bootScene([GymFodderEnemies], 'aim-ref-formation-host');
+    games.push(booted);
+    const manager = booted.game.scene;
+    manager.start('GymFodderEnemies', { enemyKey: 'diver' });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const scene = manager.getScene('GymFodderEnemies') as GymFodderEnemies;
+    placePlayer(scene.getPlayer()!, PLAYER_X, PLAYER_Y);
+    const diver = new Diver(scene, {
+      x: 300,
+      y: 150,
+      formationOffset: { row: 0, col: 0 },
+    });
+    scene.registerDynamicEntity(diver as never);
+    const probe = probeAimAtFire(diver);
+    scene.tick(1 / 60);
+
+    expect(diver.aimTarget.x).toBeCloseTo(PLAYER_X, 5);
+    expect(diver.aimTarget.y).toBeCloseTo(PLAYER_Y, 5);
+    expect(probe.atFire).not.toBeNull();
+    expect(probe.atFire!.x).toBeCloseTo(PLAYER_X, 5);
+    expect(probe.atFire!.y).toBeCloseTo(PLAYER_Y, 5);
+  });
+
+  it('the bot/level gym tracks and dives toward the live player identically to PlayScene', async () => {
+    const play = await bootPlayWithDiver();
+    const gym = await bootLevelGymWithDiver();
+    const playProbe = probeAimAtFire(play.diver);
+    const gymProbe = probeAimAtFire(gym.diver);
+
+    // Same input and dt in both scenes (AC3).
+    for (let i = 0; i < 30; i++) {
+      play.scene.tick(1 / 60);
+      gym.scene.tick(1 / 60);
+    }
+
+    // AC1 — the gym's aimed enemy tracks the live player. Red today: it keeps
+    // the constructor's bottom-centre default instead of the ship.
+    expect(gym.diver.aimTarget.x).toBeCloseTo(PLAYER_X, 5);
+    expect(gym.diver.aimTarget.y).toBeCloseTo(PLAYER_Y, 5);
+
+    // AC3 — identical target outcome to PlayScene for the same tick sequence.
+    expect(gym.diver.aimTarget.x).toBeCloseTo(play.diver.aimTarget.x, 5);
+    expect(gym.diver.aimTarget.y).toBeCloseTo(play.diver.aimTarget.y, 5);
+
+    // AC2 — the aim push precedes that frame's fire in both scenes.
+    expect(playProbe.atFire).not.toBeNull();
+    expect(gymProbe.atFire).not.toBeNull();
+    expect(gymProbe.atFire!.x).toBeCloseTo(playProbe.atFire!.x, 5);
+    expect(gymProbe.atFire!.y).toBeCloseTo(playProbe.atFire!.y, 5);
+    expect(gymProbe.atFire!.x).toBeCloseTo(PLAYER_X, 5);
+
+    // AC1 — “dives toward it”: forcing the hold to elapse snapshots the live
+    // player as the dive target, identically in both scenes.
+    forceDive(play.diver);
+    forceDive(gym.diver);
+    play.scene.tick(1 / 60);
+    gym.scene.tick(1 / 60);
+
+    const playTarget = diveTarget(play.diver);
+    const gymTarget = diveTarget(gym.diver);
+    expect(gymTarget.x).toBeCloseTo(PLAYER_X, 5);
+    expect(gymTarget.y).toBeCloseTo(PLAYER_Y, 5);
+    expect(gymTarget.x).toBeCloseTo(playTarget.x, 5);
+    expect(gymTarget.y).toBeCloseTo(playTarget.y, 5);
+  });
+});
+
+// ── Live-aim source parity guard (AH-0MV5SDM6G003A0US) ──────────────
+
+/**
+ * Source parity guard for the live-aim seam (child AH-0MV5SDM6G003A0US of the
+ * live-aim parity epic AH-0MV4XFQ0J0082BN6).
+ *
+ * The runtime equivalence suite above proves the *current* behaviour; this
+ * guard protects the *seam itself* against future omission: every
+ * player-bearing enemy base scene must push the live player (and the live
+ * mineral field) into its enemies through the single shared helper in
+ * `src/scenes/core/enemyTargeting.ts`. A scene that stops calling the helper
+ * fails the suite instead of silently reverting to the constructor's
+ * bottom-centre stand-in target.
+ *
+ * A scene may opt out only by carrying an explicit documented-divergence
+ * marker with a reason, mirroring the gym-parity convention
+ * (AGENTS.md § Game Architecture Conventions).
+ */
+
+/** Player-bearing enemy base scenes that must consume the shared helper. */
+const LIVE_AIM_SCENES = [
+  'src/scenes/PlayScene.ts',
+  'src/scenes/gym/core/GymFormationScene.ts',
+  'src/scenes/gym/GymLevel.ts',
+] as const;
+
+/** The shared live-aim helper call every player-bearing scene must make. */
+const LIVE_AIM_HELPER_CALL = 'pushAimTargets(';
+
+/** The shared live-mineral-seek helper call every player-bearing scene must make. */
+const LIVE_MINERAL_HELPER_CALL = 'pushSeekTargets(';
+
+/**
+ * Explicit marker a scene may carry to record a legitimate divergence from
+ * the shared live-aim seam. It must be followed by a non-empty reason on the
+ * same line, e.g.
+ * `// @gym-parity-divergence: this gym has no player ship`.
+ */
+const DIVERGENCE_MARKER = '@gym-parity-divergence:';
+
+/** True when `source` pushes the live-aim seam through the shared helper. */
+function pushesAimSeam(source: string): boolean {
+  return source.includes(LIVE_AIM_HELPER_CALL);
+}
+
+/** True when `source` pushes live minerals through the shared helper. */
+function pushesMineralSeekSeam(source: string): boolean {
+  return source.includes(LIVE_MINERAL_HELPER_CALL);
+}
+
+/** True when `source` documents a divergence with a non-empty reason. */
+function documentsDivergence(source: string): boolean {
+  const at = source.indexOf(DIVERGENCE_MARKER);
+  if (at === -1) return false;
+  const reason = source
+    .slice(at + DIVERGENCE_MARKER.length)
+    .split('\n')[0]
+    .trim();
+  return reason.length > 0;
+}
+
+/** True when `source` satisfies the aim-seam requirement (divergence allowed). */
+function satisfiesAimSeam(source: string): boolean {
+  return pushesAimSeam(source) || documentsDivergence(source);
+}
+
+describe('live-aim source parity guard — every player-bearing base scene pushes the seam (AH-0MV5SDM6G003A0US)', () => {
+  it('permits an explicit documented-divergence marker with a reason (AC3)', () => {
+    // An unmarked scene that never calls the helper would be flagged ...
+    expect(satisfiesAimSeam('export class Bare {}')).toBe(false);
+    // ... while a shared-helper call satisfies the guard ...
+    expect(satisfiesAimSeam('pushAimTargets(this.spawned, this.player);')).toBe(
+      true,
+    );
+    // ... and an explicit marker with a reason documents a legitimate divergence.
+    expect(
+      satisfiesAimSeam('// @gym-parity-divergence: this gym has no player ship'),
+    ).toBe(true);
+    // A bare marker with no reason is not a documented divergence.
+    expect(satisfiesAimSeam('// @gym-parity-divergence:')).toBe(false);
+  });
+
+  it(
+    'every player-bearing enemy base scene pushes the shared live-aim seam (AC1/AC2)',
+    () => {      // Red before adoption (AH-0MV5SDNI2008RWQ2): now a hard gate — the
+      // helper module and its consumers have landed.
+      const missing = LIVE_AIM_SCENES.filter((file) => {
+        const source = fs.readFileSync(
+          path.resolve(process.cwd(), file),
+          'utf8',
+        );
+        return !satisfiesAimSeam(source);
+      });
+      expect(missing).toEqual([]);
+    },
+  );
+
+  it(
+    'every player-bearing enemy base scene pushes the shared live-mineral-seek seam (AC2)',
+    () => {
+      // GymLevel now passes its live mineral field (not an empty array).
+      const missing = LIVE_AIM_SCENES.filter((file) => {
+        const source = fs.readFileSync(
+          path.resolve(process.cwd(), file),
+          'utf8',
+        );
+        return !pushesMineralSeekSeam(source) && !documentsDivergence(source);
+      });
+      expect(missing).toEqual([]);
+    },
+  );
 });
 
 // ── Shared wave-timeout + wipe→respawn lifecycle (AH-0MUNR5LM1004B223) ─
@@ -2872,6 +3219,17 @@ describe('CombatScene — cluster-missile split parity (AH-0MV1BIVIJ007KYXU)', (
       expect(gymWarheads[i].vy).toBeCloseTo(gameWarheads[i].vy, 5);
       expect(gymWarheads[i].color).toBe(gameWarheads[i].color);
     }
+    // The shared fan is phase-locked +90° from the parent heading: a shell
+    // fired to the right (heading 0) bursts to 90°/270° — perpendicular,
+    // never 0° or 180° backwards — in both the game and the gym.
+    const headings = (warheads: PlayerBullet[]): number[] =>
+      warheads.map((b) => Math.atan2(b.vy, b.vx)).sort((a, b) => a - b);
+    const gameHeadings = headings(gameWarheads);
+    const expected = [Math.PI / 2, -Math.PI / 2].sort((a, b) => a - b);
+    for (let i = 0; i < expected.length; i++) {
+      expect(gameHeadings[i]).toBeCloseTo(expected[i], 5);
+      expect(headings(gymWarheads)[i]).toBeCloseTo(expected[i], 5);
+    }
   });
 });
 
@@ -3055,5 +3413,145 @@ describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7
     expect(playScene.getEffectsRegistry().mysteryUfoScore()).toBe(
       gymScene.getEffectsRegistry().mysteryUfoScore(),
     );
+  });
+});
+
+// ── Hold-full overlay metronome + countdown parity (AH-0MV55OB5Q000C9L1) ──
+//
+// The reduced-volume metronomic fire and the beat-locked 3-2-1 countdown
+// live in the shared overlay (`MineralChoiceScene`), the pure schedulers
+// (`src/scenes/core/holdFullFire.ts`, `holdFullCountdown.ts`) and the shared
+// resume re-base in `CombatCoreScene`. The game and every gym launcher
+// supply the SAME payload and consume the SAME shared functions — an
+// enabled gameplay object runs the same code in a gym and the game
+// (AGENTS.md gym↔game parity).
+
+/** Every production scene that launches the shared `MineralChoiceScene`. */
+const HOLDFULL_LAUNCHERS = [
+  'src/scenes/PlayScene.ts',
+  'src/scenes/gym/core/GymFormationScene.ts',
+  'src/scenes/gym/GymWeaponLeveling.ts',
+] as const;
+
+/** The shared hold-full pure helpers, each defined once in its module. */
+const HOLDFULL_SHARED_HELPERS: Array<[string, string]> = [
+  ['buildHoldFullFireSchedule', 'src/scenes/core/holdFullFire.ts'],
+  ['createHoldFullFireMetronome', 'src/scenes/core/holdFullFire.ts'],
+  ['createHoldFullCountdown', 'src/scenes/core/holdFullCountdown.ts'],
+] as const;
+
+describe('hold-full overlay metronome + countdown — gym↔game parity (AC5)', () => {
+  it('every launcher passes the common overlay payload: options + fireSchedule + onSelect', () => {
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(
+        path.resolve(process.cwd(), file),
+        'utf8',
+      );
+      // The overlay launch must carry the exact options the launcher will
+      // apply (options), the frozen player-fire schedule (fireSchedule) and
+      // the single selection contract (onSelect).
+      expect(
+        source.includes("scene.launch('MineralChoiceScene'"),
+        `${file} must launch the overlay`,
+      ).toBe(true);
+      expect(
+        source.includes('options: [...this.mineralChoiceOptions]'),
+        `${file} passes the exact options`,
+      ).toBe(true);
+      expect(
+        source.includes('fireSchedule: buildHoldFullFireSchedule(this.player)'),
+        `${file} passes the shared frozen fire schedule`,
+      ).toBe(true);
+      expect(
+        source.includes('onSelect: (index: number) => this.selectMineralChoice(index)'),
+        `${file} passes the single selection contract`,
+      ).toBe(true);
+    }
+  });
+
+  it('every launcher resumes through the shared beat-clock re-base', () => {
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(
+        path.resolve(process.cwd(), file),
+        'utf8',
+      );
+      expect(
+        source.includes('this.rebaseBeatClockForHoldFullResume('),
+        `${file} re-bases the frozen beat clock on resume`,
+      ).toBe(true);
+    }
+  });
+
+  it('the shared hold-full functions are defined exactly once, in the shared core', () => {
+    const files = productionSceneFiles();
+    for (const [fn, expectedFile] of HOLDFULL_SHARED_HELPERS) {
+      const definers = files
+        .filter((file) => definesFunction(fs.readFileSync(file, 'utf8'), fn))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers, `${fn} should be defined once`).toEqual([expectedFile]);
+    }
+  });
+
+  it('rebaseBeatClockForHoldFullResume is defined once in the shared CombatCoreScene', () => {
+    const files = productionSceneFiles();
+    const definers = files
+      .filter((file) =>
+        definesMethod(fs.readFileSync(file, 'utf8'), 'rebaseBeatClockForHoldFullResume'),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+    expect(definers).toEqual(['src/scenes/core/CombatCoreScene.ts']);
+  });
+
+  it('fadeThrusterHumForHoldFull is defined once in the shared core and consumed by every launcher', () => {
+    // The engine-hum fade on overlay open (AH-0MV70Y2XY005J2HI) is one
+    // shared seam, so the game and every gym fade identically.
+    const files = productionSceneFiles();
+    const definers = files
+      .filter((file) =>
+        definesMethod(fs.readFileSync(file, 'utf8'), 'fadeThrusterHumForHoldFull'),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+    expect(definers).toEqual(['src/scenes/core/CombatCoreScene.ts']);
+
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      expect(
+        source.includes('this.fadeThrusterHumForHoldFull()'),
+        `${file} must fade the thruster hum on overlay open`,
+      ).toBe(true);
+    }
+  });
+
+  it('PlayScene and every hold-full gym inherit the same overlay selection flow', () => {
+    // The overlay itself resolves every selection through the countdown;
+    // the launchers must not re-introduce a divergent immediate-select copy.
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(
+        path.resolve(process.cwd(), file),
+        'utf8',
+      );
+      // The single `onSelect` contract answers through selectMineralChoice —
+      // the resume entry point that re-bases the clock. No other selection
+      // callback is wired.
+      expect(
+        source.includes(
+          "onSelect: (index: number) => this.selectMineralChoice(index)",
+        ),
+        `${file} selection contract via selectMineralChoice`,
+      ).toBe(true);
+      // The launcher never applies the choice inline at the launch site (no
+      // divergent immediate-resume copy).
+      const launchBlock = source.match(
+        /scene\.launch\('MineralChoiceScene',\s*\{[\s\S]*?\}\);/,
+      )?.[0];
+      expect(launchBlock, `${file} launch block`).toBeDefined();
+      expect(
+        launchBlock?.includes('selectMineralChoice'),
+        `${file} defers to selectMineralChoice`,
+      ).toBe(true);
+    }
   });
 });

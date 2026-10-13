@@ -9,7 +9,7 @@
  * Default values:
  * - lives: 3 (up to 5 with Extra Life power-up)
  * - score: 0 (increments on enemy/boss destruction)
- * - level: 1–5 (boss triggered after level 5)
+ * - level: 1–10 (boss triggered after level 10)
  * - minerals: 0 (run-scoped ship's hold; first-hold capacity 5, doubling
  *   each hold-full resolution)
  * - gameState: 'menu' | 'playing' | 'gameover'
@@ -23,7 +23,7 @@ import { POWER_UP_CATALOGUE } from '../powerups/types';
 /**
  * The three lifecycle states of the game session.
  * - `menu`: main menu is shown; no gameplay active.
- * - `playing`: player is actively playing (levels 1–5 or boss).
+ * - `playing`: player is actively playing (levels 1–10 or boss).
  * - `gameover`: player has lost all lives or defeated the boss.
  */
 export type GameSessionState = 'menu' | 'playing' | 'gameover';
@@ -45,12 +45,12 @@ export const MAX_LIVES = POWER_UP_CATALOGUE.extra_life.livesMax ?? DEFAULT_LIVES
 /** Minimum level number. */
 export const MIN_LEVEL = 1;
 
-/** Maximum regular level number before the boss (5 levels). */
-export const MAX_LEVEL = 5;
+/** Maximum regular level number before the boss (10 levels). */
+export const MAX_LEVEL = 10;
 
 /**
  * The level number that triggers the boss encounter.
- * Equals MAX_LEVEL + 1 — the boss appears after all 5 levels.
+ * Equals MAX_LEVEL + 1 — the boss appears after all 10 levels.
  */
 export const BOSS_LEVEL = MAX_LEVEL + 1;
 
@@ -76,7 +76,7 @@ export class GameState {
   lives: number;
   /** Current score (default 0). */
   score: number;
-  /** Current level (1–5 for regular levels, BOSS_LEVEL for boss). */
+  /** Current level (1–10 for regular levels, BOSS_LEVEL for boss). */
   level: number;
   /** Whether the boss has been defeated (true → player wins). */
   bossDefeated: boolean;
@@ -221,7 +221,7 @@ export class GameState {
 
   /**
    * Advances to the next level. Returns the new level.
-   * Level 5 → BOSS_LEVEL (boss) automatically.
+   * Level 10 → BOSS_LEVEL (boss) automatically.
    */
   advanceLevel(): number {
     if (this.level < MAX_LEVEL) {

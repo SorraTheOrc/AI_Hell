@@ -758,7 +758,7 @@ describe('GymFormationScene — player auto-fire (core scene AC3)', () => {
   });
 
   it('AC3 — the gym onWeaponFired hook is a no-op (no game shoot cue)', async () => {
-    const cannonSound = vi.spyOn(effectsModule, 'playCannonFireSound');
+    const fireSound = vi.spyOn(effectsModule, 'playWeaponFireSound');
     const scene = await bootWithPlayer();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
@@ -770,7 +770,7 @@ describe('GymFormationScene — player auto-fire (core scene AC3)', () => {
 
     // The shared _autoFire fired bullets but the gym hook stays silent.
     expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
-    expect(cannonSound).not.toHaveBeenCalled();
+    expect(fireSound).not.toHaveBeenCalled();
   });
 });
 

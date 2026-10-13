@@ -302,6 +302,36 @@ export function rampAngularVelocity(
 }
 
 /**
+ * Closed-form angular displacement a spinning body coasts through before it
+ * comes to rest, using the same constant-deceleration model as
+ * {@link rampAngularVelocity}.
+ *
+ * A body spinning at `current` rad/s sheds its spin at `deceleration` rad/s²,
+ * so it coasts `current·|current| / (2·deceleration)` radians — signed by the
+ * direction of spin (positive = clockwise). This is the primitive the demo
+ * bot's inertia-aware turn release uses to predict its **stop heading**: the
+ * heading it will settle on once the rotation thruster is released
+ * (AH-0MV1DUSM2005HL98 · AC1). Non-finite or zero inputs yield `0`; a
+ * non-positive `deceleration` falls back to
+ * {@link DEFAULT_ROTATION_DECELERATION} so the prediction never blows up on a
+ * misconfigured ship.
+ *
+ * @param current — angular velocity at the moment of release (rad/s).
+ * @param deceleration — spin-down rate (rad/s²); non-positive uses the default.
+ */
+export function angularStopDisplacement(
+  current: number,
+  deceleration: number,
+): number {
+  if (!Number.isFinite(current) || current === 0) return 0;
+  const rate =
+    Number.isFinite(deceleration) && deceleration > 0
+      ? deceleration
+      : DEFAULT_ROTATION_DECELERATION;
+  return (current * Math.abs(current)) / (2 * rate);
+}
+
+/**
  * Asteroids movement model: Newtonian thrust in the ship's facing
  * direction plus a constant-angular-acceleration turn ramp
  * (AH-0MUNS42NA000N41U). The angular velocity ramps toward the held

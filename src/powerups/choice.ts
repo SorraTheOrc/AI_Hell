@@ -30,6 +30,7 @@ import {
 import type { WeaponId } from '../utils/weapons';
 import { summariseWeaponLevelChange } from '../utils/weaponLevels';
 import { summarisePowerUpLevelChange } from './powerUpLevels';
+import { getHelpDescription } from '../utils/gymHelp';
 
 // ── Pool ────────────────────────────────────────────────────────────
 
@@ -47,7 +48,6 @@ export const CHOICE_POOL: readonly DropId[] = [
   'extra_life',
   'magnet',
   'mineral_scoop',
-  'power_pellet',
   'smart_bomb',
   'force_field',
   'mystery_ufo',
@@ -99,6 +99,14 @@ export interface ChoiceOption {
    * weapon-level, power-up-level and owned base-pool offers.
    */
   changeSummary?: string;
+  /**
+   * Optional one-line player-facing description of what the item does
+   * (e.g. `"Adds a 3-bullet fan (−30°/0°/+30°)."`). Populated for **every**
+   * option kind from the shared catalogue via {@link getHelpDescription}, so
+   * an unfamiliar offer is self-explanatory and the overlay copy can never
+   * drift from the gym help (AH-0MV2N2591007UGPD · AC1/AC4).
+   */
+  description?: string;
   /**
    * Whether this option represents a brand-new item the player does
    * not yet own. Set for base-pool weapons and power-ups the player
@@ -184,10 +192,18 @@ export function isWeaponOption(option: ChoiceOption): boolean {
 
 /** Builds the display descriptor for a drop id. */
 export function toChoiceOption(id: DropId): ChoiceOption {
+  // Item copy is resolved from the shared catalogues so the overlay and the
+  // gym help can never diverge (AC4).
+  const description = getHelpDescription(id);
   if (isWeaponDrop(id)) {
-    return { id, name: WEAPON_NAMES[id], kind: 'weapon' };
+    return { id, name: WEAPON_NAMES[id], kind: 'weapon', description };
   }
-  return { id, name: POWER_UP_CATALOGUE[id as PowerUpId].name, kind: 'powerup' };
+  return {
+    id,
+    name: POWER_UP_CATALOGUE[id as PowerUpId].name,
+    kind: 'powerup',
+    description,
+  };
 }
 
 // ── Weighting ───────────────────────────────────────────────────────
@@ -311,6 +327,8 @@ export function buildChoiceCandidates(
       name: `${WEAPON_NAMES[weaponId]} Lv.${level + 1}`,
       kind: 'weapon-level',
       level: level + 1,
+      // AC1: item description from the shared catalogue (AC4).
+      description: getHelpDescription(weaponId),
       // AC1: change summary derived from the shared level maths.
       changeSummary: summariseWeaponLevelChange(
         weaponId as WeaponId,
@@ -332,6 +350,8 @@ export function buildChoiceCandidates(
       name: `${POWER_UP_CATALOGUE[id].name} Lv.${level + 1}`,
       kind: 'power-up-level',
       level: level + 1,
+      // Item description from the shared catalogue (AC1/AC4).
+      description: getHelpDescription(id),
       changeSummary: summarisePowerUpLevelChange(id, level, level + 1),
     });
   }

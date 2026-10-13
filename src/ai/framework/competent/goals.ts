@@ -80,6 +80,13 @@ export const COMPETENT_GOAL_IDS = {
 export interface ContentTarget extends BotWorldPoint {
   /** The archetype (enemy) or drop type looked up in the content registry. */
   readonly contentId: string;
+  /**
+   * Target velocity (px/s) when the source exposes it, used for aim-lead
+   * prediction (AH-0MV1DUSM2005HL98 · AC2). Absent for stationary sources
+   * (minerals, drops, formation-positioned enemies without a physics body).
+   */
+  readonly vx?: number;
+  readonly vy?: number;
 }
 
 /** Clamps a number into `[0, 1]`. */
@@ -168,6 +175,12 @@ export function enemyTargets(world: BotWorld): ContentTarget[] {
     x: enemy.x,
     y: enemy.y,
     contentId: enemy.archetype,
+    // Carry velocity only when the snapshot source exposes it, so targets from
+    // sources without a physics body stay shape-compatible and lead falls back
+    // to the current position (AC2).
+    ...(typeof enemy.vx === 'number' && typeof enemy.vy === 'number'
+      ? { vx: enemy.vx, vy: enemy.vy }
+      : {}),
   }));
   if (world.boss) {
     targets.push({ x: world.boss.x, y: world.boss.y, contentId: 'boss' });

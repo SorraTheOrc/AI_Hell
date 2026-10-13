@@ -99,10 +99,6 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     expect(POWER_UP_LEVEL_SPECS.extra_life[1].cap).toBe(5); // lives cap
     expect(POWER_UP_LEVEL_SPECS.magnet[0].cap).toBe(5); // magnet stack cap
     expect(POWER_UP_LEVEL_SPECS.mineral_scoop[0].cap).toBe(5); // scoop stack cap
-    expect(POWER_UP_LEVEL_SPECS.power_pellet[0].base).toBe(6); // fright window (s)
-    expect(POWER_UP_LEVEL_SPECS.power_pellet[0].cap).toBe(14); // fright window cap (s)
-    expect(POWER_UP_LEVEL_SPECS.power_pellet[1].base).toBe(1); // flee multiplier
-    expect(POWER_UP_LEVEL_SPECS.power_pellet[1].cap).toBe(1.8); // flee multiplier cap
     expect(POWER_UP_LEVEL_SPECS.smart_bomb[0].base).toBe(1200); // pulse radius (px)
     expect(POWER_UP_LEVEL_SPECS.smart_bomb[0].cap).toBe(2400); // pulse radius cap (px)
     expect(POWER_UP_LEVEL_SPECS.smart_bomb[1].base).toBe(1); // pulse damage
@@ -133,24 +129,6 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
         previous = value;
       }
       expect(previous).toBeGreaterThan(statAt('mystery_ufo', variable, 0));
-    }
-  });
-
-  it('Power Pellet fright variables resolve monotonically within their caps (AC7)', () => {
-    const variables = ['frightenDuration', 'frightenSpeedMultiplier'] as const;
-    for (const variable of variables) {
-      const spec = POWER_UP_LEVEL_SPECS.power_pellet.find(
-        (s) => s.variable === variable,
-      )!;
-      let previous = -Infinity;
-      for (let level = 0; level <= 50; level++) {
-        const value = resolvePowerUpAtLevel('power_pellet', level)[variable]!;
-        expect(value).toBeGreaterThanOrEqual(previous);
-        expect(value).toBeLessThanOrEqual(spec.cap);
-        expect(value).toBeGreaterThanOrEqual(spec.base);
-        previous = value;
-      }
-      expect(previous).toBeGreaterThan(spec.base);
     }
   });
 

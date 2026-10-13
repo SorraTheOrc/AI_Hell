@@ -121,13 +121,12 @@ import {
 import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
-import { setExplosionBeatClock } from '../../audio/effects';
-import { BeatClock, createBeatClock } from '../../utils/beat';
 import {
-  frightenedFleeDirection,
-  frightenedFleeOffsetFromDirection,
-  type FrightenedVector,
-} from './frightenedState';
+  setExplosionBeatClock,
+  setThrusterBeatClock,
+  updateThrusterSound,
+} from '../../audio/effects';
+import { BeatClock, createBeatClock } from '../../utils/beat';
 
 /** Ring colour for the Bomb bomb pulse VFX (hot magenta-red). */
 export const BOMB_PULSE_COLOR = 0xff5577;
@@ -289,20 +288,6 @@ export class CombatCoreScene<
    * the player's auto-fire is suppressed.
    */
   private _captureDisabledMs = 0;
-  /**
-   * Per-enemy flee heading captured at the instant the Power Pellet fright
-   * window opens (AH-0MV4BXUWT005MWAJ). Recomputing the heading from each
-   * enemy's (per-frame re-anchored) formation slot made the retreat radial
-   * relative to the ship, so a moving ship dragged enemies around it in an
-   * arc. Freezing each enemy's "away from the ship" heading at activation
-   * gives a straight retreat and keeps positions stable across a ship
-   * teleport; a later pellet re-captures fresh headings because the map is
-   * cleared when the window closes and on run reset.
-   */
-  private readonly _frightenedFleeHeadings = new Map<
-    object,
-    FrightenedVector
-  >();
   /** Lazily-created Phase Shift treatment controller. */
   private phaseShiftJuice: PhaseShiftJuice | null = null;
 
@@ -357,6 +342,52 @@ export class CombatCoreScene<
   /** The keyboard-controlled player ship (null when the scene has none). */
   protected getPlayer(): Player | null {
     return null;
+  }
+
+  /**
+   * Re-bases the shared beat clock across a hold-full overlay pause so the
+   * ship's real fire resumes phase-locked on the same grid the metronome
+   * ghosted (AH-0MV55OAQT004NMSN · AC3).
+   *
+   * While the overlay is open this scene is paused at the SceneManager
+   * level, so the clock froze at launch (`clock.now() === startMs`). The
+   * overlay's metronome kept ticking on the same grid for its whole
+   * duration; on resume the frozen clock must be advanced by exactly that
+   * wall-clock elapsed time, and every active weapon re-scheduled on it, so
+   * the next real shot lands on the first grid tick after the last ghost
+   * tick — no phase jump or restart.
+   *
+   * A no-op when the overlay was open for no time at all (e.g. isolated
+   * launcher tests that resolve immediately).
+   *
+   * @param overlayElapsedMs - Total overlay-relative elapsed time (ms) —
+   *   `MineralChoiceScene.getOverlayElapsedMs()`. Non-positive values are
+   *   ignored.
+   */
+  protected rebaseBeatClockForHoldFullResume(overlayElapsedMs: number): void {
+    if (!Number.isFinite(overlayElapsedMs) || overlayElapsedMs <= 0) return;
+    this.beatClock.advance(overlayElapsedMs);
+    this.getPlayer()?.setBeatClock(this.beatClock);
+  }
+
+  /**
+   * Fades the ship's thruster/engine hum out across a hold-full overlay
+   * pause (AH-0MV70Y2XY005J2HI).
+   *
+   * The hum is driven per-frame from `Player.preUpdate` →
+   * `updateThrusterSound(level)`. Opening the overlay pauses this scene at
+   * the SceneManager level, so `preUpdate` stops firing and the hum would
+   * otherwise freeze at its last gain (a sustained mid-volume drone).
+   * Driving level 0 routes the runtime shim's fade path (a linear ramp to
+   * silence that keeps the hum nodes alive), so once play resumes
+   * `Player.preUpdate` re-drives the live level and ramps the hum back in —
+   * no separate resume hook is needed.
+   *
+   * A single shared seam so the game and every gym launcher fade
+   * identically (AGENTS.md gym↔game parity).
+   */
+  protected fadeThrusterHumForHoldFull(): void {
+    updateThrusterSound(0);
   }
 
   /**
@@ -784,6 +815,12 @@ export class CombatCoreScene<
    * AH-0MV1BIVIJ007KYXU). Splits a tagged projectile exactly once into
    * `def.splits` radial warheads and spawns the split-burst VFX.
    *
+   * The warheads fan **evenly around the full 360° circle** with a constant
+   * `+90°` phase offset from the parent missile's heading — a base count of
+   * 2 splits to 90°/270° (perpendicular, never 0° or 180° backwards), count
+   * 3 to 90°/210°/330°, and count N divides the circle into N equal
+   * 360°/N wedges, always phase-locked to the direction of travel.
+   *
    * Idempotent per projectile: `PlayerBullet.splitSpawned` makes the split
    * resolve at most once even when both the impact and expiry paths observe
    * the same projectile. The warheads are **queued** rather than pushed
@@ -812,8 +849,12 @@ export class CombatCoreScene<
       CLUSTER_WARHEAD_RADIUS_SCALE;
     for (let i = 0; i < count; i++) {
       // Even radial fan, phase-locked to the missile's own heading so the
-      // split reads as a predictable burst rather than a random spray.
-      const angle = baseHeading + (2 * Math.PI * i) / count;
+      // split reads as a predictable burst rather than a random spray. The
+      // fan is offset +90° (π/2) so the first warhead flies perpendicular to
+      // the direction of travel: a base count of 2 splits to 90°/270° (never
+      // straight ahead or 180° backwards), and each further warhead divides
+      // the full 360° circle evenly (count N → 90°, 90°+360°/N, …).
+      const angle = baseHeading + Math.PI / 2 + (2 * Math.PI * i) / count;
       this._pendingSplitWarheads.push(
         createPlayerBullet(
           this,
@@ -1274,59 +1315,6 @@ export class CombatCoreScene<
     _y: number,
   ): void {}
 
-  // ── Frightened enemy status (Power Pellet, AH-0MV1BIW95004POSX) ────
-
-  /**
-   * Whether the Power Pellet fright window is currently active. Consumed by
-   * the shared collision path (ramming a frightened enemy destroys it and
-   * not the ship) and the enemy-fire dispatchers (fire is suppressed).
-   */
-  protected isEnemyFrightened(): boolean {
-    return this.getEffectsRegistry().isFrightened();
-  }
-
-  /**
-   * The accumulated flee displacement (px) an enemy at its un-frightened
-   * formation slot should be offset by while the fright window is active.
-   * Returns `{0, 0}` when the window is inactive or no player is present.
-   *
-   * The enemy's heading is captured once, on the first frame it is offset
-   * during the window, from its current (formation-slot) position to the
-   * ship. The displacement then grows along that fixed heading with the
-   * window's elapsed time and the level-resolved flee-speed multiplier
-   * (AH-0MV4BXUWT005MWAJ), so the enemy retreats in a straight line rather
-   * than orbiting a moving ship. The heading is keyed by entity identity and
-   * the whole cache is cleared when the window closes (or on run reset), so a
-   * later pellet re-captures fresh headings.
-   *
-   * Putting this in the shared core means the game and every gym retreat
-   * enemies identically (gym↔game parity).
-   */
-  protected _frightenedFleeOffset(enemy: {
-    x: number;
-    y: number;
-  }): { x: number; y: number } {
-    const registry = this.getEffectsRegistry();
-    if (!registry.isFrightened()) {
-      if (this._frightenedFleeHeadings.size > 0) {
-        this._frightenedFleeHeadings.clear();
-      }
-      return { x: 0, y: 0 };
-    }
-    const player = this.getPlayer();
-    if (!player) return { x: 0, y: 0 };
-    let heading = this._frightenedFleeHeadings.get(enemy);
-    if (!heading) {
-      heading = frightenedFleeDirection(enemy.x, enemy.y, player.x, player.y);
-      this._frightenedFleeHeadings.set(enemy, heading);
-    }
-    return frightenedFleeOffsetFromDirection(
-      heading,
-      registry.frightenElapsed(),
-      registry.frightenSpeedMultiplier(),
-    );
-  }
-
   // ── Run lifecycle (restart / teardown parity, gap 10) ─────────────
 
   /**
@@ -1353,6 +1341,10 @@ export class CombatCoreScene<
     // note of this clock, identically in the game and every gym. A reset
     // also opens a fresh accent window for the new run.
     setExplosionBeatClock(this.beatClock);
+    // Phase-lock the thruster hum to the same clock's cannon cadence
+    // (AH-0MV01G4NL009JK92): game and gyms pulse identically, and the reset
+    // re-anchors the hum's beat to the new run start.
+    setThrusterBeatClock(this.beatClock);
     // Bind the registry to this scene's live player store, then reset both
     // the timing state and the level store together (AC6). The dynamic
     // resolver means a player created later in `create()` is picked up with
@@ -1389,9 +1381,6 @@ export class CombatCoreScene<
     // clean (Galaga capturer, AH-0MV01EFII008298D).
     this._captureHoldMs = 0;
     this._captureDisabledMs = 0;
-    // Drop captured flee headings so a restarted run re-captures from its
-    // own activation (AH-0MV4BXUWT005MWAJ).
-    this._frightenedFleeHeadings.clear();
   }
 
   /**
@@ -1423,9 +1412,10 @@ export class CombatCoreScene<
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();
-    this._frightenedFleeHeadings.clear();
     // Detach the beat-synced explosion schedule so a stopped scene cannot
     // leak its clock into the next one (AH-0MV01HNLU008S5E3).
     setExplosionBeatClock(null);
+    // Detach the thruster-hum beat pulse the same way (AH-0MV01G4NL009JK92).
+    setThrusterBeatClock(null);
   }
 }

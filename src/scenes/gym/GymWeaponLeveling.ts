@@ -43,14 +43,10 @@ import { drawWeaponDrop, type WeaponDropIconId } from '../../powerups/icons';
 import {
   playPowerUpSpawnSound,
   playPowerUpDespawnSound,
-  playCannonFireSound,
-  playSpreadFireSound,
-  playDualFireSound,
-  playRapidFireSound,
-  playNovaFireSound,
-  playMortarFireSound,
-  playArcFireSound,
+  playWeaponFireSound,
 } from '../../audio/effects';
+import { buildHoldFullFireSchedule } from '../core/holdFullFire';
+import type { MineralChoiceScene } from '../MineralChoiceScene';
 import { WasdKeysLike } from '../../utils/input';
 import {
   addBackToIndexButton,
@@ -280,29 +276,9 @@ export class GymWeaponLeveling extends CombatScene<
   }
 
   protected override onWeaponFired(weaponId: WeaponId): void {
-    switch (weaponId) {
-      case 'cannon':
-        playCannonFireSound();
-        break;
-      case 'spread':
-        playSpreadFireSound();
-        break;
-      case 'dual':
-        playDualFireSound();
-        break;
-      case 'rapid':
-        playRapidFireSound();
-        break;
-      case 'nova':
-        playNovaFireSound();
-        break;
-      case 'mortar':
-        playMortarFireSound();
-        break;
-      case 'arc':
-        playArcFireSound();
-        break;
-    }
+    // Shared player-fire path (AH-0MV55O9R5005W6J0) — one switch for live
+    // fire in the game and every gym.
+    playWeaponFireSound(weaponId);
   }
 
   // ── Spawning / lifecycle ─────────────────────────────────────────
@@ -397,8 +373,15 @@ export class GymWeaponLeveling extends CombatScene<
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
     });
     this.mineralChoiceOpen = true;
+    // Fade the gym player's engine hum out across the pause; it ramps back
+    // in on resume — the same shared seam as PlayScene
+    // (AH-0MV70Y2XY005J2HI · gym↔game parity).
+    this.fadeThrusterHumForHoldFull();
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Reduced-volume ghost fire on the frozen beat grid, matching PlayScene
+      // and the formation gym (AH-0MV55O9R5005W6J0 · gym↔game parity).
+      fireSchedule: buildHoldFullFireSchedule(this.player),
       onSelect: (index: number) => this.selectMineralChoice(index),
     });
     this.scene.pause();
@@ -413,6 +396,12 @@ export class GymWeaponLeveling extends CombatScene<
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
     this.hold.resolve();
+    // Re-base the frozen beat clock across the overlay + countdown pause so
+    // the gym's real fire resumes phase-locked (AH-0MV55OAQT004NMSN · AC3).
+    const overlay = this.scene.manager.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene | null;
+    this.rebaseBeatClockForHoldFullResume(overlay?.getOverlayElapsedMs() ?? 0);
     if (this.scene.manager.getScene('MineralChoiceScene')) {
       this.scene.resume();
     }

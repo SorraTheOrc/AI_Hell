@@ -15,7 +15,7 @@ import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery
 import { Player } from '../../entities/Player';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
-import { GymPowerUpsUtility } from './GymPowerUpsUtility';
+import { MINERAL_SEED_CLEARANCE, GymPowerUpsUtility } from './GymPowerUpsUtility';
 import { CombatCoreScene } from '../core/CombatCoreScene';
 import { HelpScene } from '../HelpScene';
 import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
@@ -828,6 +828,22 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
   it('seeds a live mineral field on create', async () => {
     const scene = await bootPowerUps();
     expect(scene.getMinerals().length).toBeGreaterThan(0);
+  });
+
+  it('seeds every mineral clear of the ship start so boot never silently collects one (AH-0MV6MK7BJ002V9H2)', async () => {
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+    // A large seed makes an accidental in-clearance sample near-certain to be
+    // caught: before the clearance fix roughly 3 % of samples landed inside
+    // the ring, so the 40-mineral boot field would overlap the ship ~10 % of
+    // the time and the mystery-UFO hold assertions saw store = 1 at start.
+    const seeded = scene.seedMinerals(500);
+    for (const mineral of seeded) {
+      expect(
+        Math.hypot(mineral.x - player.x, mineral.y - player.y),
+      ).toBeGreaterThanOrEqual(MINERAL_SEED_CLEARANCE - 1e-6);
+    }
   });
 
   it('spawns P10 in its round-robin (P5 → P8 → P9 → P10)', async () => {

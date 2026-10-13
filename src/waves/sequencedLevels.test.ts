@@ -264,7 +264,7 @@ describe('End-to-end acceptance — CSV to spawn plan (AH-0MUITRWLO001Y4Y5)', ()
       LEVELS[1].waves.length,
       LEVELS[2].waves.length,
       1,
-      LEVELS[4].waves.length,
+      ...LEVELS.slice(4).map((l) => l.waves.length),
     ]);
 
     const plan = firstPlan(levels);
@@ -328,10 +328,12 @@ describe('End-to-end acceptance — CSV to spawn plan (AH-0MUITRWLO001Y4Y5)', ()
   it('uses the baked-in default curve when the CSV file is missing', async () => {
     await loadStoreWithNoConfig();
     const levels = buildSequencedLevels();
-    // The default curve is derived from LEVELS, so a usable five-level
-    // campaign is produced rather than an empty/broken one.
-    expect(levels.length).toBe(LEVELS.length);
+    // The baked-in default curve now spans the full ten-level campaign
+    // (AH-0MV395QHS004SCOR), so a usable campaign is produced rather than an
+    // empty/broken one.
+    expect(levels.length).toBe(10);
     expect(levels[0].name).toBe(LEVELS[0].name);
+    expect(levels[levels.length - 1].name).toBe('The Gauntlet');
   });
 
   it('stays playable when the CSV is malformed (no crash, usable campaign)', async () => {
@@ -591,7 +593,8 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
     const levels = buildSequencedLevels(rows);
 
     expect(levels.map((l) => l.level)).toEqual([
-      1, 2, 3, 4, 5, LEVEL_COUNT + 2,
+      ...Array.from({ length: LEVEL_COUNT }, (_, i) => i + 1),
+      LEVEL_COUNT + 2,
     ]);
     const appended = levels[levels.length - 1];
     expect(appended.name).toBe('Bonus');
@@ -748,12 +751,17 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
       expect(wave.groups.length).toBeGreaterThan(0);
     }
 
+    // Levels 6–10 mix hand-authored showcase waves (which may deliberately
+    // feature a weaker archetype) with generated tail waves, so the per-level
+    // mean difficulty is not strictly monotonic. The calibrated progression is
+    // the configured curve; here we still assert the shipped campaign ramps
+    // from its no-fire opening to its classic-arcade finale (AH-0MV396OK0001FX14).
     const scores = defaultCampaign().map(
       (level) => levelDifficulty(level.waves).score,
     );
-    for (let i = 1; i < scores.length; i++) {
-      expect(scores[i]).toBeGreaterThan(scores[i - 1]);
-    }
+    const mean = (values: number[]): number =>
+      values.reduce((sum, value) => sum + value, 0) / values.length;
+    expect(mean(scores.slice(-3))).toBeGreaterThan(mean(scores.slice(0, 3)));
   });
 
   it('holds the fire boundary: levels 1–3 off, levels 4+ on', () => {

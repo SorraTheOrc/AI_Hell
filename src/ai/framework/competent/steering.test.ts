@@ -15,6 +15,7 @@ import {
   buildIntent,
   chooseSteeringDirection,
   evaluateDirection,
+  interceptPoint,
   mayReverse,
   mayThrust,
   normalise,
@@ -268,5 +269,72 @@ describe('mayReverse — reverse-brake predicate (AC1/AC2)', () => {
     expect(mayReverse(moving, { ...T, reverseBrakeEnabled: false }, 100, 18)).toBe(
       false,
     );
+  });
+});
+
+// ── Intercept solve (AH-0MV1DUSM2005HL98 · AC2) ─────────────────────
+
+describe('interceptPoint (AH-0MV1DUSM2005HL98 AC2)', () => {
+  it('advances a crossing target over the iterated time of flight', () => {
+    // Shooter at origin, target at (100, 0) climbing at 50 px/s, projectile
+    // 100 px/s: the flight time grows as the target rises, so the intercept
+    // is farther along +y than a single naive step (which would be 50).
+    const point = interceptPoint(
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 0, y: 50 },
+      100,
+      0,
+      6,
+    );
+    expect(point.x).toBeCloseTo(100, 6);
+    expect(point.y).toBeGreaterThan(50);
+    // The returned point lies on the projectile's reachable radius for its
+    // implied flight time.
+    expect(Math.hypot(point.x, point.y)).toBeGreaterThanOrEqual(100);
+  });
+
+  it('degenerates to the current position for a stationary target', () => {
+    const point = interceptPoint(
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 0, y: 0 },
+      200,
+      0.25,
+      3,
+    );
+    expect(point).toEqual({ x: 100, y: 0 });
+  });
+
+  it('includes the estimated time-to-align in the lead', () => {
+    const withAlign = interceptPoint(
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 0, y: 60 },
+      200,
+      0.5,
+      4,
+    );
+    const withoutAlign = interceptPoint(
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 0, y: 60 },
+      200,
+      0,
+      4,
+    );
+    expect(withAlign.y).toBeGreaterThan(withoutAlign.y);
+  });
+
+  it('is deterministic', () => {
+    const args = [
+      { x: 10, y: 20 },
+      { x: 120, y: 30 },
+      { x: -5, y: 40 },
+      180,
+      0.2,
+      4,
+    ] as const;
+    expect(interceptPoint(...args)).toEqual(interceptPoint(...args));
   });
 });

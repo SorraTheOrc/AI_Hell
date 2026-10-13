@@ -48,7 +48,6 @@ const IMPLEMENTED = [
   { game: 'Centipede', name: 'Ricochet' },
   { game: 'Missile Command', name: 'Cluster Missile' },
   { game: 'Gradius', name: 'Options' },
-  { game: 'Pac-Man', name: 'Power Pellet' },
   { game: 'Defender', name: 'Smart Bomb' },
   { game: 'Gradius', name: 'Force Field' },
   { game: 'Space Invaders', name: 'Mystery UFO' },
@@ -113,6 +112,15 @@ describe('Classic power-up & weapon roster documentation integration (AH-0MV1BIX
       ).toBe(true);
     },
   );
+
+  it('records the Power Pellet as removed from the shipped roster (AH-0MV5CB6KO0079N08)', () => {
+    // The Pac-Man Power Pellet is no longer a shipped concept. The research
+    // catalogue records the removal (reason + recovery path); the roster
+    // guards above no longer list it as an implemented entry.
+    const research = read(RESEARCH);
+    expect(research).toMatch(/Pac-Man power pellet[^\n]*remov/i);
+    expect(research).toMatch(/Reason for removal/i);
+  });
 
   it('the Game Design Document §8 records the roster and the deferrals (AC3)', () => {
     // §8 Future Scope records the classic-arcade power-up/weapon roster and

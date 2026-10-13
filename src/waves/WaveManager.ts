@@ -4,9 +4,9 @@
  * Pure state machine — no Phaser runtime dependency, so it is fully
  * unit-testable. It owns:
  *
- * - the current level (1–5) and wave within that level;
+ * - the current level (1–10) and wave within that level;
  * - the number of enemies still alive in the active wave;
- * - the transition to the final boss after Level 5 is cleared; and
+ * - the transition to the final boss after Level 10 is cleared; and
  * - deterministic spawn planning for the active wave.
  *
  * The scene (`PlayScene`) drives it: it calls {@link WaveManager.beginGame}
@@ -15,7 +15,7 @@
  * returned {@link WaveEvent} tells the scene what to do next (spawn the
  * next wave, advance the level, trigger the boss, or finish the game).
  *
- * GDD §2.4 — Levels 1–3 do not fire; GDD §2.5 — Levels 4–5 do.
+ * GDD §2.4 — Levels 1–3 do not fire; GDD §2.5 — Levels 4–10 do.
  */
 
 import {
@@ -41,7 +41,7 @@ import {
  * - `continue`      — enemies remain in the active wave.
  * - `waveCleared`   — the wave was wiped; the next wave is now current.
  * - `levelCleared`  — the level was wiped; the next level is now current.
- * - `bossTriggered` — Level 5 was wiped; the boss should now be spawned
+ * - `bossTriggered` — the final level was wiped; the boss should now be spawned
  *                     (call {@link WaveManager.beginBoss}).
  * - `gameComplete`  — the boss was defeated; the run is over.
  */
@@ -142,7 +142,7 @@ export class WaveManager {
     return this._started;
   }
 
-  /** Current 1-based level number (1–5). */
+  /** Current 1-based level number (1–10). */
   get level(): number {
     return this._levelIndex + 1;
   }
