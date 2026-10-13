@@ -28,19 +28,50 @@
  *
  * Any other value resolves to `null` (no scenario), so a typo can never
  * silently change a normal run.
+ *
+ * The supported names are derived from {@link CAPTURE_SCENARIOS}, the shared
+ * browser-free registry (`scripts/capture-scenarios.mjs`) the capture CLI also
+ * reads (AH-0MV6JGE9R005YOL1). That keeps the game resolver and the CLI list /
+ * docs table in parity, and a resolver value that is no longer registered
+ * fails fast at module load rather than silently accepting a stale name.
  */
+
+import { CAPTURE_SCENARIOS } from '../../scripts/capture-scenarios.mjs';
 
 /** URL query parameter that selects a dev scenario. */
 export const DEV_SCENARIO_PARAM = 'scenario';
 
+/**
+ * Returns the registry's own name for a scenario the resolver supports,
+ * throwing at module load if the registry and resolver have drifted (a name
+ * the resolver still branches on but that is no longer registered). The
+ * returned value comes from the registry entry, so the exported constant is
+ * genuinely sourced from — not duplicated outside — the single source of
+ * truth.
+ */
+function registeredScenarioName(name: string): string {
+  const normalised = name.trim().toLowerCase();
+  const registered = CAPTURE_SCENARIOS.find(
+    (scenario) => scenario.name === normalised,
+  );
+  if (registered === undefined) {
+    throw new Error(
+      `devScenario: "${name}" is not in CAPTURE_SCENARIOS `
+        + `(${CAPTURE_SCENARIOS.length} registered scenario(s))`,
+    );
+  }
+  return registered.name;
+}
+
 /** Value of the `scenario` parameter that jumps straight to the boss. */
-export const DEV_SCENARIO_BOSS = 'boss';
+export const DEV_SCENARIO_BOSS = registeredScenarioName('boss');
 
 /** Value of the `scenario` parameter for the recorded four-hit boss demo. */
-export const DEV_SCENARIO_BOSS_FOUR_HITS = 'boss-four-hits';
+export const DEV_SCENARIO_BOSS_FOUR_HITS =
+  registeredScenarioName('boss-four-hits');
 
 /** Value of the `scenario` parameter for the recorded defeat-path demo. */
-export const DEV_SCENARIO_DEFEAT = 'defeat';
+export const DEV_SCENARIO_DEFEAT = registeredScenarioName('defeat');
 
 /** Query parameter that tunes the boss scenario's remaining hits. */
 export const DEV_BOSS_HITS_PARAM = 'bossHits';
