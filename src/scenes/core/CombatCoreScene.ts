@@ -765,6 +765,12 @@ export class CombatCoreScene<
    * AH-0MV1BIVIJ007KYXU). Splits a tagged projectile exactly once into
    * `def.splits` radial warheads and spawns the split-burst VFX.
    *
+   * The warheads fan **evenly around the full 360° circle** with a constant
+   * `+90°` phase offset from the parent missile's heading — a base count of
+   * 2 splits to 90°/270° (perpendicular, never 0° or 180° backwards), count
+   * 3 to 90°/210°/330°, and count N divides the circle into N equal
+   * 360°/N wedges, always phase-locked to the direction of travel.
+   *
    * Idempotent per projectile: `PlayerBullet.splitSpawned` makes the split
    * resolve at most once even when both the impact and expiry paths observe
    * the same projectile. The warheads are **queued** rather than pushed
@@ -793,8 +799,12 @@ export class CombatCoreScene<
       CLUSTER_WARHEAD_RADIUS_SCALE;
     for (let i = 0; i < count; i++) {
       // Even radial fan, phase-locked to the missile's own heading so the
-      // split reads as a predictable burst rather than a random spray.
-      const angle = baseHeading + (2 * Math.PI * i) / count;
+      // split reads as a predictable burst rather than a random spray. The
+      // fan is offset +90° (π/2) so the first warhead flies perpendicular to
+      // the direction of travel: a base count of 2 splits to 90°/270° (never
+      // straight ahead or 180° backwards), and each further warhead divides
+      // the full 360° circle evenly (count N → 90°, 90°+360°/N, …).
+      const angle = baseHeading + Math.PI / 2 + (2 * Math.PI * i) / count;
       this._pendingSplitWarheads.push(
         createPlayerBullet(
           this,

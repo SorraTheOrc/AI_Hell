@@ -203,11 +203,17 @@ spray of short-lived warheads rather than independent tracking warheads.
   `AoEDescriptor`: the split is a projectile seam, not an area effect. The
   shared core tags the spawned shell, and at expiry/impact it splits it once
   into `splits` radial warheads (each an ordinary player bullet that damages
-  enemies on contact) and spawns the shared split-burst VFX. The seam lives in
+  enemies on contact) and spawns the shared split-burst VFX. The warheads fan
+  **evenly around the full 360° circle** with a constant **+90° phase offset**
+  from the parent heading — the base count of 2 splits to **90°/270°**
+  (perpendicular to the direction of travel, never straight ahead or 180°
+  backwards), and each extra warhead divides the circle evenly (count 3 →
+  90°/210°/330°). The seam lives in
   shared core so game and gyms agree on fragment count and spread.
 - `weaponLevels.ts` variables: **Split** (`splitCount`, base 0 → cap 3,
   k=0.20 — the planned variable this weapon exercises, growing the effective
-  warhead count from the base 2 toward the cap), **Fire rate** (`fireRate`,
+  warhead count from the base 2 toward the cap — always divided **evenly**
+  around the full 360° circle with a constant +90° phase offset), **Fire rate** (`fireRate`,
   MVP) and **Damage** (`damage`).
 
 **Balance / coverage:** Spreads damage rather than concentrating it, so a

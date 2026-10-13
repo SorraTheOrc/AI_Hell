@@ -3219,6 +3219,17 @@ describe('CombatScene — cluster-missile split parity (AH-0MV1BIVIJ007KYXU)', (
       expect(gymWarheads[i].vy).toBeCloseTo(gameWarheads[i].vy, 5);
       expect(gymWarheads[i].color).toBe(gameWarheads[i].color);
     }
+    // The shared fan is phase-locked +90° from the parent heading: a shell
+    // fired to the right (heading 0) bursts to 90°/270° — perpendicular,
+    // never 0° or 180° backwards — in both the game and the gym.
+    const headings = (warheads: PlayerBullet[]): number[] =>
+      warheads.map((b) => Math.atan2(b.vy, b.vx)).sort((a, b) => a - b);
+    const gameHeadings = headings(gameWarheads);
+    const expected = [Math.PI / 2, -Math.PI / 2].sort((a, b) => a - b);
+    for (let i = 0; i < expected.length; i++) {
+      expect(gameHeadings[i]).toBeCloseTo(expected[i], 5);
+      expect(headings(gymWarheads)[i]).toBeCloseTo(expected[i], 5);
+    }
   });
 });
 

@@ -462,6 +462,11 @@ export const AOE_PROJECTILE_SPEEDS = {
  * un-upgraded cluster size. The `splitCount` weapon-level variable grows the
  * effective count toward its finite spec cap (3). A cluster always spawns at
  * least two warheads, so the base weapon already reads as a split payload.
+ *
+ * The warheads fan **evenly around the full 360° circle** with a constant
+ * +90° phase offset from the missile's heading (shared `splitProjectile`
+ * seam): at this base count of 2 they split to 90°/270° — perpendicular,
+ * never straight ahead (0°) or backwards (180°).
  */
 export const CLUSTER_BASE_WARHEADS = 2;
 
@@ -745,8 +750,10 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.cluster,
     // Base split payload: the missile bursts into two radial warheads on the
-    // first impact/expiry. The `splitCount` level variable grows the warhead
-    // count toward its spec cap (3).
+    // first impact/expiry. The shared split seam fans them perpendicular to
+    // the heading (90°/270° at this base count) and the `splitCount` level
+    // variable grows the warhead count toward its spec cap (3), dividing the
+    // full 360° circle evenly at every level.
     splits: CLUSTER_BASE_WARHEADS,
   },
   options: {

@@ -5,7 +5,7 @@ import * as effectsModule from '../../audio/effects';
 import { bootScene, BootedGame } from '../../test/gameHarness';
 import { PLAYER_BULLET_SPEED, PLAYER_RESPAWN_INVULNERABLE } from '../../core/constants';
 import { Player } from '../../entities/Player';
-import { advanceAndCull, type PlayerBullet } from '../../entities/PlayerBullet';
+import { PlayerBullet, advanceAndCull } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import {
@@ -25,6 +25,7 @@ import {
   OPTIONS_POD_BULLET_SPEED,
   type WeaponId,
 } from '../../utils/weapons';
+import { resolveWeaponDefinition } from '../../utils/weaponLevels';
 
 // These hook-contract tests exercise the fourDirectional input mapping; the
 // app default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -1280,6 +1281,128 @@ describe('cluster-missile split seam (AH-0MV1BIVIJ007KYXU)', () => {
     expect(enemy.destroyed).toBe(true);
     scene.runFlushSplits();
     expect(scene.getPlayerBullets()).toHaveLength(0);
+  });
+
+  /** Normalises an angle into (−π, π]. */
+  function normalizeAngle(angle: number): number {
+    let a = angle;
+    while (a > Math.PI) a -= 2 * Math.PI;
+    while (a <= -Math.PI) a += 2 * Math.PI;
+    return a;
+  }
+
+  /** Spawns a cluster missile tagged with the base (level 0) split definition. */
+  function spawnClusterAtHeading(
+    scene: StubCombatScene,
+    heading: number,
+  ): PlayerBullet {
+    const bullet = scene.spawnPlayerBullet(
+      0,
+      0,
+      Math.cos(heading) * PLAYER_BULLET_SPEED,
+      Math.sin(heading) * PLAYER_BULLET_SPEED,
+      WEAPON_CATALOGUE.cluster.bulletColor,
+      1,
+      3,
+    );
+    bullet.splitWeapon = resolveWeaponDefinition('cluster', 0);
+    return bullet;
+  }
+
+  /** Splits a bullet and returns the flight headings (radians) of its warheads. */
+  function splitHeadings(
+    scene: StubCombatScene,
+    bullet: PlayerBullet,
+  ): number[] {
+    scene.runSplitProjectile(bullet);
+    scene.runFlushSplits();
+    return scene
+      .getPlayerBullets()
+      .filter((b) => b.splitWeapon === undefined)
+      .map((b) => Math.atan2(b.vy, b.vx))
+      .sort((a, b) => a - b);
+  }
+
+  it('a base-level cluster missile splits into at least two warheads', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    // `resolveWeaponDefinition('cluster', 0)` is the first-collection def.
+    const def = resolveWeaponDefinition('cluster', 0);
+    expect(def.splits).toBeGreaterThanOrEqual(2);
+
+    const bullet = spawnClusterAtHeading(scene, 0);
+    scene.runSplitProjectile(bullet);
+    scene.runFlushSplits();
+    const warheads = scene
+      .getPlayerBullets()
+      .filter((b) => b.splitWeapon === undefined);
+    expect(warheads.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('fans the two base warheads to +90°/−90° (90°/270°), never 0°/180°', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    // Fired to the right: baseHeading = 0.
+    const bullet = spawnClusterAtHeading(scene, 0);
+    const headings = splitHeadings(scene, bullet);
+    expect(headings).toHaveLength(2);
+    expect(headings[0]).toBeCloseTo(-Math.PI / 2, 5); // 270°
+    expect(headings[1]).toBeCloseTo(Math.PI / 2, 5); // 90°
+    for (const heading of headings) {
+      expect(Math.abs(heading)).not.toBeCloseTo(0, 5);
+      expect(Math.abs(heading)).not.toBeCloseTo(Math.PI, 5);
+    }
+  });
+
+  it.each([2, 3])(
+    'evenly spaces %d warheads with a constant +90° phase around the parent heading',
+    async (n) => {
+      const scene = await boot();
+      scene.addPlayer({ x: 50, y: 50 });
+      // A diagonal parent heading — the phase must stay relative to it.
+      const base = Math.PI / 4;
+      const bullet = scene.spawnPlayerBullet(
+        0,
+        0,
+        Math.cos(base) * PLAYER_BULLET_SPEED,
+        Math.sin(base) * PLAYER_BULLET_SPEED,
+        WEAPON_CATALOGUE.cluster.bulletColor,
+        1,
+        3,
+      );
+      bullet.splitWeapon = {
+        ...resolveWeaponDefinition('cluster', 0),
+        splits: n,
+      };
+
+      const headings = splitHeadings(scene, bullet);
+      expect(headings).toHaveLength(n);
+      const expected = Array.from({ length: n }, (_, i) =>
+        normalizeAngle(base + Math.PI / 2 + (2 * Math.PI * i) / n),
+      ).sort((a, b) => a - b);
+      for (let i = 0; i < n; i++) {
+        expect(headings[i]).toBeCloseTo(expected[i], 5);
+      }
+    },
+  );
+
+  it('keeps each warhead at the parent missile speed as an ordinary PlayerBullet', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const bullet = spawnClusterAtHeading(scene, 0);
+    const parentSpeed = Math.hypot(bullet.vx, bullet.vy);
+
+    scene.runSplitProjectile(bullet);
+    scene.runFlushSplits();
+    const warheads = scene
+      .getPlayerBullets()
+      .filter((b) => b.splitWeapon === undefined);
+    expect(warheads.length).toBeGreaterThanOrEqual(2);
+    for (const warhead of warheads) {
+      expect(Math.hypot(warhead.vx, warhead.vy)).toBeCloseTo(parentSpeed, 5);
+      expect(warhead).toBeInstanceOf(PlayerBullet);
+      expect(warhead.splitWeapon).toBeUndefined();
+    }
   });
 });
 
