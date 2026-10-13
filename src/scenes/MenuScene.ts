@@ -10,6 +10,10 @@
  *   for testing individual gym components.
  * - **GitHub** — footer link (bottom-left) that opens the project's source
  *   repository in a new browser tab (AH-0MUZI83EO003WVTG).
+ * - **Version label** — muted, display-only build metadata (e.g. `v0.1.11`)
+ *   sourced from `package.json`, rendered beneath the GitHub link
+ *   (AH-0MUZM9053008YXOZ). It is never interactive and stays out of the
+ *   Tab cycle (GDD §2.1).
  *
  * Keyboard navigation (AH-0MU9LKQEP008LCX9-C2) is provided by a shared
  * {@link FocusManager}: Play Game is focused by default, Tab and the arrow
@@ -24,6 +28,7 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH, GITHUB_REPO_URL } from '../core/constants';
+import { GAME_VERSION } from '../core/version';
 import { FocusManager } from '../utils/focusManager';
 import { installGameAudio } from '../audio/effects';
 import { loadTelemetryConsent } from '../core/telemetryConsentStore';
@@ -42,6 +47,18 @@ const DEV_TEXT_COLOR = '#888888';
 
 /** Display label for the footer GitHub link (AH-0MUZI83EO003WVTG). */
 const GITHUB_LINK_LABEL = '🐙  GitHub';
+
+/** Origin x of the bottom-left footer elements (GitHub link + version label). */
+const FOOTER_LEFT_X = 16;
+
+/**
+ * Bottom-edge y of the GitHub footer link. Offset up from the canvas edge to
+ * leave room for the version label beneath it (AH-0MUZM9053008YXOZ).
+ */
+const GITHUB_LINK_Y = GAME_HEIGHT - 36;
+
+/** Muted colour for the display-only version label (footer metadata). */
+const VERSION_TEXT_COLOR = '#666666';
 
 /**
  * Re-exported so tests and callers can assert the link target against the
@@ -270,8 +287,8 @@ export class MenuScene extends Phaser.Scene {
     // bottom-corner offset on the opposite side, and joins the Tab cycle
     // after Leaderboard.
     const githubButton = this.add.text(
-      16,
-      GAME_HEIGHT - 12,
+      FOOTER_LEFT_X,
+      GITHUB_LINK_Y,
       GITHUB_LINK_LABEL,
       {
         fontFamily: 'monospace',
@@ -295,6 +312,17 @@ export class MenuScene extends Phaser.Scene {
     });
 
     this.controls.push({ label: GITHUB_LINK_LABEL, text: githubButton });
+
+    // ── Version label (footer, bottom-left) ──────────────────────
+    // Display-only build metadata sourced from package.json
+    // (AH-0MUZM9053008YXOZ). It sits beneath the GitHub link and is
+    // deliberately *not* registered with FocusManager, so it stays out of
+    // the Tab cycle (GDD §2.1 keyboard parity, AC3).
+    this.add.text(FOOTER_LEFT_X, GAME_HEIGHT - 12, GAME_VERSION, {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: VERSION_TEXT_COLOR,
+    }).setOrigin(0, 1);
 
     // ── Gym Scene Index button (dev tool) ────────────────────────
     const devButton = this.add.text(

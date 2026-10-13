@@ -13,9 +13,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
+import packageJson from '../../package.json';
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { addEntry } from '../core/Leaderboard';
 import { GAME_HEIGHT } from '../core/constants';
+import { GAME_VERSION } from '../core/version';
 import { LEVEL_COUNT } from '../waves/Formations';
 import { GITHUB_REPO_URL, MenuScene, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
@@ -695,9 +697,11 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
 
     // Interactive click target.
     expect(link.input?.enabled).toBe(true);
-    // Bottom-left footer, matching the Gym Scene Index button's bottom offset.
+    // Bottom-left footer, sitting above the version label. It is offset up
+    // from the canvas edge to leave room for the version text beneath it
+    // (AH-0MUZM9053008YXOZ).
     expect(link.x).toBe(16);
-    expect(link.y).toBe(GAME_HEIGHT - 12);
+    expect(link.y).toBe(GAME_HEIGHT - 36);
     // Shares the neon-cyan menu palette.
     expect(link.style.color).toBe('#00ffff');
   });
@@ -783,5 +787,96 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
 
   it('AC4 — GITHUB_REPO_URL is re-exported from MenuScene and points at the repo', () => {
     expect(GITHUB_REPO_URL).toBe('https://github.com/SorraTheOrc/AI_Hell');
+  });
+});
+
+describe('MenuScene — version label (AH-0MUZM9053008YXOZ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([
+      MenuScene,
+      PlayScene,
+      PauseScene,
+      SettingsScene,
+      GameOverScene,
+      LeaderboardScene,
+      GymIndex,
+    ]);
+    return booted!.scene as MenuScene;
+  }
+
+  function pressKey(scene: MenuScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  it('AC1+AC2 — renders the package.json version, prefixed with v', async () => {
+    const scene = await bootMenu();
+    // The single source of truth is package.json…
+    expect(GAME_VERSION).toBe(`v${packageJson.version}`);
+    // …and that exact string is what is rendered.
+    const version = findText(scene, `v${packageJson.version}`);
+    expect(version.text).toBe(GAME_VERSION);
+  });
+
+  it('AC1 — muted, small, monospace footer metadata', async () => {
+    const scene = await bootMenu();
+    const version = findText(scene, GAME_VERSION);
+
+    expect(version.style.fontFamily).toContain('monospace');
+    // Small relative to the 16 px GitHub footer link.
+    expect(Number.parseInt(String(version.style.fontSize), 10)).toBeLessThan(16);
+    // Muted (not the neon menu colour), so it reads as metadata.
+    expect(version.style.color).not.toBe('#00ffff');
+  });
+
+  it('AC1 — anchored in the bottom-left, beneath the GitHub link', async () => {
+    const scene = await bootMenu();
+    const version = findText(scene, GAME_VERSION);
+    const github = findText(scene, '🐙  GitHub');
+
+    expect(version.x).toBe(16);
+    expect(version.originX).toBe(0);
+    expect(version.originY).toBe(1);
+    // Bottom-left: lower half of the canvas, anchored to its bottom edge.
+    expect(version.y).toBeGreaterThanOrEqual(GAME_HEIGHT / 2);
+    expect(version.y).toBeLessThanOrEqual(GAME_HEIGHT);
+
+    // GitHub's origin is (0, 1), so `github.y` is its bottom edge; the
+    // version anchor sits below it and its (possibly stubbed) top must not
+    // intrude into the GitHub box.
+    expect(version.y).toBeGreaterThan(github.y);
+    const versionTop =
+      version.y - (Number.isFinite(version.height) ? version.height : 0);
+    expect(versionTop).toBeGreaterThanOrEqual(github.y);
+  });
+
+  it('AC3 — display-only: not interactive and never focused (Tab cycle unchanged)', async () => {
+    const scene = await bootMenu();
+    const version = findText(scene, GAME_VERSION);
+
+    // No input handlers, so it is never clickable.
+    expect(version.input).toBeNull();
+
+    // Cycling focus visits the six controls and never the version label.
+    const focused = new Set<string>();
+    for (let i = 0; i < 6; i += 1) {
+      pressKey(scene, { key: 'Tab' });
+      focused.add(scene.getFocusedLabel());
+    }
+    expect(focused.has(GAME_VERSION)).toBe(false);
+    expect(focused.size).toBe(6);
+    // Wraps back to the default control, preserving keyboard parity (GDD §2.1).
+    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
   });
 });
