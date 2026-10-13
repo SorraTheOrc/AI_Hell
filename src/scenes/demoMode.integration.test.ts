@@ -262,6 +262,42 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
   });
 
+  it('AC6 — the demo auto-select routes through the 3-2-1 countdown and resumes on the beat', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+    play.openMineralChoice();
+    await wait(80);
+
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+    expect(overlay).toBeTruthy();
+
+    // The bot auto-selects after the human-like delay: the choice is made but
+    // NOT yet applied — the beat-locked 3-2-1 countdown is running ("3"
+    // shown), and play stays paused.
+    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 120);
+    expect(overlay.getCountdownText()).toBe('3');
+    expect(play.isMineralChoiceOpen()).toBe(true);
+    expect(play.isPaused()).toBe(true);
+
+    // After one beat the countdown advances to "2", still not applied.
+    await wait(800);
+    expect(overlay.getCountdownText()).toBe('2');
+    expect(play.isMineralChoiceOpen()).toBe(true);
+
+    // The countdown completes and the run resumes on the beat after "1" —
+    // same selection → countdown → resume path as a human choice.
+    await wait(HOLD_FULL_COUNTDOWN_DURATION_MS);
+    expect(play.isMineralChoiceOpen()).toBe(false);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
+    expect(play.isPaused()).toBe(false);
+  });
+
   it('AC1 — the demo bot takes an offered Extra Life below the cap', async () => {
     const menu = await bootMenu();
     menu.startDemo();
