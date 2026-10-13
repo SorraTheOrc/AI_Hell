@@ -24,6 +24,8 @@ export interface CaptureOptions {
   scripted: boolean;
   /** Dev scenario name passed to the game URL, or null (AH-0MUWZ5HCV0034H44). */
   scenario: string | null;
+  /** True when `--list-scenarios` was passed: list and exit without booting. */
+  listScenarios: boolean;
   help?: boolean;
 }
 
@@ -61,6 +63,17 @@ export interface RunEndedListenerStore {
 }
 
 export function parseCaptureArgs(argv?: string[]): CaptureOptions;
+/** Lists the implemented dev capture scenarios (fresh registry copies). */
+export function listScenarios(): Array<{ name: string; effect: string }>;
+/** Formats the registered scenarios as readable human lines (one per line). */
+export function formatScenarioList(
+  scenarios?: Array<{ name: string; effect: string }>,
+): string;
+/** Renders the listing as a JSON array under `--json`, else the human form. */
+export function renderScenarioListing(
+  options?: { json?: boolean },
+  scenarios?: Array<{ name: string; effect: string }>,
+): string;
 /** Validates a `--count` value into a positive integer, or throws. */
 export function parseCaptureCount(value: unknown): number;
 /** Resolves the N output paths for a `--count` batch (indexed when > 1). */

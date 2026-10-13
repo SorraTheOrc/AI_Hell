@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -50,16 +51,20 @@ import {
   captureStartKeys,
   captureStartPlan,
   captureUrl,
+  formatScenarioList,
   installRunEndedListener,
+  listScenarios,
   parseCaptureArgs,
   parseCaptureCount,
   readRunEndedSignal,
+  renderScenarioListing,
   resolveCaptureMode,
   resolveOutputPaths,
   runCaptureIterations,
   summariseCaptureBatch,
   START_KEY_GAP_MS,
 } from './capture-gameplay.mjs';
+import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
 import {
   CAPTURE_STARTED_EVENT,
   DEFAULT_CAPTURE_TAIL_MS,
@@ -1616,5 +1621,95 @@ describe('--count batch end-to-end pure pipeline (AH-0MV1CVDA50028H2A)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
+  it('parseCaptureArgs recognises --list-scenarios as a pure listing flag', () => {
+    expect(parseCaptureArgs([]).listScenarios).toBe(false);
+    expect(parseCaptureArgs(['--list-scenarios']).listScenarios).toBe(true);
+    // The flag takes no value and coexists with existing flags.
+    expect(
+      parseCaptureArgs(['--list-scenarios', '--json']).listScenarios,
+    ).toBe(true);
+    expect(parseCaptureArgs(['--list-scenarios', '--json']).json).toBe(true);
+  });
+
+  it('listScenarios returns the shared registry contents as fresh copies', () => {
+    const listed = listScenarios();
+    expect(listed).not.toBe(CAPTURE_SCENARIOS);
+    expect(listed.map((scenario) => scenario.name)).toEqual(
+      CAPTURE_SCENARIOS.map((scenario) => scenario.name),
+    );
+    expect(listed.map((scenario) => scenario.effect)).toEqual(
+      CAPTURE_SCENARIOS.map((scenario) => scenario.effect),
+    );
+
+    // Fresh copies: mutating a returned entry cannot touch the frozen registry.
+    listed[0].effect = 'mutated in test';
+    expect(CAPTURE_SCENARIOS[0].effect).not.toBe('mutated in test');
+  });
+
+  it('formatScenarioList prints every registered name with its one-line effect', () => {
+    const text = formatScenarioList();
+    expect(text).toContain('Implemented dev capture scenarios:');
+
+    for (const { name, effect } of CAPTURE_SCENARIOS) {
+      expect(text).toContain(name);
+      expect(text).toContain(effect);
+    }
+
+    // One line per scenario in registry order, value before effect.
+    const lines = text
+      .split('\n')
+      .filter((line) => line.startsWith('  '));
+    expect(lines).toHaveLength(CAPTURE_SCENARIOS.length);
+    expect(lines[0]).toMatch(`  ${CAPTURE_SCENARIOS[0].name} — `);
+  });
+
+  it('renderScenarioListing emits a machine-readable array under --json', () => {
+    const rendered = renderScenarioListing({ json: true });
+    const parsed = JSON.parse(rendered);
+
+    expect(parsed).toEqual(
+      CAPTURE_SCENARIOS.map(({ name, effect }) => ({ name, effect })),
+    );
+  });
+
+  it('renderScenarioListing favours the human form without --json', () => {
+    const rendered = renderScenarioListing({});
+    for (const { name } of CAPTURE_SCENARIOS) {
+      expect(rendered).toContain(name);
+    }
+  });
+
+  it('the spawned CLI lists every scenario, exits 0 and boots no browser or server', () => {
+    // Instrumentation of the real `main()` entry point: spawn the CLI with
+    // --list-scenarios and assert the listing with a boot-discriminating
+    // timeout. If `main` ever reached `runCapture`, the child would start
+    // Vite + Chromium and record a full run — far beyond this bound — and the
+    // test would fail with a timeout instead of a listing.
+    const script = resolve(process.cwd(), 'scripts/capture-gameplay.mjs');
+
+    const human = execFileSync(
+      process.execPath,
+      [script, '--list-scenarios'],
+      { encoding: 'utf8', timeout: 30_000 },
+    );
+    for (const { name, effect } of CAPTURE_SCENARIOS) {
+      expect(human).toContain(name);
+      expect(human).toContain(effect);
+    }
+
+    const jsonOutput = execFileSync(
+      process.execPath,
+      [script, '--list-scenarios', '--json'],
+      { encoding: 'utf8', timeout: 30_000 },
+    );
+    const parsed = JSON.parse(jsonOutput) as Array<{ name: string }>;
+    expect(parsed.map((scenario) => scenario.name)).toEqual(
+      CAPTURE_SCENARIOS.map((scenario) => scenario.name),
+    );
+    expect(parsed).not.toHaveProperty('iterations');
   });
 });

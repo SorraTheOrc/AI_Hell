@@ -37,6 +37,10 @@ npm run capture -- --scripted    # fallback: replay the fixed scripted plan
 # record the dev boss scenario: jump straight to a boss with 4 hits remaining
 npm run capture -- --scenario boss-four-hits
 
+# discover every implemented dev scenario (no browser or server booted)
+npm run capture -- --list-scenarios
+npm run capture -- --list-scenarios --json
+
 # record a batch of 3 clips in one process (one dev server + one browser)
 npm run capture -- --count 3          # or the short alias: -n 3
 npm run capture -- --count 3 --output clips/demo.webm   # clips/demo-1..3.webm
@@ -130,6 +134,28 @@ Supported values:
 | `boss-four-hits` | Jump to the boss with **4** hits remaining (the recorded demo). |
 | `boss` | The same jump, with the hits tunable via `&bossHits=N` (e.g. `?scenario=boss&bossHits=12`). |
 | `defeat` | Clear the wave and end the run in **defeat** on release (the defeat-path demo for full-run capture verification). |
+
+### Listing the implemented scenarios
+
+`--list-scenarios` prints every implemented scenario — the `--scenario` value
+plus its one-line effect — straight from the **shared registry**
+(`scripts/capture-scenarios.mjs`, the same single source the game resolver
+reads), so the CLI list can never drift from what the game accepts. The
+listing path is **pure**: it exits **0** and boots neither Vite nor Chromium,
+making it the cheap way to discover scenarios before a capture run
+(AH-0MV6JGELV001FAX1).
+
+```bash
+# human-readable, one line per scenario (value — effect)
+npm run capture -- --list-scenarios
+
+# machine-readable array [ { "name": ..., "effect": ... } ]
+npm run capture -- --list-scenarios --json
+```
+
+When `--list-scenarios` is passed, every other flag is ignored: all other
+options describe a capture run, and the listing returns instead without
+starting one.
 
 The boss scenario clears the opening wave, spawns the boss in its final phase
 with no minions and its attacks disabled, and places the ship to the boss's

@@ -74,6 +74,7 @@ import {
   formatProgress,
   setupHint,
 } from './capture-progress.mjs';
+import { listCaptureScenarios } from './capture-scenarios.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VIEWPORT = { width: 960, height: 540 };
@@ -262,6 +263,7 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     json: false,
     scripted: false,
     scenario: null,
+    listScenarios: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -318,6 +320,11 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         // (AH-0MUWZ5HCV0034H44), e.g. `boss-four-hits`.
         options.scenario = next();
         break;
+      case '--list-scenarios':
+        // Print the implemented dev scenarios then exit (AH-0MV6JGELV001FAX1)
+        // without booting Vite or Chromium — pure formatter only.
+        options.listScenarios = true;
+        break;
       case '--help':
         options.help = true;
         break;
@@ -327,6 +334,57 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
   }
 
   return options;
+}
+
+/**
+ * Lists the implemented dev capture scenarios from the shared registry.
+ *
+ * Thin consumer of {@link listCaptureScenarios} (`./capture-scenarios.mjs`,
+ * the single source of truth shared with the game resolver), returning fresh
+ * copies so formatters can never mutate the frozen registry. The CLI listing
+ * reads exactly this list, so `--list-scenarios` cannot drift from the values
+ * `--scenario` accepts (AH-0MV6JGELV001FAX1, AC1).
+ *
+ * @returns {Array<{ name: string, effect: string }>}
+ */
+export function listScenarios() {
+  return listCaptureScenarios();
+}
+
+/**
+ * Formats the registered scenarios as readable human lines.
+ *
+ * One line per scenario in registry order: the value a maintainer passes to
+ * `--scenario` plus that scenario's one-line effect, e.g.
+ *
+ *   boss — Jump straight to the boss with a tunable hit count (&bossHits=N).
+ *
+ * @param {Array<{ name: string, effect: string }>} [scenarios]
+ * @returns {string}
+ */
+export function formatScenarioList(scenarios = listScenarios()) {
+  const lines = ['Implemented dev capture scenarios:', ''];
+  for (const scenario of scenarios) {
+    lines.push(`  ${scenario.name} — ${scenario.effect}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * Renders the scenario listing for `main()`: a machine-readable JSON array
+ * under `--json`, otherwise the human-readable form. Pure — no browser, no
+ * server — so the listing path shares the registry without boot cost.
+ *
+ * @param {{ json?: boolean }} [options]
+ * @param {Array<{ name: string, effect: string }>} [scenarios]
+ * @returns {string}
+ */
+export function renderScenarioListing(
+  options = {},
+  scenarios = listScenarios(),
+) {
+  if (options.json === true) return JSON.stringify(scenarios, null, 2);
+  return formatScenarioList(scenarios);
 }
 
 /**
@@ -1427,7 +1485,7 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--list-scenarios]',
     );
     console.log(
       'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',
@@ -1438,6 +1496,16 @@ async function main() {
     console.log(
       'Count: --count n (alias -n) records n clips in one process, reusing a single dev server and browser session. Each clip gets a 1-based index; `--output demo.webm` with --count 3 writes demo-1.webm, demo-2.webm, demo-3.webm.',
     );
+    console.log(
+      'Listing: --list-scenarios prints every implemented dev scenario (value + one-line effect) from the shared registry and exits 0 booting no browser or server; add --json for a machine-readable array.',
+    );
+    return;
+  }
+
+  if (options.listScenarios) {
+    // Pure listing path (AH-0MV6JGELV001FAX1): resolved before `runCapture`
+    // is even constructed, so neither Vite nor Chromium is ever booted.
+    console.log(renderScenarioListing(options));
     return;
   }
 
