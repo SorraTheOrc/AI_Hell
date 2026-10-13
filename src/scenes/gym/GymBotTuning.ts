@@ -69,6 +69,7 @@ import {
 } from '../../core/botTuningStore';
 import { normaliseSeed, randomSeed, createSeededRng } from '../../core/rng';
 import { makeCollapsible } from '../../utils/gymPanel';
+import { attachTooltip } from '../../utils/gymTooltip';
 import { generateRandomLevel } from '../../utils/randomLevel';
 import type { ControlInput } from '../../utils/movementModel';
 import type { LevelDefinition } from '../../waves/Formations';
@@ -374,6 +375,8 @@ export class GymBotTuning extends GymLevel {
     input.max = String(field.max);
     input.step = String(field.step);
     input.addEventListener('input', () => this._onControlInput());
+    // Designer-facing tooltip: `aria-describedby` + hover/focus reveal.
+    attachTooltip(input, field.description);
 
     const value = document.createElement('output');
     value.setAttribute(BOT_TUNING_SLIDER_VALUE_ATTR, field.key);
@@ -395,6 +398,8 @@ export class GymBotTuning extends GymLevel {
     input.type = 'checkbox';
     input.setAttribute(BOT_TUNING_TOGGLE_ATTR, toggle.key);
     input.addEventListener('change', () => this._onControlInput());
+    // Designer-facing tooltip: `aria-describedby` + hover/focus reveal.
+    attachTooltip(input, toggle.description);
 
     row.append(label, input);
     return row;
