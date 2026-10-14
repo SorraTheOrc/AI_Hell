@@ -422,6 +422,44 @@ describe('Player ship entity', () => {
     expect(yDefaultSpeed).toBeLessThan(yLowSpeed);
   });
 
+  // ── Live thruster config (AH-0MV85WFWD0029DL7) ───────────────────
+
+  it('getThrusterConfig returns the loaded forward + reverse thruster physics', async () => {
+    const player = await freshPlayer();
+
+    expect(player.getThrusterConfig()).toEqual({
+      thrustAcceleration: 300,
+      maxSpeed: 175,
+      frictionDeceleration: 100,
+      reverseEnabled: true,
+      reverseAcceleration: 200,
+      reverseMaxSpeed: 120,
+    });
+  });
+
+  it('getThrusterConfig reflects setConfig changes live (effective config)', async () => {
+    const player = await freshPlayer();
+
+    player.setConfig({
+      ...FOUR_DIR_CONFIG,
+      thrustAcceleration: 600,
+      maxSpeed: 250,
+      frictionDeceleration: 40,
+      asteroidsReverseEnabled: false,
+      asteroidsReverseThrustAcceleration: 90,
+      asteroidsReverseMaxSpeed: 60,
+    });
+
+    expect(player.getThrusterConfig()).toEqual({
+      thrustAcceleration: 600,
+      maxSpeed: 250,
+      frictionDeceleration: 40,
+      reverseEnabled: false,
+      reverseAcceleration: 90,
+      reverseMaxSpeed: 60,
+    });
+  });
+
   // ── Thrust flame animation ───────────────────────────────────────
 
   it('starts with no flame (length 0), and idle frames do not animate it', async () => {

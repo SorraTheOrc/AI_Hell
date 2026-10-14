@@ -199,6 +199,18 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     expect(snapshot.drops.length).toBeGreaterThan(0);
   });
 
+  it('carries the live ship thruster config into the bot snapshot (AH-0MV85WFWD0029DL7)', async () => {
+    const scene = await bootTuning({ seed: 303 });
+    booted!.game.loop.stop();
+
+    const snapshot = scene.getBotSnapshot();
+    // The gym's player satisfies the `BotPlayerSource` seam, so the snapshot
+    // player carries the ship's effective thruster physics unchanged.
+    expect(snapshot.player!.thruster).toEqual(
+      scene.getShip()!.getThrusterConfig(),
+    );
+  });
+
   it('leaves minerals behind when an enemy is destroyed through the shared combat path', async () => {
     const scene = await bootTuning({
       seed: 5,

@@ -350,6 +350,70 @@ describe('buildBotSnapshot — enemy velocity seam (AH-0MV1DUSM2005HL98 AC2)', (
   });
 });
 
+// ── Live thruster config carried in the snapshot (AH-0MV85WFWD0029DL7) ──
+
+describe('buildBotSnapshot — live thruster config (AH-0MV85WFWD0029DL7)', () => {
+  const THRUSTER = {
+    thrustAcceleration: 420,
+    maxSpeed: 230,
+    frictionDeceleration: 90,
+    reverseEnabled: false,
+    reverseAcceleration: 140,
+    reverseMaxSpeed: 80,
+  };
+
+  it('carries the source thruster config on the snapshot player', () => {
+    const scene = makeScene({
+      getPlayer: () => ({
+        x: 10,
+        y: 20,
+        getMovementState: () => ({ x: 10, y: 20, vx: 3, vy: -4 }),
+        getThrusterConfig: () => THRUSTER,
+      }),
+    });
+
+    expect(buildBotSnapshot(scene).player).toEqual({
+      x: 10,
+      y: 20,
+      vx: 3,
+      vy: -4,
+      thruster: THRUSTER,
+    });
+  });
+
+  it('omits the thruster field when the source does not expose the getter', () => {
+    const scene = makeScene({
+      getPlayer: () => ({
+        x: 400,
+        y: 300,
+        getMovementState: () => ({ x: 400, y: 300, vx: 0, vy: 0 }),
+      }),
+    });
+
+    const player = buildBotSnapshot(scene).player as {
+      thruster?: unknown;
+    };
+    // The no-config shape is unchanged: movement fields only.
+    expect(player).toEqual({ x: 400, y: 300, vx: 0, vy: 0 });
+    expect(player.thruster).toBeUndefined();
+  });
+
+  it('deep-freezes the carried thruster config with the player', () => {
+    const scene = makeScene({
+      getPlayer: () => ({
+        x: 0,
+        y: 0,
+        getMovementState: () => ({ x: 0, y: 0, vx: 0, vy: 0 }),
+        getThrusterConfig: () => THRUSTER,
+      }),
+    });
+
+    const snapshot = buildBotSnapshot(scene);
+    expect(snapshot.player!.thruster).toEqual(THRUSTER);
+    expect(Object.isFrozen(snapshot.player!.thruster)).toBe(true);
+  });
+});
+
 // ── Thruster-config test harness (AH-0MV85WFHQ0016FTA) ─────────────
 
 describe('thruster-config test harness (AH-0MV85WFHQ0016FTA)', () => {

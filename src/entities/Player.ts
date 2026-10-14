@@ -700,6 +700,42 @@ export class Player extends Phaser.GameObjects.Graphics {
     return { rotationSpeed, rotationAcceleration, rotationDeceleration };
   }
 
+  /**
+   * The ship's live thruster physics — forward `thrustAcceleration`,
+   * `maxSpeed` and `frictionDeceleration` plus the reverse trio
+   * (`reverseEnabled` / `reverseAcceleration` / `reverseMaxSpeed`). Exposed so
+   * the demo-bot snapshot can carry the player's actual tuning instead of
+   * hard-coded physics (AH-0MV85WFWD0029DL7 · AC1). Reads the live/effective
+   * `_config` (speed multiplier applied) like {@link getRotationConfig}, and
+   * uses the `ShipConfig`-term field names so the snapshot shape matches the
+   * player's tuning UI.
+   */
+  getThrusterConfig(): {
+    thrustAcceleration: number;
+    maxSpeed: number;
+    frictionDeceleration: number;
+    reverseEnabled: boolean;
+    reverseAcceleration: number;
+    reverseMaxSpeed: number;
+  } {
+    const {
+      thrust,
+      maxSpeed,
+      friction,
+      reverseEnabled,
+      reverseAcceleration,
+      reverseMaxSpeed,
+    } = this._config;
+    return {
+      thrustAcceleration: thrust,
+      maxSpeed,
+      frictionDeceleration: friction,
+      reverseEnabled,
+      reverseAcceleration,
+      reverseMaxSpeed,
+    };
+  }
+
   private _applySpeedMultiplier(): void {
     this._config = {
       thrust: this._baseConfig.thrust * this._speedMultiplier,

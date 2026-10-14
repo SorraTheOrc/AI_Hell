@@ -478,6 +478,28 @@ bot-tuning gym fly identically.
   60 Hz run that tracks an off-axis moving enemy with a settled bearing error
   ≤ **0.05 rad**.
 
+### 9.9 Live thruster config carried in the snapshot (AH-0MV85WFWD0029DL7)
+
+The `BotSnapshot` player carries the ship's **live thruster physics** so the
+bot sees exactly the tuning the player configured, with no hard-coded physics
+in the decision layer:
+
+- `Player.getThrusterConfig()` exposes the forward trio
+  (`thrustAcceleration` / `maxSpeed` / `frictionDeceleration`) plus the
+  reverse trio (`reverseEnabled` / `reverseAcceleration` / `reverseMaxSpeed`),
+  mirroring the `getRotationConfig()` precedent by reading the live/effective
+  `_config`.
+- `buildBotSnapshot` copies it onto `BotPlayer.thruster` through the
+  optional `getThrusterConfig` seam on `BotPlayerSource` — when the source
+  does not expose the getter the field is omitted, so pre-existing sources
+  (and the fixture snapshots the harness builds) keep today's exact shape.
+- `BotWorld.player` passes the snapshot player through unchanged: no
+  re-derivation and no live-game access inside the decision layer.
+- The shipped demo path (`PlayScene._advanceDemoBot` →
+  `buildBotSnapshot(this)`) and the bot-tuning gym (`GymBotTuning` source)
+  pick the values up automatically because the live `Player` satisfies the
+  seam.
+
 ## 10. Testing
 
 The framework's unit tests live beside it:
