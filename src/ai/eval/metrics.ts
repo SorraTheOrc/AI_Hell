@@ -17,7 +17,14 @@ import {
   type RecordingAnalysis,
 } from '../../../scripts/recording-analysis.mjs';
 import type { RecordingRun } from '../../../scripts/recording.mjs';
-import type { TelemetryRecord } from './types';
+import {
+  BALANCE_STATISTICS_SCHEMA_VERSION,
+  type BalanceAggregate,
+  type BalanceRunStats,
+  type DistributionStats,
+  type TelemetryEventRecord,
+  type TelemetryRecord,
+} from './types';
 
 /** A single run's comparable metric vector (AC2). */
 export interface MetricPoint {
@@ -235,6 +242,208 @@ export function aggregateMetricPoints(points: readonly MetricPoint[]): MetricAgg
     avoidableHits: aggregateStats(pick('avoidableHits')),
     inputChangesPerSecond: aggregateStats(pick('inputChangesPerSecond')),
     dodgeRate: aggregateStats(pick('dodgeRate')),
+  };
+}
+
+/** Default simulation step assumed when a telemetry stream omits one. */
+const DEFAULT_BALANCE_TICK_SECONDS = 1 / 60;
+
+/**
+ * Computes the full distribution summary for a numeric series (AC3):
+ * count, mean, **median**, min, max and standard deviation. Non-finite
+ * values are ignored; an empty (or all-non-finite) series yields an all-zero
+ * summary so callers never see `NaN`/`undefined`.
+ */
+export function distributionStats(values: readonly number[]): DistributionStats {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (finite.length === 0) {
+    return { count: 0, mean: 0, median: 0, min: 0, max: 0, stdDev: 0 };
+  }
+  const sorted = [...finite].sort((a, b) => a - b);
+  const mean = sorted.reduce((sum, value) => sum + value, 0) / sorted.length;
+  const variance =
+    sorted.reduce((sum, value) => sum + (value - mean) ** 2, 0) / sorted.length;
+  const middle = Math.floor(sorted.length / 2);
+  const median =
+    sorted.length % 2 === 0
+      ? (sorted[middle - 1] + sorted[middle]) / 2
+      : sorted[middle];
+  return {
+    count: sorted.length,
+    mean,
+    median,
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    stdDev: Math.sqrt(variance),
+  };
+}
+
+/** Reads a finite number from an opaque payload field, else `0`. */
+function payloadNumber(payload: Readonly<Record<string, unknown>>, key: string): number {
+  const value = Number(payload[key]);
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Extracts the full per-run balance statistics from one telemetry record
+ * stream (AC3). Pure and deterministic: it reads only the supplied records,
+ * never I/O or the wall clock. It understands both the shipped instrumentation
+ * (`runTelemetry.ts`: `choice_selected`, per-archetype `enemy_killed` with an
+ * `asteroid` archetype, `wave_*`/`level_cleared`) and the headless arena's
+ * stream (`asteroid_destroyed`, untotalled `mineral_collected`), so bot and
+ * human measurements share one schema.
+ *
+ * @param records - A flat telemetry record stream (one run).
+ * @param options - Optional `dtSeconds` for survival-time derivation
+ *   (defaults to 1/60 s per recorded tick).
+ */
+export function extractBalanceStats(
+  records: readonly TelemetryRecord[],
+  options: { readonly dtSeconds?: number } = {},
+): BalanceRunStats {
+  const dtSeconds =
+    Number.isFinite(Number(options.dtSeconds)) && Number(options.dtSeconds) > 0
+      ? Number(options.dtSeconds)
+      : DEFAULT_BALANCE_TICK_SECONDS;
+
+  let seed = 0;
+  let mineralEvents = 0;
+  let mineralTotal = 0;
+  let hasMineralTotal = false;
+  const upgradesSelected: Record<string, number> = {};
+  const enemiesKilledByArchetype: Record<string, number> = {};
+  let asteroidsDestroyed = 0;
+  let powerUpsCollected = 0;
+  let avoidableHits = 0;
+  let waveReached = 0;
+  let levelReached = 0;
+  let maxTick = -1;
+
+  for (const record of records) {
+    if (record.kind === 'run_header') {
+      seed = Number(record.runSeed) >>> 0;
+      continue;
+    }
+    maxTick = Math.max(maxTick, record.tick);
+    if (record.kind === 'tick') continue;
+    const event = record as TelemetryEventRecord;
+    const payload = event.payload ?? {};
+    switch (event.event) {
+      case 'mineral_collected': {
+        mineralEvents += 1;
+        const total = Number(payload.total);
+        if (Number.isFinite(total)) {
+          hasMineralTotal = true;
+          mineralTotal = Math.max(mineralTotal, total);
+        }
+        break;
+      }
+      case 'choice_selected': {
+        const key =
+          payload.id !== undefined && payload.id !== null
+            ? String(payload.id)
+            : `index:${String(payload.index ?? 'unknown')}`;
+        upgradesSelected[key] = (upgradesSelected[key] ?? 0) + 1;
+        break;
+      }
+      case 'enemy_killed': {
+        const archetype =
+          payload.archetype !== undefined && payload.archetype !== null
+            ? String(payload.archetype)
+            : '';
+        if (archetype === 'asteroid') {
+          asteroidsDestroyed += 1;
+        } else {
+          const key = archetype || 'unknown';
+          enemiesKilledByArchetype[key] = (enemiesKilledByArchetype[key] ?? 0) + 1;
+        }
+        break;
+      }
+      case 'asteroid_destroyed':
+        asteroidsDestroyed += 1;
+        break;
+      case 'pickup':
+        powerUpsCollected += 1;
+        break;
+      case 'player_hit':
+        avoidableHits += 1;
+        break;
+      case 'wave_start':
+      case 'wave_cleared':
+        waveReached = Math.max(waveReached, payloadNumber(payload, 'waveNumber'));
+        levelReached = Math.max(levelReached, payloadNumber(payload, 'level'));
+        break;
+      case 'level_cleared':
+        levelReached = Math.max(levelReached, payloadNumber(payload, 'level'));
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Prefer the shipped instrumentation's cumulative hold total; fall back to
+  // the number of `mineral_collected` events for a stream that omits it
+  // (e.g. the headless arena).
+  const mineralsCollected = hasMineralTotal
+    ? Math.max(mineralTotal, mineralEvents)
+    : mineralEvents;
+
+  return {
+    schemaVersion: BALANCE_STATISTICS_SCHEMA_VERSION,
+    seed,
+    mineralsCollected,
+    upgradesSelected,
+    enemiesKilledByArchetype,
+    asteroidsDestroyed,
+    powerUpsCollected,
+    avoidableHits,
+    survivalSeconds: maxTick < 0 ? 0 : (maxTick + 1) * dtSeconds,
+    waveReached,
+    levelReached,
+  };
+}
+
+/** Collects the sorted union of the keys present across per-key series. */
+function perKeyDistributions(
+  points: readonly BalanceRunStats[],
+  pick: (point: BalanceRunStats) => Readonly<Record<string, number>>,
+): Record<string, DistributionStats> {
+  const keys = new Set<string>();
+  for (const point of points) {
+    for (const key of Object.keys(pick(point))) keys.add(key);
+  }
+  const result: Record<string, DistributionStats> = {};
+  for (const key of [...keys].sort()) {
+    result[key] = distributionStats(points.map((point) => pick(point)[key] ?? 0));
+  }
+  return result;
+}
+
+/**
+ * Aggregates per-run balance statistics into distribution summaries
+ * (AC3): one {@link DistributionStats} per numeric metric, plus per-key
+ * distributions for upgrades and enemy archetypes. Key ordering is stable
+ * (sorted), so the aggregate is deterministic. Pure and clock-free.
+ */
+export function aggregateBalanceStats(
+  points: readonly BalanceRunStats[],
+): BalanceAggregate {
+  return {
+    schemaVersion: BALANCE_STATISTICS_SCHEMA_VERSION,
+    runs: points.length,
+    seeds: points.map((point) => point.seed),
+    mineralsCollected: distributionStats(points.map((point) => point.mineralsCollected)),
+    powerUpsCollected: distributionStats(points.map((point) => point.powerUpsCollected)),
+    asteroidsDestroyed: distributionStats(points.map((point) => point.asteroidsDestroyed)),
+    avoidableHits: distributionStats(points.map((point) => point.avoidableHits)),
+    survivalSeconds: distributionStats(points.map((point) => point.survivalSeconds)),
+    waveReached: distributionStats(points.map((point) => point.waveReached)),
+    levelReached: distributionStats(points.map((point) => point.levelReached)),
+    upgradesSelected: perKeyDistributions(points, (point) => point.upgradesSelected),
+    enemiesKilledByArchetype: perKeyDistributions(
+      points,
+      (point) => point.enemiesKilledByArchetype,
+    ),
   };
 }
 
