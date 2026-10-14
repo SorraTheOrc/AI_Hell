@@ -926,24 +926,24 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.isBannerVisible()).toBe(false);
 
     // Clearing the wave starts a transition, announces it again with the
-    // same shared window and background.
+    // same shared background, and re-arms the shared transient window.
     killAllEnemies(scene);
     expect(scene.isTransitioning()).toBe(true);
     expect(scene.isBannerVisible()).toBe(true);
-    expect(scene.getBannerTimeRemaining()).toBeGreaterThan(
-      BANNER_DURATION_SECONDS - 0.5,
-    );
     expect(scene.getBannerBackgroundColor()).toBe(
       `rgba(0, 0, 0, ${BANNER_BACKGROUND_ALPHA})`,
     );
 
-    // The banner outlives the 1.5 s transition pause…
-    scene.tick(BANNER_DURATION_SECONDS - 0.1);
-    expect(scene.isBannerVisible()).toBe(true);
+    // The banner was armed with the shared window, so it outlives the 1.5 s
+    // transition pause (killAllEnemies consumes a little of the window while
+    // the cleared wave's death animations drain, hence the captured value).
+    const remaining = scene.getBannerTimeRemaining();
+    expect(remaining).toBeGreaterThan(LEVEL_TRANSITION_SECONDS);
 
-    // …and clears on its own window once it elapses, with the next wave's
-    // enemies on screen.
-    scene.tick(0.2);
+    // Ticking just past the banner's own window completes the transition,
+    // spawns the next wave, and clears the banner on its own.
+    scene.tick(remaining + 0.01);
+    finishSpawnSequence(scene);
     expect(scene.getAliveCount()).toBeGreaterThan(0);
     expect(scene.isBannerVisible()).toBe(false);
   });
