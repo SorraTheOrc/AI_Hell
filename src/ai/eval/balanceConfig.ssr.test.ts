@@ -13,8 +13,17 @@
  * @vitest-environment node
  */
 
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { createServer, type ViteDevServer } from 'vite';
+
+// This test boots a real Vite dev server and loads the config graph through
+// its SSR module loader — the first `createServer` transform is inherently
+// slower than a plain unit test, and under full-suite parallel load it can
+// exceed the Vitest default 5 s timeout and report a spurious timeout
+// (AH-0MV8I2OCA009M9C1; same class as the Phaser suite's
+// AH-0MUIPP1UU000UT88). Give the boot headroom so a slow parallel run does
+// not fail on timing alone; the assertions themselves are unchanged.
+vi.setConfig({ testTimeout: 30000 });
 
 /** The slice of the config-store module surface this spike needs. */
 interface SsrStore {
