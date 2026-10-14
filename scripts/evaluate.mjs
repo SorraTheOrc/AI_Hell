@@ -162,6 +162,10 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
   const humanRecordingText = options.humanFile ? readFileSync(options.humanFile, 'utf8') : null;
   const { server, core } = await loadCore();
   try {
+    // Boot the CSV-backed config store under SSR so the arena consumes the
+    // real balance data (config-driven arena, AH-0MV81YPBG0028WNM AC5); a
+    // missing/unreadable CSV falls back to the built-in defaults.
+    await core.hydrateBalanceConfig();
     const result = core.executeEvaluation({
       ...options,
       seeds: resolveSeeds(options),

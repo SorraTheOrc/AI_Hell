@@ -21,6 +21,8 @@ import { resolvePolicyFactory } from './policies';
 import { extractMetricPoint, type MetricPoint } from './metrics';
 import { buildSideBySideCapturePlan } from './video';
 
+export { hydrateBalanceConfig } from './balanceConfig';
+
 /** Parsed CLI options (produced by the `scripts/evaluate.mjs` shell). */
 export interface CliOptions {
   readonly policy: string;

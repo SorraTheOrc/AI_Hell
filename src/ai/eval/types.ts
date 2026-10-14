@@ -17,6 +17,7 @@
  */
 
 import type { BotHumanInputTunables } from '../botHumanLike';
+import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
 
 /** Telemetry schema version the arena emits (matches `src/telemetry/schema`). */
 export const EVAL_TELEMETRY_SCHEMA_VERSION = 1;
@@ -125,6 +126,25 @@ export interface ArenaSpawns {
   readonly asteroids: number;
 }
 
+/**
+ * Resolved balance configuration consumed by the arena (config-driven arena,
+ * AH-0MV81YPBG0028WNM, epic AC1 "Config-driven simulation").
+ *
+ * Built through the shared config loaders — {@link loadAllEnemyConfigs},
+ * {@link loadShipConfig} and {@link loadDifficultyCurves} from
+ * `src/core/configStore.ts` — so a CSV edit measurably changes simulated
+ * outcomes and the arena never holds a divergent copy of enemy, ship or wave
+ * stats.
+ */
+export interface ArenaBalanceConfig {
+  /** Every available enemy archetype (CSV-backed or seed defaults). */
+  readonly enemies: readonly EnemyConfig[];
+  /** The ship tuning consumed by the Asteroids movement model. */
+  readonly ship: ShipConfig;
+  /** The campaign difficulty curve (per-wave targets and generation modes). */
+  readonly difficultyCurves: readonly DifficultyCurveRow[];
+}
+
 /** Arena configuration; only `seed` and `ticks` are required. */
 export interface ArenaConfig {
   /** The run seed — drives every scenario draw and the bot governor's RNG. */
@@ -150,6 +170,13 @@ export interface ArenaConfig {
   readonly build?: EvalBuild;
   /** Entity counts; omitted fields fall back to {@link DEFAULT_ARENA_SPAWNS}. */
   readonly spawns?: Partial<ArenaSpawns>;
+  /**
+   * Resolved balance configuration (enemy archetypes, ship, difficulty
+   * curves) built through the shared config loaders. When omitted,
+   * `runArena` resolves it from the shared config store (seed defaults before
+   * boot), so every arena path is config-driven (AH-0MV81YPBG0028WNM).
+   */
+  readonly balance?: ArenaBalanceConfig;
 }
 
 /** The shaped result of one headless arena run. */

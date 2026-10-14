@@ -20,10 +20,15 @@ export {
   runArena,
 } from './arena';
 export {
+  hydrateBalanceConfig,
+  loadBalanceConfig,
+} from './balanceConfig';
+export {
   DEFAULT_ARENA_SPAWNS,
   EVAL_DATASET_VERSION,
   EVAL_TELEMETRY_SCHEMA_VERSION,
   BALANCE_STATISTICS_SCHEMA_VERSION,
+  type ArenaBalanceConfig,
   type ArenaConfig,
   type ArenaInput,
   type ArenaRunResult,

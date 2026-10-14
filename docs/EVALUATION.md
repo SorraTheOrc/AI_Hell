@@ -96,6 +96,41 @@ seed ──► arena scenario ──► BotPolicy ──► AsteroidsModel + gov
   Node shell (`scripts/evaluate.mjs`) does argv parsing and file I/O, loading
   the TS core through Vite's SSR module loader.
 
+## Config-driven arena
+
+The arena consumes the **real balance data** — no hardcoded `scout/diver/phaser`
+list, fire cadence or ship config (config-driven arena,
+AH-0MV81YPBG0028WNM, epic AC1):
+
+- **Enemy archetypes** (`src/data/enemy-configs.csv` via `loadAllEnemyConfigs`)
+  seed the spawn reservoir and drive each hostile's behaviour — collision
+  radius (`size`), hit points (`health`), fire cadence (`fireInterval`),
+  projectile speed (`bulletSpeed`) and fire chance (`shotProbability`).
+- **Ship stats** (`src/data/ship-config.csv` via `loadShipConfig`) map onto the
+  `AsteroidsModel` physics (thrust, max speed, friction, rotation).
+- **Difficulty curves** (`src/data/difficulty-curves.csv` via
+  `loadDifficultyCurves`) set how many hostile *waves* the reservoir holds
+  (the opening level's row count), so a curve edit changes a run too.
+
+A resolved balance config (`ArenaBalanceConfig`) is built by
+`loadBalanceConfig()` in `src/ai/eval/balanceConfig.ts`; `runArena` accepts it
+via `config.balance` and falls back to resolving it from the shared store, so
+every arena path is config-driven. Because each hostile derives its stats from
+an `EnemyConfig`, **editing the CSV files measurably changes simulated outcomes
+for the same seed** — verified by `src/ai/eval/arena.test.ts` for
+`shotProbability`, `fireInterval`, `health` and ship `maxSpeed`.
+
+### SSR loading (evaluate.mjs)
+
+The CLI runs the TS core through Vite's SSR module loader, where the dev-server
+`/api/csv/...` endpoints have no browser origin. `scripts/evaluate.mjs` awaits
+`hydrateBalanceConfig()` before evaluating, which under SSR (`import.meta.env.SSR`)
+reads the CSVs bundled at build time — the same content the static build uses,
+so a CSV edit immediately changes headless results. A missing/unreadable CSV
+falls back to the built-in defaults (the store's `loadConfigs` never throws),
+so evaluation can never be blocked by a broken config file
+(`src/ai/eval/balanceConfig.ssr.test.ts` spikes the SSR branch).
+
 ## Metrics
 
 The report carries the metrics the epic asks for, extracted from telemetry:
@@ -175,16 +210,20 @@ harness itself never invokes a browser or an encoder.
 
 The arena is a **closed-loop headless model**, not Phaser: it models the
 quantities the bot reasons about (player physics, collectables, hazards,
-auto-fire, collisions) rather than the full wave/VFX/enemy-behaviour stack.
-That keeps evaluation fast and deterministic under Node/vitest. For
-pixel-accurate, full-stack verification use the browser capture path
-(`npm run capture`); both paths feed the same telemetry schema, so a recorded
-capture can be analysed with `npm run analyse`.
+auto-fire, collisions) rather than the full wave/VFX/enemy-behaviour stack
+(enemy formations, burst patterns and bullet lifetimes are intentionally not
+modelled). Each hostile's radius, health, fire cadence, bullet speed and fire
+chance do come from the shared `EnemyConfig`, so balance tuning is reflected
+in the simulation. That keeps evaluation fast and deterministic under
+Node/vitest. For pixel-accurate, full-stack verification use the browser
+capture path (`npm run capture`); both paths feed the same telemetry schema,
+so a recorded capture can be analysed with `npm run analyse`.
 
 ## Testing
 
 - `src/ai/eval/arena.test.ts` — determinism, telemetry shape, parser
-  round-trip.
+  round-trip; config-driven arena (CSV edits change outcomes, AC1/AC2/AC4).
+- `src/ai/eval/balanceConfig.ssr.test.ts` — SSR config hydration spike (AC5).
 - `src/ai/eval/metrics.test.ts` — objective score, aggregation, same-seed
   deltas, A/B confidence.
 - `src/ai/eval/engine.test.ts` — end-to-end evaluation and A/B determinism.
