@@ -80,7 +80,11 @@ contact is the threat — its `tryFireNone` dispatch entry keeps it out of the
 aimed-shot fallback, and every spawned segment is registered with the
 `WaveManager`, gated behind a per-wave `centipede: true` opt-in. The dedicated
 `GymCentipede` scene runs the same shared entity/chain code, so the game and
-the gym cannot diverge.
+the gym cannot diverge. Because it is not a CSV config it is surfaced as a
+dedicated **Centipede** option inside `GymFodderEnemies`'s in-panel enemy
+selector (`src/scenes/gym/core/centipedeFormation.ts` owns the single shared
+formation config both scenes use), not as a separate ENEMIES row on the gym
+index (AH-0MV4ZOIZR0086T66).
 
 The **Robotron 2084 homing horde** (AH-0MV01EKTL001NRE6) is the third
 delivered classic archetype and is **partly** a CSV row and partly a new
@@ -289,18 +293,21 @@ key `GymFodderEnemies`; renamed from `GymEnemies`, AH-0MV13G5EV008D41E) is the
 `{ enemyKey }` via `init()` → `loadEnemyConfig(enemyKey)` and derives
 formation/bullet behaviour from the loaded config; the key is also the
 optional deep-link default for the **in-panel enemy selector** (an `<select>`
-listing every non-boss config — see §8.5). The gym index (`GymIndex`) no
-longer enumerates one row per config: its **ENEMIES** column has a single
-**"Fodder Enemies"** row that boots `GymFodderEnemies` bare (the dropdown
-picks the archetype, default `scout`), a dedicated **"Boss"** row that boots
-`GymBoss` directly (AH-0MUAYB28C004KK7X), and a dedicated **"Centipede"** row
-that boots `GymCentipede` directly (AH-0MV4ZOIZR0086T66). The index renders
-three columns — plain scenes, **ENEMIES** and **Dev Utilities** — so the
-Bosses column, the redundant `boss` "Boss Swarm" config row and the per-config
-rows were retired (AH-0MV13G5EV008D41E; formerly
-AH-0MTV8OV9V002D8B7/AH-0MUAYB28C004KK7X). Both `GymBoss` and `GymCentipede`
-are excluded from the plain scene list (left column) so enemy testbeds are
-not duplicated as bare scenes. Legacy
+listing every non-boss config plus the Centipede chain — see §8.5). The gym
+index (`GymIndex`) no longer enumerates one row per config: its **ENEMIES**
+column has a single **"Fodder Enemies"** row that boots `GymFodderEnemies`
+bare (the dropdown picks the archetype, default `scout`) and a dedicated
+**"Boss"** row that boots `GymBoss` directly (AH-0MUAYB28C004KK7X). The
+Centipede chain (a wave opt-in, not a CSV config) is **not** a separate row —
+it appears as a dedicated **"Centipede"** option inside the fodder gym's
+enemy selector, which swaps in the shared linked-chain formation the game and
+`GymCentipede` run (`src/scenes/gym/core/centipedeFormation.ts`,
+AH-0MV4ZOIZR0086T66). The index renders three columns — plain scenes,
+**ENEMIES** and **Dev Utilities** — so the Bosses column, the redundant `boss`
+"Boss Swarm" config row and the per-config rows were retired
+(AH-0MV13G5EV008D41E; formerly AH-0MTV8OV9V002D8B7/AH-0MUAYB28C004KK7X).
+`GymBoss` and `GymCentipede` are excluded from the plain scene list (left
+column) so enemy testbeds are not duplicated as bare scenes. Legacy
 `GymScout`/`GymDiver`/… scenes have been
 retired; their formation/bullet assertions now live in `GymFodderEnemies.test.ts`
 keyed by `enemyKey`.
@@ -1515,12 +1522,18 @@ plugin) and **Save As…** (sanitize → validate → duplicate check via
 **enemy selector** (id `enemy-gym-select`): a single `<select>` whose options
 are every non-boss `EnemyConfig` key discovered from the config store
 (`loadAllEnemyConfigs()`, so seed and `Save As…` entries both appear with no
-hard-coded key list), labelled by `displayName` and seeded from the scene's
-active key. Choosing a different enemy rebuilds the scene through the shared
-`respawnFormation()` clean-slate seam — it destroys every live formation
-entity and the player's in-flight bullets, loads the selected config, then
-reloads every other panel control from that config (discarding unsaved edits)
-— so the running scene always matches the selection. The `boss` archetype is
+hard-coded key list) **plus the dedicated Centipede linked-chain archetype**
+(AH-0MV4ZOIZR0086T66) — labelled by `displayName` / `Centipede` and seeded from
+the scene's active key. Choosing a different config enemy rebuilds the scene
+through the shared `respawnFormation()` clean-slate seam — it destroys every
+live formation entity and the player's in-flight bullets, loads the selected
+config, then reloads every other panel control from that config (discarding
+unsaved edits) — so the running scene always matches the selection. Choosing
+**Centipede** instead swaps in the shared centipede formation
+(`src/scenes/gym/core/centipedeFormation.ts`, the *same* `CentipedeChain` /
+`Centipede` code `PlayScene` and `GymCentipede` run) and hides the config-tuning
+controls (id `enemy-gym-config-body`) — the Centipede is a wave opt-in, not a
+CSV row, so it has no tunable/saveable config. The `boss` archetype is
 deliberately excluded (it has its own gym entry).
 The four spawn-range sliders (`startXMin/startXMax/startYMin/startYMax`, bounds
 `0..GAME_WIDTH` / `0..GAME_HEIGHT`, step 1) are clamped to the canvas and
@@ -1536,7 +1549,8 @@ and best-effort mutate entity `_*` fields (including `_bulletLifetime`, so the
 `bulletLifetime` 0.1–5.0 s TTL slider live-applies to already-spawned entities).
 Panel is removed on scene
 `SHUTDOWN`; stale panels are cleared on rebuild for test isolation.
-Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-select`, `enemy-gym-save`,
+Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-select`,
+`enemy-gym-config-body`, `enemy-gym-save`,
 `enemy-gym-save-as`, `enemy-gym-save-as-input`, `enemy-gym-save-status`,
 `data-config` / `data-config-value` on controls. The panel also shows a
 **live difficulty readout** (id `enemy-gym-difficulty`) that recomputes the

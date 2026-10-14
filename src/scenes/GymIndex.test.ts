@@ -10,10 +10,10 @@
  *    Enter/Space activation per row flavour, and shutdown cleanup.
  *
  * Since AH-0MV13G5EV008D41E the ENEMIES column is a single "Fodder Enemies"
- * row (booting the reusable `GymFodderEnemies` scene bare) plus the dedicated
- * `GymBoss` "Boss" row and (since AH-0MV4ZOIZR0086T66) the dedicated
- * `GymCentipede` "Centipede" row; the Bosses column and the per-config rows
- * are gone.
+ * row (booting the reusable `GymFodderEnemies` scene bare, whose in-panel
+ * dropdown includes the Centipede chain) plus the dedicated `GymBoss` "Boss"
+ * row; the Bosses column and the per-config rows are gone. The Centipede is
+ * *not* a separate ENEMIES row (AH-0MV4ZOIZR0086T66).
  *
  * Discovery runs through the real `import.meta.glob` (Vitest supports it),
  * so these tests exercise the actual files on disk — a new `Gym<Name>.ts`
@@ -37,7 +37,6 @@ import {
   BOSS_SCENE_KEY,
   BOSS_SCENE_LABEL,
   CENTIPEDE_SCENE_KEY,
-  CENTIPEDE_LABEL,
 } from './GymIndex';
 import { GymBoss } from './gym/GymBoss';
 import { MenuScene } from './MenuScene';
@@ -123,16 +122,24 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymWeapons',
     ]);
 
-    // Middle column: three scene rows — the reusable fodder gym, the dedicated
-    // boss, and the dedicated centipede chain. No per-config rows (the
-    // archetype dropdown lives inside GymFodderEnemies) and no `boss`
-    // "Boss Swarm" row.
+    // Middle column: exactly two scene rows — the reusable fodder gym (its
+    // in-panel dropdown selects the archetype, including the Centipede chain)
+    // and the dedicated boss. No per-config rows and no `boss` "Boss Swarm"
+    // row, and no separate Centipede row (AH-0MV4ZOIZR0086T66).
     expect(scene.listedEnemyScenes).toEqual([
       { key: FODDER_ENEMIES_SCENE_KEY, label: FODDER_ENEMIES_LABEL, sceneKey: FODDER_ENEMIES_SCENE_KEY },
       { key: BOSS_SCENE_KEY, label: BOSS_SCENE_LABEL, sceneKey: BOSS_SCENE_KEY },
-      { key: CENTIPEDE_SCENE_KEY, label: CENTIPEDE_LABEL, sceneKey: CENTIPEDE_SCENE_KEY },
     ]);
     expect(scene.listedEnemyScenes.every((s) => s.enemyKey === undefined)).toBe(true);
+
+    // The Centipede is reachable only through the Fodder Enemies dropdown —
+    // it must not leak back onto the index as a bare scene, a dedicated
+    // ENEMIES row, or a Dev Utilities row.
+    expect(scene.listedScenes.map((s) => s.key)).not.toContain(CENTIPEDE_SCENE_KEY);
+    expect(scene.listedEnemyScenes.map((s) => s.key)).not.toContain(CENTIPEDE_SCENE_KEY);
+    expect(scene.listedDevUtilityScenes.map((s) => s.key)).not.toContain(
+      CENTIPEDE_SCENE_KEY,
+    );
 
     // No .test.ts module leaks into the list, and the index itself is not
     // listed (it lives outside the globbed folder).
@@ -178,19 +185,6 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
 
     expect(booted!.game.scene.isActive(BOSS_SCENE_KEY)).toBe(true);
     expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(false);
-  });
-
-  it('AC1 — the dedicated centipede row lives in the ENEMIES column and boots GymCentipede', async () => {
-    const scene = await bootIndex();
-
-    const enemiesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
-    const centipedeRow = findTextAt(scene, CENTIPEDE_LABEL, enemiesCol);
-    expect(centipedeRow.getData('sceneKey')).toBe(CENTIPEDE_SCENE_KEY);
-    centipedeRow.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
-
-    expect(booted!.game.scene.isActive(CENTIPEDE_SCENE_KEY)).toBe(true);
-    expect(booted!.game.scene.isActive(BOSS_SCENE_KEY)).toBe(false);
   });
 });
 
@@ -238,14 +232,11 @@ describe('GymIndex — layout (AH-0MV13G5EV008D41E)', () => {
     const enemiesCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.enemies;
     const devCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
 
-    // All three ENEMIES rows sit in the middle column and boot their scene directly.
+    // Both ENEMIES rows sit in the middle column and boot their scene directly.
     expect(findTextAt(idx, FODDER_ENEMIES_LABEL, enemiesCol).getData('sceneKey')).toBe(
       FODDER_ENEMIES_SCENE_KEY,
     );
     expect(findTextAt(idx, BOSS_SCENE_LABEL, enemiesCol).getData('sceneKey')).toBe(BOSS_SCENE_KEY);
-    expect(findTextAt(idx, CENTIPEDE_LABEL, enemiesCol).getData('sceneKey')).toBe(
-      CENTIPEDE_SCENE_KEY,
-    );
 
     // Headers sit above their columns; the Bosses header is gone entirely.
     expect(findTextAt(idx, GYM_INDEX_ENEMIES_HEADER, enemiesCol)).toBeDefined();

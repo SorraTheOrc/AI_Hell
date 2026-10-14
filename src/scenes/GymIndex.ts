@@ -9,14 +9,17 @@
  *   the ENEMIES column instead;
  * - **ENEMIES** — a single "Fodder Enemies" row booting the reusable
  *   `GymFodderEnemies` scene bare (its in-panel dropdown selects the
- *   archetype) plus the dedicated multi-phase `GymBoss` "Boss" row and the
- *   dedicated `GymCentipede` "Centipede" row;
+ *   archetype — including the Centipede chain, AH-0MV4ZOIZR0086T66) plus
+ *   the dedicated multi-phase `GymBoss` "Boss" row;
  * - **Dev Utilities** — tooling scenes such as the difficulty-curve
  *   sequencer, booted directly via `sceneKey`.
  *
  * A new `Gym<Name>.ts` file dropped into the folder appears automatically;
  * the EnemyConfig archetypes are discovered *inside* `GymFodderEnemies`'s
  * panel from the config store, so a Save As entry needs no index change.
+ * The Centipede chain is not a CSV config (it is a wave opt-in), so it is
+ * surfaced as a dedicated option inside `GymFodderEnemies`'s dropdown
+ * rather than a separate ENEMIES row (AH-0MV4ZOIZR0086T66).
  *
  * Keyboard navigation (AH-0MUDZFBYY008P7ZE) is provided by the shared
  * {@link FocusManager}: the first row is focused by default, Tab / Shift+Tab
@@ -52,9 +55,12 @@ export const FODDER_ENEMIES_LABEL = 'Fodder Enemies';
 export const BOSS_SCENE_KEY = 'GymBoss';
 /** Label of the dedicated boss row in the ENEMIES column. */
 export const BOSS_SCENE_LABEL = 'Boss';
-/** Scene key of the dedicated centipede chain gym scene. */
+/** Scene key of the dedicated centipede chain gym scene. The scene is
+ * excluded from the plain-scenes column (it is an enemy archetype) and is
+ * reachable as a dedicated option inside `GymFodderEnemies`'s dropdown rather
+ * than a separate ENEMIES row (AH-0MV4ZOIZR0086T66). */
 export const CENTIPEDE_SCENE_KEY = 'GymCentipede';
-/** Label of the dedicated centipede row in the ENEMIES column. */
+/** Label used for the Centipede inside `GymFodderEnemies`'s enemy selector. */
 export const CENTIPEDE_LABEL = 'Centipede';
 
 /**
@@ -131,8 +137,9 @@ export class GymIndex extends Phaser.Scene {
     // it is no longer listed as a bare scene; a single ENEMIES row boots it.
     // Filter out GymBoss — the real boss is surfaced as a dedicated row in
     // the ENEMIES column instead of the plain scene list (AH-0MUAYB28C004KK7X).
-    // Filter out GymCentipede — the centipede chain is an enemy archetype
-    // surfaced as a dedicated ENEMIES row (AH-0MV4ZOIZR0086T66).
+    // Filter out GymCentipede — the centipede chain is an enemy archetype;
+    // it is surfaced as a dedicated option inside GymFodderEnemies's
+    // dropdown rather than as a bare plain-scene entry (AH-0MV4ZOIZR0086T66).
     const all = discoverGymScenes(loadGymSceneModules());
 
     // Far-right Dev Utilities column — tooling scenes categorised away from
@@ -163,10 +170,10 @@ export class GymIndex extends Phaser.Scene {
     }
 
     // Middle ENEMIES column (AH-0MV13G5EV008D41E): the single reusable fodder
-    // gym (booted bare; its dropdown selects the archetype) followed by the
-    // dedicated multi-phase `GymBoss` scene and the dedicated `GymCentipede`
-    // chain scene. Per-config rows, the `boss` "Boss Swarm" row and the
-    // Bosses column were retired.
+    // gym (booted bare; its dropdown selects the archetype — including the
+    // Centipede chain, AH-0MV4ZOIZR0086T66) followed by the dedicated
+    // multi-phase `GymBoss` scene. Per-config rows, the `boss` "Boss Swarm"
+    // row and the Bosses column were retired.
     this.enemyEntries = [
       {
         key: FODDER_ENEMIES_SCENE_KEY,
@@ -177,11 +184,6 @@ export class GymIndex extends Phaser.Scene {
         key: BOSS_SCENE_KEY,
         label: BOSS_SCENE_LABEL,
         sceneKey: BOSS_SCENE_KEY,
-      },
-      {
-        key: CENTIPEDE_SCENE_KEY,
-        label: CENTIPEDE_LABEL,
-        sceneKey: CENTIPEDE_SCENE_KEY,
       },
     ];
 
@@ -332,8 +334,8 @@ export class GymIndex extends Phaser.Scene {
 
   /**
    * Middle ENEMIES column rows: the single reusable fodder-enemy row
-   * (booted bare) followed by the dedicated `GymBoss` row and the
-   * dedicated `GymCentipede` row.
+   * (booted bare; its dropdown selects the archetype, including the Centipede
+   * chain) followed by the dedicated `GymBoss` row.
    */
   get listedEnemyScenes(): EnemyColumnEntry[] {
     return this.enemyEntries.map((e) => ({ ...e }));
