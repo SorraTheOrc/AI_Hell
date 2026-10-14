@@ -945,31 +945,34 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
 
 // ── Automatic defence selection: Phase Shift vs Teleport ─────────────
 
-describe('selectAutoDefence: charge-count selection (AC2)', () => {
+describe('selectAutoDefence: finite-pool charge-count selection (AC2)', () => {
   it('returns null when neither defence is available', () => {
-    expect(selectAutoDefence(0, false, 0)).toBeNull();
+    expect(selectAutoDefence(0, 0)).toBeNull();
   });
 
   it('returns the only available defence', () => {
-    expect(selectAutoDefence(1, false, 0)).toBe('phase_shift');
-    expect(selectAutoDefence(0, false, 2)).toBe('teleport');
+    expect(selectAutoDefence(1, 0)).toBe('phase_shift');
+    expect(selectAutoDefence(0, 2)).toBe('teleport');
   });
 
   it('spends the ability with the greater available count', () => {
-    expect(selectAutoDefence(1, false, 3)).toBe('teleport');
-    expect(selectAutoDefence(3, false, 1)).toBe('phase_shift');
+    expect(selectAutoDefence(1, 3)).toBe('teleport');
+    expect(selectAutoDefence(3, 1)).toBe('phase_shift');
   });
 
   it('breaks an exact tie with the injected RNG (both outcomes reachable)', () => {
-    expect(selectAutoDefence(2, false, 2, () => 0.0)).toBe('phase_shift');
-    expect(selectAutoDefence(2, false, 2, () => 0.49)).toBe('phase_shift');
-    expect(selectAutoDefence(2, false, 2, () => 0.5)).toBe('teleport');
-    expect(selectAutoDefence(2, false, 2, () => 0.99)).toBe('teleport');
+    expect(selectAutoDefence(2, 2, () => 0.0)).toBe('phase_shift');
+    expect(selectAutoDefence(2, 2, () => 0.49)).toBe('phase_shift');
+    expect(selectAutoDefence(2, 2, () => 0.5)).toBe('teleport');
+    expect(selectAutoDefence(2, 2, () => 0.99)).toBe('teleport');
   });
 
-  it('treats a permanent Phase Shift as unbounded and outranks Teleport', () => {
-    expect(selectAutoDefence(0, true, 5)).toBe('phase_shift');
-    expect(selectAutoDefence(0, true, 0)).toBe('phase_shift');
+  it('never treats a pool as unbounded: an empty phase pool cannot outrank Teleport', () => {
+    // Both pools are finite — an empty phase pool contributes zero available
+    // count, so a stored Teleport is selected (the permanent-Infinity branch
+    // is gone, AH-0MV82I8IL0012RXY AC2).
+    expect(selectAutoDefence(0, 5)).toBe('teleport');
+    expect(selectAutoDefence(0, 0)).toBeNull();
   });
 });
 
@@ -1036,13 +1039,110 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
   });
 
-  it('permanent Phase Shift outranks stored Teleports, which are conserved', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('phase_shift', true);
-    reg.applyCollect('teleport');
+  it('a permanent Phase Shift ties Teleport by count (seeded RNG decides)', () => {
+    // The permanent reward is an ownership flag, not an unbounded supply: a
+    // single-charge finite pool exactly ties one stored Teleport, so the
+    // tie-break RNG decides (no permanent-Infinity branch, AC2).
+    const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
+    phaseFirst.applyCollect('phase_shift', true);
+    phaseFirst.applyCollect('teleport');
+    expect(phaseFirst.updateDanger(true, 0.016)).toBe('phase_shift');
+    expect(phaseFirst.teleportStacks()).toBe(1); // Teleport conserved
 
+    const teleportFirst = new EffectsRegistry(undefined, () => 0.99);
+    teleportFirst.applyCollect('phase_shift', true);
+    teleportFirst.applyCollect('teleport');
+    expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
+  });
+
+  it('an empty Phase Shift pool (even a permanent owner) selects Teleport instead', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('phase_shift', true); // permanent owner, 1 charge
     expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
+    reg.tick(PHASE_DURATION + 0.01); // phase expires → re-arm cooldown starts
+    expect(reg.phaseCharges()).toBe(0);
+
+    // Danger clears and the cooldown elapses; the empty phase pool now
+    // contributes zero available count, so a stored Teleport fires (AC3).
+    reg.applyCollect('teleport');
+    reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    expect(reg.teleportStacks()).toBe(1); // not consumed here (scene warps)
+  });
+});
+
+describe('shared tick advances the recharge clock (AH-0MV82I8IL0012RXY AC1/AC5)', () => {
+  it('EffectsRegistry.tick(dt) recovers a spent Phase Shift charge through the shared path', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('phase_shift');
+    reg.updateDanger(true, 0.016); // consumes the single charge
+    expect(reg.phaseCharges()).toBe(0);
+
+    // Mid-recharge the pool stays empty...
+    reg.tick(store.phaseRechargeTime() / 2);
+    expect(reg.phaseCharges()).toBe(0);
+
+    // ...and the shared tick completes the timer and returns the charge.
+    reg.tick(store.phaseRechargeTime() / 2 + 1);
+    expect(reg.phaseCharges()).toBe(1);
+  });
+
+  it('EffectsRegistry.tick(dt) recovers a spent Teleport stack through the shared path', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('teleport');
+    reg.consumeTeleport(); // consumes the stack, starts its recharge timer
+    expect(reg.teleportStacks()).toBe(0);
+
+    reg.tick(store.teleportRechargeTime() + 1);
     expect(reg.teleportStacks()).toBe(1);
+  });
+
+  it('the recharge advance is run-scoped: reset() clears it with the store', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('phase_shift');
+    reg.updateDanger(true, 0.016);
+    expect(reg.phaseCharges()).toBe(0);
+
+    reg.reset();
+    reg.tick(store.phaseRechargeTime() + 1);
+    expect(reg.phaseCharges()).toBe(0); // nothing left recharging after reset
+  });
+});
+
+describe('registry HUD recharge accessors (AH-0MV82I8IL0012RXY AC4)', () => {
+  it('phaseRechargeTime()/teleportRechargeTime() delegate to the level store', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    expect(reg.phaseRechargeTime()).toBe(store.phaseRechargeTime());
+    expect(reg.teleportRechargeTime()).toBe(store.teleportRechargeTime());
+  });
+
+  it('recharge times start at the base and shorten as the level rises', () => {
+    const reg = new EffectsRegistry();
+    const basePhase = reg.phaseRechargeTime();
+    const baseTeleport = reg.teleportRechargeTime();
+    expect(basePhase).toBeCloseTo(30, 6);
+    expect(baseTeleport).toBeCloseTo(15, 6);
+
+    reg.applyCollect('phase_shift');
+    reg.applyCollect('phase_shift');
+    reg.applyCollect('teleport');
+    reg.applyCollect('teleport');
+    expect(reg.phaseRechargeTime()).toBeLessThan(basePhase);
+    expect(reg.teleportRechargeTime()).toBeLessThan(baseTeleport);
+  });
+
+  it('the accessors report the recharge clock while a charge is out recharging', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('phase_shift');
+    reg.updateDanger(true, 0.016); // charge consumed → timer running
+    expect(reg.phaseCharges()).toBe(0);
+    expect(reg.phaseRechargeTime()).toBe(store.phaseRechargeTime());
+    expect(reg.phaseRechargeTime()).toBeCloseTo(30, 6);
   });
 });
 
