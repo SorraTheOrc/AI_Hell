@@ -50,7 +50,9 @@ import { BotInputGovernor } from '../../ai/botHumanLike';
 import { buildBotSnapshot, type BotSnapshot, type BotSnapshotScene } from '../../ai/botSnapshot';
 import {
   createCompetentBotBrain,
+  resolveCompetentTunables,
   type BotBrain,
+  type CompetentBotTunables,
 } from '../../ai/framework';
 import {
   BOT_TUNING_NUMERIC_FIELDS,
@@ -191,6 +193,18 @@ export class GymBotTuning extends GymLevel {
       toHumanOverrides(this.tuningValues),
       this.seed,
     );
+  }
+
+  /**
+   * The competent tunables the live brain is currently built from — the
+   * panel values mapped through {@link toCompetentOverrides} and resolved by
+   * the **same** `resolveCompetentTunables` seam `PlayScene` uses
+   * (AH-0MV85WH2V005NZTX). Exposed for gym↔game parity tests: it lets a test
+   * pin that a designer's slider override survives the mapping and wins over
+   * the live ship config, exactly as the shipped demo behaves.
+   */
+  getAppliedBotTunables(): CompetentBotTunables {
+    return resolveCompetentTunables(toCompetentOverrides(this.tuningValues));
   }
 
   /** Samples the pure decision and commits it through the human-like governor. */

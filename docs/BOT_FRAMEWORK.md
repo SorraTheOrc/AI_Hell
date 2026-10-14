@@ -345,6 +345,20 @@ model consumes live reverse physics from the snapshot
 (`reverseAcceleration` / `reverseMaxSpeed`, default/override entries like the
 forward terms) — see [section 9.7](#97-reverse-thrust-ah-0mv2wjsy70070hk2).
 
+**The physics terms are fallback defaults + tuning overrides, never the
+ship's truth (AH-0MV85WH2V005NZTX).** `playerSpeed`, `frictionDeceleration`
+and the reverse pair are *not* authoritative: the steering layer resolves
+them against the snapshot's live thruster config with the precedence
+`explicit tuning override > live ship config > compiled default` (the
+`resolvePlayerSpeed` / `resolveFrictionDeceleration` / `resolveReverse*`
+helpers in `tunables.ts`). A value equal to the compiled default is a
+fallback and loses to the live config; a value differing from the compiled
+default — e.g. a `GymBotTuning` slider or a persisted config — is an explicit
+override and wins over the live config. The compiled defaults mirror the
+shipped ship config (`playerSpeed: 175`, `frictionDeceleration: 100`,
+`reverseAcceleration: 200`, `reverseMaxSpeed: 120`), so a ship running
+defaults behaves bit-for-bit as before (default-equivalence).
+
 ### 9.5 Module layout
 
 | Module | Responsibility |
@@ -520,6 +534,15 @@ in the decision layer:
   pick the values up automatically because the live `Player` satisfies the
   seam.
 
+**Fallback/override precedence (AH-0MV85WH2V005NZTX).** The steering layer
+resolves the carried physics against the tunables with `explicit tuning
+override > live ship config > compiled default` ([section 9.4](#94-single-sourced-tuning-ac5)): at the compiled defaults the live config wins bit-for-bit
+as before, while a `GymBotTuning` override (a value differing from the
+compiled default) wins over the live config — through the same
+`resolveCompetentTunables` seam in `PlayScene` and the bot-tuning gym
+(`GymBotTuning`), so the gym and the shipped demo can never resolve the
+tunables differently.
+
 ## 10. Testing
 
 The framework's unit tests live beside it:
@@ -677,7 +700,11 @@ and adjust its parameters in real time.
   knobs `skill` / `maxAimErrorRad` / `aimLeadAlignSeconds` /
   `aimLeadIterations` (`aimLeadEnabled` toggle)
   (AH-0MV1DUSM2005HL98 · AC4). Moving a slider rebuilds the live brain and
-  governor immediately.
+  governor immediately. The `playerSpeed` / `frictionDeceleration` sliders
+  are **overrides**: moving one away from its default makes it win over the
+  live ship config; left at the default it is a fallback and the ship's live
+  config wins (the same precedence the shipped demo resolves —
+  [section 9.4](#94-single-sourced-tuning-ac5)).
 - **Per-parameter tooltips.** Every slider and toggle carries a plain-English
   `description` in its `BotTuningFieldSpec`/`BotTuningToggleSpec`
   (`src/ai/tuningFields.ts`), authored in lockstep with the tunables' JSDoc.

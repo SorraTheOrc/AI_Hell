@@ -27,6 +27,16 @@ import {
   BOT_TUNING_TOGGLES,
 } from '../../ai/tuningFields';
 import {
+  COMPETENT_BOT_TUNABLES,
+  buildBotWorld,
+} from '../../ai/framework';
+import { evaluateDirection } from '../../ai/framework/competent';
+import {
+  bullet,
+  DEFAULT_THRUSTER_CONFIG,
+  makeThrusterSnapshot,
+} from '../../ai/framework/testFixtures';
+import {
   listBotTuningNames,
   resetBotTuningStore,
 } from '../../core/botTuningStore';
@@ -209,6 +219,59 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     expect(snapshot.player!.thruster).toEqual(
       scene.getShip()!.getThrusterConfig(),
     );
+  });
+
+  it('applies a slider override that wins over the live ship config via resolveCompetentTunables (AH-0MV85WH2V005NZTX)', async () => {
+    const scene = await bootTuning({ seed: 505 });
+    booted!.game.loop.stop();
+
+    // The gym's snapshot player carries the *live* ship config.
+    const live = scene.getBotSnapshot().player!.thruster!;
+    expect(live.maxSpeed).toBe(175);
+
+    // With the sliders untouched the applied tunables equal the compiled
+    // defaults, so the panelless bot is a pure fallback: the live config wins
+    // at decision time (never authoritative).
+    expect(scene.getAppliedBotTunables().playerSpeed).toBe(
+      COMPETENT_BOT_TUNABLES.playerSpeed,
+    );
+
+    // The designer drags the playerSpeed slider to an explicit override; the
+    // gym rebuilds the live brain, exactly as PlayScene rebuilds the demo
+    // brain from the persisted store.
+    const input = document.querySelector<HTMLInputElement>(
+      `input[${BOT_TUNING_SLIDER_ATTR}="playerSpeed"]`,
+    )!;
+    input.value = '250';
+    input.dispatchEvent(new Event('input'));
+
+    const applied = scene.getAppliedBotTunables();
+    expect(applied.playerSpeed).toBe(250);
+
+    // The override reaches the decision layer through resolveCompetentTunables
+    // — the same seam PlayScene uses — and wins over the live ship config: a
+    // trailing 100 px/s shot on the +x bearing clears at the live 150 cap (75
+    // px > threat radius 55) but is intercepted at the 250 override.
+    const world = buildBotWorld(
+      makeThrusterSnapshot(
+        { ...DEFAULT_THRUSTER_CONFIG, maxSpeed: 150 },
+        {
+          player: { x: 480, y: 270, vx: 0, vy: 0 },
+          enemyBullets: [bullet(600, 270, 100, 0)],
+        },
+      ),
+    );
+    // Sanity: the same snapshot with the compiled defaults (live 150 wins)
+    // stays clear, proving the override — not the live config — changed the
+    // outcome.
+    expect(evaluateDirection(1, 0, world, COMPETENT_BOT_TUNABLES)).toEqual({
+      safe: true,
+      clearance: 75,
+    });
+    expect(evaluateDirection(1, 0, world, applied)).toEqual({
+      safe: false,
+      clearance: 0,
+    });
   });
 
   it('leaves minerals behind when an enemy is destroyed through the shared combat path', async () => {
