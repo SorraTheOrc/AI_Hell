@@ -295,10 +295,21 @@ export const LEVEL_TRANSITION_SECONDS = 1.5;
 
 /**
  * Seconds a level/wave announcement banner stays on screen before it
- * hides automatically (GDD §3 — transient transitions). Must be within
- * the ~1.5–2 s window required by AH-0MU7JTEMC006QPSN.
+ * hides automatically (GDD §3 — transient transitions). The banner still
+ * expires on its own; 3.5 s leaves the player time to read the
+ * announcement during the between-wave pause while the semi-transparent
+ * background keeps the field visible (AH-0MV8BQ75V005QNZ1).
  */
-export const BANNER_DURATION_SECONDS = 1.5;
+export const BANNER_DURATION_SECONDS = 3.5;
+
+/**
+ * Opacity of the banner's background panel. The banner sits over live
+ * gameplay — carried-over asteroids keep moving and surviving enemies stay
+ * alive — during the between-wave pause, so a fully opaque panel hides the
+ * action; 0.6 keeps the white banner text legible while letting the field
+ * show through (AH-0MV8BQ75V005QNZ1).
+ */
+export const BANNER_BACKGROUND_ALPHA = 0.6;
 
 /** Rightward formation drift speed (px/s). */
 const FORMATION_DRIFT_SPEED = 28;
@@ -340,7 +351,10 @@ const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   fontFamily: 'monospace',
   fontSize: '34px',
   color: '#ffffff',
-  backgroundColor: '#000000',
+  // A CSS `rgba()` string is a valid Canvas2D `fillStyle`, so Phaser's text
+  // canvas fill honours the alpha and keeps the field visible behind the
+  // banner (AH-0MV8BQ75V005QNZ1).
+  backgroundColor: `rgba(0, 0, 0, ${BANNER_BACKGROUND_ALPHA})`,
   padding: { x: 20, y: 12 },
 };
 
@@ -1042,7 +1056,10 @@ export class PlayScene extends CombatScene<
     const transitioning = this.transitionTimer > 0;
     if (transitioning) {
       this.transitionTimer = Math.max(0, this.transitionTimer - dt);
-      this._updateTransitionBanner();
+      // The transition banner is shown once at `_startTransition()`; its own
+      // timer then governs how long it stays up, so it outlives the 1.5 s
+      // pause and is no longer hidden when the transition completes
+      // (AH-0MV8BQ75V005QNZ1).
       // Carried-over survivors stay active through the transition pause
       // (AH-0MUNS3ZQ1002DJ9S AC3): they keep their formation drift / their own
       // motion, keep firing, and remain shootable/hitable. `_moveEnemies`
@@ -2186,7 +2203,9 @@ export class PlayScene extends CombatScene<
     } else {
       this.spawnWave();
     }
-    this._hideBanner();
+    // The banner is intentionally NOT hidden here: its own transient timer
+    // (`_advanceBanner`) expires it so the announcement stays readable after
+    // the next wave spawns (AH-0MV8BQ75V005QNZ1).
   }
 
   /**
@@ -3726,6 +3745,24 @@ export class PlayScene extends CombatScene<
   /** Current banner text (empty string when no banner has been shown yet). */
   getBannerText(): string {
     return this.bannerText?.text ?? '';
+  }
+
+  /**
+   * The banner's background CSS colour (empty string before it is shown).
+   * Exposed so the semi-transparent background can be pinned by tests
+   * (AH-0MV8BQ75V005QNZ1).
+   */
+  getBannerBackgroundColor(): string {
+    return this.bannerText?.style.backgroundColor ?? '';
+  }
+
+  /**
+   * Seconds left before the banner auto-hides (0 when it is hidden). Exposed
+   * so tests can pin the transient window without depending on how much of
+   * it the boot already consumed (AH-0MV8BQ75V005QNZ1).
+   */
+  getBannerTimeRemaining(): number {
+    return this.bannerTimer;
   }
 
   /** Seconds remaining on the transition pause (0 when not transitioning). */

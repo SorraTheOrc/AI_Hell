@@ -410,6 +410,13 @@ The following rules govern how enemy entities interact with each other and with 
 > boss encounter keeps its literal `Boss` label. Both surfaces read the single
 > `PlayScene._progressLabel()` helper so they cannot diverge.
 
+> **Transient announcement banner (AH-0MV8BQ75V005QNZ1).** The centred
+> transition/level-start banner is **transient** — it expires on its own after
+> **3.5 s** (`BANNER_DURATION_SECONDS`) even while enemies remain alive, so
+> it never blocks progress. Its background panel is **60 % opaque**
+> (`rgba(0, 0, 0, 0.6)`, `BANNER_BACKGROUND_ALPHA`), letting the player see
+> the field behind the announcement while keeping the white label legible.
+
 ---
 
 ## 4. Content Catalogs
