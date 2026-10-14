@@ -757,8 +757,8 @@ Power-ups are **constantly upgradable**, exactly like weapons: every power-up ca
 | **Shield** | Shield time (15 s → 30 s, k=0.12); Shield hits (1 → 3, k=0.5) |
 | **Bomb** | Bomb range (120 px → 320 px, k=0.3); Bomb rate (0.33/s → 1/s, k=0.35) |
 | **Speed Boost** | Speed boost (1.5× → 2.5×, k=0.2); Boost time (10 s → 20 s, k=0.12) |
-| **Phase Shift** | Phase time (1.5 s → 3 s, k=0.2); Phase charges (1 → 3, k=0.5) |
-| **Teleport** | Teleports (1 → 3, k=0.5); Arrival phase (1.5 s → 3 s, k=0.2) |
+| **Phase Shift** | Phase time (1.5 s → 3 s, k=0.2); Phase charges (1 → 3, k=0.5); Phase recharge (1/30 → 1/10 charges/s ≈ 30 s → 10 s, k=0.3) |
+| **Teleport** | Teleports (1 → 3, k=0.5); Arrival phase (1.5 s → 3 s, k=0.2); Teleport recharge (1/15 → 1/5 charges/s ≈ 15 s → 5 s, k=0.3) |
 | **Extra Life** | Lives (1 → 3, k=0.5); Life cap (5, flat) |
 | **Magnet** | Magnet stacks (1 → 5, k=0.35) |
 | **Mineral Scoop** | Scoop stacks (1 → 5, k=0.35) |

@@ -576,24 +576,17 @@ describe('PowerUpLevelStore — temporary/permanent split (F1 contract)', () => 
   });
 });
 
-// ── Recharge-time axes (AH-0MV82I6SJ002R3YW, test-first) ─────────────
+// ── Recharge-time axes (AH-0MV82I6SJ002R3YW / AH-0MV82I753002LT2W) ───
 //
-// Test-first contract for the recharge-rate level axes implemented by
-// AH-0MV82I753002LT2W ("Recharge-time level axes in the power-up
-// catalogue"). The project's build → test → commit gate forbids committing
-// a failing suite, so every assertion is wrapped in Vitest's `it.fails(...)`
-// — an **expected failure**, red today because `phaseRechargeRate` /
-// `teleportRechargeRate` are not yet in the catalogue.
-//
-// Once AH-0MV82I753002LT2W lands, each body stops throwing and `it.fails`
-// reports "expected test to fail, but it passed"; the implementation item
-// must then remove the `.fails` modifiers so these become hard gates.
-// The assertions read the not-yet-implemented axes by name (rather than
-// through the typed `PowerUpLevelStats` fields) so this first-red suite still
-// compiles against the pre-impl type union.
+// Test-first contract (AH-0MV82I6SJ002R3YW) for the recharge-rate level
+// axes, now a hard gate after AH-0MV82I753002LT2W landed the catalogue
+// entries. The assertions read the axes by name (rather than through the
+// typed `PowerUpLevelStats` fields) so the contract stays decoupled from the
+// field types; the store-level seconds accessors are covered at the end of
+// this block.
 
 describe('recharge-time level axes (AH-0MV82I6SJ002R3YW — test-first)', () => {
-  /** Reads a stat by name so the not-yet-implemented axes still compile. */
+  /** Reads a resolved stat by name (decoupled from the typed stats fields). */
   function rechargeStat(
     id: PowerUpId,
     variable: string,
@@ -631,7 +624,7 @@ describe('recharge-time level axes (AH-0MV82I6SJ002R3YW — test-first)', () => 
     },
   ] as const;
 
-  it.fails(
+  it(
     'resolves each recharge rate deterministically from base to cap (levels 0..8)',
     () => {
       for (const axis of AXES) {
@@ -659,7 +652,7 @@ describe('recharge-time level axes (AH-0MV82I6SJ002R3YW — test-first)', () => 
     },
   );
 
-  it.fails('shortens recharge time (1/rate seconds) as level rises', () => {
+  it('shortens recharge time (1/rate seconds) as level rises', () => {
     for (const axis of AXES) {
       const baseRate = rechargeStat(axis.id, axis.variable, 0) as number;
       expect(1 / baseRate).toBeCloseTo(axis.baseSeconds, 6);
@@ -682,7 +675,7 @@ describe('recharge-time level axes (AH-0MV82I6SJ002R3YW — test-first)', () => 
     }
   });
 
-  it.fails(
+  it(
     'surfaces the recharge-rate delta in the upgrade summary until it flattens',
     () => {
       for (const axis of AXES) {
@@ -703,7 +696,7 @@ describe('recharge-time level axes (AH-0MV82I6SJ002R3YW — test-first)', () => 
     },
   );
 
-  it.fails(
+  it(
     'registers both axes in POWER_UP_LEVEL_VARIABLES in catalogue order',
     () => {
       const variables = POWER_UP_LEVEL_VARIABLES as readonly string[];
@@ -731,4 +724,44 @@ describe('recharge-time level axes (AH-0MV82I6SJ002R3YW — test-first)', () => 
       ).toBe(true);
     },
   );
+
+  it('store accessors expose the level-derived recharge time in seconds (AC2)', () => {
+    const store = new PowerUpLevelStore();
+
+    // Unowned → upgrade level 0 → the catalogue base recharge time.
+    expect(store.phaseRechargeTime()).toBeCloseTo(30, 6);
+    expect(store.teleportRechargeTime()).toBeCloseTo(15, 6);
+
+    const cases = [
+      {
+        id: 'phase_shift' as PowerUpId,
+        base: 30,
+        cap: 10,
+        read: () => store.phaseRechargeTime(),
+      },
+      {
+        id: 'teleport' as PowerUpId,
+        base: 15,
+        cap: 5,
+        read: () => store.teleportRechargeTime(),
+      },
+    ] as const;
+
+    for (const { id, base, cap, read } of cases) {
+      store.reset();
+      expect(read()).toBeCloseTo(base, 6);
+      let previous = read();
+      for (let i = 0; i < 60; i++) {
+        store.collect(id);
+        const current = read();
+        // Higher levels never recharge slower…
+        expect(current).toBeLessThanOrEqual(previous + 1e-9);
+        // …and never faster than the catalogue cap time.
+        expect(current).toBeGreaterThanOrEqual(cap - 1e-9);
+        previous = current;
+      }
+      // Saturates at the cap time after enough levels.
+      expect(previous).toBeCloseTo(cap, 3);
+    }
+  });
 });

@@ -97,8 +97,12 @@ export type PowerUpLevelVariable =
   | 'phaseDuration'
   /** Phase Shift — auto-activation charges granted per pickup. */
   | 'phaseCharges'
+  /** Phase Shift — recharge rate for consumed charges, in charges/second. */
+  | 'phaseRechargeRate'
   /** Teleport — stored stacks granted per pickup. */
   | 'teleportStacks'
+  /** Teleport — recharge rate for consumed teleports, in charges/second. */
+  | 'teleportRechargeRate'
   /** Teleport — arrival Phase Shift duration in seconds. */
   | 'teleportPhaseDuration'
   /** Extra Life — lives granted per pickup. */
@@ -134,7 +138,9 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'speedDuration',
   'phaseDuration',
   'phaseCharges',
+  'phaseRechargeRate',
   'teleportStacks',
+  'teleportRechargeRate',
   'teleportPhaseDuration',
   'lifeGain',
   'livesCap',
@@ -341,6 +347,25 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'grants the second charge at the first upgrade. The hold-full Phase Shift ' +
         'reward remains unlimited (permanent) and is unaffected.',
     },
+    {
+      variable: 'phaseRechargeRate',
+      powerUpId: 'phase_shift',
+      label: 'Phase recharge',
+      unit: '/s',
+      description: 'Recharge rate for a consumed Phase Shift charge, in charges per second.',
+      curve: 'exponential-saturation',
+      base: 1 / 30,
+      cap: 1 / 10,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'Stored as charges/second so the axis stays monotonic non-decreasing ' +
+        '(the recharge engine computes 1/rate → 30 s base, 10 s cap). A ' +
+        'levelled charge therefore recovers sooner; k=0.3 front-loads the ' +
+        'first upgrade (~20 s) before diminishing, mirroring the Bomb/Smart ' +
+        'Bomb frequency axes. The 10 s cap keeps a levelled charge a ' +
+        'meaningful but finite recovery rather than near-instant.',
+    },
   ],
 
   // Teleport — stored FIFO uses, S/↓ to activate.
@@ -359,6 +384,25 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       rationale:
         'Stored uses are a consumable escape; the cap is small (3) and ' +
         'k=0.5 grants a second use at the first upgrade, then flattens.',
+    },
+    {
+      variable: 'teleportRechargeRate',
+      powerUpId: 'teleport',
+      label: 'Teleport recharge',
+      unit: '/s',
+      description: 'Recharge rate for a consumed Teleport charge, in charges per second.',
+      curve: 'exponential-saturation',
+      base: 1 / 15,
+      cap: 1 / 5,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'Stored as charges/second so the axis stays monotonic non-decreasing ' +
+        '(the recharge engine computes 1/rate → 15 s base, 5 s cap). ' +
+        'Teleport is the more reactive escape, so both its base and cap are ' +
+        'shorter than Phase Shift; k=0.3 front-loads the first upgrade ' +
+        '(~10 s) before diminishing. The 5 s cap keeps a levelled escape ' +
+        'finite but snappy.',
     },
     {
       variable: 'teleportPhaseDuration',
@@ -644,8 +688,12 @@ export interface PowerUpLevelStats {
   phaseDuration?: number;
   /** Phase Shift — auto-activation charges granted per pickup. */
   phaseCharges?: number;
+  /** Phase Shift — recharge rate for consumed charges (charges/second). */
+  phaseRechargeRate?: number;
   /** Teleport — stored teleport uses granted per pickup. */
   teleportStacks?: number;
+  /** Teleport — recharge rate for consumed teleports (charges/second). */
+  teleportRechargeRate?: number;
   /** Teleport — arrival Phase Shift duration in seconds. */
   teleportPhaseDuration?: number;
   /** Extra Life — lives granted per pickup. */
@@ -953,6 +1001,18 @@ export class PowerUpLevelStore {
     return true;
   }
 
+  /**
+   * Teleport recharge time in **seconds** — the seconds inverse (`1 / rate`)
+   * of the level-derived
+   * {@link PowerUpLevelStats.teleportRechargeRate}. A higher level resolves a
+   * shorter time (15 s at base → 5 s at the cap). This is the API surface the
+   * recharge engine consumes when a teleport charge is spent.
+   */
+  teleportRechargeTime(): number {
+    const rate = this.stats('teleport').teleportRechargeRate ?? 0;
+    return rate > 0 ? 1 / rate : 0;
+  }
+
   /** Stored Phase Shift auto-activation charges (level-derived grants, minus consumes). */
   phaseCharges(): number {
     return this._phaseCharges;
@@ -972,6 +1032,18 @@ export class PowerUpLevelStore {
     if (this._phaseCharges <= 0) return false;
     this._phaseCharges -= 1;
     return true;
+  }
+
+  /**
+   * Phase Shift recharge time in **seconds** — the seconds inverse
+   * (`1 / rate`) of the level-derived
+   * {@link PowerUpLevelStats.phaseRechargeRate}. A higher level resolves a
+   * shorter time (30 s at base → 10 s at the cap). This is the API surface the
+   * recharge engine consumes when a Phase Shift charge is spent.
+   */
+  phaseRechargeTime(): number {
+    const rate = this.stats('phase_shift').phaseRechargeRate ?? 0;
+    return rate > 0 ? 1 / rate : 0;
   }
 
   /** Current lives (Extra Life model); starts at the configured start, capped. */
