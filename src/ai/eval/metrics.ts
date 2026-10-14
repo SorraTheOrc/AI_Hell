@@ -447,6 +447,52 @@ export function aggregateBalanceStats(
   };
 }
 
+/**
+ * An **incremental** balance-statistics aggregator (batch runner,
+ * AH-0MV81YTOT007V1HF, epic AC3 "bounded memory").
+ *
+ * Fold one run's {@link BalanceRunStats} at a time with {@link add}; the
+ * caller discards each run's raw telemetry, so the batch's retained state is
+ * bounded by small per-run summaries rather than by telemetry volume.
+ * `toAggregate()` returns the **exact** aggregate — byte-equivalent to
+ * {@link aggregateBalanceStats} over the same series — so an incrementally
+ * aggregated batch is reproducible and identical to a one-shot aggregation.
+ */
+export interface BalanceAggregator {
+  /** The number of runs folded so far. */
+  readonly size: number;
+  /**
+   * Folds one run's statistics. Throws on a {@link BalanceRunStats} whose
+   * schemaVersion mismatches {@link BALANCE_STATISTICS_SCHEMA_VERSION}, so a
+   * mixed-schema stream cannot silently corrupt an aggregate.
+   */
+  add(point: BalanceRunStats): void;
+  /** The exact aggregate of every run folded so far. */
+  toAggregate(): BalanceAggregate;
+}
+
+/** Creates an incremental, schema-guarded balance-statistics aggregator. */
+export function createBalanceAggregator(): BalanceAggregator {
+  const points: BalanceRunStats[] = [];
+  return {
+    get size(): number {
+      return points.length;
+    },
+    add(point: BalanceRunStats): void {
+      if (point.schemaVersion !== BALANCE_STATISTICS_SCHEMA_VERSION) {
+        throw new Error(
+          `balance-statistics schema mismatch: got ${point.schemaVersion}, ` +
+            `expected ${BALANCE_STATISTICS_SCHEMA_VERSION}`,
+        );
+      }
+      points.push(point);
+    },
+    toAggregate(): BalanceAggregate {
+      return aggregateBalanceStats(points);
+    },
+  };
+}
+
 /** Compares two runs recorded on the same seed (AC2, bot-vs-human or bot-vs-bot). */
 export function compareSameSeed(
   a: RecordingRun,
