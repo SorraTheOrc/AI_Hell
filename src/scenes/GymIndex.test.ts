@@ -95,7 +95,9 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     // the dedicated "Boss" row in the ENEMIES column instead
     // (AH-0MUAYB28C004KK7X, AH-0MV13G5EV008D41E). GymCentipede is likewise
     // excluded from the plain scene list and surfaced as a dedicated ENEMIES
-    // row (AH-0MV4ZOIZR0086T66). Labels strip the leading "Gym" and are
+    // row (AH-0MV4ZOIZR0086T66). GymPowerUpLeveling (the power-up leveling
+    // gallery, AH-0MUV5CLVQ006V9HR) is auto-discovered like every
+    // `Gym<Name>.ts`. Labels strip the leading "Gym" and are
     // sorted alphabetically. GymFodderEnemies is not listed as a bare scene
     // — a single fodder row boots it.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
@@ -103,6 +105,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'Level',
       'Minerals',
       'Player',
+      'PowerUpLeveling',
       'PowerUpsCombat',
       'PowerUpsUtility',
       'WeaponLeveling',
@@ -113,6 +116,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
       'GymLevel',
       'GymMinerals',
       'GymPlayer',
+      'GymPowerUpLeveling',
       'GymPowerUpsCombat',
       'GymPowerUpsUtility',
       'GymWeaponLeveling',
