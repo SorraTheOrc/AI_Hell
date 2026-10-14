@@ -1397,6 +1397,77 @@ describe('Player — Asteroids control scheme', () => {
     for (const r of small) expect(r).toBeCloseTo(1.12, 5);
   });
 
+  // ── Concave rear hull (AC1/AC3/AC5, AH-0MV78PAX3002MO20) ────────
+
+  it('cuts a concave rear notch into the Asteroids hull: extra interior vertex, still circumradius shipSize/2, not rotationally invariant (AC1)', async () => {
+    const player = await bootAsteroidsPlayer();
+
+    // Capture the body path vertices as the renderer issues them.
+    // Idle (no input) → only the hull is drawn, no flame commands.
+    const moveTo = { x: 0, y: 0 };
+    const vertices: Array<{ x: number; y: number }> = [];
+    vi.spyOn(player, 'moveTo').mockImplementation(
+      (x: number, y: number) => {
+        moveTo.x = x;
+        moveTo.y = y;
+        return player;
+      },
+    );
+    const lineToSpy = vi
+      .spyOn(player, 'lineTo')
+      .mockImplementation((x: number, y: number) => {
+        vertices.push({ x, y });
+        return player;
+      });
+
+    // A redraw of the body in the Asteroids scheme: setConfig re-draws
+    // immediately (scheme unchanged → exactly one redraw).
+    player.setConfig({ ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
+
+    // Hexagon + one V-notch vertex → 7 edge segments (the four-directional
+    // hull has 6). The explicit closing edge returns to the start vertex.
+    expect(lineToSpy).toHaveBeenCalledTimes(7);
+
+    const half = DEFAULT_CONFIG.shipSize / 2;
+    const all: Array<{ x: number; y: number }> = [];
+    for (const v of [{ x: moveTo.x, y: moveTo.y }, ...vertices]) {
+      if (!all.some((p) => p.x === v.x && p.y === v.y)) all.push(v);
+    }
+    expect(all).toHaveLength(7);
+
+    // AC3 — the bounding circumradius is unchanged: six outer vertices on
+    // the shipSize/2 circle, exactly one interior notch vertex inside it.
+    const onCircle = all.filter((v) => Math.abs(Math.hypot(v.x, v.y) - half) < 1e-6);
+    const interior = all.filter((v) => Math.hypot(v.x, v.y) < half - 1e-6);
+    expect(onCircle).toHaveLength(6);
+    expect(interior).toHaveLength(1);
+    for (const v of all) {
+      expect(Math.hypot(v.x, v.y)).toBeLessThanOrEqual(half + 1e-9);
+    }
+
+    // AC1 — the interior vertex sits on the rear (-x) side, mid-edge on the
+    // straight rear edge (x = -sx), pulled a shallow depth toward the centre.
+    const notch = interior[0];
+    const sx = (half * Math.sqrt(3)) / 2;
+    expect(notch.x).toBeGreaterThan(-sx); // inward from the straight rear edge
+    expect(notch.x).toBeLessThan(0);
+    expect(notch.y).toBeCloseTo(0, 6);
+    // Subtle: the notch depth (inward from the straight rear edge) is a small
+    // fraction of the circumradius, never a deep cut or arrowhead.
+    expect(notch.x + sx).toBeLessThanOrEqual(half * 0.2 + 1e-9);
+
+    // AC5 — not rotationally invariant: a 60° rotation moves the unique rear
+    // notch to a different angular position, so the vertex set changes.
+    const rotate60 = (v: { x: number; y: number }) => ({
+      x: v.x * Math.cos(Math.PI / 3) - v.y * Math.sin(Math.PI / 3),
+      y: v.x * Math.sin(Math.PI / 3) + v.y * Math.cos(Math.PI / 3),
+    });
+    const rotated = all.map(rotate60);
+    const sameSet = (a: Array<{ x: number; y: number }>, b: Array<{ x: number; y: number }>) =>
+      a.every((p) => b.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < 1e-6));
+    expect(sameSet(rotated, all)).toBe(false);
+  });
+
   it('ramps to rotationSpeed while a turn key is held (AC1)', async () => {
     const player = await bootAsteroidsPlayer();
 

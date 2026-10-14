@@ -1,6 +1,8 @@
 /**
  * Player ship entity — a single Graphics object rendering the neon
- * direction-neutral hexagon hull and (while thrusting) flames on the
+ * geometric hull (invariant hexagon in the four-directional scheme; a
+ * concave-rear hexagon that points along the direction of travel in the
+ * Asteroids scheme) and (while thrusting) flames on the
  * engines opposing the thrust.
  *
  * Rendering is delegated to Phaser.GameObjects.Graphics so the ship is
@@ -185,13 +187,33 @@ type PlayerMovementConfig = MovementConfig & {
 };
 
 /**
- * The player ship renders as a cyan hexagon (flat top/bottom, centred
- * at its origin): a regular hexagon is invariant under 60° rotation,
- * so the hull never implies a heading (GDD §7.2 — geometric, angular
- * shapes; direction-neutral so thrust direction is read from the
- * engines' flames, not the silhouette). In the Asteroids scheme the
- * whole object (hull + engines) rotates by the facing angle so the
- * engine positions make the rotation visible (AC2).
+ * Depth of the Asteroids hull's concave rear notch, as a fraction of the
+ * hull circumradius `r`. The notch is an **inward** cut: the rear edge's
+ * mid vertex is pulled this far toward the hull centre along +x, staying
+ * inside the circumradius so the bounding circle (and the `shipSize / 2`
+ * semantics) is unchanged. Kept shallow so the forward cue stays subtle
+ * (AC1, GDD §7.2); the four-directional scheme keeps its invariant regular
+ * hexagon (no notch).
+ */
+const ASTEROIDS_REAR_NOTCH_DEPTH_FACTOR = 0.2;
+
+/**
+ * The player ship renders as a cyan hexagon (flat top/bottom, centred at
+ * its origin) drawn stroke-only in the neon palette (GDD §7.2). The hull
+ * is **scheme-dependent** (AH-0MV78PAX3002MO20):
+ * - `fourDirectional`: the invariant regular hexagon is retained. A
+ *   regular hexagon is invariant under 60° rotation, so the hull never
+ *   implies a heading — in a thrust-based scheme each axis is a valid
+ *   forward, so thrust direction is read from the engine flames, not the
+ *   silhouette.
+ * - `asteroids`: the hexagon's rear edge (-x, opposite the nose) is cut
+ *   into a shallow **concave** V-notch, so the silhouette points along the
+ *   direction of travel while turning and thrusting. The whole object
+ *   (hull + engines) rotates by the facing angle so the cue visibly follows
+ *   the heading (AC2); stationary keeps the most recent heading.
+ * All outer hull vertices keep the `shipSize / 2` circumradius (the notch
+ * is an inward cut) and the engine ports stay in the same local frame
+ * (AC3).
  */
 export class Player extends Phaser.GameObjects.Graphics {
   private _movementState: MovementState & { facing?: number; angularVelocity?: number };
@@ -336,15 +358,21 @@ export class Player extends Phaser.GameObjects.Graphics {
     return (this._shipSize / 2) * multiplier;
   }
 
-  /** Redraws the whole ship (body, plus flame when one is visible). */
+  /**
+   * Redraws the whole ship (body, plus flame when one is visible).
+   *
+   * The hull is a hexagon whose circumradius is `shipSize / 2`, preserving
+   * `shipSize` semantics for physics-adjacent callers. The four-directional
+   * scheme draws the invariant regular hexagon; the Asteroids scheme cuts a
+   * shallow concave notch into the rear (-x) edge so the silhouette points
+   * in the direction of travel (AC1). Every outer vertex stays on the
+   * circumradius circle — the notch is an inward cut that never expands the
+   * bounding circle (AC3).
+   */
   private _redraw(): void {
     this.clear();
     this.lineStyle(2, this._shipColor, 1);
 
-    // Direction-neutral hexagon with flat top/bottom, centred at the
-    // origin — invariant under 60° rotation. Circumradius = shipSize / 2
-    // (the same half-size the chevron used), preserving `shipSize`
-    // semantics for physics-adjacent callers.
     const r = this._half(1);
     const sx = (r * Math.sqrt(3)) / 2; // r·cos(30°) — half-width
     const sy = r / 2; // r·sin(30°) — corner y-offset
@@ -354,6 +382,14 @@ export class Player extends Phaser.GameObjects.Graphics {
     this.lineTo(sx, sy);
     this.lineTo(0, r);
     this.lineTo(-sx, sy);
+    if (this._scheme === 'asteroids') {
+      // Concave rear edge (AC1): the straight -x edge is replaced by a
+      // shallow inward V-notch (one interior vertex on the -x side), so
+      // the hull has a forward cue that rotates with the facing. The
+      // notch vertex stays inside the circumradius (bounding circle
+      // unchanged, AC3).
+      this.lineTo(-sx + r * ASTEROIDS_REAR_NOTCH_DEPTH_FACTOR, 0);
+    }
     this.lineTo(-sx, -sy);
     this.lineTo(0, -r); // explicit closing edge back to the top vertex
     this.closePath();
