@@ -281,9 +281,20 @@ export function playTankAdvanceCue(): void {
   playCue('playTankAdvanceCue');
 }
 
+/**
+ * Linear gain applied to the Tank/Scout enemy **shot** cues so enemy fire
+ * sits at half volume in the mix (AH-0MV74ROYR009X8U3). The advance whines
+ * and every other cue are unchanged; a single named constant keeps the trim
+ * tunable in one place (precedent: `HOLD_FULL_FIRE_VOLUME_SCALE`).
+ */
+export const ENEMY_SHOT_VOLUME_SCALE = 0.5;
+
 /** Heavy low cannon thump — E3 Tank fire, scheduled at the advance cue's end. */
 export function playTankFireSound(): void {
-  playCue('playTankFireSound', { delay: TANK_ADVANCE_CUE_DURATION });
+  playCue('playTankFireSound', {
+    delay: TANK_ADVANCE_CUE_DURATION,
+    volume: ENEMY_SHOT_VOLUME_SCALE,
+  });
 }
 
 /** Duration (seconds) of the Phaser advance tell. */
@@ -309,7 +320,10 @@ export function playScoutAdvanceCue(): void {
 
 /** Sharp laser blip — E1 Scout fire, scheduled at the advance cue's end. */
 export function playScoutFireSound(): void {
-  playCue('playScoutFireSound', { delay: SCOUT_ADVANCE_CUE_DURATION });
+  playCue('playScoutFireSound', {
+    delay: SCOUT_ADVANCE_CUE_DURATION,
+    volume: ENEMY_SHOT_VOLUME_SCALE,
+  });
 }
 
 // ── Enemy cues ──────────────────────────────────────────────────────

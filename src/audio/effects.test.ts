@@ -226,6 +226,32 @@ describe('volume and mute', () => {
   });
 });
 
+// ── 3a. Enemy shot volume (AH-0MV74ROYR009X8U3) ─────────────────────
+
+describe('enemy shot volume (AH-0MV74ROYR009X8U3)', () => {
+  it('ENEMY_SHOT_VOLUME_SCALE is a single named 0.5 tunable', () => {
+    expect(effects.ENEMY_SHOT_VOLUME_SCALE).toBe(0.5);
+  });
+
+  it('playTankFireSound plays the baked tank-fire asset at half volume', () => {
+    effects.playTankFireSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-tank-fire.32141.wav');
+    expect(recording.plays[0].volume).toBe(effects.ENEMY_SHOT_VOLUME_SCALE);
+    // The advance-cue no-gap delay is preserved.
+    expect(recording.plays[0].delay).toBe(effects.TANK_ADVANCE_CUE_DURATION);
+  });
+
+  it('playScoutFireSound plays the baked scout laser asset at half volume', () => {
+    effects.playScoutFireSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/weapon-laser-zap.1.wav');
+    expect(recording.plays[0].volume).toBe(effects.ENEMY_SHOT_VOLUME_SCALE);
+    // The advance-cue no-gap delay is preserved.
+    expect(recording.plays[0].delay).toBe(effects.SCOUT_ADVANCE_CUE_DURATION);
+  });
+});
+
 // ── 3b. Shared player-weapon fire dispatcher (AH-0MV55O9R5005W6J0) ──
 
 describe('playWeaponFireSound — shared player-fire path', () => {

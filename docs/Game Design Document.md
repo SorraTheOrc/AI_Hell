@@ -1344,7 +1344,7 @@ The former procedural Web Audio synthesis has been **removed**. The **one** runt
 | **Impacts** | Player bullet hits enemy | Very short tick | Low | Immediate |
 | **Impacts** | Player bullet destroys enemy bullet | Dedicated high, very short tick (`playBulletDestructionSound()`; distinct from the heavier enemy-destruction fall) + small impact flash | Low | Immediate |
 | **Enemy actions** | Enemy spawn | Subtle hum rise | Low | Immediate |
-| **Enemy actions** | Enemy fire (Level 4+) | Short zap | Low-medium | Immediate |
+| **Enemy actions** | Enemy fire (Level 4+) | Short zap; the per-enemy Tank/Scout shots (heavy cannon thump / sharp laser blip) play at **half volume** (`ENEMY_SHOT_VOLUME_SCALE` 0.5, AH-0MV74ROYR009X8U3) | Low-medium | Immediate |
 | **Enemy actions** | Dive bomb attack | Descending tone | Medium | ≥ 500 ms advance |
 | **Run flow** | Victory (boss defeated) | Bright **two-phrase** major fanfare: rising arpeggio (C5 → E5 → G5 → C6) then a faster rising cadence (C6 → E6 → G6 → C7) resolving into a sustained major chord over a C4/G4 bass bed, with a high sparkle flourish and a soft high-pass shimmer crackle tail (`playVictoryFanfareSound()`), ~3.3 s | Medium | Immediate |
 | **Run flow** | Defeat (run lost) | Slow **five-note** descending sombre line (G4 → F4 → D4 → B3 → G3) over a sinking 98 Hz drone with a dark low-pass rumble tail (`playDefeatStingSound()`), distinct from the player-destruction cue, ~2.9 s | Medium | Immediate |
@@ -1385,7 +1385,11 @@ cue flowing with **no gap** into a sharp square-wave shot blip, with the fire
 sound scheduled at the cue's end; the E3 Tank (gym scene `GymTank`) uses a
 rising mechanical-whine advance cue flowing with **no gap** into a heavy low
 cannon thump, one cue+thump pair per radial burst, instead of the generic
-"short zap". See `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` for the per-enemy
+"short zap". The E3 Tank and E1 Scout **shot** cues play at **half volume**
+(`ENEMY_SHOT_VOLUME_SCALE` 0.5) so enemy fire reads clearly without
+dominating the mix (AH-0MV74ROYR009X8U3); their advance whines/blips remain at
+full volume, since those are telegraphs rather than shots. See
+`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` for the per-enemy
 audio decisions and the implementation best practices (which audio is owned by
 the base scene, where entity-specific sounds are orchestrated, and the no-gap
 pattern).
