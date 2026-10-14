@@ -204,6 +204,36 @@ pixel-accurate, full-stack verification use the browser capture path
   parsing and pure CLI-core behaviour.
 - `src/ai/eval/balancingDocs.test.ts` — this document's contract.
 
+## Acceptance-verification run (2026-10-14, AH-0MV81Z9EI005TQMB)
+
+Recorded evidence for the epic's end-to-end acceptance verification (epic
+AC1/AC2/AC5, verifier AC1–AC5). The batch was run at commit
+`d31906f5` of the automated-balancing work, on the **real** balance data files
+(`src/data/enemy-configs.csv`, `ship-config.csv`, `difficulty-curves.csv` via
+`loadBalanceConfig()`), against a clean checkout (no local edits).
+
+1. **100-game batch (AC1).** `node scripts/evaluate.mjs --batch --games 100
+   --out <dir>` (competent policy, seeds 1..100, 1800 ticks) completed in
+   ≈18 s and wrote all three artifacts: `balance-report.json`
+   (36,709 bytes), `balance-report.txt` (1,730 bytes, human-readable
+   distribution summary) and `runs.jsonl` (raw telemetry, 169,437 records).
+2. **Byte-identical replay (AC2).** Re-running the identical command to a
+   second directory and diffing produced **empty** diffs for
+   `balance-report.json`, `balance-report.txt` and `runs.jsonl` — the report
+   is reproducible byte-for-byte for the same seed + config + policy. Example
+   aggregate (n=100): minerals mean 5.55 (med 6, min 0, max 11, sd 2.66);
+   survival 27.94 s (sd 5.52); boss kills 0.97; power-ups 0.56.
+3. **CSV-edit sensitivity (AC3).** Raising `boss` `health` in
+   `enemy-configs.csv` from `1` to `6` changed the batch report for the same
+   seeds: `kills[boss]` mean 0.97 → 0.57, `mineralsCollected` 5.55 → 4.29,
+   `avoidableHits` 0.90 → 1.30, `capturer` kills 1.16 → 0.93. The edit was
+   then reverted; the checkout returned to clean.
+4. **Full suite (epic AC7).** `run_tests.py --scope full` at the same commit
+   passed: 254 test files / 5,292 tests, 0 failures.
+
+Artifacts from this run are git-ignored (see `/.gitignore` `eval-output/`);
+the commands and aggregate evidence above are the durable record.
+
 ## Related work
 
 - Epic: **Automated Balancing** (AH-0MV1DLUZ8009OCJW).
