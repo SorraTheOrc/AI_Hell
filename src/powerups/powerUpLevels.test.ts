@@ -575,3 +575,160 @@ describe('PowerUpLevelStore — temporary/permanent split (F1 contract)', () => 
     expect(store.getLevels()).toEqual([]);
   });
 });
+
+// ── Recharge-time axes (AH-0MV82I6SJ002R3YW, test-first) ─────────────
+//
+// Test-first contract for the recharge-rate level axes implemented by
+// AH-0MV82I753002LT2W ("Recharge-time level axes in the power-up
+// catalogue"). The project's build → test → commit gate forbids committing
+// a failing suite, so every assertion is wrapped in Vitest's `it.fails(...)`
+// — an **expected failure**, red today because `phaseRechargeRate` /
+// `teleportRechargeRate` are not yet in the catalogue.
+//
+// Once AH-0MV82I753002LT2W lands, each body stops throwing and `it.fails`
+// reports "expected test to fail, but it passed"; the implementation item
+// must then remove the `.fails` modifiers so these become hard gates.
+// The assertions read the not-yet-implemented axes by name (rather than
+// through the typed `PowerUpLevelStats` fields) so this first-red suite still
+// compiles against the pre-impl type union.
+
+describe('recharge-time level axes (AH-0MV82I6SJ002R3YW — test-first)', () => {
+  /** Reads a stat by name so the not-yet-implemented axes still compile. */
+  function rechargeStat(
+    id: PowerUpId,
+    variable: string,
+    level: number,
+  ): number | undefined {
+    return (
+      resolvePowerUpAtLevel(id, level) as unknown as Record<
+        string,
+        number | undefined
+      >
+    )[variable];
+  }
+
+  /**
+   * The two recharge-rate axes and their pinned base/cap values (plan Q1:
+   * stored as increasing charges/second). The AC's seconds inverse is
+   * `1 / rate`: 1/30 → 30 s, 1/10 → 10 s; 1/15 → 15 s, 1/5 → 5 s.
+   */
+  const AXES = [
+    {
+      id: 'phase_shift' as PowerUpId,
+      variable: 'phaseRechargeRate',
+      base: 1 / 30,
+      cap: 1 / 10,
+      baseSeconds: 30,
+      capSeconds: 10,
+    },
+    {
+      id: 'teleport' as PowerUpId,
+      variable: 'teleportRechargeRate',
+      base: 1 / 15,
+      cap: 1 / 5,
+      baseSeconds: 15,
+      capSeconds: 5,
+    },
+  ] as const;
+
+  it.fails(
+    'resolves each recharge rate deterministically from base to cap (levels 0..8)',
+    () => {
+      for (const axis of AXES) {
+        // Determinism: the same (id, level) always resolves the same value.
+        expect(rechargeStat(axis.id, axis.variable, 3)).toBe(
+          rechargeStat(axis.id, axis.variable, 3),
+        );
+        // Base at level 0, then monotonic non-decreasing and capped.
+        expect(rechargeStat(axis.id, axis.variable, 0)).toBeCloseTo(
+          axis.base,
+          10,
+        );
+        let previous = axis.base;
+        for (let level = 0; level <= 8; level++) {
+          const value = rechargeStat(axis.id, axis.variable, level);
+          expect(value).toBeGreaterThanOrEqual(previous - 1e-12);
+          expect(value).toBeLessThanOrEqual(axis.cap + 1e-12);
+          previous = value as number;
+        }
+        expect(rechargeStat(axis.id, axis.variable, 1_000_000)).toBeCloseTo(
+          axis.cap,
+          10,
+        );
+      }
+    },
+  );
+
+  it.fails('shortens recharge time (1/rate seconds) as level rises', () => {
+    for (const axis of AXES) {
+      const baseRate = rechargeStat(axis.id, axis.variable, 0) as number;
+      expect(1 / baseRate).toBeCloseTo(axis.baseSeconds, 6);
+
+      let previousSeconds = 1 / baseRate;
+      for (let level = 1; level <= 8; level++) {
+        const rate = rechargeStat(axis.id, axis.variable, level) as number;
+        const seconds = 1 / rate;
+        // A higher level never recharges slower than a lower level.
+        expect(seconds).toBeLessThanOrEqual(previousSeconds + 1e-9);
+        previousSeconds = seconds;
+      }
+
+      const capRate = rechargeStat(
+        axis.id,
+        axis.variable,
+        1_000_000,
+      ) as number;
+      expect(1 / capRate).toBeCloseTo(axis.capSeconds, 6);
+    }
+  });
+
+  it.fails(
+    'surfaces the recharge-rate delta in the upgrade summary until it flattens',
+    () => {
+      for (const axis of AXES) {
+        const summary = summarisePowerUpLevelChange(axis.id, 0, 1);
+        expect(summary.length).toBeGreaterThan(0);
+        // The summary names the axis using its catalogue label metadata.
+        const spec = POWER_UP_LEVEL_SPECS[axis.id].find(
+          (s) => (s.variable as string) === axis.variable,
+        );
+        expect(spec, `${axis.variable} spec missing`).toBeDefined();
+        expect(spec!.label.length).toBeGreaterThan(0);
+        expect(summary).toContain(spec!.label);
+      }
+      // Once the curve has flattened the summary is empty (the recharge-rate
+      // axes are omitted along with the rest).
+      expect(summarisePowerUpLevelChange('phase_shift', 1_000, 1_001)).toBe('');
+      expect(summarisePowerUpLevelChange('teleport', 1_000, 1_001)).toBe('');
+    },
+  );
+
+  it.fails(
+    'registers both axes in POWER_UP_LEVEL_VARIABLES in catalogue order',
+    () => {
+      const variables = POWER_UP_LEVEL_VARIABLES as readonly string[];
+      const phaseIndex = variables.indexOf('phaseRechargeRate');
+      const teleportIndex = variables.indexOf('teleportRechargeRate');
+      expect(phaseIndex).toBeGreaterThanOrEqual(0);
+      expect(teleportIndex).toBeGreaterThanOrEqual(0);
+      // Each axis sits after its power-up's existing variables (catalogue
+      // order) and the phase_shift bucket precedes the teleport bucket.
+      expect(phaseIndex).toBeGreaterThan(variables.indexOf('phaseCharges'));
+      expect(teleportIndex).toBeGreaterThan(
+        variables.indexOf('teleportStacks'),
+      );
+      expect(phaseIndex).toBeLessThan(teleportIndex);
+      // The specs live in their power-up's bucket.
+      expect(
+        POWER_UP_LEVEL_SPECS.phase_shift.some(
+          (s) => (s.variable as string) === 'phaseRechargeRate',
+        ),
+      ).toBe(true);
+      expect(
+        POWER_UP_LEVEL_SPECS.teleport.some(
+          (s) => (s.variable as string) === 'teleportRechargeRate',
+        ),
+      ).toBe(true);
+    },
+  );
+});
