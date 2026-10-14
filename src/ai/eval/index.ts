@@ -11,7 +11,18 @@
  * });
  * ```
  *
- * See `docs/EVALUATION.md` for how to run the CLI and interpret the report.
+ * The automated-balancing surface (batch runner and the **shared
+ * balance-statistics schema**, epic AH-0MV1DLUZ8009OCJW) is exported here
+ * too, so consumers import one schema instead of duplicating it:
+ *
+ * ```ts
+ * import { runBatch, BALANCE_STATISTICS_SCHEMA_VERSION } from './ai/eval';
+ *
+ * const { report, json } = runBatch({ seeds: [...Array(100).keys()].map(i => i + 1), ticks: 1800 });
+ * ```
+ *
+ * See `docs/EVALUATION.md` for how to run the CLI and interpret the report,
+ * and `docs/BALANCING.md` for the batch mode and balance-statistics schema.
  *
  * @module src/ai/eval
  */

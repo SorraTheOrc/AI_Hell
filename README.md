@@ -602,6 +602,18 @@ documented in **[docs/EVALUATION.md](./docs/EVALUATION.md)**
 flags, metrics and how to interpret the A/B confidence interval); it writes
 `report.json` and `runs.jsonl` under the git-ignored `eval-output/`.
 
+#### Automated balancing (batch)
+
+The same harness also runs **automated balancing**: a batch of hundreds of
+deterministic bot games against the real balance data files
+(`src/data/enemy-configs.csv`, `ship-config.csv`, `difficulty-curves.csv`),
+aggregated into full balance statistics (minerals, upgrades per choice id,
+kills per archetype, asteroids, power-ups, avoidable hits, survival, wave and
+level reached) with distribution summaries, written as versioned JSON plus a
+human-readable report. Run it with `npm run evaluate -- --batch`; see
+**[docs/BALANCING.md](./docs/BALANCING.md)** for the flags, the statistics
+schema and how to interpret the distributions (epic AH-0MV1DLUZ8009OCJW).
+
 #### Style matching from telemetry
 
 The pipeline that makes the bot **match a recorded player's style** — extract

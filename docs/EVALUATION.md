@@ -8,7 +8,11 @@ The evaluation harness is how we **re-run the bot's production code** after a
 change and answer "is it better?" without a human in the loop. It runs a real
 bot policy headlessly on fixed seeds, emits telemetry, aggregates metrics,
 compares two bot versions (A/B) with a confidence interval, and compares the
-bot against a recorded human run on the same seed.
+bot against a recorded human run on the same seed. For **automated
+balancing** — simulating hundreds of deterministic games against the real
+balance data files and reading their aggregated statistics (minerals,
+upgrades, kills per archetype, survival, wave reached) — see
+[`docs/BALANCING.md`](./BALANCING.md).
 
 ## Why same-seed
 
@@ -29,6 +33,12 @@ npm run evaluate
 
 # evaluate five seeds and print the machine-readable report
 npm run evaluate -- --seeds 5 --json
+
+# automated balancing: 100 deterministic games, full balance report
+npm run evaluate -- --batch
+
+# a 300-game balance batch across two policies (see docs/BALANCING.md)
+npm run evaluate -- --batch --games 300 --policies competent,legacy
 
 # A/B the legacy ladder against the competent bot over 10 seeds
 npm run evaluate -- --baseline legacy --candidate competent --seeds 10
@@ -232,11 +242,15 @@ so a recorded capture can be analysed with `npm run analyse`.
 - `src/ai/eval/cli.test.ts` — pure CLI-core behaviour.
 - `scripts/evaluate-args.test.ts` — the shell's argument parsing.
 - `src/ai/eval/evaluationDocs.test.ts` — this document's key sections.
+- `src/ai/eval/balancingDocs.test.ts` — the automated-balancing document's
+  contract ([`docs/BALANCING.md`](./BALANCING.md)).
 
 ## Related work
 
 - Epic: **Realistic demo/attract bot framework + playtester telemetry**
   (AH-0MUY089KR003F8S4).
+- Automated balancing (batch runner + shared balance-statistics schema, epic
+  AH-0MV1DLUZ8009OCJW): [`docs/BALANCING.md`](./BALANCING.md).
 - Telemetry: [`docs/TELEMETRY.md`](./TELEMETRY.md).
 - Bot framework: [`docs/BOT_FRAMEWORK.md`](./BOT_FRAMEWORK.md).
 - Recording/replay: [`docs/dev/recording-and-replay.md`](./dev/recording-and-replay.md).

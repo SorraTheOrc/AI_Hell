@@ -78,4 +78,9 @@ describe('Same-seed evaluation harness is documented (AH-0MUY08XLD009K4W4)', () 
     const readme = fs.readFileSync(README_PATH, 'utf8');
     expect(readme).toContain('docs/EVALUATION.md');
   });
+
+  it('points at the automated-balancing batch capability (AH-0MV81Z2EJ006HD5T)', () => {
+    expect(doc).toContain('docs/BALANCING.md');
+    expect(doc).toContain('--batch');
+  });
 });
