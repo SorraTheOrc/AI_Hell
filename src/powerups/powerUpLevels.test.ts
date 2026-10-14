@@ -765,3 +765,211 @@ describe('recharge-time level axes (AH-0MV82I6SJ002R3YW — test-first)', () => 
     }
   });
 });
+
+// ── Per-charge recharge engine and cap-3 (AH-0MV82I7HF009ZHPD) ──────
+//
+// Test-first contract (AH-0MV82I7HF009ZHPD) for the per-charge recharge
+// engine implemented by AH-0MV82I7TX0009JMT ("Per-charge recharge engine in
+// PowerUpLevelStore"). The project's build → test → commit gate forbids
+// committing a failing suite, so the engine assertions are wrapped in
+// Vitest's `it.fails(...)` — an **expected failure**, red today because the
+// engine is not yet in `PowerUpLevelStore`:
+//
+//   - per-charge recharge timers (`tickRecharge(dt)`),
+//   - cap-of-3 clamping on collect and recharge,
+//   - the hold-full Phase Shift/Teleport rewards becoming recharging pools
+//     (no unlimited activations).
+//
+// Once AH-0MV82I7TX0009JMT lands each body stops throwing and `it.fails`
+// reports "expected test to fail, but it passed"; the implementation item
+// must then remove the `.fails` modifiers (and the `tick` cast, calling
+// `store.tickRecharge(dt)` directly) so these become hard gates.
+//
+// Recharge-duration contract asserted below: a consumed charge starts a
+// timer whose duration is the level-derived recharge time (seconds) at the
+// consumption moment; `tickRecharge(dt)` advances the run-scoped clock and a
+// timer completes — restoring one charge — once its own elapsed time reaches
+// that duration. The old "hold-full reward is unlimited" assertion in the
+// P6 store block above is superseded by AC4 of this item and is rewritten by
+// AH-0MV82I7TX0009JMT.
+
+describe('per-charge recharge engine and cap-3 (AH-0MV82I7HF009ZHPD — test-first)', () => {
+  /**
+   * Advances the run-scoped recharge clock by `dt` seconds.
+   *
+   * Cast seam: `tickRecharge(dt)` does not exist on `PowerUpLevelStore`
+   * until AH-0MV82I7TX0009JMT lands. The cast keeps this suite compiling
+   * against the pre-impl API while `it.fails` keeps it green; the
+   * implementation item replaces the cast with a direct
+   * `store.tickRecharge(dt)` call once the method ships.
+   */
+  const tick = (store: PowerUpLevelStore, dt: number): void => {
+    (store as unknown as { tickRecharge(dt: number): void }).tickRecharge(dt);
+  };
+
+  // Both defensive abilities share one recharge model; each row pins the
+  // base-level (level 0) behaviour the engine must deliver.
+  const ABILITIES = [
+    {
+      id: 'phase_shift' as PowerUpId,
+      grant: (s: PowerUpLevelStore) => s.collect('phase_shift'),
+      pool: (s: PowerUpLevelStore) => s.phaseCharges(),
+      consume: (s: PowerUpLevelStore) => s.consumePhaseCharge(),
+      baseTime: 30, // seconds at level 0 (phaseRechargeRate 1/30 → 30 s)
+    },
+    {
+      id: 'teleport' as PowerUpId,
+      grant: (s: PowerUpLevelStore) => s.collect('teleport'),
+      pool: (s: PowerUpLevelStore) => s.teleportStacks(),
+      consume: (s: PowerUpLevelStore) => s.consumeTeleport(),
+      baseTime: 15, // seconds at level 0 (teleportRechargeRate 1/15 → 15 s)
+    },
+  ] as const;
+
+  it.fails('returns a spent charge to the pool once its recharge time elapses (AC1)', () => {
+    for (const a of ABILITIES) {
+      const store = new PowerUpLevelStore();
+      a.grant(store); // one field pickup at base level → 1 charge
+      expect(a.pool(store)).toBe(1);
+      expect(a.consume(store)).toBe(true);
+      expect(a.pool(store)).toBe(0);
+
+      // Nothing returns before the level-derived recharge time elapses…
+      tick(store, a.baseTime - 1);
+      expect(a.pool(store)).toBe(0);
+      // …and the moment it does the charge is back in the pool.
+      tick(store, 2);
+      expect(a.pool(store)).toBe(1);
+    }
+  });
+
+  it.fails('recharges each consumed charge on an independent timer (AC1)', () => {
+    for (const a of ABILITIES) {
+      const store = new PowerUpLevelStore();
+      // Charge 1 is spent at t=0 → its timer completes at baseTime.
+      a.grant(store);
+      expect(a.consume(store)).toBe(true);
+      tick(store, a.baseTime / 2);
+      // Charge 2 arrives (a second field pickup) and is spent at
+      // t=baseTime/2 → its timer completes later, independently.
+      a.grant(store);
+      expect(a.pool(store)).toBe(2);
+      expect(a.consume(store)).toBe(true);
+      expect(a.pool(store)).toBe(1);
+
+      // t = baseTime+1: only the first charge has recharged.
+      tick(store, a.baseTime / 2 + 1);
+      expect(a.pool(store)).toBe(2);
+      // t = 1.5 × baseTime + 1: the second has recharged too.
+      tick(store, a.baseTime / 2);
+      expect(a.pool(store)).toBe(3);
+    }
+  });
+
+  it.fails('starts a fresh timer when a recharged charge is spent again (AC1)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('teleport');
+    expect(store.consumeTeleport()).toBe(true);
+    // First recharge completes.
+    tick(store, 15);
+    expect(store.teleportStacks()).toBe(1);
+    // Spent again → a fresh timer starts from scratch.
+    expect(store.consumeTeleport()).toBe(true);
+    expect(store.teleportStacks()).toBe(0);
+    tick(store, 10);
+    expect(store.teleportStacks()).toBe(0); // only part of the time elapsed
+    tick(store, 6);
+    expect(store.teleportStacks()).toBe(1); // second timer complete
+  });
+
+  it.fails('caps the collected pool at 3 charges for both abilities (AC2)', () => {
+    for (const a of ABILITIES) {
+      const store = new PowerUpLevelStore();
+      // Every field pickup still grants (the store's level rises), but the
+      // pool must never exceed the cap of 3 — excess grants are discarded.
+      for (let i = 0; i < 8; i++) {
+        a.grant(store);
+        expect(a.pool(store)).toBeLessThanOrEqual(3);
+      }
+      expect(a.pool(store)).toBe(3);
+    }
+  });
+
+  it.fails('discards any collection or recharge that would exceed the cap of 3 (AC2)', () => {
+    const store = new PowerUpLevelStore();
+    // Two teleport pickups fill the pool to 3.
+    store.collect('teleport'); // +1 (level 0)
+    store.collect('teleport'); // +2 (level 1) → 3
+    expect(store.teleportStacks()).toBe(3);
+    // Spend one: 2 available + 1 recharging.
+    expect(store.consumeTeleport()).toBe(true);
+    expect(store.teleportStacks()).toBe(2);
+    // Collecting into the full-ish pool is clamped to 3…
+    store.collect('teleport'); // +2 (level 2) → clamped
+    expect(store.teleportStacks()).toBe(3);
+    // …and the pending recharge lands on a full pool, so it is discarded too.
+    tick(store, 20);
+    expect(store.teleportStacks()).toBe(3);
+  });
+
+  it.fails('treats the hold-full Phase Shift reward as a recharging pool — no unlimited activations (AC4)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('phase_shift', true);
+    // The permanent reward is still granted (ownership semantics unchanged)…
+    expect(store.isPhasePermanent()).toBe(true);
+    // …but it adds exactly one charge, clamped — not unbounded activations.
+    expect(store.phaseCharges()).toBe(1);
+    expect(store.consumePhaseCharge()).toBe(true);
+    expect(store.phaseCharges()).toBe(0);
+    // An empty pool blocks activation even though the reward is permanent.
+    expect(store.consumePhaseCharge()).toBe(false);
+    // The spent charge recharges like any other.
+    tick(store, store.phaseRechargeTime() + 1);
+    expect(store.phaseCharges()).toBe(1);
+  });
+
+  it.fails('mirrors Phase Shift for a hold-full Teleport: +1 charge, clamped at 3 (AC5)', () => {
+    const store = new PowerUpLevelStore();
+    expect(store.teleportStacks()).toBe(0);
+    store.collect('teleport', true);
+    expect(store.teleportStacks()).toBe(1); // exactly +1, not the level-derived stack grant
+    store.collect('teleport', true);
+    expect(store.teleportStacks()).toBe(2);
+    for (let i = 0; i < 8; i++) store.collect('teleport', true);
+    expect(store.teleportStacks()).toBe(3); // clamped at the cap of 3
+    // Recharges normally like any other charge.
+    expect(store.consumeTeleport()).toBe(true);
+    expect(store.teleportStacks()).toBe(2);
+    tick(store, store.teleportRechargeTime() + 1);
+    expect(store.teleportStacks()).toBe(3);
+  });
+
+  it.fails('reset clears the pending recharge timers (run restart, AC6)', () => {
+    for (const a of ABILITIES) {
+      const store = new PowerUpLevelStore();
+      a.grant(store);
+      expect(a.consume(store)).toBe(true);
+      expect(a.pool(store)).toBe(0);
+      tick(store, a.baseTime / 2); // mid-recharge
+      expect(a.pool(store)).toBe(0);
+      store.reset();
+      // Well past any recharge time: the cleared timer must not restore.
+      tick(store, a.baseTime * 2);
+      expect(a.pool(store)).toBe(0);
+    }
+  });
+
+  it('reset clears both charge pools (run restart, weapon parity, AC6)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('phase_shift');
+    store.collect('teleport');
+    expect(store.phaseCharges()).toBeGreaterThan(0);
+    expect(store.teleportStacks()).toBeGreaterThan(0);
+    store.reset();
+    expect(store.phaseCharges()).toBe(0);
+    expect(store.teleportStacks()).toBe(0);
+    // A fresh run starts from an empty pool again.
+    store.collect('phase_shift');
+    expect(store.phaseCharges()).toBe(1);
+  });
+});
