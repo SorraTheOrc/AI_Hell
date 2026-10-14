@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { runEvaluation } from './engine';
 import { resolvePolicyFactory } from './policies';
 import { executeEvaluation, defaultOptions, seedRange } from './cli';
+import { BALANCE_STATISTICS_SCHEMA_VERSION } from './types';
 import type { CliOptions } from './cli';
 
 /** Builds a full option object for the pure CLI core. */
@@ -91,5 +92,47 @@ describe('executeEvaluation', () => {
     const script = result.artifacts.find((artifact) => artifact.name === 'side-by-side.sh');
     expect(script?.content).toContain('ffmpeg');
     expect(script?.content).toContain('hstack=inputs=2');
+  });
+});
+
+describe('executeEvaluation batch mode (AH-0MV81YY2T0069W19: CLI batch flags)', () => {
+  it('writes the versioned balance report, text summary and raw JSONL', () => {
+    const result = executeEvaluation(options({ batch: true, seeds: [1, 2], ticks: 60 }));
+    expect(result.exitCode).toBe(0);
+    const names = result.artifacts.map((artifact) => artifact.name);
+    expect(names).toEqual(['balance-report.json', 'balance-report.txt', 'runs.jsonl']);
+
+    const report = JSON.parse(result.artifacts[0].content);
+    expect(report.kind).toBe('balance');
+    expect(report.schemaVersion).toBe(BALANCE_STATISTICS_SCHEMA_VERSION);
+    expect(report.config.policies).toEqual(['competent']);
+    expect(report.runs).toHaveLength(2);
+
+    const text = result.artifacts[1].content;
+    expect(text).toContain('Balance report');
+    expect(text).toContain('minerals collected');
+    expect(text).toContain('sd=');
+
+    // Raw telemetry JSONL, one record per line.
+    const jsonl = result.artifacts[2].content.trim().split('\n');
+    expect(jsonl.length).toBeGreaterThan(1);
+    expect(result.stdout).toContain('Balance report');
+  });
+
+  it('sweeps the supplied policies and prints JSON when --json is set', () => {
+    const result = executeEvaluation(
+      options({
+        batch: true,
+        policies: ['legacy', 'competent'],
+        seeds: [1],
+        ticks: 60,
+        json: true,
+      }),
+    );
+    const report = JSON.parse(result.artifacts[0].content);
+    expect(report.config.policies).toEqual(['legacy', 'competent']);
+    expect(report.runs).toHaveLength(2);
+    // --json prints the machine-readable artifact as stdout.
+    expect(JSON.parse(result.stdout)).toEqual(report);
   });
 });

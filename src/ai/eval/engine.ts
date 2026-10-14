@@ -42,6 +42,7 @@ import {
 import { resolvePolicyFactory } from './policies';
 import {
   buildAbReport,
+  buildBalanceReport,
   buildEvaluationReport,
   buildRunReport,
   fnv1aHash,
@@ -49,11 +50,11 @@ import {
   serialiseReport,
   stableStringify,
   type AbReport,
+  type BalanceReport,
   type EvaluationReport,
   type RunReport,
 } from './report';
 import {
-  EVAL_DATASET_VERSION,
   type ArenaBalanceConfig,
   type ArenaSpawns,
   type BalanceAggregate,
@@ -239,6 +240,8 @@ export interface BatchOutput {
   readonly runs: readonly BatchedRunSummary[];
   /** Balance statistics aggregated incrementally across all runs. */
   readonly aggregate: BalanceAggregate;
+  /** The versioned balance-batch report (epic AC4, shared schema). */
+  readonly report: BalanceReport;
   /** The batch report serialised byte-stably (AC5 reproducibility). */
   readonly json: string;
 }
@@ -293,22 +296,20 @@ export function runBatch(config: BatchConfig): BatchOutput {
   }
 
   const aggregate = aggregator.toAggregate();
+  const report = buildBalanceReport({
+    policies: policies.map((policy) => policy.name),
+    seeds: config.seeds,
+    ticks: config.ticks,
+    dt,
+    sampleEveryTicks,
+    runs,
+    aggregate,
+  });
   return {
     runs,
     aggregate,
-    json: stableStringify({
-      datasetVersion: EVAL_DATASET_VERSION,
-      kind: 'batch',
-      config: {
-        policies: policies.map((policy) => policy.name),
-        seeds: config.seeds,
-        ticks: config.ticks,
-        dt,
-        sampleEveryTicks,
-      },
-      runs,
-      aggregate,
-    }),
+    report,
+    json: serialiseReport(report),
   };
 }
 

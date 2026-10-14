@@ -11,15 +11,23 @@
  */
 
 import { parseRecording } from '../../../scripts/recording.mjs';
-import { formatAbReport, formatEvaluationReport, stableStringify } from './report';
+import {
+  formatAbReport,
+  formatBalanceReport,
+  formatEvaluationReport,
+  serialiseRecordsJsonl,
+  stableStringify,
+} from './report';
 import {
   runAbEvaluation,
+  runBatch,
   runEvaluation,
   compareRecordings,
 } from './engine';
 import { resolvePolicyFactory } from './policies';
 import { extractMetricPoint, type MetricPoint } from './metrics';
 import { buildSideBySideCapturePlan } from './video';
+import type { TelemetryRecord } from './types';
 
 export { hydrateBalanceConfig } from './balanceConfig';
 
@@ -35,6 +43,10 @@ export interface CliOptions {
   readonly outputDir: string;
   readonly json: boolean;
   readonly video: boolean;
+  /** Batch mode: sweep seeds × policies and emit the balance report (AC4). */
+  readonly batch: boolean;
+  /** Policies swept in batch mode; empty falls back to {@link CliOptions.policy}. */
+  readonly policies: readonly string[];
   /** Text of a human recording to compare against (AC2), when supplied. */
   readonly humanRecordingText: string | null;
   /** The human run's seed to compare against; defaults to the last run. */
@@ -76,6 +88,33 @@ export function executeEvaluation(options: CliOptions): CliResult {
   const artifacts: CliArtifact[] = [];
   const stderr: string[] = [];
   const stdout: string[] = [];
+
+  // 0. Batch mode: sweep seeds × policies and emit the versioned balance
+  // report, the human-readable summary and the raw telemetry JSONL (AC4).
+  if (options.batch) {
+    const policyFactories = (
+      options.policies.length > 0 ? options.policies : [options.policy]
+    ).map((name) => resolvePolicyFactory(name));
+    const records: TelemetryRecord[] = [];
+    const batch = runBatch({
+      ...runConfig(options),
+      policies: policyFactories,
+      onRun: (run) => {
+        records.push(...run.records);
+      },
+    });
+    const summary = formatBalanceReport(batch.report);
+    artifacts.push({ name: 'balance-report.json', content: batch.json });
+    artifacts.push({ name: 'balance-report.txt', content: summary });
+    artifacts.push({ name: 'runs.jsonl', content: serialiseRecordsJsonl(records) });
+    stdout.push(options.json ? batch.json : summary);
+    return {
+      exitCode: 0,
+      stdout: `${stdout.join('\n\n')}\n`,
+      stderr: stderr.join('\n'),
+      artifacts,
+    };
+  }
 
   // 1. Main evaluation(s) — single policy or A/B.
   if (options.baseline && options.candidate) {
@@ -189,6 +228,8 @@ export function defaultOptions(): CliOptions {
     outputDir: 'eval-output',
     json: false,
     video: false,
+    batch: false,
+    policies: [],
     humanRecordingText: null,
     humanSeed: null,
   };

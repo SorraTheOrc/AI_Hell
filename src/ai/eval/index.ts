@@ -69,15 +69,18 @@ export {
 } from './metrics';
 export {
   buildAbReport,
+  buildBalanceReport,
   buildEvaluationReport,
   buildRunReport,
   fnv1aHash,
   formatAbReport,
+  formatBalanceReport,
   formatEvaluationReport,
   serialiseRecordsJsonl,
   serialiseReport,
   stableStringify,
   type AbReport,
+  type BalanceReport,
   type EvaluationReport,
   type RunReport,
 } from './report';

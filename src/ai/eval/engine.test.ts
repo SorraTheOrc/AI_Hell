@@ -191,7 +191,10 @@ describe('runBatch (AH-0MV81YTOT007V1HF: deterministic batch runner)', () => {
     const second = runBatch(config);
     expect(second.json).toBe(first.json);
     expect(second.aggregate).toEqual(first.aggregate);
-    expect(first.json).toContain('"kind":"batch"');
+    expect(first.json).toContain('"kind":"balance"');
+    // The batch report is versioned through the shared statistics schema.
+    expect(first.report.kind).toBe('balance');
+    expect(first.report.schemaVersion).toBe(BALANCE_STATISTICS_SCHEMA_VERSION);
   });
 
   it('streams raw telemetry to the sink and never retains it in the output', () => {
