@@ -51,7 +51,14 @@ import { loadDifficultyCurves } from '../core/configStore';
 import type {
   DifficultyCurveRow,
   DifficultyGeneration,
+  EnemyMovementClass,
 } from '../core/configTypes';
+import {
+  OPENING_MOVEMENT_CLASSES,
+  OPENING_WAVE_POSITIONS,
+  classifyArchetype,
+  isOpeningWavePosition,
+} from '../core/waveBalance';
 import type { AdjustedGroup } from '../core/difficultySequencer';
 import {
   LEVELS,
@@ -191,42 +198,85 @@ export function dynamicTarget(
 }
 
 /**
- * Curated candidate pools and a minimum-count floor for the campaign's
- * `dynamic` opening waves (AH-0MUOCJM0N000RW2B). The opening targets sit in a
- * narrow band where one shared pool cannot deliver variety without producing
- * degenerate waves, so each opening wave is constrained to a few light
- * archetypes. `1:2` and `2:1` deliberately exchange `diver`/`swarm` on a
+ * Curated sub-selection data for one opening slot. The R1 *positions* live in
+ * the shared rule module (`OPENING_WAVE_POSITIONS`); this table only narrows
+ * the R1-derived pool to the curated band for each slot.
+ */
+interface OpeningCuration {
+  /** Curated archetype keys for this slot (sub-selection of the R1 pool). */
+  candidateKeys: readonly string[];
+  /** Exchange the two candidate keys on a seed-derived bit. */
+  seedSwap?: boolean;
+  /** Minimum group count floor for the curated wave. */
+  minCount: number;
+}
+
+/**
+ * Curated opening-wave sub-selection (data, not classification logic).
+ *
+ * The opening-wave *pool* is derived from R1 (movement-class guard, producer
+ * Q2=b): every candidate that may enter an opening wave is validated through
+ * the shared rule module ({@link OPENING_MOVEMENT_CLASSES} +
+ * {@link classifyArchetype}) before the curated band below is applied. The
+ * band is kept as data because the opening target band is narrow — a full
+ * R1 pool of every formation/diver archetype would make openers degenerate
+ * (the retuned campaign removed exactly those waves, AH-0MUOCJM0N000RW2B).
+ *
+ * Entries align 1:1 with `OPENING_WAVE_POSITIONS` (L1W1, L1W2, L2W1, L2W2),
+ * so the opening positions live in exactly one place — the shared rule
+ * module. `1:2` and `2:1` deliberately exchange `diver`/`swarm` on a
  * seed-derived bit so repeat runs open on a different order; the two `scout`
  * anchors keep the level ramp safe.
  */
-const OPENING_WAVE_CURATION: Readonly<
-  Record<
-    string,
-    { candidateKeys: readonly string[]; seedSwap?: boolean; minCount: number }
-  >
-> = {
-  '1:1': { candidateKeys: ['scout'], minCount: 4 },
-  '1:2': { candidateKeys: ['diver', 'swarm'], seedSwap: true, minCount: 4 },
-  '2:1': { candidateKeys: ['swarm', 'diver'], seedSwap: true, minCount: 4 },
-  '2:2': { candidateKeys: ['scout'], minCount: 4 },
-};
+const OPENING_CURATION: readonly OpeningCuration[] = [
+  { candidateKeys: ['scout'], minCount: 4 },                      // L1W1
+  { candidateKeys: ['diver', 'swarm'], seedSwap: true, minCount: 4 }, // L1W2
+  { candidateKeys: ['swarm', 'diver'], seedSwap: true, minCount: 4 }, // L2W1
+  { candidateKeys: ['scout'], minCount: 4 },                      // L2W2
+];
+
+/**
+ * The curated options for an opening position, or `undefined` when the
+ * (level, wave) pair is not an R1 opening position.
+ */
+function openingCurationFor(
+  level: number,
+  wave: number,
+): OpeningCuration | undefined {
+  const index = OPENING_WAVE_POSITIONS.findIndex(
+    ([openingLevel, openingWave]) =>
+      openingLevel === level && openingWave === wave,
+  );
+  return index >= 0 ? OPENING_CURATION[index] : undefined;
+}
 
 /**
  * Resolve a curated opening wave to a candidate pool drawn from `pool`,
- * applying the minimum-count floor and (for swapped waves) the seed-derived
- * archetype choice. Unknown keys are dropped rather than inventing an
- * archetype, so a custom pool that omits a curated key simply narrows the
- * wave's options.
+ * guarded by R1.
+ *
+ * The pool is first derived from R1 — only archetypes whose `movementClass`
+ * is in {@link OPENING_MOVEMENT_CLASSES} may enter an opening wave (resolved
+ * through the shared {@link classifyArchetype}) — and is then narrowed by the
+ * curated band. The minimum-count floor is applied and (for swapped waves)
+ * the seed-derived archetype choice. Unknown keys are dropped rather than
+ * inventing an archetype, so a custom pool that omits a curated key simply
+ * narrows the wave's options.
  */
 function openingCandidates(
-  curation: { candidateKeys: readonly string[]; seedSwap?: boolean; minCount: number },
+  curation: OpeningCuration,
   pool: CandidateGroup[],
   seed: number,
 ): CandidateGroup[] {
+  // R1 derivation: the curated band may narrow the R1 pool, never widen it.
+  const r1Pool = pool.filter((candidate) =>
+    OPENING_MOVEMENT_CLASSES.includes(
+      classifyArchetype(candidate.enemyKey).movementClass,
+    ),
+  );
   const keys = curation.seedSwap
     ? [curation.candidateKeys[seededUnit(seed, 0, 0) >= 0.5 ? 1 : 0]]
     : curation.candidateKeys;
-  const byKey = new Map(pool.map((candidate) => [candidate.enemyKey, candidate]));
+  const byKey = new Map(r1Pool.map((candidate) => [candidate.enemyKey, candidate]));
   return keys
     .map((key) => byKey.get(key))
     .filter((candidate): candidate is CandidateGroup => candidate !== undefined)
@@ -251,12 +301,16 @@ function buildSequencedWave(
   shootEnabled: boolean,
   candidates: CandidateGroup[],
   archetypeUsage: Map<string, number>,
+  allowedMovementClasses?: readonly EnemyMovementClass[],
 ): WaveDefinition | null {
   if (!Number.isFinite(target)) return null;
   try {
     const result = seq([target], candidates, {
       defaultShootEnabled: shootEnabled,
       archetypeUsage,
+      ...(allowedMovementClasses
+        ? { ruleConstraints: { allowedMovementClasses } }
+        : {}),
     });
     const wave = result.waves[0];
     if (!wave || wave.groups.length === 0) return null;
@@ -319,9 +373,19 @@ function buildConfiguredLevel(
               : DYNAMIC_TARGET_JITTER,
           )
         : row.targetDifficulty;
+    // R1 opening guard (F4, AH-0MV84TQTG004ZKPV): the opening positions come
+    // from the shared rule module (`isOpeningWavePosition`), the curated band
+    // is looked up from that same position constant, and the sequencer is
+    // handed the R1 movement classes so only formation/diver archetypes may
+    // enter an opening wave. Fixed waves never reach here (they continue
+    // above), so they stay exempt exactly as authored.
+    const isOpening = isOpeningWavePosition(levelNumber, row.wave);
+    // The curated band applies only to `dynamic` openings (as before); the R1
+    // movement-class guard applies to any generated opening wave (curve or
+    // dynamic) so the builder agrees with the F5 campaign validator.
     const curation =
-      mode === 'dynamic'
-        ? OPENING_WAVE_CURATION[`${levelNumber}:${row.wave}`]
+      isOpening && mode === 'dynamic'
+        ? openingCurationFor(levelNumber, row.wave)
         : undefined;
     const waveCandidates = curation
       ? openingCandidates(curation, candidates, seed)
@@ -332,6 +396,10 @@ function buildConfiguredLevel(
       shootEnabled,
       waveCandidates,
       archetypeUsage,
+      // Only generated waves reach here: `fixed` waves with a static
+      // counterpart `continue` above, and the no-counterpart fallback is
+      // generated as `curve`. So any wave at an opening position is guarded.
+      isOpening ? OPENING_MOVEMENT_CLASSES : undefined,
     );
     if (!wave) return null;
     waves.push(wave);

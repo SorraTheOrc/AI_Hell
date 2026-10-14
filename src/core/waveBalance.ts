@@ -127,8 +127,9 @@ export function classifyWaveGroups(
 
 /**
  * R1 opening positions — the `dynamic` onboarding slots (waves 1–2 of
- * levels 1–2), matching the existing key-based `OPENING_WAVE_CURATION`
- * positions in `src/waves/sequencedLevels.ts`.
+ * levels 1–2), consumed by the campaign builder
+ * (`src/waves/sequencedLevels.ts`), the sequencer F3 guard and the validator
+ * (single source of truth).
  */
 export const OPENING_WAVE_POSITIONS: ReadonlyArray<readonly [number, number]> = [
   [1, 1],
