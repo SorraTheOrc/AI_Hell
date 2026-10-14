@@ -76,6 +76,26 @@
  * no second, independently-incremented stack counter. A field pickup still
  * does not create a permanent stack, so the hybrid semantics are preserved.
  *
+ * ## Why consumable grants are not a distinct power-up type (AH-0MUX93S6F005LLXN)
+ *
+ * An exploration following AH-0MUX802450085VZZ asked whether the Phase Shift
+ * charges / Teleport teleports — whose unconsumed grants persist until
+ * consumed — should be modelled as a **second power-up type** rather than as
+ * a level that is (temporarily) raised. **Decision: no change required.**
+ *
+ * The consumable pool is already a distinct **state domain** inside this one
+ * store: the level components (`_permanentGrants` / `_tempStacks`) are
+ * separate fields from the resource pools (`_phaseCharges` /
+ * `_teleportStacks` plus their recharge timers). `clearTemporary` clears only
+ * the level and provably never claws back a granted consumable (Resolved
+ * decision 1b; asserted in `powerUpLevels.test.ts`). A catalogue-level
+ * "consumable type" tag would add a second classification axis that must be
+ * kept in sync with the drop pool, the hold-full choice, the HUD and every
+ * scene/gym for no behavioural gain, and would fork the single mutation point
+ * (`collect`) and the single curve/resolver that keep power-ups in parity
+ * with weapons. The distinct concept is therefore expressed as a distinct
+ * *state domain*, not a distinct *type*.
+ *
  * Pure and deterministic: no scene, DOM, Phaser or storage coupling.
  */
 
