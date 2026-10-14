@@ -280,14 +280,15 @@ optional deep-link default for the **in-panel enemy selector** (an `<select>`
 listing every non-boss config — see §8.5). The gym index (`GymIndex`) no
 longer enumerates one row per config: its **ENEMIES** column has a single
 **"Fodder Enemies"** row that boots `GymFodderEnemies` bare (the dropdown
-picks the archetype, default `scout`) plus the dedicated `GymBoss` scene
-labelled **"Boss"** that boots `GymBoss` directly. The index renders three
-columns — plain scenes, **ENEMIES** and **Dev Utilities** — so the Bosses
-column, the redundant `boss` "Boss Swarm" config row and the per-config rows
-were retired (AH-0MV13G5EV008D41E; formerly
-AH-0MTV8OV9V002D8B7/AH-0MUAYB28C004KK7X). `GymBoss` is excluded
-from the plain scene list (left column) so the real boss is not duplicated
-as a bare scene. Legacy
+picks the archetype, default `scout`), a dedicated **"Boss"** row that boots
+`GymBoss` directly (AH-0MUAYB28C004KK7X), and a dedicated **"Centipede"** row
+that boots `GymCentipede` directly (AH-0MV4ZOIZR0086T66). The index renders
+three columns — plain scenes, **ENEMIES** and **Dev Utilities** — so the
+Bosses column, the redundant `boss` "Boss Swarm" config row and the per-config
+rows were retired (AH-0MV13G5EV008D41E; formerly
+AH-0MTV8OV9V002D8B7/AH-0MUAYB28C004KK7X). Both `GymBoss` and `GymCentipede`
+are excluded from the plain scene list (left column) so enemy testbeds are
+not duplicated as bare scenes. Legacy
 `GymScout`/`GymDiver`/… scenes have been
 retired; their formation/bullet assertions now live in `GymFodderEnemies.test.ts`
 keyed by `enemyKey`.

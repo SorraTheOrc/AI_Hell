@@ -4,10 +4,13 @@
  * Discovers every gym scene under `src/scenes/gym/` via `import.meta.glob`.
  * The index renders three columns left-to-right (AH-0MV13G5EV008D41E):
  *
- * - **scenes** — plain scene entries;
+ * - **scenes** — plain scene entries; filtered to exclude enemy archetypes
+ *   (`GymFodderEnemies`, `GymBoss`, `GymCentipede`) which are surfaced in
+ *   the ENEMIES column instead;
  * - **ENEMIES** — a single "Fodder Enemies" row booting the reusable
  *   `GymFodderEnemies` scene bare (its in-panel dropdown selects the
- *   archetype) plus the dedicated multi-phase `GymBoss` "Boss" row;
+ *   archetype) plus the dedicated multi-phase `GymBoss` "Boss" row and the
+ *   dedicated `GymCentipede` "Centipede" row;
  * - **Dev Utilities** — tooling scenes such as the difficulty-curve
  *   sequencer, booted directly via `sceneKey`.
  *
@@ -49,6 +52,10 @@ export const FODDER_ENEMIES_LABEL = 'Fodder Enemies';
 export const BOSS_SCENE_KEY = 'GymBoss';
 /** Label of the dedicated boss row in the ENEMIES column. */
 export const BOSS_SCENE_LABEL = 'Boss';
+/** Scene key of the dedicated centipede chain gym scene. */
+export const CENTIPEDE_SCENE_KEY = 'GymCentipede';
+/** Label of the dedicated centipede row in the ENEMIES column. */
+export const CENTIPEDE_LABEL = 'Centipede';
 
 /**
  * Scene keys surfaced in the far-right **Dev Utilities** column rather than
@@ -124,6 +131,8 @@ export class GymIndex extends Phaser.Scene {
     // it is no longer listed as a bare scene; a single ENEMIES row boots it.
     // Filter out GymBoss — the real boss is surfaced as a dedicated row in
     // the ENEMIES column instead of the plain scene list (AH-0MUAYB28C004KK7X).
+    // Filter out GymCentipede — the centipede chain is an enemy archetype
+    // surfaced as a dedicated ENEMIES row (AH-0MV4ZOIZR0086T66).
     const all = discoverGymScenes(loadGymSceneModules());
 
     // Far-right Dev Utilities column — tooling scenes categorised away from
@@ -138,6 +147,7 @@ export class GymIndex extends Phaser.Scene {
       (e) =>
         e.key !== FODDER_ENEMIES_SCENE_KEY &&
         e.key !== BOSS_SCENE_KEY &&
+        e.key !== CENTIPEDE_SCENE_KEY &&
         !DEV_UTILITY_SCENE_KEY_SET.has(e.key),
     );
 
@@ -154,8 +164,9 @@ export class GymIndex extends Phaser.Scene {
 
     // Middle ENEMIES column (AH-0MV13G5EV008D41E): the single reusable fodder
     // gym (booted bare; its dropdown selects the archetype) followed by the
-    // dedicated multi-phase `GymBoss` scene. Per-config rows, the `boss`
-    // "Boss Swarm" row and the Bosses column were retired.
+    // dedicated multi-phase `GymBoss` scene and the dedicated `GymCentipede`
+    // chain scene. Per-config rows, the `boss` "Boss Swarm" row and the
+    // Bosses column were retired.
     this.enemyEntries = [
       {
         key: FODDER_ENEMIES_SCENE_KEY,
@@ -166,6 +177,11 @@ export class GymIndex extends Phaser.Scene {
         key: BOSS_SCENE_KEY,
         label: BOSS_SCENE_LABEL,
         sceneKey: BOSS_SCENE_KEY,
+      },
+      {
+        key: CENTIPEDE_SCENE_KEY,
+        label: CENTIPEDE_LABEL,
+        sceneKey: CENTIPEDE_SCENE_KEY,
       },
     ];
 
@@ -316,7 +332,8 @@ export class GymIndex extends Phaser.Scene {
 
   /**
    * Middle ENEMIES column rows: the single reusable fodder-enemy row
-   * (booted bare) followed by the dedicated `GymBoss` row.
+   * (booted bare) followed by the dedicated `GymBoss` row and the
+   * dedicated `GymCentipede` row.
    */
   get listedEnemyScenes(): EnemyColumnEntry[] {
     return this.enemyEntries.map((e) => ({ ...e }));
