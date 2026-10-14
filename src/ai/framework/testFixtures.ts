@@ -12,6 +12,7 @@ import type {
   BotDrop,
   BotEnemy,
   BotMineral,
+  BotPlayer,
   BotSnapshot,
 } from '../botSnapshot';
 
@@ -57,6 +58,80 @@ export function enemy(
     alive,
     archetype,
     ...(isTelling !== undefined ? { isTelling } : {}),
+  };
+}
+
+/**
+ * Forward + reverse thruster physics, mirroring the shape the live ship
+ * config will carry on `BotPlayer.thruster` (parent AH-0MV268RXJ007M7A9 ·
+ * AC1). Defined as a **test-side mirror** so later children can attach
+ * arbitrary thruster configs to snapshots before the production plumbing
+ * exists; field names match the `ShipConfig` terms the player exposes
+ * (`thrustAcceleration` / `maxSpeed` / `frictionDeceleration` and the
+ * reverse trio `reverseEnabled` / `reverseAcceleration` /
+ * `reverseMaxSpeed`).
+ */
+export interface BotThrusterConfigFixture {
+  readonly thrustAcceleration: number;
+  readonly maxSpeed: number;
+  readonly frictionDeceleration: number;
+  readonly reverseEnabled: boolean;
+  readonly reverseAcceleration: number;
+  readonly reverseMaxSpeed: number;
+}
+
+/**
+ * The shipped default ship config (mirrors `src/core/configDefaults.ts`).
+ * The forward physics equal today's competent-bot tunable defaults
+ * (`playerSpeed: 175` / `frictionDeceleration: 100` in
+ * `framework/competent/tunables.ts`), so a snapshot carrying this config
+ * must be behaviour-identical to a snapshot carrying no config — the
+ * default-equivalence baseline (AH-0MV85WFHQ0016FTA · AC2).
+ */
+export const DEFAULT_THRUSTER_CONFIG: BotThrusterConfigFixture =
+  Object.freeze({
+    thrustAcceleration: 300,
+    maxSpeed: 175,
+    frictionDeceleration: 100,
+    reverseEnabled: true,
+    reverseAcceleration: 200,
+    reverseMaxSpeed: 120,
+  });
+
+/** `BotPlayer` with the (future) thruster-config seam attached. */
+export interface TestPlayerWithThruster extends BotPlayer {
+  /**
+   * The ship's thruster physics ({@link BotThrusterConfigFixture}). Optional
+   * so a snapshot with no config keeps today's player shape (the next child
+   * makes the production field optional for the same reason).
+   */
+  readonly thruster?: BotThrusterConfigFixture;
+}
+
+/** A snapshot whose player may carry an arbitrary thruster config. */
+export type TestSnapshotWithThruster = BotSnapshot & {
+  readonly player: TestPlayerWithThruster | null;
+};
+
+/**
+ * Builds a snapshot carrying an arbitrary thruster config on its player —
+ * the reusable test harness for the live-thruster refactor
+ * (AH-0MV85WFHQ0016FTA · AC1). The result is still a `BotSnapshot` (so any
+ * production consumer accepts it unchanged); `player.thruster` carries the
+ * requested config for steering/snapshot tests that inspect it.
+ *
+ * @param thruster — the full forward + reverse thruster config to attach.
+ * @param overrides — forwarded to {@link makeSnapshot}; a `player` override
+ *   still receives the thruster config.
+ */
+export function makeThrusterSnapshot(
+  thruster: BotThrusterConfigFixture,
+  overrides: Partial<BotSnapshot> = {},
+): TestSnapshotWithThruster {
+  const base = makeSnapshot(overrides);
+  return {
+    ...base,
+    player: base.player ? { ...base.player, thruster } : base.player,
   };
 }
 

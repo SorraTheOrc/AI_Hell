@@ -10,7 +10,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildBotWorld } from '../worldModel';
-import { bullet, enemy, makeSnapshot } from '../testFixtures';
+import {
+  bullet,
+  DEFAULT_THRUSTER_CONFIG,
+  enemy,
+  makeSnapshot,
+  makeThrusterSnapshot,
+} from '../testFixtures';
 import {
   buildIntent,
   chooseSteeringDirection,
@@ -269,6 +275,105 @@ describe('mayReverse — reverse-brake predicate (AC1/AC2)', () => {
     expect(mayReverse(moving, { ...T, reverseBrakeEnabled: false }, 100, 18)).toBe(
       false,
     );
+  });
+});
+
+// ── Thruster-config default-equivalence baseline (AH-0MV85WFHQ0016FTA) ─
+
+describe('thruster-config default equivalence (AH-0MV85WFHQ0016FTA)', () => {
+  it("pins today's physics constants as the baseline defaults", () => {
+    // The no-config fallback must equal the shipped ship config; this is the
+    // contract the live-thruster refactor must preserve bit-for-bit.
+    expect(COMPETENT_BOT_TUNABLES.playerSpeed).toBe(175);
+    expect(COMPETENT_BOT_TUNABLES.frictionDeceleration).toBe(100);
+    expect(DEFAULT_THRUSTER_CONFIG.maxSpeed).toBe(175);
+    expect(DEFAULT_THRUSTER_CONFIG.frictionDeceleration).toBe(100);
+  });
+
+  it('evaluateDirection is identical with and without a default config', () => {
+    const worlds = [
+      makeSnapshot({
+        player: PLAYER,
+        enemies: [enemy(520, 300, 'scout')],
+        enemyBullets: [bullet(600, 270, -100, 0)],
+      }),
+      makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
+        player: PLAYER,
+        enemies: [enemy(520, 300, 'scout')],
+        enemyBullets: [bullet(600, 270, -100, 0)],
+      }),
+    ];
+    const directions = [
+      { x: 1, y: 0 },
+      { x: -1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 0.71, y: 0.71 },
+    ];
+    const [plain, config] = worlds.map((snapshot) => buildBotWorld(snapshot));
+    for (const dir of directions) {
+      expect(evaluateDirection(dir.x, dir.y, config, T)).toEqual(
+        evaluateDirection(dir.x, dir.y, plain, T),
+      );
+    }
+  });
+
+  it('pins the candidate-speed term to maxSpeed 175 in the approach prediction', () => {
+    // A shot trailing the ship at 100 px/s: with the candidate speed at the
+    // default 175 the ship closes to 52.5 px inside the threat radius (so
+    // unsafe); a slower ship (150) would stay clear at ~75 px. This
+    // expectation encodes `playerSpeed: 175`, so a regressed candidate
+    // speed fails here even though every other decision stays identical.
+    const world = buildBotWorld(
+      makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
+        player: PLAYER,
+        enemyBullets: [bullet(600, 270, 100, 0)],
+      }),
+    );
+    expect(evaluateDirection(1, 0, world, T)).toEqual({
+      safe: false,
+      clearance: 52.5,
+    });
+  });
+
+  it('mayThrust/mayReverse equal the no-config fallback at sampled speeds and gaps', () => {
+    const arrivalRadius = 18;
+    for (const speed of [0, 50, 100, 175, 250]) {
+      for (const distance of [50, 100, 170, 172, 200, 400]) {
+        const moving = { x: 480, y: 270, vx: speed, vy: 0 };
+        const plain = makeSnapshot({ player: moving });
+        const config = makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
+          player: moving,
+        });
+        expect(mayThrust(config, T, distance, arrivalRadius)).toBe(
+          mayThrust(plain, T, distance, arrivalRadius),
+        );
+        expect(mayReverse(config, T, distance, arrivalRadius)).toBe(
+          mayReverse(plain, T, distance, arrivalRadius),
+        );
+      }
+    }
+  });
+
+  it('pins the friction stopping model to frictionDeceleration 100', () => {
+    const moving = makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+    });
+    // stopping distance = 175² / (2·100) = 153.125 px. Thrust fires while the
+    // remaining gap is >= that, coasts (no thrust) beyond it.
+    expect(mayThrust(moving, T, 400, 18)).toBe(true);
+    expect(mayThrust(moving, T, 100, 18)).toBe(false);
+    expect(mayThrust(moving, T, 18 + 153.125, 18)).toBe(true); // boundary
+    expect(mayThrust(moving, T, 18 + 153.124, 18)).toBe(false);
+  });
+
+  it('pins the imminent-overshoot reverse gate at the default threshold', () => {
+    const moving = makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+    });
+    // gap 32 <= threshold 36 and forward would overshoot -> brake.
+    expect(mayReverse(moving, T, 50, 18)).toBe(true);
+    // gap 82 > threshold 36 -> coast on friction, no reverse.
+    expect(mayReverse(moving, T, 100, 18)).toBe(false);
   });
 });
 

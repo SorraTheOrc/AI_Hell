@@ -19,6 +19,11 @@ import {
   livesBelowCap,
   type BotSnapshotScene,
 } from './botSnapshot';
+import {
+  DEFAULT_THRUSTER_CONFIG,
+  makeSnapshot,
+  makeThrusterSnapshot,
+} from './framework/testFixtures';
 
 /** Builds a stub scene with inert defaults; override only what a test needs. */
 function makeScene(overrides: Partial<BotSnapshotScene> = {}): BotSnapshotScene {
@@ -342,5 +347,62 @@ describe('buildBotSnapshot — enemy velocity seam (AH-0MV1DUSM2005HL98 AC2)', (
     // The lead consumer treats an absent velocity as stationary.
     expect(enemyEntry.vx ?? 0).toBe(0);
     expect(enemyEntry.vy ?? 0).toBe(0);
+  });
+});
+
+// ── Thruster-config test harness (AH-0MV85WFHQ0016FTA) ─────────────
+
+describe('thruster-config test harness (AH-0MV85WFHQ0016FTA)', () => {
+  it('attaches an arbitrary thruster config to the snapshot player', () => {
+    const snapshot = makeThrusterSnapshot(
+      {
+        thrustAcceleration: 999,
+        maxSpeed: 777,
+        frictionDeceleration: 42,
+        reverseEnabled: false,
+        reverseAcceleration: 13,
+        reverseMaxSpeed: 7,
+      },
+      { player: { x: 10, y: 20, vx: 3, vy: -4 } },
+    );
+
+    expect(snapshot.player).toMatchObject({
+      x: 10,
+      y: 20,
+      vx: 3,
+      vy: -4,
+      thruster: {
+        thrustAcceleration: 999,
+        maxSpeed: 777,
+        frictionDeceleration: 42,
+        reverseEnabled: false,
+        reverseAcceleration: 13,
+        reverseMaxSpeed: 7,
+      },
+    });
+  });
+
+  it('keeps a null player when the underlying snapshot has none', () => {
+    const snapshot = makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
+      player: null,
+    });
+    expect(snapshot.player).toBeNull();
+  });
+
+  it('defaults the config fixture to the shipped ship values', () => {
+    expect(DEFAULT_THRUSTER_CONFIG).toEqual({
+      thrustAcceleration: 300,
+      maxSpeed: 175,
+      frictionDeceleration: 100,
+      reverseEnabled: true,
+      reverseAcceleration: 200,
+      reverseMaxSpeed: 120,
+    });
+  });
+
+  it('leaves the no-config snapshot player without a thruster field', () => {
+    const player = makeSnapshot().player as { thruster?: unknown };
+    expect(player).toEqual({ x: 400, y: 300, vx: 0, vy: 0 });
+    expect(player.thruster).toBeUndefined();
   });
 });
