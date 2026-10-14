@@ -785,6 +785,15 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     // (`tank`/`diver`) instead of `phaserx12+phaserx12+bossx1`. The wave still
     // tracks its seed-jittered target within the sequencer's tolerance, and
     // the level's aggregate difficulty keeps rising.
+    //
+    // L4–L5 re-recorded for AH-0MV84TKK8008KF98 (F3 balance-rule
+    // enforcement): every generated firing wave must satisfy R2 (no
+    // all-chaser wave) and R3 (bounded ranged mix — at least one effective
+    // contact group). These waves were all-ranged, so the sequencer now
+    // appends a tuned contact group (a `ghost-*` chaser) to each; the
+    // original target-reaching groups and their counts are unchanged. rules
+    // win over exact target match, so the appended group tracks the remaining
+    // gap rather than overshooting the target.
     const composition = (levelNumber: number) =>
       defaultCampaign()
         .find((level) => level.level === levelNumber)!
@@ -795,13 +804,13 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
               .join('+') || 'none',
         );
     expect(composition(4)).toEqual([
-      'scoutx18',
-      'diverx18',
-      'tankx18',
+      'scoutx18+ghost-chasex1',
+      'diverx18+ghost-ambushx1',
+      'tankx18+ghost-flankx1',
     ]);
     expect(composition(5)).toEqual([
-      'phaserx12+scoutx18',
-      'tankx18+tankx18+diverx18',
+      'phaserx12+scoutx18+ghost-chasex1',
+      'tankx18+tankx18+diverx18+ghost-ambushx1',
     ]);
   });
 
@@ -896,8 +905,19 @@ describe('L4–L5 re-calibration after bullet-speed halving (AH-0MUX60S9L0006NJ0
   });
 
   it('AC1 — restores the pre-halving L4 compositions (scout/diver/tank ×18)', () => {
-    const compositions = levelOf(camp(), 4).waves.map(compositionOf);
-    expect(compositions).toEqual(['scoutx18', 'diverx18', 'tankx18']);
+    // The pre-halving target-reaching groups (scout/diver/tank ×18) are
+    // preserved unchanged; F3 (AH-0MV84TKK8008KF98) appends a tuned contact
+    // group to each so the firing wave satisfies R3 (bounded ranged mix) — a
+    // rules-wins-over-target consequence, not a re-calibration.
+    const waves = levelOf(camp(), 4).waves;
+    const targetGroups = waves.map((wave) =>
+      compositionOf({ ...wave, groups: wave.groups.slice(0, 1) }),
+    );
+    expect(targetGroups).toEqual(['scoutx18', 'diverx18', 'tankx18']);
+    // Every L4 wave still carries an effective-contact group for R3.
+    for (const wave of waves) {
+      expect(wave.groups.length).toBeGreaterThanOrEqual(2);
+    }
   });
 
   it('AC2 — the sequencer meets each L4–L5 target within ±1.0 of its difficulty scale', () => {

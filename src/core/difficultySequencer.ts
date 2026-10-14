@@ -23,7 +23,16 @@ import {
   type EnemyShotPattern,
   type EnemyFormationKind,
 } from './enemyConfig';
+import type { EnemyMovementClass } from './configTypes';
 import type { WaveGroup } from '../waves/Formations';
+import {
+  classifyArchetype,
+  classifyWaveGroups,
+  checkNoAllChaser,
+  checkBoundedRangedMix,
+  CHASER_MOVEMENT_CLASS,
+  type ArchetypeClassification,
+} from './waveBalance';
 
 // ── Public types ─────────────────────────────────────────────────────
 
@@ -100,6 +109,25 @@ export interface SequencerResult {
 
 // ── Sequencer options ────────────────────────────────────────────────
 
+/**
+ * Rule-constraint context supplied by the caller (e.g. the campaign builder).
+ *
+ * The campaign builder sets `allowedMovementClasses` for R1 opening-wave
+ * curation (F4, `sequencedLevels.ts`): only archetypes whose `movementClass`
+ * is in this array are eligible for the opening-wave candidate pool.
+ */
+export interface SequencerRuleConstraints {
+  /**
+   * Movement classes the caller is happy to see in this wave's candidate pool.
+   *
+   * Passed by the campaign builder for R1 opening-wave curation (F4):
+   * `['formation', 'diver']` so that only R1-compliant archetypes enter
+   * the opening-wave candidate pool.  Absent — or `undefined` — means
+   * no movement-class filtering.
+   */
+  allowedMovementClasses?: readonly EnemyMovementClass[];
+}
+
 /** Optional configuration for the sequencer. */
 export interface SequencerOptions {
   /**
@@ -154,6 +182,28 @@ export interface SequencerOptions {
    * created per call, so the cap applies across the supplied curve.
    */
   archetypeUsage?: Map<string, number>;
+  /**
+   * Rule-constraint context passed by the caller.
+   *
+   * The campaign builder supplies `allowedMovementClasses` for R1
+   * opening-wave curation (F4).  The sequencer uses this to filter the
+   * candidate pool for the wave, so that only archetypes whose
+   * `movementClass` is in the array can be selected.
+   */
+  ruleConstraints?: SequencerRuleConstraints;
+  /**
+   * Whether the composed wave is validated and repaired against the hard
+   * balance rules (R2 no-all-chaser, R3 bounded ranged mix) using the
+   * shared rule module (`src/core/waveBalance.ts`).
+   *
+   * Enabled by default for every generated wave. Passing `false` disables
+   * enforcement and returns the raw greedily-composed wave (useful for
+   * tools that want the unconstrained preview). Rules win over exact target
+   * match: a repair may grow the difficulty error because a compliant
+   * composition is preferred over a closer non-compliant one.
+   * @default true
+   */
+  enforceRules?: boolean;
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────
@@ -494,6 +544,202 @@ function composeWaveGroups(
   return { groups, total };
 }
 
+// ── Rule enforcement (R2 / R3) ──────────────────────────────────────
+
+/**
+ * Validate and, when needed, repair a composed wave so it satisfies the
+ * hard balance rules R2 (no all-chaser wave) and R3 (bounded ranged mix).
+ *
+ * The rules are evaluated **after** composition because the greedy scorer
+ * has no intrinsic notion of the classification constraints. When a rule
+ * is violated the sequencer repairs the wave *in place* via
+ * {@link repairForRule}: it adds (or swaps in) a compliant candidate
+ * tuned to the remaining target gap, so the wave stays playable but never
+ * violates the constraint.
+ *
+ * **Precedence: rules win over exact target match.** A repair may grow the
+ * difficulty error; the sequencer returns the best error-minimising
+ * compliant composition available within the constrained candidate space
+ * (as filtered by the caller's R1 context and the per-level archetype
+ * cap).
+ *
+ * Rules are applied through the shared rule module
+ * (`src/core/waveBalance.ts`) — `checkNoAllChaser` / `checkBoundedRangedMix`
+ * and `classifyArchetype` — so the rules remain a single source of truth
+ * (parent Q1=c); no rule logic is re-implemented here. No-fire waves pass
+ * R3 by construction (effective-attack semantics, producer Q1) and are
+ * never forced to add a contact group. Rules only ever inspect `curve` /
+ * `dynamic` output — authored `fixed` waves are never sequenced.
+ *
+ * Determinism: every step is a pure function of its inputs (no
+ * randomness), so rule enforcement never breaks seeded reproducibility.
+ */
+function enforceRules(
+  groups: AdjustedGroup[],
+  shootEnabled: boolean,
+  target: number,
+  candidates: CandidateGroup[],
+  tolerance: number,
+  maxIterations: number,
+  suppressFiring: boolean,
+  isAllowed: (enemyKey: string) => boolean,
+  movementAllowed: (enemyKey: string) => boolean,
+  maxGroups: number,
+  canAddGroups: boolean,
+): AdjustedGroup[] {
+  if (groups.length === 0) return groups;
+
+  let current = groups;
+  // Bounded repair loop: each pass fixes one violating rule; a fix may in
+  // principle perturb the other rule (e.g. swapping in a firing ranged
+  // non-chaser), so re-check until stable or the budget runs out. The
+  // budget is far beyond the number of groups the sequencer can compose.
+  for (let pass = 0; pass < 4; pass++) {
+    const classified = classifyWaveGroups(current);
+
+    // R2 — no all-chaser wave.
+    if (!checkNoAllChaser(classified).pass) {
+      current = repairForRule(
+        current,
+        target,
+        candidates,
+        tolerance,
+        maxIterations,
+        suppressFiring,
+        isAllowed,
+        movementAllowed,
+        maxGroups,
+        canAddGroups,
+        (classification) =>
+          classification.movementClass !== CHASER_MOVEMENT_CLASS,
+      );
+      continue;
+    }
+
+    // R3 — bounded ranged mix (effective-attack semantics: a no-fire
+    // wave already passes, so repair is only reached when firing).
+    if (!checkBoundedRangedMix(classified, shootEnabled).pass) {
+      current = repairForRule(
+        current,
+        target,
+        candidates,
+        tolerance,
+        maxIterations,
+        suppressFiring,
+        isAllowed,
+        movementAllowed,
+        maxGroups,
+        canAddGroups,
+        (classification) => classification.attackClass === 'contact',
+      );
+      continue;
+    }
+
+    return current;
+  }
+  return current;
+}
+
+/**
+ * Repair one rule violation by introducing a compliant candidate from the
+ * caller-supplied pool: add it when the wave still has room (or multiple
+ * groups are allowed), otherwise swap it in for an offending group.
+ *
+ * Candidate selection preferences, in order:
+ *
+ * 1. only candidates that meet the rule's classification predicate and the
+ *    caller's R1 movement-class constraint;
+ * 2. of those, candidates not yet at the per-level archetype cap (falling
+ *    back to the full qualifying pool when every qualifying candidate is at
+ *    the cap — mirroring the composition pool's never-starve fallback);
+ * 3. the candidate whose tuned score lands closest to the required
+ *    residual, so the repaired wave stays as close to `target` as the
+ *    constraint allows.
+ *
+ * When no compliant candidate exists in the pool, the wave is returned
+ * unchanged (the constraint cannot be satisfied by any available
+ * archetype — never an empty result).
+ *
+ * @param matches — predicate selecting archetypes that satisfy the violated
+ *   rule (e.g. `attackClass === 'contact'` for R3, non-chaser for R2).
+ */
+function repairForRule(
+  groups: AdjustedGroup[],
+  target: number,
+  candidates: CandidateGroup[],
+  tolerance: number,
+  maxIterations: number,
+  suppressFiring: boolean,
+  isAllowed: (enemyKey: string) => boolean,
+  movementAllowed: (enemyKey: string) => boolean,
+  maxGroups: number,
+  canAddGroups: boolean,
+  matches: (classification: ArchetypeClassification) => boolean,
+): AdjustedGroup[] {
+  const rulePool = candidates.filter(
+    (candidate) =>
+      movementAllowed(candidate.enemyKey) &&
+      matches(classifyArchetype(candidate.enemyKey)),
+  );
+  if (rulePool.length === 0) return groups;
+
+  const total = groups.reduce((sum, group) => sum + group.score, 0);
+
+  // Prefer repair archetypes not yet at the per-level cap; when every one
+  // is already used, fall back to the full qualifying pool so a repair can
+  // never be starved into silence.
+  const qualifying = rulePool.filter((candidate) =>
+    isAllowed(candidate.enemyKey),
+  );
+  const repairPool = qualifying.length > 0 ? qualifying : rulePool;
+
+  const bestRepair = (residual: number): AdjustedGroup | null => {
+    let best: AdjustedGroup | null = null;
+    for (const candidate of repairPool) {
+      const adjusted = adjustGroupForTarget(
+        candidate,
+        resolveBaseConfig(candidate),
+        residual,
+        tolerance,
+        maxIterations,
+        suppressFiring,
+      );
+      if (
+        !best ||
+        Math.abs(adjusted.score - residual) <
+          Math.abs(best.score - residual)
+      ) {
+        best = adjusted;
+      }
+    }
+    return best;
+  };
+
+  const canAdd = canAddGroups && groups.length < maxGroups;
+  if (canAdd) {
+    // Add the compliant group tuned to the remaining gap, keeping the
+    // composed total as close to the target as the constraint allows.
+    const repair = bestRepair(target - total);
+    if (!repair) return groups;
+    return [...groups, repair];
+  }
+
+  // No room to add (a single-group contract, or the wave is full): swap
+  // an offending group for a compliant archetype, retuned to the offending
+  // group's contribution so the total stays near target.
+  const offenderIndex = groups.findIndex(
+    (group) => !matches(classifyArchetype(group.enemyKey)),
+  );
+  if (offenderIndex < 0) return groups;
+  const offenderScore = groups[offenderIndex].score;
+  const swapResidual = target - (total - offenderScore);
+  const repair = bestRepair(swapResidual);
+  if (!repair) return groups;
+  return groups.map((group, index) =>
+    index === offenderIndex ? repair : group,
+  );
+}
+
 // ── Public API ───────────────────────────────────────────────────────
 
 /**
@@ -507,6 +753,17 @@ function composeWaveGroups(
  * 3. Record the adjusted group and the error.
  *
  * The result is a {@link SequencerResult} containing the waves and errors.
+ *
+ * **Balance-rule enforcement (parent AH-0MV29XQ0H009P9WP, F3).** Every
+ * generated wave is validated against the hard balance rules R2
+ * (no all-chaser wave) and R3 (bounded ranged mix) using the shared rule
+ * module (`src/core/waveBalance.ts`), and repaired in place when violated
+ * (see {@link enforceRules}). An R1 opening-wave constraint is supplied by
+ * the caller through {@link SequencerOptions.ruleConstraints} — the pure
+ * sequencer cannot know wave position, so the campaign builder narrows the
+ * candidate pool to the R1-allowed movement classes (F4). Rules win over
+ * exact target match: the sequencer returns the best error-minimising
+ * composition within the rule-constrained candidate space.
  *
  * @param curve — the target difficulty curve (one score per wave).
  * @param candidates — the pool of enemy groups to choose from.
@@ -534,6 +791,23 @@ export function sequencer(
   const isAllowed = (enemyKey: string): boolean =>
     (usage.get(enemyKey) ?? 0) < maxArchetypePerLevel;
 
+  // R1 opening-wave constraint (F3): when the caller supplies the allowed
+  // movement classes, only archetypes whose classification matches may be
+  // selected. The classification is resolved through the shared rule module
+  // (`classifyArchetype`), so no rule knowledge is duplicated here.
+  const allowedMovementClasses =
+    options.ruleConstraints?.allowedMovementClasses;
+  const movementAllowed = (enemyKey: string): boolean =>
+    allowedMovementClasses
+      ? allowedMovementClasses.includes(
+          classifyArchetype(enemyKey).movementClass,
+        )
+      : true;
+  // Hard-constraint enforcement (R2 / R3) is on by default for every
+  // generated wave.
+  const enforceRulesEnabled = options.enforceRules !== false;
+  const maxGroups = options.maxGroupsPerWave ?? DEFAULT_MAX_GROUPS_PER_WAVE;
+
   // Validate candidates.
   for (const c of candidates) {
     if (c.minCount > c.maxCount) {
@@ -550,10 +824,14 @@ export function sequencer(
     const target = curve[wi];
     let bestResult: { adjusted: AdjustedGroup; error: number } | null = null;
 
-    // Exclude archetypes already at the per-level cap. If every candidate is
-    // at the cap, fall back to the full pool so the wave cannot be empty.
-    const allowedCandidates = candidates.filter((candidate) =>
-      isAllowed(candidate.enemyKey),
+    // Exclude archetypes already at the per-level cap (and, when R1 context
+    // is supplied, archetypes outside the caller's allowed movement
+    // classes). If every candidate is excluded, fall back to the full pool
+    // so the wave cannot be empty.
+    const allowedCandidates = candidates.filter(
+      (candidate) =>
+        isAllowed(candidate.enemyKey) &&
+        movementAllowed(candidate.enemyKey),
     );
     const selectionPool =
       allowedCandidates.length > 0 ? allowedCandidates : candidates;
@@ -595,29 +873,56 @@ export function sequencer(
             candidates,
             tolerance,
             maxIterations,
-            options.maxGroupsPerWave ?? DEFAULT_MAX_GROUPS_PER_WAVE,
+            maxGroups,
             suppressFiring,
-            isAllowed,
+            (enemyKey) =>
+              isAllowed(enemyKey) && movementAllowed(enemyKey),
           );
 
     const shootEnabled =
       options.defaultShootEnabled ??
       composed.groups.some((group) => groupFires(group.enemyKey, group.count));
 
+    // Balance-rule enforcement (F3): validate the composed wave against R2 /
+    // R3 via the shared rule module and repair it in place when a rule is
+    // violated. Rules win over exact target match — enforcement may grow the
+    // error (recorded in `errors`). A single-group contract
+    // (`allowMultipleGroups: false`) is honoured by swapping rather than
+    // adding, so the wave count never grows past the caller's intent.
+    const enforcedGroups = enforceRulesEnabled
+      ? enforceRules(
+          composed.groups,
+          shootEnabled,
+          target,
+          candidates,
+          tolerance,
+          maxIterations,
+          suppressFiring,
+          isAllowed,
+          movementAllowed,
+          maxGroups,
+          options.allowMultipleGroups !== false,
+        )
+      : composed.groups;
+    const enforcedTotal = enforcedGroups.reduce(
+      (sum, group) => sum + group.score,
+      0,
+    );
+
     // Record this wave against every archetype it used, so later waves in the
     // same level respect the cap.
     for (const enemyKey of new Set(
-      composed.groups.map((group) => group.enemyKey),
+      enforcedGroups.map((group) => group.enemyKey),
     )) {
       usage.set(enemyKey, (usage.get(enemyKey) ?? 0) + 1);
     }
 
     waves.push({
-      groups: composed.groups,
+      groups: enforcedGroups,
       shootEnabled,
       targetDifficulty: target,
     });
-    errors.push(Math.round(Math.abs(composed.total - target) * 100) / 100);
+    errors.push(Math.round(Math.abs(enforcedTotal - target) * 100) / 100);
   }
 
   return { waves, errors };
