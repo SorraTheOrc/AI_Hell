@@ -49,6 +49,7 @@ import {
   updateThrusterHum,
 } from './thrusterShim';
 import type { BeatClock } from '../utils/beat';
+import type { ThrusterHumProfile } from '../utils/thrusterProfile';
 import type { WeaponId } from '../utils/weapons';
 
 // Re-exported thruster-hum reference constants + test seams (moved to the shim
@@ -62,10 +63,14 @@ export {
   THRUSTER_HUM_NOISE_FILTER_MAX,
   THRUSTER_HUM_NOISE_FILTER_MIN,
   THRUSTER_HUM_SHRINK_MULTIPLIER,
+  THRUSTER_HUM_SIDE_PITCH_SCALE,
+  THRUSTER_HUM_SIDE_VOLUME_SCALE,
   THRUSTER_HUM_UNDERTONE_FREQ,
   _getThrusterHumStateForTests,
   _resetThrusterHumForTests,
 } from './thrusterShim';
+
+export type { ThrusterHumProfile } from '../utils/thrusterProfile';
 
 // ── Playback provider seam ──────────────────────────────────────────
 
@@ -678,9 +683,18 @@ export function playBossPhaseCue(phase: number): void {
 
 // ── Thruster hum (runtime shim delegation) ──────────────────────────
 
-/** Sustained thrust-driven hum. Delegates to the runtime shim (no-op headless). */
-export function updateThrusterSound(level: number): void {
-  updateThrusterHum(level);
+/**
+ * Sustained thrust-driven hum. Delegates to the runtime shim (no-op headless).
+ *
+ * `profile` selects the forward/default voice or the **side** variant
+ * (quieter + one semitone higher; AH-0MV78QUIX001EZN2); it defaults to
+ * `'forward'` so existing callers are unchanged.
+ */
+export function updateThrusterSound(
+  level: number,
+  profile: ThrusterHumProfile = 'forward',
+): void {
+  updateThrusterHum(level, profile);
 }
 
 /** Stops and frees the thruster hum. Delegates to the runtime shim. */

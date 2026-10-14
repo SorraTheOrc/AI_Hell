@@ -85,6 +85,10 @@ import {
   MovementConfig,
 } from '../utils/movement';
 import { updateFlameLength } from '../utils/flame';
+import {
+  getThrusterProfile,
+  type ThrusterHumProfile,
+} from '../utils/thrusterProfile';
 import { stopThrusterSound, updateThrusterSound } from '../audio/effects';
 import {
   AsteroidsModel,
@@ -1154,9 +1158,13 @@ export class Player extends Phaser.GameObjects.Graphics {
    *
    * Also drives the thruster hum (AH-0MTFOSOHN001Q620) via
    * `getEngineSoundLevel(state, input, thrustAcceleration)` →
-   * `updateThrusterSound(level)`: a single ship-level hum scaled
-   * proportionally to thrustAcceleration so the slider is audible.
-   * Safe no-op without an AudioContext (headless tests, autoplay).
+   * `updateThrusterSound(level, profile)`: a single ship-level hum scaled
+   * proportionally to thrustAcceleration so the slider is audible. The
+   * profile is derived from the firing-engine list already computed above
+   * (`getThrusterProfile`): any side engine (turn/strafe) selects the
+   * quieter, one-semitone-higher side voice, side-wins over forward
+   * (AH-0MV78QUIX001EZN2). Safe no-op without an AudioContext (headless
+   * tests, autoplay).
    */
   preUpdate(_time: number, delta: number): void {
     const dt = delta / 1000;
@@ -1214,7 +1222,12 @@ export class Player extends Phaser.GameObjects.Graphics {
         this._input,
         this._config.thrust,
       );
-      updateThrusterSound(level);
+      // Side thrust (Asteroids turn / fourDirectional strafe) uses the
+      // quieter, one-semitone-higher profile so manoeuvring is legible by
+      // ear; side-wins when a side engine fires alongside forward. The
+      // classification is shared, so the game and every gym agree.
+      const profile: ThrusterHumProfile = getThrusterProfile(firing);
+      updateThrusterSound(level, profile);
     } catch {
       // Never crash the game loop on an audio error.
     }

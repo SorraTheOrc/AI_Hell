@@ -31,6 +31,7 @@ import {
 import {
   RecordingAudioContext,
   RecordingSfxProvider,
+  lastSourceFrequency,
   resetRecordingAudioContext,
 } from '../test/audioTestDouble';
 
@@ -360,6 +361,34 @@ describe('thruster hum (runtime shim)', () => {
     effects.setThrusterBeatClock(null);
     effects.updateThrusterSound(1);
     expect(hum.currentGain).toBeCloseTo(effects.THRUSTER_HUM_MAX_VOLUME, 6);
+  });
+
+  it('forwards the side profile (halved gain, one semitone up) through the seam', () => {
+    effects.updateThrusterSound(0.8, 'side');
+    const hum = effects._getThrusterHumStateForTests();
+    expect(hum).not.toBeNull();
+    expect(hum!.currentGain).toBeCloseTo(
+      0.8 *
+        effects.THRUSTER_HUM_MAX_VOLUME *
+        effects.THRUSTER_HUM_SIDE_VOLUME_SCALE,
+      6,
+    );
+    const ctx = RecordingAudioContext.instances[0];
+    expect(lastSourceFrequency(ctx.oscillators[0])).toBeCloseTo(
+      effects.THRUSTER_HUM_BASE_FREQ *
+        (1 + 0.8 * 0.12) *
+        effects.THRUSTER_HUM_SIDE_PITCH_SCALE,
+      6,
+    );
+  });
+
+  it('keeps the forward profile as the default for existing callers', () => {
+    effects.updateThrusterSound(0.8);
+    const hum = effects._getThrusterHumStateForTests();
+    expect(hum!.currentGain).toBeCloseTo(
+      0.8 * effects.THRUSTER_HUM_MAX_VOLUME,
+      6,
+    );
   });
 
   it('is a safe no-op without an AudioContext', () => {

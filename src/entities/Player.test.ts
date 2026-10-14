@@ -1863,13 +1863,13 @@ describe('Player — Thruster hum wiring', () => {
     // Idle frame → level 0 (silence) so the hum decays quickly on release.
     player.setInput({ up: false, down: false, left: false, right: false });
     player.preUpdate(0, 16);
-    expect(spy).toHaveBeenLastCalledWith(0);
+    expect(spy).toHaveBeenLastCalledWith(0, 'forward');
     spy.mockClear();
 
     // Thrust held → level 1 at default thrust 300 (FLAME_REF_THRUST).
     player.setInput({ up: true, down: false, left: false, right: false });
     player.preUpdate(0, 16);
-    expect(spy).toHaveBeenLastCalledWith(1);
+    expect(spy).toHaveBeenLastCalledWith(1, 'forward');
   });
 
   it('scales the hum level proportionally to thrustAcceleration (AC2)', async () => {
@@ -1880,31 +1880,37 @@ describe('Player — Thruster hum wiring', () => {
     player.setConfig({ ...FOUR_DIR_CONFIG, thrustAcceleration: 150 });
     player.setInput({ up: true, down: false, left: false, right: false });
     player.preUpdate(0, 16);
-    expect(spy).toHaveBeenLastCalledWith(expect.closeTo(0.5, 5));
+    expect(spy).toHaveBeenLastCalledWith(expect.closeTo(0.5, 5), 'forward');
 
     // Default thrust → level 1 (backward-compat no-arg case).
     spy.mockClear();
     player.setConfig({ ...FOUR_DIR_CONFIG, thrustAcceleration: 300 });
     player.preUpdate(0, 16);
-    expect(spy).toHaveBeenLastCalledWith(1);
+    expect(spy).toHaveBeenLastCalledWith(1, 'forward');
   });
 
   it('produces hum for any arrow/WASD thrust key in fourDirectional (AC3)', async () => {
     const player = await bootPlayer();
     const spy = vi.spyOn(effects, 'updateThrusterSound');
 
-    const thrustKeys: Array<Record<string, boolean>> = [
-      { up: true, down: false, left: false, right: false },
-      { up: false, down: true, left: false, right: false },
-      { up: false, down: false, left: true, right: false },
-      { up: false, down: false, left: false, right: true },
-      { up: true, down: false, left: true, right: false }, // diagonal
+    // Vertical keys use the default (forward) profile; lateral keys use the
+    // quieter, higher side profile; a diagonal with any lateral component is
+    // side (side-wins). AH-0MV78QUIX001EZN2 AC3.
+    const thrustKeys: Array<{
+      keys: Record<string, boolean>;
+      profile: 'forward' | 'side';
+    }> = [
+      { keys: { up: true, down: false, left: false, right: false }, profile: 'forward' },
+      { keys: { up: false, down: true, left: false, right: false }, profile: 'forward' },
+      { keys: { up: false, down: false, left: true, right: false }, profile: 'side' },
+      { keys: { up: false, down: false, left: false, right: true }, profile: 'side' },
+      { keys: { up: true, down: false, left: true, right: false }, profile: 'side' }, // diagonal
     ];
-    for (const keys of thrustKeys) {
+    for (const { keys, profile } of thrustKeys) {
       spy.mockClear();
       player.setInput(keys as never);
       player.preUpdate(0, 16);
-      expect(spy).toHaveBeenLastCalledWith(expect.any(Number));
+      expect(spy).toHaveBeenLastCalledWith(expect.any(Number), profile);
       expect((spy.mock.calls.at(-1)![0] as number)).toBeGreaterThan(0);
     }
   });
@@ -1914,25 +1920,36 @@ describe('Player — Thruster hum wiring', () => {
     player.setScheme('asteroids');
     const spy = vi.spyOn(effects, 'updateThrusterSound');
 
+    // Forward → main engine → default profile.
     player.setInput({ forward: true, turnLeft: false, turnRight: false });
     player.preUpdate(0, 16);
-    expect(spy).toHaveBeenLastCalledWith(expect.any(Number));
+    expect(spy).toHaveBeenLastCalledWith(expect.any(Number), 'forward');
     expect((spy.mock.calls.at(-1)![0] as number)).toBeGreaterThan(0);
 
+    // Turning fires a side engine → side profile.
     spy.mockClear();
     player.setInput({ forward: false, turnLeft: true, turnRight: false });
     player.preUpdate(0, 16);
+    expect(spy).toHaveBeenLastCalledWith(expect.any(Number), 'side');
     expect((spy.mock.calls.at(-1)![0] as number)).toBeGreaterThan(0);
 
     spy.mockClear();
     player.setInput({ forward: false, turnLeft: false, turnRight: true });
     player.preUpdate(0, 16);
+    expect(spy).toHaveBeenLastCalledWith(expect.any(Number), 'side');
     expect((spy.mock.calls.at(-1)![0] as number)).toBeGreaterThan(0);
 
+    // Forward + turn held together → side wins (AC3 arbitration).
+    spy.mockClear();
+    player.setInput({ forward: true, turnLeft: true, turnRight: false });
+    player.preUpdate(0, 16);
+    expect(spy).toHaveBeenLastCalledWith(expect.any(Number), 'side');
+
+    // Coasting → no engines → default profile, level 0.
     spy.mockClear();
     player.setInput({ forward: false, turnLeft: false, turnRight: false });
     player.preUpdate(0, 16);
-    expect(spy).toHaveBeenLastCalledWith(0);
+    expect(spy).toHaveBeenLastCalledWith(0, 'forward');
   });
 
   it('hum stops on respawn, destroy, and stopThrusterAudio (AC5)', async () => {
