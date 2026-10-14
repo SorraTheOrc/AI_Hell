@@ -30,9 +30,9 @@ export type EnemyFormationKind =
 
 // ── Enemy classification enums (AH-0MV29NWI1007NKN7) ───────────────
 // Two orthogonal, wave-design-facing groupings that sit above the
-// low-level `formationKind` / `shotPattern` axes. They are descriptive
-// (no gameplay code reads them yet) and are consumed by wave composition
-// and balance tooling (follow-up AH-0MV29XQ0H009P9WP).
+// low-level `formationKind` / `shotPattern` axes. They describe each
+// archetype's movement/attack role and are consumed by the wave balance
+// rules (R1–R3; AH-0MV29XQ0H009P9WP) in `src/core/waveBalance.ts`.
 
 /**
  * Coarse behavioural movement class of an enemy archetype
@@ -212,19 +212,19 @@ export interface EnemyConfig {
 
   // Behavioural classification (AH-0MV29NWI1007NKN7)
   /**
-   * Coarse behavioural movement class used by wave-design/balance tooling —
-   * one of `formation | diver | chaser | patroller | roamer`. Descriptive
-   * only (no gameplay code reads it yet); see {@link EnemyMovementClass}.
-   * An absent CSV value coerces to `formation`.
+   * Coarse behavioural movement class used by the wave balance rules
+   * (R1/R2; AH-0MV29XQ0H009P9WP) — one of
+   * `formation | diver | chaser | patroller | roamer`. See
+   * {@link EnemyMovementClass}. An absent CSV value coerces to `formation`.
    */
   movementClass: EnemyMovementClass;
   /**
-   * Coarse behavioural attack class — one of
-   * `contact | projectile | beam | area`. Descriptive only; the contact
-   * invariant means every enemy still damages the player on contact, so
-   * `contact` denotes contact-only. An absent CSV value is derived from the
-   * effective `shotPattern` (`none` → `contact`, otherwise `projectile`);
-   * see {@link EnemyAttackClass}.
+   * Coarse behavioural attack class used by the wave balance rules (R3;
+   * AH-0MV29XQ0H009P9WP) — one of `contact | projectile | beam | area`. The
+   * contact invariant means every enemy still damages the player on contact,
+   * so `contact` denotes contact-only. An absent CSV value is derived from
+   * the effective `shotPattern` (`none` → `contact`, otherwise
+   * `projectile`); see {@link EnemyAttackClass}.
    */
   attackClass: EnemyAttackClass;
 

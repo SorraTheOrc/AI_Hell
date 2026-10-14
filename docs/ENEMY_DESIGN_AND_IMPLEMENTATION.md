@@ -329,8 +329,9 @@ Both fields are validated (`validateEnemyConfig`) and coerced
 documented defaults — `movementClass` → `formation`, `attackClass` derived
 from the effective `shotPattern` (`none` → `contact`, otherwise `projectile`) —
 so legacy files without the columns still parse. The classification is
-**data-only**: no gameplay code reads it yet; the wave-generation/balance
-consumer is the follow-up item AH-0MV29XQ0H009P9WP.
+**consumed**: it drives the wave balance rules R1–R3 (§1.5), which the
+runtime wave generator enforces for generated waves and the campaign audit
+validates. The consuming module is `src/core/waveBalance.ts`.
 
 The agreed mapping for all 18 CSV archetypes:
 
@@ -357,6 +358,120 @@ The agreed mapping for all 18 CSV archetypes:
 
 The `centipede` linked chain (AH-0MV01EJ92008ZZ86) is a dedicated entity, not
 a CSV row, so it carries no classification pair; it is a contact-only chaser.
+
+### 1.5 Wave balance rules R1–R3 (AH-0MV29XQ0H009P9WP)
+
+The classification in §1.4 is consumed by the **wave balance rules**, a pure,
+Phaser-free module (`src/core/waveBalance.ts`) that is the single source of
+truth for three hard design constraints. The runtime auto-sequencer (F3,
+`src/core/difficultySequencer.ts`) enforces the rules when composing generated
+(`curve` / `dynamic`) waves; the same rule functions are reused by a pure audit
+validator (F5) and by the classification-driven opening curation (F4,
+`src/waves/sequencedLevels.ts`). Hand-authored `fixed` waves are never
+sequenced and are exempt from the rules by design.
+
+#### 1.5.1 Rule definitions
+
+- **R1 — opening-wave purity.** Opening waves (the `dynamic` onboarding slots,
+  see `OPENING_WAVE_POSITIONS`) may contain only archetypes whose
+  `movementClass` is in `OPENING_MOVEMENT_CLASSES` — formation or diver
+  movement; chasers, patrollers and roamers are excluded. `attackClass` is
+  deliberately unconstrained for R1: onboarding waves are no-fire and their
+  openers are ranged-class.
+- **R2 — no all-chaser wave.** A wave may not be composed entirely of
+  archetypes with `movementClass === CHASER_MOVEMENT_CLASS`. At least one
+  non-chaser group must be present.
+- **R3 — bounded ranged mix.** A *firing* wave may not be composed entirely of
+  ranged attackers (`attackClass` in `RANGED_ATTACK_CLASSES`); the share of
+  ranged groups must stay strictly below `RANGED_SHARE_CAP`, so every firing
+  wave includes at least one effective-*contact* group.
+
+#### 1.5.2 Effective-attack semantics (R3)
+
+R3 judges a wave's **effective** attack, not its raw `attackClass` values. When
+a wave's shooting is disabled (`shootEnabled === false`), every group counts as
+effective contact and R3 is satisfied by construction. This resolves the R1↔R3
+tension: the R1-permitted openers are all ranged-class, yet the no-fire opening
+waves are compliant. The generator consequently never forces a contact group
+into a no-fire wave.
+
+#### 1.5.3 Named tunable constants
+
+All rule constants live in `src/core/waveBalance.ts` — the module is the single
+source of truth, so this section references the constants by name rather than
+restating their values.
+
+| Constant | Role | How to tune |
+|---|---|---|
+| `OPENING_WAVE_POSITIONS` | The `(level, wave)` slots R1 treats as opening waves. | Add or move entries to change which waves are openings; `isOpeningWavePosition()` generalises the lookup. |
+| `OPENING_MOVEMENT_CLASSES` | Movement classes an opening wave may contain (R1). | Widen or narrow to admit or exclude behaviours in the opening. |
+| `CHASER_MOVEMENT_CLASS` | The movement class R2 forbids from filling a whole wave. | Change only if the "no all-chaser" rule should target a different behaviour. |
+| `RANGED_ATTACK_CLASSES` | Attack classes counted as ranged (R3). | Add or remove classes to redefine which attackers count toward the mix. |
+| `RANGED_SHARE_CAP` | The maximum ranged share of a firing wave (strict `<`), R3. | Lower it to force more contact groups (a tighter mix); raising it relaxes the rule. |
+| `DEFAULT_MOVEMENT_CLASS` | Fallback `movementClass` for unknown archetype keys. | Change to alter the classification fixture's fallback, not the rules. |
+| `deriveAttackClassFromShotPattern()` | Derives the fallback `attackClass` from a shot pattern (no-fire ⇒ contact). | Change to alter the fixture's attack-class fallback. |
+
+#### 1.5.4 Generator enforcement (F3)
+
+The sequencer evaluates R2 and R3 **after** greedy composition, because its
+scorer has no intrinsic notion of the classification constraints. On a
+violation it repairs the wave in place: it adds — or, when the wave is at its
+group limit, swaps in — a compliant candidate tuned to the remaining target
+gap, preferring candidates not yet at the per-level archetype cap. When no
+compliant candidate exists, the wave is returned unchanged so it is never
+empty.
+
+**Rules win over exact target match.** A repair may grow the wave's difficulty
+error; the sequencer returns the best error-minimising compliant composition
+available within the constrained candidate space rather than an exact but
+invalid one. R1 is position-dependent (the pure sequencer cannot know which
+wave is an opening), so the campaign builder passes the R1-allowed movement
+classes through `SequencerOptions` / `SequencerRuleConstraints`; the sequencer
+consults the shared `OPENING_MOVEMENT_CLASSES` rather than re-implementing the
+rule.
+
+#### 1.5.5 Opening curation (F4)
+
+`src/waves/sequencedLevels.ts` derives the opening-wave candidate pool from R1
+(via `OPENING_MOVEMENT_CLASSES` and `classifyArchetype`) and then narrows it to
+a curated sub-selection kept as data, because the opening target band is narrow
+and a full R1 pool would make openers degenerate. The curated band may narrow
+the R1 pool but never widen it.
+
+#### 1.5.6 Audit validator (F5)
+
+`auditWaves()` / `auditWave()` reuse the exact same rule functions to audit a
+list of waves, returning a per-wave, per-rule verdict plus a human-readable
+message. `fixed` waves are reported as exempt (no rules evaluated). A campaign
+audit test (`src/waves/campaignBalanceAudit.test.ts`) runs the shipped campaign
+built from `defaultDifficultyCurves()` through the validator and pins the
+per-wave target-difficulty error, so any rule, curve or pool change that moves
+the enforcement cost fails the test and forces a documentation update.
+
+#### 1.5.7 Enforcement cost on the shipped campaign
+
+Enforcement is free on most waves: for 13 of the 15 generated waves of the
+shipped campaign the rule-constrained composition matches the raw greedy
+composition exactly. The two late-campaign waves whose raw composition is
+all-ranged are repaired with a tuned contact group that lands *closer* to the
+target than the invalid composition, so enforcement reduced their error rather
+than growing it. The largest remaining per-wave error stays within the
+sequencer's default tolerance. The measured vector is pinned in
+`campaignBalanceAudit.test.ts`.
+
+#### 1.5.8 Design principles
+
+- **Single source of truth.** Generator enforcement, opening curation and the
+  audit validator all consume `src/core/waveBalance.ts`; no rule logic is
+  duplicated.
+- **Gym↔game parity.** The rules live in the shared core consumed by both the
+  game's campaign builder and the `GymCurveSequencer` preview, so parity holds
+  by construction.
+- **Fixed waves exempt.** Authored `fixed` waves are never sequenced, altered
+  or rejected.
+- **No Phaser dependency.** The module runs under Vitest as pure functions; the
+  classification fixture resolves through `classifyArchetype` (with the
+  documented defaults for unknown keys).
 
 ---
 

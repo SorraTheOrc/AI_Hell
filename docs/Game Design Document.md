@@ -553,9 +553,10 @@ carries two coarse, descriptive fields for wave-design and balance tooling:
 `attackClass` (`contact | projectile | beam | area`). Because every enemy
 damages the player on contact, `attackClass` describes only the ranged/special
 attack — `contact` is contact-only, so there is deliberately no `none` value.
-The classification is data-only today; the wave-generation/balance consumer is
-the follow-up item AH-0MV29XQ0H009P9WP. See the enemy guide §1.4 for the full
-archetype mapping and the codec defaults.
+The classification is consumed by the wave balance rules R1–R3, which the
+runtime wave generator enforces for generated waves and the campaign audit
+validates. See the enemy guide §1.4 for the archetype mapping and codec
+defaults, and §1.5 for the rules, tunable constants and enforcement design.
 
 ### 4.2 Wave / Formation Structures
 
