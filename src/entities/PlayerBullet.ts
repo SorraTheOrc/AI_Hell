@@ -23,17 +23,29 @@
 
 import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
-import type { WeaponDefinition } from '../utils/weapons';
+import { drawBulletShape } from '../utils/bulletVisuals';
+import {
+  headingFromVelocity,
+  type BulletShape,
+  type WeaponDefinition,
+} from '../utils/weapons';
 
 /**
  * A single player bullet: a Graphics object with position, velocity,
- * and a configurable colour/radius. The scene creates bullets via
+ * and a configurable colour/radius/shape. The scene creates bullets via
  * `createPlayerBullet`, advances them via `advanceAndCull`, and
  * removes them when their lifetime elapses.
  *
  * Bullets wrap across all four screen edges (matching the player ship
  * and asteroid model) and survive until their lifetime expires, unless a
  * wall-bounce budget is set (see {@link PlayerBullet.bounces}).
+ *
+ * Appearance (colour, shape, size, elongation) is resolved from the
+ * weapon that fired it through the shared bullet-shape rendering seam
+ * (`src/utils/bulletVisuals.ts`, AH-0MV8228MD009UBF7), so the game and
+ * every gym draw the same shot for the same weapon. The bullet re-draws
+ * itself each frame and orients to its velocity heading — a `'line'` beam
+ * travels nose-first, never drawn sideways.
  */
 export class PlayerBullet extends Phaser.GameObjects.Graphics {
   /** Horizontal velocity in px/s (reflected on a wall bounce). */
@@ -47,6 +59,24 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
 
   /** Bullet colour (Phaser integer). */
   readonly color: number;
+
+  /**
+   * Bullet visual shape (from the weapon definition; `'circle'` default).
+   * Drawn through the shared bullet-shape seam (AH-0MV8228MD009UBF7).
+   */
+  readonly shape: BulletShape;
+
+  /**
+   * Optional elongation multiplier for elongated shapes
+   * (line/teardrop/missile/bolt/chevron). Absent → the shape's default.
+   */
+  readonly shapeLength: number | undefined;
+
+  /** Optional neon rim/outline colour (Phaser integer). */
+  readonly rimColor: number | undefined;
+
+  /** Stroke-thickness multiplier for stroked shapes (default 1). */
+  readonly thickness: number | undefined;
 
   /**
    * Bullet lifetime in seconds. The bullet wraps across all four screen
@@ -149,6 +179,10 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     radius: number,
     color: number,
     lifetime: number = 0.75,
+    shape: BulletShape = 'circle',
+    shapeLength?: number,
+    rimColor?: number,
+    thickness?: number,
   ) {
     super(scene, { x, y });
     this.vx = vx;
@@ -156,16 +190,27 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     this.radius = radius;
     this.color = color;
     this.lifetime = lifetime;
+    this.shape = shape;
+    this.shapeLength = shapeLength;
+    this.rimColor = rimColor;
+    this.thickness = thickness;
     this._draw();
   }
 
-  /** Draws the bullet as a filled circle at the origin. */
+  /**
+   * Draws the bullet through the shared shape seam, oriented to its
+   * velocity heading (an elongated shot flies nose-first).
+   */
   private _draw(): void {
-    this.clear();
-    this.fillStyle(this.color, 1);
-    this.beginPath();
-    this.arc(0, 0, this.radius, 0, Math.PI * 2, false);
-    this.fillPath();
+    drawBulletShape(this, {
+      shape: this.shape,
+      color: this.color,
+      radius: this.radius,
+      length: this.shapeLength,
+      rimColor: this.rimColor,
+      thickness: this.thickness,
+    });
+    this.setRotation(headingFromVelocity(this.vx, this.vy));
   }
 
   /**
@@ -252,6 +297,11 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
  * @param vy - Vertical velocity (px/s).
  * @param lifetime - Bullet lifetime in seconds (default 0.75 s, matching the
  *   reduced Cannon base range — AH-0MUU131PU006O7ZD).
+ * @param shape - Bullet visual shape (`'circle'` default; shapes drawn
+ *   through the shared seam, AH-0MV8228MD009UBF7).
+ * @param shapeLength - Optional elongation multiplier for elongated shapes.
+ * @param rimColor - Optional neon rim/outline colour.
+ * @param thickness - Optional stroke-thickness multiplier.
  * @returns The new bullet Graphics object.
  */
 export function createPlayerBullet(
@@ -263,8 +313,25 @@ export function createPlayerBullet(
   vx: number,
   vy: number,
   lifetime: number = 0.75,
+  shape: BulletShape = 'circle',
+  shapeLength?: number,
+  rimColor?: number,
+  thickness?: number,
 ): PlayerBullet {
-  const bullet = new PlayerBullet(scene, x, y, vx, vy, radius, color, lifetime);
+  const bullet = new PlayerBullet(
+    scene,
+    x,
+    y,
+    vx,
+    vy,
+    radius,
+    color,
+    lifetime,
+    shape,
+    shapeLength,
+    rimColor,
+    thickness,
+  );
   scene.add.existing(bullet);
   return bullet;
 }

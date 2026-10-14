@@ -533,10 +533,39 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
 
 /**
  * Bullet shape type — determines how the bullet is drawn.
- * `circle` = filled circle (cannon, spread, rapid);
- * `line` = short line segment (dual).
+ *
+ * Extends the original `'circle' | 'line'` pair into the full code-drawn
+ * shape family consumed by the shared bullet-shape rendering seam
+ * (`src/utils/bulletVisuals.ts`, parent AH-0MV8228MD009UBF7):
+ *
+ * - `circle` — filled disc (legacy name, renders exactly like `disc`)
+ * - `disc` — filled disc
+ * - `line` — line/beam (the Wave Laser and Dual must render as a beam)
+ * - `teardrop` — teardrop/streak
+ * - `missile` — capsule + nose + fins
+ * - `ring` — hollow ring
+ * - `shell` — two-tone round shell with a hot core
+ * - `bolt` — jagged bolt
+ * - `diamond` — four-point rhombus
+ * - `spark` — four-point star
+ * - `chevron` — forward-opening V
+ *
+ * The catalogue assigns one distinct shape per weapon so every weapon is
+ * visually unique in flight (`canonicalShape` collapses the `circle`/`disc`
+ * alias so the roster test never counts them as two signatures).
  */
-export type BulletShape = 'circle' | 'line';
+export type BulletShape =
+  | 'circle'
+  | 'disc'
+  | 'line'
+  | 'teardrop'
+  | 'missile'
+  | 'ring'
+  | 'shell'
+  | 'bolt'
+  | 'diamond'
+  | 'spark'
+  | 'chevron';
 
 // ── Weapon definition ───────────────────────────────────────────────
 
@@ -570,6 +599,25 @@ export interface WeaponDefinition {
   bulletColor: number;
   /** Bullet visual shape. */
   bulletShape: BulletShape;
+  /**
+   * Elongation multiplier for elongated shapes (line/teardrop/missile/bolt/
+   * chevron): the bullet's long axis is `radius × length` px. Absent → the
+   * shared shape's default (`DEFAULT_SHAPE_LENGTH` in `bulletVisuals.ts`).
+   * Visual metadata only (AH-0MV8228MD009UBF7).
+   */
+  bulletShapeLength?: number;
+  /**
+   * Optional neon rim/outline colour (Phaser integer) for shapes that
+   * support a rim (disc/shell/teardrop/diamond/spark/ring). Visual metadata
+   * only (AH-0MV8228MD009UBF7).
+   */
+  bulletRim?: number;
+  /**
+   * Stroke-thickness multiplier for stroked shapes (line/ring/bolt/chevron);
+   * `1` uses the default 2 px stroke. Visual metadata only
+   * (AH-0MV8228MD009UBF7).
+   */
+  bulletThickness?: number;
   /** Bullet radius multiplier relative to the default. */
   bulletSize: number;
   /**
@@ -677,7 +725,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [(-30 * Math.PI) / 180, 0, (30 * Math.PI) / 180],
     fireRateMs: WEAPON_SPREAD_FIRE_RATE,
     bulletColor: BULLET_COLORS.spread,
-    bulletShape: 'circle',
+    bulletShape: 'diamond',
     bulletSize: 0.8,
     bulletLifetime: WEAPON_BULLET_LIFETIME.spread,
   },
@@ -692,7 +740,9 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     sideOffsets: [-DUAL_SIDE_OFFSET, DUAL_SIDE_OFFSET],
     fireRateMs: WEAPON_DUAL_FIRE_RATE,
     bulletColor: BULLET_COLORS.dual,
+    // Two parallel short beams — the Dual reads as side-by-side pulse bars.
     bulletShape: 'line',
+    bulletShapeLength: 2,
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.dual,
   },
@@ -703,7 +753,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_RAPID_FIRE_RATE,
     bulletColor: BULLET_COLORS.rapid,
-    bulletShape: 'circle',
+    bulletShape: 'spark',
     bulletSize: 0.7,
     bulletLifetime: WEAPON_BULLET_LIFETIME.rapid,
   },
@@ -716,9 +766,13 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
     bulletColor: BULLET_COLORS.wave_laser,
-    // The beam is a wide neon bolt; `line` records the intended elongated
-    // look (the shared PlayerBullet visual is a scaled disc).
+    // The beam is a long, thick neon bolt — a visible piercing column,
+    // never a dot (AH-0MV8228MD009UBF7 AC1). `line` + a long length + a
+    // white-hot rim distinguish it from the Dual's short pair of beams.
     bulletShape: 'line',
+    bulletShapeLength: 7,
+    bulletRim: 0xffffff,
+    bulletThickness: 3,
     bulletSize: 1.2,
     bulletLifetime: WEAPON_BULLET_LIFETIME.wave_laser,
     // Base pass-through budget: the beam survives the first three enemies
@@ -735,7 +789,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_RICOCHET_FIRE_RATE,
     bulletColor: BULLET_COLORS.ricochet,
-    bulletShape: 'circle',
+    bulletShape: 'teardrop',
     bulletSize: 0.8,
     bulletLifetime: WEAPON_BULLET_LIFETIME.ricochet,
     // Base wall-bounce budget: the pellet reflects off two walls before it
@@ -752,7 +806,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_CLUSTER_FIRE_RATE,
     bulletColor: BULLET_COLORS.cluster,
-    bulletShape: 'circle',
+    bulletShape: 'missile',
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.cluster,
     // Base split payload: the missile bursts into two radial warheads on the
@@ -773,7 +827,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_OPTIONS_FIRE_RATE,
     bulletColor: BULLET_COLORS.options,
-    bulletShape: 'circle',
+    bulletShape: 'chevron',
     // Smaller than the cannon's bullet: the pods multiply firepower rather
     // than matching the main gun.
     bulletSize: 0.8,
@@ -794,7 +848,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_NOVA_FIRE_RATE,
     bulletColor: BULLET_COLORS.nova,
-    bulletShape: 'circle',
+    bulletShape: 'ring',
     bulletSize: 1.2,
     bulletLifetime: WEAPON_BULLET_LIFETIME.nova,
     aoe: {
@@ -812,7 +866,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_MORTAR_FIRE_RATE,
     bulletColor: BULLET_COLORS.mortar,
-    bulletShape: 'circle',
+    bulletShape: 'shell',
     bulletSize: 1.1,
     bulletLifetime: WEAPON_BULLET_LIFETIME.mortar,
     aoe: {
@@ -832,7 +886,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_ARC_FIRE_RATE,
     bulletColor: BULLET_COLORS.arc,
-    bulletShape: 'circle',
+    bulletShape: 'bolt',
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.arc,
     aoe: {

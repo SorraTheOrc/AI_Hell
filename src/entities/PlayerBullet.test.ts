@@ -353,3 +353,80 @@ describe('PlayerBullet — wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
     expect(bullet.x).toBeCloseTo(reflectedX + 3.5, 5);
   });
 });
+
+// ── Shared bullet-shape rendering seam (AH-0MV8228MD009UBF7) ─────
+
+// Phaser Graphics `commandBuffer` opcodes (mirrors src/powerups/icons.test.ts).
+const Cmd = {
+  ARC: 0,
+  BEGIN_PATH: 1,
+  CLOSE_PATH: 2,
+  FILL_RECT: 3,
+  LINE_TO: 4,
+  MOVE_TO: 5,
+  LINE_STYLE: 6,
+  FILL_STYLE: 7,
+  FILL_PATH: 8,
+  STROKE_PATH: 9,
+  FILL_TRIANGLE: 10,
+} as const;
+
+/** Counts occurrences of an opcode in a Graphics command buffer. */
+function countCmd(buf: number[], target: number): number {
+  const widths: Record<number, number> = {
+    [Cmd.ARC]: 7,
+    [Cmd.FILL_RECT]: 4,
+    [Cmd.LINE_TO]: 2,
+    [Cmd.MOVE_TO]: 2,
+    [Cmd.LINE_STYLE]: 3,
+    [Cmd.FILL_STYLE]: 2,
+    [Cmd.FILL_TRIANGLE]: 6,
+  };
+  let count = 0;
+  for (let i = 0; i < buf.length; i += 1 + (widths[buf[i]] ?? 0)) {
+    if (buf[i] === target) count += 1;
+  }
+  return count;
+}
+
+describe('PlayerBullet — shared bullet-shape rendering seam (AC1)', () => {
+  it('defaults to a filled disc (the classic cannon look)', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(scene, 100, 100, 0x00ffff, 3, 100, 0, 1.0);
+
+    expect(bullet.shape).toBe('circle');
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.ARC)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('renders a line/beam shape as a stroked segment, not a dot', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(
+      scene, 100, 100, 0x3366ff, 3, 350, 0, 1.0, 'line', 4,
+    );
+
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.LINE_TO)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('orients the shape to its velocity heading (a beam flying right/up)', async () => {
+    const scene = await makeScene();
+    const right = createPlayerBullet(scene, 100, 100, 0x3366ff, 3, 350, 0, 1.0, 'line', 4);
+    expect(right.rotation).toBeCloseTo(0, 5);
+
+    const up = createPlayerBullet(scene, 100, 100, 0x3366ff, 3, 0, -350, 1.0, 'line', 4);
+    expect(up.rotation).toBeCloseTo(-Math.PI / 2, 5);
+  });
+
+  it('re-draws through the seam each frame (buffer holds only the current shape)', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 100, 100, 100, 0, 3.0);
+    advanceAndCull(bullet, 0.01);
+
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.ARC)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.STROKE_PATH)).toBe(0);
+  });
+});

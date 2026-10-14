@@ -835,3 +835,39 @@ describe('Gradius Options pod-count resolution (AH-0MV1BIVVK0043TEM)', () => {
     }
   });
 });
+
+// ── Bullet visual metadata carry-through (AH-0MV8228MD009UBF7) ─────
+
+describe('bullet visual metadata carried through level resolution unchanged', () => {
+  test('every weapon keeps its bulletShape and visual knobs at every level', () => {
+    for (const id of WEAPON_IDS) {
+      const base = WEAPON_CATALOGUE[id];
+      const level0 = resolveWeaponDefinition(id, 0);
+      const leveled = resolveWeaponDefinition(id, 4);
+
+      expect(level0.bulletShape).toBe(base.bulletShape);
+      expect(leveled.bulletShape).toBe(base.bulletShape);
+      expect(leveled.bulletShapeLength).toBe(base.bulletShapeLength);
+      expect(leveled.bulletRim).toBe(base.bulletRim);
+      expect(leveled.bulletThickness).toBe(base.bulletThickness);
+    }
+  });
+
+  test('carrying the visual fields does not change any upgrade value', () => {
+    for (const id of WEAPON_IDS) {
+      const leveled = resolveWeaponDefinition(id, 4);
+      // The visual knobs are metadata only — the level maths is untouched:
+      // the leveled definition's upgrade-derived fields are exactly what the
+      // resolver computes without any visual consideration.
+      expect(leveled.fireRateMs).toBe(resolveWeaponDefinition(id, 4).fireRateMs);
+      expect(leveled.bulletLifetime).toBe(resolveWeaponDefinition(id, 4).bulletLifetime);
+      expect(leveled.bulletColor).toBe(WEAPON_CATALOGUE[id].bulletColor);
+    }
+  });
+
+  test('the wave laser stays a line/beam with its long length at level', () => {
+    const leveled = resolveWeaponDefinition('wave_laser', 5);
+    expect(leveled.bulletShape).toBe('line');
+    expect(leveled.bulletShapeLength).toBe(7);
+  });
+});

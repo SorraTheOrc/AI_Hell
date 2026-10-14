@@ -1507,3 +1507,125 @@ describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
     expect(second.x).not.toBeCloseTo(first.x, 3);
   });
 });
+
+// ── Bullet visual metadata threading (AH-0MV8228MD009UBF7) ─────────
+
+describe('auto-fire threads the weapon visual identity onto spawned bullets', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  it('spawned wave-laser bullets carry the beam shape + length + rim', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('wave_laser', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const bullets = scene.getPlayerBullets().filter(
+      (b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor,
+    );
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      expect(bullet.shape).toBe('line');
+      expect(bullet.shapeLength).toBe(7);
+      expect(bullet.rimColor).toBe(0xffffff);
+      expect(bullet.thickness).toBe(3);
+    }
+  });
+
+  it('spawned dual bullets carry the short-beam shape', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('dual', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const bullets = scene.getPlayerBullets().filter(
+      (b) => b.color === WEAPON_CATALOGUE.dual.bulletColor,
+    );
+    expect(bullets.length).toBeCloseTo(2, 0);
+    for (const bullet of bullets) {
+      expect(bullet.shape).toBe('line');
+      expect(bullet.shapeLength).toBe(2);
+    }
+  });
+
+  it('an ordinary cannon bullet keeps the default disc shape', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cannon'); // the permanent default weapon
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    for (const bullet of scene.getPlayerBullets()) {
+      expect(bullet.shape).toBe('circle');
+      expect(bullet.shapeLength).toBeUndefined();
+    }
+  });
+
+  it('options pod bullets carry the weapon visual identity', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('options', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(1);
+    const bullets = scene.getPlayerBullets().filter(
+      (b) => b.color === WEAPON_CATALOGUE.options.bulletColor,
+    );
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      expect(bullet.shape).toBe('chevron');
+    }
+  });
+
+  it('split warheads inherit the parent cluster missile visual identity', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(1);
+    const parent = scene.getPlayerBullets().find(
+      (b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor,
+    );
+    expect(parent).toBeDefined();
+    expect(parent!.shape).toBe('missile');
+
+    // Force a split and admit the queued warheads so they can be inspected.
+    // Only the *new* bullets are checked — the always-active cannon also
+    // fires here and must not be mistaken for a warhead.
+    const before = new Set(scene.getPlayerBullets());
+    scene.runSplitProjectile(parent!);
+    scene.runFlushSplits();
+    const warheads = scene.getPlayerBullets().filter((b) => !before.has(b));
+    expect(warheads.length).toBeGreaterThan(0);
+    for (const warhead of warheads) {
+      expect(warhead.shape).toBe('missile');
+    }
+  });
+});

@@ -73,6 +73,7 @@ import {
   bulletVelocity,
   createBulletsFromHeading,
   type AoEDescriptor,
+  type BulletShape,
   type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
@@ -747,6 +748,12 @@ export class CombatCoreScene<
           // the shared player-bullet step reflects it at the edges
           // (AH-0MV1BIV5L005NJAI).
           def.bounce,
+          // The weapon's visual identity: shape + elongation + rim/thickness,
+          // drawn through the shared bullet-shape seam (AH-0MV8228MD009UBF7).
+          def.bulletShape,
+          def.bulletShapeLength,
+          def.bulletRim,
+          def.bulletThickness,
         );
         if (def.aoe?.trigger === 'onImpact') {
           // Tag the projectile so the shared combat core can detonate its
@@ -783,6 +790,11 @@ export class CombatCoreScene<
    * `bounces` is the bullet's wall-bounce budget (edge reflections before it
    * expires; `undefined` for an ordinary wrapping bullet). The shared
    * player-bullet step reads it (AH-0MV1BIV5L005NJAI).
+   *
+   * `shape` / `shapeLength` / `rimColor` / `thickness` are the weapon's
+   * visual metadata, threaded to the bullet so the shared player-bullet
+   * renderer draws the weapon's shape through the bullet-shape seam
+   * (AH-0MV8228MD009UBF7). Defaults reproduce the classic cannon disc.
    */
   spawnPlayerBullet(
     x: number,
@@ -794,6 +806,10 @@ export class CombatCoreScene<
     radius = PLAYER_BULLET_RADIUS,
     piercing = 0,
     bounces?: number,
+    shape: BulletShape = 'circle',
+    shapeLength?: number,
+    rimColor?: number,
+    thickness?: number,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
@@ -804,6 +820,10 @@ export class CombatCoreScene<
       vx,
       vy,
       lifetime,
+      shape,
+      shapeLength,
+      rimColor,
+      thickness,
     );
     bullet.piercing = piercing;
     bullet.bounces = bounces;
@@ -866,6 +886,13 @@ export class CombatCoreScene<
           Math.cos(angle) * speed,
           Math.sin(angle) * speed,
           CLUSTER_WARHEAD_LIFETIME,
+          // Warheads inherit the projectile's visual identity through the
+          // shared bullet-shape seam so the split reads as fragments of the
+          // parent shell (AH-0MV8228MD009UBF7).
+          bullet.shape,
+          def.bulletShapeLength,
+          def.bulletRim,
+          def.bulletThickness,
         ),
       );
     }
@@ -980,6 +1007,12 @@ export class CombatCoreScene<
         def.bulletColor,
         def.bulletLifetime,
         radius,
+        0,
+        undefined,
+        def.bulletShape,
+        def.bulletShapeLength,
+        def.bulletRim,
+        def.bulletThickness,
       );
     }
   }
