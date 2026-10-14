@@ -45,7 +45,12 @@ import {
 } from '../core/constants';
 import { GameState, MAX_LIVES } from '../core/GameState';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
-import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
+import {
+  DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
+  DEFAULT_RULES,
+  loadRules,
+  type GameRules,
+} from '../core/rules';
 import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
 import type { MineralChoiceScene } from './MineralChoiceScene';
 import {
@@ -204,6 +209,10 @@ import {
   advanceWrappingBullets,
 } from './core/bulletLifecycle';
 import { resolveMineralKillDrops } from './core/mineralKillDrops';
+import {
+  rollAsteroidExtraLife,
+  type AsteroidKillDropEntity,
+} from './core/asteroidKillDrops';
 import { splitAsteroid } from './core/asteroidSplit';
 import {
   applyMineralChoiceReward,
@@ -568,6 +577,15 @@ export class PlayScene extends CombatScene<
   private rng: () => number = Math.random;
 
   /**
+   * Persisted chance that a destroyed small asteroid additionally drops an
+   * Extra Life (AH-0MV6M2M9P0078N4S). Loaded from the game rules at run
+   * start; the shared `rollAsteroidExtraLife` rule reads it in
+   * `_onEnemyKilled`.
+   */
+  private asteroidExtraLifeDropChance =
+    DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE;
+
+  /**
    * The resolved per-run seed (AH-0MUY08V6W001SJJN). Assigned once per run
    * by {@link _initRunSeed}: the explicit {@link setRunSeed} value when one
    * was supplied, otherwise a fresh random seed, so each unseeded run
@@ -794,6 +812,7 @@ export class PlayScene extends CombatScene<
 
     // Power-up drop pool.
     const rules = loadRules();
+    this.asteroidExtraLifeDropChance = rules.asteroidExtraLifeDropChance;
     this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
       rules.weaponWeights,
@@ -2767,6 +2786,20 @@ export class PlayScene extends CombatScene<
     }
     this.runTelemetry.enemyKilled(s.enemyKey, s.entity.x, s.entity.y);
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
+    // Extra Life kill reward (AH-0MV6M2M9P0078N4S): a fully destroyed small
+    // asteroid additionally rolls the configurable Extra Life drop. The
+    // shared rule tier-gates first, so large/medium rocks (which split) and
+    // non-asteroid enemies never consume an RNG draw here. Additive to the
+    // generic pool above — asteroids stay in the weighted drop pool.
+    if (
+      rollAsteroidExtraLife(
+        s.entity as unknown as AsteroidKillDropEntity,
+        this.rng,
+        this.asteroidExtraLifeDropChance,
+      )
+    ) {
+      this.spawnPowerUpDrop('extra_life', s.entity.x, s.entity.y);
+    }
     // Mineral drops (GDD §4.5): the shared kill-drop rule decides — a small
     // asteroid leaves one mineral at the site, large/medium asteroids do not
     // (their small split children do), and a non-asteroid enemy re-drops a

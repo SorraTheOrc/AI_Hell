@@ -2055,6 +2055,11 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['applyMineralChoiceReward', 'src/scenes/core/mineralLayer.ts'],
   ['isMineralAbsorbingEnemy', 'src/scenes/core/mineralLayer.ts'],
   ['resolveMineralKillDrops', 'src/scenes/core/mineralKillDrops.ts'],
+  // Per-kill Extra Life drop rule (AH-0MV6M2M9P0078N4S): the shared tier +
+  // chance rule consumed by PlayScene, GymFormationScene (all asteroid-bearing
+  // gyms) and GymLevel. Registered so any scene that re-introduces a copy
+  // fails the repo-wide duplicate-body guard.
+  ['rollAsteroidExtraLife', 'src/scenes/core/asteroidKillDrops.ts'],
   ['mapControlInput', 'src/utils/movementModel.ts'],
   ['splitAsteroid', 'src/scenes/core/asteroidSplit.ts'],
   // Live-aim / live-mineral-seek seam (AH-0MV5SDM6G003A0US). The shared

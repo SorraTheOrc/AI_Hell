@@ -132,6 +132,10 @@ import {
   type MineralKillDropEntity,
 } from '../../core/mineralKillDrops';
 import {
+  rollAsteroidExtraLife,
+  type AsteroidKillDropEntity,
+} from '../../core/asteroidKillDrops';
+import {
   applyMineralChoiceReward,
   collectMinerals,
   isMineralAbsorbingEnemy,
@@ -512,6 +516,13 @@ export class GymFormationScene<
   private powerUpSpawnTimer = 0;
   private powerUpPlacementMargin = DEFAULT_POWER_UP_PLACEMENT_MARGIN;
   private powerUpSpawnCount = 0;
+  /**
+   * Persisted chance that a destroyed small asteroid additionally drops an
+   * Extra Life (AH-0MV6M2M9P0078N4S). Loaded in `_initPowerUpLayer` for
+   * every gym — including those without the cadence layer, so GymMinerals
+   * still consumes the shared rule.
+   */
+  private asteroidExtraLifeDropChance = 0;
   /** Shared active-effect registry (effects applied by collected drops). */
   private effectsRegistry = new EffectsRegistry();
   /** Standalone HUD rendering the active effects (null when disabled). */
@@ -765,6 +776,7 @@ export class GymFormationScene<
     this.powerUpSpawnInterval = 0;
     this.powerUpSpawnTimer = 0;
     this.powerUpSpawnCount = 0;
+    this.asteroidExtraLifeDropChance = 0;
     this.hud = null;
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
@@ -854,6 +866,8 @@ export class GymFormationScene<
     // `onEnemyDestroyed`, so it must drop here too (no double-drop: the two
     // paths are mutually exclusive).
     this._dropMineralsForKill(victim);
+    // Per-kill Extra Life roll follows the same bypass (AH-0MV6M2M9P0078N4S).
+    this._rollAsteroidExtraLife(victim);
     // Dynamic-replacement seam (Asteroid split children, GDD §4.1).
     this.config.onEntityDestroyed?.(victim);
     this.statusText.setText(
@@ -872,6 +886,10 @@ export class GymFormationScene<
 
   /** Initialises the opt-in power-up layer and spawns the first drop. */
   private _initPowerUpLayer(): void {
+    // The per-kill Extra Life chance is loaded for every gym, even when the
+    // cadence layer is disabled: GymMinerals demonstrates the shared rule
+    // without cadence drops (AH-0MV6M2M9P0078N4S).
+    this.asteroidExtraLifeDropChance = loadRules().asteroidExtraLifeDropChance;
     const cfg = this.config.powerUps;
     if (!cfg) {
       this.powerUpsEnabled = false;
@@ -965,7 +983,16 @@ export class GymFormationScene<
     y: number,
   ): FormationSceneDrop | null {
     if (!this.powerUpsEnabled) return null;
+    return this._createDrop(id, x, y);
+  }
 
+  /**
+   * Builds and registers a drop of `id` at (x, y) through the shared
+   * icon/lifecycle primitives. Unlike the public `spawnPowerUpDrop`, this is
+   * not gated on the opt-in cadence layer, so the per-kill Extra Life seam
+   * works in gyms without field drops (AH-0MV6M2M9P0078N4S).
+   */
+  private _createDrop(id: DropId, x: number, y: number): FormationSceneDrop {
     const graphics = this.add.graphics();
     graphics.setPosition(x, y);
     if (isWeaponDrop(id)) {
@@ -995,12 +1022,17 @@ export class GymFormationScene<
    * teleport, ticks the effects registry and refreshes the HUD.
    */
   private _updatePowerUpLayer(dt: number): void {
-    if (!this.powerUpsEnabled) return;
+    // Per-kill Extra Life drops can exist even when the cadence layer is
+    // disabled (GymMinerals), so always advance any live drops; only the
+    // cadence spawn source is opt-in (AH-0MV6M2M9P0078N4S).
+    if (this.powerUpsEnabled || this.powerUpDrops.length > 0) {
+      // Single shared drop sequence (gap 4): Bomb notice, Magnet magnet,
+      // lifecycle, overlap collection, absorb VFX. Only the spawn *source*
+      // (the cadence below) differs from the game (OQ6).
+      this.powerUpDrops = this._updateDropLayer(this.powerUpDrops, dt);
+    }
 
-    // Single shared drop sequence (gap 4): Bomb notice, Magnet magnet,
-    // lifecycle, overlap collection, absorb VFX. Only the spawn *source*
-    // (the cadence below) differs from the game (OQ6).
-    this.powerUpDrops = this._updateDropLayer(this.powerUpDrops, dt);
+    if (!this.powerUpsEnabled) return;
 
     this.powerUpSpawnTimer -= dt;
     if (this.powerUpSpawnTimer <= 0 && this.powerUpDrops.length === 0) {
@@ -1703,7 +1735,30 @@ export class GymFormationScene<
     // mineral, large/medium split instead, and a non-asteroid enemy re-drops
     // a fraction of the minerals it absorbed — exactly as the game does.
     this._dropMineralsForKill(entity);
+    // Shared per-kill Extra Life roll (AH-0MV6M2M9P0078N4S): a fully
+    // destroyed small asteroid additionally rolls the configurable Extra
+    // Life drop, exactly as the game does. The rule tier-gates first.
+    this._rollAsteroidExtraLife(entity);
     this.config.onEntityDestroyed?.(entity);
+  }
+
+  /**
+   * Rolls the shared Extra Life kill-drop rule and spawns one `extra_life`
+   * drop at the death site when it fires. Works whether or not the opt-in
+   * cadence layer is enabled, so GymMinerals demonstrates the behaviour
+   * without adding cadence drops.
+   */
+  private _rollAsteroidExtraLife(entity: TEntity): void {
+    if (
+      !rollAsteroidExtraLife(
+        entity as unknown as AsteroidKillDropEntity,
+        this._sceneRng,
+        this.asteroidExtraLifeDropChance,
+      )
+    ) {
+      return;
+    }
+    this._createDrop('extra_life', entity.x, entity.y);
   }
 
   /**

@@ -2922,6 +2922,93 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 });
 
+describe('PlayScene — asteroid Extra Life kill drop (AH-0MV6M2M9P0078N4S)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the deterministic static campaign with the Extra Life roll forced
+   * to 1.0, and injects an RNG (0.99) that fails the generic 18 % per-kill
+   * pool so a drop can only come from the forced Extra Life roll.
+   */
+  async function bootWithForcedRoll(): Promise<PlayScene> {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        sequencedWavesEnabled: false,
+        asteroidExtraLifeDropChance: 1,
+      }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+      deterministicBoot: true,
+    });
+    const scene = booted.scene as PlayScene;
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.setRng(() => 0.99);
+    return scene;
+  }
+
+  it('AC1/AC3 — a fully destroyed small asteroid spawns exactly one extra_life drop', async () => {
+    const scene = await bootWithForcedRoll();
+    const before = scene.getDrops().length;
+
+    const small = scene.spawnAsteroidAt(
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2,
+      'small',
+    );
+    const sx = small.x;
+    const sy = small.y;
+    scene.spawnPlayerBullet(small.x, small.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(small.alive).toBe(false);
+    const drops = scene.getDrops();
+    // Exactly the one extra-life drop (the generic pool was pinned off).
+    expect(drops.length).toBe(before + 1);
+    const extra = drops.find((d) => d.dropId === 'extra_life');
+    expect(extra).toBeDefined();
+    // Standard placement (separation nudging) leaves it at/near the death site.
+    expect(Math.hypot(extra!.x - sx, extra!.y - sy)).toBeLessThanOrEqual(2);
+  });
+
+  it('AC1 — large and medium asteroid kills never roll the Extra Life drop', async () => {
+    const scene = await bootWithForcedRoll();
+    const before = scene.getDrops().length;
+
+    // Spawn each tier directly (no overlapping split siblings) so the one
+    // bullet deterministically kills the target.
+    const large = scene.spawnAsteroidAt(
+      GAME_WIDTH / 2,
+      80,
+      'large',
+    );
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    expect(large.alive).toBe(false);
+    expect(scene.getDrops().some((d) => d.dropId === 'extra_life')).toBe(false);
+
+    const medium = scene.spawnAsteroidAt(
+      GAME_WIDTH / 2,
+      160,
+      'medium',
+    );
+    scene.spawnPlayerBullet(medium.x, medium.y, 0, 0);
+    scene.tick(0.016);
+    expect(medium.alive).toBe(false);
+    expect(scene.getDrops().some((d) => d.dropId === 'extra_life')).toBe(false);
+    // With the roll forced on, any small kill would have dropped — so the
+    // static count proves the tier gate blocked large and medium.
+    expect(scene.getDrops().length).toBe(before);
+  });
+});
+
+
 describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU)', () => {
   let booted: BootedGame | null = null;
 

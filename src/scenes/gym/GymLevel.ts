@@ -99,6 +99,10 @@ import {
   resolveMineralKillDrops,
   type MineralKillDropEntity,
 } from '../core/mineralKillDrops';
+import {
+  rollAsteroidExtraLife,
+  type AsteroidKillDropEntity,
+} from '../core/asteroidKillDrops';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 
 // ── Initialisation data ────────────────────────────────────────────
@@ -274,6 +278,12 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   private dropSpawnTimer = 0;
   /** Configured seconds between drop spawns. */
   private dropSpawnInterval = 0;
+  /**
+   * Persisted chance a destroyed small asteroid additionally drops an Extra
+   * Life (AH-0MV6M2M9P0078N4S). Loaded from the game rules in
+   * `_initSupplyLayer`; read by the shared `rollAsteroidExtraLife` rule.
+   */
+  private asteroidExtraLifeDropChance = 0;
   /** Reward policy applied when the mineral hold fills (no modal pause). */
   private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
   /** Standalone effects/mineral HUD (null before create/after teardown). */
@@ -467,6 +477,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.dropPlacement = new RandomAvoidingPlacement({ rng: this.supplyRng });
     this.dropSpawnInterval = rules.powerUpSpawnInterval;
     this.dropSpawnTimer = this.dropSpawnInterval;
+    this.asteroidExtraLifeDropChance = rules.asteroidExtraLifeDropChance;
 
     this.hud = new HUD(this, this.getEffectsRegistry(), {
       showLives: true,
@@ -632,6 +643,18 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       this.supplyRng,
     );
     if (dropped.length > 0) this.minerals.push(...dropped);
+    // Shared per-kill Extra Life roll (AH-0MV6M2M9P0078N4S): a fully
+    // destroyed small asteroid additionally rolls the configurable Extra
+    // Life drop, exactly as the game does. The rule tier-gates first.
+    if (
+      rollAsteroidExtraLife(
+        enemy as unknown as AsteroidKillDropEntity,
+        this.supplyRng,
+        this.asteroidExtraLifeDropChance,
+      )
+    ) {
+      this.spawnSupplyDrop('extra_life', enemy.x, enemy.y);
+    }
   }
 
   // ── Enemy movement (parity with `PlayScene._moveEnemies`) ────────

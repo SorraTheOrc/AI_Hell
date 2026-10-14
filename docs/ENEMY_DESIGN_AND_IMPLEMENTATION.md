@@ -201,6 +201,18 @@ asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
 `PlayScene._onEnemyKilled`). Collision (ramming) kills award no points, as
 always.
 
+**Kill reward (AH-0MV6M2M9P0078N4S)**: in addition to the generic per-kill
+power-up roll, a fully destroyed **small** asteroid additionally rolls the
+configurable **Extra Life** chance (`GameRules.asteroidExtraLifeDropChance`,
+default **0.05**); a winning roll leaves exactly one `extra_life` pickup at
+the death site. The roll lives **once** in the shared helper
+`src/scenes/core/asteroidKillDrops.ts`
+(`rollAsteroidExtraLife(entity, rng, chance)` — tier gate first, then
+`rng() < chance`), consumed by `PlayScene._onEnemyKilled` and the gym kill
+seams (`GymFormationScene.onEnemyDestroyed`/EXPLODE and
+`GymLevel.onEnemyDestroyed`), so the game and the gyms cannot drift. Large and
+medium asteroids never roll it.
+
 **Wave placement — random offscreen spawner**: Asteroids are **not** a fixed
 group in Level 1 Wave 1. Every regular wave plans its asteroid spawns with the
 pure planner `src/waves/AsteroidSpawner.ts` (`computeSpawns`), and
@@ -877,7 +889,7 @@ only legitimate difference is a disabled feature — never a divergent copy.
 Every shared behaviour therefore lives once: the core template methods and
 hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
-`asteroidSplit`, `enemyTargeting`), the shared dispatcher
+`asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
 helpers `resolveSpawnRange` / `pickInRange` in `src/core/configTypes.ts`
