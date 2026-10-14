@@ -43,6 +43,7 @@ import type { BotSteeringIntent } from '../../botDecision';
 import type { BotSnapshot } from '../../botSnapshot';
 import type { BotWorld, BotWorldPoint } from '../worldModel';
 import type { CompetentBotTunables } from './tunables';
+import { resolveFrictionDeceleration, resolvePlayerSpeed } from './tunables';
 
 /** Epsilon for float comparisons. */
 const EPS = 1e-6;
@@ -187,8 +188,11 @@ export function evaluateDirection(
 
   const px = player.x;
   const py = player.y;
-  const pvx = dirX * t.playerSpeed;
-  const pvy = dirY * t.playerSpeed;
+  // Candidate-speed term: the ship's live `maxSpeed` when the snapshot carries
+  // it, else the `playerSpeed` default/override (AH-0MV85WGA9005B080 · AC1).
+  const speed = resolvePlayerSpeed(t, player.thruster?.maxSpeed);
+  const pvx = dirX * speed;
+  const pvy = dirY * speed;
   let clearance = t.clearanceCap;
   let safe = true;
 
@@ -316,10 +320,17 @@ export function mayThrust(
 ): boolean {
   const player = snapshot.player;
   if (!player) return false;
-  if (t.frictionDeceleration <= 0) return true;
+  // Stopping distance: the ship's live `frictionDeceleration` when the
+  // snapshot carries it, else the `frictionDeceleration` default/override
+  // (AH-0MV85WGA9005B080 · AC2).
+  const friction = resolveFrictionDeceleration(
+    t,
+    player.thruster?.frictionDeceleration,
+  );
+  if (friction <= 0) return true;
   const speed = Math.hypot(player.vx, player.vy);
   const gap = Math.max(0, distance - arrivalRadius);
-  const stoppingDistance = (speed * speed) / (2 * t.frictionDeceleration);
+  const stoppingDistance = (speed * speed) / (2 * friction);
   return stoppingDistance <= gap;
 }
 

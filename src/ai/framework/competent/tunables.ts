@@ -81,13 +81,30 @@ export interface CompetentBotTunables {
   repositionRadius: number;
 
   // ── Motion / prediction ─────────────────────────────────────────
-  /** Assumed player speed (px/s) used for candidate-direction prediction. */
+  /**
+   * Assumed player speed (px/s) used for candidate-direction prediction.
+   *
+   * A **default/override**, never the ship's truth (AH-0MV85WGA9005B080): the
+   * snapshot's live `maxSpeed` wins when present and this value is left at its
+   * compiled default; an explicit tuning override (a value differing from the
+   * compiled default, e.g. via GymBotTuning) wins over the live config.
+   * Precedence: explicit override > live ship config > compiled default.
+   */
   playerSpeed: number;
   /** Look-ahead window (seconds) for incoming-fire prediction. */
   firePredictionHorizon: number;
   /** Assumed enemy-bullet speed (px/s) for fire-tell shots. */
   assumedBulletSpeed: number;
-  /** The ship's coasting deceleration (px/s²) for the forward model. */
+  /**
+   * The ship's coasting deceleration (px/s²) for the forward model.
+   *
+   * A **default/override**, never the ship's truth (AH-0MV85WGA9005B080): the
+   * snapshot's live `frictionDeceleration` wins when present and this value is
+   * left at its compiled default; an explicit tuning override (a value
+   * differing from the compiled default, e.g. via GymBotTuning) wins over the
+   * live config. Precedence: explicit override > live ship config > compiled
+   * default.
+   */
   frictionDeceleration: number;
   /** Time window (seconds) within which a threatening shot is "urgent". */
   survivalUrgencyHorizon: number;
@@ -229,4 +246,58 @@ export function resolveCompetentTunables(
       ...(overrides.world ?? {}),
     },
   };
+}
+
+/**
+ * Resolves the candidate-prediction speed (px/s) for a live ship, honouring
+ * the physics precedence **explicit tuning override > live ship config >
+ * compiled default** (AH-0MV85WGA9005B080 · AC1).
+ *
+ * `playerSpeed` is a default/override, not the ship's truth: a value that
+ * differs from the compiled default is an explicit override and wins;
+ * otherwise the snapshot's live `maxSpeed` is used when present, falling back
+ * to the compiled default. At the shipped defaults the live ship, the
+ * compiled default and (unchanged) tuning all coincide at `175`, so a ship
+ * running defaults behaves bit-for-bit as before (default-equivalence).
+ */
+export function resolvePlayerSpeed(
+  t: CompetentBotTunables,
+  liveMaxSpeed?: number,
+): number {
+  if (t.playerSpeed !== COMPETENT_BOT_TUNABLES.playerSpeed) {
+    return t.playerSpeed;
+  }
+  if (liveMaxSpeed !== undefined && Number.isFinite(liveMaxSpeed)) {
+    return liveMaxSpeed;
+  }
+  return t.playerSpeed;
+}
+
+/**
+ * Resolves the coasting deceleration (px/s²) for the forward model, honouring
+ * the physics precedence **explicit tuning override > live ship config >
+ * compiled default** (AH-0MV85WGA9005B080 · AC2).
+ *
+ * `frictionDeceleration` is a default/override, not the ship's truth: a value
+ * that differs from the compiled default is an explicit override and wins;
+ * otherwise the snapshot's live `frictionDeceleration` is used when present,
+ * falling back to the compiled default. At the shipped defaults the live
+ * ship, the compiled default and (unchanged) tuning all coincide at `100`, so
+ * a ship running defaults behaves bit-for-bit as before
+ * (default-equivalence).
+ */
+export function resolveFrictionDeceleration(
+  t: CompetentBotTunables,
+  liveFrictionDeceleration?: number,
+): number {
+  if (t.frictionDeceleration !== COMPETENT_BOT_TUNABLES.frictionDeceleration) {
+    return t.frictionDeceleration;
+  }
+  if (
+    liveFrictionDeceleration !== undefined &&
+    Number.isFinite(liveFrictionDeceleration)
+  ) {
+    return liveFrictionDeceleration;
+  }
+  return t.frictionDeceleration;
 }

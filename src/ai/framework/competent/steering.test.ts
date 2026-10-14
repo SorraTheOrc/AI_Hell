@@ -28,6 +28,7 @@ import {
   planSteering,
 } from './steering';
 import { COMPETENT_BOT_TUNABLES } from './tunables';
+import { resolveCompetentTunables } from './tunables';
 
 const T = COMPETENT_BOT_TUNABLES;
 const PLAYER = { x: 480, y: 270, vx: 0, vy: 0 };
@@ -374,6 +375,68 @@ describe('thruster-config default equivalence (AH-0MV85WFHQ0016FTA)', () => {
     expect(mayReverse(moving, T, 50, 18)).toBe(true);
     // gap 82 > threshold 36 -> coast on friction, no reverse.
     expect(mayReverse(moving, T, 100, 18)).toBe(false);
+  });
+});
+
+// ── Live-thruster consumption (AH-0MV85WGA9005B080) ────────────────
+
+describe('live thruster consumption (AH-0MV85WGA9005B080)', () => {
+  it('uses the snapshot live max speed for the candidate-speed term (AC1)', () => {
+    // Trailing shot at 100 px/s on the +x bearing. With the live cap at 150
+    // the ship's closing rate is lower, so it stays clear (75 px > threat
+    // radius 55) where the default cap of 175 would close to 52.5 px.
+    const world = buildBotWorld(
+      makeThrusterSnapshot(
+        { ...DEFAULT_THRUSTER_CONFIG, maxSpeed: 150 },
+        { player: PLAYER, enemyBullets: [bullet(600, 270, 100, 0)] },
+      ),
+    );
+    expect(evaluateDirection(1, 0, world, T)).toEqual({
+      safe: true,
+      clearance: 75,
+    });
+  });
+
+  it('uses the snapshot live friction deceleration for the stopping distance (AC2)', () => {
+    // Live a=200 -> stopping 76.5625 px, so the ship still thrusts with a
+    // 100 px gap; the no-config default (a=100 -> 153.125 px) coasts.
+    const grippy = makeThrusterSnapshot(
+      { ...DEFAULT_THRUSTER_CONFIG, frictionDeceleration: 200 },
+      { player: { x: 480, y: 270, vx: 175, vy: 0 } },
+    );
+    expect(mayThrust(grippy, T, 118, 18)).toBe(true);
+    const plain = makeSnapshot({
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+    });
+    expect(mayThrust(plain, T, 118, 18)).toBe(false);
+  });
+
+  it('lets an explicit speed override win over the live ship config (AC2)', () => {
+    const tuned = resolveCompetentTunables({ playerSpeed: 250 });
+    const world = buildBotWorld(
+      makeThrusterSnapshot(
+        { ...DEFAULT_THRUSTER_CONFIG, maxSpeed: 150 },
+        { player: PLAYER, enemyBullets: [bullet(600, 270, 100, 0)] },
+      ),
+    );
+    // Live 150 alone is safe (75 px); the explicit override 250 closes to
+    // 0 px, proving the override wins over the live config.
+    expect(evaluateDirection(1, 0, world, tuned)).toEqual({
+      safe: false,
+      clearance: 0,
+    });
+  });
+
+  it('lets an explicit friction override win over the live ship config (AC2)', () => {
+    const tuned = resolveCompetentTunables({ frictionDeceleration: 50 });
+    const live = makeThrusterSnapshot(
+      { ...DEFAULT_THRUSTER_CONFIG, frictionDeceleration: 200 },
+      { player: { x: 480, y: 270, vx: 175, vy: 0 } },
+    );
+    // Explicit a=50 -> stopping 306.25 px > gap 100 -> coast (false); the
+    // live a=200 alone would have thrust.
+    expect(mayThrust(live, tuned, 118, 18)).toBe(false);
+    expect(mayThrust(live, T, 118, 18)).toBe(true);
   });
 });
 
