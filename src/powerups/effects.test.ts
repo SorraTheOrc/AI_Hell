@@ -869,18 +869,30 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     expect(reg.isPhased).toBe(false);
   });
 
-  it('permanent P6 triggers repeatedly across distinct danger episodes', () => {
-    const reg = new EffectsRegistry();
+  it('permanent P6 is a finite pool: triggers again once its spent charge recharges (AC4)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('phase_shift', true);
     expect(reg.isPhasePermanent()).toBe(true);
 
+    // The hold-full reward adds exactly one charge; the first danger episode
+    // spends it and starts the recharge timer (AH-0MV82I7TX0009JMT AC4).
     expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
     reg.tick(PHASE_DURATION + 0.01);
     expect(reg.isPhased).toBe(false);
+    expect(reg.phaseCharges()).toBe(0);
     reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
 
+    // Danger cleared and re-armed, but the empty pool blocks a new trigger —
+    // the permanent reward is never unlimited.
+    expect(reg.updateDanger(true, 0.016)).toBeNull();
+    reg.updateDanger(false, 0.016); // re-arm again (the failed try latched)
+
+    // Once the spent charge recharges the next episode can trigger again.
+    store.tickRecharge(store.phaseRechargeTime() + 1);
+    expect(reg.phaseCharges()).toBe(1);
     expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
-    expect(reg.phaseCharges()).toBe(0); // permanent never consumes
+    expect(reg.phaseCharges()).toBe(0);
   });
 
   it('does not immediately re-trigger while danger is continuous', () => {
@@ -893,13 +905,17 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
   });
 
   it('re-arms once danger clears and the cooldown elapses, but not before', () => {
-    const reg = new EffectsRegistry();
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('phase_shift', true);
     reg.updateDanger(true, 0.016);
     reg.tick(PHASE_DURATION + 0.01);
 
     reg.updateDanger(false, 0.1);
     expect(reg.updateDanger(true, 0)).toBeNull(); // blocked by cooldown
+    // The finite pool recharges while danger stays clear (AC4), so the
+    // re-armed episode can trigger once the cooldown elapses.
+    store.tickRecharge(store.phaseRechargeTime() + 1);
     expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe('phase_shift');
   });
 

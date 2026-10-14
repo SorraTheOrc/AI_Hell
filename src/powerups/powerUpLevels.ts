@@ -24,6 +24,18 @@
  *   **derived from this model** rather than tracked by a second, independent
  *   counter (AC3).
  *
+ * Phase Shift and Teleport are **recharging pools** (AH-0MV82I7TX0009JMT):
+ * each consumed charge starts its own recharge timer whose duration is the
+ * level-derived recharge time at the moment of consumption (see
+ * {@link PowerUpLevelStore.phaseRechargeTime} / {@link PowerUpLevelStore.teleportRechargeTime});
+ * {@link PowerUpLevelStore.tickRecharge} advances the timers while the run
+ * runs and a completed timer returns one charge to the pool. Both pools are
+ * capped at {@link POWER_UP_CHARGE_CAP} (3) — a field pickup grants the
+ * level-derived count, a hold-full reward exactly one, and a completed
+ * recharge one; any grant/recharge that would exceed the cap is discarded.
+ * The hold-full Phase Shift reward is a recharging pool like any other
+ * charge, never an unlimited supply.
+ *
  * ## Level semantics (weapon parity)
  *
  * `level` is the number of *upgrades* applied — exactly like
@@ -344,8 +356,9 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       discrete: true,
       rationale:
         'Charges are stored activations; the cap is small (3) and k=0.5 ' +
-        'grants the second charge at the first upgrade. The hold-full Phase Shift ' +
-        'reward remains unlimited (permanent) and is unaffected.',
+        'grants the second charge at the first upgrade. The hold-full Phase ' +
+        'Shift reward adds one charge to the same recharging pool (capped at ' +
+        '3) — it is never an unlimited supply (AH-0MV82I7TX0009JMT).',
     },
     {
       variable: 'phaseRechargeRate',
@@ -383,7 +396,9 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       discrete: true,
       rationale:
         'Stored uses are a consumable escape; the cap is small (3) and ' +
-        'k=0.5 grants a second use at the first upgrade, then flattens.',
+        'k=0.5 grants a second use at the first upgrade, then flattens. A ' +
+        'hold-full reward grants exactly one stored use (mirroring Phase ' +
+        'Shift), clamped at the cap (AH-0MV82I7TX0009JMT).',
     },
     {
       variable: 'teleportRechargeRate',
@@ -808,6 +823,13 @@ export function summarisePowerUpLevelChange(
 export const POWER_UP_LIVES_START = 3;
 
 /**
+ * Maximum Phase Shift / Teleport charges either pool can hold — a field
+ * pickup, hold-full reward or completed recharge that would push a pool past
+ * this cap is discarded (cap of 3, producer AC2).
+ */
+export const POWER_UP_CHARGE_CAP = 3;
+
+/**
  * The run-scoped power-up level model (AC2/AC3).
  *
  * Responsibilities:
@@ -821,9 +843,17 @@ export const POWER_UP_LIVES_START = 3;
  * - Derive the existing stack/charge semantics from the level model rather
  *   than from second, independent counters:
  *   - Magnet/Mineral Scoop permanent stacks = `min(permanentGrants, levelCap)`,
- *   - Teleport stored teleports and Phase Shift charges = `grants − consumed` (grants are
- *     level-derived; consumption is inherent to a consumable resource),
+ *   - Teleport stored teleports and Phase Shift charges = `grants − consumed + recharged`
+ *     in a run-scoped pool capped at {@link POWER_UP_CHARGE_CAP} (3): each consumed charge
+ *     starts its own level-derived recharge timer (advanced by {@link tickRecharge}); a
+ *     completed timer returns one charge; grants and completed recharges are
+ *     clamped so the pool never exceeds the cap,
  *   - Extra Life lives = `min(livesStart + Σ lifeGain(level), livesCap)`.
+ *
+ * The hold-full Phase Shift reward is an **owned flag** (`isPhasePermanent`), not an
+ * unlimited supply: it adds exactly one charge to the recharging pool. The
+ * recharge timers are run-scoped — they advance with {@link tickRecharge} and are
+ * cleared by {@link reset} on run restart (weapon parity).
  *
  * Pure and deterministic (no scene/storage coupling) so the game and every
  * gym can share exactly one level model.
@@ -834,6 +864,10 @@ export class PowerUpLevelStore {
   private _teleportStacks = 0;
   private _phaseCharges = 0;
   private _phasePermanent = false;
+  /** Remaining seconds of each Phase Shift charge currently recharging. */
+  private _phaseRechargeTimers: number[] = [];
+  /** Remaining seconds of each Teleport charge currently recharging. */
+  private _teleportRechargeTimers: number[] = [];
   private _lives: number;
   private readonly _livesStart: number;
 
@@ -864,13 +898,31 @@ export class PowerUpLevelStore {
     switch (id) {
       case 'phase_shift':
         if (permanent) {
+          // The hold-full reward is a recharging pool: it marks ownership and
+          // adds exactly one charge (clamped at the cap), not an unlimited
+          // supply (AH-0MV82I7TX0009JMT AC4).
           this._phasePermanent = true;
+          this._phaseCharges = Math.min(
+            this._phaseCharges + 1,
+            POWER_UP_CHARGE_CAP,
+          );
         } else {
-          this._phaseCharges += stats.phaseCharges ?? 0;
+          // A field pickup grants the level-derived count, clamped so the
+          // pool never exceeds the cap (AC2).
+          this._phaseCharges = Math.min(
+            this._phaseCharges + (stats.phaseCharges ?? 0),
+            POWER_UP_CHARGE_CAP,
+          );
         }
         break;
       case 'teleport':
-        this._teleportStacks += stats.teleportStacks ?? 0;
+        // A hold-full reward grants exactly one teleport (mirroring Phase
+        // Shift); a field pickup grants the level-derived count. Both are
+        // clamped at the cap (AC2/AC5).
+        this._teleportStacks = Math.min(
+          this._teleportStacks + (permanent ? 1 : stats.teleportStacks ?? 0),
+          POWER_UP_CHARGE_CAP,
+        );
         break;
       case 'extra_life':
         this._lives = Math.min(
@@ -994,10 +1046,15 @@ export class PowerUpLevelStore {
 
   /**
    * Consumes one stored teleport use. Returns true when one was available.
+   * A consumed charge starts its own recharge timer whose duration is the
+   * level-derived {@link teleportRechargeTime} at the moment of consumption;
+   * {@link tickRecharge} returns the charge to the pool when the timer
+   * elapses (per-charge recharge model, AC1).
    */
   consumeTeleport(): boolean {
     if (this._teleportStacks <= 0) return false;
     this._teleportStacks -= 1;
+    this._teleportRechargeTimers.push(this.teleportRechargeTime());
     return true;
   }
 
@@ -1018,20 +1075,69 @@ export class PowerUpLevelStore {
     return this._phaseCharges;
   }
 
-  /** Whether the hold-full reward granted unlimited Phase Shift activations. */
+  /**
+   * Whether the hold-full reward made Phase Shift permanently owned. This is
+   * an ownership flag only — the pool is finite and recharges like any other
+   * charge (AH-0MV82I7TX0009JMT AC4).
+   */
   isPhasePermanent(): boolean {
     return this._phasePermanent;
   }
 
   /**
-   * Consumes one Phase Shift charge unless the permanent reward is active. Returns
-   * true when an activation is available.
+   * Consumes one Phase Shift charge. Returns true when one was available.
+   * A consumed charge starts its own recharge timer whose duration is the
+   * level-derived {@link phaseRechargeTime} at the moment of consumption;
+   * {@link tickRecharge} returns the charge to the pool when the timer
+   * elapses (per-charge recharge model, AC1). The permanent reward is not
+   * an unlimited supply: an empty pool blocks activation.
    */
   consumePhaseCharge(): boolean {
-    if (this._phasePermanent) return true;
     if (this._phaseCharges <= 0) return false;
     this._phaseCharges -= 1;
+    this._phaseRechargeTimers.push(this.phaseRechargeTime());
     return true;
+  }
+
+  /**
+   * Advances the run-scoped recharge clock by `dt` seconds. Each recharging
+   * Phase Shift / Teleport charge counts down independently; when a timer
+   * elapses the charge returns to its pool, clamped so the pool never
+   * exceeds {@link POWER_UP_CHARGE_CAP} (a recharge landing on a full pool is
+   * discarded). Negative or non-finite `dt` is a no-op.
+   */
+  tickRecharge(dt: number): void {
+    const safeDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
+    if (safeDt <= 0) return;
+    this._phaseCharges = this._advanceRechargeTimers(
+      this._phaseRechargeTimers,
+      this._phaseCharges,
+      safeDt,
+    );
+    this._teleportStacks = this._advanceRechargeTimers(
+      this._teleportRechargeTimers,
+      this._teleportStacks,
+      safeDt,
+    );
+  }
+
+  /**
+   * Decrements every recharging timer in `timers` by `dt`, moving each
+   * completed timer's charge back into `pool` (clamped at the cap). Returns
+   * the adjusted pool.
+   */
+  private _advanceRechargeTimers(
+    timers: number[],
+    pool: number,
+    dt: number,
+  ): number {
+    for (let i = timers.length - 1; i >= 0; i--) {
+      timers[i] -= dt;
+      if (timers[i] > 0) continue;
+      timers.splice(i, 1);
+      pool = Math.min(pool + 1, POWER_UP_CHARGE_CAP);
+    }
+    return pool;
   }
 
   /**
@@ -1074,6 +1180,8 @@ export class PowerUpLevelStore {
     this._teleportStacks = 0;
     this._phaseCharges = 0;
     this._phasePermanent = false;
+    this._phaseRechargeTimers = [];
+    this._teleportRechargeTimers = [];
     this._lives = this._livesStart;
   }
 }
