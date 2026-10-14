@@ -244,11 +244,23 @@ describe('planSteering — reverse passthrough (AC1/AC3)', () => {
 describe('mayReverse — reverse-brake predicate (AC1/AC2)', () => {
   it('fires when forward thrust would overshoot and the gap is within the imminent-overshoot threshold', () => {
     const moving = makeSnapshot({
-      player: { x: 480, y: 270, vx: 175, vy: 0 },
+      player: { x: 480, y: 270, vx: 100, vy: 0 },
     });
     // distance=50, arrivalRadius=18 → gap=32.  Default threshold is 36 (2×
-    // collectArrivalRadius).  v=175, a=100 → stopping distance ~153 px > 32.
+    // collectArrivalRadius).  v=100, a=100 → friction stop ~50 px > 32
+    // (forward overshoots) but reverse stop ~25 px <= 32 and v <= reverse
+    // cap 120, so the retro correction fits the gap (AC1 forward model).
     expect(mayReverse(moving, T, 50, 18)).toBe(true);
+  });
+
+  it('does not fire when even reverse thrust cannot stop the ship within the gap', () => {
+    // v=175: friction stop ~153 px and reverse stop ~76.6 px both exceed the
+    // 32 px gap, so a press is futile — the pre-change model omitted reverse
+    // physics entirely and requested it here regardless (AC1 fix).
+    const moving = makeSnapshot({
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+    });
+    expect(mayReverse(moving, T, 50, 18)).toBe(false);
   });
 
   it('does not fire during the normal deceleration phase when gap is above the threshold', () => {
@@ -369,12 +381,80 @@ describe('thruster-config default equivalence (AH-0MV85WFHQ0016FTA)', () => {
 
   it('pins the imminent-overshoot reverse gate at the default threshold', () => {
     const moving = makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
-      player: { x: 480, y: 270, vx: 175, vy: 0 },
+      player: { x: 480, y: 270, vx: 100, vy: 0 },
     });
-    // gap 32 <= threshold 36 and forward would overshoot -> brake.
+    // gap 32 <= threshold 36, forward would overshoot and the reverse stop
+    // (100²/(2·200) = 25 px) fits the gap -> brake.
     expect(mayReverse(moving, T, 50, 18)).toBe(true);
     // gap 82 > threshold 36 -> coast on friction, no reverse.
     expect(mayReverse(moving, T, 100, 18)).toBe(false);
+    // v=175 is above the reverse cap: the correction is outside the ship's
+    // retro envelope, so no reverse even though the gap is imminent (AC1).
+    const hot = makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
+      player: { x: 480, y: 270, vx: 175, vy: 0 },
+    });
+    expect(mayReverse(hot, T, 50, 18)).toBe(false);
+  });
+});
+
+// ── Reverse forward model (AH-0MV85WGOO0066I9X) ────────────────────
+
+describe('reverse forward model consumes live reverse values (AH-0MV85WGOO0066I9X)', () => {
+  it('uses the live reverse acceleration for the reverse-assisted stop (AC1)', () => {
+    // v=80, distance=23, arrivalRadius=18 → gap=5.  The default reverse stop
+    // 80²/(2·200) = 16 px cannot fit a 5 px gap, so the default decision is
+    // no-reverse (the stop check now suppresses the futile press); a ship
+    // with the same speed but a stronger live retro (a=800) stops in 4 px,
+    // so the custom config flips the decision.
+    const strong = makeThrusterSnapshot(
+      { ...DEFAULT_THRUSTER_CONFIG, reverseAcceleration: 800 },
+      { player: { x: 480, y: 270, vx: 80, vy: 0 } },
+    );
+    const plain = makeSnapshot({
+      player: { x: 480, y: 270, vx: 80, vy: 0 },
+    });
+    expect(mayReverse(strong, T, 23, 18)).toBe(true);
+    expect(mayReverse(plain, T, 23, 18)).toBe(false);
+  });
+
+  it('a lower live reverse max speed restricts braking to gentler corrections (AC1)', () => {
+    // v=100 is within the default envelope (<= 120), so reverse fires
+    // (reverse stop 25 px <= gap 32); a player who capped the retro at 60
+    // keeps the correction inside that gentler envelope -> no reverse.
+    const gentle = makeThrusterSnapshot(
+      { ...DEFAULT_THRUSTER_CONFIG, reverseMaxSpeed: 60 },
+      { player: { x: 480, y: 270, vx: 100, vy: 0 } },
+    );
+    const plain = makeSnapshot({
+      player: { x: 480, y: 270, vx: 100, vy: 0 },
+    });
+    expect(mayReverse(plain, T, 50, 18)).toBe(true);
+    expect(mayReverse(gentle, T, 50, 18)).toBe(false);
+  });
+
+  it('a higher live reverse max speed does not widen the feasible envelope (AC1)', () => {
+    // v=140: even with the cap raised to 200, the reverse-assisted stop
+    // (140²/(2·200) = 49 px) still exceeds the imminent gap 32, so no
+    // reverse — feasibility, not the cap, is the binding constraint.
+    const wide = makeThrusterSnapshot(
+      { ...DEFAULT_THRUSTER_CONFIG, reverseMaxSpeed: 200 },
+      { player: { x: 480, y: 270, vx: 140, vy: 0 } },
+    );
+    expect(mayReverse(wide, T, 50, 18)).toBe(false);
+  });
+
+  it('lets an explicit tuning override win over the live ship config (AC2)', () => {
+    const tuned = resolveCompetentTunables({ reverseAcceleration: 800 });
+    const live = makeThrusterSnapshot(
+      { ...DEFAULT_THRUSTER_CONFIG, reverseAcceleration: 100 },
+      { player: { x: 480, y: 270, vx: 100, vy: 0 } },
+    );
+    // distance=48, arrivalRadius=18 → gap=30.  The live a=100 alone stops in
+    // 100²/(2·100) = 50 px > 30 (no reverse); the explicit a=800 override
+    // stops in 6.25 px <= 30, proving the override wins over the live config
+    // (and that live wins over the compiled default, which would also stop).
+    expect(mayReverse(live, tuned, 48, 18)).toBe(true);
+    expect(mayReverse(live, T, 48, 18)).toBe(false);
   });
 });
 

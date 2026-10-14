@@ -340,7 +340,10 @@ change input. The rotation-skill knobs — `skill`, `maxAimErrorRad`,
 `aimLeadEnabled`, `aimLeadAlignSeconds`, `aimLeadIterations` — live in the
 same two sources ([section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)).
 Reverse-thrust gating and timing live in the same two sources — see
-[section 9.7](#97-reverse-thrust-ah-0mv2wjsy70070hk2).
+[section 9.7](#97-reverse-thrust-ah-0mv2wjsy70070hk2).  The reverse forward
+model consumes live reverse physics from the snapshot
+(`reverseAcceleration` / `reverseMaxSpeed`, default/override entries like the
+forward terms) — see [section 9.7](#97-reverse-thrust-ah-0mv2wjsy70070hk2).
 
 ### 9.5 Module layout
 
@@ -406,6 +409,23 @@ and `BOT_HUMAN_INPUT_TUNABLES` (`reversePressMinMs`, `reversePressMaxMs`,
 seeded run pins the regression: the restricted model cuts reverse presses over
 an integration demo window from 38 to 9 (528 → 138 reverse ticks) versus the
 pre-change baseline.
+
+**The reverse forward model consumes the live reverse physics
+(AH-0MV85WGOO0066I9X).** The `collect`/`engage` brake-assist does not just ask
+"would the ship overshoot": it models the correction with the ship's snapshot
+`reverseAcceleration` and `reverseMaxSpeed` (default/override fields with the
+same precedence as `playerSpeed`/`frictionDeceleration` — explicit tuning
+override > live ship config > compiled default, all coinciding at the shipped
+`200`/`120`).  A reverse press decelerates the ship at the live reverse
+acceleration (the game model suppresses friction while the press is held), so
+the reverse-assisted stopping distance is `v²/(2·a_r)`.  Reverse is requested
+only when that distance fits inside the remaining gap — a press that cannot
+stop the ship in time is futile and is suppressed (the pre-AC1 model omitted
+reverse physics entirely) — and only while the approach speed is within the
+ship's configured retro envelope (at or below the live reverse max speed), so
+a player who capped the retro lower sees the bot reserve it for gentler
+corrections.  The rule therefore remains strictly trouble/correction: it can
+only narrow the circumstances in which reverse fires, never widen them.
 
 #### Observing the retro-thruster
 

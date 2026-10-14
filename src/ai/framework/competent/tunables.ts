@@ -142,6 +142,36 @@ export interface CompetentBotTunables {
    * (incoming threatening shot or imminent collision), not merely by proximity.
    */
   reverseRetreatRange: number;
+  /**
+   * Reverse-thrust acceleration (px/s²) assumed by the reverse forward model
+   * (AH-0MV85WGOO0066I9X · AC1).
+   *
+   * A **default/override**, never the ship's truth: the snapshot's live
+   * `reverseAcceleration` wins when present and this value is left at its
+   * compiled default; an explicit tuning override (a value differing from the
+   * compiled default, e.g. via GymBotTuning) wins over the live config.
+   * Precedence: explicit override > live ship config > compiled default.  The
+   * compiled default (200) matches the shipped ship config
+   * (`asteroidsReverseThrustAcceleration: 200` in `src/core/configDefaults.ts`),
+   * so a ship running defaults behaves bit-for-bit as before.
+   */
+  reverseAcceleration: number;
+  /**
+   * Reverse speed cap (px/s) bounding the bot's reverse-brake corrections
+   * (AH-0MV85WGOO0066I9X · AC1).
+   *
+   * A **default/override**, never the ship's truth: the snapshot's live
+   * `reverseMaxSpeed` wins when present and this value is left at its compiled
+   * default; an explicit tuning override wins over the live config.
+   * Precedence: explicit override > live ship config > compiled default.  The
+   * compiled default (120) matches the shipped ship config
+   * (`asteroidsReverseMaxSpeed: 120`).  The bot only requests reverse braking
+   * while the ship's approach speed is within its configured retro envelope
+   * (at or below this cap) — a correction belongs inside the ship's tuned
+   * reverse cruise, so a lowered cap deliberately restricts the bot's reverse
+   * braking to gentler corrections.
+   */
+  reverseMaxSpeed: number;
 
   // ── Steering scoring ────────────────────────────────────────────
   /**
@@ -209,6 +239,11 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   reverseBrakeEnabled: true,
   reverseImminentOvershootGap: 36, // 2 × collectArrivalRadius (18)
   reverseRetreatRange: 90,
+  // Shipped ship-config defaults (asteroidsReverseThrustAcceleration /
+  // asteroidsReverseMaxSpeed in src/core/configDefaults.ts); see the field
+  // docs for the default/override precedence (AH-0MV85WGOO0066I9X).
+  reverseAcceleration: 200,
+  reverseMaxSpeed: 120,
 
   fanDegrees: Object.freeze([
     0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 150, -150, 180,
@@ -300,4 +335,58 @@ export function resolveFrictionDeceleration(
     return liveFrictionDeceleration;
   }
   return t.frictionDeceleration;
+}
+
+/**
+ * Resolves the reverse-thrust acceleration (px/s²) for the reverse forward
+ * model, honouring the physics precedence **explicit tuning override > live
+ * ship config > compiled default** (AH-0MV85WGOO0066I9X · AC1).
+ *
+ * `reverseAcceleration` is a default/override, not the ship's truth: a value
+ * that differs from the compiled default is an explicit override and wins;
+ * otherwise the snapshot's live `reverseAcceleration` is used when present,
+ * falling back to the compiled default. At the shipped defaults the live
+ * ship, the compiled default and (unchanged) tuning all coincide at `200`.
+ */
+export function resolveReverseAcceleration(
+  t: CompetentBotTunables,
+  liveReverseAcceleration?: number,
+): number {
+  if (t.reverseAcceleration !== COMPETENT_BOT_TUNABLES.reverseAcceleration) {
+    return t.reverseAcceleration;
+  }
+  if (
+    liveReverseAcceleration !== undefined &&
+    Number.isFinite(liveReverseAcceleration)
+  ) {
+    return liveReverseAcceleration;
+  }
+  return t.reverseAcceleration;
+}
+
+/**
+ * Resolves the reverse speed cap (px/s) bounding the bot's reverse-brake
+ * corrections, honouring the physics precedence **explicit tuning override >
+ * live ship config > compiled default** (AH-0MV85WGOO0066I9X · AC1).
+ *
+ * `reverseMaxSpeed` is a default/override, not the ship's truth: a value that
+ * differs from the compiled default is an explicit override and wins;
+ * otherwise the snapshot's live `reverseMaxSpeed` is used when present,
+ * falling back to the compiled default. At the shipped defaults the live
+ * ship, the compiled default and (unchanged) tuning all coincide at `120`.
+ */
+export function resolveReverseMaxSpeed(
+  t: CompetentBotTunables,
+  liveReverseMaxSpeed?: number,
+): number {
+  if (t.reverseMaxSpeed !== COMPETENT_BOT_TUNABLES.reverseMaxSpeed) {
+    return t.reverseMaxSpeed;
+  }
+  if (
+    liveReverseMaxSpeed !== undefined &&
+    Number.isFinite(liveReverseMaxSpeed)
+  ) {
+    return liveReverseMaxSpeed;
+  }
+  return t.reverseMaxSpeed;
 }
