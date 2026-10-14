@@ -3317,15 +3317,19 @@ describe('CombatScene — Options orbit-emitter parity (AH-0MV1BIVVK0043TEM)', (
         Math.hypot(gamePods[i].vx, gamePods[i].vy),
         5,
       );
-      // Each pod fires along its own scene's ship heading.
-      const heading = (owner: PlayScene | EquivGymScene) =>
-        owner.getPlayer()!.getHeading();
-      expect(Math.atan2(gymPods[i].vy, gymPods[i].vx)).toBeCloseTo(
-        heading(gymScene),
+      // Each pod fires radially outward along its own ship→pod line, and the
+      // game and gym aim identically (same orbit phase, same geometry —
+      // AH-0MV1BIVVK0043TEM, AH-0MV5DFBVW002J2XO).
+      const radial = (owner: PlayScene | EquivGymScene, pod: PlayerBullet) => {
+        const ship = owner.getPlayer()!;
+        return Math.atan2(pod.y - ship.y, pod.x - ship.x);
+      };
+      expect(Math.atan2(gamePods[i].vy, gamePods[i].vx)).toBeCloseTo(
+        radial(playScene, gamePods[i]),
         5,
       );
-      expect(Math.atan2(gamePods[i].vy, gamePods[i].vx)).toBeCloseTo(
-        heading(playScene),
+      expect(Math.atan2(gymPods[i].vy, gymPods[i].vx)).toBeCloseTo(
+        radial(gymScene, gymPods[i]),
         5,
       );
     }

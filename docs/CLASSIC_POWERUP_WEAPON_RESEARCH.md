@@ -237,14 +237,21 @@ ship's heading, multiplying firepower without changing the main gun.
 
 **AI_Hell adaptation:** Collecting the weapon adds **two neon satellite pods
 that orbit the ship** (a shallow, readable circle). Each pod fires its own
-bullet along the ship's current heading on the weapon's beat subdivision, so
-the weapon's damage scales with positioning and the ship's facing. The pods are
-visual entities owned by the shared player/bullet layer, not new enemy types.
+bullet **radially outward** along its current orbit direction (the ship→pod
+line, in the direction of the orb) on the weapon's beat subdivision, so a
+volley fans into a rotating spike/flower pattern and the weapon's damage scales
+with positioning and the orbit phase rather than the ship's facing. The 2000 ms
+orbit is deliberately not a whole multiple of the 750 ms fire interval (0.375
+revolutions per trigger), so consecutive volleys aim differently and the spread
+stays alive (`isOptionsOrbitTriggerAligned`). The pods are visual entities
+owned by the shared player/bullet layer, not new enemy types.
 
-**Divergence from original:** The original pods trail directly behind the ship;
-AI_Hell orbits them so the top-down free-2D player can see and steer them, and
-so their firing lines differ from the main gun. No ship-upgrade path — the pods
-are a timed cumulative weapon like Spread/Dual/Rapid.
+**Divergence from original:** The original pods trail directly behind the ship
+and mirror its heading; AI_Hell orbits them so the top-down free-2D player can
+see and steer them, and each pod fires **radially outward along its own orbit
+direction** instead of the ship's heading, so their firing lines fan
+independently of the main gun. No ship-upgrade path — the pods are a timed
+cumulative weapon like Spread/Dual/Rapid.
 
 **Type:** weapon.
 
@@ -256,19 +263,22 @@ are a timed cumulative weapon like Spread/Dual/Rapid.
 - Fire subdivision: **1 shot per beat** (`1` → 750 ms at 80 BPM), on the shared
   grid; the pods and the active main guns stay phase-locked.
 - Seam: **new shared combat-core dispatch seam.** A shared orbit-emitter update
-  in `CombatCoreScene` maintains each pod's angle and fires from its world
-  position through the same `PlayerBullet` path; no new `AoEDescriptor`. Living
-  in shared core means `PlayScene` and every gym render and fire identical pods.
+  in `CombatCoreScene` maintains each pod's angle and fires radially outward
+  from its world position through the same `PlayerBullet` path; the pure
+  geometry and the orbit-vs-trigger invariant live in `optionsEscort.ts`
+  (`optionsPodFireDirections`, `isOptionsOrbitTriggerAligned`); no new
+  `AoEDescriptor`. Living in shared core means `PlayScene` and every gym render
+  and fire identical pods.
 - `weaponLevels.ts` variables: **Projectiles** (`projectileCount`, MVP; extra
   pods beyond the base two, capped to keep the orbit legible), **Fire rate**
   (`fireRate`, MVP), **Bullet size** (`bulletSize`, MVP) and **Homing**
   (`homing`, late-game curve of the pod shots).
 
 **Balance / coverage:** Pods multiply effective firepower, so the base is two
-pods, the pod bullet is weaker/smaller than the cannon's, and the orbit keeps
-the firing lines distinct from the main gun. It is the first weapon whose DPS
-depends on the ship's heading rather than a static pattern. Intended rarity:
-standard weapon weight.
+pods, the pod bullet is weaker/smaller than the cannon's, and each volley's
+radial spread keeps the firing lines distinct from the main gun. Its DPS
+depends on the orbit phase rather than a static pattern or the ship's heading.
+Intended rarity: standard weapon weight.
 
 **Gym scene:** `GymWeapons` — the orbiting pods and their beat-locked fire are
 visible around the ship; the shared emitter update is identical in the game.

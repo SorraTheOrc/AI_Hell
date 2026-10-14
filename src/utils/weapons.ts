@@ -32,8 +32,8 @@
  * - **cluster** — a single missile that splits once, on impact or expiry,
  *   into a radial cluster of warheads (Missile Command MIRV homage, timed;
  *   see {@link WeaponDefinition.splits})
- * - **options** — orbiting satellite pods that each fire along the ship's
- *   heading (Gradius Options homage, timed; see
+ * - **options** — orbiting satellite pods that each fire radially outward
+ *   along their own orbit direction (Gradius Options homage, timed; see
  *   {@link WeaponDefinition.orbit})
  *
  * Distances use **radians** for math (Phaser convention, positive =
@@ -513,6 +513,12 @@ export const OPTIONS_ORBIT_RADIUS = 28;
 /**
  * Time (ms) for one full pod orbit revolution. A slow, readable circle so the
  * player can steer the escort.
+ *
+ * Deliberately not a whole-number multiple of the Options fire interval
+ * (`WEAPON_OPTIONS_FIRE_RATE`, 750 ms at 80 BPM): 750 / 2000 = 0.375 rotates
+ * per trigger, so beat-triggered volleys aim in different radial directions
+ * instead of re-aiming identically (`isOptionsOrbitTriggerAligned`,
+ * AH-0MV5DFBVW002J2XO).
  */
 export const OPTIONS_ORBIT_PERIOD_MS = 2000;
 
@@ -625,9 +631,9 @@ export interface WeaponDefinition {
    * Orbit-emitter descriptor — the Gradius Options companion-entity seam
    * (AH-0MV1BIVVK0043TEM). When present the weapon does **not** use its
    * `offsets` pattern: the shared combat core spawns `orbit.pods` satellite
-   * pods that orbit the ship and each fires a bullet along the ship's heading
-   * through the ordinary `PlayerBullet` path. Absent on every conventional
-   * weapon.
+   * pods that orbit the ship and each fires a bullet radially outward along its
+   * own orbit direction through the ordinary `PlayerBullet` path. Absent on
+   * every conventional weapon.
    *
    * `pods` is the **level-resolved** pod count: {@link resolveWeaponDefinition}
    * grows the base count with the `projectileCount` upgrade, clamped to
@@ -760,7 +766,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'options',
     name: 'Options',
     description:
-      'Adds orbiting satellite pods that each fire along your heading.',
+      'Adds orbiting satellite pods that each fire radially outward, in the direction of the orb.',
     // The orbit descriptor drives pod firing; the single `[0]` offset is a
     // harmless fallback (the shared core never reads the pattern for an
     // orbit weapon).

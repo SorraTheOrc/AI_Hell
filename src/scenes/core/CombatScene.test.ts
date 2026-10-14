@@ -1429,7 +1429,7 @@ describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
       .filter((b) => b.color === WEAPON_CATALOGUE.options.bulletColor);
   }
 
-  it('auto-fire spawns one pod bullet per orbiting pod, each along the heading', async () => {
+  it('auto-fire spawns one pod bullet per orbiting pod, each radially outward', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('options', true);
@@ -1443,10 +1443,11 @@ describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
     expect(expected).toBe(2);
     expect(bullets).toHaveLength(expected);
 
-    const heading = player.getHeading();
     for (const bullet of bullets) {
-      // Each pod fires along the ship's heading at the pod bullet speed.
-      expect(Math.atan2(bullet.vy, bullet.vx)).toBeCloseTo(heading, 5);
+      // Each pod fires radially outward along its own ship→pod line at the
+      // pod bullet speed — not along the ship's heading (AH-0MV5DFBVW002J2XO).
+      const radial = Math.atan2(bullet.y - player.y, bullet.x - player.x);
+      expect(Math.atan2(bullet.vy, bullet.vx)).toBeCloseTo(radial, 5);
       expect(Math.hypot(bullet.vx, bullet.vy)).toBeCloseTo(
         OPTIONS_POD_BULLET_SPEED,
         5,
@@ -1458,6 +1459,12 @@ describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
         3,
       );
     }
+    // The two pods do not both copy the ship's heading: diametrically
+    // opposite pods fire in opposite radial directions.
+    expect(Math.atan2(bullets[0].vy, bullets[0].vx)).not.toBeCloseTo(
+      Math.atan2(bullets[1].vy, bullets[1].vx),
+      3,
+    );
     // Distinct pod launch positions — one per pod.
     const positions = new Set(
       bullets.map((b) => `${b.x.toFixed(3)},${b.y.toFixed(3)}`),

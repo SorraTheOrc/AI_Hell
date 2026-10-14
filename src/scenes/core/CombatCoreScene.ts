@@ -711,9 +711,10 @@ export class CombatCoreScene<
         }
       }
       // Orbit weapons (the Gradius Options escort) fire one bullet per pod
-      // from each pod's current world position, along the ship's heading. The
-      // pod geometry lives once in the shared `optionsEscort` helper, so the
-      // game and every gym fire identical pods (AH-0MV1BIVVK0043TEM).
+      // from each pod's current world position, radially outward along the
+      // pod's own orbit direction. The pod geometry lives once in the shared
+      // `optionsEscort` helper, so the game and every gym fire identical pods
+      // (AH-0MV1BIVVK0043TEM).
       if (def.orbit) {
         this.fireOptionsPods(def, player);
         continue;
@@ -941,20 +942,23 @@ export class CombatCoreScene<
   }
 
   /**
-   * Fires one bullet from every Options pod along the ship's heading
-   * (AH-0MV1BIVVK0043TEM). Each pod's world position comes from the shared
-   * `optionsEscort` helper; the bullets travel through the ordinary
-   * `PlayerBullet` path so they damage enemies exactly like the main gun.
+   * Fires one bullet from every Options pod radially outward along that pod's
+   * own orbit direction — each bullet travels along the line from the ship
+   * through the pod's current position, so a volley fans into a rotating
+   * spike/flower pattern rather than following the ship's heading
+   * (AH-0MV1BIVVK0043TEM, AH-0MV5DFBVW002J2XO). Each pod's world position and
+   * radial direction come from the shared `optionsEscort` helper; the bullets
+   * travel through the ordinary `PlayerBullet` path so they damage enemies
+   * exactly like the main gun.
    *
    * @param def - The level-resolved Options definition (carries `orbit`).
-   * @param player - The firing player (position + heading + bullet scale).
+   * @param player - The firing player (position + bullet scale).
    */
   protected fireOptionsPods(def: WeaponDefinition, player: Player): void {
     const orbit = def.orbit;
     if (!orbit) return;
     const count = Math.max(0, Math.round(orbit.pods));
     if (count === 0) return;
-    const heading = player.getHeading();
     const radius = PLAYER_BULLET_RADIUS * (def.levelBulletSize ?? 1);
     const positions = optionsPodPositions(
       player.x,
@@ -963,7 +967,9 @@ export class CombatCoreScene<
       count,
       orbit.radius,
     );
-    const directions = optionsPodFireDirections(heading, count);
+    // Each pod fires radially outward: its direction is its current orbit
+    // angle (the ship→pod line), not the ship's heading.
+    const directions = optionsPodFireDirections(this._optionsOrbitPhase, count);
     for (let i = 0; i < positions.length; i++) {
       const vel = bulletVelocity(directions[i], OPTIONS_POD_BULLET_SPEED);
       this.spawnPlayerBullet(
