@@ -213,12 +213,11 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   still dominates, so the bot never trades its life for a life. Normal play is
   unaffected (the preference only drives the demo bot and the demo
   auto-select).
-- **Take over (AH-0MUYP6M6W006Z1AY):** pressing a **movement key** (W/A/S/D
+- **Take over (AH-0MUYP6M6W006Z1AY, AH-0MUYG8XHI0044MQ1):** pressing a **movement key** (W/A/S/D
   per the configured bindings, or an arrow key) leaves demo mode in place
   (`setDemoMode(false)`) — the run continues under player control, no restart.
-  **ESC** (the pause key) instead leaves the demo and returns to the main
-  menu; every other key and the pointer are ignored, so a stray keypress or
-  click cannot drop an unattended attract loop into human control.
+  Any **other** key — including **ESC** — returns to the main menu, abandoning
+  the demo run without scoring; the pointer stays ignored.
 - **Non-scoring:** on death or victory a demo run returns straight to the main
   menu (it never enters `GameOverScene`), so it writes no leaderboard entry and
   no session state.

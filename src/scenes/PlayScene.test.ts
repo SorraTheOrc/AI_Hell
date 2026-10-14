@@ -4349,7 +4349,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       },
     );
 
-    it('AC2 — a rebind is honoured: the new movement key takes over, the old one does not', async () => {
+    it('AC2 — a rebind is honoured: the new movement key takes over, the old one returns to menu', async () => {
       const scene = await bootDemo();
 
       // Rebind moveUp from `w` to `i`, exactly as SettingsScene persists it.
@@ -4363,24 +4363,42 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       );
       (scene as unknown as { _applyBindings(): void })._applyBindings();
 
-      // The old default `w` is no longer movement → ignored.
-      pressKey(scene, 'w');
-      expect(scene.isDemoMode()).toBe(true);
-
-      // The new binding `i` takes over.
+      // The new binding `i` takes over in place.
       pressKey(scene, 'i');
       expect(scene.isDemoMode()).toBe(false);
     });
 
-    it('AC3 — a non-movement key is ignored and the demo keeps playing', async () => {
+    it('AC1 — a non-movement key after rebinding returns to the main menu', async () => {
       const scene = await bootDemo();
 
-      for (const key of [' ', 'Enter', 'Tab', 'F5', 'x', '7', 'F1']) {
-        pressKey(scene, key);
-      }
+      // Rebind moveUp from `w` to `i`.
+      localStorage.setItem(
+        'ai_hell_settings',
+        JSON.stringify({
+          sfxVolume: 1,
+          sfxMuted: false,
+          bindings: { moveUp: 'i' },
+        }),
+      );
+      (scene as unknown as { _applyBindings(): void })._applyBindings();
 
-      expect(scene.isDemoMode()).toBe(true);
-      expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+      // The old default `w` is no longer movement → returns to the menu.
+      pressKey(scene, 'w');
+      await new Promise((r) => setTimeout(r, 80));
+      expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    });
+
+    it('AC1 — a non-movement key returns to the main menu', async () => {
+      const scene = await bootDemo();
+
+      // Any non-movement key (e.g. space) returns to the main menu.
+      pressKey(scene, ' ');
+      await new Promise((r) => setTimeout(r, 80));
+
+      // MenuScene is now active and PlayScene is no longer.
+      expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
     });
 
     it('AC3 — the pointer no longer takes over the demo', async () => {

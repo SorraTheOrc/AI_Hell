@@ -432,9 +432,9 @@ export class PlayScene extends CombatScene<
   /**
    * Demo take-over handler active only while the demo runs
    * (AH-0MUX4966Z0009P9Q AC3). Null outside demo mode, so normal play
-   * carries no extra input listener. Narrows to a movement key (take over)
-   * or the pause key/ESC (return to the main menu) — all other input and the
-   * pointer are ignored (AH-0MUYP6M6W006Z1AY AC1–AC3).
+   * carries no extra input listener. A movement key takes over in place;
+   * any other key (including ESC/pause) returns to the main menu — the
+   * pointer stays ignored (AH-0MUYP6M6W006Z1AY AC1–AC3, AH-0MUYG8XHI0044MQ1).
    */
   private demoTakeOverHandler: ((event: KeyboardEvent) => void) | null = null;
 
@@ -786,10 +786,10 @@ export class PlayScene extends CombatScene<
       }
     });
 
-    // Narrowed take-over while the demo runs (AH-0MUX4966Z0009P9Q AC3,
-    // AH-0MUYP6M6W006Z1AY AC1–AC3): only a movement key hands control to the
-    // player (in place) and only the pause key/ESC returns to the main menu;
-    // every other key and the pointer are ignored.
+    // Press-to-take-over while the demo runs (AH-0MUX4966Z0009P9Q AC3,
+    // AH-0MUYP6M6W006Z1AY AC1–AC3, AH-0MUYG8XHI0044MQ1): a movement key
+    // hands control to the player in place; any non-movement key (including
+    // ESC) returns to the main menu; the pointer stays ignored.
     if (this.demoMode) this._enableDemoTakeOver();
 
     // Power-up drop pool.
@@ -3359,28 +3359,27 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Wires the narrowed press-to-take-over while the demo runs
-   * (AH-0MUX4966Z0009P9Q AC3, AH-0MUYP6M6W006Z1AY AC1–AC3): a **movement key**
-   * (an arrow key or a configured movement binding) leaves demo mode **in
-   * place** — the run keeps going, only the input source changes from the bot
-   * to the player. The **pause key** (ESC by default) leaves the demo and
-   * returns to the main menu instead of pausing. Any other key and the
-   * pointer are ignored. Idempotent.
+   * Wires the press-to-take-over while the demo runs
+   * (AH-0MUX4966Z0009P9Q AC3, AH-0MUYP6M6W006Z1AY AC1–AC3, AH-0MUYG8XHI0044MQ1):
+   * a **movement key** (an arrow key or a configured movement binding) leaves
+   * demo mode **in place** — the run keeps going, only the input source changes
+   * from the bot to the player. Any **other** key (including ESC) returns to
+   * the main menu, abandoning the demo run without scoring. The pointer stays
+   * ignored. Idempotent.
    */
   private _enableDemoTakeOver(): void {
     if (this.demoTakeOverHandler) return;
     const handler = (event: KeyboardEvent): void => {
       if (event.repeat) return;
-      if (event.key === this.pauseKeyName) {
-        // ESC/pause → leave the demo: clean up the listener before the
-        // transition so no stale handler leaks into the menu.
-        this._disableDemoTakeOver();
-        this.scene.start('MenuScene');
+      if (this._isMovementKey(event)) {
+        this.setDemoMode(false); // take over in place
         return;
       }
-      if (this._isMovementKey(event)) this.setDemoMode(false);
-      // Every other key (and the pointer) is ignored — the demo keeps
-      // playing unattended.
+      // Any non-movement key (ESC, letters, numbers, function keys, etc.)
+      // returns to the main menu — clean up the listener before the
+      // transition so no stale handler leaks into the menu.
+      this._disableDemoTakeOver();
+      this.scene.start('MenuScene');
     };
     this.demoTakeOverHandler = handler;
     this.input.keyboard?.on('keydown', handler);
@@ -3413,7 +3412,7 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Removes the demo take-over listener. Called on take-over, on ESC-to-menu
+   * Removes the demo take-over listener. Called on take-over, on return-to-menu
    * and on scene shutdown, so no listener leaks across sessions (AC3/AC4).
    */
   private _disableDemoTakeOver(): void {

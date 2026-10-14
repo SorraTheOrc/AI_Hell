@@ -605,7 +605,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
     expect(play.isDemoMode()).toBe(false);
   });
 
-  it('AC3 — a non-movement key during the demo does not take over', async () => {
+  it('AC1 — a non-movement key during the demo returns to the main menu', async () => {
     await bootMenu();
     findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
     await new Promise((r) => setTimeout(r, 350));
@@ -619,8 +619,10 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
       preventDefault: () => {},
     } as KeyboardEvent);
 
-    // The demo keeps playing unattended.
-    expect(play.isDemoMode()).toBe(true);
+    // Any non-movement key returns to the main menu (scene transition is async).
+    await new Promise((r) => setTimeout(r, 80));
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
 
   it('AC1 — ESC during the demo returns to the main menu (not pause)', async () => {

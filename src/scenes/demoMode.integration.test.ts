@@ -462,7 +462,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(player.x).toBeGreaterThan(beforeX);
   });
 
-  it('AC3 — other input during the demo is a no-op', async () => {
+  it('AC1 — a non-movement key during the live demo returns to the main menu', async () => {
     const menu = await bootMenu();
     menu.startDemo();
     await wait(150);
@@ -470,18 +470,32 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
 
-    for (const key of [' ', 'Enter', 'Tab']) {
-      play.input.keyboard!.emit('keydown', {
-        key,
-        repeat: false,
-        preventDefault: () => {},
-      } as KeyboardEvent);
-    }
+    play.input.keyboard!.emit('keydown', {
+      key: ' ', // a non-movement key (space)
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+
+    // The demo is abandoned for the main menu (scene transition is async).
+    await wait(80);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
+  it('AC3 — the pointer during the live demo stays ignored', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
     play.input.emit('pointerdown', { x: 100, y: 100 });
 
-    // Unattended: the bot is still in control.
+    // The demo keeps playing: no take-over and no return to the menu.
     expect(play.isDemoMode()).toBe(true);
     expect(botInputOf(play)).not.toBeNull();
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
   });
 
   // ── Stale scene-start data leak (AH-0MUY4881P007FJ8R) ──────────
