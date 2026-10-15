@@ -173,8 +173,9 @@ export interface ActiveEffect {
   /**
    * True when the effect is permanently owned for the run and has no timed
    * window (e.g. a hold-full Bomb, or the Phase Shift ownership marker).
-   * Rendered as an unlimited marker rather than a count; the Phase Shift
-   * pool itself is finite and recharges (AH-0MV82I7TX0009JMT).
+   * Rendered as the ∞ permanent value (– the level is permanent for the
+   * run), never an unlimited supply: the Phase Shift pool itself is finite,
+   * recharges (AH-0MV82I7TX0009JMT) and is surfaced as a ` ×N` pool count.
    */
   permanent?: boolean;
 }
@@ -1356,10 +1357,11 @@ export class EffectsRegistry {
       });
     }
     // Phase Shift auto-activation charges (parent AH-0MUIYX1EE008FVS8): a
-    // finite stock-pile renders as a count, the permanent owner marker as an
-    // unlimited glyph (the pool itself is finite and recharges — the HUD
-    // grey-out for an empty pool is AH-0MV82I97Y007MB6M). A zero charge
-    // count is never surfaced (no misleading "x0").
+    // finite stock-pile renders as a count; the permanent owner marker as an
+    // ∞ value (the level is permanent for the run) — never an unlimited
+    // supply, the pool is finite, recharges and is surfaced via phaseCharges()
+    // (the HUD grey-out for an empty pool is AH-0MV82I97Y007MB6M). A zero
+    // charge count is never surfaced (no misleading "x0").
     if (this.isPhasePermanent()) {
       result.push({
         id: 'phase_shift' as PowerUpId,

@@ -1176,12 +1176,15 @@ describe('P6 charge display model', () => {
     expect(reg.activeEffects().some((e) => e.id === 'phase_shift')).toBe(true);
   });
 
-  it('surfaces the permanent reward as unlimited (permanent flag)', () => {
+  it('surfaces the permanent reward via the ownership marker, not an unlimited supply', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift', true);
     const p6 = reg.activeEffects().find((e) => e.id === 'phase_shift')!;
     expect(p6).toBeDefined();
     expect(p6.permanent).toBe(true);
+    // The pool is finite and recharges (AH-0MV82I7TX0009JMT): the
+    // permanent reward gates ownership, the finite charge count is read
+    // via phaseCharges() (surfaced by the HUD as ` ×N`), not as stacks here.
     expect(p6.stacks).toBeUndefined();
   });
 
