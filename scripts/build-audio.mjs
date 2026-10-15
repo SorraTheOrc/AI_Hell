@@ -13,11 +13,15 @@
  *
  * Modes
  * -----
- *   (default)    Render when the ToneForge CLI is available, otherwise
- *                verify the committed assets against `checksums.json`.
- *                This keeps `npm run build` working in a clean checkout
- *                (CI) where the sibling `../ToneForge` is absent, while
- *                still failing closed on any checksum drift.
+ *   (default)    Verify the committed assets when the render inputs are
+ *                **unchanged**, otherwise render with the ToneForge CLI
+ *                (falling back to verify alone when no CLI is available).
+ *                The input fingerprint (manifest, recipes, pin — see
+ *                `computeInputFingerprint`) is persisted in
+ *                `checksums.json`; auto mode re-renders only when it no
+ *                longer matches, so an unchanged `npm run build` skips the
+ *                multi-minute render while still failing closed on any
+ *                checksum drift (AH-0MV87694J009Z34V).
  *   --render     Force a full render. Fails when no ToneForge CLI is
  *                available.
  *   --verify     Never render; verify the committed assets only.
@@ -274,13 +278,17 @@ export function resolveToneForge({
 /**
  * Builds a render function that invokes the ToneForge CLI for one job and
  * returns the rendered WAV bytes. `spawn` is injectable for tests.
+ *
+ * The recipe directory is resolved next to the manifest (matching
+ * `computeInputFingerprint`, so the fast-path fingerprint covers exactly
+ * the recipe files the renderer reads).
  */
-export function createToneForgeRenderer({ cli, manifest, repoRoot, env = process.env, spawn = spawnSync }) {
+export function createToneForgeRenderer({ cli, manifest, repoRoot, manifestPath = MANIFEST_PATH, env = process.env, spawn = spawnSync }) {
   return function renderJob(job) {
     const tmp = mkdtempSync(join(tmpdir(), 'aihell-audio-'));
     const out = join(tmp, basename(job.outputPath));
     try {
-      const recipeDir = join(repoRoot, 'audio', 'toneforge', manifest.recipeDirectory);
+      const recipeDir = join(dirname(manifestPath), manifest.recipeDirectory);
       const args = [
         ...cli.prefixArgs,
         'generate',
@@ -307,6 +315,45 @@ export function createToneForgeRenderer({ cli, manifest, repoRoot, env = process
       rmSync(tmp, { recursive: true, force: true });
     }
   };
+}
+
+/**
+ * Computes the deterministic SHA-256 fingerprint of every render input.
+ *
+ * The rendered output is a pure function of: the manifest (`manifestPath`:
+ * recipe references, per-cue seeds, `seedBlock`, `defaultExistingRecipeSeed`
+ * and the output/checksum paths), every recipe file under the manifest's
+ * `recipeDirectory` (resolved next to the manifest, matching
+ * `createToneForgeRenderer`), and the ToneForge pin (`pin.json`, which
+ * owns the reused ToneForge recipes such as `weapon-laser-zap`). Any
+ * change to these inputs must force a re-render; the fingerprint is what
+ * lets auto mode skip the re-render when nothing has changed.
+ *
+ * Returns `{ sha, parts }` where `parts` is the stable, ordered
+ * serialisation the digest is derived from (exported so the derivation is
+ * unit-testable against the named inputs).
+ */
+export function computeInputFingerprint({
+  manifest,
+  repoRoot = REPO_ROOT,
+  manifestPath = MANIFEST_PATH,
+} = {}) {
+  const recipes = [];
+  const recipeDir = join(dirname(manifestPath), manifest.recipeDirectory);
+  if (existsSync(recipeDir)) {
+    for (const name of readdirSync(recipeDir).sort()) {
+      if (!/\.ya?ml$/.test(name)) continue;
+      recipes.push({ file: name, sha256: sha256(readFileSync(join(recipeDir, name))) });
+    }
+  }
+  const parts = {
+    seedBlock: manifest.seedBlock ?? null,
+    defaultExistingRecipeSeed: manifest.defaultExistingRecipeSeed ?? null,
+    manifestSha256: sha256(readFileSync(manifestPath)),
+    recipes,
+    pinSha256: sha256(readFileSync(pinPathFor(repoRoot))),
+  };
+  return { sha: sha256(Buffer.from(JSON.stringify(parts))), parts };
 }
 
 /** Renders all jobs, checks reproducibility, writes assets + checksums. */
@@ -341,7 +388,8 @@ export function buildAssets({
 
   removeStaleAssets({ manifest, repoRoot, expected, logger });
 
-  const checksums = serializeChecksums(manifest, assets, { repoRoot, manifestPath });
+  const inputs = computeInputFingerprint({ manifest, repoRoot, manifestPath }).sha;
+  const checksums = serializeChecksums(manifest, assets, { repoRoot, manifestPath, inputs });
   const checksumsPath = join(repoRoot, manifest.checksumsFile);
   mkdirSync(dirname(checksumsPath), { recursive: true });
   writeFileSync(checksumsPath, checksums);
@@ -362,8 +410,21 @@ function removeStaleAssets({ manifest, repoRoot, expected, logger }) {
   }
 }
 
-/** Serialises the checksum manifest with sorted keys for determinism. */
-export function serializeChecksums(manifest, assets, { repoRoot = REPO_ROOT, manifestPath = MANIFEST_PATH } = {}) {
+/**
+ * Serialises the checksum manifest with sorted keys for determinism.
+ *
+ * `inputs` records the fingerprint of the render inputs the assets were
+ * rendered from (see `computeInputFingerprint`); auto mode compares it
+ * against the current on-disk inputs to decide whether to re-render.
+ * Older checksums files without the field still verify and simply force a
+ * single re-render on the next auto run (rollout), never a fast-path
+ * failure.
+ */
+export function serializeChecksums(
+  manifest,
+  assets,
+  { repoRoot = REPO_ROOT, manifestPath = MANIFEST_PATH, inputs } = {},
+) {
   const sorted = {};
   for (const key of Object.keys(assets).sort()) {
     sorted[key] = assets[key];
@@ -373,6 +434,7 @@ export function serializeChecksums(manifest, assets, { repoRoot = REPO_ROOT, man
       version: 1,
       manifest: relative(repoRoot, manifestPath),
       seedBlock: manifest.seedBlock,
+      inputs,
       assets: sorted,
     },
     null,
@@ -455,7 +517,8 @@ export function parseArgs(argv) {
 
 const USAGE = `Usage: scripts/build-audio.sh [--auto|--render|--verify] [--manifest <path>]
 
-  --auto    (default) render when ToneForge is available, else verify
+  --auto    (default) verify when the render inputs are unchanged, else
+            render (verifying alone when no ToneForge CLI is available)
   --render  force a full render (fails without a ToneForge CLI)
   --verify  verify committed assets against checksums.json only
 `;
@@ -527,8 +590,51 @@ export function main(argv = process.argv.slice(2), { logger = console, env = pro
     return 0;
   }
 
+  if (args.mode === 'auto') {
+    // Verify-first fast path (AH-0MV87694J009Z34V): the committed
+    // checksums.json records the fingerprint of the inputs the committed
+    // assets were rendered from. When it matches the current on-disk
+    // inputs, the assets are provably up to date — verify them strictly and
+    // skip the ~5 minute re-render. A missing/unparseable checksums file,
+    // an absent or differing fingerprint, or unexpected input read errors
+    // all fall through to the full render below (the inputs may have
+    // changed); a verification failure aborts the build (fail closed).
+    try {
+      const recorded = JSON.parse(
+        readFileSync(join(repoRoot, manifest.checksumsFile), 'utf8'),
+      ).inputs;
+      const { sha } = computeInputFingerprint({
+        manifest,
+        repoRoot,
+        manifestPath: args.manifestPath,
+      });
+      if (typeof recorded === 'string' && recorded === sha) {
+        const result = verifyAssets({ manifest, repoRoot });
+        if (!result.ok) {
+          logger.error('Audio inputs unchanged, but the committed assets failed verification:');
+          for (const error of result.errors) logger.error(`  - ${error}`);
+          return 1;
+        }
+        logger.log(
+          `Audio inputs unchanged; verified ${planRenderJobs(manifest).length} baked assets without re-rendering.`,
+        );
+        return 0;
+      }
+    } catch {
+      // Missing checksums file, unparseable fingerprint, or unreadable
+      // input — treat as "inputs may have changed" and render.
+    }
+    logger.log('Audio inputs changed or unrecorded; rendering.');
+  }
+
   logger.log(`Rendering audio with ToneForge CLI: ${cli.source}`);
-  const renderJob = createToneForgeRenderer({ cli, manifest, repoRoot, env });
+  const renderJob = createToneForgeRenderer({
+    cli,
+    manifest,
+    repoRoot,
+    manifestPath: args.manifestPath,
+    env,
+  });
   const { jobs } = buildAssets({ manifest, repoRoot, manifestPath: args.manifestPath, renderJob, logger });
   logger.log(`Rendered ${jobs.length} assets and wrote ${manifest.checksumsFile}.`);
   return 0;

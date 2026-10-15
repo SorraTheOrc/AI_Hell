@@ -2,6 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
+  "inputs": "76dfcd69df6eeb5611ce84fe7d452b69847f18385fcd240558453b6cb872398e",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-boss-destruction.32203.wav": "fbe749ae3f8ddd87a29c1068f5330f3038390483a6f06902ddf7250b783dea3c",

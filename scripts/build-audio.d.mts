@@ -41,6 +41,7 @@ export interface RenderOptions {
   cli: ToneForgeCli;
   manifest: BuildManifest;
   repoRoot: string;
+  manifestPath?: string;
   env?: NodeJS.ProcessEnv;
   spawn?: typeof import('node:child_process').spawnSync;
 }
@@ -48,6 +49,17 @@ export interface RenderOptions {
 export interface VerifyResult {
   ok: boolean;
   errors: string[];
+}
+
+export interface InputFingerprint {
+  sha: string;
+  parts: {
+    seedBlock: string | null;
+    defaultExistingRecipeSeed: number | null;
+    manifestSha256: string;
+    recipes: Array<{ file: string; sha256: string }>;
+    pinSha256: string;
+  };
 }
 
 export interface ToneForgePin {
@@ -96,6 +108,11 @@ export function resolveMainCheckout(options?: {
 export function createToneForgeRenderer(
   options: RenderOptions,
 ): (job: RenderJob) => Buffer;
+export function computeInputFingerprint(options?: {
+  manifest: BuildManifest;
+  repoRoot?: string;
+  manifestPath?: string;
+}): InputFingerprint;
 export function buildAssets(options: {
   manifest: BuildManifest;
   repoRoot?: string;
@@ -106,7 +123,7 @@ export function buildAssets(options: {
 export function serializeChecksums(
   manifest: BuildManifest,
   assets: Record<string, string>,
-  options?: { repoRoot?: string; manifestPath?: string },
+  options?: { repoRoot?: string; manifestPath?: string; inputs?: string },
 ): string;
 export function verifyAssets(options: {
   manifest: BuildManifest;
