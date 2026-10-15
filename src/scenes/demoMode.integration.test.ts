@@ -58,6 +58,7 @@ import { LeaderboardScene } from './LeaderboardScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
 import { GymIndex } from './GymIndex';
 import { GYM_BOT_TUNING_SCENE_KEY, GymBotTuning } from './gym/GymBotTuning';
+import { bundledBotTuningJson } from '../core/bundledConfig';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -868,6 +869,89 @@ describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
     expect(
       (governor as unknown as { tunables: { skill: number } }).tunables.skill,
     ).toBeCloseTo(0.4);
+  });
+});
+
+interface ShippedBaseline {
+  current: string;
+  configs: Array<{
+    name: string;
+    values: {
+      competent: Record<string, number | boolean>;
+      human: Record<string, number | boolean>;
+    };
+  }>;
+}
+
+describe('Demo flies the bundled bot-tuning baseline in a fresh profile (AH-0MV9GZD2C005IIU3)', () => {
+  let booted: BootedGame | null = null;
+
+  /** The Git-tracked shipped baseline that every distributed build bundles. */
+  function shippedBaseline(): ShippedBaseline {
+    return JSON.parse(bundledBotTuningJson) as ShippedBaseline;
+  }
+
+  beforeEach(() => {
+    // A fresh profile: no saved tuning state, as on a newly-checked-out or
+    // distributed build (the bug this item fixes).
+    resetBotTuningStore();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  it('AC1 — a fresh-profile demo is built from the bundled baseline, not the factory fallback', async () => {
+    const baseline = shippedBaseline();
+    const shipped = baseline.configs.find((c) => c.name === baseline.current)!;
+    // Sanity: the shipped baseline carries a usable human skill value.
+    const shippedSkill = shipped.values.human['skill'];
+    expect(typeof shippedSkill).toBe('number');
+
+    booted = await bootScene(
+      [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
+      { deterministicBoot: true },
+    );
+    const menu = booted.scene as MenuScene;
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted.game.scene.getScene('PlayScene') as PlayScene;
+    // The demo consulted the store, which seeded the Git-tracked bundle (not
+    // an empty profile's factory fallback).
+    expect(play.getBotTuningConfigName()).toBe(shipped.name);
+    // The governor received the shipped human overrides through the same
+    // toHumanOverrides seam the store and gym share.
+    const governor = play.getBotGovernor();
+    expect(
+      (governor as unknown as { tunables: { skill: number } }).tunables.skill,
+    ).toBeCloseTo(shippedSkill as number);
+  });
+
+  it('AC1 — the demo\'s competent tunables match the shipped baseline values', async () => {
+    const baseline = shippedBaseline();
+    const shipped = baseline.configs.find((c) => c.name === baseline.current)!;
+
+    booted = await bootScene(
+      [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
+      { deterministicBoot: true },
+    );
+    (booted.scene as MenuScene).startDemo();
+    await wait(150);
+
+    const play = booted.game.scene.getScene('PlayScene') as PlayScene;
+    const expected = resolveCompetentTunables(
+      toCompetentOverrides(coerceTuningValues(shipped.values)),
+    );
+    const governor = play.getBotGovernor();
+    // The store produced the same tunables the bundle would (no divergent
+    // copy between the demo and the shipped baseline).
+    expect(expected.mineralSeekRange).toBe(shipped.values.competent['mineralSeekRange']);
+    expect(play.getBotTuningConfigName()).toBe(shipped.name);
+    expect(governor).toBeDefined();
   });
 });
 

@@ -229,7 +229,10 @@ async function main(argv) {
     await page.addInitScript(installRunEndedListener);
     // Seed the exported bot-tuning state before the game boots so a `--bot`
     // recording flies the saved tuning (AH-0MV6MFDYG001E6PL). Resolved and
-    // validated now (fail-fast); absent flag → fresh-profile defaults.
+    // validated now (fail-fast); absent flag → the page's bundled baseline
+    // (the Git-tracked `src/data/bot-tuning.json` every build ships,
+    // AH-0MV9GZD2C005IIU3), so a fresh `npm run record -- --bot` records the
+    // tuned demo, not factory defaults.
     if (options.botConfig !== null && options.botConfig !== undefined) {
       await page.addInitScript(installBotTuningConfig, loadBotTuningConfigFile(options.botConfig));
     }
