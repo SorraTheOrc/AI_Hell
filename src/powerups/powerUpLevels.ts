@@ -7,9 +7,10 @@
  *
  * - {@link POWER_UP_LEVEL_SPECS} — one spec (base, finite cap, curve rate
  *   `k`, `discrete`, label + rationale) per levelled variable, for **every**
- *   power-up Shield–Mineral Scoop. The specs reuse the shared exponential-saturation
- *   curve from `src/utils/curve.ts` so there is exactly **one** curve
- *   implementation for weapons and power-ups (AC1/AC4).
+ *   power-up Shield–Mineral Scoop. The specs reuse the shared
+ *   exponential-saturation and linear-clamped curves from `src/utils/curve.ts`
+ *   so there is exactly **one** curve implementation for weapons and
+ *   power-ups (AC1/AC4).
  * - {@link resolvePowerUpAtLevel} — the **pure** resolver mapping
  *   `(powerUpId, level)` to a {@link PowerUpLevelStats} snapshot. Pure,
  *   deterministic, monotonic non-decreasing and clamped to each variable's
@@ -105,12 +106,24 @@ import {
   formatDelta,
   type CurveSpec,
 } from '../utils/curve';
+import {
+  SHIP_SIZE,
+  SMART_BOMB_INTERVAL_BASE_SECONDS,
+  SMART_BOMB_INTERVAL_FLOOR_SECONDS,
+  SMART_BOMB_INTERVAL_PER_LEVEL_SECONDS,
+  SMART_BOMB_RADIUS_CAP_MULTIPLIER,
+  SMART_BOMB_RADIUS_PER_LEVEL,
+  SMART_BOMB_RADIUS_SHIP_MULTIPLIER,
+} from '../core/constants';
 
 // ── Level variables ─────────────────────────────────────────────────
 
 /**
  * The tunable power-up level variable space. Each variable is monotonic
- * non-decreasing in level (a higher level never makes the power-up worse).
+ * non-decreasing in level (a higher level never makes the power-up worse);
+ * the Smart Bomb pulse interval is the exception — it is stored **descending**
+ * (`max(10, 30 − 2×level)` seconds) because a shorter pulse interval is an
+ * improvement, and its derived pulses/second inverse stays non-decreasing.
  */
 export type PowerUpLevelVariable =
   /** Shield — bubble duration in seconds. */
@@ -145,12 +158,12 @@ export type PowerUpLevelVariable =
   | 'magnetStacks'
   /** Mineral Scoop — permanent stack cap (radius growth). */
   | 'scoopStacks'
-  /** Smart Bomb — screen-wide pulse radius in pixels. */
+  /** Smart Bomb — ship-centred pulse radius in pixels. */
   | 'aoeRadius'
   /** Smart Bomb — hit points each enemy takes per pulse. */
   | 'smartBombDamage'
-  /** Smart Bomb — permanent pulse rate in pulses per second. */
-  | 'smartBombFrequency'
+  /** Smart Bomb — permanent pulse interval in seconds (descends; the pulses/s axis is its inverse). */
+  | 'smartBombInterval'
   /** Force Field — bubble duration in seconds. */
   | 'forceFieldDuration'
   /** Force Field — bullets the field reflects before it stops. */
@@ -180,7 +193,7 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'scoopStacks',
   'aoeRadius',
   'smartBombDamage',
-  'smartBombFrequency',
+  'smartBombInterval',
   'forceFieldDuration',
   'forceFieldReflects',
   'mysteryUfoMinerals',
@@ -533,29 +546,30 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Smart Bomb — Defender-inspired stored screen-wide pulse.
+  // Smart Bomb — Defender-inspired stored ship-centred pulse (re-balanced
+  // in AH-0MV8GPGBL009M0D8: modest radius, rare interval, damage unchanged).
   smart_bomb: [
     {
       variable: 'aoeRadius',
       powerUpId: 'smart_bomb',
       label: 'Pulse radius',
       unit: 'px',
-      description: 'Radius of the screen-wide smart-bomb pulse, centred on the ship.',
-      curve: 'exponential-saturation',
-      // Base already covers the 960×540 field (diagonal ≈ 1102 px); the cap
-      // keeps the value finite and monotonic so off-screen targets beyond it
-      // are provably unaffected.
-      base: 1200,
-      cap: 2400,
-      k: 0.3,
+      description: 'Radius of the smart-bomb pulse, centred on the ship.',
+      curve: 'linear-clamped',
+      // Base = 10 × SHIP_SIZE = 200 px (operator Q1-A); each level adds +2 %
+      // of the base (+4 px) up to a 2× base cap (400 px) — the ship-centred
+      // pulse never covers the whole 960×540 field again.
+      base: SMART_BOMB_RADIUS_SHIP_MULTIPLIER * SHIP_SIZE,
+      cap: SMART_BOMB_RADIUS_SHIP_MULTIPLIER * SHIP_SIZE * SMART_BOMB_RADIUS_CAP_MULTIPLIER,
+      k: SMART_BOMB_RADIUS_SHIP_MULTIPLIER * SHIP_SIZE * SMART_BOMB_RADIUS_PER_LEVEL,
       discrete: false,
       rationale:
-        'A 1200 px base radius already reaches every corner of the 960×540 ' +
-        'play area (diagonal ≈ 1102 px), so the smart bomb is screen-wide ' +
-        'from the first pickup; the 2400 px cap keeps the axis finite and ' +
-        'monotonic, and k=0.3 adds ~310 px at the first upgrade. Keeping the ' +
-        'radius finite (rather than Infinity) preserves the off-screen ' +
-        'boundary AC and the shared AoE geometry helpers.',
+        'A 200 px base radius (10 × SHIP_SIZE) covers a modest, readable ' +
+        'area around the ship rather than the whole field, so the pulse is ' +
+        'a panic-button wake-up, not a passive auto-win. Each level adds ' +
+        '+2 % of the base (+4 px) with a 2× base cap (400 px) that keeps ' +
+        'the pulse finite and the fight legible, mirroring the magnet/scoop ' +
+        '“× ship size” convention.',
     },
     {
       variable: 'smartBombDamage',
@@ -575,21 +589,26 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'the second point at the first upgrade (readable payoff) then flattens.',
     },
     {
-      variable: 'smartBombFrequency',
+      variable: 'smartBombInterval',
       powerUpId: 'smart_bomb',
-      label: 'Pulse rate',
-      unit: '/s',
-      description: 'Pulses per second for a permanent smart bomb.',
-      curve: 'exponential-saturation',
-      base: 0.2,
-      cap: 0.5,
-      k: 0.3,
-      discrete: false,
+      label: 'Pulse interval',
+      unit: 's',
+      description: 'Seconds between pulses for a permanent smart bomb.',
+      curve: 'linear-clamped',
+      // Descending interval: max(10, 30 − 2×level) s — 30 s on the first
+      // grant (level 0), −2 s per further level, floor 10 s. The stored
+      // pulses/second axis (`1 / interval`) stays monotonic non-decreasing.
+      base: SMART_BOMB_INTERVAL_BASE_SECONDS,
+      cap: SMART_BOMB_INTERVAL_FLOOR_SECONDS,
+      k: -SMART_BOMB_INTERVAL_PER_LEVEL_SECONDS,
+      discrete: true,
       rationale:
-        'Stored as pulses/second so the axis stays monotonic non-decreasing ' +
-        '(the effect computes 1/frequency). A 0.5/s cap keeps a permanent ' +
-        'smart bomb a rare, weighty clear rather than a continuous screen ' +
-        'wipe; k=0.3 front-loads the first upgrade (~0.26/s, ≈3.8 s period).',
+        'Stored as the interval in seconds (descending, whole seconds) so ' +
+        'the permanent pulse matches `max(10, 30 − 2×level)`: 30 s at level ' +
+        '0, −2 s per further level, never faster than once per 10 s. The ' +
+        'derived frequency `1 / interval` stays monotonic non-decreasing ' +
+        '(the model’s rate-axis contract), keeping the smart bomb a rare, ' +
+        'weighty clear rather than a continuous screen wipe.',
     },
   ],
 
@@ -699,8 +718,10 @@ export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
  * names match {@link PowerUpLevelVariable}; only the variables that belong
  * to the resolved power-up are present.
  *
- * Every present value is monotonic non-decreasing in level and never
- * exceeds the corresponding spec cap.
+ * Every present value never leaves the corresponding spec band; the
+ * variable space is monotonic non-decreasing except the Smart Bomb pulse
+ * interval, which is stored **descending** for the `max(10, 30 − 2×level)`
+ * schedule (its derived pulses/second inverse stays non-decreasing).
  */
 export interface PowerUpLevelStats {
   /** The power-up this snapshot describes. */
@@ -739,11 +760,20 @@ export interface PowerUpLevelStats {
   magnetStacks?: number;
   /** Mineral Scoop — permanent stack cap (attraction radius driver). */
   scoopStacks?: number;
-  /** Smart Bomb — screen-wide pulse radius in pixels. */
+  /** Smart Bomb — ship-centred pulse radius in pixels. */
   aoeRadius?: number;
   /** Smart Bomb — hit points each enemy takes per pulse. */
   smartBombDamage?: number;
-  /** Smart Bomb — permanent pulse rate in pulses per second. */
+  /**
+   * Smart Bomb — permanent pulse interval in seconds (descending:
+   * `max(10, 30 − 2×level)`).
+   */
+  smartBombInterval?: number;
+  /**
+   * Smart Bomb — permanent pulse rate in pulses per second. **Derived** from
+   * {@link smartBombInterval} (`1 / interval`) so the rate axis stays
+   * monotonic non-decreasing while the stored interval descends.
+   */
   smartBombFrequency?: number;
   /** Force Field — bubble duration in seconds. */
   forceFieldDuration?: number;
@@ -782,6 +812,14 @@ export function resolvePowerUpAtLevel(
   const bucket = stats as unknown as Record<string, number>;
   for (const spec of POWER_UP_LEVEL_SPECS[powerUpId]) {
     bucket[spec.variable] = curveValue(spec, safeLevel);
+  }
+  // The Smart Bomb interval is stored descending (linear-clamped); the
+  // pulses/second axis is its monotonic inverse so rate-based consumers keep
+  // the model's non-decreasing contract while the interval schedule descends
+  // (parent AH-0MV8GPGBL009M0D8).
+  const interval = bucket.smartBombInterval;
+  if (Number.isFinite(interval) && interval > 0) {
+    bucket.smartBombFrequency = 1 / interval;
   }
   return stats;
 }

@@ -65,8 +65,18 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
         expect(spec.powerUpId).toBe(id);
         expect(POWER_UP_LEVEL_VARIABLES).toContain(spec.variable);
         expect(Number.isFinite(spec.cap)).toBe(true);
-        expect(spec.cap).toBeGreaterThanOrEqual(spec.base);
-        expect(spec.k).toBeGreaterThanOrEqual(0);
+        expect(Number.isFinite(spec.k)).toBe(true);
+        if (spec.curve === 'exponential-saturation') {
+          // Exponential axes grow toward a cap above the base.
+          expect(spec.cap).toBeGreaterThanOrEqual(spec.base);
+          expect(spec.k).toBeGreaterThanOrEqual(0);
+        } else {
+          // Linear-clamped axes travel in either direction: ascending
+          // (radius) or descending (the Smart Bomb pulse interval), so a
+          // negative `k` and a cap below the base are valid by design.
+          expect(spec.k).not.toBe(0);
+          expect(spec.cap).not.toBe(spec.base);
+        }
         expect(spec.label.length).toBeGreaterThan(0);
         expect(spec.rationale.length).toBeGreaterThan(0);
       }
@@ -136,19 +146,17 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     }
   });
 
-  // ── Re-balanced Smart Bomb schedules (test-first RED, AH-0MV98DVM90015DNF) ──
+  // ── Re-balanced Smart Bomb schedules (AH-0MV8GPGBL009M0D8) ──
   //
   // The re-balance (parent AH-0MV8GPGBL009M0D8) shrinks the smart-bomb pulse
   // from screen-wide to a ship-centred area: radius `min(400, 200 × (1 + 0.02 ×
   // level))` px (base = 10 × SHIP_SIZE = 200, additive +2 % of base per level,
   // capped at 2× base = 400) and permanent interval `max(10, 30 − 2 × level)` s
-  // (30 s at level 0, 10 s at and beyond level 10). The assertions below are
-  // RED against the pre-rebalance catalogue and go GREEN once the
-  // implementation children land (C2 linear/clamped curve + C3 re-spec); they
-  // are wrapped in Vitest's `it.fails(...)` so the suite stays green in
-  // between (repo convention — see powerUpIdNaming.test.ts). Handoff: C2/C3
-  // must remove the `.fails` wrapper once the new schedules resolve.
-  it.fails('Smart Bomb radius re-spec: 200 px base, +2 %/level, capped at 400 px (AH-0MV8GPGBL009M0D8)', () => {
+  // (30 s at level 0, 10 s at and beyond level 10). The schedule lands in the
+  // catalogue via the shared curves (linear-clamped radius + descending
+  // interval, AH-0MV98DWVN004OTH1) and the shared effect path reads the same
+  // values, so game and gym run identical code.
+  it('Smart Bomb radius re-spec: 200 px base, +2 %/level, capped at 400 px (AH-0MV8GPGBL009M0D8)', () => {
     const spec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
       (s) => s.variable === 'aoeRadius',
     )!;
@@ -177,9 +185,10 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     expect(spec.base).toBeLessThan(Math.hypot(960, 540));
   });
 
-  it.fails('Smart Bomb interval re-spec: max(10, 30 − 2×level) s endpoints (AH-0MV8GPGBL009M0D8)', () => {
-    // The model stores a non-decreasing pulses/second axis; the permanent
-    // interval is its inverse (effects.ts `smartBombInterval()` surfaces it).
+  it('Smart Bomb interval re-spec: max(10, 30 − 2×level) s endpoints (AH-0MV8GPGBL009M0D8)', () => {
+    // The model stores a descending interval (linear-clamped) and derives the
+    // pulses/second axis as its inverse (effects.ts `smartBombInterval()`
+    // surfaces the seconds schedule directly).
     // Endpoints: 30 s at level 0, 10 s at and beyond level 10.
     const intervalAt = (level: number) =>
       1 / resolvePowerUpAtLevel('smart_bomb', level).smartBombFrequency!;
@@ -204,22 +213,46 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     }
   });
 
-  it('Smart Bomb damage and frequency resolve monotonically within their caps (AH-0MV1BIWP9003EHRQ)', () => {
-    const variables = ['smartBombDamage', 'smartBombFrequency'] as const;
-    for (const variable of variables) {
-      const spec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
-        (s) => s.variable === variable,
-      )!;
-      let previous = -Infinity;
-      for (let level = 0; level <= 50; level++) {
-        const value = resolvePowerUpAtLevel('smart_bomb', level)[variable]!;
-        expect(value).toBeGreaterThanOrEqual(previous);
-        expect(value).toBeLessThanOrEqual(spec.cap);
-        expect(value).toBeGreaterThanOrEqual(spec.base);
-        previous = value;
-      }
-      expect(previous).toBeGreaterThan(spec.base);
+  it('Smart Bomb damage, interval and derived frequency stay monotonic within their bounds (AH-0MV1BIWP9003EHRQ / AH-0MV8GPGBL009M0D8)', () => {
+    // Damage grows (spec-backed, exponential); the pulse interval descends
+    // (spec-backed, linear-clamped) and the derived pulses/second axis grows
+    // — the model's resolution of "faster pulses at a higher level".
+    const damageSpec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
+      (s) => s.variable === 'smartBombDamage',
+    )!;
+    const intervalSpec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
+      (s) => s.variable === 'smartBombInterval',
+    )!;
+
+    let previousDamage = -Infinity;
+    let previousInterval = Infinity;
+    let previousFrequency = -Infinity;
+    for (let level = 0; level <= 50; level++) {
+      const stats = resolvePowerUpAtLevel('smart_bomb', level);
+      const damage = stats.smartBombDamage!;
+      const interval = stats.smartBombInterval!;
+      const frequency = stats.smartBombFrequency!;
+
+      expect(damage).toBeGreaterThanOrEqual(previousDamage);
+      expect(damage).toBeLessThanOrEqual(damageSpec.cap);
+      expect(damage).toBeGreaterThanOrEqual(damageSpec.base);
+
+      // The interval is whole seconds, descending, floored at the cap.
+      expect(interval).toBeLessThanOrEqual(previousInterval);
+      expect(interval).toBeLessThanOrEqual(intervalSpec.base);
+      expect(interval).toBeGreaterThanOrEqual(intervalSpec.cap);
+
+      // The derived rate is the interval's inverse and never decreases.
+      expect(frequency).toBeCloseTo(1 / interval, 12);
+      expect(frequency).toBeGreaterThanOrEqual(previousFrequency);
+
+      previousDamage = damage;
+      previousInterval = interval;
+      previousFrequency = frequency;
     }
+    expect(previousDamage).toBeGreaterThan(damageSpec.base);
+    expect(previousInterval).toBeLessThan(intervalSpec.base);
+    expect(previousFrequency).toBeGreaterThan(1 / intervalSpec.base);
   });
 
   it('Force Field duration/reflects resolve monotonically within their caps (AH-0MV1BIX1W006XF95)', () => {
@@ -261,14 +294,23 @@ describe('resolvePowerUpAtLevel (AC4 — pure shared resolver)', () => {
     }
   });
 
-  it('is monotonic non-decreasing and clamped to each cap', () => {
+  it('stays monotonic toward its cap and clamps there (curve-aware)', () => {
     for (const id of idsInCatalogue) {
       for (const spec of POWER_UP_LEVEL_SPECS[id]) {
+        // linear-clamped with a negative slope descends toward its cap (the
+        // Smart Bomb pulse interval): it must shrink, never grow, and stay
+        // >= the cap (the floor). Every other variable grows toward the cap.
+        const descending = spec.curve === 'linear-clamped' && spec.k < 0;
         let previous = statAt(id, spec.variable, 0);
         for (let level = 1; level <= 40; level++) {
           const current = statAt(id, spec.variable, level);
-          expect(current).toBeGreaterThanOrEqual(previous);
-          expect(current).toBeLessThanOrEqual(spec.cap);
+          if (descending) {
+            expect(current).toBeLessThanOrEqual(previous);
+            expect(current).toBeGreaterThanOrEqual(spec.cap);
+          } else {
+            expect(current).toBeGreaterThanOrEqual(previous);
+            expect(current).toBeLessThanOrEqual(spec.cap);
+          }
           previous = current;
         }
         expect(statAt(id, spec.variable, 1_000_000)).toBe(spec.cap);
@@ -352,6 +394,23 @@ describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
     const p3 = summarisePowerUpLevelChange('shield', 0, 1);
     expect(p3).toContain('Shield time');
     expect(p3).toContain('Shield hits');
+  });
+
+  it('shows the Smart Bomb pulse-interval delta in seconds (label/unit for the interval axis)', () => {
+    // Level 0 → 1: radius +2 % (200 → 204 px), damage +1 (1 → 2), and the
+    // permanent interval −2 s (30 → 28 s). The interval delta is an absolute,
+    // whole-second figure under the 'Pulse interval' label (unit 's') so the
+    // hold-full overlay reads the re-balanced schedule clearly.
+    const summary = summarisePowerUpLevelChange('smart_bomb', 0, 1);
+    expect(summary).toContain('Pulse interval');
+    expect(summary).toContain('-2');
+    // The radius and damage axes still contribute their deltas.
+    expect(summary).toContain('Pulse radius');
+    expect(summary).toContain('Pulse damage');
+    // Once the interval has floored at 10 s the summary omits it (only the
+    // still-growing damage/radius axes remain at a very high level).
+    const floored = summarisePowerUpLevelChange('smart_bomb', 50, 51);
+    expect(floored).not.toContain('Pulse interval');
   });
 });
 

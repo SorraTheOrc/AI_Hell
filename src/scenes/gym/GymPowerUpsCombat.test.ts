@@ -302,7 +302,7 @@ describe('GymPowerUpsCombat — Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ)', 
     booted = null;
   });
 
-  it.fails('collecting the Smart Bomb destroys every scout inside the 200 px radius and spares the rest (AH-0MV8GPGBL009M0D8)', async () => {
+  it('collecting the Smart Bomb destroys every scout inside the 200 px radius and spares the rest (AH-0MV8GPGBL009M0D8)', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
@@ -329,7 +329,7 @@ describe('GymPowerUpsCombat — Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ)', 
     expect(scouts[2].alive).toBe(true);
   });
 
-  it.fails('collecting the Smart Bomb clears every bullet inside the 200 px radius and keeps the rest (AH-0MV8GPGBL009M0D8)', async () => {
+  it('collecting the Smart Bomb clears every bullet inside the 200 px radius and keeps the rest (AH-0MV8GPGBL009M0D8)', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);

@@ -353,7 +353,7 @@ export class EffectsRegistry {
    */
   private _bombPulsePending = false;
 
-  // ── Smart Bomb screen-pulse state (AH-0MV1BIWP9003EHRQ) ──────────────
+  // ── Smart Bomb pulse state (AH-0MV1BIWP9003EHRQ) ─────────────────────
   /**
    * True when a hold-full Smart Bomb granted a permanent pulse for the run:
    * it never expires and pulses every {@link smartBombInterval} seconds.
@@ -526,7 +526,7 @@ export class EffectsRegistry {
         }
         break;
       case 'smart_bomb':
-        // smart_bomb: a field pickup queues one screen-wide pulse; the
+        // smart_bomb: a field pickup queues one ship-centred pulse; the
         // hold-full reward additionally makes it permanent and pulses
         // immediately (mirrors the Bomb; AH-0MV1BIWP9003EHRQ).
         this._smartBombPulsePending = true;
@@ -897,25 +897,33 @@ export class EffectsRegistry {
 
   /**
    * The resolved Smart Bomb pulse rate in pulses per second at the current
-   * level. Resolved live, so a level-up mid-run quickens every subsequent
-   * pulse.
+   * level — the derived inverse (`1 / interval`) of the stored descending
+   * interval schedule, monotonic non-decreasing by construction. Resolved
+   * live, so a level-up mid-run quickens every subsequent pulse.
    */
   smartBombFrequency(): number {
-    return this._levelStore.stats('smart_bomb').smartBombFrequency ?? 0.2;
+    const interval = this.smartBombInterval();
+    return Number.isFinite(interval) && interval > 0
+      ? 1 / interval
+      : 0;
   }
 
   /**
-   * The resolved Smart Bomb pulse interval in seconds (`1 / frequency`). The
-   * model stores a monotonic pulses/second rate; the effect inverts it.
+   * The resolved Smart Bomb pulse interval in seconds: `max(10, 30 − 2×level)`
+   * (30 s on the first grant, 10 s at and beyond level 10). Stored
+   * descending on the level schedule so the shared effect path reads it
+   * directly; {@link smartBombFrequency} is its monotonic inverse.
    */
   smartBombInterval(): number {
-    const frequency = this.smartBombFrequency();
-    return frequency > 0 ? 1 / frequency : Number.POSITIVE_INFINITY;
+    const interval = this._levelStore.stats('smart_bomb').smartBombInterval;
+    return interval !== undefined && Number.isFinite(interval) && interval > 0
+      ? interval
+      : Number.POSITIVE_INFINITY;
   }
 
   /**
    * The shared {@link AoEDescriptor} describing one Smart Bomb pulse: a
-   * screen-wide (`aoeRadius`) area that damages every enemy once for the
+   * ship-centred (`aoeRadius`) area that damages every enemy once for the
    * level-resolved `smartBombDamage` and clears every enemy bullet.
    *
    * Building the descriptor here (rather than hand-rolling an area effect in
@@ -928,7 +936,7 @@ export class EffectsRegistry {
     const stats = this._levelStore.stats('smart_bomb');
     return {
       trigger: 'screenPulse',
-      radius: stats.aoeRadius ?? 1200,
+      radius: stats.aoeRadius ?? 200,
       damagesEnemies: true,
       clearsEnemyBullets: true,
       damage: Math.max(1, Math.floor(stats.smartBombDamage ?? 1)),
@@ -944,8 +952,8 @@ export class EffectsRegistry {
    *   {@link smartBombInterval} seconds for the rest of the run.
    *
    * The registry owns the decision; the shared combat core performs the
-   * screen-wide clear/damage through {@link smartBombAoe} so the game and
-   * every gym run the same code.
+   * ship-centred area clear/damage through {@link smartBombAoe} so the game
+   * and every gym run the same code.
    *
    * @param dt - Frame delta in seconds.
    * @returns True when a pulse should be applied this frame.

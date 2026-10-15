@@ -111,6 +111,30 @@ export const MAGNET_RADIUS_PER_STACK = 0.5;
 /** Speed (px/s) at which the magnet pulls on-screen drops toward the ship. */
 export const MAGNET_ATTRACTION_SPEED = 120;
 
+// ── Smart Bomb (Defender homage, AH-0MV1BIWP9003EHRQ; re-balanced in AH-0MV8GPGBL009M0D8) ─
+
+/**
+ * Smart Bomb pulse radius base as a multiple of `SHIP_SIZE` (10× = 200 px).
+ * The re-balanced pulse (AH-0MV8GPGBL009M0D8) is a modest ship-centred
+ * area — 10× the ship — not a screen-wide clear.
+ */
+export const SMART_BOMB_RADIUS_SHIP_MULTIPLIER = 10;
+
+/** Smart Bomb pulse radius growth per level, as a fraction of the base (+2 %). */
+export const SMART_BOMB_RADIUS_PER_LEVEL = 0.02;
+
+/** Smart Bomb pulse radius cap as a multiple of the base (2× = 400 px). */
+export const SMART_BOMB_RADIUS_CAP_MULTIPLIER = 2;
+
+/** Permanent smart-bomb pulse interval at level 0 (seconds): 30 s on the first grant. */
+export const SMART_BOMB_INTERVAL_BASE_SECONDS = 30;
+
+/** Permanent smart-bomb pulse interval shortening per level (seconds): −2 s per level. */
+export const SMART_BOMB_INTERVAL_PER_LEVEL_SECONDS = 2;
+
+/** Permanent smart-bomb pulse interval floor (seconds): never faster than once per 10 s. */
+export const SMART_BOMB_INTERVAL_FLOOR_SECONDS = 10;
+
 // ── UI ───────────────────────────────────────────────────────────────
 
 /** Render depth of the standalone HUD — above gameplay objects. */

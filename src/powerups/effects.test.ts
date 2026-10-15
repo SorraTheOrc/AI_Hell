@@ -645,17 +645,13 @@ describe('Smart Bomb: one-shot pickup / permanent periodic (AH-0MV1BIWP9003EHRQ)
     );
   });
 
-  // ── Re-balanced schedules (test-first RED, AH-0MV98DVM90015DNF) ──
+  // ── Re-balanced schedules (AH-0MV8GPGBL009M0D8) ──
   //
-  // The parent re-balance (AH-0MV8GPGBL009M0D8) shrinks the pulse to
-  // `min(400, 200 × (1 + 0.02 × level))` px (base 200 = 10× ship size, cap
-  // 2× base) and slows the permanent pulse to `max(10, 30 − 2 × level)` s.
-  // These assertions are RED against the pre-rebalance effect path and go
-  // GREEN once the implementation children land (C2/C3); they are wrapped in
-  // Vitest's `it.fails(...)` so the suite stays green in between (repo
-  // convention — see powerUpIdNaming.test.ts). Handoff: C2/C3 must remove the
-  // `.fails` wrapper once the new schedules resolve.
-  it.fails('pins the re-balanced smart-bomb interval (30 → 10 s) and radius (200 → 400 px) schedules', () => {
+  // The parent re-balance shrinks the pulse to `min(400, 200 × (1 + 0.02 ×
+  // level))` px (base 200 = 10× ship size, cap 2× base) and slows the
+  // permanent pulse to `max(10, 30 − 2 × level)` s, resolved through the
+  // shared effect path (smartBombInterval/smartBombAoe).
+  it('pins the re-balanced smart-bomb interval (30 → 10 s) and radius (200 → 400 px) schedules', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
 
