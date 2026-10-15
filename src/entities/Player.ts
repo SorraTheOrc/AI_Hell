@@ -195,11 +195,13 @@ type PlayerMovementConfig = MovementConfig & {
  * hull circumradius `r`. The notch is an **inward** cut: the rear edge's
  * mid vertex is pulled this far toward the hull centre along +x, staying
  * inside the circumradius so the bounding circle (and the `shipSize / 2`
- * semantics) is unchanged. Kept shallow so the forward cue stays subtle
- * (AC1, GDD §7.2); the four-directional scheme keeps its invariant regular
- * hexagon (no notch).
+ * semantics) is unchanged. A producer re-audit of AH-0MV78PAX3002MO20
+ * required the rear inset to be at least 2× the original subtle 0.2r
+ * depth, so it is now 0.4r — still an inward cut well short of the hull
+ * centre, never an arrowhead. The four-directional scheme keeps its
+ * invariant regular hexagon (no notch).
  */
-const ASTEROIDS_REAR_NOTCH_DEPTH_FACTOR = 0.2;
+const ASTEROIDS_REAR_NOTCH_DEPTH_FACTOR = 0.4;
 
 /**
  * The player ship renders as a cyan hexagon (flat top/bottom, centred at
@@ -211,7 +213,8 @@ const ASTEROIDS_REAR_NOTCH_DEPTH_FACTOR = 0.2;
  *   forward, so thrust direction is read from the engine flames, not the
  *   silhouette.
  * - `asteroids`: the hexagon's rear edge (-x, opposite the nose) is cut
- *   into a shallow **concave** V-notch, so the silhouette points along the
+ *   into a **concave** V-notch (midpoint inset ≈ 40% of the circumradius),
+ *   so the silhouette points along the
  *   direction of travel while turning and thrusting. The whole object
  *   (hull + engines) rotates by the facing angle so the cue visibly follows
  *   the heading (AC2); stationary keeps the most recent heading.
@@ -368,7 +371,8 @@ export class Player extends Phaser.GameObjects.Graphics {
    * The hull is a hexagon whose circumradius is `shipSize / 2`, preserving
    * `shipSize` semantics for physics-adjacent callers. The four-directional
    * scheme draws the invariant regular hexagon; the Asteroids scheme cuts a
-   * shallow concave notch into the rear (-x) edge so the silhouette points
+   * concave V-notch (midpoint inset ≈ 40% of the circumradius) into the rear
+   * (-x) edge so the silhouette points
    * in the direction of travel (AC1). Every outer vertex stays on the
    * circumradius circle — the notch is an inward cut that never expands the
    * bounding circle (AC3).
@@ -388,9 +392,9 @@ export class Player extends Phaser.GameObjects.Graphics {
     this.lineTo(-sx, sy);
     if (this._scheme === 'asteroids') {
       // Concave rear edge (AC1): the straight -x edge is replaced by a
-      // shallow inward V-notch (one interior vertex on the -x side), so
-      // the hull has a forward cue that rotates with the facing. The
-      // notch vertex stays inside the circumradius (bounding circle
+      // clearly visible inward V-notch (one interior vertex on the -x
+      // side), so the hull has a forward cue that rotates with the facing.
+      // The notch vertex stays inside the circumradius (bounding circle
       // unchanged, AC3).
       this.lineTo(-sx + r * ASTEROIDS_REAR_NOTCH_DEPTH_FACTOR, 0);
     }

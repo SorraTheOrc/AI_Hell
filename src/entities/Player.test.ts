@@ -1490,9 +1490,13 @@ describe('Player — Asteroids control scheme', () => {
     expect(notch.x).toBeGreaterThan(-sx); // inward from the straight rear edge
     expect(notch.x).toBeLessThan(0);
     expect(notch.y).toBeCloseTo(0, 6);
-    // Subtle: the notch depth (inward from the straight rear edge) is a small
-    // fraction of the circumradius, never a deep cut or arrowhead.
-    expect(notch.x + sx).toBeLessThanOrEqual(half * 0.2 + 1e-9);
+    // The notch depth (inward from the straight rear edge) is a clear
+    // fraction of the circumradius — at least 2× the original subtle 0.2r
+    // depth, per the producer re-audit (AH-0MV78PAX3002MO20) — while still
+    // an inward cut well short of the hull centre (never an arrowhead).
+    const notchDepth = notch.x + sx;
+    expect(notchDepth).toBeGreaterThanOrEqual(half * 0.4 - 1e-9);
+    expect(notchDepth).toBeLessThan(half * Math.sqrt(3) / 2);
 
     // AC5 — not rotationally invariant: a 60° rotation moves the unique rear
     // notch to a different angular position, so the vertex set changes.
