@@ -179,6 +179,31 @@ function createStopController() {
   };
 }
 
+/**
+ * Resolves the human balance `BalanceReport` artifact path next to the
+ * recording (AH-0MV7WVEWL005XEMN AC3). Always a sibling of the `.jsonl`
+ * recording so the artifact follows the recording wherever it is written.
+ */
+export function resolveBalanceStatsOutputPath(recordingPath) {
+  return resolve(dirname(recordingPath), 'balance-stats.json');
+}
+
+/**
+ * Builds the human balance `BalanceReport` artifact from a recording's flat
+ * record stream, via the shared helper exposed at the eval-core surface.
+ * Pure with respect to the supplied `core` (the filesystem shell writes the
+ * artifact); deterministic and byte-stable through `serialiseReport`.
+ *
+ * @param {object[]} records - The recording's flat telemetry records.
+ * @param {{ extractHumanBalanceStats: Function, serialiseReport: Function }} core
+ *   The eval core loaded via Vite SSR (`src/ai/eval/cli.ts`).
+ * @returns {{ name: string, content: string, report: object }}
+ */
+export function buildHumanBalanceStatsArtifact(records, core) {
+  const { report } = core.extractHumanBalanceStats(records);
+  return { name: 'balance-stats.json', content: core.serialiseReport(report), report };
+}
+
 /** CLI entry point. */
 async function main(argv) {
   const options = parseRecordArgs(argv);
@@ -278,12 +303,24 @@ async function main(argv) {
     mkdirSync(dirname(output), { recursive: true });
     writeFileSync(output, jsonl);
 
-    const summary = { ...summariseTelemetry(parseTelemetryJsonl(jsonl).records), output };
+    // Shared human balance statistics (AH-0MV7WVEWL005XEMN AC3): load the
+    // TS eval core through the already-running dev server's SSR loader and
+    // write the versioned `BalanceReport` (`kind: 'balance'`, policy
+    // 'human') next to the recording — dev tooling only, no PII.
+    const balancePath = resolveBalanceStatsOutputPath(output);
+    const records = parseTelemetryJsonl(jsonl).records;
+    const core = await server.ssrLoadModule('/src/ai/eval/cli.ts');
+    const artifact = buildHumanBalanceStatsArtifact(records, core);
+    mkdirSync(dirname(balancePath), { recursive: true });
+    writeFileSync(balancePath, artifact.content);
+
+    const summary = { ...summariseTelemetry(records), output, balanceStats: balancePath };
     if (options.json) {
       process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
     } else {
       process.stdout.write(`${formatSummary(summary)}\n`);
       process.stdout.write(`Saved recording: ${output}\n`);
+      process.stdout.write(`Saved balance statistics: ${balancePath}\n`);
     }
     return 0;
   } finally {

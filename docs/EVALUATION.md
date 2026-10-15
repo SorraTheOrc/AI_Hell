@@ -58,6 +58,7 @@ Artifacts are written under `--out` (default `eval-output/`, git-ignored):
 | `runs.jsonl` | The raw telemetry for every run, in the shipped record schema. |
 | `comparison.json` | Same-seed metric deltas (only with `--human`). |
 | `ghost.svg` | The existing human-vs-bot trajectory overlay (only with `--human`). |
+| `human-balance-report.json` | The shared versioned human `BalanceReport` (`kind: 'balance'`, `policy: 'human'` — only with `--human`). |
 | `side-by-side.sh` / `side-by-side.json` | The capture/compose plan (only with `--video`). |
 
 ### Flags
@@ -189,6 +190,18 @@ run in the file), runs the bot on that same seed, and emits:
 
 This is the same comparison the recording tooling already supports, now
 reproducible from a single command.
+
+Because the human session is a real recorded game, `--human` also emits the
+**shared balance statistics** for it: `human-balance-report.json` is a
+versioned `BalanceReport` (`kind: 'balance'`) produced by the shared pure
+helper `extractHumanBalanceStats` (`src/ai/eval/humanStats.ts`) and labelled
+with the `human` pseudo-policy. It reuses the automated-balancing
+framework's `extractBalanceStats` / `aggregateBalanceStats`, so the same
+schema a bot batch (`--batch`) reports on is computed for the human run and
+both artifacts are directly comparable — see
+[docs/BALANCING.md](./BALANCING.md#human-play-statistics-policy-human). A
+recording with multiple runs yields one per-run entry plus one aggregate,
+mirroring a batch.
 
 ## Side-by-side video (optional)
 

@@ -113,6 +113,20 @@ describe('Automated balancing is documented (AH-0MV81Z2EJ006HD5T)', () => {
     expect(doc).toContain(EPIC_ID);
   });
 
+  it('documents the human-play balance report (AH-0MV7WVEWL005XEMN)', () => {
+    for (const symbol of [
+      "'human'",
+      'extractHumanBalanceStats',
+      'balance-stats.json',
+      'human-balance-report.json',
+      'npm run record',
+      '--human',
+      'dev-tooling only',
+    ]) {
+      expect(doc).toContain(symbol);
+    }
+  });
+
   it('is cross-linked from the README and EVALUATION.md', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
     const evaluation = fs.readFileSync(EVALUATION_PATH, 'utf8');

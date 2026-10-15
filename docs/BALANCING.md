@@ -135,6 +135,38 @@ The JSON artifact is a versioned `BalanceReport`:
 Object keys are recursively sorted before serialisation, so the report is
 **byte-stable** for the same inputs.
 
+### Human-play statistics (`policy: 'human'`)
+
+A human session is recorded with the dev tooling (`npm run record`) and
+converted into the **same** `BalanceReport` shape by the shared pure helper
+`extractHumanBalanceStats` in
+[`src/ai/eval/humanStats.ts`](../src/ai/eval/humanStats.ts), labelled with the
+`human` pseudo-policy:
+
+- `npm run record` writes `balance-stats.json` **next to** the `.jsonl`
+  recording; and
+- `npm run evaluate -- --human <file.jsonl> --out <dir>` writes
+  `human-balance-report.json` under `--out` (beside the existing same-seed
+  `comparison.json` and `ghost.svg`).
+
+Both artifacts are versioned `BalanceReport`s (`kind: 'balance'`,
+`config.policies: ['human']`, `schemaVersion:
+BALANCE_STATISTICS_SCHEMA_VERSION`) that are directly comparable to a bot
+batch report on the same fields. The helper splits the recording's flat
+`run_header` / `tick` / `event` stream into one `BalanceRunStats` per run and a
+single `BalanceAggregate`, **reusing** the bot path's
+`extractBalanceStats` / `aggregateBalanceStats` — the schema and the
+statistics code are shared, so bot and human numbers cannot drift. Survival
+time is derived from tick numbers at the default 60 Hz (`dt` 1/60) as the
+recording provides no bot-config values.
+
+A recording containing several runs yields one per-run entry in `runs` plus
+one `aggregate` across every run, mirroring a bot batch. Collection is
+**dev-tooling only** (AH-0MV7WVEWL005XEMN AC3): no production
+telemetry/consent configuration changes and no PII in the artifact — only
+schema fields (numeric statistics, seeds, archetype/upgrade keys and record
+hashes).
+
 ## Config-driven simulation
 
 The batch consumes the **real balance data** through the shared config

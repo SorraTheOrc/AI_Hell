@@ -114,4 +114,13 @@ describe('resolveArtifactPath', () => {
     expect(resolveArtifactPath('out', 'report.json')).toBe('out/report.json');
     expect(resolveArtifactPath('out/', 'report.json')).toBe('out/report.json');
   });
+
+  it('places the human balance report under the requested --out (AH-0MV7WVEWL005XEMN)', () => {
+    const options = parseEvaluateArgs(['--human', 'h.jsonl', '--out', 'human-out']);
+    expect(options.humanFile).toBe('h.jsonl');
+    expect(options.outputDir).toBe('human-out');
+    expect(resolveArtifactPath(options.outputDir, 'human-balance-report.json')).toBe(
+      'human-out/human-balance-report.json',
+    );
+  });
 });

@@ -83,4 +83,11 @@ describe('Same-seed evaluation harness is documented (AH-0MUY08XLD009K4W4)', () 
     expect(doc).toContain('docs/BALANCING.md');
     expect(doc).toContain('--batch');
   });
+
+  it('documents the human balance report emitted by --human (AH-0MV7WVEWL005XEMN)', () => {
+    expect(doc).toContain('human-balance-report.json');
+    expect(doc).toContain('extractHumanBalanceStats');
+    expect(doc).toContain("policy: 'human'");
+    expect(doc).toContain('docs/BALANCING.md');
+  });
 });

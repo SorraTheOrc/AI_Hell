@@ -79,6 +79,13 @@ export {
   type SameSeedComparison,
 } from './metrics';
 export {
+  extractHumanBalanceStats,
+  HUMAN_BALANCE_POLICY,
+  HUMAN_BALANCE_DT_SECONDS,
+  type HumanBalanceStats,
+  type HumanBalanceStatsOptions,
+} from './humanStats';
+export {
   buildAbReport,
   buildBalanceReport,
   buildEvaluationReport,
