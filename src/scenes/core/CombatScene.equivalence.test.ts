@@ -283,6 +283,11 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
       '_clearEnemyBulletsInRange',
       '_updateP4Bomb',
       '_spawnBombPulse',
+      // Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ / re-balanced in
+      // AH-0MV8GPGBL009M0D8): detection lives in the shared core so gyms
+      // cannot fork the interval/radius schedules.
+      '_updateSmartBomb',
+      'onSmartBombPulse',
     ] as const;
     const files = productionSceneFiles();
     for (const method of sharedMethods) {
@@ -1576,6 +1581,57 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
       expect(live, 'in-range bullet cleared').not.toContain(inside.get(owner));
       expect(live, 'out-of-range bullet survives').toContain(outside.get(owner));
       expect(owner.getEffectsRegistry().isBombPermanent()).toBe(true);
+    }
+  });
+
+  it('drives the shared Smart Bomb screen pulse identically in the game and every gym (AH-0MV8GPGBL009M0D8)', async () => {
+    const { play, formation, combat } = await bootDrops();
+    const owners: EnemyBulletOwner[] = [play, formation, combat];
+
+    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
+    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
+
+    for (const owner of owners) {
+      const player = owner.getPlayer()!;
+      // Re-balanced base pulse radius is 200 px (10 × SHIP_SIZE): 50 px is
+      // inside, 400 px outside — no longer the old screen-wide 1200 px.
+      inside.set(
+        owner,
+        pushEnemyBullet(owner, {
+          x: player.x + 50,
+          y: player.y,
+          vx: 0,
+          vy: 0,
+          lifetime: 5,
+        }),
+      );
+      outside.set(
+        owner,
+        pushEnemyBullet(owner, {
+          x: player.x + 400,
+          y: player.y,
+          vx: 0,
+          vy: 0,
+          lifetime: 5,
+        }),
+      );
+      // Grant the permanent (hold-full) smart bomb — the shared pulse path
+      // fires it immediately and then on the resolved interval.
+      owner.getEffectsRegistry().applyCollect('smart_bomb', true);
+    }
+
+    play.tick(0.016);
+    formation.tick(0.016);
+    combat.tick(0.016);
+
+    for (const owner of owners) {
+      const live = enemyBulletGraphics(owner);
+      expect(live, 'in-range bullet cleared').not.toContain(inside.get(owner));
+      expect(live, 'out-of-range bullet survives').toContain(outside.get(owner));
+      expect(owner.getEffectsRegistry().isSmartBombPermanent()).toBe(true);
+      // The permanent pulse interval resolves to the re-balanced schedule
+      // (30 s at level 0 — `max(10, 30 − 2×level)`), shared by every scene.
+      expect(owner.getEffectsRegistry().smartBombInterval()).toBe(30);
     }
   });
 
