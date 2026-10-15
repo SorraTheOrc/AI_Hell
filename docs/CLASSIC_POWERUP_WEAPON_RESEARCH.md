@@ -331,7 +331,7 @@ scatter/chase cycle are unchanged.
 
 ---
 
-### 6. Defender smart bomb — screen-wide pulse
+### 6. Defender smart bomb — ship-centred pulse
 
 **Source game:** *Defender* (Williams, 1980); shared with *Robotron: 2084*
 (Williams, 1982).
@@ -340,18 +340,19 @@ scatter/chase cycle are unchanged.
 enemy and clearing bullets on screen — the ultimate panic button, but limited
 in supply.
 
-**AI_Hell adaptation:** A power-up that fires **one screen-wide pulse**: it
-clears every enemy bullet on screen and deals a single hit to every enemy
-(so 1 HP regulars die, multi-hit enemies lose one health). It is deliberately
-sharper than the existing Bomb (which clears bullets only and never damages
-enemies) but is a one-shot stored/periodic effect rather than a persistent
-weapon.
+**AI_Hell adaptation:** A power-up that fires **one ship-centred pulse within
+a modest radius**: it clears every enemy bullet in range and deals a single
+hit to every enemy in range (so 1 HP regulars die, multi-hit enemies lose one
+health). It is deliberately sharper than the existing Bomb (which clears
+bullets only and never damages enemies) but is a one-shot stored/periodic
+effect rather than a persistent weapon. Re-balanced in AH-0MV8GPGBL009M0D8:
+a rare panic-button clear (variables below), never a continuous screen wipe.
 
 **Divergence from original:** The pulse clears bullets *and* deals exactly one
 hit rather than destroying all enemies outright, so the Harvester (5 HP) and
 the boss survive it — the "enemies are the bullets" balance guardrail is
-preserved. No supply counter; the supply is the temporary/permanent level
-model.
+preserved — and its finite radius means enemies beyond it are unaffected. No
+supply counter; the supply is the temporary/permanent level model.
 
 **Type:** power-up (the weapon-form smart bomb is deferred — see below).
 
@@ -362,34 +363,30 @@ model.
   collected as a field drop; a hold-full reward raises the permanent level and
   the pulse repeats on a levelled interval (permanent), mirroring the Bomb's
   single-explosion vs periodic-pulse design.
-- `powerUpLevels.ts` variables: **Pulse radius** (`aoeRadius`, base 1200 px →
-  cap 2400 px, k=0.3 — the base already covers the 960×540 field diagonal
-  ≈ 1102 px, so the pulse is screen-wide while remaining finite), **Pulse
-  damage** (`smartBombDamage`, base 1 → cap 3, k=0.3) and **Pulse rate**
-  (`smartBombFrequency`, base 0.2/s → cap 0.5/s, k=0.3, used only when
-  permanent) — a new `PowerUpLevelVariable` trio.
+- `powerUpLevels.ts` variables: **Pulse radius** (`aoeRadius`, **200 → 400 px**,
+  linear-clamped, +2 % of base per level — 10 × SHIP_SIZE base, never
+  spanning the 960×540 field), **Pulse damage** (`smartBombDamage`, base 1 →
+  cap 3, k=0.3) and **Pulse interval** (`smartBombInterval`, **30 → 10 s**,
+  linear-clamped descending at −2 s per level, used only when permanent) — a
+  new `PowerUpLevelVariable` trio.
 - Code-drawn icon: a neon starburst inside a ring (added to
   `src/powerups/icons.ts`).
 - `powerUpWeights` drop weight: **2** (rare — the strongest defensive pickup)
   in `src/core/rules.ts`.
-- Seam: **reuses the existing `AoEDescriptor`/`AoETrigger` area seam** — the
-  pulse is a screen-wide `AoEDescriptor` (`trigger: 'screenPulse'`,
-  `damagesEnemies: true`, `clearsEnemyBullets: true`, `damage`), resolved by
-  the shared `CombatScene.applyAoEDescriptor` used by Nova/Mortar/Arc. The
-  finite screen-covering radius (1200 px base) expresses "screen-wide" through
-  the same radius-bound geometry the AOE weapons use, so there is no parallel
-  area-effect implementation. A `'screenPulse'` `AoETrigger` value records the
-  non-weapon, once-per-activation timing.
+- Seam: **reuses the existing `AoEDescriptor`/`AoETrigger` area seam** — a
+  ship-centred `AoEDescriptor` (`trigger: 'screenPulse'`, `damagesEnemies:
+  true`, `clearsEnemyBullets: true`, `damage`, `aoeRadius`), resolved by the
+  shared `CombatScene.applyAoEDescriptor` used by Nova/Mortar/Arc, so the
+  level-resolved radius keeps the pulse a local clear around the ship (no
+  parallel area-effect implementation). The `'screenPulse'` `AoETrigger`
+  value records the non-weapon, once-per-activation timing.
 
 **Balance / coverage:** Does not destroy multi-hit enemies, keeps the Bomb
 distinct (Bomb = bullets only, Smart Bomb = bullets + one hit) and is the
-rarer of the two, so the existing catalogue is not made redundant.
+rarer pickup, so the catalogue is not made redundant.
 
 **Gym scene:** `GymPowerUpsCombat` (live threats and enemy bullets) — the
 bullet clear and the single-hit enemy damage are both observable.
-
----
-
 ### 7. Gradius force field — bullet reflector
 
 **Source game:** *Gradius* (Konami, 1985).
@@ -501,7 +498,7 @@ one-line deferral reason so the pool can be revisited.
 |-----------|-----------------|
 | **Galaga Dual Fighter** | A trailing escort ship that doubles the main gun requires a persistent companion-entity lifecycle and a second hitbox; the Options weapon already covers "add firepower that follows the ship", so this is deferred as redundant for now. |
 | **Defender / Robotron smart bomb weapon form** | A screen-wide enemy-clearing *weapon* (as opposed to the timed power-up chosen here) makes every regular enemy obsolete the moment it is equipped and would eclipse Nova/Mortar/Arc, so the pulse is scoped as the rarer Smart Bomb power-up only; the weapon form is deferred on balance grounds. |
-| **Tempest Superzapper** | Another screen-wide "damage every enemy once" pulse duplicates the Smart Bomb power-up's effect, so it is deferred as redundant. |
+| **Tempest Superzapper** | Another screen-wide "damage every enemy once" pulse overlaps the Smart Bomb power-up's one-hit clear (whose ship-centred radius no longer spans the field), so it is deferred as redundant. |
 | **Sinistar Sinibomb** | A stored-ammo consumable needs a new ammo-count seam and a manual-fire input; AI_Hell auto-fires and has no per-weapon ammo model, so the stored-ammo mechanic is deferred until that seam exists. |
 | **Galaga Repulsor** | A player-side repulsor that pushes enemies and bullets away changes shared enemy/bullet steering and overlaps Force Field's reflection role; it is deferred to avoid two near-identical defensive fields. |
 | **Frogger Super Leap** | A timed invulnerability/dash across a hazard lane is effectively Phase Shift (already shipped) plus a teleport; deferred as an existing capability rather than a new one. |
@@ -519,7 +516,7 @@ one-line deferral reason so the pool can be revisited.
 | Missile Command cluster/MIRV missile | weapon | `WeaponId: 'cluster'` / `WEAPON_CATALOGUE` | 1 shot / 2 beats (1500 ms) | New shared split seam (`WeaponDefinition.splits`, not AoE) | `splitCount`, `fireRate`, `damage` | `GymWeapons` |
 | Gradius Options orbiting satellites | weapon | `WeaponId: 'options'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared orbit-emitter seam | `projectileCount`, `fireRate`, `bulletSize`, `homing` | `GymWeapons` |
 | Pac-Man power pellet | power-up | — (removed, AH-0MV5CB6KO0079N08) | — | — (removed) | — (removed) | — (removed) |
-| Defender smart bomb | power-up | `PowerUpId: 'smart_bomb'` / `POWER_UP_CATALOGUE` | — | Existing `AoEDescriptor`/`AoETrigger` seam (`screenPulse`) | `aoeRadius`, `smartBombDamage`, `smartBombFrequency` | `GymPowerUpsCombat` |
+| Defender smart bomb | power-up | `PowerUpId: 'smart_bomb'` / `POWER_UP_CATALOGUE` | — | Existing `AoEDescriptor`/`AoETrigger` seam (`screenPulse`) | `aoeRadius`, `smartBombDamage`, `smartBombInterval` | `GymPowerUpsCombat` |
 | Gradius force field | power-up | `PowerUpId: 'force_field'` / `POWER_UP_CATALOGUE` | — | New shared bullet-reflection seam | `forceFieldDuration`, `forceFieldReflects` | `GymPowerUpsCombat` |
 | Space Invaders mystery UFO | power-up | `PowerUpId: 'mystery_ufo'` / `POWER_UP_CATALOGUE` | — | None — catalogue entry + `EffectsRegistry` | `mysteryUfoMinerals`, `mysteryUfoScore` | `GymPowerUpsUtility` |
 
@@ -530,7 +527,7 @@ curve, the `WeightedRandomSpawner` drop pipeline and `src/powerups/icons.ts`.
 
 **New seams to be created (per child work item):** shared piercing-collision,
 shared bullet-bounce, shared missile-split, shared orbit-emitter, shared
-screen-wide pulse and shared bullet-reflection — all in `src/scenes/core/` (or
+ship-centred `screenPulse` and shared bullet-reflection — all in `src/scenes/core/` (or
 shared pure policies alongside it) so the game and every gym run the same code.
 (The shared frightened-enemy status seam was created with the Pac-Man power
 pellet and deleted with it in AH-0MV5CB6KO0079N08.)
