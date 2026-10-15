@@ -582,7 +582,7 @@ describe('P4 Bomb: ranged one-shot pickup / permanent periodic (AH-0MUVM9RAO004Y
 
 // ── Smart Bomb (AH-0MV1BIWP9003EHRQ) ──────────────────────────────
 
-describe('Smart Bomb: screen-wide one-shot pickup / permanent periodic (AH-0MV1BIWP9003EHRQ)', () => {
+describe('Smart Bomb: one-shot pickup / permanent periodic (AH-0MV1BIWP9003EHRQ)', () => {
   it('a field pickup queues exactly one pulse and leaves no permanent state', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
@@ -643,6 +643,44 @@ describe('Smart Bomb: screen-wide one-shot pickup / permanent periodic (AH-0MV1B
     expect(aoe.radius).toBe(
       resolvePowerUpAtLevel('smart_bomb', 0).aoeRadius,
     );
+  });
+
+  // ── Re-balanced schedules (test-first RED, AH-0MV98DVM90015DNF) ──
+  //
+  // The parent re-balance (AH-0MV8GPGBL009M0D8) shrinks the pulse to
+  // `min(400, 200 × (1 + 0.02 × level))` px (base 200 = 10× ship size, cap
+  // 2× base) and slows the permanent pulse to `max(10, 30 − 2 × level)` s.
+  // These assertions are RED against the pre-rebalance effect path and go
+  // GREEN once the implementation children land (C2/C3); they are wrapped in
+  // Vitest's `it.fails(...)` so the suite stays green in between (repo
+  // convention — see powerUpIdNaming.test.ts). Handoff: C2/C3 must remove the
+  // `.fails` wrapper once the new schedules resolve.
+  it.fails('pins the re-balanced smart-bomb interval (30 → 10 s) and radius (200 → 400 px) schedules', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    // Level 0 (first grant) — the base schedule.
+    store.collect('smart_bomb');
+    expect(reg.smartBombInterval()).toBeCloseTo(30, 9);
+    expect(reg.smartBombAoe().radius).toBe(200);
+    expect(reg.smartBombAoe().damage).toBe(1);
+
+    // Upgrade level 1 — interval −2 s (28 s), radius +2 % of base (204 px).
+    store.collect('smart_bomb');
+    expect(reg.smartBombInterval()).toBeCloseTo(28, 9);
+    expect(reg.smartBombAoe().radius).toBe(204);
+    expect(reg.smartBombAoe().damage).toBe(2);
+
+    // The interval floors at 10 s from upgrade level 10 (max(10, 30 − 2×level)).
+    while (store.getUpgradeLevel('smart_bomb') < 10) store.collect('smart_bomb');
+    expect(reg.smartBombInterval()).toBeCloseTo(10, 9);
+
+    // The radius clamps at 2× base (400 px) by upgrade level 50 and holds.
+    while (store.getUpgradeLevel('smart_bomb') < 50) store.collect('smart_bomb');
+    expect(reg.smartBombAoe().radius).toBe(400);
+    expect(reg.smartBombInterval()).toBeCloseTo(10, 9);
+    // Damage is unchanged by the re-balance (1 → 3 across levels).
+    expect(reg.smartBombAoe().damage).toBe(3);
   });
 
   it('reset() clears the permanent flag and any pending pulse', () => {

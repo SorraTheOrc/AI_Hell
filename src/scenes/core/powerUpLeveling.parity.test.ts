@@ -81,7 +81,10 @@ const OBSERVABLE: Record<PowerUpId, (registry: EffectsRegistry) => number> = {
   extra_life: (r) => r.lives(),
   magnet: (r) => r.magnetStacks(),
   mineral_scoop: (r) => r.scoopStacks(),
-  smart_bomb: (r) => r.smartBombFrequency(),
+  // The re-balanced permanent interval (AH-0MV8GPGBL009M0D8): the pulse fires
+  // every `max(10, 30 − 2×level)` seconds, so the observable is the interval
+  // the shared effect-path consumers drive on (parity holds for game ↔ gym).
+  smart_bomb: (r) => r.smartBombInterval(),
   force_field: (r) => r.forceFieldRemaining(),
   mystery_ufo: (r) => r.mysteryUfoMinerals(),
 };

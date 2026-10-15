@@ -27,6 +27,7 @@ import {
   summarisePowerUpLevelChange,
 } from './powerUpLevels';
 import { curveValue } from '../utils/curve';
+import { SHIP_SIZE } from '../core/constants';
 
 const idsInCatalogue = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
 
@@ -99,12 +100,15 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     expect(POWER_UP_LEVEL_SPECS.extra_life[1].cap).toBe(5); // lives cap
     expect(POWER_UP_LEVEL_SPECS.magnet[0].cap).toBe(5); // magnet stack cap
     expect(POWER_UP_LEVEL_SPECS.mineral_scoop[0].cap).toBe(5); // scoop stack cap
-    expect(POWER_UP_LEVEL_SPECS.smart_bomb[0].base).toBe(1200); // pulse radius (px)
-    expect(POWER_UP_LEVEL_SPECS.smart_bomb[0].cap).toBe(2400); // pulse radius cap (px)
-    expect(POWER_UP_LEVEL_SPECS.smart_bomb[1].base).toBe(1); // pulse damage
-    expect(POWER_UP_LEVEL_SPECS.smart_bomb[1].cap).toBe(3); // pulse damage cap
-    expect(POWER_UP_LEVEL_SPECS.smart_bomb[2].base).toBe(0.2); // pulse rate (/s)
-    expect(POWER_UP_LEVEL_SPECS.smart_bomb[2].cap).toBe(0.5); // pulse rate cap (/s)
+    // Smart Bomb damage is deliberately NOT re-anchored here: its 1 → 3
+    // schedule is unchanged by the re-balance (AH-0MV8GPGBL009M0D8). The
+    // re-spec'd radius (200 → 400 px) and interval (30 → 10 s) anchors live in
+    // the dedicated RED tests below (AH-0MV98DVM90015DNF).
+    const smartBombDamageSpec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
+      (s) => s.variable === 'smartBombDamage',
+    )!;
+    expect(smartBombDamageSpec.base).toBe(1); // pulse damage
+    expect(smartBombDamageSpec.cap).toBe(3); // pulse damage cap
     expect(POWER_UP_LEVEL_SPECS.force_field[0].base).toBe(8); // field time (s)
     expect(POWER_UP_LEVEL_SPECS.force_field[0].cap).toBe(18); // field time cap (s)
     expect(POWER_UP_LEVEL_SPECS.force_field[1].base).toBe(3); // reflect budget
@@ -132,24 +136,72 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     }
   });
 
-  it('Smart Bomb aoeRadius resolves monotonically within its cap (AH-0MV1BIWP9003EHRQ AC6)', () => {
+  // ── Re-balanced Smart Bomb schedules (test-first RED, AH-0MV98DVM90015DNF) ──
+  //
+  // The re-balance (parent AH-0MV8GPGBL009M0D8) shrinks the smart-bomb pulse
+  // from screen-wide to a ship-centred area: radius `min(400, 200 × (1 + 0.02 ×
+  // level))` px (base = 10 × SHIP_SIZE = 200, additive +2 % of base per level,
+  // capped at 2× base = 400) and permanent interval `max(10, 30 − 2 × level)` s
+  // (30 s at level 0, 10 s at and beyond level 10). The assertions below are
+  // RED against the pre-rebalance catalogue and go GREEN once the
+  // implementation children land (C2 linear/clamped curve + C3 re-spec); they
+  // are wrapped in Vitest's `it.fails(...)` so the suite stays green in
+  // between (repo convention — see powerUpIdNaming.test.ts). Handoff: C2/C3
+  // must remove the `.fails` wrapper once the new schedules resolve.
+  it.fails('Smart Bomb radius re-spec: 200 px base, +2 %/level, capped at 400 px (AH-0MV8GPGBL009M0D8)', () => {
     const spec = POWER_UP_LEVEL_SPECS.smart_bomb.find(
       (s) => s.variable === 'aoeRadius',
     )!;
+    // Base is 10× ship size; the cap is 2× the base.
+    expect(spec.base).toBe(10 * SHIP_SIZE);
+    expect(spec.base).toBe(200);
+    expect(spec.cap).toBe(400);
+
+    const expectedRadius = (level: number) =>
+      Math.min(400, 200 * (1 + 0.02 * level));
     let previous = -Infinity;
-    for (let level = 0; level <= 50; level++) {
+    for (let level = 0; level <= 60; level++) {
       const value = resolvePowerUpAtLevel('smart_bomb', level).aoeRadius!;
+      expect(value).toBeCloseTo(expectedRadius(level), 9);
       expect(value).toBeGreaterThanOrEqual(previous);
       expect(value).toBeLessThanOrEqual(spec.cap);
       expect(value).toBeGreaterThanOrEqual(spec.base);
       previous = value;
     }
-    // The pulse strictly grows past its base (a meaningful axis).
+    // The pulse strictly grows past its base (a meaningful axis)…
     expect(previous).toBeGreaterThan(spec.base);
-    // The base radius already covers the 960×540 field (diagonal ≈ 1102 px),
-    // so the pulse is screen-wide from the first pickup while remaining finite
-    // (off-screen targets beyond the cap are unaffected).
-    expect(spec.base).toBeGreaterThan(Math.hypot(960, 540));
+    // …and saturates at 2× base (400 px).
+    expect(resolvePowerUpAtLevel('smart_bomb', 1_000).aoeRadius).toBe(400);
+    // No longer screen-wide: the base radius is a fraction of the 960×540
+    // field's diagonal (≈ 1102 px).
+    expect(spec.base).toBeLessThan(Math.hypot(960, 540));
+  });
+
+  it.fails('Smart Bomb interval re-spec: max(10, 30 − 2×level) s endpoints (AH-0MV8GPGBL009M0D8)', () => {
+    // The model stores a non-decreasing pulses/second axis; the permanent
+    // interval is its inverse (effects.ts `smartBombInterval()` surfaces it).
+    // Endpoints: 30 s at level 0, 10 s at and beyond level 10.
+    const intervalAt = (level: number) =>
+      1 / resolvePowerUpAtLevel('smart_bomb', level).smartBombFrequency!;
+    const expectedInterval = (level: number) => Math.max(10, 30 - 2 * level);
+
+    for (let level = 0; level <= 12; level++) {
+      expect(intervalAt(level)).toBeCloseTo(expectedInterval(level), 9);
+    }
+    expect(intervalAt(0)).toBeCloseTo(30, 9);
+    expect(intervalAt(1)).toBeCloseTo(28, 9);
+    expect(intervalAt(10)).toBeCloseTo(10, 9);
+    expect(intervalAt(50)).toBeCloseTo(10, 9);
+
+    // The frequency axis itself stays monotonic non-decreasing (the model's
+    // monotonicity contract) while its interval inverse descends.
+    let previous = -Infinity;
+    for (let level = 0; level <= 12; level++) {
+      const frequency = resolvePowerUpAtLevel('smart_bomb', level)
+        .smartBombFrequency!;
+      expect(frequency).toBeGreaterThanOrEqual(previous);
+      previous = frequency;
+    }
   });
 
   it('Smart Bomb damage and frequency resolve monotonically within their caps (AH-0MV1BIWP9003EHRQ)', () => {
