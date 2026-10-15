@@ -408,7 +408,7 @@ describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', (
     destroy(game);
   });
 
-  it.fails(
+  it(
     'shows the permanent reward as a finite recharging pool (×N), not unlimited',
     async () => {
       const store = new PowerUpLevelStore();
@@ -444,15 +444,10 @@ describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', (
 
 describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-first)', () => {
   /**
-   * Test-first contract for the HUD grey-out implemented by
-   * AH-0MV82I97Y007MB6M ("HUD grey-out for zero-charge power-up rows"). The
-   * project's build → test → commit gate forbids committing a failing suite,
-   * so every assertion below is wrapped in Vitest's `it.fails(...)` — an
-   * **expected failure**, red today because the HUD has no grey-out state.
-   *
-   * Once AH-0MV82I97Y007MB6M lands, each body stops throwing and `it.fails`
-   * reports "expected test to fail, but it passed"; the implementation item
-   * must then remove the `.fails` modifiers so these become hard gates.
+   * Grey-out contract for the HUD implemented by AH-0MV82I97Y007MB6M
+   * ("HUD grey-out for zero-charge power-up rows"). Written test-first as
+   * `it.fails(...)` expected failures by the test item and hard-gated here
+   * once the implementation landed.
    *
    * Contract pinned here:
    * - a row is `greyed` when the player **owns** a charge-based pool
@@ -473,7 +468,7 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
     return { store, reg: new EffectsRegistry(store) };
   }
 
-  it.fails(
+  it(
     'greys out an owned Phase Shift row while its pool recharges',
     async () => {
       const { store, reg } = storeRegistry();
@@ -489,7 +484,7 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
     },
   );
 
-  it.fails(
+  it(
     'renders the owned Phase Shift row normally while charges remain',
     async () => {
       const { store, reg } = storeRegistry();
@@ -504,7 +499,7 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
     },
   );
 
-  it.fails(
+  it(
     'keeps an owned Teleport row visible and greyed when its stack is spent',
     async () => {
       const { store, reg } = storeRegistry();
@@ -520,7 +515,7 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
     },
   );
 
-  it.fails(
+  it(
     'renders the owned Teleport row normally while stacks remain',
     async () => {
       const { store, reg } = storeRegistry();
@@ -535,7 +530,7 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
     },
   );
 
-  it.fails(
+  it(
     'surfaces the recharge-aware finite count (×N) and restores it after a recharge',
     async () => {
       const { store, reg } = storeRegistry();
@@ -571,7 +566,7 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
     },
   );
 
-  it.fails(
+  it(
     'greys the icon and the label/value text with one shared grey',
     async () => {
       const { store, reg } = storeRegistry();
@@ -598,11 +593,11 @@ describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-fi
     },
   );
 
-  it.fails(
+  it(
     'reports greyed:false for a charged non-charge row (no cross-contamination)',
     async () => {
-      const { store, reg } = storeRegistry();
-      store.collect('speed_boost'); // timed row
+      const { reg } = storeRegistry();
+      reg.applyCollect('speed_boost'); // activate the timed effect → row visible
       const { game, hud } = await bootWithHUD(reg);
       hud.refresh();
 

@@ -32,6 +32,23 @@ const ICON_COLORS: Record<PowerUpId, number> = {
   mystery_ufo: 0xff2fd0, // neon magenta — Space Invaders mystery flying saucer
 };
 
+/**
+ * Shared grey for an **inactive** HUD row — a charge-based power-up the
+ * player owns whose pool is currently empty (AH-0MV82I97Y007MB6M). The HUD
+ * derives both the icon stroke and the label/value text colour from this one
+ * value, so a greyed row can never render its icon and text in different
+ * greys.
+ */
+export const POWER_UP_GREY_COLOUR = 0xaaaaaa;
+
+/**
+ * CSS (`#rrggbb`) form of {@link POWER_UP_GREY_COLOUR} for Phaser Text
+ * objects, derived from the same numeric value as the icon stroke so the two
+ * surfaces cannot drift apart.
+ */
+export const POWER_UP_GREY_COLOUR_CSS = `#${POWER_UP_GREY_COLOUR.toString(16)
+  .padStart(6, '0')}`;
+
 /** Icon stroke colours per weapon type (matching bullet colours). */
 const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   cannon: 0x00ffff, // neon cyan
@@ -69,18 +86,17 @@ const RESET_ICON_COLOR = 0xffffff; // white — return/undo arrow
 export type WeaponDropIconId = WeaponId | 'reset';
 
 /**
- * Draws a weapon power-up icon into `graphics` (cleared first),
+ * Draws a power-up icon into `graphics` (cleared first),
  * centred at (x, y) with the given size (radius extent in px).
  *
- * Each weapon's icon is a distinctive shape that hints at its shot
- * pattern: fan arc for Spread, parallel bars for Dual, stacked dots
- * for Rapid (high fire rate), and a return/undo arrow for Reset.
- *
  * @param graphics — Caller-owned Phaser Graphics.
- * @param weaponId — The weapon or reset identifier.
+ * @param id — The power-up identifier.
  * @param x — Centre x position.
  * @param y — Centre y position.
  * @param size — Icon radius extent in px.
+ * @param color — Optional stroke colour override (e.g.
+ *   {@link POWER_UP_GREY_COLOUR} for a greyed HUD row). Defaults to the
+ *   icon's own neon colour.
  */
 export function drawPowerUpIcon(
   graphics: Phaser.GameObjects.Graphics,
@@ -88,9 +104,10 @@ export function drawPowerUpIcon(
   x: number,
   y: number,
   size: number,
+  color?: number,
 ): void {
   graphics.clear();
-  _drawPowerUpIcon(graphics, id, x, y, size);
+  _drawPowerUpIcon(graphics, id, x, y, size, color);
 }
 
 /**
@@ -104,8 +121,9 @@ function _drawPowerUpIcon(
   x: number,
   y: number,
   size: number,
+  color: number = ICON_COLORS[id],
 ): void {
-  graphics.lineStyle(2, ICON_COLORS[id], 1);
+  graphics.lineStyle(2, color, 1);
 
   switch (id) {
     case 'shield':
