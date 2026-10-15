@@ -415,6 +415,31 @@ export function playCannonFireSound(): void {
   playCue('playCannonFireSound');
 }
 
+/** Punchy hit thump — Cannon bullet connects (AH-0MV8228YW0050IXS). */
+export function playCannonImpactSound(): void {
+  playCue('playCannonImpactSound');
+}
+
+/**
+ * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
+ * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
+ * their own baked hit cues; dispatched by {@link playWeaponImpactCue} from
+ * the shared impact seam. The registry lives here (not in a scene) so the
+ * audio knowledge stays in the audio layer.
+ */
+const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
+  playCannonImpactSound,
+};
+
+/**
+ * Plays the baked impact cue named by a weapon's `impactFx` metadata.
+ * Unknown cue names are a safe no-op (a weapon never falls silent — the
+ * visual impact flash still plays through the shared impact seam).
+ */
+export function playWeaponImpactCue(cue: string): void {
+  PLAYER_WEAPON_IMPACT_CUES[cue]?.();
+}
+
 /** Wide multi-tone sweep — Spread fire. */
 export function playSpreadFireSound(): void {
   playCue('playSpreadFireSound');

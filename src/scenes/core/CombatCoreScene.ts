@@ -62,6 +62,7 @@ import {
 } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { PlayerBullet, createPlayerBullet } from '../../entities/PlayerBullet';
+import { spawnMuzzleFlash } from '../../vfx/muzzleFlash';
 import {
   CLUSTER_SPLIT_BURST_RADIUS,
   CLUSTER_WARHEAD_LIFETIME,
@@ -256,6 +257,13 @@ export class CombatCoreScene<
    * so an in-flight burst leaks nothing.
    */
   protected splitBurstEffects: Phaser.GameObjects.Graphics[] = [];
+  /**
+   * Live per-weapon muzzle-flash VFX (AH-0MV8228YW0050IXS). Spawned from the
+   * shared `_autoFire` spawn path; each flash removes itself on completion
+   * and the registry is cleared on restart/shutdown so an in-flight flash
+   * leaks nothing.
+   */
+  protected fireFxEffects: Phaser.GameObjects.Graphics[] = [];
   /**
    * Warheads queued by {@link CombatCoreScene.splitProjectile}, flushed into
    * {@link CombatCoreScene.playerBullets} at the start of the next shared
@@ -696,6 +704,16 @@ export class CombatCoreScene<
     for (const weaponId of fired) {
       this.onWeaponFired(weaponId);
       const def = player.getWeaponDef(weaponId);
+      // Per-weapon fire VFX (clean muzzle flash / launch cue) — spawned from
+      // this single shared spawn path so the game and every gym show the
+      // same flash (AH-0MV8228YW0050IXS). Weapons without `muzzleFlash`
+      // metadata spawn nothing.
+      if (def.muzzleFlash) {
+        spawnMuzzleFlash(this, player.x, player.y, player.getHeading(), {
+          ...def.muzzleFlash,
+          registry: this.fireFxEffects,
+        });
+      }
       if (def.aoe) {
         // AOE dispatch: the shared core owns the hook, so the game and the
         // gyms resolve the same area effect from one implementation.
@@ -754,7 +772,14 @@ export class CombatCoreScene<
           def.bulletShapeLength,
           def.bulletRim,
           def.bulletThickness,
+          // Short fading bullet trail (cannon) — absent for every weapon
+          // without `bulletTrail` metadata (AH-0MV8228YW0050IXS).
+          def.bulletTrail,
         );
+        // Per-weapon impact feedback (cannon's distinct flash + hit cue),
+        // resolved by the shared impact seam when the shot connects
+        // (AH-0MV8228YW0050IXS). Absent → generic impact behaviour.
+        bullet.impactFx = def.impactFx;
         if (def.aoe?.trigger === 'onImpact') {
           // Tag the projectile so the shared combat core can detonate its
           // area effect on impact/expiry, then let the scene attach its
@@ -795,6 +820,9 @@ export class CombatCoreScene<
    * visual metadata, threaded to the bullet so the shared player-bullet
    * renderer draws the weapon's shape through the bullet-shape seam
    * (AH-0MV8228MD009UBF7). Defaults reproduce the classic cannon disc.
+   *
+   * `tail` is the optional short fading trail length (× radius) drawn behind
+   * the bullet by the shared seam (AH-0MV8228YW0050IXS).
    */
   spawnPlayerBullet(
     x: number,
@@ -810,6 +838,7 @@ export class CombatCoreScene<
     shapeLength?: number,
     rimColor?: number,
     thickness?: number,
+    tail?: number,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
@@ -824,6 +853,7 @@ export class CombatCoreScene<
       shapeLength,
       rimColor,
       thickness,
+      tail,
     );
     bullet.piercing = piercing;
     bullet.bounces = bounces;
@@ -1405,6 +1435,9 @@ export class CombatCoreScene<
     // In-flight Bomb pulse rings are likewise owned by their registry.
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
+    // In-flight per-weapon muzzle flashes are cleared so a restarted run
+    // starts clean (AH-0MV8228YW0050IXS).
+    this.fireFxEffects = [];
     // In-flight cluster split bursts and any un-flushed split warheads are
     // cleared so a restarted run starts clean (AH-0MV1BIVIJ007KYXU).
     for (const effect of this.splitBurstEffects) effect.destroy();
@@ -1442,6 +1475,8 @@ export class CombatCoreScene<
     this.collectAnimations = [];
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
+    for (const effect of this.fireFxEffects) effect.destroy();
+    this.fireFxEffects = [];
     for (const effect of this.splitBurstEffects) effect.destroy();
     this.splitBurstEffects = [];
     for (const warhead of this._pendingSplitWarheads) warhead.destroy();

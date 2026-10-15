@@ -104,6 +104,27 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playCannonImpactSound resolves to the baked cannon-impact asset (AH-0MV8228YW0050IXS)', () => {
+    effects.playCannonImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-cannon-impact.32209.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches a weapon’s baked impact cue (AH-0MV8228YW0050IXS)', () => {
+    effects.playWeaponImpactCue('playCannonImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-cannon-impact.32209.wav',
+    );
+  });
+
+  it('playWeaponImpactCue is a safe no-op for an unmapped cue name (impact flash still plays)', () => {
+    expect(() => effects.playWeaponImpactCue('playNotARealCue')).not.toThrow();
+    expect(recording.plays).toHaveLength(0);
+  });
+
   it('playCountdownTickSound rises in pitch with each beat (AH-0MV722WJS0075UTZ)', () => {
     // Count 3 (step 0) is the base rate, 2 and 1 rise above it.
     effects.playCountdownTickSound(0);

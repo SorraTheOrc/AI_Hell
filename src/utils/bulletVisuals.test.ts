@@ -144,6 +144,17 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.STROKE_PATH)).toBe(1);
   });
 
+  it('a tail spec draws a tapering 3-segment fading wake behind any shape (AC1/AC3)', async () => {
+    const withTail = await makeGraphics();
+    drawBulletShape(withTail, { ...specs.disc, tail: 3.5 });
+    const tailBuf = withTail.commandBuffer as number[];
+    expect(countOps(tailBuf, Cmd.FILL_TRIANGLE)).toBe(3);
+
+    const noTail = await makeGraphics();
+    drawBulletShape(noTail, specs.disc);
+    expect(countOps(noTail.commandBuffer as number[], Cmd.FILL_TRIANGLE)).toBe(0);
+  });
+
   it('teardrop renders a filled body plus a tail triangle', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.teardrop);
@@ -233,6 +244,9 @@ describe('resolvePlayerBulletVisual', () => {
     expect(cannon.shape).toBe('circle');
     expect(cannon.color).toBe(0x00ffff);
     expect(cannon.radius).toBeCloseTo(PLAYER_BULLET_RADIUS, 5);
+    // Cannon's visuals-owned identity: a neon rim + short fading trail.
+    expect(cannon.rimColor).toBe(0xffffff);
+    expect(cannon.tail).toBeGreaterThan(0);
 
     const laser = resolvePlayerBulletVisual(WEAPON_CATALOGUE.wave_laser);
     expect(laser.shape).toBe('line');

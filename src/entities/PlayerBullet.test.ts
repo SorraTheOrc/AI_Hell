@@ -430,3 +430,31 @@ describe('PlayerBullet — shared bullet-shape rendering seam (AC1)', () => {
     expect(countCmd(buf, Cmd.STROKE_PATH)).toBe(0);
   });
 });
+
+// ── Cannon — compact neon disc with a short fading trail (AH-0MV8228YW0050IXS) ─
+
+describe('PlayerBullet — cannon visual identity (AC1/AC3)', () => {
+  it('the cannon shot renders as a neon disc with a fading trail (rim + tapering tail)', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(
+      scene, 100, 100, 0x00ffff, 3, 350, 0, 1.0,
+      'circle', undefined, 0xffffff, undefined, 3.5,
+    );
+
+    // The cannon signature: filled disc (ARC + FILL_PATH), neon rim
+    // (stroked ARC → a second ARC + STROKE_PATH) and a 3-segment fading
+    // tail (FILL_TRIANGLE).
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.ARC)).toBeGreaterThanOrEqual(2);
+    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
+  });
+
+  it('an ordinary bullet draws no trail (no tapering tail segments)', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(scene, 100, 100, 0x00ffff, 3, 350, 0, 1.0);
+
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(0);
+  });
+});

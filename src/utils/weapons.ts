@@ -695,6 +695,60 @@ export interface WeaponDefinition {
    * (parent AH-0MUOOB3OR001V8CD).
    */
   aoe?: AoEDescriptor;
+  /**
+   * Optional short fading trail drawn behind the bullet in flight
+   * (AH-0MV8228YW0050IXS). Value is the tail length as a multiplier of the
+   * bullet radius, measured behind the shape's trailing edge. The shared
+   * bullet-shape seam draws a tapering fade when present; absent → no trail.
+   * Visual metadata only — never affects flight.
+   */
+  bulletTrail?: number;
+  /**
+   * Optional clean launch-cue VFX spawned at the muzzle when this weapon
+   * fires (AH-0MV8228YW0050IXS). The shared combat core spawns it once per
+   * shot through the shared spawn path, so the game and every gym show the
+   * same flash. Absent → no muzzle flash.
+   */
+  muzzleFlash?: MuzzleFlashSpec;
+  /**
+   * Optional distinct impact feedback for when this weapon's shot connects
+   * (AH-0MV8228YW0050IXS): a coloured impact flash plus a baked hit cue,
+   * resolved through the shared impact seam. Absent → the generic impact
+   * flash with no per-weapon hit sound.
+   */
+  impactFx?: ImpactFxSpec;
+}
+
+/**
+ * Muzzle-flash VFX spec (AH-0MV8228YW0050IXS) — the clean launch cue a
+ * weapon shows at the ship when it fires. Consumed by the shared muzzle-FX
+ * helper (`src/vfx/muzzleFlash.ts`) through the shared combat-core spawn
+ * path.
+ */
+export interface MuzzleFlashSpec {
+  /** Flash colour (Phaser integer). */
+  color: number;
+  /** Flash core radius (px). */
+  radius: number;
+  /** Flash fade duration (seconds). */
+  duration: number;
+}
+
+/**
+ * Per-weapon impact-feedback spec (AH-0MV8228YW0050IXS) — the distinct
+ * flash + hit sound that plays when this weapon's shot connects, resolved
+ * through the shared impact seam in `CombatScene`. The cue is a baked
+ * ToneForge cue export name from `src/audio/effects.ts`.
+ */
+export interface ImpactFxSpec {
+  /** Impact flash colour (Phaser integer). */
+  color: number;
+  /** Impact flash radius (px). */
+  radius: number;
+  /** Impact flash duration (seconds). */
+  duration: number;
+  /** Baked ToneForge impact cue export name (e.g. `playCannonImpactSound`). */
+  cue: string;
 }
 
 // ── Weapon catalogue ────────────────────────────────────────────────
@@ -714,7 +768,26 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_CANNON_FIRE_RATE,
     bulletColor: BULLET_COLORS.cannon,
+    // The Cannon shot is a compact neon disc: a white-hot neon rim around
+    // the cyan core makes the plain fill read as a bright compact disc
+    // (AH-0MV8228YW0050IXS). Visual metadata only — same disc shape as
+    // before, no behaviour change.
     bulletShape: 'circle',
+    bulletRim: 0xffffff,
+    // Short fading trail behind the disc, drawn through the shared seam
+    // (AH-0MV8228YW0050IXS).
+    bulletTrail: 3.5,
+    // Clean muzzle flash at the ship when the cannon fires (shared spawn
+    // path — AH-0MV8228YW0050IXS).
+    muzzleFlash: { color: BULLET_COLORS.cannon, radius: 7, duration: 0.12 },
+    // Distinct cyan impact flash + baked hit cue when the shot connects
+    // (shared impact seam — AH-0MV8228YW0050IXS).
+    impactFx: {
+      color: BULLET_COLORS.cannon,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playCannonImpactSound',
+    },
     bulletSize: 1,
     bulletLifetime: WEAPON_BULLET_LIFETIME.cannon,
   },

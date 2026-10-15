@@ -27,6 +27,7 @@ import { drawBulletShape } from '../utils/bulletVisuals';
 import {
   headingFromVelocity,
   type BulletShape,
+  type ImpactFxSpec,
   type WeaponDefinition,
 } from '../utils/weapons';
 
@@ -77,6 +78,23 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
 
   /** Stroke-thickness multiplier for stroked shapes (default 1). */
   readonly thickness: number | undefined;
+
+  /**
+   * Optional short fading trail length, as a multiplier of the bullet radius
+   * (AH-0MV8228YW0050IXS). Drawn behind the shape by the shared seam each
+   * frame so the shot reads as a compact disc with a fading wake.
+   */
+  readonly tail: number | undefined;
+
+  /**
+   * Optional per-weapon impact feedback (AH-0MV8228YW0050IXS) — a distinct
+   * flash colour/size plus a baked hit cue that the shared impact seam
+   * resolves when this bullet connects. `undefined` for bullets with no
+   * weapon-specific impact (the generic impact flash, no hit cue). Set by
+   * the shared spawn path from the weapon definition, like `piercing`;
+   * never read by flight logic.
+   */
+  impactFx?: ImpactFxSpec;
 
   /**
    * Bullet lifetime in seconds. The bullet wraps across all four screen
@@ -183,6 +201,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     shapeLength?: number,
     rimColor?: number,
     thickness?: number,
+    tail?: number,
   ) {
     super(scene, { x, y });
     this.vx = vx;
@@ -194,6 +213,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     this.shapeLength = shapeLength;
     this.rimColor = rimColor;
     this.thickness = thickness;
+    this.tail = tail;
     this._draw();
   }
 
@@ -209,6 +229,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
       length: this.shapeLength,
       rimColor: this.rimColor,
       thickness: this.thickness,
+      tail: this.tail,
     });
     this.setRotation(headingFromVelocity(this.vx, this.vy));
   }
@@ -302,6 +323,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
  * @param shapeLength - Optional elongation multiplier for elongated shapes.
  * @param rimColor - Optional neon rim/outline colour.
  * @param thickness - Optional stroke-thickness multiplier.
+ * @param tail - Optional short fading trail length (× radius; cannon).
  * @returns The new bullet Graphics object.
  */
 export function createPlayerBullet(
@@ -317,6 +339,7 @@ export function createPlayerBullet(
   shapeLength?: number,
   rimColor?: number,
   thickness?: number,
+  tail?: number,
 ): PlayerBullet {
   const bullet = new PlayerBullet(
     scene,
@@ -331,6 +354,7 @@ export function createPlayerBullet(
     shapeLength,
     rimColor,
     thickness,
+    tail,
   );
   scene.add.existing(bullet);
   return bullet;

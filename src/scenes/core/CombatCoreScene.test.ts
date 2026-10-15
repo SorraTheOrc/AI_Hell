@@ -196,6 +196,9 @@ class StubCoreScene extends BareCoreScene {
   getPlayerExplosions(): Phaser.GameObjects.Graphics[] {
     return this.playerExplosions;
   }
+  getFireFxEffects(): Phaser.GameObjects.Graphics[] {
+    return this.fireFxEffects;
+  }
   getCollectAnimations() {
     return this.collectAnimations;
   }
@@ -342,6 +345,38 @@ describe('CombatCoreScene — shared base class', () => {
         5,
       );
     }
+  });
+
+  // ── Cannon projectile visuals & feel (AH-0MV8228YW0050IXS) ──────
+
+  it('spawns a clean muzzle flash through the shared spawn path when the cannon fires (AC3)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Only the cannon is active: exactly one shot → exactly one muzzle flash.
+    expect(player.getActiveWeapons()).toEqual(['cannon']);
+
+    scene.runAutoFire(10);
+
+    expect(scene.getFireFxEffects()).toHaveLength(1);
+    const flash = scene.getFireFxEffects()[0];
+    expect(flash.active).toBe(true);
+    // The flash is anchored at the ship and faces the firing heading.
+    expect(flash.x).toBeCloseTo(100, 5);
+    expect(flash.y).toBeCloseTo(100, 5);
+  });
+
+  it('tags the cannon bullet with its compact-neon-disc visual identity + impact FX (AC1/AC4)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+
+    scene.runAutoFire(10);
+
+    const bullet = scene.getPlayerBullets()[0];
+    expect(bullet.shape).toBe('circle');
+    expect(bullet.rimColor).toBe(0xffffff);
+    expect(bullet.tail).toBeGreaterThan(0);
+    expect(bullet.impactFx).toBeDefined();
+    expect(bullet.impactFx?.cue).toBe('playCannonImpactSound');
   });
 
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {

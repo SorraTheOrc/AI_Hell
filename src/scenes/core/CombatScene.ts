@@ -36,7 +36,12 @@ import {
   PLAYER_HIT_SCALE_PULSE_DURATION,
   SHIP_SIZE,
 } from '../../core/constants';
-import { playDestructionSound, playMortarDetonationSound, playPhaseShiftSound } from '../../audio/effects';
+import {
+  playDestructionSound,
+  playMortarDetonationSound,
+  playPhaseShiftSound,
+  playWeaponImpactCue,
+} from '../../audio/effects';
 import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
@@ -396,15 +401,21 @@ export abstract class CombatScene<
    * damage identically in the game and every gym (AH-0MV1BIUSJ0090W92).
    */
   private damageEnemyWithBullet(enemy: TEnemy, bullet: PlayerBullet): void {
+    // Per-weapon hit feedback (cannon's distinct flash + hit cue) plays on
+    // every connect through the shared impact seam — including the lethal
+    // blow, which layers the shot's hit cue under the destruction audio
+    // (AH-0MV8228YW0050IXS AC4).
+    this.resolveWeaponImpactFx(bullet);
     if (enemy.takeDamage) {
       enemy.takeDamage();
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
       // (the entity's `takeDamage()` has already run `destroySelf()` and
       // cleared `alive`). A non-lethal hit flashes at the impact point so the
-      // player can read that the hit registered.
+      // player can read that the hit registered — unless the per-weapon
+      // impact already laid down its distinct flash above.
       if (!enemy.alive) {
         this.finaliseEnemyKill(enemy);
-      } else {
+      } else if (!bullet.impactFx) {
         spawnBulletImpact(this, bullet.x, bullet.y, {
           registry: this.bulletImpactEffects,
         });
@@ -413,6 +424,25 @@ export abstract class CombatScene<
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
     }
+  }
+
+  /**
+   * Resolves a bullet's per-weapon impact feedback through the shared impact
+   * seam (AH-0MV8228YW0050IXS AC4): plays the weapon's baked hit cue and
+   * spawns its distinct impact flash at the hit point, so the game and every
+   * gym show the identical hit feedback. Bullets without `impactFx` metadata
+   * are a no-op — they keep the generic bullet-impact flash only.
+   */
+  protected resolveWeaponImpactFx(bullet: PlayerBullet): void {
+    const fx = bullet.impactFx;
+    if (!fx) return;
+    playWeaponImpactCue(fx.cue);
+    spawnBulletImpact(this, bullet.x, bullet.y, {
+      registry: this.bulletImpactEffects,
+      color: fx.color,
+      radius: fx.radius,
+      duration: fx.duration,
+    });
   }
 
   /**

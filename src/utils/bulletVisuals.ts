@@ -71,6 +71,13 @@ export interface BulletVisualSpec {
   thickness?: number;
   /** Fill/line alpha (default 1). */
   alpha?: number;
+  /**
+   * Short fading trail drawn behind the shape (length × radius
+   * multiplier) — AH-0MV8228YW0050IXS. Absent → no trail. Drawn last so it
+   * reads as the shape's wake; the tapering fade follows the bullet as it
+   * flies (the buffer is re-drawn each frame). Visual metadata only.
+   */
+  tail?: number;
 }
 
 /**
@@ -160,6 +167,35 @@ export function drawBulletShape(
     case 'chevron':
       _chevron(graphics, spec, alpha, stroke, rim);
       break;
+  }
+  if (spec.tail !== undefined && spec.tail > 0) {
+    _bulletTail(graphics, spec, alpha);
+  }
+}
+
+/**
+ * Short fading trail: three overlapping tapering segments behind the shape's
+ * trailing edge, faint at the tip and brightening toward the body so the
+ * bullet reads as a compact disc with a fading wake (AH-0MV8228YW0050IXS).
+ */
+function _bulletTail(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const full = r * (spec.tail ?? 0);
+  if (full <= 0) return;
+  const startX = -r * 0.85;
+  const segments: ReadonlyArray<Readonly<[number, number]>> = [
+    [full, 0.16],
+    [full * 0.66, 0.3],
+    [full * 0.33, 0.48],
+  ];
+  for (const [len, segAlpha] of segments) {
+    const h = r * 0.55 * (len / full);
+    graphics.fillStyle(spec.color, Math.min(1, alpha * segAlpha));
+    graphics.fillTriangle(startX, h, startX - len, 0, startX, -h);
   }
 }
 
@@ -424,6 +460,7 @@ export function resolvePlayerBulletVisual(
     length: def.bulletShapeLength,
     rimColor: def.bulletRim,
     thickness: def.bulletThickness,
+    tail: def.bulletTrail,
   };
 }
 
