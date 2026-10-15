@@ -8,6 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { defaultBotTuningValues, type BotTuningValues } from '../ai/tuningFields';
+import { bundledBotTuningJson } from './bundledConfig';
 import {
   BOT_TUNING_SCHEMA_VERSION,
   BOT_TUNING_STORAGE_KEY,
@@ -22,6 +23,7 @@ import {
   saveBotTuningCurrent,
   selectBotTuning,
   serialiseBotTuningState,
+  type BotTuningState,
 } from './botTuningStore';
 
 /** Loads a fresh module instance so the store's cache is empty. */
@@ -155,5 +157,102 @@ describe('bot tuning store (AH-0MV4D7LAD009XYR0)', () => {
     const fresh = await loadFreshStore();
     expect(fresh.getCurrentBotTuningName()).toBe('Recorder');
     expect(fresh.getCurrentBotTuningConfig().values.competent['mineralSeekRange']).toBe(4321);
+  });
+});
+
+describe('bot tuning store — bundled baseline fallback (AH-0MV9GZD2C005IIU3)', () => {
+  beforeEach(() => {
+    resetBotTuningStore();
+    window.localStorage.clear();
+  });
+
+  /** The Git-tracked bundled baseline parsed as a state (AC1 reference). */
+  function bundledBaselineState(): BotTuningState {
+    const parsed = JSON.parse(bundledBotTuningJson) as BotTuningState;
+    return parsed;
+  }
+
+  it('AC1 — no storage seeds the bundled configuration set, not the lone factory Default', async () => {
+    const fresh = await loadFreshStore();
+    const baseline = bundledBaselineState();
+    // The bundled set (not the 1-entry factory default) is what ships.
+    expect(fresh.listBotTuningNames()).toEqual(baseline.configs.map((c) => c.name));
+    expect(fresh.getCurrentBotTuningName()).toBe(baseline.current);
+    // The currently-selected config carries the bundled values.
+    const expected = baseline.configs.find((c) => c.name === baseline.current)!;
+    expect(fresh.getCurrentBotTuningConfig().values).toEqual(expected.values);
+  });
+
+  it('AC2 — a saved localStorage selection wins locally over the bundled baseline', async () => {
+    saveBotTuningAs('Local', markedValues(9090));
+    selectBotTuning('Local');
+    const fresh = await loadFreshStore();
+    expect(fresh.getCurrentBotTuningName()).toBe('Local');
+    expect(fresh.getCurrentBotTuningConfig().values.competent['mineralSeekRange']).toBe(9090);
+    // Bundled names are still present underneath, but the local current wins.
+    expect(fresh.listBotTuningNames()).toContain('Local');
+  });
+
+  it('AC3 — corrupt persisted blob falls back to the bundled baseline, never crashing', async () => {
+    window.localStorage.setItem(BOT_TUNING_STORAGE_KEY, '{ this is not json');
+    const fresh = await loadFreshStore();
+    const baseline = bundledBaselineState();
+    expect(fresh.listBotTuningNames()).toEqual(baseline.configs.map((c) => c.name));
+    expect(fresh.getCurrentBotTuningName()).toBe(baseline.current);
+  });
+
+  it('AC3 — unknown schema version falls back to the bundled baseline', async () => {
+    window.localStorage.setItem(
+      BOT_TUNING_STORAGE_KEY,
+      JSON.stringify({ version: BOT_TUNING_SCHEMA_VERSION + 99, current: 'X', configs: [] }),
+    );
+    const fresh = await loadFreshStore();
+    expect(fresh.listBotTuningNames()).toEqual(
+      bundledBaselineState().configs.map((c) => c.name),
+    );
+    expect(fresh.getCurrentBotTuningName()).toBe(bundledBaselineState().current);
+  });
+
+  it('AC4 — an unreadable bundled file falls back to the built-in Default without crashing', async () => {
+    // Simulate a corrupted shipped baseline: mock the bundled JSON to garbage.
+    vi.resetModules();
+    vi.doMock('./bundledConfig', () => ({
+      bundledBotTuningJson: '{ not valid json',
+    }));
+    try {
+      const fresh = await import('./botTuningStore');
+      expect(fresh.getCurrentBotTuningName()).toBe(DEFAULT_BOT_TUNING_NAME);
+      expect(fresh.listBotTuningNames()).toEqual([DEFAULT_BOT_TUNING_NAME]);
+      expect(fresh.getCurrentBotTuningConfig().values).toEqual(defaultBotTuningValues());
+    } finally {
+      vi.doUnmock('./bundledConfig');
+    }
+  });
+
+  it('AC4 — a structurally-invalid bundled file (empty configs) falls back safely', async () => {
+    vi.resetModules();
+    vi.doMock('./bundledConfig', () => ({
+      bundledBotTuningJson: JSON.stringify({
+        version: BOT_TUNING_SCHEMA_VERSION,
+        current: 'X',
+        configs: [],
+      }),
+    }));
+    try {
+      const fresh = await import('./botTuningStore');
+      expect(fresh.getCurrentBotTuningName()).toBe(DEFAULT_BOT_TUNING_NAME);
+      expect(fresh.listBotTuningNames()).toEqual([DEFAULT_BOT_TUNING_NAME]);
+    } finally {
+      vi.doUnmock('./bundledConfig');
+    }
+  });
+
+  it('AC5 — the Default-named entry in the bundled baseline carries the shipped values', () => {
+    const baseline = bundledBaselineState();
+    const def = baseline.configs.find((c) => c.name === DEFAULT_BOT_TUNING_NAME);
+    expect(def).toBeDefined();
+    expect(def!.values).toEqual(defaultBotTuningValues());
+    // Config-name reporting is unchanged: the current name is still 'Default'.
+    expect(getCurrentBotTuningName()).toBe(DEFAULT_BOT_TUNING_NAME);
   });
 });

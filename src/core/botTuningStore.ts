@@ -14,9 +14,16 @@
  * introduces no CSV schema/plugin work. See the work-item Risks section.
  *
  * The store is corrupt-safe: malformed JSON, an unknown schema version, or an
- * invalid config list falls back to the built-in `Default` configuration. When
- * `localStorage` is unavailable (SSR, privacy mode) the store keeps working
- * in-memory for the session and simply does not persist.
+ * invalid config list falls back to the **Git-tracked bundled baseline**
+ * (`src/data/bot-tuning.json`, shipped via `src/core/bundledConfig.ts`)
+ * so distributed builds and fresh machines fly the tuned Bot definitions
+ * instead of the generic factory defaults (AH-0MV9GZD2C005IIU3). When the
+ * bundled file is itself unreadable/invalid, the store falls back to the
+ * built-in `Default` configuration. A user's saved `localStorage` selection
+ * always wins locally — precedence is `localStorage` → bundled baseline →
+ * built-in `Default`. When `localStorage` is unavailable (SSR, privacy mode)
+ * the store keeps working in-memory for the session and simply does not
+ * persist.
  *
  * @module src/core/botTuningStore
  */
@@ -26,6 +33,7 @@ import {
   defaultBotTuningValues,
   type BotTuningValues,
 } from '../ai/tuningFields';
+import { bundledBotTuningJson } from './bundledConfig';
 
 /** localStorage key holding the persisted tuning state. */
 export const BOT_TUNING_STORAGE_KEY = 'ai-hell-bot-tuning';
@@ -72,7 +80,7 @@ function storage(): Storage | null {
 }
 
 /** A fresh state containing only the built-in `Default` configuration. */
-function createDefaultState(): BotTuningState {
+function createBuiltinDefaultState(): BotTuningState {
   return {
     version: BOT_TUNING_SCHEMA_VERSION,
     current: DEFAULT_BOT_TUNING_NAME,
@@ -83,11 +91,11 @@ function createDefaultState(): BotTuningState {
 }
 
 /**
- * Parses a raw persisted blob into a valid state, falling back to the
- * defaults on any corruption. Never throws.
+ * Parses a raw blob into a valid state, or `null` when it is unusable.
+ * Never throws. The caller applies the fallback chain.
  */
-function parseState(raw: string | null): BotTuningState {
-  if (!raw) return createDefaultState();
+function parseStateObject(raw: string | null): BotTuningState | null {
+  if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (
@@ -96,7 +104,7 @@ function parseState(raw: string | null): BotTuningState {
       (parsed as { version?: unknown }).version !== BOT_TUNING_SCHEMA_VERSION ||
       !Array.isArray((parsed as { configs?: unknown }).configs)
     ) {
-      return createDefaultState();
+      return null;
     }
     const configs: BotTuningConfig[] = [];
     for (const entry of (parsed as { configs: unknown[] }).configs) {
@@ -105,7 +113,7 @@ function parseState(raw: string | null): BotTuningState {
       if (typeof name !== 'string' || name.trim() === '') continue;
       configs.push({ name, values: coerceTuningValues((entry as { values?: unknown }).values) });
     }
-    if (configs.length === 0) return createDefaultState();
+    if (configs.length === 0) return null;
     const requested = (parsed as { current?: unknown }).current;
     const current =
       typeof requested === 'string' && configs.some((c) => c.name === requested)
@@ -113,8 +121,28 @@ function parseState(raw: string | null): BotTuningState {
         : configs[0].name;
     return { version: BOT_TUNING_SCHEMA_VERSION, current, configs };
   } catch {
-    return createDefaultState();
+    return null;
   }
+}
+
+/**
+ * The shipped baseline state: the Git-tracked `bot-tuning.json` bundled into
+ * every build (AH-0MV9GZD2C005IIU3), parsed through the same corrupt-safe
+ * validation as user storage. Falls back to the built-in `Default` when the
+ * bundled file is unreadable/invalid, so an unreadable bundle never crashes
+ * or degrades demo behaviour.
+ */
+function createDefaultState(): BotTuningState {
+  return parseStateObject(bundledBotTuningJson) ?? createBuiltinDefaultState();
+}
+
+/**
+ * Parses a raw persisted blob into a valid state, falling back to the
+ * bundled baseline (then the built-in `Default`) on any corruption. Never
+ * throws.
+ */
+function parseState(raw: string | null): BotTuningState {
+  return parseStateObject(raw) ?? createDefaultState();
 }
 
 /** Persists the state (best-effort; a missing storage is not an error). */
