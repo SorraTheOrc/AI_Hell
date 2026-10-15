@@ -26,10 +26,15 @@ import { DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
 import {
   DEFAULT_BOT_TUNING_NAME,
+  getCurrentBotTuningConfig,
   resetBotTuningStore,
   saveBotTuningAs,
 } from '../core/botTuningStore';
-import { defaultBotTuningValues } from '../ai/tuningFields';
+import {
+  coerceTuningValues,
+  defaultBotTuningValues,
+  toCompetentOverrides,
+} from '../ai/tuningFields';
 import {
   buildBotSnapshot,
   type BotSnapshotScene,
@@ -40,12 +45,19 @@ import {
 } from '../ai/botDecision';
 import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
 import type { BotInputGovernor } from '../ai/botHumanLike';
+import {
+  COMPETENT_BOT_TUNABLES,
+  mayThrust,
+  resolveCompetentTunables,
+} from '../ai/framework/competent';
+import type { ShipConfig } from '../core/configTypes';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { GameOverScene } from './GameOverScene';
 import { LeaderboardScene } from './LeaderboardScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
 import { GymIndex } from './GymIndex';
+import { GYM_BOT_TUNING_SCENE_KEY, GymBotTuning } from './gym/GymBotTuning';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -858,3 +870,112 @@ describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
     ).toBeCloseTo(0.4);
   });
 });
+
+describe('Demo live-thruster config (AH-0MV268RXJ007M7A9)', () => {
+  let booted: BootedGame | null = null;
+
+  /** Boots a live PlayScene demo (asteroids scheme, the shipped default). */
+  async function bootDemo(): Promise<PlayScene> {
+    seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene, GymBotTuning], {
+      deterministicBoot: true,
+    });
+    booted.game.scene.start('PlayScene', { demo: true, seed: 42 });
+    await wait(150);
+    return booted.game.scene.getScene('PlayScene') as PlayScene;
+  }
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("AC1 — the demo snapshot carries the ship's live thruster config end-to-end", async () => {
+    const play = await bootDemo();
+    const player = play.getPlayer()!;
+    // The snapshot the demo brain decides from carries the player's live
+    // thruster physics (AH-0MV85WFWD0029DL7), not hard-coded constants.
+    expect(buildBotSnapshot(play as unknown as BotSnapshotScene).player?.thruster).toEqual(
+      player.getThrusterConfig(),
+    );
+    // The shipped default ship config (175 / 100 / 200 / 120) matches today's
+    // tunable defaults, so a default ship is behaviour-identical to no config
+    // (default-equivalence baseline, AH-0MV85WFHQ0016FTA).
+    expect(player.getThrusterConfig()).toMatchObject({
+      maxSpeed: 175,
+      frictionDeceleration: 100,
+      reverseEnabled: true,
+      reverseAcceleration: 200,
+      reverseMaxSpeed: 120,
+    });
+  });
+
+  it("AC2/AC5 — a custom live thruster config changes the demo bot's decisions (live wins)", async () => {
+    const play = await bootDemo();
+    const tunables = resolveCompetentTunables(toCompetentOverrides(defaultBotTuningValues()));
+    // Re-tune the live ship: higher friction + speed cap. The snapshot must
+    // reflect it and the pure forward-model decision must flip, with no code
+    // wiring beyond the demo seam (AH-0MV85WGA9005B080 · AC1/AC2).
+    const custom: ShipConfig = {
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      maxSpeed: 300,
+      frictionDeceleration: 150,
+      asteroidsReverseThrustAcceleration: 300,
+      asteroidsReverseMaxSpeed: 180,
+    };
+    play.getPlayer()!.setConfig(custom);
+    play.tick(1 / 60);
+
+    const after = buildBotSnapshot(play as unknown as BotSnapshotScene);
+    expect(after.player?.thruster).toEqual(playerThrusterOf(custom));
+
+    // The forward model consumes the snapshot's live values (same 150 px/s
+    // approach, same 102 px gap): friction 100 → stop 112.5 px (coast),
+    // friction 150 → stop 75 px (thrust). The decision flips with the live
+    // ship config, proving the demo path feeds it through automatically.
+    const demoDefault = playerThrusterOf(DEFAULT_CONFIG);
+    const snapWith = (thruster: unknown) => ({
+      player: { x: 0, y: 0, vx: 150, vy: 0, thruster },
+      enemies: [], enemyBullets: [], playerBullets: [], drops: [], minerals: [],
+      boss: null, aliveCount: 0, wave: null, runSeed: 0, lives: 3, livesCap: 5,
+      reverseEnabled: true,
+    }) as never;
+    expect(mayThrust(snapWith(demoDefault), tunables, 120, 18)).toBe(false);
+    expect(mayThrust(snapWith(after.player?.thruster), tunables, 120, 18)).toBe(true);
+  });
+
+  it('AC4 — demo and tuning-gym apply the identical tunable mapping (explicit override > live > default)', async () => {
+    await bootDemo();
+    booted!.game.scene.start(GYM_BOT_TUNING_SCENE_KEY, { seed: 42 });
+    await wait(150);
+    const gym = booted!.game.scene.getScene(GYM_BOT_TUNING_SCENE_KEY) as GymBotTuning;
+
+    // Both scenes rebuild the brain from the same persisted config through
+    // the same `toCompetentOverrides` seam — no divergent copy (AC4).
+    const storeTunables = resolveCompetentTunables(
+      toCompetentOverrides(coerceTuningValues(getCurrentBotTuningConfig().values)),
+    );
+    expect(gym.getAppliedBotTunables()).toEqual(storeTunables);
+    // With no explicit override the compiled defaults are left intact, so the
+    // live ship config wins for the physics terms (live 175/100 == defaults).
+    expect(storeTunables.playerSpeed).toBe(COMPETENT_BOT_TUNABLES.playerSpeed);
+    expect(storeTunables.frictionDeceleration).toBe(
+      COMPETENT_BOT_TUNABLES.frictionDeceleration,
+    );
+  });
+});
+
+/** Mirrors `Player.getThrusterConfig()` for a ShipConfig (test-side helper). */
+function playerThrusterOf(config: ShipConfig) {
+  return {
+    thrustAcceleration: config.thrustAcceleration,
+    maxSpeed: config.maxSpeed,
+    frictionDeceleration: config.frictionDeceleration,
+    reverseEnabled: config.asteroidsReverseEnabled,
+    reverseAcceleration: config.asteroidsReverseThrustAcceleration,
+    reverseMaxSpeed: config.asteroidsReverseMaxSpeed,
+  };
+}
