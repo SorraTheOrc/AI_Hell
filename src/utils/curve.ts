@@ -4,14 +4,14 @@
  * Both the weapon-levelling system (`src/utils/weaponLevels.ts`, parent
  * AH-0MUPMPCB2009J54J) and the power-up-levelling system
  * (`src/powerups/powerUpLevels.ts`, parent AH-0MUU2QJE2007JNR6) resolve
- * their per-level values through the **same** diminishing-returns curve.
- * This module is the single, pure, unit-testable implementation of that
- * curve so the maths cannot drift between the two systems (AC4 / "single
- * curve implementation").
+ * their per-level values through the **same** curve module. This module is
+ * the single, pure, unit-testable implementation of those curves so the
+ * maths cannot drift between the two systems (AC4 / "single curve
+ * implementation").
  *
- * ## Diminishing-returns curve
+ * ## Exponential-saturation curve
  *
- * Every variable uses the same **exponential-saturation** curve:
+ * Most variables use the **exponential-saturation** curve:
  *
  * ```
  * effective(level) = cap − (cap − base) × e^(−k × level)
@@ -23,9 +23,25 @@
  * - The curve is **strictly increasing** while `cap > base` and `k > 0`
  *   and never decreases.
  *
+ * ## Linear/clamped curve
+ *
+ * Additive-capped schedules (e.g. a fixed per-level radius grower or a
+ * descending interval timer) use the **linear-clamped** curve:
+ *
+ * ```
+ * effective(level) = clamp(base + k × level, [min(base, cap), max(base, cap)])
+ * ```
+ *
+ * - `effective(0) = base` — level 0 is the un-upgraded value.
+ * - Positive `k` grows the value linearly by `k` per level until it clamps
+ *   at `cap` (radius base 200, cap 400, per-level addend 4).
+ * - Negative `k` shrinks the value linearly until it clamps at `cap`
+ *   (interval base 30 s, floor 10 s, per-level decrement 2). In both
+ *   directions the result stays inside `[min(base, cap), max(base, cap)]`.
+ *
  * Integer-valued counts are rounded to the nearest whole number and clamped
- * to their cap so that they step up and then flatten without ever exceeding
- * the cap.
+ * to their band so that they step up/down and then flatten without ever
+ * exceeding the clamp bounds.
  *
  * Pure and deterministic: no scene, DOM, Phaser or storage coupling.
  */
@@ -33,28 +49,36 @@
 // ── Curve family & spec ─────────────────────────────────────────────
 
 /**
- * Curve family. Currently a single exponential-saturation curve is used;
- * the type is explicit so future curves (linear-capped, piecewise) can be
+ * Curve family. The exponential-saturation curve is used by legacy weapon
+ * and power-up specs; the linear-clamped curve is used by additive-capped
+ * schedules. The type is explicit so future curves (piecewise) can be
  * added without changing the spec shape.
  */
-export type UpgradeCurve = 'exponential-saturation';
+export type UpgradeCurve = 'exponential-saturation' | 'linear-clamped';
 
 /**
  * The minimal shape any level curve needs: its level-0 value (`base`), its
- * finite asymptotic `cap`, the saturation rate `k` and whether it is a
- * whole-number count (`discrete`). Weapon and power-up specs both extend
- * this so {@link curveValue} can be shared.
+ * finite `cap`, the per-level parameter `k` and whether it is a whole-
+ * number count (`discrete`). Weapon and power-up specs both extend this so
+ * {@link curveValue} can be shared.
  */
 export interface CurveSpec {
   /** The curve family used to resolve this variable. */
   curve: UpgradeCurve;
   /** Effective value at level 0 (the un-upgraded value). */
   base: number;
-  /** Finite asymptotic cap — the value is never exceeded. */
+  /**
+   * The clamp bound the curve flattens at. For exponential-saturation this
+   * is the asymptotic cap; for linear-clamped it is the clamp in the
+   * direction of travel (an upper bound when `k > 0`, a floor when `k < 0`).
+   */
   cap: number;
   /**
-   * Saturation rate `k` (per level). Larger values approach the cap more
-   * quickly; the curve is strictly increasing for any `k > 0`.
+   * Per-level parameter: the saturation rate `k` for exponential-saturation
+   * (larger values approach the cap more quickly; strictly increasing for
+   * any `k > 0`), or the per-level addend for linear-clamped (positive
+   * grows the value, negative shrinks it; sign selects the travel
+   * direction).
    */
   k: number;
   /** True when the variable is a whole-number count (rounded + clamped). */
@@ -64,10 +88,15 @@ export interface CurveSpec {
 // ── Curve maths ─────────────────────────────────────────────────────
 
 /**
- * Evaluates a curve spec's diminishing-returns curve at `level`.
+ * Evaluates a curve spec at `level`.
  *
- * `effective(level) = cap − (cap − base) × e^(−k × level)`, snapped to a
- * whole number for discrete counts and clamped to `[base, cap]`.
+ * Exponential-saturation: `effective(level) = cap − (cap − base) ×
+ * e^(−k × level)`, snapped to a whole number for discrete counts and
+ * clamped to `[base, cap]`.
+ *
+ * Linear-clamped: `effective(level) = base + k × level`, snapped to a
+ * whole number for discrete counts and clamped to
+ * `[min(base, cap), max(base, cap)]`.
  *
  * Non-finite levels are treated as level 0; negative levels clamp to 0.
  *
@@ -77,6 +106,19 @@ export interface CurveSpec {
  */
 export function curveValue(spec: CurveSpec, level: number): number {
   const safeLevel = Number.isFinite(level) ? Math.max(0, level) : 0;
+  if (spec.curve === 'linear-clamped') {
+    // Additive-capped curve: base + slope×level, clamped to the band
+    // defined by base and cap in either travel direction.
+    const lower = Math.min(spec.base, spec.cap);
+    const upper = Math.max(spec.base, spec.cap);
+    const raw = spec.base + spec.k * safeLevel;
+    if (!spec.discrete) {
+      return Math.min(upper, Math.max(lower, raw));
+    }
+    // Whole-number counts step in the travel direction and flatten at the
+    // clamp bound.
+    return Math.min(upper, Math.max(lower, Math.round(raw)));
+  }
   const span = spec.cap - spec.base;
   if (span <= 0) {
     // A flat or inverted spec is defensively pinned to its base.
