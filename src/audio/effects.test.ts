@@ -227,27 +227,45 @@ describe('volume and mute', () => {
   });
 });
 
-// ── 3a. Enemy shot volume (AH-0MV74ROYR009X8U3) ─────────────────────
+// ── 3a. Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3) ──────
 
-describe('enemy shot volume (AH-0MV74ROYR009X8U3)', () => {
-  it('ENEMY_SHOT_VOLUME_SCALE is a single named 0.5 tunable', () => {
-    expect(effects.ENEMY_SHOT_VOLUME_SCALE).toBe(0.5);
+describe('Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3)', () => {
+  it('TANK_SCOUT_FIRE_VOLUME_SCALE is a single named 0.5 tunable', () => {
+    expect(effects.TANK_SCOUT_FIRE_VOLUME_SCALE).toBe(0.5);
+  });
+
+  it('playTankAdvanceCue plays the tank advance whine at half volume', () => {
+    effects.playTankAdvanceCue();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-tank-advance.32140.wav');
+    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    // The no-gap advance cue is not delayed.
+    expect(recording.plays[0].delay).toBe(0);
   });
 
   it('playTankFireSound plays the baked tank-fire asset at half volume', () => {
     effects.playTankFireSound();
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/aihell-tank-fire.32141.wav');
-    expect(recording.plays[0].volume).toBe(effects.ENEMY_SHOT_VOLUME_SCALE);
+    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
     // The advance-cue no-gap delay is preserved.
     expect(recording.plays[0].delay).toBe(effects.TANK_ADVANCE_CUE_DURATION);
+  });
+
+  it('playScoutAdvanceCue plays the scout advance blip at half volume', () => {
+    effects.playScoutAdvanceCue();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-scout-advance.32180.wav');
+    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    // The no-gap advance cue is not delayed.
+    expect(recording.plays[0].delay).toBe(0);
   });
 
   it('playScoutFireSound plays the baked scout laser asset at half volume', () => {
     effects.playScoutFireSound();
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/weapon-laser-zap.1.wav');
-    expect(recording.plays[0].volume).toBe(effects.ENEMY_SHOT_VOLUME_SCALE);
+    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
     // The advance-cue no-gap delay is preserved.
     expect(recording.plays[0].delay).toBe(effects.SCOUT_ADVANCE_CUE_DURATION);
   });

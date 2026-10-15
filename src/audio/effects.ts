@@ -281,24 +281,25 @@ function playExplosionCue(cue: string, options: SfxPlayOptions = {}): void {
  */
 export const TANK_ADVANCE_CUE_DURATION = 0.6;
 
-/** Rising mechanical whine — E3 Tank firing advance cue. */
+/** Rising mechanical whine — E3 Tank firing advance cue (half volume). */
 export function playTankAdvanceCue(): void {
-  playCue('playTankAdvanceCue');
+  playCue('playTankAdvanceCue', { volume: TANK_SCOUT_FIRE_VOLUME_SCALE });
 }
 
 /**
- * Linear gain applied to the Tank/Scout enemy **shot** cues so enemy fire
- * sits at half volume in the mix (AH-0MV74ROYR009X8U3). The advance whines
- * and every other cue are unchanged; a single named constant keeps the trim
- * tunable in one place (precedent: `HOLD_FULL_FIRE_VOLUME_SCALE`).
+ * Linear gain applied to the Tank/Scout enemy **fire sequence** — the
+ * advance whine/blip *and* the shot cue — so enemy fire sits at half volume
+ * in the mix (AH-0MV74ROYR009X8U3). The producer confirmed the advance
+ * (warmup) cues are part of the reduction. A single named constant keeps
+ * the trim tunable in one place (precedent: `HOLD_FULL_FIRE_VOLUME_SCALE`).
  */
-export const ENEMY_SHOT_VOLUME_SCALE = 0.5;
+export const TANK_SCOUT_FIRE_VOLUME_SCALE = 0.5;
 
 /** Heavy low cannon thump — E3 Tank fire, scheduled at the advance cue's end. */
 export function playTankFireSound(): void {
   playCue('playTankFireSound', {
     delay: TANK_ADVANCE_CUE_DURATION,
-    volume: ENEMY_SHOT_VOLUME_SCALE,
+    volume: TANK_SCOUT_FIRE_VOLUME_SCALE,
   });
 }
 
@@ -318,16 +319,16 @@ export function playPhaserFireSound(): void {
 /** Duration (seconds) of the Scout advance tell. */
 export const SCOUT_ADVANCE_CUE_DURATION = 0.6;
 
-/** Rising warning blip — E1 Scout firing advance cue. */
+/** Rising warning blip — E1 Scout firing advance cue (half volume). */
 export function playScoutAdvanceCue(): void {
-  playCue('playScoutAdvanceCue');
+  playCue('playScoutAdvanceCue', { volume: TANK_SCOUT_FIRE_VOLUME_SCALE });
 }
 
 /** Sharp laser blip — E1 Scout fire, scheduled at the advance cue's end. */
 export function playScoutFireSound(): void {
   playCue('playScoutFireSound', {
     delay: SCOUT_ADVANCE_CUE_DURATION,
-    volume: ENEMY_SHOT_VOLUME_SCALE,
+    volume: TANK_SCOUT_FIRE_VOLUME_SCALE,
   });
 }
 

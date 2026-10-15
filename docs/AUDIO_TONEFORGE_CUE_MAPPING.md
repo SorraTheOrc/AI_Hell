@@ -78,8 +78,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playMajorExplosionSound` | Layered major blast: saw thump 150→26 + triangle body 340→38 + LP noise tail, 4-voice limiter | Wave timeout — retained but unused | **none** | **retired** | — (see Retired cues) |
 | `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s, vol 0.12 | Player bullet destroys enemy bullet | `vfx/bulletImpact` | new | `aihell-bullet-destruction` |
 | `playTankDestructionSound` | Saw 220→30 Hz, 0.45 s, vol 0.2 | Intentionally unwired | **none** (test-only) | **retired** | — (see Retired cues) |
-| `playTankAdvanceCue` | Advancing saw 150→320 Hz + square sub 75→160 Hz, 0.6 s | Advance cue (≥ 500 ms) | `entities/Tank` | new | `aihell-tank-advance` |
-| `playTankFireSound` | Heavy saw+sine cannon thump ~90→25 Hz, scheduled at cue end; runtime volume ×0.5 (`ENEMY_SHOT_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Tank` | new | `aihell-tank-fire` |
+| `playTankAdvanceCue` | Advancing saw 150→320 Hz + square sub 75→160 Hz, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Tank` | new | `aihell-tank-advance` |
+| `playTankFireSound` | Heavy saw+sine cannon thump ~90→25 Hz, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Tank` | new | `aihell-tank-fire` |
 | `playPowerUpSpawnSound` | Bright ascending blip (higher than enemy spawn) | Power-up spawn (advance) | `GymWeapons`, `GymWeaponLeveling` | new | `aihell-pickup-spawn` |
 | `playPowerUpDespawnSound` | Quick descending blip, lower vol, shorter | Power-up despawn | `GymWeapons`, `GymWeaponLeveling` | new | `aihell-pickup-despawn` |
 | `playPowerUpCollectSound` | Cheerful two-tone ascending chime | Power-up pickup | `dropLayer` | **existing** | `card-token-earn` |
@@ -88,8 +88,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playSwarmBurstSound` | Saw buzz 120→80 Hz + sine whoosh 200→600 Hz, ~0.2 s | Swarm volley buzz | `entities/Swarm` | new | `aihell-swarm-burst` |
 | `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
 | `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s, scheduled at cue end | Enemy fire / no-gap | `entities/Phaser` | new | `aihell-phaser-fire` |
-| `playScoutAdvanceCue` | Rising sine, pitched above Phaser, 0.6 s | Advance cue (≥ 500 ms) | `entities/Scout` | new | `aihell-scout-advance` |
-| `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`ENEMY_SHOT_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Scout` | **existing** | `weapon-laser-zap` |
+| `playScoutAdvanceCue` | Rising sine, pitched above Phaser, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Scout`, `entities/OrbitalStrike` | new | `aihell-scout-advance` |
+| `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Scout` | **existing** | `weapon-laser-zap` |
 | `playDiverDiveStartSound` | Rising saw 150→600 Hz + filtered noise, ~0.25 s | Dive danger cue | `entities/Diver` | new | `aihell-diver-dive-start` |
 | `playDiveSound` | Bandpass noise sweep 300→900 Hz, refcounted shared ~2 s voice | Diver dive | `entities/Diver` | new | `aihell-diver-dive-loop` |
 | `stopDiveSound` | Stops/releases the shared dive voice | Diver dive | `entities/Diver` | control | (companion to `aihell-diver-dive-loop`) |
