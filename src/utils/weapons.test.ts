@@ -92,6 +92,22 @@ describe('WEAPON_CATALOGUE', () => {
     expect(offsets[2]).toBeCloseTo(thirtyDeg);
   });
 
+  test('spread declares its visuals-only feel metadata (AH-0MV8229B9009DQGA)', () => {
+    const spread = WEAPON_CATALOGUE.spread;
+    // In-flight identity for the catalogue guard is the unique `diamond`
+    // shape family (never a second `disc`); the feel is added as visuals-only
+    // metadata — a warm rim, a brief fading trail, a soft muzzle flash and a
+    // distinct amber impact flash + baked hit cue.
+    expect(spread.bulletShape).toBe('diamond');
+    expect(spread.bulletRim).toBeDefined();
+    expect(spread.bulletTrail).toBeGreaterThan(0);
+    expect(spread.muzzleFlash).toBeDefined();
+    expect(spread.muzzleFlash!.color).toBe(BULLET_COLORS.spread);
+    expect(spread.impactFx).toBeDefined();
+    expect(spread.impactFx!.color).toBe(BULLET_COLORS.spread);
+    expect(spread.impactFx!.cue).toBe('playSpreadImpactSound');
+  });
+
   test('dual fires 2 parallel bullets offset perpendicular to heading', () => {
     const weapon = WEAPON_CATALOGUE.dual;
     expect(weapon.offsets.length).toBe(2);

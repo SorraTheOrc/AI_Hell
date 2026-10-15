@@ -379,6 +379,46 @@ describe('CombatCoreScene — shared base class', () => {
     expect(bullet.impactFx?.cue).toBe('playCannonImpactSound');
   });
 
+  // ── Spread projectile visuals & feel (AH-0MV8229B9009DQGA) ──────
+
+  it('spawns a muzzle flash through the shared spawn path when the spread fires (AC3)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('spread');
+
+    scene.runAutoFire(10);
+
+    // The spread fires a 3-bullet fan; at least the spread weapon's launch
+    // cue is present (the permanent cannon may fire alongside it).
+    const spreadBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === 0xffaa00);
+    expect(spreadBullets.length).toBeGreaterThan(0);
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+    const flash = scene.getFireFxEffects()[0];
+    expect(flash.active).toBe(true);
+    expect(flash.x).toBeCloseTo(100, 5);
+    expect(flash.y).toBeCloseTo(100, 5);
+  });
+
+  it('tags the spread bullet with its diamond visual identity + impact FX (AC1/AC4)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('spread');
+
+    scene.runAutoFire(10);
+
+    const spreadBullet = scene
+      .getPlayerBullets()
+      .find((b) => b.color === 0xffaa00);
+    expect(spreadBullet).toBeDefined();
+    expect(spreadBullet!.shape).toBe('diamond');
+    expect(spreadBullet!.rimColor).toBeDefined();
+    expect(spreadBullet!.tail).toBeGreaterThan(0);
+    expect(spreadBullet!.impactFx).toBeDefined();
+    expect(spreadBullet!.impactFx?.cue).toBe('playSpreadImpactSound');
+  });
+
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });

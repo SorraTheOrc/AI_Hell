@@ -772,6 +772,48 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
+  // ── Spread impact feedback (AH-0MV8229B9009DQGA) ─────────────────
+
+  it('AC4 — a spread shot plays its baked hit cue and distinct amber impact flash on connect', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = {
+      color: 0xffaa00,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playSpreadImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playSpreadImpactSound');
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  it('AC4 — the spread hit cue layer plays on the killing blow too', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = {
+      color: 0xffaa00,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playSpreadImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(false);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
   it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
     const scene = await boot();
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');

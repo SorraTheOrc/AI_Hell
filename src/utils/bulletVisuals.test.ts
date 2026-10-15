@@ -251,6 +251,17 @@ describe('resolvePlayerBulletVisual', () => {
     const laser = resolvePlayerBulletVisual(WEAPON_CATALOGUE.wave_laser);
     expect(laser.shape).toBe('line');
     expect(laser.length).toBeGreaterThan(1); // a beam, not a dot
+
+    // Spread's visuals-owned identity: a warm rim + brief fading trail so
+    // the diamond reads as a small glowing disc-like gem
+    // (AH-0MV8229B9009DQGA). The shape family stays `diamond` (its assigned
+    // unique family per the catalogue-wide roster guard), never a second
+    // `disc`.
+    const spread = resolvePlayerBulletVisual(WEAPON_CATALOGUE.spread);
+    expect(canonicalShape(spread.shape)).toBe('diamond');
+    expect(spread.color).toBe(0xffaa00);
+    expect(spread.rimColor).toBeDefined();
+    expect(spread.tail).toBeGreaterThan(0);
   });
 
   it('dual and wave_laser both resolve a beam shape, never a dot', () => {

@@ -458,3 +458,24 @@ describe('PlayerBullet — cannon visual identity (AC1/AC3)', () => {
     expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(0);
   });
 });
+
+// ── Spread — small glowing diamond with a brief fading trail (AH-0MV8229B9009DQGA) ─
+
+describe('PlayerBullet — spread visual identity (AC1/AC3)', () => {
+  it('the spread shot renders as a warm-rimmed diamond with a brief fading trail', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(
+      scene, 100, 100, 0xffaa00, 2.4, 350, 0, 0.7,
+      'diamond', undefined, 0xffdd66, undefined, 2.2,
+    );
+
+    // The spread signature: the unique `diamond` shape family (filled
+    // rhombus → FILL_PATH with MOVE_TO/LINE_TO joins), a warm neon rim
+    // (stroked outline → STROKE_PATH) and a brief 3-segment fading trail
+    // (FILL_TRIANGLE). Distinct from the cannon's disc; same trail seam.
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
+  });
+});

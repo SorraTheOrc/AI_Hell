@@ -125,6 +125,22 @@ describe('cue → baked asset mapping', () => {
     expect(recording.plays).toHaveLength(0);
   });
 
+  it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
+    effects.playSpreadImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-spread-impact.32218.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the spread impact cue (AH-0MV8229B9009DQGA)', () => {
+    effects.playWeaponImpactCue('playSpreadImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-spread-impact.32218.wav',
+    );
+  });
+
   it('playCountdownTickSound rises in pitch with each beat (AH-0MV722WJS0075UTZ)', () => {
     // Count 3 (step 0) is the base rate, 2 and 1 rise above it.
     effects.playCountdownTickSound(0);

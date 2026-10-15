@@ -420,6 +420,11 @@ export function playCannonImpactSound(): void {
   playCue('playCannonImpactSound');
 }
 
+/** Soft warm amber hit — Spread bullet connects (AH-0MV8229B9009DQGA). */
+export function playSpreadImpactSound(): void {
+  playCue('playSpreadImpactSound');
+}
+
 /**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
@@ -429,6 +434,7 @@ export function playCannonImpactSound(): void {
  */
 const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playCannonImpactSound,
+  playSpreadImpactSound,
 };
 
 /**

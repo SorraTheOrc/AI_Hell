@@ -798,7 +798,30 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [(-30 * Math.PI) / 180, 0, (30 * Math.PI) / 180],
     fireRateMs: WEAPON_SPREAD_FIRE_RATE,
     bulletColor: BULLET_COLORS.spread,
+    // The Spread shot is the catalogue's warm-amber diamond: a small
+    // glowing disc-like gem in the spread colour. The shape family stays
+    // `diamond` (the roster guard assigns one unique family per weapon — the
+    // `disc` family belongs to the cannon), so the "small disc" read comes
+    // from the warm neon rim + brief fading trail + soft muzzle/impact
+    // (AH-0MV8229B9009DQGA). Visuals-only metadata; flight unchanged.
     bulletShape: 'diamond',
+    // Warm amber rim picks the diamond out of the neon field as a compact
+    // glowing gem/disc (AH-0MV8229B9009DQGA).
+    bulletRim: 0xffdd66,
+    // Brief fading trail — three short tapering segments behind the diamond
+    // via the shared bullet-shape seam (AH-0MV8229B9009DQGA).
+    bulletTrail: 2.2,
+    // Soft muzzle flash / launch cue at the ship when the spread fires
+    // (shared combat-core spawn path — AH-0MV8229B9009DQGA).
+    muzzleFlash: { color: BULLET_COLORS.spread, radius: 7, duration: 0.14 },
+    // Distinct amber impact flash + baked hit cue when a spread shot
+    // connects (shared impact seam — AH-0MV8229B9009DQGA).
+    impactFx: {
+      color: BULLET_COLORS.spread,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playSpreadImpactSound',
+    },
     bulletSize: 0.8,
     bulletLifetime: WEAPON_BULLET_LIFETIME.spread,
   },

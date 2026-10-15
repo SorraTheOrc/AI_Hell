@@ -99,6 +99,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s | Boss per-hit feedback | shared boss feedback path (wired by AH-0MUZMTTPE0074X59) | new | `aihell-boss-hit` |
 | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s, vol 0.15 | Player cannon fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-cannon-fire` |
 | `playCannonImpactSound` | Punchy saw impact 520→90 Hz + square click + HP noise smack, ~0.13 s | Player cannon hit (when a shot connects) | shared impact seam in `CombatScene` (AH-0MV8228YW0050IXS) | new | `aihell-cannon-impact` |
+| `playSpreadImpactSound` | Warm amber triangle wedge 900→150 Hz + soft noise tick, ~0.14 s | Player spread hit (when a shot connects) | shared impact seam in `CombatScene` (AH-0MV8229B9009DQGA) | new | `aihell-spread-impact` |
 | `playSpreadFireSound` | Triangle 600→1200→800 Hz, ~0.12 s, vol 0.15 | Player spread fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-spread-fire` |
 | `playDualFireSound` | Saw 900→300 Hz + offset sine tick, ~0.06 s | Player dual fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-dual-fire` |
 | `playRapidFireSound` | Triangle 500→900 Hz, ~0.05 s, vol 0.12 | Player rapid fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-rapid-fire` |
@@ -184,6 +185,7 @@ repeated kills still vary.
 | `aihell-boss-hit` | `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s | 32208 |
 | `aihell-cannon-fire` | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s | 32210 |
 | `aihell-cannon-impact` | `playCannonImpactSound` | Punchy saw impact 520→90 Hz + square click + HP smack, ~0.13 s | 32209 |
+| `aihell-spread-impact` | `playSpreadImpactSound` | Warm amber triangle wedge 900→150 Hz + soft noise tick, ~0.14 s | 32218 |
 | `aihell-spread-fire` | `playSpreadFireSound` | Triangle 600→1200→800 Hz, ~0.12 s | 32211 |
 | `aihell-dual-fire` | `playDualFireSound` | Saw 900→300 Hz + sine tick | 32212 |
 | `aihell-rapid-fire` | `playRapidFireSound` | Triangle 500→900 Hz, ~0.05 s | 32213 |
