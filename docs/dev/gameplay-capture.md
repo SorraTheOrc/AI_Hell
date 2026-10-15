@@ -240,8 +240,16 @@ pattern as the run-end listener) that writes the exported store state into
 tuning. The file is the exact JSON the gym's Export button produces
 (`{ version, current, configs }`). A missing, unreadable, or malformed file
 fails fast with an actionable message **before** the server or browser
-launches. Without the flag the demo uses the built-in defaults, exactly as
-before.
+launches.
+
+**Without `--bot-config` the fresh browser flies the bundled baseline**, not
+factory defaults: the Git-tracked `src/data/bot-tuning.json` ships with every
+build (via `src/core/bundledConfig.ts`) and the store seeds from it when
+`localStorage` is empty (AH-0MV9GZD2C005IIU3). So a plain
+`npm run capture` in a fresh Chromium records the tuned demo — exactly what a
+distributed build (e.g. GitHub Pages) shows. Passing `--bot-config` still
+overrides the baseline for a specific clip. Precedence everywhere is
+`localStorage` → bundled baseline.
 
 The pure `installBotTuningConfig` / `loadBotTuningConfigFile` helpers live in
 `scripts/capture-gameplay.mjs` and are unit-tested in

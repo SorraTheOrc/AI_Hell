@@ -722,7 +722,11 @@ and adjust its parameters in real time.
   configuration. Presets are persisted by `src/core/botTuningStore.ts` as a
   versioned, corrupt-safe JSON blob in `localStorage` (the same
   browser-native pattern as `src/core/rules.ts`); a missing or malformed blob
-  falls back to the built-in `Default`.
+  falls back to the **bundled baseline** (`src/data/bot-tuning.json`, shipped
+  via `src/core/bundledConfig.ts`) and only then to the built-in `Default`
+  (AH-0MV9GZD2C005IIU3). Every Git-tracked build therefore ships the tuned
+  configurations, so a fresh checkout or a distributed build (e.g. the GitHub
+  Pages alpha) flies the same definitions instead of generic factory defaults.
 - **Watch Demo and recordings fly the saved config.** The shipped attract
   demo (`PlayScene` demo mode) reads the same store when it starts — and when
   the demo is re-enabled mid-session — and rebuilds its `BotBrain` /
@@ -734,7 +738,20 @@ and adjust its parameters in real time.
   `npm run capture -- --bot-config file.json` (and
   `npm run record -- --bot --bot-config file.json`), which injects that state
   into the recording page before the game boots — so a recorded demo flies the
-  designer's tuning.
+  designer's tuning. Without `--bot-config` the fresh recording browser flies
+  the bundled baseline (see above) — not factory defaults.
+
+**Precedence rule:** `localStorage` (a designer's saved selection) → bundled
+baseline (`src/data/bot-tuning.json`) → built-in `Default`. A user who saves a
+configuration locally keeps it locally; every other context sees the shipped
+baseline.
+
+**Refresh workflow (tune → Export → commit):** after tuning in the gym, click
+**Export** (`bot-tuning.json`) and overwrite `src/data/bot-tuning.json` with
+that exact file (the Export output is byte-equivalent to `serialiseBotTuningState()`), then commit. The next build and every fresh machine/browser
+fly the updated baseline. Keep the file as the single source of the shipped
+baseline — like the committed CSVs — so a stale committed baseline is the only
+risk, mitigated by documenting this workflow here.
 
 The tuning surface is a curated subset of `COMPETENT_BOT_TUNABLES` /
 `BOT_HUMAN_INPUT_TUNABLES`; `tuningFields.ts` reconstructs the nested
