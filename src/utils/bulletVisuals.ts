@@ -1274,7 +1274,22 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 1.4,
     muzzle: { color: 0xffdd66, radius: 6, duration: 0.14 },
   },
-  capturer: { shape: 'line', color: 0xff88ff, length: 2.2 },
+  // Capturer tractor beam (AH-0MV822G6F002JRRY): the capturer never fires a
+  // bullet — its threat is the beam corridor it projects, so this identity
+  // records the tractor-beam visual (a magenta tugging beam/field, distinct
+  // from every projectile) as the archetype's registered signature. The beam
+  // itself is drawn by the shared Capturer entity (`_drawBeam`); the registry
+  // entry keeps the roster total so the docs-guard stays in force. Feel
+  // knobs: the magenta beam tint recorded as colour/rim with a beam-length
+  // elongation, a short beam trail and a beam muzzle marker.
+  capturer: {
+    shape: 'line',
+    color: 0xff88ff,
+    length: 2.2,
+    rimColor: 0xff88ff,
+    tail: 1.2,
+    muzzle: { color: 0xff88ff, radius: 6, duration: 0.14 },
+  },
   'orbital-strike': { shape: 'shell', color: 0xff4444 },
 };
 

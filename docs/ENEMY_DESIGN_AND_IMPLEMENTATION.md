@@ -2120,6 +2120,20 @@ tracer connects or is intercepted (the expanding pulse wave keeps its own
 rendering). Visuals/feel only: firing logic, counts, layers, speeds and the
 telegraph cadence are unchanged.
 
+**Galaga capturer (capturer family, AH-0MV822G6F002JRRY):** the capturer
+**never fires a bullet** — its threat is the tractor beam it projects, so
+its projectile identity is the beam itself: a **magenta tugging
+beam/field** drawn by the shared `Capturer` entity (`_drawBeam`) as a
+**tapering funnel** (narrow at the capturer, flaring at the far end) with a
+bright core rail, **converging side field-lines** (the "tractor" read),
+**flowing energy motes** that travel down the field with the entity's local
+phase (time-driven, redrawn each frame so the tug shimmers identically in
+the game and every gym) and a **bright capture lure** at the beam's far end
+(the hazard point). The archetype's registered visual signature records the
+beam tint (`capturer` → `line`, magenta) so the roster guard stays total.
+Visuals/feel only: the beam lifecycle, width, length, pull strength and
+capture timing are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific

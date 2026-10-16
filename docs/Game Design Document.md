@@ -573,6 +573,15 @@ pale-amber-tinted impact flash when a dart connects or is intercepted
 patrol/attack state machine, fire gate, speed, interval and tell are
 unchanged.
 
+**Galaga capturer projectile identity** (per-enemy visuals epic,
+AH-0MV2K5SR0005RTTE): the capturer **never fires a bullet** — its threat is
+the projecting tractor beam, which renders as a **magenta tugging
+beam/field** drawn by the shared `Capturer` entity: a tapering funnel
+(narrow at the capturer, flaring far), a bright core rail, converging side
+field-lines, flowing time-driven energy motes and a bright capture lure at
+the beam's far end (AH-0MV822G6F002JRRY). Visuals/feel only — beam
+lifecycle, width, length, pull strength and capture timing are unchanged.
+
 **Behavioural classification (AH-0MV29NWI1007NKN7).** Every CSV archetype
 carries two coarse, descriptive fields for wave-design and balance tooling:
 `movementClass` (`formation | diver | chaser | patroller | roamer`) and

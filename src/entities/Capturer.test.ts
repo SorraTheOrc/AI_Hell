@@ -184,3 +184,102 @@ describe('Capturer entity — Galaga tractor-beam archetype', () => {
     expect(capturer.pullStrength).toBe(CAPTURER_PULL_STRENGTH);
   });
 });
+
+// ── Capturer tractor-beam identity (AH-0MV822G6F002JRRY) ───────────
+
+describe('Capturer — tractor-beam projectile identity (AH-0MV822G6F002JRRY)', () => {
+  let booted: BootedGame | null = null;
+  const BASE_X = 400;
+  const BASE_Y = 300;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeCapturer(
+    overrides: Partial<ConstructorParameters<typeof Capturer>[1]> = {},
+  ): Capturer {
+    return new Capturer(booted!.scene, {
+      x: BASE_X,
+      y: BASE_Y,
+      formationOffset: { row: 0, col: 0 },
+      ...overrides,
+    });
+  }
+
+  function advance(capturer: Capturer, dt: number, steps: number): void {
+    for (let i = 0; i < steps; i++) {
+      capturer.applyFormationPosition(BASE_X, BASE_Y, dt, 0, 0);
+    }
+  }
+
+  function driveToBeam(capturer: Capturer): void {
+    advance(capturer, CAPTURER_HOLD_FORMATION_SECONDS, 1);
+    advance(capturer, CAPTURER_APPROACH_SECONDS, 1);
+  }
+
+  /** The capturer's own beam Graphics child (the presentation layer). */
+  function beamGraphics(capturer: Capturer): Phaser.GameObjects.Graphics {
+    const children = (capturer as unknown as {
+      list: Phaser.GameObjects.GameObject[];
+    }).list;
+    const beam = children.find(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    );
+    if (!beam) throw new Error('expected a beam Graphics child');
+    return beam;
+  }
+
+  it('draws a distinctive tapering tractor-beam field with flowing energy motes (not a plain corridor)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const capturer = makeCapturer({ beamDuration: 1000 });
+    capturer.setAimTarget(600, 500);
+    driveToBeam(capturer);
+
+    const buf = beamGraphics(capturer).commandBuffer as number[];
+    // Phaser Graphics command opcodes + widths (src/gameobjects/graphics/Commands.js).
+    const WIDTHS: Record<number, number> = {
+      0: 7, // ARC
+      1: 0, // BEGIN_PATH
+      2: 0, // CLOSE_PATH
+      4: 2, // LINE_TO
+      5: 2, // MOVE_TO
+      6: 3, // LINE_STYLE
+      7: 2, // FILL_STYLE
+      8: 0, // FILL_PATH
+      9: 0, // STROKE_PATH
+      10: 6, // FILL_TRIANGLE
+    };
+    const countOp = (op: number): number => {
+      let n = 0;
+      for (let i = 0; i < buf.length; i += 1 + (WIDTHS[buf[i]] ?? 0)) {
+        if (buf[i] === op) n += 1;
+      }
+      return n;
+    };
+    // The tractor field: a translucent funnel (a filled path), a bright core
+    // rail plus converging field lines and mote circles (strokes + arcs), and
+    // a bright capture lure — far richer than the previous plain fillRect +
+    // single core line. Assert the structural markers are all present.
+    expect(countOp(8)).toBeGreaterThanOrEqual(1); // FILL_PATH (funnel)
+    expect(countOp(9)).toBeGreaterThanOrEqual(4); // STROKE_PATH (rail + field lines)
+    expect(countOp(0)).toBeGreaterThanOrEqual(4); // ARC (3 motes + 1 lure)
+  });
+
+  it('the energy motes flow with time (the shimmer is redrawn each frame)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const capturer = makeCapturer({ beamDuration: 100000 });
+    capturer.setAimTarget(600, 500);
+    driveToBeam(capturer);
+
+    const before = [...(beamGraphics(capturer).commandBuffer as number[])];
+    // Advance the beam a fraction of a second so `_localPhase` moves; the
+    // mote positions and alphas depend on it, so the buffer must change.
+    advance(capturer, 0.25, 1);
+    const after = [...(beamGraphics(capturer).commandBuffer as number[])];
+    expect(after).not.toEqual(before);
+  });
+});

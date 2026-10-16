@@ -823,6 +823,24 @@ describe('resolveEnemyBulletVisual', () => {
     expect(shapeAnimates(visual.shape)).toBe(false);
   });
 
+  it('capturer tractor beams resolve a magenta beam identity (never a bullet — the corridor is the hazard) (AH-0MV822G6F002JRRY)', () => {
+    const visual = resolveEnemyBulletVisual('capturer');
+    // The Capturer never fires a bullet — its threat is the projecting
+    // tractor beam, so the identity records the magenta beam/field as the
+    // archetype's signature (distinct from every projectile identity).
+    expect(canonicalShape(visual.shape)).toBe('line');
+    expect(visual.color).toBe(0xff88ff); // the bright-magenta beam tint
+    // Feel knobs: the magenta beam tint as rim, a beam-length elongation, a
+    // short beam trail and a beam muzzle marker.
+    expect(visual.rimColor).toBe(0xff88ff);
+    expect(visual.length).toBeGreaterThan(2);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0xff88ff);
+    // The beam is static presentation (no per-frame redraw required).
+    expect(shapeAnimates(visual.shape)).toBe(false);
+  });
+
   it('throws for an unknown archetype (fail loud, so children register first)', async () => {
     expect(() =>
       resolveEnemyBulletVisual('not-a-real-archetype' as never),
