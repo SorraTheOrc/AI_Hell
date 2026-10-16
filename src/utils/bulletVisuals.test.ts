@@ -121,6 +121,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     missile: { shape: 'missile' as BulletShape, color: 0xff3366, radius: 3, length: 3 },
     ring: { shape: 'ring' as BulletShape, color: 0x66ffff, radius: 3 },
     shell: { shape: 'shell' as BulletShape, color: 0xff6600, radius: 3 },
+    'heavy-shell': { shape: 'heavy-shell' as BulletShape, color: 0xffaa00, radius: 3 },
     bolt: { shape: 'bolt' as BulletShape, color: 0xcc66ff, radius: 3, length: 2.4 },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
@@ -213,6 +214,48 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     drawBulletShape(g, specs.shell);
     const buf = g.commandBuffer as number[];
     expect(countOps(buf, Cmd.ARC)).toBeGreaterThanOrEqual(2);
+  });
+
+  it('heavy-shell renders a large two-tone shell (body + hot core) plus a slow glow ring (AH-0MV822DF60001EPA)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs['heavy-shell']);
+    const buf = g.commandBuffer as number[];
+    // The heavy shell's read: a filled body + white-hot core (filled arcs)
+    // AND the breathing glow halo ring (a stroked arc) — the "slow glow" of
+    // the Tank's radial shot, distinct from the plain `shell`'s two fills.
+    expect(countOps(buf, Cmd.ARC)).toBeGreaterThanOrEqual(3);
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(2);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the heavy-shell glow ring breathes slowly with the bullet age (time-driven alpha)', async () => {
+    // The slow glow is the LAST stroked path in the buffer; the LINE_STYLE
+    // immediately before it carries `alpha × (0.15 + 0.25·breathe)` where
+    // `breathe = 0.5 + 0.5·sin(time·1.8)` — slow (1.8 rad/s), unlike the
+    // pellet's fast pulse (7 rad/s), so the heavy shell reads as a lazy,
+    // glowing ember rather than a blinking pellet.
+    const glowAlpha = (graphics: Phaser.GameObjects.Graphics): number => {
+      const buf = graphics.commandBuffer as number[];
+      const strokeIdx = buf.lastIndexOf(Cmd.STROKE_PATH);
+      let lineStyleIdx = -1;
+      for (let i = strokeIdx - 1; i >= 0; i--) {
+        if (buf[i] === Cmd.LINE_STYLE) {
+          lineStyleIdx = i;
+          break;
+        }
+      }
+      expect(lineStyleIdx).toBeGreaterThanOrEqual(0);
+      expect(buf[lineStyleIdx + 1]).toBe(1); // 1 px glow stroke
+      return buf[lineStyleIdx + 3];
+    };
+
+    const start = await makeGraphics();
+    drawBulletShape(start, { ...specs['heavy-shell'], time: 0 });
+    const bright = await makeGraphics();
+    // sin(π/2) = 1 → the glow reaches its brightest phase.
+    drawBulletShape(bright, { ...specs['heavy-shell'], time: Math.PI / 2 / 1.8 });
+
+    expect(glowAlpha(bright)).toBeGreaterThan(glowAlpha(start));
   });
 
   it('bolt renders a multi-segment jagged stroke (≥ 3 line segments)', async () => {
@@ -465,6 +508,25 @@ describe('resolveEnemyBulletVisual', () => {
     expect(resolveEnemyBulletVisual('scout')).toEqual(
       resolveEnemyBulletVisual('march'),
     );
+  });
+
+  it('tank radial shots resolve a heavy-shell identity with a slow glow + launch pop (AH-0MV822DF60001EPA)', () => {
+    const visual = resolveEnemyBulletVisual('tank');
+    // The Tank's signature look: a heavy shell — a dedicated `heavy-shell`
+    // primitive (larger body + white-hot core + slow breathing glow), NOT the
+    // plain `shell` reserved for the Boss pulse / Orbital-Strike placeholders.
+    expect(canonicalShape(visual.shape)).toBe('heavy-shell');
+    // The shot body keeps the established amber Tank bullet colour.
+    expect(visual.color).toBe(0xffaa00);
+    // Feel knobs: an amber neon rim, a short ember trail (slow shell reads
+    // heavy), and an amber launch pop at the tank body when the burst leaves.
+    expect(visual.rimColor).toBeDefined();
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0xffaa00);
+    // The slow glow is time-driven → the shared bullet lifecycle redraws the
+    // shell each frame (identically in game and every gym).
+    expect(shapeAnimates(visual.shape)).toBe(true);
   });
 
   it('throws for an unknown archetype (fail loud, so children register first)', async () => {

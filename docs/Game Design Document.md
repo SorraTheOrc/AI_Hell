@@ -444,6 +444,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium–High (acts as an immovable obstacle in formations).
 - **Fires**: No (Levels 1–3); yes, radial burst (Level 4+).
+- **Projectile identity** (per-enemy visuals epic, AH-0MV2K5SR0005RTTE): each radial shell renders as a **heavy shell** — a larger two-tone amber body with a **white-hot core** and a **slow breathing glow** ring (drawn through the shared bullet-shape seam, `src/utils/bulletVisuals.ts`, `heavy-shell` primitive) plus a short ember trail — with one amber launch pop at the tank's body per burst and an amber-tinted impact flash when a shell connects or is intercepted (shared fire/impact seams, AH-0MV822DF60001EPA). Visuals/feel only — firing logic, speed, interval, burst count and pattern are unchanged.
 
 #### E4 — Phaser (Level 5+)
 - **Behavior**: Moves slowly in a fixed orbital path; fires in predictable, repeating cycles.

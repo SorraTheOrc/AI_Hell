@@ -718,6 +718,29 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xff4444);
   });
 
+  it('a Tank shell plays its identity impact pop and flash when it hits the player (AH-0MV822DF60001EPA)', async () => {
+    // The Tank's heavy shell carries its amber bullet colour; the shared
+    // impact pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints
+    // the impact flash and pops the existing per-enemy destruction cue — so
+    // a Tank hit reads (and sounds) distinct from a Scout hit, identically
+    // in the game and every gym. This test pins the amber Tank variant of
+    // the generic path with the real TANK_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xffaa00; // TANK_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xffaa00);
+  });
+
   it('legacy enemy bullets without an identity keep the plain hit behaviour (no added flash)', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 100, y: 100 });

@@ -10,6 +10,7 @@ import {
   scaledCount,
 } from '../vfx/explosionParticles';
 import {
+  TANK_BULLET_COLOR,
   TANK_BULLET_SPEED,
   TANK_BURST_COUNT,
   TANK_COLOR,
@@ -151,6 +152,51 @@ describe('Tank entity (E3 tank, GDD §4.1 — direction-agnostic radial burst)',
     // direction-agnostic (the scene's optional setAimTarget is a no-op via
     // optional chaining).
     expect('setAimTarget' in tank).toBe(false);
+  });
+
+  it('fires the heavy-shell identity: shell shapes + one amber launch pop + animated glow (AH-0MV822DF60001EPA)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+    const tank = makeTank(240, 300);
+
+    const graphicsBefore = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    tank.shootEnabled = true;
+    const bullets = tank.tryFireRadialBurst(1_000_000);
+    expect(bullets).toHaveLength(TANK_BURST_COUNT);
+
+    // The burst spawns its shell bullet Graphics **plus** one amber launch
+    // pop at the tank body — the enemy-side fire VFX for the whole volley
+    // (one pop per burst, not per shell — the burst is one fire event that
+    // already plays one cue+thump pair).
+    const graphicsAfter = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    expect(graphicsAfter).toBe(graphicsBefore + TANK_BURST_COUNT + 1);
+
+    for (const bullet of bullets) {
+      // The identity bullet carries its amber colour (the shared impact pass
+      // tints the hit flash with it) and the animated-glow redraw hook.
+      expect(bullet.color).toBe(TANK_BULLET_COLOR);
+      expect(bullet.redraw).toBeTypeOf('function');
+    }
+    // Rotation is set per shell so its heavy-shell geometry (hot core, tail,
+    // glow) reads nose-first along the travel direction.
+    // Each heavy shell is rotated to fly nose-first along its own radial
+    // heading (Phaser normalises rotation to [-π, π], so compare a normalised
+    // heading for the exact-π spoke).
+    for (let i = 0; i < bullets.length; i++) {
+      const heading = Math.atan2(bullets[i].vy, bullets[i].vx);
+      let rotation = bullets[i].graphics.rotation;
+      let expected = heading;
+      if (rotation - expected > Math.PI) rotation -= Math.PI * 2;
+      if (rotation - expected < -Math.PI) rotation += Math.PI * 2;
+      expect(rotation).toBeCloseTo(expected, 5);
+    }
   });
 
   describe('scene-less (stale) tank — AH-0MTPLHLZ3006MOC4', () => {

@@ -21,6 +21,8 @@ import {
   playTankAdvanceCue,
   playTankFireSound,
 } from '../audio/effects';
+import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
+import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { FormationOffset } from '../utils/formations';
 import { type ExplosionHandle } from '../vfx/explosionParticles';
 
@@ -91,6 +93,12 @@ export interface TankConfig {
 export interface TankBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
   readonly color: number;
+  /**
+   * Per-frame redraw hook (the heavy shell's slow glow) consumed by the shared
+   * enemy-bullet lifecycle, so the glow breathes identically in the game and
+   * every gym (AH-0MV822DF60001EPA).
+   */
+  redraw?: (elapsed: number) => void;
   vx: number;
   vy: number;
   /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
@@ -221,21 +229,56 @@ export class Tank extends BaseEnemy {
     playTankAdvanceCue();
     playTankFireSound();
 
+    // The shared Tank radial projectile identity (AH-0MV822DF60001EPA): every
+    // shell is a heavy shell — a larger two-tone body with a white-hot core
+    // and a slow breathing glow — drawn through the shared bullet-shape seam
+    // with an ember trail. Because EVERY scene drives this same
+    // `tryFireRadialBurst` through `fireForEnemy`, the shell's shape, glow,
+    // trail and launch pop are identical in the game and every gym
+    // (gym↔game parity by construction). Firing logic, speed, interval, count
+    // and pattern are unchanged — this is visuals/feel only.
+    const visual = resolveEnemyBulletVisual('tank');
+
+    // One shared launch pop at the Tank's body for the whole burst: the
+    // volley is a single fire event (one cue+thump pair), so it gets one
+    // amber fire VFX rather than ten stacked pops. Spawned through the shared
+    // `src/vfx/enemyMuzzleFlash` helper (cheap Graphics primitive, self-
+    // cleaning tween). `heading` 0 — a radial burst has no single aim
+    // direction, so the pop is direction-agnostic like the burst itself.
+    if (visual.muzzle) {
+      spawnEnemyMuzzleFlash(this.scene, this.x, this.y, 0, visual.muzzle);
+    }
+
     const bullets: TankBullet[] = [];
     for (let i = 0; i < this._burstCount; i++) {
       const angle = (Math.PI * 2 * i) / this._burstCount;
       const vx = Math.cos(angle) * this._bulletSpeed;
       const vy = Math.sin(angle) * this._bulletSpeed;
 
-      const { graphics, color } = createBullet({
+      const { graphics, color, redraw } = createBullet({
         scene: this.scene,
         color: this._bulletColor,
         size: this._bulletSize,
         x: this.x,
         y: this.y,
+        shape: visual.shape,
+        length: visual.length,
+        rimColor: visual.rimColor,
+        thickness: visual.thickness,
+        alpha: visual.alpha,
+        tail: visual.tail,
+        angle,
       });
 
-      bullets.push({ graphics, color, vx, vy, lifetime: this._bulletLifetime, elapsed: 0 });
+      bullets.push({
+        graphics,
+        color,
+        redraw,
+        vx,
+        vy,
+        lifetime: this._bulletLifetime,
+        elapsed: 0,
+      });
     }
     return bullets;
   }

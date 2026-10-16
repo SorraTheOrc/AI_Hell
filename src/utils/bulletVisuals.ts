@@ -12,7 +12,9 @@
  *
  * `drawBulletShape` supports at least: **disc** (filled circle, `circle` is
  * the legacy alias), **line/beam** (`line`), **teardrop/streak**
- * (`teardrop`), **missile**, **ring**, **shell**, **jagged bolt** (`bolt`),
+ * (`teardrop`), **missile**, **ring**, **shell**, **heavy-shell** (the Tank's
+ * large two-tone shell with a slow breathing glow, AH-0MV822DF60001EPA),
+ * **jagged bolt** (`bolt`),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -119,6 +121,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   missile: 3,
   ring: 1,
   shell: 1,
+  'heavy-shell': 1,
   bolt: 2.4,
   diamond: 1,
   spark: 1,
@@ -199,6 +202,9 @@ export function drawBulletShape(
       break;
     case 'shell':
       _shell(graphics, spec, alpha, rim);
+      break;
+    case 'heavy-shell':
+      _heavyShell(graphics, spec, alpha, rim);
       break;
     case 'bolt':
       _bolt(graphics, spec, alpha, stroke);
@@ -420,6 +426,51 @@ function _shell(
   graphics.fillPath();
 }
 
+/**
+ * Heavy armour-piercing shell: the Tank's radial-shot identity
+ * (AH-0MV822DF60001EPA).
+ *
+ * A visibly larger two-tone shell (1.6× the base radius — the AC's "larger
+ * body") with a white-hot core and a **slow breathing glow** ring whose
+ * alpha swells and fades at 1.8 rad/s with the bullet's age (the AC's "slow
+ * glow") — time-driven, so the shared bullet lifecycle redraws it each frame
+ * identically in the game and every gym. The lazy ember read is deliberately
+ * the opposite of the Scout's fast-pulsing pellet, so the Tank's shells
+ * parse as heavy, slow artillery rather than a blinking alien pod.
+ */
+function _heavyShell(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius) * 1.6;
+  // Larger two-tone body: the shell colour with a white-hot core offset
+  // toward the trailing side (the shell is burning as it lumbers forward).
+  graphics.fillStyle(spec.color, alpha);
+  graphics.beginPath();
+  graphics.arc(0, 0, r, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  graphics.fillStyle(0xffffff, Math.min(1, alpha * 0.9));
+  graphics.beginPath();
+  graphics.arc(-r * 0.2, 0, r * 0.42, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  // Neon rim so the heavy body reads as a solid shell, not a blob.
+  if (rim !== undefined) {
+    graphics.lineStyle(2, rim, Math.min(1, alpha * 0.9));
+    graphics.beginPath();
+    graphics.arc(0, 0, r + 1, 0, Math.PI * 2, false);
+    graphics.strokePath();
+  }
+  // Slow breathing glow: a faint outer ring that swells slowly with the
+  // bullet's age — the lazy ember halo of a heavy shell.
+  const breathe = 0.5 + 0.5 * Math.sin((spec.time ?? 0) * 1.8);
+  graphics.lineStyle(1, rim ?? spec.color, Math.max(0, alpha * (0.15 + 0.25 * breathe)));
+  graphics.beginPath();
+  graphics.arc(0, 0, r * 1.9, 0, Math.PI * 2, false);
+  graphics.strokePath();
+}
+
 /** Jagged bolt: a multi-segment zig-zag stroke. */
 function _bolt(
   graphics: Phaser.GameObjects.Graphics,
@@ -577,7 +628,8 @@ function _pellet(
  * `redraw` hook exactly for these shapes (AH-0MV822CQL005R4MM).
  */
 export function shapeAnimates(shape: BulletShape): boolean {
-  return canonicalShape(shape) === 'pellet';
+  const canonical = canonicalShape(shape);
+  return canonical === 'pellet' || canonical === 'heavy-shell';
 }
 
 // ── Player weapon visual resolution ────────────────────────────────
@@ -692,7 +744,13 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     muzzle: { color: 0x00ff66, radius: 5, duration: 0.12 },
   },
   diver: { shape: 'teardrop', color: 0xffee88, length: 1.8 },
-  tank: { shape: 'shell', color: 0xffaa00 },
+  tank: {
+    shape: 'heavy-shell',
+    color: 0xffaa00,
+    rimColor: 0xffcc88,
+    tail: 1.4,
+    muzzle: { color: 0xffaa00, radius: 7, duration: 0.14 },
+  },
   phaser: { shape: 'bolt', color: 0xff4444, length: 1.6 },
   swarm: { shape: 'spark', color: 0x00ccff },
   raider: { shape: 'diamond', color: 0xffddaa },

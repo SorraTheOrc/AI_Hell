@@ -545,6 +545,8 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
  * - `missile` — capsule + nose + fins
  * - `ring` — hollow ring
  * - `shell` — two-tone round shell with a hot core
+ * - `heavy-shell` — the Tank's large two-tone shell with a slow breathing glow
+ *   (AH-0MV822DF60001EPA)
  * - `bolt` — jagged bolt
  * - `diamond` — four-point rhombus
  * - `spark` — four-point star
@@ -553,6 +555,7 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
  * The catalogue assigns one distinct shape per weapon so every weapon is
  * visually unique in flight (`canonicalShape` collapses the `circle`/`disc`
  * alias so the roster test never counts them as two signatures).
+ *   projectile-identity roster and the RosterTest-guarded per-weapon visual
  */
 export type BulletShape =
   | 'circle'
@@ -562,6 +565,7 @@ export type BulletShape =
   | 'missile'
   | 'ring'
   | 'shell'
+  | 'heavy-shell'
   | 'bolt'
   | 'diamond'
   | 'spark'

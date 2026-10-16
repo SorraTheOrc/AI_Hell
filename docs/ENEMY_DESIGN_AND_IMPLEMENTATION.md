@@ -1990,6 +1990,19 @@ body when the shot leaves and a green-tinted impact flash when the shot
 connects or is intercepted. The March block shares the identity (same
 entity class, same family per the roster guard).
 
+**E3 Tank (tank family, AH-0MV822DF60001EPA):** each radial shell renders as
+a **heavy shell** — a visibly larger two-tone amber body with a **white-hot
+core** and a **slow breathing glow** ring (a dedicated `heavy-shell` seam
+primitive; the glow swells at ~1.8 rad/s with the shell's age and is redrawn
+each frame through the shared bullet lifecycle — the lazy ember read of slow
+artillery, deliberately the opposite of the Scout's fast-pulsing pellet)
+plus a short ember trail. The volley spawns **one amber launch pop** at the
+tank's body per burst (the burst is one fire event, matching its single
+cue+thump pair — not ten stacked pops), and each shell carries its amber
+colour so the shared impact pass tints the flash when a shell connects or is
+intercepted. Visuals/feel only: firing logic, speed, interval, burst count
+and the direction-agnostic radial pattern are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific
