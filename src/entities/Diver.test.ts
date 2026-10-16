@@ -14,6 +14,8 @@ import { computeFormationReanchorDelta } from '../utils/formations';
 import {
   DIVER_COLOR,
   DIVER_SIZE,
+  DIVER_BULLET_COLOR,
+  DIVER_BURST_COUNT,
   DIVER_HOLD_FORMATION_SECONDS,
   DIVER_DIVE_DURATION,
   DIVER_DIVE_APEX_FRACTION,
@@ -980,6 +982,69 @@ describe('Diver — attack-end re-anchor seam (AH-0MUAYB957002EMYV)', () => {
       );
       expect(diver.y).toBeCloseTo(attackEnd.y, 5);
       expect(Math.abs(diver.x - attackEnd.x)).toBeLessThanOrEqual(1.5 + 1e-6);
+    }
+  });
+});
+
+describe('Diver — spread-burst projectile identity (AH-0MV822D2U000LRFV)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeDiver(
+    x: number,
+    y: number,
+    offset: FormationOffset = { row: 0, col: 0 },
+  ): Diver {
+    const scene = booted!.scene;
+    return new Diver(scene, { x, y, formationOffset: offset });
+  }
+
+  it('fires sharp shards with the shared identity: one launch pop + rotated glinting shards', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+    const diver = makeDiver(240, 300);
+
+    const graphicsBefore = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    diver.shootEnabled = true;
+    const bullets = diver.tryFireSpreadBurst(1_000_000);
+    expect(bullets).toHaveLength(DIVER_BURST_COUNT);
+
+    // The burst spawns its shard bullet Graphics **plus** one pale-yellow
+    // launch pop at the diver body — the enemy-side fire VFX for the whole
+    // volley (one pop per burst, not per shard — the burst is one fire
+    // event that already plays one fire cue).
+    const graphicsAfter = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    expect(graphicsAfter).toBe(graphicsBefore + DIVER_BURST_COUNT + 1);
+
+    for (const bullet of bullets) {
+      // The identity shard carries its pale-yellow colour (the shared
+      // impact pass tints the hit flash with it) and the animated-glint
+      // redraw hook.
+      expect(bullet.color).toBe(DIVER_BULLET_COLOR);
+      expect(bullet.redraw).toBeTypeOf('function');
+    }
+    // Each shard is rotated to fly nose-first along its own spread heading
+    // (Phaser normalises rotation to [-π, π], so compare a normalised
+    // heading for the edge spokes).
+    for (let i = 0; i < bullets.length; i++) {
+      const heading = Math.atan2(bullets[i].vy, bullets[i].vx);
+      let rotation = bullets[i].graphics.rotation;
+      let expected = heading;
+      if (rotation - expected > Math.PI) rotation -= Math.PI * 2;
+      if (rotation - expected < -Math.PI) rotation += Math.PI * 2;
+      expect(rotation).toBeCloseTo(expected, 5);
     }
   });
 });

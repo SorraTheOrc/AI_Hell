@@ -547,6 +547,8 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
  * - `shell` — two-tone round shell with a hot core
  * - `heavy-shell` — the Tank's large two-tone shell with a slow breathing glow
  *   (AH-0MV822DF60001EPA)
+ * - `shard` — the Diver's sharp splinter/arrowhead, spine-glint shimmer
+ *   (AH-0MV822D2U000LRFV)
  * - `bolt` — jagged bolt
  * - `diamond` — four-point rhombus
  * - `spark` — four-point star
@@ -566,6 +568,7 @@ export type BulletShape =
   | 'ring'
   | 'shell'
   | 'heavy-shell'
+  | 'shard'
   | 'bolt'
   | 'diamond'
   | 'spark'

@@ -437,6 +437,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium.
 - **Fires**: No (Levels 1–3); yes, short-burst spread (Level 4+).
+- **Projectile identity** (per-enemy visuals epic, AH-0MV2K5SR0005RTTE): each spread-burst shot renders as a **sharp shard/splinter** — a razor arrowhead with a **white-hot spine**, a neon rim in the Diver's own body yellow, a short fading trail and a **sweeping time-driven spine glint** (drawn through the shared bullet-shape seam, `src/utils/bulletVisuals.ts`, `shard` primitive) — echoing the Diver's dart body and diving arc — with one pale-yellow launch pop at the diver's body per burst and a pale-yellow-tinted impact flash when a shard connects or is intercepted (shared fire/impact seams, AH-0MV822D2U000LRFV). Visuals/feel only — firing logic, speed, interval, burst count and spread pattern are unchanged.
 
 #### E3 — Tank
 - **Behavior**: Slow, deliberate formation movement; holds position longer than other types.

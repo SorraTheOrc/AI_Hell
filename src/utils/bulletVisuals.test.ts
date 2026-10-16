@@ -122,6 +122,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     ring: { shape: 'ring' as BulletShape, color: 0x66ffff, radius: 3 },
     shell: { shape: 'shell' as BulletShape, color: 0xff6600, radius: 3 },
     'heavy-shell': { shape: 'heavy-shell' as BulletShape, color: 0xffaa00, radius: 3 },
+    shard: { shape: 'shard' as BulletShape, color: 0xffee88, radius: 3, length: 2.6, rimColor: 0xffff00 },
     bolt: { shape: 'bolt' as BulletShape, color: 0xcc66ff, radius: 3, length: 2.4 },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
@@ -258,6 +259,47 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(glowAlpha(bright)).toBeGreaterThan(glowAlpha(start));
   });
 
+  it('shard renders a razor arrowhead + white-hot spine + sweeping spine glint (AH-0MV822D2U000LRFV)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs.shard);
+    const buf = g.commandBuffer as number[];
+    // The shard's read: a filled razor outline + a white-hot spine (two
+    // closed filled paths) AND the arc-energy glint (a filled arc) plus a
+    // neon-rim stroke — the sharp-splinter identity, distinct from the
+    // generic teardrop/disc fallbacks.
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(3);
+    expect(countOps(buf, Cmd.ARC)).toBeGreaterThanOrEqual(1);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the shard glint sweeps up and down the spine with the bullet age (time-driven motion)', async () => {
+    // The glint is the ONLY arc in the shard's buffer; its x offset travels
+    // tail→tip with `sweep = 0.5 + 0.5·sin(time·9)`. At t=0 the glint sits
+    // mid-spine; a quarter-cycle later (sin = 1) it has swept to the tip, so
+    // the drawn x differs clearly — the shard shimmers as it flies its arc.
+    // (Walk the opcode stream with the width table rather than
+    // `lastIndexOf(Cmd.ARC)` — ARC's opcode is 0, which also appears as a
+    // parameter value, so a bare lastIndexOf is ambiguous.)
+    const glintXs = (graphics: Phaser.GameObjects.Graphics): number[] => {
+      const buf = graphics.commandBuffer as number[];
+      const xs: number[] = [];
+      for (let i = 0; i < buf.length; i += 1 + (CmdWidths[buf[i]] ?? 0)) {
+        if (buf[i] === Cmd.ARC) xs.push(buf[i + 1]);
+      }
+      return xs;
+    };
+
+    const start = await makeGraphics();
+    drawBulletShape(start, { ...specs.shard, time: 0 });
+    const tip = await makeGraphics();
+    // sin(π/2) = 1 → the glint has swept tail→tip (a quarter cycle).
+    drawBulletShape(tip, { ...specs.shard, time: Math.PI / 2 / 9 });
+
+    expect(glintXs(start)).toHaveLength(1);
+    expect(glintXs(tip)).toHaveLength(1);
+    expect(Math.abs(glintXs(tip)[0] - glintXs(start)[0])).toBeGreaterThan(2);
+  });
+
   it('bolt renders a multi-segment jagged stroke (≥ 3 line segments)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.bolt);
@@ -382,6 +424,7 @@ describe('DEFAULT_SHAPE_LENGTH', () => {
     expect(DEFAULT_SHAPE_LENGTH.teardrop).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.missile).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.bolt).toBeGreaterThan(1);
+    expect(DEFAULT_SHAPE_LENGTH.shard).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.chevron).toBeGreaterThan(1);
   });
 });
@@ -526,6 +569,26 @@ describe('resolveEnemyBulletVisual', () => {
     expect(visual.muzzle?.color).toBe(0xffaa00);
     // The slow glow is time-driven → the shared bullet lifecycle redraws the
     // shell each frame (identically in game and every gym).
+    expect(shapeAnimates(visual.shape)).toBe(true);
+  });
+
+  it('diver spread bursts resolve a sharp shard identity with a sweeping glint + launch pop (AH-0MV822D2U000LRFV)', () => {
+    const visual = resolveEnemyBulletVisual('diver');
+    // The Diver's signature look: a sharp splinter/arrowhead echoing its
+    // dart body and dive arc — a dedicated `shard` primitive (razor
+    // outline, white-hot spine, sweeping time-driven glint), NOT the
+    // generic `teardrop` fallback the placeholder used before this landed.
+    expect(canonicalShape(visual.shape)).toBe('shard');
+    // The shot body keeps the established pale-yellow Diver bullet colour.
+    expect(visual.color).toBe(0xffee88);
+    // Feel knobs: a neon rim in the Diver's own body yellow, a short fading
+    // trail, and a pale-yellow launch pop at the diver body per burst. The
+    // glint is time-driven → the shared lifecycle redraws it each frame
+    // (identically in game and every gym).
+    expect(visual.rimColor).toBe(0xffff00);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0xffee88);
     expect(shapeAnimates(visual.shape)).toBe(true);
   });
 

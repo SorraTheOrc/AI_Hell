@@ -14,7 +14,8 @@
  * the legacy alias), **line/beam** (`line`), **teardrop/streak**
  * (`teardrop`), **missile**, **ring**, **shell**, **heavy-shell** (the Tank's
  * large two-tone shell with a slow breathing glow, AH-0MV822DF60001EPA),
- * **jagged bolt** (`bolt`),
+ * **shard** (the Diver's sharp splinter/arrowhead with a sweeping spine
+ * glint, AH-0MV822D2U000LRFV), **jagged bolt** (`bolt`),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -122,6 +123,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   ring: 1,
   shell: 1,
   'heavy-shell': 1,
+  shard: 2.4,
   bolt: 2.4,
   diamond: 1,
   spark: 1,
@@ -205,6 +207,9 @@ export function drawBulletShape(
       break;
     case 'heavy-shell':
       _heavyShell(graphics, spec, alpha, rim);
+      break;
+    case 'shard':
+      _shard(graphics, spec, alpha, rim);
       break;
     case 'bolt':
       _bolt(graphics, spec, alpha, stroke);
@@ -471,6 +476,78 @@ function _heavyShell(
   graphics.strokePath();
 }
 
+/**
+ * Sharp shard/splinter: the Diver's spread-burst identity
+ * (AH-0MV822D2U000LRFV).
+ *
+ * An elongated, razor-edged arrowhead echoing the Diver's dart body and
+ * diving arc — a pointed tip flaring to narrow shoulders then tapering to a
+ * pointed tail, with a **white-hot spine** running its length and a neon
+ * rim in the Diver's own body colour. A bright **glint** sweeps up and down
+ * the spine with the bullet's age (time-driven), so the shard reads as live
+ * arc-energy rather than a static splinter — the sharp-shard silhouette is
+ * deliberately the opposite of the Tank's fat ember shell. The glint is
+ * redrawn each frame through the shared bullet lifecycle
+ * (`shapeAnimates('shard')` → `createBullet` hands back a redraw hook), so
+ * the shimmer is identical in the game and every gym.
+ */
+function _shard(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const half = shapeLength(spec.radius, spec) / 2;
+  const w = r * 0.95;
+  // Razor shard: pointed tip forward (+x), flared shoulders, pointed tail.
+  graphics.fillStyle(spec.color, alpha);
+  graphics.beginPath();
+  graphics.moveTo(half, 0);
+  graphics.lineTo(-half * 0.15, w);
+  graphics.lineTo(-half, r * 0.38);
+  graphics.lineTo(-half, 0);
+  graphics.lineTo(-half, -r * 0.38);
+  graphics.lineTo(-half * 0.15, -w);
+  graphics.closePath();
+  graphics.fillPath();
+  // White-hot spine: the arc-energy core running the shard's length.
+  graphics.fillStyle(0xffffff, Math.min(1, alpha * 0.95));
+  graphics.beginPath();
+  graphics.moveTo(half * 0.92, 0);
+  graphics.lineTo(-half * 0.22, r * 0.42);
+  graphics.lineTo(-half * 0.22, -r * 0.42);
+  graphics.closePath();
+  graphics.fillPath();
+  // Neon rim around the razor edge so the shard pops against the field.
+  if (rim !== undefined) {
+    graphics.lineStyle(1.5, rim, Math.min(1, alpha * 0.9));
+    graphics.beginPath();
+    graphics.moveTo(half, 0);
+    graphics.lineTo(-half * 0.15, w);
+    graphics.lineTo(-half, r * 0.38);
+    graphics.lineTo(-half, 0);
+    graphics.lineTo(-half, -r * 0.38);
+    graphics.lineTo(-half * 0.15, -w);
+    graphics.closePath();
+    graphics.strokePath();
+  }
+  // Arc-energy glint: a bright mote sweeping tail→tip→tail along the spine
+  // with the bullet's age (~1.4 Hz) — the shard shimmers as it flies its
+  // diving arc, distinct from the pellet's fast pulse and the shell's slow
+  // breathe.
+  const t = spec.time ?? 0;
+  const sweep = 0.5 + 0.5 * Math.sin(t * 9); // 0 (tail) → 0.5 → 1 (tip)
+  const glintX = -half + sweep * (half * 2);
+  graphics.fillStyle(
+    0xffffff,
+    Math.min(1, alpha * (0.3 + 0.35 * Math.abs(Math.cos(t * 9)))),
+  );
+  graphics.beginPath();
+  graphics.arc(glintX, 0, r * 0.3, 0, Math.PI * 2, false);
+  graphics.fillPath();
+}
+
 /** Jagged bolt: a multi-segment zig-zag stroke. */
 function _bolt(
   graphics: Phaser.GameObjects.Graphics,
@@ -629,7 +706,11 @@ function _pellet(
  */
 export function shapeAnimates(shape: BulletShape): boolean {
   const canonical = canonicalShape(shape);
-  return canonical === 'pellet' || canonical === 'heavy-shell';
+  return (
+    canonical === 'pellet' ||
+    canonical === 'heavy-shell' ||
+    canonical === 'shard'
+  );
 }
 
 // ── Player weapon visual resolution ────────────────────────────────
@@ -743,7 +824,21 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 1.2,
     muzzle: { color: 0x00ff66, radius: 5, duration: 0.12 },
   },
-  diver: { shape: 'teardrop', color: 0xffee88, length: 1.8 },
+  // Diver spread burst (AH-0MV822D2U000LRFV): a sharp splinter/arrowhead
+  // echoing the Diver's dart body and diving arc — `shard` primitive with a
+  // white-hot spine, a neon rim in the Diver's own body yellow, a sweeping
+  // time-driven spine glint and a short fading trail — with a pale-yellow
+  // launch pop at the diver's body per burst. The shot body keeps the
+  // established `DIVER_BULLET_COLOR`; identity is carried by shape + rim +
+  // feel, never a behaviour change.
+  diver: {
+    shape: 'shard',
+    color: 0xffee88,
+    length: 2.6,
+    rimColor: 0xffff00,
+    tail: 1.1,
+    muzzle: { color: 0xffee88, radius: 5, duration: 0.12 },
+  },
   tank: {
     shape: 'heavy-shell',
     color: 0xffaa00,

@@ -26,6 +26,8 @@
 import Phaser from 'phaser';
 
 import { createBullet } from './bulletUtils';
+import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
+import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import { GAME_HEIGHT } from '../core/constants';
 import {
@@ -120,11 +122,21 @@ export interface DiverConfig {
 }
 
 /**
- * A bullet fired by a diver in a spread burst.
+ * A bullet fired by a diver in a spread burst. Renders as a sharp shard
+ * (the Diver's spread-burst projectile identity — AH-0MV822D2U000LRFV) and
+ * travels purely from physics (no collision with anything), wrapping across
+ * the screen edges until its lifetime elapses.
  */
 export interface DiverBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
   readonly color: number;
+  /**
+   * Per-frame redraw hook (the shard's sweeping spine glint) consumed by the
+   * shared enemy-bullet lifecycle, so the shimmer breathes identically in the
+   * game and every gym (AH-0MV822D2U000LRFV). Present on the identity shard,
+   * absent for legacy bullets created without a shape.
+   */
+  redraw?: (elapsed: number) => void;
   vx: number;
   vy: number;
   /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
@@ -371,6 +383,27 @@ export class Diver extends BaseEnemy {
     // projectile — the 3-5 bullet volley shares a single sound).
     playDiverFireSound();
 
+    // The shared Diver projectile identity (AH-0MV822D2U000LRFV): every
+    // shard is a sharp splinter/arrowhead echoing this enemy's dart body and
+    // diving arc — drawn through the shared bullet-shape seam with a neon
+    // rim, a short fading trail and a sweeping time-driven spine glint.
+    // Because EVERY scene fires this same `tryFireSpreadBurst` through the
+    // shared `fireForEnemy` seam, the shard's shape, glint, trail and launch
+    // pop are identical in the game and every gym (gym↔game parity by
+    // construction). Firing logic, speed, interval, spread pattern and
+    // burst count are unchanged — this is visuals/feel only.
+    const visual = resolveEnemyBulletVisual('diver');
+
+    // One shared launch pop at the Diver's body for the whole burst: the
+    // volley is a single fire event (one cue per burst), so it gets one
+    // pale-yellow fire VFX rather than N stacked pops. Spawned through the
+    // shared `src/vfx/enemyMuzzleFlash` helper (cheap Graphics primitive,
+    // self-cleaning tween). The volley flies generally downward, so the
+    // pop's aim spike points down (heading π/2) like the central shard.
+    if (visual.muzzle) {
+      spawnEnemyMuzzleFlash(this.scene, this.x, this.y, Math.PI / 2, visual.muzzle);
+    }
+
     // Aim direction: straight down (toward bottom-centre / player).
     const baseAngle = 0; // straight down in screen coords (y increases downward)
 
@@ -381,16 +414,34 @@ export class Diver extends BaseEnemy {
 
       const vx = Math.sin(angle) * this._bulletSpeed;
       const vy = Math.cos(angle) * this._bulletSpeed;
+      // Each shard flies nose-first along its own spread heading (the
+      // shared seam rotates the Graphics to `angle`).
+      const heading = Math.atan2(vy, vx);
 
-      const { graphics, color } = createBullet({
+      const { graphics, color, redraw } = createBullet({
         scene: this.scene,
         color: this._bulletColor,
         size: this._bulletSize,
         x: this.x,
         y: this.y,
+        shape: visual.shape,
+        length: visual.length,
+        rimColor: visual.rimColor,
+        thickness: visual.thickness,
+        alpha: visual.alpha,
+        tail: visual.tail,
+        angle: heading,
       });
 
-      bullets.push({ graphics, color, vx, vy, lifetime: this._bulletLifetime, elapsed: 0 });
+      bullets.push({
+        graphics,
+        color,
+        redraw,
+        vx,
+        vy,
+        lifetime: this._bulletLifetime,
+        elapsed: 0,
+      });
     }
     return bullets;
   }

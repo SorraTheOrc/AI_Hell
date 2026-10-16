@@ -2003,6 +2003,21 @@ colour so the shared impact pass tints the flash when a shell connects or is
 intercepted. Visuals/feel only: firing logic, speed, interval, burst count
 and the direction-agnostic radial pattern are unchanged.
 
+**E2 Diver (diver family, AH-0MV822D2U000LRFV):** each spread-burst shot
+renders as a **sharp shard/splinter** — a dedicated `shard` seam primitive
+(razor arrowhead outline with a **white-hot spine**, a neon rim in the
+Diver's own body yellow and a short fading trail) whose bright **glint**
+sweeps up and down the spine with the shot's age (~1.4 Hz, redrawn each
+frame through the shared bullet lifecycle) — the shard echoes the Diver's
+dart body and dive arc, deliberately the opposite of the Tank's fat ember
+shell and the Scout's pulsing pod. The volley spawns **one pale-yellow
+launch pop** at the diver's body per burst (the burst is one fire event,
+matching its single fire cue — not N stacked pops), each shard flies
+nose-first along its own spread heading, and each shard carries its
+pale-yellow colour so the shared impact pass tints the flash when a shard
+connects or is intercepted. Visuals/feel only: firing logic, speed,
+interval, burst count and the spread pattern are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific
