@@ -518,6 +518,19 @@ export function playMortarFireSound(): void {
   playCue('playMortarFireSound');
 }
 
+/**
+ * Sharp dry shell-impact crack — the Mortar blast connects
+ * (AH-0MV822C250051OVN). Plays through the shared AOE detonation VFX seam
+ * (`CombatScene.spawnAoeDetonationVfx`) the instant a Mortar blast resolves,
+ * layered under the heavy `playMortarDetonationSound` boom so the impact
+ * reads as a shell landing then detonating. The game and every gym sound the
+ * identical connect. Baked via the ToneForge pipeline (`aihell-mortar-impact`,
+ * seed 32274).
+ */
+export function playMortarImpactSound(): void {
+  playCue('playMortarImpactSound');
+}
+
 /** Heavy blast — Mortar detonation. */
 export function playMortarDetonationSound(): void {
   playCue('playMortarDetonationSound');

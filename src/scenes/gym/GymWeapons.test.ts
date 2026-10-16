@@ -1113,6 +1113,20 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
 
+  it('Mortar blast fires the baked impact cue through the shared AOE seam (parity, AH-0MV822C250051OVN)', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('mortar');
+    const impactCue = vi.spyOn(effectsModule, 'playMortarImpactSound');
+
+    scene.tick(1.5); // Mortar's 1500 ms beat cadence
+
+    // The gym consumes the same shared onRandom AOE detonation seam as the
+    // game, so the shell landing plays the identical baked mortar impact cue
+    // (parity). The sampled blast may be off-screen, so no graphics assertion.
+    expect(impactCue).toHaveBeenCalledTimes(1);
+  });
+
   it('Arc chains between the practice targets through the shared core', async () => {
     const scene = await bootAoe();
     const player = scene.getPlayer()!;

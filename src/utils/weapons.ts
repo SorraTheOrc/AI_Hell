@@ -1100,7 +1100,21 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_MORTAR_FIRE_RATE,
     bulletColor: BULLET_COLORS.mortar,
+    // In-flight identity (AH-0MV822C250051OVN): the catalogue's `shell`
+    // primitive — a two-tone round shell with a hot core — is the Mortar's
+    // unique shape family (assigned to no other weapon), so each shot reads
+    // as an arcing shell rather than the main gun's disc. The arcing shell
+    // identity is carried as the weapon's declared visual in the roster and
+    // drawn as a wispy arcing trail + bright blast flash through the shared
+    // AOE detonation seam (`spawnMortarBurst`). All visual metadata; the
+    // instant onRandom resolution, range, damage and fire cadence are
+    // unchanged.
     bulletShape: 'shell',
+    // Fire feel (AH-0MV822C250051OVN): a hot deep-orange launch flash at the
+    // ship when the shell fires — the shared combat-core muzzle-flash path
+    // drives it from this metadata, so the game and every gym show the same
+    // launch cue.
+    muzzleFlash: { color: BULLET_COLORS.mortar, radius: 9, duration: 0.16 },
     bulletSize: 1.1,
     bulletLifetime: WEAPON_BULLET_LIFETIME.mortar,
     aoe: {

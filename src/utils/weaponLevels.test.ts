@@ -503,6 +503,19 @@ describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled defini
     expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
     expect(leveled.aoe?.trigger).toBe(base.aoe?.trigger);
   });
+
+  test('the mortar visual/feel metadata carries through level resolution unchanged (AH-0MV822C250051OVN)', () => {
+    const base = WEAPON_CATALOGUE.mortar;
+    const leveled = resolveWeaponDefinition('mortar', 50);
+    // The arcing-shell identity and launch flash are visual metadata, not
+    // upgrade values — they survive level resolution byte-for-byte (only the
+    // AOE radius grows). The in-flight look and fire feel never change with
+    // the weapon's level.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletColor).toBe(base.bulletColor);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.aoe?.trigger).toBe(base.aoe?.trigger);
+  });
 });
 
 describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {

@@ -39,6 +39,7 @@ import {
 import {
   playDestructionSound,
   playMortarDetonationSound,
+  playMortarImpactSound,
   playPhaseShiftSound,
   playWeaponImpactCue,
   playNovaImpactSound,
@@ -752,18 +753,28 @@ export abstract class CombatScene<
    * **graphics are culled** when the point lies outside the play bounds — the
    * random Mortar can otherwise sample a point beyond the screen
    * (AH-0MUUF9GZV004WVT9 AC4).
+   *
+   * `origin` (when supplied) is the launcher's fire position, used to draw the
+   * Mortar's inbound arcing shell trail from the ship into the blast point
+   * (AH-0MV822C250051OVN); absent for the retained `onImpact` projectile path.
    */
   protected spawnAoeDetonationVfx(
     def: WeaponDefinition,
     x: number,
     y: number,
+    origin?: { x: number; y: number },
   ): void {
     if (def.id === 'mortar' && def.aoe) {
       if (this.isPointInPlayBounds(x, y)) {
         spawnMortarBurst(this, x, y, def.aoe.radius, {
           registry: this.aoeEffects,
+          origin,
         });
       }
+      // The shell lands (sharp impact crack) then detonates (heavy boom),
+      // both through this same shared AOE seam so the game and every gym
+      // sound the identical Mortar connect (AH-0MV822C250051OVN).
+      playMortarImpactSound();
       playMortarDetonationSound();
     }
   }
@@ -791,7 +802,10 @@ export abstract class CombatScene<
     for (let i = 0; i < detonations; i++) {
       const point = selectRandomPoint(x, y, range, this.sceneRng);
       this.applyAoeEffect(def, point.x, point.y);
-      this.spawnAoeDetonationVfx(def, point.x, point.y);
+      // Pass the ship as the launch origin so the burst draws the inbound
+      // arcing shell trail from the launcher into the blast point (visual
+      // identity AH-0MV822C250051OVN).
+      this.spawnAoeDetonationVfx(def, point.x, point.y, { x, y });
     }
   }
 

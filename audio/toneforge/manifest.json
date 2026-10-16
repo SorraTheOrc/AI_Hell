@@ -327,6 +327,14 @@
       ]
     },
     {
+      "cue": "playMortarImpactSound",
+      "recipe": "aihell-mortar-impact",
+      "delivery": "baked",
+      "seeds": [
+        32274
+      ]
+    },
+    {
       "cue": "playMortarDetonationSound",
       "recipe": "aihell-mortar-detonation",
       "delivery": "baked",

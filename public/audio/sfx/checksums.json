@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "b9c004143ee24d06bee16fb1fda2e261203d472436ac08f52b5897f5a076b768",
+  "inputs": "978797fff3894e31f18e96b1aa3ddd03be941181396b1a828c4c2881b83a149b",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-boss-destruction.32203.wav": "fbe749ae3f8ddd87a29c1068f5330f3038390483a6f06902ddf7250b783dea3c",
@@ -35,6 +35,7 @@
     "audio/sfx/aihell-enemy-spawn.32101.wav": "407c52caa07a27a788cf7126dbc42ec8e01b9b4170b370843250184d980ba6b3",
     "audio/sfx/aihell-mortar-detonation.32216.wav": "bc23f74f42ef85512815efefad21cb032a7bf4753c20e7d9cafcca7962e504cd",
     "audio/sfx/aihell-mortar-fire.32215.wav": "abaf710ab11c516780cf9ed6b0db9065e3f8a4f31017750b2a32ff0ab6220dbc",
+    "audio/sfx/aihell-mortar-impact.32274.wav": "312d2d70c24a463d756979e22b93d40e7e0778fa2ce753ee388ef01577b6292a",
     "audio/sfx/aihell-nova-fire.32214.wav": "fb39c47a99901be277373ab477f0a1d3757067889dad20e08b61c5bf737717e8",
     "audio/sfx/aihell-nova-impact.32273.wav": "0278fe31ad94e6a47afb14db8b64be5ca007044825755224a730d890b80e3535",
     "audio/sfx/aihell-options-fire.32271.wav": "c58ecd72cc7543a5f84f8d8af5422cadb1701b8f1961ab0465a4776709c83bcf",

@@ -133,6 +133,14 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playMortarImpactSound resolves to the baked mortar-impact asset (AH-0MV822C250051OVN)', () => {
+    effects.playMortarImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-mortar-impact.32274.wav',
+    );
+  });
+
   it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
     effects.playSpreadImpactSound();
     expect(recording.plays).toHaveLength(1);

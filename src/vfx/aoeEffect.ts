@@ -42,6 +42,12 @@ export interface AoeEffectOptions {
   duration?: number;
   /** Effect colour override (Phaser integer). */
   color?: number;
+  /**
+   * Optional launch-origin point (the ship at fire time) used to draw the
+   * Mortar's inbound arcing shell trail from the launcher to the blast point
+   * (AH-0MV822C250051OVN). Absent → no trail (the generic burst only).
+   */
+  origin?: { x: number; y: number };
 }
 
 /** Handle returned by the AOE VFX helpers. */
@@ -133,19 +139,26 @@ export const MORTAR_BURST_START_SCALE = 0.3;
 /** Number of radiating spikes in the Mortar burst. */
 export const MORTAR_BURST_SPIKE_COUNT = 8;
 
+/** Number of segments along the Mortar's inbound arcing trail. */
+export const MORTAR_TRAIL_SEGMENTS = 8;
+
 /**
- * Spawns the Mortar detonation burst at (x, y): a filled flash core ringed by
- * radiating spikes, expanding to `radius` while fading. Visually distinct from
- * the Nova concentric rings and from the Bomb bomb icon.
+ * Spawns the Mortar detonation burst at (x, y): a bright blast flash core
+ * ringed by radiating spikes, expanding to `radius` while fading. When an
+ * `origin` (the ship's fire position) is supplied, an inbound **arcing shell
+ * trail** — a tapering ballistic arc from the launcher to the blast point —
+ * is drawn with the burst, so the detonation reads as a shell landing
+ * (AH-0MV822C250051OVN). Visually distinct from the Nova concentric rings
+ * and from the Bomb bomb icon.
  *
- * The blast's damage/clear resolves before this is called — the burst is the
+ * The burst's damage/clear resolves before this is called — the burst is the
  * impact-point feedback.
  *
  * @param scene - The owning scene (tween owner).
  * @param x - Detonation centre x (the projectile's impact/expiry point).
  * @param y - Detonation centre y.
  * @param radius - Final burst radius in px (the AOE effect radius).
- * @param options - Optional registry/duration/colour overrides.
+ * @param options - Optional registry/duration/colour/origin overrides.
  * @returns An {@link AoeEffectHandle} for observation/teardown.
  */
 export function spawnMortarBurst(
@@ -162,7 +175,50 @@ export function spawnMortarBurst(
   const graphics = scene.add.graphics();
   graphics.setPosition(x, y);
   graphics.setScale(MORTAR_BURST_START_SCALE);
-  // Flash core — the bright blast centre.
+
+  // Inbound arcing shell trail (AH-0MV822C250051OVN): a tapering ballistic
+  // quadratic arc drawn from the launcher origin into the blast point, so the
+  // random onRandom detonation reads as an arcing shell landing rather than a
+  // point flash. The control point bows the path perpendicular to the shot.
+  const origin = options.origin;
+  if (origin) {
+    const ox = origin.x - x;
+    const oy = origin.y - y;
+    const dist = Math.hypot(ox, oy);
+    if (dist > 4) {
+      // Perpendicular unit so the apex bows to one side of the line of fire.
+      const nx = -oy / dist;
+      const ny = ox / dist;
+      const bow = Math.min(dist * 0.3, radius * 1.6);
+      const cx = ox * 0.5 + nx * bow;
+      const cy = oy * 0.5 + ny * bow;
+      // Wispy taper: three fading strokes over the same arc, each thinner and
+      // shorter than the last so the trail reads as a drifting smoke wake.
+      for (let w = 0; w < 3; w++) {
+        const width = 2 - w * 0.6;
+        const alpha = 0.55 - w * 0.15;
+        graphics.lineStyle(width, color, alpha);
+        graphics.beginPath();
+        // Start partway along the arc so only the outermost wisps reach back
+        // to the launcher; the head of the trail is at the blast point.
+        const startT = 0.15 + w * 0.06;
+        for (let s = 0; s <= MORTAR_TRAIL_SEGMENTS; s++) {
+          const t = startT + ((1 - startT) * s) / MORTAR_TRAIL_SEGMENTS;
+          const mt = 1 - t;
+          const px = mt * mt * ox + 2 * mt * t * cx;
+          const py = mt * mt * oy + 2 * mt * t * cy;
+          if (s === 0) graphics.moveTo(px, py);
+          else graphics.lineTo(px, py);
+        }
+        graphics.strokePath();
+      }
+    }
+  }
+
+  // Flash core — the bright blast centre (white-hot inner flash over the
+  // weapon-coloured fill so the detonation reads as a shell landing).
+  graphics.fillStyle(0xffffff, 0.75);
+  graphics.fillCircle(0, 0, radius * 0.22);
   graphics.fillStyle(color, 0.35);
   graphics.fillCircle(0, 0, radius);
   // Radiating spikes — the explosion-burst signature (distinct from a ring).

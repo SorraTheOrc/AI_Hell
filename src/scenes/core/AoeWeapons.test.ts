@@ -608,6 +608,84 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(bulletHit.graphics.active).toBe(false);
   });
 
+  it('F3 AC3 — the Mortar launch flash is spawned through the shared combat-core fire-VFX path (AH-0MV822C250051OVN)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('mortar');
+    expect(scene.getFireFxEffects()).toHaveLength(0);
+
+    scene.runAutoFire(1.5);
+
+    // `_autoFire` drives the muzzle flash from the weapon's `muzzleFlash`
+    // metadata, so the Mortar's launch cue is wired through the shared
+    // combat-core spawn path — the game and every gym show the identical
+    // flash.
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  it('F3 AC3 — the Mortar blast plays the baked impact cue through the shared AOE seam (AH-0MV822C250051OVN)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('mortar');
+    const impactCue = vi.spyOn(effectsModule, 'playMortarImpactSound');
+    const detonationCue = vi.spyOn(
+      effectsModule,
+      'playMortarDetonationSound',
+    );
+
+    // rng=0 samples the ship centre → the blast is on-screen and bursts.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    scene.runAutoFire(1.5);
+
+    // The shell lands (baked impact crack) then detonates (heavy boom), both
+    // through the same shared AOE detonation VFX seam, so the game and every
+    // gym sound the identical Mortar connect.
+    expect(impactCue).toHaveBeenCalledTimes(1);
+    expect(detonationCue).toHaveBeenCalledTimes(1);
+  });
+
+  it('F3 AC3 — the Mortar burst is drawn from the ship origin (inbound arcing shell trail) (AH-0MV822C250051OVN)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('mortar');
+
+    // rng=0.25 → the point is (100, 190): off the ship, so the inbound trail
+    // has a real arc to draw.
+    vi.spyOn(Math, 'random').mockReturnValue(0.25);
+    scene.runAutoFire(1.5);
+
+    // The burst is registered at the sampled point, and it carries the
+    // inbound trail geometry (multiple stroked arc segments) so the blast
+    // reads as an arcing shell landing.
+    const effects = scene.getAoeEffects();
+    expect(effects).toHaveLength(1);
+    expect(effects[0].x).toBe(100);
+    expect(effects[0].y).toBe(190);
+    // STROKE_PATH (opcode 9) segments: the burst's 8 spikes plus the trail's
+    // three arc strokes — strictly more than the 8 spikes alone.
+    const buf = effects[0].commandBuffer as number[];
+    // Per-opcode argument counts (Phaser Commands.js): MOVE_TO/LINE_TO carry 2
+    // args, LINE_STYLE 3, FILL_STYLE 2; the path terminators none. Walking
+    // with these strides keeps the counter aligned.
+    const widths: Record<number, number> = {
+      0: 7,
+      1: 0,
+      2: 0,
+      3: 4,
+      4: 2,
+      5: 2,
+      6: 3,
+      7: 2,
+      8: 0,
+      9: 0,
+    };
+    let strokes = 0;
+    for (let i = 0; i < buf.length; i += 1 + (widths[buf[i]] ?? 0)) {
+      if (buf[i] === 9) strokes += 1;
+    }
+    expect(strokes).toBeGreaterThan(8);
+  });
+
   // ── Retained onImpact projectile-detonation machinery (dead code) ──
   // No catalogue weapon uses the `onImpact` trigger after the Mortar moved
   // to `onRandom`, but the dispatch resolves through the same

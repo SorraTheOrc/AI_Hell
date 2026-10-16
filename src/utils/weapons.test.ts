@@ -957,3 +957,36 @@ describe('Nova expanding-ring shockwave (AH-0MV822BPT002GF17)', () => {
     expect(nova.muzzleFlash!.duration).toBeGreaterThan(0);
   });
 });
+
+describe('Mortar arcing-shell blast (AH-0MV822C250051OVN)', () => {
+  test('keeps the shell shape and onRandom blast mechanics unchanged', () => {
+    const mortar = WEAPON_CATALOGUE.mortar;
+    // The Mortar's unique in-flight family is the `shell` primitive — no
+    // other weapon claims it — so each shot reads as an arcing shell. The
+    // blast still resolves instantly at a random in-range point (no
+    // travelling projectile): the visual work adds feel, never behaviour.
+    expect(mortar.bulletShape).toBe('shell');
+    expect(mortar.bulletColor).toBe(BULLET_COLORS.mortar);
+    expect(mortar.aoe?.trigger).toBe('onRandom');
+    expect(mortar.aoe?.projectileSpeed).toBe(AOE_PROJECTILE_SPEEDS.mortar);
+  });
+
+  test('carries the launch-flash fire VFX through the shared combat-core path (AH-0MV822C250051OVN)', () => {
+    const mortar = WEAPON_CATALOGUE.mortar;
+    // A hot deep-orange launch flash at the ship when the shell fires — the
+    // shared combat-core spawn path (`_autoFire`) drives it from this
+    // metadata, so the game and every gym show the identical flash.
+    expect(mortar.muzzleFlash).toBeDefined();
+    expect(mortar.muzzleFlash!.color).toBe(BULLET_COLORS.mortar);
+    expect(mortar.muzzleFlash!.radius).toBeGreaterThan(0);
+    expect(mortar.muzzleFlash!.duration).toBeGreaterThan(0);
+  });
+
+  test('fires once every 2 beats and stays an AOE weapon on the grid', () => {
+    // The visual/feel work must not touch the cadence: the Mortar still fires
+    // once every two beats and remains an exact multiple of the beat period.
+    expect(WEAPON_CATALOGUE.mortar.fireRateMs).toBe(1500);
+    expect(isAoeWeapon('mortar')).toBe(true);
+    expect(isOnBeatGrid(WEAPON_CATALOGUE.mortar.fireRateMs)).toBe(true);
+  });
+});
