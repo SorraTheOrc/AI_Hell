@@ -16,6 +16,7 @@ import * as effectsModule from '../audio/effects';
 import * as bulletImpactModule from '../vfx/bulletImpact';
 import {
   BOSS_ATTACK_INTERVAL,
+  BOSS_BULLET_COLOR,
   BOSS_HEALTH_BAR_WIDTH,
   BOSS_HEALTH_SEGMENTS,
   BOSS_HIT_POINTS_PER_PHASE,
@@ -1000,5 +1001,69 @@ describe('Boss — per-hit impact VFX & SFX (AH-0MUZMTTPE0074X59)', () => {
 
     expect(boss.getHitEffects()).toHaveLength(0);
     expect(flash.active).toBe(false);
+  });
+});
+
+// ── Boss spread projectile identity (AH-0MV822ETD008LLZX) ───────────
+
+describe('Boss — spread volley projectile identity (AH-0MV822ETD008LLZX)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(config: {
+    shotProbability?: number;
+    rng?: () => number;
+  } = {}): Boss {
+    return new Boss(booted!.scene, {
+      x: 480,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+      ...config,
+    });
+  }
+
+  it('fires dense boss pellets with the shared identity: one launch pop + nose-aligned rotation', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+    const boss = makeBoss({ shotProbability: 1, rng: () => 0 });
+    boss._simulateTelegraphElapsed();
+
+    const graphicsBefore = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    const bullets = boss.tryFireSpreadBullets(1_000_000);
+    expect(bullets.length).toBeGreaterThanOrEqual(7);
+
+    // The volley spawns its pellet bullet Graphics **plus** one blood-red
+    // launch pop at the Boss's body — the enemy-side fire VFX for the whole
+    // volley (one pop per volley, not per pellet).
+    const graphicsAfter = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    expect(graphicsAfter).toBe(graphicsBefore + bullets.length + 1);
+
+    // Each pellet keeps the established white Boss bullet colour (the shared
+    // impact pass tints the hit flash with it).
+    for (const bullet of bullets) {
+      expect(bullet.color).toBe(BOSS_BULLET_COLOR);
+      expect(bullet.isPulseWave).toBeUndefined();
+    }
+    // Each pellet is rotated to fly nose-first along its spread direction.
+    for (const bullet of bullets) {
+      const heading = Math.atan2(bullet.vy, bullet.vx);
+      let rotation = bullet.graphics.rotation;
+      let expected = heading;
+      if (rotation - expected > Math.PI) rotation -= Math.PI * 2;
+      if (rotation - expected < -Math.PI) rotation += Math.PI * 2;
+      expect(rotation).toBeCloseTo(expected, 5);
+    }
   });
 });

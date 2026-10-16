@@ -2063,6 +2063,20 @@ impact pass tints the flash when a dart connects or is intercepted.
 Visuals/feel only: the patrol/attack state machine, fire gate, speed,
 interval and advance-cue tell are unchanged.
 
+**Boss spread (boss-spread pattern, AH-0MV822ETD008LLZX):** the Scan
+(Phase 1) spread volley's shots render as **dense boss pellets** — a
+dedicated `boss-pellet` seam primitive (a heavy hexagonal body with a
+white-hot core and a **menacing concentric ring accent** — a blood-red
+targeting halo — plus a short fading trail). The volley spawns **one
+blood-red launch pop** at the boss's body (the volley is one fire event
+that already plays one Boss fire cue — not 7–9 stacked pops), each pellet
+flies nose-first along its spread direction, and each pellet carries its
+white colour so the shared impact pass tints the flash when a pellet
+connects or is intercepted. The remaining boss patterns (spiral, pulse,
+desperation) get their own identities under their own child items.
+Visuals/feel only: firing logic, counts, spread angle, speeds and the
+telegraph cadence are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific

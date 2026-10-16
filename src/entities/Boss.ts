@@ -34,6 +34,9 @@
 import Phaser from 'phaser';
 
 import { createBullet } from './bulletUtils';
+import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
+import type { EnemyBulletVisual } from '../utils/bulletVisuals';
+import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { FormationOffset } from '../utils/formations';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import {
@@ -509,6 +512,30 @@ export class Boss extends Phaser.GameObjects.Container {
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
     if (!this._shouldFire(now)) return [];
 
+    // The shared Boss spread projectile identity (AH-0MV822ETD008LLZX): a
+    // dense hexagonal pellet with a white-hot core and a menacing concentric
+    // ring accent, drawn through the shared bullet-shape seam. Because the
+    // Boss entity is shared by PlayScene and every gym, the pellet's shape,
+    // ring, trail and launch pop are identical in the game and every gym
+    // (gym↔game parity by construction). Firing logic, count, spread angle
+    // and speed are unchanged — visuals/feel only.
+    const visual = resolveEnemyBulletVisual('boss-spread');
+
+    // One shared launch pop at the Boss's body for the whole volley (the
+    // volley is a single fire event that already plays one Boss fire cue —
+    // not 7–9 stacked pops). Spawned through the shared
+    // `src/vfx/enemyMuzzleFlash` helper (cheap Graphics primitive,
+    // self-cleaning tween), aimed down the volley's centre line.
+    if (visual.muzzle) {
+      spawnEnemyMuzzleFlash(
+        this.scene as Phaser.Scene,
+        this.x,
+        this.y,
+        Math.PI / 2,
+        visual.muzzle,
+      );
+    }
+
     const speed = this._bulletSpeed();
     const bullets: BossBullet[] = [];
     const count = this._currentPhaseNumber === 4 ? 9 : 7;
@@ -518,7 +545,7 @@ export class Boss extends Phaser.GameObjects.Container {
     for (let i = 0; i < count; i++) {
       const t = i / (count - 1);
       const angle = startAngle - t * spreadAngle;
-      bullets.push(this._createBullet(angle, speed));
+      bullets.push(this._createBullet(angle, speed, visual));
     }
     // Play the Boss fire sound once per volley (alongside the phase cue telegraph).
     playBossFireSound();
@@ -715,13 +742,24 @@ export class Boss extends Phaser.GameObjects.Container {
       : BOSS_BULLET_SPEED;
   }
 
-  private _createBullet(angle: number, speed: number): BossBullet {
+  private _createBullet(
+    angle: number,
+    speed: number,
+    visual?: EnemyBulletVisual,
+  ): BossBullet {
     const { graphics, color } = createBullet({
       scene: this.scene as Phaser.Scene,
-      color: BOSS_BULLET_COLOR,
+      color: visual?.color ?? BOSS_BULLET_COLOR,
       size: BOSS_BULLET_SIZE,
       x: this.x,
       y: this.y,
+      shape: visual?.shape,
+      length: visual?.length,
+      rimColor: visual?.rimColor,
+      thickness: visual?.thickness,
+      alpha: visual?.alpha,
+      tail: visual?.tail,
+      angle,
     });
 
     return {

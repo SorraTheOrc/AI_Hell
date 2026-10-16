@@ -127,6 +127,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     'phaser-bolt': { shape: 'phaser-bolt' as BulletShape, color: 0xff4444, radius: 3, length: 1.8, rimColor: 0xff00ff },
     fleck: { shape: 'fleck' as BulletShape, color: 0x00ccff, radius: 3, length: 1.4, rimColor: 0x00ccff },
     dart: { shape: 'dart' as BulletShape, color: 0xffddaa, radius: 3, length: 2.8, rimColor: 0xff6688 },
+    'boss-pellet': { shape: 'boss-pellet' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0xff3366 },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
     chevron: { shape: 'chevron' as BulletShape, color: 0x00ffcc, radius: 3, length: 2 },
@@ -348,6 +349,18 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
   });
 
+  it('boss-pellet renders a dense hexagonal pellet with a white-hot core + menacing ring accent (AH-0MV822ETD008LLZX)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs['boss-pellet']);
+    const buf = g.commandBuffer as number[];
+    // The boss pellet's read: a filled hexagonal body + a white-hot core
+    // (two filled paths) plus the concentric ring-accent stroke — denser
+    // than a plain disc and distinct from the Boss's other pattern shapes.
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(2);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countOps(buf, Cmd.LINE_TO)).toBeGreaterThanOrEqual(5);
+  });
+
   it('diamond renders a closed filled path (≥ 3 line segments)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.diamond);
@@ -467,6 +480,7 @@ describe('DEFAULT_SHAPE_LENGTH', () => {
     expect(DEFAULT_SHAPE_LENGTH['phaser-bolt']).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.fleck).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.dart).toBeGreaterThan(1);
+    expect(DEFAULT_SHAPE_LENGTH['boss-pellet']).toBe(1);
     expect(DEFAULT_SHAPE_LENGTH.shard).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.chevron).toBeGreaterThan(1);
   });
@@ -688,6 +702,25 @@ describe('resolveEnemyBulletVisual', () => {
     expect(visual.tail).toBeGreaterThan(0);
     expect(visual.muzzle).toBeDefined();
     expect(visual.muzzle?.color).toBe(0xffddaa);
+    expect(shapeAnimates(visual.shape)).toBe(false);
+  });
+
+  it('boss spread volleys resolve a dense pellet identity with a menacing ring accent + launch pop (AH-0MV822ETD008LLZX)', () => {
+    const visual = resolveEnemyBulletVisual('boss-spread');
+    // The Boss spread pattern's signature look: a dense hexagonal pellet
+    // with a white-hot core and a menacing concentric ring accent — a
+    // dedicated `boss-pellet` primitive, NOT the plain `disc` the
+    // placeholder used before this landed.
+    expect(canonicalShape(visual.shape)).toBe('boss-pellet');
+    // The shot body keeps the established white Boss bullet colour.
+    expect(visual.color).toBe(0xffffff);
+    // Feel knobs: the blood-red targeting-halo ring accent, a short fading
+    // trail, and a blood-red launch pop at the Boss's body per volley. No
+    // animation — static pellet, so no per-frame redraw is required.
+    expect(visual.rimColor).toBe(0xff3366);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0xff3366);
     expect(shapeAnimates(visual.shape)).toBe(false);
   });
 

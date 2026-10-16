@@ -624,6 +624,7 @@ on entry (AH-0MUJM746P000QAEO).
   3. **Pulse**: Screen-wide pulse wave that expands from the boss, followed by aimed shots at the player's last known position; **no minions** — the pulse is the threat.
   4. **Desperation**: All previous patterns combined at higher speed; **15 swarm** reinforce the boss; boss loses armour (visual cue: core becomes more exposed/bright).
 - **Pattern design philosophy**: Each phase has clear telegraphing (glow, charge, audio cue) before the attack begins. Patterns should be learnable but require precise movement.
+- **Projectile identity** (per-enemy visuals epic, AH-0MV2K5SR0005RTTE): the **Scan (Phase 1) spread volley** fires **dense boss pellets** — heavy hexagonal pellets with a white-hot core and a **menacing concentric ring accent** (a blood-red targeting halo), a short fading trail and a blood-red launch pop at the boss's body once per volley (drawn through the shared bullet-shape seam, `src/utils/bulletVisuals.ts`, `boss-pellet` primitive) — with a white-tinted impact flash when a pellet connects or is intercepted (shared fire/impact seams, AH-0MV822ETD008LLZX). The remaining boss patterns (spiral, pulse, desperation) get their own identities under their own child items. Visuals/feel only — firing logic, counts, spread angle, speeds and the telegraph cadence are unchanged.
 
 ### 4.4 Power-Ups
 

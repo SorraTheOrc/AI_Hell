@@ -834,6 +834,29 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xffddaa);
   });
 
+  it('a Boss spread pellet plays its identity impact pop and flash when it hits the player (AH-0MV822ETD008LLZX)', async () => {
+    // The Boss spread pellet carries the white Boss bullet colour; the shared
+    // impact pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints
+    // the impact flash and pops the existing per-enemy destruction cue — so
+    // a Boss hit reads (and sounds) distinct from every other identity,
+    // identically in the game and every gym. This test pins the white Boss
+    // variant of the generic path with the real BOSS_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xffffff; // BOSS_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xffffff);
+  });
+
   it('legacy enemy bullets without an identity keep the plain hit behaviour (no added flash)', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 100, y: 100 });

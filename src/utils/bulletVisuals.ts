@@ -19,7 +19,9 @@
  * (the Phaser's crisply-edged hexagonal bolt with a bright velocity-aligned
  * core streak, AH-0MV822DRX009RYUB), **fleck** (the Swarm's tiny fast
  * cometary micro-shard, AH-0MV822E4T006F37Y), **dart** (the Raider's slim
- * sharp-nosed dart with a short trail, AH-0MV822EH800780GI),
+ * sharp-nosed dart with a short trail, AH-0MV822EH800780GI), **boss-pellet**
+ * (the Boss spread pattern's dense pellet with a menacing concentric ring
+ * accent, AH-0MV822ETD008LLZX),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -132,6 +134,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   'phaser-bolt': 2.6,
   fleck: 1.4,
   dart: 2.8,
+  'boss-pellet': 1,
   diamond: 1,
   spark: 1,
   chevron: 2,
@@ -229,6 +232,9 @@ export function drawBulletShape(
       break;
     case 'dart':
       _dart(graphics, spec, alpha, rim);
+      break;
+    case 'boss-pellet':
+      _bossPellet(graphics, spec, alpha, rim);
       break;
     case 'diamond':
       _diamond(graphics, spec, alpha, rim);
@@ -746,6 +752,49 @@ function _dart(
   }
 }
 
+/**
+ * Dense boss pellet (AH-0MV822ETD008LLZX): the Boss spread pattern's shot
+ * identity.
+ *
+ * A heavy hexagonal pellet (a squatter, denser read than a plain disc) with a
+ * bright white-hot inner core and a **menacing concentric ring accent** — a
+ * thin blood-red orbit around the body that reads as the Boss's targeting
+ * halo. Static and cheap (Boss spread volleys are 7–9 shots plus whirling
+ * spirals), deliberately heavier than the player's disc and distinct from
+ * the Boss's other three pattern identities.
+ */
+function _bossPellet(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  // Dense hexagonal body: flatter sides than a disc read as a heavy shot.
+  graphics.fillStyle(spec.color, alpha);
+  graphics.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI * 2 * i) / 6;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (i === 0) graphics.moveTo(x, y);
+    else graphics.lineTo(x, y);
+  }
+  graphics.closePath();
+  graphics.fillPath();
+  // Bright white-hot inner core.
+  graphics.fillStyle(0xffffff, Math.min(1, alpha * 0.9));
+  graphics.beginPath();
+  graphics.arc(0, 0, r * 0.38, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  // Menacing concentric ring accent (the Boss's targeting halo).
+  const tint = rim ?? spec.color;
+  graphics.lineStyle(1.5, tint, Math.min(1, alpha * 0.95));
+  graphics.beginPath();
+  graphics.arc(0, 0, r * 1.45, 0, Math.PI * 2, false);
+  graphics.strokePath();
+}
+
 /** Diamond: a filled four-point rhombus. */
 function _diamond(
   graphics: Phaser.GameObjects.Graphics,
@@ -1061,7 +1110,13 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 1.0,
     muzzle: { color: 0xffddaa, radius: 5, duration: 0.12 },
   },
-  'boss-spread': { shape: 'disc', color: 0xffffff, rimColor: 0xff3366 },
+  'boss-spread': {
+    shape: 'boss-pellet',
+    color: 0xffffff,
+    rimColor: 0xff3366,
+    tail: 0.8,
+    muzzle: { color: 0xff3366, radius: 6, duration: 0.14 },
+  },
   'boss-spiral': { shape: 'ring', color: 0xffffff },
   'boss-pulse': { shape: 'shell', color: 0xffffff },
   'boss-desperation': { shape: 'bolt', color: 0xffdd66, length: 1.8 },
