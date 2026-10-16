@@ -869,7 +869,34 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_RAPID_FIRE_RATE,
     bulletColor: BULLET_COLORS.rapid,
+    // The Rapid shot reads as a small, fast staccato flare: the catalogue's
+    // `spark` primitive (four-point star, the dedicated rapid-fire flare in
+    // `bulletVisuals.ts`) at the smallest 0.7× scale, ringed white-hot so it
+    // reads as a compact bright dot/star at 6 shots/beat stream pace
+    // (AH-0MV822A03006UT2P). The `disc` family deliberately stays with the
+    // cannon — the roster guard assigns one shape family per weapon, so the
+    // "small fast disc" read comes from the white rim + short trail +
+    // staccato flash + yellow impact, exactly the spread child's convention
+    // (AH-0MV8229B9009DQGA). Visual metadata only — flight unchanged.
     bulletShape: 'spark',
+    // White-hot neon rim — the small spark reads as a bright hot core with a
+    // white halo at stream pace (AH-0MV822A03006UT2P).
+    bulletRim: 0xffffff,
+    // Short fading trail — brief, so the staccato stream stays clean instead
+    // of painting long smears (shared trail seam, AH-0MV822A03006UT2P).
+    bulletTrail: 1.8,
+    // Staccato muzzle flash / launch cue — short and crisp (the shortest in
+    // the catalogue) so rapid volleys stay readable (shared combat-core
+    // spawn path — AH-0MV822A03006UT2P).
+    muzzleFlash: { color: BULLET_COLORS.rapid, radius: 5, duration: 0.07 },
+    // Distinct yellow impact flash + baked rapid-hit cue when a shot connects
+    // (shared impact seam — AH-0MV822A03006UT2P).
+    impactFx: {
+      color: BULLET_COLORS.rapid,
+      radius: 7,
+      duration: 0.1,
+      cue: 'playRapidImpactSound',
+    },
     bulletSize: 0.7,
     bulletLifetime: WEAPON_BULLET_LIFETIME.rapid,
   },

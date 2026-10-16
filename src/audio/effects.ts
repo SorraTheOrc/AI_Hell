@@ -430,6 +430,11 @@ export function playDualImpactSound(): void {
   playCue('playDualImpactSound');
 }
 
+/** Tight staccato yellow tick — Rapid bullet connects (AH-0MV822A03006UT2P). */
+export function playRapidImpactSound(): void {
+  playCue('playRapidImpactSound');
+}
+
 /**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
@@ -441,6 +446,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playCannonImpactSound,
   playSpreadImpactSound,
   playDualImpactSound,
+  playRapidImpactSound,
 };
 
 /**

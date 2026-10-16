@@ -461,6 +461,47 @@ describe('CombatCoreScene — shared base class', () => {
     expect(dualBullet!.impactFx?.cue).toBe('playDualImpactSound');
   });
 
+  // ── Rapid projectile visuals & feel (AH-0MV822A03006UT2P) ──────
+
+  it('spawns a staccato muzzle flash through the shared spawn path when the rapid fires (AC3)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('rapid');
+
+    scene.runAutoFire(10);
+
+    // Every rapid shot spawns exactly one short launch flash at the ship
+    // (the permanent cannon may fire alongside it).
+    const rapidFlash = scene
+      .getFireFxEffects()
+      .filter((f) => f.active);
+    expect(rapidFlash.length).toBeGreaterThan(0);
+    const flash = rapidFlash[0];
+    expect(flash.x).toBeCloseTo(100, 5);
+    expect(flash.y).toBeCloseTo(100, 5);
+  });
+
+  it('tags the rapid bullet with its small spark visual identity + impact FX (AC1/AC4)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('rapid');
+
+    scene.runAutoFire(10);
+
+    const rapidBullet = scene
+      .getPlayerBullets()
+      .find((b) => b.color === 0xffff00);
+    expect(rapidBullet).toBeDefined();
+    expect(rapidBullet!.shape).toBe('spark');
+    expect(rapidBullet!.rimColor).toBeDefined();
+    // The rapid's small (0.7×) scale is a visual-spec knob — the base spawn
+    // radius stays the shared PLAYER_BULLET_RADIUS; the "small fast read"
+    // comes from the spark + rim + trail + staccato flash on top.
+    expect(rapidBullet!.tail).toBeGreaterThan(0);
+    expect(rapidBullet!.impactFx).toBeDefined();
+    expect(rapidBullet!.impactFx?.cue).toBe('playRapidImpactSound');
+  });
+
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });

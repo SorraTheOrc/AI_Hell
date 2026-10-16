@@ -858,6 +858,51 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
+  // ── Rapid impact feedback (AH-0MV822A03006UT2P) ─────────────────
+
+  it('AC4 — a rapid shot plays its baked hit cue and distinct yellow impact flash on connect', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    // The weapon definition's impactFx metadata (rapid): bright yellow flash
+    // at the hit point + the newly baked staccato hit cue, routed through the
+    // shared impact seam.
+    pb.impactFx = {
+      color: 0xffff00,
+      radius: 7,
+      duration: 0.1,
+      cue: 'playRapidImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playRapidImpactSound');
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  it('AC4 — the rapid hit cue layer plays on the killing blow too', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = {
+      color: 0xffff00,
+      radius: 7,
+      duration: 0.1,
+      cue: 'playRapidImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(false);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
   it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
     const scene = await boot();
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');

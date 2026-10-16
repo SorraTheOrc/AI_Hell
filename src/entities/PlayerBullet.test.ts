@@ -500,3 +500,28 @@ describe('PlayerBullet — dual visual identity (AC1/AC3)', () => {
     expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
   });
 });
+
+// ── Rapid — small fast staccato spark with a white-hot rim and short trail (AH-0MV822A03006UT2P) ─
+
+describe('PlayerBullet — rapid visual identity (AC1/AC3)', () => {
+  it('the rapid shot renders as a small white-rimmed spark with a short fading trail', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(
+      scene, 100, 100, 0xffff00, 2.1, 350, 0, 0.375,
+      'spark', undefined, 0xffffff, undefined, 1.8,
+    );
+
+    // The rapid signature: the unique `spark` star body (filled four-point
+    // star → MOVE_TO/LINE_TO joins + FILL_PATH), a white-hot rim highlight
+    // (stroked inner ARC → STROKE_PATH) and a short 3-segment fading trail
+    // (FILL_TRIANGLE via the shared seam) — the "small fast disc" read at
+    // stream pace, visually distinct from the cannon's plain rimmed disc.
+    expect(bullet.radius).toBeLessThan(3); // small
+    expect(bullet.rimColor).toBe(0xffffff);
+    expect(bullet.tail).toBe(1.8); // short, so the stream stays clean
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
+  });
+});

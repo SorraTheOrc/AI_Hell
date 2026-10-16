@@ -282,6 +282,19 @@ describe('resolvePlayerBulletVisual', () => {
     expect(dual.tail).toBeGreaterThan(0);
     expect(dual.color).toBe(0xff00ff);
   });
+
+  it('the rapid spark resolves a small white-rimmed flare with a short trail (AH-0MV822A03006UT2P)', () => {
+    const rapid = resolvePlayerBulletVisual(WEAPON_CATALOGUE.rapid);
+    // The "small fast disc" read: the catalogue's `spark` star family at the
+    // smallest 0.7× scale, a white-hot rim around the core and a short fading
+    // trail — the staccato flare identity, distinct from the cannon's
+    // rimmed disc (visual metadata only, flight unchanged).
+    expect(canonicalShape(rapid.shape)).toBe('spark');
+    expect(rapid.color).toBe(0xffff00);
+    expect(rapid.radius).toBeLessThan(PLAYER_BULLET_RADIUS); // smaller than base
+    expect(rapid.rimColor).toBe(0xffffff);
+    expect(rapid.tail).toBeGreaterThan(0);
+  });
 });
 
 describe('resolveEnemyBulletVisual', () => {

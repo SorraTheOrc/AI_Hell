@@ -126,6 +126,28 @@ describe('WEAPON_CATALOGUE', () => {
     expect(dual.impactFx!.cue).toBe('playDualImpactSound');
   });
 
+  test('rapid declares its visuals-only feel metadata (AH-0MV822A03006UT2P)', () => {
+    const rapid = WEAPON_CATALOGUE.rapid;
+    // In-flight identity for the catalogue guard stays the unique `spark`
+    // family (the `disc` family belongs to the cannon); the "small fast
+    // disc" read comes from visuals-only metadata — a white-hot rim on the
+    // small spark, a short fading trail, a staccato muzzle flash (the
+    // shortest in the catalogue) and a distinct yellow impact flash + baked
+    // hit cue.
+    expect(rapid.bulletShape).toBe('spark');
+    expect(rapid.bulletRim).toBeDefined();
+    expect(rapid.bulletSize).toBeLessThan(1); // small, fast disc-like read
+    expect(rapid.bulletTrail).toBeGreaterThan(0);
+    expect(rapid.muzzleFlash).toBeDefined();
+    // Staccato: the shortest, smallest launch flash in the catalogue.
+    expect(rapid.muzzleFlash!.duration).toBeLessThan(0.1);
+    expect(rapid.muzzleFlash!.radius).toBeLessThan(7);
+    expect(rapid.muzzleFlash!.color).toBe(BULLET_COLORS.rapid);
+    expect(rapid.impactFx).toBeDefined();
+    expect(rapid.impactFx!.color).toBe(BULLET_COLORS.rapid);
+    expect(rapid.impactFx!.cue).toBe('playRapidImpactSound');
+  });
+
   test('dual fires 2 parallel bullets offset perpendicular to heading', () => {
     const weapon = WEAPON_CATALOGUE.dual;
     expect(weapon.offsets.length).toBe(2);

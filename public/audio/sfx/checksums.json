@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "96cd345a19437eb0d7bdbf2c5d8cec5943db477dd2c99ffaf559eb88b5281315",
+  "inputs": "b69b840cdf739b279f46b9242d33ad1a2f03e900b7ebe8ceb54b46b1666ef6c2",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-boss-destruction.32203.wav": "fbe749ae3f8ddd87a29c1068f5330f3038390483a6f06902ddf7250b783dea3c",
@@ -49,6 +49,7 @@
     "audio/sfx/aihell-pickup-spread.32220.wav": "d0cf23167e6bd2995bb1ee57e7315f07dd17d2c7f34c603af0e3e9ef88aa3037",
     "audio/sfx/aihell-player-hull-breach.32120.wav": "68e7be9488bfe78477a263f7b865f482e1e45d6a8555396b6517d46410be3160",
     "audio/sfx/aihell-rapid-fire.32213.wav": "ac8572b3d2c48ff94b07bf1db933ad93bad5bbfaf2e827f22bd1244d45314069",
+    "audio/sfx/aihell-rapid-impact.32266.wav": "6c33fd00a4ae8a778250122392690946a184bd0f211c0b56733e3cb06e727531",
     "audio/sfx/aihell-scout-advance.32180.wav": "8e0f57dbb048d39024e435aafcb2ce216fc04c1138e9e4bcccde210ceb6be53a",
     "audio/sfx/aihell-spread-fire.32211.wav": "5b8092fc74e3859fe2b450d1a8c62aba49db885b5065982562cf638d80447c29",
     "audio/sfx/aihell-spread-impact.32218.wav": "f39fd29ffa78126671960cec016f5664ccded6a64dc1029dc7ed0b2c5b2bc928",

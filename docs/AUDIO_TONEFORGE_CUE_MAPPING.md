@@ -103,6 +103,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playSpreadFireSound` | Triangle 600→1200→800 Hz, ~0.12 s, vol 0.15 | Player spread fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-spread-fire` |
 | `playDualFireSound` | Saw 900→300 Hz + offset sine tick, ~0.06 s | Player dual fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-dual-fire` |
 | `playDualImpactSound` | Bright twin square snap 1400→600 Hz + sine echo + HP noise tick, ~0.11 s | Player dual hit (when either twin bar connects) | shared impact seam in `CombatScene` (AH-0MV8229NM009CZOA) | new | `aihell-dual-impact` |
+| `playRapidImpactSound` | Tight staccato square tick 2400→1100 Hz + thin triangle shimmer + HP noise tap, ~0.06 s | Player rapid hit (when a shot connects) | shared impact seam in `CombatScene` (AH-0MV822A03006UT2P) | new | `aihell-rapid-impact` |
 | `playRapidFireSound` | Triangle 500→900 Hz, ~0.05 s, vol 0.12 | Player rapid fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-rapid-fire` |
 | `playNovaFireSound` | Saw 160→40 Hz + rising triangle ring 300→1800 Hz | Player Nova fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-nova-fire` |
 | `playMortarFireSound` | Muffled triangle 220→90 Hz + high barrel tick | Player Mortar fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-mortar-fire` |
@@ -190,6 +191,7 @@ repeated kills still vary.
 | `aihell-spread-fire` | `playSpreadFireSound` | Triangle 600→1200→800 Hz, ~0.12 s | 32211 |
 | `aihell-dual-fire` | `playDualFireSound` | Saw 900→300 Hz + sine tick | 32212 |
 | `aihell-dual-impact` | `playDualImpactSound` | Bright twin square snap 1400→600 Hz + sine echo + HP tick, ~0.11 s | 32265 |
+| `aihell-rapid-impact` | `playRapidImpactSound` | Tight staccato square tick 2400→1100 Hz + triangle shimmer + HP tap, ~0.06 s | 32266 |
 | `aihell-rapid-fire` | `playRapidFireSound` | Triangle 500→900 Hz, ~0.05 s | 32213 |
 | `aihell-nova-fire` | `playNovaFireSound` | Saw 160→40 Hz + rising triangle ring | 32214 |
 | `aihell-mortar-fire` | `playMortarFireSound` | Triangle 220→90 Hz + barrel tick | 32215 |
