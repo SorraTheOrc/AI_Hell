@@ -1317,6 +1317,81 @@ describe('ricochet player bullets — wall-bounce budget (AH-0MV1BIV5L005NJAI)',
       expect(bullet.bounces).toBeUndefined();
     }
   });
+
+  it('auto-fire wires the wall-bounce hook onto spawned ricochet bullets (AH-0MV822AP1006W2F9)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Equip the ricochet permanently so it fires this frame.
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const ricochetBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(ricochetBullets.length).toBeGreaterThan(0);
+    for (const bullet of ricochetBullets) {
+      expect(typeof bullet.onWallBounce).toBe('function');
+    }
+  });
+
+  it('a wall bounce plays the ricochet impact cue and spawns a distinct flash (AH-0MV822AP1006W2F9)', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const ricochetBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(ricochetBullets.length).toBeGreaterThan(0);
+
+    // Steer one bullet so it crosses the left edge on the next advance.
+    const bullet = ricochetBullets[0];
+    bullet.x = 2;
+    bullet.vx = -350;
+    bullet.vy = 0;
+
+    advanceAndCull(bullet, 0.01);
+
+    expect(cue).toHaveBeenCalledWith('playRicochetImpactSound');
+    expect(scene.getBulletImpactEffects().length).toBeGreaterThan(0);
+    expect(bullet.onWallBounce).toBeDefined();
+  });
+
+  it('the final wall contact (expiry) still plays the impact cue once (AH-0MV822AP1006W2F9)', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const bullet = scene
+      .getPlayerBullets()
+      .find((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(bullet).toBeDefined();
+    // Exhaust the bounce budget so the next wall contact expires the bullet.
+    bullet!.bounces = 0;
+    bullet!.x = 2;
+    bullet!.vx = -350;
+    bullet!.vy = 0;
+
+    expect(advanceAndCull(bullet!, 0.01)).toBe(false);
+
+    expect(cue).toHaveBeenCalledWith('playRicochetImpactSound');
+  });
 });
 
 // ── Missile Command cluster/MIRV split seam (AH-0MV1BIVIJ007KYXU) ────

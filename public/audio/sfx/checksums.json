@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "6c7471ae63f091c54f0b33291a4dd759723e9eebad90fa89bcbf9402a69cd0a5",
+  "inputs": "4f1778e70a0962de8d6bae29c2fb61c60799c606340188a8fc96d4724715fd3e",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-boss-destruction.32203.wav": "fbe749ae3f8ddd87a29c1068f5330f3038390483a6f06902ddf7250b783dea3c",
@@ -50,6 +50,8 @@
     "audio/sfx/aihell-player-hull-breach.32120.wav": "68e7be9488bfe78477a263f7b865f482e1e45d6a8555396b6517d46410be3160",
     "audio/sfx/aihell-rapid-fire.32213.wav": "ac8572b3d2c48ff94b07bf1db933ad93bad5bbfaf2e827f22bd1244d45314069",
     "audio/sfx/aihell-rapid-impact.32266.wav": "6c33fd00a4ae8a778250122392690946a184bd0f211c0b56733e3cb06e727531",
+    "audio/sfx/aihell-ricochet-fire.32267.wav": "41fd2f24f863fd87daf8a9e1f8621fdc00837b28607c89b044eaf0dca49ee0d9",
+    "audio/sfx/aihell-ricochet-impact.32268.wav": "638ad6b7e002fa37fe7d4581f2985ab9cad23f3079a44d532b5e686f7906b656",
     "audio/sfx/aihell-scout-advance.32180.wav": "8e0f57dbb048d39024e435aafcb2ce216fc04c1138e9e4bcccde210ceb6be53a",
     "audio/sfx/aihell-spread-fire.32211.wav": "5b8092fc74e3859fe2b450d1a8c62aba49db885b5065982562cf638d80447c29",
     "audio/sfx/aihell-spread-impact.32218.wav": "f39fd29ffa78126671960cec016f5664ccded6a64dc1029dc7ed0b2c5b2bc928",

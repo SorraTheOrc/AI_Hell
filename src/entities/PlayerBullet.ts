@@ -168,6 +168,13 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
   private _wallExpired = false;
 
   /**
+   * Optional callback invoked when this ricochet bullet hits a wall and
+   * reflects (AH-0MV822AP1006W2F9). The scene uses it to spawn the per-shot
+   * impact VFX and SFX on wall bounce. `undefined` for ordinary bullets.
+   */
+  onWallBounce?: (bullet: PlayerBullet) => void;
+
+  /**
    * Enemies this bullet has already damaged. The shared collision path checks
    * membership before applying damage so a piercing bullet which overlaps the
    * same enemy across frames damages it exactly once.
@@ -293,6 +300,8 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     } else {
       this._wallExpired = true;
     }
+    // Notify the scene so it can play the edge-flash + hit SFX on bounce.
+    this.onWallBounce?.(this);
   }
 
   /**

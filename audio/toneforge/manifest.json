@@ -207,6 +207,22 @@
       ]
     },
     {
+      "cue": "playRicochetFireSound",
+      "recipe": "aihell-ricochet-fire",
+      "delivery": "baked",
+      "seeds": [
+        32267
+      ]
+    },
+    {
+      "cue": "playRicochetImpactSound",
+      "recipe": "aihell-ricochet-impact",
+      "delivery": "baked",
+      "seeds": [
+        32268
+      ]
+    },
+    {
       "cue": "playSpreadImpactSound",
       "recipe": "aihell-spread-impact",
       "delivery": "baked",

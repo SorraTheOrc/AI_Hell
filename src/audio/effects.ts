@@ -420,6 +420,16 @@ export function playCannonImpactSound(): void {
   playCue('playCannonImpactSound');
 }
 
+/** Bright green ricochet shot — fires (AH-0MV822AP1006W2F9). */
+export function playRicochetFireSound(): void {
+  playCue('playRicochetFireSound');
+}
+
+/** Soft ping — Ricochet bullet connects on wall bounce or enemy hit (AH-0MV822AP1006W2F9). */
+export function playRicochetImpactSound(): void {
+  playCue('playRicochetImpactSound');
+}
+
 /** Soft warm amber hit — Spread bullet connects (AH-0MV8229B9009DQGA). */
 export function playSpreadImpactSound(): void {
   playCue('playSpreadImpactSound');
@@ -444,6 +454,7 @@ export function playRapidImpactSound(): void {
  */
 const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playCannonImpactSound,
+  playRicochetImpactSound,
   playSpreadImpactSound,
   playDualImpactSound,
   playRapidImpactSound,
@@ -552,6 +563,9 @@ export function playWeaponFireSound(
       break;
     case 'wave_laser':
       playCue('playWaveLaserFireSound', options);
+      break;
+    case 'ricochet':
+      playCue('playRicochetFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches

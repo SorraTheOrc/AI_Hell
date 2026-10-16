@@ -399,12 +399,18 @@ describe('playWeaponFireSound — shared player-fire path', () => {
   });
 
   it('is a no-op for catalogue-only weapon ids without a baked fire cue', () => {
-    // ricochet/cluster/options have no baked fire cue yet — they stay
+    // cluster/options have no baked fire cue yet — they stay
     // catalogue-only ids that degrade to a silent no-op.
     expect(() =>
-      effects.playWeaponFireSound('ricochet' as never),
+      effects.playWeaponFireSound('cluster' as never),
     ).not.toThrow();
     expect(recording.plays).toHaveLength(0);
+  });
+
+  it('plays the baked ricochet fire cue', () => {
+    effects.playWeaponFireSound('ricochet');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-ricochet-fire.32267.wav');
   });
 });
 

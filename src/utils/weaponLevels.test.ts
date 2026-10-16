@@ -736,6 +736,18 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
       expect(resolveWeaponDefinition(id, 50).bounce).toBeUndefined();
     }
   });
+
+  test('the ricochet visual/feel metadata carries through level resolution unchanged (AH-0MV822AP1006W2F9)', () => {
+    const base = WEAPON_CATALOGUE.ricochet;
+    const leveled = resolveWeaponDefinition('ricochet', 50);
+    // The per-shot look and feel are visual metadata, not upgrade values —
+    // they must survive level resolution byte-for-byte.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletRim).toBe(base.bulletRim);
+    expect(leveled.bulletTrail).toBe(base.bulletTrail);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+  });
 });
 
 // ── Missile Command cluster split budget (AH-0MV1BIVIJ007KYXU) ───────

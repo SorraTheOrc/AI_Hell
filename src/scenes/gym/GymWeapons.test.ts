@@ -1294,6 +1294,35 @@ describe('GymWeapons — ricochet edge-bounce demonstration (AH-0MV1BIV5L005NJAI
 
     expect(scene.getBullets()).not.toContain(bullet);
   });
+
+  it('a wall bounce in the gym plays the shared ricochet impact cue (AH-0MV822AP1006W2F9 parity)', async () => {
+    const scene = await bootWeapons();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const player = scene.getPlayer()!;
+    player.setPosition(50, 50);
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    // Advance a full beat so the 1/beat ricochet fires (and past its own
+    // cue), then steer the spawned shot at the left wall.
+    scene.tick(0.8);
+    const bullet = scene
+      .getBullets()
+      .find((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(bullet).toBeDefined();
+    expect(typeof bullet!.onWallBounce).toBe('function');
+    bullet!.x = 2;
+    bullet!.vx = -350;
+    bullet!.vy = 0;
+    bullet!.bounces = 1;
+
+    scene.tick(0.01); // crosses the wall → shared bounce feedback fires
+
+    expect(cue).toHaveBeenCalledWith('playRicochetImpactSound');
+  });
 });
 
 describe('GymWeapons — cluster-missile split demonstration (AH-0MV1BIVIJ007KYXU)', () => {

@@ -352,6 +352,50 @@ describe('PlayerBullet — wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
     expect(bullet.x).toBeGreaterThan(reflectedX);
     expect(bullet.x).toBeCloseTo(reflectedX + 3.5, 5);
   });
+
+  it('notifies onWallBounce once per wall contact (AH-0MV822AP1006W2F9)', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 2, GAME_HEIGHT / 2, -350, 0, 3.0);
+    bullet.bounces = 2;
+    let bounces = 0;
+    bullet.onWallBounce = () => {
+      bounces++;
+    };
+
+    advanceAndCull(bullet, 0.01); // wall contact → onWallBounce fires
+    advanceAndCull(bullet, 0.01); // flying — no wall contact
+
+    expect(bounces).toBe(1);
+    expect(bullet.bounces).toBe(1);
+  });
+
+  it('fires onWallBounce on the final wall contact before expiry (AH-0MV822AP1006W2F9)', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 2, GAME_HEIGHT / 2, -350, 0, 3.0);
+    bullet.bounces = 0;
+    let bounces = 0;
+    bullet.onWallBounce = () => {
+      bounces++;
+    };
+
+    expect(advanceAndCull(bullet, 0.01)).toBe(false); // expires on the wall
+
+    expect(bounces).toBe(1);
+    expect(bullet.isExpired()).toBe(true);
+  });
+
+  it('an ordinary (wrapping) bullet never fires onWallBounce (AH-0MV822AP1006W2F9)', async () => {
+    const scene = await makeScene();
+    const bullet = makeBullet(scene, 1, GAME_HEIGHT / 2, -350, 0, 3.0);
+    let bounces = 0;
+    bullet.onWallBounce = () => {
+      bounces++;
+    };
+
+    advanceAndCull(bullet, 0.01); // wraps, never reflects
+
+    expect(bounces).toBe(0);
+  });
 });
 
 // ── Shared bullet-shape rendering seam (AH-0MV8228MD009UBF7) ─────

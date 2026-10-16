@@ -136,7 +136,13 @@ enemies it would otherwise miss.
 instead of wrapping (the default Asteroids wrap model), continuing to damage
 enemies for a small number of bounces before expiring. The existing catalogue
 `cannon` bullet wraps; the ricochet bullet bounces, which makes it a distinct
-"bank shot" tool for the top-down arena.
+"bank shot" tool for the top-down arena. **In-flight identity (AH-0MV822AP1006W2F9):**
+the shot renders as a neon **teardrop/streak pellet** with a short fading trail
+and a white neon rim (visual metadata on `WeaponDefinition`, drawn through the
+shared bullet-shape seam), fires with a bright springy ping + green launch flash,
+and plays a brief green edge-flash + soft bounce tick through the shared impact
+seam on every wall reflection — so the bank shot is legible and audible even
+when it misses.
 
 **Divergence from original:** Documented divergence from the bullet wrap rule
 (GDD §2.4): a ricochet bullet **reflects** while it has bounces remaining and

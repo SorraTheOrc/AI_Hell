@@ -951,6 +951,22 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletShape: 'teardrop',
     bulletSize: 0.8,
     bulletLifetime: WEAPON_BULLET_LIFETIME.ricochet,
+    // Short fading trail behind the teardrop, drawn through the shared seam
+    // (AH-0MV8228YW0050IXS).
+    bulletTrail: 2,
+    // Neon rim around the teardrop body — makes the green pellet pop.
+    bulletRim: 0xffffff,
+    // Clean muzzle flash at the ship when the ricochet fires (shared spawn
+    // path — AH-0MV8228YW0050IXS).
+    muzzleFlash: { color: BULLET_COLORS.ricochet, radius: 7, duration: 0.12 },
+    // Distinct green impact flash + baked hit cue on wall bounce and enemy
+    // hit (shared impact seam — AH-0MV8228YW0050IXS).
+    impactFx: {
+      color: BULLET_COLORS.ricochet,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playRicochetImpactSound',
+    },
     // Base wall-bounce budget: the pellet reflects off two walls before it
     // expires on the next contact. The `bounce` level variable grows it
     // toward the spec cap (4).

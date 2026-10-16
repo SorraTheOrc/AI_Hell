@@ -148,6 +148,23 @@ describe('WEAPON_CATALOGUE', () => {
     expect(rapid.impactFx!.cue).toBe('playRapidImpactSound');
   });
 
+  test('ricochet declares its visuals-only feel metadata (AH-0MV822AP1006W2F9)', () => {
+    const ricochet = WEAPON_CATALOGUE.ricochet;
+    // In-flight identity: a teardrop/streak pellet with a white neon rim and
+    // a short fading trail (visual metadata on the definition, drawn through
+    // the shared bullet-shape seam).
+    expect(ricochet.bulletShape).toBe('teardrop');
+    expect(ricochet.bulletRim).toBeDefined();
+    expect(ricochet.bulletTrail).toBeGreaterThan(0);
+    // A clean launch flash at the ship, coloured to the pellet.
+    expect(ricochet.muzzleFlash).toBeDefined();
+    expect(ricochet.muzzleFlash!.color).toBe(BULLET_COLORS.ricochet);
+    // A distinct green edge-flash + baked bounce/hit cue.
+    expect(ricochet.impactFx).toBeDefined();
+    expect(ricochet.impactFx!.color).toBe(BULLET_COLORS.ricochet);
+    expect(ricochet.impactFx!.cue).toBe('playRicochetImpactSound');
+  });
+
   test('dual fires 2 parallel bullets offset perpendicular to heading', () => {
     const weapon = WEAPON_CATALOGUE.dual;
     expect(weapon.offsets.length).toBe(2);

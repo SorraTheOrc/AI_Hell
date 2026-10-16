@@ -516,6 +516,14 @@ export class CombatCoreScene<
   ): void {}
 
   /**
+   * Hook run when a ricochet bullet bounces off a wall (AH-0MV822AP1006W2F9).
+   * Default no-op; `CombatScene` overrides to play the per-weapon impact
+   * SFX and spawn the distinct impact flash, so the game and every gym
+   * show identical bounce feedback.
+   */
+  protected onPlayerBulletWallBounce(_bullet: PlayerBullet): void {}
+
+  /**
    * Plays the per-type pickup activation cue through the single shared
    * `playDropPickupCue` dispatcher, so every scene plays the same cue set
    * (generic pop + Speed Boost/Extra Life/Magnet + weapon/Reset, generic chime fallback).
@@ -780,6 +788,11 @@ export class CombatCoreScene<
         // resolved by the shared impact seam when the shot connects
         // (AH-0MV8228YW0050IXS). Absent → generic impact behaviour.
         bullet.impactFx = def.impactFx;
+        // Wall-bounce feedback for ricochet: play impact VFX/SFX on each
+        // edge reflection (AH-0MV822AP1006W2F9).
+        if (def.bounce !== undefined) {
+          bullet.onWallBounce = () => this.onPlayerBulletWallBounce(bullet);
+        }
         if (def.aoe?.trigger === 'onImpact') {
           // Tag the projectile so the shared combat core can detonate its
           // area effect on impact/expiry, then let the scene attach its

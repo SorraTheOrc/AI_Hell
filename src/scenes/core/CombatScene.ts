@@ -809,6 +809,15 @@ export abstract class CombatScene<
   }
 
   /**
+   * Resolves per-weapon impact VFX/SFX when a ricochet bullet bounces off
+   * a wall (AH-0MV822AP1006W2F9 AC4). Reuses the same impact seam as
+   * enemy hits so the game and every gym show identical bounce feedback.
+   */
+  protected override onPlayerBulletWallBounce(bullet: PlayerBullet): void {
+    this.resolveWeaponImpactFx(bullet);
+  }
+
+  /**
    * Called when an enemy is destroyed through the generic path. Default
    * no-op; the gym forwards to `config.onEntityDestroyed`.
    */
