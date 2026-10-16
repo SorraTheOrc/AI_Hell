@@ -10,9 +10,11 @@ import { describe, expect, test } from 'vitest';
 
 import {
   advanceOrbitPhase,
+  isOptionsOrbitTriggerAligned,
   optionsPodFireDirections,
   optionsPodOrbitAngles,
   optionsPodPositions,
+  optionsRevolutionsPerTrigger,
   resolveOptionsPodCount,
 } from './optionsEscort';
 import {
@@ -20,6 +22,7 @@ import {
   OPTIONS_MAX_PODS,
   OPTIONS_ORBIT_PERIOD_MS,
   OPTIONS_ORBIT_RADIUS,
+  WEAPON_OPTIONS_FIRE_RATE,
 } from '../../utils/weapons';
 
 describe('optionsEscort — pod count (AC4)', () => {
@@ -119,17 +122,91 @@ describe('optionsEscort — deterministic orbit (AC4)', () => {
   });
 });
 
-describe('optionsEscort — fire directions (AC4)', () => {
-  test('every pod fires along the ship heading', () => {
-    const heading = 1.234;
-    expect(optionsPodFireDirections(heading, 3)).toEqual([
-      heading,
-      heading,
-      heading,
-    ]);
+describe('optionsEscort — pod fire directions are radial (AH-0MV5DFBVW002J2XO)', () => {
+  test('every pod fires radially outward along its own orbit angle', () => {
+    for (const count of [1, 2, 3, 4, 5, 6]) {
+      for (const phase of [0, 0.37, Math.PI / 3, 2.5, Math.PI * 1.9]) {
+        const positions = optionsPodPositions(0, 0, phase, count);
+        const directions = optionsPodFireDirections(phase, count);
+        expect(directions).toHaveLength(count);
+        expect(directions).toEqual(optionsPodOrbitAngles(phase, count));
+        directions.forEach((direction, i) => {
+          // The fire direction is the pod's orbit angle (ship→pod radial)...
+          expect(direction).toBeCloseTo(positions[i].angle, 12);
+          // ...and the bullet leaves along the ship→pod line.
+          expect(Math.cos(direction)).toBeCloseTo(
+            positions[i].x / OPTIONS_ORBIT_RADIUS,
+            10,
+          );
+          expect(Math.sin(direction)).toBeCloseTo(
+            positions[i].y / OPTIONS_ORBIT_RADIUS,
+            10,
+          );
+        });
+      }
+    }
+  });
+
+  test('a custom orbit radius does not change the radial direction', () => {
+    const narrow = optionsPodPositions(10, 20, 0.4, 3, 12);
+    const wide = optionsPodPositions(10, 20, 0.4, 3, 200);
+    expect(narrow.map((pod) => pod.angle)).toEqual(
+      wide.map((pod) => pod.angle),
+    );
+    expect(optionsPodFireDirections(0.4, 3)).toEqual(
+      narrow.map((pod) => pod.angle),
+    );
   });
 
   test('zero pods produce no fire directions', () => {
     expect(optionsPodFireDirections(0, 0)).toEqual([]);
+    expect(optionsPodFireDirections(1.2, -3)).toEqual([]);
+  });
+});
+
+describe('optionsEscort — orbit vs trigger non-alignment (AH-0MV5DFBVW002J2XO)', () => {
+  test('the Options fire interval is not a whole number of orbit revolutions', () => {
+    const revolutions = optionsRevolutionsPerTrigger(WEAPON_OPTIONS_FIRE_RATE);
+    // 750 ms trigger / 2000 ms orbit = 0.375 revolutions per trigger.
+    expect(revolutions).toBeCloseTo(0.375, 12);
+    expect(Number.isInteger(revolutions)).toBe(false);
+    expect(isOptionsOrbitTriggerAligned(WEAPON_OPTIONS_FIRE_RATE)).toBe(false);
+  });
+
+  test('the invariant predicate detects an exactly-aligned cadence', () => {
+    expect(optionsRevolutionsPerTrigger(OPTIONS_ORBIT_PERIOD_MS)).toBe(1);
+    expect(isOptionsOrbitTriggerAligned(OPTIONS_ORBIT_PERIOD_MS)).toBe(true);
+    expect(isOptionsOrbitTriggerAligned(OPTIONS_ORBIT_PERIOD_MS * 2)).toBe(
+      true,
+    );
+    // An invalid orbit period cannot guarantee non-alignment: fail safe.
+    expect(isOptionsOrbitTriggerAligned(750, 0)).toBe(true);
+  });
+
+  test('non-alignment holds across the plausible configured tempo range', () => {
+    // Options stays at subdivision 1, so its trigger is one beat; the shipped
+    // orbit must never complete a whole number of revolutions per beat across
+    // the tempos a player could configure.
+    for (const bpm of [60, 80, 100, 120, 150, 200]) {
+      const fireInterval = 60000 / bpm;
+      expect(
+        isOptionsOrbitTriggerAligned(fireInterval),
+        `BPM ${bpm}`,
+      ).toBe(false);
+    }
+  });
+
+  test('two consecutive volleys aim in different radial directions', () => {
+    const count = 3;
+    const first = optionsPodFireDirections(0, count);
+    // Advance the orbit by exactly one fire interval between volleys.
+    const nextPhase = advanceOrbitPhase(0, WEAPON_OPTIONS_FIRE_RATE);
+    const second = optionsPodFireDirections(nextPhase, count);
+    // Every pod turned 0.375 of a turn, so no direction repeats; three pods
+    // still each fired (the volley is not suppressed).
+    expect(second).toHaveLength(count);
+    first.forEach((direction, i) => {
+      expect(second[i]).not.toBeCloseTo(direction, 9);
+    });
   });
 });

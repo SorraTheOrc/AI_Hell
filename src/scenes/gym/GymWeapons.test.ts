@@ -23,6 +23,7 @@ import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { Player } from '../../entities/Player';
+import { PlayerBullet } from '../../entities/PlayerBullet';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
@@ -1098,6 +1099,34 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
 
+  it('Nova ring fires the baked impact cue through the shared AOE seam (parity, AH-0MV822BPT002GF17)', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('nova');
+    const cue = vi.spyOn(effectsModule, 'playNovaImpactSound');
+
+    scene.tick(3.0); // Nova's 3000 ms beat cadence
+
+    // The gym consumes the same shared onFire AOE VFX seam as the game, so
+    // the ring expansion plays the identical baked nova impact cue (parity).
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Mortar blast fires the baked impact cue through the shared AOE seam (parity, AH-0MV822C250051OVN)', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('mortar');
+    const impactCue = vi.spyOn(effectsModule, 'playMortarImpactSound');
+
+    scene.tick(1.5); // Mortar's 1500 ms beat cadence
+
+    // The gym consumes the same shared onRandom AOE detonation seam as the
+    // game, so the shell landing plays the identical baked mortar impact cue
+    // (parity). The sampled blast may be off-screen, so no graphics assertion.
+    expect(impactCue).toHaveBeenCalledTimes(1);
+  });
+
   it('Arc chains between the practice targets through the shared core', async () => {
     const scene = await bootAoe();
     const player = scene.getPlayer()!;
@@ -1110,6 +1139,21 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
     for (const target of scene.getTargets()) {
       expect(target.alive).toBe(false);
     }
+    expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Arc chain fires the baked impact cue through the shared chain seam (parity, AH-0MV822CE7004MQ14)', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('arc');
+    const impactCue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+
+    scene.tick(0.75); // Arc's 750 ms beat cadence
+
+    // The gym consumes the same shared onFire chain seam as the game, so the
+    // chaining bolt dispatches the identical baked arc impact cue the moment
+    // it connects (parity). The bolt VFX (jagged lightning) must register too.
+    expect(impactCue).toHaveBeenCalledWith('playArcImpactSound');
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
 
@@ -1294,6 +1338,35 @@ describe('GymWeapons — ricochet edge-bounce demonstration (AH-0MV1BIV5L005NJAI
 
     expect(scene.getBullets()).not.toContain(bullet);
   });
+
+  it('a wall bounce in the gym plays the shared ricochet impact cue (AH-0MV822AP1006W2F9 parity)', async () => {
+    const scene = await bootWeapons();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const player = scene.getPlayer()!;
+    player.setPosition(50, 50);
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    // Advance a full beat so the 1/beat ricochet fires (and past its own
+    // cue), then steer the spawned shot at the left wall.
+    scene.tick(0.8);
+    const bullet = scene
+      .getBullets()
+      .find((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(bullet).toBeDefined();
+    expect(typeof bullet!.onWallBounce).toBe('function');
+    bullet!.x = 2;
+    bullet!.vx = -350;
+    bullet!.vy = 0;
+    bullet!.bounces = 1;
+
+    scene.tick(0.01); // crosses the wall → shared bounce feedback fires
+
+    expect(cue).toHaveBeenCalledWith('playRicochetImpactSound');
+  });
 });
 
 describe('GymWeapons — cluster-missile split demonstration (AH-0MV1BIVIJ007KYXU)', () => {
@@ -1351,6 +1424,38 @@ describe('GymWeapons — cluster-missile split demonstration (AH-0MV1BIVIJ007KYX
           b.splitWeapon === undefined,
       );
     expect(warheads.length).toBeGreaterThan(0);
+    // Warheads render as small discs in the gym too (parity, AH-0MV822B1B0048UZT).
+    for (const warhead of warheads) {
+      expect(warhead.shape).toBe('disc');
+    }
+  });
+
+  it('the cluster shell renders with its flame/trail/impact feel in the gym (AH-0MV822B1B0048UZT parity)', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(50, 50);
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    // Advance in small steps: the cluster missile fires every 1500 ms but
+    // lives only 0.9 s, so step until the shell is in flight (a single large
+    // tick would expire it before it can be inspected).
+    let shell: PlayerBullet | undefined;
+    for (let i = 0; i < 60; i++) {
+      scene.tick(0.05);
+      shell = scene
+        .getBullets()
+        .find((b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor);
+      if (shell) break;
+    }
+    expect(shell).toBeDefined();
+    expect(shell!.shape).toBe('missile');
+    expect(shell!.flame).toBeGreaterThan(0);
+    expect(shell!.tail).toBeGreaterThan(0);
+    expect(shell!.impactFx?.cue).toBe('playClusterImpactSound');
   });
 });
 
@@ -1395,5 +1500,15 @@ describe('GymWeapons — Gradius Options escort demonstration (AH-0MV1BIVVK0043T
     expect(pods.length).toBe(
       player.getWeaponDef('options').orbit?.pods ?? 0,
     );
+    // The gym's pod bullets carry the same visual identity as the game's
+    // through the shared core (parity, AH-0MV822BDN008IYL6): the chevron
+    // pod-dart family, pale-aqua rim, short fading trail and the baked
+    // impact feedback the shared impact seam resolves on connect.
+    for (const pod of pods) {
+      expect(pod.shape).toBe('chevron');
+      expect(pod.rimColor).toBe(WEAPON_CATALOGUE.options.bulletRim);
+      expect(pod.tail).toBe(WEAPON_CATALOGUE.options.bulletTrail);
+      expect(pod.impactFx?.cue).toBe('playOptionsImpactSound');
+    }
   });
 });

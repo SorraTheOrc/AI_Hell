@@ -45,7 +45,12 @@ import {
 } from '../core/constants';
 import { GameState, MAX_LIVES } from '../core/GameState';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
-import { DEFAULT_RULES, loadRules, type GameRules } from '../core/rules';
+import {
+  DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
+  DEFAULT_RULES,
+  loadRules,
+  type GameRules,
+} from '../core/rules';
 import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
 import type { MineralChoiceScene } from './MineralChoiceScene';
 import {
@@ -204,6 +209,10 @@ import {
   advanceWrappingBullets,
 } from './core/bulletLifecycle';
 import { resolveMineralKillDrops } from './core/mineralKillDrops';
+import {
+  rollAsteroidExtraLife,
+  type AsteroidKillDropEntity,
+} from './core/asteroidKillDrops';
 import { splitAsteroid } from './core/asteroidSplit';
 import {
   applyMineralChoiceReward,
@@ -286,10 +295,21 @@ export const LEVEL_TRANSITION_SECONDS = 1.5;
 
 /**
  * Seconds a level/wave announcement banner stays on screen before it
- * hides automatically (GDD §3 — transient transitions). Must be within
- * the ~1.5–2 s window required by AH-0MU7JTEMC006QPSN.
+ * hides automatically (GDD §3 — transient transitions). The banner still
+ * expires on its own; 3.5 s leaves the player time to read the
+ * announcement during the between-wave pause while the semi-transparent
+ * background keeps the field visible (AH-0MV8BQ75V005QNZ1).
  */
-export const BANNER_DURATION_SECONDS = 1.5;
+export const BANNER_DURATION_SECONDS = 3.5;
+
+/**
+ * Opacity of the banner's background panel. The banner sits over live
+ * gameplay — carried-over asteroids keep moving and surviving enemies stay
+ * alive — during the between-wave pause, so a fully opaque panel hides the
+ * action; 0.6 keeps the white banner text legible while letting the field
+ * show through (AH-0MV8BQ75V005QNZ1).
+ */
+export const BANNER_BACKGROUND_ALPHA = 0.6;
 
 /** Rightward formation drift speed (px/s). */
 const FORMATION_DRIFT_SPEED = 28;
@@ -331,7 +351,10 @@ const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   fontFamily: 'monospace',
   fontSize: '34px',
   color: '#ffffff',
-  backgroundColor: '#000000',
+  // A CSS `rgba()` string is a valid Canvas2D `fillStyle`, so Phaser's text
+  // canvas fill honours the alpha and keeps the field visible behind the
+  // banner (AH-0MV8BQ75V005QNZ1).
+  backgroundColor: `rgba(0, 0, 0, ${BANNER_BACKGROUND_ALPHA})`,
   padding: { x: 20, y: 12 },
 };
 
@@ -432,9 +455,9 @@ export class PlayScene extends CombatScene<
   /**
    * Demo take-over handler active only while the demo runs
    * (AH-0MUX4966Z0009P9Q AC3). Null outside demo mode, so normal play
-   * carries no extra input listener. Narrows to a movement key (take over)
-   * or the pause key/ESC (return to the main menu) — all other input and the
-   * pointer are ignored (AH-0MUYP6M6W006Z1AY AC1–AC3).
+   * carries no extra input listener. A movement key takes over in place;
+   * any other key (including ESC/pause) returns to the main menu — the
+   * pointer stays ignored (AH-0MUYP6M6W006Z1AY AC1–AC3, AH-0MUYG8XHI0044MQ1).
    */
   private demoTakeOverHandler: ((event: KeyboardEvent) => void) | null = null;
 
@@ -566,6 +589,15 @@ export class PlayScene extends CombatScene<
 
   private dropSpawner: PowerUpSpawner<DropId> | null = null;
   private rng: () => number = Math.random;
+
+  /**
+   * Persisted chance that a destroyed small asteroid additionally drops an
+   * Extra Life (AH-0MV6M2M9P0078N4S). Loaded from the game rules at run
+   * start; the shared `rollAsteroidExtraLife` rule reads it in
+   * `_onEnemyKilled`.
+   */
+  private asteroidExtraLifeDropChance =
+    DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE;
 
   /**
    * The resolved per-run seed (AH-0MUY08V6W001SJJN). Assigned once per run
@@ -786,14 +818,15 @@ export class PlayScene extends CombatScene<
       }
     });
 
-    // Narrowed take-over while the demo runs (AH-0MUX4966Z0009P9Q AC3,
-    // AH-0MUYP6M6W006Z1AY AC1–AC3): only a movement key hands control to the
-    // player (in place) and only the pause key/ESC returns to the main menu;
-    // every other key and the pointer are ignored.
+    // Press-to-take-over while the demo runs (AH-0MUX4966Z0009P9Q AC3,
+    // AH-0MUYP6M6W006Z1AY AC1–AC3, AH-0MUYG8XHI0044MQ1): a movement key
+    // hands control to the player in place; any non-movement key (including
+    // ESC) returns to the main menu; the pointer stays ignored.
     if (this.demoMode) this._enableDemoTakeOver();
 
     // Power-up drop pool.
     const rules = loadRules();
+    this.asteroidExtraLifeDropChance = rules.asteroidExtraLifeDropChance;
     this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
       rules.weaponWeights,
@@ -1023,7 +1056,10 @@ export class PlayScene extends CombatScene<
     const transitioning = this.transitionTimer > 0;
     if (transitioning) {
       this.transitionTimer = Math.max(0, this.transitionTimer - dt);
-      this._updateTransitionBanner();
+      // The transition banner is shown once at `_startTransition()`; its own
+      // timer then governs how long it stays up, so it outlives the 1.5 s
+      // pause and is no longer hidden when the transition completes
+      // (AH-0MV8BQ75V005QNZ1).
       // Carried-over survivors stay active through the transition pause
       // (AH-0MUNS3ZQ1002DJ9S AC3): they keep their formation drift / their own
       // motion, keep firing, and remain shootable/hitable. `_moveEnemies`
@@ -2167,7 +2203,9 @@ export class PlayScene extends CombatScene<
     } else {
       this.spawnWave();
     }
-    this._hideBanner();
+    // The banner is intentionally NOT hidden here: its own transient timer
+    // (`_advanceBanner`) expires it so the announcement stays readable after
+    // the next wave spawns (AH-0MV8BQ75V005QNZ1).
   }
 
   /**
@@ -2767,6 +2805,20 @@ export class PlayScene extends CombatScene<
     }
     this.runTelemetry.enemyKilled(s.enemyKey, s.entity.x, s.entity.y);
     this._maybeDropPowerUp(s.entity.x, s.entity.y);
+    // Extra Life kill reward (AH-0MV6M2M9P0078N4S): a fully destroyed small
+    // asteroid additionally rolls the configurable Extra Life drop. The
+    // shared rule tier-gates first, so large/medium rocks (which split) and
+    // non-asteroid enemies never consume an RNG draw here. Additive to the
+    // generic pool above — asteroids stay in the weighted drop pool.
+    if (
+      rollAsteroidExtraLife(
+        s.entity as unknown as AsteroidKillDropEntity,
+        this.rng,
+        this.asteroidExtraLifeDropChance,
+      )
+    ) {
+      this.spawnPowerUpDrop('extra_life', s.entity.x, s.entity.y);
+    }
     // Mineral drops (GDD §4.5): the shared kill-drop rule decides — a small
     // asteroid leaves one mineral at the site, large/medium asteroids do not
     // (their small split children do), and a non-asteroid enemy re-drops a
@@ -3359,28 +3411,27 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Wires the narrowed press-to-take-over while the demo runs
-   * (AH-0MUX4966Z0009P9Q AC3, AH-0MUYP6M6W006Z1AY AC1–AC3): a **movement key**
-   * (an arrow key or a configured movement binding) leaves demo mode **in
-   * place** — the run keeps going, only the input source changes from the bot
-   * to the player. The **pause key** (ESC by default) leaves the demo and
-   * returns to the main menu instead of pausing. Any other key and the
-   * pointer are ignored. Idempotent.
+   * Wires the press-to-take-over while the demo runs
+   * (AH-0MUX4966Z0009P9Q AC3, AH-0MUYP6M6W006Z1AY AC1–AC3, AH-0MUYG8XHI0044MQ1):
+   * a **movement key** (an arrow key or a configured movement binding) leaves
+   * demo mode **in place** — the run keeps going, only the input source changes
+   * from the bot to the player. Any **other** key (including ESC) returns to
+   * the main menu, abandoning the demo run without scoring. The pointer stays
+   * ignored. Idempotent.
    */
   private _enableDemoTakeOver(): void {
     if (this.demoTakeOverHandler) return;
     const handler = (event: KeyboardEvent): void => {
       if (event.repeat) return;
-      if (event.key === this.pauseKeyName) {
-        // ESC/pause → leave the demo: clean up the listener before the
-        // transition so no stale handler leaks into the menu.
-        this._disableDemoTakeOver();
-        this.scene.start('MenuScene');
+      if (this._isMovementKey(event)) {
+        this.setDemoMode(false); // take over in place
         return;
       }
-      if (this._isMovementKey(event)) this.setDemoMode(false);
-      // Every other key (and the pointer) is ignored — the demo keeps
-      // playing unattended.
+      // Any non-movement key (ESC, letters, numbers, function keys, etc.)
+      // returns to the main menu — clean up the listener before the
+      // transition so no stale handler leaks into the menu.
+      this._disableDemoTakeOver();
+      this.scene.start('MenuScene');
     };
     this.demoTakeOverHandler = handler;
     this.input.keyboard?.on('keydown', handler);
@@ -3413,7 +3464,7 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Removes the demo take-over listener. Called on take-over, on ESC-to-menu
+   * Removes the demo take-over listener. Called on take-over, on return-to-menu
    * and on scene shutdown, so no listener leaks across sessions (AC3/AC4).
    */
   private _disableDemoTakeOver(): void {
@@ -3694,6 +3745,24 @@ export class PlayScene extends CombatScene<
   /** Current banner text (empty string when no banner has been shown yet). */
   getBannerText(): string {
     return this.bannerText?.text ?? '';
+  }
+
+  /**
+   * The banner's background CSS colour (empty string before it is shown).
+   * Exposed so the semi-transparent background can be pinned by tests
+   * (AH-0MV8BQ75V005QNZ1).
+   */
+  getBannerBackgroundColor(): string {
+    return this.bannerText?.style.backgroundColor ?? '';
+  }
+
+  /**
+   * Seconds left before the banner auto-hides (0 when it is hidden). Exposed
+   * so tests can pin the transient window without depending on how much of
+   * it the boot already consumed (AH-0MV8BQ75V005QNZ1).
+   */
+  getBannerTimeRemaining(): number {
+    return this.bannerTimer;
   }
 
   /** Seconds remaining on the transition pause (0 when not transitioning). */

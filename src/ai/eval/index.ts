@@ -11,7 +11,18 @@
  * });
  * ```
  *
- * See `docs/EVALUATION.md` for how to run the CLI and interpret the report.
+ * The automated-balancing surface (batch runner and the **shared
+ * balance-statistics schema**, epic AH-0MV1DLUZ8009OCJW) is exported here
+ * too, so consumers import one schema instead of duplicating it:
+ *
+ * ```ts
+ * import { runBatch, BALANCE_STATISTICS_SCHEMA_VERSION } from './ai/eval';
+ *
+ * const { report, json } = runBatch({ seeds: [...Array(100).keys()].map(i => i + 1), ticks: 1800 });
+ * ```
+ *
+ * See `docs/EVALUATION.md` for how to run the CLI and interpret the report,
+ * and `docs/BALANCING.md` for the batch mode and balance-statistics schema.
  *
  * @module src/ai/eval
  */
@@ -20,14 +31,23 @@ export {
   runArena,
 } from './arena';
 export {
+  hydrateBalanceConfig,
+  loadBalanceConfig,
+} from './balanceConfig';
+export {
   DEFAULT_ARENA_SPAWNS,
   EVAL_DATASET_VERSION,
   EVAL_TELEMETRY_SCHEMA_VERSION,
+  BALANCE_STATISTICS_SCHEMA_VERSION,
+  type ArenaBalanceConfig,
   type ArenaConfig,
   type ArenaInput,
   type ArenaRunResult,
   type ArenaSpawns,
   type ArenaState,
+  type BalanceAggregate,
+  type BalanceRunStats,
+  type DistributionStats,
   type EvalBuild,
   type TelemetryEventRecord,
   type TelemetryRecord,
@@ -36,9 +56,13 @@ export {
 } from './types';
 export {
   abEvaluate,
+  aggregateBalanceStats,
   aggregateMetricPoints,
   aggregateStats,
   compareSameSeed,
+  createBalanceAggregator,
+  distributionStats,
+  extractBalanceStats,
   extractMetricPoint,
   objectiveScore,
   recordingRunFromRecords,
@@ -47,6 +71,7 @@ export {
   COMPARED_METRICS,
   type AbResult,
   type AggregateStats,
+  type BalanceAggregator,
   type ComparedMetric,
   type MetricAggregate,
   type MetricDelta,
@@ -54,25 +79,40 @@ export {
   type SameSeedComparison,
 } from './metrics';
 export {
+  extractHumanBalanceStats,
+  HUMAN_BALANCE_POLICY,
+  HUMAN_BALANCE_DT_SECONDS,
+  type HumanBalanceStats,
+  type HumanBalanceStatsOptions,
+} from './humanStats';
+export {
   buildAbReport,
+  buildBalanceReport,
   buildEvaluationReport,
   buildRunReport,
   fnv1aHash,
   formatAbReport,
+  formatBalanceReport,
   formatEvaluationReport,
   serialiseRecordsJsonl,
   serialiseReport,
   stableStringify,
   type AbReport,
+  type BalanceReport,
   type EvaluationReport,
   type RunReport,
 } from './report';
 export {
   compareRecordings,
   runAbEvaluation,
+  runBatch,
   runEvaluation,
   summariseRuns,
   type AbOutput,
+  type BatchConfig,
+  type BatchOutput,
+  type BatchRunSink,
+  type BatchedRunSummary,
   type ComparisonOutput,
   type EvaluationOutput,
   type EvaluationRunConfig,

@@ -283,6 +283,11 @@ describe('CombatScene — shared-implementation identity and duplicate-body guar
       '_clearEnemyBulletsInRange',
       '_updateP4Bomb',
       '_spawnBombPulse',
+      // Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ / re-balanced in
+      // AH-0MV8GPGBL009M0D8): detection lives in the shared core so gyms
+      // cannot fork the interval/radius schedules.
+      '_updateSmartBomb',
+      'onSmartBombPulse',
     ] as const;
     const files = productionSceneFiles();
     for (const method of sharedMethods) {
@@ -1579,6 +1584,57 @@ describe('shared power-up drop layer — cross-scene equivalence (AC5)', () => {
     }
   });
 
+  it('drives the shared Smart Bomb screen pulse identically in the game and every gym (AH-0MV8GPGBL009M0D8)', async () => {
+    const { play, formation, combat } = await bootDrops();
+    const owners: EnemyBulletOwner[] = [play, formation, combat];
+
+    const inside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
+    const outside = new Map<EnemyBulletOwner, Phaser.GameObjects.Graphics>();
+
+    for (const owner of owners) {
+      const player = owner.getPlayer()!;
+      // Re-balanced base pulse radius is 200 px (10 × SHIP_SIZE): 50 px is
+      // inside, 400 px outside — no longer the old screen-wide 1200 px.
+      inside.set(
+        owner,
+        pushEnemyBullet(owner, {
+          x: player.x + 50,
+          y: player.y,
+          vx: 0,
+          vy: 0,
+          lifetime: 5,
+        }),
+      );
+      outside.set(
+        owner,
+        pushEnemyBullet(owner, {
+          x: player.x + 400,
+          y: player.y,
+          vx: 0,
+          vy: 0,
+          lifetime: 5,
+        }),
+      );
+      // Grant the permanent (hold-full) smart bomb — the shared pulse path
+      // fires it immediately and then on the resolved interval.
+      owner.getEffectsRegistry().applyCollect('smart_bomb', true);
+    }
+
+    play.tick(0.016);
+    formation.tick(0.016);
+    combat.tick(0.016);
+
+    for (const owner of owners) {
+      const live = enemyBulletGraphics(owner);
+      expect(live, 'in-range bullet cleared').not.toContain(inside.get(owner));
+      expect(live, 'out-of-range bullet survives').toContain(outside.get(owner));
+      expect(owner.getEffectsRegistry().isSmartBombPermanent()).toBe(true);
+      // The permanent pulse interval resolves to the re-balanced schedule
+      // (30 s at level 0 — `max(10, 30 − 2×level)`), shared by every scene.
+      expect(owner.getEffectsRegistry().smartBombInterval()).toBe(30);
+    }
+  });
+
   it('plays the same per-type cue for the same drop in every scene', async () => {
     const { play, formation, utility, weapons } = await bootDrops();
     const speedCue = vi.spyOn(effectsModule, 'playSpeedBoostCollectSound');
@@ -2055,6 +2111,11 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['applyMineralChoiceReward', 'src/scenes/core/mineralLayer.ts'],
   ['isMineralAbsorbingEnemy', 'src/scenes/core/mineralLayer.ts'],
   ['resolveMineralKillDrops', 'src/scenes/core/mineralKillDrops.ts'],
+  // Per-kill Extra Life drop rule (AH-0MV6M2M9P0078N4S): the shared tier +
+  // chance rule consumed by PlayScene, GymFormationScene (all asteroid-bearing
+  // gyms) and GymLevel. Registered so any scene that re-introduces a copy
+  // fails the repo-wide duplicate-body guard.
+  ['rollAsteroidExtraLife', 'src/scenes/core/asteroidKillDrops.ts'],
   ['mapControlInput', 'src/utils/movementModel.ts'],
   ['splitAsteroid', 'src/scenes/core/asteroidSplit.ts'],
   // Live-aim / live-mineral-seek seam (AH-0MV5SDM6G003A0US). The shared
@@ -3312,15 +3373,19 @@ describe('CombatScene — Options orbit-emitter parity (AH-0MV1BIVVK0043TEM)', (
         Math.hypot(gamePods[i].vx, gamePods[i].vy),
         5,
       );
-      // Each pod fires along its own scene's ship heading.
-      const heading = (owner: PlayScene | EquivGymScene) =>
-        owner.getPlayer()!.getHeading();
-      expect(Math.atan2(gymPods[i].vy, gymPods[i].vx)).toBeCloseTo(
-        heading(gymScene),
+      // Each pod fires radially outward along its own ship→pod line, and the
+      // game and gym aim identically (same orbit phase, same geometry —
+      // AH-0MV1BIVVK0043TEM, AH-0MV5DFBVW002J2XO).
+      const radial = (owner: PlayScene | EquivGymScene, pod: PlayerBullet) => {
+        const ship = owner.getPlayer()!;
+        return Math.atan2(pod.y - ship.y, pod.x - ship.x);
+      };
+      expect(Math.atan2(gamePods[i].vy, gamePods[i].vx)).toBeCloseTo(
+        radial(playScene, gamePods[i]),
         5,
       );
-      expect(Math.atan2(gamePods[i].vy, gamePods[i].vx)).toBeCloseTo(
-        heading(playScene),
+      expect(Math.atan2(gymPods[i].vy, gymPods[i].vx)).toBeCloseTo(
+        radial(gymScene, gymPods[i]),
         5,
       );
     }

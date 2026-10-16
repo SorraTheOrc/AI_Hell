@@ -17,6 +17,7 @@
  */
 
 import type { BotHumanInputTunables } from '../botHumanLike';
+import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
 
 /** Telemetry schema version the arena emits (matches `src/telemetry/schema`). */
 export const EVAL_TELEMETRY_SCHEMA_VERSION = 1;
@@ -125,6 +126,25 @@ export interface ArenaSpawns {
   readonly asteroids: number;
 }
 
+/**
+ * Resolved balance configuration consumed by the arena (config-driven arena,
+ * AH-0MV81YPBG0028WNM, epic AC1 "Config-driven simulation").
+ *
+ * Built through the shared config loaders — {@link loadAllEnemyConfigs},
+ * {@link loadShipConfig} and {@link loadDifficultyCurves} from
+ * `src/core/configStore.ts` — so a CSV edit measurably changes simulated
+ * outcomes and the arena never holds a divergent copy of enemy, ship or wave
+ * stats.
+ */
+export interface ArenaBalanceConfig {
+  /** Every available enemy archetype (CSV-backed or seed defaults). */
+  readonly enemies: readonly EnemyConfig[];
+  /** The ship tuning consumed by the Asteroids movement model. */
+  readonly ship: ShipConfig;
+  /** The campaign difficulty curve (per-wave targets and generation modes). */
+  readonly difficultyCurves: readonly DifficultyCurveRow[];
+}
+
 /** Arena configuration; only `seed` and `ticks` are required. */
 export interface ArenaConfig {
   /** The run seed — drives every scenario draw and the bot governor's RNG. */
@@ -150,6 +170,13 @@ export interface ArenaConfig {
   readonly build?: EvalBuild;
   /** Entity counts; omitted fields fall back to {@link DEFAULT_ARENA_SPAWNS}. */
   readonly spawns?: Partial<ArenaSpawns>;
+  /**
+   * Resolved balance configuration (enemy archetypes, ship, difficulty
+   * curves) built through the shared config loaders. When omitted,
+   * `runArena` resolves it from the shared config store (seed defaults before
+   * boot), so every arena path is config-driven (AH-0MV81YPBG0028WNM).
+   */
+  readonly balance?: ArenaBalanceConfig;
 }
 
 /** The shaped result of one headless arena run. */
@@ -170,3 +197,86 @@ export const DEFAULT_ARENA_SPAWNS: ArenaSpawns = Object.freeze({
   enemies: 4,
   asteroids: 4,
 });
+
+/**
+ * Version of the shared **balance-statistics** schema
+ * (AH-0MV81YJQP008L9CQ, epic AH-0MV1DLUZ8009OCJW AC3/AC4).
+ *
+ * Downstream consumers — the bot batch runner, the human-play statistics
+ * collector (AH-0MV7WVEWL005XEMN) and the periodic human-experience
+ * validation (AH-0MV7WVHU0000U775) — import one schema instead of
+ * duplicating it. Bump on any backwards-incompatible change to
+ * {@link BalanceRunStats} / {@link BalanceAggregate} so consumers can key a
+ * migration off it.
+ */
+export const BALANCE_STATISTICS_SCHEMA_VERSION = 1;
+
+/**
+ * The distribution summary of one numeric metric across a set of runs
+ * (AC3). Extends the harness's {@link import('./metrics').AggregateStats}
+ * with the **median**, so balance reports carry the full (count, mean,
+ * median, min, max, std-dev) summary.
+ */
+export interface DistributionStats {
+  readonly count: number;
+  readonly mean: number;
+  readonly median: number;
+  readonly min: number;
+  readonly max: number;
+  readonly stdDev: number;
+}
+
+/**
+ * Per-run balance statistics, extracted purely from one run's telemetry
+ * record stream (AC3). Bot runs and recorded human games both emit the same
+ * telemetry envelope, so these numbers are directly comparable.
+ */
+export interface BalanceRunStats {
+  /** Schema version of this record ({@link BALANCE_STATISTICS_SCHEMA_VERSION}). */
+  readonly schemaVersion: number;
+  /** The run's RNG seed (from the `run_header`), or `0` when absent. */
+  readonly seed: number;
+  /** Minerals collected into the hold. */
+  readonly mineralsCollected: number;
+  /** Upgrade/choice selection counts, keyed by upgrade/choice id. */
+  readonly upgradesSelected: Readonly<Record<string, number>>;
+  /** Enemy kill counts, keyed by archetype (asteroids are excluded). */
+  readonly enemiesKilledByArchetype: Readonly<Record<string, number>>;
+  /** Asteroids destroyed (either `asteroid_destroyed` or an asteroid kill). */
+  readonly asteroidsDestroyed: number;
+  /** Power-ups/weapons collected. */
+  readonly powerUpsCollected: number;
+  /** Hits that cost a life (`player_hit`); absorbed hits are excluded. */
+  readonly avoidableHits: number;
+  /** Survival time in seconds (derived from the last recorded tick). */
+  readonly survivalSeconds: number;
+  /** Highest wave number reached (0 when the stream carries no wave events). */
+  readonly waveReached: number;
+  /** Highest level reached (0 when the stream carries no level events). */
+  readonly levelReached: number;
+}
+
+/**
+ * Aggregated balance statistics across a set of runs (AC3): one
+ * {@link DistributionStats} per numeric metric, plus per-key distributions
+ * for upgrades and enemy archetypes.
+ */
+export interface BalanceAggregate {
+  /** Schema version of this aggregate ({@link BALANCE_STATISTICS_SCHEMA_VERSION}). */
+  readonly schemaVersion: number;
+  /** Number of runs aggregated. */
+  readonly runs: number;
+  /** The seeds of the aggregated runs, in input order. */
+  readonly seeds: readonly number[];
+  readonly mineralsCollected: DistributionStats;
+  readonly powerUpsCollected: DistributionStats;
+  readonly asteroidsDestroyed: DistributionStats;
+  readonly avoidableHits: DistributionStats;
+  readonly survivalSeconds: DistributionStats;
+  readonly waveReached: DistributionStats;
+  readonly levelReached: DistributionStats;
+  /** Per-upgrade/choice-id distribution of per-run selection counts. */
+  readonly upgradesSelected: Readonly<Record<string, DistributionStats>>;
+  /** Per-archetype distribution of per-run kill counts. */
+  readonly enemiesKilledByArchetype: Readonly<Record<string, DistributionStats>>;
+}

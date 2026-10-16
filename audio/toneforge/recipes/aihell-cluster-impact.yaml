@@ -1,0 +1,76 @@
+# AI Hell cue: aihell-cluster-impact — Player cluster missile hit — heavy missile detonation thump.
+version: "0.1"
+meta:
+  name: aihell-cluster-impact
+  description: Player cluster missile impact — heavy saw 260 to 60 Hz detonation thump with a lowpass noise smack, the shell/warhead connect cue of the splitting missile.
+  category: AIHell
+  tags:
+    - weapon
+    - hit
+  duration: 0.18
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 260
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 260
+        - kind: exponentialRamp
+          time: 0.16
+          value: 60
+  e0:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.16
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.2
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 900
+      Q: 1
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1800
+        - kind: exponentialRamp
+          time: 0.1
+          value: 300
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.1
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.09
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out

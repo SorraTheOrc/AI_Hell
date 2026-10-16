@@ -32,8 +32,8 @@
  * - **cluster** — a single missile that splits once, on impact or expiry,
  *   into a radial cluster of warheads (Missile Command MIRV homage, timed;
  *   see {@link WeaponDefinition.splits})
- * - **options** — orbiting satellite pods that each fire along the ship's
- *   heading (Gradius Options homage, timed; see
+ * - **options** — orbiting satellite pods that each fire radially outward
+ *   along their own orbit direction (Gradius Options homage, timed; see
  *   {@link WeaponDefinition.orbit})
  *
  * Distances use **radians** for math (Phaser convention, positive =
@@ -513,6 +513,12 @@ export const OPTIONS_ORBIT_RADIUS = 28;
 /**
  * Time (ms) for one full pod orbit revolution. A slow, readable circle so the
  * player can steer the escort.
+ *
+ * Deliberately not a whole-number multiple of the Options fire interval
+ * (`WEAPON_OPTIONS_FIRE_RATE`, 750 ms at 80 BPM): 750 / 2000 = 0.375 rotates
+ * per trigger, so beat-triggered volleys aim in different radial directions
+ * instead of re-aiming identically (`isOptionsOrbitTriggerAligned`,
+ * AH-0MV5DFBVW002J2XO).
  */
 export const OPTIONS_ORBIT_PERIOD_MS = 2000;
 
@@ -527,10 +533,71 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
 
 /**
  * Bullet shape type — determines how the bullet is drawn.
- * `circle` = filled circle (cannon, spread, rapid);
- * `line` = short line segment (dual).
+ *
+ * Extends the original `'circle' | 'line'` pair into the full code-drawn
+ * shape family consumed by the shared bullet-shape rendering seam
+ * (`src/utils/bulletVisuals.ts`, parent AH-0MV8228MD009UBF7):
+ *
+ * - `circle` — filled disc (legacy name, renders exactly like `disc`)
+ * - `disc` — filled disc
+ * - `line` — line/beam (the Wave Laser and Dual must render as a beam)
+ * - `teardrop` — teardrop/streak
+ * - `missile` — capsule + nose + fins
+ * - `ring` — hollow ring
+ * - `shell` — two-tone round shell with a hot core
+ * - `heavy-shell` — the Tank's large two-tone shell with a slow breathing glow
+ *   (AH-0MV822DF60001EPA)
+ * - `shard` — the Diver's sharp splinter/arrowhead, spine-glint shimmer
+ *   (AH-0MV822D2U000LRFV)
+ * - `bolt` — jagged bolt
+ * - `phaser-bolt` — the Phaser's crisply-edged hexagonal bolt with a bright
+ *   velocity-aligned core streak (AH-0MV822DRX009RYUB)
+ * - `fleck` — the Swarm's tiny fast cometary fleck, massed-fire micro-shard
+ *   (AH-0MV822E4T006F37Y)
+ * - `dart` — the Raider's slim sharp-nosed dart with a short trail
+ *   (AH-0MV822EH800780GI)
+ * - `boss-pellet` — the Boss spread pattern's dense pellet with a menacing
+ *   concentric ring accent (AH-0MV822ETD008LLZX)
+ * - `spiral-pellet` — the Boss spiral pattern's pellet carrying the boss
+ *   phase colour, with a short spiral-wake arc (AH-0MV822F5J006WFR0)
+ * - `pulse-ring` — the Boss pulse pattern's slow wide pulse ring
+ *   (AH-0MV822FHN005PK37)
+ * - `tracer` — the Boss desperation burst's bright velocity-aligned tracer
+ *   (AH-0MV822FTS00156F5)
+ * - `warhead` — the OrbitalStrike's falling shell with a fiery tail
+ *   (AH-0MV822GIO005B685)
+ * - `diamond` — four-point rhombus
+ * - `spark` — four-point star
+ * - `chevron` — forward-opening V
+ *
+ * The catalogue assigns one distinct shape per weapon so every weapon is
+ * visually unique in flight (`canonicalShape` collapses the `circle`/`disc`
+ * alias so the roster test never counts them as two signatures).
+ *   projectile-identity roster and the RosterTest-guarded per-weapon visual
  */
-export type BulletShape = 'circle' | 'line';
+export type BulletShape =
+  | 'circle'
+  | 'disc'
+  | 'line'
+  | 'teardrop'
+  | 'missile'
+  | 'ring'
+  | 'shell'
+  | 'heavy-shell'
+  | 'shard'
+  | 'bolt'
+  | 'phaser-bolt'
+  | 'fleck'
+  | 'dart'
+  | 'boss-pellet'
+  | 'spiral-pellet'
+  | 'pulse-ring'
+  | 'tracer'
+  | 'warhead'
+  | 'diamond'
+  | 'spark'
+  | 'chevron'
+  | 'pellet';
 
 // ── Weapon definition ───────────────────────────────────────────────
 
@@ -564,6 +631,25 @@ export interface WeaponDefinition {
   bulletColor: number;
   /** Bullet visual shape. */
   bulletShape: BulletShape;
+  /**
+   * Elongation multiplier for elongated shapes (line/teardrop/missile/bolt/
+   * chevron): the bullet's long axis is `radius × length` px. Absent → the
+   * shared shape's default (`DEFAULT_SHAPE_LENGTH` in `bulletVisuals.ts`).
+   * Visual metadata only (AH-0MV8228MD009UBF7).
+   */
+  bulletShapeLength?: number;
+  /**
+   * Optional neon rim/outline colour (Phaser integer) for shapes that
+   * support a rim (disc/shell/teardrop/diamond/spark/ring). Visual metadata
+   * only (AH-0MV8228MD009UBF7).
+   */
+  bulletRim?: number;
+  /**
+   * Stroke-thickness multiplier for stroked shapes (line/ring/bolt/chevron);
+   * `1` uses the default 2 px stroke. Visual metadata only
+   * (AH-0MV8228MD009UBF7).
+   */
+  bulletThickness?: number;
   /** Bullet radius multiplier relative to the default. */
   bulletSize: number;
   /**
@@ -625,9 +711,9 @@ export interface WeaponDefinition {
    * Orbit-emitter descriptor — the Gradius Options companion-entity seam
    * (AH-0MV1BIVVK0043TEM). When present the weapon does **not** use its
    * `offsets` pattern: the shared combat core spawns `orbit.pods` satellite
-   * pods that orbit the ship and each fires a bullet along the ship's heading
-   * through the ordinary `PlayerBullet` path. Absent on every conventional
-   * weapon.
+   * pods that orbit the ship and each fires a bullet radially outward along its
+   * own orbit direction through the ordinary `PlayerBullet` path. Absent on
+   * every conventional weapon.
    *
    * `pods` is the **level-resolved** pod count: {@link resolveWeaponDefinition}
    * grows the base count with the `projectileCount` upgrade, clamped to
@@ -641,6 +727,69 @@ export interface WeaponDefinition {
    * (parent AH-0MUOOB3OR001V8CD).
    */
   aoe?: AoEDescriptor;
+  /**
+   * Optional short fading trail drawn behind the bullet in flight
+   * (AH-0MV8228YW0050IXS). Value is the tail length as a multiplier of the
+   * bullet radius, measured behind the shape's trailing edge. The shared
+   * bullet-shape seam draws a tapering fade when present; absent → no trail.
+   * Visual metadata only — never affects flight.
+   */
+  bulletTrail?: number;
+  /**
+   * Optional animated exhaust-flame length, as a multiplier of the bullet
+   * radius (AH-0MV822B1B0048UZT). Drawn as a flickering two-tone flame behind
+   * the missile's tail through the shared bullet-shape seam; the flame length
+   * shimmers with the bullet's elapsed time so a missile reads as powered in
+   * flight. Absent → no flame (the default for every non-missile weapon).
+   * Visual metadata only — never affects flight.
+   */
+  bulletFlame?: number;
+  /**
+   * Optional clean launch-cue VFX spawned at the muzzle when this weapon
+   * fires (AH-0MV8228YW0050IXS). The shared combat core spawns it once per
+   * shot through the shared spawn path, so the game and every gym show the
+   * same flash. Absent → no muzzle flash.
+   */
+  muzzleFlash?: MuzzleFlashSpec;
+  /**
+   * Optional distinct impact feedback for when this weapon's shot connects
+   * (AH-0MV8228YW0050IXS): a coloured impact flash plus a baked hit cue,
+   * resolved through the shared impact seam. Absent → the generic impact
+   * flash with no per-weapon hit sound.
+   */
+  impactFx?: ImpactFxSpec;
+}
+
+/**
+ * Muzzle-flash VFX spec (AH-0MV8228YW0050IXS) — the clean launch cue a
+ * weapon shows at the ship when it fires. Consumed by the shared muzzle-FX
+ * helper (`src/vfx/muzzleFlash.ts`) through the shared combat-core spawn
+ * path.
+ */
+export interface MuzzleFlashSpec {
+  /** Flash colour (Phaser integer). */
+  color: number;
+  /** Flash core radius (px). */
+  radius: number;
+  /** Flash fade duration (seconds). */
+  duration: number;
+}
+
+/**
+ * Per-weapon impact-feedback spec (AH-0MV8228YW0050IXS) — the distinct
+ * flash + hit sound that plays when this weapon's shot connects, resolved
+ * through the shared impact seam in `CombatScene`. The cue is a baked
+ * ToneForge cue export name from `src/audio/effects.ts`.
+ */
+export interface ImpactFxSpec {
+  /** Impact flash colour (Phaser integer). */
+  color: number;
+  /** Impact flash radius (px). */
+  radius: number;
+  /** Impact flash duration (seconds). */
+  duration: number;
+  /** Baked ToneForge impact cue export name (e.g. `playCannonImpactSound`). */
+  cue: string;
 }
 
 // ── Weapon catalogue ────────────────────────────────────────────────
@@ -660,7 +809,26 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_CANNON_FIRE_RATE,
     bulletColor: BULLET_COLORS.cannon,
+    // The Cannon shot is a compact neon disc: a white-hot neon rim around
+    // the cyan core makes the plain fill read as a bright compact disc
+    // (AH-0MV8228YW0050IXS). Visual metadata only — same disc shape as
+    // before, no behaviour change.
     bulletShape: 'circle',
+    bulletRim: 0xffffff,
+    // Short fading trail behind the disc, drawn through the shared seam
+    // (AH-0MV8228YW0050IXS).
+    bulletTrail: 3.5,
+    // Clean muzzle flash at the ship when the cannon fires (shared spawn
+    // path — AH-0MV8228YW0050IXS).
+    muzzleFlash: { color: BULLET_COLORS.cannon, radius: 7, duration: 0.12 },
+    // Distinct cyan impact flash + baked hit cue when the shot connects
+    // (shared impact seam — AH-0MV8228YW0050IXS).
+    impactFx: {
+      color: BULLET_COLORS.cannon,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playCannonImpactSound',
+    },
     bulletSize: 1,
     bulletLifetime: WEAPON_BULLET_LIFETIME.cannon,
   },
@@ -671,7 +839,30 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [(-30 * Math.PI) / 180, 0, (30 * Math.PI) / 180],
     fireRateMs: WEAPON_SPREAD_FIRE_RATE,
     bulletColor: BULLET_COLORS.spread,
-    bulletShape: 'circle',
+    // The Spread shot is the catalogue's warm-amber diamond: a small
+    // glowing disc-like gem in the spread colour. The shape family stays
+    // `diamond` (the roster guard assigns one unique family per weapon — the
+    // `disc` family belongs to the cannon), so the "small disc" read comes
+    // from the warm neon rim + brief fading trail + soft muzzle/impact
+    // (AH-0MV8229B9009DQGA). Visuals-only metadata; flight unchanged.
+    bulletShape: 'diamond',
+    // Warm amber rim picks the diamond out of the neon field as a compact
+    // glowing gem/disc (AH-0MV8229B9009DQGA).
+    bulletRim: 0xffdd66,
+    // Brief fading trail — three short tapering segments behind the diamond
+    // via the shared bullet-shape seam (AH-0MV8229B9009DQGA).
+    bulletTrail: 2.2,
+    // Soft muzzle flash / launch cue at the ship when the spread fires
+    // (shared combat-core spawn path — AH-0MV8229B9009DQGA).
+    muzzleFlash: { color: BULLET_COLORS.spread, radius: 7, duration: 0.14 },
+    // Distinct amber impact flash + baked hit cue when a spread shot
+    // connects (shared impact seam — AH-0MV8229B9009DQGA).
+    impactFx: {
+      color: BULLET_COLORS.spread,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playSpreadImpactSound',
+    },
     bulletSize: 0.8,
     bulletLifetime: WEAPON_BULLET_LIFETIME.spread,
   },
@@ -686,7 +877,29 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     sideOffsets: [-DUAL_SIDE_OFFSET, DUAL_SIDE_OFFSET],
     fireRateMs: WEAPON_DUAL_FIRE_RATE,
     bulletColor: BULLET_COLORS.dual,
+    // Two parallel short beams — the Dual reads as side-by-side pulse bars.
+    // A slightly chunkier stroke and a short fading wake make the twin bars
+    // read as solid pulse bars (never dots), distinctly lighter than the
+    // Wave Laser's long piercing beam (AH-0MV8229NM009CZOA). Visual metadata
+    // only — flight unchanged.
     bulletShape: 'line',
+    bulletShapeLength: 2,
+    bulletThickness: 1.6,
+    // Short fading trail behind each bar — the twin bars leave a brief
+    // magenta wake in flight (AH-0MV8229NM009CZOA).
+    bulletTrail: 1.6,
+    // Quick launch flash at the ship when the dual fires — short so the
+    // fast twin volley stays clean (shared combat-core spawn path,
+    // AH-0MV8229NM009CZOA).
+    muzzleFlash: { color: BULLET_COLORS.dual, radius: 6, duration: 0.1 },
+    // Distinct magenta impact flash + baked twin-snap hit cue when either
+    // bar connects (shared impact seam — AH-0MV8229NM009CZOA).
+    impactFx: {
+      color: BULLET_COLORS.dual,
+      radius: 8,
+      duration: 0.14,
+      cue: 'playDualImpactSound',
+    },
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.dual,
   },
@@ -697,7 +910,34 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_RAPID_FIRE_RATE,
     bulletColor: BULLET_COLORS.rapid,
-    bulletShape: 'circle',
+    // The Rapid shot reads as a small, fast staccato flare: the catalogue's
+    // `spark` primitive (four-point star, the dedicated rapid-fire flare in
+    // `bulletVisuals.ts`) at the smallest 0.7× scale, ringed white-hot so it
+    // reads as a compact bright dot/star at 6 shots/beat stream pace
+    // (AH-0MV822A03006UT2P). The `disc` family deliberately stays with the
+    // cannon — the roster guard assigns one shape family per weapon, so the
+    // "small fast disc" read comes from the white rim + short trail +
+    // staccato flash + yellow impact, exactly the spread child's convention
+    // (AH-0MV8229B9009DQGA). Visual metadata only — flight unchanged.
+    bulletShape: 'spark',
+    // White-hot neon rim — the small spark reads as a bright hot core with a
+    // white halo at stream pace (AH-0MV822A03006UT2P).
+    bulletRim: 0xffffff,
+    // Short fading trail — brief, so the staccato stream stays clean instead
+    // of painting long smears (shared trail seam, AH-0MV822A03006UT2P).
+    bulletTrail: 1.8,
+    // Staccato muzzle flash / launch cue — short and crisp (the shortest in
+    // the catalogue) so rapid volleys stay readable (shared combat-core
+    // spawn path — AH-0MV822A03006UT2P).
+    muzzleFlash: { color: BULLET_COLORS.rapid, radius: 5, duration: 0.07 },
+    // Distinct yellow impact flash + baked rapid-hit cue when a shot connects
+    // (shared impact seam — AH-0MV822A03006UT2P).
+    impactFx: {
+      color: BULLET_COLORS.rapid,
+      radius: 7,
+      duration: 0.1,
+      cue: 'playRapidImpactSound',
+    },
     bulletSize: 0.7,
     bulletLifetime: WEAPON_BULLET_LIFETIME.rapid,
   },
@@ -710,15 +950,35 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
     bulletColor: BULLET_COLORS.wave_laser,
-    // The beam is a wide neon bolt; `line` records the intended elongated
-    // look (the shared PlayerBullet visual is a scaled disc).
+    // The beam is a long, thick neon bolt — a visible piercing column,
+    // never a dot (AH-0MV8228MD009UBF7 AC1). `line` + a long length + a
+    // white-hot rim distinguish it from the Dual's short pair of beams.
     bulletShape: 'line',
+    bulletShapeLength: 7,
+    bulletRim: 0xffffff,
+    bulletThickness: 3,
     bulletSize: 1.2,
     bulletLifetime: WEAPON_BULLET_LIFETIME.wave_laser,
     // Base pass-through budget: the beam survives the first three enemies
     // (and damages them all) before it is consumed. The `piercing` level
     // variable grows it toward the spec cap (5).
     piercing: 3,
+    // Wide neon muzzle flash / launch cue at the ship when the wave laser
+    // fires — a substantial burst befitting the long beam it launches
+    // (AH-0MV822ACO007CEZF). The flash is wider than the cannon's to match
+    // the beam identity.
+    muzzleFlash: { color: BULLET_COLORS.wave_laser, radius: 12, duration: 0.15 },
+    // Short fading trail behind the beam — a faint neon wake that extends
+    // the beam's visual identity in flight (AH-0MV822ACO007CEZF).
+    bulletTrail: 4,
+    // Distinct neon-blue impact flash + baked hit cue when a wave laser
+    // shot connects (shared impact seam — AH-0MV822ACO007CEZF).
+    impactFx: {
+      color: BULLET_COLORS.wave_laser,
+      radius: 12,
+      duration: 0.18,
+      cue: 'playWaveLaserImpactSound',
+    },
   },
   ricochet: {
     id: 'ricochet',
@@ -729,9 +989,25 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_RICOCHET_FIRE_RATE,
     bulletColor: BULLET_COLORS.ricochet,
-    bulletShape: 'circle',
+    bulletShape: 'teardrop',
     bulletSize: 0.8,
     bulletLifetime: WEAPON_BULLET_LIFETIME.ricochet,
+    // Short fading trail behind the teardrop, drawn through the shared seam
+    // (AH-0MV8228YW0050IXS).
+    bulletTrail: 2,
+    // Neon rim around the teardrop body — makes the green pellet pop.
+    bulletRim: 0xffffff,
+    // Clean muzzle flash at the ship when the ricochet fires (shared spawn
+    // path — AH-0MV8228YW0050IXS).
+    muzzleFlash: { color: BULLET_COLORS.ricochet, radius: 7, duration: 0.12 },
+    // Distinct green impact flash + baked hit cue on wall bounce and enemy
+    // hit (shared impact seam — AH-0MV8228YW0050IXS).
+    impactFx: {
+      color: BULLET_COLORS.ricochet,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playRicochetImpactSound',
+    },
     // Base wall-bounce budget: the pellet reflects off two walls before it
     // expires on the next contact. The `bounce` level variable grows it
     // toward the spec cap (4).
@@ -746,9 +1022,28 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_CLUSTER_FIRE_RATE,
     bulletColor: BULLET_COLORS.cluster,
-    bulletShape: 'circle',
+    bulletShape: 'missile',
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.cluster,
+    // In-flight identity (AH-0MV822B1B0048UZT): a small missile with a
+    // flickering exhaust flame, a white-hot neon rim and a short fading
+    // smoke trail. All visual metadata — flight (speed, lifetime, splits)
+    // is unchanged.
+    bulletFlame: 1.6,
+    bulletTrail: 2.4,
+    bulletRim: 0xffffff,
+    // Launch puff at the ship when the cluster missile fires (shared spawn
+    // path — AH-0MV8228YW0050IXS): the clean muzzle flash the shared helper
+    // draws reads as the missile's launch smoke puff.
+    muzzleFlash: { color: BULLET_COLORS.cluster, radius: 9, duration: 0.16 },
+    // Distinct hot-pink impact flash + baked hit cue when a shell connects
+    // (shared impact seam — AH-0MV8228YW0050IXS).
+    impactFx: {
+      color: BULLET_COLORS.cluster,
+      radius: 10,
+      duration: 0.18,
+      cue: 'playClusterImpactSound',
+    },
     // Base split payload: the missile bursts into two radial warheads on the
     // first impact/expiry. The shared split seam fans them perpendicular to
     // the heading (90°/270° at this base count) and the `splitCount` level
@@ -760,14 +1055,37 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'options',
     name: 'Options',
     description:
-      'Adds orbiting satellite pods that each fire along your heading.',
+      'Adds orbiting satellite pods that each fire radially outward, in the direction of the orb.',
     // The orbit descriptor drives pod firing; the single `[0]` offset is a
     // harmless fallback (the shared core never reads the pattern for an
     // orbit weapon).
     offsets: [0],
     fireRateMs: WEAPON_OPTIONS_FIRE_RATE,
     bulletColor: BULLET_COLORS.options,
-    bulletShape: 'circle',
+    bulletShape: 'chevron',
+    // In-flight identity (AH-0MV822BDN008IYL6): a small angular pod shot —
+    // the shared seam's `chevron` family (the catalogue assigns this unique
+    // family to the Options, so its shots read as pod darts, never as the
+    // main gun's disc) — with its own pale-aqua neon rim (its own tint, light
+    // against the main gun's cyan disc), and a short faint fading trail.
+    // All visual metadata; the orbit/fire behaviour is unchanged.
+    bulletRim: 0xd9fff2,
+    // Light trail behind the pod shot — short and faint so the six-pod
+    // rotating volley stays readable (shared bullet-trail seam).
+    bulletTrail: 2.0,
+    // Clean aqua launch flash / launch cue at the ship when the Options
+    // volley fires (shared combat-core spawn path — the same VFX every
+    // weapon shows at its muzzle).
+    muzzleFlash: { color: BULLET_COLORS.options, radius: 6, duration: 0.12 },
+    // Distinct aqua impact flash + baked hit cue when a pod shot connects
+    // (shared impact seam), so the escort's hits read and sound distinct
+    // from the main gun.
+    impactFx: {
+      color: BULLET_COLORS.options,
+      radius: 8,
+      duration: 0.15,
+      cue: 'playOptionsImpactSound',
+    },
     // Smaller than the cannon's bullet: the pods multiply firepower rather
     // than matching the main gun.
     bulletSize: 0.8,
@@ -788,7 +1106,15 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_NOVA_FIRE_RATE,
     bulletColor: BULLET_COLORS.nova,
-    bulletShape: 'circle',
+    bulletShape: 'ring',
+    // Fire feel (AH-0MV822BPT002GF17): a bright pale-cyan launch flash at the
+    // ship when the ring shockwave expands — the shared combat-core muzzle
+    // flash path drives it from this metadata, so the game and every gym
+    // show the same launch cue. The ring shockwave itself is the expanding
+    // onFire AOE VFX (`spawnNovaRing` via the shared AOE seam), and the
+    // baked nova impact cue plays the instant the ring expands (impact
+    // through the shared AOE VFX path). All visual/feel metadata only.
+    muzzleFlash: { color: BULLET_COLORS.nova, radius: 10, duration: 0.16 },
     bulletSize: 1.2,
     bulletLifetime: WEAPON_BULLET_LIFETIME.nova,
     aoe: {
@@ -806,7 +1132,21 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_MORTAR_FIRE_RATE,
     bulletColor: BULLET_COLORS.mortar,
-    bulletShape: 'circle',
+    // In-flight identity (AH-0MV822C250051OVN): the catalogue's `shell`
+    // primitive — a two-tone round shell with a hot core — is the Mortar's
+    // unique shape family (assigned to no other weapon), so each shot reads
+    // as an arcing shell rather than the main gun's disc. The arcing shell
+    // identity is carried as the weapon's declared visual in the roster and
+    // drawn as a wispy arcing trail + bright blast flash through the shared
+    // AOE detonation seam (`spawnMortarBurst`). All visual metadata; the
+    // instant onRandom resolution, range, damage and fire cadence are
+    // unchanged.
+    bulletShape: 'shell',
+    // Fire feel (AH-0MV822C250051OVN): a hot deep-orange launch flash at the
+    // ship when the shell fires — the shared combat-core muzzle-flash path
+    // drives it from this metadata, so the game and every gym show the same
+    // launch cue.
+    muzzleFlash: { color: BULLET_COLORS.mortar, radius: 9, duration: 0.16 },
     bulletSize: 1.1,
     bulletLifetime: WEAPON_BULLET_LIFETIME.mortar,
     aoe: {
@@ -826,7 +1166,25 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     offsets: [0],
     fireRateMs: WEAPON_ARC_FIRE_RATE,
     bulletColor: BULLET_COLORS.arc,
-    bulletShape: 'circle',
+    bulletShape: 'bolt',
+    // Fire feel (AH-0MV822CE7004MQ14): a bright electric-purple launch flash
+    // at the ship when the bolt fires — the shared combat-core muzzle-flash
+    // path drives it from this metadata, so the game and every gym show the
+    // same launch cue. The bolt itself (jagged lightning between targets) is
+    // drawn by the shared chain VFX (`spawnArcChain`) through the shared AOE
+    // seam.
+    muzzleFlash: { color: BULLET_COLORS.arc, radius: 10, duration: 0.16 },
+    // Connect feedback (AH-0MV822CE7004MQ14): a distinct electric impact
+    // flash at each chained target plus the newly baked arc impact cue,
+    // routed through the shared impact seam so the game and every gym
+    // connect identically. Visual/feel metadata only — the instant onFire
+    // chain resolution, damage, bullet clearing and cadence are unchanged.
+    impactFx: {
+      color: BULLET_COLORS.arc,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playArcImpactSound',
+    },
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.arc,
     aoe: {

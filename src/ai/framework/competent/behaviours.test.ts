@@ -214,11 +214,13 @@ describe('survival is a hard steering constraint (AC4)', () => {
 
 describe('collect behaviour — reverse brake-assist (AC1)', () => {
   it('requests reverse instead of only coasting when the gap is within the imminent-overshoot threshold', () => {
-    // Closing on a mineral at 50 px with v=175 px/s: gap=32, threshold=36
-    // (2× collectArrivalRadius). Stopping distance (~153 px) exceeds gap, so
-    // the bot brakes with reverse.
+    // Closing on a mineral at 50 px with v=100 px/s: gap=32, threshold=36
+    // (2× collectArrivalRadius).  Friction-only stopping distance
+    // (100²/200 = 50 px) exceeds gap, so forward coasts; the reverse-assisted
+    // stop (100²/(2·200) = 25 px) fits and v is within the retro envelope,
+    // so the bot brakes with reverse (AH-0MV85WGOO0066I9X · AC1).
     const snapshot = makeSnapshot({
-      player: { x: 480, y: 270, vx: 175, vy: 0 },
+      player: { x: 480, y: 270, vx: 100, vy: 0 },
       minerals: [mineral(530, 270)],
       reverseEnabled: true,
     });

@@ -196,6 +196,9 @@ class StubCoreScene extends BareCoreScene {
   getPlayerExplosions(): Phaser.GameObjects.Graphics[] {
     return this.playerExplosions;
   }
+  getFireFxEffects(): Phaser.GameObjects.Graphics[] {
+    return this.fireFxEffects;
+  }
   getCollectAnimations() {
     return this.collectAnimations;
   }
@@ -342,6 +345,161 @@ describe('CombatCoreScene — shared base class', () => {
         5,
       );
     }
+  });
+
+  // ── Cannon projectile visuals & feel (AH-0MV8228YW0050IXS) ──────
+
+  it('spawns a clean muzzle flash through the shared spawn path when the cannon fires (AC3)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Only the cannon is active: exactly one shot → exactly one muzzle flash.
+    expect(player.getActiveWeapons()).toEqual(['cannon']);
+
+    scene.runAutoFire(10);
+
+    expect(scene.getFireFxEffects()).toHaveLength(1);
+    const flash = scene.getFireFxEffects()[0];
+    expect(flash.active).toBe(true);
+    // The flash is anchored at the ship and faces the firing heading.
+    expect(flash.x).toBeCloseTo(100, 5);
+    expect(flash.y).toBeCloseTo(100, 5);
+  });
+
+  it('tags the cannon bullet with its compact-neon-disc visual identity + impact FX (AC1/AC4)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    scene.addPlayer({ x: 100, y: 100 });
+
+    scene.runAutoFire(10);
+
+    const bullet = scene.getPlayerBullets()[0];
+    expect(bullet.shape).toBe('circle');
+    expect(bullet.rimColor).toBe(0xffffff);
+    expect(bullet.tail).toBeGreaterThan(0);
+    expect(bullet.impactFx).toBeDefined();
+    expect(bullet.impactFx?.cue).toBe('playCannonImpactSound');
+  });
+
+  // ── Spread projectile visuals & feel (AH-0MV8229B9009DQGA) ──────
+
+  it('spawns a muzzle flash through the shared spawn path when the spread fires (AC3)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('spread');
+
+    scene.runAutoFire(10);
+
+    // The spread fires a 3-bullet fan; at least the spread weapon's launch
+    // cue is present (the permanent cannon may fire alongside it).
+    const spreadBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === 0xffaa00);
+    expect(spreadBullets.length).toBeGreaterThan(0);
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+    const flash = scene.getFireFxEffects()[0];
+    expect(flash.active).toBe(true);
+    expect(flash.x).toBeCloseTo(100, 5);
+    expect(flash.y).toBeCloseTo(100, 5);
+  });
+
+  it('tags the spread bullet with its diamond visual identity + impact FX (AC1/AC4)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('spread');
+
+    scene.runAutoFire(10);
+
+    const spreadBullet = scene
+      .getPlayerBullets()
+      .find((b) => b.color === 0xffaa00);
+    expect(spreadBullet).toBeDefined();
+    expect(spreadBullet!.shape).toBe('diamond');
+    expect(spreadBullet!.rimColor).toBeDefined();
+    expect(spreadBullet!.tail).toBeGreaterThan(0);
+    expect(spreadBullet!.impactFx).toBeDefined();
+    expect(spreadBullet!.impactFx?.cue).toBe('playSpreadImpactSound');
+  });
+
+  // ── Dual projectile visuals & feel (AH-0MV8229NM009CZOA) ────────
+
+  it('spawns a quick muzzle flash through the shared spawn path when the dual fires (AC3)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('dual');
+
+    scene.runAutoFire(10);
+
+    // The dual fires two parallel side-by-side beams; each volley spawns one
+    // shared launch flash at the ship (the permanent cannon may fire too).
+    const dualBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === 0xff00ff);
+    expect(dualBullets.length).toBeGreaterThan(0);
+    expect(dualBullets.length).toBe(2); // twin pulse bars, one volley
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+    const flash = scene.getFireFxEffects()[0];
+    expect(flash.active).toBe(true);
+    expect(flash.x).toBeCloseTo(100, 5);
+    expect(flash.y).toBeCloseTo(100, 5);
+  });
+
+  it('tags the dual bullet with its short-beam visual identity + impact FX (AC1/AC4)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('dual');
+
+    scene.runAutoFire(10);
+
+    const dualBullet = scene
+      .getPlayerBullets()
+      .find((b) => b.color === 0xff00ff);
+    expect(dualBullet).toBeDefined();
+    expect(dualBullet!.shape).toBe('line');
+    expect(dualBullet!.shapeLength).toBeLessThan(3); // short beam, not a dot
+    expect(dualBullet!.thickness).toBeGreaterThan(1);
+    expect(dualBullet!.tail).toBeGreaterThan(0);
+    expect(dualBullet!.impactFx).toBeDefined();
+    expect(dualBullet!.impactFx?.cue).toBe('playDualImpactSound');
+  });
+
+  // ── Rapid projectile visuals & feel (AH-0MV822A03006UT2P) ──────
+
+  it('spawns a staccato muzzle flash through the shared spawn path when the rapid fires (AC3)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('rapid');
+
+    scene.runAutoFire(10);
+
+    // Every rapid shot spawns exactly one short launch flash at the ship
+    // (the permanent cannon may fire alongside it).
+    const rapidFlash = scene
+      .getFireFxEffects()
+      .filter((f) => f.active);
+    expect(rapidFlash.length).toBeGreaterThan(0);
+    const flash = rapidFlash[0];
+    expect(flash.x).toBeCloseTo(100, 5);
+    expect(flash.y).toBeCloseTo(100, 5);
+  });
+
+  it('tags the rapid bullet with its small spark visual identity + impact FX (AC1/AC4)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('rapid');
+
+    scene.runAutoFire(10);
+
+    const rapidBullet = scene
+      .getPlayerBullets()
+      .find((b) => b.color === 0xffff00);
+    expect(rapidBullet).toBeDefined();
+    expect(rapidBullet!.shape).toBe('spark');
+    expect(rapidBullet!.rimColor).toBeDefined();
+    // The rapid's small (0.7×) scale is a visual-spec knob — the base spawn
+    // radius stays the shared PLAYER_BULLET_RADIUS; the "small fast read"
+    // comes from the spark + rim + trail + staccato flash on top.
+    expect(rapidBullet!.tail).toBeGreaterThan(0);
+    expect(rapidBullet!.impactFx).toBeDefined();
+    expect(rapidBullet!.impactFx?.cue).toBe('playRapidImpactSound');
   });
 
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {

@@ -490,6 +490,47 @@ describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled defini
     expect(leveled.aoe!.trigger).toBe(base.aoe!.trigger);
     expect(WEAPON_CATALOGUE.nova.aoe!.radius).toBe(base.aoe!.radius);
   });
+
+  test('the nova visual/feel metadata carries through level resolution unchanged (AH-0MV822BPT002GF17)', () => {
+    const base = WEAPON_CATALOGUE.nova;
+    const leveled = resolveWeaponDefinition('nova', 50);
+    // The ring shockwave's look and feel are visual metadata, not upgrade
+    // values — they survive level resolution byte-for-byte (only the AOE
+    // radius grows). The launch flash + impact feedback never change with
+    // the weapon's level.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletColor).toBe(base.bulletColor);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.aoe?.trigger).toBe(base.aoe?.trigger);
+  });
+
+  test('the mortar visual/feel metadata carries through level resolution unchanged (AH-0MV822C250051OVN)', () => {
+    const base = WEAPON_CATALOGUE.mortar;
+    const leveled = resolveWeaponDefinition('mortar', 50);
+    // The arcing-shell identity and launch flash are visual metadata, not
+    // upgrade values — they survive level resolution byte-for-byte (only the
+    // AOE radius grows). The in-flight look and fire feel never change with
+    // the weapon's level.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletColor).toBe(base.bulletColor);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.aoe?.trigger).toBe(base.aoe?.trigger);
+  });
+
+  test('the arc visual/feel metadata carries through level resolution unchanged (AH-0MV822CE7004MQ14)', () => {
+    const base = WEAPON_CATALOGUE.arc;
+    const leveled = resolveWeaponDefinition('arc', 50);
+    // The bolt identity, launch flash and connect feedback are visual
+    // metadata, not upgrade values — they survive level resolution
+    // byte-for-byte (only the AOE radius grows). The in-flight look, fire
+    // feel and impact feedback never change with the weapon's level.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletColor).toBe(base.bulletColor);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+    expect(leveled.aoe?.trigger).toBe(base.aoe?.trigger);
+    expect(leveled.aoe?.chains).toBe(base.aoe?.chains);
+  });
 });
 
 describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
@@ -736,6 +777,18 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
       expect(resolveWeaponDefinition(id, 50).bounce).toBeUndefined();
     }
   });
+
+  test('the ricochet visual/feel metadata carries through level resolution unchanged (AH-0MV822AP1006W2F9)', () => {
+    const base = WEAPON_CATALOGUE.ricochet;
+    const leveled = resolveWeaponDefinition('ricochet', 50);
+    // The per-shot look and feel are visual metadata, not upgrade values —
+    // they must survive level resolution byte-for-byte.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletRim).toBe(base.bulletRim);
+    expect(leveled.bulletTrail).toBe(base.bulletTrail);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+  });
 });
 
 // ── Missile Command cluster split budget (AH-0MV1BIVIJ007KYXU) ───────
@@ -779,6 +832,32 @@ describe('cluster-missile split budget (AH-0MV1BIVIJ007KYXU)', () => {
       if (id === 'cluster') continue;
       expect(resolveWeaponDefinition(id, 50).splits).toBeUndefined();
     }
+  });
+
+  test('the cluster visual/feel metadata carries through level resolution unchanged (AH-0MV822B1B0048UZT)', () => {
+    const base = WEAPON_CATALOGUE.cluster;
+    const leveled = resolveWeaponDefinition('cluster', 50);
+    // The per-shot look and feel are visual metadata, not upgrade values —
+    // they must survive level resolution byte-for-byte.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletFlame).toBe(base.bulletFlame);
+    expect(leveled.bulletRim).toBe(base.bulletRim);
+    expect(leveled.bulletTrail).toBe(base.bulletTrail);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+  });
+
+  test('the options visual/feel metadata carries through level resolution unchanged (AH-0MV822BDN008IYL6)', () => {
+    const base = WEAPON_CATALOGUE.options;
+    const leveled = resolveWeaponDefinition('options', 50);
+    // The pod shot's look and feel are visual metadata, not upgrade values —
+    // they must survive level resolution byte-for-byte (the `projectileCount`
+    // upgrade grows the pod count, never the shot's tint/trail/feedback).
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletRim).toBe(base.bulletRim);
+    expect(leveled.bulletTrail).toBe(base.bulletTrail);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
   });
 });
 
@@ -833,5 +912,41 @@ describe('Gradius Options pod-count resolution (AH-0MV1BIVVK0043TEM)', () => {
         isOnBeatGrid(resolveWeaponDefinition('options', level).fireRateMs),
       ).toBe(true);
     }
+  });
+});
+
+// ── Bullet visual metadata carry-through (AH-0MV8228MD009UBF7) ─────
+
+describe('bullet visual metadata carried through level resolution unchanged', () => {
+  test('every weapon keeps its bulletShape and visual knobs at every level', () => {
+    for (const id of WEAPON_IDS) {
+      const base = WEAPON_CATALOGUE[id];
+      const level0 = resolveWeaponDefinition(id, 0);
+      const leveled = resolveWeaponDefinition(id, 4);
+
+      expect(level0.bulletShape).toBe(base.bulletShape);
+      expect(leveled.bulletShape).toBe(base.bulletShape);
+      expect(leveled.bulletShapeLength).toBe(base.bulletShapeLength);
+      expect(leveled.bulletRim).toBe(base.bulletRim);
+      expect(leveled.bulletThickness).toBe(base.bulletThickness);
+    }
+  });
+
+  test('carrying the visual fields does not change any upgrade value', () => {
+    for (const id of WEAPON_IDS) {
+      const leveled = resolveWeaponDefinition(id, 4);
+      // The visual knobs are metadata only — the level maths is untouched:
+      // the leveled definition's upgrade-derived fields are exactly what the
+      // resolver computes without any visual consideration.
+      expect(leveled.fireRateMs).toBe(resolveWeaponDefinition(id, 4).fireRateMs);
+      expect(leveled.bulletLifetime).toBe(resolveWeaponDefinition(id, 4).bulletLifetime);
+      expect(leveled.bulletColor).toBe(WEAPON_CATALOGUE[id].bulletColor);
+    }
+  });
+
+  test('the wave laser stays a line/beam with its long length at level', () => {
+    const leveled = resolveWeaponDefinition('wave_laser', 5);
+    expect(leveled.bulletShape).toBe('line');
+    expect(leveled.bulletShapeLength).toBe(7);
   });
 });

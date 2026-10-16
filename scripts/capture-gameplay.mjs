@@ -1036,7 +1036,10 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
 
     // Seed the exported bot-tuning state *before* the game boots so the demo
     // bot flies the saved tuning (AH-0MV6MFDYG001E6PL). Resolved once by the
-    // caller; a null/absent state leaves the fresh profile's defaults in place.
+    // caller; a null/absent state leaves the page on its bundled baseline
+    // (the Git-tracked `src/data/bot-tuning.json` every build ships,
+    // AH-0MV9GZD2C005IIU3) instead of the generic factory defaults. This is
+    // what makes a fresh-Chromium `npm run capture` record the tuned demo.
     if (options.botTuningState) {
       await page.addInitScript(installBotTuningConfig, options.botTuningState);
     }

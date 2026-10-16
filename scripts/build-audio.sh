@@ -7,7 +7,7 @@
 # forwarded (see `--help`). The wrapper resolves the script directory so
 # it works from any working directory.
 #
-#   scripts/build-audio.sh            # render if ToneForge is available, else verify
+#   scripts/build-audio.sh            # verify if inputs unchanged, else render
 #   scripts/build-audio.sh --render   # force render
 #   scripts/build-audio.sh --verify   # verify committed assets only
 #

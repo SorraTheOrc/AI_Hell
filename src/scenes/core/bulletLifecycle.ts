@@ -34,6 +34,13 @@ export interface WrappingBullet {
   lifetime: number;
   /** Elapsed time since creation (seconds). */
   elapsed: number;
+  /**
+   * Optional per-frame redraw hook for shapes animated by the bullet's age
+   * (the pellet's faint pulse, AH-0MV822CQL005R4MM). Present only on
+   * identity bullets whose shape animates; called with the elapsed seconds.
+   * Absent → the bullet keeps its static draw (no per-frame cost).
+   */
+  redraw?: (elapsed: number) => void;
 }
 
 /**
@@ -70,6 +77,11 @@ export function advanceWrappingBullets<T extends WrappingBullet>(
     if (bullet.graphics.x >= width) bullet.graphics.x -= width;
     if (bullet.graphics.y < 0) bullet.graphics.y += height;
     if (bullet.graphics.y >= height) bullet.graphics.y -= height;
+    // Animated identity bullets (the pellet's faint pulse) redraw at their
+    // new position with their current age — the same seam PlayerBullet uses,
+    // so the pulse breathes identically in the game and every gym
+    // (AH-0MV822CQL005R4MM).
+    bullet.redraw?.(bullet.elapsed);
     if (bullet.elapsed >= bullet.lifetime) {
       // Defensive destruction: a Graphics object already removed from a
       // shutting-down scene must not throw (GymPowerUpsCombat precedent).

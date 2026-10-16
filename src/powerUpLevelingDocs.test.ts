@@ -52,6 +52,25 @@ describe('power-up leveling is documented (AH-0MUU2QJE2007JNR6 AC8)', () => {
     expect(gdd).toMatch(/permanent stack/);
   });
 
+  it('the GDD and README document the linear/clamped curve family (AH-0MV8GPGBL009M0D8)', () => {
+    // The power-up side now mixes exponential-saturation with the
+    // linear-clamped curve for additive-capped schedules (the Smart Bomb
+    // radius/interval); both curves must stay documented.
+    expect(gdd).toMatch(/linear[/-]clamped/);
+    expect(gdd).toContain('clamp(base + k × level, [min(base, cap), max(base, cap)])');
+    expect(readme).toMatch(/linear[/-]clamped/);
+  });
+
+  it('the GDD and README document the re-balanced Smart Bomb radius and interval (AH-0MV8GPGBL009M0D8)', () => {
+    // The old screen-wide smart bomb (1200 → 2400 px, 0.2/s → 0.5/s) is
+    // replaced by a modest 200 → 400 px ship-centred radius pulsing on a
+    // 30 → 10 s interval; the docs must record the new schedules.
+    expect(gdd).toMatch(/200\s*→\s*400/);
+    expect(gdd).toMatch(/30\s*s?\s*→\s*10\s*s/);
+    expect(readme).toMatch(/200\s*→\s*400/);
+    expect(readme).toMatch(/30\s*→\s*10\s*s/);
+  });
+
   it('the README points at the power-up leveling module and resolver', () => {
     expect(readme).toContain('src/powerups/powerUpLevels.ts');
     expect(readme).toContain('resolvePowerUpAtLevel');

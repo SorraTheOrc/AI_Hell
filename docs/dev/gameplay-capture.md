@@ -240,12 +240,47 @@ pattern as the run-end listener) that writes the exported store state into
 tuning. The file is the exact JSON the gym's Export button produces
 (`{ version, current, configs }`). A missing, unreadable, or malformed file
 fails fast with an actionable message **before** the server or browser
-launches. Without the flag the demo uses the built-in defaults, exactly as
-before.
+launches.
+
+**Without `--bot-config` the fresh browser flies the bundled baseline**, not
+factory defaults: the Git-tracked `src/data/bot-tuning.json` ships with every
+build (via `src/core/bundledConfig.ts`) and the store seeds from it when
+`localStorage` is empty (AH-0MV9GZD2C005IIU3). So a plain
+`npm run capture` in a fresh Chromium records the tuned demo — exactly what a
+distributed build (e.g. GitHub Pages) shows. Passing `--bot-config` still
+overrides the baseline for a specific clip. Precedence everywhere is
+`localStorage` → bundled baseline.
 
 The pure `installBotTuningConfig` / `loadBotTuningConfigFile` helpers live in
 `scripts/capture-gameplay.mjs` and are unit-tested in
 `scripts/capture-gameplay.test.ts` (no browser needed).
+
+#### Which bot values ship (and verifying they are used)
+
+The bundled `src/data/bot-tuning.json` is the **single source of the shipped
+baseline**, so the *values it contains* are exactly what a fresh browser or a
+distributed build (e.g. the GitHub Pages alpha) flies. The refresh workflow is
+**tune in the gym → Export → overwrite `src/data/bot-tuning.json` → commit**
+(see [BOT_FRAMEWORK.md §12](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym)).
+The file is byte-equivalent to the gym's Export output, so it is safe to
+overwrite it wholesale with an Export download.
+
+Because the committed file originally equalled the built-in factory `Default`,
+an un-wired build looked identical to a wired one — a test that compares the
+demo against the committed file cannot, by itself, prove the file was used. Two
+guards close that hole:
+
+- `src/core/botTuningStore.test.ts` (`AC1 — a DISTINCTIVE bundled baseline is
+  served verbatim`) mocks the bundle with non-default values and asserts the
+  store returns *those* values — not the built-in fallback.
+- `src/scenes/demoBaselineDiscriminating.test.ts` boots the shipped demo against
+  a non-default mocked bundle and asserts the live governor receives it, so the
+  whole bundle → store → `PlayScene` chain is exercised, not just the store.
+
+A build only picks up a changed baseline when it is **built**; the GitHub Pages
+alpha is cut from release tags (`.github/workflows/deploy-pages.yml`), so a
+baseline committed to `dev` reaches the alpha at the next `dev` → `main`
+release, not before.
 
 ### Demo game-over dwell
 

@@ -18,10 +18,14 @@
  * - **Bomb** — ranged periodic enemy-bullet clear (no enemy damage); a
  *   field pickup is a single explosion, a hold-full reward pulses
  * - **Phase Shift** — charge-based automatic pass-through (parent
- *   AH-0MUIYX1EE008FVS8): collecting stores one auto-activation; the shared
- *   danger feed triggers a 1.5 s pass-through when 3+ hostile bodies/bullets
- *   close within 40 px; the hold-full reward makes activations unlimited.
- * - **Teleport** — stored stacks (FIFO), S/↓ to teleport to nearest safe spot, grants a 1.5 s Phase Shift on arrival
+ *   AH-0MUIYX1EE008FVS8): collecting grants level-derived auto-activation
+ *   charges into a **finite recharging pool** (cap 3, level-derived recharge
+ *   time); the shared danger feed triggers a 1.5 s pass-through when 3+
+ *   hostile bodies/bullets close within 40 px; the hold-full reward adds
+ *   exactly one charge to that pool — it is never an unlimited supply
+ *   (AH-0MV82I7TX0009JMT).
+ * - **Teleport** — stored stacks (FIFO) in a **finite recharging pool** (cap 3,
+ *   level-derived recharge time), S/↓ to teleport to nearest safe spot, grants a 1.5 s Phase Shift on arrival
  * - **Smart Bomb** — Defender-inspired stored screen-wide pulse: a field
  *   pickup fires one screen-clearing blast (damages every enemy once and
  *   clears every enemy bullet); a hold-full reward makes the pulse repeat on
@@ -133,14 +137,14 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'phase_shift',
     name: 'Phase Shift',
     description:
-      'Stores one automatic phase; triggers a 1.5 s pass-through when 3+ threats close within 40 px. The hold-full reward makes it unlimited.',
+      'Stores auto-activation charges (up to 3, recharging); triggers a 1.5 s pass-through when 3+ threats close within 40 px. The hold-full reward adds one charge to the pool.',
     // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
     duration: 1.5,
   },
   teleport: {
     id: 'teleport',
     name: 'Teleport',
-    description: 'Stores a use; press S or ↓ to warp to the nearest safe spot and gain a 1.5 s Phase Shift on arrival.',
+    description: 'Stores a use (up to 3, recharging); press S or ↓ to warp to the nearest safe spot and gain a 1.5 s Phase Shift on arrival.',
   },
   extra_life: {
     id: 'extra_life',

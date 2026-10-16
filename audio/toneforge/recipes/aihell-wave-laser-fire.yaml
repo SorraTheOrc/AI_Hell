@@ -1,0 +1,45 @@
+# AI Hell cue: aihell-wave-laser-fire — Player wave laser fire — high-energy beam crack.
+version: "0.1"
+meta:
+  name: aihell-wave-laser-fire
+  description: Player wave laser fire — high-energy beam crack, rising 1200 to 600 Hz square wave with a brief sustain.
+  category: AIHell
+  tags:
+    - weapon
+    - fire
+  duration: 0.1
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 1200
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1200
+        - kind: exponentialRamp
+          time: 0.08
+          value: 600
+  e0:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.075
+      sustain: 0.3
+      release: 0.02
+  g0:
+    kind: gain
+    params:
+      gain: 0.18
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

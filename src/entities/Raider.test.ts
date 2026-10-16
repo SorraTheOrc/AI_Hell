@@ -232,3 +232,67 @@ describe('Raider entity', () => {
     r.destroy(true);
   });
 });
+
+// ── Raider aimed-shot projectile identity (AH-0MV822EH800780GI) ─────
+
+describe('Raider — aimed-shot projectile identity (AH-0MV822EH800780GI)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function scene(): Promise<Phaser.Scene> {
+    booted = await bootScene([Harness]);
+    return booted.scene;
+  }
+
+  it('fires slim sharp-nosed darts with the shared identity: one launch pop + nose-first rotation', async () => {
+    const s = await scene();
+    const r = new Raider(s, {
+      x: 100,
+      y: 300,
+      formationOffset: OFFSET,
+      patrolSpeed: 0,
+      shotProbability: 1,
+      rng: () => 0,
+    });
+    r.setAimTarget(300, 300);
+    r.applyFormationPosition(0, 0, 0.1, 0, 0);
+    expect(r.mode).toBe('attack');
+
+    const graphicsBefore = s.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    r.shootEnabled = true;
+    const t0 = 2_000_000;
+    expect(r.tryFireAimedBullet(t0)).toBeNull(); // tell starts
+    const bullet = r.tryFireAimedBullet(t0 + 600);
+    expect(bullet).not.toBeNull();
+
+    // The shot spawns its dart bullet Graphics **plus** one pale-amber launch
+    // pop at the raider's body — the enemy-side fire VFX for the aimed shot.
+    const graphicsAfter = s.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    expect(graphicsAfter).toBe(graphicsBefore + 1 + 1);
+
+    // The identity dart keeps the established pale-amber bullet colour (the
+    // shared impact pass tints the hit flash with it).
+    expect(bullet!.color).toBe(0xffddaa); // RAIDER_BULLET_COLOR
+
+    // The dart is rotated to fly nose-first toward the pushed aim target
+    // (+x from the raider).
+    const heading = Math.atan2(bullet!.vy, bullet!.vx);
+    let rotation = bullet!.graphics.rotation;
+    let expected = heading;
+    if (rotation - expected > Math.PI) rotation -= Math.PI * 2;
+    if (rotation - expected < -Math.PI) rotation += Math.PI * 2;
+    expect(rotation).toBeCloseTo(expected, 5);
+    r.destroy(true);
+  });
+});

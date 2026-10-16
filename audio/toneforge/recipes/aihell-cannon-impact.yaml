@@ -1,0 +1,93 @@
+# AI Hell cue: aihell-cannon-impact — Player cannon impact — punchy saw thump 520 to 90 Hz + square click + HP smack.
+version: "0.1"
+meta:
+  name: aihell-cannon-impact
+  description: Player cannon hit — punchy saw impact 520 to 90 Hz with a square click and a short high-pass noise smack.
+  category: AIHell
+  tags:
+    - weapon
+    - hit
+  duration: 0.13
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 520
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 520
+        - kind: exponentialRamp
+          time: 0.12
+          value: 90
+  e0:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.12
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.24
+  v1:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 1500
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1500
+        - kind: exponentialRamp
+          time: 0.03
+          value: 760
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.028
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.12
+  v2:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f2:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 2200
+      Q: 1
+  e2:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.045
+      sustain: 0
+      release: 0
+  g2:
+    kind: gain
+    params:
+      gain: 0.08
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [v2, f2, e2, g2, mix]
+  - from: mix
+    to: out

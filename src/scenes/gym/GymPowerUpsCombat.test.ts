@@ -302,7 +302,7 @@ describe('GymPowerUpsCombat — Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ)', 
     booted = null;
   });
 
-  it('collecting the Smart Bomb destroys every on-screen scout and spares an off-screen scout', async () => {
+  it('collecting the Smart Bomb destroys every scout inside the 200 px radius and spares the rest (AH-0MV8GPGBL009M0D8)', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
@@ -313,32 +313,39 @@ describe('GymPowerUpsCombat — Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ)', 
     scene.advanceDrops(0.5); // grow to full size (collectible)
     scene.tick(1 / 60); // collection queues the pulse
 
-    // Move one scout far off-screen after the collection tick; the pulse
-    // resolves on the next frame's shared player step — before the formation
-    // step — so this scout is provably beyond the 1200 px base radius.
-    scouts[2].setPosition(5000, 5000);
+    // Re-balance (AH-0MV8GPGBL009M0D8): the pulse radius shrinks from the old
+    // screen-wide 1200 px to a 200 px base. Place one scout inside that radius
+    // and the others beyond it — one still on-screen — so the shared step
+    // provably resolves the smaller radius. The pulse resolves on the next
+    // frame's shared player step — before the formation step — so these
+    // positions are what the pulse tests.
+    scouts[0].setPosition(480, 120); // 150 px → inside the radius
+    scouts[1].setPosition(700, 270); // 220 px → beyond (on-screen)
+    scouts[2].setPosition(5000, 5000); // far off-screen
     scene.tick(1 / 60); // the shared smart-bomb step resolves the pulse
 
     expect(scouts[0].alive).toBe(false);
-    expect(scouts[1].alive).toBe(false);
+    expect(scouts[1].alive).toBe(true);
     expect(scouts[2].alive).toBe(true);
   });
 
-  it('collecting the Smart Bomb clears every on-screen enemy bullet', async () => {
+  it('collecting the Smart Bomb clears every bullet inside the 200 px radius and keeps the rest (AH-0MV8GPGBL009M0D8)', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    scene.spawnEnemyBullet(530, 270, 0, 0);
-    scene.spawnEnemyBullet(120, 400, 0, 0);
-    expect(scene.getEnemyBullets().length).toBeGreaterThanOrEqual(2);
+    scene.spawnEnemyBullet(530, 270, 0, 0); // 50 px → cleared
+    scene.spawnEnemyBullet(400, 220, 0, 0); // ≈ 94 px → cleared
+    scene.spawnEnemyBullet(700, 350, 0, 0); // ≈ 234 px → beyond the 200 px radius
+    expect(scene.getEnemyBullets().length).toBeGreaterThanOrEqual(3);
 
     scene.spawnDrop('smart_bomb', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60); // collection queues the pulse
     scene.tick(1 / 60); // the shared smart-bomb step resolves it
 
-    expect(scene.getEnemyBullets()).toHaveLength(0);
+    // Only the beyond-radius bullet survives the shrunken pulse.
+    expect(scene.getEnemyBullets()).toHaveLength(1);
   });
 
   it('a Smart Bomb field pickup is a one-shot and leaves no permanent HUD row', async () => {

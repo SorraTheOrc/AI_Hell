@@ -99,6 +99,14 @@ export interface GameRules {
    */
   mineralRedropBonusMax: number;
   /**
+   * Probability that a fully destroyed **small** asteroid additionally drops
+   * an Extra Life power-up (default 0.05). Large/medium asteroids split
+   * instead and never roll it; non-asteroid enemies are unaffected. This roll
+   * is additive to the generic per-kill drop pool and the mineral kill-drop
+   * rule (AH-0MV6M2M9P0078N4S). Clamped to `[0, 1]` by {@link loadRules}.
+   */
+  asteroidExtraLifeDropChance: number;
+  /**
    * Opt-in switch for runtime-generated waves (AH-0MUH6LEYY0054E63).
    * When `true`, `PlayScene` builds the campaign from the difficulty-curve
    * config via the auto-sequencer; when `false` (the default) the static
@@ -233,6 +241,14 @@ export const DEFAULT_MINERAL_REDROP_BONUS_MIN = 0.25;
 export const DEFAULT_MINERAL_REDROP_BONUS_MAX = 1.25;
 
 /**
+ * Default chance (5 %) that a fully destroyed small asteroid additionally
+ * drops an Extra Life power-up (AH-0MV6M2M9P0078N4S). Deliberately small so
+ * clearing the asteroid field offers a recovery opportunity without grinding
+ * runs to the 5-life cap; additive to the generic per-kill drop pool.
+ */
+export const DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE = 0.05;
+
+/**
  * Default for the sequenced-waves toggle — **on** (AH-0MUJSUTLA006Q8E1). The
  * shipped campaign is generated from `src/data/difficulty-curves.csv` (a
  * mixed `fixed`/`curve`/`dynamic` programme) unless a designer opts out by
@@ -285,6 +301,7 @@ export const DEFAULT_RULES: GameRules = {
   mineralHoldGrowthMultiplier: DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
   mineralRedropBonusMin: DEFAULT_MINERAL_REDROP_BONUS_MIN,
   mineralRedropBonusMax: DEFAULT_MINERAL_REDROP_BONUS_MAX,
+  asteroidExtraLifeDropChance: DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
   sequencedWavesEnabled: DEFAULT_SEQUENCED_WAVES_ENABLED,
 };
 
@@ -345,6 +362,7 @@ function cloneDefaultRules(): GameRules {
     mineralHoldGrowthMultiplier: DEFAULT_RULES.mineralHoldGrowthMultiplier,
     mineralRedropBonusMin: DEFAULT_RULES.mineralRedropBonusMin,
     mineralRedropBonusMax: DEFAULT_RULES.mineralRedropBonusMax,
+    asteroidExtraLifeDropChance: DEFAULT_RULES.asteroidExtraLifeDropChance,
     sequencedWavesEnabled: DEFAULT_RULES.sequencedWavesEnabled,
   };
 }
@@ -378,6 +396,17 @@ function coerceNonNegativeNumber(value: unknown, fallback: number): number {
  */
 function coerceBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
+}
+
+/**
+ * Coerces a stored value to a probability in `[0, 1]`, falling back to
+ * `fallback` when the value is not a finite number. Values outside the range
+ * are clamped so a corrupt blob can never make a drop impossible or
+ * always-true (AH-0MV6M2M9P0078N4S).
+ */
+function coerceChance(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(1, Math.max(0, value));
 }
 
 /**
@@ -552,6 +581,10 @@ export function loadRules(): GameRules {
             parsed.mineralRedropBonusMax,
             DEFAULT_MINERAL_REDROP_BONUS_MAX,
           ),
+      asteroidExtraLifeDropChance: coerceChance(
+        parsed.asteroidExtraLifeDropChance,
+        DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
+      ),
       sequencedWavesEnabled: coerceBoolean(
         parsed.sequencedWavesEnabled,
         DEFAULT_SEQUENCED_WAVES_ENABLED,

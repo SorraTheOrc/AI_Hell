@@ -98,6 +98,18 @@ function isDev(): boolean {
   return import.meta.env.DEV === true;
 }
 
+/**
+ * True when running under Vite's SSR module loader (the Node shell in
+ * `scripts/evaluate.mjs`, or vitest's node environment). In a real SSR run a
+ * relative `/api/csv/...` fetch cannot resolve, so the boot loader falls
+ * back to the CSVs bundled at build time (AH-0MV81YPBG0028WNM AC5); vitest
+ * itself keeps the dev-fetch/default behaviour via the `MODE === 'test'`
+ * guard in {@link loadConfigs}.
+ */
+function isSsr(): boolean {
+  return import.meta.env.SSR === true;
+}
+
 // ── Default difficulty curve (AH-0MUITRZZE000OYQE) ──────────────────
 
 /** Round to two decimal places for stable, comparable curve values. */
@@ -445,6 +457,23 @@ export async function loadConfigs(): Promise<void> {
       ]);
       populateFromCsv(enemyCsv, shipCsv);
     } catch {
+      // The dev-plugin endpoints need a browser origin. Under Vite SSR
+      // outside the vitest harness (e.g. `scripts/evaluate.mjs`, MODE
+      // `development`) a relative `/api/csv/...` fetch cannot resolve at all,
+      // so read the CSVs bundled at build time instead — the same content the
+      // production/static path uses (AH-0MV81YPBG0028WNM AC5). Browser dev
+      // sessions and vitest tests keep the built-in default fallback.
+      if (isSsr() && import.meta.env.MODE !== 'test') {
+        try {
+          const bundled = await import('./bundledConfig');
+          populateFromCsv(bundled.bundledEnemyCsv, bundled.bundledShipCsv);
+          populateDifficultyFromCsv(bundled.bundledDifficultyCurvesCsv);
+          return;
+        } catch {
+          populateFromDefaults();
+          return;
+        }
+      }
       populateFromDefaults();
     }
 

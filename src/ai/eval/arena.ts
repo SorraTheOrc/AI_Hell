@@ -17,6 +17,18 @@
  * config therefore produce byte-identical records. The run header's
  * `startedAt` is fixed at `0` for the same reason.
  *
+ * ## Config-driven (AC1, AH-0MV81YPBG0028WNM)
+ *
+ * The arena consumes a resolved balance config ({@link ArenaBalanceConfig})
+ * built through the shared config loaders — enemy archetypes, ship stats and
+ * the difficulty curve — instead of hardcoding `['scout','diver','phaser']`,
+ * a fixed fire cadence and a fixed ship config. Each hostile derives its
+ * radius, hit points, fire cadence, bullet speed and shot probability from
+ * its archetype's `EnemyConfig`; the ship physics come from `ShipConfig`;
+ * and the difficulty curve's opening level sets how many hostile waves the
+ * spawn reservoir holds. A CSV edit therefore measurably changes simulated
+ * outcomes for the same seed.
+ *
  * ## Fidelity boundary
  *
  * This is a *closed-loop headless arena*, not Phaser. It models the parts the
@@ -31,6 +43,8 @@
 
 import { createSeededRng } from '../../core/rng';
 import { MAX_LIVES } from '../../core/GameState';
+import { loadBalanceConfig } from './balanceConfig';
+import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
 import { AsteroidsModel } from '../../utils/movementModel';
 import type {
   AsteroidsConfig,
@@ -59,16 +73,6 @@ const DEFAULT_DT = 1 / 60;
 const DEFAULT_WIDTH = 960;
 const DEFAULT_HEIGHT = 540;
 
-/** Ship physics matching the shipped `src/core/configDefaults.ts`. */
-const SHIP_CONFIG: AsteroidsConfig = {
-  thrust: 300,
-  maxSpeed: 175,
-  friction: 100,
-  rotationSpeed: 3,
-  rotationAcceleration: 12,
-  rotationDeceleration: 60,
-};
-
 /** Player collision/life model. */
 const PLAYER_HIT_RADIUS = 14;
 const PLAYER_START_LIVES = 3;
@@ -76,20 +80,28 @@ const PLAYER_START_LIVES = 3;
 const INVULNERABLE_TICKS = 90;
 /** Distance at which a collectable is scooped up (matches the bot tunable). */
 const COLLECT_RADIUS = 18;
-/** Hostile body-collision radius. */
-const HOSTILE_RADIUS = 16;
 /** Auto-fire cadence and projectile speed. */
 const FIRE_INTERVAL_TICKS = 9;
 const PLAYER_BULLET_SPEED = 420;
-/** Enemy fire cadence and projectile speed. */
-const ENEMY_FIRE_INTERVAL_TICKS = 80;
-const ENEMY_FIRE_WARMUP_TICKS = 40;
-const ENEMY_BULLET_SPEED = 200;
 /** Ticks between replenishing the collectable/hostile reservoirs. */
 const COLLECTABLE_RESPAWN_TICKS = 150;
 const HOSTILE_RESPAWN_TICKS = 240;
 /** Bullets are retired once this far outside the playfield. */
 const BULLET_MARGIN = 32;
+/**
+ * Ticks a freshly spawned hostile waits before its first volley (arena
+ * tuning — a small grace period so the opening is not instantly lethal).
+ */
+const HOSTILE_FIRE_WARMUP_TICKS = 40;
+/** Hostile "waves" in the reservoir when the difficulty curve is empty. */
+const DEFAULT_HOSTILE_WAVES = 2;
+/**
+ * Defensive fallbacks when a resolved enemy config is absent or carries a
+ * degenerate value (should not happen: the store coerces sane values).
+ */
+const FALLBACK_HOSTILE_RADIUS = 16;
+const FALLBACK_FIRE_INTERVAL_MS = 1200;
+const FALLBACK_ENEMY_BULLET_SPEED = 200;
 
 const asteroidModel = new AsteroidsModel();
 
@@ -105,8 +117,18 @@ interface Hostile {
   alive: boolean;
   archetype: string;
   isAsteroid: boolean;
+  /** Body-collision radius in px, from the archetype's config `size`. */
+  radius: number;
+  /** Remaining hit points (config `health`); reaches 0 → destroyed. */
+  health: number;
+  /** Ticks between fire volleys, derived from config `fireInterval` (ms). */
+  fireTicks: number;
   /** Ticks until this hostile next fires; never fires when `isAsteroid`. */
   fireCooldown: number;
+  /** Projectile speed (px/s) from config `bulletSpeed`. */
+  bulletSpeed: number;
+  /** Chance (0..1) of firing per cycle, from config `shotProbability`. */
+  shotProbability: number;
 }
 
 interface Bullet extends Vec {
@@ -155,6 +177,76 @@ function distance(a: Vec, b: Vec): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+/** Clamps a probability into [0, 1]. */
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * Maps the shared CSV-backed {@link ShipConfig} onto the movement model's
+ * {@link AsteroidsConfig} (config-driven arena, AH-0MV81YPBG0028WNM). The
+ * forward-thrust and rotation tunables map 1:1; the Asteroids-scheme reverse
+ * thruster (AH-0MV13LXOR001X15X) is carried through so the governor's
+ * reverse input behaves like the shipped ship.
+ */
+function shipToAsteroidsConfig(ship: ShipConfig): AsteroidsConfig {
+  return {
+    thrust: ship.thrustAcceleration,
+    maxSpeed: ship.maxSpeed,
+    friction: ship.frictionDeceleration,
+    rotationSpeed: ship.asteroidsRotationSpeed,
+    rotationAcceleration: ship.asteroidsRotationAcceleration,
+    rotationDeceleration: ship.asteroidsRotationDeceleration,
+    reverseEnabled: ship.asteroidsReverseEnabled,
+    reverseAcceleration: ship.asteroidsReverseThrustAcceleration,
+    reverseMaxSpeed: ship.asteroidsReverseMaxSpeed,
+  };
+}
+
+/**
+ * The enemy archetypes the arena seeds into its skirmish, from the resolved
+ * balance config — no hardcoded `['scout','diver','phaser']`. Spawner-
+ * delivered archetypes — the asteroid (dedicated offscreen spawner, not
+ * wave-accounted), the grunt homing horde and the harvester — are excluded,
+ * mirroring the auto-sequencer's candidate-pool rationale
+ * (`src/core/difficultySequencer.ts` `defaultCandidatePool`). The order is
+ * the store's sorted key order, so the selection is deterministic per config.
+ */
+function arenaArchetypes(enemies: readonly EnemyConfig[]): string[] {
+  const excluded = new Set(['asteroid', 'grunt', 'harvester']);
+  const keys = enemies.map((enemy) => enemy.key).filter((key) => !excluded.has(key));
+  return keys.length > 0 ? keys : ['scout'];
+}
+
+/**
+ * The number of hostile "waves" the reservoir holds, taken from the opening
+ * level's difficulty-curve row count (each row is one wave of the campaign
+ * skeleton). Falls back to {@link DEFAULT_HOSTILE_WAVES} when the curve is
+ * empty or unreadable, so a missing config keeps the historical two-wave
+ * skirmish. Deterministic: derived from the curve, never the wall clock.
+ */
+function openingHostileWaves(
+  curve: readonly DifficultyCurveRow[],
+  fallback = DEFAULT_HOSTILE_WAVES,
+): number {
+  if (curve.length === 0) return fallback;
+  const openingLevel = curve[0].level;
+  const rows = curve.filter((row) => row.level === openingLevel).length;
+  return Math.max(1, rows);
+}
+
+/** Indexes the resolved enemy configs by key for hostile lookups. */
+function enemiesByKey(enemies: readonly EnemyConfig[]): Map<string, EnemyConfig> {
+  const map = new Map<string, EnemyConfig>();
+  for (const enemy of enemies) map.set(enemy.key, enemy);
+  return map;
+}
+
+/** Ticks between fire volleys for a config fire interval (ms). */
+function fireIntervalTicks(ms: number, dt: number): number {
+  return Math.max(1, Math.round(Math.max(0, ms) / 1000 / dt) || 1);
+}
+
 /**
  * Builds the seed-derived spawn reservoirs. Positions are laid out on a
  * margin inside the playfield so the bot has to travel to reach them.
@@ -164,6 +256,8 @@ function buildSpawnPlan(
   width: number,
   height: number,
   spawns: ArenaSpawns,
+  archetypes: readonly string[],
+  hostileWaves: number,
 ): {
   mineralReservoir: Vec[];
   powerUpReservoir: Vec[];
@@ -180,24 +274,23 @@ function buildSpawnPlan(
   const mineralReservoir = Array.from({ length: spawns.minerals * 3 }, point);
   const powerUpReservoir = Array.from({ length: spawns.powerUps * 3 }, point);
 
-  const archetypes = ['scout', 'diver', 'phaser'];
+  // Config-driven hostile waves (AH-0MV81YPBG0028WNM): the difficulty-curve
+  // opening level's row count sets how many hostile waves the reservoir
+  // holds. The first wave carries the requested enemy/asteroid split; later
+  // waves refill with a mixed composition so a long run stays populated.
   const hostileReservoir: HostileSpec[] = [];
-  for (let i = 0; i < spawns.enemies + spawns.asteroids; i += 1) {
-    const isAsteroid = i >= spawns.enemies;
-    hostileReservoir.push({
-      ...point(),
-      archetype: isAsteroid ? 'asteroid' : archetypes[i % archetypes.length],
-      isAsteroid,
-    });
-  }
-  // A second wave of hostiles so a long run is not defanged after the first.
-  for (let i = 0; i < Math.ceil((spawns.enemies + spawns.asteroids) / 2); i += 1) {
-    const isAsteroid = i % 2 === 0 && spawns.asteroids > 0;
-    hostileReservoir.push({
-      ...point(),
-      archetype: isAsteroid ? 'asteroid' : archetypes[i % archetypes.length],
-      isAsteroid,
-    });
+  const total = spawns.enemies + spawns.asteroids;
+  for (let wave = 0; wave < hostileWaves; wave += 1) {
+    const length = wave === 0 ? total : Math.ceil(total / 2);
+    for (let i = 0; i < length; i += 1) {
+      const isAsteroid =
+        wave === 0 ? i >= spawns.enemies : i % 2 === 0 && spawns.asteroids > 0;
+      hostileReservoir.push({
+        ...point(),
+        archetype: isAsteroid ? 'asteroid' : archetypes[i % archetypes.length],
+        isAsteroid,
+      });
+    }
   }
 
   return { mineralReservoir, powerUpReservoir, hostileReservoir };
@@ -347,12 +440,26 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const sampleEvery = Math.max(1, Math.trunc(positiveOr(config.sampleEveryTicks, 1)));
   const build: EvalBuild = config.build ?? { appVersion: '0.0.0-eval', commit: 'eval' };
   const spawns = resolveSpawns(config.spawns);
+  // Config-driven (AH-0MV81YPBG0028WNM): consume the resolved balance config
+  // (enemy archetypes, ship, difficulty curves) through the shared config
+  // loaders — never a hardcoded copy of enemy/ship/wave stats.
+  const balance = config.balance ?? loadBalanceConfig();
+  const enemyByKey = enemiesByKey(balance.enemies);
+  const archetypes = arenaArchetypes(balance.enemies);
+  const hostileWaves = openingHostileWaves(balance.difficultyCurves);
+  const shipAsteroids = shipToAsteroidsConfig(balance.ship);
   const { mineralReservoir, powerUpReservoir, hostileReservoir } = buildSpawnPlan(
     config.seed,
     width,
     height,
     spawns,
+    archetypes,
+    hostileWaves,
   );
+  // A dedicated seeded stream for the per-cycle shot-probability draws. It is
+  // independent of the reservoir and governor streams, so the closed loop
+  // stays deterministic without perturbing already-drawn scenario positions.
+  const simRng = createSeededRng(config.seed);
 
   const governor = new BotInputGovernor(config.humanInput ?? {});
   governor.seed(config.seed);
@@ -408,6 +515,12 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const spawnHostile = (index: number): void => {
     const spec = hostileReservoir[index];
     if (!spec) return;
+    // Hostile behaviour comes from the archetype's shared EnemyConfig:
+    // radius (size), hit points (health), fire cadence (fireInterval in ms),
+    // projectile speed (bulletSpeed) and fire chance (shotProbability).
+    // Asteroids carry their own config and never fire.
+    const enemy = enemyByKey.get(spec.archetype);
+    const health = Math.max(1, Math.trunc(positiveOr(enemy?.health, 1)));
     world.hostiles.push({
       id: index,
       x: spec.x,
@@ -415,7 +528,15 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       alive: true,
       archetype: spec.archetype,
       isAsteroid: spec.isAsteroid,
-      fireCooldown: ENEMY_FIRE_WARMUP_TICKS + index * 7,
+      radius: positiveOr(enemy?.size, FALLBACK_HOSTILE_RADIUS),
+      health,
+      fireTicks: fireIntervalTicks(
+        enemy ? enemy.fireInterval : FALLBACK_FIRE_INTERVAL_MS,
+        dt,
+      ),
+      fireCooldown: HOSTILE_FIRE_WARMUP_TICKS + index * 7,
+      bulletSpeed: positiveOr(enemy?.bulletSpeed, FALLBACK_ENEMY_BULLET_SPEED),
+      shotProbability: clamp01(enemy?.shotProbability ?? 1),
     });
   };
 
@@ -444,7 +565,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       dt,
       width,
       height,
-      SHIP_CONFIG as BaseMovementConfig,
+      shipAsteroids as BaseMovementConfig,
     ) as unknown as RotatingMovementState;
     world.player = {
       x: moved.x,
@@ -468,20 +589,23 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       });
     }
 
-    // 3. Hostile fire.
+    // 3. Hostile fire (config-driven cadence, speed and shot probability).
     for (const hostile of world.hostiles) {
       if (!hostile.alive || hostile.isAsteroid) continue;
       hostile.fireCooldown -= 1;
       if (hostile.fireCooldown > 0) continue;
-      hostile.fireCooldown = ENEMY_FIRE_INTERVAL_TICKS;
+      hostile.fireCooldown = hostile.fireTicks;
+      // Per-archetype shot probability (config `shotProbability`): the draw
+      // uses the run's seeded stream, so it is reproducible per seed+config.
+      if (!(simRng() < hostile.shotProbability)) continue;
       const dx = world.player.x - hostile.x;
       const dy = world.player.y - hostile.y;
       const length = Math.hypot(dx, dy) || 1;
       world.enemyBullets.push({
         x: hostile.x,
         y: hostile.y,
-        vx: (dx / length) * ENEMY_BULLET_SPEED,
-        vy: (dy / length) * ENEMY_BULLET_SPEED,
+        vx: (dx / length) * hostile.bulletSpeed,
+        vy: (dy / length) * hostile.bulletSpeed,
       });
     }
 
@@ -501,18 +625,24 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       (bullet) => !offField(bullet, width, height),
     );
 
-    // 5. Player bullets vs hostiles.
+    // 5. Player bullets vs hostiles (per-archetype radius and health).
     for (const bullet of world.playerBullets) {
       for (const hostile of world.hostiles) {
         if (!hostile.alive) continue;
-        if (distance(bullet, hostile) > HOSTILE_RADIUS) continue;
+        if (distance(bullet, hostile) > hostile.radius) continue;
+        bullet.x = Number.NaN; // retired below (one bullet never passes through)
+        hostile.health -= 1;
+        if (hostile.health > 0) break; // wounded, but alive
         hostile.alive = false;
-        bullet.x = Number.NaN; // retired below
-        pushEvent(tick, hostile.isAsteroid ? 'asteroid_destroyed' : 'enemy_killed', {
-          x: hostile.x,
-          y: hostile.y,
-          archetype: hostile.archetype,
-        });
+        pushEvent(
+          tick,
+          hostile.isAsteroid ? 'asteroid_destroyed' : 'enemy_killed',
+          {
+            x: hostile.x,
+            y: hostile.y,
+            archetype: hostile.archetype,
+          },
+        );
         break;
       }
     }

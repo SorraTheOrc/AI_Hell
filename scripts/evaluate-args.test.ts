@@ -24,6 +24,9 @@ describe('parseEvaluateArgs', () => {
       outputDir: 'eval-output',
       json: false,
       video: false,
+      batch: false,
+      games: null,
+      policies: null,
       humanFile: null,
     });
   });
@@ -67,6 +70,28 @@ describe('parseEvaluateArgs', () => {
     expect(() => parseEvaluateArgs(['--nope'])).toThrow(/Unknown argument/);
     expect(() => parseEvaluateArgs(['--policy'])).toThrow(/Missing value/);
   });
+
+  it('parses the batch flags (size, policies, output dir)', () => {
+    const options = parseEvaluateArgs([
+      '--batch',
+      '--games',
+      '50',
+      '--policies',
+      'legacy, competent',
+      '--out',
+      'balance-out',
+    ]);
+    expect(options.batch).toBe(true);
+    expect(options.games).toBe(50);
+    expect(options.policies).toEqual(['legacy', 'competent']);
+    expect(options.outputDir).toBe('balance-out');
+  });
+
+  it('parses repeatable --seed into an explicit seeds list even in batch mode', () => {
+    const options = parseEvaluateArgs(['--batch', '--seed', '4', '--seed', '9']);
+    expect(options.batch).toBe(true);
+    expect(options.seeds).toEqual([4, 9]);
+  });
 });
 
 describe('resolveSeeds', () => {
@@ -75,11 +100,27 @@ describe('resolveSeeds', () => {
     expect(resolveSeeds({ seeds: [9, 4] })).toEqual([9, 4]);
     expect(resolveSeeds({ seeds: null })).toEqual([1, 2, 3]);
   });
+
+  it('defaults batch size to 100 games and honours --games', () => {
+    expect(resolveSeeds({ batch: true })).toHaveLength(100);
+    expect(resolveSeeds({ batch: true, games: 12 })).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    // Explicit seeds win over the batch fallback.
+    expect(resolveSeeds({ batch: true, seeds: [5, 6] })).toEqual([5, 6]);
+  });
 });
 
 describe('resolveArtifactPath', () => {
   it('joins with or without a trailing slash', () => {
     expect(resolveArtifactPath('out', 'report.json')).toBe('out/report.json');
     expect(resolveArtifactPath('out/', 'report.json')).toBe('out/report.json');
+  });
+
+  it('places the human balance report under the requested --out (AH-0MV7WVEWL005XEMN)', () => {
+    const options = parseEvaluateArgs(['--human', 'h.jsonl', '--out', 'human-out']);
+    expect(options.humanFile).toBe('h.jsonl');
+    expect(options.outputDir).toBe('human-out');
+    expect(resolveArtifactPath(options.outputDir, 'human-balance-report.json')).toBe(
+      'human-out/human-balance-report.json',
+    );
   });
 });

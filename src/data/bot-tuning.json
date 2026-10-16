@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "current": "Default",
+  "configs": [
+    {
+      "name": "Default",
+      "values": {
+        "competent": {
+          "survivalBase": 11.5,
+          "survivalUrgencyPort": 8,
+          "lifeBase": 9,
+          "mineralBase": 4,
+          "powerUpBase": 4,
+          "enemyBase": 2,
+          "asteroidBase": 1,
+          "repositionBase": 0.1,
+          "prioritySpan": 0.5,
+          "enemyWavePressurePort": 2,
+          "lifeSeekRange": 1275,
+          "mineralSeekRange": 225,
+          "powerUpSeekRange": 850,
+          "enemySeekRange": 800,
+          "asteroidSeekRange": 400,
+          "engagementRange": 140,
+          "collectArrivalRadius": 18,
+          "dangerMargin": 120,
+          "wallMargin": 120,
+          "threatRadius": 85,
+          "longTravelDistance": 360,
+          "repositionRadius": 90,
+          "playerSpeed": 175,
+          "firePredictionHorizon": 0.9,
+          "assumedBulletSpeed": 200,
+          "frictionDeceleration": 25,
+          "survivalUrgencyHorizon": 0.5,
+          "aimLeadAlignSeconds": 0.25,
+          "aimLeadIterations": 5,
+          "reverseImminentOvershootGap": 0,
+          "reverseRetreatRange": 90,
+          "progressWeight": 1,
+          "clearanceWeight": 0.6,
+          "clearanceCap": 80,
+          "commitment.minCommitSeconds": 0.3,
+          "commitment.switchMargin": 0.2,
+          "commitment.challengerPersistenceSeconds": 0.15,
+          "world.horizon": 1.55,
+          "world.threatRadius": 55,
+          "world.assumedBulletSpeed": 200,
+          "reverseBrakeEnabled": true,
+          "aimLeadEnabled": true
+        },
+        "human": {
+          "reactionTimeMs": 250,
+          "alignmentToleranceRad": 0.1,
+          "skill": 1,
+          "maxAimErrorRad": 0.18,
+          "thrustPressMinMs": 565,
+          "thrustPressMaxMs": 750,
+          "thrustPressMaxMsLong": 1305,
+          "thrustPressGentleMinPct": 0.01,
+          "thrustPressGentleMaxPct": 0.09,
+          "reversePressMinMs": 460,
+          "reversePressMaxMs": 1100,
+          "reversePressGentleMinPct": 0.02,
+          "reversePressGentleMaxPct": 0.06,
+          "allowDown": false
+        }
+      }
+    }
+  ]
+}

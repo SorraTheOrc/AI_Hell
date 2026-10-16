@@ -47,6 +47,16 @@ import { Asteroid } from '../../entities/Asteroid';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
+import {
+  CENTIPEDE_SEGMENT_COUNT,
+  CENTIPEDE_SEGMENT_SPACING,
+  CENTIPEDE_ENEMY_KEY,
+} from '../../waves/CentipedeSpawner';
+import type { CentipedeChain } from '../core/centipedeChain';
+import {
+  centipedeFormationConfig,
+  getCentipedeChain,
+} from './core/centipedeFormation';
 
 export const GYM_FODDER_ENEMIES_DEFAULT_KEY = 'scout';
 
@@ -56,6 +66,18 @@ export const GYM_FODDER_ENEMIES_DEFAULT_KEY = 'scout';
  * enemy gym *except* the boss (AH-0MUNR5LM1004B223).
  */
 export const GYM_FODDER_ENEMIES_BOSS_KEY = 'boss';
+
+/**
+ * Dropdown value + archetype key of the Centipede linked-chain enemy type
+ * (AH-0MV4ZOIZR0086T66). The Centipede is a wave opt-in, not a CSV
+ * `EnemyConfig`, so it is surfaced as a dedicated option in the in-panel
+ * enemy selector (alongside the discovered configs) instead of a separate
+ * ENEMIES row on the gym index.
+ */
+export const GYM_FODDER_ENEMIES_CENTIPEDE_KEY = CENTIPEDE_ENEMY_KEY;
+
+/** Display label of the Centipede entry in the enemy selector. */
+export const GYM_FODDER_ENEMIES_CENTIPEDE_LABEL = 'Centipede';
 
 /**
  * Panel DOM ids — stable selectors for tests. The panel is a plain-DOM
@@ -70,6 +92,8 @@ export const ENEMY_SAVE_STATUS_ID = 'enemy-gym-save-status';
 export const ENEMY_SAVE_AS_INPUT_ID = 'enemy-gym-save-as-input';
 /** In-panel enemy-type selector (`<select>`); options are discovery-driven. */
 export const ENEMY_SELECT_ID = 'enemy-gym-select';
+/** Container wrapping the config-tuning controls (hidden for non-config archetypes). */
+export const ENEMY_CONFIG_BODY_ID = 'enemy-gym-config-body';
 export const ENEMY_RESPAWN_ID = 'enemy-gym-respawn';
 export const ENEMY_TOGGLE_PLAYER_ID = 'enemy-gym-toggle-player';
 /** Live 0–100 archetype difficulty readout (AH-0MTZWZ7MC002B01K, AC5). */
@@ -234,10 +258,44 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
   };
 }
 
+/**
+ * Synthetic in-memory `EnemyConfig` describing the Centipede chain for the
+ * panel/accessor surface. The Centipede is a wave opt-in, not a CSV config, so
+ * this is never persisted (the config-tuning controls are hidden while it is
+ * the active archetype) — it exists only so the difficulty readout and
+ * `currentConfig` stay coherent.
+ */
+function centipedePanelConfig(): EnemyConfig {
+  const base = loadEnemyConfig(GYM_FODDER_ENEMIES_DEFAULT_KEY);
+  const startX = GAME_WIDTH / 2;
+  const startY = CENTIPEDE_SEGMENT_COUNT * CENTIPEDE_SEGMENT_SPACING;
+  return {
+    ...base,
+    key: GYM_FODDER_ENEMIES_CENTIPEDE_KEY,
+    displayName: GYM_FODDER_ENEMIES_CENTIPEDE_LABEL,
+    formationKind: 'single',
+    count: CENTIPEDE_SEGMENT_COUNT,
+    spacingX: 0,
+    spacingY: 0,
+    driftSpeed: 0,
+    startX,
+    startY,
+    startXMin: startX,
+    startXMax: startX,
+    startYMin: startY,
+    startYMax: startY,
+    shotPattern: 'none',
+    movementClass: 'roamer',
+    attackClass: 'contact',
+  };
+}
+
 export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEnemiesBullet> {
   private pendingKey: string = GYM_FODDER_ENEMIES_DEFAULT_KEY;
   private activeConfig: EnemyConfig = loadEnemyConfig(GYM_FODDER_ENEMIES_DEFAULT_KEY);
   private panel: HTMLDivElement | null = null;
+  /** Config-tuning controls container; hidden while a non-config archetype runs. */
+  private _configBody: HTMLDivElement | null = null;
   private _playerEnabled = true;
 
   constructor() {
@@ -247,9 +305,16 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
   init(data?: { enemyKey?: string }): void {
     const key = data?.enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
     this.pendingKey = key;
-    this.activeConfig = loadEnemyConfig(key);
-    const next = enemyConfigToFormationConfig(key);
-    this.config = next;
+    if (key === GYM_FODDER_ENEMIES_CENTIPEDE_KEY) {
+      // The Centipede is a chain archetype (wave opt-in), not a CSV config:
+      // boot the shared centipede formation the game and GymCentipede run.
+      this.activeConfig = centipedePanelConfig();
+      this.config = centipedeFormationConfig('GymFodderEnemies');
+    } else {
+      this.activeConfig = loadEnemyConfig(key);
+      const next = enemyConfigToFormationConfig(key);
+      this.config = next;
+    }
     this._resolveFormationBase();
   }
 
@@ -257,9 +322,13 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     super.create();
     this._buildPanel();
     this._applyPanelValues(this.activeConfig);
+    // Non-config archetypes (the Centipede chain) hide the config-tuning
+    // controls — there is no CSV row to tune or save.
+    this._setConfigBodyVisible(this.pendingKey !== GYM_FODDER_ENEMIES_CENTIPEDE_KEY);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.panel?.remove();
       this.panel = null;
+      this._configBody = null;
     });
   }
 
@@ -288,29 +357,36 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     panel.appendChild(difficultyRow);
 
     // Enemy-type selector (AH-0MV13G5EV008D41E): one option per non-boss
-    // `EnemyConfig`, resolved from the config store so seed and Save As
-    // entries both appear with no hard-coded key list. Choosing an option
+    // `EnemyConfig` (resolved from the config store so seed and Save As
+    // entries both appear with no hard-coded key list) plus the dedicated
+    // Centipede linked-chain option (AH-0MV4ZOIZR0086T66). Choosing an option
     // rebuilds the scene and resyncs the rest of the panel.
     panel.appendChild(this._enemySelectRow());
 
+    // Everything below tunes a specific `EnemyConfig`; the Centipede chain has
+    // fixed tuning (no CSV row), so these controls are wrapped in one container
+    // that is hidden while the centipede is the active archetype.
+    const configBody = document.createElement('div');
+    configBody.id = ENEMY_CONFIG_BODY_ID;
+
     // Numeric sliders.
     for (const [field, range] of Object.entries(ENEMY_SLIDER_RANGES)) {
-      panel.appendChild(this._sliderRow(field, range));
+      configBody.appendChild(this._sliderRow(field, range));
     }
 
     // Colour inputs.
     for (const field of VISUAL_COLOR_FIELDS) {
-      panel.appendChild(this._colorRow(field));
+      configBody.appendChild(this._colorRow(field));
     }
 
     // Formation / shot enums as selects.
-    panel.appendChild(this._selectRow('formationKind', [...FORMATION_KINDS]));
-    panel.appendChild(this._selectRow('shotPattern', [...SHOT_PATTERNS]));
+    configBody.appendChild(this._selectRow('formationKind', [...FORMATION_KINDS]));
+    configBody.appendChild(this._selectRow('shotPattern', [...SHOT_PATTERNS]));
 
     // Behavioural classification selects (AH-0MV29NWI1007NKN7): persisted
     // through the same CSV save path as every other control.
-    panel.appendChild(this._selectRow('movementClass', [...MOVEMENT_CLASSES]));
-    panel.appendChild(this._selectRow('attackClass', [...ATTACK_CLASSES]));
+    configBody.appendChild(this._selectRow('movementClass', [...MOVEMENT_CLASSES]));
+    configBody.appendChild(this._selectRow('attackClass', [...ATTACK_CLASSES]));
 
     // Respawn + Player toggle row (controls that affect the live scene, not persistence).
     const utilRow = document.createElement('div');
@@ -330,14 +406,14 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     togglePlayer.addEventListener('click', () => this._onTogglePlayer());
 
     utilRow.append(respawn, togglePlayer);
-    panel.appendChild(utilRow);
+    configBody.appendChild(utilRow);
 
     // Live spawn-interval control (power-up cadence, live-tunable).
     const spawnControl = buildSpawnIntervalSlider((seconds) => {
       this.setPowerUpSpawnInterval(seconds);
       applyAndPersistSpawnInterval(seconds);
     });
-    panel.appendChild(spawnControl.row);
+    configBody.appendChild(spawnControl.row);
 
     // Save / Save As row.
     const actions = document.createElement('div');
@@ -365,7 +441,10 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     status.id = ENEMY_SAVE_STATUS_ID;
 
     actions.append(save, saveAsInput, saveAs, status);
-    panel.appendChild(actions);
+    configBody.appendChild(actions);
+
+    panel.appendChild(configBody);
+    this._configBody = configBody;
 
     // Wrap the controls in a collapsible body + header (AH-0MUDYFMUX007Q0W3).
     makeCollapsible({ panel, title: 'AI Config' });
@@ -429,9 +508,10 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
   /**
    * The enemy-type selector row (AH-0MV13G5EV008D41E). Options are the
    * non-boss `EnemyConfig` keys discovered from the config store (seed +
-   * Save As), labelled by `displayName` and sorted alphabetically; the
-   * scene's active key is preselected. The `boss` archetype is deliberately
-   * excluded — it has its own dedicated gym entry.
+   * Save As), labelled by `displayName`, plus the dedicated Centipede
+   * linked-chain option (AH-0MV4ZOIZR0086T66); the whole roster is sorted
+   * alphabetically and the scene's active key is preselected. The `boss`
+   * archetype is deliberately excluded — it has its own dedicated gym entry.
    */
   private _enemySelectRow(): HTMLElement {
     const row = document.createElement('label');
@@ -442,16 +522,39 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     const select = document.createElement('select');
     select.id = ENEMY_SELECT_ID;
     select.setAttribute('aria-label', 'Enemy type');
-    for (const cfg of this._selectableEnemyConfigs()) {
+    for (const option of this._selectableEnemyOptions()) {
       const o = document.createElement('option');
-      o.value = cfg.key;
-      o.textContent = cfg.displayName;
+      o.value = option.value;
+      o.textContent = option.label;
       select.appendChild(o);
     }
     select.value = this.pendingKey;
     select.addEventListener('change', () => this._onEnemySelect());
     row.append(label, select);
     return row;
+  }
+
+  /**
+   * Every option offered by the enemy selector: the non-boss `EnemyConfig`
+   * keys (discovery-driven, so a Save As entry appears on the next boot) plus
+   * the dedicated Centipede linked-chain archetype, which is a wave opt-in
+   * rather than a CSV config. Sorted alphabetically by label so the selector
+   * reads as one coherent roster.
+   */
+  private _selectableEnemyOptions(): { value: string; label: string }[] {
+    const configs = this._selectableEnemyConfigs().map((cfg) => ({
+      value: cfg.key,
+      label: cfg.displayName,
+    }));
+    return [
+      ...configs,
+      {
+        value: GYM_FODDER_ENEMIES_CENTIPEDE_KEY,
+        label: GYM_FODDER_ENEMIES_CENTIPEDE_LABEL,
+      },
+    ].sort(
+      (a, b) => a.label.localeCompare(b.label) || a.value.localeCompare(b.value),
+    );
   }
 
   /**
@@ -635,7 +738,10 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
    * Rebuilds the scene for `key` through the shared clean-slate seam:
    *
    * 1. load the selected `EnemyConfig` and rebuild the formation config
-   *    (entity factory, bullet dispatch, formation builder, timeout);
+   *    (entity factory, bullet dispatch, formation builder, timeout) — or,
+   *    for the Centipede option, swap to the shared linked-chain formation
+   *    (the same code `GymCentipede`/`PlayScene` run) and hide the
+   *    config-tuning controls (its tuning is fixed, there is no CSV row);
    * 2. destroy every live formation entity and the player's in-flight
    *    bullets via `respawnFormation()` (the same path the Respawn button
    *    uses — no forked destroy/spawn logic);
@@ -644,13 +750,32 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
    */
   private _selectEnemy(key: string): void {
     this.pendingKey = key;
-    this.activeConfig = loadEnemyConfig(key);
-    this.config = enemyConfigToFormationConfig(key);
 
     // A selection change is a clean slate for the player's shots too (the
     // shared respawn seam deliberately keeps them).
     for (const pb of this.playerBullets) pb.destroy();
     this.playerBullets = [];
+
+    if (key === GYM_FODDER_ENEMIES_CENTIPEDE_KEY) {
+      // Centipede is a wave opt-in / linked chain, not a CSV config: the
+      // whole formation config is the shared centipede one and the
+      // config-tuning controls are hidden.
+      this.activeConfig = centipedePanelConfig();
+      this.config = centipedeFormationConfig('GymFodderEnemies');
+      this._setConfigBodyVisible(false);
+      // Shared formation-respawn seam — destroys the old formation and spawns
+      // the newly selected one (a fresh chain) at the initial geometry.
+      this.respawnFormation();
+      const centipedeSelect = this.panel?.querySelector<HTMLSelectElement>(
+        `#${ENEMY_SELECT_ID}`,
+      );
+      if (centipedeSelect) centipedeSelect.value = this.activeConfig.key || key;
+      return;
+    }
+
+    this.activeConfig = loadEnemyConfig(key);
+    this.config = enemyConfigToFormationConfig(key);
+    this._setConfigBodyVisible(true);
 
     // Shared formation-respawn seam — destroys the old formation and spawns
     // the newly selected one at the initial geometry.
@@ -660,6 +785,15 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     this._applyPanelValues(this.activeConfig);
     const select = this.panel?.querySelector<HTMLSelectElement>(`#${ENEMY_SELECT_ID}`);
     if (select) select.value = this.activeConfig.key || key;
+  }
+
+  /**
+   * Shows/hides the config-tuning controls. They only apply to CSV
+   * `EnemyConfig` archetypes, so they are hidden while the Centipede chain
+   * (a fixed, non-config archetype) is active.
+   */
+  private _setConfigBodyVisible(visible: boolean): void {
+    if (this._configBody) this._configBody.style.display = visible ? '' : 'none';
   }
 
   private _onRespawn(): void {
@@ -785,6 +919,14 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
 
   get activeEnemyKey(): string {
     return this.pendingKey;
+  }
+
+  /**
+   * The shared `CentipedeChain` backing the scene when the Centipede
+   * archetype is active (the same chain the game and `GymCentipede` run).
+   */
+  get centipedeChain(): CentipedeChain | undefined {
+    return getCentipedeChain(this);
   }
 
   get currentConfig(): EnemyConfig {

@@ -16,6 +16,12 @@ import { LEVELS, LEVEL_COUNT } from './Formations';
 import type { WaveDefinition } from './Formations';
 import { WaveManager } from './WaveManager';
 import { defaultCandidatePool, sequencer } from '../core/difficultySequencer';
+import {
+  OPENING_MOVEMENT_CLASSES,
+  OPENING_WAVE_POSITIONS,
+  checkOpeningPurity,
+  classifyWaveGroups,
+} from '../core/waveBalance';
 import { FACTOR_RANGES, FACTOR_WEIGHTS } from '../core/enemyDifficulty';
 import { DEFAULT_ENEMY_CONFIGS } from '../core/configDefaults';
 import type {
@@ -785,6 +791,15 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     // (`tank`/`diver`) instead of `phaserx12+phaserx12+bossx1`. The wave still
     // tracks its seed-jittered target within the sequencer's tolerance, and
     // the level's aggregate difficulty keeps rising.
+    //
+    // L4–L5 re-recorded for AH-0MV84TKK8008KF98 (F3 balance-rule
+    // enforcement): every generated firing wave must satisfy R2 (no
+    // all-chaser wave) and R3 (bounded ranged mix — at least one effective
+    // contact group). These waves were all-ranged, so the sequencer now
+    // appends a tuned contact group (a `ghost-*` chaser) to each; the
+    // original target-reaching groups and their counts are unchanged. rules
+    // win over exact target match, so the appended group tracks the remaining
+    // gap rather than overshooting the target.
     const composition = (levelNumber: number) =>
       defaultCampaign()
         .find((level) => level.level === levelNumber)!
@@ -795,13 +810,13 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
               .join('+') || 'none',
         );
     expect(composition(4)).toEqual([
-      'scoutx18',
-      'diverx18',
-      'tankx18',
+      'scoutx18+ghost-chasex1',
+      'diverx18+ghost-ambushx1',
+      'tankx18+ghost-flankx1',
     ]);
     expect(composition(5)).toEqual([
-      'phaserx12+scoutx18',
-      'tankx18+tankx18+diverx18',
+      'phaserx12+scoutx18+ghost-chasex1',
+      'tankx18+tankx18+diverx18+ghost-ambushx1',
     ]);
   });
 
@@ -896,8 +911,19 @@ describe('L4–L5 re-calibration after bullet-speed halving (AH-0MUX60S9L0006NJ0
   });
 
   it('AC1 — restores the pre-halving L4 compositions (scout/diver/tank ×18)', () => {
-    const compositions = levelOf(camp(), 4).waves.map(compositionOf);
-    expect(compositions).toEqual(['scoutx18', 'diverx18', 'tankx18']);
+    // The pre-halving target-reaching groups (scout/diver/tank ×18) are
+    // preserved unchanged; F3 (AH-0MV84TKK8008KF98) appends a tuned contact
+    // group to each so the firing wave satisfies R3 (bounded ranged mix) — a
+    // rules-wins-over-target consequence, not a re-calibration.
+    const waves = levelOf(camp(), 4).waves;
+    const targetGroups = waves.map((wave) =>
+      compositionOf({ ...wave, groups: wave.groups.slice(0, 1) }),
+    );
+    expect(targetGroups).toEqual(['scoutx18', 'diverx18', 'tankx18']);
+    // Every L4 wave still carries an effective-contact group for R3.
+    for (const wave of waves) {
+      expect(wave.groups.length).toBeGreaterThanOrEqual(2);
+    }
   });
 
   it('AC2 — the sequencer meets each L4–L5 target within ±1.0 of its difficulty scale', () => {
@@ -1082,6 +1108,115 @@ describe('Dynamic varied opening (AH-0MUOCJM0N000RW2B)', () => {
         .filter((r) => r.level === 3)
         .map((r) => r.targetDifficulty),
     ).toEqual([11.4, 11.85, 12.3]);
+  });
+});
+
+// ── Classification-driven opening curation (AH-0MV84TQTG004ZKPV) ─────
+
+/**
+ * F4 of the classification epic (parent AH-0MV29XQ0H009P9WP): the opening
+ * waves move from a key-based curated map in `sequencedLevels.ts` to an R1
+ * guard over the shared rule module (`src/core/waveBalance.ts`). The builder
+ * derives the opening candidate pool from R1 (only `movementClass` in
+ * `OPENING_MOVEMENT_CLASSES` may enter), supplies that shared rule to the
+ * sequencer as `ruleConstraints`, and keeps the curated scout/diver/swarm
+ * band as data so the narrow opening target band never degrades. Every
+ * assertion goes through the public `buildSequencedLevels` API (plus an
+ * injected sequencer spy where the rule must be proven at the boundary).
+ */
+describe('Classification-driven opening curation (AH-0MV84TQTG004ZKPV)', () => {
+  /** Seeds used for the R1-compliance and non-degeneracy sweep. */
+  const SEEDS = [0, 1, 2, 3, 7, 42, 100, 255, 777, 999];
+
+  function campaign(seed = 0) {
+    return buildSequencedLevels(defaultDifficultyCurves(), undefined, { seed });
+  }
+
+  /** The four opening waves, in campaign order, for a seed. */
+  function openingWaves(seed = 0) {
+    const levels = campaign(seed);
+    return OPENING_WAVE_POSITIONS.map(
+      ([level, wave]) => levels.find((l) => l.level === level)!.waves[wave - 1],
+    );
+  }
+
+  it('AC1 — derives the opening pool from the shared R1 rule: every opening group is formation/diver', () => {
+    for (const seed of SEEDS) {
+      for (const wave of openingWaves(seed)) {
+        const classified = classifyWaveGroups(wave.groups);
+        // Reuse the shared R1 purity rule (single source of truth) rather
+        // than re-implementing the opening check in the builder test.
+        expect(checkOpeningPurity(classified).pass, `seed ${seed}`).toBe(true);
+        for (const group of classified) {
+          expect(
+            OPENING_MOVEMENT_CLASSES.includes(group.movementClass),
+            `seed ${seed}: '${group.enemyKey}' is ${group.movementClass}`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('AC1/AC5 — supplies the shared R1 movement-class set to the sequencer for generated opening waves only', () => {
+    const spy = vi.fn(sequencer);
+    const rows = [
+      // L1W1 is an opening position (generated `curve` on the default rows).
+      ...levelRows(1, 'Entry', [6]),
+      // L4W1 is generated but not an opening position.
+      ...levelRows(4, 'Firestorm', [20]),
+    ];
+    buildSequencedLevels(rows, undefined, { sequencer: spy });
+
+    const constraints = spy.mock.calls.map(
+      (call) => call[2]?.ruleConstraints?.allowedMovementClasses,
+    );
+    expect(constraints[0]).toEqual(OPENING_MOVEMENT_CLASSES);
+    expect(constraints[1]).toBeUndefined();
+  });
+
+  it('AC4 — fixed opening waves are untouched: never sequenced, never R1-guarded', () => {
+    const spy = vi.fn(sequencer);
+    const rows: DifficultyCurveRow[] = [
+      // Both level-1 waves are opening positions, hand-authored `fixed`.
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 99, generation: 'fixed' },
+      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 99, generation: 'fixed' },
+    ];
+    const levels = buildSequencedLevels(rows, undefined, { sequencer: spy });
+
+    // The whole level is the static definition verbatim; the sequencer never
+    // saw the fixed opening waves.
+    expect(levels.find((level) => level.level === 1)).toBe(LEVELS[0]);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('AC2 — the curated scout/diver/swarm band is retained as data and still narrows the R1 pool', () => {
+    // The default pool contains many formation/diver archetypes (tank, phaser,
+    // march, capturer...), yet openings never widen to them: the curated band
+    // keeps the openings on the light archetypes the retuned campaign pinned.
+    const band = new Set(['scout', 'diver', 'swarm']);
+    for (const seed of SEEDS) {
+      for (const wave of openingWaves(seed)) {
+        for (const group of wave.groups) {
+          expect(
+            band.has(group.enemyKey),
+            `seed ${seed}: opening includes '${group.enemyKey}' outside the curated band`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('AC3 — seeded dynamic reproducibility and playable opening difficulty are unchanged', () => {
+    // The guard must not perturb the seeded builder: same seed → same campaign.
+    expect(campaign(0)).toEqual(campaign(0));
+    // Every opening still tunes to a playable (non-degenerate) composition.
+    for (const seed of SEEDS) {
+      for (const wave of openingWaves(seed)) {
+        const total = wave.groups.reduce((sum, group) => sum + group.count, 0);
+        expect(total, `seed ${seed}`).toBeGreaterThan(1);
+        expect(wave.groups.length).toBeGreaterThan(0);
+      }
+    }
   });
 });
 

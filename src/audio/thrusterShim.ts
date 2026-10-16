@@ -38,9 +38,23 @@
  */
 
 import { beatSubdivisionMs, type BeatClock } from '../utils/beat';
+import type { ThrusterHumProfile } from '../utils/thrusterProfile';
 
 /** Maximum thruster hum gain (≤ 0.2 per GDD §7.3 "all player cues"). */
 export const THRUSTER_HUM_MAX_VOLUME = 0.05;
+/**
+ * Side-thruster gain multiplier: the side profile is **50% quieter** than the
+ * forward profile, so its target gain is `level × THRUSTER_HUM_MAX_VOLUME ×
+ * THRUSTER_HUM_SIDE_VOLUME_SCALE` (AH-0MV78QUIX001EZN2 AC1).
+ */
+export const THRUSTER_HUM_SIDE_VOLUME_SCALE = 0.5;
+/**
+ * Side-thruster pitch multiplier: **one equal-tempered semitone** above the
+ * forward profile (`2^(1/12)` ≈ 1.0595), applied to **both** pitched
+ * oscillators on top of the thrust-dependent `pitchScale`
+ * (AH-0MV78QUIX001EZN2 AC2). The band-pass noise filter is unchanged.
+ */
+export const THRUSTER_HUM_SIDE_PITCH_SCALE = 2 ** (1 / 12);
 /** Base thruster hum frequency — soft triangle hum (GDD §7.3 continuous hum). */
 export const THRUSTER_HUM_BASE_FREQ = 60;
 /** Undertone frequency (sine) — adds body to the low jet rumble. */
@@ -262,13 +276,29 @@ function cannonPulseValue(): number | null {
  * `Player.preUpdate`; 0 silences the hum, > 0 reuses the same nodes and
  * ramps the gain. Safe no-op without an `AudioContext` (never throws);
  * without a registered clock the modulation is skipped (AC4).
+ *
+ * `profile` selects the forward/default voice or the **side** variant
+ * (AH-0MV78QUIX001EZN2): the side profile multiplies the gain target by
+ * {@link THRUSTER_HUM_SIDE_VOLUME_SCALE} (50% quieter) and shifts **both**
+ * pitched oscillators up by {@link THRUSTER_HUM_SIDE_PITCH_SCALE} (one
+ * semitone), composed with the thrust-dependent `pitchScale`. It defaults to
+ * `'forward'` so existing callers (including `CombatCoreScene`'s
+ * `updateThrusterSound(0)`) keep their behaviour. The band-pass noise filter
+ * is identical for both profiles.
  */
-export function updateThrusterHum(level: number): void {
+export function updateThrusterHum(
+  level: number,
+  profile: ThrusterHumProfile = 'forward',
+): void {
   const clamped = clampLevel(level);
+  const volumeScale =
+    profile === 'side' ? THRUSTER_HUM_SIDE_VOLUME_SCALE : 1;
+  const sidePitchScale =
+    profile === 'side' ? THRUSTER_HUM_SIDE_PITCH_SCALE : 1;
   const pulse = cannonPulseValue();
   const amplitudeMod =
     pulse === null ? 1 : 1 - THRUSTER_HUM_AMPLITUDE_MODULATION_DEPTH * (1 - pulse);
-  const targetGain = clamped * THRUSTER_HUM_MAX_VOLUME * amplitudeMod;
+  const targetGain = clamped * THRUSTER_HUM_MAX_VOLUME * volumeScale * amplitudeMod;
 
   const ctx = deps.getContext();
   if (ctx === null) return;
@@ -287,7 +317,7 @@ export function updateThrusterHum(level: number): void {
   const hum = ensureThrusterHum(ctx);
   if (hum === null) return;
 
-  const pitchScale = 1 + clamped * 0.12;
+  const pitchScale = (1 + clamped * 0.12) * sidePitchScale;
   hum.sub.frequency.setValueAtTime(
     THRUSTER_HUM_UNDERTONE_FREQ * pitchScale,
     ctx.currentTime,

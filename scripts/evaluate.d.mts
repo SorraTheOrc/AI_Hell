@@ -16,6 +16,9 @@ export interface ParsedEvaluateArgs {
   outputDir: string;
   json: boolean;
   video: boolean;
+  batch: boolean;
+  games: number | null;
+  policies: string[] | null;
   humanFile: string | null;
   humanSeed: number | null;
   help: boolean;
@@ -24,7 +27,11 @@ export interface ParsedEvaluateArgs {
 export const EVALUATE_USAGE: string;
 
 export function parseEvaluateArgs(argv?: string[]): ParsedEvaluateArgs;
-export function resolveSeeds(options: { seeds: number | number[] | null }): number[];
+export function resolveSeeds(options: {
+  seeds?: number | number[] | null;
+  games?: number | null;
+  batch?: boolean;
+}): number[];
 export function resolveArtifactPath(dir: string, name: string): string;
 export function main(
   argv: string[],

@@ -20,6 +20,12 @@
  * remaining absorptions, Phase Shift phase charges, Teleport teleport uses) are appended to
  * the label as ` ×N` so the value column stays strictly `∞`/countdown.
  *
+ * A charge-based power-up the player **owns** but whose pool is currently
+ * **empty** stays visible as a greyed-out row (icon + label + value all in
+ * the shared grey from `powerups/icons.ts`) instead of being hidden, so the
+ * recharging pool is always legible (AH-0MV82I97Y007MB6M). A power-up the
+ * player has never owned is still hidden.
+ *
  * Contains NO gym-specific imports or logic — it depends only on the
  * engine-agnostic power-up modules (`powerups/effects.ts`, `powerups/types.ts`,
  * `powerups/powerUpLevels.ts`, `powerups/icons.ts`), so any scene can
@@ -34,7 +40,12 @@ import {
 } from '../powerups/effects';
 import { getPowerUpById, type PowerUpId } from '../powerups/types';
 import { POWER_UP_LEVEL_IDS } from '../powerups/powerUpLevels';
-import { drawPowerUpIcon, drawWeaponIcon } from '../powerups/icons';
+import {
+  drawPowerUpIcon,
+  drawWeaponIcon,
+  POWER_UP_GREY_COLOUR,
+  POWER_UP_GREY_COLOUR_CSS,
+} from '../powerups/icons';
 import type { WeaponDropIconId } from '../powerups/icons';
 import { HUD_DEPTH } from '../core/constants';
 
@@ -112,6 +123,13 @@ export interface HUDEntry {
   temporary: boolean;
   /** Consumable count (Shield absorptions, Phase Shift charges, Teleport teleports), if any. */
   stacks?: number;
+  /**
+   * True when the row is rendered inactive (greyed out) because a
+   * charge-based pool the player owns is currently empty
+   * (AH-0MV82I97Y007MB6M). Always `false` for charged rows and for
+   * non-charge rows.
+   */
+  greyed: boolean;
 }
 
 /**
@@ -356,7 +374,14 @@ export class HUD extends Phaser.GameObjects.Container {
     const y = this._rowY(row);
 
     const icon = new Phaser.GameObjects.Graphics(this.scene);
-    drawPowerUpIcon(icon, entry.icon, ICON_X, y + ROW_HEIGHT / 2, 8);
+    drawPowerUpIcon(
+      icon,
+      entry.icon,
+      ICON_X,
+      y + ROW_HEIGHT / 2,
+      8,
+      entry.greyed ? POWER_UP_GREY_COLOUR : undefined,
+    );
 
     const name = new Phaser.GameObjects.Text(
       this.scene,
@@ -373,6 +398,13 @@ export class HUD extends Phaser.GameObjects.Container {
       entry.value,
       TEXT_STYLE,
     );
+
+    // A greyed (owned-but-empty) row paints the icon, label and value with
+    // the one shared grey so they cannot diverge (AH-0MV82I97Y007MB6M).
+    if (entry.greyed) {
+      name.setColor(POWER_UP_GREY_COLOUR_CSS);
+      value.setColor(POWER_UP_GREY_COLOUR_CSS);
+    }
 
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
@@ -401,6 +433,7 @@ export class HUD extends Phaser.GameObjects.Container {
       const remaining = reg.powerUpTemporaryRemaining(id);
       const temporary = remaining !== undefined;
       const stacks = this._powerUpStacks(id);
+      const greyed = this._isPowerUpGreyed(id);
       rows.push({
         id,
         name: entry.name,
@@ -409,6 +442,7 @@ export class HUD extends Phaser.GameObjects.Container {
         value: formatHUDValue(temporary, remaining),
         level,
         temporary,
+        greyed,
         ...(stacks !== undefined ? { stacks } : {}),
       });
     }
@@ -429,10 +463,14 @@ export class HUD extends Phaser.GameObjects.Container {
         return (
           reg.isPhasePermanent() ||
           reg.phaseCharges() > 0 ||
-          reg.isActive('phase_shift')
+          reg.isActive('phase_shift') ||
+          // Owned (permanent or field pickup) but spent: the recharging pool
+          // keeps the row visible (greyed) rather than hiding it
+          // (AH-0MV82I97Y007MB6M).
+          this._ownsChargePool(id)
         );
       case 'teleport':
-        return reg.teleportStacks() > 0;
+        return reg.teleportStacks() > 0 || this._ownsChargePool(id);
       case 'magnet':
         return reg.isMagnetActive();
       case 'mineral_scoop':
@@ -466,13 +504,44 @@ export class HUD extends Phaser.GameObjects.Container {
       case 'shield':
         return reg.shieldAbsorptionsRemaining() || undefined;
       case 'phase_shift':
-        return reg.isPhasePermanent() ? undefined : reg.phaseCharges() || undefined;
+        // The finite recharging pool is surfaced even for the permanent
+        // reward, which is no longer an unlimited supply
+        // (AH-0MV82I97Y007MB6M).
+        return reg.phaseCharges() || undefined;
       case 'teleport':
         return reg.teleportStacks() || undefined;
       case 'force_field':
         return reg.forceFieldRemaining() || undefined;
       default:
         return undefined;
+    }
+  }
+
+  /**
+   * Whether the player **owns** a charge-based pool (`phase_shift` /
+   * `teleport`) this run — permanent grants and field-pickup stacks both
+   * count (`powerUpLevel` is their sum, 0 when never picked up). Used to keep
+   * an owned-but-empty pool visible (greyed) instead of hiding it
+   * (AH-0MV82I97Y007MB6M).
+   */
+  private _ownsChargePool(id: PowerUpId): boolean {
+    return this._registry!.powerUpLevel(id) > 0;
+  }
+
+  /**
+   * Whether a row should render greyed-out/inactive: the player owns the
+   * charge-based pool but has zero available charges/stacks
+   * (AH-0MV82I97Y007MB6M). Non-charge rows are never greyed.
+   */
+  private _isPowerUpGreyed(id: PowerUpId): boolean {
+    const reg = this._registry!;
+    switch (id) {
+      case 'phase_shift':
+        return this._ownsChargePool(id) && reg.phaseCharges() === 0;
+      case 'teleport':
+        return this._ownsChargePool(id) && reg.teleportStacks() === 0;
+      default:
+        return false;
     }
   }
 

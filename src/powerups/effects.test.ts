@@ -582,7 +582,7 @@ describe('P4 Bomb: ranged one-shot pickup / permanent periodic (AH-0MUVM9RAO004Y
 
 // ── Smart Bomb (AH-0MV1BIWP9003EHRQ) ──────────────────────────────
 
-describe('Smart Bomb: screen-wide one-shot pickup / permanent periodic (AH-0MV1BIWP9003EHRQ)', () => {
+describe('Smart Bomb: one-shot pickup / permanent periodic (AH-0MV1BIWP9003EHRQ)', () => {
   it('a field pickup queues exactly one pulse and leaves no permanent state', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
@@ -643,6 +643,40 @@ describe('Smart Bomb: screen-wide one-shot pickup / permanent periodic (AH-0MV1B
     expect(aoe.radius).toBe(
       resolvePowerUpAtLevel('smart_bomb', 0).aoeRadius,
     );
+  });
+
+  // ── Re-balanced schedules (AH-0MV8GPGBL009M0D8) ──
+  //
+  // The parent re-balance shrinks the pulse to `min(400, 200 × (1 + 0.02 ×
+  // level))` px (base 200 = 10× ship size, cap 2× base) and slows the
+  // permanent pulse to `max(10, 30 − 2 × level)` s, resolved through the
+  // shared effect path (smartBombInterval/smartBombAoe).
+  it('pins the re-balanced smart-bomb interval (30 → 10 s) and radius (200 → 400 px) schedules', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    // Level 0 (first grant) — the base schedule.
+    store.collect('smart_bomb');
+    expect(reg.smartBombInterval()).toBeCloseTo(30, 9);
+    expect(reg.smartBombAoe().radius).toBe(200);
+    expect(reg.smartBombAoe().damage).toBe(1);
+
+    // Upgrade level 1 — interval −2 s (28 s), radius +2 % of base (204 px).
+    store.collect('smart_bomb');
+    expect(reg.smartBombInterval()).toBeCloseTo(28, 9);
+    expect(reg.smartBombAoe().radius).toBe(204);
+    expect(reg.smartBombAoe().damage).toBe(2);
+
+    // The interval floors at 10 s from upgrade level 10 (max(10, 30 − 2×level)).
+    while (store.getUpgradeLevel('smart_bomb') < 10) store.collect('smart_bomb');
+    expect(reg.smartBombInterval()).toBeCloseTo(10, 9);
+
+    // The radius clamps at 2× base (400 px) by upgrade level 50 and holds.
+    while (store.getUpgradeLevel('smart_bomb') < 50) store.collect('smart_bomb');
+    expect(reg.smartBombAoe().radius).toBe(400);
+    expect(reg.smartBombInterval()).toBeCloseTo(10, 9);
+    // Damage is unchanged by the re-balance (1 → 3 across levels).
+    expect(reg.smartBombAoe().damage).toBe(3);
   });
 
   it('reset() clears the permanent flag and any pending pulse', () => {
@@ -869,18 +903,30 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
     expect(reg.isPhased).toBe(false);
   });
 
-  it('permanent P6 triggers repeatedly across distinct danger episodes', () => {
-    const reg = new EffectsRegistry();
+  it('permanent P6 is a finite pool: triggers again once its spent charge recharges (AC4)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('phase_shift', true);
     expect(reg.isPhasePermanent()).toBe(true);
 
+    // The hold-full reward adds exactly one charge; the first danger episode
+    // spends it and starts the recharge timer (AH-0MV82I7TX0009JMT AC4).
     expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
     reg.tick(PHASE_DURATION + 0.01);
     expect(reg.isPhased).toBe(false);
+    expect(reg.phaseCharges()).toBe(0);
     reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
 
+    // Danger cleared and re-armed, but the empty pool blocks a new trigger —
+    // the permanent reward is never unlimited.
+    expect(reg.updateDanger(true, 0.016)).toBeNull();
+    reg.updateDanger(false, 0.016); // re-arm again (the failed try latched)
+
+    // Once the spent charge recharges the next episode can trigger again.
+    store.tickRecharge(store.phaseRechargeTime() + 1);
+    expect(reg.phaseCharges()).toBe(1);
     expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
-    expect(reg.phaseCharges()).toBe(0); // permanent never consumes
+    expect(reg.phaseCharges()).toBe(0);
   });
 
   it('does not immediately re-trigger while danger is continuous', () => {
@@ -893,13 +939,17 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
   });
 
   it('re-arms once danger clears and the cooldown elapses, but not before', () => {
-    const reg = new EffectsRegistry();
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
     reg.applyCollect('phase_shift', true);
     reg.updateDanger(true, 0.016);
     reg.tick(PHASE_DURATION + 0.01);
 
     reg.updateDanger(false, 0.1);
     expect(reg.updateDanger(true, 0)).toBeNull(); // blocked by cooldown
+    // The finite pool recharges while danger stays clear (AC4), so the
+    // re-armed episode can trigger once the cooldown elapses.
+    store.tickRecharge(store.phaseRechargeTime() + 1);
     expect(reg.updateDanger(true, PHASE_REARM_COOLDOWN)).toBe('phase_shift');
   });
 
@@ -929,31 +979,34 @@ describe('P6 Phase Shift: charge-based auto-trigger', () => {
 
 // ── Automatic defence selection: Phase Shift vs Teleport ─────────────
 
-describe('selectAutoDefence: charge-count selection (AC2)', () => {
+describe('selectAutoDefence: finite-pool charge-count selection (AC2)', () => {
   it('returns null when neither defence is available', () => {
-    expect(selectAutoDefence(0, false, 0)).toBeNull();
+    expect(selectAutoDefence(0, 0)).toBeNull();
   });
 
   it('returns the only available defence', () => {
-    expect(selectAutoDefence(1, false, 0)).toBe('phase_shift');
-    expect(selectAutoDefence(0, false, 2)).toBe('teleport');
+    expect(selectAutoDefence(1, 0)).toBe('phase_shift');
+    expect(selectAutoDefence(0, 2)).toBe('teleport');
   });
 
   it('spends the ability with the greater available count', () => {
-    expect(selectAutoDefence(1, false, 3)).toBe('teleport');
-    expect(selectAutoDefence(3, false, 1)).toBe('phase_shift');
+    expect(selectAutoDefence(1, 3)).toBe('teleport');
+    expect(selectAutoDefence(3, 1)).toBe('phase_shift');
   });
 
   it('breaks an exact tie with the injected RNG (both outcomes reachable)', () => {
-    expect(selectAutoDefence(2, false, 2, () => 0.0)).toBe('phase_shift');
-    expect(selectAutoDefence(2, false, 2, () => 0.49)).toBe('phase_shift');
-    expect(selectAutoDefence(2, false, 2, () => 0.5)).toBe('teleport');
-    expect(selectAutoDefence(2, false, 2, () => 0.99)).toBe('teleport');
+    expect(selectAutoDefence(2, 2, () => 0.0)).toBe('phase_shift');
+    expect(selectAutoDefence(2, 2, () => 0.49)).toBe('phase_shift');
+    expect(selectAutoDefence(2, 2, () => 0.5)).toBe('teleport');
+    expect(selectAutoDefence(2, 2, () => 0.99)).toBe('teleport');
   });
 
-  it('treats a permanent Phase Shift as unbounded and outranks Teleport', () => {
-    expect(selectAutoDefence(0, true, 5)).toBe('phase_shift');
-    expect(selectAutoDefence(0, true, 0)).toBe('phase_shift');
+  it('never treats a pool as unbounded: an empty phase pool cannot outrank Teleport', () => {
+    // Both pools are finite — an empty phase pool contributes zero available
+    // count, so a stored Teleport is selected (the permanent-Infinity branch
+    // is gone, AH-0MV82I8IL0012RXY AC2).
+    expect(selectAutoDefence(0, 5)).toBe('teleport');
+    expect(selectAutoDefence(0, 0)).toBeNull();
   });
 });
 
@@ -1020,13 +1073,110 @@ describe('updateDanger: automatic Teleport selection (AC1/AC2/AC5)', () => {
     expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
   });
 
-  it('permanent Phase Shift outranks stored Teleports, which are conserved', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('phase_shift', true);
-    reg.applyCollect('teleport');
+  it('a permanent Phase Shift ties Teleport by count (seeded RNG decides)', () => {
+    // The permanent reward is an ownership flag, not an unbounded supply: a
+    // single-charge finite pool exactly ties one stored Teleport, so the
+    // tie-break RNG decides (no permanent-Infinity branch, AC2).
+    const phaseFirst = new EffectsRegistry(undefined, () => 0.0);
+    phaseFirst.applyCollect('phase_shift', true);
+    phaseFirst.applyCollect('teleport');
+    expect(phaseFirst.updateDanger(true, 0.016)).toBe('phase_shift');
+    expect(phaseFirst.teleportStacks()).toBe(1); // Teleport conserved
 
+    const teleportFirst = new EffectsRegistry(undefined, () => 0.99);
+    teleportFirst.applyCollect('phase_shift', true);
+    teleportFirst.applyCollect('teleport');
+    expect(teleportFirst.updateDanger(true, 0.016)).toBe('teleport');
+  });
+
+  it('an empty Phase Shift pool (even a permanent owner) selects Teleport instead', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('phase_shift', true); // permanent owner, 1 charge
     expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
+    reg.tick(PHASE_DURATION + 0.01); // phase expires → re-arm cooldown starts
+    expect(reg.phaseCharges()).toBe(0);
+
+    // Danger clears and the cooldown elapses; the empty phase pool now
+    // contributes zero available count, so a stored Teleport fires (AC3).
+    reg.applyCollect('teleport');
+    reg.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
+    expect(reg.updateDanger(true, 0.016)).toBe('teleport');
+    expect(reg.teleportStacks()).toBe(1); // not consumed here (scene warps)
+  });
+});
+
+describe('shared tick advances the recharge clock (AH-0MV82I8IL0012RXY AC1/AC5)', () => {
+  it('EffectsRegistry.tick(dt) recovers a spent Phase Shift charge through the shared path', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('phase_shift');
+    reg.updateDanger(true, 0.016); // consumes the single charge
+    expect(reg.phaseCharges()).toBe(0);
+
+    // Mid-recharge the pool stays empty...
+    reg.tick(store.phaseRechargeTime() / 2);
+    expect(reg.phaseCharges()).toBe(0);
+
+    // ...and the shared tick completes the timer and returns the charge.
+    reg.tick(store.phaseRechargeTime() / 2 + 1);
+    expect(reg.phaseCharges()).toBe(1);
+  });
+
+  it('EffectsRegistry.tick(dt) recovers a spent Teleport stack through the shared path', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('teleport');
+    reg.consumeTeleport(); // consumes the stack, starts its recharge timer
+    expect(reg.teleportStacks()).toBe(0);
+
+    reg.tick(store.teleportRechargeTime() + 1);
     expect(reg.teleportStacks()).toBe(1);
+  });
+
+  it('the recharge advance is run-scoped: reset() clears it with the store', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('phase_shift');
+    reg.updateDanger(true, 0.016);
+    expect(reg.phaseCharges()).toBe(0);
+
+    reg.reset();
+    reg.tick(store.phaseRechargeTime() + 1);
+    expect(reg.phaseCharges()).toBe(0); // nothing left recharging after reset
+  });
+});
+
+describe('registry HUD recharge accessors (AH-0MV82I8IL0012RXY AC4)', () => {
+  it('phaseRechargeTime()/teleportRechargeTime() delegate to the level store', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    expect(reg.phaseRechargeTime()).toBe(store.phaseRechargeTime());
+    expect(reg.teleportRechargeTime()).toBe(store.teleportRechargeTime());
+  });
+
+  it('recharge times start at the base and shorten as the level rises', () => {
+    const reg = new EffectsRegistry();
+    const basePhase = reg.phaseRechargeTime();
+    const baseTeleport = reg.teleportRechargeTime();
+    expect(basePhase).toBeCloseTo(30, 6);
+    expect(baseTeleport).toBeCloseTo(15, 6);
+
+    reg.applyCollect('phase_shift');
+    reg.applyCollect('phase_shift');
+    reg.applyCollect('teleport');
+    reg.applyCollect('teleport');
+    expect(reg.phaseRechargeTime()).toBeLessThan(basePhase);
+    expect(reg.teleportRechargeTime()).toBeLessThan(baseTeleport);
+  });
+
+  it('the accessors report the recharge clock while a charge is out recharging', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('phase_shift');
+    reg.updateDanger(true, 0.016); // charge consumed → timer running
+    expect(reg.phaseCharges()).toBe(0);
+    expect(reg.phaseRechargeTime()).toBe(store.phaseRechargeTime());
+    expect(reg.phaseRechargeTime()).toBeCloseTo(30, 6);
   });
 });
 
@@ -1060,12 +1210,15 @@ describe('P6 charge display model', () => {
     expect(reg.activeEffects().some((e) => e.id === 'phase_shift')).toBe(true);
   });
 
-  it('surfaces the permanent reward as unlimited (permanent flag)', () => {
+  it('surfaces the permanent reward via the ownership marker, not an unlimited supply', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift', true);
     const p6 = reg.activeEffects().find((e) => e.id === 'phase_shift')!;
     expect(p6).toBeDefined();
     expect(p6.permanent).toBe(true);
+    // The pool is finite and recharges (AH-0MV82I7TX0009JMT): the
+    // permanent reward gates ownership, the finite charge count is read
+    // via phaseCharges() (surfaced by the HUD as ` ×N`), not as stacks here.
     expect(p6.stacks).toBeUndefined();
   });
 

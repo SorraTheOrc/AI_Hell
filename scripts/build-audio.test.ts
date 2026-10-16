@@ -35,6 +35,7 @@ import {
   MANIFEST_PATH,
   REPO_ROOT,
   buildAssets,
+  computeInputFingerprint,
   loadManifest,
   loadPin,
   main,
@@ -169,13 +170,34 @@ function writeStubCli(): string {
   writeFileSync(
     stub,
     [
-      "import { writeFileSync } from 'node:fs';",
+      "import { writeFileSync, appendFileSync } from 'node:fs';",
       "const args = process.argv.slice(2);",
       "const get = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };",
       'writeFileSync(get("--output"), `WAV:${get("--recipe")}:${get("--seed")}`);',
+      "if (process.env.RENDER_LOG) appendFileSync(process.env.RENDER_LOG, get('--recipe') + '\\n');",
     ].join('\n'),
   );
   return stub;
+}
+
+/** Path to the render-invocation log directory used by the stub CLI tests. */
+function renderLogPath(): string {
+  return join(repoRoot, 'render.log');
+}
+
+/** Env that points `TONEFORGE_CLI` at a stub that records every render call. */
+function stubEnv(stub: string): NodeJS.ProcessEnv {
+  return { ...process.env, TONEFORGE_CLI: stub, RENDER_LOG: renderLogPath() };
+}
+
+/** Lines recorded by the stub CLI (one per render) since it first ran. */
+function renderLogLines(): string[] {
+  return readFileSync(renderLogPath(), 'utf8').trim().split('\n').filter(Boolean);
+}
+
+/** The `inputs` fingerprint persisted in the committed checksums.json. */
+function readInputsFingerprint(): string | undefined {
+  return (JSON.parse(readFileSync(checksumsPath(), 'utf8')) as { inputs?: string }).inputs;
 }
 
 beforeEach(() => {
@@ -367,6 +389,266 @@ describe('main', () => {
 
   it('exits non-zero on an unknown argument', () => {
     expect(main(['--nope'], { logger: silentLogger })).toBe(2);
+  });
+});
+
+// ── Input fingerprint (AH-0MV87694J009Z34V) ─────────────────────────
+
+describe('computeInputFingerprint', () => {
+  it('is deterministic for identical inputs', () => {
+    useMinimalManifest();
+    const manifest = loadManifest(manifestJsonPath);
+    const options = { manifest, repoRoot, manifestPath: manifestJsonPath };
+    expect(computeInputFingerprint(options).sha).toBe(computeInputFingerprint(options).sha);
+    expect(computeInputFingerprint(options).parts).toEqual(computeInputFingerprint(options).parts);
+  });
+
+  it('covers the seed block, recipe set and pin (all render inputs)', () => {
+    useMinimalManifest();
+    const manifest = loadManifest(manifestJsonPath);
+    const { sha, parts } = computeInputFingerprint({
+      manifest,
+      repoRoot,
+      manifestPath: manifestJsonPath,
+    });
+    expect(sha).toMatch(/^[0-9a-f]{64}$/);
+    expect(parts.seedBlock).toBe(manifest.seedBlock ?? null);
+    expect(parts.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(parts.pinSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(parts.recipes).toEqual([]);
+  });
+
+  it('changes when the manifest changes', () => {
+    useMinimalManifest();
+    const options = {
+      manifest: loadManifest(manifestJsonPath),
+      repoRoot,
+      manifestPath: manifestJsonPath,
+    };
+    const before = computeInputFingerprint(options).sha;
+    const mutated = JSON.parse(readFileSync(manifestJsonPath, 'utf8'));
+    mutated.cues[0].seeds = [32102];
+    writeFileSync(manifestJsonPath, JSON.stringify(mutated));
+    const after = computeInputFingerprint({
+      manifest: loadManifest(manifestJsonPath),
+      repoRoot,
+      manifestPath: manifestJsonPath,
+    }).sha;
+    expect(after).not.toBe(before);
+  });
+
+  it('changes when a recipe file changes', () => {
+    useMinimalManifest();
+    const recipeDir = join(repoRoot, 'audio', 'toneforge', 'recipes');
+    mkdirSync(recipeDir, { recursive: true });
+    writeFileSync(join(recipeDir, 'aihell-enemy-spawn.yaml'), '# v1\n');
+    const options = {
+      manifest: loadManifest(manifestJsonPath),
+      repoRoot,
+      manifestPath: manifestJsonPath,
+    };
+    const before = computeInputFingerprint(options).sha;
+    writeFileSync(join(recipeDir, 'aihell-enemy-spawn.yaml'), '# v2 — changed recipe\n');
+    const after = computeInputFingerprint({
+      manifest: loadManifest(manifestJsonPath),
+      repoRoot,
+      manifestPath: manifestJsonPath,
+    }).sha;
+    expect(after).not.toBe(before);
+  });
+
+  it('changes when the pin changes', () => {
+    useMinimalManifest();
+    const options = {
+      manifest: loadManifest(manifestJsonPath),
+      repoRoot,
+      manifestPath: manifestJsonPath,
+    };
+    const before = computeInputFingerprint(options).sha;
+    const pin = JSON.parse(readFileSync(pinPathFor(repoRoot), 'utf8'));
+    pin.revision = 'f'.repeat(40);
+    writeFileSync(pinPathFor(repoRoot), JSON.stringify(pin));
+    const after = computeInputFingerprint({
+      manifest: loadManifest(manifestJsonPath),
+      repoRoot,
+      manifestPath: manifestJsonPath,
+    }).sha;
+    expect(after).not.toBe(before);
+  });
+});
+
+// ── Auto-mode verify-first fast path (AH-0MV87694J009Z34V) ──────────
+
+describe('auto-mode fast path', () => {
+  it('verifies without re-rendering when the inputs are unchanged', () => {
+    useMinimalManifest();
+    const env = stubEnv(writeStubCli());
+    expect(
+      main(['--render', '--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    const checksumsBefore = readFileSync(checksumsPath(), 'utf8');
+    const rendersAfterFirstBuild = renderLogLines().length;
+    expect(readInputsFingerprint()).toMatch(/^[0-9a-f]{64}$/);
+
+    const code = main(['--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+      logger: silentLogger,
+      env,
+    });
+    expect(code).toBe(0);
+    // No renderer invocation (fast path), byte-identical artifact set.
+    expect(renderLogLines().length).toBe(rendersAfterFirstBuild);
+    expect(readFileSync(checksumsPath(), 'utf8')).toBe(checksumsBefore);
+    expect(verifyAssets({ manifest: loadManifest(manifestJsonPath), repoRoot }).ok).toBe(true);
+  });
+
+  it('re-renders when a recipe file changes, then fast-paths again', () => {
+    useMinimalManifest();
+    const recipeDir = join(repoRoot, 'audio', 'toneforge', 'recipes');
+    mkdirSync(recipeDir, { recursive: true });
+    writeFileSync(join(recipeDir, 'aihell-enemy-spawn.yaml'), '# v1\n');
+    const env = stubEnv(writeStubCli());
+    expect(
+      main(['--render', '--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    const fingerprintV1 = readInputsFingerprint();
+    const rendersAfterV1 = renderLogLines().length;
+
+    writeFileSync(join(recipeDir, 'aihell-enemy-spawn.yaml'), '# v2 — changed recipe\n');
+    expect(
+      main(['--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    expect(renderLogLines().length).toBeGreaterThan(rendersAfterV1);
+    expect(readInputsFingerprint()).not.toBe(fingerprintV1);
+
+    // The fresh fingerprint matches again, so the next run fast-paths.
+    const rendersAfterV2 = renderLogLines().length;
+    expect(
+      main(['--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    expect(renderLogLines().length).toBe(rendersAfterV2);
+  });
+
+  it('re-renders when the manifest changes and updates the asset set', () => {
+    useMinimalManifest();
+    const env = stubEnv(writeStubCli());
+    expect(
+      main(['--render', '--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    const rendered = readChecksums().assets;
+    expect(rendered['audio/sfx/aihell-enemy-spawn.32101.wav']).toBeTruthy();
+
+    const manifest = JSON.parse(readFileSync(manifestJsonPath, 'utf8')) as {
+      cues: Array<{ recipe: string; seeds: number[] }>;
+    };
+    manifest.cues = manifest.cues.map((cue) =>
+      cue.recipe === 'aihell-enemy-spawn' ? { ...cue, seeds: [32102] } : cue,
+    );
+    writeFileSync(manifestJsonPath, JSON.stringify(manifest, null, 2));
+
+    expect(
+      main(['--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    const assets = readChecksums().assets;
+    expect(assets['audio/sfx/aihell-enemy-spawn.32102.wav']).toBeTruthy();
+    expect(assets['audio/sfx/aihell-enemy-spawn.32101.wav']).toBeUndefined();
+  });
+
+  it('falls through to render when the committed checksums.json has no fingerprint (rollout)', () => {
+    useMinimalManifest();
+    const env = stubEnv(writeStubCli());
+    expect(
+      main(['--render', '--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    const checksums = JSON.parse(readFileSync(checksumsPath(), 'utf8'));
+    delete (checksums as { inputs?: string }).inputs;
+    writeFileSync(checksumsPath(), JSON.stringify(checksums));
+
+    const rendersBefore = renderLogLines().length;
+    expect(
+      main(['--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    expect(renderLogLines().length).toBeGreaterThan(rendersBefore);
+    expect(readInputsFingerprint()).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('fails closed when the inputs are unchanged but a committed asset drifts', () => {
+    useMinimalManifest();
+    const env = stubEnv(writeStubCli());
+    expect(
+      main(['--render', '--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    writeFileSync(assetPath('weapon-laser-zap.1.wav'), 'tampered');
+    expect(
+      main(['--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(1);
+  });
+
+  it('keeps --verify strict and render-free and --render always forced', () => {
+    useMinimalManifest();
+    const env = stubEnv(writeStubCli());
+    expect(
+      main(['--render', '--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    const rendersAfterBuild = renderLogLines().length;
+
+    // --verify never renders and stays strict.
+    expect(
+      main(['--verify', '--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    expect(renderLogLines().length).toBe(rendersAfterBuild);
+    writeFileSync(assetPath('weapon-laser-zap.1.wav'), 'tampered');
+    expect(
+      main(['--verify', '--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(1);
+
+    // --render forces a full render even when the inputs are unchanged.
+    const rendersBeforeForce = renderLogLines().length;
+    expect(
+      main(['--render', '--repo-root', repoRoot, '--manifest', manifestJsonPath], {
+        logger: silentLogger,
+        env,
+      }),
+    ).toBe(0);
+    expect(renderLogLines().length).toBeGreaterThan(rendersBeforeForce);
   });
 });
 

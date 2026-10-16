@@ -1,0 +1,70 @@
+# AI Hell cue: aihell-ricochet-fire — Player ricochet fire — bright green springy ping 1400 to 500 Hz.
+version: "0.1"
+meta:
+  name: aihell-ricochet-fire
+  description: Player ricochet fire — bright springy ping 1400 to 500 Hz with a short metallic tick, the launch cue of the bouncing pellet.
+  category: AIHell
+  tags:
+    - weapon
+    - fire
+  duration: 0.1
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 1400
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1400
+        - kind: exponentialRamp
+          time: 0.09
+          value: 500
+  e0:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.09
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.16
+  v1:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 2600
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 2600
+        - kind: exponentialRamp
+          time: 0.025
+          value: 1300
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.022
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.09
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - from: mix
+    to: out

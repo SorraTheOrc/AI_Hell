@@ -427,6 +427,25 @@ recording/analysis tooling (AH-0MUY08W7Y004GATZ): `npm run record`,
 inspector is the quick, dependency-free first look at any recording, and its
 summary shape is the stable interface the analysis tool builds on.
 
+### Human balance statistics (`npm run record`)
+
+`npm run record` (dev mode only) writes a `balance-stats.json` **next to** the
+`.jsonl` recording: the versioned human `BalanceReport` (`kind: 'balance'`,
+`policy: 'human'`) produced by the shared pure helper `extractHumanBalanceStats`
+([`src/ai/eval/humanStats.ts`](../src/ai/eval/humanStats.ts)). The helper
+splits the recording's `run_header` / `tick` / `event` stream into per-run
+`BalanceRunStats` and one `BalanceAggregate`, **reusing** the
+automated-balancing framework's `extractBalanceStats` / `aggregateBalanceStats`
+— the same schema and code path a bot batch uses, so the human report is
+directly comparable to a bot report. See
+[docs/BALANCING.md](./BALANCING.md#human-play-statistics-policy-human).
+
+Collection exists **only** in the dev tooling (`scripts/record-session.mjs` and
+`scripts/evaluate.mjs --human`, AH-0MV7WVEWL005XEMN AC3); it changes no
+production telemetry/consent configuration and adds no production call site.
+The artifact is PII-free: it holds only schema fields (numeric statistics,
+seeds, archetype/upgrade keys and record hashes).
+
 ## Testing
 
 The framework is covered by hermetic unit tests under

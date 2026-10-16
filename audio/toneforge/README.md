@@ -62,10 +62,22 @@ renders every cue in [`manifest.json`](./manifest.json) and records the SHA-256 
 each WAV in `public/audio/sfx/checksums.json`:
 
 ```bash
-npm run build-audio         # render when ToneForge is available, else verify
+npm run build-audio         # verify when inputs unchanged, else render
 npm run build-audio:render  # force a full render (needs the ToneForge CLI)
 npm run build-audio:verify  # verify committed assets against checksums.json
 ```
+
+**Auto mode fast path.** `npm run build-audio` (auto mode) records a
+fingerprint of the render inputs — [`manifest.json`](./manifest.json), every
+recipe file under `recipes/`, and [`pin.json`](./pin.json) — inside
+`public/audio/sfx/checksums.json` (`inputs`). On the next run it verifies the
+committed assets when that fingerprint still matches the on-disk inputs,
+skipping the multi-minute re-render entirely; any change to the manifest, a
+recipe or the pin forces a full re-render. A missing or mismatched fingerprint
+(including the rollout case of an older `checksums.json` with no `inputs`
+field) falls through to a render, and a checksum mismatch still aborts the
+build (fail closed). Use `npm run build-audio:render` to force a render and
+`npm run build-audio:verify` to verify only.
 
 `manifest.json` is the single source of truth shared by the build and the audio
 tests (`src/audio/cueManifest.ts` imports it), so the rendered set can never

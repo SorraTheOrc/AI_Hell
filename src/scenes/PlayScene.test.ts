@@ -36,6 +36,7 @@ import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
 import { PauseScene } from './PauseScene';
 import {
+  BANNER_BACKGROUND_ALPHA,
   BANNER_DURATION_SECONDS,
   BOSS_PHASE_SCORES,
   LEVEL_TRANSITION_SECONDS,
@@ -852,13 +853,13 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
   // ── Transient transition banner (AH-0MU7JTEMC006QPSN) ─────────
 
-  it('AH-0MU7JTEMC006QPSN AC1 — the level banner hides within ~2s while enemies remain alive', async () => {
+  it('AH-0MU7JTEMC006QPSN AC1 — the level banner hides within the banner window while enemies remain alive', async () => {
     const scene = await bootPlay();
     // The level-start announcement is on screen when the wave begins.
     expect(scene.getAliveCount()).toBeGreaterThan(0);
     expect(scene.isBannerVisible()).toBe(true);
 
-    scene.tick(2.0);
+    scene.tick(BANNER_DURATION_SECONDS);
 
     // Enemies are still alive (the wave was not cleared), yet the banner
     // must have cleared so it no longer obscures gameplay.
@@ -870,7 +871,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const scene = await bootPlay();
 
     // Let the level-start banner expire first.
-    scene.tick(2.0);
+    scene.tick(BANNER_DURATION_SECONDS);
     expect(scene.isBannerVisible()).toBe(false);
 
     // Clearing the wave starts a transition and announces it again.
@@ -881,7 +882,69 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // The next wave spawns; its banner clears while enemies remain alive.
     finishTransition(scene);
     expect(scene.getAliveCount()).toBeGreaterThan(0);
-    scene.tick(2.0);
+    scene.tick(BANNER_DURATION_SECONDS);
+    expect(scene.isBannerVisible()).toBe(false);
+  });
+
+  // ── Semi-transparent, longer-lived banner (AH-0MV8BQ75V005QNZ1) ──
+
+  it('AH-0MV8BQ75V005QNZ1 AC1 — the level-start banner background is 60% opaque', async () => {
+    const scene = await bootPlay();
+    expect(scene.isBannerVisible()).toBe(true);
+    expect(BANNER_BACKGROUND_ALPHA).toBe(0.6);
+    expect(scene.getBannerBackgroundColor()).toBe(
+      `rgba(0, 0, 0, ${BANNER_BACKGROUND_ALPHA})`,
+    );
+  });
+
+  it('AH-0MV8BQ75V005QNZ1 AC2 — the level-start banner stays visible for the 3.5s window then hides', async () => {
+    const scene = await bootPlay();
+    expect(scene.isBannerVisible()).toBe(true);
+
+    // The announcement was shown with the shared 3.5 s window (the boot has
+    // already consumed a small, fixed slice of it).
+    expect(BANNER_DURATION_SECONDS).toBe(3.5);
+    const remaining = scene.getBannerTimeRemaining();
+    expect(remaining).toBeGreaterThan(BANNER_DURATION_SECONDS - 0.5);
+    expect(remaining).toBeLessThanOrEqual(BANNER_DURATION_SECONDS);
+
+    // Just inside the new window the banner is still readable…
+    scene.tick(remaining - 0.01);
+    expect(scene.isBannerVisible()).toBe(true);
+
+    // …and it clears on its own once the window elapses, with enemies alive.
+    scene.tick(0.02);
+    expect(scene.getAliveCount()).toBeGreaterThan(0);
+    expect(scene.isBannerVisible()).toBe(false);
+  });
+
+  it('AH-0MV8BQ75V005QNZ1 AC1/AC2 — the wave-transition banner is also semi-transparent and long-lived', async () => {
+    const scene = await bootPlay();
+
+    // Expire the level-start banner first.
+    scene.tick(BANNER_DURATION_SECONDS);
+    expect(scene.isBannerVisible()).toBe(false);
+
+    // Clearing the wave starts a transition, announces it again with the
+    // same shared background, and re-arms the shared transient window.
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    expect(scene.isBannerVisible()).toBe(true);
+    expect(scene.getBannerBackgroundColor()).toBe(
+      `rgba(0, 0, 0, ${BANNER_BACKGROUND_ALPHA})`,
+    );
+
+    // The banner was armed with the shared window, so it outlives the 1.5 s
+    // transition pause (killAllEnemies consumes a little of the window while
+    // the cleared wave's death animations drain, hence the captured value).
+    const remaining = scene.getBannerTimeRemaining();
+    expect(remaining).toBeGreaterThan(LEVEL_TRANSITION_SECONDS);
+
+    // Ticking just past the banner's own window completes the transition,
+    // spawns the next wave, and clears the banner on its own.
+    scene.tick(remaining + 0.01);
+    finishSpawnSequence(scene);
+    expect(scene.getAliveCount()).toBeGreaterThan(0);
     expect(scene.isBannerVisible()).toBe(false);
   });
 
@@ -951,7 +1014,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     expect(scene.isBannerVisible()).toBe(true);
 
     // Well inside the BANNER_DURATION_SECONDS window the banner is still up…
-    scene.tick(1.0);
+    scene.tick(BANNER_DURATION_SECONDS - 0.5);
     expect(scene.isBannerVisible()).toBe(true);
 
     // …and it clears within the bounded window while enemies remain alive.
@@ -2922,6 +2985,93 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 });
 
+describe('PlayScene — asteroid Extra Life kill drop (AH-0MV6M2M9P0078N4S)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Boots the deterministic static campaign with the Extra Life roll forced
+   * to 1.0, and injects an RNG (0.99) that fails the generic 18 % per-kill
+   * pool so a drop can only come from the forced Extra Life roll.
+   */
+  async function bootWithForcedRoll(): Promise<PlayScene> {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        sequencedWavesEnabled: false,
+        asteroidExtraLifeDropChance: 1,
+      }),
+    );
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
+      deterministicBoot: true,
+    });
+    const scene = booted.scene as PlayScene;
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.setRng(() => 0.99);
+    return scene;
+  }
+
+  it('AC1/AC3 — a fully destroyed small asteroid spawns exactly one extra_life drop', async () => {
+    const scene = await bootWithForcedRoll();
+    const before = scene.getDrops().length;
+
+    const small = scene.spawnAsteroidAt(
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2,
+      'small',
+    );
+    const sx = small.x;
+    const sy = small.y;
+    scene.spawnPlayerBullet(small.x, small.y, 0, 0);
+    scene.tick(0.016);
+
+    expect(small.alive).toBe(false);
+    const drops = scene.getDrops();
+    // Exactly the one extra-life drop (the generic pool was pinned off).
+    expect(drops.length).toBe(before + 1);
+    const extra = drops.find((d) => d.dropId === 'extra_life');
+    expect(extra).toBeDefined();
+    // Standard placement (separation nudging) leaves it at/near the death site.
+    expect(Math.hypot(extra!.x - sx, extra!.y - sy)).toBeLessThanOrEqual(2);
+  });
+
+  it('AC1 — large and medium asteroid kills never roll the Extra Life drop', async () => {
+    const scene = await bootWithForcedRoll();
+    const before = scene.getDrops().length;
+
+    // Spawn each tier directly (no overlapping split siblings) so the one
+    // bullet deterministically kills the target.
+    const large = scene.spawnAsteroidAt(
+      GAME_WIDTH / 2,
+      80,
+      'large',
+    );
+    scene.spawnPlayerBullet(large.x, large.y, 0, 0);
+    scene.tick(0.016);
+    expect(large.alive).toBe(false);
+    expect(scene.getDrops().some((d) => d.dropId === 'extra_life')).toBe(false);
+
+    const medium = scene.spawnAsteroidAt(
+      GAME_WIDTH / 2,
+      160,
+      'medium',
+    );
+    scene.spawnPlayerBullet(medium.x, medium.y, 0, 0);
+    scene.tick(0.016);
+    expect(medium.alive).toBe(false);
+    expect(scene.getDrops().some((d) => d.dropId === 'extra_life')).toBe(false);
+    // With the roll forced on, any small kill would have dropped — so the
+    // static count proves the tier gate blocked large and medium.
+    expect(scene.getDrops().length).toBe(before);
+  });
+});
+
+
 describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU)', () => {
   let booted: BootedGame | null = null;
 
@@ -4349,7 +4499,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       },
     );
 
-    it('AC2 — a rebind is honoured: the new movement key takes over, the old one does not', async () => {
+    it('AC2 — a rebind is honoured: the new movement key takes over, the old one returns to menu', async () => {
       const scene = await bootDemo();
 
       // Rebind moveUp from `w` to `i`, exactly as SettingsScene persists it.
@@ -4363,24 +4513,42 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       );
       (scene as unknown as { _applyBindings(): void })._applyBindings();
 
-      // The old default `w` is no longer movement → ignored.
-      pressKey(scene, 'w');
-      expect(scene.isDemoMode()).toBe(true);
-
-      // The new binding `i` takes over.
+      // The new binding `i` takes over in place.
       pressKey(scene, 'i');
       expect(scene.isDemoMode()).toBe(false);
     });
 
-    it('AC3 — a non-movement key is ignored and the demo keeps playing', async () => {
+    it('AC1 — a non-movement key after rebinding returns to the main menu', async () => {
       const scene = await bootDemo();
 
-      for (const key of [' ', 'Enter', 'Tab', 'F5', 'x', '7', 'F1']) {
-        pressKey(scene, key);
-      }
+      // Rebind moveUp from `w` to `i`.
+      localStorage.setItem(
+        'ai_hell_settings',
+        JSON.stringify({
+          sfxVolume: 1,
+          sfxMuted: false,
+          bindings: { moveUp: 'i' },
+        }),
+      );
+      (scene as unknown as { _applyBindings(): void })._applyBindings();
 
-      expect(scene.isDemoMode()).toBe(true);
-      expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+      // The old default `w` is no longer movement → returns to the menu.
+      pressKey(scene, 'w');
+      await new Promise((r) => setTimeout(r, 80));
+      expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    });
+
+    it('AC1 — a non-movement key returns to the main menu', async () => {
+      const scene = await bootDemo();
+
+      // Any non-movement key (e.g. space) returns to the main menu.
+      pressKey(scene, ' ');
+      await new Promise((r) => setTimeout(r, 80));
+
+      // MenuScene is now active and PlayScene is no longer.
+      expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+      expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
     });
 
     it('AC3 — the pointer no longer takes over the demo', async () => {

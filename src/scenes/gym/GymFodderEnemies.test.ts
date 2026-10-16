@@ -39,7 +39,7 @@ vi.mock('../../core/configStore', async (importOriginal) => {
 });
 import { PLAYER_SPAWN, POWER_UP_DROP_SIZE, SHIP_SIZE, GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { loadRules, saveRules } from '../../core/rules';
-import { GymFodderEnemies, GYM_FODDER_ENEMIES_DEFAULT_KEY, GYM_FODDER_ENEMIES_BOSS_KEY, ENEMY_DIFFICULTY_ID, ENEMY_SELECT_ID, ENEMY_TOGGLE_PLAYER_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymFodderEnemies';
+import { GymFodderEnemies, GYM_FODDER_ENEMIES_DEFAULT_KEY, GYM_FODDER_ENEMIES_BOSS_KEY, GYM_FODDER_ENEMIES_CENTIPEDE_KEY, GYM_FODDER_ENEMIES_CENTIPEDE_LABEL, ENEMY_DIFFICULTY_ID, ENEMY_SELECT_ID, ENEMY_TOGGLE_PLAYER_ID, ENEMY_CONFIG_BODY_ID, normaliseSpawnRanges, SPAWN_RANGE_FIELDS } from './GymFodderEnemies';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { enemyDifficulty } from '../../core/enemyDifficulty';
@@ -53,6 +53,9 @@ import { OrbitalStrike } from '../../entities/OrbitalStrike';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
+import { Centipede } from '../../entities/Centipede';
+import { CentipedeChain } from '../core/centipedeChain';
+import { CENTIPEDE_SEGMENT_COUNT } from '../../waves/CentipedeSpawner';
 
 // GymIndex discovery helper (glob) — verify GymFodderEnemies is listed without extra registration.
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
@@ -1203,7 +1206,7 @@ describe('GymFodderEnemies — in-panel enemy selector (AH-0MV13G5EV008D41E)', (
     select.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  it('AC — renders exactly one enemy <select> listing every non-boss config key with the active key selected', async () => {
+  it('AC — renders exactly one enemy <select> listing every non-boss config key plus the Centipede option, with the active key selected', async () => {
     const scene = await bootWithKey('scout');
     const panel = document.getElementById('enemy-gym-panel')!;
     // Exactly one enemy selector (id-scoped; formationKind/shotPattern have
@@ -1215,12 +1218,53 @@ describe('GymFodderEnemies — in-panel enemy selector (AH-0MV13G5EV008D41E)', (
     const expectedKeys = Object.keys(DEFAULT_ENEMY_CONFIGS).filter(
       (k) => k !== GYM_FODDER_ENEMIES_BOSS_KEY,
     );
-    expect([...optionKeys].sort()).toEqual([...expectedKeys].sort());
+    // Every discoverable non-boss config plus the dedicated Centipede chain
+    // archetype (AH-0MV4ZOIZR0086T66).
+    expect([...optionKeys].sort()).toEqual(
+      [...expectedKeys, GYM_FODDER_ENEMIES_CENTIPEDE_KEY].sort(),
+    );
     // The boss archetype is deliberately excluded.
     expect(optionKeys).not.toContain(GYM_FODDER_ENEMIES_BOSS_KEY);
+    // The Centipede option carries the expected label.
+    const centipedeOption = Array.from(select.options).find(
+      (o) => o.value === GYM_FODDER_ENEMIES_CENTIPEDE_KEY,
+    );
+    expect(centipedeOption, 'Centipede option missing').toBeDefined();
+    expect(centipedeOption!.textContent).toBe(GYM_FODDER_ENEMIES_CENTIPEDE_LABEL);
     // Seeded from the scene's active key.
     expect(select.value).toBe('scout');
     expect(scene.activeEnemyKey).toBe('scout');
+  });
+
+  it('AC — selecting Centipede runs the shared linked chain and hides the config-tuning controls (AH-0MV4ZOIZR0086T66)', async () => {
+    const scene = await bootWithKey('scout');
+    const select = enemySelect();
+    const configBody = document.getElementById(ENEMY_CONFIG_BODY_ID);
+    expect(configBody, 'config body missing').not.toBeNull();
+    // A config archetype shows the tuning controls.
+    expect(configBody!.style.display).not.toBe('none');
+
+    selectEnemy(select, GYM_FODDER_ENEMIES_CENTIPEDE_KEY);
+
+    // The active archetype is the Centipede and the shared chain replaced the
+    // config formation — one `Centipede` segment per chain link.
+    expect(scene.activeEnemyKey).toBe(GYM_FODDER_ENEMIES_CENTIPEDE_KEY);
+    expect(scene.currentConfig.key).toBe(GYM_FODDER_ENEMIES_CENTIPEDE_KEY);
+    expect(scene.formationEntities).toHaveLength(CENTIPEDE_SEGMENT_COUNT);
+    expect(scene.formationEntities.every((e) => e instanceof Centipede)).toBe(true);
+    expect(scene.centipedeChain).toBeInstanceOf(CentipedeChain);
+    expect(scene.centipedeChain!.aliveCount()).toBe(CENTIPEDE_SEGMENT_COUNT);
+    expect(scene.centipedeChain!.subChainCount()).toBe(1);
+    // A fixed (non-config) archetype hides the tuning controls.
+    expect(configBody!.style.display).toBe('none');
+
+    // Switching back to a config archetype restores the tuning controls and
+    // the config-driven formation.
+    selectEnemy(select, 'swarm');
+    expect(scene.activeEnemyKey).toBe('swarm');
+    expect(configBody!.style.display).not.toBe('none');
+    expect(scene.formationEntities).toHaveLength(DEFAULT_ENEMY_CONFIGS.swarm.count);
+    expect(scene.formationEntities.some((e) => e instanceof Centipede)).toBe(false);
   });
 
   it('AC — seeds the selection from a deep-linked init({ enemyKey })', async () => {

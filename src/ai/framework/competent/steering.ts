@@ -43,6 +43,12 @@ import type { BotSteeringIntent } from '../../botDecision';
 import type { BotSnapshot } from '../../botSnapshot';
 import type { BotWorld, BotWorldPoint } from '../worldModel';
 import type { CompetentBotTunables } from './tunables';
+import {
+  resolveFrictionDeceleration,
+  resolvePlayerSpeed,
+  resolveReverseAcceleration,
+  resolveReverseMaxSpeed,
+} from './tunables';
 
 /** Epsilon for float comparisons. */
 const EPS = 1e-6;
@@ -187,8 +193,11 @@ export function evaluateDirection(
 
   const px = player.x;
   const py = player.y;
-  const pvx = dirX * t.playerSpeed;
-  const pvy = dirY * t.playerSpeed;
+  // Candidate-speed term: the ship's live `maxSpeed` when the snapshot carries
+  // it, else the `playerSpeed` default/override (AH-0MV85WGA9005B080 · AC1).
+  const speed = resolvePlayerSpeed(t, player.thruster?.maxSpeed);
+  const pvx = dirX * speed;
+  const pvy = dirY * speed;
   let clearance = t.clearanceCap;
   let safe = true;
 
@@ -316,10 +325,17 @@ export function mayThrust(
 ): boolean {
   const player = snapshot.player;
   if (!player) return false;
-  if (t.frictionDeceleration <= 0) return true;
+  // Stopping distance: the ship's live `frictionDeceleration` when the
+  // snapshot carries it, else the `frictionDeceleration` default/override
+  // (AH-0MV85WGA9005B080 · AC2).
+  const friction = resolveFrictionDeceleration(
+    t,
+    player.thruster?.frictionDeceleration,
+  );
+  if (friction <= 0) return true;
   const speed = Math.hypot(player.vx, player.vy);
   const gap = Math.max(0, distance - arrivalRadius);
-  const stoppingDistance = (speed * speed) / (2 * t.frictionDeceleration);
+  const stoppingDistance = (speed * speed) / (2 * friction);
   return stoppingDistance <= gap;
 }
 
@@ -334,6 +350,20 @@ export function mayThrust(
  * shed, and the reverse thruster is enabled.  During a normal approach the
  * ship coasts on friction; reverse is a trouble-correcting action, not a
  * positioning tool.
+ *
+ * ## Reverse forward model (AH-0MV85WGOO0066I9X · AC1)
+ *
+ * The correction itself is modelled with the ship's **live reverse physics**
+ * instead of being omitted: a reverse press decelerates the ship at the
+ * snapshot's `reverseAcceleration` (the game model suppresses friction while
+ * the press is held, so `a_r` alone does the work), giving a reverse-assisted
+ * stopping distance `v² / (2a_r)`.  Reverse is only requested when that
+ * distance actually fits inside the remaining gap — a press that cannot stop
+ * the ship in time is futile and is not emitted (the pre-change model fired
+ * regardless).  The snapshot's `reverseMaxSpeed` bounds the correction to the
+ * ship's configured retro envelope: the bot only reverse-brakes while the
+ * approach speed is at or below the cap, so a player who capped the retro
+ * lower sees the bot reserve it for gentler corrections.
  */
 export function mayReverse(
   snapshot: BotSnapshot,
@@ -350,7 +380,32 @@ export function mayReverse(
   // Imminent-overshoot gate: only brake within the threshold.
   if (gap > t.reverseImminentOvershootGap) return false;
   if (gap <= EPS) return false;
-  return !mayThrust(snapshot, t, distance, arrivalRadius);
+  if (mayThrust(snapshot, t, distance, arrivalRadius)) return false;
+
+  // ── Reverse forward model (AH-0MV85WGOO0066I9X · AC1) ───────────
+  // A reverse press decelerates at the live reverse acceleration (friction is
+  // suppressed while reverse is held in the game model), so the stop distance
+  // is v²/(2·a_r) — the mirror of the friction forward model in mayThrust.
+  const reverseAcceleration = resolveReverseAcceleration(
+    t,
+    player.thruster?.reverseAcceleration,
+  );
+  if (reverseAcceleration <= 0) return false;
+  // The correction is bounded by the ship's configured retro envelope: the
+  // bot only reverse-brakes while the approach speed is at or below the live
+  // reverse max speed. A lowered cap deliberately restricts the bot's reverse
+  // braking to gentler corrections (matching the player's tuning).
+  const reverseMaxSpeed = resolveReverseMaxSpeed(
+    t,
+    player.thruster?.reverseMaxSpeed,
+  );
+  if (reverseMaxSpeed < 0) return false;
+  if (speed > reverseMaxSpeed) return false;
+  const reverseStoppingDistance =
+    (speed * speed) / (2 * reverseAcceleration);
+  // The reverse-assisted stop must fit inside the remaining gap; otherwise
+  // the press cannot correct the overshoot and is not requested.
+  return reverseStoppingDistance <= gap;
 }
 
 /** Options for {@link planSteering}. */

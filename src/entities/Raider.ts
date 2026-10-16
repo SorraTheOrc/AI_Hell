@@ -31,6 +31,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import type { EnemyShotPattern } from '../core/configTypes';
 import { Scout, type ScoutBullet, type ScoutConfig } from './Scout';
+import type { EnemyBulletArchetype } from '../utils/bulletVisuals';
 import {
   RAIDER_ATTACK_SPEED,
   RAIDER_BULLET_COLOR,
@@ -107,6 +108,17 @@ export class Raider extends Scout {
 
   /** Archetype key (`'raider'`), matching the scene's enemy key. */
   override get archetype(): string {
+    return 'raider';
+  }
+
+  /**
+   * The Raider's own aimed-shot projectile identity (AH-0MV822EH800780GI):
+   * a slim sharp-nosed dart, distinct from the Scout pellet whose shared
+   * `tryFireAimedBullet` path the Raider reuses. Firing logic, speed,
+   * interval and the advance-cue tell are unchanged — this only changes how
+   * the shot is drawn (and the identity registry the shared seam consumes).
+   */
+  protected override get bulletVisualArchetype(): EnemyBulletArchetype {
     return 'raider';
   }
 

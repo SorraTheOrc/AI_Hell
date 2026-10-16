@@ -97,10 +97,10 @@ export const BOT_TUNING_NUMERIC_FIELDS: readonly BotTuningFieldSpec[] = [
   { group: 'competent', key: 'repositionRadius', label: 'repositionRadius', min: 0, max: 600, step: 5, description: 'Distance (px) from the playfield centre within which the reposition fallback idles.' },
 
   // Motion / prediction.
-  { group: 'competent', key: 'playerSpeed', label: 'playerSpeed', min: 0, max: 600, step: 5, description: 'Assumed player speed (px/s) used for candidate-direction prediction.' },
+  { group: 'competent', key: 'playerSpeed', label: 'playerSpeed', min: 0, max: 600, step: 5, description: "Assumed player speed (px/s) used for candidate-direction prediction. A fallback default + tuning override, never the ship's truth: the live ship config's max speed wins while this stays at its default; an explicit value set here wins over the live config (AH-0MV85WGA9005B080)." },
   { group: 'competent', key: 'firePredictionHorizon', label: 'firePredictionHorizon', min: 0, max: 3, step: 0.05, description: 'Look-ahead window (seconds) for incoming-fire prediction.' },
   { group: 'competent', key: 'assumedBulletSpeed', label: 'assumedBulletSpeed', min: 0, max: 800, step: 10, description: 'Assumed enemy-bullet speed (px/s) used for fire-tell shots.' },
-  { group: 'competent', key: 'frictionDeceleration', label: 'frictionDeceleration', min: 0, max: 500, step: 5, description: "The ship's coasting deceleration (px/s²) used by the forward model." },
+  { group: 'competent', key: 'frictionDeceleration', label: 'frictionDeceleration', min: 0, max: 500, step: 5, description: "The ship's coasting deceleration (px/s²) used by the forward model. A fallback default + tuning override, never the ship's truth: the live ship config's friction deceleration wins while this stays at its default; an explicit value set here wins over the live config (AH-0MV85WGA9005B080)." },
   { group: 'competent', key: 'survivalUrgencyHorizon', label: 'survivalUrgencyHorizon', min: 0, max: 3, step: 0.05, description: 'Time window (seconds) within which a threatening shot counts as urgent.' },
 
   // Aim lead prediction (AH-0MV1DUSM2005HL98).

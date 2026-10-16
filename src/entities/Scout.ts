@@ -25,6 +25,9 @@ import Phaser from 'phaser';
 import { createBullet } from './bulletUtils';
 import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import { FormationOffset } from '../utils/formations';
+import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
+import type { EnemyBulletArchetype } from '../utils/bulletVisuals';
+import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { playScoutAdvanceCue, playScoutFireSound } from '../audio/effects';
 import { type ExplosionHandle } from '../vfx/explosionParticles';
 
@@ -93,7 +96,8 @@ export interface ScoutConfig {
 }
 
 /**
- * A bullet fired by a scout. Drawn as a small filled circle; travelled
+ * A bullet fired by a scout. Drawn as a small alien pellet (shared
+ * Scout/Invader projectile identity — AH-0MV822CQL005R4MM) and travelled
  * purely from physics (no collision with anything), wrapping across the
  * screen edges until its per-type lifetime elapses.
  */
@@ -106,6 +110,12 @@ export interface ScoutBullet {
   lifetime: number;
   /** Elapsed time since creation (seconds). */
   elapsed: number;
+  /**
+   * Per-frame redraw hook (the pellet's faint pulse) consumed by the shared
+   * enemy-bullet lifecycle — present on the identity bullet, absent for
+   * legacy bullets created without a shape (AH-0MV822CQL005R4MM).
+   */
+  redraw?: (elapsed: number) => void;
 }
 
 export class Scout extends BaseEnemy {
@@ -152,6 +162,18 @@ export class Scout extends BaseEnemy {
 
   /** Archetype key (`'scout'`), matching the scene's enemy key. */
   override get archetype(): string {
+    return 'scout';
+  }
+
+  /**
+   * The enemy bullet-identity archetype resolved by the shared aimed-shot
+   * fire seam (`tryFireAimedBullet`) — `'scout'` for the Scout, overridden
+   * by subclasses that share the aimed-shot path but need their own
+   * projectile identity (e.g. the Raider, AH-0MV822EH800780GI). The
+   * overridable seam keeps the game ↔ gym shared fire path single and
+   * parity-safe while letting each archetype resolve its own look.
+   */
+  protected get bulletVisualArchetype(): EnemyBulletArchetype {
     return 'scout';
   }
 
@@ -284,18 +306,43 @@ export class Scout extends BaseEnemy {
     const dx = this.target.x - this.x;
     const dy = this.target.y - this.y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const heading = Math.atan2(dy, dx);
 
-    const { graphics, color } = createBullet({
+    // The shared Scout/Invader projectile identity (AH-0MV822CQL005R4MM): a
+    // small alien pellet with an enemy-tinted core and a faint pulse, plus
+    // its green launch pop — resolved from the shared identity registry and
+    // drawn through the shared bullet-shape seam. Because EVERY scene drives
+    // this same `tryFireAimedBullet` through `fireForEnemy`, the pellet's
+    // shape, pulse, trail and launch pop are identical in the game and every
+    // gym (gym↔game parity by construction). Firing logic, speed, interval
+    // and lifetime are unchanged — this is visuals/feel only.
+    const visual = resolveEnemyBulletVisual(this.bulletVisualArchetype);
+    const { graphics, color, redraw } = createBullet({
       scene: this.scene,
       color: this._bulletColor,
       size: this._bulletSize,
       x: this.x,
       y: this.y,
+      shape: visual.shape,
+      length: visual.length,
+      rimColor: visual.rimColor,
+      thickness: visual.thickness,
+      alpha: visual.alpha,
+      tail: visual.tail,
+      angle: heading,
     });
+    // Fire VFX / launch cue: the shared enemy fire-time launch pop at the
+    // scout's body, spawned through the shared `src/vfx/enemyMuzzleFlash`
+    // helper from this shared fire seam (cheap Graphics primitive, self-
+    // cleaning tween).
+    if (visual.muzzle) {
+      spawnEnemyMuzzleFlash(this.scene, this.x, this.y, heading, visual.muzzle);
+    }
 
     return {
       graphics,
       color,
+      redraw,
       vx: (dx / dist) * this._bulletSpeed,
       vy: (dy / dist) * this._bulletSpeed,
       lifetime: this._bulletLifetime,

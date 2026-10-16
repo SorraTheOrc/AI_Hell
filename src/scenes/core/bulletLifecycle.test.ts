@@ -8,7 +8,7 @@
  * `advanceAndCull` path.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene } from '../../test/gameHarness';
@@ -198,6 +198,29 @@ describe('advanceWrappingBullets — lifetime expiry', () => {
     advanceWrappingBullets(bullets, 0.6);
 
     expect(bullets).toEqual([longLivedA, longLivedB]);
+  });
+
+  it('redraws an animated bullet every step with its elapsed age (AH-0MV822CQL005R4MM)', async () => {
+    const scene = await makeScene();
+    const redraw = vi.fn();
+    const pulsing = new StubEnemyBullet(scene, 100, 200, 50, 0, 10);
+    (pulsing as StubEnemyBullet & { redraw: (t: number) => void }).redraw =
+      redraw;
+
+    advanceWrappingBullets([pulsing], 0.25);
+    expect(redraw).toHaveBeenCalledTimes(1);
+    expect(redraw).toHaveBeenLastCalledWith(0.25);
+
+    advanceWrappingBullets([pulsing], 0.1);
+    expect(redraw).toHaveBeenLastCalledWith(0.35);
+  });
+
+  it('leaves bullets without a redraw hook untouched (no per-frame cost)', async () => {
+    const scene = await makeScene();
+    const plain = new StubEnemyBullet(scene, 100, 200, 50, -30);
+
+    expect(() => advanceWrappingBullets([plain], 0.5)).not.toThrow();
+    expect(plain.graphics.x).toBeCloseTo(125, 5);
   });
 });
 

@@ -1,0 +1,71 @@
+# AI Hell cue: aihell-arc-impact — Arc chaining-bolt connect — sharp electric crack.
+version: "0.1"
+meta:
+  name: aihell-arc-impact
+  description: Player Arc bolt connect — a sharp electric crack, sawtooth 2400 to 220 Hz with a fast high-pass noise zipper, distinct from the Arc fire zap and from every other weapon impact.
+  category: AIHell
+  tags:
+    - weapon
+    - hit
+  duration: 0.14
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 2400
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 2400
+        - kind: exponentialRamp
+          time: 0.04
+          value: 900
+        - kind: exponentialRamp
+          time: 0.13
+          value: 220
+  e0:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.128
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.13
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 3000
+      Q: 1
+  e1:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.045
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.09
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out

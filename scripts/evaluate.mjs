@@ -40,6 +40,9 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     outputDir: 'eval-output',
     json: false,
     video: false,
+    batch: false,
+    games: null,
+    policies: null,
     humanFile: null,
     humanSeed: null,
     help: false,
@@ -70,6 +73,15 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
       case '--seeds':
         options.seeds = Number(next());
         break;
+      case '--games':
+        options.games = Number(next());
+        break;
+      case '--policies':
+        options.policies = next()
+          .split(',')
+          .map((name) => name.trim())
+          .filter((name) => name.length > 0);
+        break;
       case '--ticks':
         options.ticks = Number(next());
         break;
@@ -90,6 +102,9 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
         break;
       case '--json':
         options.json = true;
+        break;
+      case '--batch':
+        options.batch = true;
         break;
       case '--video':
         options.video = true;
@@ -117,6 +132,9 @@ Options:
   --candidate <name>   A/B candidate policy
   --seed <n>           A seed (repeatable)
   --seeds <count>      Use seeds 1..count (default 3)
+  --batch              Batch mode: sweep seeds x policies, emit the balance report
+  --games <count>      Games (seeds 1..count) in batch mode (default 100)
+  --policies <a,b>     Comma-separated policies to sweep in batch mode
   --ticks <n>          Max ticks per run (default 1800)
   --dt <seconds>       Fixed simulation step (default 1/60)
   --sample-every <n>   Record every Nth tick (default 1)
@@ -131,7 +149,14 @@ Options:
 /** Resolves the seeds list from parsed options. */
 export function resolveSeeds(options) {
   if (Array.isArray(options.seeds)) return options.seeds.map((seed) => Number(seed));
-  const count = Number.isFinite(options.seeds) && options.seeds > 0 ? Math.trunc(options.seeds) : 3;
+  // `--games` is the explicit batch-size flag and takes precedence; a batch
+  // defaults to 100 games (epic AC2 "~100 deterministic bot games") while a
+  // non-batch run keeps the historic default of 3 seeds.
+  const source = Number.isFinite(options.games) && options.games !== null
+    ? options.games
+    : options.seeds;
+  const fallback = options.batch ? 100 : 3;
+  const count = Number.isFinite(source) && source > 0 ? Math.trunc(source) : fallback;
   return Array.from({ length: count }, (_, index) => index + 1);
 }
 
@@ -162,9 +187,14 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
   const humanRecordingText = options.humanFile ? readFileSync(options.humanFile, 'utf8') : null;
   const { server, core } = await loadCore();
   try {
+    // Boot the CSV-backed config store under SSR so the arena consumes the
+    // real balance data (config-driven arena, AH-0MV81YPBG0028WNM AC5); a
+    // missing/unreadable CSV falls back to the built-in defaults.
+    await core.hydrateBalanceConfig();
     const result = core.executeEvaluation({
       ...options,
       seeds: resolveSeeds(options),
+      policies: options.policies ?? [],
       humanRecordingText,
       humanSeed: options.humanSeed,
     });

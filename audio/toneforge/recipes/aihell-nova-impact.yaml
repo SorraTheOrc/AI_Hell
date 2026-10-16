@@ -1,0 +1,68 @@
+# AI Hell cue: aihell-nova-impact — Nova ring shockwave connect — bright expanding ring ping.
+version: "0.1"
+meta:
+  name: aihell-nova-impact
+  description: Player Nova ring connect — a bright expanding ring ping, triangle 1600 to 300 Hz with a light highpass noise shimmer, distinct from the Nova fire thump and from every other weapon impact.
+  category: AIHell
+  tags:
+    - weapon
+    - hit
+  duration: 0.16
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 1600
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1600
+        - kind: exponentialRamp
+          time: 0.15
+          value: 300
+  e0:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.148
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.16
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 3500
+      Q: 1
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.04
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.045
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - from: mix
+    to: out

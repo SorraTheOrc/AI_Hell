@@ -62,6 +62,8 @@ export interface RecordedSource {
   type: string;
   starts: number[];
   stops: number[];
+  /** Frequency automation events (oscillators); empty for buffer sources. */
+  frequencyEvents: RecordedParamEvent[];
 }
 
 /**
@@ -94,7 +96,13 @@ export class RecordingAudioContext {
   }
 
   private recordSource(kind: RecordedSource['kind'], type: string): RecordedSource {
-    const rec: RecordedSource = { kind, type, starts: [], stops: [] };
+    const rec: RecordedSource = {
+      kind,
+      type,
+      starts: [],
+      stops: [],
+      frequencyEvents: [],
+    };
     this.oscillators.push(rec);
     return rec;
   }
@@ -110,9 +118,23 @@ export class RecordingAudioContext {
         rec.type = v;
       },
       frequency: {
-        setValueAtTime: (_value: number, _time: number) => {},
-        exponentialRampToValueAtTime: (_value: number, _time: number) => {},
-        linearRampToValueAtTime: (_value: number, _time: number) => {},
+        setValueAtTime: (value: number, time: number) => {
+          rec.frequencyEvents.push({ method: 'setValueAtTime', value, time });
+        },
+        exponentialRampToValueAtTime: (value: number, time: number) => {
+          rec.frequencyEvents.push({
+            method: 'exponentialRampToValueAtTime',
+            value,
+            time,
+          });
+        },
+        linearRampToValueAtTime: (value: number, time: number) => {
+          rec.frequencyEvents.push({
+            method: 'linearRampToValueAtTime',
+            value,
+            time,
+          });
+        },
       },
       detune: { setValueAtTime: () => {} },
       connect: (target: unknown) => {
@@ -272,6 +294,18 @@ export function lastGainValue(gain: RecordedGain): number | undefined {
 /** The most recent non-automation frequency scheduled on *filter*. */
 export function lastFilterFrequency(filter: RecordedFilter): number | undefined {
   for (const ev of [...filter.frequencyEvents].reverse()) {
+    if (ev.method === 'setValueAtTime' || ev.method === 'linearRampToValueAtTime') {
+      return ev.value;
+    }
+  }
+  return undefined;
+}
+
+/** The most recent non-automation frequency scheduled on an oscillator source. */
+export function lastSourceFrequency(
+  source: RecordedSource,
+): number | undefined {
+  for (const ev of [...source.frequencyEvents].reverse()) {
     if (ev.method === 'setValueAtTime' || ev.method === 'linearRampToValueAtTime') {
       return ev.value;
     }

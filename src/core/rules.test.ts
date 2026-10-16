@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { POWER_UP_SPAWN_INTERVAL } from './constants';
 import {
+  DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
   DEFAULT_BEAT_BPM,
   DEFAULT_EXTRA_LIFE_WEIGHT,
   DEFAULT_MYSTERY_UFO_WEIGHT,
@@ -129,6 +130,7 @@ describe('game rules configuration module', () => {
         mineralHoldGrowthMultiplier: 3,
         mineralRedropBonusMin: 0.3,
         mineralRedropBonusMax: 1.5,
+        asteroidExtraLifeDropChance: 0.25,
         sequencedWavesEnabled: true,
       };
       saveRules(custom);
@@ -145,6 +147,7 @@ describe('game rules configuration module', () => {
       expect(loaded.mineralCollectAmount).toBe(2);
       expect(loaded.mineralHoldCapacity).toBe(30);
       expect(loaded.mineralHoldGrowthMultiplier).toBe(3);
+      expect(loaded.asteroidExtraLifeDropChance).toBe(0.25);
     });
 
     it('merges a partial weapon weight table over the weapon defaults', () => {
@@ -690,5 +693,70 @@ describe('sequenced-waves opt-in toggle (AH-0MUITS1SM008GPR9)', () => {
     loaded.sequencedWavesEnabled = false;
     expect(DEFAULT_RULES.sequencedWavesEnabled).toBe(true);
     expect(loadRules().sequencedWavesEnabled).toBe(true);
+  });
+});
+
+// ── Asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S) ───────────
+
+describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('defaults to 5 %', () => {
+    expect(DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE).toBe(0.05);
+    expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0.05);
+    expect(loadRules().asteroidExtraLifeDropChance).toBe(0.05);
+  });
+
+  it('loads a persisted value', () => {
+    saveRules({ ...DEFAULT_RULES, asteroidExtraLifeDropChance: 0.42 });
+    expect(loadRules().asteroidExtraLifeDropChance).toBe(0.42);
+  });
+
+  it('loads the default from an older blob without the key (no migration)', () => {
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpSpawnInterval: 3 }),
+    );
+    expect(loadRules().asteroidExtraLifeDropChance).toBe(
+      DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
+    );
+  });
+
+  it('clamps a stored value into [0, 1]', () => {
+    for (const [stored, expected] of [
+      [1.5, 1],
+      [-0.5, 0],
+      [0, 0],
+      [1, 1],
+    ] as const) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ asteroidExtraLifeDropChance: stored }),
+      );
+      expect(loadRules().asteroidExtraLifeDropChance).toBe(expected);
+    }
+  });
+
+  it('falls back to the default for a non-numeric or non-finite value', () => {
+    for (const stored of ['often', null, NaN, Infinity]) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ asteroidExtraLifeDropChance: stored }),
+      );
+      expect(loadRules().asteroidExtraLifeDropChance).toBe(
+        DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
+      );
+    }
+  });
+
+  it('returns a fresh copy so mutating it does not change the defaults', () => {
+    const loaded = loadRules();
+    loaded.asteroidExtraLifeDropChance = 1;
+    expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0.05);
+    expect(loadRules().asteroidExtraLifeDropChance).toBe(0.05);
   });
 });

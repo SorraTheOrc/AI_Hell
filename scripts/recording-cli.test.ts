@@ -17,7 +17,15 @@ import { dirname, resolve } from 'node:path';
 
 import { parseAnalyseArgs, selectRun as selectAnalyseRun } from './analyse-recording.mjs';
 import { parseReplayArgs, selectRun as selectReplayRun } from './replay-recording.mjs';
-import { parseRecordArgs, recordUrl, resolveRecordingOutputPath } from './record-session.mjs';
+import {
+  buildHumanBalanceStatsArtifact,
+  parseRecordArgs,
+  recordUrl,
+  resolveBalanceStatsOutputPath,
+  resolveRecordingOutputPath,
+} from './record-session.mjs';
+import { extractHumanBalanceStats } from '../src/ai/eval/humanStats';
+import { serialiseReport } from '../src/ai/eval/report';
 import type { RecordingRun } from './recording.mjs';
 
 function run(seed: number, index: number): RecordingRun {
@@ -116,6 +124,45 @@ describe('record-session CLI', () => {
     expect(resolveRecordingOutputPath(null, { seed: 7 })).toMatch(/recordings[/\\]session-seed7-/);
     // A null seed (the CLI default) must not be coerced to `seed0`.
     expect(resolveRecordingOutputPath(null, { seed: null })).not.toContain('seed0');
+  });
+
+  it('writes the human balance artifact next to the recording', () => {
+    expect(resolveBalanceStatsOutputPath('/tmp/rec/session.jsonl')).toBe(
+      '/tmp/rec/balance-stats.json',
+    );
+    expect(resolveBalanceStatsOutputPath('recordings/session.jsonl')).toContain(
+      'balance-stats.json',
+    );
+  });
+
+  it('builds a versioned human BalanceReport artifact via the shared helper', () => {
+    const records = [
+      {
+        kind: 'run_header',
+        schemaVersion: 1,
+        runSeed: 321,
+        build: { appVersion: 'dev', commit: 'x' },
+        startedAt: 0,
+      },
+      { kind: 'tick', schemaVersion: 1, tick: 0, state: {}, input: {} },
+      { kind: 'tick', schemaVersion: 1, tick: 4, state: {}, input: {} },
+      {
+        kind: 'event',
+        schemaVersion: 1,
+        tick: 2,
+        event: 'pickup',
+        payload: { kind: 'powerUp', id: 'spread' },
+      },
+    ];
+    const core = { extractHumanBalanceStats, serialiseReport };
+    const artifact = buildHumanBalanceStatsArtifact(records, core);
+    expect(artifact.name).toBe('balance-stats.json');
+    const report = JSON.parse(artifact.content);
+    expect(report.kind).toBe('balance');
+    expect(report.config.policies).toEqual(['human']);
+    expect(report.config.seeds).toEqual([321]);
+    expect(report.runs).toHaveLength(1);
+    expect(report.aggregate.runs).toBe(1);
   });
 });
 

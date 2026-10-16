@@ -16,17 +16,22 @@ import {
   RecordingAudioContext,
   lastFilterFrequency,
   lastGainValue,
+  lastSourceFrequency,
   resetRecordingAudioContext,
 } from '../test/audioTestDouble';
 import { beatSubdivisionMs, createBeatClock, type BeatClock } from '../utils/beat';
 import {
   THRUSTER_HUM_AMPLITUDE_MODULATION_DEPTH,
+  THRUSTER_HUM_BASE_FREQ,
   THRUSTER_HUM_CANNON_SUBDIVISIONS,
   THRUSTER_HUM_GROWTH_TIME,
   THRUSTER_HUM_MAX_VOLUME,
   THRUSTER_HUM_NOISE_FILTER_MAX,
   THRUSTER_HUM_NOISE_FILTER_MIN,
   THRUSTER_HUM_SHRINK_MULTIPLIER,
+  THRUSTER_HUM_SIDE_PITCH_SCALE,
+  THRUSTER_HUM_SIDE_VOLUME_SCALE,
+  THRUSTER_HUM_UNDERTONE_FREQ,
   configureThrusterShim,
   resetThrusterHumForTests,
   setThrusterBeatClock,
@@ -121,6 +126,87 @@ describe('updateThrusterHum — envelopes', () => {
     expect(_getThrusterHumStateForTests()!.currentGain).toBeCloseTo(
       0.6 * THRUSTER_HUM_MAX_VOLUME,
       8,
+    );
+  });
+});
+
+describe('side profile (AH-0MV78QUIX001EZN2)', () => {
+  it('targets half the forward gain at the same level (AC1)', () => {
+    updateThrusterHum(0.8, 'forward');
+    const forwardGain = _getThrusterHumStateForTests()!.currentGain;
+    resetThrusterHumForTests();
+
+    updateThrusterHum(0.8, 'side');
+    const hum = _getThrusterHumStateForTests()!;
+
+    expect(hum.currentGain).toBeCloseTo(0.5 * forwardGain, 8);
+    expect(hum.currentGain).toBeCloseTo(
+      0.8 * THRUSTER_HUM_MAX_VOLUME * THRUSTER_HUM_SIDE_VOLUME_SCALE,
+      8,
+    );
+    // The hum gain node sees the same halved target (AC1 observable). The
+    // reset above reused the voice with a fresh gain node — read the newest.
+    expect(lastGainValue(ctx.gains.at(-1)!)).toBeCloseTo(
+      0.8 * THRUSTER_HUM_MAX_VOLUME * THRUSTER_HUM_SIDE_VOLUME_SCALE,
+      8,
+    );
+  });
+
+  it('shifts both pitched oscillators up one semitone, filter unchanged (AC2)', () => {
+    const clock = createBeatClock();
+    setThrusterBeatClock(clock);
+    updateThrusterHum(1, 'side');
+
+    // Triangle fundamental (osc[0]) and sine undertone (osc[1]) are both
+    // the forward pitch × 2^(1/12); the noise band-pass (filter[0]) is
+    // exactly the forward grid value at the peak (700 = MIN).
+    const forwardPitch = 1 + 1 * 0.12;
+    expect(lastSourceFrequency(ctx.oscillators[0])).toBeCloseTo(
+      THRUSTER_HUM_BASE_FREQ * forwardPitch * THRUSTER_HUM_SIDE_PITCH_SCALE,
+      6,
+    );
+    expect(lastSourceFrequency(ctx.oscillators[1])).toBeCloseTo(
+      THRUSTER_HUM_UNDERTONE_FREQ * forwardPitch * THRUSTER_HUM_SIDE_PITCH_SCALE,
+      6,
+    );
+    expect(lastFilterFrequency(ctx.filters[0])).toBeCloseTo(
+      THRUSTER_HUM_NOISE_FILTER_MIN,
+      6,
+    );
+    setThrusterBeatClock(null);
+  });
+
+  it('composes the semitone with the thrust-dependent pitchScale (AC2)', () => {
+    updateThrusterHum(0.5, 'side');
+    expect(lastSourceFrequency(ctx.oscillators[0])).toBeCloseTo(
+      THRUSTER_HUM_BASE_FREQ * (1 + 0.5 * 0.12) * THRUSTER_HUM_SIDE_PITCH_SCALE,
+      6,
+    );
+  });
+
+  it('leaves forward profile gain and pitch unchanged (AC1/AC2 regression)', () => {
+    updateThrusterHum(1, 'forward');
+    const hum = _getThrusterHumStateForTests()!;
+    expect(hum.currentGain).toBeCloseTo(THRUSTER_HUM_MAX_VOLUME, 8);
+    expect(lastSourceFrequency(ctx.oscillators[0])).toBeCloseTo(
+      THRUSTER_HUM_BASE_FREQ * (1 + 0.12),
+      6,
+    );
+    expect(lastSourceFrequency(ctx.oscillators[1])).toBeCloseTo(
+      THRUSTER_HUM_UNDERTONE_FREQ * (1 + 0.12),
+      6,
+    );
+  });
+
+  it('defaults to the forward profile when none is supplied (AC2 compat)', () => {
+    updateThrusterHum(1);
+    expect(_getThrusterHumStateForTests()!.currentGain).toBeCloseTo(
+      THRUSTER_HUM_MAX_VOLUME,
+      8,
+    );
+    expect(lastSourceFrequency(ctx.oscillators[0])).toBeCloseTo(
+      THRUSTER_HUM_BASE_FREQ * 1.12,
+      6,
     );
   });
 });

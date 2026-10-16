@@ -217,6 +217,9 @@ class AoeStubScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   getAoeEffects(): Phaser.GameObjects.Graphics[] {
     return this.aoeEffects;
   }
+  getFireFxEffects(): Phaser.GameObjects.Graphics[] {
+    return this.fireFxEffects;
+  }
 }
 
 describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
@@ -496,6 +499,34 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(ring.y).toBe(100);
   });
 
+  it('F2 AC3 — the Nova launch flash plays the baked impact cue through the shared AOE seam (AH-0MV822BPT002GF17)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('nova');
+    const cue = vi.spyOn(effectsModule, 'playNovaImpactSound');
+
+    scene.runAutoFire(3.0);
+
+    // The ring expansion reads as the Nova's shockwave connecting: the baked
+    // nova impact cue plays through the same shared onFire AOE VFX path that
+    // spawns the ring, so the game and every gym sound identical.
+    expect(cue).toHaveBeenCalledTimes(1);
+  });
+
+  it('F2 AC3 — the Nova launch flash is spawned through the shared combat-core fire-VFX path (AH-0MV822BPT002GF17)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('nova');
+    expect(scene.getFireFxEffects()).toHaveLength(0);
+
+    scene.runAutoFire(3.0);
+
+    // `_autoFire` drives the muzzle flash from the weapon's `muzzleFlash`
+    // metadata, so the fire VFX (launch cue) is wired through the shared
+    // combat-core spawn path and the game + gyms show the identical flash.
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
   it('F2 AC3 — a non-onFire weapon spawns no onFire ring at the ship', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
@@ -575,6 +606,84 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(missed.destroyed).toBe(false);
     expect(scene.bullets).toEqual([bulletMiss]);
     expect(bulletHit.graphics.active).toBe(false);
+  });
+
+  it('F3 AC3 — the Mortar launch flash is spawned through the shared combat-core fire-VFX path (AH-0MV822C250051OVN)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('mortar');
+    expect(scene.getFireFxEffects()).toHaveLength(0);
+
+    scene.runAutoFire(1.5);
+
+    // `_autoFire` drives the muzzle flash from the weapon's `muzzleFlash`
+    // metadata, so the Mortar's launch cue is wired through the shared
+    // combat-core spawn path — the game and every gym show the identical
+    // flash.
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  it('F3 AC3 — the Mortar blast plays the baked impact cue through the shared AOE seam (AH-0MV822C250051OVN)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('mortar');
+    const impactCue = vi.spyOn(effectsModule, 'playMortarImpactSound');
+    const detonationCue = vi.spyOn(
+      effectsModule,
+      'playMortarDetonationSound',
+    );
+
+    // rng=0 samples the ship centre → the blast is on-screen and bursts.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    scene.runAutoFire(1.5);
+
+    // The shell lands (baked impact crack) then detonates (heavy boom), both
+    // through the same shared AOE detonation VFX seam, so the game and every
+    // gym sound the identical Mortar connect.
+    expect(impactCue).toHaveBeenCalledTimes(1);
+    expect(detonationCue).toHaveBeenCalledTimes(1);
+  });
+
+  it('F3 AC3 — the Mortar burst is drawn from the ship origin (inbound arcing shell trail) (AH-0MV822C250051OVN)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('mortar');
+
+    // rng=0.25 → the point is (100, 190): off the ship, so the inbound trail
+    // has a real arc to draw.
+    vi.spyOn(Math, 'random').mockReturnValue(0.25);
+    scene.runAutoFire(1.5);
+
+    // The burst is registered at the sampled point, and it carries the
+    // inbound trail geometry (multiple stroked arc segments) so the blast
+    // reads as an arcing shell landing.
+    const effects = scene.getAoeEffects();
+    expect(effects).toHaveLength(1);
+    expect(effects[0].x).toBe(100);
+    expect(effects[0].y).toBe(190);
+    // STROKE_PATH (opcode 9) segments: the burst's 8 spikes plus the trail's
+    // three arc strokes — strictly more than the 8 spikes alone.
+    const buf = effects[0].commandBuffer as number[];
+    // Per-opcode argument counts (Phaser Commands.js): MOVE_TO/LINE_TO carry 2
+    // args, LINE_STYLE 3, FILL_STYLE 2; the path terminators none. Walking
+    // with these strides keeps the counter aligned.
+    const widths: Record<number, number> = {
+      0: 7,
+      1: 0,
+      2: 0,
+      3: 4,
+      4: 2,
+      5: 2,
+      6: 3,
+      7: 2,
+      8: 0,
+      9: 0,
+    };
+    let strokes = 0;
+    for (let i = 0; i < buf.length; i += 1 + (widths[buf[i]] ?? 0)) {
+      if (buf[i] === 9) strokes += 1;
+    }
+    expect(strokes).toBeGreaterThan(8);
   });
 
   // ── Retained onImpact projectile-detonation machinery (dead code) ──
@@ -771,22 +880,48 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(scene.getAoeEffects()).toHaveLength(1);
   });
 
-  it('F4 AC3 — Arc is a no-op with no live enemies (no chain, no VFX)', async () => {
+  it('F4 AC5 — Arc connect fires the baked impact cue + a flash at each chained target (AH-0MV822CE7004MQ14)', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('arc');
+    scene.entities.push(
+      new StubEnemy(scene, 150, 100),
+      new StubEnemy(scene, 200, 100),
+    );
+    const impactCue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
 
     scene.runAutoFire(0.75);
 
-    // The chain is empty → no damage and no chain VFX to draw.
+    // One shot → one electric hit cue (the chain is a single attack), and
+    // one impact flash per chained target through the shared impact seam —
+    // the same path the game and every gym consume, so the connect cannot
+    // drift between scenes. The cue dispatches through the shared
+    // `playWeaponImpactCue` registry with the arc impact cue.
+    expect(impactCue).toHaveBeenCalledTimes(1);
+    expect(impactCue).toHaveBeenCalledWith('playArcImpactSound');
+    // Primary target + one chain hop → two connect flashes.
+    expect(scene.getBulletImpactEffects()).toHaveLength(2);
+  });
+
+  it('F4 AC3 — Arc is a no-op with no live enemies (no chain, no VFX, no impact cue)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    const impactCue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+
+    scene.runAutoFire(0.75);
+
+    // The chain is empty → no damage, no chain VFX and no connect feedback
+    // to draw/play.
     expect(scene.getAoeEffects()).toHaveLength(0);
     expect(scene.hooks.filter((h) => h.startsWith('onEnemyDestroyed'))).toHaveLength(0);
+    expect(impactCue).not.toHaveBeenCalled();
   });
 });
 
 // ── Smart Bomb screen-pulse descriptor seam (AH-0MV1BIWP9003EHRQ) ─────
 //
-// The Defender Smart Bomb resolves its screen-wide pulse through the SAME
+// The Defender Smart Bomb resolves its pulse through the SAME
 // `AoEDescriptor` / `applyAoEDescriptor` seam as the AOE weapons, so these
 // tests pin that shared path: one descriptor application damages every enemy
 // in range for `damage` HP, clears every bullet in range, and reports the
@@ -806,7 +941,7 @@ describe('Smart Bomb screen pulse reuses the AOE descriptor seam (AH-0MV1BIWP900
     return booted.scene as AoeStubScene;
   }
 
-  /** The screen-wide descriptor shape the Smart Bomb resolves. */
+  /** The descriptor shape the Smart Bomb resolves. */
   const screenPulse = (
     radius: number,
     damage = 1,
@@ -818,18 +953,21 @@ describe('Smart Bomb screen pulse reuses the AOE descriptor seam (AH-0MV1BIWP900
     damage,
   });
 
-  it('damages every on-screen enemy exactly once and leaves an off-screen enemy untouched', async () => {
+  it('damages every in-range enemy exactly once and leaves a beyond-radius enemy untouched', async () => {
     const scene = await boot();
-    const onScreenA = new ToughEnemy(scene, 300, 200, 3);
-    const onScreenB = new ToughEnemy(scene, 700, 350, 3);
+    const inRangeA = new ToughEnemy(scene, 430, 270, 3); // 50 px from origin
+    const inRangeB = new ToughEnemy(scene, 540, 220, 3); // ≈ 81 px from origin
+    const beyondRadius = new ToughEnemy(scene, 700, 350, 3); // ≈ 234 px — on-screen but beyond 200 px
     const offScreen = new ToughEnemy(scene, 5000, 5000, 3);
-    scene.entities.push(onScreenA, onScreenB, offScreen);
+    scene.entities.push(inRangeA, inRangeB, beyondRadius, offScreen);
 
-    // 1200 px base pulse radius covers the whole 960×540 field but not (5000,5000).
-    scene.runApplyAoeDescriptor(screenPulse(1200), 480, 270);
+    // 200 px base pulse radius (10× ship size, AH-0MV8GPGBL009M0D8) covers the
+    // ship-centred area but not the (700,350) neighbour nor (5000,5000).
+    scene.runApplyAoeDescriptor(screenPulse(200), 480, 270);
 
-    expect(onScreenA.damageCalls).toBe(1); // exactly one damage instance
-    expect(onScreenB.damageCalls).toBe(1);
+    expect(inRangeA.damageCalls).toBe(1); // exactly one damage instance
+    expect(inRangeB.damageCalls).toBe(1);
+    expect(beyondRadius.damageCalls).toBe(0);
     expect(offScreen.damageCalls).toBe(0);
   });
 
@@ -838,7 +976,7 @@ describe('Smart Bomb screen pulse reuses the AOE descriptor seam (AH-0MV1BIWP900
     const tough = new ToughEnemy(scene, 480, 270, 5);
     scene.entities.push(tough);
 
-    scene.runApplyAoeDescriptor(screenPulse(1200, 2), 480, 270);
+    scene.runApplyAoeDescriptor(screenPulse(200, 2), 480, 270);
 
     expect(tough.damageCalls).toBe(2);
     expect(tough.health).toBe(3);
@@ -847,11 +985,11 @@ describe('Smart Bomb screen pulse reuses the AOE descriptor seam (AH-0MV1BIWP900
   it('clears every enemy bullet in range and keeps an out-of-range bullet', async () => {
     const scene = await boot();
     const inside = new StubBullet(scene, 480, 270);
-    const farInside = new StubBullet(scene, 900, 500);
+    const farInside = new StubBullet(scene, 600, 350); // ≈ 156 px — just inside 200 px
     const outside = new StubBullet(scene, 5000, 5000);
     scene.bullets.push(inside, farInside, outside);
 
-    scene.runApplyAoeDescriptor(screenPulse(1200), 480, 270);
+    scene.runApplyAoeDescriptor(screenPulse(200), 480, 270);
 
     expect(scene.bullets).toEqual([outside]);
     expect(inside.graphics.active).toBe(false);
@@ -863,9 +1001,9 @@ describe('Smart Bomb screen pulse reuses the AOE descriptor seam (AH-0MV1BIWP900
     const scene = await boot();
     scene.bossPresent = true;
 
-    scene.runApplyAoeDescriptor(screenPulse(1200), 480, 270);
+    scene.runApplyAoeDescriptor(screenPulse(200), 480, 270);
 
-    expect(scene.hooks).toContain('onAoeHitsBoss:480,270,1200');
+    expect(scene.hooks).toContain('onAoeHitsBoss:480,270,200');
     expect(scene.bossHitCount).toBe(1);
   });
 });

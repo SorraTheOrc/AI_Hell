@@ -36,7 +36,15 @@ import {
   PLAYER_HIT_SCALE_PULSE_DURATION,
   SHIP_SIZE,
 } from '../../core/constants';
-import { playDestructionSound, playMortarDetonationSound, playPhaseShiftSound } from '../../audio/effects';
+import {
+  playBulletDestructionSound,
+  playDestructionSound,
+  playMortarDetonationSound,
+  playMortarImpactSound,
+  playPhaseShiftSound,
+  playWeaponImpactCue,
+  playNovaImpactSound,
+} from '../../audio/effects';
 import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
@@ -396,15 +404,21 @@ export abstract class CombatScene<
    * damage identically in the game and every gym (AH-0MV1BIUSJ0090W92).
    */
   private damageEnemyWithBullet(enemy: TEnemy, bullet: PlayerBullet): void {
+    // Per-weapon hit feedback (cannon's distinct flash + hit cue) plays on
+    // every connect through the shared impact seam — including the lethal
+    // blow, which layers the shot's hit cue under the destruction audio
+    // (AH-0MV8228YW0050IXS AC4).
+    this.resolveWeaponImpactFx(bullet);
     if (enemy.takeDamage) {
       enemy.takeDamage();
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
       // (the entity's `takeDamage()` has already run `destroySelf()` and
       // cleared `alive`). A non-lethal hit flashes at the impact point so the
-      // player can read that the hit registered.
+      // player can read that the hit registered — unless the per-weapon
+      // impact already laid down its distinct flash above.
       if (!enemy.alive) {
         this.finaliseEnemyKill(enemy);
-      } else {
+      } else if (!bullet.impactFx) {
         spawnBulletImpact(this, bullet.x, bullet.y, {
           registry: this.bulletImpactEffects,
         });
@@ -413,6 +427,25 @@ export abstract class CombatScene<
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
     }
+  }
+
+  /**
+   * Resolves a bullet's per-weapon impact feedback through the shared impact
+   * seam (AH-0MV8228YW0050IXS AC4): plays the weapon's baked hit cue and
+   * spawns its distinct impact flash at the hit point, so the game and every
+   * gym show the identical hit feedback. Bullets without `impactFx` metadata
+   * are a no-op — they keep the generic bullet-impact flash only.
+   */
+  protected resolveWeaponImpactFx(bullet: PlayerBullet): void {
+    const fx = bullet.impactFx;
+    if (!fx) return;
+    playWeaponImpactCue(fx.cue);
+    spawnBulletImpact(this, bullet.x, bullet.y, {
+      registry: this.bulletImpactEffects,
+      color: fx.color,
+      radius: fx.radius,
+      duration: fx.duration,
+    });
   }
 
   /**
@@ -585,6 +618,10 @@ export abstract class CombatScene<
       ];
       this.applyArcChainEffect(aoe, x, y, chain, path);
       this.spawnArcChainVfx(path);
+      // The connect feedback (impact flash at each chained target + baked hit
+      // cue) rides the same shared chain seam, so the game and every gym
+      // connect identically (AH-0MV822CE7004MQ14).
+      this.resolveChainImpactFx(def, path);
       return;
     }
     this.applyAoeEffect(def, x, y);
@@ -666,6 +703,31 @@ export abstract class CombatScene<
   }
 
   /**
+   * Resolves the per-weapon connect feedback for a chaining AOE shot (Arc):
+   * plays the weapon's baked hit cue once and spawns its distinct impact
+   * flash at every chained target through the shared impact-flash seam, so
+   * the game and every gym connect identically
+   * (AH-0MV822CE7004MQ14). Weapons without `impactFx` metadata are a no-op
+   * — the jagged bolt still draws, but no per-weapon connect feedback plays.
+   */
+  protected resolveChainImpactFx(
+    def: WeaponDefinition,
+    path: readonly ArcChainPoint[],
+  ): void {
+    const fx = def.impactFx;
+    if (!fx || path.length < 2) return;
+    playWeaponImpactCue(fx.cue);
+    for (let i = 1; i < path.length; i++) {
+      spawnBulletImpact(this, path[i].x, path[i].y, {
+        registry: this.bulletImpactEffects,
+        color: fx.color,
+        radius: fx.radius,
+        duration: fx.duration,
+      });
+    }
+  }
+
+  /**
    * Spawns the distinctive neon-vector VFX for a firing AOE weapon. Owned by
    * the shared core so the game and every gym render the identical effect
    * (parent AH-0MUOOB3OR001V8CD AC5). Nova's expanding ring is the F2
@@ -679,6 +741,11 @@ export abstract class CombatScene<
   ): void {
     if (def.id === 'nova' && def.aoe) {
       spawnNovaRing(this, x, y, def.aoe.radius, { registry: this.aoeEffects });
+      // The shockwave connect sound plays with the ring expansion through
+      // the same shared onFire AOE VFX path that spawns it (AH-0MV822BPT002GF17),
+      // so the game and every gym sound the identical nova impact — mirroring
+      // the Mortar detonation cue in `spawnAoeDetonationVfx`.
+      playNovaImpactSound();
     }
   }
 
@@ -716,18 +783,28 @@ export abstract class CombatScene<
    * **graphics are culled** when the point lies outside the play bounds — the
    * random Mortar can otherwise sample a point beyond the screen
    * (AH-0MUUF9GZV004WVT9 AC4).
+   *
+   * `origin` (when supplied) is the launcher's fire position, used to draw the
+   * Mortar's inbound arcing shell trail from the ship into the blast point
+   * (AH-0MV822C250051OVN); absent for the retained `onImpact` projectile path.
    */
   protected spawnAoeDetonationVfx(
     def: WeaponDefinition,
     x: number,
     y: number,
+    origin?: { x: number; y: number },
   ): void {
     if (def.id === 'mortar' && def.aoe) {
       if (this.isPointInPlayBounds(x, y)) {
         spawnMortarBurst(this, x, y, def.aoe.radius, {
           registry: this.aoeEffects,
+          origin,
         });
       }
+      // The shell lands (sharp impact crack) then detonates (heavy boom),
+      // both through this same shared AOE seam so the game and every gym
+      // sound the identical Mortar connect (AH-0MV822C250051OVN).
+      playMortarImpactSound();
       playMortarDetonationSound();
     }
   }
@@ -755,7 +832,10 @@ export abstract class CombatScene<
     for (let i = 0; i < detonations; i++) {
       const point = selectRandomPoint(x, y, range, this.sceneRng);
       this.applyAoeEffect(def, point.x, point.y);
-      this.spawnAoeDetonationVfx(def, point.x, point.y);
+      // Pass the ship as the launch origin so the burst draws the inbound
+      // arcing shell trail from the launcher into the blast point (visual
+      // identity AH-0MV822C250051OVN).
+      this.spawnAoeDetonationVfx(def, point.x, point.y, { x, y });
     }
   }
 
@@ -776,6 +856,15 @@ export abstract class CombatScene<
    */
   protected onPlayerBulletHitsBoss(_bullet: PlayerBullet): boolean {
     return false;
+  }
+
+  /**
+   * Resolves per-weapon impact VFX/SFX when a ricochet bullet bounces off
+   * a wall (AH-0MV822AP1006W2F9 AC4). Reuses the same impact seam as
+   * enemy hits so the game and every gym show identical bounce feedback.
+   */
+  protected override onPlayerBulletWallBounce(bullet: PlayerBullet): void {
+    this.resolveWeaponImpactFx(bullet);
   }
 
   /**
@@ -821,7 +910,14 @@ export abstract class CombatScene<
       this,
       enemyBullet.graphics.x,
       enemyBullet.graphics.y,
-      { registry: this.bulletImpactEffects },
+      {
+        registry: this.bulletImpactEffects,
+        // Identity-carrying shots (the Scout's pellet) tint the interception
+        // flash with their own colour, so the hit reads distinct per enemy
+        // while the existing per-enemy destruction cue still plays
+        // (AH-0MV822CQL005R4MM). Legacy bullets keep the warm-white flash.
+        color: enemyBullet.color,
+      },
     );
   }
 
@@ -1099,6 +1195,11 @@ export abstract class CombatScene<
         )
       ) {
         this._hitPlayer();
+        // Identity-carrying shot lands on the ship: pop its distinct impact
+        // flash + the existing per-enemy cue through the shared impact seam,
+        // so a Scout hit reads (and sounds) distinct from a glancing shot
+        // (AH-0MV822CQL005R4MM). Legacy bullets keep the plain hit behaviour.
+        this._spawnEnemyBulletHitImpact(eb);
         eb.graphics.destroy();
       } else {
         keptEnemy2.push(eb);
@@ -1131,6 +1232,24 @@ export abstract class CombatScene<
         this._hitPlayer();
       }
     }
+  }
+
+  /**
+   * Resolves the per-identity impact feedback for an enemy shot reaching the
+   * player (AH-0MV822CQL005R4MM): a small flash in the shot's own colour at
+   * the impact point plus the existing per-enemy destruction cue — routed
+   * through the same shared impact helpers (`spawnBulletImpact` +
+   * `playBulletDestructionSound`) the interception path uses, so the game
+   * and every gym read a Scout hit identically. A no-op for legacy bullets
+   * without the identity `color` field (unchanged behaviour).
+   */
+  private _spawnEnemyBulletHitImpact(enemyBullet: TBullet): void {
+    if (enemyBullet.color === undefined) return;
+    playBulletDestructionSound();
+    spawnBulletImpact(this, enemyBullet.graphics.x, enemyBullet.graphics.y, {
+      registry: this.bulletImpactEffects,
+      color: enemyBullet.color,
+    });
   }
 
   /**
