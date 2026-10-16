@@ -26,6 +26,7 @@ import { createBullet } from './bulletUtils';
 import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import { FormationOffset } from '../utils/formations';
 import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
+import type { EnemyBulletArchetype } from '../utils/bulletVisuals';
 import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { playScoutAdvanceCue, playScoutFireSound } from '../audio/effects';
 import { type ExplosionHandle } from '../vfx/explosionParticles';
@@ -161,6 +162,18 @@ export class Scout extends BaseEnemy {
 
   /** Archetype key (`'scout'`), matching the scene's enemy key. */
   override get archetype(): string {
+    return 'scout';
+  }
+
+  /**
+   * The enemy bullet-identity archetype resolved by the shared aimed-shot
+   * fire seam (`tryFireAimedBullet`) — `'scout'` for the Scout, overridden
+   * by subclasses that share the aimed-shot path but need their own
+   * projectile identity (e.g. the Raider, AH-0MV822EH800780GI). The
+   * overridable seam keeps the game ↔ gym shared fire path single and
+   * parity-safe while letting each archetype resolve its own look.
+   */
+  protected get bulletVisualArchetype(): EnemyBulletArchetype {
     return 'scout';
   }
 
@@ -303,7 +316,7 @@ export class Scout extends BaseEnemy {
     // shape, pulse, trail and launch pop are identical in the game and every
     // gym (gym↔game parity by construction). Firing logic, speed, interval
     // and lifetime are unchanged — this is visuals/feel only.
-    const visual = resolveEnemyBulletVisual('scout');
+    const visual = resolveEnemyBulletVisual(this.bulletVisualArchetype);
     const { graphics, color, redraw } = createBullet({
       scene: this.scene,
       color: this._bulletColor,

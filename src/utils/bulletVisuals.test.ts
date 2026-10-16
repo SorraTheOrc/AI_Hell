@@ -126,6 +126,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     bolt: { shape: 'bolt' as BulletShape, color: 0xcc66ff, radius: 3, length: 2.4 },
     'phaser-bolt': { shape: 'phaser-bolt' as BulletShape, color: 0xff4444, radius: 3, length: 1.8, rimColor: 0xff00ff },
     fleck: { shape: 'fleck' as BulletShape, color: 0x00ccff, radius: 3, length: 1.4, rimColor: 0x00ccff },
+    dart: { shape: 'dart' as BulletShape, color: 0xffddaa, radius: 3, length: 2.8, rimColor: 0xff6688 },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
     chevron: { shape: 'chevron' as BulletShape, color: 0x00ffcc, radius: 3, length: 2 },
@@ -335,6 +336,18 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
   });
 
+  it('dart renders a slim sharp-nosed spearhead with a white-hot nose tip + neon rim (AH-0MV822EH800780GI)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs.dart);
+    const buf = g.commandBuffer as number[];
+    // The dart's read: a filled long spearhead body + a white-hot nose-tip
+    // fill (two closed filled paths) plus a hot-pink neon-rim stroke — the
+    // needle-like fast-attacker identity, distinct from the Raider's own
+    // `diamond` body and every other shot.
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(2);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
   it('diamond renders a closed filled path (≥ 3 line segments)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.diamond);
@@ -453,6 +466,7 @@ describe('DEFAULT_SHAPE_LENGTH', () => {
     expect(DEFAULT_SHAPE_LENGTH.bolt).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH['phaser-bolt']).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.fleck).toBeGreaterThan(1);
+    expect(DEFAULT_SHAPE_LENGTH.dart).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.shard).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.chevron).toBeGreaterThan(1);
   });
@@ -656,6 +670,24 @@ describe('resolveEnemyBulletVisual', () => {
     expect(visual.tail).toBeGreaterThan(0);
     expect(visual.muzzle).toBeDefined();
     expect(visual.muzzle?.color).toBe(0x00ccff);
+    expect(shapeAnimates(visual.shape)).toBe(false);
+  });
+
+  it('raider shots resolve a slim sharp-nosed dart identity with a hot-pink rim + launch pop (AH-0MV822EH800780GI)', () => {
+    const visual = resolveEnemyBulletVisual('raider');
+    // The Raider's signature look: a slim sharp-nosed dart — a dedicated
+    // `dart` primitive (long spearhead body + white-hot nose tip), NOT the
+    // wide `diamond` the placeholder used before this landed.
+    expect(canonicalShape(visual.shape)).toBe('dart');
+    // The shot body keeps the established pale-amber Raider bullet colour.
+    expect(visual.color).toBe(0xffddaa);
+    // Feel knobs: a hot-pink neon rim (the attack-run threat read), a short
+    // fading trail, and a pale-amber launch pop at the raider's body. No
+    // animation — the dart is static, so no per-frame redraw is required.
+    expect(visual.rimColor).toBe(0xff6688);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0xffddaa);
     expect(shapeAnimates(visual.shape)).toBe(false);
   });
 

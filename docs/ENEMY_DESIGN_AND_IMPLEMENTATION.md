@@ -2048,6 +2048,21 @@ heading, and each fleck carries its cyan colour so the shared impact pass
 tints the flash when a fleck connects or is intercepted. Visuals/feel only:
 firing logic, speed, interval and spread are unchanged.
 
+**Defender raider (raider family, AH-0MV822EH800780GI):** during a committed
+attack run the raider's aimed shot renders as a **slim sharp-nosed dart** —
+a dedicated `dart` seam primitive (a long spearhead body with a **white-hot
+nose tip**, a hot-pink neon rim and a short fading trail) — a needle-like
+fast-attacker read, deliberately distinct from the Scout pellet whose shared
+`tryFireAimedBullet` path the raider reuses. The raider resolves its own
+identity through the overridable `bulletVisualArchetype` seam on the shared
+Scout fire path (the one place the shared aimed-shot code names its
+projectile identity), so the game and every gym draw the same dart with no
+per-scene copy. Each shot spawns **one pale-amber launch pop** at the
+raider's body and each dart carries its pale-amber colour so the shared
+impact pass tints the flash when a dart connects or is intercepted.
+Visuals/feel only: the patrol/attack state machine, fire gate, speed,
+interval and advance-cue tell are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific

@@ -554,6 +554,8 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
  *   velocity-aligned core streak (AH-0MV822DRX009RYUB)
  * - `fleck` — the Swarm's tiny fast cometary fleck, massed-fire micro-shard
  *   (AH-0MV822E4T006F37Y)
+ * - `dart` — the Raider's slim sharp-nosed dart with a short trail
+ *   (AH-0MV822EH800780GI)
  * - `diamond` — four-point rhombus
  * - `spark` — four-point star
  * - `chevron` — forward-opening V
@@ -576,6 +578,7 @@ export type BulletShape =
   | 'bolt'
   | 'phaser-bolt'
   | 'fleck'
+  | 'dart'
   | 'diamond'
   | 'spark'
   | 'chevron'

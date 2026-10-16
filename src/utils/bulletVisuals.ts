@@ -18,7 +18,8 @@
  * glint, AH-0MV822D2U000LRFV), **jagged bolt** (`bolt`), **phaser-bolt**
  * (the Phaser's crisply-edged hexagonal bolt with a bright velocity-aligned
  * core streak, AH-0MV822DRX009RYUB), **fleck** (the Swarm's tiny fast
- * cometary micro-shard, AH-0MV822E4T006F37Y),
+ * cometary micro-shard, AH-0MV822E4T006F37Y), **dart** (the Raider's slim
+ * sharp-nosed dart with a short trail, AH-0MV822EH800780GI),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -130,6 +131,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   bolt: 2.4,
   'phaser-bolt': 2.6,
   fleck: 1.4,
+  dart: 2.8,
   diamond: 1,
   spark: 1,
   chevron: 2,
@@ -224,6 +226,9 @@ export function drawBulletShape(
       break;
     case 'fleck':
       _fleck(graphics, spec, alpha, rim);
+      break;
+    case 'dart':
+      _dart(graphics, spec, alpha, rim);
       break;
     case 'diamond':
       _diamond(graphics, spec, alpha, rim);
@@ -687,6 +692,60 @@ function _fleck(
   }
 }
 
+/**
+ * Slim sharp-nosed dart (AH-0MV822EH800780GI): the Raider's aimed-shot
+ * identity.
+ *
+ * A long, narrow spearhead — a sharp point forward (+x), thin straight
+ * flanks sweeping back to a pair of small swept tail fins — with a white-hot
+ * nose tip and a brisk neon rim in a hot pink that echoes the raider's
+ * attack-run threat. Deliberately the most needle-like silhouette in the
+ * roster (the Raider is a fast committed attacker), distinct from the
+ * Raider's own `diamond`-shaped body and every other shot identity.
+ */
+function _dart(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const half = shapeLength(spec.radius, spec) / 2;
+  const w = r * 0.6;
+  // Long spearhead body: sharp nose, thin flanks, swept tail.
+  graphics.fillStyle(spec.color, alpha);
+  graphics.beginPath();
+  graphics.moveTo(half, 0);
+  graphics.lineTo(half * 0.25, w);
+  graphics.lineTo(-half * 0.72, w * 0.85);
+  graphics.lineTo(-half, 0);
+  graphics.lineTo(-half * 0.72, -w * 0.85);
+  graphics.lineTo(half * 0.25, -w);
+  graphics.closePath();
+  graphics.fillPath();
+  // White-hot nose tip — the dart leads with a bright point.
+  graphics.fillStyle(0xffffff, Math.min(1, alpha * 0.9));
+  graphics.beginPath();
+  graphics.moveTo(half, 0);
+  graphics.lineTo(half * 0.3, w * 0.38);
+  graphics.lineTo(half * 0.3, -w * 0.38);
+  graphics.closePath();
+  graphics.fillPath();
+  // Neon rim around the slim body.
+  if (rim !== undefined) {
+    graphics.lineStyle(1.5, rim, Math.min(1, alpha * 0.9));
+    graphics.beginPath();
+    graphics.moveTo(half, 0);
+    graphics.lineTo(half * 0.25, w);
+    graphics.lineTo(-half * 0.72, w * 0.85);
+    graphics.lineTo(-half, 0);
+    graphics.lineTo(-half * 0.72, -w * 0.85);
+    graphics.lineTo(half * 0.25, -w);
+    graphics.closePath();
+    graphics.strokePath();
+  }
+}
+
 /** Diamond: a filled four-point rhombus. */
 function _diamond(
   graphics: Phaser.GameObjects.Graphics,
@@ -994,7 +1053,14 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 0.9,
     muzzle: { color: 0x00ccff, radius: 4, duration: 0.1 },
   },
-  raider: { shape: 'diamond', color: 0xffddaa },
+  raider: {
+    shape: 'dart',
+    color: 0xffddaa,
+    length: 2.8,
+    rimColor: 0xff6688,
+    tail: 1.0,
+    muzzle: { color: 0xffddaa, radius: 5, duration: 0.12 },
+  },
   'boss-spread': { shape: 'disc', color: 0xffffff, rimColor: 0xff3366 },
   'boss-spiral': { shape: 'ring', color: 0xffffff },
   'boss-pulse': { shape: 'shell', color: 0xffffff },

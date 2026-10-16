@@ -559,6 +559,20 @@ The dynamic archetypes are gated behind per-wave opt-ins (`ghosts`,
 `centipede`, `horde`, `laneTraffic`) so the shipped campaign wave data is
 unchanged; the `orbital-strike` hazard is enabled for regular waves.
 
+**Defender raider projectile identity** (per-enemy visuals epic,
+AH-0MV2K5SR0005RTTE): during a committed attack run the raider fires a
+**slim sharp-nosed dart** — a long spearhead body with a **white-hot nose
+tip**, a hot-pink neon rim, a short fading trail and a pale-amber launch pop
+at its body (drawn through the shared bullet-shape seam,
+`src/utils/bulletVisuals.ts`, `dart` primitive; the raider reuses the Scout's
+shared aimed-shot path but resolves its own identity via the overridable
+`bulletVisualArchetype` seam) — a needle-like fast-attacker read, distinct
+from the Scout pellet and the Raider's own wide diamond body, with a
+pale-amber-tinted impact flash when a dart connects or is intercepted
+(shared fire/impact seams, AH-0MV822EH800780GI). Visuals/feel only — the
+patrol/attack state machine, fire gate, speed, interval and tell are
+unchanged.
+
 **Behavioural classification (AH-0MV29NWI1007NKN7).** Every CSV archetype
 carries two coarse, descriptive fields for wave-design and balance tooling:
 `movementClass` (`formation | diver | chaser | patroller | roamer`) and
