@@ -2034,6 +2034,20 @@ straight-edged prism is deliberately the opposite of the player's jagged
 than a splinter, ember or pod. Visuals/feel only: firing logic, speed,
 interval, spoke count and the radial pattern are unchanged.
 
+**E5 Swarm (swarm family, AH-0MV822E4T006F37Y):** each coordinated-burst
+shot renders as a **tiny fast cometary fleck** — a dedicated `fleck` seam
+primitive (a small elongated tear with a **white-hot leading glint**, a
+pointed tail, a cyan neon rim and a short fading trail) that reads as one
+of a massed fast-moving volley — deliberately the smallest, simplest
+silhouette in the roster, so the Swarm's massed fire stays cheap at high
+bullet counts while still being visibly distinct from the Scout's pulsing
+pod and the Raider's wide diamond. Each member's shot spawns **one cyan
+launch pop** at the member's body (each member is its own emitter, so each
+fleck gets its own tiny pop), each fleck flies nose-first along its spread
+heading, and each fleck carries its cyan colour so the shared impact pass
+tints the flash when a fleck connects or is intercepted. Visuals/feel only:
+firing logic, speed, interval and spread are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific

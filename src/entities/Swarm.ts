@@ -18,6 +18,8 @@ import Phaser from 'phaser';
 import { createBullet } from './bulletUtils';
 import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import { playSwarmBurstSound } from '../audio/effects';
+import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
+import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { FormationOffset } from '../utils/formations';
 import { type ExplosionHandle } from '../vfx/explosionParticles';
 
@@ -84,6 +86,8 @@ export interface SwarmConfig {
 
 /**
  * A bullet fired by a swarm member during a coordinated burst volley.
+ * Renders as a tiny fast cometary fleck (the Swarm's burst projectile
+ * identity — AH-0MV822E4T006F37Y) and travels toward the target.
  */
 export interface SwarmBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
@@ -258,6 +262,16 @@ export class Swarm extends BaseEnemy {
     // Swarm coordinated burst: single buzzing whoosh per volley.
     playSwarmBurstSound();
 
+    // The shared Swarm projectile identity (AH-0MV822E4T006F37Y): each
+    // member's shot is a tiny fast cometary fleck — a small elongated tear
+    // with a white-hot leading glint, a pointed tail, a cyan rim and a short
+    // fading trail — drawn through the shared bullet-shape seam. Because
+    // EVERY scene drives this same `tryFireBurstBullet` through `fireForEnemy`,
+    // the fleck's shape, rim, trail and launch pop are identical in the game
+    // and every gym (gym↔game parity by construction). Firing logic, speed,
+    // interval and spread are unchanged — visuals/feel only.
+    const visual = resolveEnemyBulletVisual('swarm');
+
     const dx = this.target.x - this.x;
     const dy = this.target.y - this.y;
     const baseAngle = Math.atan2(dy, dx);
@@ -265,12 +279,28 @@ export class Swarm extends BaseEnemy {
     const spread = (this._rng() - 0.5) * 0.3;
     const angle = baseAngle + spread;
 
+    // One shared launch pop at the member's body per shot (each member is
+    // its own emitter, so each fleck gets its own tiny cyan pop — cheap).
+    // Spawned through the shared `src/vfx/enemyMuzzleFlash` helper (cheap
+    // Graphics primitive, self-cleaning tween), aimed along the spread
+    // heading so the pop's spike points where the fleck flies.
+    if (visual.muzzle) {
+      spawnEnemyMuzzleFlash(this.scene, this.x, this.y, angle, visual.muzzle);
+    }
+
     const { graphics, color } = createBullet({
       scene: this.scene,
       color: this._bulletColor,
       size: this._bulletSize,
       x: this.x,
       y: this.y,
+      shape: visual.shape,
+      length: visual.length,
+      rimColor: visual.rimColor,
+      thickness: visual.thickness,
+      alpha: visual.alpha,
+      tail: visual.tail,
+      angle,
     });
 
     return {

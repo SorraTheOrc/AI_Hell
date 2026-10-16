@@ -552,6 +552,8 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
  * - `bolt` — jagged bolt
  * - `phaser-bolt` — the Phaser's crisply-edged hexagonal bolt with a bright
  *   velocity-aligned core streak (AH-0MV822DRX009RYUB)
+ * - `fleck` — the Swarm's tiny fast cometary fleck, massed-fire micro-shard
+ *   (AH-0MV822E4T006F37Y)
  * - `diamond` — four-point rhombus
  * - `spark` — four-point star
  * - `chevron` — forward-opening V
@@ -573,6 +575,7 @@ export type BulletShape =
   | 'shard'
   | 'bolt'
   | 'phaser-bolt'
+  | 'fleck'
   | 'diamond'
   | 'spark'
   | 'chevron'

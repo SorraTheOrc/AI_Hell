@@ -484,3 +484,54 @@ describe('Swarm SFX wiring (AH-0MU3VPIA900697E8)', () => {
     expect(burstSpy).not.toHaveBeenCalled();
   });
 });
+
+// ── Swarm coordinated-burst projectile identity (AH-0MV822E4T006F37Y) ──────
+
+describe('Swarm — coordinated-burst projectile identity (AH-0MV822E4T006F37Y)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  it('fires tiny fast flecks with the shared identity: one launch pop + rotated flecks', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+    const swarm = new Swarm(
+      scene,
+      { x: 240, y: 300, formationOffset: { row: 0, col: 0 }, rng: () => 0.5 },
+      0,
+    );
+
+    const graphicsBefore = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    swarm.shootEnabled = true;
+    const bullet = swarm.tryFireBurstBullet(1_000_000);
+    expect(bullet).not.toBeNull();
+
+    // The shot spawns its fleck bullet Graphics **plus** one cyan launch pop
+    // at the member body — the enemy-side fire VFX per emitted fleck.
+    const graphicsAfter = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    expect(graphicsAfter).toBe(graphicsBefore + 1 + 1);
+
+    // The identity fleck keeps the established cyan bullet colour (the shared
+    // impact pass tints the hit flash with it).
+    expect(bullet!.color).toBe(SWARM_BULLET_COLOR);
+
+    // The fleck is rotated to fly nose-first along its spread heading.
+    const heading = Math.atan2(bullet!.vy, bullet!.vx);
+    let rotation = bullet!.graphics.rotation;
+    let expected = heading;
+    if (rotation - expected > Math.PI) rotation -= Math.PI * 2;
+    if (rotation - expected < -Math.PI) rotation += Math.PI * 2;
+    expect(rotation).toBeCloseTo(expected, 5);
+  });
+});

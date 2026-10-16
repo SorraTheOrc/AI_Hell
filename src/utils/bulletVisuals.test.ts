@@ -125,6 +125,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     shard: { shape: 'shard' as BulletShape, color: 0xffee88, radius: 3, length: 2.6, rimColor: 0xffff00 },
     bolt: { shape: 'bolt' as BulletShape, color: 0xcc66ff, radius: 3, length: 2.4 },
     'phaser-bolt': { shape: 'phaser-bolt' as BulletShape, color: 0xff4444, radius: 3, length: 1.8, rimColor: 0xff00ff },
+    fleck: { shape: 'fleck' as BulletShape, color: 0x00ccff, radius: 3, length: 1.4, rimColor: 0x00ccff },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
     chevron: { shape: 'chevron' as BulletShape, color: 0x00ffcc, radius: 3, length: 2 },
@@ -321,6 +322,19 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
   });
 
+  it('fleck renders a tiny cometary tear: filled head + tail + white-hot glint + neon rim (AH-0MV822E4T006F37Y)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs.fleck);
+    const buf = g.commandBuffer as number[];
+    // The fleck's read: a filled tear body + a pointed tail triangle + a
+    // white-hot leading glint (arc fills) plus a cyan neon-rim stroke — the
+    // tiny-fast-fleck massed-fire micro-shard, distinct from the 4-point
+    // `spark` star and the Raider's wide `diamond`.
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countOps(buf, Cmd.ARC)).toBeGreaterThanOrEqual(2);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
   it('diamond renders a closed filled path (≥ 3 line segments)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.diamond);
@@ -438,6 +452,7 @@ describe('DEFAULT_SHAPE_LENGTH', () => {
     expect(DEFAULT_SHAPE_LENGTH.missile).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.bolt).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH['phaser-bolt']).toBeGreaterThan(1);
+    expect(DEFAULT_SHAPE_LENGTH.fleck).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.shard).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.chevron).toBeGreaterThan(1);
   });
@@ -622,6 +637,25 @@ describe('resolveEnemyBulletVisual', () => {
     expect(visual.tail).toBeGreaterThan(0);
     expect(visual.muzzle).toBeDefined();
     expect(visual.muzzle?.color).toBe(0xff00ff);
+    expect(shapeAnimates(visual.shape)).toBe(false);
+  });
+
+  it('swarm coordinated bursts resolve a tiny fast fleck identity with a cyan pop (AH-0MV822E4T006F37Y)', () => {
+    const visual = resolveEnemyBulletVisual('swarm');
+    // The Swarm's signature look: a tiny fast cometary micro-shard — a
+    // dedicated `fleck` primitive (small elongated tear + white-hot leading
+    // glint + pointed tail), NOT the 4-point `spark` star the placeholder
+    // used before this landed.
+    expect(canonicalShape(visual.shape)).toBe('fleck');
+    // The shot body keeps the established cyan Swarm bullet colour.
+    expect(visual.color).toBe(0x00ccff);
+    // Feel knobs: a cyan neon rim, a short fading trail (the fast-fleck
+    // read), and a cyan launch pop at each member's body. No animation —
+    // massed fire must stay cheap, so no per-frame redraw is required.
+    expect(visual.rimColor).toBe(0x00ccff);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0x00ccff);
     expect(shapeAnimates(visual.shape)).toBe(false);
   });
 

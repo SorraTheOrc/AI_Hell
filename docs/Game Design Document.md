@@ -461,6 +461,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: High (positional threat in dense formations).
 - **Fires**: No (Levels 1–3); yes, coordinated burst (Level 4).
+- **Projectile identity** (per-enemy visuals epic, AH-0MV2K5SR0005RTTE): each coordinated-burst shot renders as a **tiny fast cometary fleck** — a small elongated tear with a **white-hot leading glint**, a pointed tail, a cyan neon rim, a short fading trail and a cyan launch pop at the member's body (drawn through the shared bullet-shape seam, `src/utils/bulletVisuals.ts`, `fleck` primitive) — a tiny-fast-fleck micro-shard that reads as massed fire, distinct from the Raider's wide diamond and every other identity, with a cyan-tinted impact flash when a fleck connects or is intercepted (shared fire/impact seams, AH-0MV822E4T006F37Y). Visuals/feel only — firing logic, speed, interval and spread are unchanged.
 
 #### E6 — Asteroid
 - **Behavior**: Free-roaming rock that drifts in a **straight line at constant

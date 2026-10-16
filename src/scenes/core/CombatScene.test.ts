@@ -787,6 +787,29 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xff4444);
   });
 
+  it('a Swarm fleck plays its identity impact pop and flash when it hits the player (AH-0MV822E4T006F37Y)', async () => {
+    // The Swarm's fleck carries its cyan bullet colour; the shared impact
+    // pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints the
+    // impact flash and pops the existing per-enemy destruction cue — so a
+    // Swarm hit reads (and sounds) distinct from every other identity,
+    // identically in the game and every gym. This test pins the cyan Swarm
+    // variant of the generic path with the real SWARM_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0x00ccff; // SWARM_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0x00ccff);
+  });
+
   it('legacy enemy bullets without an identity keep the plain hit behaviour (no added flash)', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 100, y: 100 });

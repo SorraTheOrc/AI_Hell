@@ -17,7 +17,8 @@
  * **shard** (the Diver's sharp splinter/arrowhead with a sweeping spine
  * glint, AH-0MV822D2U000LRFV), **jagged bolt** (`bolt`), **phaser-bolt**
  * (the Phaser's crisply-edged hexagonal bolt with a bright velocity-aligned
- * core streak, AH-0MV822DRX009RYUB),
+ * core streak, AH-0MV822DRX009RYUB), **fleck** (the Swarm's tiny fast
+ * cometary micro-shard, AH-0MV822E4T006F37Y),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -128,6 +129,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   shard: 2.4,
   bolt: 2.4,
   'phaser-bolt': 2.6,
+  fleck: 1.4,
   diamond: 1,
   spark: 1,
   chevron: 2,
@@ -219,6 +221,9 @@ export function drawBulletShape(
       break;
     case 'phaser-bolt':
       _phaserBolt(graphics, spec, alpha, rim, stroke);
+      break;
+    case 'fleck':
+      _fleck(graphics, spec, alpha, rim);
       break;
     case 'diamond':
       _diamond(graphics, spec, alpha, rim);
@@ -632,6 +637,56 @@ function _phaserBolt(
   }
 }
 
+/**
+ * Tiny fast cometary fleck (AH-0MV822E4T006F37Y): the Swarm's coordinated-burst
+ * shot identity.
+ *
+ * A small elongated tear/comet — a bright cyan head with a white-hot leading
+ * glint and a short pointed tail at the rear — reads as one of a massed,
+ * fast-moving swarm of flecks (the tiny-fast-fleck read the AC calls for).
+ * Deliberately the smallest, simplest silhouette in the roster: the Swarm
+ * fires en masse, so the fleck must stay cheap at high bullet counts while
+ * still being visibly different from the Scout's pulsing pod (a rounded
+ * scalloped disc) and the Diamond shot of the Raider (a wide 4-point
+ * rhombus).
+ */
+function _fleck(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const half = shapeLength(spec.radius, spec) / 2;
+  // Elongated tear body along +x (the flight axis).
+  graphics.fillStyle(spec.color, alpha);
+  graphics.beginPath();
+  graphics.moveTo(half, 0);
+  graphics.arc(0, 0, r, 0, Math.PI * 2, false);
+  graphics.closePath();
+  graphics.fillPath();
+  // Pointed tail: a sliver triangle behind the head.
+  graphics.fillStyle(spec.color, Math.min(1, alpha * 0.9));
+  graphics.beginPath();
+  graphics.moveTo(-r * 0.6, -r * 0.5);
+  graphics.lineTo(-half * 1.05, 0);
+  graphics.lineTo(-r * 0.6, r * 0.5);
+  graphics.closePath();
+  graphics.fillPath();
+  // White-hot leading glint (tiny, so the massed volley stays cheap).
+  graphics.fillStyle(0xffffff, Math.min(1, alpha * 0.85));
+  graphics.beginPath();
+  graphics.arc(r * 0.45, 0, r * 0.4, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  // Neon rim (swarm cyan) around the head.
+  if (rim !== undefined) {
+    graphics.lineStyle(1.5, rim, Math.min(1, alpha * 0.9));
+    graphics.beginPath();
+    graphics.arc(0, 0, r, 0, Math.PI * 2, false);
+    graphics.strokePath();
+  }
+}
+
 /** Diamond: a filled four-point rhombus. */
 function _diamond(
   graphics: Phaser.GameObjects.Graphics,
@@ -926,7 +981,19 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 1.2,
     muzzle: { color: 0xff00ff, radius: 5, duration: 0.12 },
   },
-  swarm: { shape: 'spark', color: 0x00ccff },
+  // Swarm coordinated burst (AH-0MV822E4T006F37Y): each member's shot is a
+  // tiny fast cometary fleck — a small elongated tear with a white-hot
+  // leading glint, a pointed tail, a cyan neon rim and a short fading trail
+  // — with a cyan launch pop at the member's body. The shot body keeps the
+  // established `SWARM_BULLET_COLOR`; identity is carried by shape + rim +
+  // feel, never a behaviour change.
+  swarm: {
+    shape: 'fleck',
+    color: 0x00ccff,
+    rimColor: 0x00ccff,
+    tail: 0.9,
+    muzzle: { color: 0x00ccff, radius: 4, duration: 0.1 },
+  },
   raider: { shape: 'diamond', color: 0xffddaa },
   'boss-spread': { shape: 'disc', color: 0xffffff, rimColor: 0xff3366 },
   'boss-spiral': { shape: 'ring', color: 0xffffff },
