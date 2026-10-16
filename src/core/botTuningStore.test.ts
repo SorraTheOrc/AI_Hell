@@ -247,12 +247,48 @@ describe('bot tuning store — bundled baseline fallback (AH-0MV9GZD2C005IIU3)',
     }
   });
 
-  it('AC5 — the Default-named entry in the bundled baseline carries the shipped values', () => {
+  it('AC5 — the Default-named entry in the bundled baseline is intact (not pinned to the factory defaults)', () => {
     const baseline = bundledBaselineState();
     const def = baseline.configs.find((c) => c.name === DEFAULT_BOT_TUNING_NAME);
     expect(def).toBeDefined();
-    expect(def!.values).toEqual(defaultBotTuningValues());
-    // Config-name reporting is unchanged: the current name is still 'Default'.
+    // Deliberately NOT pinned to `defaultBotTuningValues()`: the bundled file
+    // is meant to carry the *tuned* Bot definitions (AH-0MV9GZD2C005IIU3), so
+    // an Export → commit refresh must not break the suite. Config-name
+    // reporting is unchanged: the current name is still 'Default'.
     expect(getCurrentBotTuningName()).toBe(DEFAULT_BOT_TUNING_NAME);
+  });
+
+  it('AC1 — a DISTINCTIVE bundled baseline is served verbatim (mechanism is content-agnostic)', async () => {
+    // Guard against a silently-broken mechanism: because the committed file
+    // currently equals the factory defaults, most baseline tests are
+    // tautological (fresh state == defaults either way). Force the bundled
+    // baseline to carry clearly *different* values and prove the store serves
+    // exactly those — the shipped file is the fallback, not the built-in
+    // `Default`.
+    const distinctiveJson = JSON.stringify({
+      version: BOT_TUNING_SCHEMA_VERSION,
+      current: 'Tuned',
+      configs: [
+        { name: 'Tuned', values: { competent: { mineralSeekRange: 777 }, human: { skill: 0.5 } } },
+      ],
+    });
+    vi.resetModules();
+    vi.doMock('./bundledConfig', () => ({
+      bundledBotTuningJson: distinctiveJson,
+    }));
+    try {
+      const fresh = await import('./botTuningStore');
+      expect(fresh.listBotTuningNames()).toEqual(['Tuned']);
+      expect(fresh.getCurrentBotTuningName()).toBe('Tuned');
+      expect(fresh.getCurrentBotTuningConfig().values.competent['mineralSeekRange']).toBe(777);
+      expect(fresh.getCurrentBotTuningConfig().values.human['skill']).toBe(0.5);
+      // Proves the bundled file itself was flown, not the built-in fallback,
+      // which would have returned the default values.
+      expect(fresh.getCurrentBotTuningConfig().values.competent['mineralSeekRange']).not.toBe(
+        defaultBotTuningValues().competent['mineralSeekRange'],
+      );
+    } finally {
+      vi.doUnmock('./bundledConfig');
+    }
   });
 });

@@ -749,9 +749,17 @@ baseline.
 **Refresh workflow (tune → Export → commit):** after tuning in the gym, click
 **Export** (`bot-tuning.json`) and overwrite `src/data/bot-tuning.json` with
 that exact file (the Export output is byte-equivalent to `serialiseBotTuningState()`), then commit. The next build and every fresh machine/browser
-fly the updated baseline. Keep the file as the single source of the shipped
+fly the updated baseline. The GitHub Pages alpha is cut from release tags, so a
+baseline committed to `dev` reaches it at the next `dev` → `main` release.
+
+Keep the file as the single source of the shipped
 baseline — like the committed CSVs — so a stale committed baseline is the only
-risk, mitigated by documenting this workflow here.
+risk, mitigated by documenting this workflow here. Do **not** pin the file to
+the built-in factory defaults in tests: the shipped baseline is expected to
+carry the *tuned* values, and an equality assertion against
+`defaultBotTuningValues()` would reject the very Export → commit refresh. The
+end-to-end wiring is instead guarded by the discriminating tests named in
+[docs/dev/gameplay-capture.md](dev/gameplay-capture.md#which-bot-values-ship-and-verifying-they-are-used).
 
 The tuning surface is a curated subset of `COMPETENT_BOT_TUNABLES` /
 `BOT_HUMAN_INPUT_TUNABLES`; `tuningFields.ts` reconstructs the nested

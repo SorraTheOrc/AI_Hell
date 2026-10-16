@@ -255,6 +255,33 @@ The pure `installBotTuningConfig` / `loadBotTuningConfigFile` helpers live in
 `scripts/capture-gameplay.mjs` and are unit-tested in
 `scripts/capture-gameplay.test.ts` (no browser needed).
 
+#### Which bot values ship (and verifying they are used)
+
+The bundled `src/data/bot-tuning.json` is the **single source of the shipped
+baseline**, so the *values it contains* are exactly what a fresh browser or a
+distributed build (e.g. the GitHub Pages alpha) flies. The refresh workflow is
+**tune in the gym → Export → overwrite `src/data/bot-tuning.json` → commit**
+(see [BOT_FRAMEWORK.md §12](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym)).
+The file is byte-equivalent to the gym's Export output, so it is safe to
+overwrite it wholesale with an Export download.
+
+Because the committed file originally equalled the built-in factory `Default`,
+an un-wired build looked identical to a wired one — a test that compares the
+demo against the committed file cannot, by itself, prove the file was used. Two
+guards close that hole:
+
+- `src/core/botTuningStore.test.ts` (`AC1 — a DISTINCTIVE bundled baseline is
+  served verbatim`) mocks the bundle with non-default values and asserts the
+  store returns *those* values — not the built-in fallback.
+- `src/scenes/demoBaselineDiscriminating.test.ts` boots the shipped demo against
+  a non-default mocked bundle and asserts the live governor receives it, so the
+  whole bundle → store → `PlayScene` chain is exercised, not just the store.
+
+A build only picks up a changed baseline when it is **built**; the GitHub Pages
+alpha is cut from release tags (`.github/workflows/deploy-pages.yml`), so a
+baseline committed to `dev` reaches the alpha at the next `dev` → `main`
+release, not before.
+
 ### Demo game-over dwell
 
 For the captured tail to show the outcome, the demo/attract mode holds on the
