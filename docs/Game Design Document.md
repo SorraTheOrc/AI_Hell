@@ -453,6 +453,7 @@ The following rules govern how enemy entities interact with each other and with 
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium (but high pattern-based challenge).
 - **Fires**: Yes — predictable radial or aimed patterns with clear tell animations and an advance audio cue (≥ 500 ms lead time) before each firing cycle begins.
+- **Projectile identity** (per-enemy visuals epic, AH-0MV2K5SR0005RTTE): each radial shot renders as a **crisply-edged phaser bolt** — a hexagonal prism (pointed tips, parallel long edges) with a **bright white velocity-aligned core streak**, a neon rim in the Phaser's own magenta, a short fading trail and a magenta launch pop at the phaser's body per radial volley (drawn through the shared bullet-shape seam, `src/utils/bulletVisuals.ts`, `phaser-bolt` primitive) — the crisp, straight-edged energy bolt of a telegraphed phaser volley, distinct from the jagged player `bolt` and every other enemy identity, with a red-tinted impact flash when a bolt connects or is intercepted (shared fire/impact seams, AH-0MV822DRX009RYUB). Visuals/feel only — firing logic, speed, interval, spoke count and radial pattern are unchanged.
 
 #### E5 — Swarm
 - **Behavior**: Moves in tight, fast-moving clusters; changes direction suddenly.

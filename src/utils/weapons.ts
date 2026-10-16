@@ -550,6 +550,8 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
  * - `shard` — the Diver's sharp splinter/arrowhead, spine-glint shimmer
  *   (AH-0MV822D2U000LRFV)
  * - `bolt` — jagged bolt
+ * - `phaser-bolt` — the Phaser's crisply-edged hexagonal bolt with a bright
+ *   velocity-aligned core streak (AH-0MV822DRX009RYUB)
  * - `diamond` — four-point rhombus
  * - `spark` — four-point star
  * - `chevron` — forward-opening V
@@ -570,6 +572,7 @@ export type BulletShape =
   | 'heavy-shell'
   | 'shard'
   | 'bolt'
+  | 'phaser-bolt'
   | 'diamond'
   | 'spark'
   | 'chevron'

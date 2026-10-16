@@ -124,6 +124,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     'heavy-shell': { shape: 'heavy-shell' as BulletShape, color: 0xffaa00, radius: 3 },
     shard: { shape: 'shard' as BulletShape, color: 0xffee88, radius: 3, length: 2.6, rimColor: 0xffff00 },
     bolt: { shape: 'bolt' as BulletShape, color: 0xcc66ff, radius: 3, length: 2.4 },
+    'phaser-bolt': { shape: 'phaser-bolt' as BulletShape, color: 0xff4444, radius: 3, length: 1.8, rimColor: 0xff00ff },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
     chevron: { shape: 'chevron' as BulletShape, color: 0x00ffcc, radius: 3, length: 2 },
@@ -308,6 +309,18 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.STROKE_PATH)).toBe(1);
   });
 
+  it('phaser-bolt renders a crisp hexagonal prism with a white-hot core streak plus a neon rim (AH-0MV822DRX009RYUB)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs['phaser-bolt']);
+    const buf = g.commandBuffer as number[];
+    // The phaser-bolt's read: a filled hexagonal prism body + a bright
+    // velocity-aligned white core streak (two closed filled paths) plus a
+    // magenta neon-rim stroke — distinct from the jagged `bolt` (a bare
+    // stroke with no body) and from the smooth `line`/`teardrop` bodies.
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(2);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
   it('diamond renders a closed filled path (≥ 3 line segments)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.diamond);
@@ -424,6 +437,7 @@ describe('DEFAULT_SHAPE_LENGTH', () => {
     expect(DEFAULT_SHAPE_LENGTH.teardrop).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.missile).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.bolt).toBeGreaterThan(1);
+    expect(DEFAULT_SHAPE_LENGTH['phaser-bolt']).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.shard).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.chevron).toBeGreaterThan(1);
   });
@@ -590,6 +604,25 @@ describe('resolveEnemyBulletVisual', () => {
     expect(visual.muzzle).toBeDefined();
     expect(visual.muzzle?.color).toBe(0xffee88);
     expect(shapeAnimates(visual.shape)).toBe(true);
+  });
+
+  it('phaser radial shots resolve a crisp phaser-bolt identity with a white core streak + launch pop (AH-0MV822DRX009RYUB)', () => {
+    const visual = resolveEnemyBulletVisual('phaser');
+    // The Phaser's signature look: a crisply-edged hexagonal phaser bolt with
+    // a bright velocity-aligned white core streak — a dedicated `phaser-bolt`
+    // primitive, NOT the jagged `bolt` the placeholder used before this
+    // landed (and distinct from `boss-desperation`'s jagged bolt).
+    expect(canonicalShape(visual.shape)).toBe('phaser-bolt');
+    // The shot body keeps the established lethal-red Phaser bullet colour.
+    expect(visual.color).toBe(0xff4444);
+    // Feel knobs: a neon rim in the Phaser's own body magenta, a short fading
+    // trail, and a magenta launch pop at the phaser body per radial volley.
+    // The bolt is static, so no per-frame redraw is required.
+    expect(visual.rimColor).toBe(0xff00ff);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0xff00ff);
+    expect(shapeAnimates(visual.shape)).toBe(false);
   });
 
   it('throws for an unknown archetype (fail loud, so children register first)', async () => {

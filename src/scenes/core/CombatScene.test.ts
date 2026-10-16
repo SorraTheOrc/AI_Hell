@@ -764,6 +764,29 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xffee88);
   });
 
+  it('a Phaser bolt plays its identity impact pop and flash when it hits the player (AH-0MV822DRX009RYUB)', async () => {
+    // The Phaser's bolt carries its lethal-red bullet colour; the shared
+    // impact pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints
+    // the impact flash and pops the existing per-enemy destruction cue — so
+    // a Phaser hit reads (and sounds) distinct from a Scout, Tank or Diver
+    // hit, identically in the game and every gym. This test pins the red
+    // Phaser variant of the generic path with the real PHASER_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xff4444; // PHASER_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xff4444);
+  });
+
   it('legacy enemy bullets without an identity keep the plain hit behaviour (no added flash)', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 100, y: 100 });

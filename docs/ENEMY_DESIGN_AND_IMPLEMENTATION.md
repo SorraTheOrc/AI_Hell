@@ -2018,6 +2018,22 @@ pale-yellow colour so the shared impact pass tints the flash when a shard
 connects or is intercepted. Visuals/feel only: firing logic, speed,
 interval, burst count and the spread pattern are unchanged.
 
+**E4 Phaser (phaser family, AH-0MV822DRX009RYUB):** each radial shot renders
+as a **crisp-edged phaser bolt** — a dedicated `phaser-bolt` seam primitive
+(a smooth hexagonal prism with pointed tips at each end of the flight axis
+and parallel long edges — no zig-zag) filled with the shot's lethal red,
+with a **bright white velocity-aligned core streak** running the prism's
+length, a neon rim in the Phaser's own body magenta and a short fading
+trail. The radial volley spawns **one magenta launch pop** at the phaser's
+body per volley (the volley is one fire event, matching its single
+cue+sound pair — not eight stacked pops), each bolt flies nose-first along
+its own spoke, and each bolt carries its red colour so the shared impact
+pass tints the flash when a bolt connects or is intercepted. The clean
+straight-edged prism is deliberately the opposite of the player's jagged
+`bolt` and of every other enemy identity — crisp, telegraphed energy rather
+than a splinter, ember or pod. Visuals/feel only: firing logic, speed,
+interval, spoke count and the radial pattern are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific

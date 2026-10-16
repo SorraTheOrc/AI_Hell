@@ -15,7 +15,9 @@
  * (`teardrop`), **missile**, **ring**, **shell**, **heavy-shell** (the Tank's
  * large two-tone shell with a slow breathing glow, AH-0MV822DF60001EPA),
  * **shard** (the Diver's sharp splinter/arrowhead with a sweeping spine
- * glint, AH-0MV822D2U000LRFV), **jagged bolt** (`bolt`),
+ * glint, AH-0MV822D2U000LRFV), **jagged bolt** (`bolt`), **phaser-bolt**
+ * (the Phaser's crisply-edged hexagonal bolt with a bright velocity-aligned
+ * core streak, AH-0MV822DRX009RYUB),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -125,6 +127,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   'heavy-shell': 1,
   shard: 2.4,
   bolt: 2.4,
+  'phaser-bolt': 2.6,
   diamond: 1,
   spark: 1,
   chevron: 2,
@@ -213,6 +216,9 @@ export function drawBulletShape(
       break;
     case 'bolt':
       _bolt(graphics, spec, alpha, stroke);
+      break;
+    case 'phaser-bolt':
+      _phaserBolt(graphics, spec, alpha, rim, stroke);
       break;
     case 'diamond':
       _diamond(graphics, spec, alpha, rim);
@@ -566,6 +572,66 @@ function _bolt(
   graphics.strokePath();
 }
 
+/**
+ * Crisp-edged phaser bolt (AH-0MV822DRX009RYUB): the Phaser's radial-shot
+ * identity.
+ *
+ * A smooth hexagonal prism — pointed tips at each end of the long (+x)
+ * axis, parallel long edges, no zig-zag — filled with the shot's colour and
+ * stroked with a neon rim in the Phaser's own magenta. A **bright white-hot
+ * core streak** runs down the velocity line through the prism's centre, so
+ * the bolt reads as energy under power (the Phaser's telegraphed radial
+ * volleys). Distinct from the jagged `bolt` (a multi-segment stroke with no
+ * body) and from the Scout's pulsing pod / Tank's ember shell / Diver's
+ * splinter — crisp, straight-edged and velocity-aligned, the Phaser
+ * archetype rendered in flight.
+ */
+function _phaserBolt(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+  stroke: number = BASE_STROKE,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const half = shapeLength(spec.radius, spec) / 2;
+  const w = r * 0.85;
+  // Hexagonal prism body: pointed nose, parallel edges, pointed tail.
+  graphics.fillStyle(spec.color, alpha);
+  graphics.beginPath();
+  graphics.moveTo(half, 0);
+  graphics.lineTo(half * 0.55, -w);
+  graphics.lineTo(-half * 0.55, -w);
+  graphics.lineTo(-half, 0);
+  graphics.lineTo(-half * 0.55, w);
+  graphics.lineTo(half * 0.55, w);
+  graphics.closePath();
+  graphics.fillPath();
+  // Bright velocity-aligned core streak — energy under power.
+  graphics.fillStyle(0xffffff, Math.min(1, alpha * 0.92));
+  graphics.beginPath();
+  graphics.moveTo(half * 0.85, 0);
+  graphics.lineTo(half * 0.34, -w * 0.5);
+  graphics.lineTo(-half * 0.34, -w * 0.5);
+  graphics.lineTo(-half * 0.34, w * 0.5);
+  graphics.lineTo(half * 0.34, w * 0.5);
+  graphics.closePath();
+  graphics.fillPath();
+  // Neon rim (the Phaser's magenta) around the crisp edge.
+  if (rim !== undefined) {
+    graphics.lineStyle(stroke, rim, Math.min(1, alpha * 0.9));
+    graphics.beginPath();
+    graphics.moveTo(half, 0);
+    graphics.lineTo(half * 0.55, -w);
+    graphics.lineTo(-half * 0.55, -w);
+    graphics.lineTo(-half, 0);
+    graphics.lineTo(-half * 0.55, w);
+    graphics.lineTo(half * 0.55, w);
+    graphics.closePath();
+    graphics.strokePath();
+  }
+}
+
 /** Diamond: a filled four-point rhombus. */
 function _diamond(
   graphics: Phaser.GameObjects.Graphics,
@@ -846,7 +912,20 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 1.4,
     muzzle: { color: 0xffaa00, radius: 7, duration: 0.14 },
   },
-  phaser: { shape: 'bolt', color: 0xff4444, length: 1.6 },
+  // Phaser radial shot (AH-0MV822DRX009RYUB): a crisply-edged hexagonal
+  // phaser bolt with a bright white velocity-aligned core streak and a neon
+  // rim in the Phaser's own body magenta, a short fading trail and a magenta
+  // launch pop at the body per radial volley. The shot body keeps the
+  // established lethal-red `PHASER_BULLET_COLOR`; identity is carried by
+  // shape + rim + feel, never a behaviour change.
+  phaser: {
+    shape: 'phaser-bolt',
+    color: 0xff4444,
+    length: 1.8,
+    rimColor: 0xff00ff,
+    tail: 1.2,
+    muzzle: { color: 0xff00ff, radius: 5, duration: 0.12 },
+  },
   swarm: { shape: 'spark', color: 0x00ccff },
   raider: { shape: 'diamond', color: 0xffddaa },
   'boss-spread': { shape: 'disc', color: 0xffffff, rimColor: 0xff3366 },
