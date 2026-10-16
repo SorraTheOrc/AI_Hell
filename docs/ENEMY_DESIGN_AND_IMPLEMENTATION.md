@@ -1967,6 +1967,29 @@ Scout's two-phase tell) — never re-added in a thin scene class.
 destruction `aihell-enemy-destruction` (multi-seed 32110–32112). Full catalogue:
 [Audio cue-to-recipe mapping](AUDIO_TONEFORGE_CUE_MAPPING.md).
 
+### Projectile identity & per-shot feel (per-enemy visuals epic)
+
+Each AC-listed enemy attack gets its own in-flight projectile identity
+(shape/colour/feel through the shared bullet-shape seam) plus fire/impact
+VFX + SFX, gated by its existing fire behaviour (AH-0MV2K5SR0005RTTE —
+visuals/feel only: firing logic, speeds, intervals and patterns are
+unchanged). The shared seams the children consume: `bulletUtils.createBullet`
+(the shared enemy-bullet spawn path), `resolveEnemyBulletVisual`
+(`src/utils/bulletVisuals.ts`, the identity registry the roster guard pins),
+`src/vfx/enemyMuzzleFlash.ts` (the enemy fire-time launch pop) and the shared
+impact passes in `src/scenes/core/CombatScene.ts` (coloured interception
+flash + per-identity hit pop through `playBulletDestructionSound`, the reused
+per-enemy impact cue).
+
+**E1 Scout / Space-Invaders March (scout-invader family,
+AH-0MV822CQL005R4MM):** the aimed shot renders as a **small alien pellet** —
+scalloped pod body, a bright **enemy-tinted (green) core** and a **faint
+pulsing rim** (time-driven, redrawn each frame through the shared bullet
+lifecycle) plus a short fading trail — with a green launch pop at the scout's
+body when the shot leaves and a green-tinted impact flash when the shot
+connects or is intercepted. The March block shares the identity (same
+entity class, same family per the roster guard).
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific
