@@ -1099,6 +1099,20 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
 
+  it('Nova ring fires the baked impact cue through the shared AOE seam (parity, AH-0MV822BPT002GF17)', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('nova');
+    const cue = vi.spyOn(effectsModule, 'playNovaImpactSound');
+
+    scene.tick(3.0); // Nova's 3000 ms beat cadence
+
+    // The gym consumes the same shared onFire AOE VFX seam as the game, so
+    // the ring expansion plays the identical baked nova impact cue (parity).
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
+  });
+
   it('Arc chains between the practice targets through the shared core', async () => {
     const scene = await bootAoe();
     const player = scene.getPlayer()!;

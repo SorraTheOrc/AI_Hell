@@ -311,6 +311,14 @@
       ]
     },
     {
+      "cue": "playNovaImpactSound",
+      "recipe": "aihell-nova-impact",
+      "delivery": "baked",
+      "seeds": [
+        32273
+      ]
+    },
+    {
       "cue": "playMortarFireSound",
       "recipe": "aihell-mortar-fire",
       "delivery": "baked",

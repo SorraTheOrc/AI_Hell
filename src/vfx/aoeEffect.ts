@@ -81,6 +81,11 @@ export function spawnNovaRing(
   const graphics = scene.add.graphics();
   graphics.setPosition(x, y);
   graphics.setScale(NOVA_RING_START_SCALE);
+  // Bright white-hot flash core (AH-0MV822BPT002GF17) — a filled flash at the
+  // ring's origin so the shot reads as a bright ring flash, not a hairline
+  // outline. It expands with the ring and fades with the same tween.
+  graphics.fillStyle(0xffffff, 0.55);
+  graphics.fillCircle(0, 0, radius * 0.34);
   // Outer ring — the primary pulse edge.
   graphics.lineStyle(NOVA_RING_LINE_WIDTH, color, 1);
   graphics.strokeCircle(0, 0, radius);

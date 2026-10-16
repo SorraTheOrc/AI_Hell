@@ -217,6 +217,9 @@ class AoeStubScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   getAoeEffects(): Phaser.GameObjects.Graphics[] {
     return this.aoeEffects;
   }
+  getFireFxEffects(): Phaser.GameObjects.Graphics[] {
+    return this.fireFxEffects;
+  }
 }
 
 describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
@@ -494,6 +497,34 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     const ring = scene.getAoeEffects()[0];
     expect(ring.x).toBe(100);
     expect(ring.y).toBe(100);
+  });
+
+  it('F2 AC3 — the Nova launch flash plays the baked impact cue through the shared AOE seam (AH-0MV822BPT002GF17)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('nova');
+    const cue = vi.spyOn(effectsModule, 'playNovaImpactSound');
+
+    scene.runAutoFire(3.0);
+
+    // The ring expansion reads as the Nova's shockwave connecting: the baked
+    // nova impact cue plays through the same shared onFire AOE VFX path that
+    // spawns the ring, so the game and every gym sound identical.
+    expect(cue).toHaveBeenCalledTimes(1);
+  });
+
+  it('F2 AC3 — the Nova launch flash is spawned through the shared combat-core fire-VFX path (AH-0MV822BPT002GF17)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('nova');
+    expect(scene.getFireFxEffects()).toHaveLength(0);
+
+    scene.runAutoFire(3.0);
+
+    // `_autoFire` drives the muzzle flash from the weapon's `muzzleFlash`
+    // metadata, so the fire VFX (launch cue) is wired through the shared
+    // combat-core spawn path and the game + gyms show the identical flash.
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
   });
 
   it('F2 AC3 — a non-onFire weapon spawns no onFire ring at the ship', async () => {

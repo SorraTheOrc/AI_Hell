@@ -117,6 +117,30 @@ describe('aoeEffect — Nova expanding ring (F2 AC3)', () => {
     // ...nor with the Bomb bomb icon red (0xff3333).
     expect(NOVA_RING_COLOR).not.toBe(0xff3333);
   });
+
+  it('draws a bright white-hot flash core in addition to the stroked rings (AH-0MV822BPT002GF17)', async () => {
+    const scene = await boot();
+
+    const handle = spawnNovaRing(scene, 100, 120, 90);
+
+    // Phaser Graphics opcodes: the ring is composed of stroked circles (the
+    // expanding ring edge) *plus* a filled white-hot core flash so the shot
+    // reads as a bright ring flash, not a hairline outline. The flash core is
+    // a FILL_PATH command; the two rings are STROKE_PATH commands.
+    const buf = handle.graphics.commandBuffer as number[];
+    // Arg widths for the opcodes the ring emits (opcode + args = stride).
+    const widths: Record<number, number> = { 0: 7, 1: 0, 6: 3, 7: 2 };
+    const count = (target: number): number => {
+      let n = 0;
+      for (let i = 0; i < buf.length; i += 1 + (widths[buf[i]] ?? 0)) {
+        if (buf[i] === target) n += 1;
+      }
+      return n;
+    };
+    // Both stroked rings (outer + inner echo) and at least one filled flash.
+    expect(count(9)).toBeGreaterThanOrEqual(2); // STROKE_PATH
+    expect(count(8)).toBeGreaterThanOrEqual(1); // FILL_PATH (flash core)
+  });
 });
 
 describe('aoeEffect — Mortar detonation burst (F3 AC5)', () => {

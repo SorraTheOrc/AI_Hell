@@ -440,6 +440,17 @@ export function playOptionsImpactSound(): void {
   playCue('playOptionsImpactSound');
 }
 
+/**
+ * Bright expanding ring hit — Nova shockwave connects
+ * (AH-0MV822BPT002GF17). Plays through the shared onFire AOE VFX seam
+ * (`CombatScene.spawnAoeEffectVfx`) the instant the Nova ring expands, so the
+ * game and every gym sound the identical shockwave hit. Baked via the
+ * ToneForge pipeline (`aihell-nova-impact`, seed 32273).
+ */
+export function playNovaImpactSound(): void {
+  playCue('playNovaImpactSound');
+}
+
 /** Soft warm amber hit — Spread bullet connects (AH-0MV8229B9009DQGA). */
 export function playSpreadImpactSound(): void {
   playCue('playSpreadImpactSound');

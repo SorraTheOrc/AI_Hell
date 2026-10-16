@@ -41,6 +41,7 @@ import {
   playMortarDetonationSound,
   playPhaseShiftSound,
   playWeaponImpactCue,
+  playNovaImpactSound,
 } from '../../audio/effects';
 import { Boss } from '../../entities/Boss';
 import { Player } from '../../entities/Player';
@@ -709,6 +710,11 @@ export abstract class CombatScene<
   ): void {
     if (def.id === 'nova' && def.aoe) {
       spawnNovaRing(this, x, y, def.aoe.radius, { registry: this.aoeEffects });
+      // The shockwave connect sound plays with the ring expansion through
+      // the same shared onFire AOE VFX path that spawns it (AH-0MV822BPT002GF17),
+      // so the game and every gym sound the identical nova impact — mirroring
+      // the Mortar detonation cue in `spawnAoeDetonationVfx`.
+      playNovaImpactSound();
     }
   }
 

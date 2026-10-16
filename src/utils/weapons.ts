@@ -1075,6 +1075,14 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     fireRateMs: WEAPON_NOVA_FIRE_RATE,
     bulletColor: BULLET_COLORS.nova,
     bulletShape: 'ring',
+    // Fire feel (AH-0MV822BPT002GF17): a bright pale-cyan launch flash at the
+    // ship when the ring shockwave expands — the shared combat-core muzzle
+    // flash path drives it from this metadata, so the game and every gym
+    // show the same launch cue. The ring shockwave itself is the expanding
+    // onFire AOE VFX (`spawnNovaRing` via the shared AOE seam), and the
+    // baked nova impact cue plays the instant the ring expands (impact
+    // through the shared AOE VFX path). All visual/feel metadata only.
+    muzzleFlash: { color: BULLET_COLORS.nova, radius: 10, duration: 0.16 },
     bulletSize: 1.2,
     bulletLifetime: WEAPON_BULLET_LIFETIME.nova,
     aoe: {

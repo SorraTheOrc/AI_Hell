@@ -939,3 +939,21 @@ describe('Gradius Options orbiting satellites (AH-0MV1BIVVK0043TEM)', () => {
     expect(opts.impactFx!.cue).toBe('playOptionsImpactSound');
   });
 });
+
+describe('Nova expanding-ring shockwave (AH-0MV822BPT002GF17)', () => {
+  test('carries the ring weapon definition unchanged (visual metadata only)', () => {
+    const nova = WEAPON_CATALOGUE.nova;
+    // The Nova shot is an expanding ring shockwave from the ship: the ring
+    // bullet shape stays unique to the Nova (roster), and the muzzle flash
+    // launch cue + per-shot impact are visual/feel metadata on the def.
+    expect(nova.bulletShape).toBe('ring');
+    expect(nova.bulletColor).toBe(BULLET_COLORS.nova);
+    expect(nova.bulletSize).toBeGreaterThan(0);
+    expect(nova.aoe?.trigger).toBe('onFire');
+    // Fire feel: a bright flash at the ship when the ring launches (shared
+    // combat-core muzzle-flash path drives it from this metadata).
+    expect(nova.muzzleFlash).toBeDefined();
+    expect(nova.muzzleFlash!.color).toBe(BULLET_COLORS.nova);
+    expect(nova.muzzleFlash!.duration).toBeGreaterThan(0);
+  });
+});

@@ -106,6 +106,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playRapidImpactSound` | Tight staccato square tick 2400→1100 Hz + thin triangle shimmer + HP noise tap, ~0.06 s | Player rapid hit (when a shot connects) | shared impact seam in `CombatScene` (AH-0MV822A03006UT2P) | new | `aihell-rapid-impact` |
 | `playRapidFireSound` | Triangle 500→900 Hz, ~0.05 s, vol 0.12 | Player rapid fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-rapid-fire` |
 | `playNovaFireSound` | Saw 160→40 Hz + rising triangle ring 300→1800 Hz | Player Nova fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-nova-fire` |
+| `playNovaImpactSound` | Bright expanding ring ping — triangle 1600→300 Hz + light HP noise shimmer, ~0.16 s | Player Nova ring connect | shared AOE VFX seam in `CombatScene` (AH-0MV822BPT002GF17) | new | `aihell-nova-impact` |
 | `playMortarFireSound` | Muffled triangle 220→90 Hz + high barrel tick | Player Mortar fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-mortar-fire` |
 | `playMortarDetonationSound` | Heavy saw 180→40 Hz + LP noise wash | Mortar detonation | `CombatScene` | new | `aihell-mortar-detonation` |
 | `playArcFireSound` | Square 1400→500→1120 Hz + HP noise crackle | Player Arc fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-arc-fire` |
@@ -202,6 +203,7 @@ repeated kills still vary.
 | `aihell-rapid-impact` | `playRapidImpactSound` | Tight staccato square tick 2400→1100 Hz + triangle shimmer + HP tap, ~0.06 s | 32266 |
 | `aihell-rapid-fire` | `playRapidFireSound` | Triangle 500→900 Hz, ~0.05 s | 32213 |
 | `aihell-nova-fire` | `playNovaFireSound` | Saw 160→40 Hz + rising triangle ring | 32214 |
+| `aihell-nova-impact` | `playNovaImpactSound` | Bright expanding ring ping 1600→300 Hz + HP noise shimmer | 32273 |
 | `aihell-mortar-fire` | `playMortarFireSound` | Triangle 220→90 Hz + barrel tick | 32215 |
 | `aihell-mortar-detonation` | `playMortarDetonationSound` | Saw 180→40 Hz + LP noise wash | 32216 |
 | `aihell-arc-fire` | `playArcFireSound` | Square 1400→500→1120 Hz + HP noise crackle | 32217 |

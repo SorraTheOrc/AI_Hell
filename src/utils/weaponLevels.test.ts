@@ -490,6 +490,19 @@ describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled defini
     expect(leveled.aoe!.trigger).toBe(base.aoe!.trigger);
     expect(WEAPON_CATALOGUE.nova.aoe!.radius).toBe(base.aoe!.radius);
   });
+
+  test('the nova visual/feel metadata carries through level resolution unchanged (AH-0MV822BPT002GF17)', () => {
+    const base = WEAPON_CATALOGUE.nova;
+    const leveled = resolveWeaponDefinition('nova', 50);
+    // The ring shockwave's look and feel are visual metadata, not upgrade
+    // values — they survive level resolution byte-for-byte (only the AOE
+    // radius grows). The launch flash + impact feedback never change with
+    // the weapon's level.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletColor).toBe(base.bulletColor);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.aoe?.trigger).toBe(base.aoe?.trigger);
+  });
 });
 
 describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {

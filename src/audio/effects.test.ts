@@ -125,6 +125,14 @@ describe('cue → baked asset mapping', () => {
     expect(recording.plays).toHaveLength(0);
   });
 
+  it('playNovaImpactSound resolves to the baked nova-impact asset (AH-0MV822BPT002GF17)', () => {
+    effects.playNovaImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-nova-impact.32273.wav',
+    );
+  });
+
   it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
     effects.playSpreadImpactSound();
     expect(recording.plays).toHaveLength(1);
