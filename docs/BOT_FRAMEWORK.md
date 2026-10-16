@@ -340,7 +340,24 @@ change input. The rotation-skill knobs — `skill`, `maxAimErrorRad`,
 `aimLeadEnabled`, `aimLeadAlignSeconds`, `aimLeadIterations` — live in the
 same two sources ([section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)).
 Reverse-thrust gating and timing live in the same two sources — see
-[section 9.7](#97-reverse-thrust-ah-0mv2wjsy70070hk2).
+[section 9.7](#97-reverse-thrust-ah-0mv2wjsy70070hk2).  The reverse forward
+model consumes live reverse physics from the snapshot
+(`reverseAcceleration` / `reverseMaxSpeed`, default/override entries like the
+forward terms) — see [section 9.7](#97-reverse-thrust-ah-0mv2wjsy70070hk2).
+
+**The physics terms are fallback defaults + tuning overrides, never the
+ship's truth (AH-0MV85WH2V005NZTX).** `playerSpeed`, `frictionDeceleration`
+and the reverse pair are *not* authoritative: the steering layer resolves
+them against the snapshot's live thruster config with the precedence
+`explicit tuning override > live ship config > compiled default` (the
+`resolvePlayerSpeed` / `resolveFrictionDeceleration` / `resolveReverse*`
+helpers in `tunables.ts`). A value equal to the compiled default is a
+fallback and loses to the live config; a value differing from the compiled
+default — e.g. a `GymBotTuning` slider or a persisted config — is an explicit
+override and wins over the live config. The compiled defaults mirror the
+shipped ship config (`playerSpeed: 175`, `frictionDeceleration: 100`,
+`reverseAcceleration: 200`, `reverseMaxSpeed: 120`), so a ship running
+defaults behaves bit-for-bit as before (default-equivalence).
 
 ### 9.5 Module layout
 
@@ -406,6 +423,23 @@ and `BOT_HUMAN_INPUT_TUNABLES` (`reversePressMinMs`, `reversePressMaxMs`,
 seeded run pins the regression: the restricted model cuts reverse presses over
 an integration demo window from 38 to 9 (528 → 138 reverse ticks) versus the
 pre-change baseline.
+
+**The reverse forward model consumes the live reverse physics
+(AH-0MV85WGOO0066I9X).** The `collect`/`engage` brake-assist does not just ask
+"would the ship overshoot": it models the correction with the ship's snapshot
+`reverseAcceleration` and `reverseMaxSpeed` (default/override fields with the
+same precedence as `playerSpeed`/`frictionDeceleration` — explicit tuning
+override > live ship config > compiled default, all coinciding at the shipped
+`200`/`120`).  A reverse press decelerates the ship at the live reverse
+acceleration (the game model suppresses friction while the press is held), so
+the reverse-assisted stopping distance is `v²/(2·a_r)`.  Reverse is requested
+only when that distance fits inside the remaining gap — a press that cannot
+stop the ship in time is futile and is suppressed (the pre-AC1 model omitted
+reverse physics entirely) — and only while the approach speed is within the
+ship's configured retro envelope (at or below the live reverse max speed), so
+a player who capped the retro lower sees the bot reserve it for gentler
+corrections.  The rule therefore remains strictly trouble/correction: it can
+only narrow the circumstances in which reverse fires, never widen them.
 
 #### Observing the retro-thruster
 
@@ -477,6 +511,37 @@ bot-tuning gym fly identically.
   competent brain + governor + shipped `AsteroidsModel` into a deterministic
   60 Hz run that tracks an off-axis moving enemy with a settled bearing error
   ≤ **0.05 rad**.
+
+### 9.9 Live thruster config carried in the snapshot (AH-0MV85WFWD0029DL7)
+
+The `BotSnapshot` player carries the ship's **live thruster physics** so the
+bot sees exactly the tuning the player configured, with no hard-coded physics
+in the decision layer:
+
+- `Player.getThrusterConfig()` exposes the forward trio
+  (`thrustAcceleration` / `maxSpeed` / `frictionDeceleration`) plus the
+  reverse trio (`reverseEnabled` / `reverseAcceleration` / `reverseMaxSpeed`),
+  mirroring the `getRotationConfig()` precedent by reading the live/effective
+  `_config`.
+- `buildBotSnapshot` copies it onto `BotPlayer.thruster` through the
+  optional `getThrusterConfig` seam on `BotPlayerSource` — when the source
+  does not expose the getter the field is omitted, so pre-existing sources
+  (and the fixture snapshots the harness builds) keep today's exact shape.
+- `BotWorld.player` passes the snapshot player through unchanged: no
+  re-derivation and no live-game access inside the decision layer.
+- The shipped demo path (`PlayScene._advanceDemoBot` →
+  `buildBotSnapshot(this)`) and the bot-tuning gym (`GymBotTuning` source)
+  pick the values up automatically because the live `Player` satisfies the
+  seam.
+
+**Fallback/override precedence (AH-0MV85WH2V005NZTX).** The steering layer
+resolves the carried physics against the tunables with `explicit tuning
+override > live ship config > compiled default` ([section 9.4](#94-single-sourced-tuning-ac5)): at the compiled defaults the live config wins bit-for-bit
+as before, while a `GymBotTuning` override (a value differing from the
+compiled default) wins over the live config — through the same
+`resolveCompetentTunables` seam in `PlayScene` and the bot-tuning gym
+(`GymBotTuning`), so the gym and the shipped demo can never resolve the
+tunables differently.
 
 ## 10. Testing
 
@@ -635,7 +700,11 @@ and adjust its parameters in real time.
   knobs `skill` / `maxAimErrorRad` / `aimLeadAlignSeconds` /
   `aimLeadIterations` (`aimLeadEnabled` toggle)
   (AH-0MV1DUSM2005HL98 · AC4). Moving a slider rebuilds the live brain and
-  governor immediately.
+  governor immediately. The `playerSpeed` / `frictionDeceleration` sliders
+  are **overrides**: moving one away from its default makes it win over the
+  live ship config; left at the default it is a fallback and the ship's live
+  config wins (the same precedence the shipped demo resolves —
+  [section 9.4](#94-single-sourced-tuning-ac5)).
 - **Per-parameter tooltips.** Every slider and toggle carries a plain-English
   `description` in its `BotTuningFieldSpec`/`BotTuningToggleSpec`
   (`src/ai/tuningFields.ts`), authored in lockstep with the tunables' JSDoc.
@@ -653,7 +722,11 @@ and adjust its parameters in real time.
   configuration. Presets are persisted by `src/core/botTuningStore.ts` as a
   versioned, corrupt-safe JSON blob in `localStorage` (the same
   browser-native pattern as `src/core/rules.ts`); a missing or malformed blob
-  falls back to the built-in `Default`.
+  falls back to the **bundled baseline** (`src/data/bot-tuning.json`, shipped
+  via `src/core/bundledConfig.ts`) and only then to the built-in `Default`
+  (AH-0MV9GZD2C005IIU3). Every Git-tracked build therefore ships the tuned
+  configurations, so a fresh checkout or a distributed build (e.g. the GitHub
+  Pages alpha) flies the same definitions instead of generic factory defaults.
 - **Watch Demo and recordings fly the saved config.** The shipped attract
   demo (`PlayScene` demo mode) reads the same store when it starts — and when
   the demo is re-enabled mid-session — and rebuilds its `BotBrain` /
@@ -665,7 +738,28 @@ and adjust its parameters in real time.
   `npm run capture -- --bot-config file.json` (and
   `npm run record -- --bot --bot-config file.json`), which injects that state
   into the recording page before the game boots — so a recorded demo flies the
-  designer's tuning.
+  designer's tuning. Without `--bot-config` the fresh recording browser flies
+  the bundled baseline (see above) — not factory defaults.
+
+**Precedence rule:** `localStorage` (a designer's saved selection) → bundled
+baseline (`src/data/bot-tuning.json`) → built-in `Default`. A user who saves a
+configuration locally keeps it locally; every other context sees the shipped
+baseline.
+
+**Refresh workflow (tune → Export → commit):** after tuning in the gym, click
+**Export** (`bot-tuning.json`) and overwrite `src/data/bot-tuning.json` with
+that exact file (the Export output is byte-equivalent to `serialiseBotTuningState()`), then commit. The next build and every fresh machine/browser
+fly the updated baseline. The GitHub Pages alpha is cut from release tags, so a
+baseline committed to `dev` reaches it at the next `dev` → `main` release.
+
+Keep the file as the single source of the shipped
+baseline — like the committed CSVs — so a stale committed baseline is the only
+risk, mitigated by documenting this workflow here. Do **not** pin the file to
+the built-in factory defaults in tests: the shipped baseline is expected to
+carry the *tuned* values, and an equality assertion against
+`defaultBotTuningValues()` would reject the very Export → commit refresh. The
+end-to-end wiring is instead guarded by the discriminating tests named in
+[docs/dev/gameplay-capture.md](dev/gameplay-capture.md#which-bot-values-ship-and-verifying-they-are-used).
 
 The tuning surface is a curated subset of `COMPETENT_BOT_TUNABLES` /
 `BOT_HUMAN_INPUT_TUNABLES`; `tuningFields.ts` reconstructs the nested

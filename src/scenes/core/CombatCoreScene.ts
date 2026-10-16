@@ -62,6 +62,7 @@ import {
 } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { PlayerBullet, createPlayerBullet } from '../../entities/PlayerBullet';
+import { spawnMuzzleFlash } from '../../vfx/muzzleFlash';
 import {
   CLUSTER_SPLIT_BURST_RADIUS,
   CLUSTER_WARHEAD_LIFETIME,
@@ -73,6 +74,7 @@ import {
   bulletVelocity,
   createBulletsFromHeading,
   type AoEDescriptor,
+  type BulletShape,
   type WeaponDefinition,
   type WeaponId,
 } from '../../utils/weapons';
@@ -184,6 +186,16 @@ export interface CombatEnemyBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
   vx: number;
   vy: number;
+  /**
+   * Identity-carrying enemy shot colour (AH-0MV822CQL005R4MM). Present on
+   * bullets created through the shared bullet-shape seam (e.g. the Scout's
+   * pellet; future identity children the same way) — the shared impact
+   * passes use it to tint the interception flash and to pop an impact cue
+   * when the shot reaches the player. Absent on legacy bullets ({@link
+   * PlayScene.spawnEnemyBullet} etc.) → they keep the plain generic
+   * feedback, unchanged.
+   */
+  readonly color?: number;
 }
 
 /**
@@ -255,6 +267,13 @@ export class CombatCoreScene<
    * so an in-flight burst leaks nothing.
    */
   protected splitBurstEffects: Phaser.GameObjects.Graphics[] = [];
+  /**
+   * Live per-weapon muzzle-flash VFX (AH-0MV8228YW0050IXS). Spawned from the
+   * shared `_autoFire` spawn path; each flash removes itself on completion
+   * and the registry is cleared on restart/shutdown so an in-flight flash
+   * leaks nothing.
+   */
+  protected fireFxEffects: Phaser.GameObjects.Graphics[] = [];
   /**
    * Warheads queued by {@link CombatCoreScene.splitProjectile}, flushed into
    * {@link CombatCoreScene.playerBullets} at the start of the next shared
@@ -507,6 +526,14 @@ export class CombatCoreScene<
   ): void {}
 
   /**
+   * Hook run when a ricochet bullet bounces off a wall (AH-0MV822AP1006W2F9).
+   * Default no-op; `CombatScene` overrides to play the per-weapon impact
+   * SFX and spawn the distinct impact flash, so the game and every gym
+   * show identical bounce feedback.
+   */
+  protected onPlayerBulletWallBounce(_bullet: PlayerBullet): void {}
+
+  /**
    * Plays the per-type pickup activation cue through the single shared
    * `playDropPickupCue` dispatcher, so every scene plays the same cue set
    * (generic pop + Speed Boost/Extra Life/Magnet + weapon/Reset, generic chime fallback).
@@ -695,6 +722,16 @@ export class CombatCoreScene<
     for (const weaponId of fired) {
       this.onWeaponFired(weaponId);
       const def = player.getWeaponDef(weaponId);
+      // Per-weapon fire VFX (clean muzzle flash / launch cue) — spawned from
+      // this single shared spawn path so the game and every gym show the
+      // same flash (AH-0MV8228YW0050IXS). Weapons without `muzzleFlash`
+      // metadata spawn nothing.
+      if (def.muzzleFlash) {
+        spawnMuzzleFlash(this, player.x, player.y, player.getHeading(), {
+          ...def.muzzleFlash,
+          registry: this.fireFxEffects,
+        });
+      }
       if (def.aoe) {
         // AOE dispatch: the shared core owns the hook, so the game and the
         // gyms resolve the same area effect from one implementation.
@@ -711,9 +748,10 @@ export class CombatCoreScene<
         }
       }
       // Orbit weapons (the Gradius Options escort) fire one bullet per pod
-      // from each pod's current world position, along the ship's heading. The
-      // pod geometry lives once in the shared `optionsEscort` helper, so the
-      // game and every gym fire identical pods (AH-0MV1BIVVK0043TEM).
+      // from each pod's current world position, radially outward along the
+      // pod's own orbit direction. The pod geometry lives once in the shared
+      // `optionsEscort` helper, so the game and every gym fire identical pods
+      // (AH-0MV1BIVVK0043TEM).
       if (def.orbit) {
         this.fireOptionsPods(def, player);
         continue;
@@ -746,7 +784,29 @@ export class CombatCoreScene<
           // the shared player-bullet step reflects it at the edges
           // (AH-0MV1BIV5L005NJAI).
           def.bounce,
+          // The weapon's visual identity: shape + elongation + rim/thickness,
+          // drawn through the shared bullet-shape seam (AH-0MV8228MD009UBF7).
+          def.bulletShape,
+          def.bulletShapeLength,
+          def.bulletRim,
+          def.bulletThickness,
+          // Short fading bullet trail (cannon) — absent for every weapon
+          // without `bulletTrail` metadata (AH-0MV8228YW0050IXS).
+          def.bulletTrail,
+          // Animated exhaust-flame length (cluster missile) — absent for
+          // every weapon without `bulletFlame` metadata
+          // (AH-0MV822B1B0048UZT).
+          def.bulletFlame,
         );
+        // Per-weapon impact feedback (cannon's distinct flash + hit cue),
+        // resolved by the shared impact seam when the shot connects
+        // (AH-0MV8228YW0050IXS). Absent → generic impact behaviour.
+        bullet.impactFx = def.impactFx;
+        // Wall-bounce feedback for ricochet: play impact VFX/SFX on each
+        // edge reflection (AH-0MV822AP1006W2F9).
+        if (def.bounce !== undefined) {
+          bullet.onWallBounce = () => this.onPlayerBulletWallBounce(bullet);
+        }
         if (def.aoe?.trigger === 'onImpact') {
           // Tag the projectile so the shared combat core can detonate its
           // area effect on impact/expiry, then let the scene attach its
@@ -782,6 +842,17 @@ export class CombatCoreScene<
    * `bounces` is the bullet's wall-bounce budget (edge reflections before it
    * expires; `undefined` for an ordinary wrapping bullet). The shared
    * player-bullet step reads it (AH-0MV1BIV5L005NJAI).
+   *
+   * `shape` / `shapeLength` / `rimColor` / `thickness` are the weapon's
+   * visual metadata, threaded to the bullet so the shared player-bullet
+   * renderer draws the weapon's shape through the bullet-shape seam
+   * (AH-0MV8228MD009UBF7). Defaults reproduce the classic cannon disc.
+   *
+   * `tail` is the optional short fading trail length (× radius) drawn behind
+   * the bullet by the shared seam (AH-0MV8228YW0050IXS).
+   *
+   * `flame` is the optional animated exhaust-flame length (× radius) the
+   * shared seam draws behind a `missile` shape (AH-0MV822B1B0048UZT).
    */
   spawnPlayerBullet(
     x: number,
@@ -793,6 +864,12 @@ export class CombatCoreScene<
     radius = PLAYER_BULLET_RADIUS,
     piercing = 0,
     bounces?: number,
+    shape: BulletShape = 'circle',
+    shapeLength?: number,
+    rimColor?: number,
+    thickness?: number,
+    tail?: number,
+    flame?: number,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
@@ -803,6 +880,12 @@ export class CombatCoreScene<
       vx,
       vy,
       lifetime,
+      shape,
+      shapeLength,
+      rimColor,
+      thickness,
+      tail,
+      flame,
     );
     bullet.piercing = piercing;
     bullet.bounces = bounces;
@@ -855,18 +938,31 @@ export class CombatCoreScene<
       // straight ahead or 180° backwards), and each further warhead divides
       // the full 360° circle evenly (count N → 90°, 90°+360°/N, …).
       const angle = baseHeading + Math.PI / 2 + (2 * Math.PI * i) / count;
-      this._pendingSplitWarheads.push(
-        createPlayerBullet(
-          this,
-          bullet.x,
-          bullet.y,
-          bullet.color,
-          radius,
-          Math.cos(angle) * speed,
-          Math.sin(angle) * speed,
-          CLUSTER_WARHEAD_LIFETIME,
-        ),
+      const warhead = createPlayerBullet(
+        this,
+        bullet.x,
+        bullet.y,
+        bullet.color,
+        radius,
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed,
+        CLUSTER_WARHEAD_LIFETIME,
+        // Warheads render as small discs, never tiny missiles, so the
+        // split reads as a cluster of fragments (AH-0MV822B1B0048UZT).
+        // They keep the shell's colour and neon rim through the shared
+        // bullet-shape seam, so the burst still reads as one weapon.
+        'disc',
+        undefined,
+        bullet.rimColor,
+        undefined,
       );
+      // A warhead is the part that actually connects, so it carries the
+      // weapon's impact feedback: the shared impact seam plays the baked
+      // cluster hit cue + hot-pink flash when it damages an enemy
+      // (AH-0MV822B1B0048UZT). The parent shell only ever splits, never
+      // deals a direct hit, so it never reaches the impact seam itself.
+      warhead.impactFx = def.impactFx;
+      this._pendingSplitWarheads.push(warhead);
     }
     this.spawnSplitBurst(bullet.x, bullet.y, count);
   }
@@ -941,20 +1037,23 @@ export class CombatCoreScene<
   }
 
   /**
-   * Fires one bullet from every Options pod along the ship's heading
-   * (AH-0MV1BIVVK0043TEM). Each pod's world position comes from the shared
-   * `optionsEscort` helper; the bullets travel through the ordinary
-   * `PlayerBullet` path so they damage enemies exactly like the main gun.
+   * Fires one bullet from every Options pod radially outward along that pod's
+   * own orbit direction — each bullet travels along the line from the ship
+   * through the pod's current position, so a volley fans into a rotating
+   * spike/flower pattern rather than following the ship's heading
+   * (AH-0MV1BIVVK0043TEM, AH-0MV5DFBVW002J2XO). Each pod's world position and
+   * radial direction come from the shared `optionsEscort` helper; the bullets
+   * travel through the ordinary `PlayerBullet` path so they damage enemies
+   * exactly like the main gun.
    *
    * @param def - The level-resolved Options definition (carries `orbit`).
-   * @param player - The firing player (position + heading + bullet scale).
+   * @param player - The firing player (position + bullet scale).
    */
   protected fireOptionsPods(def: WeaponDefinition, player: Player): void {
     const orbit = def.orbit;
     if (!orbit) return;
     const count = Math.max(0, Math.round(orbit.pods));
     if (count === 0) return;
-    const heading = player.getHeading();
     const radius = PLAYER_BULLET_RADIUS * (def.levelBulletSize ?? 1);
     const positions = optionsPodPositions(
       player.x,
@@ -963,10 +1062,12 @@ export class CombatCoreScene<
       count,
       orbit.radius,
     );
-    const directions = optionsPodFireDirections(heading, count);
+    // Each pod fires radially outward: its direction is its current orbit
+    // angle (the ship→pod line), not the ship's heading.
+    const directions = optionsPodFireDirections(this._optionsOrbitPhase, count);
     for (let i = 0; i < positions.length; i++) {
       const vel = bulletVelocity(directions[i], OPTIONS_POD_BULLET_SPEED);
-      this.spawnPlayerBullet(
+      const bullet = this.spawnPlayerBullet(
         positions[i].x,
         positions[i].y,
         vel.vx,
@@ -974,7 +1075,18 @@ export class CombatCoreScene<
         def.bulletColor,
         def.bulletLifetime,
         radius,
+        0,
+        undefined,
+        def.bulletShape,
+        def.bulletShapeLength,
+        def.bulletRim,
+        def.bulletThickness,
+        def.bulletTrail,
       );
+      // Per-weapon impact feedback (the options pod's distinct aqua flash +
+      // baked hit cue), resolved by the shared impact seam when the shot
+      // connects — identical in the game and every gym (AH-0MV822BDN008IYL6).
+      bullet.impactFx = def.impactFx;
     }
   }
 
@@ -1366,6 +1478,9 @@ export class CombatCoreScene<
     // In-flight Bomb pulse rings are likewise owned by their registry.
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
+    // In-flight per-weapon muzzle flashes are cleared so a restarted run
+    // starts clean (AH-0MV8228YW0050IXS).
+    this.fireFxEffects = [];
     // In-flight cluster split bursts and any un-flushed split warheads are
     // cleared so a restarted run starts clean (AH-0MV1BIVIJ007KYXU).
     for (const effect of this.splitBurstEffects) effect.destroy();
@@ -1403,6 +1518,8 @@ export class CombatCoreScene<
     this.collectAnimations = [];
     for (const effect of this.bombPulseEffects) effect.destroy();
     this.bombPulseEffects = [];
+    for (const effect of this.fireFxEffects) effect.destroy();
+    this.fireFxEffects = [];
     for (const effect of this.splitBurstEffects) effect.destroy();
     this.splitBurstEffects = [];
     for (const warhead of this._pendingSplitWarheads) warhead.destroy();

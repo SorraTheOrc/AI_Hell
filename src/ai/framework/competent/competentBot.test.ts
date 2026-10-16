@@ -5,7 +5,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { bullet, drop, makeSnapshot, mineral } from '../testFixtures';
+import {
+  bullet,
+  DEFAULT_THRUSTER_CONFIG,
+  drop,
+  makeSnapshot,
+  makeThrusterSnapshot,
+  mineral,
+} from '../testFixtures';
 import { createCompetentBotBrain } from './index';
 import { COMPETENT_GOAL_IDS } from './goals';
 import { COMPETENT_BOT_TUNABLES } from './tunables';
@@ -68,5 +75,25 @@ describe('competent bot commitment (AC1)', () => {
     expect(brain.committedGoalId).not.toBeNull();
     brain.reset();
     expect(brain.committedGoalId).toBeNull();
+  });
+});
+
+describe('end-to-end default equivalence (AH-0MV85WFHQ0016FTA)', () => {
+  it('commits the same goal with a default-config and a no-config snapshot', () => {
+    const brain = createCompetentBotBrain({ fallback: null });
+    const plain = makeSnapshot({ player: PLAYER, minerals: [mineral(580, 270)] });
+    const withConfig = makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
+      player: PLAYER,
+      minerals: [mineral(580, 270)],
+    });
+
+    const plainIntent = brain.decide(plain, 0.1);
+    brain.reset();
+    const configIntent = brain.decide(withConfig, 0.1);
+
+    // A default-config snapshot must drive the exact decisions of today's
+    // no-config behaviour (AC2 default-equivalence), end to end.
+    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.collectMineral);
+    expect(configIntent).toEqual(plainIntent);
   });
 });

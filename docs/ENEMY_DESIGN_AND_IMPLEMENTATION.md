@@ -80,7 +80,11 @@ contact is the threat — its `tryFireNone` dispatch entry keeps it out of the
 aimed-shot fallback, and every spawned segment is registered with the
 `WaveManager`, gated behind a per-wave `centipede: true` opt-in. The dedicated
 `GymCentipede` scene runs the same shared entity/chain code, so the game and
-the gym cannot diverge.
+the gym cannot diverge. Because it is not a CSV config it is surfaced as a
+dedicated **Centipede** option inside `GymFodderEnemies`'s in-panel enemy
+selector (`src/scenes/gym/core/centipedeFormation.ts` owns the single shared
+formation config both scenes use), not as a separate ENEMIES row on the gym
+index (AH-0MV4ZOIZR0086T66).
 
 The **Robotron 2084 homing horde** (AH-0MV01EKTL001NRE6) is the third
 delivered classic archetype and is **partly** a CSV row and partly a new
@@ -201,6 +205,18 @@ asteroids award **50** (`SCORE_VALUES.asteroid`, tier-checked in
 `PlayScene._onEnemyKilled`). Collision (ramming) kills award no points, as
 always.
 
+**Kill reward (AH-0MV6M2M9P0078N4S)**: in addition to the generic per-kill
+power-up roll, a fully destroyed **small** asteroid additionally rolls the
+configurable **Extra Life** chance (`GameRules.asteroidExtraLifeDropChance`,
+default **0.05**); a winning roll leaves exactly one `extra_life` pickup at
+the death site. The roll lives **once** in the shared helper
+`src/scenes/core/asteroidKillDrops.ts`
+(`rollAsteroidExtraLife(entity, rng, chance)` — tier gate first, then
+`rng() < chance`), consumed by `PlayScene._onEnemyKilled` and the gym kill
+seams (`GymFormationScene.onEnemyDestroyed`/EXPLODE and
+`GymLevel.onEnemyDestroyed`), so the game and the gyms cannot drift. Large and
+medium asteroids never roll it.
+
 **Wave placement — random offscreen spawner**: Asteroids are **not** a fixed
 group in Level 1 Wave 1. Every regular wave plans its asteroid spawns with the
 pure planner `src/waves/AsteroidSpawner.ts` (`computeSpawns`), and
@@ -277,17 +293,21 @@ key `GymFodderEnemies`; renamed from `GymEnemies`, AH-0MV13G5EV008D41E) is the
 `{ enemyKey }` via `init()` → `loadEnemyConfig(enemyKey)` and derives
 formation/bullet behaviour from the loaded config; the key is also the
 optional deep-link default for the **in-panel enemy selector** (an `<select>`
-listing every non-boss config — see §8.5). The gym index (`GymIndex`) no
-longer enumerates one row per config: its **ENEMIES** column has a single
-**"Fodder Enemies"** row that boots `GymFodderEnemies` bare (the dropdown
-picks the archetype, default `scout`) plus the dedicated `GymBoss` scene
-labelled **"Boss"** that boots `GymBoss` directly. The index renders three
-columns — plain scenes, **ENEMIES** and **Dev Utilities** — so the Bosses
-column, the redundant `boss` "Boss Swarm" config row and the per-config rows
-were retired (AH-0MV13G5EV008D41E; formerly
-AH-0MTV8OV9V002D8B7/AH-0MUAYB28C004KK7X). `GymBoss` is excluded
-from the plain scene list (left column) so the real boss is not duplicated
-as a bare scene. Legacy
+listing every non-boss config plus the Centipede chain — see §8.5). The gym
+index (`GymIndex`) no longer enumerates one row per config: its **ENEMIES**
+column has a single **"Fodder Enemies"** row that boots `GymFodderEnemies`
+bare (the dropdown picks the archetype, default `scout`) and a dedicated
+**"Boss"** row that boots `GymBoss` directly (AH-0MUAYB28C004KK7X). The
+Centipede chain (a wave opt-in, not a CSV config) is **not** a separate row —
+it appears as a dedicated **"Centipede"** option inside the fodder gym's
+enemy selector, which swaps in the shared linked-chain formation the game and
+`GymCentipede` run (`src/scenes/gym/core/centipedeFormation.ts`,
+AH-0MV4ZOIZR0086T66). The index renders three columns — plain scenes,
+**ENEMIES** and **Dev Utilities** — so the Bosses column, the redundant `boss`
+"Boss Swarm" config row and the per-config rows were retired
+(AH-0MV13G5EV008D41E; formerly AH-0MTV8OV9V002D8B7/AH-0MUAYB28C004KK7X).
+`GymBoss` and `GymCentipede` are excluded from the plain scene list (left
+column) so enemy testbeds are not duplicated as bare scenes. Legacy
 `GymScout`/`GymDiver`/… scenes have been
 retired; their formation/bullet assertions now live in `GymFodderEnemies.test.ts`
 keyed by `enemyKey`.
@@ -316,8 +336,9 @@ Both fields are validated (`validateEnemyConfig`) and coerced
 documented defaults — `movementClass` → `formation`, `attackClass` derived
 from the effective `shotPattern` (`none` → `contact`, otherwise `projectile`) —
 so legacy files without the columns still parse. The classification is
-**data-only**: no gameplay code reads it yet; the wave-generation/balance
-consumer is the follow-up item AH-0MV29XQ0H009P9WP.
+**consumed**: it drives the wave balance rules R1–R3 (§1.5), which the
+runtime wave generator enforces for generated waves and the campaign audit
+validates. The consuming module is `src/core/waveBalance.ts`.
 
 The agreed mapping for all 18 CSV archetypes:
 
@@ -344,6 +365,120 @@ The agreed mapping for all 18 CSV archetypes:
 
 The `centipede` linked chain (AH-0MV01EJ92008ZZ86) is a dedicated entity, not
 a CSV row, so it carries no classification pair; it is a contact-only chaser.
+
+### 1.5 Wave balance rules R1–R3 (AH-0MV29XQ0H009P9WP)
+
+The classification in §1.4 is consumed by the **wave balance rules**, a pure,
+Phaser-free module (`src/core/waveBalance.ts`) that is the single source of
+truth for three hard design constraints. The runtime auto-sequencer (F3,
+`src/core/difficultySequencer.ts`) enforces the rules when composing generated
+(`curve` / `dynamic`) waves; the same rule functions are reused by a pure audit
+validator (F5) and by the classification-driven opening curation (F4,
+`src/waves/sequencedLevels.ts`). Hand-authored `fixed` waves are never
+sequenced and are exempt from the rules by design.
+
+#### 1.5.1 Rule definitions
+
+- **R1 — opening-wave purity.** Opening waves (the `dynamic` onboarding slots,
+  see `OPENING_WAVE_POSITIONS`) may contain only archetypes whose
+  `movementClass` is in `OPENING_MOVEMENT_CLASSES` — formation or diver
+  movement; chasers, patrollers and roamers are excluded. `attackClass` is
+  deliberately unconstrained for R1: onboarding waves are no-fire and their
+  openers are ranged-class.
+- **R2 — no all-chaser wave.** A wave may not be composed entirely of
+  archetypes with `movementClass === CHASER_MOVEMENT_CLASS`. At least one
+  non-chaser group must be present.
+- **R3 — bounded ranged mix.** A *firing* wave may not be composed entirely of
+  ranged attackers (`attackClass` in `RANGED_ATTACK_CLASSES`); the share of
+  ranged groups must stay strictly below `RANGED_SHARE_CAP`, so every firing
+  wave includes at least one effective-*contact* group.
+
+#### 1.5.2 Effective-attack semantics (R3)
+
+R3 judges a wave's **effective** attack, not its raw `attackClass` values. When
+a wave's shooting is disabled (`shootEnabled === false`), every group counts as
+effective contact and R3 is satisfied by construction. This resolves the R1↔R3
+tension: the R1-permitted openers are all ranged-class, yet the no-fire opening
+waves are compliant. The generator consequently never forces a contact group
+into a no-fire wave.
+
+#### 1.5.3 Named tunable constants
+
+All rule constants live in `src/core/waveBalance.ts` — the module is the single
+source of truth, so this section references the constants by name rather than
+restating their values.
+
+| Constant | Role | How to tune |
+|---|---|---|
+| `OPENING_WAVE_POSITIONS` | The `(level, wave)` slots R1 treats as opening waves. | Add or move entries to change which waves are openings; `isOpeningWavePosition()` generalises the lookup. |
+| `OPENING_MOVEMENT_CLASSES` | Movement classes an opening wave may contain (R1). | Widen or narrow to admit or exclude behaviours in the opening. |
+| `CHASER_MOVEMENT_CLASS` | The movement class R2 forbids from filling a whole wave. | Change only if the "no all-chaser" rule should target a different behaviour. |
+| `RANGED_ATTACK_CLASSES` | Attack classes counted as ranged (R3). | Add or remove classes to redefine which attackers count toward the mix. |
+| `RANGED_SHARE_CAP` | The maximum ranged share of a firing wave (strict `<`), R3. | Lower it to force more contact groups (a tighter mix); raising it relaxes the rule. |
+| `DEFAULT_MOVEMENT_CLASS` | Fallback `movementClass` for unknown archetype keys. | Change to alter the classification fixture's fallback, not the rules. |
+| `deriveAttackClassFromShotPattern()` | Derives the fallback `attackClass` from a shot pattern (no-fire ⇒ contact). | Change to alter the fixture's attack-class fallback. |
+
+#### 1.5.4 Generator enforcement (F3)
+
+The sequencer evaluates R2 and R3 **after** greedy composition, because its
+scorer has no intrinsic notion of the classification constraints. On a
+violation it repairs the wave in place: it adds — or, when the wave is at its
+group limit, swaps in — a compliant candidate tuned to the remaining target
+gap, preferring candidates not yet at the per-level archetype cap. When no
+compliant candidate exists, the wave is returned unchanged so it is never
+empty.
+
+**Rules win over exact target match.** A repair may grow the wave's difficulty
+error; the sequencer returns the best error-minimising compliant composition
+available within the constrained candidate space rather than an exact but
+invalid one. R1 is position-dependent (the pure sequencer cannot know which
+wave is an opening), so the campaign builder passes the R1-allowed movement
+classes through `SequencerOptions` / `SequencerRuleConstraints`; the sequencer
+consults the shared `OPENING_MOVEMENT_CLASSES` rather than re-implementing the
+rule.
+
+#### 1.5.5 Opening curation (F4)
+
+`src/waves/sequencedLevels.ts` derives the opening-wave candidate pool from R1
+(via `OPENING_MOVEMENT_CLASSES` and `classifyArchetype`) and then narrows it to
+a curated sub-selection kept as data, because the opening target band is narrow
+and a full R1 pool would make openers degenerate. The curated band may narrow
+the R1 pool but never widen it.
+
+#### 1.5.6 Audit validator (F5)
+
+`auditWaves()` / `auditWave()` reuse the exact same rule functions to audit a
+list of waves, returning a per-wave, per-rule verdict plus a human-readable
+message. `fixed` waves are reported as exempt (no rules evaluated). A campaign
+audit test (`src/waves/campaignBalanceAudit.test.ts`) runs the shipped campaign
+built from `defaultDifficultyCurves()` through the validator and pins the
+per-wave target-difficulty error, so any rule, curve or pool change that moves
+the enforcement cost fails the test and forces a documentation update.
+
+#### 1.5.7 Enforcement cost on the shipped campaign
+
+Enforcement is free on most waves: for 13 of the 15 generated waves of the
+shipped campaign the rule-constrained composition matches the raw greedy
+composition exactly. The two late-campaign waves whose raw composition is
+all-ranged are repaired with a tuned contact group that lands *closer* to the
+target than the invalid composition, so enforcement reduced their error rather
+than growing it. The largest remaining per-wave error stays within the
+sequencer's default tolerance. The measured vector is pinned in
+`campaignBalanceAudit.test.ts`.
+
+#### 1.5.8 Design principles
+
+- **Single source of truth.** Generator enforcement, opening curation and the
+  audit validator all consume `src/core/waveBalance.ts`; no rule logic is
+  duplicated.
+- **Gym↔game parity.** The rules live in the shared core consumed by both the
+  game's campaign builder and the `GymCurveSequencer` preview, so parity holds
+  by construction.
+- **Fixed waves exempt.** Authored `fixed` waves are never sequenced, altered
+  or rejected.
+- **No Phaser dependency.** The module runs under Vitest as pure functions; the
+  classification fixture resolves through `classifyArchetype` (with the
+  documented defaults for unknown keys).
 
 ---
 
@@ -876,7 +1011,7 @@ only legitimate difference is a disabled feature — never a divergent copy.
 Every shared behaviour therefore lives once: the core template methods and
 hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
-`asteroidSplit`, `enemyTargeting`), the shared dispatcher
+`asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
 helpers `resolveSpawnRange` / `pickInRange` in `src/core/configTypes.ts`
@@ -899,6 +1034,24 @@ missile-split seams (`src/scenes/core/CombatCoreScene.ts`), the pure
 `AoEDescriptor` (`screenPulse`) pulse, and the shared `_reflectEnemyBullet`
 Force Field seam — so the game and every gym (`GymWeapons`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`) run identical arsenal behaviour.
+
+**Projectile identity & per-shot feel are shared (per-enemy visuals epic,
+AH-0MV2K5SR0005RTTE).** Every weapon/attack's in-flight look, fire-time
+launch pop and impact feedback is resolved from the shared bullet-shape
+seams consumers run in both the game and every gym: the per-weapon bullet
+looks from the weapon catalogue → `resolvePlayerBulletVisual` (consumed by
+`PlayerBullet._draw` and the shared combat-core spawn path), the per-enemy
+identities from `ENEMY_BULLET_VISUALS` → `resolveEnemyBulletVisual`
+(consumed by `bulletUtils.createBullet` inside each shared entity's own fire
+method), the enemy launch pop from `src/vfx/enemyMuzzleFlash.ts`, and the
+impact flash/cue from the shared `CombatScene` interception + hit passes.
+The repo duplicate-body guard and the gym↔game equivalence suite therefore
+cover the new visuals exactly as they do behaviours: a weapon or enemy
+renders the same code-drawn silhouette, muzzle flash and hit feedback in
+`PlayScene` and in `GymWeapons` / `GymFodderEnemies` / `GymBoss` / the
+classic-arcade gyms — a disabled feature is the only permitted divergence.
+See "Projectile identity & per-shot feel" in this document for the full
+per-attack roster.
 
 **Documented divergence — the Player gym's obstacle course.** `GymPlayer`
 spawns a deterministic set of indestructible obstacles
@@ -1387,12 +1540,18 @@ plugin) and **Save As…** (sanitize → validate → duplicate check via
 **enemy selector** (id `enemy-gym-select`): a single `<select>` whose options
 are every non-boss `EnemyConfig` key discovered from the config store
 (`loadAllEnemyConfigs()`, so seed and `Save As…` entries both appear with no
-hard-coded key list), labelled by `displayName` and seeded from the scene's
-active key. Choosing a different enemy rebuilds the scene through the shared
-`respawnFormation()` clean-slate seam — it destroys every live formation
-entity and the player's in-flight bullets, loads the selected config, then
-reloads every other panel control from that config (discarding unsaved edits)
-— so the running scene always matches the selection. The `boss` archetype is
+hard-coded key list) **plus the dedicated Centipede linked-chain archetype**
+(AH-0MV4ZOIZR0086T66) — labelled by `displayName` / `Centipede` and seeded from
+the scene's active key. Choosing a different config enemy rebuilds the scene
+through the shared `respawnFormation()` clean-slate seam — it destroys every
+live formation entity and the player's in-flight bullets, loads the selected
+config, then reloads every other panel control from that config (discarding
+unsaved edits) — so the running scene always matches the selection. Choosing
+**Centipede** instead swaps in the shared centipede formation
+(`src/scenes/gym/core/centipedeFormation.ts`, the *same* `CentipedeChain` /
+`Centipede` code `PlayScene` and `GymCentipede` run) and hides the config-tuning
+controls (id `enemy-gym-config-body`) — the Centipede is a wave opt-in, not a
+CSV row, so it has no tunable/saveable config. The `boss` archetype is
 deliberately excluded (it has its own gym entry).
 The four spawn-range sliders (`startXMin/startXMax/startYMin/startYMax`, bounds
 `0..GAME_WIDTH` / `0..GAME_HEIGHT`, step 1) are clamped to the canvas and
@@ -1408,7 +1567,8 @@ and best-effort mutate entity `_*` fields (including `_bulletLifetime`, so the
 `bulletLifetime` 0.1–5.0 s TTL slider live-applies to already-spawned entities).
 Panel is removed on scene
 `SHUTDOWN`; stale panels are cleared on rebuild for test isolation.
-Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-select`, `enemy-gym-save`,
+Queryable DOM ids: `enemy-gym-panel`, `enemy-gym-select`,
+`enemy-gym-config-body`, `enemy-gym-save`,
 `enemy-gym-save-as`, `enemy-gym-save-as-input`, `enemy-gym-save-status`,
 `data-config` / `data-config-value` on controls. The panel also shows a
 **live difficulty readout** (id `enemy-gym-difficulty`) that recomputes the
@@ -1824,6 +1984,215 @@ Scout's two-phase tell) — never re-added in a thin scene class.
 32204–32207), Boss fire `aihell-boss-fire`; spawn `aihell-enemy-spawn`;
 destruction `aihell-enemy-destruction` (multi-seed 32110–32112). Full catalogue:
 [Audio cue-to-recipe mapping](AUDIO_TONEFORGE_CUE_MAPPING.md).
+
+### Projectile identity & per-shot feel (per-enemy visuals epic)
+
+Each AC-listed enemy attack gets its own in-flight projectile identity
+(shape/colour/feel through the shared bullet-shape seam) plus fire/impact
+VFX + SFX, gated by its existing fire behaviour (AH-0MV2K5SR0005RTTE —
+visuals/feel only: firing logic, speeds, intervals and patterns are
+unchanged). The shared seams the children consume: `bulletUtils.createBullet`
+(the shared enemy-bullet spawn path), `resolveEnemyBulletVisual`
+(`src/utils/bulletVisuals.ts`, the identity registry the roster guard pins),
+`src/vfx/enemyMuzzleFlash.ts` (the enemy fire-time launch pop) and the shared
+impact passes in `src/scenes/core/CombatScene.ts` (coloured interception
+flash + per-identity hit pop through `playBulletDestructionSound`, the reused
+per-enemy impact cue).
+
+### Projectile identity roster (AH-0MV2K5SR0005RTTE)
+
+The consolidated per-attack identity — shape primitive, fire-time VFX (launch
+pop at the emitter) and impact feel — for every AC-listed enemy attack. All
+shapes are code-drawn `src/utils/bulletVisuals.ts` primitives rendered
+through the shared seam, so the game and every gym draw them identically
+(gym↔game parity by construction; the docs-guard test pins this table).
+
+| Identity | Family/pattern | Shape primitive | Fire VFX (launch pop) | Impact feel |
+|---|---|---|---|---|
+| Alien pellet | Scout / Space-Invaders March | `pellet` (pulsing rim) | green pop at scout | green flash + shared destruction cue |
+| Sharp shard | Diver spread burst | `shard` (spine glint) | one pale-yellow pop per burst | pale-yellow flash + shared destruction cue |
+| Heavy shell | Tank radial | `heavy-shell` (breathing glow) | one amber pop per burst | amber flash + shared destruction cue |
+| Crisp phaser bolt | Phaser radial | `phaser-bolt` (core streak) | one magenta pop per volley | red flash + shared destruction cue |
+| Cometary fleck | Swarm burst | `fleck` (comet tear) | cyan pop per member shot | cyan flash + shared destruction cue |
+| Slim dart | Defender raider | `dart` (spearhead) | pale-amber pop per shot | pale-amber flash + shared destruction cue |
+| Dense boss pellet | Boss spread | `boss-pellet` (ring accent) | one blood-red pop per volley | white flash + shared destruction cue |
+| Phase pellet | Boss spiral | `spiral-pellet` (phase core) | one phase-tinted pop per volley | white flash + shared destruction cue |
+| Pulse ring | Boss pulse aimed shots | `pulse-ring` (wide wave echo) | one pale pop per volley | white flash + shared destruction cue |
+| Tracer | Boss desperation | `tracer` (white-hot streak) | one hot-gold pop per volley | hot-gold flash + shared destruction cue |
+| Tractor beam | Galaga capturer | beam field (tapering funnel) | beam-start field shimmer | capture lure + shared destruction cue |
+| Falling warhead | Missile-Command orbital-strike | `warhead` (fiery tail) | amber pop at spawn | red detonation flash + shared explosion cue |
+
+**Aliasing note:** the Space-Invaders March (`march`) shares the Scout
+identity (same entity class, one roster family); the Boss's four patterns
+are separate identities (one child per pattern). The Capturer and
+OrbitalStrike never fire a bullet — their identities are the beam field and
+the falling warhead respectively.
+
+**E1 Scout / Space-Invaders March (scout-invader family,
+AH-0MV822CQL005R4MM):** the aimed shot renders as a **small alien pellet** —
+scalloped pod body, a bright **enemy-tinted (green) core** and a **faint
+pulsing rim** (time-driven, redrawn each frame through the shared bullet
+lifecycle) plus a short fading trail — with a green launch pop at the scout's
+body when the shot leaves and a green-tinted impact flash when the shot
+connects or is intercepted. The March block shares the identity (same
+entity class, same family per the roster guard).
+
+**E3 Tank (tank family, AH-0MV822DF60001EPA):** each radial shell renders as
+a **heavy shell** — a visibly larger two-tone amber body with a **white-hot
+core** and a **slow breathing glow** ring (a dedicated `heavy-shell` seam
+primitive; the glow swells at ~1.8 rad/s with the shell's age and is redrawn
+each frame through the shared bullet lifecycle — the lazy ember read of slow
+artillery, deliberately the opposite of the Scout's fast-pulsing pellet)
+plus a short ember trail. The volley spawns **one amber launch pop** at the
+tank's body per burst (the burst is one fire event, matching its single
+cue+thump pair — not ten stacked pops), and each shell carries its amber
+colour so the shared impact pass tints the flash when a shell connects or is
+intercepted. Visuals/feel only: firing logic, speed, interval, burst count
+and the direction-agnostic radial pattern are unchanged.
+
+**E2 Diver (diver family, AH-0MV822D2U000LRFV):** each spread-burst shot
+renders as a **sharp shard/splinter** — a dedicated `shard` seam primitive
+(razor arrowhead outline with a **white-hot spine**, a neon rim in the
+Diver's own body yellow and a short fading trail) whose bright **glint**
+sweeps up and down the spine with the shot's age (~1.4 Hz, redrawn each
+frame through the shared bullet lifecycle) — the shard echoes the Diver's
+dart body and dive arc, deliberately the opposite of the Tank's fat ember
+shell and the Scout's pulsing pod. The volley spawns **one pale-yellow
+launch pop** at the diver's body per burst (the burst is one fire event,
+matching its single fire cue — not N stacked pops), each shard flies
+nose-first along its own spread heading, and each shard carries its
+pale-yellow colour so the shared impact pass tints the flash when a shard
+connects or is intercepted. Visuals/feel only: firing logic, speed,
+interval, burst count and the spread pattern are unchanged.
+
+**E4 Phaser (phaser family, AH-0MV822DRX009RYUB):** each radial shot renders
+as a **crisp-edged phaser bolt** — a dedicated `phaser-bolt` seam primitive
+(a smooth hexagonal prism with pointed tips at each end of the flight axis
+and parallel long edges — no zig-zag) filled with the shot's lethal red,
+with a **bright white velocity-aligned core streak** running the prism's
+length, a neon rim in the Phaser's own body magenta and a short fading
+trail. The radial volley spawns **one magenta launch pop** at the phaser's
+body per volley (the volley is one fire event, matching its single
+cue+sound pair — not eight stacked pops), each bolt flies nose-first along
+its own spoke, and each bolt carries its red colour so the shared impact
+pass tints the flash when a bolt connects or is intercepted. The clean
+straight-edged prism is deliberately the opposite of the player's jagged
+`bolt` and of every other enemy identity — crisp, telegraphed energy rather
+than a splinter, ember or pod. Visuals/feel only: firing logic, speed,
+interval, spoke count and the radial pattern are unchanged.
+
+**E5 Swarm (swarm family, AH-0MV822E4T006F37Y):** each coordinated-burst
+shot renders as a **tiny fast cometary fleck** — a dedicated `fleck` seam
+primitive (a small elongated tear with a **white-hot leading glint**, a
+pointed tail, a cyan neon rim and a short fading trail) that reads as one
+of a massed fast-moving volley — deliberately the smallest, simplest
+silhouette in the roster, so the Swarm's massed fire stays cheap at high
+bullet counts while still being visibly distinct from the Scout's pulsing
+pod and the Raider's wide diamond. Each member's shot spawns **one cyan
+launch pop** at the member's body (each member is its own emitter, so each
+fleck gets its own tiny pop), each fleck flies nose-first along its spread
+heading, and each fleck carries its cyan colour so the shared impact pass
+tints the flash when a fleck connects or is intercepted. Visuals/feel only:
+firing logic, speed, interval and spread are unchanged.
+
+**Defender raider (raider family, AH-0MV822EH800780GI):** during a committed
+attack run the raider's aimed shot renders as a **slim sharp-nosed dart** —
+a dedicated `dart` seam primitive (a long spearhead body with a **white-hot
+nose tip**, a hot-pink neon rim and a short fading trail) — a needle-like
+fast-attacker read, deliberately distinct from the Scout pellet whose shared
+`tryFireAimedBullet` path the raider reuses. The raider resolves its own
+identity through the overridable `bulletVisualArchetype` seam on the shared
+Scout fire path (the one place the shared aimed-shot code names its
+projectile identity), so the game and every gym draw the same dart with no
+per-scene copy. Each shot spawns **one pale-amber launch pop** at the
+raider's body and each dart carries its pale-amber colour so the shared
+impact pass tints the flash when a dart connects or is intercepted.
+Visuals/feel only: the patrol/attack state machine, fire gate, speed,
+interval and advance-cue tell are unchanged.
+
+**Boss spread (boss-spread pattern, AH-0MV822ETD008LLZX):** the Scan
+(Phase 1) spread volley's shots render as **dense boss pellets** — a
+dedicated `boss-pellet` seam primitive (a heavy hexagonal body with a
+white-hot core and a **menacing concentric ring accent** — a blood-red
+targeting halo — plus a short fading trail). The volley spawns **one
+blood-red launch pop** at the boss's body (the volley is one fire event
+that already plays one Boss fire cue — not 7–9 stacked pops), each pellet
+flies nose-first along its spread direction, and each pellet carries its
+white colour so the shared impact pass tints the flash when a pellet
+connects or is intercepted. The remaining boss patterns (spiral, pulse,
+desperation) get their own identities under their own child items.
+Visuals/feel only: firing logic, counts, spread angle, speeds and the
+telegraph cadence are unchanged.
+
+**Boss spiral (boss-spiral pattern, AH-0MV822F5J006WFR0):** the Firestorm
+(Phase 2) spiral volley's shots render as **phase-coloured spiral pellets**
+— a dedicated `spiral-pellet` seam primitive (a compact white pellet with a
+bright **phase-coloured core** — the Boss's current health-phase colour,
+green → yellow → orange → red, resolved live at fire time through the same
+mapping the health bar uses — and a **spiral-wake arc** trailing behind, plus
+a short fading trail). The volley spawns **one phase-tinted launch pop** at
+the boss's body (one pop per volley — the volley is one fire event that
+already plays one Boss fire cue), each pellet flies nose-first along its
+rotating spiral spoke, and each pellet carries its white colour so the
+shared impact pass tints the flash when a pellet connects or is
+intercepted. The remaining boss patterns (pulse, desperation) get their own
+identities under their own child items. Visuals/feel only: firing logic,
+counts, rotation step, speeds and the telegraph cadence are unchanged.
+
+**Boss pulse (boss-pulse pattern, AH-0MV822FHN005PK37):** the Pulse pattern's
+aimed shots render as **slow wide pulse rings** — a dedicated `pulse-ring`
+seam primitive (a pale ring with a faint filling, a bright outer edge and a
+dim inner halo — the compact echo of the screen-wide wave that the pattern
+also spawns, which keeps its own dedicated expanding-ring pulse-wave
+rendering) plus a short fading trail. The pattern plays **one pale launch
+pop** at the boss's body alongside the wave spawn (one pop per volley — the
+pattern is one fire event that already plays one Boss fire cue), each aimed
+shot flies nose-first along its fan direction, and each carries its white
+colour so the shared impact pass tints the flash when a shot connects or is
+intercepted. The remaining boss pattern (desperation) gets its own identity
+under its own child item. Visuals/feel only: firing logic, wave speed, aim
+count, fan spread and the telegraph cadence are unchanged.
+
+**Boss desperation (boss-desperation pattern, AH-0MV822FTS00156F5):** every
+bullet of the combined desperation volley (spread + spiral + aimed) renders
+as a **bright velocity-aligned tracer** — a dedicated `tracer` seam primitive
+(a long hot-gold streak with a **white-hot head** and a short tail flare)
+plus a short fading trail — the exposed, brighter-core read of the boss's
+final phase, hotter and faster-looking than every other boss identity. The
+volley plays **one hot-gold launch pop** at the boss's body (one pop per
+combined volley — the volley is one fire event that already plays one Boss
+fire cue), each tracer flies nose-first along its layer direction, and each
+carries its hot-gold colour so the shared impact pass tints the flash when a
+tracer connects or is intercepted (the expanding pulse wave keeps its own
+rendering). Visuals/feel only: firing logic, counts, layers, speeds and the
+telegraph cadence are unchanged.
+
+**Galaga capturer (capturer family, AH-0MV822G6F002JRRY):** the capturer
+**never fires a bullet** — its threat is the tractor beam it projects, so
+its projectile identity is the beam itself: a **magenta tugging
+beam/field** drawn by the shared `Capturer` entity (`_drawBeam`) as a
+**tapering funnel** (narrow at the capturer, flaring at the far end) with a
+bright core rail, **converging side field-lines** (the "tractor" read),
+**flowing energy motes** that travel down the field with the entity's local
+phase (time-driven, redrawn each frame so the tug shimmers identically in
+the game and every gym) and a **bright capture lure** at the beam's far end
+(the hazard point). The archetype's registered visual signature records the
+beam tint (`capturer` → `line`, magenta) so the roster guard stays total.
+Visuals/feel only: the beam lifecycle, width, length, pull strength and
+capture timing are unchanged.
+
+**Missile Command orbital-strike (orbital-strike pattern,
+AH-0MV822GIO005B685):** the falling shell renders as a **falling warhead** —
+a dedicated `warhead` seam primitive (a cap-shaped shell body with a
+**white-hot nose** and a **flickering fiery tail** — a time-driven flame
+behind the rear — plus a short fading trail and a hot-amber neon rim). The
+strike plays **one amber launch pop** where the shell enters from above (the
+enemy-side fire VFX for the strike), the warhead flies nose-first straight
+down the fall, and it carries its hot-red colour so the shared impact pass
+tints the detonation flash at the impact point. The radial-detonation
+shrapnel keeps its plain disc look (the strike's shrapnel is the burst, not
+a named identity). Visuals/feel only: telegraph duration, fall speed,
+impact timing and the burst pattern are unchanged.
 
 ### Explode / destruction
 

@@ -1,0 +1,93 @@
+# AI Hell cue: aihell-dual-impact — Player dual impact — bright twin square snap 1400 to 600 Hz, ~0.11 s.
+version: "0.1"
+meta:
+  name: aihell-dual-impact
+  description: Player dual hit — a bright twin square snap (1400 to 600 Hz) with a soft sine echo and a short high-pass noise tick, crisper and higher than the cannon's saw thump and the spread's amber wedge (dual = twin pulse bars).
+  category: AIHell
+  tags:
+    - weapon
+    - hit
+  duration: 0.11
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 1400
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1400
+        - kind: exponentialRamp
+          time: 0.1
+          value: 600
+  e0:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.1
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.2
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 1200
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1200
+        - kind: exponentialRamp
+          time: 0.05
+          value: 480
+  e1:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.05
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.08
+  v2:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f2:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 2400
+      Q: 1
+  e2:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.03
+      sustain: 0
+      release: 0
+  g2:
+    kind: gain
+    params:
+      gain: 0.06
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [v2, f2, e2, g2, mix]
+  - from: mix
+    to: out

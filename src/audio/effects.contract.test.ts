@@ -74,6 +74,10 @@ const KNOWN_CUE_SET = new Set<string>([...ALL_MAPPED_CUES, ...RETIRED_CUES]);
 // CUE_MANIFEST while every cue it dispatches is present. Known to the
 // coverage check so it is not mistaken for an unwired cue.
 KNOWN_CUE_SET.add('playWeaponFireSound');
+// `playWeaponImpactCue` is the matching shared dispatcher for the **impact**
+// cues (AH-0MV8228YW0050IXS): it routes an `impactFx.cue` name to the baked
+// cue in the manifest, and is likewise known (not a baked cue itself).
+KNOWN_CUE_SET.add('playWeaponImpactCue');
 
 function resolveCue(name: string): CueFn | undefined {
   const fromEffects = (effects as unknown as Record<string, unknown>)[name];

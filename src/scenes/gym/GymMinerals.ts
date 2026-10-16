@@ -11,6 +11,11 @@
  * (including the hold's overflow carry). The base scene seeds 100 random
  * minerals on create (see `GymFormationScene._initMineralLayer`).
  *
+ * Even without the opt-in cadence power-up layer this gym demonstrates the
+ * shared per-kill Extra Life drop (`scenes/core/asteroidKillDrops.ts`): a
+ * fully destroyed small asteroid rolls the configurable chance and a winning
+ * roll leaves one Extra Life on the field (AH-0MV6M2M9P0078N4S).
+ *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention.
  *
  * @module src/scenes/gym/GymMinerals

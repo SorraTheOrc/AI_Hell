@@ -19,6 +19,13 @@ import type { EnemyConfig } from './enemyConfig';
 import { WaveManager, type WaveEvent } from '../waves/WaveManager';
 import type { LevelDefinition } from '../waves/Formations';
 import { formationSpawnCount } from '../utils/formations';
+import {
+  checkNoAllChaser,
+  checkBoundedRangedMix,
+  classifyWaveGroups,
+  classifyArchetype,
+  OPENING_MOVEMENT_CLASSES,
+} from './waveBalance';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -444,10 +451,19 @@ describe('multi-group wave composition (AH-0MUGXDVPH005TIZL)', () => {
     expect(Math.abs(total - 90)).toBeLessThanOrEqual(5);
   });
 
-  it('keeps a single group when it already reaches the target', () => {
+  it('keeps a single group when it already reaches the target (R3 adds a contact group)', () => {
+    // The greedy composer stops once a single group lands within tolerance of
+    // the target — it never adds groups to chase the target. F3 rule
+    // enforcement (AH-0MV84TKK8008KF98) then appends exactly one contact
+    // group so the firing wave satisfies R3 (bounded ranged mix), preserving
+    // the original target-reaching group and keeping the error small.
     const result = sequencer([20], defaultCandidatePool());
     const wave = result.waves[0];
-    expect(wave.groups).toHaveLength(1);
+    expect(wave.groups.length).toBeGreaterThanOrEqual(1);
+    // The original single group is retained (not swapped away).
+    expect(wave.groups.some((group) => group.enemyKey === 'diver')).toBe(true);
+    // The composed total still tracks the target: the R3 repair tunes the
+    // contact group to the remaining gap rather than chasing more difficulty.
     expect(result.errors[0]).toBeLessThanOrEqual(10);
   });
 
@@ -525,6 +541,223 @@ describe('per-level cap does not constrain single-wave (gym) calls (AH-0MV2SGIX5
     }).waves[0];
     expect(
       wave.groups.some((group) => group.formation === 'orbital'),
+    ).toBe(true);
+  });
+});
+
+// ── Balance-rule hard-constraint enforcement (AH-0MV84TKK8008KF98, F3) ──
+
+/**
+ * The runtime auto-sequencer must never produce a generated wave that
+ * violates the balance rules R2 (no all-chaser wave) and R3 (bounded ranged
+ * mix). Enforcement consumes the shared rule module (`src/core/waveBalance.ts`)
+ * — the *same* `checkNoAllChaser` / `checkBoundedRangedMix` functions the
+ * pure audit validator uses (single source of truth, parent Q1=c) — so these
+ * tests assert observable behaviour through the public `sequencer()` API and
+ * verify the enforcement through the shared checkers.
+ */
+describe('balance-rule hard-constraint enforcement (AH-0MV84TKK8008KF98, F3)', () => {
+  /** Assert the shared checkers pass for every wave of a sequencer result. */
+  function expectAllWavesCompliant(
+    result: SequencerResult,
+    curve: DifficultyCurveConfig,
+  ): void {
+    expect(result.waves).toHaveLength(curve.length);
+    result.waves.forEach((wave, index) => {
+      const classified = classifyWaveGroups(wave.groups);
+      expect(
+        checkNoAllChaser(classified).pass,
+        `R2 violation: target ${curve[index]}, groups ${wave.groups
+          .map((g) => g.enemyKey)
+          .join(', ')}`,
+      ).toBe(true);
+      expect(
+        checkBoundedRangedMix(classified, wave.shootEnabled).pass,
+        `R3 violation: target ${curve[index]}, groups ${wave.groups
+          .map((g) => g.enemyKey)
+          .join(', ')}`,
+      ).toBe(true);
+    });
+  }
+
+  it('never produces a wave violating R2/R3 for the default pool across a range of targets', () => {
+    // Single-wave and multi-wave, low and high targets.
+    const sweeps: DifficultyCurveConfig[] = [
+      [1, 2, 5, 9, 15, 20, 30, 40, 50],
+      [60, 70, 80, 90, 100],
+      [1],
+      [20],
+      [100],
+      [5, 10, 15, 20, 25, 30, 35, 40],
+      [90, 91, 92, 93, 94],
+    ];
+    for (const curve of sweeps) {
+      const firing = sequencer(curve, defaultCandidatePool(), {
+        defaultShootEnabled: true,
+      });
+      const derived = sequencer(curve, defaultCandidatePool());
+      expectAllWavesCompliant(firing, curve);
+      expectAllWavesCompliant(derived, curve);
+    }
+  });
+
+  it('gives every firing wave at least one effective-contact group (R3)', () => {
+    const curve: DifficultyCurveConfig = [10, 20, 30, 45, 60, 80, 100];
+    const result = sequencer(curve, defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    });
+    result.waves.forEach((wave, index) => {
+      const classified = classifyWaveGroups(wave.groups);
+      const contactGroups = classified.filter(
+        (group) => group.attackClass === 'contact',
+      );
+      expect(
+        contactGroups.length,
+        `target ${curve[index]}: firing wave must include an effective-contact group`,
+      ).toBeGreaterThan(0);
+    });
+  });
+
+  it('does not force a contact group onto no-fire waves (producer Q1)', () => {
+    // A no-fire wave is R3-compliant by construction (every group counts as
+    // effective contact), so enforcement must be a no-op for it: composing
+    // with enforcement on and off must produce identical waves.
+    const curve: DifficultyCurveConfig = [6, 8, 10, 20, 40];
+    const enforced = sequencer(curve, defaultCandidatePool(), {
+      defaultShootEnabled: false,
+    });
+    const raw = sequencer(curve, defaultCandidatePool(), {
+      defaultShootEnabled: false,
+      enforceRules: false,
+    });
+    expect(enforced.waves).toEqual(raw.waves);
+  });
+
+  it('rejects an all-chaser pool composition: no generated wave is all-chaser (R2)', () => {
+    // Ghosts are the default pool's chasers; a low target selects one, and
+    // enforcement must repair the all-chaser wave with a non-chaser group
+    // while keeping it playable and compliant.
+    const result = sequencer([1], defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    });
+    const wave = result.waves[0];
+    expect(wave.groups.length).toBeGreaterThan(0);
+    const nonChaser = classifyWaveGroups(wave.groups).filter(
+      (group) => group.movementClass !== 'chaser',
+    );
+    expect(nonChaser.length).toBeGreaterThan(0);
+    expect(checkNoAllChaser(classifyWaveGroups(wave.groups)).pass).toBe(true);
+  });
+
+  it('repairs an all-ranged single-group wave with a contact group (R3)', () => {
+    const result = sequencer([30], defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    });
+    const wave = result.waves[0];
+    const classified = classifyWaveGroups(wave.groups);
+    expect(checkBoundedRangedMix(classified, true).pass).toBe(true);
+    expect(classified.some((group) => group.attackClass === 'contact')).toBe(
+      true,
+    );
+  });
+
+  it('returns a playable, non-empty wave where rules bind (never empty)', () => {
+    // Sweep targets that force repairs across the difficulty band; each wave
+    // stays non-empty even with the maximum group budget.
+    for (const curve of [
+      [1, 9, 20, 30, 50, 90],
+      [100],
+      [2, 3, 4, 5],
+    ] as DifficultyCurveConfig[]) {
+      const result = sequencer(curve, defaultCandidatePool());
+      for (const wave of result.waves) {
+        expect(wave.groups.length, `target ${wave.targetDifficulty}`).toBeGreaterThan(
+          0,
+        );
+      }
+    }
+  });
+
+  it('keeps the remaining difficulty error minimal within the constrained space', () => {
+    // The repair tunes the added contact group to the remaining gap, so a
+    // rule-bound single wave's error stays within a documented budget rather
+    // than ballooning (rules win over exact target match — some growth is
+    // expected, but the minimum achievable is chosen). Tested per single
+    // target so the only active constraint is the balance rule (no per-level
+    // archetype-cap interference).
+    const targets: DifficultyCurveConfig = [1, 5, 9, 15, 20, 30, 45, 60, 80, 100];
+    for (const target of targets) {
+      const result = sequencer([target], defaultCandidatePool(), {
+        defaultShootEnabled: true,
+      });
+      const wave = result.waves[0];
+      const total = wave.groups.reduce((sum, group) => sum + group.score, 0);
+      expect(
+        Math.abs(total - target),
+        `target ${target}`,
+      ).toBeLessThanOrEqual(15);
+    }
+  });
+
+  it('R1-constrained pools produce only formation/diver groups', () => {
+    const curve: DifficultyCurveConfig = [6, 8, 9, 10, 20];
+    const result = sequencer(curve, defaultCandidatePool(), {
+      defaultShootEnabled: false,
+      ruleConstraints: { allowedMovementClasses: ['formation', 'diver'] },
+    });
+    result.waves.forEach((wave, index) => {
+      for (const group of wave.groups) {
+        const movementClass = classifyArchetype(group.enemyKey).movementClass;
+        expect(
+          OPENING_MOVEMENT_CLASSES.includes(movementClass),
+          `target ${curve[index]}: '${group.enemyKey}' is ${movementClass}, outside the R1-allowed set`,
+        ).toBe(true);
+      }
+    });
+  });
+
+  it('honours a single-group contract: enforcement swaps instead of composing', () => {
+    // `allowMultipleGroups: false` must never grow a wave: R3 repair happens
+    // by swapping the ranged group for a contact archetype, keeping exactly
+    // one group.
+    const result = sequencer([90], defaultCandidatePool(), {
+      allowMultipleGroups: false,
+    });
+    const wave = result.waves[0];
+    expect(wave.groups).toHaveLength(1);
+    expect(
+      checkBoundedRangedMix(classifyWaveGroups(wave.groups), wave.shootEnabled)
+        .pass,
+    ).toBe(true);
+  });
+
+  it('preserves determinism under rule enforcement (no randomness)', () => {
+    const curve: DifficultyCurveConfig = [1, 5, 20, 45, 70, 90, 100];
+    const first = sequencer(curve, defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    });
+    const second = sequencer(curve, defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    });
+    expect(second).toEqual(first);
+  });
+
+  it('enforceRules: false returns the unconstrained (violating) composition', () => {
+    // The enforcement opt-out must reproduce the pre-F3 greedily-composed
+    // wave — here an all-ranged Phaser wave that R3 would reject — proving
+    // the constraint, not another change, is what repairs the composition.
+    const raw = sequencer([30], defaultCandidatePool(), {
+      defaultShootEnabled: true,
+      enforceRules: false,
+    }).waves[0];
+    const enforced = sequencer([30], defaultCandidatePool(), {
+      defaultShootEnabled: true,
+    }).waves[0];
+    expect(
+      checkBoundedRangedMix(classifyWaveGroups(raw.groups), true).pass,
+    ).toBe(false);
+    expect(
+      checkBoundedRangedMix(classifyWaveGroups(enforced.groups), true).pass,
     ).toBe(true);
   });
 });

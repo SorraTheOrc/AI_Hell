@@ -7,9 +7,10 @@
  *
  * - {@link POWER_UP_LEVEL_SPECS} — one spec (base, finite cap, curve rate
  *   `k`, `discrete`, label + rationale) per levelled variable, for **every**
- *   power-up Shield–Mineral Scoop. The specs reuse the shared exponential-saturation
- *   curve from `src/utils/curve.ts` so there is exactly **one** curve
- *   implementation for weapons and power-ups (AC1/AC4).
+ *   power-up Shield–Mineral Scoop. The specs reuse the shared
+ *   exponential-saturation and linear-clamped curves from `src/utils/curve.ts`
+ *   so there is exactly **one** curve implementation for weapons and
+ *   power-ups (AC1/AC4).
  * - {@link resolvePowerUpAtLevel} — the **pure** resolver mapping
  *   `(powerUpId, level)` to a {@link PowerUpLevelStats} snapshot. Pure,
  *   deterministic, monotonic non-decreasing and clamped to each variable's
@@ -23,6 +24,18 @@
  *   permanent stacks, Teleport stored teleports, Phase Shift charges, Extra Life lives) are
  *   **derived from this model** rather than tracked by a second, independent
  *   counter (AC3).
+ *
+ * Phase Shift and Teleport are **recharging pools** (AH-0MV82I7TX0009JMT):
+ * each consumed charge starts its own recharge timer whose duration is the
+ * level-derived recharge time at the moment of consumption (see
+ * {@link PowerUpLevelStore.phaseRechargeTime} / {@link PowerUpLevelStore.teleportRechargeTime});
+ * {@link PowerUpLevelStore.tickRecharge} advances the timers while the run
+ * runs and a completed timer returns one charge to the pool. Both pools are
+ * capped at {@link POWER_UP_CHARGE_CAP} (3) — a field pickup grants the
+ * level-derived count, a hold-full reward exactly one, and a completed
+ * recharge one; any grant/recharge that would exceed the cap is discarded.
+ * The hold-full Phase Shift reward is a recharging pool like any other
+ * charge, never an unlimited supply.
  *
  * ## Level semantics (weapon parity)
  *
@@ -64,6 +77,26 @@
  * no second, independently-incremented stack counter. A field pickup still
  * does not create a permanent stack, so the hybrid semantics are preserved.
  *
+ * ## Why consumable grants are not a distinct power-up type (AH-0MUX93S6F005LLXN)
+ *
+ * An exploration following AH-0MUX802450085VZZ asked whether the Phase Shift
+ * charges / Teleport teleports — whose unconsumed grants persist until
+ * consumed — should be modelled as a **second power-up type** rather than as
+ * a level that is (temporarily) raised. **Decision: no change required.**
+ *
+ * The consumable pool is already a distinct **state domain** inside this one
+ * store: the level components (`_permanentGrants` / `_tempStacks`) are
+ * separate fields from the resource pools (`_phaseCharges` /
+ * `_teleportStacks` plus their recharge timers). `clearTemporary` clears only
+ * the level and provably never claws back a granted consumable (Resolved
+ * decision 1b; asserted in `powerUpLevels.test.ts`). A catalogue-level
+ * "consumable type" tag would add a second classification axis that must be
+ * kept in sync with the drop pool, the hold-full choice, the HUD and every
+ * scene/gym for no behavioural gain, and would fork the single mutation point
+ * (`collect`) and the single curve/resolver that keep power-ups in parity
+ * with weapons. The distinct concept is therefore expressed as a distinct
+ * *state domain*, not a distinct *type*.
+ *
  * Pure and deterministic: no scene, DOM, Phaser or storage coupling.
  */
 
@@ -73,12 +106,24 @@ import {
   formatDelta,
   type CurveSpec,
 } from '../utils/curve';
+import {
+  SHIP_SIZE,
+  SMART_BOMB_INTERVAL_BASE_SECONDS,
+  SMART_BOMB_INTERVAL_FLOOR_SECONDS,
+  SMART_BOMB_INTERVAL_PER_LEVEL_SECONDS,
+  SMART_BOMB_RADIUS_CAP_MULTIPLIER,
+  SMART_BOMB_RADIUS_PER_LEVEL,
+  SMART_BOMB_RADIUS_SHIP_MULTIPLIER,
+} from '../core/constants';
 
 // ── Level variables ─────────────────────────────────────────────────
 
 /**
  * The tunable power-up level variable space. Each variable is monotonic
- * non-decreasing in level (a higher level never makes the power-up worse).
+ * non-decreasing in level (a higher level never makes the power-up worse);
+ * the Smart Bomb pulse interval is the exception — it is stored **descending**
+ * (`max(10, 30 − 2×level)` seconds) because a shorter pulse interval is an
+ * improvement, and its derived pulses/second inverse stays non-decreasing.
  */
 export type PowerUpLevelVariable =
   /** Shield — bubble duration in seconds. */
@@ -97,8 +142,12 @@ export type PowerUpLevelVariable =
   | 'phaseDuration'
   /** Phase Shift — auto-activation charges granted per pickup. */
   | 'phaseCharges'
+  /** Phase Shift — recharge rate for consumed charges, in charges/second. */
+  | 'phaseRechargeRate'
   /** Teleport — stored stacks granted per pickup. */
   | 'teleportStacks'
+  /** Teleport — recharge rate for consumed teleports, in charges/second. */
+  | 'teleportRechargeRate'
   /** Teleport — arrival Phase Shift duration in seconds. */
   | 'teleportPhaseDuration'
   /** Extra Life — lives granted per pickup. */
@@ -109,12 +158,12 @@ export type PowerUpLevelVariable =
   | 'magnetStacks'
   /** Mineral Scoop — permanent stack cap (radius growth). */
   | 'scoopStacks'
-  /** Smart Bomb — screen-wide pulse radius in pixels. */
+  /** Smart Bomb — ship-centred pulse radius in pixels. */
   | 'aoeRadius'
   /** Smart Bomb — hit points each enemy takes per pulse. */
   | 'smartBombDamage'
-  /** Smart Bomb — permanent pulse rate in pulses per second. */
-  | 'smartBombFrequency'
+  /** Smart Bomb — permanent pulse interval in seconds (descends; the pulses/s axis is its inverse). */
+  | 'smartBombInterval'
   /** Force Field — bubble duration in seconds. */
   | 'forceFieldDuration'
   /** Force Field — bullets the field reflects before it stops. */
@@ -134,7 +183,9 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'speedDuration',
   'phaseDuration',
   'phaseCharges',
+  'phaseRechargeRate',
   'teleportStacks',
+  'teleportRechargeRate',
   'teleportPhaseDuration',
   'lifeGain',
   'livesCap',
@@ -142,7 +193,7 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'scoopStacks',
   'aoeRadius',
   'smartBombDamage',
-  'smartBombFrequency',
+  'smartBombInterval',
   'forceFieldDuration',
   'forceFieldReflects',
   'mysteryUfoMinerals',
@@ -338,8 +389,28 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       discrete: true,
       rationale:
         'Charges are stored activations; the cap is small (3) and k=0.5 ' +
-        'grants the second charge at the first upgrade. The hold-full Phase Shift ' +
-        'reward remains unlimited (permanent) and is unaffected.',
+        'grants the second charge at the first upgrade. The hold-full Phase ' +
+        'Shift reward adds one charge to the same recharging pool (capped at ' +
+        '3) — it is never an unlimited supply (AH-0MV82I7TX0009JMT).',
+    },
+    {
+      variable: 'phaseRechargeRate',
+      powerUpId: 'phase_shift',
+      label: 'Phase recharge',
+      unit: '/s',
+      description: 'Recharge rate for a consumed Phase Shift charge, in charges per second.',
+      curve: 'exponential-saturation',
+      base: 1 / 30,
+      cap: 1 / 10,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'Stored as charges/second so the axis stays monotonic non-decreasing ' +
+        '(the recharge engine computes 1/rate → 30 s base, 10 s cap). A ' +
+        'levelled charge therefore recovers sooner; k=0.3 front-loads the ' +
+        'first upgrade (~20 s) before diminishing, mirroring the Bomb/Smart ' +
+        'Bomb frequency axes. The 10 s cap keeps a levelled charge a ' +
+        'meaningful but finite recovery rather than near-instant.',
     },
   ],
 
@@ -358,7 +429,28 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       discrete: true,
       rationale:
         'Stored uses are a consumable escape; the cap is small (3) and ' +
-        'k=0.5 grants a second use at the first upgrade, then flattens.',
+        'k=0.5 grants a second use at the first upgrade, then flattens. A ' +
+        'hold-full reward grants exactly one stored use (mirroring Phase ' +
+        'Shift), clamped at the cap (AH-0MV82I7TX0009JMT).',
+    },
+    {
+      variable: 'teleportRechargeRate',
+      powerUpId: 'teleport',
+      label: 'Teleport recharge',
+      unit: '/s',
+      description: 'Recharge rate for a consumed Teleport charge, in charges per second.',
+      curve: 'exponential-saturation',
+      base: 1 / 15,
+      cap: 1 / 5,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'Stored as charges/second so the axis stays monotonic non-decreasing ' +
+        '(the recharge engine computes 1/rate → 15 s base, 5 s cap). ' +
+        'Teleport is the more reactive escape, so both its base and cap are ' +
+        'shorter than Phase Shift; k=0.3 front-loads the first upgrade ' +
+        '(~10 s) before diminishing. The 5 s cap keeps a levelled escape ' +
+        'finite but snappy.',
     },
     {
       variable: 'teleportPhaseDuration',
@@ -454,29 +546,30 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Smart Bomb — Defender-inspired stored screen-wide pulse.
+  // Smart Bomb — Defender-inspired stored ship-centred pulse (re-balanced
+  // in AH-0MV8GPGBL009M0D8: modest radius, rare interval, damage unchanged).
   smart_bomb: [
     {
       variable: 'aoeRadius',
       powerUpId: 'smart_bomb',
       label: 'Pulse radius',
       unit: 'px',
-      description: 'Radius of the screen-wide smart-bomb pulse, centred on the ship.',
-      curve: 'exponential-saturation',
-      // Base already covers the 960×540 field (diagonal ≈ 1102 px); the cap
-      // keeps the value finite and monotonic so off-screen targets beyond it
-      // are provably unaffected.
-      base: 1200,
-      cap: 2400,
-      k: 0.3,
+      description: 'Radius of the smart-bomb pulse, centred on the ship.',
+      curve: 'linear-clamped',
+      // Base = 10 × SHIP_SIZE = 200 px (operator Q1-A); each level adds +2 %
+      // of the base (+4 px) up to a 2× base cap (400 px) — the ship-centred
+      // pulse never covers the whole 960×540 field again.
+      base: SMART_BOMB_RADIUS_SHIP_MULTIPLIER * SHIP_SIZE,
+      cap: SMART_BOMB_RADIUS_SHIP_MULTIPLIER * SHIP_SIZE * SMART_BOMB_RADIUS_CAP_MULTIPLIER,
+      k: SMART_BOMB_RADIUS_SHIP_MULTIPLIER * SHIP_SIZE * SMART_BOMB_RADIUS_PER_LEVEL,
       discrete: false,
       rationale:
-        'A 1200 px base radius already reaches every corner of the 960×540 ' +
-        'play area (diagonal ≈ 1102 px), so the smart bomb is screen-wide ' +
-        'from the first pickup; the 2400 px cap keeps the axis finite and ' +
-        'monotonic, and k=0.3 adds ~310 px at the first upgrade. Keeping the ' +
-        'radius finite (rather than Infinity) preserves the off-screen ' +
-        'boundary AC and the shared AoE geometry helpers.',
+        'A 200 px base radius (10 × SHIP_SIZE) covers a modest, readable ' +
+        'area around the ship rather than the whole field, so the pulse is ' +
+        'a panic-button wake-up, not a passive auto-win. Each level adds ' +
+        '+2 % of the base (+4 px) with a 2× base cap (400 px) that keeps ' +
+        'the pulse finite and the fight legible, mirroring the magnet/scoop ' +
+        '“× ship size” convention.',
     },
     {
       variable: 'smartBombDamage',
@@ -496,21 +589,26 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'the second point at the first upgrade (readable payoff) then flattens.',
     },
     {
-      variable: 'smartBombFrequency',
+      variable: 'smartBombInterval',
       powerUpId: 'smart_bomb',
-      label: 'Pulse rate',
-      unit: '/s',
-      description: 'Pulses per second for a permanent smart bomb.',
-      curve: 'exponential-saturation',
-      base: 0.2,
-      cap: 0.5,
-      k: 0.3,
-      discrete: false,
+      label: 'Pulse interval',
+      unit: 's',
+      description: 'Seconds between pulses for a permanent smart bomb.',
+      curve: 'linear-clamped',
+      // Descending interval: max(10, 30 − 2×level) s — 30 s on the first
+      // grant (level 0), −2 s per further level, floor 10 s. The stored
+      // pulses/second axis (`1 / interval`) stays monotonic non-decreasing.
+      base: SMART_BOMB_INTERVAL_BASE_SECONDS,
+      cap: SMART_BOMB_INTERVAL_FLOOR_SECONDS,
+      k: -SMART_BOMB_INTERVAL_PER_LEVEL_SECONDS,
+      discrete: true,
       rationale:
-        'Stored as pulses/second so the axis stays monotonic non-decreasing ' +
-        '(the effect computes 1/frequency). A 0.5/s cap keeps a permanent ' +
-        'smart bomb a rare, weighty clear rather than a continuous screen ' +
-        'wipe; k=0.3 front-loads the first upgrade (~0.26/s, ≈3.8 s period).',
+        'Stored as the interval in seconds (descending, whole seconds) so ' +
+        'the permanent pulse matches `max(10, 30 − 2×level)`: 30 s at level ' +
+        '0, −2 s per further level, never faster than once per 10 s. The ' +
+        'derived frequency `1 / interval` stays monotonic non-decreasing ' +
+        '(the model’s rate-axis contract), keeping the smart bomb a rare, ' +
+        'weighty clear rather than a continuous screen wipe.',
     },
   ],
 
@@ -620,8 +718,10 @@ export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
  * names match {@link PowerUpLevelVariable}; only the variables that belong
  * to the resolved power-up are present.
  *
- * Every present value is monotonic non-decreasing in level and never
- * exceeds the corresponding spec cap.
+ * Every present value never leaves the corresponding spec band; the
+ * variable space is monotonic non-decreasing except the Smart Bomb pulse
+ * interval, which is stored **descending** for the `max(10, 30 − 2×level)`
+ * schedule (its derived pulses/second inverse stays non-decreasing).
  */
 export interface PowerUpLevelStats {
   /** The power-up this snapshot describes. */
@@ -644,8 +744,12 @@ export interface PowerUpLevelStats {
   phaseDuration?: number;
   /** Phase Shift — auto-activation charges granted per pickup. */
   phaseCharges?: number;
+  /** Phase Shift — recharge rate for consumed charges (charges/second). */
+  phaseRechargeRate?: number;
   /** Teleport — stored teleport uses granted per pickup. */
   teleportStacks?: number;
+  /** Teleport — recharge rate for consumed teleports (charges/second). */
+  teleportRechargeRate?: number;
   /** Teleport — arrival Phase Shift duration in seconds. */
   teleportPhaseDuration?: number;
   /** Extra Life — lives granted per pickup. */
@@ -656,11 +760,20 @@ export interface PowerUpLevelStats {
   magnetStacks?: number;
   /** Mineral Scoop — permanent stack cap (attraction radius driver). */
   scoopStacks?: number;
-  /** Smart Bomb — screen-wide pulse radius in pixels. */
+  /** Smart Bomb — ship-centred pulse radius in pixels. */
   aoeRadius?: number;
   /** Smart Bomb — hit points each enemy takes per pulse. */
   smartBombDamage?: number;
-  /** Smart Bomb — permanent pulse rate in pulses per second. */
+  /**
+   * Smart Bomb — permanent pulse interval in seconds (descending:
+   * `max(10, 30 − 2×level)`).
+   */
+  smartBombInterval?: number;
+  /**
+   * Smart Bomb — permanent pulse rate in pulses per second. **Derived** from
+   * {@link smartBombInterval} (`1 / interval`) so the rate axis stays
+   * monotonic non-decreasing while the stored interval descends.
+   */
   smartBombFrequency?: number;
   /** Force Field — bubble duration in seconds. */
   forceFieldDuration?: number;
@@ -699,6 +812,14 @@ export function resolvePowerUpAtLevel(
   const bucket = stats as unknown as Record<string, number>;
   for (const spec of POWER_UP_LEVEL_SPECS[powerUpId]) {
     bucket[spec.variable] = curveValue(spec, safeLevel);
+  }
+  // The Smart Bomb interval is stored descending (linear-clamped); the
+  // pulses/second axis is its monotonic inverse so rate-based consumers keep
+  // the model's non-decreasing contract while the interval schedule descends
+  // (parent AH-0MV8GPGBL009M0D8).
+  const interval = bucket.smartBombInterval;
+  if (Number.isFinite(interval) && interval > 0) {
+    bucket.smartBombFrequency = 1 / interval;
   }
   return stats;
 }
@@ -760,6 +881,13 @@ export function summarisePowerUpLevelChange(
 export const POWER_UP_LIVES_START = 3;
 
 /**
+ * Maximum Phase Shift / Teleport charges either pool can hold — a field
+ * pickup, hold-full reward or completed recharge that would push a pool past
+ * this cap is discarded (cap of 3, producer AC2).
+ */
+export const POWER_UP_CHARGE_CAP = 3;
+
+/**
  * The run-scoped power-up level model (AC2/AC3).
  *
  * Responsibilities:
@@ -773,9 +901,17 @@ export const POWER_UP_LIVES_START = 3;
  * - Derive the existing stack/charge semantics from the level model rather
  *   than from second, independent counters:
  *   - Magnet/Mineral Scoop permanent stacks = `min(permanentGrants, levelCap)`,
- *   - Teleport stored teleports and Phase Shift charges = `grants − consumed` (grants are
- *     level-derived; consumption is inherent to a consumable resource),
+ *   - Teleport stored teleports and Phase Shift charges = `grants − consumed + recharged`
+ *     in a run-scoped pool capped at {@link POWER_UP_CHARGE_CAP} (3): each consumed charge
+ *     starts its own level-derived recharge timer (advanced by {@link tickRecharge}); a
+ *     completed timer returns one charge; grants and completed recharges are
+ *     clamped so the pool never exceeds the cap,
  *   - Extra Life lives = `min(livesStart + Σ lifeGain(level), livesCap)`.
+ *
+ * The hold-full Phase Shift reward is an **owned flag** (`isPhasePermanent`), not an
+ * unlimited supply: it adds exactly one charge to the recharging pool. The
+ * recharge timers are run-scoped — they advance with {@link tickRecharge} and are
+ * cleared by {@link reset} on run restart (weapon parity).
  *
  * Pure and deterministic (no scene/storage coupling) so the game and every
  * gym can share exactly one level model.
@@ -786,6 +922,10 @@ export class PowerUpLevelStore {
   private _teleportStacks = 0;
   private _phaseCharges = 0;
   private _phasePermanent = false;
+  /** Remaining seconds of each Phase Shift charge currently recharging. */
+  private _phaseRechargeTimers: number[] = [];
+  /** Remaining seconds of each Teleport charge currently recharging. */
+  private _teleportRechargeTimers: number[] = [];
   private _lives: number;
   private readonly _livesStart: number;
 
@@ -816,13 +956,31 @@ export class PowerUpLevelStore {
     switch (id) {
       case 'phase_shift':
         if (permanent) {
+          // The hold-full reward is a recharging pool: it marks ownership and
+          // adds exactly one charge (clamped at the cap), not an unlimited
+          // supply (AH-0MV82I7TX0009JMT AC4).
           this._phasePermanent = true;
+          this._phaseCharges = Math.min(
+            this._phaseCharges + 1,
+            POWER_UP_CHARGE_CAP,
+          );
         } else {
-          this._phaseCharges += stats.phaseCharges ?? 0;
+          // A field pickup grants the level-derived count, clamped so the
+          // pool never exceeds the cap (AC2).
+          this._phaseCharges = Math.min(
+            this._phaseCharges + (stats.phaseCharges ?? 0),
+            POWER_UP_CHARGE_CAP,
+          );
         }
         break;
       case 'teleport':
-        this._teleportStacks += stats.teleportStacks ?? 0;
+        // A hold-full reward grants exactly one teleport (mirroring Phase
+        // Shift); a field pickup grants the level-derived count. Both are
+        // clamped at the cap (AC2/AC5).
+        this._teleportStacks = Math.min(
+          this._teleportStacks + (permanent ? 1 : stats.teleportStacks ?? 0),
+          POWER_UP_CHARGE_CAP,
+        );
         break;
       case 'extra_life':
         this._lives = Math.min(
@@ -946,11 +1104,28 @@ export class PowerUpLevelStore {
 
   /**
    * Consumes one stored teleport use. Returns true when one was available.
+   * A consumed charge starts its own recharge timer whose duration is the
+   * level-derived {@link teleportRechargeTime} at the moment of consumption;
+   * {@link tickRecharge} returns the charge to the pool when the timer
+   * elapses (per-charge recharge model, AC1).
    */
   consumeTeleport(): boolean {
     if (this._teleportStacks <= 0) return false;
     this._teleportStacks -= 1;
+    this._teleportRechargeTimers.push(this.teleportRechargeTime());
     return true;
+  }
+
+  /**
+   * Teleport recharge time in **seconds** — the seconds inverse (`1 / rate`)
+   * of the level-derived
+   * {@link PowerUpLevelStats.teleportRechargeRate}. A higher level resolves a
+   * shorter time (15 s at base → 5 s at the cap). This is the API surface the
+   * recharge engine consumes when a teleport charge is spent.
+   */
+  teleportRechargeTime(): number {
+    const rate = this.stats('teleport').teleportRechargeRate ?? 0;
+    return rate > 0 ? 1 / rate : 0;
   }
 
   /** Stored Phase Shift auto-activation charges (level-derived grants, minus consumes). */
@@ -958,20 +1133,81 @@ export class PowerUpLevelStore {
     return this._phaseCharges;
   }
 
-  /** Whether the hold-full reward granted unlimited Phase Shift activations. */
+  /**
+   * Whether the hold-full reward made Phase Shift permanently owned. This is
+   * an ownership flag only — the pool is finite and recharges like any other
+   * charge (AH-0MV82I7TX0009JMT AC4).
+   */
   isPhasePermanent(): boolean {
     return this._phasePermanent;
   }
 
   /**
-   * Consumes one Phase Shift charge unless the permanent reward is active. Returns
-   * true when an activation is available.
+   * Consumes one Phase Shift charge. Returns true when one was available.
+   * A consumed charge starts its own recharge timer whose duration is the
+   * level-derived {@link phaseRechargeTime} at the moment of consumption;
+   * {@link tickRecharge} returns the charge to the pool when the timer
+   * elapses (per-charge recharge model, AC1). The permanent reward is not
+   * an unlimited supply: an empty pool blocks activation.
    */
   consumePhaseCharge(): boolean {
-    if (this._phasePermanent) return true;
     if (this._phaseCharges <= 0) return false;
     this._phaseCharges -= 1;
+    this._phaseRechargeTimers.push(this.phaseRechargeTime());
     return true;
+  }
+
+  /**
+   * Advances the run-scoped recharge clock by `dt` seconds. Each recharging
+   * Phase Shift / Teleport charge counts down independently; when a timer
+   * elapses the charge returns to its pool, clamped so the pool never
+   * exceeds {@link POWER_UP_CHARGE_CAP} (a recharge landing on a full pool is
+   * discarded). Negative or non-finite `dt` is a no-op.
+   */
+  tickRecharge(dt: number): void {
+    const safeDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
+    if (safeDt <= 0) return;
+    this._phaseCharges = this._advanceRechargeTimers(
+      this._phaseRechargeTimers,
+      this._phaseCharges,
+      safeDt,
+    );
+    this._teleportStacks = this._advanceRechargeTimers(
+      this._teleportRechargeTimers,
+      this._teleportStacks,
+      safeDt,
+    );
+  }
+
+  /**
+   * Decrements every recharging timer in `timers` by `dt`, moving each
+   * completed timer's charge back into `pool` (clamped at the cap). Returns
+   * the adjusted pool.
+   */
+  private _advanceRechargeTimers(
+    timers: number[],
+    pool: number,
+    dt: number,
+  ): number {
+    for (let i = timers.length - 1; i >= 0; i--) {
+      timers[i] -= dt;
+      if (timers[i] > 0) continue;
+      timers.splice(i, 1);
+      pool = Math.min(pool + 1, POWER_UP_CHARGE_CAP);
+    }
+    return pool;
+  }
+
+  /**
+   * Phase Shift recharge time in **seconds** — the seconds inverse
+   * (`1 / rate`) of the level-derived
+   * {@link PowerUpLevelStats.phaseRechargeRate}. A higher level resolves a
+   * shorter time (30 s at base → 10 s at the cap). This is the API surface the
+   * recharge engine consumes when a Phase Shift charge is spent.
+   */
+  phaseRechargeTime(): number {
+    const rate = this.stats('phase_shift').phaseRechargeRate ?? 0;
+    return rate > 0 ? 1 / rate : 0;
   }
 
   /** Current lives (Extra Life model); starts at the configured start, capped. */
@@ -1002,6 +1238,8 @@ export class PowerUpLevelStore {
     this._teleportStacks = 0;
     this._phaseCharges = 0;
     this._phasePermanent = false;
+    this._phaseRechargeTimers = [];
+    this._teleportRechargeTimers = [];
     this._lives = this._livesStart;
   }
 }

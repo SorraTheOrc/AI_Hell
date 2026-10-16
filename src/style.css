@@ -248,3 +248,32 @@ body {
 .gym-tooltip-visible {
   opacity: 1;
 }
+
+/* ── Power-Up Leveling gym readout (AH-0MUV5CLVQ006V9HR) ─────────
+ * The level/stats gallery panel: each power-up occupies one row with a
+ * bold label line (`Name — Lv N`) above a dim resolver-stats line, so the
+ * whole curve is legible at a glance. Styling is scoped to the new gym's
+ * panel id; the shared `.gym-panel` classes provide the anchoring.  */
+#gym-powerup-level-readout .gym-powerup-level-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 6px;
+  border-left: 2px solid #2a2a2a;
+}
+
+#gym-powerup-level-readout .gym-powerup-level-row:hover {
+  border-left-color: #88ffcc;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+#gym-powerup-level-readout .gym-panel-label {
+  font-weight: 600;
+  color: #fff;
+}
+
+#gym-powerup-level-readout .gym-powerup-level-stats {
+  color: #9ab;
+  font-family: monospace;
+  font-size: 11px;
+}

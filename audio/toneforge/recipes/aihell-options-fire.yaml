@@ -1,0 +1,62 @@
+# AI Hell cue: aihell-options-fire — Player options volley fire — bright soft twinkle.
+version: "0.1"
+meta:
+  name: aihell-options-fire
+  description: Player options pod volley fire — a bright soft two-tone twinkle, quick triangle rise 900 to 1600 Hz with a light high sine overtone, the light launch cue of the orbiting satellite volley.
+  category: AIHell
+  tags:
+    - weapon
+    - fire
+  duration: 0.07
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 900
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 900
+        - kind: exponentialRamp
+          time: 0.065
+          value: 1600
+  e0:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.062
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.12
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 2100
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.05
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.05
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - from: mix
+    to: out

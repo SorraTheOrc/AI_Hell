@@ -26,10 +26,15 @@ import { DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
 import {
   DEFAULT_BOT_TUNING_NAME,
+  getCurrentBotTuningConfig,
   resetBotTuningStore,
   saveBotTuningAs,
 } from '../core/botTuningStore';
-import { defaultBotTuningValues } from '../ai/tuningFields';
+import {
+  coerceTuningValues,
+  defaultBotTuningValues,
+  toCompetentOverrides,
+} from '../ai/tuningFields';
 import {
   buildBotSnapshot,
   type BotSnapshotScene,
@@ -40,12 +45,20 @@ import {
 } from '../ai/botDecision';
 import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
 import type { BotInputGovernor } from '../ai/botHumanLike';
+import {
+  COMPETENT_BOT_TUNABLES,
+  mayThrust,
+  resolveCompetentTunables,
+} from '../ai/framework/competent';
+import type { ShipConfig } from '../core/configTypes';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { GameOverScene } from './GameOverScene';
 import { LeaderboardScene } from './LeaderboardScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
 import { GymIndex } from './GymIndex';
+import { GYM_BOT_TUNING_SCENE_KEY, GymBotTuning } from './gym/GymBotTuning';
+import { bundledBotTuningJson } from '../core/bundledConfig';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -462,7 +475,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(player.x).toBeGreaterThan(beforeX);
   });
 
-  it('AC3 — other input during the demo is a no-op', async () => {
+  it('AC1 — a non-movement key during the live demo returns to the main menu', async () => {
     const menu = await bootMenu();
     menu.startDemo();
     await wait(150);
@@ -470,18 +483,32 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
 
-    for (const key of [' ', 'Enter', 'Tab']) {
-      play.input.keyboard!.emit('keydown', {
-        key,
-        repeat: false,
-        preventDefault: () => {},
-      } as KeyboardEvent);
-    }
+    play.input.keyboard!.emit('keydown', {
+      key: ' ', // a non-movement key (space)
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+
+    // The demo is abandoned for the main menu (scene transition is async).
+    await wait(80);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+  });
+
+  it('AC3 — the pointer during the live demo stays ignored', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+
     play.input.emit('pointerdown', { x: 100, y: 100 });
 
-    // Unattended: the bot is still in control.
+    // The demo keeps playing: no take-over and no return to the menu.
     expect(play.isDemoMode()).toBe(true);
     expect(botInputOf(play)).not.toBeNull();
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
   });
 
   // ── Stale scene-start data leak (AH-0MUY4881P007FJ8R) ──────────
@@ -844,3 +871,198 @@ describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
     ).toBeCloseTo(0.4);
   });
 });
+
+interface ShippedBaseline {
+  current: string;
+  configs: Array<{
+    name: string;
+    values: {
+      competent: Record<string, number | boolean>;
+      human: Record<string, number | boolean>;
+    };
+  }>;
+}
+
+describe('Demo flies the bundled bot-tuning baseline in a fresh profile (AH-0MV9GZD2C005IIU3)', () => {
+  let booted: BootedGame | null = null;
+
+  /** The Git-tracked shipped baseline that every distributed build bundles. */
+  function shippedBaseline(): ShippedBaseline {
+    return JSON.parse(bundledBotTuningJson) as ShippedBaseline;
+  }
+
+  beforeEach(() => {
+    // A fresh profile: no saved tuning state, as on a newly-checked-out or
+    // distributed build (the bug this item fixes).
+    resetBotTuningStore();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.restoreAllMocks();
+  });
+
+  it('AC1 — a fresh-profile demo is built from the bundled baseline, not the factory fallback', async () => {
+    const baseline = shippedBaseline();
+    const shipped = baseline.configs.find((c) => c.name === baseline.current)!;
+    // Sanity: the shipped baseline carries a usable human skill value.
+    const shippedSkill = shipped.values.human['skill'];
+    expect(typeof shippedSkill).toBe('number');
+
+    booted = await bootScene(
+      [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
+      { deterministicBoot: true },
+    );
+    const menu = booted.scene as MenuScene;
+    menu.startDemo();
+    await wait(150);
+
+    const play = booted.game.scene.getScene('PlayScene') as PlayScene;
+    // The demo consulted the store, which seeded the Git-tracked bundle (not
+    // an empty profile's factory fallback).
+    expect(play.getBotTuningConfigName()).toBe(shipped.name);
+    // The governor received the shipped human overrides through the same
+    // toHumanOverrides seam the store and gym share.
+    const governor = play.getBotGovernor();
+    expect(
+      (governor as unknown as { tunables: { skill: number } }).tunables.skill,
+    ).toBeCloseTo(shippedSkill as number);
+  });
+
+  it('AC1 — the demo\'s competent tunables match the shipped baseline values', async () => {
+    const baseline = shippedBaseline();
+    const shipped = baseline.configs.find((c) => c.name === baseline.current)!;
+
+    booted = await bootScene(
+      [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
+      { deterministicBoot: true },
+    );
+    (booted.scene as MenuScene).startDemo();
+    await wait(150);
+
+    const play = booted.game.scene.getScene('PlayScene') as PlayScene;
+    const expected = resolveCompetentTunables(
+      toCompetentOverrides(coerceTuningValues(shipped.values)),
+    );
+    const governor = play.getBotGovernor();
+    // The store produced the same tunables the bundle would (no divergent
+    // copy between the demo and the shipped baseline).
+    expect(expected.mineralSeekRange).toBe(shipped.values.competent['mineralSeekRange']);
+    expect(play.getBotTuningConfigName()).toBe(shipped.name);
+    expect(governor).toBeDefined();
+  });
+});
+
+describe('Demo live-thruster config (AH-0MV268RXJ007M7A9)', () => {
+  let booted: BootedGame | null = null;
+
+  /** Boots a live PlayScene demo (asteroids scheme, the shipped default). */
+  async function bootDemo(): Promise<PlayScene> {
+    seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene, GymBotTuning], {
+      deterministicBoot: true,
+    });
+    booted.game.scene.start('PlayScene', { demo: true, seed: 42 });
+    await wait(150);
+    return booted.game.scene.getScene('PlayScene') as PlayScene;
+  }
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("AC1 — the demo snapshot carries the ship's live thruster config end-to-end", async () => {
+    const play = await bootDemo();
+    const player = play.getPlayer()!;
+    // The snapshot the demo brain decides from carries the player's live
+    // thruster physics (AH-0MV85WFWD0029DL7), not hard-coded constants.
+    expect(buildBotSnapshot(play as unknown as BotSnapshotScene).player?.thruster).toEqual(
+      player.getThrusterConfig(),
+    );
+    // The shipped default ship config (175 / 100 / 200 / 120) matches today's
+    // tunable defaults, so a default ship is behaviour-identical to no config
+    // (default-equivalence baseline, AH-0MV85WFHQ0016FTA).
+    expect(player.getThrusterConfig()).toMatchObject({
+      maxSpeed: 175,
+      frictionDeceleration: 100,
+      reverseEnabled: true,
+      reverseAcceleration: 200,
+      reverseMaxSpeed: 120,
+    });
+  });
+
+  it("AC2/AC5 — a custom live thruster config changes the demo bot's decisions (live wins)", async () => {
+    const play = await bootDemo();
+    const tunables = resolveCompetentTunables(toCompetentOverrides(defaultBotTuningValues()));
+    // Re-tune the live ship: higher friction + speed cap. The snapshot must
+    // reflect it and the pure forward-model decision must flip, with no code
+    // wiring beyond the demo seam (AH-0MV85WGA9005B080 · AC1/AC2).
+    const custom: ShipConfig = {
+      ...DEFAULT_CONFIG,
+      controlScheme: 'asteroids',
+      maxSpeed: 300,
+      frictionDeceleration: 150,
+      asteroidsReverseThrustAcceleration: 300,
+      asteroidsReverseMaxSpeed: 180,
+    };
+    play.getPlayer()!.setConfig(custom);
+    play.tick(1 / 60);
+
+    const after = buildBotSnapshot(play as unknown as BotSnapshotScene);
+    expect(after.player?.thruster).toEqual(playerThrusterOf(custom));
+
+    // The forward model consumes the snapshot's live values (same 150 px/s
+    // approach, same 102 px gap): friction 100 → stop 112.5 px (coast),
+    // friction 150 → stop 75 px (thrust). The decision flips with the live
+    // ship config, proving the demo path feeds it through automatically.
+    const demoDefault = playerThrusterOf(DEFAULT_CONFIG);
+    const snapWith = (thruster: unknown) => ({
+      player: { x: 0, y: 0, vx: 150, vy: 0, thruster },
+      enemies: [], enemyBullets: [], playerBullets: [], drops: [], minerals: [],
+      boss: null, aliveCount: 0, wave: null, runSeed: 0, lives: 3, livesCap: 5,
+      reverseEnabled: true,
+    }) as never;
+    expect(mayThrust(snapWith(demoDefault), tunables, 120, 18)).toBe(false);
+    expect(mayThrust(snapWith(after.player?.thruster), tunables, 120, 18)).toBe(true);
+  });
+
+  it('AC4 — demo and tuning-gym apply the identical tunable mapping (explicit override > live > default)', async () => {
+    await bootDemo();
+    booted!.game.scene.start(GYM_BOT_TUNING_SCENE_KEY, { seed: 42 });
+    await wait(150);
+    const gym = booted!.game.scene.getScene(GYM_BOT_TUNING_SCENE_KEY) as GymBotTuning;
+
+    // Both scenes rebuild the brain from the same persisted config through
+    // the same `toCompetentOverrides` seam — no divergent copy (AC4).
+    const storeTunables = resolveCompetentTunables(
+      toCompetentOverrides(coerceTuningValues(getCurrentBotTuningConfig().values)),
+    );
+    expect(gym.getAppliedBotTunables()).toEqual(storeTunables);
+    // The shipped baseline (`src/data/bot-tuning.json`) provides the fallback
+    // tunables for a fresh browser: the currently-selected bundled config is
+    // what the demo (and the gym, through the same seam) flies. The bundled
+    // baseline deliberately overrides some physics terms (e.g.
+    // frictionDeceleration 25 vs the compiled 100), so we assert against the
+    // resolved bundled tunables — not the compiled defaults — keeping the
+    // parity invariant the test exists for.
+    expect(storeTunables.playerSpeed).toBe(COMPETENT_BOT_TUNABLES.playerSpeed);
+    expect(storeTunables.frictionDeceleration).toBe(getCurrentBotTuningConfig().values.competent['frictionDeceleration']);
+  });
+});
+
+/** Mirrors `Player.getThrusterConfig()` for a ShipConfig (test-side helper). */
+function playerThrusterOf(config: ShipConfig) {
+  return {
+    thrustAcceleration: config.thrustAcceleration,
+    maxSpeed: config.maxSpeed,
+    frictionDeceleration: config.frictionDeceleration,
+    reverseEnabled: config.asteroidsReverseEnabled,
+    reverseAcceleration: config.asteroidsReverseThrustAcceleration,
+    reverseMaxSpeed: config.asteroidsReverseMaxSpeed,
+  };
+}

@@ -31,6 +31,7 @@ import {
 import {
   RecordingAudioContext,
   RecordingSfxProvider,
+  lastSourceFrequency,
   resetRecordingAudioContext,
 } from '../test/audioTestDouble';
 
@@ -100,6 +101,163 @@ describe('cue → baked asset mapping', () => {
     // New recipe, single seed 32264 — resolves deterministically.
     expect(recording.plays[0].url).toBe(
       'audio/sfx/aihell-countdown-tick.32264.wav',
+    );
+  });
+
+  it('playCannonImpactSound resolves to the baked cannon-impact asset (AH-0MV8228YW0050IXS)', () => {
+    effects.playCannonImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-cannon-impact.32209.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches a weapon’s baked impact cue (AH-0MV8228YW0050IXS)', () => {
+    effects.playWeaponImpactCue('playCannonImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-cannon-impact.32209.wav',
+    );
+  });
+
+  it('playWeaponImpactCue is a safe no-op for an unmapped cue name (impact flash still plays)', () => {
+    expect(() => effects.playWeaponImpactCue('playNotARealCue')).not.toThrow();
+    expect(recording.plays).toHaveLength(0);
+  });
+
+  it('playNovaImpactSound resolves to the baked nova-impact asset (AH-0MV822BPT002GF17)', () => {
+    effects.playNovaImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-nova-impact.32273.wav',
+    );
+  });
+
+  it('playMortarImpactSound resolves to the baked mortar-impact asset (AH-0MV822C250051OVN)', () => {
+    effects.playMortarImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-mortar-impact.32274.wav',
+    );
+  });
+
+  it('playArcImpactSound resolves to the baked arc-impact asset (AH-0MV822CE7004MQ14)', () => {
+    effects.playArcImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-arc-impact.32275.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the arc impact cue (AH-0MV822CE7004MQ14)', () => {
+    effects.playWeaponImpactCue('playArcImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-arc-impact.32275.wav',
+    );
+  });
+
+  it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
+    effects.playSpreadImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-spread-impact.32218.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the spread impact cue (AH-0MV8229B9009DQGA)', () => {
+    effects.playWeaponImpactCue('playSpreadImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-spread-impact.32218.wav',
+    );
+  });
+
+  it('playDualImpactSound resolves to the baked dual-impact asset (AH-0MV8229NM009CZOA)', () => {
+    effects.playDualImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-dual-impact.32265.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the dual impact cue (AH-0MV8229NM009CZOA)', () => {
+    effects.playWeaponImpactCue('playDualImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-dual-impact.32265.wav',
+    );
+  });
+
+  it('playRapidImpactSound resolves to the baked rapid-impact asset (AH-0MV822A03006UT2P)', () => {
+    effects.playRapidImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rapid-impact.32266.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the rapid impact cue (AH-0MV822A03006UT2P)', () => {
+    effects.playWeaponImpactCue('playRapidImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rapid-impact.32266.wav',
+    );
+  });
+
+  it('playWaveLaserFireSound resolves to the baked wave-laser fire asset (AH-0MV822ACO007CEZF)', () => {
+    effects.playWaveLaserFireSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-wave-laser-fire.32219.wav',
+    );
+  });
+
+  it('playWaveLaserImpactSound resolves to the baked wave-laser impact asset (AH-0MV822ACO007CEZF)', () => {
+    effects.playWaveLaserImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-wave-laser-impact.32231.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the wave-laser impact cue (AH-0MV822ACO007CEZF)', () => {
+    effects.playWeaponImpactCue('playWaveLaserImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-wave-laser-impact.32231.wav',
+    );
+  });
+
+  it('playClusterImpactSound resolves to the baked cluster-impact asset (AH-0MV822B1B0048UZT)', () => {
+    effects.playClusterImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-cluster-impact.32270.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the cluster impact cue (AH-0MV822B1B0048UZT)', () => {
+    effects.playWeaponImpactCue('playClusterImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-cluster-impact.32270.wav',
+    );
+  });
+
+  it('playOptionsImpactSound resolves to the baked options-impact asset (AH-0MV822BDN008IYL6)', () => {
+    effects.playOptionsImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-options-impact.32272.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the options impact cue (AH-0MV822BDN008IYL6)', () => {
+    effects.playWeaponImpactCue('playOptionsImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-options-impact.32272.wav',
     );
   });
 
@@ -226,6 +384,50 @@ describe('volume and mute', () => {
   });
 });
 
+// ── 3a. Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3) ──────
+
+describe('Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3)', () => {
+  it('TANK_SCOUT_FIRE_VOLUME_SCALE is a single named 0.5 tunable', () => {
+    expect(effects.TANK_SCOUT_FIRE_VOLUME_SCALE).toBe(0.5);
+  });
+
+  it('playTankAdvanceCue plays the tank advance whine at half volume', () => {
+    effects.playTankAdvanceCue();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-tank-advance.32140.wav');
+    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    // The no-gap advance cue is not delayed.
+    expect(recording.plays[0].delay).toBe(0);
+  });
+
+  it('playTankFireSound plays the baked tank-fire asset at half volume', () => {
+    effects.playTankFireSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-tank-fire.32141.wav');
+    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    // The advance-cue no-gap delay is preserved.
+    expect(recording.plays[0].delay).toBe(effects.TANK_ADVANCE_CUE_DURATION);
+  });
+
+  it('playScoutAdvanceCue plays the scout advance blip at half volume', () => {
+    effects.playScoutAdvanceCue();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-scout-advance.32180.wav');
+    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    // The no-gap advance cue is not delayed.
+    expect(recording.plays[0].delay).toBe(0);
+  });
+
+  it('playScoutFireSound plays the baked scout laser asset at half volume', () => {
+    effects.playScoutFireSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/weapon-laser-zap.1.wav');
+    expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
+    // The advance-cue no-gap delay is preserved.
+    expect(recording.plays[0].delay).toBe(effects.SCOUT_ADVANCE_CUE_DURATION);
+  });
+});
+
 // ── 3b. Shared player-weapon fire dispatcher (AH-0MV55O9R5005W6J0) ──
 
 describe('playWeaponFireSound — shared player-fire path', () => {
@@ -238,6 +440,10 @@ describe('playWeaponFireSound — shared player-fire path', () => {
       ['nova', 'playNovaFireSound'],
       ['mortar', 'playMortarFireSound'],
       ['arc', 'playArcFireSound'],
+      ['wave_laser', 'playWaveLaserFireSound'],
+      ['ricochet', 'playRicochetFireSound'],
+      ['cluster', 'playClusterFireSound'],
+      ['options', 'playOptionsFireSound'],
     ];
     for (const [weaponId, cue] of cases) {
       recording.plays.length = 0;
@@ -259,11 +465,32 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     expect(recording.plays[0].volume).toBe(1);
   });
 
-  it('is a no-op for catalogue-only weapon ids without a baked fire cue', () => {
+  it('is a no-op for a weapon id without a baked fire cue', () => {
+    // Every catalogue weapon now has a baked fire cue; an unknown id
+    // degrades to a silent no-op (matches the per-weapon `_playShootCue`
+    // switch behaviour).
     expect(() =>
-      effects.playWeaponFireSound('wave_laser' as never),
+      effects.playWeaponFireSound('not-a-catalogue-weapon' as never),
     ).not.toThrow();
     expect(recording.plays).toHaveLength(0);
+  });
+
+  it('plays the baked ricochet fire cue', () => {
+    effects.playWeaponFireSound('ricochet');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-ricochet-fire.32267.wav');
+  });
+
+  it('plays the baked cluster-missile fire cue (AH-0MV822B1B0048UZT)', () => {
+    effects.playWeaponFireSound('cluster');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-cluster-fire.32269.wav');
+  });
+
+  it('plays the baked options fire cue (AH-0MV822BDN008IYL6)', () => {
+    effects.playWeaponFireSound('options');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-options-fire.32271.wav');
   });
 });
 
@@ -334,6 +561,34 @@ describe('thruster hum (runtime shim)', () => {
     effects.setThrusterBeatClock(null);
     effects.updateThrusterSound(1);
     expect(hum.currentGain).toBeCloseTo(effects.THRUSTER_HUM_MAX_VOLUME, 6);
+  });
+
+  it('forwards the side profile (halved gain, one semitone up) through the seam', () => {
+    effects.updateThrusterSound(0.8, 'side');
+    const hum = effects._getThrusterHumStateForTests();
+    expect(hum).not.toBeNull();
+    expect(hum!.currentGain).toBeCloseTo(
+      0.8 *
+        effects.THRUSTER_HUM_MAX_VOLUME *
+        effects.THRUSTER_HUM_SIDE_VOLUME_SCALE,
+      6,
+    );
+    const ctx = RecordingAudioContext.instances[0];
+    expect(lastSourceFrequency(ctx.oscillators[0])).toBeCloseTo(
+      effects.THRUSTER_HUM_BASE_FREQ *
+        (1 + 0.8 * 0.12) *
+        effects.THRUSTER_HUM_SIDE_PITCH_SCALE,
+      6,
+    );
+  });
+
+  it('keeps the forward profile as the default for existing callers', () => {
+    effects.updateThrusterSound(0.8);
+    const hum = effects._getThrusterHumStateForTests();
+    expect(hum!.currentGain).toBeCloseTo(
+      0.8 * effects.THRUSTER_HUM_MAX_VOLUME,
+      6,
+    );
   });
 
   it('is a safe no-op without an AudioContext', () => {

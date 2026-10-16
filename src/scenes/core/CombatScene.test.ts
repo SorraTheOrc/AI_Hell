@@ -100,6 +100,37 @@ class StubBullet implements CombatEnemyBullet {
   }
 }
 
+/**
+ * The colour of the LAST FILL_STYLE(7) in a Graphics command buffer. The
+ * constructor seeds default zero-styles first, so a spawn's own fill is the
+ * final one — layout `[7, color, alpha]` per Phaser's Commands.js. Walks the
+ * buffer by command width so an ARC radius (also 7) is never mistaken for an
+ * opcode.
+ */
+function lastFillColor(buf: number[]): number {
+  // Command widths per Phaser Commands.js (opcode, then N args).
+  const WIDTHS: Record<number, number> = {
+    0: 8, // ARC
+    1: 1, // BEGIN_PATH
+    2: 1, // CLOSE_PATH
+    3: 5, // FILL_RECT
+    4: 3, // LINE_TO
+    5: 3, // MOVE_TO
+    6: 4, // LINE_STYLE
+    7: 3, // FILL_STYLE
+    8: 1, // FILL_PATH
+    9: 1, // STROKE_PATH
+    10: 7, // FILL_TRIANGLE
+  };
+  let color = -1;
+  for (let i = 0; i < buf.length; ) {
+    const op = buf[i];
+    if (op === 7) color = buf[i + 1];
+    i += WIDTHS[op] ?? 1;
+  }
+  return color;
+}
+
 /** Minimal drop satisfying the shared collect contract. */
 class StubDrop implements CombatDrop {
   readonly powerUp: PowerUp;
@@ -294,6 +325,9 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   }
   getBulletImpactEffects() {
     return this.bulletImpactEffects;
+  }
+  getFireFxEffects() {
+    return this.fireFxEffects;
   }
   getInvulnerable() {
     return this.invulnerable;
@@ -641,6 +675,201 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
+  it('AC5 — an identity-carrying enemy bullet tints its interception flash (AH-0MV822CQL005R4MM)', async () => {
+    const scene = await boot();
+    scene.useDefaultImpact = true;
+    scene.spawnPlayerBullet(50, 50, 0, 0);
+    const eb = new StubBullet(scene, 50, 50);
+    // Scout shots carry their shot colour on the wrapper (the bullet-shape
+    // seam hands `{ graphics, color }` to every scene's wrapper).
+    (eb as unknown as { color?: number }).color = 0xff4444;
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    // The shared interception path still plays the existing per-enemy
+    // destruction cue, but the impact flash now takes the shot's own
+    // colour — a distinct Scout hit read, identical in game and gyms.
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    // FILL_STYLE(7) carries [color, alpha]; the flash's own fill is the LAST
+    // FILL_STYLE in its buffer (the Graphics constructor seeds default
+    // zero-styles before the flash draws).
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xff4444);
+  });
+
+  it('a scout bullet plays its identity impact pop and flash when it hits the player (AH-0MV822CQL005R4MM)', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xff4444;
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    // The bullet lands: the shared hit lifecycle runs AND the identity
+    // impact pop (existing per-enemy cue + tinted flash) plays through the
+    // shared enemy-bullet-vs-player pass.
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xff4444);
+  });
+
+  it('a Tank shell plays its identity impact pop and flash when it hits the player (AH-0MV822DF60001EPA)', async () => {
+    // The Tank's heavy shell carries its amber bullet colour; the shared
+    // impact pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints
+    // the impact flash and pops the existing per-enemy destruction cue — so
+    // a Tank hit reads (and sounds) distinct from a Scout hit, identically
+    // in the game and every gym. This test pins the amber Tank variant of
+    // the generic path with the real TANK_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xffaa00; // TANK_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xffaa00);
+  });
+
+  it('a Diver shard plays its identity impact pop and flash when it hits the player (AH-0MV822D2U000LRFV)', async () => {
+    // The Diver's shard carries its pale-yellow bullet colour; the shared
+    // impact pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints
+    // the impact flash and pops the existing per-enemy destruction cue — so
+    // a Diver hit reads (and sounds) distinct from a Scout or Tank hit,
+    // identically in the game and every gym. This test pins the pale-yellow
+    // Diver variant of the generic path with the real DIVER_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xffee88; // DIVER_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xffee88);
+  });
+
+  it('a Phaser bolt plays its identity impact pop and flash when it hits the player (AH-0MV822DRX009RYUB)', async () => {
+    // The Phaser's bolt carries its lethal-red bullet colour; the shared
+    // impact pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints
+    // the impact flash and pops the existing per-enemy destruction cue — so
+    // a Phaser hit reads (and sounds) distinct from a Scout, Tank or Diver
+    // hit, identically in the game and every gym. This test pins the red
+    // Phaser variant of the generic path with the real PHASER_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xff4444; // PHASER_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xff4444);
+  });
+
+  it('a Swarm fleck plays its identity impact pop and flash when it hits the player (AH-0MV822E4T006F37Y)', async () => {
+    // The Swarm's fleck carries its cyan bullet colour; the shared impact
+    // pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints the
+    // impact flash and pops the existing per-enemy destruction cue — so a
+    // Swarm hit reads (and sounds) distinct from every other identity,
+    // identically in the game and every gym. This test pins the cyan Swarm
+    // variant of the generic path with the real SWARM_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0x00ccff; // SWARM_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0x00ccff);
+  });
+
+  it('a Raider dart plays its identity impact pop and flash when it hits the player (AH-0MV822EH800780GI)', async () => {
+    // The Raider's dart carries its pale-amber bullet colour; the shared
+    // impact pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints
+    // the impact flash and pops the existing per-enemy destruction cue — so
+    // a Raider hit reads (and sounds) distinct from the Scout pellet whose
+    // shared aimed-shot path it reuses, identically in the game and every
+    // gym. This test pins the pale-amber Raider variant of the generic path
+    // with the real RAIDER_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xffddaa; // RAIDER_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xffddaa);
+  });
+
+  it('a Boss spread pellet plays its identity impact pop and flash when it hits the player (AH-0MV822ETD008LLZX)', async () => {
+    // The Boss spread pellet carries the white Boss bullet colour; the shared
+    // impact pass (added by the Scout identity, AH-0MV822CQL005R4MM) tints
+    // the impact flash and pops the existing per-enemy destruction cue — so
+    // a Boss hit reads (and sounds) distinct from every other identity,
+    // identically in the game and every gym. This test pins the white Boss
+    // variant of the generic path with the real BOSS_BULLET_COLOR.
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xffffff; // BOSS_BULLET_COLOR
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xffffff);
+  });
+
+  it('legacy enemy bullets without an identity keep the plain hit behaviour (no added flash)', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    scene.bullets.push(new StubBullet(scene, 100, 100));
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).not.toHaveBeenCalled();
+    expect(scene.getBulletImpactEffects()).toHaveLength(0);
+  });
+
   // ── Collision bookkeeping ─────────────────────────────────────────
 
   it('AC4 — player bullet vs enemy consumes the bullet and destroys one enemy', async () => {
@@ -714,6 +943,193 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(enemy.alive).toBe(false);
     expect(scene.getBulletImpactEffects()).toHaveLength(0);
     expect(scene.hooks.filter((h) => h === 'onEnemyDestroyed:true')).toHaveLength(1);
+  });
+
+  // ── Per-weapon impact feedback (AH-0MV8228YW0050IXS) ────────────
+
+  it('AC4 — a cannon shot plays its baked hit cue and distinct impact flash on connect', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = {
+      color: 0x00ffff,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playCannonImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playCannonImpactSound');
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  it('AC4 — the cannon hit cue layer plays on the killing blow too', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = {
+      color: 0x00ffff,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playCannonImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(false);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  it('AC4 — a bullet without impactFx metadata keeps the generic hit behaviour (no hit cue)', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    scene.spawnPlayerBullet(40, 40, 0, 0);
+
+    scene.runCollisions();
+
+    expect(cue).not.toHaveBeenCalled();
+    // The generic non-lethal impact flash still plays.
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  // ── Spread impact feedback (AH-0MV8229B9009DQGA) ─────────────────
+
+  it('AC4 — a spread shot plays its baked hit cue and distinct amber impact flash on connect', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = {
+      color: 0xffaa00,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playSpreadImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playSpreadImpactSound');
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  it('AC4 — the spread hit cue layer plays on the killing blow too', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = {
+      color: 0xffaa00,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playSpreadImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(false);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  // ── Dual impact feedback (AH-0MV8229NM009CZOA) ─────────────────
+
+  it('AC4 — a dual shot plays its baked hit cue and distinct magenta impact flash on connect', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    // The weapon definition's impactFx metadata (dual): magenta flash + the
+    // newly baked twin-snap hit cue, routed through the shared impact seam.
+    pb.impactFx = {
+      color: 0xff00ff,
+      radius: 8,
+      duration: 0.14,
+      cue: 'playDualImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playDualImpactSound');
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  it('AC4 — the dual hit cue layer plays on the killing blow too', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = {
+      color: 0xff00ff,
+      radius: 8,
+      duration: 0.14,
+      cue: 'playDualImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(false);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  // ── Rapid impact feedback (AH-0MV822A03006UT2P) ─────────────────
+
+  it('AC4 — a rapid shot plays its baked hit cue and distinct yellow impact flash on connect', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    // The weapon definition's impactFx metadata (rapid): bright yellow flash
+    // at the hit point + the newly baked staccato hit cue, routed through the
+    // shared impact seam.
+    pb.impactFx = {
+      color: 0xffff00,
+      radius: 7,
+      duration: 0.1,
+      cue: 'playRapidImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playRapidImpactSound');
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  it('AC4 — the rapid hit cue layer plays on the killing blow too', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 1);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = {
+      color: 0xffff00,
+      radius: 7,
+      duration: 0.1,
+      cue: 'playRapidImpactSound',
+    };
+
+    scene.runCollisions();
+
+    expect(enemy.alive).toBe(false);
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
   it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
@@ -1130,6 +1546,81 @@ describe('ricochet player bullets — wall-bounce budget (AH-0MV1BIV5L005NJAI)',
       expect(bullet.bounces).toBeUndefined();
     }
   });
+
+  it('auto-fire wires the wall-bounce hook onto spawned ricochet bullets (AH-0MV822AP1006W2F9)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Equip the ricochet permanently so it fires this frame.
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const ricochetBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(ricochetBullets.length).toBeGreaterThan(0);
+    for (const bullet of ricochetBullets) {
+      expect(typeof bullet.onWallBounce).toBe('function');
+    }
+  });
+
+  it('a wall bounce plays the ricochet impact cue and spawns a distinct flash (AH-0MV822AP1006W2F9)', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const ricochetBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(ricochetBullets.length).toBeGreaterThan(0);
+
+    // Steer one bullet so it crosses the left edge on the next advance.
+    const bullet = ricochetBullets[0];
+    bullet.x = 2;
+    bullet.vx = -350;
+    bullet.vy = 0;
+
+    advanceAndCull(bullet, 0.01);
+
+    expect(cue).toHaveBeenCalledWith('playRicochetImpactSound');
+    expect(scene.getBulletImpactEffects().length).toBeGreaterThan(0);
+    expect(bullet.onWallBounce).toBeDefined();
+  });
+
+  it('the final wall contact (expiry) still plays the impact cue once (AH-0MV822AP1006W2F9)', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('ricochet', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const bullet = scene
+      .getPlayerBullets()
+      .find((b) => b.color === WEAPON_CATALOGUE.ricochet.bulletColor);
+    expect(bullet).toBeDefined();
+    // Exhaust the bounce budget so the next wall contact expires the bullet.
+    bullet!.bounces = 0;
+    bullet!.x = 2;
+    bullet!.vx = -350;
+    bullet!.vy = 0;
+
+    expect(advanceAndCull(bullet!, 0.01)).toBe(false);
+
+    expect(cue).toHaveBeenCalledWith('playRicochetImpactSound');
+  });
 });
 
 // ── Missile Command cluster/MIRV split seam (AH-0MV1BIVIJ007KYXU) ────
@@ -1404,6 +1895,57 @@ describe('cluster-missile split seam (AH-0MV1BIVIJ007KYXU)', () => {
       expect(warhead.splitWeapon).toBeUndefined();
     }
   });
+
+  it('auto-fire wires the cluster shell visual/feel metadata (AH-0MV822B1B0048UZT)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+    const shell = scene
+      .getPlayerBullets()
+      .find((b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor);
+    expect(shell).toBeDefined();
+    // The shell reads as a missile with a flickering exhaust flame...
+    expect(shell!.shape).toBe('missile');
+    expect(shell!.flame).toBeGreaterThan(0);
+    expect(shell!.tail).toBeGreaterThan(0);
+    // ...and carries the weapon's baked hit cue for its warheads.
+    expect(shell!.impactFx?.cue).toBe('playClusterImpactSound');
+    // The launch puff is spawned through the shared combat-core spawn path.
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  it('a warhead connect plays the cluster impact cue through the shared seam (AH-0MV822B1B0048UZT)', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    scene.addPlayer({ x: 50, y: 50 });
+    const victim = addEnemy(scene, 200, 200);
+    spawnCluster(scene, 200, 200);
+
+    // The shell splits on impact; the warheads are queued then admitted.
+    scene.runCollisions();
+    expect(victim.destroyed).toBe(false);
+    scene.runFlushSplits();
+    const warhead = scene
+      .getPlayerBullets()
+      .find(
+        (b) =>
+          b.color === WEAPON_CATALOGUE.cluster.bulletColor && b.impactFx,
+      );
+    expect(warhead).toBeDefined();
+
+    // A warhead connecting damages the enemy and plays the baked hit cue +
+    // hot-pink impact flash through the shared impact path.
+    scene.runCollisions();
+    expect(victim.destroyed).toBe(true);
+    expect(cue).toHaveBeenCalledWith('playClusterImpactSound');
+    expect(scene.getBulletImpactEffects().length).toBeGreaterThan(0);
+  });
 });
 
 // ── Gradius Options orbit-emitter seam (AH-0MV1BIVVK0043TEM) ─────────
@@ -1429,7 +1971,7 @@ describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
       .filter((b) => b.color === WEAPON_CATALOGUE.options.bulletColor);
   }
 
-  it('auto-fire spawns one pod bullet per orbiting pod, each along the heading', async () => {
+  it('auto-fire spawns one pod bullet per orbiting pod, each radially outward', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('options', true);
@@ -1443,10 +1985,11 @@ describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
     expect(expected).toBe(2);
     expect(bullets).toHaveLength(expected);
 
-    const heading = player.getHeading();
     for (const bullet of bullets) {
-      // Each pod fires along the ship's heading at the pod bullet speed.
-      expect(Math.atan2(bullet.vy, bullet.vx)).toBeCloseTo(heading, 5);
+      // Each pod fires radially outward along its own ship→pod line at the
+      // pod bullet speed — not along the ship's heading (AH-0MV5DFBVW002J2XO).
+      const radial = Math.atan2(bullet.y - player.y, bullet.x - player.x);
+      expect(Math.atan2(bullet.vy, bullet.vx)).toBeCloseTo(radial, 5);
       expect(Math.hypot(bullet.vx, bullet.vy)).toBeCloseTo(
         OPTIONS_POD_BULLET_SPEED,
         5,
@@ -1458,6 +2001,12 @@ describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
         3,
       );
     }
+    // The two pods do not both copy the ship's heading: diametrically
+    // opposite pods fire in opposite radial directions.
+    expect(Math.atan2(bullets[0].vy, bullets[0].vx)).not.toBeCloseTo(
+      Math.atan2(bullets[1].vy, bullets[1].vx),
+      3,
+    );
     // Distinct pod launch positions — one per pod.
     const positions = new Set(
       bullets.map((b) => `${b.x.toFixed(3)},${b.y.toFixed(3)}`),
@@ -1498,5 +2047,140 @@ describe('Options orbit-emitter seam (AH-0MV1BIVVK0043TEM)', () => {
     scene.getPlayerBullets().length = 0;
     const second = fireOptionsPods(scene)[0];
     expect(second.x).not.toBeCloseTo(first.x, 3);
+  });
+});
+
+// ── Bullet visual metadata threading (AH-0MV8228MD009UBF7) ─────────
+
+describe('auto-fire threads the weapon visual identity onto spawned bullets', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  it('spawned wave-laser bullets carry the beam shape + length + rim', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('wave_laser', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const bullets = scene.getPlayerBullets().filter(
+      (b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor,
+    );
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      expect(bullet.shape).toBe('line');
+      expect(bullet.shapeLength).toBe(7);
+      expect(bullet.rimColor).toBe(0xffffff);
+      expect(bullet.thickness).toBe(3);
+    }
+  });
+
+  it('spawned dual bullets carry the short-beam shape', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('dual', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    const bullets = scene.getPlayerBullets().filter(
+      (b) => b.color === WEAPON_CATALOGUE.dual.bulletColor,
+    );
+    expect(bullets.length).toBeCloseTo(2, 0);
+    for (const bullet of bullets) {
+      expect(bullet.shape).toBe('line');
+      expect(bullet.shapeLength).toBe(2);
+    }
+  });
+
+  it('an ordinary cannon bullet keeps the default disc shape', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cannon'); // the permanent default weapon
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(0.5);
+    for (const bullet of scene.getPlayerBullets()) {
+      expect(bullet.shape).toBe('circle');
+      expect(bullet.shapeLength).toBeUndefined();
+    }
+  });
+
+  it('options pod bullets carry the weapon visual identity', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('options', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(1);
+    const bullets = scene.getPlayerBullets().filter(
+      (b) => b.color === WEAPON_CATALOGUE.options.bulletColor,
+    );
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      expect(bullet.shape).toBe('chevron');
+      // The pod shot carries its full visual identity through the shared
+      // orbit spawn path (AH-0MV822BDN008IYL6): the pale-aqua rim, the
+      // short fading trail, and the per-weapon impact feedback the shared
+      // impact seam resolves when the shot connects.
+      expect(bullet.rimColor).toBe(WEAPON_CATALOGUE.options.bulletRim);
+      expect(bullet.tail).toBe(WEAPON_CATALOGUE.options.bulletTrail);
+      expect(bullet.impactFx?.cue).toBe('playOptionsImpactSound');
+    }
+  });
+
+  it('split warheads render as small discs, keeping the parent shell colour (AH-0MV822B1B0048UZT)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(1);
+    const parent = scene.getPlayerBullets().find(
+      (b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor,
+    );
+    expect(parent).toBeDefined();
+    expect(parent!.shape).toBe('missile');
+
+    // Force a split and admit the queued warheads so they can be inspected.
+    // Only the *new* bullets are checked — the always-active cannon also
+    // fires here and must not be mistaken for a warhead.
+    const before = new Set(scene.getPlayerBullets());
+    scene.runSplitProjectile(parent!);
+    scene.runFlushSplits();
+    const warheads = scene.getPlayerBullets().filter((b) => !before.has(b));
+    expect(warheads.length).toBeGreaterThan(0);
+    for (const warhead of warheads) {
+      // Small discs, never tiny missiles: the split reads as a cluster of
+      // fragments (AC — "warheads render as small discs").
+      expect(warhead.shape).toBe('disc');
+      // The burst still reads as one weapon: warheads keep the shell colour.
+      expect(warhead.color).toBe(WEAPON_CATALOGUE.cluster.bulletColor);
+      // A warhead is a fragment of the (larger) parent shell.
+      expect(warhead.radius).toBeLessThan(parent!.radius);
+    }
   });
 });

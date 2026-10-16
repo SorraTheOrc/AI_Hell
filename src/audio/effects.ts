@@ -49,6 +49,7 @@ import {
   updateThrusterHum,
 } from './thrusterShim';
 import type { BeatClock } from '../utils/beat';
+import type { ThrusterHumProfile } from '../utils/thrusterProfile';
 import type { WeaponId } from '../utils/weapons';
 
 // Re-exported thruster-hum reference constants + test seams (moved to the shim
@@ -62,10 +63,14 @@ export {
   THRUSTER_HUM_NOISE_FILTER_MAX,
   THRUSTER_HUM_NOISE_FILTER_MIN,
   THRUSTER_HUM_SHRINK_MULTIPLIER,
+  THRUSTER_HUM_SIDE_PITCH_SCALE,
+  THRUSTER_HUM_SIDE_VOLUME_SCALE,
   THRUSTER_HUM_UNDERTONE_FREQ,
   _getThrusterHumStateForTests,
   _resetThrusterHumForTests,
 } from './thrusterShim';
+
+export type { ThrusterHumProfile } from '../utils/thrusterProfile';
 
 // ── Playback provider seam ──────────────────────────────────────────
 
@@ -276,14 +281,26 @@ function playExplosionCue(cue: string, options: SfxPlayOptions = {}): void {
  */
 export const TANK_ADVANCE_CUE_DURATION = 0.6;
 
-/** Rising mechanical whine — E3 Tank firing advance cue. */
+/** Rising mechanical whine — E3 Tank firing advance cue (half volume). */
 export function playTankAdvanceCue(): void {
-  playCue('playTankAdvanceCue');
+  playCue('playTankAdvanceCue', { volume: TANK_SCOUT_FIRE_VOLUME_SCALE });
 }
+
+/**
+ * Linear gain applied to the Tank/Scout enemy **fire sequence** — the
+ * advance whine/blip *and* the shot cue — so enemy fire sits at half volume
+ * in the mix (AH-0MV74ROYR009X8U3). The producer confirmed the advance
+ * (warmup) cues are part of the reduction. A single named constant keeps
+ * the trim tunable in one place (precedent: `HOLD_FULL_FIRE_VOLUME_SCALE`).
+ */
+export const TANK_SCOUT_FIRE_VOLUME_SCALE = 0.5;
 
 /** Heavy low cannon thump — E3 Tank fire, scheduled at the advance cue's end. */
 export function playTankFireSound(): void {
-  playCue('playTankFireSound', { delay: TANK_ADVANCE_CUE_DURATION });
+  playCue('playTankFireSound', {
+    delay: TANK_ADVANCE_CUE_DURATION,
+    volume: TANK_SCOUT_FIRE_VOLUME_SCALE,
+  });
 }
 
 /** Duration (seconds) of the Phaser advance tell. */
@@ -302,14 +319,17 @@ export function playPhaserFireSound(): void {
 /** Duration (seconds) of the Scout advance tell. */
 export const SCOUT_ADVANCE_CUE_DURATION = 0.6;
 
-/** Rising warning blip — E1 Scout firing advance cue. */
+/** Rising warning blip — E1 Scout firing advance cue (half volume). */
 export function playScoutAdvanceCue(): void {
-  playCue('playScoutAdvanceCue');
+  playCue('playScoutAdvanceCue', { volume: TANK_SCOUT_FIRE_VOLUME_SCALE });
 }
 
 /** Sharp laser blip — E1 Scout fire, scheduled at the advance cue's end. */
 export function playScoutFireSound(): void {
-  playCue('playScoutFireSound', { delay: SCOUT_ADVANCE_CUE_DURATION });
+  playCue('playScoutFireSound', {
+    delay: SCOUT_ADVANCE_CUE_DURATION,
+    volume: TANK_SCOUT_FIRE_VOLUME_SCALE,
+  });
 }
 
 // ── Enemy cues ──────────────────────────────────────────────────────
@@ -395,6 +415,85 @@ export function playCannonFireSound(): void {
   playCue('playCannonFireSound');
 }
 
+/** Punchy hit thump — Cannon bullet connects (AH-0MV8228YW0050IXS). */
+export function playCannonImpactSound(): void {
+  playCue('playCannonImpactSound');
+}
+
+/** Bright green ricochet shot — fires (AH-0MV822AP1006W2F9). */
+export function playRicochetFireSound(): void {
+  playCue('playRicochetFireSound');
+}
+
+/** Soft ping — Ricochet bullet connects on wall bounce or enemy hit (AH-0MV822AP1006W2F9). */
+export function playRicochetImpactSound(): void {
+  playCue('playRicochetImpactSound');
+}
+
+/** Heavy missile detonation thump — Cluster Missile shell/warhead connects (AH-0MV822B1B0048UZT). */
+export function playClusterImpactSound(): void {
+  playCue('playClusterImpactSound');
+}
+
+/** Soft bright aqua pop — Options pod shot connects (AH-0MV822BDN008IYL6). */
+export function playOptionsImpactSound(): void {
+  playCue('playOptionsImpactSound');
+}
+
+/**
+ * Bright expanding ring hit — Nova shockwave connects
+ * (AH-0MV822BPT002GF17). Plays through the shared onFire AOE VFX seam
+ * (`CombatScene.spawnAoeEffectVfx`) the instant the Nova ring expands, so the
+ * game and every gym sound the identical shockwave hit. Baked via the
+ * ToneForge pipeline (`aihell-nova-impact`, seed 32273).
+ */
+export function playNovaImpactSound(): void {
+  playCue('playNovaImpactSound');
+}
+
+/** Soft warm amber hit — Spread bullet connects (AH-0MV8229B9009DQGA). */
+export function playSpreadImpactSound(): void {
+  playCue('playSpreadImpactSound');
+}
+
+/** Bright twin square snap — Dual bullet connects (AH-0MV8229NM009CZOA). */
+export function playDualImpactSound(): void {
+  playCue('playDualImpactSound');
+}
+
+/** Tight staccato yellow tick — Rapid bullet connects (AH-0MV822A03006UT2P). */
+export function playRapidImpactSound(): void {
+  playCue('playRapidImpactSound');
+}
+
+/**
+ * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
+ * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
+ * their own baked hit cues; dispatched by {@link playWeaponImpactCue} from
+ * the shared impact seam. The registry lives here (not in a scene) so the
+ * audio knowledge stays in the audio layer.
+ */
+const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
+  playCannonImpactSound,
+  playRicochetImpactSound,
+  playSpreadImpactSound,
+  playDualImpactSound,
+  playRapidImpactSound,
+  playWaveLaserImpactSound,
+  playClusterImpactSound,
+  playOptionsImpactSound,
+  playArcImpactSound,
+};
+
+/**
+ * Plays the baked impact cue named by a weapon's `impactFx` metadata.
+ * Unknown cue names are a safe no-op (a weapon never falls silent — the
+ * visual impact flash still plays through the shared impact seam).
+ */
+export function playWeaponImpactCue(cue: string): void {
+  PLAYER_WEAPON_IMPACT_CUES[cue]?.();
+}
+
 /** Wide multi-tone sweep — Spread fire. */
 export function playSpreadFireSound(): void {
   playCue('playSpreadFireSound');
@@ -420,6 +519,19 @@ export function playMortarFireSound(): void {
   playCue('playMortarFireSound');
 }
 
+/**
+ * Sharp dry shell-impact crack — the Mortar blast connects
+ * (AH-0MV822C250051OVN). Plays through the shared AOE detonation VFX seam
+ * (`CombatScene.spawnAoeDetonationVfx`) the instant a Mortar blast resolves,
+ * layered under the heavy `playMortarDetonationSound` boom so the impact
+ * reads as a shell landing then detonating. The game and every gym sound the
+ * identical connect. Baked via the ToneForge pipeline (`aihell-mortar-impact`,
+ * seed 32274).
+ */
+export function playMortarImpactSound(): void {
+  playCue('playMortarImpactSound');
+}
+
 /** Heavy blast — Mortar detonation. */
 export function playMortarDetonationSound(): void {
   playCue('playMortarDetonationSound');
@@ -428,6 +540,38 @@ export function playMortarDetonationSound(): void {
 /** Bright electric zap — Arc fire. */
 export function playArcFireSound(): void {
   playCue('playArcFireSound');
+}
+
+/**
+ * Sharp electric crack — the Arc chaining bolt connects
+ * (AH-0MV822CE7004MQ14). Plays through the shared AOE chain seam
+ * (`CombatScene.resolveChainImpactFx`) the instant the bolt lands on its
+ * nearest target and chains onward, so the game and every gym sound the
+ * identical connect. Baked via the ToneForge pipeline (`aihell-arc-impact`,
+ * seed 32275).
+ */
+export function playArcImpactSound(): void {
+  playCue('playArcImpactSound');
+}
+
+/** High-energy beam crack — Wave Laser fire (AH-0MV822ACO007CEZF). */
+export function playWaveLaserFireSound(): void {
+  playCue('playWaveLaserFireSound');
+}
+
+/** Low missile launch whoosh + click — Cluster Missile fire (AH-0MV822B1B0048UZT). */
+export function playClusterFireSound(): void {
+  playCue('playClusterFireSound');
+}
+
+/** Bright soft twinkle — Options pod volley fire (AH-0MV822BDN008IYL6). */
+export function playOptionsFireSound(): void {
+  playCue('playOptionsFireSound');
+}
+
+/** Sharp neon snap — Wave Laser bullet connects (AH-0MV822ACO007CEZF). */
+export function playWaveLaserImpactSound(): void {
+  playCue('playWaveLaserImpactSound');
 }
 
 /**
@@ -475,6 +619,18 @@ export function playWeaponFireSound(
       break;
     case 'arc':
       playCue('playArcFireSound', options);
+      break;
+    case 'wave_laser':
+      playCue('playWaveLaserFireSound', options);
+      break;
+    case 'ricochet':
+      playCue('playRicochetFireSound', options);
+      break;
+    case 'cluster':
+      playCue('playClusterFireSound', options);
+      break;
+    case 'options':
+      playCue('playOptionsFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches
@@ -664,9 +820,18 @@ export function playBossPhaseCue(phase: number): void {
 
 // ── Thruster hum (runtime shim delegation) ──────────────────────────
 
-/** Sustained thrust-driven hum. Delegates to the runtime shim (no-op headless). */
-export function updateThrusterSound(level: number): void {
-  updateThrusterHum(level);
+/**
+ * Sustained thrust-driven hum. Delegates to the runtime shim (no-op headless).
+ *
+ * `profile` selects the forward/default voice or the **side** variant
+ * (quieter + one semitone higher; AH-0MV78QUIX001EZN2); it defaults to
+ * `'forward'` so existing callers are unchanged.
+ */
+export function updateThrusterSound(
+  level: number,
+  profile: ThrusterHumProfile = 'forward',
+): void {
+  updateThrusterHum(level, profile);
 }
 
 /** Stops and frees the thruster hum. Delegates to the runtime shim. */

@@ -17,7 +17,14 @@ import {
   type MetricPoint,
 } from './metrics';
 import type { RecordingAnalysis } from '../../../scripts/recording-analysis.mjs';
-import { EVAL_DATASET_VERSION, type TelemetryRecord } from './types';
+import type { BatchedRunSummary } from './engine';
+import {
+  BALANCE_STATISTICS_SCHEMA_VERSION,
+  EVAL_DATASET_VERSION,
+  type BalanceAggregate,
+  type DistributionStats,
+  type TelemetryRecord,
+} from './types';
 
 /** A per-run report entry. */
 export interface RunReport {
@@ -42,6 +49,26 @@ export interface EvaluationReport {
   };
   readonly runs: readonly RunReport[];
   readonly aggregate: MetricAggregate;
+}
+
+/** A versioned, deterministic balance-batch report (AC4). */
+export interface BalanceReport {
+  /** Version of the evaluation dataset (bump on a report shape change). */
+  readonly datasetVersion: number;
+  /** Version of the shared balance-statistics schema ({@link BALANCE_STATISTICS_SCHEMA_VERSION}). */
+  readonly schemaVersion: number;
+  readonly kind: 'balance';
+  readonly config: {
+    readonly policies: readonly string[];
+    readonly seeds: readonly number[];
+    readonly ticks: number;
+    readonly dt: number;
+    readonly sampleEveryTicks: number;
+  };
+  /** Every run's summary, in (policy × seed) sweep order. */
+  readonly runs: readonly BatchedRunSummary[];
+  /** Distribution summaries across all runs (the shared AC3 aggregate). */
+  readonly aggregate: BalanceAggregate;
 }
 
 /** A two-policy A/B evaluation report. */
@@ -171,8 +198,34 @@ export function serialiseRecordsJsonl(records: readonly TelemetryRecord[]): stri
 }
 
 /** Serialises a run report to stable JSON (AC5). */
-export function serialiseReport(report: EvaluationReport | AbReport): string {
+export function serialiseReport(report: EvaluationReport | AbReport | BalanceReport): string {
   return stableStringify(report);
+}
+
+/** Builds a versioned balance-batch report (AC4). */
+export function buildBalanceReport(options: {
+  policies: readonly string[];
+  seeds: readonly number[];
+  ticks: number;
+  dt: number;
+  sampleEveryTicks: number;
+  runs: readonly BatchedRunSummary[];
+  aggregate: BalanceAggregate;
+}): BalanceReport {
+  return {
+    datasetVersion: EVAL_DATASET_VERSION,
+    schemaVersion: BALANCE_STATISTICS_SCHEMA_VERSION,
+    kind: 'balance',
+    config: {
+      policies: options.policies,
+      seeds: options.seeds,
+      ticks: options.ticks,
+      dt: options.dt,
+      sampleEveryTicks: options.sampleEveryTicks,
+    },
+    runs: options.runs,
+    aggregate: options.aggregate,
+  };
 }
 
 /** Formats a number for the text report. */
@@ -205,6 +258,57 @@ export function formatEvaluationReport(report: EvaluationReport): string {
   lines.push(`  minerals/min: ${n(agg.mineralsPerMinute.mean, 1)} ± ${n(agg.mineralsPerMinute.stdDev, 1)}`);
   lines.push(`  avoidable hits: ${n(agg.avoidableHits.mean, 2)} ± ${n(agg.avoidableHits.stdDev, 2)}`);
   lines.push(`  input changes/s: ${n(agg.inputChangesPerSecond.mean, 2)} ± ${n(agg.inputChangesPerSecond.stdDev, 2)}`);
+  return lines.join('\n');
+}
+
+/** Formats one distribution summary as a fixed-width text line. */
+function distributionLine(label: string, stats: DistributionStats): string {
+  return (
+    `  ${label.padEnd(22)} n=${String(stats.count).padStart(3)}  ` +
+    `mean=${n(stats.mean, 2).padStart(7)}  median=${n(stats.median, 2).padStart(7)}  ` +
+    `min=${n(stats.min, 2).padStart(7)}  max=${n(stats.max, 2).padStart(7)}  ` +
+    `sd=${n(stats.stdDev, 2).padStart(6)}`
+  );
+}
+
+/** Renders a per-key distribution section (upgrades / archetypes). */
+function formatPerKeySection(
+  heading: string,
+  rows: Readonly<Record<string, DistributionStats>>,
+  lines: string[],
+): void {
+  lines.push(heading);
+  const keys = Object.keys(rows);
+  if (keys.length === 0) {
+    lines.push('  (none)');
+    return;
+  }
+  for (const key of keys) lines.push(distributionLine(key, rows[key]));
+}
+
+/** Renders a human-readable balance-batch report (epic AC4). */
+export function formatBalanceReport(report: BalanceReport): string {
+  const lines: string[] = [];
+  const agg = report.aggregate;
+  lines.push(`Balance report — ${report.config.policies.join(', ') || 'competent'}`);
+  lines.push('='.repeat(40));
+  lines.push(
+    `schema v${report.schemaVersion} · ${agg.runs} run(s) · ` +
+      `seeds ${report.config.seeds.join(', ')} · ticks ${report.config.ticks}`,
+  );
+  lines.push('');
+  lines.push('Aggregate distributions (count, mean, median, min, max, std-dev):');
+  lines.push(distributionLine('minerals collected', agg.mineralsCollected));
+  lines.push(distributionLine('power-ups collected', agg.powerUpsCollected));
+  lines.push(distributionLine('asteroids destroyed', agg.asteroidsDestroyed));
+  lines.push(distributionLine('avoidable hits', agg.avoidableHits));
+  lines.push(distributionLine('survival (s)', agg.survivalSeconds));
+  lines.push(distributionLine('wave reached', agg.waveReached));
+  lines.push(distributionLine('level reached', agg.levelReached));
+  lines.push('');
+  formatPerKeySection('Upgrades selected (per choice id):', agg.upgradesSelected, lines);
+  lines.push('');
+  formatPerKeySection('Enemies killed (per archetype):', agg.enemiesKilledByArchetype, lines);
   return lines.join('\n');
 }
 

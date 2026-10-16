@@ -8,7 +8,11 @@ The evaluation harness is how we **re-run the bot's production code** after a
 change and answer "is it better?" without a human in the loop. It runs a real
 bot policy headlessly on fixed seeds, emits telemetry, aggregates metrics,
 compares two bot versions (A/B) with a confidence interval, and compares the
-bot against a recorded human run on the same seed.
+bot against a recorded human run on the same seed. For **automated
+balancing** — simulating hundreds of deterministic games against the real
+balance data files and reading their aggregated statistics (minerals,
+upgrades, kills per archetype, survival, wave reached) — see
+[`docs/BALANCING.md`](./BALANCING.md).
 
 ## Why same-seed
 
@@ -30,6 +34,12 @@ npm run evaluate
 # evaluate five seeds and print the machine-readable report
 npm run evaluate -- --seeds 5 --json
 
+# automated balancing: 100 deterministic games, full balance report
+npm run evaluate -- --batch
+
+# a 300-game balance batch across two policies (see docs/BALANCING.md)
+npm run evaluate -- --batch --games 300 --policies competent,legacy
+
 # A/B the legacy ladder against the competent bot over 10 seeds
 npm run evaluate -- --baseline legacy --candidate competent --seeds 10
 
@@ -48,6 +58,7 @@ Artifacts are written under `--out` (default `eval-output/`, git-ignored):
 | `runs.jsonl` | The raw telemetry for every run, in the shipped record schema. |
 | `comparison.json` | Same-seed metric deltas (only with `--human`). |
 | `ghost.svg` | The existing human-vs-bot trajectory overlay (only with `--human`). |
+| `human-balance-report.json` | The shared versioned human `BalanceReport` (`kind: 'balance'`, `policy: 'human'` — only with `--human`). |
 | `side-by-side.sh` / `side-by-side.json` | The capture/compose plan (only with `--video`). |
 
 ### Flags
@@ -95,6 +106,41 @@ seed ──► arena scenario ──► BotPolicy ──► AsteroidsModel + gov
 - **CLI core** (`src/ai/eval/cli.ts`) — pure artifact/report construction; the
   Node shell (`scripts/evaluate.mjs`) does argv parsing and file I/O, loading
   the TS core through Vite's SSR module loader.
+
+## Config-driven arena
+
+The arena consumes the **real balance data** — no hardcoded `scout/diver/phaser`
+list, fire cadence or ship config (config-driven arena,
+AH-0MV81YPBG0028WNM, epic AC1):
+
+- **Enemy archetypes** (`src/data/enemy-configs.csv` via `loadAllEnemyConfigs`)
+  seed the spawn reservoir and drive each hostile's behaviour — collision
+  radius (`size`), hit points (`health`), fire cadence (`fireInterval`),
+  projectile speed (`bulletSpeed`) and fire chance (`shotProbability`).
+- **Ship stats** (`src/data/ship-config.csv` via `loadShipConfig`) map onto the
+  `AsteroidsModel` physics (thrust, max speed, friction, rotation).
+- **Difficulty curves** (`src/data/difficulty-curves.csv` via
+  `loadDifficultyCurves`) set how many hostile *waves* the reservoir holds
+  (the opening level's row count), so a curve edit changes a run too.
+
+A resolved balance config (`ArenaBalanceConfig`) is built by
+`loadBalanceConfig()` in `src/ai/eval/balanceConfig.ts`; `runArena` accepts it
+via `config.balance` and falls back to resolving it from the shared store, so
+every arena path is config-driven. Because each hostile derives its stats from
+an `EnemyConfig`, **editing the CSV files measurably changes simulated outcomes
+for the same seed** — verified by `src/ai/eval/arena.test.ts` for
+`shotProbability`, `fireInterval`, `health` and ship `maxSpeed`.
+
+### SSR loading (evaluate.mjs)
+
+The CLI runs the TS core through Vite's SSR module loader, where the dev-server
+`/api/csv/...` endpoints have no browser origin. `scripts/evaluate.mjs` awaits
+`hydrateBalanceConfig()` before evaluating, which under SSR (`import.meta.env.SSR`)
+reads the CSVs bundled at build time — the same content the static build uses,
+so a CSV edit immediately changes headless results. A missing/unreadable CSV
+falls back to the built-in defaults (the store's `loadConfigs` never throws),
+so evaluation can never be blocked by a broken config file
+(`src/ai/eval/balanceConfig.ssr.test.ts` spikes the SSR branch).
 
 ## Metrics
 
@@ -145,6 +191,18 @@ run in the file), runs the bot on that same seed, and emits:
 This is the same comparison the recording tooling already supports, now
 reproducible from a single command.
 
+Because the human session is a real recorded game, `--human` also emits the
+**shared balance statistics** for it: `human-balance-report.json` is a
+versioned `BalanceReport` (`kind: 'balance'`) produced by the shared pure
+helper `extractHumanBalanceStats` (`src/ai/eval/humanStats.ts`) and labelled
+with the `human` pseudo-policy. It reuses the automated-balancing
+framework's `extractBalanceStats` / `aggregateBalanceStats`, so the same
+schema a bot batch (`--batch`) reports on is computed for the human run and
+both artifacts are directly comparable — see
+[docs/BALANCING.md](./BALANCING.md#human-play-statistics-policy-human). A
+recording with multiple runs yields one per-run entry plus one aggregate,
+mirroring a batch.
+
 ## Side-by-side video (optional)
 
 `--video` does not re-implement capture. It emits a `side-by-side.sh` plan that:
@@ -175,16 +233,20 @@ harness itself never invokes a browser or an encoder.
 
 The arena is a **closed-loop headless model**, not Phaser: it models the
 quantities the bot reasons about (player physics, collectables, hazards,
-auto-fire, collisions) rather than the full wave/VFX/enemy-behaviour stack.
-That keeps evaluation fast and deterministic under Node/vitest. For
-pixel-accurate, full-stack verification use the browser capture path
-(`npm run capture`); both paths feed the same telemetry schema, so a recorded
-capture can be analysed with `npm run analyse`.
+auto-fire, collisions) rather than the full wave/VFX/enemy-behaviour stack
+(enemy formations, burst patterns and bullet lifetimes are intentionally not
+modelled). Each hostile's radius, health, fire cadence, bullet speed and fire
+chance do come from the shared `EnemyConfig`, so balance tuning is reflected
+in the simulation. That keeps evaluation fast and deterministic under
+Node/vitest. For pixel-accurate, full-stack verification use the browser
+capture path (`npm run capture`); both paths feed the same telemetry schema,
+so a recorded capture can be analysed with `npm run analyse`.
 
 ## Testing
 
 - `src/ai/eval/arena.test.ts` — determinism, telemetry shape, parser
-  round-trip.
+  round-trip; config-driven arena (CSV edits change outcomes, AC1/AC2/AC4).
+- `src/ai/eval/balanceConfig.ssr.test.ts` — SSR config hydration spike (AC5).
 - `src/ai/eval/metrics.test.ts` — objective score, aggregation, same-seed
   deltas, A/B confidence.
 - `src/ai/eval/engine.test.ts` — end-to-end evaluation and A/B determinism.
@@ -193,11 +255,15 @@ capture can be analysed with `npm run analyse`.
 - `src/ai/eval/cli.test.ts` — pure CLI-core behaviour.
 - `scripts/evaluate-args.test.ts` — the shell's argument parsing.
 - `src/ai/eval/evaluationDocs.test.ts` — this document's key sections.
+- `src/ai/eval/balancingDocs.test.ts` — the automated-balancing document's
+  contract ([`docs/BALANCING.md`](./BALANCING.md)).
 
 ## Related work
 
 - Epic: **Realistic demo/attract bot framework + playtester telemetry**
   (AH-0MUY089KR003F8S4).
+- Automated balancing (batch runner + shared balance-statistics schema, epic
+  AH-0MV1DLUZ8009OCJW): [`docs/BALANCING.md`](./BALANCING.md).
 - Telemetry: [`docs/TELEMETRY.md`](./TELEMETRY.md).
 - Bot framework: [`docs/BOT_FRAMEWORK.md`](./BOT_FRAMEWORK.md).
 - Recording/replay: [`docs/dev/recording-and-replay.md`](./dev/recording-and-replay.md).

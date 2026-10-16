@@ -10,8 +10,10 @@
  *    Enter/Space activation per row flavour, and shutdown cleanup.
  *
  * Since AH-0MV13G5EV008D41E the ENEMIES column is a single "Fodder Enemies"
- * row (booting the reusable `GymFodderEnemies` scene bare) plus the dedicated
- * `GymBoss` "Boss" row; the Bosses column and the per-config rows are gone.
+ * row (booting the reusable `GymFodderEnemies` scene bare, whose in-panel
+ * dropdown includes the Centipede chain) plus the dedicated `GymBoss` "Boss"
+ * row; the Bosses column and the per-config rows are gone. The Centipede is
+ * *not* a separate ENEMIES row (AH-0MV4ZOIZR0086T66).
  *
  * Discovery runs through the real `import.meta.glob` (Vitest supports it),
  * so these tests exercise the actual files on disk — a new `Gym<Name>.ts`
@@ -34,6 +36,7 @@ import {
   FODDER_ENEMIES_LABEL,
   BOSS_SCENE_KEY,
   BOSS_SCENE_LABEL,
+  CENTIPEDE_SCENE_KEY,
 } from './GymIndex';
 import { GymBoss } from './gym/GymBoss';
 import { MenuScene } from './MenuScene';
@@ -89,15 +92,19 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     // GymPowerUpsCombat are on disk. GymBoss is excluded from the *plain
     // scene list* (left column) — the real, multi-phase boss is surfaced as
     // the dedicated "Boss" row in the ENEMIES column instead
-    // (AH-0MUAYB28C004KK7X, AH-0MV13G5EV008D41E). Labels strip the leading
-    // "Gym" and are sorted alphabetically. GymFodderEnemies is likewise not
-    // listed as a bare scene — a single fodder row boots it.
+    // (AH-0MUAYB28C004KK7X, AH-0MV13G5EV008D41E). GymCentipede is likewise
+    // excluded from the plain scene list and surfaced as a dedicated ENEMIES
+    // row (AH-0MV4ZOIZR0086T66). GymPowerUpLeveling (the power-up leveling
+    // gallery, AH-0MUV5CLVQ006V9HR) is auto-discovered like every
+    // `Gym<Name>.ts`. Labels strip the leading "Gym" and are
+    // sorted alphabetically. GymFodderEnemies is not listed as a bare scene
+    // — a single fodder row boots it.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'BotTuning',
-      'Centipede',
       'Level',
       'Minerals',
       'Player',
+      'PowerUpLeveling',
       'PowerUpsCombat',
       'PowerUpsUtility',
       'WeaponLeveling',
@@ -105,24 +112,34 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymBotTuning',
-      'GymCentipede',
       'GymLevel',
       'GymMinerals',
       'GymPlayer',
+      'GymPowerUpLeveling',
       'GymPowerUpsCombat',
       'GymPowerUpsUtility',
       'GymWeaponLeveling',
       'GymWeapons',
     ]);
 
-    // Middle column: exactly two scene rows — the reusable fodder gym and the
-    // dedicated boss. No per-config rows (the archetype dropdown lives inside
-    // GymFodderEnemies) and no `boss` "Boss Swarm" row.
+    // Middle column: exactly two scene rows — the reusable fodder gym (its
+    // in-panel dropdown selects the archetype, including the Centipede chain)
+    // and the dedicated boss. No per-config rows and no `boss` "Boss Swarm"
+    // row, and no separate Centipede row (AH-0MV4ZOIZR0086T66).
     expect(scene.listedEnemyScenes).toEqual([
       { key: FODDER_ENEMIES_SCENE_KEY, label: FODDER_ENEMIES_LABEL, sceneKey: FODDER_ENEMIES_SCENE_KEY },
       { key: BOSS_SCENE_KEY, label: BOSS_SCENE_LABEL, sceneKey: BOSS_SCENE_KEY },
     ]);
     expect(scene.listedEnemyScenes.every((s) => s.enemyKey === undefined)).toBe(true);
+
+    // The Centipede is reachable only through the Fodder Enemies dropdown —
+    // it must not leak back onto the index as a bare scene, a dedicated
+    // ENEMIES row, or a Dev Utilities row.
+    expect(scene.listedScenes.map((s) => s.key)).not.toContain(CENTIPEDE_SCENE_KEY);
+    expect(scene.listedEnemyScenes.map((s) => s.key)).not.toContain(CENTIPEDE_SCENE_KEY);
+    expect(scene.listedDevUtilityScenes.map((s) => s.key)).not.toContain(
+      CENTIPEDE_SCENE_KEY,
+    );
 
     // No .test.ts module leaks into the list, and the index itself is not
     // listed (it lives outside the globbed folder).

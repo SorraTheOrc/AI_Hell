@@ -13,6 +13,7 @@ import {
 } from '../vfx/explosionParticles';
 import {
   PHASER_ADVANCE_CUE_DURATION,
+  PHASER_BULLET_COLOR,
   PHASER_BULLET_SPEED,
   PHASER_COLOR,
   PHASER_COLOR_NUMBER,
@@ -372,5 +373,63 @@ describe('Phaser SFX wiring (AH-0MU3VPIA900697E8)', () => {
     expect(phaser.isTelling).toBe(false);
     expect(advanceSpy).not.toHaveBeenCalled();
     expect(fireSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ── Phaser radial projectile identity (AH-0MV822DRX009RYUB) ────────
+
+describe('Phaser — radial projectile identity (AH-0MV822DRX009RYUB)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  it('fires crisp phaser bolts with the shared identity: one launch pop + rotated core-streak bolts', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+    const phaser = new PhaserEntity(scene, {
+      x: 240, y: 300, formationOffset: { row: 0, col: 0 }, burstCount: 8,
+    });
+
+    const graphicsBefore = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    phaser.shootEnabled = true;
+    expect(phaser.tryFireRadialBullets(1_000_000)).toEqual([]); // tell starts
+    const bullets = phaser.tryFireRadialBullets(
+      1_000_000 + PHASER_ADVANCE_CUE_DURATION,
+    );
+    expect(bullets).toHaveLength(8);
+
+    // The volley spawns its bolt bullet Graphics **plus** one magenta launch
+    // pop at the phaser body — the enemy-side fire VFX for the whole radial
+    // burst (one pop per volley, not per spoke — the burst is one fire event
+    // that already plays one cue+sound pair).
+    const graphicsAfter = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    expect(graphicsAfter).toBe(graphicsBefore + 8 + 1);
+
+    for (const bullet of bullets) {
+      // The identity bolt keeps the established lethal-red bullet colour (the
+      // shared impact pass tints the hit flash with it).
+      expect(bullet.color).toBe(PHASER_BULLET_COLOR);
+    }
+    // Each bolt is rotated to fly nose-first along its own spoke (Phaser
+    // normalises rotation to [-π, π], so compare a normalised heading).
+    for (const bullet of bullets) {
+      const heading = Math.atan2(bullet.vy, bullet.vx);
+      let rotation = bullet.graphics.rotation;
+      let expected = heading;
+      if (rotation - expected > Math.PI) rotation -= Math.PI * 2;
+      if (rotation - expected < -Math.PI) rotation += Math.PI * 2;
+      expect(rotation).toBeCloseTo(expected, 5);
+    }
   });
 });

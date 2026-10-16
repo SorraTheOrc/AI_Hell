@@ -19,6 +19,8 @@
 import Phaser from 'phaser';
 
 import { createBullet } from './bulletUtils';
+import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
+import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import { playPhaserAdvanceCue, playPhaserFireSound } from '../audio/effects';
 import { FormationOffset } from '../utils/formations';
@@ -99,13 +101,22 @@ export interface PhaserConfig {
 }
 
 /**
- * A bullet fired by a Phaser. Drawn as a small filled circle; travels
- * in a straight line, wrapping across the screen edges until its
- * per-type lifetime elapses.
+ * A bullet fired by a Phaser. Renders as a crisply-edged phaser bolt (the
+ * Phaser's radial-shot projectile identity — AH-0MV822DRX009RYUB) and travels
+ * in a straight line, wrapping across the screen edges until its per-type
+ * lifetime elapses.
  */
 export interface PhaserBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
   readonly color: number;
+  /**
+   * Per-frame redraw hook for shapes animated by the bullet's age, consumed by
+   * the shared enemy-bullet lifecycle so any animated part breathes
+   * identically in the game and every gym. The Phaser bolt is static, so this
+   * is normally absent; threaded through for parity with the Tank/Diver
+   * identity bullets.
+   */
+  redraw?: (elapsed: number) => void;
   vx: number;
   vy: number;
   /** Bullet lifetime in seconds (AH-0MU960UTE001PTV0). */
@@ -323,6 +334,28 @@ export class PhaserEntity extends BaseEnemy {
       // the scene pushes it). The 8-spoke radial shape is unchanged.
       // The fire sound was already scheduled at tell start (cue end), so
       // this branch plays no additional audio (no double-play).
+      // The shared Phaser radial projectile identity (AH-0MV822DRX009RYUB):
+      // every bolt is a crisply-edged hexagonal phaser bolt with a bright
+      // velocity-aligned white core streak and a neon rim in the Phaser's own
+      // magenta — drawn through the shared bullet-shape seam with a short
+      // fading trail. Because EVERY scene drives this same
+      // `tryFireRadialBullets` through `fireForEnemy`, the bolt's shape, rim,
+      // trail and launch pop are identical in the game and every gym
+      // (gym↔game parity by construction). Firing logic, speed, interval,
+      // spoke count and radial pattern are unchanged — visuals/feel only.
+      const visual = resolveEnemyBulletVisual('phaser');
+
+      // One shared launch pop at the Phaser's body for the whole radial
+      // volley: the volley is a single fire event (one cue+sound pair), so it
+      // gets one magenta fire VFX rather than N stacked pops. Spawned through
+      // the shared `src/vfx/enemyMuzzleFlash` helper (cheap Graphics
+      // primitive, self-cleaning tween). `heading` 0 — a radial burst has no
+      // single aim direction, so the pop is direction-agnostic like the burst
+      // itself.
+      if (visual.muzzle) {
+        spawnEnemyMuzzleFlash(this.scene, this.x, this.y, 0, visual.muzzle);
+      }
+
       const bullets: PhaserBullet[] = [];
       const baseAngle = Math.atan2(
         this.target.y - this.y,
@@ -334,21 +367,35 @@ export class PhaserEntity extends BaseEnemy {
       });
 
       for (const dir of directions) {
-        const { graphics, color } = createBullet({
+        // Normalise direction.
+        const mag = Math.sqrt(dir.dx * dir.dx + dir.dy * dir.dy) || 1;
+        const nx = dir.dx / mag;
+        const ny = dir.dy / mag;
+        // Each bolt flies nose-first along its own spoke (the shared seam
+        // rotates the Graphics to `heading`).
+        const heading = Math.atan2(ny, nx);
+
+        const { graphics, color, redraw } = createBullet({
           scene: this.scene,
           color: this._bulletColor,
           size: this._bulletSize,
           x: this.x,
           y: this.y,
+          shape: visual.shape,
+          length: visual.length,
+          rimColor: visual.rimColor,
+          thickness: visual.thickness,
+          alpha: visual.alpha,
+          tail: visual.tail,
+          angle: heading,
         });
 
-        // Normalise direction.
-        const mag = Math.sqrt(dir.dx * dir.dx + dir.dy * dir.dy) || 1;
         bullets.push({
           graphics,
           color,
-          vx: (dir.dx / mag) * this._bulletSpeed,
-          vy: (dir.dy / mag) * this._bulletSpeed,
+          redraw,
+          vx: nx * this._bulletSpeed,
+          vy: ny * this._bulletSpeed,
           lifetime: this._bulletLifetime,
           elapsed: 0,
         });

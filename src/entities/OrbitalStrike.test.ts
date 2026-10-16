@@ -213,3 +213,58 @@ describe('OrbitalStrike entity', () => {
     strike.destroy(true);
   });
 });
+
+// ── OrbitalStrike falling-shell projectile identity (AH-0MV822GIO005B685) ─
+
+describe('OrbitalStrike — falling-shell projectile identity (AH-0MV822GIO005B685)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function scene(): Promise<Phaser.Scene> {
+    booted = await bootScene([Harness]);
+    return booted.scene;
+  }
+
+  it('creates a warhead falling shell with the shared identity: one launch pop + nose-down rotation', async () => {
+    const s = await scene();
+    const graphicsBefore = s.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    const strike = new OrbitalStrike(s, {
+      x: 500,
+      y: -50,
+      formationOffset: { row: 0, col: 0 },
+    });
+    strike.initStrike(500, 400, 6);
+    // Advance past the telegraph so the shell spawns.
+    strike.update(0.7);
+
+    expect(strike.phase).toBe('falling');
+    const falling = (strike as unknown as { _fallingBullet: { graphics: Phaser.GameObjects.Graphics; color: number } | null })._fallingBullet;
+    expect(falling).not.toBeNull();
+    // The warhead keeps the established hot-red bullet colour (the shared
+    // impact pass tints the detonation flash with it).
+    expect(falling!.color).toBe(0xff4444); // ORBITAL_STRIKE_BULLET_COLOR
+    // The warhead is rotated nose-first straight down the fall.
+    expect(Math.abs(falling!.graphics.rotation - Math.PI / 2)).toBeLessThan(1e-3);
+
+    // The strike spawned its falling-shell Graphics **plus** one amber launch
+    // pop at the spawn point (the enemy-side fire VFX for the strike).
+    const graphicsAfter = s.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    // At least the falling-shell Graphics **plus** one amber launch pop at the
+    // spawn point joined the scene (the exact total also includes the strike's
+    // own body + telegraph marker graphics, so assert the increase).
+    expect(graphicsAfter).toBeGreaterThanOrEqual(graphicsBefore + 2);
+
+    strike.destroy(true);
+  });
+});

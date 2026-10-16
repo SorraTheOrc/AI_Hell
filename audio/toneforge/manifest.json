@@ -199,6 +199,70 @@
       ]
     },
     {
+      "cue": "playCannonImpactSound",
+      "recipe": "aihell-cannon-impact",
+      "delivery": "baked",
+      "seeds": [
+        32209
+      ]
+    },
+    {
+      "cue": "playRicochetFireSound",
+      "recipe": "aihell-ricochet-fire",
+      "delivery": "baked",
+      "seeds": [
+        32267
+      ]
+    },
+    {
+      "cue": "playRicochetImpactSound",
+      "recipe": "aihell-ricochet-impact",
+      "delivery": "baked",
+      "seeds": [
+        32268
+      ]
+    },
+    {
+      "cue": "playClusterFireSound",
+      "recipe": "aihell-cluster-fire",
+      "delivery": "baked",
+      "seeds": [
+        32269
+      ]
+    },
+    {
+      "cue": "playClusterImpactSound",
+      "recipe": "aihell-cluster-impact",
+      "delivery": "baked",
+      "seeds": [
+        32270
+      ]
+    },
+    {
+      "cue": "playOptionsFireSound",
+      "recipe": "aihell-options-fire",
+      "delivery": "baked",
+      "seeds": [
+        32271
+      ]
+    },
+    {
+      "cue": "playOptionsImpactSound",
+      "recipe": "aihell-options-impact",
+      "delivery": "baked",
+      "seeds": [
+        32272
+      ]
+    },
+    {
+      "cue": "playSpreadImpactSound",
+      "recipe": "aihell-spread-impact",
+      "delivery": "baked",
+      "seeds": [
+        32218
+      ]
+    },
+    {
       "cue": "playSpreadFireSound",
       "recipe": "aihell-spread-fire",
       "delivery": "baked",
@@ -212,6 +276,22 @@
       "delivery": "baked",
       "seeds": [
         32212
+      ]
+    },
+    {
+      "cue": "playDualImpactSound",
+      "recipe": "aihell-dual-impact",
+      "delivery": "baked",
+      "seeds": [
+        32265
+      ]
+    },
+    {
+      "cue": "playRapidImpactSound",
+      "recipe": "aihell-rapid-impact",
+      "delivery": "baked",
+      "seeds": [
+        32266
       ]
     },
     {
@@ -231,11 +311,27 @@
       ]
     },
     {
+      "cue": "playNovaImpactSound",
+      "recipe": "aihell-nova-impact",
+      "delivery": "baked",
+      "seeds": [
+        32273
+      ]
+    },
+    {
       "cue": "playMortarFireSound",
       "recipe": "aihell-mortar-fire",
       "delivery": "baked",
       "seeds": [
         32215
+      ]
+    },
+    {
+      "cue": "playMortarImpactSound",
+      "recipe": "aihell-mortar-impact",
+      "delivery": "baked",
+      "seeds": [
+        32274
       ]
     },
     {
@@ -252,6 +348,30 @@
       "delivery": "baked",
       "seeds": [
         32217
+      ]
+    },
+    {
+      "cue": "playArcImpactSound",
+      "recipe": "aihell-arc-impact",
+      "delivery": "baked",
+      "seeds": [
+        32275
+      ]
+    },
+    {
+      "cue": "playWaveLaserFireSound",
+      "recipe": "aihell-wave-laser-fire",
+      "delivery": "baked",
+      "seeds": [
+        32219
+      ]
+    },
+    {
+      "cue": "playWaveLaserImpactSound",
+      "recipe": "aihell-wave-laser-impact",
+      "delivery": "baked",
+      "seeds": [
+        32231
       ]
     },
     {

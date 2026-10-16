@@ -11,15 +11,32 @@
  */
 
 import { parseRecording } from '../../../scripts/recording.mjs';
-import { formatAbReport, formatEvaluationReport, stableStringify } from './report';
+import { parseTelemetryJsonl } from '../../../scripts/inspect-telemetry.mjs';
+import {
+  formatAbReport,
+  formatBalanceReport,
+  formatEvaluationReport,
+  serialiseRecordsJsonl,
+  serialiseReport,
+  stableStringify,
+} from './report';
 import {
   runAbEvaluation,
+  runBatch,
   runEvaluation,
   compareRecordings,
 } from './engine';
 import { resolvePolicyFactory } from './policies';
 import { extractMetricPoint, type MetricPoint } from './metrics';
+import { extractHumanBalanceStats } from './humanStats';
 import { buildSideBySideCapturePlan } from './video';
+import type { TelemetryRecord } from './types';
+
+export { hydrateBalanceConfig } from './balanceConfig';
+// Dev tools load the TS core via Vite SSR and need the shared human helper + 
+// stable serialisation at the eval-core surface (AH-0MV7WVEWL005XEMN).
+export { extractHumanBalanceStats, HUMAN_BALANCE_POLICY } from './humanStats';
+export { serialiseReport } from './report';
 
 /** Parsed CLI options (produced by the `scripts/evaluate.mjs` shell). */
 export interface CliOptions {
@@ -33,6 +50,10 @@ export interface CliOptions {
   readonly outputDir: string;
   readonly json: boolean;
   readonly video: boolean;
+  /** Batch mode: sweep seeds × policies and emit the balance report (AC4). */
+  readonly batch: boolean;
+  /** Policies swept in batch mode; empty falls back to {@link CliOptions.policy}. */
+  readonly policies: readonly string[];
   /** Text of a human recording to compare against (AC2), when supplied. */
   readonly humanRecordingText: string | null;
   /** The human run's seed to compare against; defaults to the last run. */
@@ -75,6 +96,33 @@ export function executeEvaluation(options: CliOptions): CliResult {
   const stderr: string[] = [];
   const stdout: string[] = [];
 
+  // 0. Batch mode: sweep seeds × policies and emit the versioned balance
+  // report, the human-readable summary and the raw telemetry JSONL (AC4).
+  if (options.batch) {
+    const policyFactories = (
+      options.policies.length > 0 ? options.policies : [options.policy]
+    ).map((name) => resolvePolicyFactory(name));
+    const records: TelemetryRecord[] = [];
+    const batch = runBatch({
+      ...runConfig(options),
+      policies: policyFactories,
+      onRun: (run) => {
+        records.push(...run.records);
+      },
+    });
+    const summary = formatBalanceReport(batch.report);
+    artifacts.push({ name: 'balance-report.json', content: batch.json });
+    artifacts.push({ name: 'balance-report.txt', content: summary });
+    artifacts.push({ name: 'runs.jsonl', content: serialiseRecordsJsonl(records) });
+    stdout.push(options.json ? batch.json : summary);
+    return {
+      exitCode: 0,
+      stdout: `${stdout.join('\n\n')}\n`,
+      stderr: stderr.join('\n'),
+      artifacts,
+    };
+  }
+
   // 1. Main evaluation(s) — single policy or A/B.
   if (options.baseline && options.candidate) {
     const baseline = resolvePolicyFactory(options.baseline);
@@ -102,6 +150,19 @@ export function executeEvaluation(options: CliOptions): CliResult {
       stderr.push('No matching human run found in the supplied recording.');
       return { exitCode: 1, stdout: stdout.join('\n\n'), stderr: stderr.join('\n'), artifacts };
     }
+    // The shared human balance-statistics artifact (AH-0MV7WVEWL005XEMN): a
+    // versioned `BalanceReport` (`kind: 'balance'`, `policy: 'human'`)
+    // derived from the recording's flat record stream — the same schema the
+    // bot batch emits, so the two are directly comparable.
+    const humanRecords = parseTelemetryJsonl(options.humanRecordingText)
+      .records as TelemetryRecord[];
+    const humanStats = extractHumanBalanceStats(humanRecords);
+    artifacts.push({
+      name: 'human-balance-report.json',
+      content: serialiseReport(humanStats.report),
+    });
+    stdout.push(formatBalanceReport(humanStats.report));
+
     const seed = humanRun.runSeed;
     const botPolicy = resolvePolicyFactory(options.policy);
     const bot = runEvaluation(botPolicy, { ...runConfig(options), seeds: [seed] });
@@ -187,6 +248,8 @@ export function defaultOptions(): CliOptions {
     outputDir: 'eval-output',
     json: false,
     video: false,
+    batch: false,
+    policies: [],
     humanRecordingText: null,
     humanSeed: null,
   };

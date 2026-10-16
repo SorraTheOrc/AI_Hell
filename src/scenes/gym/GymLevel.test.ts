@@ -24,6 +24,7 @@ import {
 } from './GymLevel';
 import { Diver } from '../../entities/Diver';
 import { Harvester } from '../../entities/Harvester';
+import { RULES_STORAGE_KEY } from '../../core/rules';
 
 /** Waits for Phaser scene transitions to settle. */
 const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
@@ -398,5 +399,42 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     // The Harvester must have selected a live mineral as its target.
     expect(harvester!.seekTargetX).not.toBeNull();
     expect(harvester!.seekTargetY).not.toBeNull();
+  });
+
+  it('AC4/AC5 — a small asteroid kill spawns one extra_life drop on the field', async () => {
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ asteroidExtraLifeDropChance: 1 }),
+    );
+    const scene = await bootWith({
+      level: makeLevel('Asteroid', [scoutWave(1)]),
+    });
+    // 0.99 fails the generic pool and passes the forced 1.0 Extra Life roll.
+    scene.setSupplyRng(() => 0.99);
+    const before = scene.getDrops().length;
+
+    // A small asteroid is terminal (it never splits in the level gym), so it
+    // reaches the shared kill seam directly; feed it a minimal asteroid stub.
+    const smallAsteroid = {
+      x: 123,
+      y: 234,
+      alive: true,
+      getSizeTier: () => 'small' as const,
+    };
+    (
+      scene as unknown as { onEnemyDestroyed(enemy: unknown): void }
+    ).onEnemyDestroyed(smallAsteroid);
+
+    const drops = scene.getDrops();
+    expect(drops.length).toBe(before + 1);
+    // The cadence drop at boot can itself be an extra_life, so locate the
+    // kill drop by its exact death-site position (spawnSupplyDrop does no
+    // nudging).
+    const extra = drops.find(
+      (d) => d.dropId === 'extra_life' && d.x === 123 && d.y === 234,
+    );
+    expect(extra).toBeDefined();
+    expect(extra!.x).toBeCloseTo(123, 0);
+    expect(extra!.y).toBeCloseTo(234, 0);
   });
 });

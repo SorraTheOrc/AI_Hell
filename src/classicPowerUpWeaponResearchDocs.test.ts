@@ -176,4 +176,16 @@ describe('Classic power-up & weapon research is documented (AH-0MV1BIUGE005BJO8)
     const gdd = fs.readFileSync(GDD_PATH, 'utf8');
     expect(gdd).toContain('CLASSIC_POWERUP_WEAPON_RESEARCH');
   });
+
+  it('§6 records the re-balanced ship-centred smart bomb, not a screen-wide pulse (AH-0MV8GPGBL009M0D8)', () => {
+    // The smart bomb was re-balanced away from a screen-wide pulse to a
+    // modest 200 → 400 px ship-centred radius pulsing on a 30 → 10 s
+    // interval. The §6 entry must carry that framing and the new
+    // radius/interval schedules; a stale screen-wide description fails.
+    const snippet = snippetFor('Defender smart bomb');
+    expect(/ship-centred/i.test(snippet)).toBe(true);
+    expect(/200\s*→\s*400/.test(snippet)).toBe(true);
+    expect(/30\s*s?\s*→\s*10\s*s/.test(snippet)).toBe(true);
+    expect(/screen-wide/i.test(snippet)).toBe(false);
+  });
 });

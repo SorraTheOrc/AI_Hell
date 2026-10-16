@@ -15,7 +15,14 @@ import {
   buildBotWorld,
   predictIncomingFire,
 } from './worldModel';
-import { bullet, enemy, makeSnapshot, mineral } from './testFixtures';
+import {
+  bullet,
+  enemy,
+  makeSnapshot,
+  makeThrusterSnapshot,
+  DEFAULT_THRUSTER_CONFIG,
+  mineral,
+} from './testFixtures';
 
 describe('buildBotWorld', () => {
   it('partitions live enemies from asteroids and excludes dead ones', () => {
@@ -107,6 +114,18 @@ describe('buildBotWorld', () => {
     expect(new BotWorldModel().observe(snapshot)).toEqual(
       buildBotWorld(snapshot),
     );
+  });
+
+  it('carries the live thruster config on BotWorld.player unchanged (AH-0MV85WFWD0029DL7)', () => {
+    const snapshot = makeThrusterSnapshot(DEFAULT_THRUSTER_CONFIG, {
+      player: { x: 400, y: 300, vx: 175, vy: 0 },
+    });
+
+    const world = buildBotWorld(snapshot);
+
+    // No re-derivation: the decision layer receives the exact snapshot player.
+    expect(world.player).toEqual(snapshot.player);
+    expect(world.player!.thruster).toEqual(DEFAULT_THRUSTER_CONFIG);
   });
 });
 

@@ -35,6 +35,7 @@ import {
   WEAPON_CLUSTER_FIRE_RATE,
   WEAPON_CLUSTER_SUBDIVISION,
   CLUSTER_BASE_WARHEADS,
+  CLUSTER_WARHEAD_RADIUS_SCALE,
   WEAPON_OPTIONS_FIRE_RATE,
   WEAPON_OPTIONS_SUBDIVISION,
   OPTIONS_BASE_PODS,
@@ -90,6 +91,79 @@ describe('WEAPON_CATALOGUE', () => {
     expect(offsets[0]).toBeCloseTo(-thirtyDeg);
     expect(offsets[1]).toBeCloseTo(0);
     expect(offsets[2]).toBeCloseTo(thirtyDeg);
+  });
+
+  test('spread declares its visuals-only feel metadata (AH-0MV8229B9009DQGA)', () => {
+    const spread = WEAPON_CATALOGUE.spread;
+    // In-flight identity for the catalogue guard is the unique `diamond`
+    // shape family (never a second `disc`); the feel is added as visuals-only
+    // metadata — a warm rim, a brief fading trail, a soft muzzle flash and a
+    // distinct amber impact flash + baked hit cue.
+    expect(spread.bulletShape).toBe('diamond');
+    expect(spread.bulletRim).toBeDefined();
+    expect(spread.bulletTrail).toBeGreaterThan(0);
+    expect(spread.muzzleFlash).toBeDefined();
+    expect(spread.muzzleFlash!.color).toBe(BULLET_COLORS.spread);
+    expect(spread.impactFx).toBeDefined();
+    expect(spread.impactFx!.color).toBe(BULLET_COLORS.spread);
+    expect(spread.impactFx!.cue).toBe('playSpreadImpactSound');
+  });
+
+  test('dual declares its visuals-only feel metadata (AH-0MV8229NM009CZOA)', () => {
+    const dual = WEAPON_CATALOGUE.dual;
+    // In-flight identity for the catalogue guard stays the unique short
+    // `line`/beam family (never a dot); the feel is added as visuals-only
+    // metadata — a chunkier pulse-bar stroke, a short fading trail, a quick
+    // launch flash and a distinct magenta impact flash + baked hit cue.
+    expect(dual.bulletShape).toBe('line');
+    expect(dual.bulletShapeLength).toBeLessThan(3); // short beam, not the wave laser
+    expect(dual.bulletThickness).toBeDefined();
+    expect(dual.bulletThickness).toBeGreaterThan(1);
+    expect(dual.bulletTrail).toBeGreaterThan(0);
+    expect(dual.muzzleFlash).toBeDefined();
+    expect(dual.muzzleFlash!.color).toBe(BULLET_COLORS.dual);
+    expect(dual.impactFx).toBeDefined();
+    expect(dual.impactFx!.color).toBe(BULLET_COLORS.dual);
+    expect(dual.impactFx!.cue).toBe('playDualImpactSound');
+  });
+
+  test('rapid declares its visuals-only feel metadata (AH-0MV822A03006UT2P)', () => {
+    const rapid = WEAPON_CATALOGUE.rapid;
+    // In-flight identity for the catalogue guard stays the unique `spark`
+    // family (the `disc` family belongs to the cannon); the "small fast
+    // disc" read comes from visuals-only metadata — a white-hot rim on the
+    // small spark, a short fading trail, a staccato muzzle flash (the
+    // shortest in the catalogue) and a distinct yellow impact flash + baked
+    // hit cue.
+    expect(rapid.bulletShape).toBe('spark');
+    expect(rapid.bulletRim).toBeDefined();
+    expect(rapid.bulletSize).toBeLessThan(1); // small, fast disc-like read
+    expect(rapid.bulletTrail).toBeGreaterThan(0);
+    expect(rapid.muzzleFlash).toBeDefined();
+    // Staccato: the shortest, smallest launch flash in the catalogue.
+    expect(rapid.muzzleFlash!.duration).toBeLessThan(0.1);
+    expect(rapid.muzzleFlash!.radius).toBeLessThan(7);
+    expect(rapid.muzzleFlash!.color).toBe(BULLET_COLORS.rapid);
+    expect(rapid.impactFx).toBeDefined();
+    expect(rapid.impactFx!.color).toBe(BULLET_COLORS.rapid);
+    expect(rapid.impactFx!.cue).toBe('playRapidImpactSound');
+  });
+
+  test('ricochet declares its visuals-only feel metadata (AH-0MV822AP1006W2F9)', () => {
+    const ricochet = WEAPON_CATALOGUE.ricochet;
+    // In-flight identity: a teardrop/streak pellet with a white neon rim and
+    // a short fading trail (visual metadata on the definition, drawn through
+    // the shared bullet-shape seam).
+    expect(ricochet.bulletShape).toBe('teardrop');
+    expect(ricochet.bulletRim).toBeDefined();
+    expect(ricochet.bulletTrail).toBeGreaterThan(0);
+    // A clean launch flash at the ship, coloured to the pellet.
+    expect(ricochet.muzzleFlash).toBeDefined();
+    expect(ricochet.muzzleFlash!.color).toBe(BULLET_COLORS.ricochet);
+    // A distinct green edge-flash + baked bounce/hit cue.
+    expect(ricochet.impactFx).toBeDefined();
+    expect(ricochet.impactFx!.color).toBe(BULLET_COLORS.ricochet);
+    expect(ricochet.impactFx!.cue).toBe('playRicochetImpactSound');
   });
 
   test('dual fires 2 parallel bullets offset perpendicular to heading', () => {
@@ -681,6 +755,23 @@ describe('R-Type wave laser (AH-0MV1BIUSJ0090W92)', () => {
       WEAPON_CATALOGUE.cannon.bulletColor,
     );
   });
+
+  test('carries a wide muzzle flash, a faint trail and a distinct impact FX (AH-0MV822ACO007CEZF)', () => {
+    const def = WEAPON_CATALOGUE.wave_laser;
+    // Wide launch cue at the ship — larger than the cannon's default flash.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.wave_laser);
+    expect(def.muzzleFlash!.radius).toBeGreaterThan(
+      WEAPON_CATALOGUE.cannon.muzzleFlash!.radius,
+    );
+    // A short fading wake behind the beam in flight.
+    expect(def.bulletTrail).toBeDefined();
+    expect(def.bulletTrail!).toBeGreaterThan(0);
+    // Distinct neon-blue impact flash + the baked wave-laser hit cue.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.wave_laser);
+    expect(def.impactFx!.cue).toBe('playWaveLaserImpactSound');
+  });
 });
 
 describe('Centipede ricochet (AH-0MV1BIV5L005NJAI)', () => {
@@ -760,6 +851,36 @@ describe('Missile Command cluster missile (AH-0MV1BIVIJ007KYXU)', () => {
     expect(WEAPON_CATALOGUE.cluster.piercing).toBeUndefined();
     expect(WEAPON_CATALOGUE.cluster.bounce).toBeUndefined();
   });
+
+  test('declares its visuals-only feel metadata (AH-0MV822B1B0048UZT)', () => {
+    const cluster = WEAPON_CATALOGUE.cluster;
+    // In-flight identity: a small missile with an animated exhaust flame
+    // (drawn through the shared bullet-shape seam) and a short fading
+    // smoke trail.
+    expect(cluster.bulletShape).toBe('missile');
+    expect(cluster.bulletFlame).toBeDefined();
+    expect(cluster.bulletFlame!).toBeGreaterThan(0);
+    expect(cluster.bulletTrail).toBeGreaterThan(0);
+    // A white-hot neon rim outlines the missile body so it pops against
+    // the magenta core (shared seam rim knob).
+    expect(cluster.bulletRim).toBeDefined();
+    // A clean launch puff at the ship (shared spawn path).
+    expect(cluster.muzzleFlash).toBeDefined();
+    expect(cluster.muzzleFlash!.color).toBe(BULLET_COLORS.cluster);
+    // A distinct hot-pink impact flash + baked hit cue on connect.
+    expect(cluster.impactFx).toBeDefined();
+    expect(cluster.impactFx!.color).toBe(BULLET_COLORS.cluster);
+    expect(cluster.impactFx!.cue).toBe('playClusterImpactSound');
+  });
+
+  test('warhead discs stay visually distinct from the missile shell (AH-0MV822B1B0048UZT)', () => {
+    const cluster = WEAPON_CATALOGUE.cluster;
+    // The split payload shrinks each warhead below the shell radius and
+    // renders them as small discs (not tiny missiles) so the burst reads
+    // as a cluster of points.
+    expect(CLUSTER_WARHEAD_RADIUS_SCALE).toBeLessThan(1);
+    expect(cluster.splits).toBe(CLUSTER_BASE_WARHEADS);
+  });
 });
 
 describe('Gradius Options orbiting satellites (AH-0MV1BIVVK0043TEM)', () => {
@@ -802,5 +923,116 @@ describe('Gradius Options orbiting satellites (AH-0MV1BIVVK0043TEM)', () => {
     expect(WEAPON_CATALOGUE.options.bulletSize).toBeLessThan(
       WEAPON_CATALOGUE.cannon.bulletSize,
     );
+  });
+
+  test('carries the pod-shot visual identity (rim tint, light trail, muzzle flash, impact fx) (AH-0MV822BDN008IYL6)', () => {
+    const opts = WEAPON_CATALOGUE.options;
+    // A small pod dart with its own pale-aqua tint (rim), a short faint
+    // fading trail, an aqua launch flash and a baked aqua impact pop — all
+    // visual metadata, distinct from the main gun.
+    expect(opts.bulletShape).toBe('chevron');
+    expect(opts.bulletRim).toBe(0xd9fff2);
+    expect(opts.bulletTrail).toBeGreaterThan(0);
+    expect(opts.muzzleFlash).toBeDefined();
+    expect(opts.muzzleFlash!.color).toBe(BULLET_COLORS.options);
+    expect(opts.impactFx).toBeDefined();
+    expect(opts.impactFx!.cue).toBe('playOptionsImpactSound');
+  });
+});
+
+describe('Nova expanding-ring shockwave (AH-0MV822BPT002GF17)', () => {
+  test('carries the ring weapon definition unchanged (visual metadata only)', () => {
+    const nova = WEAPON_CATALOGUE.nova;
+    // The Nova shot is an expanding ring shockwave from the ship: the ring
+    // bullet shape stays unique to the Nova (roster), and the muzzle flash
+    // launch cue + per-shot impact are visual/feel metadata on the def.
+    expect(nova.bulletShape).toBe('ring');
+    expect(nova.bulletColor).toBe(BULLET_COLORS.nova);
+    expect(nova.bulletSize).toBeGreaterThan(0);
+    expect(nova.aoe?.trigger).toBe('onFire');
+    // Fire feel: a bright flash at the ship when the ring launches (shared
+    // combat-core muzzle-flash path drives it from this metadata).
+    expect(nova.muzzleFlash).toBeDefined();
+    expect(nova.muzzleFlash!.color).toBe(BULLET_COLORS.nova);
+    expect(nova.muzzleFlash!.duration).toBeGreaterThan(0);
+  });
+});
+
+describe('Mortar arcing-shell blast (AH-0MV822C250051OVN)', () => {
+  test('keeps the shell shape and onRandom blast mechanics unchanged', () => {
+    const mortar = WEAPON_CATALOGUE.mortar;
+    // The Mortar's unique in-flight family is the `shell` primitive — no
+    // other weapon claims it — so each shot reads as an arcing shell. The
+    // blast still resolves instantly at a random in-range point (no
+    // travelling projectile): the visual work adds feel, never behaviour.
+    expect(mortar.bulletShape).toBe('shell');
+    expect(mortar.bulletColor).toBe(BULLET_COLORS.mortar);
+    expect(mortar.aoe?.trigger).toBe('onRandom');
+    expect(mortar.aoe?.projectileSpeed).toBe(AOE_PROJECTILE_SPEEDS.mortar);
+  });
+
+  test('carries the launch-flash fire VFX through the shared combat-core path (AH-0MV822C250051OVN)', () => {
+    const mortar = WEAPON_CATALOGUE.mortar;
+    // A hot deep-orange launch flash at the ship when the shell fires — the
+    // shared combat-core spawn path (`_autoFire`) drives it from this
+    // metadata, so the game and every gym show the identical flash.
+    expect(mortar.muzzleFlash).toBeDefined();
+    expect(mortar.muzzleFlash!.color).toBe(BULLET_COLORS.mortar);
+    expect(mortar.muzzleFlash!.radius).toBeGreaterThan(0);
+    expect(mortar.muzzleFlash!.duration).toBeGreaterThan(0);
+  });
+
+  test('fires once every 2 beats and stays an AOE weapon on the grid', () => {
+    // The visual/feel work must not touch the cadence: the Mortar still fires
+    // once every two beats and remains an exact multiple of the beat period.
+    expect(WEAPON_CATALOGUE.mortar.fireRateMs).toBe(1500);
+    expect(isAoeWeapon('mortar')).toBe(true);
+    expect(isOnBeatGrid(WEAPON_CATALOGUE.mortar.fireRateMs)).toBe(true);
+  });
+});
+
+describe('Arc chaining-bolt feel (AH-0MV822CE7004MQ14)', () => {
+  test('keeps the bolt shape and onFire chain mechanics unchanged', () => {
+    const arc = WEAPON_CATALOGUE.arc;
+    // The Arc's unique in-flight family is the `bolt` primitive — a jagged
+    // lightning bolt between targets drawn by the shared chain VFX
+    // (`spawnArcChain`). The chain still resolves instantly at fire time (no
+    // travelling projectile): the visual/feel work adds feedback, never
+    // behaviour.
+    expect(arc.bulletShape).toBe('bolt');
+    expect(arc.bulletColor).toBe(BULLET_COLORS.arc);
+    expect(arc.aoe?.trigger).toBe('onFire');
+    expect(arc.aoe?.chains).toBe(2);
+  });
+
+  test('carries the launch-flash fire VFX through the shared combat-core path (AH-0MV822CE7004MQ14)', () => {
+    const arc = WEAPON_CATALOGUE.arc;
+    // A bright electric-purple launch flash at the ship when the bolt fires —
+    // the shared combat-core spawn path (`_autoFire`) drives it from this
+    // metadata, so the game and every gym show the identical flash.
+    expect(arc.muzzleFlash).toBeDefined();
+    expect(arc.muzzleFlash!.color).toBe(BULLET_COLORS.arc);
+    expect(arc.muzzleFlash!.radius).toBeGreaterThan(0);
+    expect(arc.muzzleFlash!.duration).toBeGreaterThan(0);
+  });
+
+  test('carries distinct electric connect feedback (impact flash + baked cue) (AH-0MV822CE7004MQ14)', () => {
+    const arc = WEAPON_CATALOGUE.arc;
+    // Every bolt that lands flashes at its target and plays the baked arc
+    // impact cue through the shared impact seam — routed so the game and
+    // every gym connect identically.
+    expect(arc.impactFx).toBeDefined();
+    expect(arc.impactFx!.cue).toBe('playArcImpactSound');
+    expect(arc.impactFx!.color).toBe(BULLET_COLORS.arc);
+    expect(arc.impactFx!.radius).toBeGreaterThan(0);
+    expect(arc.impactFx!.duration).toBeGreaterThan(0);
+  });
+
+  test('fires once per beat and stays an AOE weapon on the grid', () => {
+    // The visual/feel work must not touch the cadence: the Arc still fires
+    // once per beat and remains an exact subdivision of the beat period.
+    expect(WEAPON_CATALOGUE.arc.fireRateMs).toBe(750);
+    expect(isAoeWeapon('arc')).toBe(true);
+    expect(isOnBeatGrid(WEAPON_CATALOGUE.arc.fireRateMs)).toBe(true);
   });
 });

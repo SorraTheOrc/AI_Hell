@@ -197,19 +197,62 @@ export class Capturer extends BaseEnemy {
     this.bodyGraphics.strokePath();
   }
 
-  /** Redraws the translucent beam corridor from the capturer's centre. */
+  /** Redraws the tractor-beam field from the capturer's centre. */
   private _drawBeam(): void {
     this.beamGraphics.clear();
     const beam = this._beam;
     if (!beam || !beam.active) return;
-    this.beamGraphics.fillStyle(CAPTURER_BEAM_COLOR, 0.22);
-    this.beamGraphics.fillRect(-beam.width / 2, 0, beam.width, beam.length);
-    // Bright core line down the axis.
+    const width = Math.max(2, beam.width);
+    const length = Math.max(2, beam.length);
+    const half = width / 2;
+    // Tapering tractor beam: a funnel that narrows toward the capturer and
+    // flairs at the far end, like the classic Galaga tractor beam — a
+    // translucent magenta field with a bright core rail and converging side
+    // field-lines, plus a flowing energy shimmer (time-driven, redrawn each
+    // frame) and a bright capture lure at the beam's far end (AH-0MV822G6F002JRRY).
+    const farHalf = half * 1.35; // far-end flair
+    const nearHalf = half * 0.55; // narrow at the capturer
+    // Translucent funnel fill.
+    this.beamGraphics.fillStyle(CAPTURER_BEAM_COLOR, 0.16);
+    this.beamGraphics.beginPath();
+    this.beamGraphics.moveTo(-nearHalf, 0);
+    this.beamGraphics.lineTo(-farHalf, length);
+    this.beamGraphics.lineTo(farHalf, length);
+    this.beamGraphics.lineTo(nearHalf, 0);
+    this.beamGraphics.closePath();
+    this.beamGraphics.fillPath();
+    // Bright core rail down the field axis.
     this.beamGraphics.lineStyle(2, CAPTURER_BEAM_COLOR, 0.7);
     this.beamGraphics.beginPath();
     this.beamGraphics.moveTo(0, 0);
-    this.beamGraphics.lineTo(0, beam.length);
+    this.beamGraphics.lineTo(0, length);
     this.beamGraphics.strokePath();
+    // Three converging field lines (edge + two inner) — the "tractor" read.
+    this.beamGraphics.lineStyle(1, CAPTURER_BEAM_COLOR, 0.35);
+    for (const t of [-0.78, -0.36, 0.36, 0.78]) {
+      this.beamGraphics.beginPath();
+      this.beamGraphics.moveTo(t * nearHalf, 0);
+      this.beamGraphics.lineTo(t * farHalf, length);
+      this.beamGraphics.strokePath();
+    }
+    // Flowing energy shimmer: bright motes travelling down the field with the
+    // local phase (time-driven, so it swims identically in the game and gyms).
+    const t = this._localPhase;
+    for (let k = 0; k < 3; k++) {
+      const frac = ((t * 0.6 + k / 3) % 1 + 1) % 1; // 0 (source) → 1 (far end)
+      const y = frac * length;
+      const fx = (1 - frac) * nearHalf + frac * farHalf;
+      const alpha = 0.5 * Math.abs(Math.sin(t * 4 + k));
+      this.beamGraphics.fillStyle(CAPTURER_BEAM_COLOR, alpha);
+      this.beamGraphics.beginPath();
+      this.beamGraphics.arc(0, y, Math.max(1.5, fx * 0.35), 0, Math.PI * 2, false);
+      this.beamGraphics.fillPath();
+    }
+    // Bright capture lure at the far end — the hazard point.
+    this.beamGraphics.fillStyle(0xffffff, 0.5);
+    this.beamGraphics.beginPath();
+    this.beamGraphics.arc(0, length, 5, 0, Math.PI * 2, false);
+    this.beamGraphics.fillPath();
   }
 
   /** Live particle-explosion handles (copy — for tests/SHUTDOWN checks). */

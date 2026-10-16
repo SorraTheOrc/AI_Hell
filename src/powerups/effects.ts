@@ -55,18 +55,23 @@
  *   without damaging 1-HP enemies (GDD §4.4).
  * - **Phase Shift** — charge-based auto-trigger (parent
  *   AH-0MUIYX1EE008FVS8). Collecting Phase Shift stores the level-resolved
- *   `phaseCharges` auto-activation charges (or grants unlimited activations
- *   for the hold-full reward); the shared combat core calls
+ *   `phaseCharges` auto-activation charges in a **finite recharging pool**
+ *   (the hold-full reward adds exactly one charge — never unlimited,
+ *   AH-0MV82I7TX0009JMT); the shared combat core calls
  *   {@link EffectsRegistry.updateDanger} each frame and the registry
  *   activates a `phaseDuration` pass-through the moment the player is in
- *   real danger and a charge is available. After expiry it re-arms only once
- *   danger has cleared and a short cooldown has elapsed (Q2/Q3).
- * - **Teleport** — stored FIFO stacks (no timer); the shared automatic
- *   defence feed spends one FIFO use when Teleport is selected
+ *   real danger and a charge is available. Spent charges return through the
+ *   shared {@link EffectsRegistry.tick} recharge clock
+ *   (AH-0MV82I8IL0012RXY). After expiry it re-arms only once danger has
+ *   cleared and a short cooldown has elapsed (Q2/Q3).
+ * - **Teleport** — a recharging FIFO pool (AH-0MV82I7TX0009JMT): the shared
+ *   automatic defence feed spends one FIFO use when Teleport is selected
  *   (AH-0MUZE4AIP009HZWC) and grants Phase Shift for
  *   `teleportPhaseDuration` at the landing spot without consuming an
- *   auto-activation charge (Q6). Safe-spot resolution is the scene's
- *   responsibility; this module tracks only the stored count.
+ *   auto-activation charge (Q6). A spent stack returns through the shared
+ *   {@link EffectsRegistry.tick} recharge clock (AH-0MV82I8IL0012RXY).
+ *   Safe-spot resolution is the scene's responsibility; this module tracks
+ *   only the stored count.
  *
  * The registry is pure (no Phaser imports). The scene layers
  * movement/ship integration, bullet clearing, hit-response and teleport
@@ -86,6 +91,7 @@ import {
 } from '../core/constants';
 import {
   POWER_UP_LIVES_START,
+  POWER_UP_CHARGE_CAP,
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
   type PowerUpLevelStats,
@@ -165,8 +171,11 @@ export interface ActiveEffect {
    */
   stacks?: number;
   /**
-   * True when the effect has unlimited uses for the run (e.g. the hold-full
-   * Phase Shift reward). Rendered as an unlimited marker rather than a count.
+   * True when the effect is permanently owned for the run and has no timed
+   * window (e.g. a hold-full Bomb, or the Phase Shift ownership marker).
+   * Rendered as the ∞ permanent value (– the level is permanent for the
+   * run), never an unlimited supply: the Phase Shift pool itself is finite,
+   * recharges (AH-0MV82I7TX0009JMT) and is surfaced as a ` ×N` pool count.
    */
   permanent?: boolean;
 }
@@ -226,15 +235,18 @@ export type DangerDecision = AutoDefenceChoice | null;
  * - Only one available → that ability.
  * - Both available → the ability with the **greater** available count.
  * - Equal finite counts → a uniform 50/50 pick driven by `rng`.
- * - A permanent Phase Shift is **unbounded** (count `Infinity`) and so
- *   always outranks a finite Teleport stack, conserving Teleports while
- *   unlimited Phase Shift is owned (documented assumption).
+ *
+ * Both pools are **finite**: Phase Shift and Teleport are recharging pools
+ * capped at {@link POWER_UP_CHARGE_CAP} (3) in the level store, an empty
+ * pool contributes zero available count, and there is no unbounded
+ * /permanent-Infinity branch — the permanent Phase Shift reward is an
+ * ownership flag, not an unlimited supply, so it never outranks a stored
+ * Teleport on ownership alone (AH-0MV82I8IL0012RXY AC2).
  *
  * Pure and engine-agnostic so the game and every gym share one rule and the
  * tie-break is deterministically testable via an injectable `rng`.
  *
  * @param phaseCharges — stored Phase Shift auto-activation charges.
- * @param phasePermanent — whether the Phase Shift reward is unlimited.
  * @param teleportStacks — stored Teleport FIFO stacks.
  * @param rng — random source in `[0, 1)`; only consulted for an exact tie
  *   between two finite counts. Injectable/seeded for deterministic tests.
@@ -242,13 +254,10 @@ export type DangerDecision = AutoDefenceChoice | null;
  */
 export function selectAutoDefence(
   phaseCharges: number,
-  phasePermanent: boolean,
   teleportStacks: number,
   rng: () => number = Math.random,
 ): AutoDefenceChoice | null {
-  const phaseCount = phasePermanent
-    ? Number.POSITIVE_INFINITY
-    : Math.max(0, phaseCharges);
+  const phaseCount = Math.max(0, phaseCharges);
   const teleportCount = Math.max(0, teleportStacks);
   const phaseAvailable = phaseCount > 0;
   const teleportAvailable = teleportCount > 0;
@@ -293,7 +302,10 @@ interface TimedEffectState {
  *
  * Lives/stack/charge state is **delegated** to the injected run-scoped
  * {@link PowerUpLevelStore}; only timing state (active durations, timers,
- * Phase Shift re-arm) lives here.
+ * Phase Shift re-arm) lives here. `tick(dt)` also forwards `dt` to the
+ * store's recharge clock, so every scene that ticks the registry (the game
+ * and each gym) recovers spent Phase Shift/Teleport charges identically
+ * through one shared path (AH-0MV82I8IL0012RXY AC1/AC5).
  */
 export class EffectsRegistry {
   private _timed = new Map<PowerUpId, TimedEffectState>();
@@ -341,7 +353,7 @@ export class EffectsRegistry {
    */
   private _bombPulsePending = false;
 
-  // ── Smart Bomb screen-pulse state (AH-0MV1BIWP9003EHRQ) ──────────────
+  // ── Smart Bomb pulse state (AH-0MV1BIWP9003EHRQ) ─────────────────────
   /**
    * True when a hold-full Smart Bomb granted a permanent pulse for the run:
    * it never expires and pulses every {@link smartBombInterval} seconds.
@@ -514,7 +526,7 @@ export class EffectsRegistry {
         }
         break;
       case 'smart_bomb':
-        // smart_bomb: a field pickup queues one screen-wide pulse; the
+        // smart_bomb: a field pickup queues one ship-centred pulse; the
         // hold-full reward additionally makes it permanent and pulses
         // immediately (mirrors the Bomb; AH-0MV1BIWP9003EHRQ).
         this._smartBombPulsePending = true;
@@ -615,12 +627,19 @@ export class EffectsRegistry {
   }
 
   /**
-   * Advances timers by `dt` seconds, removing expired effects and weapons.
-   * Permanent effects (granted by the hold-full choice) never expire, but an
-   * active temporary field-pickup window on top of one still expires and
-   * clears the store's temporary level (AC1/AC2).
+   * Advances timers by `dt` seconds: the run-scoped recharge clock (a spent
+   * Phase Shift/Teleport charge returns to its finite pool when its timer
+   * elapses) and the timed effect/weapon windows, removing expired effects
+   * and weapons. Permanent effects (granted by the hold-full choice) never
+   * expire, but an active temporary field-pickup window on top of one still
+   * expires and clears the store's temporary level (AC1/AC2).
    */
   tick(dt: number): void {
+    // Advance the run-scoped recharge clock through the shared tick path, so
+    // the game and every gym recover spent Phase Shift/Teleport charges
+    // identically (AH-0MV82I8IL0012RXY AC1/AC5). The store ignores
+    // non-positive/non-finite `dt`.
+    this._levelStore.tickRecharge(dt);
     // Expire timed power-up effects (permanent effects are skipped unless a
     // temporary window is active on top of them).
     for (const [id, effect] of [...this._timed]) {
@@ -878,25 +897,33 @@ export class EffectsRegistry {
 
   /**
    * The resolved Smart Bomb pulse rate in pulses per second at the current
-   * level. Resolved live, so a level-up mid-run quickens every subsequent
-   * pulse.
+   * level — the derived inverse (`1 / interval`) of the stored descending
+   * interval schedule, monotonic non-decreasing by construction. Resolved
+   * live, so a level-up mid-run quickens every subsequent pulse.
    */
   smartBombFrequency(): number {
-    return this._levelStore.stats('smart_bomb').smartBombFrequency ?? 0.2;
+    const interval = this.smartBombInterval();
+    return Number.isFinite(interval) && interval > 0
+      ? 1 / interval
+      : 0;
   }
 
   /**
-   * The resolved Smart Bomb pulse interval in seconds (`1 / frequency`). The
-   * model stores a monotonic pulses/second rate; the effect inverts it.
+   * The resolved Smart Bomb pulse interval in seconds: `max(10, 30 − 2×level)`
+   * (30 s on the first grant, 10 s at and beyond level 10). Stored
+   * descending on the level schedule so the shared effect path reads it
+   * directly; {@link smartBombFrequency} is its monotonic inverse.
    */
   smartBombInterval(): number {
-    const frequency = this.smartBombFrequency();
-    return frequency > 0 ? 1 / frequency : Number.POSITIVE_INFINITY;
+    const interval = this._levelStore.stats('smart_bomb').smartBombInterval;
+    return interval !== undefined && Number.isFinite(interval) && interval > 0
+      ? interval
+      : Number.POSITIVE_INFINITY;
   }
 
   /**
    * The shared {@link AoEDescriptor} describing one Smart Bomb pulse: a
-   * screen-wide (`aoeRadius`) area that damages every enemy once for the
+   * ship-centred (`aoeRadius`) area that damages every enemy once for the
    * level-resolved `smartBombDamage` and clears every enemy bullet.
    *
    * Building the descriptor here (rather than hand-rolling an area effect in
@@ -909,7 +936,7 @@ export class EffectsRegistry {
     const stats = this._levelStore.stats('smart_bomb');
     return {
       trigger: 'screenPulse',
-      radius: stats.aoeRadius ?? 1200,
+      radius: stats.aoeRadius ?? 200,
       damagesEnemies: true,
       clearsEnemyBullets: true,
       damage: Math.max(1, Math.floor(stats.smartBombDamage ?? 1)),
@@ -925,8 +952,8 @@ export class EffectsRegistry {
    *   {@link smartBombInterval} seconds for the rest of the run.
    *
    * The registry owns the decision; the shared combat core performs the
-   * screen-wide clear/damage through {@link smartBombAoe} so the game and
-   * every gym run the same code.
+   * ship-centred area clear/damage through {@link smartBombAoe} so the game
+   * and every gym run the same code.
    *
    * @param dt - Frame delta in seconds.
    * @returns True when a pulse should be applied this frame.
@@ -983,13 +1010,14 @@ export class EffectsRegistry {
    * When `inDanger` is true, the player is not already phased, danger has
    * cleared since the last activation and the shared re-arm cooldown has
    * elapsed, this selects which defensive ability to spend via
-   * {@link selectAutoDefence} (greater charge count wins; an exact tie is a
-   * seeded 50/50) and, for Phase Shift, activates the level-resolved
-   * `phaseDuration` and consumes one charge (permanent rewards do not
-   * consume). Teleport is **not** consumed here — the registry has no player
-   * or warp — so the scene performs the warp on the returned decision. Either
-   * way the danger episode is latched so at most one ability fires per
-   * episode (AC5).
+   * {@link selectAutoDefence} (greater finite pool count wins; an exact tie
+   * is a seeded 50/50) and, for Phase Shift, activates the level-resolved
+   * `phaseDuration` and consumes one charge from the **finite** pool (the
+   * permanent reward is an ownership flag — never an unlimited supply).
+   * Teleport is **not** consumed here — the registry has no player or warp —
+   * so the scene performs the warp on the returned decision. Either way the
+   * danger episode is latched so at most one ability fires per episode
+   * (AC5).
    *
    * @param inDanger — whether the danger helper reports the ship surrounded.
    * @param dt — frame delta in seconds (advances the shared re-arm cooldown).
@@ -1011,7 +1039,6 @@ export class EffectsRegistry {
     const store = this._levelStore;
     const choice = selectAutoDefence(
       store.phaseCharges(),
-      store.isPhasePermanent(),
       store.teleportStacks(),
       this._rng,
     );
@@ -1022,20 +1049,28 @@ export class EffectsRegistry {
     this._dangerCleared = false;
 
     if (choice === 'phase_shift') {
-      // `consumePhaseCharge` returns false only when neither a real charge
-      // nor the permanent reward is available (AC3: one derived model).
+      // `consumePhaseCharge` returns false only when the finite pool is
+      // empty (AC3); `selectAutoDefence` already required a non-zero count,
+      // so the fallback only guards a raced consumption.
       if (!store.consumePhaseCharge()) return null;
       this._activatePhase(store.stats('phase_shift').phaseDuration ?? 1.5);
     }
     return choice;
   }
 
-  /** Stored Phase Shift auto-activation charges (0 for a permanent reward). */
+  /**
+   * Stored Phase Shift auto-activation charges (0 when the finite pool is
+   * empty — even for a permanent owner, AH-0MV82I8IL0012RXY AC3). HUD-facing.
+   */
   phaseCharges(): number {
     return this._levelStore.phaseCharges();
   }
 
-  /** Whether the hold-full reward granted unlimited Phase Shift activations. */
+  /**
+   * Whether the hold-full reward made Phase Shift permanently owned. This is
+   * an ownership flag only — the pool is finite and recharges like any
+   * other charge (AH-0MV82I7TX0009JMT AC4).
+   */
   isPhasePermanent(): boolean {
     return this._levelStore.isPhasePermanent();
   }
@@ -1043,6 +1078,26 @@ export class EffectsRegistry {
   /** Stored teleport uses (Teleport). */
   teleportStacks(): number {
     return this._levelStore.teleportStacks();
+  }
+
+  /**
+   * Phase Shift recharge time in seconds at the current level — the
+   * HUD-facing view of the recharge clock a spent charge is counting down
+   * (30 s base → 10 s cap, level-derived via `phaseRechargeRate`;
+   * AH-0MV82I8IL0012RXY AC4).
+   */
+  phaseRechargeTime(): number {
+    return this._levelStore.phaseRechargeTime();
+  }
+
+  /**
+   * Teleport recharge time in seconds at the current level — the HUD-facing
+   * view of the recharge clock a spent stack is counting down (15 s base →
+   * 5 s cap, level-derived via `teleportRechargeRate`;
+   * AH-0MV82I8IL0012RXY AC4).
+   */
+  teleportRechargeTime(): number {
+    return this._levelStore.teleportRechargeTime();
   }
 
   /** Whether at least one teleport use is stored. */
@@ -1309,9 +1364,12 @@ export class EffectsRegistry {
         stacks: teleportStacks,
       });
     }
-    // Phase Shift auto-activation charges (parent AH-0MUIYX1EE008FVS8): a finite
-    // stock-pile renders as a count, the hold-full reward as unlimited. A
-    // zero charge count is never surfaced (no misleading "x0").
+    // Phase Shift auto-activation charges (parent AH-0MUIYX1EE008FVS8): a
+    // finite stock-pile renders as a count; the permanent owner marker as an
+    // ∞ value (the level is permanent for the run) — never an unlimited
+    // supply, the pool is finite, recharges and is surfaced via phaseCharges()
+    // (the HUD grey-out for an empty pool is AH-0MV82I97Y007MB6M). A zero
+    // charge count is never surfaced (no misleading "x0").
     if (this.isPhasePermanent()) {
       result.push({
         id: 'phase_shift' as PowerUpId,

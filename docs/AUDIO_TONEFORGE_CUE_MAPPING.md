@@ -78,8 +78,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playMajorExplosionSound` | Layered major blast: saw thump 150→26 + triangle body 340→38 + LP noise tail, 4-voice limiter | Wave timeout — retained but unused | **none** | **retired** | — (see Retired cues) |
 | `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s, vol 0.12 | Player bullet destroys enemy bullet | `vfx/bulletImpact` | new | `aihell-bullet-destruction` |
 | `playTankDestructionSound` | Saw 220→30 Hz, 0.45 s, vol 0.2 | Intentionally unwired | **none** (test-only) | **retired** | — (see Retired cues) |
-| `playTankAdvanceCue` | Advancing saw 150→320 Hz + square sub 75→160 Hz, 0.6 s | Advance cue (≥ 500 ms) | `entities/Tank` | new | `aihell-tank-advance` |
-| `playTankFireSound` | Heavy saw+sine cannon thump ~90→25 Hz, scheduled at cue end | Enemy fire / no-gap | `entities/Tank` | new | `aihell-tank-fire` |
+| `playTankAdvanceCue` | Advancing saw 150→320 Hz + square sub 75→160 Hz, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Tank` | new | `aihell-tank-advance` |
+| `playTankFireSound` | Heavy saw+sine cannon thump ~90→25 Hz, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Tank` | new | `aihell-tank-fire` |
 | `playPowerUpSpawnSound` | Bright ascending blip (higher than enemy spawn) | Power-up spawn (advance) | `GymWeapons`, `GymWeaponLeveling` | new | `aihell-pickup-spawn` |
 | `playPowerUpDespawnSound` | Quick descending blip, lower vol, shorter | Power-up despawn | `GymWeapons`, `GymWeaponLeveling` | new | `aihell-pickup-despawn` |
 | `playPowerUpCollectSound` | Cheerful two-tone ascending chime | Power-up pickup | `dropLayer` | **existing** | `card-token-earn` |
@@ -88,8 +88,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playSwarmBurstSound` | Saw buzz 120→80 Hz + sine whoosh 200→600 Hz, ~0.2 s | Swarm volley buzz | `entities/Swarm` | new | `aihell-swarm-burst` |
 | `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
 | `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s, scheduled at cue end | Enemy fire / no-gap | `entities/Phaser` | new | `aihell-phaser-fire` |
-| `playScoutAdvanceCue` | Rising sine, pitched above Phaser, 0.6 s | Advance cue (≥ 500 ms) | `entities/Scout` | new | `aihell-scout-advance` |
-| `playScoutFireSound` | High square laser sweep, scheduled at cue end | Enemy fire / no-gap | `entities/Scout` | **existing** | `weapon-laser-zap` |
+| `playScoutAdvanceCue` | Rising sine, pitched above Phaser, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Scout`, `entities/OrbitalStrike` | new | `aihell-scout-advance` |
+| `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Scout` | **existing** | `weapon-laser-zap` |
 | `playDiverDiveStartSound` | Rising saw 150→600 Hz + filtered noise, ~0.25 s | Dive danger cue | `entities/Diver` | new | `aihell-diver-dive-start` |
 | `playDiveSound` | Bandpass noise sweep 300→900 Hz, refcounted shared ~2 s voice | Diver dive | `entities/Diver` | new | `aihell-diver-dive-loop` |
 | `stopDiveSound` | Stops/releases the shared dive voice | Diver dive | `entities/Diver` | control | (companion to `aihell-diver-dive-loop`) |
@@ -98,13 +98,28 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playBossFireSound` | Saw 200→50 Hz + low sine undertone, ~0.2 s | Boss fire | `entities/Boss` | new | `aihell-boss-fire` |
 | `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s | Boss per-hit feedback | shared boss feedback path (wired by AH-0MUZMTTPE0074X59) | new | `aihell-boss-hit` |
 | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s, vol 0.15 | Player cannon fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-cannon-fire` |
+| `playCannonImpactSound` | Punchy saw impact 520→90 Hz + square click + HP noise smack, ~0.13 s | Player cannon hit (when a shot connects) | shared impact seam in `CombatScene` (AH-0MV8228YW0050IXS) | new | `aihell-cannon-impact` |
+| `playSpreadImpactSound` | Warm amber triangle wedge 900→150 Hz + soft noise tick, ~0.14 s | Player spread hit (when a shot connects) | shared impact seam in `CombatScene` (AH-0MV8229B9009DQGA) | new | `aihell-spread-impact` |
 | `playSpreadFireSound` | Triangle 600→1200→800 Hz, ~0.12 s, vol 0.15 | Player spread fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-spread-fire` |
 | `playDualFireSound` | Saw 900→300 Hz + offset sine tick, ~0.06 s | Player dual fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-dual-fire` |
+| `playDualImpactSound` | Bright twin square snap 1400→600 Hz + sine echo + HP noise tick, ~0.11 s | Player dual hit (when either twin bar connects) | shared impact seam in `CombatScene` (AH-0MV8229NM009CZOA) | new | `aihell-dual-impact` |
+| `playRapidImpactSound` | Tight staccato square tick 2400→1100 Hz + thin triangle shimmer + HP noise tap, ~0.06 s | Player rapid hit (when a shot connects) | shared impact seam in `CombatScene` (AH-0MV822A03006UT2P) | new | `aihell-rapid-impact` |
 | `playRapidFireSound` | Triangle 500→900 Hz, ~0.05 s, vol 0.12 | Player rapid fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-rapid-fire` |
 | `playNovaFireSound` | Saw 160→40 Hz + rising triangle ring 300→1800 Hz | Player Nova fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-nova-fire` |
+| `playNovaImpactSound` | Bright expanding ring ping — triangle 1600→300 Hz + light HP noise shimmer, ~0.16 s | Player Nova ring connect | shared AOE VFX seam in `CombatScene` (AH-0MV822BPT002GF17) | new | `aihell-nova-impact` |
 | `playMortarFireSound` | Muffled triangle 220→90 Hz + high barrel tick | Player Mortar fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-mortar-fire` |
+| `playMortarImpactSound` | Sharp dry shell-impact crack — triangle 900→150 Hz + HP noise smack, ~0.12 s | Player Mortar shell lands / blast connects | shared AOE detonation seam in `CombatScene` (AH-0MV822C250051OVN) | new | `aihell-mortar-impact` |
 | `playMortarDetonationSound` | Heavy saw 180→40 Hz + LP noise wash | Mortar detonation | `CombatScene` | new | `aihell-mortar-detonation` |
 | `playArcFireSound` | Square 1400→500→1120 Hz + HP noise crackle | Player Arc fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-arc-fire` |
+| `playArcImpactSound` | Sharp electric crack — saw 2400→900→220 Hz + fast HP noise zipper, ~0.14 s | Player Arc bolt connects / chains | shared AOE chain seam in `CombatScene` (AH-0MV822CE7004MQ14) | new | `aihell-arc-impact` |
+| `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz with a brief sustain, ~0.1 s | Player wave-laser fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
+| `playWaveLaserImpactSound` | Sharp neon snap — saw 800→200 Hz + square click + BP noise crack, ~0.12 s | Player wave-laser hit (when the beam connects) | shared impact seam in `CombatScene` (AH-0MV822ACO007CEZF) | new | `aihell-wave-laser-impact` |
+| `playRicochetFireSound` | Bright springy ping — triangle 1400→500 Hz + square tick, ~0.1 s | Player ricochet fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-ricochet-fire` |
+| `playRicochetImpactSound` | Soft high bounce tick — triangle 1800→900 Hz + HP noise smack, ~0.09 s | Player ricochet wall bounce or connect | shared impact seam in `CombatScene` (AH-0MV822AP1006W2F9) | new | `aihell-ricochet-impact` |
+| `playClusterFireSound` | Low missile launch — square 300→90 Hz + swept lowpass noise whoosh + bright ignition click, ~0.16 s | Player cluster-missile fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-cluster-fire` |
+| `playClusterImpactSound` | Heavy detonation thump — saw 260→60 Hz + lowpass noise smack, ~0.18 s | Player cluster-missile shell/warhead connect | shared impact seam in `CombatScene` (AH-0MV822B1B0048UZT) | new | `aihell-cluster-impact` |
+| `playOptionsFireSound` | Bright soft two-tone twinkle — triangle 900→1600 Hz + light sine overtone, ~0.07 s | Player options pod-volley fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-options-fire` |
+| `playOptionsImpactSound` | Soft bright aqua pop — triangle 1300→550 Hz + light HP noise tick, ~0.11 s | Player options pod-shot connect | shared impact seam in `CombatScene` (AH-0MV822BDN008IYL6) | new | `aihell-options-impact` |
 | `playSpreadPickupSound` | Triangle 500→1500→800 Hz, ~0.15 s | Spread pickup | `dropLayer` | new | `aihell-pickup-spread` |
 | `playDualPickupSound` | Saw 1000→500 then 1200→700 Hz, 0.06 s apart | Dual pickup | `dropLayer` | new | `aihell-pickup-dual` |
 | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | Rapid pickup | `dropLayer` | new | `aihell-pickup-rapid` |
@@ -120,7 +135,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playVictorySparkleSound` | Bright sine 1400→600 Hz + HP shimmer, ~0.12 s | Victory firework sparkle | `endOfRunJuice.spawnVictoryFireworks` | new | `aihell-victory-sparkle` |
 | `playDefeatStingSound` | Five-note descent G4-F4-D4-B3-G3 + sinking 98→73.42 Hz drone + LP rumble tail, ~2.9 s, ≤ 0.2 | Defeat | `GameOverScene` | new | `aihell-defeat-sting` (sequence + stack) |
 | `playVolumeFeedback` | Player hull-breach cue at selected gain, pitch unchanged | Settings volume feedback | `SettingsScene` | **existing** | `aihell-player-hull-breach` (gain-scaled) |
-| `updateThrusterSound` | Continuous: triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz, thrust-scaled (≤ 0.05) with an amplitude tremolo + counter-phase filter sweep on the shared beat clock's cannon cadence (2 subdivisions/beat) while thrusting | Thruster hum (held thrust) | `Player`, `movementModel` | new | `aihell-thruster-hum` (runtime shim delivery) |
+| `updateThrusterSound` | Continuous: triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz, thrust-scaled (≤ 0.05) with an amplitude tremolo + counter-phase filter sweep on the shared beat clock's cannon cadence (2 subdivisions/beat) while thrusting; optional side profile (50% gain, both pitched oscillators one semitone up) selected when a side engine fires | Thruster hum (held thrust) | `Player`, `movementModel`, `utils/thrusterProfile` | new | `aihell-thruster-hum` (runtime shim delivery) |
 | `stopThrusterSound` | Stops/releases the thruster hum nodes | Thruster hum | `Player` | control | (companion to `aihell-thruster-hum`) |
 
 ### Beat-synced explosion accents (AH-0MV01HNLU008S5E3)
@@ -182,13 +197,28 @@ repeated kills still vary.
 | `aihell-boss-fire` | `playBossFireSound` | Saw 200→50 Hz + low sine undertone | 32200 |
 | `aihell-boss-hit` | `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s | 32208 |
 | `aihell-cannon-fire` | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s | 32210 |
+| `aihell-cannon-impact` | `playCannonImpactSound` | Punchy saw impact 520→90 Hz + square click + HP smack, ~0.13 s | 32209 |
+| `aihell-spread-impact` | `playSpreadImpactSound` | Warm amber triangle wedge 900→150 Hz + soft noise tick, ~0.14 s | 32218 |
 | `aihell-spread-fire` | `playSpreadFireSound` | Triangle 600→1200→800 Hz, ~0.12 s | 32211 |
 | `aihell-dual-fire` | `playDualFireSound` | Saw 900→300 Hz + sine tick | 32212 |
+| `aihell-dual-impact` | `playDualImpactSound` | Bright twin square snap 1400→600 Hz + sine echo + HP tick, ~0.11 s | 32265 |
+| `aihell-rapid-impact` | `playRapidImpactSound` | Tight staccato square tick 2400→1100 Hz + triangle shimmer + HP tap, ~0.06 s | 32266 |
 | `aihell-rapid-fire` | `playRapidFireSound` | Triangle 500→900 Hz, ~0.05 s | 32213 |
 | `aihell-nova-fire` | `playNovaFireSound` | Saw 160→40 Hz + rising triangle ring | 32214 |
+| `aihell-nova-impact` | `playNovaImpactSound` | Bright expanding ring ping 1600→300 Hz + HP noise shimmer | 32273 |
 | `aihell-mortar-fire` | `playMortarFireSound` | Triangle 220→90 Hz + barrel tick | 32215 |
+| `aihell-mortar-impact` | `playMortarImpactSound` | Sharp shell-impact crack 900→150 Hz + HP noise smack | 32274 |
 | `aihell-mortar-detonation` | `playMortarDetonationSound` | Saw 180→40 Hz + LP noise wash | 32216 |
 | `aihell-arc-fire` | `playArcFireSound` | Square 1400→500→1120 Hz + HP noise crackle | 32217 |
+| `aihell-arc-impact` | `playArcImpactSound` | Sharp electric crack 2400→900→220 Hz + fast HP noise zipper | 32275 |
+| `aihell-wave-laser-fire` | `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz, brief sustain, ~0.1 s | 32219 |
+| `aihell-wave-laser-impact` | `playWaveLaserImpactSound` | Sharp neon snap 800→200 Hz + square click + BP noise crack, ~0.12 s | 32231 |
+| `aihell-ricochet-fire` | `playRicochetFireSound` | Bright springy ping 1400→500 Hz + square tick, ~0.1 s | 32267 |
+| `aihell-ricochet-impact` | `playRicochetImpactSound` | Soft high bounce tick 1800→900 Hz + HP noise smack, ~0.09 s | 32268 |
+| `aihell-cluster-fire` | `playClusterFireSound` | Low missile launch 300→90 Hz + swept noise whoosh + ignition click, ~0.16 s | 32269 |
+| `aihell-cluster-impact` | `playClusterImpactSound` | Heavy detonation thump 260→60 Hz + lowpass noise smack, ~0.18 s | 32270 |
+| `aihell-options-fire` | `playOptionsFireSound` | Bright soft two-tone twinkle 900→1600 Hz + light sine overtone, ~0.07 s | 32271 |
+| `aihell-options-impact` | `playOptionsImpactSound` | Soft bright aqua pop 1300→550 Hz + light HP noise tick, ~0.11 s | 32272 |
 | `aihell-pickup-spread` | `playSpreadPickupSound` | Triangle 500→1500→800 Hz, ~0.15 s | 32220 |
 | `aihell-pickup-dual` | `playDualPickupSound` | Two saw drops 1000→500 / 1200→700 Hz | 32221 |
 | `aihell-pickup-rapid` | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | 32222 |
@@ -204,7 +234,7 @@ repeated kills still vary.
 | `aihell-victory-sparkle` | `playVictorySparkleSound` | Bright sine + HP shimmer | 32261–32263 |
 | `aihell-countdown-tick` | `playCountdownTickSound` | Bright square blip 1046→784 Hz (C6→G5), ~0.12 s — one beat of the 3-2-1 restart countdown (AH-0MV55OA93008OUL1) | 32264 |
 | `aihell-defeat-sting` | `playDefeatStingSound` | Descending five-note line + sinking drone + LP tail | 32241 |
-| `aihell-thruster-hum` | `updateThrusterSound` | Continuous triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz (runtime shim delivery, not baked) | — |
+| `aihell-thruster-hum` | `updateThrusterSound` | Continuous triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz (runtime shim delivery, not baked); side profile halves the gain and shifts both pitched oscillators up one semitone when a side engine fires | — |
 
 ### New recipes outside `effects.ts` (Boss.ts surface)
 

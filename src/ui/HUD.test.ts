@@ -9,10 +9,14 @@ import {
   PERMANENT_VALUE,
   buildHUDLabel,
   formatHUDValue,
+  type HUDEntry,
   type HUDOptions,
 } from './HUD';
 import { EffectsRegistry } from '../powerups/effects';
-import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
+import {
+  PowerUpLevelStore,
+  resolvePowerUpAtLevel,
+} from '../powerups/powerUpLevels';
 
 
 /**
@@ -44,6 +48,86 @@ function hudTexts(hud: HUD): string[] {
 }
 
 const destroy = (game: Phaser.Game) => game.destroy(true);
+
+// ── Grey-out contract helpers (AH-0MV82I8VA008LX0R) ──────────────────
+//
+// These read the not-yet-implemented grey-out contract by name where the
+// production type does not yet carry it, mirroring the repository's
+// test-first convention (powerUpLevels.test.ts reads the recharge axes by
+// name). Once AH-0MV82I97Y007MB6M lands, the `greyed` field becomes a hard
+// part of the HUD model and the guards can be dropped.
+
+/** Reads a row's `greyed` flag (undefined until the HUD implements it). */
+function rowGreyed(row: HUDEntry | undefined): boolean | undefined {
+  return (row as unknown as { greyed?: boolean } | undefined)?.greyed;
+}
+
+/** The direct children of a HUD container (rows are rebuilt on refresh). */
+function hudChildren(hud: HUD): Phaser.GameObjects.GameObject[] {
+  return (hud as unknown as { list: Phaser.GameObjects.GameObject[] }).list;
+}
+
+/** Locates a row's label/value Text objects by their rendered strings. */
+function rowTexts(
+  hud: HUD,
+  label: string,
+  value: string,
+): {
+  labelText?: Phaser.GameObjects.Text;
+  valueText?: Phaser.GameObjects.Text;
+} {
+  const texts = hudChildren(hud).filter(
+    (c): c is Phaser.GameObjects.Text => c instanceof Phaser.GameObjects.Text,
+  );
+  return {
+    labelText: texts.find((t) => t.text === label),
+    valueText: texts.find((t) => t.text === value),
+  };
+}
+
+/**
+ * The icon Graphics rendered immediately before a row's label Text (rows are
+ * added as `[icon, label, value]`, so the nearest preceding Graphics is the
+ * row icon).
+ */
+function rowIcon(
+  hud: HUD,
+  label: string,
+): Phaser.GameObjects.Graphics | undefined {
+  const list = hudChildren(hud);
+  const labelIndex = list.findIndex(
+    (c) => c instanceof Phaser.GameObjects.Text && c.text === label,
+  );
+  if (labelIndex < 0) return undefined;
+  for (let i = labelIndex - 1; i >= 0; i--) {
+    if (list[i] instanceof Phaser.GameObjects.Graphics) {
+      return list[i] as Phaser.GameObjects.Graphics;
+    }
+  }
+  return undefined;
+}
+
+/** Parses a `#rrggbb` text colour into a 24-bit number (undefined otherwise). */
+function textColour(text?: Phaser.GameObjects.Text): number | undefined {
+  const colour = text?.style?.color;
+  if (typeof colour !== 'string') return undefined;
+  const hex = colour.startsWith('#') ? colour.slice(1) : colour;
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return undefined;
+  return parseInt(hex, 16);
+}
+
+/**
+ * The first `lineStyle` stroke colour a Graphics emitted — the row icon's
+ * outline colour (Phaser `LINE_STYLE` command opcode is 6, followed by
+ * lineWidth, colour, alpha).
+ */
+function firstStrokeColour(
+  graphics?: Phaser.GameObjects.Graphics,
+): number | undefined {
+  const buf = graphics?.commandBuffer as number[] | undefined;
+  if (!buf || buf[0] !== 6 || typeof buf[2] !== 'number') return undefined;
+  return buf[2];
+}
 
 describe('HUD AC4: standalone scene attachability', () => {
   it('constructs with any Phaser scene and is added to the display list', async () => {
@@ -324,17 +408,24 @@ describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', (
     destroy(game);
   });
 
-  it('shows the permanent reward as level + ∞ without a charge count', async () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('phase_shift', true);
-    const { game, hud } = await bootWithHUD(reg);
-    hud.refresh();
-    const p6 = hud.getRows().find((r) => r.id === 'phase_shift')!;
-    expect(p6.label).toBe('Phase Shift Lvl 1');
-    expect(p6.value).toBe(PERMANENT_VALUE);
-    expect(p6.label).not.toMatch(/×/);
-    destroy(game);
-  });
+  it(
+    'shows the permanent reward as a finite recharging pool (×N), not unlimited',
+    async () => {
+      const store = new PowerUpLevelStore();
+      const reg = new EffectsRegistry(store);
+      store.collect('phase_shift', true); // hold-full: owned + 1 charge
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+      const p6 = hud.getRows().find((r) => r.id === 'phase_shift')!;
+      // The finite pool count is surfaced (previously the permanent reward
+      // implied an unlimited supply and showed no count).
+      expect(p6.label).toBe('Phase Shift Lvl 1 ×1');
+      // `∞` still means the level is permanent for the run (GDD §4.5), not
+      // an unlimited charge supply.
+      expect(p6.value).toBe(PERMANENT_VALUE);
+      destroy(game);
+    },
+  );
 
   it('does not show a misleading x0 when no charges remain', async () => {
     const reg = new EffectsRegistry();
@@ -348,6 +439,196 @@ describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', (
     expect(formatHUDValue(true, 4.2)).toBe('5s');
     expect(formatHUDValue(true, 0)).toBe('0s');
     expect(formatHUDValue(false, 10)).toBe(PERMANENT_VALUE);
+  });
+});
+
+describe('HUD grey-out for empty recharge pools (AH-0MV82I8VA008LX0R — test-first)', () => {
+  /**
+   * Grey-out contract for the HUD implemented by AH-0MV82I97Y007MB6M
+   * ("HUD grey-out for zero-charge power-up rows"). Written test-first as
+   * `it.fails(...)` expected failures by the test item and hard-gated here
+   * once the implementation landed.
+   *
+   * Contract pinned here:
+   * - a row is `greyed` when the player **owns** a charge-based pool
+   *   (Phase Shift / Teleport) but has **zero** available charges;
+   * - an owned-but-empty row stays **visible** (never hidden);
+   * - the icon + label + value share one desaturated grey colour so they
+   *   cannot diverge;
+   * - charge-count labels surface the finite `×N` count (including the
+   *   recharged value) without the unlimited marker;
+   * - non-charge rows and charged rows render unchanged.
+   */
+  /** A registry backed by a store the test can drive directly. */
+  function storeRegistry(): {
+    store: PowerUpLevelStore;
+    reg: EffectsRegistry;
+  } {
+    const store = new PowerUpLevelStore();
+    return { store, reg: new EffectsRegistry(store) };
+  }
+
+  it(
+    'greys out an owned Phase Shift row while its pool recharges',
+    async () => {
+      const { store, reg } = storeRegistry();
+      store.collect('phase_shift', true); // hold-full: owned, 1 charge
+      store.consumePhaseCharge(); // spent → 0 charges, recharging
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      const row = hud.getRows().find((r) => r.id === 'phase_shift');
+      expect(row).toBeDefined();
+      expect(rowGreyed(row)).toBe(true);
+      destroy(game);
+    },
+  );
+
+  it(
+    'renders the owned Phase Shift row normally while charges remain',
+    async () => {
+      const { store, reg } = storeRegistry();
+      store.collect('phase_shift', true); // owned, 1 charge
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      const row = hud.getRows().find((r) => r.id === 'phase_shift');
+      expect(row).toBeDefined();
+      expect(rowGreyed(row)).toBe(false);
+      destroy(game);
+    },
+  );
+
+  it(
+    'keeps an owned Teleport row visible and greyed when its stack is spent',
+    async () => {
+      const { store, reg } = storeRegistry();
+      store.collect('teleport', true); // hold-full: owned, 1 stack
+      store.consumeTeleport(); // spent → 0 stacks, recharging
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      const row = hud.getRows().find((r) => r.id === 'teleport');
+      expect(row).toBeDefined();
+      expect(rowGreyed(row)).toBe(true);
+      destroy(game);
+    },
+  );
+
+  it(
+    'renders the owned Teleport row normally while stacks remain',
+    async () => {
+      const { store, reg } = storeRegistry();
+      store.collect('teleport', true); // owned, 1 stack
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      const row = hud.getRows().find((r) => r.id === 'teleport');
+      expect(row).toBeDefined();
+      expect(rowGreyed(row)).toBe(false);
+      destroy(game);
+    },
+  );
+
+  it(
+    'surfaces the recharge-aware finite count (×N) and restores it after a recharge',
+    async () => {
+      const { store, reg } = storeRegistry();
+      store.collect('phase_shift', true); // ×1
+      store.collect('teleport', true); // ×1
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      const phase = () => hud.getRows().find((r) => r.id === 'phase_shift');
+      const tele = () => hud.getRows().find((r) => r.id === 'teleport');
+
+      // The finite pool count is surfaced (the permanent Phase Shift reward
+      // is no longer an unlimited supply) — existing behaviour for Teleport.
+      expect(phase()!.label).toBe('Phase Shift Lvl 1 ×1');
+      expect(tele()!.label).toBe('Teleport Lvl 1 ×1');
+
+      // Spending empties the pool (greyed)…
+      store.consumePhaseCharge();
+      store.consumeTeleport();
+      hud.refresh();
+      expect(rowGreyed(phase())).toBe(true);
+      expect(rowGreyed(tele())).toBe(true);
+
+      // …and a completed recharge returns the charge to the label.
+      store.tickRecharge(store.phaseRechargeTime());
+      store.tickRecharge(store.teleportRechargeTime());
+      hud.refresh();
+      expect(phase()!.label).toBe('Phase Shift Lvl 1 ×1');
+      expect(tele()!.label).toBe('Teleport Lvl 1 ×1');
+      expect(rowGreyed(phase())).toBe(false);
+      expect(rowGreyed(tele())).toBe(false);
+      destroy(game);
+    },
+  );
+
+  it(
+    'greys the icon and the label/value text with one shared grey',
+    async () => {
+      const { store, reg } = storeRegistry();
+      store.collect('phase_shift', true);
+      store.consumePhaseCharge(); // owned, empty
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      const row = hud.getRows().find((r) => r.id === 'phase_shift')!;
+      const { labelText, valueText } = rowTexts(hud, row.label, row.value);
+      const labelColour = textColour(labelText);
+      const valueColour = textColour(valueText);
+      const iconColour = firstStrokeColour(rowIcon(hud, row.label));
+
+      expect(labelColour).toBeDefined();
+      expect(labelColour).not.toBe(0xffffff); // not the normal, active white
+      expect(valueColour).toBe(labelColour); // label + value grey together
+      expect(iconColour).toBe(labelColour); // the icon shares the same grey
+
+      // A desaturated grey (r = g = b), so the row reads as inactive.
+      expect((labelColour! >> 16) & 0xff).toBe((labelColour! >> 8) & 0xff);
+      expect((labelColour! >> 8) & 0xff).toBe(labelColour! & 0xff);
+      destroy(game);
+    },
+  );
+
+  it(
+    'reports greyed:false for a charged non-charge row (no cross-contamination)',
+    async () => {
+      const { reg } = storeRegistry();
+      reg.applyCollect('speed_boost'); // activate the timed effect → row visible
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      const row = hud.getRows().find((r) => r.id === 'speed_boost');
+      expect(row).toBeDefined();
+      expect(rowGreyed(row)).toBe(false);
+      destroy(game);
+    },
+  );
+
+  it('keeps the Teleport row hidden until the player owns it', async () => {
+    // The corresponding never-owned Phase Shift case is already pinned by
+    // the P6 suite above; this covers the Teleport sibling (AC3).
+    const { reg } = storeRegistry();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+    expect(hud.getRows().some((r) => r.id === 'teleport')).toBe(false);
+    destroy(game);
+  });
+
+  it('leaves a charged row visually unchanged (white label + value)', async () => {
+    const { store, reg } = storeRegistry();
+    store.collect('phase_shift', true); // owned, 1 charge
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'phase_shift')!;
+    const { labelText, valueText } = rowTexts(hud, row.label, row.value);
+    expect(textColour(labelText)).toBe(0xffffff);
+    expect(textColour(valueText)).toBe(0xffffff);
+    destroy(game);
   });
 });
 

@@ -35,12 +35,41 @@ export interface BotVec2 {
   readonly y: number;
 }
 
+/**
+ * The ship's live thruster physics — forward acceleration / speed cap /
+ * friction plus the reverse trio (AH-0MV85WFWD0029DL7). Field names match the
+ * `ShipConfig`/`Player.getThrusterConfig()` terms the player exposes, so the
+ * snapshot carries the player's tuning unchanged.
+ */
+export interface BotThrusterConfig {
+  /** Acceleration applied while thrusting (px/s²). */
+  readonly thrustAcceleration: number;
+  /** Absolute forward speed cap (px/s). */
+  readonly maxSpeed: number;
+  /** Linear deceleration when no thrust is held (px/s²). */
+  readonly frictionDeceleration: number;
+  /** Whether the reverse (retro) thruster is enabled. */
+  readonly reverseEnabled: boolean;
+  /** Reverse-thrust acceleration (px/s²). */
+  readonly reverseAcceleration: number;
+  /** Speed cap under reverse thrust (px/s). */
+  readonly reverseMaxSpeed: number;
+}
+
 /** Player position and velocity. */
 export interface BotPlayer {
   readonly x: number;
   readonly y: number;
   readonly vx: number;
   readonly vy: number;
+  /**
+   * The ship's live thruster physics, sourced from the player's effective
+   * config via the structural `BotPlayerSource` seam
+   * (AH-0MV85WFWD0029DL7 · AC1/AC2). Optional so snapshots from sources that
+   * do not expose the config keep their existing shape (no-config fallback
+   * semantics hold).
+   */
+  readonly thruster?: BotThrusterConfig;
 }
 
 /** A single enemy (or asteroid) and its threat-relevant state. */
@@ -177,6 +206,13 @@ export interface BotPlayerSource {
    * pre-reverse behaviour for consumers that do not expose it.
    */
   isReverseEnabled?(): boolean;
+  /**
+   * The ship's live thruster physics (forward + reverse)
+   * (AH-0MV85WFWD0029DL7 · AC2).  Optional so older structural sources remain
+   * valid; an absent getter omits the `thruster` field from the snapshot
+   * player, preserving the existing no-config shape.
+   */
+  getThrusterConfig?(): BotThrusterConfig;
 }
 
 /** Minimal enemy source (a `BaseEnemy`/`EnemyEntity` satisfies this). */
@@ -276,7 +312,15 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
   const bossSource = scene.getBoss();
 
   const player: BotPlayer | null = playerSource
-    ? copyMovement(playerSource.getMovementState())
+    ? {
+        ...copyMovement(playerSource.getMovementState()),
+        // Carry the live thruster physics only when the source exposes it,
+        // so snapshots from sources without the getter keep their existing
+        // shape (the no-config fallback semantics hold) (AH-0MV85WFWD0029DL7).
+        ...(playerSource.getThrusterConfig
+          ? { thruster: playerSource.getThrusterConfig() }
+          : {}),
+      }
     : null;
 
   const boss: BotBoss | null = bossSource
