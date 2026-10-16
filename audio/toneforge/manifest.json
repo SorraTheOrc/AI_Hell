@@ -287,6 +287,22 @@
       ]
     },
     {
+      "cue": "playWaveLaserFireSound",
+      "recipe": "aihell-wave-laser-fire",
+      "delivery": "baked",
+      "seeds": [
+        32219
+      ]
+    },
+    {
+      "cue": "playWaveLaserImpactSound",
+      "recipe": "aihell-wave-laser-impact",
+      "delivery": "baked",
+      "seeds": [
+        32231
+      ]
+    },
+    {
       "cue": "playSpreadPickupSound",
       "recipe": "aihell-pickup-spread",
       "delivery": "baked",

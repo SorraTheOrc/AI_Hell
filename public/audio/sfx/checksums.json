@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "b69b840cdf739b279f46b9242d33ad1a2f03e900b7ebe8ceb54b46b1666ef6c2",
+  "inputs": "6c7471ae63f091c54f0b33291a4dd759723e9eebad90fa89bcbf9402a69cd0a5",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-boss-destruction.32203.wav": "fbe749ae3f8ddd87a29c1068f5330f3038390483a6f06902ddf7250b783dea3c",
@@ -71,6 +71,8 @@
     "audio/sfx/aihell-victory-sparkle.32261.wav": "67720e9302d91165bfc0beab2728588ecec96639d0c6d4e273a3e4d64ae0a890",
     "audio/sfx/aihell-victory-sparkle.32262.wav": "13770f071b6fcbca39371829cedbf563db0ce446db4b0a4890df0ba0c5ceb5e2",
     "audio/sfx/aihell-victory-sparkle.32263.wav": "441227623601987f0bf9f1f5a793c3506423099b7222c33cb9d8f13813a2f7f7",
+    "audio/sfx/aihell-wave-laser-fire.32219.wav": "822b24697a968a3b3a13e9d2e362511465ef1473ccc263bbffaf98a09c6d4107",
+    "audio/sfx/aihell-wave-laser-impact.32231.wav": "f41c9c34fbdf2bf12dbc0c565b99f778bc866769dbc27869fc56e18939c16ea1",
     "audio/sfx/card-token-earn.1.wav": "0a117cb12f96009c963f936d41360c756dcca6e6de85ba7cb65d563e296e037e",
     "audio/sfx/weapon-laser-zap.1.wav": "3de4305548efce3a7b7b6ecc45f8389867c2e639115ec9ff12498c4d2318cbd8"
   }

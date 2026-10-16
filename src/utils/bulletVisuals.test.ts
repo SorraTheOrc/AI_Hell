@@ -283,6 +283,18 @@ describe('resolvePlayerBulletVisual', () => {
     expect(dual.color).toBe(0xff00ff);
   });
 
+  it('the wave laser resolves a long stroked beam with a faint trail (AH-0MV822ACO007CEZF)', () => {
+    const laser = resolvePlayerBulletVisual(WEAPON_CATALOGUE.wave_laser);
+    // The elongated neon beam identity: a long line/beam (never a dot), a
+    // thick stroke, and a faint fading wake behind the trailing edge — all
+    // visual metadata; flight (speed, lifetime, piercing) is unchanged.
+    expect(canonicalShape(laser.shape)).toBe('line');
+    expect(laser.length).toBeGreaterThan(3); // long beam, distinctly not the dual
+    expect(laser.thickness).toBeGreaterThan(1);
+    expect(laser.tail).toBeGreaterThan(0); // faint trail
+    expect(laser.color).toBe(0x3366ff);
+  });
+
   it('the rapid spark resolves a small white-rimmed flare with a short trail (AH-0MV822A03006UT2P)', () => {
     const rapid = resolvePlayerBulletVisual(WEAPON_CATALOGUE.rapid);
     // The "small fast disc" read: the catalogue's `spark` star family at the

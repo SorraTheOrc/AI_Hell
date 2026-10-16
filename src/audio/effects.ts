@@ -447,6 +447,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playSpreadImpactSound,
   playDualImpactSound,
   playRapidImpactSound,
+  playWaveLaserImpactSound,
 };
 
 /**
@@ -491,6 +492,16 @@ export function playMortarDetonationSound(): void {
 /** Bright electric zap — Arc fire. */
 export function playArcFireSound(): void {
   playCue('playArcFireSound');
+}
+
+/** High-energy beam crack — Wave Laser fire (AH-0MV822ACO007CEZF). */
+export function playWaveLaserFireSound(): void {
+  playCue('playWaveLaserFireSound');
+}
+
+/** Sharp neon snap — Wave Laser bullet connects (AH-0MV822ACO007CEZF). */
+export function playWaveLaserImpactSound(): void {
+  playCue('playWaveLaserImpactSound');
 }
 
 /**
@@ -538,6 +549,9 @@ export function playWeaponFireSound(
       break;
     case 'arc':
       playCue('playArcFireSound', options);
+      break;
+    case 'wave_laser':
+      playCue('playWaveLaserFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches

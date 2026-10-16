@@ -922,6 +922,22 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     // (and damages them all) before it is consumed. The `piercing` level
     // variable grows it toward the spec cap (5).
     piercing: 3,
+    // Wide neon muzzle flash / launch cue at the ship when the wave laser
+    // fires — a substantial burst befitting the long beam it launches
+    // (AH-0MV822ACO007CEZF). The flash is wider than the cannon's to match
+    // the beam identity.
+    muzzleFlash: { color: BULLET_COLORS.wave_laser, radius: 12, duration: 0.15 },
+    // Short fading trail behind the beam — a faint neon wake that extends
+    // the beam's visual identity in flight (AH-0MV822ACO007CEZF).
+    bulletTrail: 4,
+    // Distinct neon-blue impact flash + baked hit cue when a wave laser
+    // shot connects (shared impact seam — AH-0MV822ACO007CEZF).
+    impactFx: {
+      color: BULLET_COLORS.wave_laser,
+      radius: 12,
+      duration: 0.18,
+      cue: 'playWaveLaserImpactSound',
+    },
   },
   ricochet: {
     id: 'ricochet',

@@ -173,6 +173,30 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playWaveLaserFireSound resolves to the baked wave-laser fire asset (AH-0MV822ACO007CEZF)', () => {
+    effects.playWaveLaserFireSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-wave-laser-fire.32219.wav',
+    );
+  });
+
+  it('playWaveLaserImpactSound resolves to the baked wave-laser impact asset (AH-0MV822ACO007CEZF)', () => {
+    effects.playWaveLaserImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-wave-laser-impact.32231.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the wave-laser impact cue (AH-0MV822ACO007CEZF)', () => {
+    effects.playWeaponImpactCue('playWaveLaserImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-wave-laser-impact.32231.wav',
+    );
+  });
+
   it('playCountdownTickSound rises in pitch with each beat (AH-0MV722WJS0075UTZ)', () => {
     // Count 3 (step 0) is the base rate, 2 and 1 rise above it.
     effects.playCountdownTickSound(0);
@@ -352,6 +376,7 @@ describe('playWeaponFireSound — shared player-fire path', () => {
       ['nova', 'playNovaFireSound'],
       ['mortar', 'playMortarFireSound'],
       ['arc', 'playArcFireSound'],
+      ['wave_laser', 'playWaveLaserFireSound'],
     ];
     for (const [weaponId, cue] of cases) {
       recording.plays.length = 0;
@@ -374,8 +399,10 @@ describe('playWeaponFireSound — shared player-fire path', () => {
   });
 
   it('is a no-op for catalogue-only weapon ids without a baked fire cue', () => {
+    // ricochet/cluster/options have no baked fire cue yet — they stay
+    // catalogue-only ids that degrade to a silent no-op.
     expect(() =>
-      effects.playWeaponFireSound('wave_laser' as never),
+      effects.playWeaponFireSound('ricochet' as never),
     ).not.toThrow();
     expect(recording.plays).toHaveLength(0);
   });

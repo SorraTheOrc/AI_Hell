@@ -737,6 +737,23 @@ describe('R-Type wave laser (AH-0MV1BIUSJ0090W92)', () => {
       WEAPON_CATALOGUE.cannon.bulletColor,
     );
   });
+
+  test('carries a wide muzzle flash, a faint trail and a distinct impact FX (AH-0MV822ACO007CEZF)', () => {
+    const def = WEAPON_CATALOGUE.wave_laser;
+    // Wide launch cue at the ship — larger than the cannon's default flash.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.wave_laser);
+    expect(def.muzzleFlash!.radius).toBeGreaterThan(
+      WEAPON_CATALOGUE.cannon.muzzleFlash!.radius,
+    );
+    // A short fading wake behind the beam in flight.
+    expect(def.bulletTrail).toBeDefined();
+    expect(def.bulletTrail!).toBeGreaterThan(0);
+    // Distinct neon-blue impact flash + the baked wave-laser hit cue.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.wave_laser);
+    expect(def.impactFx!.cue).toBe('playWaveLaserImpactSound');
+  });
 });
 
 describe('Centipede ricochet (AH-0MV1BIV5L005NJAI)', () => {
