@@ -2,9 +2,10 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "978797fff3894e31f18e96b1aa3ddd03be941181396b1a828c4c2881b83a149b",
+  "inputs": "4fafb2b37a208bed25e914b4180cbb5e8c989750f097be50f5bd6e76ffdd1c72",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
+    "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",
     "audio/sfx/aihell-boss-destruction.32203.wav": "fbe749ae3f8ddd87a29c1068f5330f3038390483a6f06902ddf7250b783dea3c",
     "audio/sfx/aihell-boss-fire.32200.wav": "0901713dacfe520e70372cae0e366c529e73633004b97462c256a76500f098cb",
     "audio/sfx/aihell-boss-hit.32208.wav": "c4dfdd061d3af995ee1b0754ecfa5916b75b329a0cba82992ed94fe472612d09",

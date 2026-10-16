@@ -617,6 +617,10 @@ export abstract class CombatScene<
       ];
       this.applyArcChainEffect(aoe, x, y, chain, path);
       this.spawnArcChainVfx(path);
+      // The connect feedback (impact flash at each chained target + baked hit
+      // cue) rides the same shared chain seam, so the game and every gym
+      // connect identically (AH-0MV822CE7004MQ14).
+      this.resolveChainImpactFx(def, path);
       return;
     }
     this.applyAoeEffect(def, x, y);
@@ -695,6 +699,31 @@ export abstract class CombatScene<
   protected spawnArcChainVfx(path: readonly ArcChainPoint[]): void {
     if (path.length < 2) return;
     spawnArcChain(this, path, { registry: this.aoeEffects });
+  }
+
+  /**
+   * Resolves the per-weapon connect feedback for a chaining AOE shot (Arc):
+   * plays the weapon's baked hit cue once and spawns its distinct impact
+   * flash at every chained target through the shared impact-flash seam, so
+   * the game and every gym connect identically
+   * (AH-0MV822CE7004MQ14). Weapons without `impactFx` metadata are a no-op
+   * — the jagged bolt still draws, but no per-weapon connect feedback plays.
+   */
+  protected resolveChainImpactFx(
+    def: WeaponDefinition,
+    path: readonly ArcChainPoint[],
+  ): void {
+    const fx = def.impactFx;
+    if (!fx || path.length < 2) return;
+    playWeaponImpactCue(fx.cue);
+    for (let i = 1; i < path.length; i++) {
+      spawnBulletImpact(this, path[i].x, path[i].y, {
+        registry: this.bulletImpactEffects,
+        color: fx.color,
+        radius: fx.radius,
+        duration: fx.duration,
+      });
+    }
   }
 
   /**

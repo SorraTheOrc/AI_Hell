@@ -111,6 +111,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playMortarImpactSound` | Sharp dry shell-impact crack — triangle 900→150 Hz + HP noise smack, ~0.12 s | Player Mortar shell lands / blast connects | shared AOE detonation seam in `CombatScene` (AH-0MV822C250051OVN) | new | `aihell-mortar-impact` |
 | `playMortarDetonationSound` | Heavy saw 180→40 Hz + LP noise wash | Mortar detonation | `CombatScene` | new | `aihell-mortar-detonation` |
 | `playArcFireSound` | Square 1400→500→1120 Hz + HP noise crackle | Player Arc fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-arc-fire` |
+| `playArcImpactSound` | Sharp electric crack — saw 2400→900→220 Hz + fast HP noise zipper, ~0.14 s | Player Arc bolt connects / chains | shared AOE chain seam in `CombatScene` (AH-0MV822CE7004MQ14) | new | `aihell-arc-impact` |
 | `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz with a brief sustain, ~0.1 s | Player wave-laser fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
 | `playWaveLaserImpactSound` | Sharp neon snap — saw 800→200 Hz + square click + BP noise crack, ~0.12 s | Player wave-laser hit (when the beam connects) | shared impact seam in `CombatScene` (AH-0MV822ACO007CEZF) | new | `aihell-wave-laser-impact` |
 | `playRicochetFireSound` | Bright springy ping — triangle 1400→500 Hz + square tick, ~0.1 s | Player ricochet fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-ricochet-fire` |
@@ -209,6 +210,7 @@ repeated kills still vary.
 | `aihell-mortar-impact` | `playMortarImpactSound` | Sharp shell-impact crack 900→150 Hz + HP noise smack | 32274 |
 | `aihell-mortar-detonation` | `playMortarDetonationSound` | Saw 180→40 Hz + LP noise wash | 32216 |
 | `aihell-arc-fire` | `playArcFireSound` | Square 1400→500→1120 Hz + HP noise crackle | 32217 |
+| `aihell-arc-impact` | `playArcImpactSound` | Sharp electric crack 2400→900→220 Hz + fast HP noise zipper | 32275 |
 | `aihell-wave-laser-fire` | `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz, brief sustain, ~0.1 s | 32219 |
 | `aihell-wave-laser-impact` | `playWaveLaserImpactSound` | Sharp neon snap 800→200 Hz + square click + BP noise crack, ~0.12 s | 32231 |
 | `aihell-ricochet-fire` | `playRicochetFireSound` | Bright springy ping 1400→500 Hz + square tick, ~0.1 s | 32267 |

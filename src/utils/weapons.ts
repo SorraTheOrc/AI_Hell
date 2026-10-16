@@ -1135,6 +1135,24 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     fireRateMs: WEAPON_ARC_FIRE_RATE,
     bulletColor: BULLET_COLORS.arc,
     bulletShape: 'bolt',
+    // Fire feel (AH-0MV822CE7004MQ14): a bright electric-purple launch flash
+    // at the ship when the bolt fires — the shared combat-core muzzle-flash
+    // path drives it from this metadata, so the game and every gym show the
+    // same launch cue. The bolt itself (jagged lightning between targets) is
+    // drawn by the shared chain VFX (`spawnArcChain`) through the shared AOE
+    // seam.
+    muzzleFlash: { color: BULLET_COLORS.arc, radius: 10, duration: 0.16 },
+    // Connect feedback (AH-0MV822CE7004MQ14): a distinct electric impact
+    // flash at each chained target plus the newly baked arc impact cue,
+    // routed through the shared impact seam so the game and every gym
+    // connect identically. Visual/feel metadata only — the instant onFire
+    // chain resolution, damage, bullet clearing and cadence are unchanged.
+    impactFx: {
+      color: BULLET_COLORS.arc,
+      radius: 9,
+      duration: 0.16,
+      cue: 'playArcImpactSound',
+    },
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.arc,
     aoe: {

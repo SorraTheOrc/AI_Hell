@@ -482,6 +482,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playWaveLaserImpactSound,
   playClusterImpactSound,
   playOptionsImpactSound,
+  playArcImpactSound,
 };
 
 /**
@@ -539,6 +540,18 @@ export function playMortarDetonationSound(): void {
 /** Bright electric zap — Arc fire. */
 export function playArcFireSound(): void {
   playCue('playArcFireSound');
+}
+
+/**
+ * Sharp electric crack — the Arc chaining bolt connects
+ * (AH-0MV822CE7004MQ14). Plays through the shared AOE chain seam
+ * (`CombatScene.resolveChainImpactFx`) the instant the bolt lands on its
+ * nearest target and chains onward, so the game and every gym sound the
+ * identical connect. Baked via the ToneForge pipeline (`aihell-arc-impact`,
+ * seed 32275).
+ */
+export function playArcImpactSound(): void {
+  playCue('playArcImpactSound');
 }
 
 /** High-energy beam crack — Wave Laser fire (AH-0MV822ACO007CEZF). */

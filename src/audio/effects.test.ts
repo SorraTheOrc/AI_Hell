@@ -141,6 +141,22 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playArcImpactSound resolves to the baked arc-impact asset (AH-0MV822CE7004MQ14)', () => {
+    effects.playArcImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-arc-impact.32275.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the arc impact cue (AH-0MV822CE7004MQ14)', () => {
+    effects.playWeaponImpactCue('playArcImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-arc-impact.32275.wav',
+    );
+  });
+
   it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
     effects.playSpreadImpactSound();
     expect(recording.plays).toHaveLength(1);

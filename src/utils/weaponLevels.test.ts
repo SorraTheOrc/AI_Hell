@@ -516,6 +516,21 @@ describe('resolveWeaponDefinition (AH-0MUQOUKMW0063VBT — shared leveled defini
     expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
     expect(leveled.aoe?.trigger).toBe(base.aoe?.trigger);
   });
+
+  test('the arc visual/feel metadata carries through level resolution unchanged (AH-0MV822CE7004MQ14)', () => {
+    const base = WEAPON_CATALOGUE.arc;
+    const leveled = resolveWeaponDefinition('arc', 50);
+    // The bolt identity, launch flash and connect feedback are visual
+    // metadata, not upgrade values — they survive level resolution
+    // byte-for-byte (only the AOE radius grows). The in-flight look, fire
+    // feel and impact feedback never change with the weapon's level.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletColor).toBe(base.bulletColor);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+    expect(leveled.aoe?.trigger).toBe(base.aoe?.trigger);
+    expect(leveled.aoe?.chains).toBe(base.aoe?.chains);
+  });
 });
 
 describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {

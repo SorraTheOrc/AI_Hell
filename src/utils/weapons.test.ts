@@ -990,3 +990,49 @@ describe('Mortar arcing-shell blast (AH-0MV822C250051OVN)', () => {
     expect(isOnBeatGrid(WEAPON_CATALOGUE.mortar.fireRateMs)).toBe(true);
   });
 });
+
+describe('Arc chaining-bolt feel (AH-0MV822CE7004MQ14)', () => {
+  test('keeps the bolt shape and onFire chain mechanics unchanged', () => {
+    const arc = WEAPON_CATALOGUE.arc;
+    // The Arc's unique in-flight family is the `bolt` primitive — a jagged
+    // lightning bolt between targets drawn by the shared chain VFX
+    // (`spawnArcChain`). The chain still resolves instantly at fire time (no
+    // travelling projectile): the visual/feel work adds feedback, never
+    // behaviour.
+    expect(arc.bulletShape).toBe('bolt');
+    expect(arc.bulletColor).toBe(BULLET_COLORS.arc);
+    expect(arc.aoe?.trigger).toBe('onFire');
+    expect(arc.aoe?.chains).toBe(2);
+  });
+
+  test('carries the launch-flash fire VFX through the shared combat-core path (AH-0MV822CE7004MQ14)', () => {
+    const arc = WEAPON_CATALOGUE.arc;
+    // A bright electric-purple launch flash at the ship when the bolt fires —
+    // the shared combat-core spawn path (`_autoFire`) drives it from this
+    // metadata, so the game and every gym show the identical flash.
+    expect(arc.muzzleFlash).toBeDefined();
+    expect(arc.muzzleFlash!.color).toBe(BULLET_COLORS.arc);
+    expect(arc.muzzleFlash!.radius).toBeGreaterThan(0);
+    expect(arc.muzzleFlash!.duration).toBeGreaterThan(0);
+  });
+
+  test('carries distinct electric connect feedback (impact flash + baked cue) (AH-0MV822CE7004MQ14)', () => {
+    const arc = WEAPON_CATALOGUE.arc;
+    // Every bolt that lands flashes at its target and plays the baked arc
+    // impact cue through the shared impact seam — routed so the game and
+    // every gym connect identically.
+    expect(arc.impactFx).toBeDefined();
+    expect(arc.impactFx!.cue).toBe('playArcImpactSound');
+    expect(arc.impactFx!.color).toBe(BULLET_COLORS.arc);
+    expect(arc.impactFx!.radius).toBeGreaterThan(0);
+    expect(arc.impactFx!.duration).toBeGreaterThan(0);
+  });
+
+  test('fires once per beat and stays an AOE weapon on the grid', () => {
+    // The visual/feel work must not touch the cadence: the Arc still fires
+    // once per beat and remains an exact subdivision of the beat period.
+    expect(WEAPON_CATALOGUE.arc.fireRateMs).toBe(750);
+    expect(isAoeWeapon('arc')).toBe(true);
+    expect(isOnBeatGrid(WEAPON_CATALOGUE.arc.fireRateMs)).toBe(true);
+  });
+});

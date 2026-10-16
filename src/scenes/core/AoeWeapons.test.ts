@@ -880,16 +880,42 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
     expect(scene.getAoeEffects()).toHaveLength(1);
   });
 
-  it('F4 AC3 — Arc is a no-op with no live enemies (no chain, no VFX)', async () => {
+  it('F4 AC5 — Arc connect fires the baked impact cue + a flash at each chained target (AH-0MV822CE7004MQ14)', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('arc');
+    scene.entities.push(
+      new StubEnemy(scene, 150, 100),
+      new StubEnemy(scene, 200, 100),
+    );
+    const impactCue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
 
     scene.runAutoFire(0.75);
 
-    // The chain is empty → no damage and no chain VFX to draw.
+    // One shot → one electric hit cue (the chain is a single attack), and
+    // one impact flash per chained target through the shared impact seam —
+    // the same path the game and every gym consume, so the connect cannot
+    // drift between scenes. The cue dispatches through the shared
+    // `playWeaponImpactCue` registry with the arc impact cue.
+    expect(impactCue).toHaveBeenCalledTimes(1);
+    expect(impactCue).toHaveBeenCalledWith('playArcImpactSound');
+    // Primary target + one chain hop → two connect flashes.
+    expect(scene.getBulletImpactEffects()).toHaveLength(2);
+  });
+
+  it('F4 AC3 — Arc is a no-op with no live enemies (no chain, no VFX, no impact cue)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('arc');
+    const impactCue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+
+    scene.runAutoFire(0.75);
+
+    // The chain is empty → no damage, no chain VFX and no connect feedback
+    // to draw/play.
     expect(scene.getAoeEffects()).toHaveLength(0);
     expect(scene.hooks.filter((h) => h.startsWith('onEnemyDestroyed'))).toHaveLength(0);
+    expect(impactCue).not.toHaveBeenCalled();
   });
 });
 

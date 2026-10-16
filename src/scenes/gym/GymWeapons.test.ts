@@ -1142,6 +1142,21 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
     expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
   });
 
+  it('Arc chain fires the baked impact cue through the shared chain seam (parity, AH-0MV822CE7004MQ14)', async () => {
+    const scene = await bootAoe();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('arc');
+    const impactCue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+
+    scene.tick(0.75); // Arc's 750 ms beat cadence
+
+    // The gym consumes the same shared onFire chain seam as the game, so the
+    // chaining bolt dispatches the identical baked arc impact cue the moment
+    // it connects (parity). The bolt VFX (jagged lightning) must register too.
+    expect(impactCue).toHaveBeenCalledWith('playArcImpactSound');
+    expect(scene.getAoeEffects().length).toBeGreaterThanOrEqual(1);
+  });
+
   it('Mortar detonates at a random point within range through the shared core', async () => {
     const scene = await bootAoe();
     const player = scene.getPlayer()!;

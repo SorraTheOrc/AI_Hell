@@ -351,6 +351,14 @@
       ]
     },
     {
+      "cue": "playArcImpactSound",
+      "recipe": "aihell-arc-impact",
+      "delivery": "baked",
+      "seeds": [
+        32275
+      ]
+    },
+    {
       "cue": "playWaveLaserFireSound",
       "recipe": "aihell-wave-laser-fire",
       "delivery": "baked",
