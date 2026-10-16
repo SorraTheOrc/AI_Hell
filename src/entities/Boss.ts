@@ -624,6 +624,20 @@ export class Boss extends Phaser.GameObjects.Container {
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
     if (!this._shouldFire(now)) return [];
 
+    // The shared Boss pulse projectile identity (AH-0MV822FHN005PK37): the
+    // Pulse pattern's aimed shots render as slow wide pulse rings — a
+    // pale ring with a faint filling that reads as the compact echo of the
+    // expanding screen-wide wave (which keeps its own dedicated pulse-wave
+    // rendering). Because the Boss entity is shared by PlayScene and every
+    // gym, the ring's shape, tint, trail and launch pop are identical in the
+    // game and every gym (gym↔game parity by construction). Firing logic,
+    // wave speed, aim count and fan spread are unchanged — visuals/feel only.
+    const visual = resolveEnemyBulletVisual('boss-pulse');
+
+    // One shared launch pop at the Boss's body alongside the wave spawn (the
+    // pattern is one fire event that already plays one Boss fire cue).
+    // Spawned through the shared `src/vfx/enemyMuzzleFlash` helper (cheap
+    // Graphics primitive, self-cleaning tween), aimed toward the player.
     const bullets: BossBullet[] = [];
 
     // Create a pulse wave (ring expanding from the Boss).
@@ -645,6 +659,18 @@ export class Boss extends Phaser.GameObjects.Container {
       pulseRadius: BOSS_CORE_GLOW_RADIUS,
     });
 
+    if (visual.muzzle) {
+      const dx = this._playerTargetX - this.x;
+      const dy = this._playerTargetY - this.y;
+      spawnEnemyMuzzleFlash(
+        this.scene as Phaser.Scene,
+        this.x,
+        this.y,
+        Math.atan2(dy, dx),
+        visual.muzzle,
+      );
+    }
+
     // Aimed shots toward player's last known position.
     const speed = this._bulletSpeed();
     const aimCount = this._currentPhaseNumber === 4 ? 4 : 3;
@@ -655,7 +681,7 @@ export class Boss extends Phaser.GameObjects.Container {
       // Fan out slightly around the aim direction.
       const fanSpread = 0.2;
       const angle = baseAngle + (i - (aimCount - 1) / 2) * fanSpread;
-      bullets.push(this._createBullet(angle, speed));
+      bullets.push(this._createBullet(angle, speed, visual));
     }
 
     // Play the Boss fire sound once per volley.

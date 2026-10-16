@@ -2092,6 +2092,20 @@ intercepted. The remaining boss patterns (pulse, desperation) get their own
 identities under their own child items. Visuals/feel only: firing logic,
 counts, rotation step, speeds and the telegraph cadence are unchanged.
 
+**Boss pulse (boss-pulse pattern, AH-0MV822FHN005PK37):** the Pulse pattern's
+aimed shots render as **slow wide pulse rings** — a dedicated `pulse-ring`
+seam primitive (a pale ring with a faint filling, a bright outer edge and a
+dim inner halo — the compact echo of the screen-wide wave that the pattern
+also spawns, which keeps its own dedicated expanding-ring pulse-wave
+rendering) plus a short fading trail. The pattern plays **one pale launch
+pop** at the boss's body alongside the wave spawn (one pop per volley — the
+pattern is one fire event that already plays one Boss fire cue), each aimed
+shot flies nose-first along its fan direction, and each carries its white
+colour so the shared impact pass tints the flash when a shot connects or is
+intercepted. The remaining boss pattern (desperation) gets its own identity
+under its own child item. Visuals/feel only: firing logic, wave speed, aim
+count, fan spread and the telegraph cadence are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific

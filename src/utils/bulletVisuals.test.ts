@@ -129,6 +129,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     dart: { shape: 'dart' as BulletShape, color: 0xffddaa, radius: 3, length: 2.8, rimColor: 0xff6688 },
     'boss-pellet': { shape: 'boss-pellet' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0xff3366 },
     'spiral-pellet': { shape: 'spiral-pellet' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0xffcc00 },
+    'pulse-ring': { shape: 'pulse-ring' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0x88ddff, thickness: 2.2 },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
     chevron: { shape: 'chevron' as BulletShape, color: 0x00ffcc, radius: 3, length: 2 },
@@ -373,6 +374,17 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
   });
 
+  it('pulse-ring renders a slow wide pulse (faint fill + outer ring + dim inner halo) (AH-0MV822FHN005PK37)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs['pulse-ring']);
+    const buf = g.commandBuffer as number[];
+    // The pulse-ring's read: a faint filled body + a bright outer ring stroke
+    // + a dim inner halo stroke — the slow wide pulse-wave echo, distinct from
+    // the dense hex `boss-pellet` and the `shell` it replaced.
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(2);
+  });
+
   it('diamond renders a closed filled path (≥ 3 line segments)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.diamond);
@@ -494,6 +506,7 @@ describe('DEFAULT_SHAPE_LENGTH', () => {
     expect(DEFAULT_SHAPE_LENGTH.dart).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH['boss-pellet']).toBe(1);
     expect(DEFAULT_SHAPE_LENGTH['spiral-pellet']).toBe(1);
+    expect(DEFAULT_SHAPE_LENGTH['pulse-ring']).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.shard).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.chevron).toBeGreaterThan(1);
   });
@@ -754,6 +767,26 @@ describe('resolveEnemyBulletVisual', () => {
     expect(visual.tail).toBeGreaterThan(0);
     expect(visual.muzzle).toBeDefined();
     expect(visual.muzzle?.color).toBe(0xffcc00);
+    expect(shapeAnimates(visual.shape)).toBe(false);
+  });
+
+  it('boss pulse aimed shots resolve a slow wide pulse-ring identity with a pale launch pop (AH-0MV822FHN005PK37)', () => {
+    const visual = resolveEnemyBulletVisual('boss-pulse');
+    // The Boss pulse pattern's signature look: a slow wide pulse ring — a
+    // dedicated `pulse-ring` primitive (faint fill + bright outer ring +
+    // dim inner halo), NOT the filled `shell` the placeholder used before
+    // this landed.
+    expect(canonicalShape(visual.shape)).toBe('pulse-ring');
+    // The shot body keeps the established white Boss bullet colour.
+    expect(visual.color).toBe(0xffffff);
+    // Feel knobs: a pale-blue ring tint, a thicker ring stroke, a short
+    // fading trail, and a pale launch pop at the Boss's body. No animation
+    // — static ring, so no per-frame redraw is required.
+    expect(visual.rimColor).toBe(0x88ddff);
+    expect(visual.thickness).toBeGreaterThan(1);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0x88ddff);
     expect(shapeAnimates(visual.shape)).toBe(false);
   });
 

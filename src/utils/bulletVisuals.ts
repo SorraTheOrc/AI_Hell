@@ -23,6 +23,8 @@
  * (the Boss spread pattern's dense pellet with a menacing concentric ring
  * accent, AH-0MV822ETD008LLZX), **spiral-pellet** (the Boss spiral pattern's
  * phase-coloured pellet with a spiral-wake arc, AH-0MV822F5J006WFR0),
+ * **pulse-ring** (the Boss pulse pattern's slow wide pulse ring,
+ * AH-0MV822FHN005PK37),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -137,6 +139,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   dart: 2.8,
   'boss-pellet': 1,
   'spiral-pellet': 1,
+  'pulse-ring': 1.6,
   diamond: 1,
   spark: 1,
   chevron: 2,
@@ -240,6 +243,9 @@ export function drawBulletShape(
       break;
     case 'spiral-pellet':
       _spiralPellet(graphics, spec, alpha, rim);
+      break;
+    case 'pulse-ring':
+      _pulseRing(graphics, spec, alpha, stroke, rim);
       break;
     case 'diamond':
       _diamond(graphics, spec, alpha, rim);
@@ -838,6 +844,44 @@ function _spiralPellet(
   graphics.strokePath();
 }
 
+/**
+ * Slow wide pulse ring (AH-0MV822FHN005PK37): the Boss pulse pattern's shot
+ * identity.
+ *
+ * A wide, soft ring (the pulse-wave read) built from an outer stroked ring
+ * with a faint filling and a pale inner halo — the aimed shots that ride the
+ * Pulse pattern's screen-wide wave look like slow, wide pulse rings rather
+ * than solid bullets. The `thickness` knob widens the ring stroke; on its
+ * own the shape is a compact echo of the expanding `advancePulseWave` ring.
+ * Distinct from the spread pellet (dense hex) and the spiral pellet
+ * (phase-coloured core).
+ */
+function _pulseRing(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  stroke: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const tint = rim ?? spec.color;
+  // Faint filled body so the ring reads as a slow wide pulse.
+  graphics.fillStyle(tint, Math.min(1, alpha * 0.18));
+  graphics.beginPath();
+  graphics.arc(0, 0, r, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  // Bright outer ring — the pulse edge.
+  graphics.lineStyle(stroke, tint, Math.min(1, alpha * 0.95));
+  graphics.beginPath();
+  graphics.arc(0, 0, r, 0, Math.PI * 2, false);
+  graphics.strokePath();
+  // Dim inner halo ring.
+  graphics.lineStyle(Math.max(1, stroke * 0.5), tint, Math.min(1, alpha * 0.35));
+  graphics.beginPath();
+  graphics.arc(0, 0, r * 0.55, 0, Math.PI * 2, false);
+  graphics.strokePath();
+}
+
 /** Diamond: a filled four-point rhombus. */
 function _diamond(
   graphics: Phaser.GameObjects.Graphics,
@@ -1167,7 +1211,14 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 0.9,
     muzzle: { color: 0xffcc00, radius: 6, duration: 0.14 },
   },
-  'boss-pulse': { shape: 'shell', color: 0xffffff },
+  'boss-pulse': {
+    shape: 'pulse-ring',
+    color: 0xffffff,
+    rimColor: 0x88ddff,
+    thickness: 2.2,
+    tail: 0.9,
+    muzzle: { color: 0x88ddff, radius: 6, duration: 0.14 },
+  },
   'boss-desperation': { shape: 'bolt', color: 0xffdd66, length: 1.8 },
   capturer: { shape: 'line', color: 0xff88ff, length: 2.2 },
   'orbital-strike': { shape: 'shell', color: 0xff4444 },

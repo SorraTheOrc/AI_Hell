@@ -1133,3 +1133,72 @@ describe('Boss — spiral volley projectile identity (AH-0MV822F5J006WFR0)', () 
     }
   });
 });
+
+// ── Boss pulse projectile identity (AH-0MV822FHN005PK37) ────────────
+
+describe('Boss — pulse pattern projectile identity (AH-0MV822FHN005PK37)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(config: {
+    shotProbability?: number;
+    rng?: () => number;
+    initialPhase?: number;
+  } = {}): Boss {
+    return new Boss(booted!.scene, {
+      x: 480,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+      ...config,
+    });
+  }
+
+  it('fires slow wide pulse-ring aimed shots with the shared identity: one launch pop + wave', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+    const boss = makeBoss({ shotProbability: 1, rng: () => 0 });
+    boss._simulateTelegraphElapsed();
+
+    const graphicsBefore = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    const bullets = boss.tryFirePulseBullets(1_000_000);
+    // 1 pulse wave + 3 aimed shots (phase 1).
+    expect(bullets.length).toBeGreaterThanOrEqual(4);
+
+    // The pattern spawns its pulse-wave graphics + aimed-shot Graphics plus
+    // one pale launch pop at the Boss's body (one pop per volley, not per shot).
+    const graphicsAfter = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    // pulse wave (1) + aimed shots (3) + muzzle pop (1)
+    expect(graphicsAfter).toBe(graphicsBefore + bullets.length + 1);
+
+    // Exactly one bullet is the expanding pulse wave.
+    const waves = bullets.filter((b) => b.isPulseWave);
+    expect(waves).toHaveLength(1);
+
+    // Each aimed shot keeps the established white Boss bullet colour (the
+    // shared impact pass tints the hit flash with it).
+    for (const bullet of bullets.filter((b) => !b.isPulseWave)) {
+      expect(bullet.color).toBe(BOSS_BULLET_COLOR);
+    }
+    // Each aimed shot is rotated to fly nose-first along its fan direction.
+    for (const bullet of bullets.filter((b) => !b.isPulseWave)) {
+      const heading = Math.atan2(bullet.vy, bullet.vx);
+      let rotation = bullet.graphics.rotation;
+      let expected = heading;
+      if (rotation - expected > Math.PI) rotation -= Math.PI * 2;
+      if (rotation - expected < -Math.PI) rotation += Math.PI * 2;
+      expect(rotation).toBeCloseTo(expected, 5);
+    }
+  });
+});

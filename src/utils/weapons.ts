@@ -560,6 +560,8 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
  *   concentric ring accent (AH-0MV822ETD008LLZX)
  * - `spiral-pellet` — the Boss spiral pattern's pellet carrying the boss
  *   phase colour, with a short spiral-wake arc (AH-0MV822F5J006WFR0)
+ * - `pulse-ring` — the Boss pulse pattern's slow wide pulse ring
+ *   (AH-0MV822FHN005PK37)
  * - `diamond` — four-point rhombus
  * - `spark` — four-point star
  * - `chevron` — forward-opening V
@@ -585,6 +587,7 @@ export type BulletShape =
   | 'dart'
   | 'boss-pellet'
   | 'spiral-pellet'
+  | 'pulse-ring'
   | 'diamond'
   | 'spark'
   | 'chevron'
