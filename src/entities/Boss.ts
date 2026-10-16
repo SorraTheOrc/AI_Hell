@@ -564,13 +564,47 @@ export class Boss extends Phaser.GameObjects.Container {
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
     if (!this._shouldFire(now)) return [];
 
+    // The shared Boss spiral projectile identity (AH-0MV822F5J006WFR0): a
+    // compact pellet carrying the Boss's **current phase colour** (green
+    // phase 1, yellow 2, orange 3, red 4) with a short spiral-wake arc,
+    // drawn through the shared bullet-shape seam. The live phase colour is
+    // resolved at fire time (the same mapping the health bar uses), so the
+    // spiral volley visually tracks the Boss's phase. Because the Boss
+    // entity is shared by PlayScene and every gym, the pellet's shape, core
+    // tint, spiral-wake and launch pop are identical in the game and every
+    // gym (gym↔game parity by construction). Firing logic, count, rotation
+    // step and speed are unchanged — visuals/feel only.
+    const visual = resolveEnemyBulletVisual('boss-spiral');
+
+    // One shared launch pop at the Boss's body for the whole volley (the
+    // volley is a single fire event that already plays one Boss fire cue),
+    // tinted with the current phase colour. Spawned through the shared
+    // `src/vfx/enemyMuzzleFlash` helper (cheap Graphics primitive,
+    // self-cleaning tween), direction-agnostic like the spiral itself.
+    const phaseTint = this._phaseBulletTint();
+    if (visual.muzzle) {
+      spawnEnemyMuzzleFlash(
+        this.scene as Phaser.Scene,
+        this.x,
+        this.y,
+        0,
+        { ...visual.muzzle, color: phaseTint },
+      );
+    }
+
     const speed = this._bulletSpeed();
     const bullets: BossBullet[] = [];
     const count = this._currentPhaseNumber === 4 ? 16 : 12;
 
     for (let i = 0; i < count; i++) {
       const angle = this._attackAngle + (Math.PI * 2 * i) / count;
-      bullets.push(this._createBullet(angle, speed));
+      // Carry the live phase colour as the pellet's core tint.
+      bullets.push(
+        this._createBullet(angle, speed, {
+          ...visual,
+          rimColor: phaseTint,
+        }),
+      );
     }
     this._attackAngle += 0.3; // rotate the spiral next volley
     // Play the Boss fire sound once per volley.
@@ -740,6 +774,23 @@ export class Boss extends Phaser.GameObjects.Container {
     return this._currentPhaseNumber === 4
       ? BOSS_BULLET_SPEED * BOSS_DESPERATION_SPEED_MULT
       : BOSS_BULLET_SPEED;
+  }
+
+  /**
+   * The Boss's current phase colour — the same mapping the health bar uses
+   * (green phase 1, yellow 2, orange 3, red 4). The spiral pattern's
+   * projectiles carry it as their core tint so the Firestorm volley visually
+   * tracks the Boss's phase (AH-0MV822F5J006WFR0). Single shared source so
+   * the game and every gym tint the spiral pellets identically.
+   */
+  private _phaseBulletTint(): number {
+    const tints: Record<number, number> = {
+      4: 0xff0000,
+      3: 0xff8800,
+      2: 0xffcc00,
+      1: 0x00ff00,
+    };
+    return tints[this._currentPhaseNumber] ?? 0xff0000;
   }
 
   private _createBullet(

@@ -128,6 +128,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     fleck: { shape: 'fleck' as BulletShape, color: 0x00ccff, radius: 3, length: 1.4, rimColor: 0x00ccff },
     dart: { shape: 'dart' as BulletShape, color: 0xffddaa, radius: 3, length: 2.8, rimColor: 0xff6688 },
     'boss-pellet': { shape: 'boss-pellet' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0xff3366 },
+    'spiral-pellet': { shape: 'spiral-pellet' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0xffcc00 },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
     chevron: { shape: 'chevron' as BulletShape, color: 0x00ffcc, radius: 3, length: 2 },
@@ -361,6 +362,17 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.LINE_TO)).toBeGreaterThanOrEqual(5);
   });
 
+  it('spiral-pellet renders a phase-coloured pellet with a spiral-wake arc (AH-0MV822F5J006WFR0)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs['spiral-pellet']);
+    const buf = g.commandBuffer as number[];
+    // The spiral pellet's read: a filled body + a phase-coloured core (two
+    // filled paths) plus the trailing spiral-wake stroke — distinct from the
+    // spread pattern's dense hex pellet and the plain `ring`.
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(2);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
   it('diamond renders a closed filled path (≥ 3 line segments)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.diamond);
@@ -481,6 +493,7 @@ describe('DEFAULT_SHAPE_LENGTH', () => {
     expect(DEFAULT_SHAPE_LENGTH.fleck).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.dart).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH['boss-pellet']).toBe(1);
+    expect(DEFAULT_SHAPE_LENGTH['spiral-pellet']).toBe(1);
     expect(DEFAULT_SHAPE_LENGTH.shard).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.chevron).toBeGreaterThan(1);
   });
@@ -721,6 +734,26 @@ describe('resolveEnemyBulletVisual', () => {
     expect(visual.tail).toBeGreaterThan(0);
     expect(visual.muzzle).toBeDefined();
     expect(visual.muzzle?.color).toBe(0xff3366);
+    expect(shapeAnimates(visual.shape)).toBe(false);
+  });
+
+  it('boss spiral volleys resolve a phase-coloured pellet identity with a spiral-wake + launch pop (AH-0MV822F5J006WFR0)', () => {
+    const visual = resolveEnemyBulletVisual('boss-spiral');
+    // The Boss spiral pattern's signature look: a compact pellet carrying the
+    // Boss's current phase colour with a spiral-wake arc — a dedicated
+    // `spiral-pellet` primitive, NOT the plain `ring` the placeholder used
+    // before this landed.
+    expect(canonicalShape(visual.shape)).toBe('spiral-pellet');
+    // The shot body keeps the established white Boss bullet colour.
+    expect(visual.color).toBe(0xffffff);
+    // Feel knobs: the phase-colour core tint (yellow at phase 2 defaults),
+    // a short fading trail, and a phase-tinted launch pop at the Boss's body
+    // per volley. No animation — static pellet, so no per-frame redraw is
+    // required.
+    expect(visual.rimColor).toBe(0xffcc00);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0xffcc00);
     expect(shapeAnimates(visual.shape)).toBe(false);
   });
 

@@ -1067,3 +1067,69 @@ describe('Boss — spread volley projectile identity (AH-0MV822ETD008LLZX)', () 
     }
   });
 });
+
+// ── Boss spiral projectile identity (AH-0MV822F5J006WFR0) ──────────
+
+describe('Boss — spiral volley projectile identity (AH-0MV822F5J006WFR0)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(config: {
+    shotProbability?: number;
+    rng?: () => number;
+    initialPhase?: number;
+  } = {}): Boss {
+    return new Boss(booted!.scene, {
+      x: 480,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+      ...config,
+    });
+  }
+
+  it('fires phase-tinted spiral pellets with the shared identity: one launch pop + phase-coloured cores', async () => {
+    // Phase 3 (orange 0xff8800) so the tint is distinct from the phase-1
+    // default green — proves the pellet carries the LIVE phase colour.
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+    const boss = makeBoss({ shotProbability: 1, rng: () => 0, initialPhase: 3 });
+    boss._simulateTelegraphElapsed();
+
+    const graphicsBefore = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    const bullets = boss.tryFireSpiralBullets(1_000_000);
+    expect(bullets.length).toBeGreaterThanOrEqual(12);
+
+    // The volley spawns its pellet bullet Graphics **plus** one phase-tinted
+    // launch pop at the Boss's body — one pop per volley, not per pellet.
+    const graphicsAfter = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    expect(graphicsAfter).toBe(graphicsBefore + bullets.length + 1);
+
+    // Each pellet keeps the established white Boss bullet colour (the shared
+    // impact pass tints the hit flash with it).
+    for (const bullet of bullets) {
+      expect(bullet.color).toBe(BOSS_BULLET_COLOR);
+      expect(bullet.isPulseWave).toBeUndefined();
+    }
+    // Each pellet is rotated to fly nose-first along its spiral spoke.
+    for (const bullet of bullets) {
+      const heading = Math.atan2(bullet.vy, bullet.vx);
+      let rotation = bullet.graphics.rotation;
+      let expected = heading;
+      if (rotation - expected > Math.PI) rotation -= Math.PI * 2;
+      if (rotation - expected < -Math.PI) rotation += Math.PI * 2;
+      expect(rotation).toBeCloseTo(expected, 5);
+    }
+  });
+});

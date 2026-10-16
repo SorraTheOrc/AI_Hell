@@ -2077,6 +2077,21 @@ desperation) get their own identities under their own child items.
 Visuals/feel only: firing logic, counts, spread angle, speeds and the
 telegraph cadence are unchanged.
 
+**Boss spiral (boss-spiral pattern, AH-0MV822F5J006WFR0):** the Firestorm
+(Phase 2) spiral volley's shots render as **phase-coloured spiral pellets**
+— a dedicated `spiral-pellet` seam primitive (a compact white pellet with a
+bright **phase-coloured core** — the Boss's current health-phase colour,
+green → yellow → orange → red, resolved live at fire time through the same
+mapping the health bar uses — and a **spiral-wake arc** trailing behind, plus
+a short fading trail). The volley spawns **one phase-tinted launch pop** at
+the boss's body (one pop per volley — the volley is one fire event that
+already plays one Boss fire cue), each pellet flies nose-first along its
+rotating spiral spoke, and each pellet carries its white colour so the
+shared impact pass tints the flash when a pellet connects or is
+intercepted. The remaining boss patterns (pulse, desperation) get their own
+identities under their own child items. Visuals/feel only: firing logic,
+counts, rotation step, speeds and the telegraph cadence are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific

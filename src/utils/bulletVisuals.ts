@@ -21,7 +21,8 @@
  * cometary micro-shard, AH-0MV822E4T006F37Y), **dart** (the Raider's slim
  * sharp-nosed dart with a short trail, AH-0MV822EH800780GI), **boss-pellet**
  * (the Boss spread pattern's dense pellet with a menacing concentric ring
- * accent, AH-0MV822ETD008LLZX),
+ * accent, AH-0MV822ETD008LLZX), **spiral-pellet** (the Boss spiral pattern's
+ * phase-coloured pellet with a spiral-wake arc, AH-0MV822F5J006WFR0),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -135,6 +136,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   fleck: 1.4,
   dart: 2.8,
   'boss-pellet': 1,
+  'spiral-pellet': 1,
   diamond: 1,
   spark: 1,
   chevron: 2,
@@ -235,6 +237,9 @@ export function drawBulletShape(
       break;
     case 'boss-pellet':
       _bossPellet(graphics, spec, alpha, rim);
+      break;
+    case 'spiral-pellet':
+      _spiralPellet(graphics, spec, alpha, rim);
       break;
     case 'diamond':
       _diamond(graphics, spec, alpha, rim);
@@ -795,6 +800,44 @@ function _bossPellet(
   graphics.strokePath();
 }
 
+/**
+ * Phase-coloured spiral pellet (AH-0MV822F5J006WFR0): the Boss spiral
+ * pattern's shot identity.
+ *
+ * A compact pellet with a bright **phase-coloured core** (the Boss's health
+ * phase colour — green phase 1, yellow 2, orange 3, red 4) and a short
+ * **spiral-wake arc** trailing behind, so the shot reads as cartwheeling
+ * outward from the spinning Firestorm volley. The core tint is supplied as
+ * `rimColor` (the Boss resolves its live phase colour at fire time), so the
+ * same primitive carries whatever phase the Boss is in — distinct from the
+ * spread pattern's dense hex pellet with its concentric ring.
+ */
+function _spiralPellet(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const tint = rim ?? 0xffffff;
+  // Compact white pellet body.
+  graphics.fillStyle(spec.color, alpha);
+  graphics.beginPath();
+  graphics.arc(0, 0, r, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  // Bright phase-coloured core — the Boss's current phase colour.
+  graphics.fillStyle(tint, alpha);
+  graphics.beginPath();
+  graphics.arc(0, 0, r * 0.42, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  // Short spiral-wake arc behind the body (a trailing comma suggesting the
+  // cartwheel of the spinning volley), stroked in the phase colour.
+  graphics.lineStyle(1.5, tint, Math.min(1, alpha * 0.85));
+  graphics.beginPath();
+  graphics.arc(-r * 1.15, 0, r * 0.6, Math.PI * 0.6, Math.PI * 1.6, true);
+  graphics.strokePath();
+}
+
 /** Diamond: a filled four-point rhombus. */
 function _diamond(
   graphics: Phaser.GameObjects.Graphics,
@@ -1117,7 +1160,13 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 0.8,
     muzzle: { color: 0xff3366, radius: 6, duration: 0.14 },
   },
-  'boss-spiral': { shape: 'ring', color: 0xffffff },
+  'boss-spiral': {
+    shape: 'spiral-pellet',
+    color: 0xffffff,
+    rimColor: 0xffcc00,
+    tail: 0.9,
+    muzzle: { color: 0xffcc00, radius: 6, duration: 0.14 },
+  },
   'boss-pulse': { shape: 'shell', color: 0xffffff },
   'boss-desperation': { shape: 'bolt', color: 0xffdd66, length: 1.8 },
   capturer: { shape: 'line', color: 0xff88ff, length: 2.2 },
