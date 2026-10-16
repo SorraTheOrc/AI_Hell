@@ -37,6 +37,7 @@ import {
   SHIP_SIZE,
 } from '../../core/constants';
 import {
+  playBulletDestructionSound,
   playDestructionSound,
   playMortarDetonationSound,
   playMortarImpactSound,
@@ -909,7 +910,14 @@ export abstract class CombatScene<
       this,
       enemyBullet.graphics.x,
       enemyBullet.graphics.y,
-      { registry: this.bulletImpactEffects },
+      {
+        registry: this.bulletImpactEffects,
+        // Identity-carrying shots (the Scout's pellet) tint the interception
+        // flash with their own colour, so the hit reads distinct per enemy
+        // while the existing per-enemy destruction cue still plays
+        // (AH-0MV822CQL005R4MM). Legacy bullets keep the warm-white flash.
+        color: enemyBullet.color,
+      },
     );
   }
 
@@ -1187,6 +1195,11 @@ export abstract class CombatScene<
         )
       ) {
         this._hitPlayer();
+        // Identity-carrying shot lands on the ship: pop its distinct impact
+        // flash + the existing per-enemy cue through the shared impact seam,
+        // so a Scout hit reads (and sounds) distinct from a glancing shot
+        // (AH-0MV822CQL005R4MM). Legacy bullets keep the plain hit behaviour.
+        this._spawnEnemyBulletHitImpact(eb);
         eb.graphics.destroy();
       } else {
         keptEnemy2.push(eb);
@@ -1219,6 +1232,24 @@ export abstract class CombatScene<
         this._hitPlayer();
       }
     }
+  }
+
+  /**
+   * Resolves the per-identity impact feedback for an enemy shot reaching the
+   * player (AH-0MV822CQL005R4MM): a small flash in the shot's own colour at
+   * the impact point plus the existing per-enemy destruction cue — routed
+   * through the same shared impact helpers (`spawnBulletImpact` +
+   * `playBulletDestructionSound`) the interception path uses, so the game
+   * and every gym read a Scout hit identically. A no-op for legacy bullets
+   * without the identity `color` field (unchanged behaviour).
+   */
+  private _spawnEnemyBulletHitImpact(enemyBullet: TBullet): void {
+    if (enemyBullet.color === undefined) return;
+    playBulletDestructionSound();
+    spawnBulletImpact(this, enemyBullet.graphics.x, enemyBullet.graphics.y, {
+      registry: this.bulletImpactEffects,
+      color: enemyBullet.color,
+    });
   }
 
   /**

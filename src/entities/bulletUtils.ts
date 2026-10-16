@@ -13,13 +13,20 @@
 
 import type Phaser from 'phaser';
 
-import { drawBulletShape } from '../utils/bulletVisuals';
+import { drawBulletShape, shapeAnimates } from '../utils/bulletVisuals';
 import type { BulletShape as ProjectileShape } from '../utils/weapons';
 
 /** Minimal bullet shape returned by `createBullet`. */
 export interface BulletShape {
   readonly graphics: Phaser.GameObjects.Graphics;
   readonly color: number;
+  /**
+   * Per-frame redraw hook for shapes animated by the bullet's age (the
+   * pellet's faint pulse, AH-0MV822CQL005R4MM). Present only for animated
+   * shapes; the shared enemy-bullet lifecycle calls it with the elapsed
+   * seconds so the shot's pulse breathes in the game and every gym.
+   */
+  redraw?: (elapsed: number) => void;
 }
 
 export interface BulletCreateConfig {
@@ -46,6 +53,11 @@ export interface BulletCreateConfig {
    * shot flies nose-first (default 0 = right).
    */
   angle?: number;
+  /**
+   * Short fading trail behind the shape (× radius — see `BulletVisualSpec.tail`)
+   * (AH-0MV822CQL005R4MM). Optional.
+   */
+  tail?: number;
 }
 
 /**
@@ -67,22 +79,32 @@ export interface BulletCreateConfig {
  */
 export function createBullet(config: BulletCreateConfig): BulletShape {
   const { scene, color, size, x, y } = config;
+  const shape = config.shape ?? 'circle';
 
   const graphics = scene.add.graphics();
-  drawBulletShape(graphics, {
-    shape: config.shape ?? 'circle',
+  const spec = {
+    shape,
     color,
     radius: size,
     length: config.length,
     rimColor: config.rimColor,
     thickness: config.thickness,
     alpha: config.alpha,
-  });
+    tail: config.tail,
+  };
+  drawBulletShape(graphics, spec);
   graphics.setPosition(x, y);
   if (config.angle !== undefined) {
     graphics.setRotation(config.angle);
   }
   graphics.setDepth(3);
 
-  return { graphics, color };
+  // An animated shape (the pellet's faint pulse) must be redrawn every frame
+  // through the shared bullet lifecycle; the redraw threads the bullet's age
+  // into `spec.time` so the pulse breathes identically in game and gyms.
+  const redraw = shapeAnimates(shape)
+    ? (elapsed: number) => drawBulletShape(graphics, { ...spec, time: elapsed })
+    : undefined;
+
+  return { graphics, color, redraw };
 }

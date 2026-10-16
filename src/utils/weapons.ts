@@ -565,7 +565,8 @@ export type BulletShape =
   | 'bolt'
   | 'diamond'
   | 'spark'
-  | 'chevron';
+  | 'chevron'
+  | 'pellet';
 
 // ── Weapon definition ───────────────────────────────────────────────
 

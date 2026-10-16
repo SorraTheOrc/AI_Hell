@@ -186,6 +186,16 @@ export interface CombatEnemyBullet {
   readonly graphics: Phaser.GameObjects.Graphics;
   vx: number;
   vy: number;
+  /**
+   * Identity-carrying enemy shot colour (AH-0MV822CQL005R4MM). Present on
+   * bullets created through the shared bullet-shape seam (e.g. the Scout's
+   * pellet; future identity children the same way) — the shared impact
+   * passes use it to tint the interception flash and to pop an impact cue
+   * when the shot reaches the player. Absent on legacy bullets ({@link
+   * PlayScene.spawnEnemyBullet} etc.) → they keep the plain generic
+   * feedback, unchanged.
+   */
+  readonly color?: number;
 }
 
 /**

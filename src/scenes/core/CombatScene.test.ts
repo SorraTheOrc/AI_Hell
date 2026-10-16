@@ -100,6 +100,37 @@ class StubBullet implements CombatEnemyBullet {
   }
 }
 
+/**
+ * The colour of the LAST FILL_STYLE(7) in a Graphics command buffer. The
+ * constructor seeds default zero-styles first, so a spawn's own fill is the
+ * final one — layout `[7, color, alpha]` per Phaser's Commands.js. Walks the
+ * buffer by command width so an ARC radius (also 7) is never mistaken for an
+ * opcode.
+ */
+function lastFillColor(buf: number[]): number {
+  // Command widths per Phaser Commands.js (opcode, then N args).
+  const WIDTHS: Record<number, number> = {
+    0: 8, // ARC
+    1: 1, // BEGIN_PATH
+    2: 1, // CLOSE_PATH
+    3: 5, // FILL_RECT
+    4: 3, // LINE_TO
+    5: 3, // MOVE_TO
+    6: 4, // LINE_STYLE
+    7: 3, // FILL_STYLE
+    8: 1, // FILL_PATH
+    9: 1, // STROKE_PATH
+    10: 7, // FILL_TRIANGLE
+  };
+  let color = -1;
+  for (let i = 0; i < buf.length; ) {
+    const op = buf[i];
+    if (op === 7) color = buf[i + 1];
+    i += WIDTHS[op] ?? 1;
+  }
+  return color;
+}
+
 /** Minimal drop satisfying the shared collect contract. */
 class StubDrop implements CombatDrop {
   readonly powerUp: PowerUp;
@@ -642,6 +673,62 @@ describe('CombatScene — shared combat core hook contract', () => {
 
     expect(cue).toHaveBeenCalledTimes(1);
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  it('AC5 — an identity-carrying enemy bullet tints its interception flash (AH-0MV822CQL005R4MM)', async () => {
+    const scene = await boot();
+    scene.useDefaultImpact = true;
+    scene.spawnPlayerBullet(50, 50, 0, 0);
+    const eb = new StubBullet(scene, 50, 50);
+    // Scout shots carry their shot colour on the wrapper (the bullet-shape
+    // seam hands `{ graphics, color }` to every scene's wrapper).
+    (eb as unknown as { color?: number }).color = 0xff4444;
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    // The shared interception path still plays the existing per-enemy
+    // destruction cue, but the impact flash now takes the shot's own
+    // colour — a distinct Scout hit read, identical in game and gyms.
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    // FILL_STYLE(7) carries [color, alpha]; the flash's own fill is the LAST
+    // FILL_STYLE in its buffer (the Graphics constructor seeds default
+    // zero-styles before the flash draws).
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xff4444);
+  });
+
+  it('a scout bullet plays its identity impact pop and flash when it hits the player (AH-0MV822CQL005R4MM)', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    const eb = new StubBullet(scene, 100, 100);
+    (eb as unknown as { color?: number }).color = 0xff4444;
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    // The bullet lands: the shared hit lifecycle runs AND the identity
+    // impact pop (existing per-enemy cue + tinted flash) plays through the
+    // shared enemy-bullet-vs-player pass.
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).toHaveBeenCalledTimes(1);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(0xff4444);
+  });
+
+  it('legacy enemy bullets without an identity keep the plain hit behaviour (no added flash)', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    scene.bullets.push(new StubBullet(scene, 100, 100));
+
+    scene.runCollisions();
+
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(cue).not.toHaveBeenCalled();
+    expect(scene.getBulletImpactEffects()).toHaveLength(0);
   });
 
   // ── Collision bookkeeping ─────────────────────────────────────────

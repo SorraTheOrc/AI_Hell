@@ -207,6 +207,38 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     expect(bullet.vx).toBeGreaterThan(0);
   });
 
+  it('fires the Scout/Invader pellet identity: bullet + launch pop + animated redraw (AH-0MV822CQL005R4MM)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+    const scout = makeScout(100, 200);
+
+    scout.shootEnabled = true;
+    scout.tryFireAimedBullet(1_000_000); // tell
+    const graphicsBefore = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    const bullet = scout.tryFireAimedBullet(
+      1_000_000 + SCOUT_ADVANCE_CUE_DURATION,
+    )!;
+
+    // The arriving shot spawns its bullet Graphics **plus** the launch pop —
+    // the enemy-side fire VFX, spawned from this shared fire seam.
+    const graphicsAfter = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    expect(graphicsAfter).toBe(graphicsBefore + 2);
+
+    expect(bullet.color).toBe(SCOUT_BULLET_COLOR);
+    // The pellet identity is animated — the faint pulse redraws each frame
+    // through the shared bullet lifecycle (`bullet.redraw`).
+    expect(bullet.redraw).toBeTypeOf('function');
+    // The scalloped pellet flies nose-first toward the aim target.
+    const heading = Math.atan2(bullet.vy, bullet.vx);
+    expect(bullet.graphics.rotation).toBeCloseTo(heading, 5);
+  });
+
   it('destroySelf hides the body and plays an explosion (no-op when already destroyed)', async () => {
     booted = await bootScene([HarnessScene]);
     const scout = makeScout(100, 100);

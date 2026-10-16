@@ -30,6 +30,7 @@ import {
   resolvePlayerBulletVisual,
   resolveEnemyBulletVisual,
   missileFlameLength,
+  shapeAnimates,
   ENEMY_BULLET_IDENTITIES,
   DEFAULT_SHAPE_LENGTH,
 } from './bulletVisuals';
@@ -124,6 +125,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
     chevron: { shape: 'chevron' as BulletShape, color: 0x00ffcc, radius: 3, length: 2 },
+    pellet: { shape: 'pellet' as BulletShape, color: 0xff4444, radius: 3, rimColor: 0x00ff66 },
   } as const;
 
   it('disc and circle render as a filled arc (not a bare rectangle)', async () => {
@@ -243,6 +245,46 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     const buf = g.commandBuffer as number[];
     expect(countOps(buf, Cmd.LINE_TO)).toBe(2);
     expect(countOps(buf, Cmd.STROKE_PATH)).toBe(1);
+  });
+
+  it('pellet renders a scalloped alien-pod body, an enemy-tinted core and a stroked pulse ring (AH-0MV822CQL005R4MM)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs.pellet);
+    const buf = g.commandBuffer as number[];
+    // The body's bulged silhouette + the rim-tinted core are filled arcs; the
+    // outer pulse ring is a stroked arc. Plenty of arcs/fills, exactly one
+    // stroke: the faint pulsing rim.
+    expect(countOps(buf, Cmd.ARC)).toBeGreaterThanOrEqual(3);
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(2);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBe(1);
+  });
+
+  it('the pellet pulse ring breathes with the bullet age (time-driven alpha)', async () => {
+    // The pulse ring is the LAST stroked path in the buffer; the LINE_STYLE
+    // immediately before it carries `alpha × (0.35 + 0.30·sin(time·7))`.
+    const pulseAlpha = (graphics: Phaser.GameObjects.Graphics): number => {
+      const buf = graphics.commandBuffer as number[];
+      const strokeIdx = buf.lastIndexOf(Cmd.STROKE_PATH);
+      let lineStyleIdx = -1;
+      for (let i = strokeIdx - 1; i >= 0; i--) {
+        if (buf[i] === Cmd.LINE_STYLE) {
+          lineStyleIdx = i;
+          break;
+        }
+      }
+      expect(lineStyleIdx).toBeGreaterThanOrEqual(0);
+      // LINE_STYLE layout: [id, lineWidth, color, alpha] (Phaser Commands.js).
+      expect(buf[lineStyleIdx + 1]).toBe(1); // 1 px stroke
+      return buf[lineStyleIdx + 3];
+    };
+
+    const start = await makeGraphics();
+    drawBulletShape(start, { ...specs.pellet, time: 0 });
+    const bright = await makeGraphics();
+    // sin(π/2) = 1 → the ring reaches its brightest pulse phase.
+    drawBulletShape(bright, { ...specs.pellet, time: Math.PI / 2 / 7 });
+
+    expect(pulseAlpha(bright)).toBeGreaterThan(pulseAlpha(start));
   });
 
   it('draws only the requested shape (the buffer is cleared first)', async () => {
@@ -404,6 +446,25 @@ describe('resolveEnemyBulletVisual', () => {
     for (const entry of ENEMY_BULLET_IDENTITIES) {
       expect(resolveEnemyBulletVisual(entry.id)).toBeDefined();
     }
+  });
+
+  it('scout/invader aimed shots resolve a pellet identity with an enemy-tinted core + faint pulse (AH-0MV822CQL005R4MM)', () => {
+    for (const id of ['scout', 'march'] as const) {
+      const visual = resolveEnemyBulletVisual(id);
+      // The shared family: a small alien pellet, not the legacy plain disc.
+      expect(canonicalShape(visual.shape)).toBe('pellet');
+      // The shot body keeps the established lethal-red Scout bullet colour.
+      expect(visual.color).toBe(0xff4444);
+      // The enemy-tinted core/pulse + the launch-cue VFX are part of the
+      // identity, so the game and every gym resolve the same feel.
+      expect(visual.rimColor).toBeDefined();
+      expect(visual.muzzle).toBeDefined();
+      expect(shapeAnimates(visual.shape)).toBe(true);
+    }
+    // Aliases share one signature (the roster guard asserts this too).
+    expect(resolveEnemyBulletVisual('scout')).toEqual(
+      resolveEnemyBulletVisual('march'),
+    );
   });
 
   it('throws for an unknown archetype (fail loud, so children register first)', async () => {

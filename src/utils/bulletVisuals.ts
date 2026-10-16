@@ -13,8 +13,10 @@
  * `drawBulletShape` supports at least: **disc** (filled circle, `circle` is
  * the legacy alias), **line/beam** (`line`), **teardrop/streak**
  * (`teardrop`), **missile**, **ring**, **shell**, **jagged bolt** (`bolt`),
- * plus the roster's `diamond`, `spark` (4-point star) and `chevron`
- * primitives needed to give every weapon a unique in-flight identity.
+ * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
+ * `pellet` (scalloped alien pod with a tinted core + faint pulse,
+ * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
+ * in-flight identity.
  *
  * Shapes are drawn in the Graphics' local space, long axis along +x; callers
  * orient the GameObject with `setRotation(heading)` (see `PlayerBullet._draw`).
@@ -40,7 +42,7 @@
 import type Phaser from 'phaser';
 
 import { PLAYER_BULLET_RADIUS } from '../core/constants';
-import type { BulletShape, WeaponDefinition } from './weapons';
+import type { BulletShape, MuzzleFlashSpec, WeaponDefinition } from './weapons';
 
 // ── Visual metadata shape ──────────────────────────────────────────
 
@@ -121,6 +123,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   diamond: 1,
   spark: 1,
   chevron: 2,
+  pellet: 1,
 };
 
 /** Default stroke width (px) for stroked shapes. */
@@ -208,6 +211,9 @@ export function drawBulletShape(
       break;
     case 'chevron':
       _chevron(graphics, spec, alpha, stroke, rim);
+      break;
+    case 'pellet':
+      _pellet(graphics, spec, alpha, rim);
       break;
   }
   if (spec.tail !== undefined && spec.tail > 0) {
@@ -509,6 +515,71 @@ function _chevron(
   graphics.strokePath();
 }
 
+/**
+ * Alien pod pellet: a small scalloped body, a bright enemy-tinted core and a
+ * faint pulsing rim (AH-0MV822CQL005R4MM).
+ *
+ * The Scout/Invader aimed shot's distinct in-flight identity: three bump
+ * protrusions around a compact disc give the silhouette an alien-pod read
+ * (decidedly not the plain disc every enemy uses before it adopts an
+ * identity), the `rimColor` inner disc echoes the enemy's own tint (the neon
+ * green Scout chevron), and the outer ring breathes with {@link spec.time} —
+ * the faint pulse that makes the shot feel alive. The pulse is time-driven,
+ * so an enemy bullet carrying this shape redraws each frame through the
+ * shared bullet lifecycle (`bulletUtils.createBullet` hands back a `redraw`
+ * hook for exactly these animated shapes).
+ */
+function _pellet(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const tint = rim ?? 0xffffff;
+  // Scalloped alien-pod body: a compact disc ringed by three bumps.
+  graphics.fillStyle(spec.color, alpha);
+  graphics.beginPath();
+  graphics.arc(0, 0, r, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  const bumpRadius = r * 0.3;
+  for (const angle of [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3]) {
+    graphics.fillStyle(spec.color, alpha * 0.85);
+    graphics.beginPath();
+    graphics.arc(
+      Math.cos(angle) * r * 1.3,
+      Math.sin(angle) * r * 1.3,
+      bumpRadius,
+      0,
+      Math.PI * 2,
+      false,
+    );
+    graphics.fillPath();
+  }
+  // Enemy-tinted bright core — the shot reads as belonging to this enemy.
+  graphics.fillStyle(tint, alpha);
+  graphics.beginPath();
+  graphics.arc(0, 0, r * 0.42, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  // Faint pulse ring whose alpha breathes with the bullet's age.
+  const pulse = 0.35 + 0.3 * Math.sin((spec.time ?? 0) * 7);
+  graphics.lineStyle(1, tint, Math.min(1, Math.max(0, alpha * pulse)));
+  graphics.beginPath();
+  graphics.arc(0, 0, r * 1.55, 0, Math.PI * 2, false);
+  graphics.strokePath();
+}
+
+/**
+ * Whether a shape carries parts animated by `spec.time` (so enemy bullets
+ * must be redrawn each frame to show them). Currently the pellet's faint
+ * pulse; the player-side missile exhaust flame animates through
+ * `PlayerBullet._draw` directly. `bulletUtils.createBullet` hands back a
+ * `redraw` hook exactly for these shapes (AH-0MV822CQL005R4MM).
+ */
+export function shapeAnimates(shape: BulletShape): boolean {
+  return canonicalShape(shape) === 'pellet';
+}
+
 // ── Player weapon visual resolution ────────────────────────────────
 
 /**
@@ -580,6 +651,19 @@ export interface EnemyBulletVisual {
   thickness?: number;
   /** Fill/line alpha (optional). */
   alpha?: number;
+  /**
+   * Short fading trail behind the shape (× radius; see `BulletVisualSpec.tail`).
+   * Optional — absent → no trail (AH-0MV822CQL005R4MM).
+   */
+  tail?: number;
+  /**
+   * Fire-time launch-pop VFX spawned at the enemy's body when a shot leaves
+   * (AH-0MV822CQL005R4MM). The enemy side of the player's per-weapon
+   * `muzzleFlash` metadata: the entity's shared fire method spawns the pop
+   * through the shared `src/vfx/enemyMuzzleFlash.ts` helper, so the game and
+   * every gym pop identically. Absent → no launch pop.
+   */
+  muzzle?: MuzzleFlashSpec;
 }
 
 /**
@@ -588,8 +672,25 @@ export interface EnemyBulletVisual {
  * colour* together, never a behaviour/balance re-tune.
  */
 export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisual> = {
-  scout: { shape: 'disc', color: 0xff4444 },
-  march: { shape: 'disc', color: 0xff4444 },
+  // Scout/Invader aimed shot (AH-0MV822CQL005R4MM): a small alien pellet —
+  // scalloped body, enemy-tinted (green) core and a faint time-driven pulse —
+  // with a green launch pop at the shot and a short fading trail. The shot
+  // body keeps the established lethal-red `SCOUT_BULLET_COLOR`; identity is
+  // carried by shape + rim + feel, never a behaviour change.
+  scout: {
+    shape: 'pellet',
+    color: 0xff4444,
+    rimColor: 0x00ff66,
+    tail: 1.2,
+    muzzle: { color: 0x00ff66, radius: 5, duration: 0.12 },
+  },
+  march: {
+    shape: 'pellet',
+    color: 0xff4444,
+    rimColor: 0x00ff66,
+    tail: 1.2,
+    muzzle: { color: 0x00ff66, radius: 5, duration: 0.12 },
+  },
   diver: { shape: 'teardrop', color: 0xffee88, length: 1.8 },
   tank: { shape: 'shell', color: 0xffaa00 },
   phaser: { shape: 'bolt', color: 0xff4444, length: 1.6 },
