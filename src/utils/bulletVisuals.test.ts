@@ -382,6 +382,21 @@ describe('resolvePlayerBulletVisual', () => {
     expect(rapid.rimColor).toBe(0xffffff);
     expect(rapid.tail).toBeGreaterThan(0);
   });
+
+  it('the options pod shot resolves a pale-aqua rimmed chevron with a light trail (AH-0MV822BDN008IYL6)', () => {
+    const options = resolvePlayerBulletVisual(WEAPON_CATALOGUE.options);
+    // The small pod-shot identity: the catalogue `chevron` family (the
+    // unique pod-dart family the roster assigns to the Options), a pale
+    // aqua neon rim (its own tint) and a short faint fading trail — all
+    // visual metadata; the orbit/fire behaviour is unchanged.
+    expect(canonicalShape(options.shape)).toBe('chevron');
+    expect(options.color).toBe(0x00ffcc);
+    // Smaller than the cannon's bullet: the pods multiply firepower rather
+    // than matching the main gun.
+    expect(options.radius).toBeLessThan(PLAYER_BULLET_RADIUS);
+    expect(options.rimColor).toBe(0xd9fff2);
+    expect(options.tail).toBeGreaterThan(0);
+  });
 });
 
 describe('resolveEnemyBulletVisual', () => {

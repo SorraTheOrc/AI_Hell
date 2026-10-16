@@ -924,4 +924,18 @@ describe('Gradius Options orbiting satellites (AH-0MV1BIVVK0043TEM)', () => {
       WEAPON_CATALOGUE.cannon.bulletSize,
     );
   });
+
+  test('carries the pod-shot visual identity (rim tint, light trail, muzzle flash, impact fx) (AH-0MV822BDN008IYL6)', () => {
+    const opts = WEAPON_CATALOGUE.options;
+    // A small pod dart with its own pale-aqua tint (rim), a short faint
+    // fading trail, an aqua launch flash and a baked aqua impact pop — all
+    // visual metadata, distinct from the main gun.
+    expect(opts.bulletShape).toBe('chevron');
+    expect(opts.bulletRim).toBe(0xd9fff2);
+    expect(opts.bulletTrail).toBeGreaterThan(0);
+    expect(opts.muzzleFlash).toBeDefined();
+    expect(opts.muzzleFlash!.color).toBe(BULLET_COLORS.options);
+    expect(opts.impactFx).toBeDefined();
+    expect(opts.impactFx!.cue).toBe('playOptionsImpactSound');
+  });
 });

@@ -1457,5 +1457,15 @@ describe('GymWeapons — Gradius Options escort demonstration (AH-0MV1BIVVK0043T
     expect(pods.length).toBe(
       player.getWeaponDef('options').orbit?.pods ?? 0,
     );
+    // The gym's pod bullets carry the same visual identity as the game's
+    // through the shared core (parity, AH-0MV822BDN008IYL6): the chevron
+    // pod-dart family, pale-aqua rim, short fading trail and the baked
+    // impact feedback the shared impact seam resolves on connect.
+    for (const pod of pods) {
+      expect(pod.shape).toBe('chevron');
+      expect(pod.rimColor).toBe(WEAPON_CATALOGUE.options.bulletRim);
+      expect(pod.tail).toBe(WEAPON_CATALOGUE.options.bulletTrail);
+      expect(pod.impactFx?.cue).toBe('playOptionsImpactSound');
+    }
   });
 });

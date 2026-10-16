@@ -614,3 +614,27 @@ describe('PlayerBullet — cluster missile visual identity (AC1/AC3)', () => {
     expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(0);
   });
 });
+
+// ── Options — small pod shot: pale-aqua rimmed chevron with a light trail (AH-0MV822BDN008IYL6) ─
+
+describe('PlayerBullet — options pod-shot visual identity (AC1/AC3)', () => {
+  it('the pod shot renders as a rimmed chevron dart with a fading trail', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(
+      scene, 100, 100, 0x00ffcc, 2.4, 300, 0, 0.7,
+      'chevron', undefined, 0xd9fff2, undefined, 2.0,
+    );
+
+    // The options signature: the unique `chevron` pod-dart family (stroked V
+    // → MOVE_TO + 2 LINE_TO + STROKE_PATH, never the main gun's disc), a
+    // pale-aqua neon rim and a short 3-segment fading trail (FILL_TRIANGLE
+    // via the shared seam) — the small pod shot's own tint + light trail.
+    expect(bullet.shape).toBe('chevron');
+    expect(bullet.rimColor).toBe(0xd9fff2);
+    expect(bullet.tail).toBe(2.0);
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.LINE_TO)).toBe(2);
+    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
+  });
+});

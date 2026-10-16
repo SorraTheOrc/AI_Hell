@@ -435,6 +435,11 @@ export function playClusterImpactSound(): void {
   playCue('playClusterImpactSound');
 }
 
+/** Soft bright aqua pop — Options pod shot connects (AH-0MV822BDN008IYL6). */
+export function playOptionsImpactSound(): void {
+  playCue('playOptionsImpactSound');
+}
+
 /** Soft warm amber hit — Spread bullet connects (AH-0MV8229B9009DQGA). */
 export function playSpreadImpactSound(): void {
   playCue('playSpreadImpactSound');
@@ -465,6 +470,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playRapidImpactSound,
   playWaveLaserImpactSound,
   playClusterImpactSound,
+  playOptionsImpactSound,
 };
 
 /**
@@ -519,6 +525,11 @@ export function playWaveLaserFireSound(): void {
 /** Low missile launch whoosh + click — Cluster Missile fire (AH-0MV822B1B0048UZT). */
 export function playClusterFireSound(): void {
   playCue('playClusterFireSound');
+}
+
+/** Bright soft twinkle — Options pod volley fire (AH-0MV822BDN008IYL6). */
+export function playOptionsFireSound(): void {
+  playCue('playOptionsFireSound');
 }
 
 /** Sharp neon snap — Wave Laser bullet connects (AH-0MV822ACO007CEZF). */
@@ -580,6 +591,9 @@ export function playWeaponFireSound(
       break;
     case 'cluster':
       playCue('playClusterFireSound', options);
+      break;
+    case 'options':
+      playCue('playOptionsFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches

@@ -239,6 +239,22 @@
       ]
     },
     {
+      "cue": "playOptionsFireSound",
+      "recipe": "aihell-options-fire",
+      "delivery": "baked",
+      "seeds": [
+        32271
+      ]
+    },
+    {
+      "cue": "playOptionsImpactSound",
+      "recipe": "aihell-options-impact",
+      "delivery": "baked",
+      "seeds": [
+        32272
+      ]
+    },
+    {
       "cue": "playSpreadImpactSound",
       "recipe": "aihell-spread-impact",
       "delivery": "baked",

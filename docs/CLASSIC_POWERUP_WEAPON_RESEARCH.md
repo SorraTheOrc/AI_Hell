@@ -265,6 +265,13 @@ see and steer them, and each pod fires **radially outward along its own orbit
 direction** instead of the ship's heading, so their firing lines fan
 independently of the main gun. No ship-upgrade path — the pods are a timed
 cumulative weapon like Spread/Dual/Rapid.
+**In-flight identity (AH-0MV822BDN008IYL6):** each pod shot renders as a neon
+**small pod dart** (the shared `chevron` family the catalogue assigns to the
+Options) with its own **pale-aqua rim tint and a short faint fading trail**, so
+the rotating volley reads as the escort's shots, never as the main gun's cyan
+disc. The volley fires with a baked bright soft-tone cue + aqua launch flash,
+and every pod-shot connect plays the baked soft-aqua hit pop + aqua impact
+flash through the shared impact seam — with no behaviour change.
 
 **Type:** weapon.
 

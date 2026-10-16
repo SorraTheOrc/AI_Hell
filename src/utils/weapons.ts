@@ -1031,6 +1031,29 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     fireRateMs: WEAPON_OPTIONS_FIRE_RATE,
     bulletColor: BULLET_COLORS.options,
     bulletShape: 'chevron',
+    // In-flight identity (AH-0MV822BDN008IYL6): a small angular pod shot —
+    // the shared seam's `chevron` family (the catalogue assigns this unique
+    // family to the Options, so its shots read as pod darts, never as the
+    // main gun's disc) — with its own pale-aqua neon rim (its own tint, light
+    // against the main gun's cyan disc), and a short faint fading trail.
+    // All visual metadata; the orbit/fire behaviour is unchanged.
+    bulletRim: 0xd9fff2,
+    // Light trail behind the pod shot — short and faint so the six-pod
+    // rotating volley stays readable (shared bullet-trail seam).
+    bulletTrail: 2.0,
+    // Clean aqua launch flash / launch cue at the ship when the Options
+    // volley fires (shared combat-core spawn path — the same VFX every
+    // weapon shows at its muzzle).
+    muzzleFlash: { color: BULLET_COLORS.options, radius: 6, duration: 0.12 },
+    // Distinct aqua impact flash + baked hit cue when a pod shot connects
+    // (shared impact seam), so the escort's hits read and sound distinct
+    // from the main gun.
+    impactFx: {
+      color: BULLET_COLORS.options,
+      radius: 8,
+      duration: 0.15,
+      cue: 'playOptionsImpactSound',
+    },
     // Smaller than the cannon's bullet: the pods multiply firepower rather
     // than matching the main gun.
     bulletSize: 0.8,

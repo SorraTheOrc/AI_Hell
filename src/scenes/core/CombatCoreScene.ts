@@ -1057,7 +1057,7 @@ export class CombatCoreScene<
     const directions = optionsPodFireDirections(this._optionsOrbitPhase, count);
     for (let i = 0; i < positions.length; i++) {
       const vel = bulletVelocity(directions[i], OPTIONS_POD_BULLET_SPEED);
-      this.spawnPlayerBullet(
+      const bullet = this.spawnPlayerBullet(
         positions[i].x,
         positions[i].y,
         vel.vx,
@@ -1071,7 +1071,12 @@ export class CombatCoreScene<
         def.bulletShapeLength,
         def.bulletRim,
         def.bulletThickness,
+        def.bulletTrail,
       );
+      // Per-weapon impact feedback (the options pod's distinct aqua flash +
+      // baked hit cue), resolved by the shared impact seam when the shot
+      // connects — identical in the game and every gym (AH-0MV822BDN008IYL6).
+      bullet.impactFx = def.impactFx;
     }
   }
 

@@ -115,6 +115,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playRicochetImpactSound` | Soft high bounce tick — triangle 1800→900 Hz + HP noise smack, ~0.09 s | Player ricochet wall bounce or connect | shared impact seam in `CombatScene` (AH-0MV822AP1006W2F9) | new | `aihell-ricochet-impact` |
 | `playClusterFireSound` | Low missile launch — square 300→90 Hz + swept lowpass noise whoosh + bright ignition click, ~0.16 s | Player cluster-missile fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-cluster-fire` |
 | `playClusterImpactSound` | Heavy detonation thump — saw 260→60 Hz + lowpass noise smack, ~0.18 s | Player cluster-missile shell/warhead connect | shared impact seam in `CombatScene` (AH-0MV822B1B0048UZT) | new | `aihell-cluster-impact` |
+| `playOptionsFireSound` | Bright soft two-tone twinkle — triangle 900→1600 Hz + light sine overtone, ~0.07 s | Player options pod-volley fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-options-fire` |
+| `playOptionsImpactSound` | Soft bright aqua pop — triangle 1300→550 Hz + light HP noise tick, ~0.11 s | Player options pod-shot connect | shared impact seam in `CombatScene` (AH-0MV822BDN008IYL6) | new | `aihell-options-impact` |
 | `playSpreadPickupSound` | Triangle 500→1500→800 Hz, ~0.15 s | Spread pickup | `dropLayer` | new | `aihell-pickup-spread` |
 | `playDualPickupSound` | Saw 1000→500 then 1200→700 Hz, 0.06 s apart | Dual pickup | `dropLayer` | new | `aihell-pickup-dual` |
 | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | Rapid pickup | `dropLayer` | new | `aihell-pickup-rapid` |
@@ -209,6 +211,8 @@ repeated kills still vary.
 | `aihell-ricochet-impact` | `playRicochetImpactSound` | Soft high bounce tick 1800→900 Hz + HP noise smack, ~0.09 s | 32268 |
 | `aihell-cluster-fire` | `playClusterFireSound` | Low missile launch 300→90 Hz + swept noise whoosh + ignition click, ~0.16 s | 32269 |
 | `aihell-cluster-impact` | `playClusterImpactSound` | Heavy detonation thump 260→60 Hz + lowpass noise smack, ~0.18 s | 32270 |
+| `aihell-options-fire` | `playOptionsFireSound` | Bright soft two-tone twinkle 900→1600 Hz + light sine overtone, ~0.07 s | 32271 |
+| `aihell-options-impact` | `playOptionsImpactSound` | Soft bright aqua pop 1300→550 Hz + light HP noise tick, ~0.11 s | 32272 |
 | `aihell-pickup-spread` | `playSpreadPickupSound` | Triangle 500→1500→800 Hz, ~0.15 s | 32220 |
 | `aihell-pickup-dual` | `playDualPickupSound` | Two saw drops 1000→500 / 1200→700 Hz | 32221 |
 | `aihell-pickup-rapid` | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | 32222 |

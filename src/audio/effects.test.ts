@@ -213,6 +213,22 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playOptionsImpactSound resolves to the baked options-impact asset (AH-0MV822BDN008IYL6)', () => {
+    effects.playOptionsImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-options-impact.32272.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the options impact cue (AH-0MV822BDN008IYL6)', () => {
+    effects.playWeaponImpactCue('playOptionsImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-options-impact.32272.wav',
+    );
+  });
+
   it('playCountdownTickSound rises in pitch with each beat (AH-0MV722WJS0075UTZ)', () => {
     // Count 3 (step 0) is the base rate, 2 and 1 rise above it.
     effects.playCountdownTickSound(0);
@@ -393,6 +409,9 @@ describe('playWeaponFireSound — shared player-fire path', () => {
       ['mortar', 'playMortarFireSound'],
       ['arc', 'playArcFireSound'],
       ['wave_laser', 'playWaveLaserFireSound'],
+      ['ricochet', 'playRicochetFireSound'],
+      ['cluster', 'playClusterFireSound'],
+      ['options', 'playOptionsFireSound'],
     ];
     for (const [weaponId, cue] of cases) {
       recording.plays.length = 0;
@@ -414,11 +433,12 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     expect(recording.plays[0].volume).toBe(1);
   });
 
-  it('is a no-op for catalogue-only weapon ids without a baked fire cue', () => {
-    // options has no baked fire cue yet — it stays a catalogue-only id that
-    // degrades to a silent no-op.
+  it('is a no-op for a weapon id without a baked fire cue', () => {
+    // Every catalogue weapon now has a baked fire cue; an unknown id
+    // degrades to a silent no-op (matches the per-weapon `_playShootCue`
+    // switch behaviour).
     expect(() =>
-      effects.playWeaponFireSound('options' as never),
+      effects.playWeaponFireSound('not-a-catalogue-weapon' as never),
     ).not.toThrow();
     expect(recording.plays).toHaveLength(0);
   });
@@ -433,6 +453,12 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     effects.playWeaponFireSound('cluster');
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/aihell-cluster-fire.32269.wav');
+  });
+
+  it('plays the baked options fire cue (AH-0MV822BDN008IYL6)', () => {
+    effects.playWeaponFireSound('options');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-options-fire.32271.wav');
   });
 });
 

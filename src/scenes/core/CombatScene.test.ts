@@ -1913,6 +1913,13 @@ describe('auto-fire threads the weapon visual identity onto spawned bullets', ()
     expect(bullets.length).toBeGreaterThan(0);
     for (const bullet of bullets) {
       expect(bullet.shape).toBe('chevron');
+      // The pod shot carries its full visual identity through the shared
+      // orbit spawn path (AH-0MV822BDN008IYL6): the pale-aqua rim, the
+      // short fading trail, and the per-weapon impact feedback the shared
+      // impact seam resolves when the shot connects.
+      expect(bullet.rimColor).toBe(WEAPON_CATALOGUE.options.bulletRim);
+      expect(bullet.tail).toBe(WEAPON_CATALOGUE.options.bulletTrail);
+      expect(bullet.impactFx?.cue).toBe('playOptionsImpactSound');
     }
   });
 
