@@ -1035,6 +1035,24 @@ missile-split seams (`src/scenes/core/CombatCoreScene.ts`), the pure
 Force Field seam — so the game and every gym (`GymWeapons`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`) run identical arsenal behaviour.
 
+**Projectile identity & per-shot feel are shared (per-enemy visuals epic,
+AH-0MV2K5SR0005RTTE).** Every weapon/attack's in-flight look, fire-time
+launch pop and impact feedback is resolved from the shared bullet-shape
+seams consumers run in both the game and every gym: the per-weapon bullet
+looks from the weapon catalogue → `resolvePlayerBulletVisual` (consumed by
+`PlayerBullet._draw` and the shared combat-core spawn path), the per-enemy
+identities from `ENEMY_BULLET_VISUALS` → `resolveEnemyBulletVisual`
+(consumed by `bulletUtils.createBullet` inside each shared entity's own fire
+method), the enemy launch pop from `src/vfx/enemyMuzzleFlash.ts`, and the
+impact flash/cue from the shared `CombatScene` interception + hit passes.
+The repo duplicate-body guard and the gym↔game equivalence suite therefore
+cover the new visuals exactly as they do behaviours: a weapon or enemy
+renders the same code-drawn silhouette, muzzle flash and hit feedback in
+`PlayScene` and in `GymWeapons` / `GymFodderEnemies` / `GymBoss` / the
+classic-arcade gyms — a disabled feature is the only permitted divergence.
+See "Projectile identity & per-shot feel" in this document for the full
+per-attack roster.
+
 **Documented divergence — the Player gym's obstacle course.** `GymPlayer`
 spawns a deterministic set of indestructible obstacles
 (`src/entities/Obstacle.ts`) that the shipped `PlayScene` does not yet have.
@@ -1980,6 +1998,35 @@ unchanged). The shared seams the children consume: `bulletUtils.createBullet`
 impact passes in `src/scenes/core/CombatScene.ts` (coloured interception
 flash + per-identity hit pop through `playBulletDestructionSound`, the reused
 per-enemy impact cue).
+
+### Projectile identity roster (AH-0MV2K5SR0005RTTE)
+
+The consolidated per-attack identity — shape primitive, fire-time VFX (launch
+pop at the emitter) and impact feel — for every AC-listed enemy attack. All
+shapes are code-drawn `src/utils/bulletVisuals.ts` primitives rendered
+through the shared seam, so the game and every gym draw them identically
+(gym↔game parity by construction; the docs-guard test pins this table).
+
+| Identity | Family/pattern | Shape primitive | Fire VFX (launch pop) | Impact feel |
+|---|---|---|---|---|
+| Alien pellet | Scout / Space-Invaders March | `pellet` (pulsing rim) | green pop at scout | green flash + shared destruction cue |
+| Sharp shard | Diver spread burst | `shard` (spine glint) | one pale-yellow pop per burst | pale-yellow flash + shared destruction cue |
+| Heavy shell | Tank radial | `heavy-shell` (breathing glow) | one amber pop per burst | amber flash + shared destruction cue |
+| Crisp phaser bolt | Phaser radial | `phaser-bolt` (core streak) | one magenta pop per volley | red flash + shared destruction cue |
+| Cometary fleck | Swarm burst | `fleck` (comet tear) | cyan pop per member shot | cyan flash + shared destruction cue |
+| Slim dart | Defender raider | `dart` (spearhead) | pale-amber pop per shot | pale-amber flash + shared destruction cue |
+| Dense boss pellet | Boss spread | `boss-pellet` (ring accent) | one blood-red pop per volley | white flash + shared destruction cue |
+| Phase pellet | Boss spiral | `spiral-pellet` (phase core) | one phase-tinted pop per volley | white flash + shared destruction cue |
+| Pulse ring | Boss pulse aimed shots | `pulse-ring` (wide wave echo) | one pale pop per volley | white flash + shared destruction cue |
+| Tracer | Boss desperation | `tracer` (white-hot streak) | one hot-gold pop per volley | hot-gold flash + shared destruction cue |
+| Tractor beam | Galaga capturer | beam field (tapering funnel) | beam-start field shimmer | capture lure + shared destruction cue |
+| Falling warhead | Missile-Command orbital-strike | `warhead` (fiery tail) | amber pop at spawn | red detonation flash + shared explosion cue |
+
+**Aliasing note:** the Space-Invaders March (`march`) shares the Scout
+identity (same entity class, one roster family); the Boss's four patterns
+are separate identities (one child per pattern). The Capturer and
+OrbitalStrike never fire a bullet — their identities are the beam field and
+the falling warhead respectively.
 
 **E1 Scout / Space-Invaders March (scout-invader family,
 AH-0MV822CQL005R4MM):** the aimed shot renders as a **small alien pellet** —

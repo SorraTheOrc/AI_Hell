@@ -261,4 +261,33 @@ describe('docs guard — the player-facing documentation records the visual rost
       ).toContain(phrase);
     },
   );
+
+  it('the enemy design doc roster table lists every identity family (AH-0MV822GWT001O9YD)', () => {
+    // The consolidated projectile-identity roster pins every AC-listed family
+    // by name and shape so the docs cannot drift from the code registry.
+    const entries: ReadonlyArray<[string, string]> = [
+      ['Scout / Space-Invaders March', '`pellet`'],
+      ['Diver spread burst', '`shard`'],
+      ['Tank radial', '`heavy-shell`'],
+      ['Phaser radial', '`phaser-bolt`'],
+      ['Swarm burst', '`fleck`'],
+      ['Defender raider', '`dart`'],
+      ['Boss spread', '`boss-pellet`'],
+      ['Boss spiral', '`spiral-pellet`'],
+      ['Boss pulse aimed shots', '`pulse-ring`'],
+      ['Boss desperation', '`tracer`'],
+      ['Galaga capturer', 'beam field'],
+      ['Missile-Command orbital-strike', '`warhead`'],
+    ];
+    for (const [attacker, shape] of entries) {
+      expect(
+        enemyGuide,
+        `roster table missing ${attacker} → ${shape}`,
+      ).toContain(attacker);
+      expect(enemyGuide).toContain(shape);
+    }
+    // The parity documentation confirms the shared seams cover the new
+    // visuals (game and gyms draw identically).
+    expect(enemyGuide).toContain('Projectile identity & per-shot feel are shared');
+  });
 });
