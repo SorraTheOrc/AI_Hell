@@ -1043,12 +1043,15 @@ describe('Demo live-thruster config (AH-0MV268RXJ007M7A9)', () => {
       toCompetentOverrides(coerceTuningValues(getCurrentBotTuningConfig().values)),
     );
     expect(gym.getAppliedBotTunables()).toEqual(storeTunables);
-    // With no explicit override the compiled defaults are left intact, so the
-    // live ship config wins for the physics terms (live 175/100 == defaults).
+    // The shipped baseline (`src/data/bot-tuning.json`) provides the fallback
+    // tunables for a fresh browser: the currently-selected bundled config is
+    // what the demo (and the gym, through the same seam) flies. The bundled
+    // baseline deliberately overrides some physics terms (e.g.
+    // frictionDeceleration 25 vs the compiled 100), so we assert against the
+    // resolved bundled tunables — not the compiled defaults — keeping the
+    // parity invariant the test exists for.
     expect(storeTunables.playerSpeed).toBe(COMPETENT_BOT_TUNABLES.playerSpeed);
-    expect(storeTunables.frictionDeceleration).toBe(
-      COMPETENT_BOT_TUNABLES.frictionDeceleration,
-    );
+    expect(storeTunables.frictionDeceleration).toBe(getCurrentBotTuningConfig().values.competent['frictionDeceleration']);
   });
 });
 
