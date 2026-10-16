@@ -25,7 +25,8 @@
  * phase-coloured pellet with a spiral-wake arc, AH-0MV822F5J006WFR0),
  * **pulse-ring** (the Boss pulse pattern's slow wide pulse ring,
  * AH-0MV822FHN005PK37), **tracer** (the Boss desperation burst's bright
- * velocity-aligned tracer, AH-0MV822FTS00156F5),
+ * velocity-aligned tracer, AH-0MV822FTS00156F5), **warhead** (the
+ * OrbitalStrike's falling shell with a fiery tail, AH-0MV822GIO005B685),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -142,6 +143,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   'spiral-pellet': 1,
   'pulse-ring': 1.6,
   tracer: 2.6,
+  warhead: 1.6,
   diamond: 1,
   spark: 1,
   chevron: 2,
@@ -251,6 +253,9 @@ export function drawBulletShape(
       break;
     case 'tracer':
       _tracer(graphics, spec, alpha, rim);
+      break;
+    case 'warhead':
+      _warhead(graphics, spec, alpha, rim);
       break;
     case 'diamond':
       _diamond(graphics, spec, alpha, rim);
@@ -929,6 +934,56 @@ function _tracer(
   graphics.fillPath();
 }
 
+/**
+ * Falling warhead (AH-0MV822GIO005B685): the OrbitalStrike's falling-shell
+ * and its radial shrapnel share a hot-red body, so the warhead carries a
+ * cap-shaped shell silhouette with a white-hot nose and a **fiery tail**
+ * (a flickering flame triangle behind the rear, driven by {@link spec.time}
+ * when the shared seam animates it, otherwise a static flame) — the
+ * "falling warhead with a fiery tail" read the AC calls for. Distinct from
+ * the Boss's hot-gold `tracer` (a thin streak) and from the plain `shell`
+ * (a round two-tone disc).
+ */
+function _warhead(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const half = shapeLength(spec.radius, spec) / 2;
+  const tint = rim ?? spec.color;
+  // Cap-shaped shell body along +x (nose forward, open rear).
+  graphics.fillStyle(spec.color, alpha);
+  graphics.beginPath();
+  graphics.moveTo(half, 0);
+  graphics.arc(0, 0, r, 0, Math.PI * 2, false);
+  graphics.closePath();
+  graphics.fillPath();
+  // White-hot nose tip.
+  graphics.fillStyle(0xffffff, Math.min(1, alpha * 0.9));
+  graphics.beginPath();
+  graphics.arc(r * 0.55, 0, r * 0.5, 0, Math.PI * 2, false);
+  graphics.fillPath();
+  // Fiery tail: a flame triangle behind the rear, longer when animated.
+  const time = spec.time ?? 0;
+  const flame = 1.4 + 0.35 * Math.sin(time * 31);
+  graphics.fillStyle(tint, Math.min(1, alpha * 0.8));
+  graphics.beginPath();
+  graphics.moveTo(-r * 0.6, -r * 0.55);
+  graphics.lineTo(-half * flame, 0);
+  graphics.lineTo(-r * 0.6, r * 0.55);
+  graphics.closePath();
+  graphics.fillPath();
+  // Neon rim (hot amber) around the body.
+  if (rim !== undefined) {
+    graphics.lineStyle(1.5, rim, Math.min(1, alpha * 0.9));
+    graphics.beginPath();
+    graphics.arc(0, 0, r, 0, Math.PI * 2, false);
+    graphics.strokePath();
+  }
+}
+
 /** Diamond: a filled four-point rhombus. */
 function _diamond(
   graphics: Phaser.GameObjects.Graphics,
@@ -1290,7 +1345,14 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 1.2,
     muzzle: { color: 0xff88ff, radius: 6, duration: 0.14 },
   },
-  'orbital-strike': { shape: 'shell', color: 0xff4444 },
+  'orbital-strike': {
+    shape: 'warhead',
+    color: 0xff4444,
+    length: 1.6,
+    rimColor: 0xffee88,
+    tail: 1.2,
+    muzzle: { color: 0xffee88, radius: 6, duration: 0.14 },
+  },
 };
 
 /**

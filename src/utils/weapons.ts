@@ -564,6 +564,8 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
  *   (AH-0MV822FHN005PK37)
  * - `tracer` — the Boss desperation burst's bright velocity-aligned tracer
  *   (AH-0MV822FTS00156F5)
+ * - `warhead` — the OrbitalStrike's falling shell with a fiery tail
+ *   (AH-0MV822GIO005B685)
  * - `diamond` — four-point rhombus
  * - `spark` — four-point star
  * - `chevron` — forward-opening V
@@ -591,6 +593,7 @@ export type BulletShape =
   | 'spiral-pellet'
   | 'pulse-ring'
   | 'tracer'
+  | 'warhead'
   | 'diamond'
   | 'spark'
   | 'chevron'

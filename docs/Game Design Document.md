@@ -582,6 +582,17 @@ field-lines, flowing time-driven energy motes and a bright capture lure at
 the beam's far end (AH-0MV822G6F002JRRY). Visuals/feel only — beam
 lifecycle, width, length, pull strength and capture timing are unchanged.
 
+**Missile Command orbital-strike projectile identity** (per-enemy visuals
+epic, AH-0MV2K5SR0005RTTE): the falling shell renders as a **falling
+warhead** — a cap-shaped shell body with a **white-hot nose** and a
+**flickering fiery tail**, a hot-amber neon rim, a short fading trail and
+an amber launch pop where the shell enters from above (drawn through the
+shared bullet-shape seam, `src/utils/bulletVisuals.ts`, `warhead`
+primitive) — with a red-tinted impact/detonation flash at the impact point
+(shared fire/impact seams, AH-0MV822GIO005B685). The radial-detonation
+shrapnel keeps its plain disc look. Visuals/feel only — telegraph duration,
+fall speed, impact timing and burst pattern are unchanged.
+
 **Behavioural classification (AH-0MV29NWI1007NKN7).** Every CSV archetype
 carries two coarse, descriptive fields for wave-design and balance tooling:
 `movementClass` (`formation | diver | chaser | patroller | roamer`) and

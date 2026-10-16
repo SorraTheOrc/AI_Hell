@@ -34,6 +34,8 @@ import Phaser from 'phaser';
 import { createBullet } from './bulletUtils';
 import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import { FormationOffset } from '../utils/formations';
+import { resolveEnemyBulletVisual, type EnemyBulletVisual } from '../utils/bulletVisuals';
+import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { playScoutAdvanceCue } from '../audio/effects';
 import type { ExplosionHandle } from '../vfx/explosionParticles';
 
@@ -393,20 +395,51 @@ export class OrbitalStrike extends BaseEnemy {
   }
 
   /**
-   * Create the falling projectile (a single bullet heading toward the impact).
+   * Create the falling projectile (a single warhead heading toward the
+   * impact), rendered through the shared OrbitalStrike projectile identity.
    */
   private _createFallingProjectile(): OrbitalStrikeBullet {
+    // The shared OrbitalStrike projectile identity (AH-0MV822GIO005B685):
+    // the falling shell renders as a warhead with a white-hot nose and a
+    // fiery tail, drawn through the shared bullet-shape seam. Because the
+    // OrbitalStrike is a shared entity, the warhead's shape, tail and nose
+    // are identical in the game and every gym (gym↔game parity by
+    // construction). Firing logic, fall speed and impact timing are
+    // unchanged — visuals/feel only.
+    const visual: EnemyBulletVisual = resolveEnemyBulletVisual('orbital-strike');
+
+    // One launch pop at the spawn point (top of the screen) where the shell
+    // enters — the enemy-side fire VFX for the strike, spawned through the
+    // shared `src/vfx/enemyMuzzleFlash` helper (cheap Graphics primitive,
+    // self-cleaning tween), aimed straight down along the fall.
+    if (visual.muzzle) {
+      spawnEnemyMuzzleFlash(
+        this.scene,
+        this._targetX,
+        this._spawnY,
+        Math.PI / 2,
+        visual.muzzle,
+      );
+    }
+
     const bullet = createBullet({
       scene: this.scene,
-      color: ORBITAL_STRIKE_BULLET_COLOR,
+      color: visual.color ?? ORBITAL_STRIKE_BULLET_COLOR,
       size: ORBITAL_STRIKE_BULLET_SIZE,
       x: this._targetX,
       y: this._spawnY,
+      shape: visual.shape,
+      length: visual.length,
+      rimColor: visual.rimColor,
+      thickness: visual.thickness,
+      alpha: visual.alpha,
+      tail: visual.tail,
+      angle: Math.PI / 2, // nose-first down the fall
     });
 
     return {
       graphics: bullet.graphics,
-      color: ORBITAL_STRIKE_BULLET_COLOR,
+      color: visual.color ?? ORBITAL_STRIKE_BULLET_COLOR,
       vx: 0,
       vy: ORBITAL_STRIKE_FALL_SPEED,
       lifetime: ORBITAL_STRIKE_BURST_BULLET_LIFETIME,

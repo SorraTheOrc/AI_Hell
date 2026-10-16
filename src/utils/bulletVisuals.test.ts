@@ -131,6 +131,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     'spiral-pellet': { shape: 'spiral-pellet' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0xffcc00 },
     'pulse-ring': { shape: 'pulse-ring' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0x88ddff, thickness: 2.2 },
     tracer: { shape: 'tracer' as BulletShape, color: 0xffdd66, radius: 3, length: 2.6, rimColor: 0xffdd66 },
+    warhead: { shape: 'warhead' as BulletShape, color: 0xff4444, radius: 3, length: 1.6, rimColor: 0xffee88 },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
     chevron: { shape: 'chevron' as BulletShape, color: 0x00ffcc, radius: 3, length: 2 },
@@ -397,6 +398,29 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
   });
 
+  it('warhead renders a cap-shaped shell with a white-hot nose and a fiery tail (AH-0MV822GIO005B685)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs.warhead);
+    const buf = g.commandBuffer as number[];
+    // The warhead's read: a filled cap-shaped body + a white-hot nose + the
+    // filled fiery tail (fills) plus an amber neon-rim stroke — the falling-
+    // shell identity, distinct from the plain `shell` and the Boss tracer.
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(3);
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the warhead flame flickers with the bullet age (time-driven tail)', async () => {
+    const start = await makeGraphics();
+    drawBulletShape(start, { ...specs.warhead, time: 0 });
+    const mid = await makeGraphics();
+    drawBulletShape(mid, { ...specs.warhead, time: 0.06 });
+    // The flame length is `1.4 + 0.35·sin(time·31)`, so a couple of frames
+    // apart the tail triangle's rear x differs — the shell's fire licks as it
+    // falls. (The only affected opcode stream is the flame fill triangle plus
+    // the body/nose fills; assert the buffer changes at all.)
+    expect(start.commandBuffer).not.toEqual(mid.commandBuffer);
+  });
+
   it('diamond renders a closed filled path (≥ 3 line segments)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.diamond);
@@ -520,6 +544,7 @@ describe('DEFAULT_SHAPE_LENGTH', () => {
     expect(DEFAULT_SHAPE_LENGTH['spiral-pellet']).toBe(1);
     expect(DEFAULT_SHAPE_LENGTH['pulse-ring']).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.tracer).toBeGreaterThan(1);
+    expect(DEFAULT_SHAPE_LENGTH.warhead).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.shard).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.chevron).toBeGreaterThan(1);
   });
@@ -839,6 +864,22 @@ describe('resolveEnemyBulletVisual', () => {
     expect(visual.muzzle?.color).toBe(0xff88ff);
     // The beam is static presentation (no per-frame redraw required).
     expect(shapeAnimates(visual.shape)).toBe(false);
+  });
+
+  it('orbital-strike falling shells resolve a warhead identity with a fiery tail + launch pop (AH-0MV822GIO005B685)', () => {
+    const visual = resolveEnemyBulletVisual('orbital-strike');
+    // The OrbitalStrike's signature look: a falling warhead — a dedicated
+    // `warhead` primitive (cap-shaped shell + white-hot nose + fiery tail),
+    // NOT the plain `shell` the placeholder used before this landed.
+    expect(canonicalShape(visual.shape)).toBe('warhead');
+    // The shot body keeps the established hot-red bullet colour.
+    expect(visual.color).toBe(0xff4444);
+    // Feel knobs: a hot-amber neon rim, a short fading trail, and an amber
+    // launch pop where the shell enters from above.
+    expect(visual.rimColor).toBe(0xffee88);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0xffee88);
   });
 
   it('throws for an unknown archetype (fail loud, so children register first)', async () => {

@@ -2134,6 +2134,19 @@ beam tint (`capturer` → `line`, magenta) so the roster guard stays total.
 Visuals/feel only: the beam lifecycle, width, length, pull strength and
 capture timing are unchanged.
 
+**Missile Command orbital-strike (orbital-strike pattern,
+AH-0MV822GIO005B685):** the falling shell renders as a **falling warhead** —
+a dedicated `warhead` seam primitive (a cap-shaped shell body with a
+**white-hot nose** and a **flickering fiery tail** — a time-driven flame
+behind the rear — plus a short fading trail and a hot-amber neon rim). The
+strike plays **one amber launch pop** where the shell enters from above (the
+enemy-side fire VFX for the strike), the warhead flies nose-first straight
+down the fall, and it carries its hot-red colour so the shared impact pass
+tints the detonation flash at the impact point. The radial-detonation
+shrapnel keeps its plain disc look (the strike's shrapnel is the burst, not
+a named identity). Visuals/feel only: telegraph duration, fall speed,
+impact timing and the burst pattern are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific
