@@ -704,6 +704,15 @@ export interface WeaponDefinition {
    */
   bulletTrail?: number;
   /**
+   * Optional animated exhaust-flame length, as a multiplier of the bullet
+   * radius (AH-0MV822B1B0048UZT). Drawn as a flickering two-tone flame behind
+   * the missile's tail through the shared bullet-shape seam; the flame length
+   * shimmers with the bullet's elapsed time so a missile reads as powered in
+   * flight. Absent → no flame (the default for every non-missile weapon).
+   * Visual metadata only — never affects flight.
+   */
+  bulletFlame?: number;
+  /**
    * Optional clean launch-cue VFX spawned at the muzzle when this weapon
    * fires (AH-0MV8228YW0050IXS). The shared combat core spawns it once per
    * shot through the shared spawn path, so the game and every gym show the
@@ -984,6 +993,25 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletShape: 'missile',
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.cluster,
+    // In-flight identity (AH-0MV822B1B0048UZT): a small missile with a
+    // flickering exhaust flame, a white-hot neon rim and a short fading
+    // smoke trail. All visual metadata — flight (speed, lifetime, splits)
+    // is unchanged.
+    bulletFlame: 1.6,
+    bulletTrail: 2.4,
+    bulletRim: 0xffffff,
+    // Launch puff at the ship when the cluster missile fires (shared spawn
+    // path — AH-0MV8228YW0050IXS): the clean muzzle flash the shared helper
+    // draws reads as the missile's launch smoke puff.
+    muzzleFlash: { color: BULLET_COLORS.cluster, radius: 9, duration: 0.16 },
+    // Distinct hot-pink impact flash + baked hit cue when a shell connects
+    // (shared impact seam — AH-0MV8228YW0050IXS).
+    impactFx: {
+      color: BULLET_COLORS.cluster,
+      radius: 10,
+      duration: 0.18,
+      cue: 'playClusterImpactSound',
+    },
     // Base split payload: the missile bursts into two radial warheads on the
     // first impact/expiry. The shared split seam fans them perpendicular to
     // the heading (90°/270° at this base count) and the `splitCount` level

@@ -223,6 +223,22 @@
       ]
     },
     {
+      "cue": "playClusterFireSound",
+      "recipe": "aihell-cluster-fire",
+      "delivery": "baked",
+      "seeds": [
+        32269
+      ]
+    },
+    {
+      "cue": "playClusterImpactSound",
+      "recipe": "aihell-cluster-impact",
+      "delivery": "baked",
+      "seeds": [
+        32270
+      ]
+    },
+    {
       "cue": "playSpreadImpactSound",
       "recipe": "aihell-spread-impact",
       "delivery": "baked",

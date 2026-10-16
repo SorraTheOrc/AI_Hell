@@ -430,6 +430,11 @@ export function playRicochetImpactSound(): void {
   playCue('playRicochetImpactSound');
 }
 
+/** Heavy missile detonation thump — Cluster Missile shell/warhead connects (AH-0MV822B1B0048UZT). */
+export function playClusterImpactSound(): void {
+  playCue('playClusterImpactSound');
+}
+
 /** Soft warm amber hit — Spread bullet connects (AH-0MV8229B9009DQGA). */
 export function playSpreadImpactSound(): void {
   playCue('playSpreadImpactSound');
@@ -459,6 +464,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playDualImpactSound,
   playRapidImpactSound,
   playWaveLaserImpactSound,
+  playClusterImpactSound,
 };
 
 /**
@@ -508,6 +514,11 @@ export function playArcFireSound(): void {
 /** High-energy beam crack — Wave Laser fire (AH-0MV822ACO007CEZF). */
 export function playWaveLaserFireSound(): void {
   playCue('playWaveLaserFireSound');
+}
+
+/** Low missile launch whoosh + click — Cluster Missile fire (AH-0MV822B1B0048UZT). */
+export function playClusterFireSound(): void {
+  playCue('playClusterFireSound');
 }
 
 /** Sharp neon snap — Wave Laser bullet connects (AH-0MV822ACO007CEZF). */
@@ -566,6 +577,9 @@ export function playWeaponFireSound(
       break;
     case 'ricochet':
       playCue('playRicochetFireSound', options);
+      break;
+    case 'cluster':
+      playCue('playClusterFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches

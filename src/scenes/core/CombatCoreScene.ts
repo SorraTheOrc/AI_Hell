@@ -783,6 +783,10 @@ export class CombatCoreScene<
           // Short fading bullet trail (cannon) — absent for every weapon
           // without `bulletTrail` metadata (AH-0MV8228YW0050IXS).
           def.bulletTrail,
+          // Animated exhaust-flame length (cluster missile) — absent for
+          // every weapon without `bulletFlame` metadata
+          // (AH-0MV822B1B0048UZT).
+          def.bulletFlame,
         );
         // Per-weapon impact feedback (cannon's distinct flash + hit cue),
         // resolved by the shared impact seam when the shot connects
@@ -836,6 +840,9 @@ export class CombatCoreScene<
    *
    * `tail` is the optional short fading trail length (× radius) drawn behind
    * the bullet by the shared seam (AH-0MV8228YW0050IXS).
+   *
+   * `flame` is the optional animated exhaust-flame length (× radius) the
+   * shared seam draws behind a `missile` shape (AH-0MV822B1B0048UZT).
    */
   spawnPlayerBullet(
     x: number,
@@ -852,6 +859,7 @@ export class CombatCoreScene<
     rimColor?: number,
     thickness?: number,
     tail?: number,
+    flame?: number,
   ): PlayerBullet {
     const bullet = createPlayerBullet(
       this,
@@ -867,6 +875,7 @@ export class CombatCoreScene<
       rimColor,
       thickness,
       tail,
+      flame,
     );
     bullet.piercing = piercing;
     bullet.bounces = bounces;
@@ -919,25 +928,31 @@ export class CombatCoreScene<
       // straight ahead or 180° backwards), and each further warhead divides
       // the full 360° circle evenly (count N → 90°, 90°+360°/N, …).
       const angle = baseHeading + Math.PI / 2 + (2 * Math.PI * i) / count;
-      this._pendingSplitWarheads.push(
-        createPlayerBullet(
-          this,
-          bullet.x,
-          bullet.y,
-          bullet.color,
-          radius,
-          Math.cos(angle) * speed,
-          Math.sin(angle) * speed,
-          CLUSTER_WARHEAD_LIFETIME,
-          // Warheads inherit the projectile's visual identity through the
-          // shared bullet-shape seam so the split reads as fragments of the
-          // parent shell (AH-0MV8228MD009UBF7).
-          bullet.shape,
-          def.bulletShapeLength,
-          def.bulletRim,
-          def.bulletThickness,
-        ),
+      const warhead = createPlayerBullet(
+        this,
+        bullet.x,
+        bullet.y,
+        bullet.color,
+        radius,
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed,
+        CLUSTER_WARHEAD_LIFETIME,
+        // Warheads render as small discs, never tiny missiles, so the
+        // split reads as a cluster of fragments (AH-0MV822B1B0048UZT).
+        // They keep the shell's colour and neon rim through the shared
+        // bullet-shape seam, so the burst still reads as one weapon.
+        'disc',
+        undefined,
+        bullet.rimColor,
+        undefined,
       );
+      // A warhead is the part that actually connects, so it carries the
+      // weapon's impact feedback: the shared impact seam plays the baked
+      // cluster hit cue + hot-pink flash when it damages an enemy
+      // (AH-0MV822B1B0048UZT). The parent shell only ever splits, never
+      // deals a direct hit, so it never reaches the impact seam itself.
+      warhead.impactFx = def.impactFx;
+      this._pendingSplitWarheads.push(warhead);
     }
     this.spawnSplitBurst(bullet.x, bullet.y, count);
   }

@@ -23,6 +23,7 @@ import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { Player } from '../../entities/Player';
+import { PlayerBullet } from '../../entities/PlayerBullet';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { GymWeapons } from './GymWeapons';
@@ -1380,6 +1381,38 @@ describe('GymWeapons — cluster-missile split demonstration (AH-0MV1BIVIJ007KYX
           b.splitWeapon === undefined,
       );
     expect(warheads.length).toBeGreaterThan(0);
+    // Warheads render as small discs in the gym too (parity, AH-0MV822B1B0048UZT).
+    for (const warhead of warheads) {
+      expect(warhead.shape).toBe('disc');
+    }
+  });
+
+  it('the cluster shell renders with its flame/trail/impact feel in the gym (AH-0MV822B1B0048UZT parity)', async () => {
+    const scene = await bootWeapons();
+    const player = scene.getPlayer()!;
+    player.setPosition(50, 50);
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    // Advance in small steps: the cluster missile fires every 1500 ms but
+    // lives only 0.9 s, so step until the shell is in flight (a single large
+    // tick would expire it before it can be inspected).
+    let shell: PlayerBullet | undefined;
+    for (let i = 0; i < 60; i++) {
+      scene.tick(0.05);
+      shell = scene
+        .getBullets()
+        .find((b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor);
+      if (shell) break;
+    }
+    expect(shell).toBeDefined();
+    expect(shell!.shape).toBe('missile');
+    expect(shell!.flame).toBeGreaterThan(0);
+    expect(shell!.tail).toBeGreaterThan(0);
+    expect(shell!.impactFx?.cue).toBe('playClusterImpactSound');
   });
 });
 

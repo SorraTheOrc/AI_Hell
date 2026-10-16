@@ -29,6 +29,7 @@ import {
   canonicalShape,
   resolvePlayerBulletVisual,
   resolveEnemyBulletVisual,
+  missileFlameLength,
   ENEMY_BULLET_IDENTITIES,
   DEFAULT_SHAPE_LENGTH,
 } from './bulletVisuals';
@@ -170,6 +171,33 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.FILL_TRIANGLE)).toBeGreaterThanOrEqual(2);
   });
 
+  it('missile draws a flickering exhaust flame when a flame spec is set (AH-0MV822B1B0048UZT)', async () => {
+    const noFlame = await makeGraphics();
+    drawBulletShape(noFlame, specs.missile);
+    const noFlameTriangles = countOps(
+      noFlame.commandBuffer as number[],
+      Cmd.FILL_TRIANGLE,
+    );
+
+    const withFlame = await makeGraphics();
+    drawBulletShape(withFlame, { ...specs.missile, flame: 1.6, time: 0.05 });
+    const withFlameTriangles = countOps(
+      withFlame.commandBuffer as number[],
+      Cmd.FILL_TRIANGLE,
+    );
+
+    // The flame adds two filled triangles (outer + white-hot core) behind
+    // the body/fins/nose geometry.
+    expect(withFlameTriangles).toBe(noFlameTriangles + 2);
+  });
+
+  it('missile honours the neon rim by stroking the body outline (AH-0MV822B1B0048UZT)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, { ...specs.missile, rimColor: 0xffffff });
+    const buf = g.commandBuffer as number[];
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
   it('ring renders a stroked arc (hollow, not a filled disc)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.ring);
@@ -225,6 +253,41 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     // Line's STROKE_PATH is gone — the second draw replaced the whole buffer.
     expect(countOps(buf, Cmd.STROKE_PATH)).toBe(0);
     expect(countOps(buf, Cmd.ARC)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ── Missile exhaust-flame flicker (AH-0MV822B1B0048UZT) ──────────
+
+describe('missileFlameLength — flickering exhaust flame', () => {
+  it('is zero when no flame multiplier is requested', () => {
+    expect(missileFlameLength(3, 0.5)).toBe(0);
+    expect(missileFlameLength(3, 0.5, 0)).toBe(0);
+  });
+
+  it('stays inside [0.55, 1.0] × radius × flame for any time', () => {
+    const radius = 3;
+    const flame = 2;
+    const min = 0.55 * radius * flame;
+    const max = radius * flame;
+    for (let t = 0; t < 5; t += 0.013) {
+      const len = missileFlameLength(radius, t, flame);
+      expect(len).toBeGreaterThanOrEqual(min - 1e-9);
+      expect(len).toBeLessThanOrEqual(max + 1e-9);
+    }
+  });
+
+  it('flickers — the length changes as time advances', () => {
+    const samples = new Set<number>();
+    for (let t = 0; t < 0.2; t += 0.01) {
+      samples.add(Number(missileFlameLength(3, t, 2).toFixed(4)));
+    }
+    expect(samples.size).toBeGreaterThan(1);
+  });
+
+  it('treats a non-finite time as zero rather than producing NaN', () => {
+    const len = missileFlameLength(3, Number.NaN, 2);
+    expect(Number.isFinite(len)).toBe(true);
+    expect(len).toBeGreaterThan(0);
   });
 });
 
@@ -293,6 +356,18 @@ describe('resolvePlayerBulletVisual', () => {
     expect(laser.thickness).toBeGreaterThan(1);
     expect(laser.tail).toBeGreaterThan(0); // faint trail
     expect(laser.color).toBe(0x3366ff);
+  });
+
+  it('the cluster missile resolves a rimmed missile with an exhaust flame and trail (AH-0MV822B1B0048UZT)', () => {
+    const cluster = resolvePlayerBulletVisual(WEAPON_CATALOGUE.cluster);
+    // The powered-missile identity: the `missile` body family, a white neon
+    // rim, a flickering exhaust flame and a short fading smoke trail — all
+    // visual metadata; flight and the split budget are unchanged.
+    expect(canonicalShape(cluster.shape)).toBe('missile');
+    expect(cluster.rimColor).toBeDefined();
+    expect(cluster.flame).toBeGreaterThan(0);
+    expect(cluster.tail).toBeGreaterThan(0);
+    expect(cluster.color).toBe(0xff3366);
   });
 
   it('the rapid spark resolves a small white-rimmed flare with a short trail (AH-0MV822A03006UT2P)', () => {

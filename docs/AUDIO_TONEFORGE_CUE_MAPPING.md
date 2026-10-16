@@ -113,6 +113,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playWaveLaserImpactSound` | Sharp neon snap — saw 800→200 Hz + square click + BP noise crack, ~0.12 s | Player wave-laser hit (when the beam connects) | shared impact seam in `CombatScene` (AH-0MV822ACO007CEZF) | new | `aihell-wave-laser-impact` |
 | `playRicochetFireSound` | Bright springy ping — triangle 1400→500 Hz + square tick, ~0.1 s | Player ricochet fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-ricochet-fire` |
 | `playRicochetImpactSound` | Soft high bounce tick — triangle 1800→900 Hz + HP noise smack, ~0.09 s | Player ricochet wall bounce or connect | shared impact seam in `CombatScene` (AH-0MV822AP1006W2F9) | new | `aihell-ricochet-impact` |
+| `playClusterFireSound` | Low missile launch — square 300→90 Hz + swept lowpass noise whoosh + bright ignition click, ~0.16 s | Player cluster-missile fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-cluster-fire` |
+| `playClusterImpactSound` | Heavy detonation thump — saw 260→60 Hz + lowpass noise smack, ~0.18 s | Player cluster-missile shell/warhead connect | shared impact seam in `CombatScene` (AH-0MV822B1B0048UZT) | new | `aihell-cluster-impact` |
 | `playSpreadPickupSound` | Triangle 500→1500→800 Hz, ~0.15 s | Spread pickup | `dropLayer` | new | `aihell-pickup-spread` |
 | `playDualPickupSound` | Saw 1000→500 then 1200→700 Hz, 0.06 s apart | Dual pickup | `dropLayer` | new | `aihell-pickup-dual` |
 | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | Rapid pickup | `dropLayer` | new | `aihell-pickup-rapid` |
@@ -205,6 +207,8 @@ repeated kills still vary.
 | `aihell-wave-laser-impact` | `playWaveLaserImpactSound` | Sharp neon snap 800→200 Hz + square click + BP noise crack, ~0.12 s | 32231 |
 | `aihell-ricochet-fire` | `playRicochetFireSound` | Bright springy ping 1400→500 Hz + square tick, ~0.1 s | 32267 |
 | `aihell-ricochet-impact` | `playRicochetImpactSound` | Soft high bounce tick 1800→900 Hz + HP noise smack, ~0.09 s | 32268 |
+| `aihell-cluster-fire` | `playClusterFireSound` | Low missile launch 300→90 Hz + swept noise whoosh + ignition click, ~0.16 s | 32269 |
+| `aihell-cluster-impact` | `playClusterImpactSound` | Heavy detonation thump 260→60 Hz + lowpass noise smack, ~0.18 s | 32270 |
 | `aihell-pickup-spread` | `playSpreadPickupSound` | Triangle 500→1500→800 Hz, ~0.15 s | 32220 |
 | `aihell-pickup-dual` | `playDualPickupSound` | Two saw drops 1000→500 / 1200→700 Hz | 32221 |
 | `aihell-pickup-rapid` | `playRapidPickupSound` | Triangle 400→1600 Hz, 0.1 s | 32222 |

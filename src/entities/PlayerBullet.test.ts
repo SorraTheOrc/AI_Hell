@@ -569,3 +569,48 @@ describe('PlayerBullet — rapid visual identity (AC1/AC3)', () => {
     expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
   });
 });
+
+// ── Cluster Missile — powered missile with flickering flame + smoke trail (AH-0MV822B1B0048UZT) ─
+
+describe('PlayerBullet — cluster missile visual identity (AC1/AC3)', () => {
+  it('the cluster shell renders as a rimmed missile with an exhaust flame and a fading smoke trail', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(
+      scene, 100, 100, 0xff3366, 2.7, 350, 0, 0.9,
+      'missile', undefined, 0xffffff, undefined, 2.4, 1.6,
+    );
+
+    // The cluster signature: the `missile` body family (body CMD.RECT +
+    // nose/fins/flame triangles), a white neon rim (STROKE_PATH) and a short
+    // 3-segment fading smoke trail (FILL_TRIANGLE via the shared seam).
+    expect(bullet.shape).toBe('missile');
+    expect(bullet.flame).toBe(1.6);
+    expect(bullet.tail).toBe(2.4);
+    const buf = bullet.commandBuffer as number[];
+    // Two flame triangles + two fins + one nose = at least five triangles.
+    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBeGreaterThanOrEqual(5);
+    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the exhaust flame re-draws each frame so it flickers in flight', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(
+      scene, 100, 100, 0xff3366, 2.7, 350, 0, 0.9,
+      'missile', undefined, 0xffffff, undefined, 2.4, 1.6,
+    );
+    const before = [...(bullet.commandBuffer as number[])];
+    advanceAndCull(bullet, 0.01);
+    const after = bullet.commandBuffer as number[];
+    // The buffer is re-drawn through the seam; the animated flame's geometry
+    // changes with the elapsed time (a static shape would be byte-identical).
+    expect(after).not.toEqual(before);
+  });
+
+  it('an ordinary bullet draws no exhaust flame (no flame spec)', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(scene, 100, 100, 0x00ffff, 3, 350, 0, 1.0);
+    expect(bullet.flame).toBeUndefined();
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(0);
+  });
+});

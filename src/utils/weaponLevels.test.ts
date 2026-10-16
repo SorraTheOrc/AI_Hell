@@ -792,6 +792,19 @@ describe('cluster-missile split budget (AH-0MV1BIVIJ007KYXU)', () => {
       expect(resolveWeaponDefinition(id, 50).splits).toBeUndefined();
     }
   });
+
+  test('the cluster visual/feel metadata carries through level resolution unchanged (AH-0MV822B1B0048UZT)', () => {
+    const base = WEAPON_CATALOGUE.cluster;
+    const leveled = resolveWeaponDefinition('cluster', 50);
+    // The per-shot look and feel are visual metadata, not upgrade values —
+    // they must survive level resolution byte-for-byte.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletFlame).toBe(base.bulletFlame);
+    expect(leveled.bulletRim).toBe(base.bulletRim);
+    expect(leveled.bulletTrail).toBe(base.bulletTrail);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+  });
 });
 
 // ── Gradius Options pod-count resolution (AH-0MV1BIVVK0043TEM) ───────

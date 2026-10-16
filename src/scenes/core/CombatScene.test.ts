@@ -295,6 +295,9 @@ class StubCombatScene extends CombatScene<StubEnemy, StubBullet, StubDrop> {
   getBulletImpactEffects() {
     return this.bulletImpactEffects;
   }
+  getFireFxEffects() {
+    return this.fireFxEffects;
+  }
   getInvulnerable() {
     return this.invulnerable;
   }
@@ -1666,6 +1669,57 @@ describe('cluster-missile split seam (AH-0MV1BIVIJ007KYXU)', () => {
       expect(warhead.splitWeapon).toBeUndefined();
     }
   });
+
+  it('auto-fire wires the cluster shell visual/feel metadata (AH-0MV822B1B0048UZT)', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('cluster', true);
+    player.setBeatClock(scene.getBeatClock());
+    scene.getBeatClock().reset();
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+    const shell = scene
+      .getPlayerBullets()
+      .find((b) => b.color === WEAPON_CATALOGUE.cluster.bulletColor);
+    expect(shell).toBeDefined();
+    // The shell reads as a missile with a flickering exhaust flame...
+    expect(shell!.shape).toBe('missile');
+    expect(shell!.flame).toBeGreaterThan(0);
+    expect(shell!.tail).toBeGreaterThan(0);
+    // ...and carries the weapon's baked hit cue for its warheads.
+    expect(shell!.impactFx?.cue).toBe('playClusterImpactSound');
+    // The launch puff is spawned through the shared combat-core spawn path.
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  it('a warhead connect plays the cluster impact cue through the shared seam (AH-0MV822B1B0048UZT)', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    scene.addPlayer({ x: 50, y: 50 });
+    const victim = addEnemy(scene, 200, 200);
+    spawnCluster(scene, 200, 200);
+
+    // The shell splits on impact; the warheads are queued then admitted.
+    scene.runCollisions();
+    expect(victim.destroyed).toBe(false);
+    scene.runFlushSplits();
+    const warhead = scene
+      .getPlayerBullets()
+      .find(
+        (b) =>
+          b.color === WEAPON_CATALOGUE.cluster.bulletColor && b.impactFx,
+      );
+    expect(warhead).toBeDefined();
+
+    // A warhead connecting damages the enemy and plays the baked hit cue +
+    // hot-pink impact flash through the shared impact path.
+    scene.runCollisions();
+    expect(victim.destroyed).toBe(true);
+    expect(cue).toHaveBeenCalledWith('playClusterImpactSound');
+    expect(scene.getBulletImpactEffects().length).toBeGreaterThan(0);
+  });
 });
 
 // ── Gradius Options orbit-emitter seam (AH-0MV1BIVVK0043TEM) ─────────
@@ -1862,7 +1916,7 @@ describe('auto-fire threads the weapon visual identity onto spawned bullets', ()
     }
   });
 
-  it('split warheads inherit the parent cluster missile visual identity', async () => {
+  it('split warheads render as small discs, keeping the parent shell colour (AH-0MV822B1B0048UZT)', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('cluster', true);
@@ -1887,7 +1941,13 @@ describe('auto-fire threads the weapon visual identity onto spawned bullets', ()
     const warheads = scene.getPlayerBullets().filter((b) => !before.has(b));
     expect(warheads.length).toBeGreaterThan(0);
     for (const warhead of warheads) {
-      expect(warhead.shape).toBe('missile');
+      // Small discs, never tiny missiles: the split reads as a cluster of
+      // fragments (AC — "warheads render as small discs").
+      expect(warhead.shape).toBe('disc');
+      // The burst still reads as one weapon: warheads keep the shell colour.
+      expect(warhead.color).toBe(WEAPON_CATALOGUE.cluster.bulletColor);
+      // A warhead is a fragment of the (larger) parent shell.
+      expect(warhead.radius).toBeLessThan(parent!.radius);
     }
   });
 });

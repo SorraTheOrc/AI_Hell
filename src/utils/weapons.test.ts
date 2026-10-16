@@ -35,6 +35,7 @@ import {
   WEAPON_CLUSTER_FIRE_RATE,
   WEAPON_CLUSTER_SUBDIVISION,
   CLUSTER_BASE_WARHEADS,
+  CLUSTER_WARHEAD_RADIUS_SCALE,
   WEAPON_OPTIONS_FIRE_RATE,
   WEAPON_OPTIONS_SUBDIVISION,
   OPTIONS_BASE_PODS,
@@ -849,6 +850,36 @@ describe('Missile Command cluster missile (AH-0MV1BIVIJ007KYXU)', () => {
     );
     expect(WEAPON_CATALOGUE.cluster.piercing).toBeUndefined();
     expect(WEAPON_CATALOGUE.cluster.bounce).toBeUndefined();
+  });
+
+  test('declares its visuals-only feel metadata (AH-0MV822B1B0048UZT)', () => {
+    const cluster = WEAPON_CATALOGUE.cluster;
+    // In-flight identity: a small missile with an animated exhaust flame
+    // (drawn through the shared bullet-shape seam) and a short fading
+    // smoke trail.
+    expect(cluster.bulletShape).toBe('missile');
+    expect(cluster.bulletFlame).toBeDefined();
+    expect(cluster.bulletFlame!).toBeGreaterThan(0);
+    expect(cluster.bulletTrail).toBeGreaterThan(0);
+    // A white-hot neon rim outlines the missile body so it pops against
+    // the magenta core (shared seam rim knob).
+    expect(cluster.bulletRim).toBeDefined();
+    // A clean launch puff at the ship (shared spawn path).
+    expect(cluster.muzzleFlash).toBeDefined();
+    expect(cluster.muzzleFlash!.color).toBe(BULLET_COLORS.cluster);
+    // A distinct hot-pink impact flash + baked hit cue on connect.
+    expect(cluster.impactFx).toBeDefined();
+    expect(cluster.impactFx!.color).toBe(BULLET_COLORS.cluster);
+    expect(cluster.impactFx!.cue).toBe('playClusterImpactSound');
+  });
+
+  test('warhead discs stay visually distinct from the missile shell (AH-0MV822B1B0048UZT)', () => {
+    const cluster = WEAPON_CATALOGUE.cluster;
+    // The split payload shrinks each warhead below the shell radius and
+    // renders them as small discs (not tiny missiles) so the burst reads
+    // as a cluster of points.
+    expect(CLUSTER_WARHEAD_RADIUS_SCALE).toBeLessThan(1);
+    expect(cluster.splits).toBe(CLUSTER_BASE_WARHEADS);
   });
 });
 

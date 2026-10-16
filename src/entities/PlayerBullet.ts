@@ -87,6 +87,15 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
   readonly tail: number | undefined;
 
   /**
+   * Optional animated exhaust-flame length, as a multiplier of the bullet
+   * radius (AH-0MV822B1B0048UZT). A `missile` shape draws a flickering
+   * two-tone flame behind its tail; the shared seam varies the length with
+   * the bullet's elapsed time so it reads as powered in flight. `undefined`
+   * for every non-missile weapon.
+   */
+  readonly flame: number | undefined;
+
+  /**
    * Optional per-weapon impact feedback (AH-0MV8228YW0050IXS) — a distinct
    * flash colour/size plus a baked hit cue that the shared impact seam
    * resolves when this bullet connects. `undefined` for bullets with no
@@ -209,6 +218,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     rimColor?: number,
     thickness?: number,
     tail?: number,
+    flame?: number,
   ) {
     super(scene, { x, y });
     this.vx = vx;
@@ -221,12 +231,15 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
     this.rimColor = rimColor;
     this.thickness = thickness;
     this.tail = tail;
+    this.flame = flame;
     this._draw();
   }
 
   /**
    * Draws the bullet through the shared shape seam, oriented to its
-   * velocity heading (an elongated shot flies nose-first).
+   * velocity heading (an elongated shot flies nose-first). The bullet's
+   * elapsed time is threaded through so animated shape parts (a missile's
+   * exhaust flame) flicker as it flies (AH-0MV822B1B0048UZT).
    */
   private _draw(): void {
     drawBulletShape(this, {
@@ -237,6 +250,8 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
       rimColor: this.rimColor,
       thickness: this.thickness,
       tail: this.tail,
+      flame: this.flame,
+      time: this._elapsed,
     });
     this.setRotation(headingFromVelocity(this.vx, this.vy));
   }
@@ -333,6 +348,8 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
  * @param rimColor - Optional neon rim/outline colour.
  * @param thickness - Optional stroke-thickness multiplier.
  * @param tail - Optional short fading trail length (× radius; cannon).
+ * @param flame - Optional animated exhaust-flame length (× radius; the
+ *   cluster missile).
  * @returns The new bullet Graphics object.
  */
 export function createPlayerBullet(
@@ -349,6 +366,7 @@ export function createPlayerBullet(
   rimColor?: number,
   thickness?: number,
   tail?: number,
+  flame?: number,
 ): PlayerBullet {
   const bullet = new PlayerBullet(
     scene,
@@ -364,6 +382,7 @@ export function createPlayerBullet(
     rimColor,
     thickness,
     tail,
+    flame,
   );
   scene.add.existing(bullet);
   return bullet;

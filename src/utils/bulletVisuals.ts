@@ -78,6 +78,20 @@ export interface BulletVisualSpec {
    * flies (the buffer is re-drawn each frame). Visual metadata only.
    */
   tail?: number;
+  /**
+   * Animated exhaust-flame length (× radius multiplier) drawn behind a
+   * `missile` shape's tail (AH-0MV822B1B0048UZT). The flame length shimmers
+   * with {@link BulletVisualSpec.time} so a powered missile reads as live;
+   * absent → no flame. Visual metadata only.
+   */
+  flame?: number;
+  /**
+   * Seconds since the bullet spawned. Shapes with animated parts (the
+   * missile exhaust flame) use it to flicker; absent → 0. Set by
+   * `PlayerBullet._draw` from its elapsed counter, never by metadata
+   * resolvers.
+   */
+  time?: number;
 }
 
 /**
@@ -111,6 +125,34 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
 
 /** Default stroke width (px) for stroked shapes. */
 const BASE_STROKE = 2;
+
+/**
+ * Flickering length (px) of a missile's exhaust flame
+ * (AH-0MV822B1B0048UZT). Zero when `flame` is 0 (no flame requested);
+ * otherwise a length inside `[0.55, 1.0] × radius × flame` driven by two
+ * incommensurate sines of `time`, so the flame shimmers without ever
+ * disappearing or outgrowing the body.
+ *
+ * Pure and delta-time based, so the flame is framerate-independent and
+ * unit-testable without a Phaser boot.
+ *
+ * @param radius - Bullet radius in px.
+ * @param time - Seconds since the bullet spawned.
+ * @param flame - Flame length multiplier (absent/0 → no flame).
+ */
+export function missileFlameLength(
+  radius: number,
+  time: number,
+  flame = 0,
+): number {
+  const max = Math.max(0.1, radius) * flame;
+  if (max <= 0) return 0;
+  const t = Number.isFinite(time) ? time : 0;
+  const shimmer =
+    0.5 + 0.25 * Math.sin(t * 47) + 0.25 * Math.sin(t * 71 + 1.3);
+  const clamped = Math.min(1, Math.max(0, shimmer));
+  return max * (0.55 + 0.45 * clamped);
+}
 
 /** Resolves the effective long-axis length for a spec. */
 function shapeLength(radius: number, spec: BulletVisualSpec): number {
@@ -147,7 +189,7 @@ export function drawBulletShape(
       _teardrop(graphics, spec, alpha, rim);
       break;
     case 'missile':
-      _missile(graphics, spec, alpha);
+      _missile(graphics, spec, alpha, rim);
       break;
     case 'ring':
       _ring(graphics, spec, alpha, stroke, rim);
@@ -265,11 +307,12 @@ function _teardrop(
   }
 }
 
-/** Missile: capsule body, nose cone and tail fins. */
+/** Missile: capsule body, nose cone, tail fins and a flickering exhaust flame. */
 function _missile(
   graphics: Phaser.GameObjects.Graphics,
   spec: BulletVisualSpec,
   alpha: number,
+  rim?: number,
 ): void {
   const r = Math.max(0.1, spec.radius);
   const len = shapeLength(spec.radius, spec);
@@ -297,6 +340,36 @@ function _missile(
       dir * r,
       bodyX + r * 0.35,
       dir * halfH,
+    );
+  }
+  // Neon rim around the body + nose so the missile pops (AH-0MV822B1B0048UZT).
+  if (rim !== undefined) {
+    graphics.lineStyle(1, rim, alpha);
+    graphics.beginPath();
+    graphics.moveTo(bodyX, -halfH);
+    graphics.lineTo(bodyX + bodyW, -halfH);
+    graphics.lineTo(bodyX + bodyW + r * 1.1, 0);
+    graphics.lineTo(bodyX + bodyW, halfH);
+    graphics.lineTo(bodyX, halfH);
+    graphics.closePath();
+    graphics.strokePath();
+  }
+  // Flickering exhaust flame behind the tail (AH-0MV822B1B0048UZT): an
+  // outer body-coloured flame with a white-hot inner core. Its length is a
+  // pure function of the bullet's elapsed time, so the missile reads as
+  // powered and the flame shimmers frame to frame.
+  const flameLen = missileFlameLength(r, spec.time ?? 0, spec.flame ?? 0);
+  if (flameLen > 0) {
+    graphics.fillStyle(spec.color, alpha * 0.9);
+    graphics.fillTriangle(bodyX, -halfH, bodyX - flameLen, 0, bodyX, halfH);
+    graphics.fillStyle(0xffffff, alpha);
+    graphics.fillTriangle(
+      bodyX,
+      -halfH * 0.5,
+      bodyX - flameLen * 0.55,
+      0,
+      bodyX,
+      halfH * 0.5,
     );
   }
 }
@@ -461,6 +534,7 @@ export function resolvePlayerBulletVisual(
     rimColor: def.bulletRim,
     thickness: def.bulletThickness,
     tail: def.bulletTrail,
+    flame: def.bulletFlame,
   };
 }
 

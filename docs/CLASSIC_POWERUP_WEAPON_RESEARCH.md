@@ -195,6 +195,13 @@ formation.
 **Divergence from original:** No ground/city target model and no inbound arcing
 ICBM — the MIRV is the player's own projectile, and the cluster is a radial
 spray of short-lived warheads rather than independent tracking warheads.
+**In-flight identity (AH-0MV822B1B0048UZT):** the shell renders as a neon
+**small missile with a flickering exhaust flame** (the shared missile shape
+honouring `bulletRim`/`bulletFlame`/`bulletTrail` visual metadata), fires with a
+baked low launch whoosh + magenta launch puff, splits into **small disc
+warheads**, and every warhead connect plays the baked cluster detonation thump
++ hot-pink impact flash through the shared impact seam — so the payload is
+legible and audible in flight and on contact, with no behaviour change.
 
 **Type:** weapon.
 

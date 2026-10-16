@@ -197,6 +197,22 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playClusterImpactSound resolves to the baked cluster-impact asset (AH-0MV822B1B0048UZT)', () => {
+    effects.playClusterImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-cluster-impact.32270.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the cluster impact cue (AH-0MV822B1B0048UZT)', () => {
+    effects.playWeaponImpactCue('playClusterImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-cluster-impact.32270.wav',
+    );
+  });
+
   it('playCountdownTickSound rises in pitch with each beat (AH-0MV722WJS0075UTZ)', () => {
     // Count 3 (step 0) is the base rate, 2 and 1 rise above it.
     effects.playCountdownTickSound(0);
@@ -399,10 +415,10 @@ describe('playWeaponFireSound — shared player-fire path', () => {
   });
 
   it('is a no-op for catalogue-only weapon ids without a baked fire cue', () => {
-    // cluster/options have no baked fire cue yet — they stay
-    // catalogue-only ids that degrade to a silent no-op.
+    // options has no baked fire cue yet — it stays a catalogue-only id that
+    // degrades to a silent no-op.
     expect(() =>
-      effects.playWeaponFireSound('cluster' as never),
+      effects.playWeaponFireSound('options' as never),
     ).not.toThrow();
     expect(recording.plays).toHaveLength(0);
   });
@@ -411,6 +427,12 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     effects.playWeaponFireSound('ricochet');
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/aihell-ricochet-fire.32267.wav');
+  });
+
+  it('plays the baked cluster-missile fire cue (AH-0MV822B1B0048UZT)', () => {
+    effects.playWeaponFireSound('cluster');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-cluster-fire.32269.wav');
   });
 });
 

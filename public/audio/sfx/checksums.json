@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "4f1778e70a0962de8d6bae29c2fb61c60799c606340188a8fc96d4724715fd3e",
+  "inputs": "59b59c7fa89183e7fae5f9601a735e79b4233d33077c50abef62b116655e93b8",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-boss-destruction.32203.wav": "fbe749ae3f8ddd87a29c1068f5330f3038390483a6f06902ddf7250b783dea3c",
@@ -17,6 +17,8 @@
     "audio/sfx/aihell-bullet-destruction.32130.wav": "2659a6b969674d3bbe39f04fad5a00a5b9c9ee44bee90256a031a8859f35b6bd",
     "audio/sfx/aihell-cannon-fire.32210.wav": "737bdbe85cb87eb84fe8bd0af83d54fcdbe11028b7f10906aa53bb7860aa65be",
     "audio/sfx/aihell-cannon-impact.32209.wav": "cb15b77e1a75aa0840c7e02d613a43c02283dbbe753353c46f3cf6d6534264b7",
+    "audio/sfx/aihell-cluster-fire.32269.wav": "95009237880c0c2e753637f24cc8756a7552249a5ac303dff40f9ec05aa09ee3",
+    "audio/sfx/aihell-cluster-impact.32270.wav": "298d2a27aca5a40726cb5ed670d988829a72ac761e39cb2d3f9606c5bd262fc5",
     "audio/sfx/aihell-countdown-tick.32264.wav": "b031b231cc280a055cc9f2bf19c5d97e3d841be07a9e931294c06d80adfb0692",
     "audio/sfx/aihell-defeat-sting.32241.wav": "0427f3802da5b1f749024c4ede68235b9ef581fc2c102fb0164a56e56ff43ac1",
     "audio/sfx/aihell-diver-destruction.32193.wav": "5a69fd97c59bb3d624dda0364560fa73a9a7def8b34c93311a18a7385b864490",
