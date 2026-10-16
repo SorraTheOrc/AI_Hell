@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.1.13 (2026-10-16)
+> **Release focus:** This release focuses on clearer combat readability and fairer balance, with distinct weapon visuals and sounds, quieter shots, better ship-facing feedback, and fairer wave composition. It also speeds up builds, makes power-ups and escapes more reliable, and adds data-driven tuning through simulated games and bot-versus-human stats.
+### Features
+- Your ship now clearly shows which way it's facing while turning and thrusting. (AH-0MV78PAX3002MO20)
+- Builds are much faster now, so your changes finish without getting stuck. (AH-0MV87694J009Z34V)
+- Tank and Scout shots are quieter, so enemy fire no longer drowns out other sounds. (AH-0MV74ROYR009X8U3)
+- Smart Bomb now pulses less often and covers a smaller area, keeping it a tense panic button instead of an auto-win. (AH-0MV8GPGBL009M0D8)
+- Devs can now compare bot and human balance stats to keep the game fair. (AH-0MV7WVEWL005XEMN)
+- Small asteroids now have a chance to drop an extra life when destroyed. (AH-0MV6M2M9P0078N4S)
+- Orbiting escort pods now fire outward in their own direction, spreading shots around you. (AH-0MV5DFBVW002J2XO)
+- Side thrusters now sound quieter and higher-pitched, so turning and strafing are easier to tell apart from forward thrust. (AH-0MV78QUIX001EZN2)
+- Level and wave banners are now see-through and stay up longer, so you can keep playing while you read them. (AH-0MV8BQ75V005QNZ1)
+- Balance changes are now tested with hundreds of simulated games, so tuning is based on real data. (AH-0MV1DLUZ8009OCJW)
+- Generated waves now follow fairer composition rules, so you'll never face an all-chaser or all-ranged wave. (AH-0MV29XQ0H009P9WP)
+- Centipede now appears in the enemies gym's dropdown instead of the general scenes list. (AH-0MV4ZOIZR0086T66)
+- The demo bot now flies with your ship's actual thrusters, so the preview matches your handling. (AH-0MV268RXJ007M7A9)
+- Every weapon and enemy shot now has its own unique look and sound, so you can tell them apart at a glance. (AH-0MV2K5SR0005RTTE)
+- Teleport and Phase Shift now recharge over time, so used escapes come back. (AH-0MV2N0FX2004KEPR)
+- In demo mode, any key except movement now returns to the main menu; movement keys still take over. (AH-0MUYG8XHI0044MQ1)
+- Power-ups now level up the same way everywhere, with a new demo area to see each one grow. (AH-0MUV5CLVQ006V9HR)
+### Bug Fixes
+- Demos now always use the correct tuned bot settings, even on a fresh device. (AH-0MV9GZD2C005IIU3)
+- Daily standup reports are now saved and versioned so you can look back at past updates. (AH-0MV8IHVT1008M2LG)
+### Other
+- Temporary power-ups you earn will stay usable until you actually use them. (AH-0MUX93S6F005LLXN)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.12 (2026-10-13)
 > **Release focus:** This release focuses on improving the demo bot's aiming and piloting behaviour while giving designers live tuning tools with explanatory tooltips, alongside clearer upgrade choices and a more informative main menu. It also expands the campaign to 10 levels with classic-arcade enemies from level 6, refines enemy roles and movement, and fixes several gameplay issues including speed boost duration, cluster missile splitting, and reliable test results.
 ### Features
