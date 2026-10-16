@@ -419,6 +419,48 @@ describe('CombatCoreScene — shared base class', () => {
     expect(spreadBullet!.impactFx?.cue).toBe('playSpreadImpactSound');
   });
 
+  // ── Dual projectile visuals & feel (AH-0MV8229NM009CZOA) ────────
+
+  it('spawns a quick muzzle flash through the shared spawn path when the dual fires (AC3)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('dual');
+
+    scene.runAutoFire(10);
+
+    // The dual fires two parallel side-by-side beams; each volley spawns one
+    // shared launch flash at the ship (the permanent cannon may fire too).
+    const dualBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === 0xff00ff);
+    expect(dualBullets.length).toBeGreaterThan(0);
+    expect(dualBullets.length).toBe(2); // twin pulse bars, one volley
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+    const flash = scene.getFireFxEffects()[0];
+    expect(flash.active).toBe(true);
+    expect(flash.x).toBeCloseTo(100, 5);
+    expect(flash.y).toBeCloseTo(100, 5);
+  });
+
+  it('tags the dual bullet with its short-beam visual identity + impact FX (AC1/AC4)', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('dual');
+
+    scene.runAutoFire(10);
+
+    const dualBullet = scene
+      .getPlayerBullets()
+      .find((b) => b.color === 0xff00ff);
+    expect(dualBullet).toBeDefined();
+    expect(dualBullet!.shape).toBe('line');
+    expect(dualBullet!.shapeLength).toBeLessThan(3); // short beam, not a dot
+    expect(dualBullet!.thickness).toBeGreaterThan(1);
+    expect(dualBullet!.tail).toBeGreaterThan(0);
+    expect(dualBullet!.impactFx).toBeDefined();
+    expect(dualBullet!.impactFx?.cue).toBe('playDualImpactSound');
+  });
+
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });

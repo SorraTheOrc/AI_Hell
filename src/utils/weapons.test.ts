@@ -108,6 +108,24 @@ describe('WEAPON_CATALOGUE', () => {
     expect(spread.impactFx!.cue).toBe('playSpreadImpactSound');
   });
 
+  test('dual declares its visuals-only feel metadata (AH-0MV8229NM009CZOA)', () => {
+    const dual = WEAPON_CATALOGUE.dual;
+    // In-flight identity for the catalogue guard stays the unique short
+    // `line`/beam family (never a dot); the feel is added as visuals-only
+    // metadata — a chunkier pulse-bar stroke, a short fading trail, a quick
+    // launch flash and a distinct magenta impact flash + baked hit cue.
+    expect(dual.bulletShape).toBe('line');
+    expect(dual.bulletShapeLength).toBeLessThan(3); // short beam, not the wave laser
+    expect(dual.bulletThickness).toBeDefined();
+    expect(dual.bulletThickness).toBeGreaterThan(1);
+    expect(dual.bulletTrail).toBeGreaterThan(0);
+    expect(dual.muzzleFlash).toBeDefined();
+    expect(dual.muzzleFlash!.color).toBe(BULLET_COLORS.dual);
+    expect(dual.impactFx).toBeDefined();
+    expect(dual.impactFx!.color).toBe(BULLET_COLORS.dual);
+    expect(dual.impactFx!.cue).toBe('playDualImpactSound');
+  });
+
   test('dual fires 2 parallel bullets offset perpendicular to heading', () => {
     const weapon = WEAPON_CATALOGUE.dual;
     expect(weapon.offsets.length).toBe(2);

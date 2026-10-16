@@ -425,6 +425,11 @@ export function playSpreadImpactSound(): void {
   playCue('playSpreadImpactSound');
 }
 
+/** Bright twin square snap — Dual bullet connects (AH-0MV8229NM009CZOA). */
+export function playDualImpactSound(): void {
+  playCue('playDualImpactSound');
+}
+
 /**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
@@ -435,6 +440,7 @@ export function playSpreadImpactSound(): void {
 const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playCannonImpactSound,
   playSpreadImpactSound,
+  playDualImpactSound,
 };
 
 /**

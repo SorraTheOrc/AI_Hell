@@ -270,6 +270,18 @@ describe('resolvePlayerBulletVisual', () => {
       expect(canonicalShape(spec.shape)).toBe('line');
     }
   });
+
+  it('the dual beam resolves a short stroked bar with a fading trail (AH-0MV8229NM009CZOA)', () => {
+    const dual = resolvePlayerBulletVisual(WEAPON_CATALOGUE.dual);
+    // The twin pulse bars: a short line/beam (not a dot), a slightly chunkier
+    // stroke than the default hairline, and a short fading wake behind each
+    // bar — all visual metadata, flight unchanged.
+    expect(canonicalShape(dual.shape)).toBe('line');
+    expect(dual.length).toBeLessThan(3); // short bar, distinctly not the wave laser
+    expect(dual.thickness).toBeGreaterThan(1);
+    expect(dual.tail).toBeGreaterThan(0);
+    expect(dual.color).toBe(0xff00ff);
+  });
 });
 
 describe('resolveEnemyBulletVisual', () => {

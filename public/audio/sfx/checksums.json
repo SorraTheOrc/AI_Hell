@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "ea9f89f63aff49b575778b58d6bc9e772f03dd374434da72261743effef844cb",
+  "inputs": "96cd345a19437eb0d7bdbf2c5d8cec5943db477dd2c99ffaf559eb88b5281315",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-boss-destruction.32203.wav": "fbe749ae3f8ddd87a29c1068f5330f3038390483a6f06902ddf7250b783dea3c",
@@ -26,6 +26,7 @@
     "audio/sfx/aihell-diver-dive-start.32190.wav": "8613ced4e3338afa6e26a74cfe0c114c278efa1698786c56828824a6c194ffb7",
     "audio/sfx/aihell-diver-fire.32192.wav": "b7574ae4abd02fee7d6c35e05bb2059d70148ed8d9e8dfc62f02ef4d276ee05d",
     "audio/sfx/aihell-dual-fire.32212.wav": "41522229e77c59a1dd7ec207af163c91c80c2afe5b92cdf6241b18afa7c4a923",
+    "audio/sfx/aihell-dual-impact.32265.wav": "e6ba2a3e89a86ae657428f1f3c8b4d18cd0c33ce773012b654a536b9a6aa3de4",
     "audio/sfx/aihell-enemy-destruction.32110.wav": "a455c1899eb72b74437c5b124bcd66b8f76983ef3cc669b02d956b76b0380fa1",
     "audio/sfx/aihell-enemy-destruction.32111.wav": "84401c2acc35a79dd8ef4bb6a93584d0b36b7f051b4058e8a34d3cd5dd2eddf9",
     "audio/sfx/aihell-enemy-destruction.32112.wav": "eca6cd498f38cace48eb0f86bf0add7cb50464fe65b9d342f09e99a2afe794f3",

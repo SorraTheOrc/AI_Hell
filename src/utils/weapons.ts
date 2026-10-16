@@ -837,8 +837,28 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     fireRateMs: WEAPON_DUAL_FIRE_RATE,
     bulletColor: BULLET_COLORS.dual,
     // Two parallel short beams — the Dual reads as side-by-side pulse bars.
+    // A slightly chunkier stroke and a short fading wake make the twin bars
+    // read as solid pulse bars (never dots), distinctly lighter than the
+    // Wave Laser's long piercing beam (AH-0MV8229NM009CZOA). Visual metadata
+    // only — flight unchanged.
     bulletShape: 'line',
     bulletShapeLength: 2,
+    bulletThickness: 1.6,
+    // Short fading trail behind each bar — the twin bars leave a brief
+    // magenta wake in flight (AH-0MV8229NM009CZOA).
+    bulletTrail: 1.6,
+    // Quick launch flash at the ship when the dual fires — short so the
+    // fast twin volley stays clean (shared combat-core spawn path,
+    // AH-0MV8229NM009CZOA).
+    muzzleFlash: { color: BULLET_COLORS.dual, radius: 6, duration: 0.1 },
+    // Distinct magenta impact flash + baked twin-snap hit cue when either
+    // bar connects (shared impact seam — AH-0MV8229NM009CZOA).
+    impactFx: {
+      color: BULLET_COLORS.dual,
+      radius: 8,
+      duration: 0.14,
+      cue: 'playDualImpactSound',
+    },
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.dual,
   },

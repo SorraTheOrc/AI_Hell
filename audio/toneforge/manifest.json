@@ -231,6 +231,14 @@
       ]
     },
     {
+      "cue": "playDualImpactSound",
+      "recipe": "aihell-dual-impact",
+      "delivery": "baked",
+      "seeds": [
+        32265
+      ]
+    },
+    {
       "cue": "playRapidFireSound",
       "recipe": "aihell-rapid-fire",
       "delivery": "baked",

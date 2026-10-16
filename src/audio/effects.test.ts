@@ -141,6 +141,22 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playDualImpactSound resolves to the baked dual-impact asset (AH-0MV8229NM009CZOA)', () => {
+    effects.playDualImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-dual-impact.32265.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the dual impact cue (AH-0MV8229NM009CZOA)', () => {
+    effects.playWeaponImpactCue('playDualImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-dual-impact.32265.wav',
+    );
+  });
+
   it('playCountdownTickSound rises in pitch with each beat (AH-0MV722WJS0075UTZ)', () => {
     // Count 3 (step 0) is the base rate, 2 and 1 rise above it.
     effects.playCountdownTickSound(0);

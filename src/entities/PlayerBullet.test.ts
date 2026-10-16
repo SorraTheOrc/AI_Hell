@@ -479,3 +479,24 @@ describe('PlayerBullet — spread visual identity (AC1/AC3)', () => {
     expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
   });
 });
+
+// ── Dual — twin short pulse bars with a quick fading wake (AH-0MV8229NM009CZOA) ─
+
+describe('PlayerBullet — dual visual identity (AC1/AC3)', () => {
+  it('the dual shot renders as a short stroked beam (not a dot) with a 3-segment fading trail', async () => {
+    const scene = await makeScene();
+    const bullet = createPlayerBullet(
+      scene, 100, 100, 0xff00ff, 3, 350, 0, 0.7,
+      'line', 2, undefined, 1.6, 1.6,
+    );
+
+    // The dual signature: a stroked line/beam (LINE_TO + STROKE_PATH, never
+    // a dot) with a chunkier stroke than the default hairline, plus a short
+    // 3-segment fading wake behind each bar (FILL_TRIANGLE via the shared
+    // seam).
+    const buf = bullet.commandBuffer as number[];
+    expect(countCmd(buf, Cmd.LINE_TO)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(1);
+    expect(countCmd(buf, Cmd.FILL_TRIANGLE)).toBe(3);
+  });
+});
