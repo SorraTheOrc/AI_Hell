@@ -562,6 +562,8 @@ export const OPTIONS_POD_BULLET_SPEED = 300;
  *   phase colour, with a short spiral-wake arc (AH-0MV822F5J006WFR0)
  * - `pulse-ring` — the Boss pulse pattern's slow wide pulse ring
  *   (AH-0MV822FHN005PK37)
+ * - `tracer` — the Boss desperation burst's bright velocity-aligned tracer
+ *   (AH-0MV822FTS00156F5)
  * - `diamond` — four-point rhombus
  * - `spark` — four-point star
  * - `chevron` — forward-opening V
@@ -588,6 +590,7 @@ export type BulletShape =
   | 'boss-pellet'
   | 'spiral-pellet'
   | 'pulse-ring'
+  | 'tracer'
   | 'diamond'
   | 'spark'
   | 'chevron'

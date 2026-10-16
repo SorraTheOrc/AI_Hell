@@ -24,7 +24,8 @@
  * accent, AH-0MV822ETD008LLZX), **spiral-pellet** (the Boss spiral pattern's
  * phase-coloured pellet with a spiral-wake arc, AH-0MV822F5J006WFR0),
  * **pulse-ring** (the Boss pulse pattern's slow wide pulse ring,
- * AH-0MV822FHN005PK37),
+ * AH-0MV822FHN005PK37), **tracer** (the Boss desperation burst's bright
+ * velocity-aligned tracer, AH-0MV822FTS00156F5),
  * plus the roster's `diamond`, `spark` (4-point star), `chevron` and
  * `pellet` (scalloped alien pod with a tinted core + faint pulse,
  * AH-0MV822CQL005R4MM) primitives needed to give every weapon a unique
@@ -140,6 +141,7 @@ export const DEFAULT_SHAPE_LENGTH: Record<BulletShape, number> = {
   'boss-pellet': 1,
   'spiral-pellet': 1,
   'pulse-ring': 1.6,
+  tracer: 2.6,
   diamond: 1,
   spark: 1,
   chevron: 2,
@@ -246,6 +248,9 @@ export function drawBulletShape(
       break;
     case 'pulse-ring':
       _pulseRing(graphics, spec, alpha, stroke, rim);
+      break;
+    case 'tracer':
+      _tracer(graphics, spec, alpha, rim);
       break;
     case 'diamond':
       _diamond(graphics, spec, alpha, rim);
@@ -882,6 +887,48 @@ function _pulseRing(
   graphics.strokePath();
 }
 
+/**
+ * Bright velocity-aligned tracer (AH-0MV822FTS00156F5): the Boss desperation
+ * burst's shot identity.
+ *
+ * A long, thin arrow-stroke — a bright hot-gold line whose leading third is
+ * white (the white-hot head of the tracer) with a short tail flare —
+ * reading as an intense, fast tracer streaking out of the desperation
+ * volley. Distinct from the jagged player `bolt` (multi-segment, no body)
+ * and from the Boss's other pattern shapes; deliberately the hottest,
+ * fastest-looking shot in the boss identity family.
+ */
+function _tracer(
+  graphics: Phaser.GameObjects.Graphics,
+  spec: BulletVisualSpec,
+  alpha: number,
+  rim?: number,
+): void {
+  const r = Math.max(0.1, spec.radius);
+  const half = shapeLength(spec.radius, spec) / 2;
+  const tint = rim ?? spec.color;
+  // Long thin tracer body along +x.
+  graphics.lineStyle(2, spec.color, Math.min(1, alpha * 0.95));
+  graphics.beginPath();
+  graphics.moveTo(-half, 0);
+  graphics.lineTo(half, 0);
+  graphics.strokePath();
+  // White-hot head (the bright leading third).
+  graphics.lineStyle(2, 0xffffff, Math.min(1, alpha * 0.95));
+  graphics.beginPath();
+  graphics.moveTo(half * 0.25, 0);
+  graphics.lineTo(half, 0);
+  graphics.strokePath();
+  // Short tail flare: a tiny triangle behind the streak's rear.
+  graphics.fillStyle(tint, Math.min(1, alpha * 0.85));
+  graphics.beginPath();
+  graphics.moveTo(-half * 0.8, -r * 0.6);
+  graphics.lineTo(-half * 1.3, 0);
+  graphics.lineTo(-half * 0.8, r * 0.6);
+  graphics.closePath();
+  graphics.fillPath();
+}
+
 /** Diamond: a filled four-point rhombus. */
 function _diamond(
   graphics: Phaser.GameObjects.Graphics,
@@ -1219,7 +1266,14 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
     tail: 0.9,
     muzzle: { color: 0x88ddff, radius: 6, duration: 0.14 },
   },
-  'boss-desperation': { shape: 'bolt', color: 0xffdd66, length: 1.8 },
+  'boss-desperation': {
+    shape: 'tracer',
+    color: 0xffdd66,
+    length: 2.6,
+    rimColor: 0xffdd66,
+    tail: 1.4,
+    muzzle: { color: 0xffdd66, radius: 6, duration: 0.14 },
+  },
   capturer: { shape: 'line', color: 0xff88ff, length: 2.2 },
   'orbital-strike': { shape: 'shell', color: 0xff4444 },
 };

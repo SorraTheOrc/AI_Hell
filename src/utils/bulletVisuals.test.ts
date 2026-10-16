@@ -130,6 +130,7 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     'boss-pellet': { shape: 'boss-pellet' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0xff3366 },
     'spiral-pellet': { shape: 'spiral-pellet' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0xffcc00 },
     'pulse-ring': { shape: 'pulse-ring' as BulletShape, color: 0xffffff, radius: 3, rimColor: 0x88ddff, thickness: 2.2 },
+    tracer: { shape: 'tracer' as BulletShape, color: 0xffdd66, radius: 3, length: 2.6, rimColor: 0xffdd66 },
     diamond: { shape: 'diamond' as BulletShape, color: 0xffaa00, radius: 3 },
     spark: { shape: 'spark' as BulletShape, color: 0xffff00, radius: 3 },
     chevron: { shape: 'chevron' as BulletShape, color: 0x00ffcc, radius: 3, length: 2 },
@@ -385,6 +386,17 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(2);
   });
 
+  it('tracer renders a hot long streak with a white-hot head + tail flare (AH-0MV822FTS00156F5)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs.tracer);
+    const buf = g.commandBuffer as number[];
+    // The tracer's read: two stroked line segments (body + white-hot head)
+    // plus the filled tail-flare triangle — the intense desperation-volley
+    // streak, distinct from the jagged `bolt` (three line segments, no fill).
+    expect(countOps(buf, Cmd.STROKE_PATH)).toBeGreaterThanOrEqual(2);
+    expect(countOps(buf, Cmd.FILL_PATH)).toBeGreaterThanOrEqual(1);
+  });
+
   it('diamond renders a closed filled path (≥ 3 line segments)', async () => {
     const g = await makeGraphics();
     drawBulletShape(g, specs.diamond);
@@ -507,6 +519,7 @@ describe('DEFAULT_SHAPE_LENGTH', () => {
     expect(DEFAULT_SHAPE_LENGTH['boss-pellet']).toBe(1);
     expect(DEFAULT_SHAPE_LENGTH['spiral-pellet']).toBe(1);
     expect(DEFAULT_SHAPE_LENGTH['pulse-ring']).toBeGreaterThan(1);
+    expect(DEFAULT_SHAPE_LENGTH.tracer).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.shard).toBeGreaterThan(1);
     expect(DEFAULT_SHAPE_LENGTH.chevron).toBeGreaterThan(1);
   });
@@ -787,6 +800,26 @@ describe('resolveEnemyBulletVisual', () => {
     expect(visual.tail).toBeGreaterThan(0);
     expect(visual.muzzle).toBeDefined();
     expect(visual.muzzle?.color).toBe(0x88ddff);
+    expect(shapeAnimates(visual.shape)).toBe(false);
+  });
+
+  it('boss desperation bursts resolve a bright tracer identity with a hot-gold pop (AH-0MV822FTS00156F5)', () => {
+    const visual = resolveEnemyBulletVisual('boss-desperation');
+    // The Boss desperation pattern's signature look: a bright velocity-aligned
+    // tracer — a dedicated `tracer` primitive (long hot-gold streak + white-hot
+    // head + tail flare), NOT the jagged `bolt` the placeholder used before
+    // this landed.
+    expect(canonicalShape(visual.shape)).toBe('tracer');
+    // The shot body keeps the established hot-gold desperation colour.
+    expect(visual.color).toBe(0xffdd66);
+    // Feel knobs: a hot-gold rim/tint, a longer streak, a short fading trail,
+    // and a hot-gold launch pop at the Boss's body. No animation — static
+    // tracer, so no per-frame redraw is required.
+    expect(visual.rimColor).toBe(0xffdd66);
+    expect(visual.length).toBeGreaterThan(2);
+    expect(visual.tail).toBeGreaterThan(0);
+    expect(visual.muzzle).toBeDefined();
+    expect(visual.muzzle?.color).toBe(0xffdd66);
     expect(shapeAnimates(visual.shape)).toBe(false);
   });
 

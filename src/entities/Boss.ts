@@ -701,6 +701,32 @@ export class Boss extends Phaser.GameObjects.Container {
     if (this._telegraphState === TelegraphState.Telegraphing) return [];
     if (!this._shouldFire(now)) return [];
 
+    // The shared Boss desperation projectile identity (AH-0MV822FTS00156F5):
+    // every bullet of the combined desperation volley (spread + spiral +
+    // aimed) renders as a bright velocity-aligned tracer — a hot-gold streak
+    // with a white-hot head and a tail flare — echoing the exposed, brighter
+    // core the boss shows in phase 4. Because the Boss entity is shared by
+    // PlayScene and every gym, the tracers' shape, tint, trail and launch pop
+    // are identical in the game and every gym (gym↔game parity by
+    // construction). Firing logic, counts, layers and speeds are unchanged —
+    // visuals/feel only.
+    const visual = resolveEnemyBulletVisual('boss-desperation');
+
+    // One shared launch pop at the Boss's body for the whole combined volley
+    // (the volley is one fire event that already plays one Boss fire cue),
+    // tinted hot-gold like the tracers. Spawned through the shared
+    // `src/vfx/enemyMuzzleFlash` helper (cheap Graphics primitive,
+    // self-cleaning tween), direction-agnostic like the combined volley.
+    if (visual.muzzle) {
+      spawnEnemyMuzzleFlash(
+        this.scene as Phaser.Scene,
+        this.x,
+        this.y,
+        0,
+        visual.muzzle,
+      );
+    }
+
     const bullets: BossBullet[] = [];
     const speed = this._bulletSpeed();
 
@@ -710,14 +736,14 @@ export class Boss extends Phaser.GameObjects.Container {
     for (let i = 0; i < spreadCount; i++) {
       const t = i / (spreadCount - 1);
       const angle = Math.PI / 2 + spreadAngle / 2 - t * spreadAngle;
-      bullets.push(this._createBullet(angle, speed));
+      bullets.push(this._createBullet(angle, speed, visual));
     }
 
     // Layer 2: spiral (8 bullets).
     for (let i = 0; i < 8; i++) {
       const angle =
         this._attackAngle + (Math.PI * 2 * i) / 8 + Math.PI / 8;
-      bullets.push(this._createBullet(angle, speed));
+      bullets.push(this._createBullet(angle, speed, visual));
     }
     this._attackAngle += 0.5;
 
@@ -725,7 +751,7 @@ export class Boss extends Phaser.GameObjects.Container {
     const dx = this._playerTargetX - this.x;
     const dy = this._playerTargetY - this.y;
     const aimAngle = Math.atan2(dy, dx);
-    bullets.push(this._createBullet(aimAngle, speed));
+    bullets.push(this._createBullet(aimAngle, speed, visual));
 
     // Pulse wave.
     const pulse = (this.scene as Phaser.Scene).add.graphics();

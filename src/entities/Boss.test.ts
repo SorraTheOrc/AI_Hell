@@ -1202,3 +1202,73 @@ describe('Boss — pulse pattern projectile identity (AH-0MV822FHN005PK37)', () 
     }
   });
 });
+
+// ── Boss desperation projectile identity (AH-0MV822FTS00156F5) ─────
+
+describe('Boss — desperation burst projectile identity (AH-0MV822FTS00156F5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makeBoss(config: {
+    shotProbability?: number;
+    rng?: () => number;
+  } = {}): Boss {
+    return new Boss(booted!.scene, {
+      x: 480,
+      y: 200,
+      formationOffset: { row: 0, col: 0 },
+      ...config,
+    });
+  }
+
+  it('fires bright tracers across every desperation layer: one launch pop + nose-aligned streaks', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+    const boss = makeBoss({ shotProbability: 1, rng: () => 0 });
+    boss._simulateTelegraphElapsed();
+
+    const graphicsBefore = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+
+    const bullets = boss.tryFireDesperationBullets(1_000_000);
+    // 5 spread + 8 spiral + 1 aimed + 1 pulse wave.
+    expect(bullets.length).toBeGreaterThanOrEqual(15);
+
+    // The volley spawns its tracer bullet Graphics (all layers) + the pulse
+    // wave + one hot-gold launch pop at the Boss's body (one pop per volley,
+    // not per layer).
+    const graphicsAfter = scene.children.list.filter(
+      (c): c is Phaser.GameObjects.Graphics =>
+        c instanceof Phaser.GameObjects.Graphics,
+    ).length;
+    expect(graphicsAfter).toBe(graphicsBefore + bullets.length + 1);
+
+    // Exactly one bullet is the expanding pulse wave; the rest are tracers.
+    const waves = bullets.filter((b) => b.isPulseWave);
+    expect(waves).toHaveLength(1);
+
+    // Each tracer carries its hot-gold desperation colour (the identity
+    // colour, distinct from the other patterns' white bodies) — which the
+    // shared impact pass tints the hit flash with.
+    const tracers = bullets.filter((b) => !b.isPulseWave);
+    for (const bullet of tracers) {
+      expect(bullet.color).toBe(0xffdd66);
+    }
+    // Each tracer is rotated to fly nose-first along its layer direction.
+    for (const bullet of tracers) {
+      const heading = Math.atan2(bullet.vy, bullet.vx);
+      let rotation = bullet.graphics.rotation;
+      let expected = heading;
+      if (rotation - expected > Math.PI) rotation -= Math.PI * 2;
+      if (rotation - expected < -Math.PI) rotation += Math.PI * 2;
+      expect(rotation).toBeCloseTo(expected, 5);
+    }
+  });
+});

@@ -2106,6 +2106,20 @@ intercepted. The remaining boss pattern (desperation) gets its own identity
 under its own child item. Visuals/feel only: firing logic, wave speed, aim
 count, fan spread and the telegraph cadence are unchanged.
 
+**Boss desperation (boss-desperation pattern, AH-0MV822FTS00156F5):** every
+bullet of the combined desperation volley (spread + spiral + aimed) renders
+as a **bright velocity-aligned tracer** — a dedicated `tracer` seam primitive
+(a long hot-gold streak with a **white-hot head** and a short tail flare)
+plus a short fading trail — the exposed, brighter-core read of the boss's
+final phase, hotter and faster-looking than every other boss identity. The
+volley plays **one hot-gold launch pop** at the boss's body (one pop per
+combined volley — the volley is one fire event that already plays one Boss
+fire cue), each tracer flies nose-first along its layer direction, and each
+carries its hot-gold colour so the shared impact pass tints the flash when a
+tracer connects or is intercepted (the expanding pulse wave keeps its own
+rendering). Visuals/feel only: firing logic, counts, layers, speeds and the
+telegraph cadence are unchanged.
+
 ### Explode / destruction
 
 - **Function:** `playDestructionSound()` (shared) — or an entity-specific
