@@ -8,7 +8,7 @@
     "dev": "vite",
     "build-audio": "scripts/build-audio.sh",
     "build-audio:render": "scripts/build-audio.sh --render",
-    "build-audio:verify": "scripts/build-audio.sh --verify",
+    "build-audio:verify": "scripts/build-audio.sh --verify && node scripts/audio-balance-guard.mjs",
     "check-bundle": "node scripts/check-bundle-hygiene.mjs",
     "build": "npm run build-audio && tsc --noEmit && vite build && npm run check-bundle",
     "preview": "vite preview --port 4173",
