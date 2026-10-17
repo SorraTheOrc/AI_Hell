@@ -297,3 +297,83 @@ describe('Campaign design invariants for the ten-level campaign (AH-0MV398ZWL009
     });
   });
 });
+
+// ── 10-wave campaign & mini-boss verification harness (AH-0MVCRAHWO0007US2) ──
+//
+// Test-first verification for the expanded campaign (epic AH-0MVCC8XSS007P01Z):
+// every level 1–10 must define exactly 10 waves with the 10th flagged as that
+// level's mini-boss encounter, and the difficulty targets across all 100 waves
+// must stay non-decreasing.
+//
+// These pins are **RED** against today's 29-wave campaign (AC5), so they run
+// under Vitest's `it.fails(...)` — the repo's expected-failure convention (see
+// `difficultySequencer.variety.test.ts`): the assertion genuinely fails now
+// while the suite stays green at the build → test → commit gate. When the
+// production features land (AH-0MVCRAR89009C8GZ data foundation, then the
+// gating/reward items), flip each `it.fails` back to a plain `it` — the
+// assertions then hard-gate the shipped shape.
+describe('10-wave campaign & mini-boss verification harness (AH-0MVCRAHWO0007US2)', () => {
+  /**
+   * The wave-10 mini-boss marker the data foundation lands on every level's
+   * 10th `WaveDefinition` (contract: `miniBoss === true`). Read through a
+   * cast today so the harness compiles before the production type exists.
+   */
+  interface MiniBossMarkedWave extends WaveDefinition {
+    miniBoss?: boolean;
+  }
+
+  /** The 10th wave of a level, or undefined when the level has fewer waves. */
+  function tenthWave(level: LevelDefinition): WaveDefinition | undefined {
+    return level.waves[9];
+  }
+
+  it.fails('AC1 — every level 1–10 in LEVELS defines exactly 10 waves', () => {
+    expect(LEVELS).toHaveLength(10);
+    for (const level of LEVELS) {
+      expect(
+        level.waves.length,
+        `L${level.level} (${level.name}) has ${level.waves.length} waves`,
+      ).toBe(10);
+    }
+  });
+
+  it.fails('AC1/AC2 — the merged campaign has exactly 10 waves per level, 100 in total', () => {
+    const merged = buildSequencedLevels();
+    expect(merged).toHaveLength(10);
+    const total = merged.reduce((sum, level) => sum + level.waves.length, 0);
+    expect(total, 'campaign wave total').toBe(100);
+    for (const level of merged) {
+      expect(level.waves.length, `L${level.level}`).toBe(10);
+    }
+  });
+
+  it.fails("AC2 — wave 10 of every merged level is flagged as that level's mini-boss", () => {
+    for (const level of buildSequencedLevels()) {
+      const wave = tenthWave(level);
+      expect(wave, `L${level.level} has no 10th wave`).toBeDefined();
+      expect(
+        (wave as MiniBossMarkedWave).miniBoss,
+        `L${level.level} wave 10 is not flagged mini-boss`,
+      ).toBe(true);
+    }
+  });
+
+  it.fails('AC3 — the default difficulty curve spans exactly 100 waves, 10 per level, non-decreasing', () => {
+    const rows = [...defaultDifficultyCurves()].sort(
+      (a, b) => a.level - b.level || a.wave - b.wave,
+    );
+    expect(rows).toHaveLength(100);
+    const perLevel = new Map<number, number>();
+    for (const row of rows) {
+      perLevel.set(row.level, (perLevel.get(row.level) ?? 0) + 1);
+    }
+    for (let level = 1; level <= 10; level++) {
+      expect(perLevel.get(level), `L${level} row count`).toBe(10);
+    }
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i].targetDifficulty).toBeGreaterThanOrEqual(
+        rows[i - 1].targetDifficulty,
+      );
+    }
+  });
+});

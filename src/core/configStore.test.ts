@@ -844,3 +844,45 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
     }
   });
 });
+
+// ── 10-wave campaign verification harness (AH-0MVCRAHWO0007US2) ──
+//
+// Test-first verification for the expanded campaign (epic AH-0MVCC8XSS007P01Z):
+// the default difficulty curve must record exactly 10 waves per level (100
+// rows in total) with a wave-10 row for every level, and the targets stay
+// non-decreasing across the full 100-wave grid.
+//
+// RED against today's 29-row curve (AC5); run under `it.fails(...)` so the
+// gate stays green. Flip each `it.fails` back to a plain `it` once
+// `defaultDifficultyCurves()` in `configStore.ts` records the 10-wave curves
+// (AH-0MVCRAR89009C8GZ).
+describe('10-wave campaign verification harness — default curve (AH-0MVCRAHWO0007US2)', () => {
+  it.fails('AC3 — defaultDifficultyCurves() spans exactly 10 waves per level, 100 rows total', () => {
+    const rows = defaultDifficultyCurves();
+    expect(rows).toHaveLength(100);
+    const perLevel = new Map<number, number>();
+    for (const row of rows) {
+      perLevel.set(row.level, (perLevel.get(row.level) ?? 0) + 1);
+    }
+    for (let level = 1; level <= 10; level++) {
+      expect(perLevel.get(level), `L${level} curve row count`).toBe(10);
+    }
+  });
+
+  it.fails('AC2/AC3 — every level records a wave-10 row and the targets stay non-decreasing', () => {
+    const rows = [...defaultDifficultyCurves()].sort(
+      (a, b) => a.level - b.level || a.wave - b.wave,
+    );
+    for (let level = 1; level <= 10; level++) {
+      expect(
+        rows.some((row) => row.level === level && row.wave === 10),
+        `L${level} has no wave-10 curve row`,
+      ).toBe(true);
+    }
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i].targetDifficulty).toBeGreaterThanOrEqual(
+        rows[i - 1].targetDifficulty,
+      );
+    }
+  });
+});

@@ -453,3 +453,36 @@ describe('shipped campaign playability (AC5)', () => {
     }
   });
 });
+
+// ── 10-wave campaign verification harness (AH-0MVCRAHWO0007US2) ──
+//
+// Test-first verification for the expanded campaign (epic AH-0MVCC8XSS007P01Z):
+// the shipped curve must configure exactly 10 waves per level (100 rows), so
+// the balance audit spans the full expanded grid.
+//
+// RED against today's 29-row curve (AC5); run under `it.fails(...)` so the
+// gate stays green. Flip each `it.fails` back to a plain `it` once the
+// campaign-data item (AH-0MVCRAR89009C8GZ) lands the 10-wave rows.
+describe('10-wave campaign verification harness — wave counts (AH-0MVCRAHWO0007US2)', () => {
+  it.fails('AC3 — the shipped curve configures exactly 10 waves per level (100 rows)', () => {
+    const rows = campaignRows();
+    expect(rows).toHaveLength(100);
+    const perLevel = new Map<number, number>();
+    for (const row of rows) {
+      perLevel.set(row.level, (perLevel.get(row.level) ?? 0) + 1);
+    }
+    for (let level = 1; level <= 10; level++) {
+      expect(perLevel.get(level), `L${level} configured wave count`).toBe(10);
+    }
+  });
+
+  it.fails('AC2 — every level has a wave-10 row to map its mini-boss encounter', () => {
+    const rows = campaignRows();
+    for (let level = 1; level <= 10; level++) {
+      expect(
+        rows.some((row) => row.level === level && row.wave === 10),
+        `L${level} has no wave-10 row`,
+      ).toBe(true);
+    }
+  });
+});
