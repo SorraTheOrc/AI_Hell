@@ -120,6 +120,18 @@ export interface WaveDefinition {
    * the wave exactly as it was.
    */
   laneTraffic?: boolean;
+  /**
+   * Opt-in marker for this level's wave-10 mini-boss encounter (epic
+   * AH-0MVCC8XSS007P01Z). When `true` the `WaveManager` treats the wave as
+   * the level's mini-boss: it exposes the encounter through the per-level
+   * mini-boss accessors (`miniBossTriggered`/`miniBossActive`/
+   * `miniBossDefeated`, cf. AH-0MVCRAV3B0069AIJ) and holds the level until
+   * the mini-boss wave is wiped. The gating is **flag-driven** — a 9th or
+   * 10th wave *without* this marker behaves exactly like a regular wave, so
+   * an unmarked wave can never stall progression. Absent (the default)
+   * leaves the wave exactly as it was.
+   */
+  miniBoss?: boolean;
 }
 
 /** An ordered sequence of waves forming one level. */
