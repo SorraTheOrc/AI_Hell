@@ -1,41 +1,49 @@
-# AI Hell cue: aihell-diver-destruction — Diver destroyed — descending saw 280 to 40 Hz plus sine undertone.
-# Seed range 32193-32195: renders three pitch-jittered variants.
+# AI Hell cue: aihell-diver-destruction — Diver destroyed — descending saw plus sine undertone, A-minor scale-degree variants.
+# Seed range (seeds 32173, 32176, 32197): three A-minor scale-degree variants — each seed starts on a
+# distinct A-minor note (E3/B3/E4, saw) and descends to an A-minor note (E2), per-kill variation preserved
+# without off-scale pitches (AC3, AH-0MVCRR203005HKVZ). Undertone sits on E2 -> G0.
 version: "0.1"
 meta:
   name: aihell-diver-destruction
-  description: Diver destroyed — descending saw 280 to 40 Hz plus sine undertone.
+  description: Diver destroyed — descending saw to A-minor scale-degree variants plus sine undertone.
   category: AIHell
   tags:
     - diver
     - destruction
   duration: 0.37
   parameters:
-    - name: startFreq
-      type: number
-      min: 238
-      max: 322
-      unit: Hz
-      default: 280
-    - name: endFreq
-      type: number
-      min: 34
-      max: 46
-      unit: Hz
-      default: 40
+    - name: endSlot
+      type: integer
+      min: 1
+      max: 2
+      unit: int
+      overrides:
+        - target: v0.automation.frequency.exponentialRamp.value
+          expression: "endSlot * 41.2"
+    - name: startSlot
+      type: integer
+      min: 2
+      max: 4
+      unit: int
+      overrides:
+        - target: v0.frequency
+          expression: "startSlot * 82.41"
+        - target: v0.automation.frequency.set.value
+          expression: "startSlot * 82.41"
 nodes:
   v0:
     kind: oscillator
     params:
       type: sawtooth
-      frequency: 280
+      frequency: 293.66
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 280
+          value: 293.66
         - kind: exponentialRamp
           time: 0.35
-          value: 40
+          value: 41.2
   e0:
     kind: envelope
     params:
@@ -51,15 +59,15 @@ nodes:
     kind: oscillator
     params:
       type: sine
-      frequency: 80
+      frequency: 82.41
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 80
+          value: 82.41
         - kind: exponentialRamp
           time: 0.35
-          value: 25
+          value: 24.5
   e1:
     kind: envelope
     params:

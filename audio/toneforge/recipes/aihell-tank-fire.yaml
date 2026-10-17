@@ -1,4 +1,4 @@
-# AI Hell cue: aihell-tank-fire — Tank fire — heavy saw and sine cannon thump 90 to 28 Hz.
+# AI Hell cue: aihell-tank-fire — Tank fire — heavy saw (F2 to A0) and sine cannon thump (A1 to G0).
 version: "0.1"
 meta:
   name: aihell-tank-fire
@@ -13,15 +13,15 @@ nodes:
     kind: oscillator
     params:
       type: sawtooth
-      frequency: 90
+      frequency: 87.31
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 90
+          value: 87.31
         - kind: exponentialRamp
           time: 0.35
-          value: 28
+          value: 27.5
   e0:
     kind: envelope
     params:
@@ -45,7 +45,7 @@ nodes:
           value: 55
         - kind: exponentialRamp
           time: 0.35
-          value: 24
+          value: 24.5
   e1:
     kind: envelope
     params:

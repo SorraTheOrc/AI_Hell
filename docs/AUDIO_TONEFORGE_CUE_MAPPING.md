@@ -167,18 +167,41 @@ baked durations must preserve the existing 0.6 s lead:
 | `playPhaserAdvanceCue` | `PHASER_ADVANCE_CUE_DURATION` 0.6 s | `playPhaserFireSound` |
 | `playTankAdvanceCue` | `TANK_ADVANCE_CUE_DURATION` 0.6 s | `playTankFireSound` |
 
+### A-minor scale conformance (AC3 — AH-0MVCRR203005HKVZ)
+
+Every pitched oscillator automation point (static frequency, `set`/ramp start,
+ramp end, waypoints) in every **enemy** recipe snaps to the nearest **A natural
+minor** note (`A B C D E F G`, equal temperament, A4 = 440 Hz, within 10 cents).
+The multi-seed jitter ranges were converted to **scale-degree variants**: integer
+`startSlot`/`endSlot` parameters map each seed onto a distinct A-minor note pair
+via ToneForge's declarative override expressions (e.g. `startSlot * 220`),
+preserving per-kill variation without off-scale pitches. Filtered-noise-only
+cues (only `aihell-diver-dive-loop` / `playDiveSound` today) are unpitched and
+conformant by nature — the guard exempts them.
+
+The A natural minor note ladder used (equal temperament): A0 27.5, B0 30.87,
+C1 32.70, D1 36.71, E1 41.20, F1 43.65, G1 49.00, A2 110, B2 123.47, D3 146.83,
+E3 164.81, F3 174.61, G3 196, A3 220, B3 246.94, C4 261.63, D4 293.66, E4 329.63,
+F4 369.99, G4 392, A4 440, B4 493.88, C5 523.25, D5 587.33, E5 659.26, F5 698.46,
+G5 783.99, A5 880, B5 987.77, D6 1174.66, E6 1318.51. The balance guard
+(`scripts/audio-balance-guard.mjs`) asserts this invariant over every enemy cue
+as part of `npm run build-audio:verify` (AC5).
+
 ## New recipes to author (input to AH-0MUTYV8480019Z51)
 
 Seed block **32100–32199** is reserved for game-specific recipes to keep them
 clear of ToneForge's existing card/impact seeds. One-shots are rendered at a
 single seed; cues whose original character used per-invocation jitter
 (`EXPLOSION_PITCH_JITTER` ±15 %) are baked as a **3-variant seed range** so
-repeated kills still vary.
+repeated kills still vary. Under **A-minor scale conformance (AC3,
+AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
+**scale-degree variants**: each seed anchors on a distinct A-minor note pair
+(start + end), so per-kill variation is preserved without off-scale pitches.
 
 | Proposed slug | Source cue | Character to reproduce | Seed(s) |
 |---------------|------------|------------------------|---------|
 | `aihell-enemy-spawn` | `playSpawnSound` | Rising square blip 220→880 Hz, 0.18 s | 32101 |
-| `aihell-enemy-destruction` | `playDestructionSound` | Descending saw 440→60 Hz, 0.28 s | 32110–32112 |
+| `aihell-enemy-destruction` | `playDestructionSound` | Descending saw 440→60 Hz, 0.28 s — scale-degree variants: starts A3/A4/E5 → A1 (AC3) | 32113, 32128, 32144 |
 | `aihell-player-hull-breach` | `playPlayerDestructionSound` | Layered thump + body + HP noise tail (stack of three primitives) | 32120 |
 | `aihell-bullet-destruction` | `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s | 32130 |
 | `aihell-tank-advance` | `playTankAdvanceCue` | Saw 150→320 + square sub 75→160 Hz, 0.6 s | 32140 |
@@ -193,7 +216,7 @@ repeated kills still vary.
 | `aihell-diver-dive-start` | `playDiverDiveStartSound` | Rising saw 150→600 Hz + noise, ~0.25 s | 32190 |
 | `aihell-diver-dive-loop` | `playDiveSound` | Bandpass noise sweep 300→900 Hz, loopable ~2 s | 32191 |
 | `aihell-diver-fire` | `playDiverFireSound` | Saw 280→120 Hz, 0.08 s | 32192 |
-| `aihell-diver-destruction` | `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s | 32193–32195 |
+| `aihell-diver-destruction` | `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s — scale-degree variants: starts E3/B3/E4 → E2, undertone E2→G0 (AC3) | 32173, 32176, 32197 |
 | `aihell-boss-fire` | `playBossFireSound` | Saw 200→50 Hz + low sine undertone | 32200 |
 | `aihell-boss-hit` | `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s | 32208 |
 | `aihell-cannon-fire` | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s | 32210 |
@@ -248,7 +271,7 @@ avoid a partially migrated palette. Discovered during this audit.
 | `playBossSpawnSound` | Sine 80→220 Hz, 0.45 s | `aihell-boss-spawn` | 32201 |
 | `playBossPhaseTransitionSound` | Square 220→880 Hz, 0.35 s | `aihell-boss-phase-transition` | 32202 |
 | `playBossDestructionSound` | Saw 180→20 Hz, 0.6 s | `aihell-boss-destruction` | 32203 |
-| `playBossPhaseCue(phase)` | Per-phase square rise (4 variants) | `aihell-boss-phase-cue` | 32204–32207 |
+| `playBossPhaseCue(phase)` | Per-phase square rise — scale-degree variants: phases rise A3/A4/E5/A5 → A5 (AC3) | `aihell-boss-phase-cue` | 32242, 32227, 32207, 32204 |
 
 ## Retired cues
 
@@ -270,7 +293,7 @@ synthesis branch, shrinking the dead-code surface.
 | `setSfxMuted(on)` | Retained. Routes to the shared Phaser sound manager mute (parent AC5). |
 | `getAudioContext()` | Retained as the single shared-context accessor; must continue to resolve to exactly one `AudioContext` under Phaser (parent AC6). |
 | `blip(freqStart, freqEnd, duration, type, volume)` | Retired synthesis helper: replaced by recipe-backed WAV playback. Its remaining caller (`Boss.ts`) is migrated to dedicated Boss recipes (above). |
-| `explosionPitchFactor()` / `EXPLOSION_PITCH_JITTER` | Retired as a runtime function; the ±15 % pitch variation is approximated at build time by the 3-variant seed ranges for `aihell-enemy-destruction` and `aihell-diver-destruction`. |
+| `explosionPitchFactor()` / `EXPLOSION_PITCH_JITTER` | Retired as a runtime function; the ±15 % pitch variation is approximated at build time by the **3-variant scale-degree seed ranges** for `aihell-enemy-destruction` and `aihell-diver-destruction` (each seed anchors on a distinct A-minor note pair — AC3, AH-0MVCRR203005HKVZ). |
 | `_get*ForTests()` / `_reset*ForTests()` accessors | Retained and re-pointed at the new playback layer so the contract tests (parent child AH-0MUTYV8RJ009MWKJ) can still assert the single-context and no-op invariants. |
 | Exported `*_HZ` / `*_VOLUME` / `*_DURATION` constants | Retained as the reference character for recipe authoring and for the audible-character audition on AH-0MUTYV8480019Z51; they are no longer runtime synthesis parameters. |
 

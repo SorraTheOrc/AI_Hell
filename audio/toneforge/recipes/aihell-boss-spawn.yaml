@@ -1,4 +1,4 @@
-# AI Hell cue: aihell-boss-spawn — Boss spawn — rising sine 80 to 220 Hz, 0.45 s.
+# AI Hell cue: aihell-boss-spawn — Boss spawn — rising sine E2 to A3 (82.41 to 220 Hz), 0.45 s.
 version: "0.1"
 meta:
   name: aihell-boss-spawn
@@ -13,12 +13,12 @@ nodes:
     kind: oscillator
     params:
       type: sine
-      frequency: 80
+      frequency: 82.41
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 80
+          value: 82.41
         - kind: exponentialRamp
           time: 0.446
           value: 220

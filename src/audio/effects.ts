@@ -807,7 +807,8 @@ export function playBossDestructionSound(): void {
 
 /**
  * Per-phase Boss attack telegraph audio. Each of the four phases maps to its
- * own baked variant (seeds 32204–32207), so the tell is distinct per phase.
+ * own baked variant (seeds 32242/32227/32207/32204 — distinct A-minor square
+ * rises, AC3 AH-0MVCRR203005HKVZ), so the tell is distinct per phase.
  */
 export function playBossPhaseCue(phase: number): void {
   const seeds = cueSeeds('playBossPhaseCue');

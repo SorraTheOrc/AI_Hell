@@ -1,4 +1,4 @@
-# AI Hell cue: aihell-diver-dive-start — Diver dive-start — rising saw 150 to 600 Hz plus bandpass noise.
+# AI Hell cue: aihell-diver-dive-start — Diver dive-start — rising saw D3 to D5 (146.83 to 587.33 Hz) plus bandpass noise.
 version: "0.1"
 meta:
   name: aihell-diver-dive-start
@@ -13,15 +13,15 @@ nodes:
     kind: oscillator
     params:
       type: sawtooth
-      frequency: 150
+      frequency: 146.83
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 150
+          value: 146.83
         - kind: exponentialRamp
           time: 0.25
-          value: 600
+          value: 587.33
   e0:
     kind: envelope
     params:

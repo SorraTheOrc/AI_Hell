@@ -47,9 +47,9 @@
       "recipe": "aihell-enemy-destruction",
       "delivery": "baked",
       "seeds": [
-        32110,
-        32111,
-        32112
+        32113,
+        32128,
+        32144
       ]
     },
     {
@@ -169,9 +169,9 @@
       "recipe": "aihell-diver-destruction",
       "delivery": "baked",
       "seeds": [
-        32193,
-        32194,
-        32195
+        32173,
+        32176,
+        32197
       ]
     },
     {
@@ -525,10 +525,10 @@
       "recipe": "aihell-boss-phase-cue",
       "delivery": "baked",
       "seeds": [
-        32204,
-        32205,
-        32206,
-        32207
+        32242,
+        32227,
+        32207,
+        32204
       ]
     },
     {

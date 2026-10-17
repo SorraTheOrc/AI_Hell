@@ -1,4 +1,4 @@
-# AI Hell cue: aihell-boss-fire — Boss fire — saw 200 to 50 Hz with low sine undertone.
+# AI Hell cue: aihell-boss-fire — Boss fire — saw G3 to G1 (196 to 49 Hz) with low sine undertone (B1 to B0).
 version: "0.1"
 meta:
   name: aihell-boss-fire
@@ -13,15 +13,15 @@ nodes:
     kind: oscillator
     params:
       type: sawtooth
-      frequency: 200
+      frequency: 196
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 200
+          value: 196
         - kind: exponentialRamp
           time: 0.2
-          value: 50
+          value: 49
   e0:
     kind: envelope
     params:
@@ -37,15 +37,15 @@ nodes:
     kind: oscillator
     params:
       type: sine
-      frequency: 60
+      frequency: 61.74
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 60
+          value: 61.74
         - kind: exponentialRamp
           time: 0.2
-          value: 30
+          value: 30.87
   e1:
     kind: envelope
     params:

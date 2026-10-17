@@ -5,8 +5,9 @@ Deterministic pre-change amplitude/spectral baseline for the enemy cue set, prod
 **Analysis report: enemy cue tf analyze metrics (AC1) (AH-0MVCRR10A001OM2K)**.
 
 > This revision documents the **pre-change (as-committed) baseline** of the 27 enemy cue assets.
-> The post-change section (§4) is populated once the recipe rebalance (AC2), scale snapping
-> (AC3) and Scout-fire replacement (AC4) child items land and the enemy set is re-rendered.
+> The post-change revision (§4) records the state after the **AC3 scale snapping** child landed and the
+> enemy set was re-rendered; the amplitude-tier retune (AC2) and Scout-fire replacement (AC4) children
+> are tracked separately.
 
 ## 1. Method (deterministic)
 
@@ -104,16 +105,74 @@ Including the Scout fire outlier the full 27-asset spread is ≈ **16.6× peak**
 All peaks must be ≤ **0.50** (AC2), and the multi-seed variant ranges (`enemy-destruction`,
 `diver-destruction`) must stay within < 0.5 dB of each other.
 
-## 4. Post-change values (revision — pending AC2/AC3/AC4)
+## 4. Post-change values (AC3 scale-snap revision — committed 2026-10-17)
 
-- **Revision note:** this section is **pending**. It will be filled in, in the **same format as §2**
-  (per-asset table: cue / asset / seed / duration / peak / RMS / crest factor / spectral centroid)
-  with the revision marked, once the AC2 (amplitude tiers), AC3 (A-minor scale snapping) and
-  AC4 (Scout fire replacement) implementation children land and `npm run build-audio:render`
-  regenerates the enemy set. The pre-change spread figures in §2.1 and §2.2 are the comparison
-  baseline; the post-change revision must re-quote both so the delta is auditable.
+**Revision note:** this section records the enemy set **after the AC3 A-minor scale snapping** child
+(AH-0MVCRR203005HKVZ) landed: every pitched oscillator automation point (static / start / end)
+and every multi-seed range in every enemy recipe now sits on an **A natural minor** note
+(`A B C D E F G`, equal temperament, A4 = 440 Hz, ≤ 10 cents — the guard's tolerance).
+The set was re-rendered (`npm run build-audio:render`) and `checksums.json` regenerated.
 
-_No post-change values yet — the rebalance commits have not landed at the time of writing._
+- **Seed changes (scale-degree variants):** `aihell-enemy-destruction` 32110–32112 →
+  **32113 / 32128 / 32144** (starts A3/A4/E5, all descending to A1); `aihell-diver-destruction`
+  32193–32195 → **32173 / 32176 / 32197** (starts E3/B3/E4, all descending to E2);
+  `aihell-boss-phase-cue` 32204–32207 → **32242 / 32227 / 32207 / 32204** (phase rises A3/A4/E5/A5,
+  each to A5). Each seed anchors on a distinct A-minor note pair; per-kill variation is preserved.
+- **Amplitude state:** the AC2 amplitude-tier retune (AH-0MVCRR1K2002H4H1) was found **not to have
+  landed** (its completion commit referenced unrelated power-up work); per-cue RMS below therefore
+  still reflects the pre-change gains and the balance guard remains red on the AC2 assertions until
+  that work re-lands. Scout fire (AC4) is likewise still the un-replaced `weapon-laser-zap` outlier.
+
+Per-asset metrics for every committed enemy cue asset after the AC3 re-render (same analysis method
+and invocation as §1):
+
+| Cue (manifest entry) | Recipe / asset | Seed | Duration (s) | Peak | RMS | Crest factor | Spectral centroid (Hz) |
+|---|---|---|---|---|---|---|---|
+| playDiveSound | `aihell-diver-dive-loop.32191.wav` | 32191 | 2.000 | 0.0590 | 0.0137 | 4.312 | 4090.3 |
+| playSpawnSound | `aihell-enemy-spawn.32101.wav` | 32101 | 0.180 | 0.1200 | 0.0680 | 1.764 | 3943.0 |
+| playTankAdvanceCue | `aihell-tank-advance.32140.wav` | 32140 | 0.600 | 0.1790 | 0.0908 | 1.970 | 3317.7 |
+| playScoutAdvanceCue | `aihell-scout-advance.32180.wav` | 32180 | 0.600 | 0.0800 | 0.0564 | 1.417 | 1015.3 |
+| playPhaserAdvanceCue | `aihell-phaser-advance.32170.wav` | 32170 | 0.600 | 0.0800 | 0.0564 | 1.417 | 744.8 |
+| playPhaserFireSound | `aihell-phaser-fire.32171.wav` | 32171 | 0.100 | 0.1171 | 0.0358 | 3.272 | 1844.3 |
+| playDiverFireSound | `aihell-diver-fire.32192.wav` | 32192 | 0.100 | 0.1449 | 0.0443 | 3.270 | 3572.5 |
+| playSwarmBurstSound | `aihell-swarm-burst.32160.wav` | 32160 | 0.200 | 0.1541 | 0.0386 | 3.990 | 2789.3 |
+| playScoutFireSound | `weapon-laser-zap.1.wav` | 1 | 0.108 | 0.9774 | 0.2985 | 3.275 | 550.4 |
+| playDiverDiveStartSound | `aihell-diver-dive-start.32190.wav` | 32190 | 0.250 | 0.1415 | 0.0688 | 2.057 | 3593.8 |
+| playBulletDestructionSound | `aihell-bullet-destruction.32130.wav` | 32130 | 0.070 | 0.1200 | 0.0665 | 1.805 | 6460.0 |
+| playDestructionSound | `aihell-enemy-destruction.32113.wav` | 32113 | 0.280 | 0.2937 | 0.0986 | 2.978 | 3293.1 |
+| playDestructionSound | `aihell-enemy-destruction.32128.wav` | 32128 | 0.280 | 0.2868 | 0.0981 | 2.923 | 3767.9 |
+| playDestructionSound | `aihell-enemy-destruction.32144.wav` | 32144 | 0.280 | 0.2920 | 0.0984 | 2.967 | 3521.9 |
+| playDiverDestructionSound | `aihell-diver-destruction.32173.wav` | 32173 | 0.370 | 0.3121 | 0.0851 | 3.667 | 3361.6 |
+| playDiverDestructionSound | `aihell-diver-destruction.32176.wav` | 32176 | 0.370 | 0.3333 | 0.0847 | 3.933 | 3139.7 |
+| playDiverDestructionSound | `aihell-diver-destruction.32197.wav` | 32197 | 0.370 | 0.2988 | 0.0852 | 3.508 | 3420.7 |
+| playBossDestructionSound | `aihell-boss-destruction.32203.wav` | 32203 | 0.600 | 0.2197 | 0.1255 | 1.751 | 3033.6 |
+| playTankFireSound | `aihell-tank-fire.32141.wav` | 32141 | 0.370 | 0.4599 | 0.1205 | 3.817 | 2731.0 |
+| playBossFireSound | `aihell-boss-fire.32200.wav` | 32200 | 0.220 | 0.3922 | 0.1040 | 3.770 | 2862.2 |
+| playBossHitSound | `aihell-boss-hit.32208.wav` | 32208 | 0.160 | 0.4160 | 0.0953 | 4.366 | 4803.1 |
+| playBossPhaseCue | `aihell-boss-phase-cue.32242.wav` | 32242 | 0.300 | 0.1000 | 0.0985 | 1.015 | 3974.6 |
+| playBossPhaseCue | `aihell-boss-phase-cue.32227.wav` | 32227 | 0.300 | 0.1000 | 0.0982 | 1.018 | 5016.3 |
+| playBossPhaseCue | `aihell-boss-phase-cue.32207.wav` | 32207 | 0.300 | 0.1000 | 0.0979 | 1.021 | 6366.3 |
+| playBossPhaseCue | `aihell-boss-phase-cue.32204.wav` | 32204 | 0.300 | 0.1000 | 0.0977 | 1.024 | 4456.0 |
+| playBossSpawnSound | `aihell-boss-spawn.32201.wav` | 32201 | 0.450 | 0.1779 | 0.0732 | 2.431 | 142.4 |
+| playBossPhaseTransitionSound | `aihell-boss-phase-transition.32202.wav` | 32202 | 0.350 | 0.1200 | 0.0686 | 1.749 | 3962.4 |
+
+### 4.1 AC3 scale table (A natural minor)
+
+The A natural minor scale (equal temperament, A4 = 440 Hz) the enemy recipes now snap to:
+
+| Note | Frequency (Hz) | Note | Frequency (Hz) | Note | Frequency (Hz) | Note | Frequency (Hz) |
+|---|---|---|---|---|---|---|---|
+| A0 | 27.50 | A2 | 110.00 | A4 | 440.00 | A5 | 880.00 |
+| B0 | 30.87 | B2 | 123.47 | B4 | 493.88 | B5 | 987.77 |
+| C1 | 32.70 | C3 | 130.81 | C5 | 523.25 | D6 | 1174.66 |
+| D1 | 36.71 | D3 | 146.83 | D5 | 587.33 | E6 | 1318.51 |
+| E1 | 41.20 | E3 | 164.81 | E5 | 659.26 | — | — |
+| F1 | 43.65 | F3 | 174.61 | F5 | 698.46 | — | — |
+| G1 | 49.00 | G3 | 196.00 | G5 | 783.99 | — | — |
+
+Guard status: `node scripts/audio-balance-guard.mjs` now reports **zero scale-conformance errors**
+across all 20 enemy cues (the AC3 portion is green). Residual failures are the AC2 amplitude
+tiers (not yet landed) and the AC4 Scout-fire outlier — tracked in the items referenced above.
 
 ## 5. Reproducibility
 
