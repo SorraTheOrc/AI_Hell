@@ -614,6 +614,14 @@ transitions (still drifting, wrapping, rotating and shootable), as do minerals
 already on the field. Only the boss encounter removes carried-over asteroids,
 on entry (AH-0MUJM746P000QAEO).
 
+> **Wave-timeout carry-over is physically continuous**
+> (AH-0MUNS3ZQ1002DJ9S, AH-0MV9FUG4J008OHKA): when the wave timer expires,
+> surviving formation enemies are carried over into the next wave **in
+> place** — they keep drifting/marching exactly where they were, and the next
+> wave's fresh enemies join that continuing formation base rather than
+> resetting it. A wave that is wiped clean (no survivors) still starts its
+> fresh formation at the configured start positions.
+
 | Wave Type | Description | Levels |
 |-----------|-------------|--------|
 | **Line** | Enemies fly across in a horizontal or diagonal line | 1, 2 |

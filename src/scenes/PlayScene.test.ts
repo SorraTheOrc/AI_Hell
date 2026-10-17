@@ -4850,6 +4850,219 @@ describe('PlayScene — Space Invaders marching block (AH-0MV01EDZS0005R20)', ()
   });
 });
 
+// ── Carry-over position/motion across the next-wave spawn
+//    (AH-0MV9FUG4J008OHKA) ────────────────────────────────────────────
+
+describe('PlayScene — carried-over survivors keep formation position/motion across the next-wave spawn (AH-0MV9FUG4J008OHKA)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Suspends the player's auto-fire so carried-over survivors are not shot
+   * during the carry-over assertions (survivors are hittable in the
+   * transition pause, AH-0MUNS3ZQ1002DJ9S AC3).
+   */
+  function suspendAutoFire(scene: PlayScene): void {
+    (scene as unknown as { autoFireEnabled(): boolean }).autoFireEnabled =
+      () => false;
+  }
+
+  /**
+   * Two identical drift waves: wave 1 times out and its survivors carry
+   * over beside wave 2, which is configured identically so a clean start and
+   * a carry-over can be compared 1:1.
+   */
+  const DRIFT_LEVELS: LevelDefinition[] = [
+    {
+      level: 1,
+      name: 'Carry Drift',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 4,
+              spacingX: 28,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.35,
+              startY: GAME_HEIGHT * 0.3,
+            },
+          ],
+          shootEnabled: false,
+        },
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 4,
+              spacingX: 28,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.35,
+              startY: GAME_HEIGHT * 0.3,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    },
+  ];
+
+  async function bootCarryDrift(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(DRIFT_LEVELS, {
+      asteroidSpawner: false,
+    });
+    booted = game;
+    suspendAutoFire(scene);
+    return scene;
+  }
+
+  it('AC1/AC2 (drift) — carried-over survivors keep position and drift speed when the next wave spawns', async () => {
+    const scene = await bootCarryDrift();
+    finishSpawnSequence(scene);
+    const firstWaveX = scene.getEnemies()[0].x;
+
+    // Advance the drift so the carry-over has a non-zero shared base to
+    // preserve (28 px/s → ~28 px after one second).
+    scene.tick(1.0);
+    const survivor = scene.getEnemies()[0];
+    const xBefore = survivor.x;
+    expect(xBefore).toBeGreaterThan(firstWaveX + 20);
+
+    // Time out the wave → transition pause → next wave spawns with the
+    // surviving formation enemies carried over.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.05);
+    expect(scene.isTransitioning()).toBe(true);
+    const xMid = survivor.x;
+    finishTransition(scene);
+    expect(survivor.alive).toBe(true);
+
+    // No snap: the survivor kept drifting through the transition AND the
+    // wave-2 spawn. The ~1.5 s transition tick (drift keeps advancing in the
+    // pause, AH-0MUNS3ZQ1002DJ9S AC3) plus the 0.001 s spawn tick advance
+    // the drift by ~42 px; a spawn-time reset would snap it back below the
+    // pre-timeout position instead.
+    const xAfter = survivor.x;
+    expect(xAfter).toBeGreaterThan(xBefore);
+    expect(xAfter - xMid).toBeGreaterThan(30);
+    expect(xAfter - xMid).toBeLessThan(55);
+  });
+
+  it('AC3 — a clean wipe (no survivors) still starts the next wave at its configured positions', async () => {
+    const scene = await bootCarryDrift();
+    finishSpawnSequence(scene);
+    const firstWaveX = scene.getEnemies().filter((e) => e.alive).map((e) => e.x);
+
+    // Deliberately advance the drift so the clean wipe has a non-zero base
+    // to erase: a leaked carry-over base would show up as an offset here
+    // (28 px/s × 2 s ≈ 56 px of drift).
+    scene.tick(2.0);
+    const driftedX = scene.getEnemies().filter((e) => e.alive).map((e) => e.x);
+    for (let i = 0; i < firstWaveX.length; i += 1) {
+      expect(driftedX[i]).toBeGreaterThan(firstWaveX[i] + 45);
+    }
+
+    // Wipe wave 1 with no survivors → transition → wave 2.
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    finishTransition(scene);
+
+    const secondWaveX = scene.getEnemies().filter((e) => e.alive).map((e) => e.x);
+    expect(secondWaveX.length).toBe(firstWaveX.length);
+    // A clean start re-places the fresh wave at its configured startX — near
+    // where wave 1 began (bounded ±2 px wiggle each side, plus boot jitter),
+    // and nowhere near its drifted positions (a leaked carry-over base would
+    // keep the ~56+ px drift offset instead of erasing it).
+    for (let i = 0; i < firstWaveX.length; i += 1) {
+      expect(Math.abs(secondWaveX[i] - firstWaveX[i])).toBeLessThanOrEqual(12);
+      expect(secondWaveX[i]).toBeLessThan(driftedX[i] - 40);
+    }
+  });
+
+  /** Two identical march waves so a carried march survivor meets a fresh
+   * march block at the next-wave spawn. */
+  const MARCH_LEVELS: LevelDefinition[] = [
+    {
+      level: 1,
+      name: 'Carry March',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'march',
+              formation: 'march',
+              count: 11,
+              spacingX: 26,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.5,
+              startY: GAME_HEIGHT * 0.25,
+            },
+          ],
+          shootEnabled: false,
+        },
+        {
+          groups: [
+            {
+              enemyKey: 'march',
+              formation: 'march',
+              count: 11,
+              spacingX: 26,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.5,
+              startY: GAME_HEIGHT * 0.25,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    },
+  ];
+
+  async function bootCarryMarch(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(MARCH_LEVELS, {
+      asteroidSpawner: false,
+    });
+    booted = game;
+    suspendAutoFire(scene);
+    return scene;
+  }
+
+  it('AC1/AC2 (march) — a carried march survivor keeps its step cadence when a fresh march block spawns alongside it', async () => {
+    const scene = await bootCarryMarch();
+    finishSpawnSequence(scene);
+
+    // One full step at full strength (step 20 / reference drift 20 → 1 s
+    // cadence, AH-0MV01EDZS0005R20).
+    scene.tick(1.0);
+    const survivor = scene.getEnemies()[0];
+    const xAfterStep = survivor.x;
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.05);
+    expect(scene.isTransitioning()).toBe(true);
+    const xMid = survivor.x;
+
+    // Advance the transition; the marched block keeps stepping — the ~1.5 s
+    // transition tick accrues just over one full step (1 s cadence).
+    finishTransition(scene);
+    expect(survivor.alive).toBe(true);
+
+    const xAfter = survivor.x;
+    // The survivor continued marching forward (a full step through the
+    // transition + spawn) rather than snapping back onto the fresh origin
+    // (which would put it at/behind its pre-timeout position).
+    expect(xAfter).toBeGreaterThan(xAfterStep + 10);
+    expect(xAfter - xMid).toBeGreaterThan(10);
+  });
+});
+
 // ── Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q) ─────────
 
 describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)', () => {

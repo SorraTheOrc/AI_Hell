@@ -1216,6 +1216,19 @@ export class PlayScene extends CombatScene<
     // a non-blocking world hazard (the Asteroid accounting).
     this.planLaneTrafficSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
+    // Carry-over continuity (AH-0MV9FUG4J008OHKA): when the previous wave
+    // timed out, its surviving formation enemies persist in place — resetting
+    // the shared drift/march state below would re-anchor every survivor to its
+    // spawn origin (a visible snap). Capture the carried survivors **before**
+    // spawning the fresh wave so the just-spawned enemies are never mistaken
+    // for carried ones.
+    const carriedFormation = this.spawned.filter(
+      (s) =>
+        s.entity.alive &&
+        !isNonBlockingHazard(s.enemyKey) &&
+        s.enemyKey !== 'orbital-strike' &&
+        !s.entity.setSeekTargets,
+    );
     if (spawns.length > 0) {
       // Open the wave's wormhole at the first enemy's position. The shared
       // controller closes any still-open previous wormhole first, so a
@@ -1225,11 +1238,33 @@ export class PlayScene extends CombatScene<
       for (const spawn of spawns) this._spawnEnemy(spawn);
       playSpawnSound();
     }
-    this.driftX = 0;
-    this.driftDir = 1;
-    this.diverAnchorX = 0;
-    this.diverAnchorY = 0;
-    this._resetMarchFormation(spawns);
+
+    // Whenever a formation survivor carries over, keep the continuing base so
+    // survivors simply keep moving and the fresh wave's enemies join that base
+    // (gym parity with `GymFormationScene.respawnWithCarriedSurvivors`). With
+    // no carried formation survivors (a clean wipe), the base resets exactly
+    // as before.
+    if (carriedFormation.length === 0) {
+      this.driftX = 0;
+      this.driftDir = 1;
+      this.diverAnchorX = 0;
+      this.diverAnchorY = 0;
+      this._resetMarchFormation(spawns);
+    } else {
+      // Keep the continuous drift, its direction and the Diver anchor exactly
+      // where they were — the fresh wave's enemies join the continuing base
+      // (gym parity).
+      const carriedMarch = carriedFormation.some((s) => s.march);
+      if (!carriedMarch) {
+        // No march block is being carried: a fresh march block (if this wave
+        // has one) still starts at its configured origin, exactly as on a
+        // clean start.
+        this._resetMarchFormation(spawns);
+      }
+      // When march survivors are carried, the continuing march state is kept
+      // in full: fresh march spawns join the single rigid block (mirroring
+      // the gym's carry-over respawn).
+    }
     this._startWaveTimer();
     this.runTelemetry.waveStart(
       this.waveManager.level,

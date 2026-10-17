@@ -851,6 +851,16 @@ life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
   complete. A full wipe with no survivors falls back to a clean-slate
   `respawnFormation`/base reset. The timeout pauses while a countdown is
   active and restarts on every respawn.
+- **The game keeps survivors physically continuous (AH-0MV9FUG4J008OHKA).**
+  In `PlayScene`, `spawnWave()` was resetting the shared formation state on
+  every wave boundary, so carried-over survivors snapped back to their spawn
+  origins the moment the next wave spawned. It now preserves the continuing
+  base whenever a formation survivor carries over: the drift position,
+  direction and Diver anchors stay put, and a carried march block keeps its
+  march state (fresh march spawns join the continuing block as one rigid
+  body, mirroring `respawnWithCarriedSurvivors`). The fresh wave's enemies
+  join the continuing base. A clean start with no survivors resets exactly
+  as before.
 - **UI.** A depleting top-of-screen bar mirrors `PlayScene._drawWaveTimer()`
   and shares its geometry constants and drawing code.
 - **Parity guard.** `CombatScene.equivalence.test.ts` asserts the shared
