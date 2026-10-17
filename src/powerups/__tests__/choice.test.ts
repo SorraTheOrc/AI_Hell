@@ -415,10 +415,10 @@ describe('power-up choice strategy', () => {
     }
 
     it('AC4 — the bonus weight is a single named constant', () => {
-      expect(OWNED_UPGRADE_BONUS_WEIGHT).toBe(1.1);
+      expect(OWNED_UPGRADE_BONUS_WEIGHT).toBe(1.25);
     });
 
-    it('AC1 — owned level-up candidates weigh 1.1×, base-pool candidates 1.0×', () => {
+    it('AC1 — owned level-up candidates weigh 1.25×, base-pool candidates 1.0×', () => {
       expect(
         choiceCandidateWeight({
           id: 'spread',
@@ -426,7 +426,7 @@ describe('power-up choice strategy', () => {
           kind: 'weapon-level',
           level: 3,
         }),
-      ).toBe(1.1);
+      ).toBe(1.25);
       expect(
         choiceCandidateWeight({
           id: 'shield',
@@ -434,7 +434,7 @@ describe('power-up choice strategy', () => {
           kind: 'power-up-level',
           level: 2,
         }),
-      ).toBe(1.1);
+      ).toBe(1.25);
       // Unowned base-pool entries retain 1.0×.
       expect(
         choiceCandidateWeight({ id: 'spread', name: 'Spread Shot', kind: 'weapon' }),
@@ -453,7 +453,7 @@ describe('power-up choice strategy', () => {
     const weightingStrategy = createRandomChoiceStrategy(weightingPool);
 
     it('AC1 — a weighted draw favours the owned upgrade where a uniform draw would not', () => {
-      // Total weight 2.1; r = 0.48 → threshold 1.008, which crosses the
+      // Total weight 2.25; r = 0.48 → threshold 1.08, which crosses the
       // unowned 1.0 weight and lands on the owned level-up. A uniform draw
       // (total 2.0) at the same r has threshold 0.96 and would pick `dual`.
       const owned = weightingStrategy.choose(1, () => 0.48, weightingContext);
@@ -466,7 +466,7 @@ describe('power-up choice strategy', () => {
       expect(unowned[0].id).toBe('dual');
     });
 
-    it('AC5(b) — 10,000 weighted draws match the 1.1× distribution (±3%)', () => {
+    it('AC5(b) — 10,000 weighted draws match the 1.25× distribution (±3%)', () => {
       const rng = mulberry32(42);
       let owned = 0;
       let unowned = 0;
@@ -475,7 +475,7 @@ describe('power-up choice strategy', () => {
         if (options[0].kind === 'weapon-level') owned++;
         else unowned++;
       }
-      // Owned upgrade appears 1.1× as often as the single unowned entry.
+      // Owned upgrade appears 1.25× as often as the single unowned entry.
       const observedRatio = owned / unowned;
       expect(Math.abs(observedRatio / OWNED_UPGRADE_BONUS_WEIGHT - 1)).toBeLessThan(
         0.03,

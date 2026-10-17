@@ -1,7 +1,8 @@
 /**
- * Docs guard for hold-full choice weighting (AH-0MUY47W62005FF74 AC4/AC6).
+ * Docs guard for hold-full choice weighting (AH-0MUY47W62005FF74 AC4/AC6,
+ * AH-0MVCFB00Y004AQ2Z).
  *
- * The 1.1× owned-upgrade bias and its named constant
+ * The 1.25× owned-upgrade bias and its named constant
  * (`OWNED_UPGRADE_BONUS_WEIGHT`, `src/powerups/choice.ts`) must be recorded in
  * the player-facing references — GDD §4.5 and the README — so the tuning
  * intent cannot silently drift from the code. Like the sibling
@@ -23,17 +24,17 @@ describe('hold-full choice weighting is documented (AH-0MUY47W62005FF74)', () =>
   const readme = fs.readFileSync(README_PATH, 'utf8');
 
   it('the weighting constant is named and exported from the strategy module', () => {
-    expect(OWNED_UPGRADE_BONUS_WEIGHT).toBe(1.1);
+    expect(OWNED_UPGRADE_BONUS_WEIGHT).toBe(1.25);
     expect(readme).toContain('OWNED_UPGRADE_BONUS_WEIGHT');
   });
 
   it('the GDD §4.5 records the owned-upgrade weighting', () => {
-    expect(gdd).toMatch(/OWNED_UPGRADE_BONUS_WEIGHT|1\.1×/);
-    expect(gdd).toMatch(/10% more likely|10% more often/i);
+    expect(gdd).toMatch(/OWNED_UPGRADE_BONUS_WEIGHT|1\.25×/);
+    expect(gdd).toMatch(/25% more likely|25% more often/i);
   });
 
-  it('the README records the 1.1× owned-upgrade weight', () => {
-    expect(readme).toMatch(/1\.1×/);
-    expect(readme).toMatch(/10% more often|10% more likely/i);
+  it('the README records the 1.25× owned-upgrade weight', () => {
+    expect(readme).toMatch(/1\.25×/);
+    expect(readme).toMatch(/25% more often|25% more likely/i);
   });
 });
