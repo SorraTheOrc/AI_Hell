@@ -912,6 +912,12 @@ describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'teleport',
       'smart_bomb',
       'force_field',
+      // Net-new combat power-ups (AH-0MVCRC1Q0007JAV1): Frenzy, Chrono Field,
+      // Thorn Field and Orbital Strike join the combat gym drop pool.
+      'frenzy',
+      'chrono',
+      'thorns',
+      'strike',
     ]);
   });
 

@@ -43,6 +43,26 @@
  *   power-up so later pickups pay more. It has no timed window and stores no
  *   consumable state; deliberately rare (weight 3, rarer than the standard 4).
  *
+ * The five net-new power-ups (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC1Q0007JAV1)
+ * extend the catalogue beyond the original 11:
+ *
+ * - **Frenzy** — timed damage amplification: every player bullet deals its
+ *   level-resolved **bonus hits** to the first enemy it damages (base 1 extra
+ *   hit → cap 3), so multi-hit enemies such as the Harvester (5 HP) fall
+ *   faster while 1-HP regulars still die in one shot.
+ * - **Chrono Field** — timed enemy-bullet slowdown: while active, enemy bullets
+ *   advance at a fraction of their normal speed (the level-resolved slowness
+ *   removes up to 75 % of the bullet speed), buying the player time to thread
+ *   dense patterns.
+ * - **Thorn Field** — timed ram counter: while active, ramming an enemy
+ *   destroys it **without costing the player a hit** for a level-resolved
+ *   number of rams.
+ * - **Salvage** — timed mineral bounty: destroyed enemies drop the
+ *   level-resolved bonus minerals at their death site.
+ * - **Orbital Strike** — a periodic auto-targeting bolt (field pickup = one
+ *   immediate strike, hold-full = repeating on a level-resolved interval) that
+ *   damages the nearest live enemy.
+ *
  * Weapon types (P1/P2) remain in `src/utils/weapons.ts`.
  */
 
@@ -59,7 +79,12 @@ export type PowerUpId =
   | 'mineral_scoop'
   | 'smart_bomb'
   | 'force_field'
-  | 'mystery_ufo';
+  | 'mystery_ufo'
+  | 'frenzy'
+  | 'chrono'
+  | 'thorns'
+  | 'salvage'
+  | 'strike';
 
 /**
  * A weapon power-up ID that the game can spawn as a field drop
@@ -194,10 +219,63 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // Instant, non-timed: no duration and no stored state; the reward is
     // granted on collection and the level advances (AH-0MV1BIXFO006Z1I7).
   },
+  frenzy: {
+    id: 'frenzy',
+    name: 'Frenzy',
+    description:
+      'Hits twice as hard for a while: every bullet applies bonus damage hits, so multi-HP enemies fall faster.',
+    duration: 8,
+  },
+  chrono: {
+    id: 'chrono',
+    name: 'Chrono Field',
+    description:
+      'Slows enemy bullets to a crawl while it lasts — more time to thread the gaps.',
+    duration: 5,
+  },
+  thorns: {
+    id: 'thorns',
+    name: 'Thorn Field',
+    description:
+      'Ramming an enemy destroys it without costing a life, for a limited number of rams.',
+    duration: 8,
+  },
+  salvage: {
+    id: 'salvage',
+    name: 'Salvage',
+    description:
+      'Destroyed enemies drop extra minerals at the wreck — a short mining frenzy.',
+    duration: 10,
+  },
+  strike: {
+    id: 'strike',
+    name: 'Orbital Strike',
+    description:
+      'A lightning bolt strikes the nearest enemy. A pickup fires one; the permanent reward strikes on a level-resolved interval.',
+    // Timed window for the field pickup is procedural (see strikeInterval);
+    // the catalogue base duration mirrors the guardrail (30 s).
+    duration: 30,
+  },
 };
 
-/** Power-up IDs cycled by the combat gym round-robin spawner. */
-export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = ['shield', 'bomb', 'phase_shift', 'teleport', 'smart_bomb', 'force_field'] as const;
+/**
+ * Power-up IDs cycled by the combat gym round-robin spawner. The five
+ * net-new combat-coupled power-ups (epic AH-0MVCRC1Q0007JAV1) are appended so
+ * the gym exercises each: Frenzy (damage amp), Chrono Field (bullet slow),
+ * Thorn Field (ram counter) and Orbital Strike (auto-targeting bolt).
+ */
+export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = [
+  'shield',
+  'bomb',
+  'phase_shift',
+  'teleport',
+  'smart_bomb',
+  'force_field',
+  'frenzy',
+  'chrono',
+  'thorns',
+  'strike',
+] as const;
 
 /**
  * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full

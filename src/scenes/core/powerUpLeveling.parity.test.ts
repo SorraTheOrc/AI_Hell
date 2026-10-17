@@ -87,6 +87,14 @@ const OBSERVABLE: Record<PowerUpId, (registry: EffectsRegistry) => number> = {
   smart_bomb: (r) => r.smartBombInterval(),
   force_field: (r) => r.forceFieldRemaining(),
   mystery_ufo: (r) => r.mysteryUfoMinerals(),
+  // Net-new combat power-ups (AH-0MVCRC1Q0007JAV1): each observable is the
+  // shared effect-path accessor the game and gyms both consume, so parity
+  // holds for the new catalogue additions too.
+  frenzy: (r) => r.frenzyBonusHits(),
+  chrono: (r) => r.enemyBulletTimeScale(),
+  thorns: (r) => r.thornsRemaining(),
+  salvage: (r) => r.salvageBonusMinerals(),
+  strike: (r) => r.strikeDamage(),
 };
 
 /**

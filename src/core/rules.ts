@@ -166,6 +166,14 @@ export const DEFAULT_SMART_BOMB_WEIGHT = 2;
  */
 export const DEFAULT_MYSTERY_UFO_WEIGHT = 3;
 
+/**
+ * Default relative weight for the Orbital Strike (AH-0MVCRC1Q0007JAV1). The
+ * rare exception among the five net-new combat power-ups: its permanent bolt
+ * is strong offence, so it drops at `2` (same as the Smart Bomb). The others
+ * (Frenzy, Chrono Field, Thorn Field, Salvage) stay standard-rarity (4).
+ */
+export const DEFAULT_ORBITAL_STRIKE_WEIGHT = 2;
+
 /** Default relative weight for weapon drops (spread, dual, rapid, reset). */
 export const DEFAULT_WEAPON_WEIGHT = 2;
 
@@ -182,6 +190,11 @@ export const POWER_UP_WEIGHT_IDS: readonly PowerUpId[] = [
   'smart_bomb',
   'force_field',
   'mystery_ufo',
+  'frenzy',
+  'chrono',
+  'thorns',
+  'salvage',
+  'strike',
 ];
 
 /**
@@ -270,6 +283,10 @@ export function defaultPowerUpWeights(): PowerUpWeights {
       weights[id] = DEFAULT_SMART_BOMB_WEIGHT;
     } else if (id === 'mystery_ufo') {
       weights[id] = DEFAULT_MYSTERY_UFO_WEIGHT;
+    } else if (id === 'strike') {
+      // Orbital Strike is the rare exception: its permanent bolt is strong
+      // offence, so it drops as rarely as the Smart Bomb (2).
+      weights[id] = DEFAULT_ORBITAL_STRIKE_WEIGHT;
     } else {
       weights[id] = DEFAULT_STANDARD_POWER_UP_WEIGHT;
     }

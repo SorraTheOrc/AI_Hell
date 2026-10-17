@@ -82,6 +82,14 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     // value it modestly above the neutral default (AH-0MV1BIXFO006Z1I7).
     { id: 'mystery_ufo', value: 1.2 },
     { id: 'teleport', value: 0.9 },
+    // Net-new combat power-ups (AH-0MVCRC1Q0007JAV1). The timed amplifiers
+    // are worth collecting so the bot routes for them; the Orbital Strike's
+    // auto-targeting bolt is strong offence, so it ranks alongside the bomb.
+    { id: 'frenzy', value: 1.2 },
+    { id: 'chrono', value: 1 },
+    { id: 'thorns', value: 1.1 },
+    { id: 'salvage', value: 0.8 },
+    { id: 'strike', value: 1.15 },
     // Weapon drops (P1/P2) are all similarly useful; `reset` merely removes a
     // weapon, so it is the least desirable.
     { id: 'spread', value: 1 },

@@ -388,6 +388,29 @@ export class EffectsRegistry {
    */
   private _mysteryBonus: { minerals: number; score: number } | null = null;
 
+  // ── Thorn Field ram budget (AH-0MVCRC1Q0007JAV1) ──────────────────
+  /**
+   * Rams still absorbed by the active Thorn Field (resolved from the level
+   * store on every collection: base 2, cap 6). Run-scoped: reset() and window
+   * expiry clear it; zero means the field no longer counters rams.
+   */
+  private _thornsRemaining = 0;
+
+  // ── Orbital Strike bolt state (AH-0MVCRC1Q0007JAV1) ───────────────
+  /**
+   * True when a hold-full Strike granted a permanent bolt for the run: it
+   * never expires and strikes every {@link strikeInterval} seconds. Cleared
+   * only by `reset()`.
+   */
+  private _strikePermanent = false;
+  /** Seconds until the next permanent strike (unused when not permanent). */
+  private _strikePulseTimer = 0;
+  /**
+   * One-shot strike request queued by a field pickup: the next
+   * {@link updateStrike} fires exactly once and clears it.
+   */
+  private _strikePulsePending = false;
+
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
   private _store: PowerUpLevelStore;
@@ -559,6 +582,58 @@ export class EffectsRegistry {
         // total) via consumeMysteryBonus().
         this._queueMysteryBonus(stats);
         break;
+      case 'frenzy':
+        // frenzy: a timed damage amplifier. No registry-local consumable
+        // state — the shared bullet/AOE damage seams read the level-resolved
+        // bonus while the window is active (AH-0MVCRC1Q0007JAV1).
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.frenzyDuration ?? 8,
+          permanent,
+        );
+        break;
+      case 'chrono':
+        // chrono: a timed enemy-bullet slowdown. The shared enemy-bullet
+        // advance scales dt while the window is active (AH-0MVCRC1Q0007JAV1).
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.chronoDuration ?? 5,
+          permanent,
+        );
+        break;
+      case 'thorns':
+        // thorns: a timed ram counter. Refresh (never add) the absorb budget
+        // to the newly resolved count — a level-up mid-field strengthens it.
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.thornsDuration ?? 8,
+          permanent,
+        );
+        this._thornsRemaining = Math.max(0, Math.round(stats.thornsAbsorbs ?? 2));
+        break;
+      case 'salvage':
+        // salvage: a timed mineral bounty. The shared kill-drop seam adds the
+        // level-resolved bonus minerals while the window is active.
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.salvageDuration ?? 10,
+          permanent,
+        );
+        break;
+      case 'strike':
+        // strike: a field pickup queues one immediate bolt; the hold-full
+        // reward makes it permanent and pulses on the resolved interval
+        // (mirrors the Bomb/Smart Bomb; AH-0MVCRC1Q0007JAV1).
+        this._strikePulsePending = true;
+        if (permanent) {
+          this._strikePermanent = true;
+          this._strikePulseTimer = this.strikeInterval();
+        }
+        break;
       default:
         // Phase Shift phase, Teleport teleport, Extra Life life: no registry-local timed state —
         // the level store owns charges/stacks/lives.
@@ -691,6 +766,10 @@ export class EffectsRegistry {
     // window was temporary or permanent (AH-0MV1BIX1W006XF95).
     if (id === 'force_field') {
       this._forceFieldRemaining = 0;
+    }
+    // The Thorn Field's ram budget ends with its window (AH-0MVCRC1Q0007JAV1).
+    if (id === 'thorns') {
+      this._thornsRemaining = 0;
     }
   }
 
@@ -974,6 +1053,134 @@ export class EffectsRegistry {
     }
     return false;
   }
+
+  // ── Frenzy damage amplifier (AH-0MVCRC1Q0007JAV1) ────────────────────
+
+  /**
+   * Bonus damage hits each player bullet currently applies, or 0 while the
+   * Frenzy window is inactive. The shared bullet/AOE damage seams read this
+   * so the game and every gym amplify identically.
+   */
+  frenzyBonusHits(): number {
+    if (!this._timed.has('frenzy')) return 0;
+    return Math.max(0, Math.floor(this._levelStore.stats('frenzy').frenzyBonusHits ?? 1));
+  }
+
+  // ── Chrono Field enemy-bullet slowdown (AH-0MVCRC1Q0007JAV1) ────────
+
+  /**
+   * Current enemy-bullet speed scale (1 = normal, <1 while the Chrono Field
+   * window is active). The shared enemy-bullet advance multiplies dt by this
+   * so the game and every gym slow bullets identically.
+   */
+  enemyBulletTimeScale(): number {
+    if (!this._timed.has('chrono')) return 1;
+    const slow = this._levelStore.stats('chrono').chronoSlowFactor ?? 0.5;
+    return Math.max(0, Math.min(1, 1 - slow));
+  }
+
+  // ── Thorn Field ram counter (AH-0MVCRC1Q0007JAV1) ──────────────────
+
+  /**
+   * Rams the active Thorn Field can still absorb (0 when inactive or
+   * exhausted). Surfaced for the HUD and consumed by the shared collision
+   * ram branch.
+   */
+  thornsRemaining(): number {
+    return this._thornsRemaining;
+  }
+
+  /**
+   * Whether the ramp counter can absorb another ram right now (window active
+   * and budget remaining).
+   */
+  hasThornsRam(): boolean {
+    return this._timed.has('thorns') && this._thornsRemaining > 0;
+  }
+
+  /**
+   * Consumes one ram absorb from the active Thorn Field. Returns true when
+   * a ram was absorbed (the player does not take the hit) and decrements the
+   * budget; false when there is no active field or its budget is spent. Once
+   * false, rams cost the player a hit normally again.
+   */
+  tryConsumeThornsRam(): boolean {
+    if (!this._timed.has('thorns')) return false;
+    if (this._thornsRemaining <= 0) return false;
+    this._thornsRemaining -= 1;
+    return true;
+  }
+
+  // ── Salvage mineral bounty (AH-0MVCRC1Q0007JAV1) ────────────────────
+
+  /**
+   * Bonus minerals each destroyed enemy currently drops, or 0 while the
+   * Salvage window is inactive. The shared kill-drop sears adds this at the
+   * wreck so the game and every gym pay out identically.
+   */
+  salvageBonusMinerals(): number {
+    if (!this._timed.has('salvage')) return 0;
+    return Math.max(0, Math.round(this._levelStore.stats('salvage').salvageMinerals ?? 1));
+  }
+
+  // ── Orbital Strike auto-targeting bolt (AH-0MVCRC1Q0007JAV1) ────────
+
+  /** Whether a permanent (hold-full) Orbital Strike is active for the run. */
+  isStrikePermanent(): boolean {
+    return this._strikePermanent;
+  }
+
+  /**
+   * The resolved strike interval in seconds: `max(10, 30 − 2×level)` (30 s on
+   * the first grant, 10 s at and beyond level 10). Mirrors the Smart Bomb
+   * descending interval schedule.
+   */
+  strikeInterval(): number {
+    const interval = this._levelStore.stats('strike').strikeInterval;
+    return interval !== undefined && Number.isFinite(interval) && interval > 0
+      ? interval
+      : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * The level-resolved damage the Orbital Strike bolt deals (whole hits,
+   * minimum 1). The shared strike seam resolves this at the nearest enemy.
+   */
+  strikeDamage(): number {
+    return Math.max(1, Math.floor(this._levelStore.stats('strike').strikeDamage ?? 1));
+  }
+
+  /**
+   * Advances the Orbital Strike bolt state by `dt` and reports whether a
+   * bolt is due this frame.
+   *
+   * - A field-pickup request fires exactly once and is then gone.
+   * - A permanent strike fires immediately on grant and then once per
+   *   {@link strikeInterval} seconds for the rest of the run.
+   *
+   * The registry owns the decision; the shared combat core selects the
+   * nearest enemy and resolves the damage (AH-0MVCRC1Q0007JAV1).
+   *
+   * @param dt - Frame delta in seconds.
+   * @returns True when a bolt should strike this frame.
+   */
+  updateStrike(dt: number): boolean {
+    if (this._strikePulsePending) {
+      this._strikePulsePending = false;
+      if (this._strikePermanent) {
+        this._strikePulseTimer = this.strikeInterval();
+      }
+      return true;
+    }
+    if (!this._strikePermanent) return false;
+    this._strikePulseTimer -= dt;
+    if (this._strikePulseTimer <= 0) {
+      this._strikePulseTimer = this.strikeInterval();
+      return true;
+    }
+    return false;
+  }
+
 
   /**
    * Activates Phase Shift (upgrade-level duration for Teleport arrivals) —
@@ -1300,7 +1507,9 @@ export class EffectsRegistry {
           ? this._shieldRemaining
           : effect.id === 'force_field'
             ? this._forceFieldRemaining
-            : undefined;
+            : effect.id === 'thorns'
+              ? this._thornsRemaining
+              : undefined;
       // A permanent base with no active temporary window shows its full
       // duration (it never counts down); an active temporary window shows
       // the window remaining (AC1/AC2).
@@ -1356,6 +1565,15 @@ export class EffectsRegistry {
         permanent: true,
       });
     }
+    // A permanent Orbital Strike renders one run-scoped row; a field pickup
+    // (one immediate bolt) leaves no row (AH-0MVCRC1Q0007JAV1).
+    if (this._strikePermanent) {
+      result.push({
+        id: 'strike' as PowerUpId,
+        type: 'strike',
+        permanent: true,
+      });
+    }
     const teleportStacks = this._levelStore.teleportStacks();
     if (teleportStacks > 0) {
       result.push({
@@ -1408,6 +1626,10 @@ export class EffectsRegistry {
     this._smartBombPulsePending = false;
     this._forceFieldRemaining = 0;
     this._mysteryBonus = null;
+    this._thornsRemaining = 0;
+    this._strikePermanent = false;
+    this._strikePulseTimer = 0;
+    this._strikePulsePending = false;
     this._levelStore.reset();
   }
 }
