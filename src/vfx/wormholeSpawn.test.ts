@@ -16,6 +16,7 @@ import {
   TOTAL_SPAWN_PROTECTION_WINDOW,
   WORMHOLE_CLOSE_DURATION,
   WORMHOLE_OPEN_DURATION,
+  WormholeController,
   getSpawnState,
   isEnemySpawning,
   spawnWormholeClose,
@@ -107,6 +108,82 @@ describe('wormholeSpawn — wormhole open/close VFX', () => {
       TOTAL_SPAWN_PROTECTION_WINDOW,
       5,
     );
+  });
+});
+
+describe('wormholeSpawn — WormholeController single-live lifecycle (AH-0MV9KHLV8006GMX6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([WormholeVfxStubScene]);
+    return booted.scene;
+  }
+
+  it('open() opens a single live wormhole and registers it for teardown', async () => {
+    const scene = await boot();
+    const controller = new WormholeController(scene);
+    const registry: Phaser.GameObjects.Container[] = [];
+
+    const handle = controller.open(100, 120, registry);
+
+    expect(controller.isOpen).toBe(true);
+    expect(handle.container.x).toBe(100);
+    expect(handle.container.y).toBe(120);
+    expect(registry).toContain(handle.container);
+    expect(scene.children.list).toContain(handle.container);
+  });
+
+  it('open() first closes any still-open wormhole — at most one live', async () => {
+    const scene = await boot();
+    const controller = new WormholeController(scene);
+    const registry: Phaser.GameObjects.Container[] = [];
+    const previous = controller.open(10, 10, registry);
+    expect(controller.isOpen).toBe(true);
+
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const next = controller.open(20, 20, registry);
+
+    // A close tween is scheduled for the previous wormhole before the new one
+    // opens — no path may overwrite a live wormhole.
+    const close = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets === previous.container && c.alpha === 0);
+    expect(close).toBeDefined();
+    (close!.onComplete as () => void)();
+
+    // Previous destroyed and unregistered; only the new wormhole is live.
+    expect(registry).toEqual([next.container]);
+    expect(controller.isOpen).toBe(true);
+    expect(previous.isComplete()).toBe(true);
+  });
+
+  it('close() is idempotent and clears the live slot', async () => {
+    const scene = await boot();
+    const controller = new WormholeController(scene);
+    const registry: Phaser.GameObjects.Container[] = [];
+    expect(controller.isOpen).toBe(false);
+
+    controller.close(registry); // no-op when nothing is live
+    const handle = controller.open(10, 10, registry);
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    controller.close(registry);
+    expect(controller.isOpen).toBe(false);
+    controller.close(registry); // idempotent
+
+    const close = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets === handle.container && c.alpha === 0);
+    expect(close).toBeDefined();
+    (close!.onComplete as () => void)();
+    expect(registry).toHaveLength(0);
+    expect(handle.isComplete()).toBe(true);
   });
 });
 

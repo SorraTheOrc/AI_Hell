@@ -2064,4 +2064,30 @@ describe('GymFodderEnemies — wormhole spawn animation parity (AH-0MURBER4L0082
     expect(victim.alive).toBe(true);
     expect(scene.aliveCount).toBe(before);
   });
+
+  it('a wipe→respawn while the wormhole is live re-opens one for the fresh formation (AH-0MV9KHLV8006GMX6)', async () => {
+    const scene = await bootGym();
+    // The initial formation enters through a live wormhole.
+    expect(scene.isWormholeOpen()).toBe(true);
+
+    // Wipe the formation mid-spawn (still growing) — the wipe→respawn
+    // countdown begins on the next tick.
+    for (const e of scene.formationEntities) e.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    // Fast-forward past the 3 s countdown: the respawned formation must enter
+    // through a fresh wormhole (single-live controller re-opens it) with
+    // every entity growing from 1 px — parity with PlayScene.spawnWave().
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.isWormholeOpen()).toBe(true);
+    for (const entity of scene.formationEntities) {
+      const e = entity as unknown as { scaleX: number; isSpawning: boolean };
+      expect(e.isSpawning).toBe(true);
+      expect(e.scaleX).toBeCloseTo(0.01, 5);
+    }
+  });
 });

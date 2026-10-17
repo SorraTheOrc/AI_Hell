@@ -4119,6 +4119,71 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
     ).toBe(true);
     expect(scene.getEnemyBullets()).toHaveLength(0);
   });
+
+  it('AC3 — spawnWave() while a wormhole is still live closes the previous one first (AH-0MV9KHLV8006GMX6)', async () => {
+    const scene = await bootPlay();
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+    expect(registry).toHaveLength(1);
+    const previous = registry[0];
+
+    // A second wave spawn while the first wormhole is mid-spawn: the pre-fix
+    // code overwrote the live handle without closing it, stranding the
+    // previous wormhole on screen. The shared controller must schedule its
+    // close tween before the new wormhole opens.
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    scene.spawnWave();
+    const close = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets === previous && c.alpha === 0 && c.scale === 0);
+    expect(
+      close,
+      'spawnWave must schedule a close tween for the previous wormhole',
+    ).toBeDefined();
+    (close!.onComplete as () => void)();
+
+    // The previous wormhole is destroyed and removed from the effects
+    // registry; only the fresh wave's wormhole remains live.
+    expect(scene.children.list).not.toContain(previous);
+    expect(registry).toHaveLength(1);
+    expect(registry[0]).not.toBe(previous);
+  });
+
+  it('AC4 — a mid-spawn wave timeout closes the wormhole and the next wave opens only one (AH-0MV9KHLV8006GMX6)', async () => {
+    const scene = await bootPlay();
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+    expect(registry).toHaveLength(1);
+    const previous = registry[0];
+
+    // Timeout while the fresh wave is still growing: survivors are carried
+    // and a wave transition begins. The transition's update path skips
+    // `_updateSpawnAnimations`, so pre-fix the wormhole was never closed
+    // here and survived (still open) into the next wave.
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+
+    // The transition start must close the still-open wormhole.
+    const close = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets === previous && c.alpha === 0 && c.scale === 0);
+    expect(
+      close,
+      'starting a transition must close a still-open wormhole',
+    ).toBeDefined();
+    (close!.onComplete as () => void)();
+
+    // Complete the transition: the next spawnWave() opens exactly one
+    // wormhole — never two live at once.
+    scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
+    expect(scene.children.list).not.toContain(previous);
+    expect(registry).toHaveLength(1);
+    expect(registry[0]).not.toBe(previous);
+  });
 });
 
 describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () => {

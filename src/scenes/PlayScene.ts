@@ -82,12 +82,10 @@ import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
 import { Mineral } from '../entities/Mineral';
 import {
-  spawnWormholeOpen,
-  spawnWormholeClose,
+  WormholeController,
   startSpawnAnimation,
   updateSpawnAnimation,
   type SpawnAnimatable,
-  type WormholeHandle,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
 import { getExplosionVfxCounts } from '../vfx/explosionParticles';
@@ -558,8 +556,13 @@ export class PlayScene extends CombatScene<
   private victoryEffects: Phaser.GameObjects.GameObject[] = [];
 
   // ── Wormhole spawn animation tracking ────────────────────────────
-  /** The live wormhole handle for the current wave spawn, or null. */
-  private _spawnWormhole: WormholeHandle | null = null;
+  /**
+   * Single-live-wormhole lifecycle (shared with every gym via
+   * `vfx/wormholeSpawn.ts`): opening a new wormhole first closes any
+   * still-open one, and close is idempotent across transitions, timeouts,
+   * respawns and resets (AH-0MV9KHLV8006GMX6).
+   */
+  private readonly _wormhole = new WormholeController(this);
 
   /**
    * Whether the simulation is frozen by the pause menu (parent
@@ -950,7 +953,7 @@ export class PlayScene extends CombatScene<
     this.pendingStrikeSpawns = [];
     this.strikesSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
-    this._spawnWormhole = null;
+    this._wormhole.close(this.wormholeEffects);
     this.paused = false;
   }
 
@@ -1166,10 +1169,7 @@ export class PlayScene extends CombatScene<
         s.entity.setSpawning(false);
       }
     }
-    if (!anySpawning && this._spawnWormhole) {
-      spawnWormholeClose(this, this._spawnWormhole, this.wormholeEffects);
-      this._spawnWormhole = null;
-    }
+    if (!anySpawning) this._wormhole.close(this.wormholeEffects);
   }
 
   /**
@@ -1185,10 +1185,7 @@ export class PlayScene extends CombatScene<
       updateSpawnAnimation(s.entity as unknown as SpawnAnimatable, 10);
       s.entity.setSpawning(false);
     }
-    if (this._spawnWormhole) {
-      spawnWormholeClose(this, this._spawnWormhole, this.wormholeEffects);
-      this._spawnWormhole = null;
-    }
+    this._wormhole.close(this.wormholeEffects);
   }
 
   // ── Wave spawning & progression ─────────────────────────────────
@@ -1220,10 +1217,11 @@ export class PlayScene extends CombatScene<
     this.planLaneTrafficSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
     if (spawns.length > 0) {
-      // Spawn one wormhole at the first enemy's position.
-      this._spawnWormhole = spawnWormholeOpen(this, spawns[0].x, spawns[0].y, {
-        registry: this.wormholeEffects,
-      });
+      // Open the wave's wormhole at the first enemy's position. The shared
+      // controller closes any still-open previous wormhole first, so a
+      // transition/timeout that began mid-spawn never strands a live one
+      // (AC3 — AH-0MV9KHLV8006GMX6).
+      this._wormhole.open(spawns[0].x, spawns[0].y, this.wormholeEffects);
       for (const spawn of spawns) this._spawnEnemy(spawn);
       playSpawnSound();
     }
@@ -2101,6 +2099,11 @@ export class PlayScene extends CombatScene<
 
   /** Begins the brief pause before the next wave/level spawns. */
   private _startTransition(): void {
+    // Close any wormhole still open (e.g. a timeout/carry-over began
+    // mid-spawn): the normal close tick is gated behind the non-transition
+    // branch, so the close must happen at transition start (AC4 —
+    // AH-0MV9KHLV8006GMX6).
+    this._wormhole.close(this.wormholeEffects);
     this.transitionTimer = LEVEL_TRANSITION_SECONDS;
     // The time-limit is paused/hidden while the transition runs; the next
     // wave restarts a fresh countdown (AH-0MU7JTG9R002ZWA6).
@@ -2350,10 +2353,7 @@ export class PlayScene extends CombatScene<
    * wormhole and hides the wave timer.
    */
   private _clearWaveForScenario(): void {
-    if (this._spawnWormhole) {
-      spawnWormholeClose(this, this._spawnWormhole, this.wormholeEffects);
-      this._spawnWormhole = null;
-    }
+    this._wormhole.close(this.wormholeEffects);
     for (const s of this.spawned) {
       if (s.entity.alive) s.entity.destroySelf();
     }

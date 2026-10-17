@@ -897,27 +897,49 @@ enemy is protected (AC4):
 **Implementation.**
 
 - `src/vfx/wormholeSpawn.ts` owns the wormhole VFX (`spawnWormholeOpen` /
-  `spawnWormholeClose`) and the dt-driven growth helpers
-  (`startSpawnAnimation`, `updateSpawnAnimation`, `isEnemySpawning`). The
-  spawn state is stored as entity data, so any `Container`-based entity works.
+  `spawnWormholeClose`), the dt-driven growth helpers
+  (`startSpawnAnimation`, `updateSpawnAnimation`, `isEnemySpawning`) and the
+  `WormholeController` shared lifecycle. The spawn state is stored as entity
+  data, so any `Container`-based entity works.
 - `BaseEnemy` exposes `isSpawning` / `setSpawning()` — the single flag every
   shared collision/fire/absorption gate reads.
 - `PlayScene._spawnEnemy` starts the animation; `PlayScene._updateSpawnAnimations`
   advances it before collisions so an enemy that finishes growing this frame
   is collidable on the same frame; the wormhole closes once every wave enemy
   has finished.
-- `GymFormationScene.create` starts the animation for each formation entity
-  and `_updateSpawnAnimations` advances/closes it, so `GymFodderEnemies` and the
-  other formation gyms are in lock-step with the game.
+- `GymFormationScene` starts the animation for each formation entity through
+  the shared `_spawnFormation()` helper (used by `create()` and the
+  wipe→respawn / carry-over respawn paths) and `_updateSpawnAnimations`
+  advances/closes it, so `GymFodderEnemies` and the other formation gyms are
+  in lock-step with the game — a respawned formation enters through a fresh
+  wormhole exactly as the game's next wave does.
 - Both scenes expose a `finishSpawnAnimations()` test seam that completes the
   animation without advancing wave timers/asteroid spawns, so collision tests
   can observe fully-spawned enemies deterministically.
 
-**Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters and
-  the dt-driven growth curve; `PlayScene.test.ts` (describe
-  “wormhole spawn animation”) and `GymFodderEnemies.test.ts` (describe
-  “wormhole spawn animation parity”) cover the spawn-protection gates in both
-  scenes.
+**Single-live lifecycle (AH-0MV9KHLV8006GMX6).** At most **one** wormhole is
+live at a time. Both scenes owns a `WormholeController` (`vfx/wormholeSpawn.ts`):
+`open(x, y)` first closes any still-open wormhole (so a second `spawnWave()` /
+formation respawn never strands the previous one), and `close()` is idempotent.
+The close is driven everywhere a live wormhole could otherwise be left behind:
+
+- `_updateSpawnAnimations`/`finishSpawnAnimations` close once every entity has
+  finished growing (scale→0, alpha→0, registry removal, destroy).
+- `PlayScene._startTransition` closes any wormhole still open when a
+  wave/level/boss transition begins — the normal close tick is gated behind
+  the non-transition branch, so a mid-spawn timeout/carry-over no longer
+  leaves the wormhole frozen on screen.
+- `resetRunState` closes on run reset/restart.
+- Gym formation respawns re-open a wormhole through the controller (which
+  closes any previous first), keeping the gym matched to the game.
+
+**Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters,
+  the dt-driven growth curve and the `WormholeController` single-live
+  lifecycle; `PlayScene.test.ts` (describe “wormhole spawn animation”) and
+  `GymFodderEnemies.test.ts` (describe “wormhole spawn animation parity”)
+  cover the spawn-protection gates in both scenes plus the regression cases
+  (second `spawnWave()` while a wormhole is live, transition/timeout
+  mid-spawn, and a gym wipe→respawn re-opening one wormhole).
 
 ### 3.2 Existing scenes (reference implementations)
 

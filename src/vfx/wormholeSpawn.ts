@@ -152,6 +152,54 @@ export function spawnWormholeClose(
   });
 }
 
+// ── Single-live wormhole lifecycle controller ──────────────────────
+
+/**
+ * Single-live-wormhole lifecycle controller shared by `PlayScene` and every
+ * formation gym (AH-0MV9KHLV8006GMX6).
+ *
+ * Enforces the invariant that **at most one wormhole is live at a time**:
+ * {@link WormholeController.open} first closes any still-open wormhole, so no
+ * path can overwrite a live one, and {@link WormholeController.close} is
+ * idempotent so transition / timeout / respawn / reset paths may safely call
+ * it whether or not a wormhole happens to be live.
+ */
+export class WormholeController {
+  private handle: WormholeHandle | null = null;
+
+  constructor(private readonly scene: Phaser.Scene) {}
+
+  /** True while a wormhole is live (open, awaiting close). */
+  get isOpen(): boolean {
+    return this.handle !== null;
+  }
+
+  /**
+   * Closes any still-open wormhole, then opens a fresh one at (x, y) and
+   * returns its handle. Never overwrites a live wormhole.
+   */
+  open(
+    x: number,
+    y: number,
+    registry?: Phaser.GameObjects.Container[],
+  ): WormholeHandle {
+    this.close(registry);
+    this.handle = spawnWormholeOpen(this.scene, x, y, registry ? { registry } : {});
+    return this.handle;
+  }
+
+  /**
+   * Closes the live wormhole (scale→0, alpha→0, registry removal and destroy
+   * once the close animation completes) and clears the slot. A no-op when no
+   * wormhole is live.
+   */
+  close(registry?: Phaser.GameObjects.Container[]): void {
+    if (!this.handle) return;
+    spawnWormholeClose(this.scene, this.handle, registry);
+    this.handle = null;
+  }
+}
+
 // ── Enemy spawn animation helpers ───────────────────────────────────
 
 const SPAWN_STATE_KEY = '__spawnState';
