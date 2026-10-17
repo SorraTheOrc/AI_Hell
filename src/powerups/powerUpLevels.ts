@@ -414,7 +414,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Teleport — stored FIFO uses, S/↓ to activate.
+  // Teleport — stored FIFO uses, spent automatically when the ship is in danger.
   teleport: [
     {
       variable: 'teleportStacks',

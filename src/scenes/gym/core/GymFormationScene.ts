@@ -1050,7 +1050,7 @@ export class GymFormationScene<
     drop.powerUp.tryCollect();
   }
 
-  // ── Teleport (Teleport, S/↓) ───────────────────────────────────────────
+  // ── Teleport (automatic on danger) ─────────────────────────────────────
 
   /**
    * Teleports are allowed when the opt-in drop layer is active, or whenever

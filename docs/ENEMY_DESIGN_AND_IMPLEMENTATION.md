@@ -607,7 +607,7 @@ the first three enemy gym scenes duplicated:
   the same code as the shipped game — plus the shared bullet/effect/animation
   registries; `SHUTDOWN` calls `teardownRunState()`, which destroys those
   registries and resets the effects registry. `CombatScene` overrides both to
-  add invulnerability, hit-count, teleport-key and bullet-impact state;
+  add invulnerability, hit-count, teleport-arrival and bullet-impact state;
   `GymFormationScene`, `GymWeapons`, `GymPowerUpsCombat`,
   `GymPowerUpsUtility` and `GymPlayer` override them to add their own object
   families (enemies, drops, minerals, player, obstacles, HUD) and call

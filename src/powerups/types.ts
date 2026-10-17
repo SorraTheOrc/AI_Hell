@@ -25,7 +25,9 @@
  *   exactly one charge to that pool — it is never an unlimited supply
  *   (AH-0MV82I7TX0009JMT).
  * - **Teleport** — stored stacks (FIFO) in a **finite recharging pool** (cap 3,
- *   level-derived recharge time), S/↓ to teleport to nearest safe spot, grants a 1.5 s Phase Shift on arrival
+ *   level-derived recharge time); activates automatically when the ship is in
+ *   danger — one stack is spent to warp to the nearest safe spot and grant a
+ *   1.5 s Phase Shift on arrival
  * - **Smart Bomb** — Defender-inspired stored screen-wide pulse: a field
  *   pickup fires one screen-clearing blast (damages every enemy once and
  *   clears every enemy bullet); a hold-full reward makes the pulse repeat on
@@ -144,7 +146,8 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   teleport: {
     id: 'teleport',
     name: 'Teleport',
-    description: 'Stores a use (up to 3, recharging); press S or ↓ to warp to the nearest safe spot and gain a 1.5 s Phase Shift on arrival.',
+    description:
+      'Stores up to 3 uses; when the ship is in danger, one is spent automatically to warp to the nearest safe spot and grant a short Phase Shift on arrival. Teleporting can be disorienting — keep your wits about you.',
   },
   extra_life: {
     id: 'extra_life',
