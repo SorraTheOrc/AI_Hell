@@ -65,7 +65,7 @@ describe('PlayScene mineral wiring', () => {
     expect(scene.getGameState().minerals).toBe(before + 1);
   });
 
-  it('a Mystery UFO pickup grants an instant mineral + score bounty (AH-0MV1BIXFO006Z1I7)', async () => {
+  it('a Mystery UFO pickup grants an instant mineral bounty; the score burst is retired (AH-0MV1BIXFO006Z1I7 / AH-0MVBMPZ2C0008VAE)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const gs = scene.getGameState();
@@ -77,10 +77,12 @@ describe('PlayScene mineral wiring', () => {
     player.setPosition(drop.x, drop.y);
     scene.tick(0.016);
 
-    // Base bounty (level 0): +2 minerals into the hold, +250 score; the
-    // power-up levels up and leaves no timed/consumable state behind.
+    // Base bounty (level 0): +2 minerals into the hold, no score — the
+    // instant score burst is retired with the collector-drone epic
+    // (AH-0MVBMPZ2C0008VAE); the power-up levels up and leaves no
+    // timed/consumable state behind.
     expect(gs.minerals).toBe(mineralsBefore + 2);
-    expect(gs.score).toBe(scoreBefore + 250);
+    expect(gs.score).toBe(scoreBefore);
     expect(player.getPowerUpLevel('mystery_ufo')).toBe(1);
     expect(scene.getEffectsRegistry().isActive('mystery_ufo')).toBe(false);
   });

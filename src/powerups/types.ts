@@ -215,9 +215,13 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'mystery_ufo',
     name: 'Mystery UFO',
     description:
-      'A rare Space Invaders-inspired bonus: instantly grants a burst of minerals and score. Each pickup levels it up so the next bounty is larger.',
+      'A rare Space Invaders-inspired bonus: grants a burst of minerals. ' +
+      'Each pickup levels it up so the next bounty — or your collector ' +
+      'drone — is stronger.',
     // Instant, non-timed: no duration and no stored state; the reward is
     // granted on collection and the level advances (AH-0MV1BIXFO006Z1I7).
+    // The collector-drone level axes (lifetime/capacity/radius/spawn
+    // interval) resolve from the shared curve (AH-0MVBMPZ2C0008VAE).
   },
   frenzy: {
     id: 'frenzy',

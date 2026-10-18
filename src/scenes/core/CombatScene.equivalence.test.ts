@@ -3467,16 +3467,13 @@ describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7
     gymScene.getPlayer()!.setPosition(480, 270);
     gymScene.tick(1 / 60);
 
-    // Both grant the same base bounty (+2 minerals) and level up once.
+    // Both grant the same base mineral bounty (+2 minerals) and level up once.
     expect(playScene.getGameState().minerals).toBe(playBefore + 2);
     expect(gymScene.getMineralHold().store).toBe(gymBefore + 2);
     expect(playScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
     expect(gymScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
     expect(playScene.getEffectsRegistry().mysteryUfoMinerals()).toBe(
       gymScene.getEffectsRegistry().mysteryUfoMinerals(),
-    );
-    expect(playScene.getEffectsRegistry().mysteryUfoScore()).toBe(
-      gymScene.getEffectsRegistry().mysteryUfoScore(),
     );
   });
 });

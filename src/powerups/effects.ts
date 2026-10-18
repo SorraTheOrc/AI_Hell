@@ -380,13 +380,15 @@ export class EffectsRegistry {
 
   // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ───────────────
   /**
-   * Pending Mystery UFO instant bounty: accumulated when a `mystery_ufo` drop
-   * is collected and drained by the scene via {@link consumeMysteryBonus}
-   * (minerals into the ship's hold, score into the run total). `null` when no
-   * pickup is pending; cleared by {@link reset}. Repeated collections before a
-   * drain accumulate, so no pickup is lost.
+   * Pending Mystery UFO instant mineral bounty: accumulated when a
+   * `mystery_ufo` drop is collected and drained by the scene via
+   * {@link consumeMysteryBonus} (minerals into the ship's hold; the instant
+   * score burst is retired with the collector-drone epic,
+   * AH-0MV9G113S009B37I). `null` when no pickup is pending; cleared by
+   * {@link reset}. Repeated collections before a drain accumulate, so no
+   * pickup is lost.
    */
-  private _mysteryBonus: { minerals: number; score: number } | null = null;
+  private _mysteryBonus: { minerals: number } | null = null;
 
   // ── Thorn Field ram budget (AH-0MVCRC1Q0007JAV1) ──────────────────
   /**
@@ -575,11 +577,12 @@ export class EffectsRegistry {
         );
         break;
       case 'mystery_ufo':
-        // mystery_ufo: an instant mineral + score bounty (Space Invaders
-        // homage, AH-0MV1BIXFO006Z1I7). There is no timed window and no
-        // consumable state — the level-resolved burst is queued for the scene
-        // to grant immediately (minerals into the hold, score into the run
-        // total) via consumeMysteryBonus().
+        // mystery_ufo: an instant mineral bounty (Space Invaders homage,
+        // AH-0MV1BIXFO006Z1I7). There is no timed window and no consumable
+        // state — the level-resolved mineral burst is queued for the scene
+        // to grant immediately (minerals into the hold) via
+        // consumeMysteryBonus(). The instant score burst is retired with the
+        // collector-drone epic (AH-0MV9G113S009B37I).
         this._queueMysteryBonus(stats);
         break;
       case 'frenzy':
@@ -642,18 +645,17 @@ export class EffectsRegistry {
   }
 
   /**
-   * Accumulates the level-resolved Mystery UFO instant bounty (minerals +
-   * score) for the scene to drain via {@link consumeMysteryBonus}. Both
-   * components are rounded to whole numbers and clamped non-negative, so the
-   * hold and the score total only ever receive whole values.
+   * Accumulates the level-resolved Mystery UFO instant mineral bounty for the
+   * scene to drain via {@link consumeMysteryBonus}. The mineral count is
+   * rounded to a whole number and clamped non-negative, so the hold only ever
+   * receives whole values. (The instant score burst is retired with the
+   * collector-drone epic — AH-0MV9G113S009B37I.)
    */
   private _queueMysteryBonus(stats: PowerUpLevelStats): void {
     const minerals = Math.max(0, Math.round(stats.mysteryUfoMinerals ?? 0));
-    const score = Math.max(0, Math.round(stats.mysteryUfoScore ?? 0));
-    if (minerals === 0 && score === 0) return;
+    if (minerals === 0) return;
     this._mysteryBonus = {
       minerals: (this._mysteryBonus?.minerals ?? 0) + minerals,
-      score: (this._mysteryBonus?.score ?? 0) + score,
     };
   }
 
@@ -855,15 +857,14 @@ export class EffectsRegistry {
   // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ────────────────
 
   /**
-   * Drains and returns the accumulated Mystery UFO instant bounty
-   * (`{ minerals, score }`), or `null` when no pickup is pending.
+   * Drains and returns the accumulated Mystery UFO instant mineral bounty
+   * (`{ minerals }`), or `null` when no pickup is pending.
    *
-   * The scene applies the minerals to its hold and the score to its run total;
-   * the registry itself owns no hold or score, so the same code serves the
-   * game and every gym. The bounty is drained (not merely read) so a pickup is
-   * granted exactly once.
+   * The scene applies the minerals to its hold; the registry itself owns no
+   * hold, so the same code serves the game and every gym. The bounty is
+   * drained (not merely read) so a pickup is granted exactly once.
    */
-  consumeMysteryBonus(): { minerals: number; score: number } | null {
+  consumeMysteryBonus(): { minerals: number } | null {
     const bonus = this._mysteryBonus;
     this._mysteryBonus = null;
     return bonus;
@@ -871,7 +872,8 @@ export class EffectsRegistry {
 
   /**
    * The level-resolved mineral bounty the next Mystery UFO pickup grants
-   * (whole minerals, non-negative). Surfaced for help/tests.
+   * (whole minerals, non-negative). Surfaced for help/tests. (The score axis
+   * is retired with the collector-drone epic — AH-0MV9G113S009B37I.)
    */
   mysteryUfoMinerals(): number {
     const nextLevel = this._levelStore.getEffectiveLevel('mystery_ufo');
@@ -880,20 +882,6 @@ export class EffectsRegistry {
       Math.round(
         resolvePowerUpAtLevel('mystery_ufo', nextLevel).mysteryUfoMinerals ??
           0,
-      ),
-    );
-  }
-
-  /**
-   * The level-resolved score bounty the next Mystery UFO pickup grants
-   * (whole points, non-negative). Surfaced for help/tests.
-   */
-  mysteryUfoScore(): number {
-    const nextLevel = this._levelStore.getEffectiveLevel('mystery_ufo');
-    return Math.max(
-      0,
-      Math.round(
-        resolvePowerUpAtLevel('mystery_ufo', nextLevel).mysteryUfoScore ?? 0,
       ),
     );
   }

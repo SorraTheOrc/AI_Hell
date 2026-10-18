@@ -3151,16 +3151,15 @@ export class PlayScene extends CombatScene<
       this.effectsRegistry.setLives(this.gameState.lives);
     }
     if (drop.dropId === 'mystery_ufo') {
-      // Instant mineral + score bounty (Space Invaders homage,
-      // AH-0MV1BIXFO006Z1I7): grant it through the shared registry drain so
-      // the game and every gym apply the same burst, then sync the hold HUD
-      // and open the hold-full choice if the burst filled the hold.
+      // Instant mineral bounty (Space Invaders homage, AH-0MV1BIXFO006Z1I7):
+      // grant it through the shared registry drain so the game and every gym
+      // apply the same burst, then sync the hold HUD and open the hold-full
+      // choice if the burst filled the hold. The instant score burst is
+      // retired with the collector-drone epic (AH-0MV9G113S009B37I), so only
+      // minerals flow.
       this._applyPendingMysteryBonus({
         addMinerals: (amount) => {
           this.gameState.addMinerals(amount);
-        },
-        addScore: (amount) => {
-          this.gameState.addScore(amount);
         },
       });
       this._syncMineralHud();

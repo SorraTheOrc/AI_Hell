@@ -125,11 +125,49 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     expect(POWER_UP_LEVEL_SPECS.force_field[1].cap).toBe(10); // reflect budget cap
     expect(POWER_UP_LEVEL_SPECS.mystery_ufo[0].base).toBe(2); // bonus minerals
     expect(POWER_UP_LEVEL_SPECS.mystery_ufo[0].cap).toBe(6); // bonus minerals cap
-    // The instant-bounty score axis (mysteryUfoScore base 250 / cap 1500) is
-    // retired with the collector-drone epic (AH-0MV9G113S009B37I): the
-    // reward becomes a visible drone, so the score pin is removed here and
-    // the new drone axes (lifetime/capacity/radius/spawn interval) anchor in
-    // the level-variables feature (AH-0MVBMPZ2C0008VAE).
+    // The instant-bounty score axis (base 250 / cap 1500) is retired with the
+    // collector-drone epic (AH-0MV9G113S009B37I): the reward becomes a
+    // visible drone, so the score pin is removed here and the new drone axes
+    // (lifetime/capacity/radius/spawn interval) anchor in a dedicated test
+    // below.
+  });
+
+  it('anchors the collector-drone level axes on the shared curve (AH-0MVBMPZ2C0008VAE)', () => {
+    // The visible collector drone's four tunable axes resolve from the
+    // catalogue exactly like every other power-up axis — level 0 is the
+    // agreed default, each axis grows (or descends for the interval) toward
+    // its cap on the shared curve with k=0.3's family.
+    const specs = Object.fromEntries(
+      POWER_UP_LEVEL_SPECS.mystery_ufo.map((s) => [s.variable, s]),
+    ) as Record<string, (typeof POWER_UP_LEVEL_SPECS.mystery_ufo)[number]>;
+
+    // Lifetime: 5 → 8 s.
+    expect(specs.mysteryUfoLifetime.base).toBe(5);
+    expect(specs.mysteryUfoLifetime.cap).toBe(8);
+    expect(specs.mysteryUfoLifetime.k).toBe(0.3);
+    expect(specs.mysteryUfoLifetime.curve).toBe('exponential-saturation');
+    // Capacity: 10 → 20 minerals, discrete (whole holds only).
+    expect(specs.mysteryUfoCapacity.base).toBe(10);
+    expect(specs.mysteryUfoCapacity.cap).toBe(20);
+    expect(specs.mysteryUfoCapacity.k).toBe(0.3);
+    expect(specs.mysteryUfoCapacity.discrete).toBe(true);
+    // Collector radius: 20 → 40 px.
+    expect(specs.mysteryUfoRadius.base).toBe(20);
+    expect(specs.mysteryUfoRadius.cap).toBe(40);
+    expect(specs.mysteryUfoRadius.k).toBe(0.3);
+    // Spawn interval: 30 → 12 s, descending (permanent hold-full timer).
+    expect(specs.mysteryUfoSpawnInterval.base).toBe(30);
+    expect(specs.mysteryUfoSpawnInterval.cap).toBe(12);
+    expect(specs.mysteryUfoSpawnInterval.k).toBe(-2);
+    expect(specs.mysteryUfoSpawnInterval.curve).toBe('linear-clamped');
+    expect(specs.mysteryUfoSpawnInterval.discrete).toBe(true);
+
+    // Level 0 resolves to the agreed defaults: 5 s / 10 / 20 px / 30 s.
+    const level0 = resolvePowerUpAtLevel('mystery_ufo', 0);
+    expect(level0.mysteryUfoLifetime).toBe(5);
+    expect(level0.mysteryUfoCapacity).toBe(10);
+    expect(level0.mysteryUfoRadius).toBe(20);
+    expect(level0.mysteryUfoSpawnInterval).toBe(30);
   });
 
   it('Mystery UFO mineral bonus variable resolves monotonically within its cap (AH-0MV1BIXFO006Z1I7)', () => {
@@ -147,6 +185,40 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
       }
       expect(previous).toBeGreaterThan(statAt('mystery_ufo', variable, 0));
     }
+  });
+
+  it('collector-drone axes resolve monotonically within their caps (AH-0MVBMPZ2C0008VAE)', () => {
+    // Each new drone axis is strictly monotonic (or correctly descending for
+    // the permanent spawn interval) and clamped by its cap — the drone grows
+    // with the run without re-tuning code.
+    const growing = ['mysteryUfoLifetime', 'mysteryUfoCapacity', 'mysteryUfoRadius'] as const;
+    for (const variable of growing) {
+      const spec = POWER_UP_LEVEL_SPECS.mystery_ufo.find(
+        (s) => s.variable === variable,
+      )!;
+      let previous = statAt('mystery_ufo', variable, 0);
+      for (let level = 1; level <= 200; level++) {
+        const value = statAt('mystery_ufo', variable, level);
+        expect(value).toBeGreaterThanOrEqual(previous);
+        const cap = spec.cap;
+        expect(value).toBeLessThanOrEqual(cap);
+        previous = value;
+      }
+      expect(previous).toBeGreaterThan(statAt('mystery_ufo', variable, 0));
+    }
+
+    // The permanent spawn interval descends (max(12, 30 − 2×level)) and
+    // clamps at its 12 s floor.
+    let previousInterval = statAt('mystery_ufo', 'mysteryUfoSpawnInterval', 0);
+    for (let level = 1; level <= 200; level++) {
+      const value = statAt('mystery_ufo', 'mysteryUfoSpawnInterval', level);
+      expect(value).toBeLessThanOrEqual(previousInterval);
+      expect(value).toBeGreaterThanOrEqual(12);
+      previousInterval = value;
+    }
+    expect(previousInterval).toBeLessThan(
+      statAt('mystery_ufo', 'mysteryUfoSpawnInterval', 0),
+    );
   });
 
   // ── Re-balanced Smart Bomb schedules (AH-0MV8GPGBL009M0D8) ──

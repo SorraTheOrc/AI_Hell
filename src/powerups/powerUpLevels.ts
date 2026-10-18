@@ -168,10 +168,17 @@ export type PowerUpLevelVariable =
   | 'forceFieldDuration'
   /** Force Field — bullets the field reflects before it stops. */
   | 'forceFieldReflects'
-  /** Mystery UFO — minerals granted instantly by one pickup. */
+  /** Mystery UFO — minerals granted instantly by one pickup (interim: the
+   * instant mineral burst is retired with the collector-drone epic). */
   | 'mysteryUfoMinerals'
-  /** Mystery UFO — score granted instantly by one pickup. */
-  | 'mysteryUfoScore'
+  /** Mystery UFO — collector-drone lifetime in seconds. */
+  | 'mysteryUfoLifetime'
+  /** Mystery UFO — minerals one collector drone can carry before returning. */
+  | 'mysteryUfoCapacity'
+  /** Mystery UFO — collector-drone vacuum radius in pixels. */
+  | 'mysteryUfoRadius'
+  /** Mystery UFO — seconds between permanent collector-drone spawns (descends). */
+  | 'mysteryUfoSpawnInterval'
   /** Frenzy — bonus damage hits each player bullet applies. */
   | 'frenzyBonusHits'
   /** Frenzy — timed window during which bullets deal bonus hits. */
@@ -216,7 +223,10 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'forceFieldDuration',
   'forceFieldReflects',
   'mysteryUfoMinerals',
-  'mysteryUfoScore',
+  'mysteryUfoLifetime',
+  'mysteryUfoCapacity',
+  'mysteryUfoRadius',
+  'mysteryUfoSpawnInterval',
   'frenzyBonusHits',
   'frenzyDuration',
   'chronoSlowFactor',
@@ -641,9 +651,14 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Mystery UFO — Space Invaders-inspired instant mineral/score bounty
-  // (AH-0MV1BIXFO006Z1I7). No timed window: the burst is granted on
-  // collection and the level scales the next bounty.
+  // Mystery UFO — Space Invaders-inspired bonus pickup (AH-0MV1BIXFO006Z1I7).
+  // With the collector-drone epic (AH-0MV9G113S009B37I) the instant
+  // mineral/score bounty is being replaced by a visible collector drone; its
+  // level axes (lifetime, capacity, collector radius and permanent spawn
+  // interval) resolve here so the drone grows with the run without re-tuning
+  // code. The retired instant-bounty score axis (base 250 / cap 1500) no
+  // longer exists, and `mysteryUfoMinerals` remains while the instant path
+  // is being torn down.
   mystery_ufo: [
     {
       variable: 'mysteryUfoMinerals',
@@ -663,21 +678,78 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'Discrete so the hold only ever receives whole minerals.',
     },
     {
-      variable: 'mysteryUfoScore',
+      variable: 'mysteryUfoLifetime',
       powerUpId: 'mystery_ufo',
-      label: 'Bonus score',
-      unit: '',
-      description: 'Points granted instantly by one Mystery UFO pickup.',
+      label: 'Drone lifetime',
+      unit: 's',
+      description: 'How long one collector drone flies before returning.',
       curve: 'exponential-saturation',
-      base: 250,
-      cap: 1500,
+      base: 5,
+      cap: 8,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'A 5 s sortie keeps the level-0 drone a brief ferry, while the 8 s ' +
+        'cap lets a levelled drone reach minerals across the field before its ' +
+        'lifetime expires; k=0.3 front-loads ~0.8 s on the first upgrade so ' +
+        'the drone feels responsive early. Continuous so the lifetime can be ' +
+        'any second value the timer reads.',
+    },
+    {
+      variable: 'mysteryUfoCapacity',
+      powerUpId: 'mystery_ufo',
+      label: 'Drone capacity',
+      unit: '',
+      description: 'Minerals one collector drone can carry before returning.',
+      curve: 'exponential-saturation',
+      base: 10,
+      cap: 20,
       k: 0.3,
       discrete: true,
       rationale:
-        'A 250-point base echoes the classic Space Invaders mystery-ship ' +
-        'bounty band; the 1500-point cap keeps a levelled bonus meaningful ' +
-        'but finite, and k=0.3 front-loads the first upgrade (~350 points). ' +
-        'Discrete so the run total stays whole.',
+        'A 10-mineral hold at level 0 grows to 20 at the cap, so a levelled ' +
+        'drone ferries a full hold-full chunk per run; k=0.3 adds ~2.6 ' +
+        'minerals on the first upgrade for a visible step. Discrete so the ' +
+        'drone only ever holds whole minerals.',
+    },
+    {
+      variable: 'mysteryUfoRadius',
+      powerUpId: 'mystery_ufo',
+      label: 'Collector radius',
+      unit: 'px',
+      description: 'Distance at which the drone vacuums minerals into its hold.',
+      curve: 'exponential-saturation',
+      base: 20,
+      cap: 40,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'A 20 px vacuum radius (about one ship size) at level 0 widens to ' +
+        '40 px at the cap so a levelled drone sweeps a broader arc without ' +
+        'becoming a full-field magnet; k=0.3 adds ~5 px on the first upgrade. ' +
+        'Continuous so the radius can be any pixel value.',
+    },
+    {
+      variable: 'mysteryUfoSpawnInterval',
+      powerUpId: 'mystery_ufo',
+      label: 'Spawn interval',
+      unit: 's',
+      description: 'How often a permanent collector drone respawns.',
+      curve: 'linear-clamped',
+      // Descending interval: max(12, 30 − 2×level) s — 30 s on the first
+      // grant, −2 s per further level, floor 12 s. Mirrors the Smart Bomb /
+      // Orbital Strike permanent-interval schedules.
+      base: 30,
+      cap: 12,
+      k: -2,
+      discrete: true,
+      rationale:
+        'A permanent (full-hull) collector drone is free income, so it is ' +
+        'deliberately rare: 30 s between spawns, never more often than once ' +
+        'per 12 s (mirrors the Smart Bomb / Strike interval). The derived ' +
+        'spawns/second inverse stays monotonic non-decreasing, matching the ' +
+        'model\'s rate-axis contract. Discrete so the timer uses whole ' +
+        'seconds.',
     },
   ],
 
@@ -1008,10 +1080,19 @@ export interface PowerUpLevelStats {
   forceFieldDuration?: number;
   /** Force Field — bullets the field reflects before it stops. */
   forceFieldReflects?: number;
-  /** Mystery UFO — minerals granted instantly by one pickup. */
+  /** Mystery UFO — minerals granted instantly by one pickup (interim). */
   mysteryUfoMinerals?: number;
-  /** Mystery UFO — score granted instantly by one pickup. */
-  mysteryUfoScore?: number;
+  /** Mystery UFO — collector-drone lifetime in seconds. */
+  mysteryUfoLifetime?: number;
+  /** Mystery UFO — minerals one collector drone can carry before returning. */
+  mysteryUfoCapacity?: number;
+  /** Mystery UFO — collector-drone vacuum radius in pixels. */
+  mysteryUfoRadius?: number;
+  /**
+   * Mystery UFO — seconds between permanent collector-drone spawns
+   * (descending: `max(12, 30 − 2×level)`).
+   */
+  mysteryUfoSpawnInterval?: number;
   /** Frenzy — bonus damage hits each player bullet applies while active. */
   frenzyBonusHits?: number;
   /** Frenzy — timed window duration in seconds. */

@@ -789,8 +789,9 @@ describe('Force Field: timed bullet reflector (AH-0MV1BIX1W006XF95)', () => {
 // The instant mineral+score bounty (AH-0MV1BIXFO006Z1I7) is retired by the
 // visible collector-drone epic (AH-0MV9G113S009B37I): a field pickup will
 // spawn a visible drone instead of granting a direct hold/score payout, and
-// the `mysteryUfoScore` axis is removed with the level-variable feature
-// (AH-0MVBMPZ2C0008VAE). These tests pin only the **survivor registry
+// the retired instant-bounty score axis is removed with the level-variable
+// feature (AH-0MVBMPZ2C0008VAE), which also anchors the collector-drone
+// lifetime/capacity/radius/spawn-interval axes on the shared curve. These tests pin only the **survivor registry
 // contract** — run-scoped level advancement, a permanent hold-full path and
 // reset semantics — so the suite stays green as the instant path is
 // removed. The "no direct payout, one drone spawn" behaviour is asserted by
