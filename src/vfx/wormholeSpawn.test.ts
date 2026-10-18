@@ -29,7 +29,9 @@ import {
   spawnWormholeOpen,
   startSpawnAnimation,
   updateSpawnAnimation,
+  type SpawnAnimatable,
 } from './wormholeSpawn';
+import * as wormholeSpawnModule from './wormholeSpawn';
 
 /** Minimal bootable scene for the VFX helpers. */
 class WormholeVfxStubScene extends Phaser.Scene {
@@ -566,5 +568,240 @@ describe('wormholeSpawn — wave portal placement (AH-0MV8BR9Y70079TKC)', () => 
         player: null,
       }),
     ).toEqual(anchor);
+  });
+});
+
+// ── Emergence shimmer + wormhole glow/pulse ring — test-first contract (AH-0MVD2MTEI002MVIS) ──
+//
+// Test-first companion for the "Per-enemy emergence shimmer" (AH-0MVD2N333004VDA9)
+// and "Wormhole glow/pulse ring" (AH-0MVD2N6AW0073X5M) features of the
+// improved Phase Shift epic (AH-0MV8BUKFK003Z23S). RED against today's
+// module (no shimmer helper, no ring on open), so every new case runs under
+// Vitest's `it.fails(...)` — the repo's expected-failure convention (see
+// `src/vfx/phaseShiftJuice.test.ts` for the sibling juice contract): the
+// assertion genuinely fails now while the suite stays green at the
+// build → test → commit gate. When the shimmer/ring implementation lands,
+// flip each `it.fails` back to a plain `it`.
+//
+// Predicted API the upgrade must expose (the contract):
+//   constants: ENEMY_SHIMMER_BURST_DURATION_MS (150–250), ENEMY_SHIMMER_FLICKER_HZ
+//     (2–4), ENEMY_SHIMMER_ALPHA_MIN/MAX (0..1, min<max), ENEMY_SHIMMER_SCALE_AMOUNT
+//     (>0, subtle), ENEMY_SHIMMER_COLOUR_PULSE_RANGE ([min,max] within 0..1),
+//     ENEMY_SHIMMER_ENABLE_BURST / ENEMY_SHIMMER_ENABLE_SHIMMER (default on),
+//     WORMHOLE_RING_ENABLE (default on), WORMHOLE_RING_COLOR, WORMHOLE_RING_RADIUS,
+//     WORMHOLE_RING_PULSE_RANGE ([min,max] scale multipliers), WORMHOLE_RING_GLOW_ALPHA.
+//   helpers: updateEnemyShimmer(enemy, dt) -> boolean — drives the per-entity
+//     treatment from the spawn-state window (true while growing), never touches
+//     the player ship, works headless (no Phaser scene facilities needed).
+//
+// All steps use deterministic dt ticks (1/60 s or 0.016 s); no wall-clock
+// sleeps or randomness.
+describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED until AH-0MVD2N333004VDA9)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([WormholeVfxStubScene]);
+    return booted.scene;
+  }
+
+  // Predicted shimmer helper + constants, read through the module namespace
+  // (cast) so the contract compiles before the production interface grows.
+  const mod = wormholeSpawnModule as unknown as {
+    updateEnemyShimmer: (enemy: SpawnAnimatable, dt: number) => boolean;
+    ENEMY_SHIMMER_BURST_DURATION_MS: number;
+    ENEMY_SHIMMER_FLICKER_HZ: number;
+    ENEMY_SHIMMER_ALPHA_MIN: number;
+    ENEMY_SHIMMER_ALPHA_MAX: number;
+    ENEMY_SHIMMER_SCALE_AMOUNT: number;
+    ENEMY_SHIMMER_COLOUR_PULSE_RANGE: readonly [number, number];
+    ENEMY_SHIMMER_ENABLE_BURST: boolean;
+    ENEMY_SHIMMER_ENABLE_SHIMMER: boolean;
+  };
+
+  function startGrowth(scene: Phaser.Scene) {
+    const enemy = scene.add.container(50, 50);
+    startSpawnAnimation(enemy, 1);
+    // Skip the wormhole-open delay so growth begins on the next call.
+    updateSpawnAnimation(enemy, WORMHOLE_OPEN_DURATION);
+    return enemy;
+  }
+
+  it.fails('activates at the growing edge and sustains until the spawn window ends', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(50, 50);
+    startSpawnAnimation(enemy, 1);
+
+    // During the wormhole-open delay growth has not begun — no shimmer yet.
+    expect(mod.updateEnemyShimmer(enemy, 0.016)).toBe(false);
+
+    // Skip the delay: growth starts → the shimmer treatment becomes active.
+    updateSpawnAnimation(enemy, WORMHOLE_OPEN_DURATION);
+    expect(mod.updateEnemyShimmer(enemy, 0.016)).toBe(true);
+
+    // Sustains while the enemy keeps growing.
+    updateSpawnAnimation(enemy, ENEMY_GROWTH_DURATION / 2);
+    expect(mod.updateEnemyShimmer(enemy, 0.016)).toBe(true);
+
+    // Growth completes → spawn state cleared → shimmer stops.
+    updateSpawnAnimation(enemy, ENEMY_GROWTH_DURATION);
+    expect(mod.updateEnemyShimmer(enemy, 0.016)).toBe(false);
+  });
+
+  it.fails('applies a subtle alpha flicker between ticks while shimmering (no jump, stays in (0,1])', async () => {
+    const scene = await boot();
+    const enemy = startGrowth(scene);
+    enemy.setAlpha(1);
+
+    mod.updateEnemyShimmer(enemy, 0.016);
+    const first = enemy.alpha;
+    mod.updateEnemyShimmer(enemy, 0.016);
+    const second = enemy.alpha;
+
+    // The flicker must visibly move the alpha (≈2–4 Hz shimmer)…
+    expect(second).not.toBe(first);
+    // …but stay subtle and bounded.
+    expect(Math.abs(second - first)).toBeLessThanOrEqual(0.25);
+    expect(enemy.alpha).toBeGreaterThan(0);
+    expect(enemy.alpha).toBeLessThanOrEqual(1);
+  });
+
+  it.fails('is a no-op on an enemy that is not spawning (alpha untouched)', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(50, 50);
+    enemy.setAlpha(0.7);
+
+    expect(mod.updateEnemyShimmer(enemy, 0.016)).toBe(false);
+    expect(enemy.alpha).toBe(0.7);
+  });
+
+  it.fails('exposes the documented tunable ranges and per-layer toggles (default on)', () => {
+    // Burst lifetime ≈150–250 ms.
+    expect(mod.ENEMY_SHIMMER_BURST_DURATION_MS).toBeGreaterThanOrEqual(150);
+    expect(mod.ENEMY_SHIMMER_BURST_DURATION_MS).toBeLessThanOrEqual(250);
+    // Subtle alpha flicker ≈2–4 Hz.
+    expect(mod.ENEMY_SHIMMER_FLICKER_HZ).toBeGreaterThanOrEqual(2);
+    expect(mod.ENEMY_SHIMMER_FLICKER_HZ).toBeLessThanOrEqual(4);
+    // Alpha range within (0,1] with min < max.
+    expect(mod.ENEMY_SHIMMER_ALPHA_MIN).toBeGreaterThan(0);
+    expect(mod.ENEMY_SHIMMER_ALPHA_MIN).toBeLessThan(mod.ENEMY_SHIMMER_ALPHA_MAX);
+    expect(mod.ENEMY_SHIMMER_ALPHA_MAX).toBeLessThanOrEqual(1);
+    // Subtle scale pulse amount (non-zero, small — must not fight the growth curve).
+    expect(mod.ENEMY_SHIMMER_SCALE_AMOUNT).toBeGreaterThan(0);
+    expect(mod.ENEMY_SHIMMER_SCALE_AMOUNT).toBeLessThan(0.1);
+    // Soft colour-pulse range inside 0..1, min < max.
+    const [pulseMin, pulseMax] = mod.ENEMY_SHIMMER_COLOUR_PULSE_RANGE;
+    expect(pulseMin).toBeGreaterThanOrEqual(0);
+    expect(pulseMax).toBeLessThanOrEqual(1);
+    expect(pulseMax).toBeGreaterThan(pulseMin);
+    // Both shimmer layers default on.
+    expect(mod.ENEMY_SHIMMER_ENABLE_BURST).toBe(true);
+    expect(mod.ENEMY_SHIMMER_ENABLE_SHIMMER).toBe(true);
+  });
+
+  it.fails('is a safe no-op headless (a bare container-like object never throws)', () => {
+    const bare = {
+      alpha: 1,
+      scaleX: 1,
+      getData: () => null,
+      setData: () => bare,
+      setAlpha: (a: number) => {
+        bare.alpha = a;
+        return bare;
+      },
+      setScale: () => bare,
+    } as unknown as SpawnAnimatable;
+
+    expect(() => mod.updateEnemyShimmer(bare, 0.016)).not.toThrow();
+    expect(mod.updateEnemyShimmer(bare, 0.016)).toBe(false);
+  });
+});
+
+describe('wormholeSpawn — wormhole glow/pulse ring (AH-0MVD2MTEI002MVIS, RED until AH-0MVD2N6AW0073X5M)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([WormholeVfxStubScene]);
+    return booted.scene;
+  }
+
+  const mod = wormholeSpawnModule as unknown as {
+    WORMHOLE_RING_ENABLE: boolean;
+    WORMHOLE_RING_COLOR: number;
+    WORMHOLE_RING_RADIUS: number;
+    WORMHOLE_RING_PULSE_RANGE: readonly [number, number];
+    WORMHOLE_RING_GLOW_ALPHA: number;
+  };
+
+  it.fails('draws one glow/pulse ring as a child of the wormhole container on open', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.Container[] = [];
+
+    const handle = spawnWormholeOpen(scene, 100, 120, { registry });
+
+    const ring = handle.container.list.find(
+      (o) => o instanceof Phaser.GameObjects.Graphics && o.getData('wormholeRing') === true,
+    );
+    expect(ring).toBeDefined();
+    expect(registry).toContain(handle.container);
+  });
+
+  it('removes and destroys the wormhole exactly once when the close completes; a second close does not double-remove (teardown-clean lifecycle the ring will share)', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.Container[] = [];
+    const handle = spawnWormholeOpen(scene, 10, 20, { registry });
+    const destroySpy = vi.spyOn(handle.container, 'destroy');
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    spawnWormholeClose(scene, handle, registry);
+    const close = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets === handle.container && c.alpha === 0);
+    expect(close).toBeDefined();
+    (close!.onComplete as () => void)();
+
+    expect(handle.isComplete()).toBe(true);
+    expect(destroySpy).toHaveBeenCalledTimes(1);
+    expect(registry).toHaveLength(0);
+
+    // Idempotent teardown: a second close on the same handle never re-removes
+    // or destroys a second time (no double-remove / no leak).
+    expect(() => spawnWormholeClose(scene, handle, registry)).not.toThrow();
+    expect(registry).toHaveLength(0);
+    expect(destroySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.fails('exposes the ring tunables with documented magnitudes and the enable toggle', () => {
+    expect(mod.WORMHOLE_RING_ENABLE).toBe(true);
+    // A visible-but-subtle glow colour (neither the phase-shift cyan split
+    // nor the player-death palette) and a positive radius.
+    expect(mod.WORMHOLE_RING_COLOR).toBeGreaterThan(0);
+    expect(mod.WORMHOLE_RING_RADIUS).toBeGreaterThan(0);
+    // Radius pulse multipliers that breathe around 1.0 (min < max).
+    const [ringMin, ringMax] = mod.WORMHOLE_RING_PULSE_RANGE;
+    expect(ringMin).toBeGreaterThan(0);
+    expect(ringMax).toBeGreaterThan(ringMin);
+    // Soft glow alpha within (0,1].
+    expect(mod.WORMHOLE_RING_GLOW_ALPHA).toBeGreaterThan(0);
+    expect(mod.WORMHOLE_RING_GLOW_ALPHA).toBeLessThanOrEqual(1);
+  });
+
+  it('a wormhole that never opened leaves the registry empty and close() stays a clean no-op (no ring to leak)', async () => {
+    const scene = await boot();
+    const controller = new WormholeController(scene);
+    const registry: Phaser.GameObjects.Container[] = [];
+
+    expect(controller.isOpen).toBe(false);
+    controller.close(registry);
+    expect(registry).toHaveLength(0);
   });
 });
