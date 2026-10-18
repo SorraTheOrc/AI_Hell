@@ -153,6 +153,7 @@ import {
   WORMHOLE_OPEN_DURATION,
   WormholeController,
   formationExtents,
+  getSpawnState,
   placeWavePortal,
   startSpawnAnimation,
   updateSpawnAnimation,
@@ -919,11 +920,20 @@ export class GymFormationScene<
   private _powerUpPlacementContext(): PlacementContext {
     const enemies = this.entities
       .filter((entity) => entity.alive)
-      .map((entity) => ({
-        x: entity.x,
-        y: entity.y,
-        radius: entity.getHitRadius(),
-      }));
+      .map((entity) => {
+        // (AH-0MV8BSMXC0097KLW) A spawning entity is mid-emergence — its
+        // transient transit position hugs the wormhole and would mislead drop
+        // placement (drops may land under a magnet-drawn player later in the
+        // formation's arrival). Avoid the slot it settles on instead.
+        let x = entity.x;
+        let y = entity.y;
+        const state = getSpawnState(entity as unknown as SpawnAnimatable);
+        if (state) {
+          x = state.destX;
+          y = state.destY;
+        }
+        return { x, y, radius: entity.getHitRadius() };
+      });
     const player = this.player
       ? { x: this.player.x, y: this.player.y, radius: SHIP_SIZE / 2 }
       : { x: -1e6, y: -1e6, radius: 0 };
