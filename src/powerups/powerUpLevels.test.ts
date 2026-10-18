@@ -125,12 +125,15 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     expect(POWER_UP_LEVEL_SPECS.force_field[1].cap).toBe(10); // reflect budget cap
     expect(POWER_UP_LEVEL_SPECS.mystery_ufo[0].base).toBe(2); // bonus minerals
     expect(POWER_UP_LEVEL_SPECS.mystery_ufo[0].cap).toBe(6); // bonus minerals cap
-    expect(POWER_UP_LEVEL_SPECS.mystery_ufo[1].base).toBe(250); // bonus score
-    expect(POWER_UP_LEVEL_SPECS.mystery_ufo[1].cap).toBe(1500); // bonus score cap
+    // The instant-bounty score axis (mysteryUfoScore base 250 / cap 1500) is
+    // retired with the collector-drone epic (AH-0MV9G113S009B37I): the
+    // reward becomes a visible drone, so the score pin is removed here and
+    // the new drone axes (lifetime/capacity/radius/spawn interval) anchor in
+    // the level-variables feature (AH-0MVBMPZ2C0008VAE).
   });
 
-  it('Mystery UFO bonus variables resolve monotonically within their caps (AH-0MV1BIXFO006Z1I7)', () => {
-    const variables = ['mysteryUfoMinerals', 'mysteryUfoScore'] as const;
+  it('Mystery UFO mineral bonus variable resolves monotonically within its cap (AH-0MV1BIXFO006Z1I7)', () => {
+    const variables = ['mysteryUfoMinerals'] as const;
     for (const variable of variables) {
       let previous = statAt('mystery_ufo', variable, 0);
       for (let level = 1; level <= 200; level++) {
