@@ -14,6 +14,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { cliSpawnEnv } from './cliChildEnv';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -1711,7 +1712,7 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
     const human = execFileSync(
       process.execPath,
       [script, '--list-scenarios'],
-      { encoding: 'utf8', timeout: 30_000 },
+      { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
     );
     for (const { name, effect } of CAPTURE_SCENARIOS) {
       expect(human).toContain(name);
@@ -1721,7 +1722,7 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
     const jsonOutput = execFileSync(
       process.execPath,
       [script, '--list-scenarios', '--json'],
-      { encoding: 'utf8', timeout: 30_000 },
+      { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
     );
     const parsed = JSON.parse(jsonOutput) as Array<{ name: string }>;
     expect(parsed.map((scenario) => scenario.name)).toEqual(

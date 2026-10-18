@@ -945,13 +945,53 @@ The close is driven everywhere a live wormhole could otherwise be left behind:
 - Gym formation respawns re-open a wormhole through the controller (which
   closes any previous first), keeping the gym matched to the game.
 
+**Portal placement (AH-0MV8BR9Y70079TKC).** The wave wormhole is opened at
+an **independent position well away from the player** — never at the first
+enemy's formation slot — and every formation enemy is anchored **relative to
+the portal** rather than to the screen. The shared rule lives once in
+`src/vfx/wormholeSpawn.ts` (gym↔game parity, §5.1):
+
+- `placeWavePortal()` is a pure function of (formation geometry, playfield
+  bounds, player state) with an injected RNG (used only for exact-distance
+  ties — deterministic replays stay deterministic). With **no player** (the
+  formation gyms have no in-game ship) it returns the formation base
+  unchanged, so gym behaviour is unchanged.
+- **`D_MIN` = the largest of the formation's height or width**, derived from
+  the planned wave's bounding box (`formationExtents(spawns)`) — the single
+  source, never hard-coded per call site. The portal keeps `D_MIN` Euclidean
+  distance from the player's live position **and** from its position
+  projected `WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS` (2 s ≈ the
+  open+growth window) along its current velocity vector (AC1/AC2).
+- When the planned anchor already satisfies `D_MIN` it is kept untouched —
+  the formation stays exactly where the wave designer placed it. Otherwise
+  the nearest conforming candidate is chosen, so the formation displaces as
+  little as possible. When **no** in-bounds candidate meets `D_MIN`, the
+  furthest-available candidate is used and the position is still **never
+  placed inside the player's hull radius + a safety margin** (AC4).
+- `PlayScene.spawnWave()` derives the extents, calls `placeWavePortal()`
+  with the player's live movement state, then translates every planned spawn
+  onto the portal with `anchorSpawnsToPortal()` (portal-relative offsets —
+  spacing, counts, offsets and wave pacing unchanged; a moved portal moves the
+  whole formation with it). The gyms call the same `placeWavePortal()`
+  without a player and lay the formation out from the returned base.
+- `GymFormationScene._spawnFormation()` routes its entity placement through
+  `computeFormationPosition(portal, …)` so both scenes share one code path;
+  with the portal pinned to the formation base this is byte-for-byte the old
+  arithmetic.
+
 **Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters,
-  the dt-driven growth curve and the `WormholeController` single-live
-  lifecycle; `PlayScene.test.ts` (describe “wormhole spawn animation”) and
+  the dt-driven growth curve, the `WormholeController` single-live
+  lifecycle, and the placement/anchoring helpers (`placeWavePortal`:
+  far-anchor fast path, near-player rejection, trajectory projection,
+  no-safe-candidate fallback, hull safety, gym no-player path;
+  `anchorSpawnsToPortal`: portal-relative translation preserving spacing);
+  `PlayScene.test.ts` (describe “wormhole spawn animation” and “wave portal
+  placed away from the player”) and
   `GymFodderEnemies.test.ts` (describe “wormhole spawn animation parity”)
   cover the spawn-protection gates in both scenes plus the regression cases
   (second `spawnWave()` while a wormhole is live, transition/timeout
-  mid-spawn, and a gym wipe→respawn re-opening one wormhole).
+  mid-spawn, a gym wipe→respawn re-opening one wormhole, and the portal
+  staying ≥ `D_MIN` away from the player and its trajectory).
 
 ### 3.2 Existing scenes (reference implementations)
 

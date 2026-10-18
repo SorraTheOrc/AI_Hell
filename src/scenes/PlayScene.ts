@@ -83,8 +83,13 @@ import type { AsteroidSizeTier } from '../entities/Asteroid';
 import { Mineral } from '../entities/Mineral';
 import {
   WormholeController,
+  anchorSpawnsToPortal,
+  formationCentre,
+  formationExtents,
+  placeWavePortal,
   startSpawnAnimation,
   updateSpawnAnimation,
+  type PortalPoint,
   type SpawnAnimatable,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
@@ -1216,6 +1221,9 @@ export class PlayScene extends CombatScene<
     // a non-blocking world hazard (the Asteroid accounting).
     this.planLaneTrafficSpawns();
     const spawns = this.waveManager.planSpawns(this.rng);
+    // The formation is anchored relative to the wave portal; without a live
+    // portal (no planned enemies) the plan is used unchanged.
+    let anchoredSpawns: EnemySpawn[] = spawns;
     // Carry-over continuity (AH-0MV9FUG4J008OHKA): when the previous wave
     // timed out, its surviving formation enemies persist in place — resetting
     // the shared drift/march state below would re-anchor every survivor to its
@@ -1230,12 +1238,17 @@ export class PlayScene extends CombatScene<
         !s.entity.setSeekTargets,
     );
     if (spawns.length > 0) {
-      // Open the wave's wormhole at the first enemy's position. The shared
-      // controller closes any still-open previous wormhole first, so a
-      // transition/timeout that began mid-spawn never strands a live one
+      // Open the wave's wormhole at an independent position well away from
+      // the player (current position and ~2 s trajectory), then anchor every
+      // formation enemy relative to that portal — portal-relative offsets
+      // instead of screen coordinates (AH-0MV8BR9Y70079TKC, AC1–AC5). The
+      // shared controller closes any still-open previous wormhole first, so
+      // a transition/timeout that began mid-spawn never strands a live one
       // (AC3 — AH-0MV9KHLV8006GMX6).
-      this._wormhole.open(spawns[0].x, spawns[0].y, this.wormholeEffects);
-      for (const spawn of spawns) this._spawnEnemy(spawn);
+      const portal = this._resolveWavePortal(spawns);
+      anchoredSpawns = anchorSpawnsToPortal(spawns, portal);
+      this._wormhole.open(portal.x, portal.y, this.wormholeEffects);
+      for (const spawn of anchoredSpawns) this._spawnEnemy(spawn);
       playSpawnSound();
     }
 
@@ -1249,7 +1262,7 @@ export class PlayScene extends CombatScene<
       this.driftDir = 1;
       this.diverAnchorX = 0;
       this.diverAnchorY = 0;
-      this._resetMarchFormation(spawns);
+      this._resetMarchFormation(anchoredSpawns);
     } else {
       // Keep the continuous drift, its direction and the Diver anchor exactly
       // where they were — the fresh wave's enemies join the continuing base
@@ -1259,7 +1272,7 @@ export class PlayScene extends CombatScene<
         // No march block is being carried: a fresh march block (if this wave
         // has one) still starts at its configured origin, exactly as on a
         // clean start.
-        this._resetMarchFormation(spawns);
+        this._resetMarchFormation(anchoredSpawns);
       }
       // When march survivors are carried, the continuing march state is kept
       // in full: fresh march spawns join the single rigid block (mirroring
@@ -1271,6 +1284,29 @@ export class PlayScene extends CombatScene<
       this.waveManager.waveNumber,
       this.waveManager.waveCount,
     );
+  }
+
+  /**
+   * Chooses where the wave's wormhole opens (AH-0MV8BR9Y70079TKC).
+   *
+   * Derives the wave's formation extents from the planned spawns (single
+   * source for `D_MIN = max(height, width)`), then runs the shared
+   * {@link placeWavePortal} helper with the player's live position and
+   * velocity. Uses the scene RNG so deterministic replays stay
+   * deterministic. The portal is independent of any single enemy slot and
+   * the whole formation is anchored relative to it (AC1–AC5).
+   */
+  private _resolveWavePortal(spawns: readonly EnemySpawn[]): PortalPoint {
+    const movement = this.player?.getMovementState();
+    return placeWavePortal({
+      formation: formationExtents(spawns),
+      anchor: formationCentre(spawns),
+      playfield: { width: GAME_WIDTH, height: GAME_HEIGHT },
+      player: movement
+        ? { x: movement.x, y: movement.y, vx: movement.vx, vy: movement.vy }
+        : null,
+      rng: this.rng,
+    });
   }
 
   /** Instantiates one enemy from its spawn descriptor. */

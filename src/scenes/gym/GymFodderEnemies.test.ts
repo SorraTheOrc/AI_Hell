@@ -2027,6 +2027,41 @@ describe('GymFodderEnemies — wormhole spawn animation parity (AH-0MURBER4L0082
     return booted.scene as unknown as GymFodderEnemies;
   }
 
+  it('AC5 — opens the fresh portal at the formation base through the shared placement helper (gym parity, AH-0MV8BR9Y70079TKC)', async () => {
+    const PORTAL_BASE_X = 240;
+    const PORTAL_BASE_Y = 120;
+    class PinnedBaseWrapper extends GymFodderEnemies {
+      override init(_data?: { enemyKey?: string }): void {
+        super.init({ enemyKey: 'scout' });
+      }
+      // Pin the base so the assertion cannot race the per-frame drift that
+      // starts as soon as the scene boots.
+      protected override _resolveFormationBase(): void {
+        super._resolveFormationBase();
+        this.formationBaseX = PORTAL_BASE_X;
+        this.formationBaseY = PORTAL_BASE_Y;
+      }
+    }
+    Object.defineProperty(PinnedBaseWrapper, 'name', {
+      value: 'Wrapper_scout_gym_portal_test',
+    });
+    booted = await bootScene([PinnedBaseWrapper as unknown as typeof Phaser.Scene]);
+    const scene = booted.scene as unknown as GymFodderEnemies;
+
+    // With no player ship the shared `placeWavePortal` returns the anchor
+    // unchanged, so the wormhole sits exactly on the formation base — the
+    // same code path `PlayScene` uses, keeping gym behaviour unchanged.
+    const handle = (
+      scene as unknown as {
+        _wormhole: { handle: { container: Phaser.GameObjects.Container } | null };
+      }
+    )._wormhole.handle;
+    expect(handle).not.toBeNull();
+    expect(handle!.container.x).toBe(PORTAL_BASE_X);
+    expect(handle!.container.y).toBe(PORTAL_BASE_Y);
+    expect(scene.isWormholeOpen()).toBe(true);
+  });
+
   it('spawns enemies at 1 pixel, marked spawning, and grows them to full size', async () => {
     const scene = await bootGym();
     const entities = scene.formationEntities.filter(

@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { cliSpawnEnv } from './cliChildEnv';
 
 import { parseAnalyseArgs, selectRun as selectAnalyseRun } from './analyse-recording.mjs';
 import { parseReplayArgs, selectRun as selectReplayRun } from './replay-recording.mjs';
@@ -185,6 +186,7 @@ describe('CLI entry points (AH-0MV2RY8XT007I91E)', () => {
     spawnSync(process.execPath, [resolve(SCRIPTS_DIR, script), ...args], {
       input,
       encoding: 'utf8',
+      env: cliSpawnEnv(),
     });
 
   for (const script of ['record-session.mjs', 'analyse-recording.mjs', 'replay-recording.mjs']) {

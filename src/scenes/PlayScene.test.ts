@@ -12,6 +12,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
+import {
+  WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS,
+  anchorSpawnsToPortal,
+  formationCentre,
+  formationExtents,
+} from '../vfx/wormholeSpawn';
+import type { EnemySpawn } from '../waves/WaveManager';
 import * as effectsModule from '../audio/effects';
 import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
@@ -4190,6 +4197,206 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
     expect(scene.children.list).not.toContain(previous);
     expect(registry).toHaveLength(1);
     expect(registry[0]).not.toBe(previous);
+  });
+});
+
+describe('PlayScene — wave portal placed away from the player (AH-0MV8BR9Y70079TKC)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** A deterministic V-formation scout wave near the top centre. */
+  const PORTAL_LEVELS: LevelDefinition[] = [
+    {
+      level: 1,
+      name: 'Portal Test',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 4,
+              spacingX: 28,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.5,
+              startY: GAME_HEIGHT * 0.24,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    },
+  ];
+
+  async function bootPortalScene(): Promise<PlayScene> {
+    const result = await bootSceneWithLevels(PORTAL_LEVELS, {
+      asteroidSpawner: false,
+    });
+    booted = result.booted;
+    return result.scene;
+  }
+
+  /** The live wormhole container after `spawnWave()` (single-live controller). */
+  function wavePortalContainer(scene: PlayScene): Phaser.GameObjects.Container {
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+    return registry[registry.length - 1];
+  }
+
+  function livePoints(scene: PlayScene, from: number): { x: number; y: number }[] {
+    return scene
+      .getEnemies()
+      .slice(from)
+      .filter((e) => e.alive)
+      .map((e) => ({ x: e.x, y: e.y }));
+  }
+
+  function bounds(points: readonly { x: number; y: number }[]): {
+    cx: number;
+    cy: number;
+    width: number;
+    height: number;
+  } {
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    return {
+      cx: (minX + maxX) / 2,
+      cy: (minY + maxY) / 2,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }
+
+  /** Parks the player at (x, y) with the given velocity (test seam). */
+  function parkPlayer(
+    scene: PlayScene,
+    x: number,
+    y: number,
+    vx = 0,
+    vy = 0,
+  ): void {
+    const player = scene.getPlayer()!;
+    const state = player.getMovementState();
+    (
+      player as unknown as {
+        _movementState: { x: number; y: number; vx: number; vy: number };
+      }
+    )._movementState = { ...state, x, y, vx, vy };
+    player.setPosition(x, y);
+  }
+
+  /**
+   * The deterministic plan `spawnWave()` is about to emit: this level uses
+   * degenerate spawn ranges (no randomness consumed), so the plan is a pure
+   * function independent of the scene RNG.
+   */
+  function plannedSpawns(scene: PlayScene): EnemySpawn[] {
+    return scene.getWaveManager().planSpawns(() => 0.5);
+  }
+
+  it('AC1 — spawnWave() opens the portal ≥ D_MIN from the player when it hovers on the formation anchor', async () => {
+    const scene = await bootPortalScene();
+    const plan = plannedSpawns(scene);
+    const anchor = formationCentre(plan);
+    const dMin = Math.max(formationExtents(plan).width, formationExtents(plan).height);
+
+    // Park the player on the planned formation anchor: the pre-fix code
+    // opened the wormhole at the first enemy slot — right on or beside the
+    // player. The portal must now move to a conforming position.
+    parkPlayer(scene, anchor.x, anchor.y);
+    scene.spawnWave();
+    const portal = wavePortalContainer(scene);
+
+    expect(
+      Math.hypot(portal.x - anchor.x, portal.y - anchor.y),
+    ).toBeGreaterThanOrEqual(dMin - 1e-6);
+  });
+
+  it('AC2 — spawnWave() avoids the player’s ~2 s trajectory position as well', async () => {
+    const scene = await bootPortalScene();
+    const plan = plannedSpawns(scene);
+    const anchor = formationCentre(plan);
+    const dMin = Math.max(formationExtents(plan).width, formationExtents(plan).height);
+
+    // The player is 150 px below the anchor (already ≥ D_MIN away) but
+    // moving straight up at 100 px/s: after the 2 s open+growth window the
+    // ship is ~50 px past the anchor — well inside D_MIN.
+    const vy = -100;
+    parkPlayer(scene, anchor.x, anchor.y + 150, 0, vy);
+    scene.spawnWave();
+    const portal = wavePortalContainer(scene);
+    const projected = {
+      x: anchor.x,
+      y: anchor.y + 150 + vy * WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS,
+    };
+
+    expect(
+      Math.hypot(portal.x - projected.x, portal.y - projected.y),
+    ).toBeGreaterThanOrEqual(dMin - 1e-6);
+  });
+
+  it('AC3 — the fresh formation is anchored to the portal (a moved portal moves the whole formation)', async () => {
+    const scene = await bootPortalScene();
+    const plan = plannedSpawns(scene);
+    const anchor = formationCentre(plan);
+
+    // Force the portal away (player on the anchor), then check the formation
+    // hangs off the portal: its centre sits exactly on the portal and every
+    // enemy sits on its portal-anchored slot, keeping all spacing.
+    parkPlayer(scene, anchor.x, anchor.y);
+    const beforeCount = scene.getEnemies().length;
+    scene.spawnWave();
+    const portal = wavePortalContainer(scene);
+    const fresh = livePoints(scene, beforeCount);
+    const expected = anchorSpawnsToPortal(plan, {
+      x: portal.x,
+      y: portal.y,
+    });
+    expect(fresh.length).toBe(expected.length);
+
+    const freshCentre = bounds(fresh);
+    expect(Math.abs(freshCentre.cx - portal.x)).toBeLessThan(1e-6);
+    expect(Math.abs(freshCentre.cy - portal.y)).toBeLessThan(1e-6);
+
+    for (let i = 0; i < fresh.length; i += 1) {
+      expect(fresh[i].x).toBeCloseTo(expected[i].x, 4);
+      expect(fresh[i].y).toBeCloseTo(expected[i].y, 4);
+    }
+    // Spacing is preserved (spacingX/spacingY unchanged).
+    expect(fresh[1].x - fresh[0].x).toBeCloseTo(
+      expected[1].x - expected[0].x,
+      4,
+    );
+  });
+
+  it('with a parked player well away, the wave spawns at the planned centre (no gratuitous shift)', async () => {
+    const scene = await bootPortalScene();
+    const plan = plannedSpawns(scene);
+    const anchor = formationCentre(plan);
+    parkPlayer(scene, GAME_WIDTH - 60, GAME_HEIGHT - 40);
+
+    const beforeCount = scene.getEnemies().length;
+    scene.spawnWave();
+    const portal = wavePortalContainer(scene);
+    const fresh = livePoints(scene, beforeCount);
+    const freshCentre = bounds(fresh);
+
+    // The planned anchor already satisfies D_MIN, so the formation is not
+    // shifted at all — the portal sits on the planned formation centre.
+    expect(Math.abs(portal.x - anchor.x)).toBeLessThan(1);
+    expect(Math.abs(portal.y - anchor.y)).toBeLessThan(1);
+    expect(Math.abs(freshCentre.cx - anchor.x)).toBeLessThan(1);
+    expect(Math.abs(freshCentre.cy - anchor.y)).toBeLessThan(1);
   });
 });
 

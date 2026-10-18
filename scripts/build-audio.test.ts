@@ -19,6 +19,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { cliSpawnEnv } from './cliChildEnv';
 import {
   existsSync,
   mkdirSync,
@@ -668,7 +669,7 @@ describe('scripts/build-audio.sh', () => {
       ['--render', '--repo-root', repoRoot, '--manifest', manifestJsonPath],
       {
         encoding: 'utf8',
-        env: { ...process.env, TONEFORGE_CLI: stub },
+        env: { ...cliSpawnEnv(), TONEFORGE_CLI: stub },
       },
     );
     expect(result.stderr).toBe('');

@@ -75,6 +75,7 @@ import {
 } from '../../../audio/effects';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
 import {
+  computeFormationPosition,
   computeFormationReanchorDelta,
   FormationOffset,
   type FormationReanchorRequest,
@@ -150,6 +151,8 @@ import {
 import { type WeaponId } from '../../../utils/weapons';
 import {
   WormholeController,
+  formationExtents,
+  placeWavePortal,
   startSpawnAnimation,
   updateSpawnAnimation,
   type SpawnAnimatable,
@@ -1653,13 +1656,34 @@ export class GymFormationScene<
    * `respawnWithCarriedSurvivors()` so the fresh-spawn path cannot drift.
    */
   private _spawnFormation(offsets: readonly FormationOffset[]): void {
+    // Shared portal placement (AH-0MV8BR9Y70079TKC, AC5): with no player
+    // ship the portal stays at the formation base and the formation is laid
+    // out relative to it — the same `placeWavePortal` code path `PlayScene`
+    // uses (gym↔game parity), so gym behaviour is unchanged.
+    const portal = placeWavePortal({
+      formation: formationExtents(
+        offsets.map((offset) =>
+          computeFormationPosition(
+            0,
+            0,
+            offset,
+            this.config.spacingX,
+            this.config.spacingY,
+          ),
+        ),
+      ),
+      anchor: { x: this.formationBaseX, y: this.formationBaseY },
+      playfield: { width: GAME_WIDTH, height: GAME_HEIGHT },
+    });
     for (const offset of offsets) {
-      const entity = this.config.createEntity(
-        this,
-        this.formationBaseX + offset.col * this.config.spacingX,
-        this.formationBaseY + offset.row * this.config.spacingY,
+      const { x, y } = computeFormationPosition(
+        portal.x,
+        portal.y,
         offset,
+        this.config.spacingX,
+        this.config.spacingY,
       );
+      const entity = this.config.createEntity(this, x, y, offset);
       // Containers are not auto-added to the display list — without this
       // the enemies would never render (project convention, see Gym.ts).
       this.add.existing(entity);
@@ -1670,7 +1694,7 @@ export class GymFormationScene<
     // The fresh formation enters through a wormhole; the controller closes
     // any still-open previous wormhole first (single-live invariant).
     if (offsets.length > 0) {
-      this._wormhole.open(this.formationBaseX, this.formationBaseY);
+      this._wormhole.open(portal.x, portal.y);
     }
   }
 
