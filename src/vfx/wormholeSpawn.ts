@@ -205,6 +205,16 @@ export class WormholeController {
 const SPAWN_STATE_KEY = '__spawnState';
 
 /**
+ * Destination position for the wormhole-to-formation transit movement
+ * (AH-0MV8BSMXC0097KLW). Omit it from {@link startSpawnAnimation} to keep the
+ * enemy in place (legacy callers that do not need movement are unchanged).
+ */
+export interface SpawnDestination {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
  * Spawn-animation bookkeeping attached to a spawning entity.  All times are
  * in **scene-tick seconds** elapsed since the spawn began, so the animation
  * is driven identically by a live `update()` and by deterministic
@@ -219,6 +229,16 @@ export interface SpawnState {
   originalScale: number;
   /** Whether growth has begun (after the wormhole-open delay). */
   growing: boolean;
+  /** World position where the enemy emerged (the wormhole origin). */
+  originX: number;
+  /** World position where the enemy emerged (the wormhole origin). */
+  originY: number;
+  /** Formation position the enemy travels to (equals the origin when unmoving). */
+  destX: number;
+  /** Formation position the enemy travels to (equals the origin when unmoving). */
+  destY: number;
+  /** Whether the entity transits from the origin to the destination. */
+  moves: boolean;
 }
 
 /**
@@ -242,18 +262,30 @@ export function getSpawnState(enemy: SpawnAnimatable): SpawnState | null {
  * @param enemy - The enemy to mark as spawning.
  * @param originalScale - The enemy's full scale (restored when growth ends).
  * @param delay - Seconds to wait (wormhole opening) before growth starts.
+ * @param destination - Optional formation position to travel to. When
+ *   supplied, the enemy also moves from its current (wormhole) position to
+ *   the destination in lock-step with the growth animation, completing by
+ *   the end of the growth phase (within the spawn-protection window). When
+ *   omitted the enemy stays in place (no movement).
  */
 export function startSpawnAnimation(
   enemy: SpawnAnimatable,
   originalScale: number,
   delay: number = WORMHOLE_OPEN_DURATION,
+  destination?: SpawnDestination,
 ): void {
   enemy.setScale(0.01);
+  const moves = destination !== undefined;
   enemy.setData(SPAWN_STATE_KEY, {
     elapsed: 0,
     delay,
     originalScale,
     growing: false,
+    originX: enemy.x,
+    originY: enemy.y,
+    destX: destination?.x ?? enemy.x,
+    destY: destination?.y ?? enemy.y,
+    moves,
   } satisfies SpawnState);
 }
 
@@ -296,9 +328,19 @@ export function updateSpawnAnimation(
   );
   const easedProgress = easeOutCubic(progress);
   enemy.setScale(0.01 + (state.originalScale - 0.01) * easedProgress);
+  if (state.moves) {
+    // Wormhole-to-formation transit (AH-0MV8BSMXC0097KLW): travel from the
+    // emergence point to the formation position in lock-step with the growth
+    // animation, so the enemy is fully arrived before it becomes collidable.
+    enemy.setPosition(
+      state.originX + (state.destX - state.originX) * easedProgress,
+      state.originY + (state.destY - state.originY) * easedProgress,
+    );
+  }
 
   if (progress >= 1) {
     enemy.setScale(state.originalScale);
+    if (state.moves) enemy.setPosition(state.destX, state.destY);
     enemy.setData(SPAWN_STATE_KEY, undefined);
     return false;
   }

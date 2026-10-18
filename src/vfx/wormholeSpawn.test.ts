@@ -271,3 +271,106 @@ describe('wormholeSpawn — enemy growth animation (AC2)', () => {
     expect(getSpawnState(enemy)).toBeNull();
   });
 });
+
+describe('wormholeSpawn — wormhole-to-formation transit movement (AH-0MV8BSMXC0097KLW)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([WormholeVfxStubScene]);
+    return booted.scene;
+  }
+
+  it('records the wormhole origin and the formation destination in the spawn state', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(100, 80);
+
+    startSpawnAnimation(enemy, 1, WORMHOLE_OPEN_DURATION, { x: 400, y: 260 });
+
+    const state = getSpawnState(enemy);
+    expect(state).not.toBeNull();
+    expect(state?.originX).toBeCloseTo(100, 5);
+    expect(state?.originY).toBeCloseTo(80, 5);
+    expect(state?.destX).toBeCloseTo(400, 5);
+    expect(state?.destY).toBeCloseTo(260, 5);
+  });
+
+  it('starts at the wormhole origin and holds there through the wormhole-open delay', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(100, 80);
+    startSpawnAnimation(enemy, 1, WORMHOLE_OPEN_DURATION, { x: 400, y: 260 });
+
+    updateSpawnAnimation(enemy, WORMHOLE_OPEN_DURATION / 2);
+
+    // The wormhole is still opening — the enemy has not begun to move yet.
+    expect(enemy.x).toBeCloseTo(100, 5);
+    expect(enemy.y).toBeCloseTo(80, 5);
+  });
+
+  it('moves from the wormhole toward the formation position in lock-step with growth', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(100, 80);
+    startSpawnAnimation(enemy, 1, WORMHOLE_OPEN_DURATION, { x: 400, y: 260 });
+
+    // Transit begins with the grow phase, after the open delay.
+    updateSpawnAnimation(enemy, WORMHOLE_OPEN_DURATION);
+    updateSpawnAnimation(enemy, ENEMY_GROWTH_DURATION / 2);
+
+    expect(enemy.x).toBeGreaterThan(100);
+    expect(enemy.x).toBeLessThan(400);
+    expect(enemy.y).toBeGreaterThan(80);
+    expect(enemy.y).toBeLessThan(260);
+    expect(isEnemySpawning(enemy)).toBe(true);
+  });
+
+  it('reaches the formation position by the end of the spawn-protection window', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(0, 0);
+    startSpawnAnimation(enemy, 1, WORMHOLE_OPEN_DURATION, { x: 640, y: 360 });
+
+    const stillSpawning = updateSpawnAnimation(enemy, TOTAL_SPAWN_PROTECTION_WINDOW);
+
+    expect(stillSpawning).toBe(false);
+    expect(enemy.x).toBeCloseTo(640, 5);
+    expect(enemy.y).toBeCloseTo(360, 5);
+  });
+
+  it('is dt-driven, monotonic and never overshoots the destination', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(0, 0);
+    startSpawnAnimation(enemy, 1, 0, { x: 100, y: 0 }); // no open delay
+
+    let previous = enemy.x;
+    for (let i = 0; i < 6; i++) {
+      updateSpawnAnimation(enemy, ENEMY_GROWTH_DURATION / 6);
+      expect(enemy.x).toBeGreaterThanOrEqual(previous);
+      expect(enemy.x).toBeLessThanOrEqual(100);
+      previous = enemy.x;
+    }
+    expect(enemy.x).toBeCloseTo(100, 5);
+  });
+
+  it('keeps the entity in place when no destination is supplied', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(50, 60);
+    startSpawnAnimation(enemy, 1);
+
+    updateSpawnAnimation(enemy, TOTAL_SPAWN_PROTECTION_WINDOW);
+
+    expect(enemy.x).toBeCloseTo(50, 5);
+    expect(enemy.y).toBeCloseTo(60, 5);
+  });
+
+  it('does not move an entity that is not spawning', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(50, 60);
+
+    expect(updateSpawnAnimation(enemy, 1)).toBe(false);
+    expect(enemy.x).toBeCloseTo(50, 5);
+    expect(enemy.y).toBeCloseTo(60, 5);
+  });
+});
