@@ -39,6 +39,7 @@ export {
   EVAL_DATASET_VERSION,
   EVAL_TELEMETRY_SCHEMA_VERSION,
   BALANCE_STATISTICS_SCHEMA_VERSION,
+  TUNE_COMPARISON_SCHEMA_VERSION,
   type ArenaBalanceConfig,
   type ArenaConfig,
   type ArenaInput,
@@ -53,6 +54,9 @@ export {
   type TelemetryRecord,
   type TelemetryRunHeaderRecord,
   type TelemetryTickRecord,
+  type TuneComparison,
+  type TuneMetricDelta,
+  type TuneThresholds,
 } from './types';
 export {
   abEvaluate,
@@ -96,12 +100,21 @@ export {
   formatEvaluationReport,
   serialiseRecordsJsonl,
   serialiseReport,
+  serialiseTuneComparison,
   stableStringify,
   type AbReport,
   type BalanceReport,
   type EvaluationReport,
   type RunReport,
 } from './report';
+export {
+  compareBalanceAggregates,
+  compareDistribution,
+  DEFAULT_TUNE_THRESHOLD,
+  TUNE_COMPARED_METRICS,
+  type TuneComparedMetric,
+  type TuneComparisonOptions,
+} from './tune';
 export {
   compareRecordings,
   runAbEvaluation,

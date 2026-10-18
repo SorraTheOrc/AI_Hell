@@ -24,6 +24,7 @@ import {
   type BalanceAggregate,
   type DistributionStats,
   type TelemetryRecord,
+  type TuneComparison,
 } from './types';
 
 /** A per-run report entry. */
@@ -200,6 +201,14 @@ export function serialiseRecordsJsonl(records: readonly TelemetryRecord[]): stri
 /** Serialises a run report to stable JSON (AC5). */
 export function serialiseReport(report: EvaluationReport | AbReport | BalanceReport): string {
   return stableStringify(report);
+}
+
+/**
+ * Serialises a tune comparison to stable, recursively key-sorted JSON so the
+ * same edit + seeds yields a byte-identical comparison artifact (parent AC3).
+ */
+export function serialiseTuneComparison(comparison: TuneComparison): string {
+  return stableStringify(comparison);
 }
 
 /** Builds a versioned balance-batch report (AC4). */
