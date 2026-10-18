@@ -12,12 +12,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { aggregateBalanceStats } from './metrics';
-import { serialiseTuneComparison, stableStringify } from './report';
 import {
+  buildBalanceReport,
+  fnv1aHash,
+  serialiseTuneComparison,
+  stableStringify,
+  type BalanceReport,
+} from './report';
+import type { BatchedRunSummary } from './engine';
+import {
+  assertNoSideEffects,
+  assertSameSweep,
   compareBalanceAggregates,
   compareDistribution,
   DEFAULT_TUNE_THRESHOLD,
+  recordsHashDifferences,
+  SameSweepGuardError,
+  sweepConfigDifferences,
+  SWEEP_CONFIG_FIELDS,
   TUNE_COMPARED_METRICS,
+  type SweepConfigDifference,
 } from './tune';
 import {
   BALANCE_STATISTICS_SCHEMA_VERSION,
@@ -48,6 +62,58 @@ function runStats(overrides: Partial<BalanceRunStats> = {}): BalanceRunStats {
 /** A distribution summary constant (fixtures for threshold edge cases). */
 function dist(stats: Partial<DistributionStats>): DistributionStats {
   return { count: 0, mean: 0, median: 0, min: 0, max: 0, stdDev: 0, ...stats };
+}
+
+/** A deterministic per-run summary with a stable hash per (policy, seed). */
+function runSummary(
+  policy: string,
+  seed: number,
+  overrides: Partial<BatchedRunSummary> = {},
+): BatchedRunSummary {
+  return {
+    policy,
+    seed,
+    stats: runStats({ seed }),
+    recordsHash: fnv1aHash(`${policy}:${seed}`),
+    recordCount: 1,
+    ...overrides,
+  };
+}
+
+/** Builds a minimal {@link BalanceReport} for the same-sweep guard fixtures. */
+function balanceReport(overrides: {
+  readonly policies?: readonly string[];
+  readonly seeds?: readonly number[];
+  readonly ticks?: number;
+  readonly dt?: number;
+  readonly sampleEveryTicks?: number;
+  readonly runs?: readonly BatchedRunSummary[];
+} = {}): BalanceReport {
+  const policies = overrides.policies ?? ['competent'];
+  const seeds = overrides.seeds ?? [1, 2];
+  const runs =
+    overrides.runs ??
+    policies.flatMap((policy) => seeds.map((seed) => runSummary(policy, seed)));
+  return buildBalanceReport({
+    policies,
+    seeds,
+    ticks: overrides.ticks ?? 1800,
+    dt: overrides.dt ?? 1 / 60,
+    sampleEveryTicks: overrides.sampleEveryTicks ?? 1,
+    runs,
+    aggregate: aggregateBalanceStats(runs.map((run) => run.stats)),
+  });
+}
+
+/** Asserts `fn` throws a {@link SameSweepGuardError} and returns it. */
+function guardError(fn: () => void): SameSweepGuardError {
+  try {
+    fn();
+  } catch (caught) {
+    if (caught instanceof SameSweepGuardError) return caught;
+    throw caught;
+  }
+  throw new Error('expected SameSweepGuardError to be thrown');
 }
 
 describe('compareBalanceAggregates — per-metric deltas (AC1)', () => {
@@ -380,5 +446,161 @@ describe('pure core: no I/O and no wall clock (AC4)', () => {
     } finally {
       nowStub.mockRestore();
     }
+  });
+
+  it('the same-sweep guard never consults the clock, the RNG or the network', () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response());
+    try {
+      const a = balanceReport();
+      const b = balanceReport({ ticks: 900 });
+      expect(sweepConfigDifferences(a, b).length).toBeGreaterThan(0);
+      expect(assertSameSweep(a, a)).toBeUndefined();
+      expect(assertNoSideEffects(a, a)).toBeUndefined();
+      expect(nowSpy).not.toHaveBeenCalled();
+      expect(randomSpy).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      nowSpy.mockRestore();
+      randomSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+describe('same-sweep guard — identical sweep configuration required (AC2)', () => {
+  const baseline = balanceReport();
+
+  it('finds no differences and never refuses for two identical-config batches', () => {
+    const candidate = balanceReport();
+    expect(sweepConfigDifferences(baseline, candidate)).toEqual([]);
+    expect(assertSameSweep(baseline, candidate)).toBeUndefined();
+    expect(assertSameSweep(baseline, baseline)).toBeUndefined();
+  });
+
+  it('reports each differing sweep-config field before any delta is computed', () => {
+    expect(sweepConfigDifferences(baseline, balanceReport({ seeds: [3, 4] }))).toEqual([
+      { field: 'seeds', baseline: [1, 2], candidate: [3, 4] },
+    ]);
+    expect(sweepConfigDifferences(baseline, balanceReport({ policies: ['aggressive'] }))).toEqual([
+      { field: 'policies', baseline: ['competent'], candidate: ['aggressive'] },
+    ]);
+    expect(sweepConfigDifferences(baseline, balanceReport({ ticks: 900 }))).toEqual([
+      { field: 'ticks', baseline: 1800, candidate: 900 },
+    ]);
+    expect(sweepConfigDifferences(baseline, balanceReport({ dt: 1 / 120 }))).toEqual([
+      { field: 'dt', baseline: 1 / 60, candidate: 1 / 120 },
+    ]);
+    expect(sweepConfigDifferences(baseline, balanceReport({ sampleEveryTicks: 5 }))).toEqual([
+      { field: 'sampleEveryTicks', baseline: 1, candidate: 5 },
+    ]);
+  });
+
+  it('treats a reordered seed list as a byte-level config difference', () => {
+    expect(sweepConfigDifferences(baseline, balanceReport({ seeds: [2, 1] }))).toEqual([
+      { field: 'seeds', baseline: [1, 2], candidate: [2, 1] },
+    ]);
+  });
+
+  it('throws a SameSweepGuardError naming every differing field before comparison', () => {
+    const different = balanceReport({ ticks: 900, policies: ['aggressive'] });
+    const error = guardError(() => assertSameSweep(baseline, different));
+    expect(error.code).toBe('sweep-config-mismatch');
+    expect(error.differences).toEqual([
+      { field: 'policies', baseline: ['competent'], candidate: ['aggressive'] },
+      { field: 'ticks', baseline: 1800, candidate: 900 },
+    ]);
+    expect(error.message).toContain('policies');
+    expect(error.message).toContain('ticks');
+    expect(error.message).toMatch(/refusing to compare/i);
+  });
+
+  it('reports all five fields when everything differs', () => {
+    const wildlyDifferent = balanceReport({
+      policies: ['aggressive'],
+      seeds: [9],
+      ticks: 60,
+      dt: 0.5,
+      sampleEveryTicks: 10,
+    });
+    const error = guardError(() => assertSameSweep(baseline, wildlyDifferent));
+    expect(error.code).toBe('sweep-config-mismatch');
+    const fields = error.differences
+      .filter((difference): difference is SweepConfigDifference => 'field' in difference)
+      .map((difference) => difference.field);
+    expect(fields).toEqual([...SWEEP_CONFIG_FIELDS]);
+  });
+
+  it('surfaces an actionable message identifying the differing batch field', () => {
+    const error = guardError(() => assertSameSweep(baseline, balanceReport({ dt: 0.25 })));
+    expect(error.message).toContain('dt');
+    expect(error.message).toMatch(/identical/i);
+  });
+});
+
+describe('same-sweep guard — identical-config re-run side-effect detection (AC2)', () => {
+  const baseline = balanceReport();
+
+  it('accepts an identical-config re-run with byte-identical per-run hashes', () => {
+    expect(assertNoSideEffects(baseline, balanceReport())).toBeUndefined();
+  });
+
+  it('exposes per-run hash differences purely', () => {
+    const drifted = balanceReport({ runs: [runSummary('competent', 1, { recordsHash: 'deadbeef' })] });
+    expect(recordsHashDifferences(baseline, drifted)).toEqual([
+      { policy: 'competent', seed: 1, baseline: fnv1aHash('competent:1'), candidate: 'deadbeef' },
+      { policy: 'competent', seed: 2, baseline: fnv1aHash('competent:2'), candidate: '' },
+    ]);
+  });
+
+  it('errors when a re-run drifts for one (policy, seed) record hash', () => {
+    const drifted = balanceReport({
+      runs: [
+        runSummary('competent', 1, { recordsHash: 'deadbeef' }),
+        runSummary('competent', 2),
+      ],
+    });
+    const error = guardError(() => assertNoSideEffects(baseline, drifted));
+    expect(error.code).toBe('records-hash-drift');
+    expect(error.differences).toEqual([
+      { policy: 'competent', seed: 1, baseline: fnv1aHash('competent:1'), candidate: 'deadbeef' },
+    ]);
+    expect(error.message).toContain('competent/1');
+    expect(error.message).toMatch(/side effect/i);
+  });
+
+  it('reports hash drift for multiple policies in deterministic order', () => {
+    const original = balanceReport({ policies: ['aggressive', 'competent'] });
+    const drifted = balanceReport({
+      policies: ['aggressive', 'competent'],
+      runs: [
+        runSummary('aggressive', 1, { recordsHash: 'aaaaaaaa' }),
+        runSummary('aggressive', 2),
+        runSummary('competent', 1),
+        runSummary('competent', 2, { recordsHash: 'bbbbbbbb' }),
+      ],
+    });
+    const error = guardError(() => assertNoSideEffects(original, drifted));
+    expect(error.code).toBe('records-hash-drift');
+    expect(error.differences).toEqual([
+      { policy: 'aggressive', seed: 1, baseline: fnv1aHash('aggressive:1'), candidate: 'aaaaaaaa' },
+      { policy: 'competent', seed: 2, baseline: fnv1aHash('competent:2'), candidate: 'bbbbbbbb' },
+    ]);
+  });
+
+  it('detects a missing run on a re-run as drift (hash differs from an absent run)', () => {
+    const partial = balanceReport({ runs: [runSummary('competent', 1)] });
+    const error = guardError(() => assertNoSideEffects(baseline, partial));
+    expect(error.code).toBe('records-hash-drift');
+    expect(error.differences).toEqual([
+      { policy: 'competent', seed: 2, baseline: fnv1aHash('competent:2'), candidate: '' },
+    ]);
+  });
+
+  it('refuses a config-mismatched pair as a config mismatch, not a drift', () => {
+    const differentConfig = balanceReport({ ticks: 900 });
+    const error = guardError(() => assertNoSideEffects(baseline, differentConfig));
+    expect(error.code).toBe('sweep-config-mismatch');
   });
 });

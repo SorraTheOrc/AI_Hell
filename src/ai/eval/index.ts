@@ -108,10 +108,21 @@ export {
   type RunReport,
 } from './report';
 export {
+  assertNoSideEffects,
+  assertSameSweep,
   compareBalanceAggregates,
   compareDistribution,
   DEFAULT_TUNE_THRESHOLD,
+  recordsHashDifferences,
+  SameSweepGuardError,
+  sweepConfigDifferences,
+  SWEEP_CONFIG_FIELDS,
   TUNE_COMPARED_METRICS,
+  type RunHashDifference,
+  type SameSweepDifference,
+  type SameSweepGuardCode,
+  type SweepConfigDifference,
+  type SweepConfigField,
   type TuneComparedMetric,
   type TuneComparisonOptions,
 } from './tune';

@@ -26,6 +26,8 @@ import {
   type TuneMetricDelta,
   type TuneThresholds,
 } from './types';
+import { stableStringify, type BalanceReport } from './report';
+import type { BatchedRunSummary } from './engine';
 
 /**
  * Default relative classification threshold: ±10 % of the baseline mean or
@@ -228,4 +230,169 @@ export function compareBalanceAggregates(
       .map((delta) => delta.metric)
       .sort(),
   };
+}
+
+/**
+ * The five sweep-configuration fields the same-sweep guard compares. Both
+ * batches must agree on **every** field before their deltas may be computed
+ * (parent AC2).
+ */
+export const SWEEP_CONFIG_FIELDS = Object.freeze([
+  'policies',
+  'seeds',
+  'ticks',
+  'dt',
+  'sampleEveryTicks',
+] as const);
+
+/** One of the {@link SWEEP_CONFIG_FIELDS} compared by the guard. */
+export type SweepConfigField = (typeof SWEEP_CONFIG_FIELDS)[number];
+
+/** Why the same-sweep guard refused a comparison. */
+export type SameSweepGuardCode = 'sweep-config-mismatch' | 'records-hash-drift';
+
+/** A sweep-config field whose baseline and candidate values differ. */
+export interface SweepConfigDifference {
+  readonly field: SweepConfigField;
+  readonly baseline: unknown;
+  readonly candidate: unknown;
+}
+
+/**
+ * A per-run `(policy, seed)` coordinate whose recorded telemetry hash differs
+ * between two batches (an absent run is reported with an empty hash).
+ */
+export interface RunHashDifference {
+  readonly policy: string;
+  readonly seed: number;
+  readonly baseline: string;
+  readonly candidate: string;
+}
+
+/** Any difference the same-sweep guard detected. */
+export type SameSweepDifference = SweepConfigDifference | RunHashDifference;
+
+/**
+ * Raised by {@link assertSameSweep} / {@link assertNoSideEffects} when two
+ * batches may not be compared. `code` distinguishes a sweep-configuration
+ * mismatch (`sweep-config-mismatch`) from a non-deterministic identical-config
+ * re-run (`records-hash-drift`); `differences` carries the structured evidence
+ * for a shell to surface. Pure: constructing the error does no I/O.
+ */
+export class SameSweepGuardError extends Error {
+  readonly code: SameSweepGuardCode;
+  readonly differences: readonly SameSweepDifference[];
+
+  constructor(
+    message: string,
+    code: SameSweepGuardCode,
+    differences: readonly SameSweepDifference[],
+  ) {
+    super(message);
+    this.name = 'SameSweepGuardError';
+    this.code = code;
+    this.differences = differences;
+  }
+}
+
+/** Structural equality via the shared key-sorted serialisation. */
+function sameValue(a: unknown, b: unknown): boolean {
+  return stableStringify(a) === stableStringify(b);
+}
+
+/**
+ * Compares the sweep configuration of two balance batches (parent AC2), purely.
+ * Returns one {@link SweepConfigDifference} per differing field in
+ * {@link SWEEP_CONFIG_FIELDS} order; an empty array means the batches are
+ * sweep-identical and safe to diff. Never throws and computes no deltas.
+ */
+export function sweepConfigDifferences(
+  baseline: BalanceReport,
+  candidate: BalanceReport,
+): SweepConfigDifference[] {
+  const differences: SweepConfigDifference[] = [];
+  for (const field of SWEEP_CONFIG_FIELDS) {
+    const baselineValue = baseline.config[field];
+    const candidateValue = candidate.config[field];
+    if (!sameValue(baselineValue, candidateValue)) {
+      differences.push({ field, baseline: baselineValue, candidate: candidateValue });
+    }
+  }
+  return differences;
+}
+
+/**
+ * Refuses (throws {@link SameSweepGuardError}) to compare two batches whose
+ * sweep configuration differs (parent AC2), **before** any delta is computed.
+ * A no-op when the configuration matches exactly.
+ */
+export function assertSameSweep(baseline: BalanceReport, candidate: BalanceReport): void {
+  const differences = sweepConfigDifferences(baseline, candidate);
+  if (differences.length === 0) return;
+  const fields = differences.map((difference) => difference.field).join(', ');
+  throw new SameSweepGuardError(
+    `Refusing to compare batches with different sweep configuration (${fields}): ` +
+      'both batches must use identical policies, seeds, ticks, dt and sampleEveryTicks.',
+    'sweep-config-mismatch',
+    differences,
+  );
+}
+
+/**
+ * Compares the recorded per-run telemetry hashes of two batches, keyed by
+ * `(policy, seed)` and visited in deterministic key order. A missing run on
+ * either side reports an empty hash, so an added or dropped run counts as
+ * drift. Pure; returns an empty array when every hash matches.
+ */
+export function recordsHashDifferences(
+  baseline: BalanceReport,
+  candidate: BalanceReport,
+): RunHashDifference[] {
+  const byCoordinate = (report: BalanceReport): Map<string, BatchedRunSummary> => {
+    const map = new Map<string, BatchedRunSummary>();
+    for (const run of report.runs) map.set(`${run.policy}\u0000${run.seed}`, run);
+    return map;
+  };
+  const baselineRuns = byCoordinate(baseline);
+  const candidateRuns = byCoordinate(candidate);
+  const coordinates = [
+    ...new Set([...baselineRuns.keys(), ...candidateRuns.keys()]),
+  ].sort();
+  const differences: RunHashDifference[] = [];
+  for (const coordinate of coordinates) {
+    const [policy, seed] = coordinate.split('\u0000');
+    const baselineHash = baselineRuns.get(coordinate)?.recordsHash ?? '';
+    const candidateHash = candidateRuns.get(coordinate)?.recordsHash ?? '';
+    if (baselineHash !== candidateHash) {
+      differences.push({
+        policy,
+        seed: Number(seed),
+        baseline: baselineHash,
+        candidate: candidateHash,
+      });
+    }
+  }
+  return differences;
+}
+
+/**
+ * Errors on a non-empty byte-diff of an identical-config re-run (parent AC2):
+ * first asserts the sweep configuration is identical, then requires every
+ * per-run `recordsHash` to match. Any drift means the pure arena observed a
+ * side effect or non-determinism (e.g. a wall clock, ambient RNG or I/O leak)
+ * and the batches must not be trusted. Pure; a no-op when the re-run is
+ * byte-identical.
+ */
+export function assertNoSideEffects(baseline: BalanceReport, rerun: BalanceReport): void {
+  assertSameSweep(baseline, rerun);
+  const differences = recordsHashDifferences(baseline, rerun);
+  if (differences.length === 0) return;
+  const coordinates = differences.map((difference) => `${difference.policy}/${difference.seed}`);
+  throw new SameSweepGuardError(
+    `Identical-config re-run drifted for ${differences.length} run(s) ` +
+      `(${coordinates.join(', ')}): the recorded per-run record hashes differ, ` +
+      'indicating a side effect or non-determinism.',
+    'records-hash-drift',
+    differences,
+  );
 }

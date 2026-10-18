@@ -1697,12 +1697,15 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
     }
   });
 
-  it('the spawned CLI lists every scenario, exits 0 and boots no browser or server', () => {
+  it('the spawned CLI lists every scenario, exits 0 and boots no browser or server', { timeout: 60_000 }, () => {
     // Instrumentation of the real `main()` entry point: spawn the CLI with
-    // --list-scenarios and assert the listing with a boot-discriminating
-    // timeout. If `main` ever reached `runCapture`, the child would start
-    // Vite + Chromium and record a full run — far beyond this bound — and the
-    // test would fail with a timeout instead of a listing.
+    // --list-scenarios and assert the listing within the child's own 30 s
+    // execFileSync bound. The per-test timeout is generous (60 s) because a
+    // loaded vitest run can spend >5 s just spawning the Vite-SSR loader
+    // (load flake, AH-0MVE112BV006EDSZ); if `main` ever reached `runCapture`,
+    // the child would start Vite + Chromium and record a full run — far
+    // beyond the 30 s bound — and the test fails with a timeout instead of a
+    // listing.
     const script = resolve(process.cwd(), 'scripts/capture-gameplay.mjs');
 
     const human = execFileSync(
