@@ -2010,12 +2010,12 @@ Scout's two-phase tell) — never re-added in a thin scene class.
 `aihell-scout-fire` (baked, seed 32181 — AC4, AH-0MVCRR2H2007VPDU; replaces the
 near-clipping `weapon-laser-zap`); Diver dive-start `aihell-diver-dive-start`, dive loop
 `aihell-diver-dive-loop`, fire `aihell-diver-fire`, destruction
-`aihell-diver-destruction` (multi-seed 32193–32195); Tank advance
+`aihell-diver-destruction` (multi-seed 32173/32176/32197 — AC3 scale-degree variants); Tank advance
 `aihell-tank-advance`, fire `aihell-tank-fire`; Phaser advance
 `aihell-phaser-advance`, fire `aihell-phaser-fire`; Swarm burst
 `aihell-swarm-burst`; Boss phase cue `aihell-boss-phase-cue` (per-phase seeds
-32204–32207), Boss fire `aihell-boss-fire`; spawn `aihell-enemy-spawn`;
-destruction `aihell-enemy-destruction` (multi-seed 32110–32112). Full catalogue:
+32242/32227/32207/32204 — AC3 scale-degree variants), Boss fire `aihell-boss-fire`; spawn `aihell-enemy-spawn`;
+destruction `aihell-enemy-destruction` (multi-seed 32113/32128/32144 — AC3 scale-degree variants). Full catalogue:
 [Audio cue-to-recipe mapping](AUDIO_TONEFORGE_CUE_MAPPING.md).
 
 ### Projectile identity & per-shot feel (per-enemy visuals epic)

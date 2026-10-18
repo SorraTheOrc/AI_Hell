@@ -1446,9 +1446,15 @@ gym behave identically. Coverage: `src/utils/beat.test.ts`,
 `src/audio/effects.test.ts`, the `PlayScene` beat-accent integration test and
 the gym↔game equivalence suite.
 
-#### Destruction Variation (baked variants)
+#### Destruction Variation (baked scale-degree variants)
 
-Destruction sweeps are intentionally non-identical between kills. The original per-invocation pitch jitter (a single ±15 % factor applied to all endpoints) is now **approximated at build time**: `aihell-enemy-destruction` is baked as a **3-seed variant range** (32110–32112) and `aihell-diver-destruction` as 32193–32195, and one variant is chosen at random per play in `src/audio/effects.ts`. The descending character and tonal relationships are preserved, and every variant is seed-deterministic. Audio remains outside the deterministic VFX seed contract, so the runtime variant choice uses `Math.random()`. The retired `playTankDestructionSound()` cue and the runtime `EXPLOSION_PITCH_JITTER` / `explosionPitchFactor()` helpers no longer exist (see the [cue mapping](AUDIO_TONEFORGE_CUE_MAPPING.md)).
+Destruction sweeps are intentionally non-identical between kills. The original per-invocation pitch jitter (a single ±15 % factor applied to all endpoints) is now **approximated at build time as A-minor scale-degree variants**: `aihell-enemy-destruction` is baked as a **3-seed variant range** (32113 / 32128 / 32144 — starts A3/A4/E5, each descending to A1) and `aihell-diver-destruction` as 32173 / 32176 / 32197 (starts E3/B3/E4, each descending to E2) under the enemy-balance epic (AH-0MVAUU594007S92Q, AC3), and one variant is chosen at random per play in `src/audio/effects.ts`. The descending character and tonal relationships are preserved, every variant sits on a note of the battle-scenes' provisional **A natural minor** scale (equal temperament, A4 = 440 Hz), and every variant is seed-deterministic. Audio remains outside the deterministic VFX seed contract, so the runtime variant choice uses `Math.random()`. The retired `playTankDestructionSound()` cue and the runtime `EXPLOSION_PITCH_JITTER` / `explosionPitchFactor()` helpers no longer exist (see the [cue mapping](AUDIO_TONEFORGE_CUE_MAPPING.md)).
+
+All **enemy** SFX (spawn, advance, fire, destruction, boss cues) are pitched onto the battle-scenes'
+A natural minor scale and gain-staged onto category-relative amplitude tiers (ambience ≤ 0.02,
+subtle one-shots 0.055, heavy one-shots 0.090 RMS, every peak ≤ 0.50) — see [Enemy audio balance](AUDIO_ENEMY_BALANCE.md) and the [cue mapping](AUDIO_TONEFORGE_CUE_MAPPING.md); the balance guard
+(`scripts/audio-balance-guard.mjs`) asserts both invariants in `npm run build-audio:verify`
+(balance epic AH-0MVAUU594007S92Q).
 
 #### Per-Enemy Audio Character
 

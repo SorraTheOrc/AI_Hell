@@ -169,6 +169,25 @@ baked durations must preserve the existing 0.6 s lead:
 | `playPhaserAdvanceCue` | `PHASER_ADVANCE_CUE_DURATION` 0.6 s | `playPhaserFireSound` |
 | `playTankAdvanceCue` | `TANK_ADVANCE_CUE_DURATION` 0.6 s | `playTankFireSound` |
 
+### Amplitude tiers (AC2 — AH-0MVD02WZI004QCTP)
+
+Every **enemy** cue is gain-staged onto a documented category-relative RMS tier, enforced by the
+balance guard (`scripts/audio-balance-guard.mjs`) as part of `npm run build-audio:verify`:
+
+| Tier | RMS target (±1.5 dB) | Peak ceiling | Cues |
+|---|---|---|---|
+| Ambience | ≤ 0.02 | 0.50 | `aihell-diver-dive-loop` (`playDiveSound`) |
+| Subtle one-shots | 0.055 | 0.50 | `aihell-enemy-spawn`, `aihell-tank-advance`, `aihell-scout-advance`, `aihell-phaser-advance`, `aihell-phaser-fire`, `aihell-diver-fire`, `aihell-swarm-burst`, `aihell-diver-dive-start`, `aihell-bullet-destruction` |
+| Heavy one-shots | 0.090 | 0.50 | `aihell-scout-fire`, `aihell-enemy-destruction`, `aihell-diver-destruction`, `aihell-boss-destruction`, `aihell-tank-fire`, `aihell-boss-fire`, `aihell-boss-hit`, `aihell-boss-phase-cue`, `aihell-boss-spawn`, `aihell-boss-phase-transition` |
+
+The tier is realised by the recipe's `mix` bus gain (one value per out-of-tier cue was retuned in AC2);
+multi-seed variant ranges (enemy/diver destruction, boss-phase-cue) are additionally checked to stay
+within < 0.5 dB of each other. See [`docs/AUDIO_ENEMY_BALANCE.md`](AUDIO_ENEMY_BALANCE.md) for the
+analysis report (pre-change spread ~7.9× peak / ~9.3× RMS and post-change per-asset values). The
+Scout fire cue was re-created as the in-repo `aihell-scout-fire` recipe under AC4
+(AH-0MVCRR2H2007VPDU) and sits in the Heavy tier; `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×) runtime
+behaviour is unchanged.
+
 ### A-minor scale conformance (AC3 — AH-0MVCRR203005HKVZ)
 
 Every pitched oscillator automation point (static frequency, `set`/ramp start,
