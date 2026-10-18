@@ -372,8 +372,23 @@ tolerant of partial runs and append-friendly:
   WebM basename (`capture-output/gameplay-<timestamp>.webm` →
   `gameplay-<timestamp>.action.jsonl`). Dev runs may alternatively write to
   the telemetry JSONL sink (`localStorage`) and export on demand.
+- **Capture wiring (AH-0MVDV4DMY001Z7CU):** `npm run capture` now performs
+  that export automatically — it opts the page into telemetry
+  (`VITE_TELEMETRY_ENABLED=true`/`VITE_TELEMETRY_SINK=jsonl`), reads the
+  recorded run back from the page's JSONL sink at run end, and writes
+  `<run-id>.action.jsonl` next to each WebM using the canonical serialiser
+  format (ported byte-for-byte into `scripts/capture-series.mjs`; parity
+  asserted by `scripts/capture-gameplay.test.ts`). It also writes the §7.5
+  join anchor as `<run-id>.capture.json` (chosen over extending the versioned
+  series header, so the series format stays the documented one). See
+  [docs/dev/gameplay-capture.md](./gameplay-capture.md) →
+  [Action-intensity export](./gameplay-capture.md#action-intensity-export).
 - **Size bound:** at 10 Hz and ~120 B/sample, a 30-minute run is ≈ 18000
-  samples ≈ 2.2 MB raw — negligible next to the WebM.
+  samples ≈ 2.2 MB raw — negligible next to the WebM. (The telemetry sink
+  that feeds the export records the full per-tick state, so the page's
+  `localStorage` quota — not the series file — is the practical bound on how
+  much of a very long run the export can cover; the export tolerates a
+  prefix/partial series.)
 
 ### 7.4 Run identity and clock anchor
 
@@ -397,16 +412,23 @@ WebM playback timeline.
 
 **Anchor:** record a dev-gated **`capture_started`** marker (epoch ms) at the
 moment `MediaRecorder` starts — the same injection point that already hosts
-the run-end listener. Then, for a WebM whose first frame is `capture_started`:
+the run-end listener. `npm run capture` now **persists the anchor**: after
+each run it writes `<run-id>.capture.json` (sidecar, §7.3) containing the
+`capture_started` marker, the telemetry run-header `startedAt` (epoch ms),
+and the precomputed `offsetMs = capture_started − run_startedAt`
+(`kind: 'capture-join-anchor'`, `schemaVersion: 1`), so `mapTimeToVideo` can
+run **offline and deterministically** without re-running the game
+(AH-0MVDV4DMY001Z7CU, AC2). Then, for a WebM whose first frame is
+`capture_started`:
 
 ```
-videoTimeMs(t)  ≈  t − ( capture_started − run_startedAt )
+videoTimeMs(t)  ≈  t − offsetMs          (offsetMs = capture_started − run_startedAt)
 ```
 
 Because the first recorded sample may predate `capture_started` (warm-up), a
-consumer clamps at 0. If the marker is absent (e.g. an older capture), fall
-back to the telemetry `startedAt` plus the known `--warmup` value, and flag
-the join as approximate.
+consumer clamps at 0. If the marker is absent (e.g. an older capture, or the
+anchor flags itself `approximate`), fall back to the telemetry `startedAt`
+plus the known `--warmup` value, and flag the join as approximate.
 
 **Highlight recipe** (for the video-editor consumer):
 

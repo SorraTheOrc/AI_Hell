@@ -194,6 +194,12 @@ export interface CaptureIterationRecord {
   reasons?: string[];
   pageErrors?: string[];
   error?: string;
+  /** `<stem>.action.jsonl` path, or null when the export failed. */
+  seriesOutput?: string | null;
+  /** `<stem>.capture.json` path, or null when the export failed. */
+  anchorOutput?: string | null;
+  /** Number of extracted action-intensity samples (0 = header-only). */
+  seriesSampleCount?: number;
 }
 
 /** The aggregate shape a multi-clip `--count` run returns. */
@@ -217,6 +223,37 @@ export function buildIterationRecord(
 export function summariseCaptureBatch(
   iterations?: CaptureIterationRecord[],
 ): CaptureBatchSummary;
+
+/** The series/join-anchor fields a clip result carries when exported. */
+export interface CaptureSeriesExport {
+  /** `<stem>.action.jsonl` path, or null when the export failed. */
+  seriesOutput: string | null;
+  /** `<stem>.capture.json` path, or null when the export failed. */
+  anchorOutput: string | null;
+  /** Number of extracted action-intensity samples (0 = header-only). */
+  seriesSampleCount: number;
+  /** The telemetry run header's seed, or null when absent. */
+  seriesRunSeed: number | null;
+  /** The telemetry run header's `startedAt` epoch ms, or null. */
+  seriesStartedAtEpochMs: number | null;
+  /** True when the join anchor is not exact (a missing epoch input). */
+  anchorApproximate: boolean;
+  /** Export error message when the sidecars could not be written. */
+  seriesExportError?: string;
+}
+
+/**
+ * Writes the action-intensity series and §7.5 join anchor for one clip
+ * (pure logic with injected `mkdir`/`writeFile` for hermetic tests).
+ */
+export function writeCaptureSeriesArtifacts(params: {
+  jsonl: string;
+  outputPath: string;
+  captureStarted?: { event: string; atEpochMs: number } | null;
+  sampleRateHz?: number;
+  mkdir?: (dir: string, opts?: object) => unknown;
+  writeFile?: (path: string, content: string) => unknown;
+}): CaptureSeriesExport;
 export function runCaptureIterations(params: {
   outputPaths: string[];
   items?: CapturePlanItem[];

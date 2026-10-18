@@ -29,6 +29,13 @@
  *    is verifiable, not assumed.
  * 7. Stream the encoded chunks to Node via `exposeFunction` and write them
  *    to the output file.
+ * 8. Enable page telemetry before the game boots, then after each clip read
+ *    the recorded run back from the page's JSONL sink and write the
+ *    action-intensity series (`<run-id>.action.jsonl`) and the §7.5
+ *    video-join anchor (`<run-id>.capture.json`) alongside the WebM
+ *    (AH-0MVDV4DMY001Z7CU). The export reuses the canonical series format
+ *    (`docs/dev/action-intensity.md` §7.2–§7.3) and is additive — a partial
+ *    or telemetry-less run simply writes a header-only series.
  *
  * Output format is WebM/VP9. MP4 transcoding is intentionally **not** done
  * here: the SpikeBox Playwright build ships a minimal ffmpeg with no VP9
@@ -46,7 +53,7 @@
 
 import { createServer } from 'vite';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, extname, isAbsolute, resolve } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -75,6 +82,17 @@ import {
   setupHint,
 } from './capture-progress.mjs';
 import { listCaptureScenarios } from './capture-scenarios.mjs';
+import { parseTelemetryJsonl } from './inspect-telemetry.mjs';
+import {
+  CAPTURE_ANCHOR_EXTENSION,
+  CAPTURE_TELEMETRY_JSONL_KEY,
+  DEFAULT_ACTION_INTENSITY_SAMPLE_RATE_HZ,
+  actionIntensitySeriesFileName,
+  buildCaptureJoinAnchor,
+  captureAnchorFileName,
+  extractActionIntensitySeriesFromRecords,
+  serialiseActionIntensitySeries,
+} from './capture-series.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VIEWPORT = { width: 960, height: 540 };
@@ -972,6 +990,9 @@ export function buildIterationRecord(index, clip) {
     runOutcome: clip.runOutcome ?? null,
     reasons: clip.reasons ?? [],
     pageErrors: clip.pageErrors ?? [],
+    seriesOutput: clip.seriesOutput ?? null,
+    anchorOutput: clip.anchorOutput ?? null,
+    seriesSampleCount: clip.seriesSampleCount ?? 0,
   };
 }
 
@@ -991,6 +1012,90 @@ export function summariseCaptureBatch(iterations = []) {
     succeeded,
     failed: records.length - succeeded,
     iterations: records,
+  };
+}
+
+/**
+ * Writes the action-intensity series and §7.5 join anchor for one clip
+ * (AH-0MVDV4DMY001Z7CU, AC1/AC2).
+ *
+ * Pure logic, injected filesystem: parses the page's recorded telemetry
+ * JSONL (read out of `localStorage` by the caller), extracts the deduped
+ * action-intensity samples, serialises them with the canonical series
+ * format (`capture-series.mjs` port of `actionIntensitySerialiser.ts`), and
+ * builds the join anchor from the recording-start marker and the telemetry
+ * run-header `startedAt`. Both artefacts are written next to the WebM with a
+ * matching basename (`<stem>.action.jsonl` / `<stem>.capture.json`), so the
+ * compile pipeline can map series peaks to video timestamps offline (§7.5).
+ *
+ * The export is **additive and tolerant**: telemetry disabled, an empty
+ * sink, or a run interrupted before any sample yields a header-only series
+ * (valid — AC3), and the anchor flags itself `approximate` when either
+ * epoch input is missing.
+ *
+ * @param {{
+ *   jsonl: string,
+ *   outputPath: string,
+ *   captureStarted?: { event: string, atEpochMs: number } | null,
+ *   sampleRateHz?: number,
+ *   mkdir?: (dir: string, opts?: object) => unknown,
+ *   writeFile?: (path: string, content: string) => unknown,
+ * }} params
+ * @returns {{
+ *   seriesOutput: string,
+ *   anchorOutput: string,
+ *   seriesSampleCount: number,
+ *   seriesRunSeed: number | null,
+ *   seriesStartedAtEpochMs: number | null,
+ *   anchorApproximate: boolean,
+ * }}
+ */
+export function writeCaptureSeriesArtifacts({
+  jsonl,
+  outputPath,
+  captureStarted = null,
+  sampleRateHz = DEFAULT_ACTION_INTENSITY_SAMPLE_RATE_HZ,
+  mkdir = mkdirSync,
+  writeFile = writeFileSync,
+}) {
+  const { records } = parseTelemetryJsonl(jsonl);
+  const series = extractActionIntensitySeriesFromRecords(records, {
+    sampleRateHz,
+  });
+  // Keep the caller's path form: absolute in, absolute out; relative in,
+  // relative out (the §7.3 convention co-locates the sidecar with the WebM,
+  // wherever `outputPath` points). `join` preserves the input form;
+  // `resolve` would force an absolute path and break a planted-relative run.
+  const seriesOutput = join(
+    dirname(outputPath),
+    actionIntensitySeriesFileName(basename(outputPath)),
+  );
+  const anchorOutput = join(
+    dirname(outputPath),
+    captureAnchorFileName(basename(outputPath)),
+  );
+  const anchor = buildCaptureJoinAnchor({
+    captureStarted,
+    runStartedAtEpochMs: series.startedAt,
+  });
+
+  const seriesText = serialiseActionIntensitySeries({
+    runSeed: series.runSeed ?? 0,
+    sampleRateHz,
+    samples: series.samples,
+  });
+
+  mkdir(dirname(seriesOutput), { recursive: true });
+  writeFile(seriesOutput, seriesText);
+  writeFile(anchorOutput, `${JSON.stringify(anchor, null, 2)}\n`);
+
+  return {
+    seriesOutput,
+    anchorOutput,
+    seriesSampleCount: series.samples.length,
+    seriesRunSeed: series.runSeed,
+    seriesStartedAtEpochMs: series.startedAt,
+    anchorApproximate: anchor.approximate,
   };
 }
 
@@ -1043,6 +1148,22 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     if (options.botTuningState) {
       await page.addInitScript(installBotTuningConfig, options.botTuningState);
     }
+
+    // Clear the page's telemetry JSONL sink before the game boots so a batch
+    // item (which shares the browser context's `localStorage`) can never read
+    // the previous item's records back — each series/anchor export covers
+    // exactly its own run (AH-0MVDV4DMY001Z7CU, AC1). Runs before any game
+    // script, so an empty sink is guaranteed for the run about to start.
+    await page.addInitScript(
+      (key) => {
+        try {
+          globalThis.localStorage?.removeItem(key);
+        } catch {
+          /* no-op: storage unavailable — the export will read an empty sink */
+        }
+      },
+      CAPTURE_TELEMETRY_JSONL_KEY,
+    );
 
     // Stream encoded chunks to Node as they are produced (avoids one huge
     // base64 return value over the CDP bridge).
@@ -1192,6 +1313,37 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, video);
 
+    // Action-intensity series + §7.5 join anchor export (AH-0MVDV4DMY001Z7CU,
+    // AC1/AC2): read the run back from the page's telemetry JSONL sink and
+    // write `<stem>.action.jsonl` / `<stem>.capture.json` next to the WebM.
+    // Additive and tolerant — the game flushed its recorder at run end; a
+    // missing/partial sink produces a header-only series (AC3).
+    let seriesExport = null;
+    try {
+      const jsonl = await page.evaluate(
+        (key) => globalThis.localStorage?.getItem(key) ?? '',
+        CAPTURE_TELEMETRY_JSONL_KEY,
+      );
+      seriesExport = writeCaptureSeriesArtifacts({
+        jsonl,
+        outputPath,
+        captureStarted,
+      });
+    } catch (error) {
+      // The WebM is the primary artefact; a failed export must never fail the
+      // clip. Report the reason and degrade to no sidecar (AC3 additive).
+      seriesExport = {
+        seriesOutput: null,
+        anchorOutput: null,
+        seriesSampleCount: 0,
+        seriesRunSeed: null,
+        seriesStartedAtEpochMs: null,
+        anchorApproximate: true,
+        seriesExportError:
+          error && error.message ? error.message : String(error),
+      };
+    }
+
     const videoVerdict = isNonTrivialClip({ ...probe, bytes: video.length });
     const audioVerdict = evaluateAudioTrack({
       trackCount: probe.audioTrackCount,
@@ -1214,6 +1366,7 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       bytes: video.length,
       durationMs: recordingMs,
       captureStarted,
+      ...seriesExport,
       ...runSummary,
       renderer: probe.renderer,
       ...probe,
@@ -1401,6 +1554,15 @@ export async function runCapture(
   options = parseCaptureArgs(),
   reporter = createReporter(),
 ) {
+  // Enable page telemetry (AH-0MVDV4DMY001Z7CU, AC1): the action-intensity
+  // series is exported from the run the game records into its dev JSONL
+  // sink (`localStorage` key `ai_hell_telemetry_jsonl`). Mirrors
+  // `scripts/record-session.mjs` — the metric is a strict no-op without the
+  // flag, so the capture opts the page in before the Vite server reads the
+  // `VITE_*` env (dev builds need no consent).
+  process.env.VITE_TELEMETRY_ENABLED = 'true';
+  process.env.VITE_TELEMETRY_SINK = 'jsonl';
+
   // Fail fast on an unusable `--bot-config` file before launching the server
   // or a browser (AH-0MV6MFDYG001E6PL).
   if (options.botConfig !== null && options.botConfig !== undefined) {
@@ -1798,6 +1960,15 @@ function formatReport(result) {
     `Resolution: ${result.width}x${result.height} @ ${Math.round(result.durationSeconds * 1000)} ms`,
   ];
 
+  // Action-intensity series + join anchor sidecars (AH-0MVDV4DMY001Z7CU,
+  // AC1/AC2/AC5): reported when a clip exported them.
+  if (result.seriesOutput) {
+    lines.push(
+      `Series:     ${result.seriesOutput} (${result.seriesSampleCount} samples)`,
+      `Anchor:     ${result.anchorOutput}`,
+    );
+  }
+
   // Full-run captures report the detected outcome and whether the run was
   // complete, so a capped clip is never mistaken for a finished run (AC2/AC3).
   if (result.fullRun) {
@@ -1849,6 +2020,9 @@ async function main() {
     );
     console.log(
       'Combined: --count n with --all-scenarios records n clips of EVERY registered scenario (N x all) in one process, in scenario-major order (all repeats of each scenario in registry order); names carry a per-scenario iteration suffix (`<scenario>-<timestamp>-<n>.webm`, or `<dir>/<scenario>-<n>.webm` with --output <dir>). --count n alone or with --scenario is unchanged.',
+    );
+    console.log(
+      'Series: every clip also exports <run-id>.action.jsonl (the per-run action-intensity series, documented docs/dev/action-intensity.md §7.2–§7.3) and <run-id>.capture.json (the §7.5 video-join anchor: the capture_started marker plus the telemetry run-header startedAt), written next to the WebM with a matching basename. The capture re-enables page telemetry; a partial or telemetry-less run still writes a header-only series.',
     );
     return;
   }

@@ -66,7 +66,7 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
 | Renderer | `Phaser.AUTO` → **WebGL**, via headless Chromium's software (SwiftShader) backend |
 | Encoder | browser-native `MediaRecorder`, preferring `video/webm;codecs=vp9,opus` (falls back to VP8+Opus, then plain WebM) |
 | Audio | the game's own SFX, tapped from its single shared `AudioContext` and encoded as **Opus 48 kHz stereo** |
-| Output | `.webm` (VP9 + Opus), **960×540 @ 60 fps** capture of the game canvas |
+| Output | `.webm` (VP9 + Opus), **960×540 @ 60 fps** capture of the game canvas, plus **`<stem>.action.jsonl`** (per-run action-intensity series) and **`<stem>.capture.json`** (§7.5 video-join anchor) alongside each WebM (AH-0MVDV4DMY001Z7CU) |
 
 ## What the command does (pipeline)
 
@@ -108,6 +108,47 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
    decodes the audio with `decodeAudioData` for **peak and RMS**.
 9. Streams the encoded chunks to Node over an `exposeFunction` binding and
    writes them to the output file.
+10. Before the game boots, opts the page **into telemetry**
+    (`VITE_TELEMETRY_ENABLED=true`, `VITE_TELEMETRY_SINK=jsonl` — the same
+    flags `scripts/record-session.mjs` uses) so the run's per-tick
+    `state.actionIntensity` metric lands in the page's dev JSONL sink. After
+    each clip it reads the sink back via `page.evaluate`, and writes the
+    **action-intensity series** (`<stem>.action.jsonl`) and the **§7.5
+    video-join anchor** (`<stem>.capture.json`) next to the WebM
+    (AH-0MVDV4DMY001Z7CU). See [Action-intensity export](#action-intensity-export).
+
+## Action-intensity export
+
+Every clip exports two artefacts alongside the WebM (basename-matched, e.g.
+`gameplay-2026-10-18T10-00-00-000Z.webm` →
+`gameplay-2026-10-18T10-00-00-000Z.action.jsonl` + `…capture.json`):
+
+- **`<stem>.action.jsonl`** — the standalone action-intensity series in the
+  canonical format (`docs/dev/action-intensity.md` §7.2–§7.3), built by the
+  pure helpers in `scripts/capture-series.mjs` from the recorded telemetry
+  ticks: a self-describing header (`schemaVersion`, `runSeed`,
+  `sampleRateHz`, `categories`) plus one line per recorded action-intensity
+  sample (`t` on the 1/sampleRateHz grid, `tick`, the four scores, the
+  breakdown). It is **byte-for-byte compatible** with
+  `src/scenes/core/actionIntensitySerialiser.ts` (the parity is asserted by
+  `scripts/capture-gameplay.test.ts`) — no format is forked.
+- **`<stem>.capture.json`** — the §7.5 join anchor:
+  `{ schemaVersion, kind: 'capture-join-anchor', captureStartedAtEpochMs,
+  runStartedAtEpochMs, offsetMs, approximate }`. `offsetMs =
+  capture_started − run_startedAt` is the exact constant a consumer
+  subtracts from series `t` to get WebM timeline time
+  (`videoTimeMs(t) = t − offsetMs`, clamped at 0). When either epoch is
+  missing (an older clip, telemetry off) the anchor flags itself
+  `approximate` and the consumer falls back to the documented `--warmup`
+  heuristic (§7.5).
+
+The export is **additive and tolerant**: it cannot fail a clip (a failed
+write degrades to `seriesOutput: null`/`anchorOutput: null` on the result),
+and a telemetry-less or interrupted run writes a valid **header-only**
+series (AC3). The dev JSONL sink stores the run in the page's `localStorage`
+(`ai_hell_telemetry_jsonl`), so very long busy runs can hit the browser's
+storage quota — the sink then writes a *prefix* of the run and the series is
+partial (still schema-valid; see §7.3 of the action-intensity doc).
 
 ## Dev scenarios (`--scenario`)
 
