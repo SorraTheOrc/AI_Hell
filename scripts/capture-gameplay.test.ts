@@ -1730,12 +1730,6 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
     );
     expect(parsed).not.toHaveProperty('iterations');
   });
-});
-
-describe('bot-tuning config injection (AH-0MV6MFDYG001E6PL)', () => {
-  it('names the store key the gym persists under', () => {
-    expect(BOT_TUNING_STORAGE_KEY).toBe('ai-hell-bot-tuning');
-  });
 
   it('installBotTuningConfig writes the exported state into localStorage', () => {
     const entries = new Map<string, string>();

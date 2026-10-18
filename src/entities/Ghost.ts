@@ -130,6 +130,13 @@ export class Ghost extends BaseEnemy {
   private _playerVy = 0;
   private _hasPlayer = false;
 
+  /**
+   * The ghost self-steers every frame (ghostSteering), so the wormhole
+   * transit interpolation must not override its position; it still emerges
+   * at the wormhole origin and roams out from there (AH-0MV8BSMXC0097KLW).
+   */
+  readonly autonomousPositioning = true;
+
   constructor(scene: Phaser.Scene, config: GhostConfig) {
     const baseConfig: BaseEnemyConfig = {
       formationOffset: config.formationOffset,

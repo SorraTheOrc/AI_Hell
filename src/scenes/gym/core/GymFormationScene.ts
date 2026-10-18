@@ -150,6 +150,7 @@ import {
 } from '../../../powerups/choice';
 import { type WeaponId } from '../../../utils/weapons';
 import {
+  WORMHOLE_OPEN_DURATION,
   WormholeController,
   formationExtents,
   placeWavePortal,
@@ -1676,18 +1677,43 @@ export class GymFormationScene<
       playfield: { width: GAME_WIDTH, height: GAME_HEIGHT },
     });
     for (const offset of offsets) {
-      const { x, y } = computeFormationPosition(
+      // Wormhole-entry transit (AH-0MV8BSMXC0097KLW): spawning-capable
+      // entities emerge at the portal (where the wormhole opens) and traverse
+      // to their slot over the spawn window — parity with `PlayScene.spawnWave`
+      // (composed with the portal placement AH-0MV8BR9Y70079TKC). Autonomous
+      // movers (`autonomousPositioning`, e.g. the Raider) are exempt: they
+      // emerge at the portal and their own motion carries them out, avoiding a
+      // position pop when the spawn window ends. Entities without the spawning
+      // seams (e.g. test stubs) are created straight on their slot.
+      const slot = computeFormationPosition(
         portal.x,
         portal.y,
         offset,
         this.config.spacingX,
         this.config.spacingY,
       );
-      const entity = this.config.createEntity(this, x, y, offset);
+      const entity = this.config.createEntity(this, portal.x, portal.y, offset);
+      const canTransit =
+        !(entity as { autonomousPositioning?: boolean })
+          .autonomousPositioning &&
+        typeof (entity as { setSpawning?: unknown }).setSpawning === 'function';
+      if (!canTransit) entity.setPosition(slot.x, slot.y);
       // Containers are not auto-added to the display list — without this
       // the enemies would never render (project convention, see Gym.ts).
       this.add.existing(entity);
-      startSpawnAnimation(entity as unknown as SpawnAnimatable, entity.scaleX);
+      startSpawnAnimation(
+        entity as unknown as SpawnAnimatable,
+        entity.scaleX,
+        WORMHOLE_OPEN_DURATION,
+        canTransit
+          ? () => ({
+              // Track the live slot so base drift/march during the transit
+              // is followed and the entity lands exactly on its live slot.
+              x: this.formationBaseX + offset.col * this.config.spacingX,
+              y: this.formationBaseY + offset.row * this.config.spacingY,
+            })
+          : undefined,
+      );
       entity.setSpawning?.(true);
       this.entities.push(entity);
     }

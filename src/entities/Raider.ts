@@ -88,6 +88,15 @@ export class Raider extends Scout {
   private _playerY = 0;
   private _hasTarget = false;
 
+  /**
+   * The Raider drives its own patrol/attack position every frame
+   * (`applyFormationPosition` ignores the formation base), so the wormhole
+   * transit interpolation must not override it (AH-0MV8BSMXC0097KLW). The
+   * Raider still emerges at the wormhole origin; its own motion carries it
+   * out from there.
+   */
+  readonly autonomousPositioning = true;
+
   constructor(scene: Phaser.Scene, config: RaiderConfig) {
     // Resolve the raider-specific tuning before delegating the shared Scout
     // seam (which owns the aimed-fire tell and the default goal target).

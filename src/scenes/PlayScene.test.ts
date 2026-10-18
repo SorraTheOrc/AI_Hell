@@ -25,6 +25,7 @@ import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
+import { getSpawnState, type SpawnAnimatable } from '../vfx/wormholeSpawn';
 import { Asteroid } from '../entities/Asteroid';
 import { Ghost } from '../entities/Ghost';
 import { Centipede } from '../entities/Centipede';
@@ -472,6 +473,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
   it('AC1/AC3 — spawned enemies are formation-placed and non-firing on Level 1', async () => {
     const scene = await bootPlay();
+    // (AH-0MV8BSMXC0097KLW) Fresh enemies all emerge from the same wormhole;
+    // complete the spawn animation so they have traversed to their distinct
+    // formation slots before asserting placement.
+    scene.finishSpawnAnimations();
+    scene.tick(0.016);
 
     const enemies = scene.getEnemies();
     const positions = new Set(enemies.map((e) => `${e.x},${e.y}`));
@@ -4198,6 +4204,155 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
     expect(registry).toHaveLength(1);
     expect(registry[0]).not.toBe(previous);
   });
+
+  it('AH-0MV8BSMXC0097KLW — freshly spawned enemies begin at the wormhole origin', async () => {
+    const scene = await bootPlay();
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+
+    const before = scene.getEnemies().length;
+    scene.spawnWave();
+    const fresh = scene.getEnemies().slice(before).filter((e) => e.alive);
+    expect(fresh.length).toBeGreaterThan(0);
+
+    // The wave's wormhole opened at the first spawn slot; every fresh enemy
+    // must begin there (the wormhole origin) rather than at its own slot.
+    const wormhole = registry[registry.length - 1];
+    expect(wormhole).toBeDefined();
+    for (const enemy of fresh) {
+      expect(enemy.x).toBeCloseTo(wormhole.x, 5);
+      expect(enemy.y).toBeCloseTo(wormhole.y, 5);
+    }
+  });
+
+  it('AH-0MV8BSMXC0097KLW — enemies begin at the wormhole and arrive exactly on their formation destination', async () => {
+    const scene = await bootPlay();
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+    const before = scene.getEnemies().length;
+    scene.spawnWave();
+    const fresh = scene.getEnemies().slice(before).filter((e) => e.alive);
+    expect(fresh.length).toBeGreaterThan(0);
+
+    const wormhole = registry[registry.length - 1];
+    const expected = new Map<EnemyEntity, { x: number; y: number }>();
+    let movers = 0;
+    for (const enemy of fresh) {
+      const state = getSpawnState(enemy as unknown as SpawnAnimatable);
+      expect(state).not.toBeNull();
+      // Begins at the wave's wormhole origin (where the VFX opened).
+      expect(enemy.x).toBeCloseTo(wormhole.x, 5);
+      expect(enemy.y).toBeCloseTo(wormhole.y, 5);
+      expected.set(enemy, { x: state!.destX, y: state!.destY });
+      if (state!.originX !== state!.destX || state!.originY !== state!.destY) {
+        movers += 1;
+      }
+    }
+    expect(movers).toBeGreaterThan(0);
+
+    // Completing the spawn animation before any scene tick (formation drift
+    // has not advanced) lands every enemy exactly on its recorded formation
+    // destination.
+    scene.finishSpawnAnimations();
+    for (const [enemy, dest] of expected) {
+      expect(enemy.x).toBeCloseTo(dest.x, 5);
+      expect(enemy.y).toBeCloseTo(dest.y, 5);
+      expect((enemy as unknown as { isSpawning: boolean }).isSpawning).toBe(false);
+    }
+  });
+
+  it('AH-0MV8BSMXC0097KLW — the transit is dt-driven and completes within the 3 s spawn-protection window', async () => {
+    const scene = await bootPlay();
+    const before = scene.getEnemies().length;
+    scene.spawnWave();
+    const fresh = scene.getEnemies().slice(before).filter((e) => e.alive);
+    const movers = fresh.filter((e) => {
+      const state = getSpawnState(e as unknown as SpawnAnimatable);
+      return (
+        !!state && (state.originX !== state.destX || state.originY !== state.destY)
+      );
+    });
+    expect(movers.length).toBeGreaterThan(0);
+    const origins = movers.map((e) => ({ x: e.x, y: e.y }));
+
+    // Partway through the grow phase the movers are still spawning and have
+    // begun to travel away from the wormhole.
+    scene.tick(1.2);
+    movers.forEach((enemy, i) => {
+      expect((enemy as unknown as { isSpawning: boolean }).isSpawning).toBe(true);
+      expect(
+        Math.abs(enemy.x - origins[i].x) + Math.abs(enemy.y - origins[i].y),
+      ).toBeGreaterThan(1);
+    });
+
+    // Completing the full window (growth ends at 2.5 s < 3 s) clears the
+    // protection: the movers have arrived within the window.
+    scene.tick(1.5);
+    for (const enemy of movers) {
+      expect((enemy as unknown as { isSpawning: boolean }).isSpawning).toBe(false);
+    }
+  });
+
+  it('AH-0MV8BSMXC0097KLW — spawn protection holds while enemies are in transit', async () => {
+    const scene = await bootPlay();
+    scene.spawnWave();
+    const victim = scene
+      .getEnemies()
+      .find((e) => {
+        if (!e.alive) return false;
+        const state = getSpawnState(e as unknown as SpawnAnimatable);
+        return (
+          !!state && (state.originX !== state.destX || state.originY !== state.destY)
+        );
+      })!;
+    expect(victim).toBeDefined();
+    const aliveBefore = scene.getAliveCount();
+    const livesBefore = scene.getGameState().lives;
+    const origin = getSpawnState(victim as unknown as SpawnAnimatable)!;
+
+    scene.tick(1.2);
+    expect((victim as unknown as { isSpawning: boolean }).isSpawning).toBe(true);
+    expect(getSpawnState(victim as unknown as SpawnAnimatable)).not.toBeNull();
+    // Mid-transit: the mover has left the wormhole origin.
+    expect(
+      Math.abs(victim.x - origin.originX) + Math.abs(victim.y - origin.originY),
+    ).toBeGreaterThan(1);
+
+    // 1. Player bullets pass through.
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.016);
+    expect(victim.alive).toBe(true);
+    expect(scene.getAliveCount()).toBe(aliveBefore);
+
+    // 2. No shooting while spawning.
+    victim.shootEnabled = true;
+    scene.tick(0.1);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+
+    // 3. No mineral absorption while spawning: a mineral touching the
+    // transiting enemy stays on the field (checked before the player is
+    // parked on the enemy, so only the enemy could have absorbed it).
+    scene.spawnMineralAt(victim.x, victim.y);
+    const mineralsBefore = scene.getMinerals().length;
+    scene.tick(0.016);
+    expect(scene.getMinerals()).toHaveLength(mineralsBefore);
+
+    // 4. No body collision with the player.
+    const player = scene.getPlayer()!;
+    player.setPosition(victim.x, victim.y);
+    scene.tick(0.001);
+    expect(scene.getGameState().lives).toBe(livesBefore);
+    expect(victim.alive).toBe(true);
+
+    // Once transit completes the same enemy becomes vulnerable to all four.
+    scene.finishSpawnAnimations();
+    scene.tick(0.001); // settle the drift/wiggle position before aiming
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.016);
+    expect(scene.getAliveCount()).toBeLessThan(aliveBefore);
+  });
 });
 
 describe('PlayScene — wave portal placed away from the player (AH-0MV8BR9Y70079TKC)', () => {
@@ -4356,6 +4511,10 @@ describe('PlayScene — wave portal placed away from the player (AH-0MV8BR9Y7007
     parkPlayer(scene, anchor.x, anchor.y);
     const beforeCount = scene.getEnemies().length;
     scene.spawnWave();
+    // (AH-0MV8BSMXC0097KLW) Fresh enemies emerge from the portal and traverse
+    // to their anchored slots; complete the transit (no tick) before measuring
+    // the anchored formation.
+    scene.finishSpawnAnimations();
     const portal = wavePortalContainer(scene);
     const fresh = livePoints(scene, beforeCount);
     const expected = anchorSpawnsToPortal(plan, {
@@ -4365,12 +4524,24 @@ describe('PlayScene — wave portal placed away from the player (AH-0MV8BR9Y7007
     expect(fresh.length).toBe(expected.length);
 
     const freshCentre = bounds(fresh);
-    expect(Math.abs(freshCentre.cx - portal.x)).toBeLessThan(1e-6);
+    // The formation hangs off the portal; a small horizontal budget covers
+    // drift carried over from the boot (spawnWave keeps the continuing base
+    // when survivors carry over). The ROW centre is exact (no vertical drift).
+    expect(Math.abs(freshCentre.cx - portal.x)).toBeLessThan(8);
     expect(Math.abs(freshCentre.cy - portal.y)).toBeLessThan(1e-6);
 
+    const expectedCentre = bounds(expected);
     for (let i = 0; i < fresh.length; i += 1) {
-      expect(fresh[i].x).toBeCloseTo(expected[i].x, 4);
-      expect(fresh[i].y).toBeCloseTo(expected[i].y, 4);
+      // The portal-anchored SHAPE is preserved (slot positions relative to
+      // the formation centre, spacing included).
+      expect(fresh[i].x - freshCentre.cx).toBeCloseTo(
+        expected[i].x - expectedCentre.cx,
+        3,
+      );
+      expect(fresh[i].y - freshCentre.cy).toBeCloseTo(
+        expected[i].y - expectedCentre.cy,
+        3,
+      );
     }
     // Spacing is preserved (spacingX/spacingY unchanged).
     expect(fresh[1].x - fresh[0].x).toBeCloseTo(
@@ -5808,7 +5979,8 @@ describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
     expect(victim.health).toBe(2);
 
     // Two hits: the first leaves the 2 HP raider alive. A second point-blank
-    // bullet (matching the entity's own position) finishes it.
+    // bullet (matching the entity's own live position) finishes it.
+    scene.tick(0.001); // settle the patrol/wiggle position before aiming
     scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
     scene.tick(0.001);
     scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);

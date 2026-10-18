@@ -82,6 +82,7 @@ import { Asteroid } from '../entities/Asteroid';
 import type { AsteroidSizeTier } from '../entities/Asteroid';
 import { Mineral } from '../entities/Mineral';
 import {
+  WORMHOLE_OPEN_DURATION,
   WormholeController,
   anchorSpawnsToPortal,
   formationCentre,
@@ -1247,8 +1248,12 @@ export class PlayScene extends CombatScene<
       // (AC3 — AH-0MV9KHLV8006GMX6).
       const portal = this._resolveWavePortal(spawns);
       anchoredSpawns = anchorSpawnsToPortal(spawns, portal);
+      // Every enemy of the wave emerges from the wave's portal and traverses
+      // to its anchored formation position during the spawn window
+      // (AH-0MV8BSMXC0097KLW, composed with AH-0MV8BR9Y70079TKC).
       this._wormhole.open(portal.x, portal.y, this.wormholeEffects);
-      for (const spawn of anchoredSpawns) this._spawnEnemy(spawn);
+      const wormholeOrigin = { x: portal.x, y: portal.y };
+      for (const spawn of anchoredSpawns) this._spawnEnemy(spawn, wormholeOrigin);
       playSpawnSound();
     }
 
@@ -1309,14 +1314,21 @@ export class PlayScene extends CombatScene<
     });
   }
 
-  /** Instantiates one enemy from its spawn descriptor. */
-  private _spawnEnemy(spawn: EnemySpawn): void {
+  /**
+   * Instantiates one enemy from its spawn descriptor.
+   *
+   * @param origin - The wave's wormhole position when the enemy should emerge
+   *   from the wormhole and traverse to its formation slot. When omitted (e.g.
+   *   boss minions, which are not part of the wave's wormhole entry) the
+   *   enemy is created in place with the growth animation only.
+   */
+  private _spawnEnemy(spawn: EnemySpawn, origin?: { x: number; y: number }): void {
     const cfg = loadEnemyConfig(spawn.enemyKey);
     const entity = createEnemyFromConfig(
       this,
       cfg,
-      spawn.x,
-      spawn.y,
+      origin?.x ?? spawn.x,
+      origin?.y ?? spawn.y,
       spawn.offset,
       this.rng,
     );
@@ -1325,8 +1337,39 @@ export class PlayScene extends CombatScene<
     // ── Wormhole spawn animation (AC1–AC4) ────────────────────────
     // The enemy starts at 1 px and grows to its full scale over the
     // growth duration; while spawning it is protected from collisions.
-    // Growth begins once the wormhole has finished opening.
-    startSpawnAnimation(entity, entity.scaleX);
+    // Growth begins once the wormhole has finished opening. When the enemy
+    // emerged from the wormhole it also traverses to its formation position
+    // in lock-step with the growth animation (AH-0MV8BSMXC0097KLW).
+    // Entities with autonomous motion (e.g. the Raider, whose patrol/attack
+    // state drives its own position) are exempt: they emerge at the origin
+    // and their own motion carries them out, avoiding a position pop when
+    // the spawn window ends.
+    const transit =
+      origin && !(entity as { autonomousPositioning?: boolean }).autonomousPositioning;
+    startSpawnAnimation(
+      entity,
+      entity.scaleX,
+      WORMHOLE_OPEN_DURATION,
+      transit
+        ? () => {
+            // Track the live formation slot so formation drift/march during
+            // the transit is followed and the enemy lands exactly on it.
+            const isMarch = cfg.formationKind === 'march';
+            const baseX =
+              isMarch && this.marchState
+                ? this.marchState.x
+                : spawn.startX + this.driftX;
+            const baseY =
+              isMarch && this.marchState
+                ? this.marchState.y
+                : spawn.startY;
+            return {
+              x: baseX + spawn.offset.col * spawn.spacingX,
+              y: baseY + spawn.offset.row * spawn.spacingY,
+            };
+          }
+        : undefined,
+    );
     entity.setSpawning(true);
 
     this.add.existing(entity);

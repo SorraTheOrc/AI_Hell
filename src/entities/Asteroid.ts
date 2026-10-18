@@ -184,6 +184,14 @@ export class Asteroid extends BaseEnemy {
   private readonly _vy: number;
 
   /**
+   * Asteroids advance their own constant straight-line motion, so the
+   * wormhole transit interpolation must not override their position; they
+   * still emerge at the wormhole origin and drift out from there
+   * (AH-0MV8BSMXC0097KLW).
+   */
+  readonly autonomousPositioning = true;
+
+  /**
    * True once an offscreen spawn has entered the viewport (or immediately
    * for onscreen spawns). While false, `updatePosition` skips wrapping so
    * the asteroid can drift in from beyond the edge.

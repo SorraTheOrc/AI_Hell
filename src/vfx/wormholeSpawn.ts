@@ -210,11 +210,16 @@ const SPAWN_STATE_KEY = '__spawnState';
  * Destination position for the wormhole-to-formation transit movement
  * (AH-0MV8BSMXC0097KLW). Omit it from {@link startSpawnAnimation} to keep the
  * enemy in place (legacy callers that do not need movement are unchanged).
+ *
+ * A plain `{x, y}` pins the destination once. A **function** re-resolves the
+ * destination every frame so a scene can track the live formation slot (e.g.
+ * under drift/march) — the enemy straight-line transits toward the moving
+ * target and lands exactly on it, with no position pop when the spawn window
+ * ends.
  */
-export interface SpawnDestination {
-  readonly x: number;
-  readonly y: number;
-}
+export type SpawnDestination =
+  | { readonly x: number; readonly y: number }
+  | (() => { x: number; y: number });
 
 /**
  * Spawn-animation bookkeeping attached to a spawning entity.  All times are
@@ -235,12 +240,17 @@ export interface SpawnState {
   originX: number;
   /** World position where the enemy emerged (the wormhole origin). */
   originY: number;
-  /** Formation position the enemy travels to (equals the origin when unmoving). */
+  /** Formation position at spawn time (the transition target snapshot). */
   destX: number;
-  /** Formation position the enemy travels to (equals the origin when unmoving). */
+  /** Formation position at spawn time (the transition target snapshot). */
   destY: number;
   /** Whether the entity transits from the origin to the destination. */
   moves: boolean;
+  /**
+   * Optional per-frame destination resolver (drift/march tracking). When
+   * absent the fixed {@link destX}/{@link destY} snapshot is used.
+   */
+  destFn?: () => { x: number; y: number };
 }
 
 /**
@@ -278,6 +288,8 @@ export function startSpawnAnimation(
 ): void {
   enemy.setScale(0.01);
   const moves = destination !== undefined;
+  const snapshot =
+    typeof destination === 'function' ? destination() : destination;
   enemy.setData(SPAWN_STATE_KEY, {
     elapsed: 0,
     delay,
@@ -285,9 +297,10 @@ export function startSpawnAnimation(
     growing: false,
     originX: enemy.x,
     originY: enemy.y,
-    destX: destination?.x ?? enemy.x,
-    destY: destination?.y ?? enemy.y,
+    destX: snapshot?.x ?? enemy.x,
+    destY: snapshot?.y ?? enemy.y,
     moves,
+    destFn: typeof destination === 'function' ? destination : undefined,
   } satisfies SpawnState);
 }
 
@@ -297,6 +310,16 @@ export function startSpawnAnimation(
  */
 export function isEnemySpawning(enemy: SpawnAnimatable): boolean {
   return getSpawnState(enemy) !== null;
+}
+
+/** Resolves the current transit target (live resolver when one is set). */
+function resolveSpawnDestination(state: SpawnState): { x: number; y: number } {
+  if (state.destFn) {
+    const live = state.destFn();
+    state.destX = live.x;
+    state.destY = live.y;
+  }
+  return { x: state.destX, y: state.destY };
 }
 
 /**
@@ -319,7 +342,13 @@ export function updateSpawnAnimation(
   state.elapsed += dt;
 
   if (!state.growing) {
-    if (state.elapsed < state.delay) return true;
+    if (state.elapsed < state.delay) {
+      // Wormhole still opening: the enemy holds at its emergence point so a
+      // scene-level formation pass cannot park it at its slot mid-entry
+      // (AH-0MV8BSMXC0097KLW).
+      if (state.moves) enemy.setPosition(state.originX, state.originY);
+      return true;
+    }
     state.growing = true;
   }
 
@@ -334,15 +363,21 @@ export function updateSpawnAnimation(
     // Wormhole-to-formation transit (AH-0MV8BSMXC0097KLW): travel from the
     // emergence point to the formation position in lock-step with the growth
     // animation, so the enemy is fully arrived before it becomes collidable.
+    // The target resolves every frame so drift/march motion of the live slot
+    // is tracked and the enemy lands exactly on it (no position pop).
+    const dest = resolveSpawnDestination(state);
     enemy.setPosition(
-      state.originX + (state.destX - state.originX) * easedProgress,
-      state.originY + (state.destY - state.originY) * easedProgress,
+      state.originX + (dest.x - state.originX) * easedProgress,
+      state.originY + (dest.y - state.originY) * easedProgress,
     );
   }
 
   if (progress >= 1) {
     enemy.setScale(state.originalScale);
-    if (state.moves) enemy.setPosition(state.destX, state.destY);
+    if (state.moves) {
+      const dest = resolveSpawnDestination(state);
+      enemy.setPosition(dest.x, dest.y);
+    }
     enemy.setData(SPAWN_STATE_KEY, undefined);
     return false;
   }
