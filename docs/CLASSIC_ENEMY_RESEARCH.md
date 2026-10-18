@@ -120,8 +120,10 @@ pivot, and Clyde wanders. A shared scatter/chase timer alternates every ghost
 between a corner retreat and its pursuit target.
 
 **AI_Hell adaptation:** Four fast, low-HP **non-firing** pursuers (`chase`,
-`ambush`, `flank`, `wander`) enter from the arena edges as a wave-accounted
-group. Each steers toward a personality-specific target resolved by the
+`ambush`, `flank`, `wander`) enter together, shortly after the wave starts,
+from a single entry point as a tight, wave-accounted cluster (all four
+released within one narrow ~90 ms window) instead of arriving one per arena
+edge. Each steers toward a personality-specific target resolved by the
 shared, pure `src/scenes/core/ghostSteering.ts` policy, which also owns the
 scatter/chase timer (a pure function of elapsed time). Aim leads use the
 player's live velocity; scatter targets are fixed arena corners. `chase`
@@ -133,7 +135,9 @@ threat (GDD §2.4) and is resolved by the existing enemy-body collision rule.
 
 **Divergence from original:** No maze or tunnel system — movement is free 2D
 within the arena, clamped to the viewport. There is no literal "ghost house";
-the pursuers enter from the edges. Ambush/flank lead by a tuned number of
+the pursuers enter from a single point as a tight pack rather than one per
+edge (the closest adaptation of the central pen this free-2D arena allows).
+Ambush/flank lead by a tuned number of
 seconds rather than a tile count.
 
 **Pipeline fit:** `EnemyConfig` / CSV rows — **one row per personality**
@@ -154,14 +158,19 @@ without changing existing waves.
 
 | Factor | Type | Notes |
 |--------|------|-------|
-| Movement | `count` + pursuit speed (shared `GHOST_PURSUIT_SPEED`) | The threat is the pursuit envelope, not formation drift (`driftSpeed` is neutral/0). Four bodies converging from different edges. |
+| Movement | `count` + pursuit speed (shared `GHOST_PURSUIT_SPEED`) | The threat is the pursuit envelope, not formation drift (`driftSpeed` is neutral/0). Four bodies converging together from one entry point as a tight group. |
 | Fire | `shotPattern` (`none`) | Never fires at any level; the firing factors (`fireInterval`, `shotProbability`, `bulletSpeed`, `bulletLifetime`, `burstCount`) contribute zero. |
 | Health | `health` (1) | Single-hit; survival depends on reading the personalities, not durability. |
 
 **Gym scene:** `GymFodderEnemies` — each personality row appears automatically in the
 gym index, and the shared `Ghost` / `ghostSteering` code runs in both the gym
 and the game (enforced by `src/scenes/core/CombatScene.equivalence.test.ts`).
-No new gym scene is required.
+The gym spawns each personality on its own via the in-panel enemy selector —
+it does **not** call `computeGhostSpawns()` — so the *group composition*
+(single entry point, tight cluster, narrow release window) is exercised by the
+shared spawn planner and `PlayScene`, while the ghost entity, archetype keys
+and steering policy remain the single source of truth for both
+(AH-0MV9G78DO0053MGK). No new gym scene is required.
 
 ---
 

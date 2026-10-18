@@ -1,12 +1,12 @@
 /**
  * Pure planner for Pac-Man ghost grouping spawns (classic-arcade archetype,
- * AH-0MV01EH2U008XT3Q).
+ * AH-0MV01EH2U008XT3Q; group-spawn behaviour AH-0MV9G78DO0053MGK).
  *
- * The four personalities are a coordinated group: they enter the arena from
- * the edges, spread across the first third of the wave, and then pursue with
- * their own targeting rules. Like the asteroid/harvester planners this module
- * has **no Phaser dependency** so the spawn schedule is fully unit-testable
- * and deterministic for a fixed RNG.
+ * The four personalities are a coordinated group: they enter the arena as a
+ * single tight cluster from one common entry point and are released within a
+ * narrow time window, then pursue with their own targeting rules. Like the
+ * asteroid/harvester planners this module has **no Phaser dependency** so the
+ * spawn schedule is fully unit-testable and deterministic for a fixed RNG.
  *
  * Unlike the Asteroid (which is explicitly *not* wave-accounted), every ghost
  * this planner releases **is** registered with the `WaveManager`
@@ -42,14 +42,35 @@ export const GHOST_ENEMY_KEYS: readonly string[] = GHOST_PERSONALITIES.map(
 
 // ── Tuning ──────────────────────────────────────────────────────────
 
-/** Inset from the arena edge at which a ghost spawns (px) — always reachable. */
+/** Inset from the arena edge at which a ghost may tread (px) — always reachable. */
 export const GHOST_SPAWN_EDGE_INSET = 70;
 
-/** Earliest spawn time fraction within the wave. */
-export const GHOST_SPAWN_MIN_TIME_FRACTION = 0.05;
+/** Horizontal centre of the group's single entry point (fraction of arena width). */
+export const GHOST_GROUP_ENTRY_X_FRACTION = 0.5;
 
-/** Latest spawn time fraction within the wave. */
-export const GHOST_SPAWN_MAX_TIME_FRACTION = 0.35;
+/**
+ * Vertical centre of the group's single entry point (fraction of arena
+ * height). Kept away from the arena edges and from the player's central
+ * spawn so the pack is never on top of the ship.
+ */
+export const GHOST_GROUP_ENTRY_Y_FRACTION = 0.25;
+
+/** Max distance (px) of any ghost from the group's entry point (tight pack). */
+export const GHOST_GROUP_CLUSTER_RADIUS = 42;
+
+/**
+ * Delay (seconds) from wave start before the first ghost of the group
+ * enters. The pack appears as one unit shortly after the wave begins — the
+ * delay only sets *when* the group enters, never how spread out it is.
+ */
+export const GHOST_GROUP_ENTRY_DELAY_SECONDS = 1.5;
+
+/**
+ * The whole group's release window (seconds): every ghost spawns within this
+ * single narrow window (well under a second), so the pack enters together
+ * instead of being staggered across the wave.
+ */
+export const GHOST_GROUP_RELEASE_WINDOW_SECONDS = 0.09;
 
 /** Maximum ghosts released per wave (one per personality). */
 export const GHOST_MAX_PER_WAVE = GHOST_PERSONALITIES.length;
@@ -72,16 +93,24 @@ export interface GhostSpawnEvent {
   timeSeconds: number;
 }
 
+/** Clamps `v` into [`lo`, `hi`], keeping every spawn inside the play area. */
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
 // ── Core algorithm ──────────────────────────────────────────────────
 
 /**
  * Computes the ghost spawn events for one wave: exactly one ghost per
- * personality ({@link GHOST_MAX_PER_WAVE}), each entering from a different
- * arena edge and spread across the first third of the wave's time limit.
+ * personality ({@link GHOST_MAX_PER_WAVE}), all clustered around a single
+ * common entry point and released within {@link GHOST_GROUP_RELEASE_WINDOW_SECONDS}.
  *
  * Positions are inset inside the play area so every spawned ghost is
  * immediately reachable and therefore never stalls the wave (the wave is
  * only complete once every released, wave-accounted ghost is destroyed).
+ * Only the spawn planner changes — each ghost keeps its personality steering,
+ * behaviour and entity config, so the group is observationally identical to a
+ * hand-placed set of individual ghosts (gym↔game parity).
  *
  * @param gameWidth — viewport width in px.
  * @param gameHeight — viewport height in px.
@@ -95,47 +124,48 @@ export function computeGhostSpawns(
   waveTimeLimit: number,
   rng: () => number,
 ): GhostSpawnEvent[] {
+  const count = GHOST_PERSONALITIES.length;
+
+  // Single common entry point, clamped inside the reachable play area so the
+  // group stays in bounds even on very small arenas.
   const inset = GHOST_SPAWN_EDGE_INSET;
   const minX = Math.min(inset, gameWidth / 2);
   const maxX = Math.max(minX, gameWidth - inset);
   const minY = Math.min(inset, gameHeight / 2);
   const maxY = Math.max(minY, gameHeight - inset);
+  const entryX = clamp(GHOST_GROUP_ENTRY_X_FRACTION * gameWidth, minX, maxX);
+  const entryY = clamp(GHOST_GROUP_ENTRY_Y_FRACTION * gameHeight, minY, maxY);
 
-  const count = GHOST_PERSONALITIES.length;
-  const timeSpan = GHOST_SPAWN_MAX_TIME_FRACTION - GHOST_SPAWN_MIN_TIME_FRACTION;
+  // The cluster radius must never push a ghost past the play-area bounds.
+  const clusterRadius = Math.max(
+    0,
+    Math.min(
+      GHOST_GROUP_CLUSTER_RADIUS,
+      entryX - minX,
+      maxX - entryX,
+      entryY - minY,
+      maxY - entryY,
+    ),
+  );
 
   return GHOST_PERSONALITIES.map((personality, index) => {
-    // One edge per personality (top, right, bottom, left) so the group
-    // enters from all sides; the along-edge position is jittered.
-    const edge = index % 4;
-    let x: number;
-    let y: number;
-    switch (edge) {
-      case 0: // top
-        x = minX + rng() * (maxX - minX);
-        y = minY;
-        break;
-      case 1: // right
-        x = maxX;
-        y = minY + rng() * (maxY - minY);
-        break;
-      case 2: // bottom
-        x = minX + rng() * (maxX - minX);
-        y = maxY;
-        break;
-      default: // left
-        x = minX;
-        y = minY + rng() * (maxY - minY);
-        break;
-    }
+    // Place each ghost on its own spoke of the cluster so the pack reads as a
+    // group rather than a single overlapping sprite; the ring radius is
+    // jittered by the RNG (deterministic for a fixed sequence).
+    const angle =
+      (index / count) * Math.PI * 2 + (rng() * 2 - 1) * ((Math.PI / count) * 0.4);
+    const radius = clusterRadius * (0.55 + 0.45 * rng());
+    const x = clamp(entryX + Math.cos(angle) * radius, minX, maxX);
+    const y = clamp(entryY + Math.sin(angle) * radius, minY, maxY);
 
-    // Spread evenly across the window with a small deterministic jitter.
-    const anchor = count > 1 ? index / (count - 1) : 0;
-    const jitter = (rng() * 2 - 1) * (timeSpan / (count * 4));
-    const timeFraction = Math.max(
-      GHOST_SPAWN_MIN_TIME_FRACTION,
-      Math.min(GHOST_SPAWN_MAX_TIME_FRACTION, GHOST_SPAWN_MIN_TIME_FRACTION + anchor * timeSpan + jitter),
-    );
+    // Narrow release window: the pack enters together within one named
+    // constant (well under a second), after a short fixed entry delay so the
+    // group appears as a beat rather than synchronously with the wave start.
+    const span = count > 1 ? index / (count - 1) : 0;
+    const timeSeconds =
+      GHOST_GROUP_ENTRY_DELAY_SECONDS +
+      span * GHOST_GROUP_RELEASE_WINDOW_SECONDS;
+    const timeFraction = waveTimeLimit > 0 ? timeSeconds / waveTimeLimit : 0;
 
     return {
       enemyKey: GHOST_ARCHETYPE_BY_PERSONALITY[personality],
@@ -143,7 +173,7 @@ export function computeGhostSpawns(
       x,
       y,
       timeFraction,
-      timeSeconds: timeFraction * waveTimeLimit,
+      timeSeconds,
     };
   });
 }

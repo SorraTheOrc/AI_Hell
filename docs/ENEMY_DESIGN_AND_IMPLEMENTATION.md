@@ -61,7 +61,9 @@ of these to be implemented as a full vertical slice. Four non-firing CSV rows
 (`ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander`) share the pure
 `src/scenes/core/ghostSteering.ts` targeting policy and the
 `src/entities/Ghost.ts` entity; `src/waves/GhostSpawner.ts` plans the
-four-personality group and `PlayScene` registers every released ghost with the
+four-personality group as a tight cluster from one entry point (released
+within a single ~90 ms window, AH-0MV9G78DO0053MGK) and `PlayScene` registers
+every released ghost with the
 `WaveManager`, gated behind a per-wave `ghosts: true` opt-in (so existing wave
 data is unchanged). The entity never fires — body contact is the threat — and
 its `tryFireNone` dispatch entry keeps it out of the aimed-shot fallback.

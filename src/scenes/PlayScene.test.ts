@@ -61,6 +61,13 @@ import {
 } from '../waves/StrikeSpawner';
 import { OrbitalStrike } from '../entities/OrbitalStrike';
 import { CENTIPEDE_SEGMENT_COUNT } from '../waves/CentipedeSpawner';
+import {
+  GHOST_GROUP_CLUSTER_RADIUS,
+  GHOST_GROUP_ENTRY_X_FRACTION,
+  GHOST_GROUP_ENTRY_Y_FRACTION,
+  GHOST_GROUP_RELEASE_WINDOW_SECONDS,
+  type GhostSpawnEvent,
+} from '../waves/GhostSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
 import { RULES_STORAGE_KEY } from '../core/rules';
@@ -5136,6 +5143,46 @@ describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)
     }
     // Every spawned pursuer is registered with the wave accounting.
     expect(wm.enemiesAlive).toBe(4);
+  });
+
+  it('spawns the group as a tight cluster from a single entry point', async () => {
+    const scene = await bootWithGhostWave(true);
+    releaseGhosts(scene);
+    const info = scene as unknown as {
+      spawned: Array<{ entity: Ghost; startX: number; startY: number }>;
+    };
+    const records = info.spawned.filter((r) => r.entity instanceof Ghost);
+    expect(records).toHaveLength(4);
+    const entryX = GAME_WIDTH * GHOST_GROUP_ENTRY_X_FRACTION;
+    const entryY = GAME_HEIGHT * GHOST_GROUP_ENTRY_Y_FRACTION;
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (const r of records) {
+      xs.push(r.startX);
+      ys.push(r.startY);
+      // Every ghost starts within the cluster radius of one common point.
+      expect(Math.hypot(r.startX - entryX, r.startY - entryY)).toBeLessThanOrEqual(
+        GHOST_GROUP_CLUSTER_RADIUS + 1e-6,
+      );
+    }
+    const spread = Math.max(
+      Math.max(...xs) - Math.min(...xs),
+      Math.max(...ys) - Math.min(...ys),
+    );
+    // A tight pack — nothing like the four-edges spawn of the old planner.
+    expect(spread).toBeLessThanOrEqual(2 * GHOST_GROUP_CLUSTER_RADIUS);
+  });
+
+  it('plans the whole group within a single narrow release window', async () => {
+    const scene = await bootWithGhostWave(true);
+    const planned = (
+      scene as unknown as { pendingGhostSpawns: GhostSpawnEvent[] }
+    ).pendingGhostSpawns;
+    expect(planned).toHaveLength(4);
+    const times = planned.map((e) => e.timeSeconds);
+    expect(Math.max(...times) - Math.min(...times)).toBeLessThanOrEqual(
+      GHOST_GROUP_RELEASE_WINDOW_SECONDS + 1e-6,
+    );
   });
 
   it('pursuers never fire at any level (no enemy bullets)', async () => {
