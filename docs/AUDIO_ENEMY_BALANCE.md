@@ -105,58 +105,64 @@ Including the Scout fire outlier the full 27-asset spread is ≈ **16.6× peak**
 All peaks must be ≤ **0.50** (AC2), and the multi-seed variant ranges (`enemy-destruction`,
 `diver-destruction`) must stay within < 0.5 dB of each other.
 
-## 4. Post-change values (AC3 scale-snap revision — committed 2026-10-17)
+## 4. Post-change values (final rebalance revision — committed after A-minor AC3 + amplitude AC2)
 
-**Revision note:** this section records the enemy set **after the AC3 A-minor scale snapping** child
-(AH-0MVCRR203005HKVZ) landed: every pitched oscillator automation point (static / start / end)
-and every multi-seed range in every enemy recipe now sits on an **A natural minor** note
-(`A B C D E F G`, equal temperament, A4 = 440 Hz, ≤ 10 cents — the guard's tolerance).
-The set was re-rendered (`npm run build-audio:render`) and `checksums.json` regenerated.
+**Revision note:** this section records the enemy set **after the full rebalance** — the AC3 A-minor
+scale snapping (AH-0MVCRR203005HKVZ), the AC2 amplitude-tier retune (AH-0MVD02WZI004QCTP, landed
+here) and the AC4 Scout-fire swap (AH-0MVCRR2H2007VPDU) are all applied: every pitched oscillator
+automation point (static / start / end) and every multi-seed range in every enemy recipe sits on an
+**A natural minor** note (`A B C D E F G`, equal temperament, A4 = 440 Hz, ≤ 10 cents — the guard's
+tolerance), and every rendered enemy WAV sits inside its documented category RMS tier (±1.5 dB:
+ambience `dive-loop` ≤ 0.02, subtle one-shots 0.055, heavy one-shots 0.090) with peak ≤ 0.50.
+The set was re-rendered (`npm run build-audio:render`) and `checksums.json` regenerated; the balance
+guard (`node scripts/audio-balance-guard.mjs`) is green on all 20 enemy cues.
 
 - **Seed changes (scale-degree variants):** `aihell-enemy-destruction` 32110–32112 →
   **32113 / 32128 / 32144** (starts A3/A4/E5, all descending to A1); `aihell-diver-destruction`
   32193–32195 → **32173 / 32176 / 32197** (starts E3/B3/E4, all descending to E2);
   `aihell-boss-phase-cue` 32204–32207 → **32242 / 32227 / 32207 / 32204** (phase rises A3/A4/E5/A5,
   each to A5). Each seed anchors on a distinct A-minor note pair; per-kill variation is preserved.
-- **Amplitude state:** the AC2 amplitude-tier retune (AH-0MVCRR1K2002H4H1) was found **not to have
-  landed** (its completion commit referenced unrelated power-up work); per-cue RMS below therefore
-  still reflects the pre-change gains and the balance guard remains red on the AC2 assertions until
-  that work re-lands. The Scout-fire outlier was still the un-replaced `weapon-laser-zap` at this
-  revision; it has since been swapped to the in-repo `aihell-scout-fire` recipe under AC4 — see
-  §4.2.
+- **Amplitude retune (AC2, AH-0MVD02WZI004QCTP):** one `mix` bus-gain edit per out-of-tier enemy
+  recipe snapped the rendered RMS onto its documented tier — spawn 0.0680→0.0550, bullet-destruction
+  0.0665→0.0550, tank-advance 0.0908→0.0550, tank-fire 0.1205→0.0900, swarm-burst 0.0386→0.0550,
+  phaser-fire 0.0358→0.0550, dive-start 0.0688→0.0550, diver-fire 0.0443→0.0550, boss-spawn
+  0.0732→0.0900, boss-phase-transition 0.0686→0.0900, boss-destruction 0.1255→0.0900. Cues already
+  in tier (advances, dive-loop, multi-seed destructions, boss fire/hit/phase-cue) were unchanged.
 
-Per-asset metrics for every committed enemy cue asset after the AC3 re-render (same analysis method
+The Scout-fire outlier is resolved by the AC4 recipe swap — see §4.2.
+
+Per-asset metrics for every committed enemy cue asset after the full rebalance (same analysis method
 and invocation as §1):
 
 | Cue (manifest entry) | Recipe / asset | Seed | Duration (s) | Peak | RMS | Crest factor | Spectral centroid (Hz) |
 |---|---|---|---|---|---|---|---|
 | playDiveSound | `aihell-diver-dive-loop.32191.wav` | 32191 | 2.000 | 0.0590 | 0.0137 | 4.312 | 4090.3 |
-| playSpawnSound | `aihell-enemy-spawn.32101.wav` | 32101 | 0.180 | 0.1200 | 0.0680 | 1.764 | 3943.0 |
-| playTankAdvanceCue | `aihell-tank-advance.32140.wav` | 32140 | 0.600 | 0.1790 | 0.0908 | 1.970 | 3317.7 |
+| playSpawnSound | `aihell-enemy-spawn.32101.wav` | 32101 | 0.180 | 0.0970 | 0.0550 | 1.764 | 3943.0 |
+| playTankAdvanceCue | `aihell-tank-advance.32140.wav` | 32140 | 0.600 | 0.1084 | 0.0550 | 1.970 | 3317.7 |
 | playScoutAdvanceCue | `aihell-scout-advance.32180.wav` | 32180 | 0.600 | 0.0800 | 0.0564 | 1.417 | 1015.3 |
 | playPhaserAdvanceCue | `aihell-phaser-advance.32170.wav` | 32170 | 0.600 | 0.0800 | 0.0564 | 1.417 | 744.8 |
-| playPhaserFireSound | `aihell-phaser-fire.32171.wav` | 32171 | 0.100 | 0.1171 | 0.0358 | 3.272 | 1844.3 |
-| playDiverFireSound | `aihell-diver-fire.32192.wav` | 32192 | 0.100 | 0.1449 | 0.0443 | 3.270 | 3572.5 |
-| playSwarmBurstSound | `aihell-swarm-burst.32160.wav` | 32160 | 0.200 | 0.1541 | 0.0386 | 3.990 | 2789.3 |
-| playScoutFireSound | `weapon-laser-zap.1.wav` | 1 | 0.108 | 0.9774 | 0.2985 | 3.275 | 550.4 |
-| playDiverDiveStartSound | `aihell-diver-dive-start.32190.wav` | 32190 | 0.250 | 0.1415 | 0.0688 | 2.057 | 3593.8 |
-| playBulletDestructionSound | `aihell-bullet-destruction.32130.wav` | 32130 | 0.070 | 0.1200 | 0.0665 | 1.805 | 6460.0 |
+| playPhaserFireSound | `aihell-phaser-fire.32171.wav` | 32171 | 0.100 | 0.1799 | 0.0550 | 3.273 | 1844.6 |
+| playDiverFireSound | `aihell-diver-fire.32192.wav` | 32192 | 0.100 | 0.1798 | 0.0550 | 3.270 | 3572.6 |
+| playSwarmBurstSound | `aihell-swarm-burst.32160.wav` | 32160 | 0.200 | 0.2196 | 0.0550 | 3.990 | 2789.4 |
+| playScoutFireSound | `aihell-scout-fire.32181.wav` | 32181 | 0.108 | 0.1900 | 0.0955 | 1.990 | 5369.9 |
+| playDiverDiveStartSound | `aihell-diver-dive-start.32190.wav` | 32190 | 0.250 | 0.1131 | 0.0550 | 2.057 | 3593.7 |
+| playBulletDestructionSound | `aihell-bullet-destruction.32130.wav` | 32130 | 0.070 | 0.0992 | 0.0550 | 1.805 | 6459.8 |
 | playDestructionSound | `aihell-enemy-destruction.32113.wav` | 32113 | 0.280 | 0.2937 | 0.0986 | 2.978 | 3293.1 |
 | playDestructionSound | `aihell-enemy-destruction.32128.wav` | 32128 | 0.280 | 0.2868 | 0.0981 | 2.923 | 3767.9 |
 | playDestructionSound | `aihell-enemy-destruction.32144.wav` | 32144 | 0.280 | 0.2920 | 0.0984 | 2.967 | 3521.9 |
 | playDiverDestructionSound | `aihell-diver-destruction.32173.wav` | 32173 | 0.370 | 0.3121 | 0.0851 | 3.667 | 3361.6 |
 | playDiverDestructionSound | `aihell-diver-destruction.32176.wav` | 32176 | 0.370 | 0.3333 | 0.0847 | 3.933 | 3139.7 |
 | playDiverDestructionSound | `aihell-diver-destruction.32197.wav` | 32197 | 0.370 | 0.2988 | 0.0852 | 3.508 | 3420.7 |
-| playBossDestructionSound | `aihell-boss-destruction.32203.wav` | 32203 | 0.600 | 0.2197 | 0.1255 | 1.751 | 3033.6 |
-| playTankFireSound | `aihell-tank-fire.32141.wav` | 32141 | 0.370 | 0.4599 | 0.1205 | 3.817 | 2731.0 |
+| playBossDestructionSound | `aihell-boss-destruction.32203.wav` | 32203 | 0.600 | 0.1576 | 0.0900 | 1.751 | 3033.6 |
+| playTankFireSound | `aihell-tank-fire.32141.wav` | 32141 | 0.370 | 0.3435 | 0.0900 | 3.817 | 2730.9 |
 | playBossFireSound | `aihell-boss-fire.32200.wav` | 32200 | 0.220 | 0.3922 | 0.1040 | 3.770 | 2862.2 |
 | playBossHitSound | `aihell-boss-hit.32208.wav` | 32208 | 0.160 | 0.4160 | 0.0953 | 4.366 | 4803.1 |
 | playBossPhaseCue | `aihell-boss-phase-cue.32242.wav` | 32242 | 0.300 | 0.1000 | 0.0985 | 1.015 | 3974.6 |
 | playBossPhaseCue | `aihell-boss-phase-cue.32227.wav` | 32227 | 0.300 | 0.1000 | 0.0982 | 1.018 | 5016.3 |
 | playBossPhaseCue | `aihell-boss-phase-cue.32207.wav` | 32207 | 0.300 | 0.1000 | 0.0979 | 1.021 | 6366.3 |
 | playBossPhaseCue | `aihell-boss-phase-cue.32204.wav` | 32204 | 0.300 | 0.1000 | 0.0977 | 1.024 | 4456.0 |
-| playBossSpawnSound | `aihell-boss-spawn.32201.wav` | 32201 | 0.450 | 0.1779 | 0.0732 | 2.431 | 142.4 |
-| playBossPhaseTransitionSound | `aihell-boss-phase-transition.32202.wav` | 32202 | 0.350 | 0.1200 | 0.0686 | 1.749 | 3962.4 |
+| playBossSpawnSound | `aihell-boss-spawn.32201.wav` | 32201 | 0.450 | 0.2188 | 0.0900 | 2.431 | 138.1 |
+| playBossPhaseTransitionSound | `aihell-boss-phase-transition.32202.wav` | 32202 | 0.350 | 0.1574 | 0.0900 | 1.749 | 3962.4 |
 
 ### 4.1 AC3 scale table (A natural minor)
 

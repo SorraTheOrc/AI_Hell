@@ -1,4 +1,5 @@
 # AI Hell cue: aihell-swarm-burst — Swarm volley — saw buzz (B2 to E2) with a sine whoosh (G3 to D5).
+# Amplitude tier: subtle one-shot (target RMS 0.055 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-swarm-burst
@@ -60,7 +61,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 1.4249
   out:
     kind: destination
 routing:

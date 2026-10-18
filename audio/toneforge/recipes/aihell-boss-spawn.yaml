@@ -1,4 +1,5 @@
 # AI Hell cue: aihell-boss-spawn — Boss spawn — rising sine E2 to A3 (82.41 to 220 Hz), 0.45 s.
+# Amplitude tier: heavy one-shot (target RMS 0.090 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-boss-spawn
@@ -36,7 +37,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 1.2295
   out:
     kind: destination
 routing:

@@ -1,4 +1,5 @@
 # AI Hell cue: aihell-diver-dive-start — Diver dive-start — rising saw D3 to D5 (146.83 to 587.33 Hz) plus bandpass noise.
+# Amplitude tier: subtle one-shot (target RMS 0.055 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-diver-dive-start
@@ -66,7 +67,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 0.7994
   out:
     kind: destination
 routing:

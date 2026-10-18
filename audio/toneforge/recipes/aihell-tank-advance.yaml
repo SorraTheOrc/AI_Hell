@@ -1,4 +1,5 @@
 # AI Hell cue: aihell-tank-advance — Tank advance cue — rising saw whine (D3 to E4) with square sub (D2 to E3), 0.6 s.
+# Amplitude tier: subtle one-shot (target RMS 0.055 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-tank-advance
@@ -60,7 +61,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 0.6057
   out:
     kind: destination
 routing:

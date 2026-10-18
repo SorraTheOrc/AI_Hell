@@ -1,4 +1,5 @@
 # AI Hell cue: aihell-phaser-fire — Phaser fire — triangle drop B5 to B4 (987.77 to 493.88 Hz).
+# Amplitude tier: subtle one-shot (target RMS 0.055 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-phaser-fire
@@ -36,7 +37,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 1.5363
   out:
     kind: destination
 routing:

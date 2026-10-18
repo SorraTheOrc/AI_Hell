@@ -1,4 +1,5 @@
 # AI Hell cue: aihell-tank-fire — Tank fire — heavy saw (F2 to A0) and sine cannon thump (A1 to G0).
+# Amplitude tier: heavy one-shot (target RMS 0.090 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-tank-fire
@@ -60,7 +61,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 0.8
+      gain: 0.5975
   out:
     kind: destination
 routing:

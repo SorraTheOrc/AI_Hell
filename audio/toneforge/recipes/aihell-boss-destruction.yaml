@@ -1,4 +1,5 @@
 # AI Hell cue: aihell-boss-destruction — Boss destruction — descending saw F3 to E0 (174.61 to 20.6 Hz), 0.6 s.
+# Amplitude tier: heavy one-shot (target RMS 0.090 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-boss-destruction
@@ -36,7 +37,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 0.7171
   out:
     kind: destination
 routing:
