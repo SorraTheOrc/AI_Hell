@@ -2007,7 +2007,8 @@ Swarm's `tryFireBurstBullet`, Phaser's tell, the Boss's attack methods, the
 Scout's two-phase tell) — never re-added in a thin scene class.
 
 **ToneForge recipes per cue:** Scout advance `aihell-scout-advance`, Scout fire
-`weapon-laser-zap`; Diver dive-start `aihell-diver-dive-start`, dive loop
+`aihell-scout-fire` (baked, seed 32181 — AC4, AH-0MVCRR2H2007VPDU; replaces the
+near-clipping `weapon-laser-zap`); Diver dive-start `aihell-diver-dive-start`, dive loop
 `aihell-diver-dive-loop`, fire `aihell-diver-fire`, destruction
 `aihell-diver-destruction` (multi-seed 32193–32195); Tank advance
 `aihell-tank-advance`, fire `aihell-tank-fire`; Phaser advance

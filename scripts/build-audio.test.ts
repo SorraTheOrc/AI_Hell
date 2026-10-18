@@ -237,7 +237,10 @@ describe('planRenderJobs', () => {
   });
 
   it('renders reused ToneForge recipes at the default seed', () => {
-    for (const recipe of ['weapon-laser-zap', 'card-token-earn']) {
+    // card-token-earn remains the sole reused ToneForge recipe; weapon-laser-zap
+    // was retired under AC4 (AH-0MVCRR2H2007VPDU) in favour of the in-repo
+    // aihell-scout-fire recipe, which is planned at its declared seed.
+    for (const recipe of ['card-token-earn']) {
       expect(
         jobs.some(
           (job) => job.recipe === recipe && job.seed === manifest.defaultExistingRecipeSeed,
@@ -245,6 +248,8 @@ describe('planRenderJobs', () => {
         `${recipe} is not planned`,
       ).toBe(true);
     }
+    expect(jobs.some((job) => job.recipe === 'weapon-laser-zap')).toBe(false);
+    expect(jobs.some((job) => job.recipe === 'aihell-scout-fire' && job.seed === 32181)).toBe(true);
   });
 
   it('assigns unique asset paths', () => {

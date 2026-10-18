@@ -10,9 +10,10 @@
  *   AC2 — category-relative amplitude tiers: every rendered enemy WAV has
  *   an RMS inside its documented category tier (±1.5 dB: ambience
  *   `dive-loop` ≤ 0.02, subtle one-shots target 0.055, heavy one-shots
- *   target 0.090), a peak ≤ 0.50 (no clipping), and the multi-seed
- *   jitter variants (`playDestructionSound`, `playDiverDestructionSound`)
- *   stay internally consistent (< 0.5 dB across variants).
+ *   (incl. scout fire post-AC4, AH-0MVCRR2H2007VPDU) target 0.090, a peak
+ *   ≤ 0.50 (no clipping), and the multi-seed jitter variants
+ *   (`playDestructionSound`, `playDiverDestructionSound`) stay internally
+ *   consistent (< 0.5 dB across variants).
  *
  *   AC3 — A natural minor scale conformance: every pitched oscillator
  *   automation point (static frequency, `set`/ramp start, ramp end,
@@ -26,12 +27,10 @@
  *
  * Enemy cues are identified from the manifest by the recipe's
  * `meta.tags` (enemy family tags: enemy, tank, swarm, phaser, scout,
- * diver, boss, bullet) plus an explicit allowance for the one non-baked
- * enemy cue (`playScoutFireSound` → ToneForge `weapon-laser-zap`, replaced
- * by an in-repo recipe under AC4). Amplitude tiers are keyed by cue name
- * and mirror parent AC2; the guard cross-checks that every identified
- * enemy cue has a tier and every tier key exists in the manifest, so the
- * table cannot silently fall out of sync with the cue catalogue.
+ * diver, boss, bullet). Amplitude tiers are keyed by cue name and mirror
+ * parent AC2; the guard cross-checks that every identified enemy cue has
+ * a tier and every tier key exists in the manifest, so the table cannot
+ * silently fall out of sync with the cue catalogue.
  *
  * Run as part of the manifest's verify path (`npm run build-audio:verify`
  * chains it after `scripts/build-audio.sh --verify`) and standalone via
@@ -109,12 +108,12 @@ export const ENEMY_TAGS = new Set([
 ]);
 
 /**
- * Enemy cues without an in-repo recipe to tag. Today that is exactly the
- * ToneForge-owned scout-fire asset (`weapon-laser-zap`); AC4 replaces it
- * with an in-repo `aihell-scout-fire` recipe (tagged `scout`), after
- * which this allowance is redundant but harmless.
+ * Enemy cues without an in-repo recipe to tag. Empty since AC4
+ * (AH-0MVCRR2H2007VPDU) replaced the ToneForge-owned scout-fire asset
+ * (`weapon-laser-zap`) with the in-repo `aihell-scout-fire` recipe
+ * (tagged `scout`): every enemy cue now has an in-repo recipe to tag.
  */
-export const ENEMY_CUE_EXTRAS = new Set(['playScoutFireSound']);
+export const ENEMY_CUE_EXTRAS = new Set();
 
 /**
  * Amplitude tier per enemy cue, mirroring parent AC2:
@@ -136,10 +135,12 @@ export const AMPLITUDE_TIERS = {
   playPhaserFireSound: { targetRms: 0.055 },
   playDiverFireSound: { targetRms: 0.055 },
   playSwarmBurstSound: { targetRms: 0.055 },
-  playScoutFireSound: { targetRms: 0.055 },
   playDiverDiveStartSound: { targetRms: 0.055 },
   playBulletDestructionSound: { targetRms: 0.055 },
   // Heavy one-shots → target RMS 0.090.
+  // Scout fire reclassified to Heavy under AC4 (AH-0MVCRR2H2007VPDU): the
+  // near-clipping weapon-laser-zap replacement is gain-staged to 0.090.
+  playScoutFireSound: { targetRms: 0.090 },
   playDestructionSound: { targetRms: 0.090 },
   playDiverDestructionSound: { targetRms: 0.090 },
   playBossDestructionSound: { targetRms: 0.090 },

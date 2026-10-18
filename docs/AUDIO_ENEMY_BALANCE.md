@@ -99,8 +99,8 @@ Including the Scout fire outlier the full 27-asset spread is ≈ **16.6× peak**
 | Tier | Category RMS target | Cues |
 |---|---|---|
 | Ambience | ≤ 0.02 | `aihell-diver-dive-loop` (`playDiveSound`) |
-| Subtle one-shots | 0.055 (±1.5 dB) | spawn, tank/scout/phaser advance, phaser fire, diver fire, swarm-burst, Scout fire (post-AC4), dive-start, bullet-destruction |
-| Heavy one-shots | 0.090 (±1.5 dB) | enemy/diver/boss destruction, tank fire, boss fire/hit/phase-cue/spawn, boss-phase-transition |
+| Subtle one-shots | 0.055 (±1.5 dB) | spawn, tank/scout/phaser advance, phaser fire, diver fire, swarm-burst, dive-start, bullet-destruction |
+| Heavy one-shots | 0.090 (±1.5 dB) | enemy/diver/boss destruction, tank fire, boss fire/hit/phase-cue/spawn, boss-phase-transition, **Scout fire (post-AC4, AH-0MVCRR2H2007VPDU)** |
 
 All peaks must be ≤ **0.50** (AC2), and the multi-seed variant ranges (`enemy-destruction`,
 `diver-destruction`) must stay within < 0.5 dB of each other.
@@ -121,7 +121,9 @@ The set was re-rendered (`npm run build-audio:render`) and `checksums.json` rege
 - **Amplitude state:** the AC2 amplitude-tier retune (AH-0MVCRR1K2002H4H1) was found **not to have
   landed** (its completion commit referenced unrelated power-up work); per-cue RMS below therefore
   still reflects the pre-change gains and the balance guard remains red on the AC2 assertions until
-  that work re-lands. Scout fire (AC4) is likewise still the un-replaced `weapon-laser-zap` outlier.
+  that work re-lands. The Scout-fire outlier was still the un-replaced `weapon-laser-zap` at this
+  revision; it has since been swapped to the in-repo `aihell-scout-fire` recipe under AC4 — see
+  §4.2.
 
 Per-asset metrics for every committed enemy cue asset after the AC3 re-render (same analysis method
 and invocation as §1):
@@ -170,9 +172,33 @@ The A natural minor scale (equal temperament, A4 = 440 Hz) the enemy recipes now
 | F1 | 43.65 | F3 | 174.61 | F5 | 698.46 | — | — |
 | G1 | 49.00 | G3 | 196.00 | G5 | 783.99 | — | — |
 
-Guard status: `node scripts/audio-balance-guard.mjs` now reports **zero scale-conformance errors**
+Guard status: `node scripts/audio-balance-guard.mjs` reports **zero scale-conformance errors**
 across all 20 enemy cues (the AC3 portion is green). Residual failures are the AC2 amplitude
-tiers (not yet landed) and the AC4 Scout-fire outlier — tracked in the items referenced above.
+tiers (not yet landed) — tracked in AC2-amplitude-retune-never-landed (AH-0MVD02WZI004QCTP).
+The Scout-fire outlier was resolved by the AC4 swap below.
+
+### 4.2 AC4 Scout-fire replacement (AH-0MVCRR2H2007VPDU — committed 2026-10-18)
+
+The Scout fire shot moved from the near-clipping existing-recipe asset `weapon-laser-zap.1.wav`
+(RMS 0.298, peak 0.977) to the in-repo baked recipe `aihell-scout-fire` (seed **32181**): a
+square-wave laser sweep descending E5 (659.26 Hz) → A4 (440 Hz) over 0.108 s, pitched on A
+natural minor (both automation endpoints are scale notes). Gain-staged to the **Heavy** one-shot
+tier; `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×) runtime behaviour unchanged.
+
+| Cue (manifest entry) | Recipe / asset | Seed | Duration (s) | Peak | RMS | Crest factor | Spectral centroid (Hz) |
+|---|---|---|---|---|---|---|---|
+| playScoutFireSound | `aihell-scout-fire.32181.wav` | 32181 | 0.108 | 0.1900 | 0.0955 | 1.99 | 5369.9 |
+
+The rendered asset sits inside the Heavy tier band [0.0757, 0.1070] at 0.0955 RMS with peak
+0.190 ≤ 0.50 — the AC2 guard assertion for this cue now passes. `weapon-laser-zap` is no longer
+referenced by the manifest and its `weapon-laser-zap.1.wav` asset was removed by the build's
+stale-asset sweep. The high spectral centroid (5369.9 Hz, versus 550.4 Hz for the removed
+`weapon-laser-zap` asset) reflects the square wave's strong harmonic series — the "high square
+laser sweep" character called for in the brief, now at a balanced amplitude.
+
+Audition note: the cue is a bright, square-edged descending sweep over 0.108 s; the pitch falls
+a perfect fourth (E5 → A4) within A natural minor, so the character is preserved while the
+pitch content now sits in the battle-scenes' tonal world.
 
 ## 5. Reproducibility
 

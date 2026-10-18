@@ -324,7 +324,12 @@ export function playScoutAdvanceCue(): void {
   playCue('playScoutAdvanceCue', { volume: TANK_SCOUT_FIRE_VOLUME_SCALE });
 }
 
-/** Sharp laser blip — E1 Scout fire, scheduled at the advance cue's end. */
+/**
+ * High square laser sweep (baked `aihell-scout-fire`, seed 32181) — E1 Scout
+ * fire, scheduled at the advance cue's end. AC4 (AH-0MVCRR2H2007VPDU)
+ * swapped the near-clipping existing-recipe `weapon-laser-zap` for this
+ * in-repo recipe; runtime volume scaling is unchanged.
+ */
 export function playScoutFireSound(): void {
   playCue('playScoutFireSound', {
     delay: SCOUT_ADVANCE_CUE_DURATION,

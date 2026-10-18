@@ -43,16 +43,18 @@ accessors). For each cue:
 3. A single disposition was assigned from exactly one of
    **`existing-recipe`**, **`new-recipe`**, or **`retired`**.
 
-Only two cues map to existing ToneForge recipes (`weapon-laser-zap`,
-`card-token-earn`); the remainder need game-specific recipes or stacks because
-the shipped catalogue is card-game oriented. Three cues are retired.
+Only one cue still maps to an existing ToneForge recipe (`card-token-earn`);
+the former `weapon-laser-zap` scout-fire mapping was swapped to the in-repo
+`aihell-scout-fire` recipe under AC4 (AH-0MVCRR2H2007VPDU); the remainder
+need game-specific recipes or stacks because the shipped catalogue is
+card-game oriented. Three cues are retired.
 
 ## Disposition summary
 
 | Disposition | Count | Notes |
 |-------------|-------|-------|
-| `existing-recipe` | 3 | Scout fire (`weapon-laser-zap`), power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
-| `new-recipe` | 37 | Game-specific cues in `effects.ts`, including the thruster hum |
+| `existing-recipe` | 2 | Power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
+| `new-recipe` | 38 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4), plus the thruster hum |
 | `new-recipe` (outside `effects.ts`) | 4 | `Boss.ts` inline cues using `blip()` — see the Boss.ts section |
 | `retired` | 3 | `playMajorExplosionSound`, `playTankDestructionSound`, `playWeaponChangeSound` |
 | control companion (in cue table) | 2 | `stopDiveSound`, `stopThrusterSound` — start/stop lifetime mapping |
@@ -89,7 +91,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
 | `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s, scheduled at cue end | Enemy fire / no-gap | `entities/Phaser` | new | `aihell-phaser-fire` |
 | `playScoutAdvanceCue` | Rising sine, pitched above Phaser, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Scout`, `entities/OrbitalStrike` | new | `aihell-scout-advance` |
-| `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Scout` | **existing** | `weapon-laser-zap` |
+| `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Scout` | new | `aihell-scout-fire` (since AC4, AH-0MVCRR2H2007VPDU) |
 | `playDiverDiveStartSound` | Rising saw 150→600 Hz + filtered noise, ~0.25 s | Dive danger cue | `entities/Diver` | new | `aihell-diver-dive-start` |
 | `playDiveSound` | Bandpass noise sweep 300→900 Hz, refcounted shared ~2 s voice | Diver dive | `entities/Diver` | new | `aihell-diver-dive-loop` |
 | `stopDiveSound` | Stops/releases the shared dive voice | Diver dive | `entities/Diver` | control | (companion to `aihell-diver-dive-loop`) |
@@ -213,6 +215,7 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-phaser-advance` | `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s | 32170 |
 | `aihell-phaser-fire` | `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s | 32171 |
 | `aihell-scout-advance` | `playScoutAdvanceCue` | Rising sine above the Phaser tell, 0.6 s | 32180 |
+| `aihell-scout-fire` | `playScoutFireSound` | High square laser sweep (square, E5→A4), 0.108 s — AC4 swap (AH-0MVCRR2H2007VPDU) | 32181 |
 | `aihell-diver-dive-start` | `playDiverDiveStartSound` | Rising saw 150→600 Hz + noise, ~0.25 s | 32190 |
 | `aihell-diver-dive-loop` | `playDiveSound` | Bandpass noise sweep 300→900 Hz, loopable ~2 s | 32191 |
 | `aihell-diver-fire` | `playDiverFireSound` | Saw 280→120 Hz, 0.08 s | 32192 |

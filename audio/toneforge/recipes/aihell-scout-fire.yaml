@@ -1,0 +1,51 @@
+# AI Hell cue: aihell-scout-fire — Scout fire — high square laser sweep (E5 down to A4, 0.108 s).
+#
+# AC4 (AH-0MVCRR2H2007VPDU): replaces the near-clipping existing-recipe asset
+# weapon-laser-zap.1.wav (RMS 0.298, peak 0.977) while preserving the "high
+# square laser sweep" character. Pitched to A natural minor (E5 → A4, both
+# scale notes) and gain-staged to the Heavy one-shot tier (~0.090 RMS,
+# peak ≤ 0.50) per the parent AC2 table.
+version: "0.1"
+meta:
+  name: aihell-scout-fire
+  description: Scout fire — high square laser sweep, descending E5 (659.26 Hz) to A4 (440 Hz), 0.108 s.
+  category: AIHell
+  tags:
+    - scout
+    - fire
+  duration: 0.108
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 659.26
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 659.26
+        - kind: exponentialRamp
+          time: 0.1
+          value: 440
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.08
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.19
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

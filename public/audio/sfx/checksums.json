@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "11824f9e578a584aeab1621ee409dbadec391fbbcefc766ed117bea6ab8ae3cb",
+  "inputs": "d86737a5e524882ae300f4e3bce2df75d5a30511272be06862546d98d4265a76",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",
@@ -60,6 +60,7 @@
     "audio/sfx/aihell-ricochet-fire.32267.wav": "41fd2f24f863fd87daf8a9e1f8621fdc00837b28607c89b044eaf0dca49ee0d9",
     "audio/sfx/aihell-ricochet-impact.32268.wav": "638ad6b7e002fa37fe7d4581f2985ab9cad23f3079a44d532b5e686f7906b656",
     "audio/sfx/aihell-scout-advance.32180.wav": "8e0f57dbb048d39024e435aafcb2ce216fc04c1138e9e4bcccde210ceb6be53a",
+    "audio/sfx/aihell-scout-fire.32181.wav": "1b97c9cbd15b3a853311fb9385cbf16ad45f01b63fb5862894925c20ca090a2c",
     "audio/sfx/aihell-spread-fire.32211.wav": "5b8092fc74e3859fe2b450d1a8c62aba49db885b5065982562cf638d80447c29",
     "audio/sfx/aihell-spread-impact.32218.wav": "f39fd29ffa78126671960cec016f5664ccded6a64dc1029dc7ed0b2c5b2bc928",
     "audio/sfx/aihell-swarm-burst.32160.wav": "403cf077f0ed63b86a55fadf0e100c70ef9b9babbc6fbe09320d8b523d8a3666",
@@ -82,7 +83,6 @@
     "audio/sfx/aihell-victory-sparkle.32263.wav": "441227623601987f0bf9f1f5a793c3506423099b7222c33cb9d8f13813a2f7f7",
     "audio/sfx/aihell-wave-laser-fire.32219.wav": "822b24697a968a3b3a13e9d2e362511465ef1473ccc263bbffaf98a09c6d4107",
     "audio/sfx/aihell-wave-laser-impact.32231.wav": "f41c9c34fbdf2bf12dbc0c565b99f778bc866769dbc27869fc56e18939c16ea1",
-    "audio/sfx/card-token-earn.1.wav": "0a117cb12f96009c963f936d41360c756dcca6e6de85ba7cb65d563e296e037e",
-    "audio/sfx/weapon-laser-zap.1.wav": "3de4305548efce3a7b7b6ecc45f8389867c2e639115ec9ff12498c4d2318cbd8"
+    "audio/sfx/card-token-earn.1.wav": "0a117cb12f96009c963f936d41360c756dcca6e6de85ba7cb65d563e296e037e"
   }
 }

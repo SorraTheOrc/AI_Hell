@@ -91,8 +91,6 @@ describe('cue → baked asset mapping', () => {
     // A genuinely existing ToneForge recipe uses the default seed.
     effects.playPowerUpCollectSound();
     expect(recording.plays[1].url).toBe('audio/sfx/card-token-earn.1.wav');
-    effects.playScoutFireSound();
-    expect(recording.plays[2].url).toBe('audio/sfx/weapon-laser-zap.1.wav');
   });
 
   it('playCountdownTickSound resolves to the baked countdown-tick asset (AH-0MV55OA93008OUL1)', () => {
@@ -421,7 +419,7 @@ describe('Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3)', () => {
   it('playScoutFireSound plays the baked scout laser asset at half volume', () => {
     effects.playScoutFireSound();
     expect(recording.plays).toHaveLength(1);
-    expect(recording.plays[0].url).toBe('audio/sfx/weapon-laser-zap.1.wav');
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-scout-fire.32181.wav');
     expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
     // The advance-cue no-gap delay is preserved.
     expect(recording.plays[0].delay).toBe(effects.SCOUT_ADVANCE_CUE_DURATION);

@@ -120,6 +120,7 @@ derived from the render seed).
 | `aihell-phaser-advance.yaml` | `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s | 32170 |
 | `aihell-phaser-fire.yaml` | `playPhaserFireSound` | Triangle drop 1000→500 Hz | 32171 |
 | `aihell-scout-advance.yaml` | `playScoutAdvanceCue` | Rising sine 880→1320 Hz, 0.6 s | 32180 |
+| `aihell-scout-fire.yaml` | `playScoutFireSound` | High square laser sweep, E5→A4, 0.108 s (AC4 swap, AH-0MVCRR2H2007VPDU) | 32181 |
 | `aihell-diver-dive-start.yaml` | `playDiverDiveStartSound` | Rising saw 150→600 Hz + bandpass noise | 32190 |
 | `aihell-diver-dive-loop.yaml` | `playDiveSound` | Loopable bandpass noise sweep 300→900 Hz, 2 s | 32191 |
 | `aihell-diver-fire.yaml` | `playDiverFireSound` | Saw drop 280→120 Hz | 32192 |

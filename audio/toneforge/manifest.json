@@ -24,9 +24,11 @@
     },
     {
       "cue": "playScoutFireSound",
-      "recipe": "weapon-laser-zap",
-      "delivery": "existing-recipe",
-      "seeds": []
+      "recipe": "aihell-scout-fire",
+      "delivery": "baked",
+      "seeds": [
+        32181
+      ]
     },
     {
       "cue": "playVolumeFeedback",
