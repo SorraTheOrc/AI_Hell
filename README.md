@@ -612,7 +612,10 @@ kills per archetype, asteroids, power-ups, avoidable hits, survival, wave and
 level reached) with distribution summaries, written as versioned JSON plus a
 human-readable report. Run it with `npm run evaluate -- --batch`; see
 **[docs/BALANCING.md](./docs/BALANCING.md)** for the flags, the statistics
-schema and how to interpret the distributions (epic AH-0MV1DLUZ8009OCJW).
+schema and how to interpret the distributions (epic AH-0MV1DLUZ8009OCJW),
+plus the **tuning loop** (`--tune` baselines one declarative CSV edit against
+an identical re-run and writes a versioned before/after comparison —
+AH-0MV8Q5EYE001R715).
 
 #### Style matching from telemetry
 

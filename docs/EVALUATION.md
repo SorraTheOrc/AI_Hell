@@ -40,6 +40,9 @@ npm run evaluate -- --batch
 # a 300-game balance batch across two policies (see docs/BALANCING.md)
 npm run evaluate -- --batch --games 300 --policies competent,legacy
 
+# tune one balance value: baseline → edit boss health → identical re-run → compare
+npm run evaluate -- --tune --set enemy-configs.csv boss.health=6 --games 100
+
 # A/B the legacy ladder against the competent bot over 10 seeds
 npm run evaluate -- --baseline legacy --candidate competent --seeds 10
 
@@ -78,6 +81,10 @@ Artifacts are written under `--out` (default `eval-output/`, git-ignored):
 | `--human-seed <n>` | Which human run seed to compare. | last run |
 | `--video` | Emit the side-by-side capture/compose plan (AC4). | off |
 | `--json` | Print the report JSON instead of text. | text |
+| `--tune` | Tune loop: baseline batch → one declarative CSV edit → identical re-run → compare (see `docs/BALANCING.md`). | off |
+| `--set <file> <assignment>` | The single declarative edit for `--tune`, e.g. `--set enemy-configs.csv boss.health=6`. | — |
+| `--threshold <pct>` | Relative significance threshold for `--tune`. | `10` |
+| `--keep-edit` | Keep the `--tune` CSV edit after the run (default: restore). | off |
 
 ## How it works
 
