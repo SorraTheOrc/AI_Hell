@@ -55,6 +55,7 @@ export {
   type TelemetryRunHeaderRecord,
   type TelemetryTickRecord,
   type TuneComparison,
+  type TuneEditRecord,
   type TuneMetricDelta,
   type TuneThresholds,
 } from './types';
@@ -98,6 +99,7 @@ export {
   formatAbReport,
   formatBalanceReport,
   formatEvaluationReport,
+  formatTuneSummary,
   serialiseRecordsJsonl,
   serialiseReport,
   serialiseTuneComparison,
@@ -143,6 +145,12 @@ export {
   type PolicyFactory,
   type SeedRunOutput,
 } from './engine';
+export {
+  buildTuneComparisonArtifacts,
+  runBalanceBatch,
+  type TuneArtifactInput,
+  type TuneArtifacts,
+} from './cli';
 export {
   buildSideBySideCapturePlan,
   SIDE_BY_SIDE_DEFAULTS,

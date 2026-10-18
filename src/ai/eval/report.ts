@@ -321,6 +321,74 @@ export function formatBalanceReport(report: BalanceReport): string {
   return lines.join('\n');
 }
 
+/**
+ * Renders the human-readable tune summary (parent AC5): the edit that was
+ * applied, every metric that moved beyond the configured relative threshold
+ * (mean/median), every distribution-shape change (stdDev growth / median
+ * shift), and a per-metric delta table echoing the same statistics as the
+ * machine-readable artifact.
+ */
+export function formatTuneSummary(comparison: TuneComparison): string {
+  const lines: string[] = [];
+  lines.push('Tune comparison');
+  lines.push('='.repeat(40));
+  lines.push(
+    `schema v${comparison.schemaVersion} · thresholds ±` +
+      `${(comparison.thresholds.mean * 100).toFixed(0)}% mean / ±` +
+      `${(comparison.thresholds.median * 100).toFixed(0)}% median`,
+  );
+  if (comparison.edit) {
+    const { edit } = comparison;
+    const key = edit.rowKey === null ? edit.file : `${edit.file} ${edit.rowKey}`;
+    lines.push(`edit: ${key}.${edit.field} ${edit.previousValue} → ${edit.newValue}`);
+  }
+  lines.push('');
+
+  lines.push('Metrics moved beyond threshold (mean/median):');
+  for (const metric of comparison.movedMetrics) {
+    const delta = comparison.metrics[metric] ??
+      comparison.upgradesSelected[metric] ??
+      comparison.enemiesKilledByArchetype[metric];
+    if (!delta) continue;
+    const meanRel = delta.meanRelativeDelta === null
+      ? 'n/a'
+      : `${(delta.meanRelativeDelta * 100).toFixed(1)}%`;
+    const medianRel = delta.medianRelativeDelta === null
+      ? 'n/a'
+      : `${(delta.medianRelativeDelta * 100).toFixed(1)}%`;
+    lines.push(
+      `  ${metric.padEnd(30)} meanΔ ${meanRel.padStart(8)}  ` +
+        `medianΔ ${medianRel.padStart(8)}`,
+    );
+  }
+  if (comparison.movedMetrics.length === 0) {
+    lines.push('  (none)');
+  }
+  lines.push('');
+
+  lines.push('Distribution-shape changes (stdDev growth / median shift):');
+  if (comparison.shapeChangedMetrics.length === 0) {
+    lines.push('  (none)');
+  } else {
+    for (const metric of comparison.shapeChangedMetrics) {
+      lines.push(`  ${metric}`);
+    }
+  }
+  lines.push('');
+
+  lines.push('Per-metric deltas (candidate − baseline):');
+  for (const metric of Object.keys(comparison.metrics).sort()) {
+    const delta = comparison.metrics[metric];
+    lines.push(
+      `  ${metric.padEnd(24)} mean ${n(delta.baseline.mean, 2).padStart(8)} → ` +
+        `${n(delta.candidate.mean, 2).padStart(8)}  (Δ ${n(delta.delta.mean, 2)})` +
+        `  median ${n(delta.baseline.median, 2)} → ${n(delta.candidate.median, 2)}` +
+        `  sd ${n(delta.delta.stdDev, 2)}`,
+    );
+  }
+  return lines.join('\n');
+}
+
 /** Renders a human-readable A/B report. */
 export function formatAbReport(report: AbReport): string {
   const lines: string[] = [];

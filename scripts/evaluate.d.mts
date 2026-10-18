@@ -22,6 +22,11 @@ export interface ParsedEvaluateArgs {
   humanFile: string | null;
   humanSeed: number | null;
   help: boolean;
+  tune: boolean;
+  tuneFile: string | null;
+  tuneAssignment: string | null;
+  threshold: number;
+  keepEdit: boolean;
 }
 
 export const EVALUATE_USAGE: string;
@@ -78,6 +83,10 @@ export function resolveSeeds(options: {
   batch?: boolean;
 }): number[];
 export function resolveArtifactPath(dir: string, name: string): string;
+export function executeTune(
+  options: ParsedEvaluateArgs,
+  io?: { out: { write(text: string): void }; err: { write(text: string): void } },
+): Promise<number>;
 export function main(
   argv: string[],
   io?: { out: { write(text: string): void }; err: { write(text: string): void } },

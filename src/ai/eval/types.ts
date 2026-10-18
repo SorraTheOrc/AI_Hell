@@ -288,9 +288,11 @@ export interface BalanceAggregate {
  * The `--tune` loop emits a versioned before/after comparison of two
  * balance batches; bump this constant on any backwards-incompatible change to
  * {@link TuneComparison} so downstream consumers (the CLI shell, docs and
- * tests) can key a migration off it.
+ * tests) can key a migration off it. **v2** adds the self-describing
+ * `edit` record ({@link TuneEditRecord}) carried in the comparison artifact
+ * (AH-0MVBNITA0005VQGN).
  */
-export const TUNE_COMPARISON_SCHEMA_VERSION = 1;
+export const TUNE_COMPARISON_SCHEMA_VERSION = 2;
 
 /**
  * Relative thresholds used to classify a tune-comparison delta as a
@@ -351,6 +353,24 @@ export interface TuneMetricDelta {
 }
 
 /**
+ * Describes one declarative CSV edit applied between the baseline and
+ * candidate batches (child 3 of AH-0MV8Q5EYE001R715). Recorded inside the
+ * comparison artifact so a before/after report remains self-describing.
+ */
+export interface TuneEditRecord {
+  /** The balance CSV file edited (a {@link KNOWN_BALANCE_CSV_FILES} basename). */
+  readonly file: string;
+  /** Row key edited, or null for a single-row file. */
+  readonly rowKey: string | null;
+  /** Header column edited. */
+  readonly field: string;
+  /** The cell's value before the edit. */
+  readonly previousValue: string;
+  /** The new value the edit applied. */
+  readonly newValue: string;
+}
+
+/**
  * A versioned, deterministic before/after comparison of two balance batches
  * (AC1): per-metric deltas for every numeric {@link BalanceAggregate} metric
  * plus per-upgrade and per-archetype deltas, classified against a
@@ -365,6 +385,8 @@ export interface TuneComparison {
   readonly kind: 'tune-comparison';
   /** The resolved relative thresholds used for classification. */
   readonly thresholds: TuneThresholds;
+  /** The declarative edit that produced the candidate, when one was applied. */
+  readonly edit?: TuneEditRecord;
   /** Per numeric-metric deltas, keyed by metric name. */
   readonly metrics: Readonly<Record<string, TuneMetricDelta>>;
   /** Per-upgrade/choice-id deltas. */
