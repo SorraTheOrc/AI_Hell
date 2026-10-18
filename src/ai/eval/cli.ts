@@ -37,6 +37,15 @@ export { hydrateBalanceConfig } from './balanceConfig';
 // stable serialisation at the eval-core surface (AH-0MV7WVEWL005XEMN).
 export { extractHumanBalanceStats, HUMAN_BALANCE_POLICY } from './humanStats';
 export { serialiseReport } from './report';
+// The tune loop's declarative CSV edit surface (AH-0MVBNISWE009QFBL): pure
+// parse/apply helpers re-exported so the Node shell can drive edits via the
+// SSR-loaded core without a second, divergent CSV editor.
+export {
+  applyCsvEdit,
+  CsvEditError,
+  KNOWN_BALANCE_CSV_FILES,
+  parseEditSpec,
+} from '../../utils/csvEdit';
 
 /** Parsed CLI options (produced by the `scripts/evaluate.mjs` shell). */
 export interface CliOptions {

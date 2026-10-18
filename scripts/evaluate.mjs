@@ -25,6 +25,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename as pathBasename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Parses `process.argv`-style flags into a plain options object. */
@@ -175,6 +176,65 @@ export async function loadCore() {
   });
   return { server, core: await server.ssrLoadModule('/src/ai/eval/cli.ts') };
 }
+
+/**
+ * The pure CSV-edit surface the shell consumes from the SSR-loaded core
+ * ({@link applyCsvEditFile} accepts it for testability without SSR boot).
+ * @typedef {object} CsvEditCore
+ * @property {(csv: string, spec: {file: string; rowKey: string | null; field: string; value: string}) => {csv: string; previousValue: string; newValue: string; changed: boolean}} applyCsvEdit
+ * @property {(file: string, assignment: string) => {file: string; rowKey: string | null; field: string; value: string}} parseEditSpec
+ * @property {new (code: string, message: string) => Error} [CsvEditError]
+ */
+
+/**
+ * Applies one declarative `--set` edit to a balance CSV and persists it
+ * (AC1, AH-0MVBNISWE009QFBL). Reads the file, parses the assignment via the
+ * pure core, applies the pure editor, writes the edited text back and returns
+ * the change record (previous/new value + both texts) the tune loop needs.
+ * The caller retains `originalText` so it can restore byte-identical state
+ * afterwards (see {@link restoreCsvFile}).
+ *
+ * @param {string} filePath
+ * @param {string} assignment
+ * @param {CsvEditCore | null} csvEditCore
+ */
+export async function applyCsvEditFile(
+  filePath,
+  assignment,
+  csvEditCore = null,
+) {
+  const core = csvEditCore ?? (await loadCore()).core;
+  const originalText = readFileSync(filePath, 'utf8');
+  const spec = core.parseEditSpec(pathBasename(filePath), assignment);
+  const outcome = core.applyCsvEdit(originalText, spec);
+  writeFileSync(filePath, outcome.csv);
+  return {
+    fileName: spec.file,
+    spec,
+    previousValue: outcome.previousValue,
+    newValue: outcome.newValue,
+    originalText,
+    editedText: outcome.csv,
+  };
+}
+
+/**
+ * Restores a balance CSV to its pre-edit text (AC4, AH-0MVBNISWE009QFBL).
+ * Without the `--keep-edit` opt-out the file is written back byte-identically
+ * on success **and** failure paths; with `keepEdit` the edited text stays.
+ */
+export async function restoreCsvFile(
+  filePath,
+  originalText,
+  keepEdit = false,
+) {
+  if (keepEdit) {
+    return { action: 'kept-edited' };
+  }
+  writeFileSync(filePath, originalText);
+  return { action: 'restored' };
+}
+
 
 /** CLI entry point; returns the process exit code. */
 export async function main(argv, io = { out: process.stdout, err: process.stderr }) {
