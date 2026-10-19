@@ -4,17 +4,15 @@
  *
  * This file is the **specification** the sibling implementation item
  * (`Implement: pure edit-plan and selection logic in compile-promo`,
- * AH-0MVDV4OKN001OT18) must satisfy. It deliberately exists **before** the
- * implementation: the module's exported constants are pinned by plain
- * assertions (they are the documented contract and are final), while every
- * function assertion is wrapped in Vitest's `it.fails(...)` — the repo's
- * established test-first convention (see `src/powerups/powerUpIdNaming.test.ts`
- * and the *test-first RED* item AH-0MV98DVM90015DNF) — so the committed suite
- * stays **green with exactly 48 *expected* failures** (AC8's red-before-green:
- * the assertions genuinely fail against the placeholder stub). Each
- * `it.fails(...)` becomes an **unexpected pass** once the sibling lands the
- * real implementation, at which point the wrappers MUST be removed (a task
- * owned by the sibling item, whose AC8 is exactly this).
+ * AH-0MVDV4OKN001OT18) satisfies. It was written **before** the
+ * implementation (test-first): the module's exported constants are pinned by
+ * plain assertions (they are the documented contract and are final), and
+ * every function assertion was initially wrapped in Vitest's `it.fails(...)`
+ * (the repo's test-first convention; see `src/powerups/powerUpIdNaming.test.ts`
+ * and AH-0MV98DVM90015DNF) so the committed suite stayed green against the
+ * placeholder stub. The sibling implementation landed the real functions and
+ * removed those wrappers (AC8): the assertions below now run as plain
+ * `it(...)` tests against the shipped implementation.
  *
  * No ffmpeg, no browser, no captured footage — only synthetic series
  * fixtures, per the §7.5 recipe in `docs/dev/action-intensity.md` and the
@@ -40,7 +38,7 @@
  * - `DEDUPE_INTENSITY_TOLERANCE` — `0.05`; `DEDUPE_DURATION_TOLERANCE_MS` —
  *   `250`.
  *
- * Pure functions (asserted via `it.fails(...)` while stubbed):
+ * Pure functions (asserted via plain `it(...)`):
  * - `selectHighlightWindows(points, options?)` → `HighlightWindow[]` in
  *   series time: peaks where `burstiness ≥ θ` **or** `intensity ≥ I_hi`,
  *   peaks within `mergeGapMs` grouped, each group expanded by
@@ -100,8 +98,13 @@ import {
   DEFAULT_HIGHLIGHT_OPTIONS,
   DEFAULT_TARGETS,
   EDITORIAL_CATEGORIES,
+  USAGE_TEXT,
   buildEditPlan,
+  compilePromoMain,
   mapTimeToVideo,
+  parseActionIntensitySeries,
+  parseCaptureAnchor,
+  parseCompileArgs,
   selectHighlightWindows,
   sourceSeriesPath,
   sourceWebmPath,
@@ -154,26 +157,26 @@ describe('selectHighlightWindows — peak recipe (§7.5) (AH-0MVDV47VO0081VUK AC
     });
   });
 
-  it.fails('returns no windows for an empty series', () => {
+  it('returns no windows for an empty series', () => {
     expect(selectHighlightWindows([])).toEqual([]);
   });
 
-  it.fails('returns no windows when every sample is below both thresholds', () => {
+  it('returns no windows when every sample is below both thresholds', () => {
     const quiet = [pt(1_000, 0.1, 0.0), pt(5_000, 0.6, 0.0), pt(9_000, 0.69, 0.149)];
     expect(selectHighlightWindows(quiet)).toEqual([]);
   });
 
-  it.fails('expands a single burstiness peak by lead before and tail after', () => {
+  it('expands a single burstiness peak by lead before and tail after', () => {
     const windows = selectHighlightWindows([pt(2_000, 0.4, 0.3)]);
     expect(windows).toEqual([{ startMs: 500, endMs: 3_000 }]);
   });
 
-  it.fails('treats an intensity-only peak (≥ 0.7, no burstiness) as a peak', () => {
+  it('treats an intensity-only peak (≥ 0.7, no burstiness) as a peak', () => {
     const windows = selectHighlightWindows([pt(4_000, 0.75, 0.0)]);
     expect(windows).toEqual([{ startMs: 2_500, endMs: 5_000 }]);
   });
 
-  it.fails('is inclusive at the exact thresholds (≥) and exclusive just below', () => {
+  it('is inclusive at the exact thresholds (≥) and exclusive just below', () => {
     expect(selectHighlightWindows([pt(2_000, 0.5, 0.15)])).toEqual([
       { startMs: 500, endMs: 3_000 },
     ]);
@@ -184,12 +187,12 @@ describe('selectHighlightWindows — peak recipe (§7.5) (AH-0MVDV47VO0081VUK AC
     expect(selectHighlightWindows([pt(2_000, 0.6999, 0.0)])).toEqual([]);
   });
 
-  it.fails('clamps the expanded start at 0 (warm-up clamp)', () => {
+  it('clamps the expanded start at 0 (warm-up clamp)', () => {
     const windows = selectHighlightWindows([pt(200, 0.9, 0.0)]);
     expect(windows).toEqual([{ startMs: 0, endMs: 1_200 }]);
   });
 
-  it.fails('merges peaks exactly at the 1.0 s gap into one window', () => {
+  it('merges peaks exactly at the 1.0 s gap into one window', () => {
     const windows = selectHighlightWindows([
       pt(2_000, 0.9, 0.2),
       pt(3_000, 0.9, 0.2),
@@ -197,7 +200,7 @@ describe('selectHighlightWindows — peak recipe (§7.5) (AH-0MVDV47VO0081VUK AC
     expect(windows).toEqual([{ startMs: 500, endMs: 4_000 }]);
   });
 
-  it.fails('keeps windows apart when peaks are farther apart than the gap and the expansions do not overlap', () => {
+  it('keeps windows apart when peaks are farther apart than the gap and the expansions do not overlap', () => {
     const windows = selectHighlightWindows([
       pt(2_000, 0.9, 0.2),
       pt(6_000, 0.9, 0.2),
@@ -208,7 +211,7 @@ describe('selectHighlightWindows — peak recipe (§7.5) (AH-0MVDV47VO0081VUK AC
     ]);
   });
 
-  it.fails('merges distinct gap-separated windows whose expansions overlap', () => {
+  it('merges distinct gap-separated windows whose expansions overlap', () => {
     const windows = selectHighlightWindows([
       pt(2_000, 0.9, 0.2),
       pt(3_400, 0.9, 0.2),
@@ -216,7 +219,7 @@ describe('selectHighlightWindows — peak recipe (§7.5) (AH-0MVDV47VO0081VUK AC
     expect(windows).toEqual([{ startMs: 500, endMs: 4_400 }]);
   });
 
-  it.fails('collapses an all-peaks series into one merged window', () => {
+  it('collapses an all-peaks series into one merged window', () => {
     const allPeaks = [
       pt(0, 0.8, 0.2),
       pt(1_000, 0.8, 0.2),
@@ -232,7 +235,7 @@ describe('selectHighlightWindows — peak recipe (§7.5) (AH-0MVDV47VO0081VUK AC
     expect(selectHighlightWindows(allPeaks)).toEqual([{ startMs: 0, endMs: 10_000 }]);
   });
 
-  it.fails('is independent of input order (sorts internally) — determinism', () => {
+  it('is independent of input order (sorts internally) — determinism', () => {
     const ascending = [pt(2_000, 0.9, 0.3), pt(7_000, 0.9, 0.3)];
     const shuffled = [pt(7_000, 0.9, 0.3), pt(2_000, 0.9, 0.3)];
     expect(selectHighlightWindows(shuffled)).toEqual(
@@ -240,7 +243,7 @@ describe('selectHighlightWindows — peak recipe (§7.5) (AH-0MVDV47VO0081VUK AC
     );
   });
 
-  it.fails('honours explicit option overrides', () => {
+  it('honours explicit option overrides', () => {
     const windows = selectHighlightWindows([pt(2_000, 0.4, 0.3)], {
       ...DEFAULT_HIGHLIGHT_OPTIONS,
       leadMs: 500,
@@ -259,36 +262,36 @@ describe('mapTimeToVideo — series→video join anchor (§7.5) (AH-0MVDV47VO008
   const RUN_STARTED = 1_699_999_500_000;
   const OFFSET_MS = CAPTURE_STARTED - RUN_STARTED; // 500_000
 
-  it.fails('shifts series time by (capture_started − run_startedAt)', () => {
+  it('shifts series time by (capture_started − run_startedAt)', () => {
     expect(mapTimeToVideo(600_000, CAPTURE_STARTED, RUN_STARTED)).toBe(
       600_000 - OFFSET_MS,
     );
   });
 
-  it.fails('clamps at 0 when the series time predates the recording (warm-up)', () => {
+  it('clamps at 0 when the series time predates the recording (warm-up)', () => {
     expect(mapTimeToVideo(100_000, CAPTURE_STARTED, RUN_STARTED)).toBe(0);
     expect(mapTimeToVideo(OFFSET_MS - 1, CAPTURE_STARTED, RUN_STARTED)).toBe(0);
   });
 
-  it.fails('maps exactly at the anchor offset to 0', () => {
+  it('maps exactly at the anchor offset to 0', () => {
     expect(mapTimeToVideo(OFFSET_MS, CAPTURE_STARTED, RUN_STARTED)).toBe(0);
   });
 
-  it.fails('falls back to the raw clamped series time when the capture anchor is missing', () => {
+  it('falls back to the raw clamped series time when the capture anchor is missing', () => {
     expect(mapTimeToVideo(600_000, null, RUN_STARTED)).toBe(600_000);
   });
 
-  it.fails('falls back when the run-start anchor is missing', () => {
+  it('falls back when the run-start anchor is missing', () => {
     expect(mapTimeToVideo(600_000, CAPTURE_STARTED, null)).toBe(600_000);
   });
 
-  it.fails('falls back when either anchor is non-finite', () => {
+  it('falls back when either anchor is non-finite', () => {
     expect(mapTimeToVideo(600_000, Number.NaN, RUN_STARTED)).toBe(600_000);
     expect(mapTimeToVideo(600_000, CAPTURE_STARTED, Number.NaN)).toBe(600_000);
     expect(mapTimeToVideo(600_000, Number.NaN, Number.NaN)).toBe(600_000);
   });
 
-  it.fails('returns 0 for a non-finite series time', () => {
+  it('returns 0 for a non-finite series time', () => {
     expect(mapTimeToVideo(Number.NaN, CAPTURE_STARTED, RUN_STARTED)).toBe(0);
     expect(mapTimeToVideo(Number.NaN, null, null)).toBe(0);
   });
@@ -301,19 +304,19 @@ describe('mapTimeToVideo — series→video join anchor (§7.5) (AH-0MVDV47VO008
 describe('source path helpers — §7.3 naming (AH-0MVDV47VO0081VUK AC7/AC1)', () => {
   const RUN_ID = 'gameplay-2026-10-06T14-59-06-220Z';
 
-  it.fails('derives the source WebM path next to the captured footage', () => {
+  it('derives the source WebM path next to the captured footage', () => {
     expect(sourceWebmPath(RUN_ID)).toBe(`${CAPTURE_OUTPUT_DIR}/${RUN_ID}.webm`);
     expect(CAPTURE_OUTPUT_DIR).toBe('capture-output');
   });
 
-  it.fails('derives the sibling .action.jsonl path from the same run id', () => {
+  it('derives the sibling .action.jsonl path from the same run id', () => {
     expect(sourceSeriesPath(RUN_ID)).toBe(
       `${CAPTURE_OUTPUT_DIR}/${RUN_ID}${ACTION_SERIES_EXTENSION}`,
     );
     expect(ACTION_SERIES_EXTENSION).toBe('.action.jsonl');
   });
 
-  it.fails('keeps run ids and paths stable — no wall-clock or random suffix', () => {
+  it('keeps run ids and paths stable — no wall-clock or random suffix', () => {
     expect(sourceWebmPath('run-1')).toBe(sourceWebmPath('run-1'));
     expect(sourceSeriesPath('run-1')).toBe(sourceSeriesPath('run-1'));
   });
@@ -337,13 +340,13 @@ describe('editorial feature mapping (AH-0MVDV47VO0081VUK AC5)', () => {
     });
   });
 
-  it.fails('evidences a single feature from one breakdown count', () => {
+  it('evidences a single feature from one breakdown count', () => {
     const w1 = { startMs: 1_500, endMs: 4_000 };
     const points = [pt(3_000, 0.8, 0.3, { playerBullets: 1 })];
     expect(windowFeatures(w1, points)).toEqual(['weapons']);
   });
 
-  it.fails('unions the features evidenced across the window in category order', () => {
+  it('unions the features evidenced across the window in category order', () => {
     const window = { startMs: 0, endMs: 10_000 };
     const points = [
       pt(1_000, 0.8, 0.3, { drops: 2 }),
@@ -358,13 +361,13 @@ describe('editorial feature mapping (AH-0MVDV47VO0081VUK AC5)', () => {
     ]);
   });
 
-  it.fails('evidences nothing for an empty window or an all-zero breakdown', () => {
+  it('evidences nothing for an empty window or an all-zero breakdown', () => {
     const window = { startMs: 0, endMs: 5_000 };
     expect(windowFeatures(window, [])).toEqual([]);
     expect(windowFeatures(window, [pt(1_000, 0.8, 0.1)])).toEqual([]);
   });
 
-  it.fails('dedupes repeated evidence of the same category', () => {
+  it('dedupes repeated evidence of the same category', () => {
     const window = { startMs: 0, endMs: 5_000 };
     const points = [pt(1_000, 0.8, 0.1, { enemies: 1 }), pt(2_000, 0.8, 0.1, { enemies: 2 })];
     expect(windowFeatures(window, points)).toEqual(['enemies']);
@@ -398,7 +401,7 @@ describe('buildEditPlan — sized plan (AH-0MVDV47VO0081VUK AC4)', () => {
     });
   });
 
-  it.fails('selects every window when the pool falls short of every target (short pool)', () => {
+  it('selects every window when the pool falls short of every target (short pool)', () => {
     const plan = buildEditPlan(sources);
     // Series windows map to video time unchanged via the missing-anchor fall-back.
     expect(plan.promo.map((s) => [s.videoInMs, s.videoOutMs])).toEqual([
@@ -415,13 +418,13 @@ describe('buildEditPlan — sized plan (AH-0MVDV47VO0081VUK AC4)', () => {
     expect(plan.highlights).toEqual(plan.promo);
   });
 
-  it.fails('reports per-segment motivating intensities and burstiness values', () => {
+  it('reports per-segment motivating intensities and burstiness values', () => {
     const plan = buildEditPlan(sources);
     expect(plan.promo.map((s) => s.intensity)).toEqual([0.9, 0.8, 0.6]);
     expect(plan.promo.map((s) => s.burstiness)).toEqual([0.1, 0.3, 0.4]);
   });
 
-  it.fails('clamps segments to the per-source duration constraint', () => {
+  it('clamps segments to the per-source duration constraint', () => {
     const plan = buildEditPlan([
       source(
         'gameplay-run-SHORT',
@@ -434,7 +437,7 @@ describe('buildEditPlan — sized plan (AH-0MVDV47VO0081VUK AC4)', () => {
     expect(plan.promo[0].videoOutMs).toBe(4_200); // clamped to source duration
   });
 
-  it.fails('drops windows that map entirely outside the source duration', () => {
+  it('drops windows that map entirely outside the source duration', () => {
     const plan = buildEditPlan([
       source(
         'gameplay-run-LATE',
@@ -490,7 +493,7 @@ describe('buildEditPlan — sized to a rich pool (AH-0MVDV47VO0081VUK AC4)', () 
   const richRun = () =>
     source('gameplay-rich', richPool(), { durationMs: 300_000 });
 
-  it.fails('sizes the promo between the reported ~45–60 s bounds', () => {
+  it('sizes the promo between the reported ~45–60 s bounds', () => {
     const plan = buildEditPlan([richRun()]);
     const promoMs = plan.promo.reduce((sum, s) => sum + s.videoOutMs - s.videoInMs, 0);
 
@@ -499,7 +502,7 @@ describe('buildEditPlan — sized to a rich pool (AH-0MVDV47VO0081VUK AC4)', () 
     expect(plan.promo.length).toBeGreaterThan(5);
   });
 
-  it.fails('sizes the showreel above 2 min when the pool allows', () => {
+  it('sizes the showreel above 2 min when the pool allows', () => {
     const plan = buildEditPlan([richRun()]);
     const showreelMs = plan.showreel.reduce(
       (sum, s) => sum + s.videoOutMs - s.videoInMs,
@@ -514,7 +517,7 @@ describe('buildEditPlan — sized to a rich pool (AH-0MVDV47VO0081VUK AC4)', () 
     expect(starts).toEqual([...starts].sort((a, b) => a - b));
   });
 
-  it.fails('emits the requested number of short highlight clips', () => {
+  it('emits the requested number of short highlight clips', () => {
     const plan = buildEditPlan([richRun()]);
 
     expect(plan.highlights).toHaveLength(DEFAULT_TARGETS.highlights.count);
@@ -524,7 +527,7 @@ describe('buildEditPlan — sized to a rich pool (AH-0MVDV47VO0081VUK AC4)', () 
     }
   });
 
-  it.fails('orders the promo and highlights by motivating intensity (rank order)', () => {
+  it('orders the promo and highlights by motivating intensity (rank order)', () => {
     const plan = buildEditPlan([richRun()]);
 
     const promoIntensities = plan.promo.map((s) => s.intensity);
@@ -547,7 +550,7 @@ describe('buildEditPlan — feature coverage & dedupe (AH-0MVDV47VO0081VUK AC5)'
     breakdown: Record<string, number>,
   ) => source(runId, [pt(t, intensity, 0.2, breakdown)]);
 
-  it.fails('guarantees weapons, pickups and enemies each appear in the promo and showreel', () => {
+  it('guarantees weapons, pickups and enemies each appear in the promo and showreel', () => {
     const plan = buildEditPlan([
       runWithPeak('gameplay-weapons', 5_000, 0.55, { playerBullets: 2 }),
       runWithPeak('gameplay-pickups', 20_000, 0.95, { drops: 1 }),
@@ -561,7 +564,7 @@ describe('buildEditPlan — feature coverage & dedupe (AH-0MVDV47VO0081VUK AC5)'
     }
   });
 
-  it.fails('includes a boss segment in coverage when boss footage exists', () => {
+  it('includes a boss segment in coverage when boss footage exists', () => {
     const plan = buildEditPlan([
       runWithPeak('gameplay-weapons', 5_000, 0.5, { playerBullets: 1 }),
       runWithPeak('gameplay-boss', 25_000, 0.9, { bosses: 1 }),
@@ -573,7 +576,7 @@ describe('buildEditPlan — feature coverage & dedupe (AH-0MVDV47VO0081VUK AC5)'
     expect(plan.uncoveredFeatures).not.toContain('boss');
   });
 
-  it.fails('does not invent a boss category when no boss footage exists (visible gap)', () => {
+  it('does not invent a boss category when no boss footage exists (visible gap)', () => {
     const plan = buildEditPlan([
       runWithPeak('gameplay-weapons', 5_000, 0.5, { playerBullets: 1 }),
       runWithPeak('gameplay-pickups', 25_000, 0.5, { drops: 1 }),
@@ -583,14 +586,14 @@ describe('buildEditPlan — feature coverage & dedupe (AH-0MVDV47VO0081VUK AC5)'
     expect(plan.uncoveredFeatures).toContain('boss');
   });
 
-  it.fails('reports every category with no footage in uncoveredFeatures, in order', () => {
+  it('reports every category with no footage in uncoveredFeatures, in order', () => {
     const plan = buildEditPlan([runWithPeak('gameplay-weapons', 5_000, 0.5, { playerBullets: 1 })]);
 
     // The pool has no pickups, enemies or boss footage — the gap is explicit.
     expect(plan.uncoveredFeatures).toEqual(['pickups', 'enemies', 'boss']);
   });
 
-  it.fails('selects the strongest window when every candidate evidences the same feature', () => {
+  it('selects the strongest window when every candidate evidences the same feature', () => {
     const plan = buildEditPlan([
       runWithPeak('gameplay-a', 5_000, 0.55, { enemies: 2 }),
       runWithPeak('gameplay-b', 20_000, 0.95, { enemies: 2 }),
@@ -610,7 +613,7 @@ describe('buildEditPlan — feature coverage & dedupe (AH-0MVDV47VO0081VUK AC5)'
     ]);
   });
 
-  it.fails('dedupes repeated near-identical moments keeping the earliest video-in', () => {
+  it('dedupes repeated near-identical moments keeping the earliest video-in', () => {
     const identical = (runId: string, t: number) =>
       source(runId, [pt(t, 0.72, 0.3, { enemies: 3 })]); // intensities within 0.05
     const plan = buildEditPlan([identical('gameplay-early', 5_000), identical('gameplay-late', 25_000)]);
@@ -622,7 +625,7 @@ describe('buildEditPlan — feature coverage & dedupe (AH-0MVDV47VO0081VUK AC5)'
     expect(plan.showreel[0].runId).toBe('gameplay-early');
   });
 
-  it.fails('keeps clearly different windows of the same feature (not near-identical)', () => {
+  it('keeps clearly different windows of the same feature (not near-identical)', () => {
     const plan = buildEditPlan([
       runWithPeak('gameplay-low', 5_000, 0.5, { enemies: 3 }),
       runWithPeak('gameplay-high', 25_000, 0.95, { enemies: 3 }),
@@ -649,7 +652,7 @@ describe('buildEditPlan — determinism (AH-0MVDV47VO0081VUK AC6)', () => {
     ],
   });
 
-  it.fails('returns byte-identical plans and manifests across repeated calls', () => {
+  it('returns byte-identical plans and manifests across repeated calls', () => {
     const planA = buildEditPlan(multiRunInput().sources);
     const planB = buildEditPlan(multiRunInput().sources);
 
@@ -657,7 +660,7 @@ describe('buildEditPlan — determinism (AH-0MVDV47VO0081VUK AC6)', () => {
     expect(JSON.stringify(planA)).toBe(JSON.stringify(planB));
   });
 
-  it.fails('orders entries deterministically (no wall-clock or random dependence)', () => {
+  it('orders entries deterministically (no wall-clock or random dependence)', () => {
     const plan = buildEditPlan(multiRunInput().sources);
 
     // Promo and highlights open on the strongest peak (demo-1, 0.9); the
@@ -668,7 +671,7 @@ describe('buildEditPlan — determinism (AH-0MVDV47VO0081VUK AC6)', () => {
     expect(plan.highlights.map((s) => s.runId)).toEqual(['gameplay-demo-1', 'gameplay-demo-2']);
   });
 
-  it.fails('is a pure function — the input sources are not mutated', () => {
+  it('is a pure function — the input sources are not mutated', () => {
     const input = multiRunInput();
     const frozen = JSON.stringify(input);
 
@@ -696,7 +699,7 @@ describe('manifest shapes (AH-0MVDV47VO0081VUK AC7)', () => {
   ];
   const plan = () => buildEditPlan(sources());
 
-  it.fails('selection manifest entries carry source WebM, .action.jsonl, mapped timestamps and motivating values', () => {
+  it('selection manifest entries carry source WebM, .action.jsonl, mapped timestamps and motivating values', () => {
     const built = plan();
     const segments = [...built.promo, ...built.highlights];
     expect(segments.length).toBeGreaterThan(0);
@@ -717,7 +720,7 @@ describe('manifest shapes (AH-0MVDV47VO0081VUK AC7)', () => {
     expect(built.promo[1].videoOutMs).toBe(4_000);
   });
 
-  it.fails('coverage manifest maps each feature to its clip timestamp ranges', () => {
+  it('coverage manifest maps each feature to its clip timestamp ranges', () => {
     const built = plan();
     expect(built.coverage).toContainEqual({
       feature: 'weapons',
@@ -729,7 +732,7 @@ describe('manifest shapes (AH-0MVDV47VO0081VUK AC7)', () => {
     });
   });
 
-  it.fails('every coverage clip corresponds to a selected segment and vice versa', () => {
+  it('every coverage clip corresponds to a selected segment and vice versa', () => {
     const built = plan();
     const selected = new Set(
       [...built.promo, ...built.showreel].map(
@@ -759,10 +762,191 @@ describe('manifest shapes (AH-0MVDV47VO0081VUK AC7)', () => {
     }
   });
 
-  it.fails('serialises the whole plan deterministically (stable key order)', () => {
+  it('serialises the whole plan deterministically (stable key order)', () => {
     const first = JSON.stringify(plan());
     const again = JSON.stringify(plan());
 
     expect(again).toBe(first);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// AC1 — Series reader (parseActionIntensitySeries / parseCaptureAnchor)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('parseActionIntensitySeries — JSONL series reader (AH-0MVDV4OKN001OT18 AC1)', () => {
+  const HEADER =
+    '{"schemaVersion":1,"runSeed":123,"sampleRateHz":10,"categories":["playerBullets","drops","enemies","bosses"]}';
+
+  it('parses the self-describing header and one sample per line', () => {
+    const { header, points } = parseActionIntensitySeries(
+      `${HEADER}\n{"t":0,"tick":0,"intensity":0.2,"burstiness":0.0,"breakdown":{"drops":1}}\n{"t":100,"tick":1,"intensity":0.8,"burstiness":0.3,"breakdown":{"enemies":2}}\n`,
+    );
+    expect(header).toEqual({
+      schemaVersion: 1,
+      runSeed: 123,
+      sampleRateHz: 10,
+      categories: ['playerBullets', 'drops', 'enemies', 'bosses'],
+    });
+    expect(points).toEqual([
+      { t: 0, intensity: 0.2, burstiness: 0.0, breakdown: { drops: 1 } },
+      { t: 100, intensity: 0.8, burstiness: 0.3, breakdown: { enemies: 2 } },
+    ]);
+  });
+
+  it('tolerates a header-only file (partial run) as zero points', () => {
+    const { header, points } = parseActionIntensitySeries(`${HEADER}\n`);
+    expect(header).not.toBeNull();
+    expect(points).toEqual([]);
+  });
+
+  it('skips malformed / truncated / blank lines but keeps valid neighbours', () => {
+    const { points } = parseActionIntensitySeries(
+      `${HEADER}\n{"t":100,"tick":1,"intensity":0.8,"burstiness":0.3,"breakdown":{"enemies":2}}\n{"t":200, "intensity": 0.9,  // truncated\n{garbage\n{"t":300,"intensity":0.6,"burstiness":0.1}\n`,
+    );
+    expect(points.map((p) => p.t)).toEqual([100, 300]);
+  });
+
+  it('skips sample lines lacking finite scores', () => {
+    const { points } = parseActionIntensitySeries(
+      `${HEADER}\n{"t":100,"intensity":"nope","burstiness":0.3}\n{"t":200,"intensity":0.6,"burstiness":0.1}\n`,
+    );
+    expect(points).toEqual([{ t: 200, intensity: 0.6, burstiness: 0.1 }]);
+  });
+
+  it('returns an empty parse for blank / non-JSON input', () => {
+    expect(parseActionIntensitySeries('')).toEqual({ header: null, points: [] });
+    expect(parseActionIntensitySeries('not json\n')).toEqual({
+      header: null,
+      points: [],
+    });
+  });
+});
+
+describe('parseCaptureAnchor — join anchor sidecar (§7.5)', () => {
+  it('extracts the epoch-ms values from a capture-join-anchor record', () => {
+    const anchor = parseCaptureAnchor(
+      JSON.stringify({
+        kind: 'capture-join-anchor',
+        captureStartedAtEpochMs: 1_700_000_000_000,
+        runStartedAtEpochMs: 1_699_999_500_000,
+        offsetMs: 500_000,
+        approximate: false,
+      }),
+    );
+    expect(anchor).toEqual({
+      captureStartedMs: 1_700_000_000_000,
+      runStartedAtMs: 1_699_999_500_000,
+    });
+  });
+
+  it('yields nulls when the anchor is missing / non-finite (approximate join)', () => {
+    expect(parseCaptureAnchor('not json')).toEqual({
+      captureStartedMs: null,
+      runStartedAtMs: null,
+    });
+    expect(
+      parseCaptureAnchor(JSON.stringify({ captureStartedAtEpochMs: 'bogus' })),
+    ).toEqual({ captureStartedMs: null, runStartedAtMs: null });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// AC6 — CLI contract (--help, arg parsing, missing-source errors, pure path)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('compile-promo CLI — AC6 contract (AH-0MVDV4OKN001OT18)', () => {
+  it('documents inputs, outputs and prerequisites (ffmpeg) in --help', () => {
+    expect(USAGE_TEXT).toContain('Usage: node scripts/compile-promo.mjs');
+    expect(USAGE_TEXT).toContain('.action.jsonl');
+    expect(USAGE_TEXT).toContain('ffmpeg');
+    expect(USAGE_TEXT).toContain('--help');
+  });
+
+  it('flags --help / -h without touching the filesystem', () => {
+    expect(parseCompileArgs(['--help']).help).toBe(true);
+    expect(parseCompileArgs(['-h']).help).toBe(true);
+    expect(compilePromoMain(['--help']).code).toBe(0);
+    expect(compilePromoMain(['--help']).stdout).toContain('Usage:');
+  });
+
+  it('parses --runs, positional run ids, --duration-ms and --out', () => {
+    expect(parseCompileArgs(['--runs', 'a,b,c']).runs).toEqual(['a', 'b', 'c']);
+    expect(parseCompileArgs(['run-1', 'run-2']).runs).toEqual(['run-1', 'run-2']);
+    expect(parseCompileArgs(['--duration-ms', '30000']).durationMs).toBe(30_000);
+    expect(parseCompileArgs(['--out', 'x.json']).out).toBe('x.json');
+  });
+
+  it('rejects unknown options and malformed values (typos fail loudly)', () => {
+    expect(parseCompileArgs(['--bogus']).error).toContain('unknown option');
+    expect(parseCompileArgs(['--duration-ms', 'nope']).error).toContain(
+      '--duration-ms',
+    );
+    expect(compilePromoMain(['--bogus']).code).toBe(1);
+  });
+
+  it('errors with an actionable message when a source series is missing', () => {
+    const fs = {
+      readFileSync: () => {
+        throw new Error('should not be called');
+      },
+      existsSync: (path: string) => !path.endsWith('.action.jsonl'),
+      readdirSync: () => [],
+    };
+    const result = compilePromoMain(['gameplay-ghost'], fs);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('gameplay-ghost');
+    expect(result.stdout).toContain('npm run capture');
+  });
+
+  it('errors when the source footage (.webm) is missing', () => {
+    const fs = {
+      readFileSync: () => '',
+      existsSync: (path: string) => !path.endsWith('.webm'),
+      readdirSync: () => [],
+    };
+    const result = compilePromoMain(['gameplay-ghost'], fs);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('.webm');
+    expect(result.stdout).toContain('npm run capture');
+  });
+
+  it('errors clearly when no captured runs exist at all', () => {
+    const fs = {
+      readFileSync: () => '',
+      existsSync: () => false,
+      readdirSync: () => [],
+    };
+    const result = compilePromoMain([], fs);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('no captured runs found');
+  });
+
+  it('runs the pure path without ffmpeg and emits the selection manifest', () => {
+    const series = `{"schemaVersion":1,"runSeed":7,"sampleRateHz":10,"categories":["playerBullets","drops","enemies","bosses"]}\n{"t":3000,"intensity":0.8,"burstiness":0.3,"breakdown":{"playerBullets":2}}\n`;
+    const files: Record<string, string> = {
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.action.jsonl`]: series,
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.capture.json`]: '',
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.webm`]: '',
+    };
+    let written = '';
+    const fs = {
+      readFileSync: (path: string) => files[path] ?? '',
+      writeFileSync: (_path: string, content: string) => {
+        written = content;
+      },
+      existsSync: (path: string) => path in files,
+      readdirSync: () => Object.keys(files),
+    };
+    const result = compilePromoMain(['--runs', 'gameplay-demo', '--out', 'plan.json'], fs);
+
+    expect(result.code).toBe(0);
+    const plan = JSON.parse(written);
+    // The demo's weapons peak is selected and appears in the manifest.
+    expect(plan.promo[0].runId).toBe('gameplay-demo');
+    expect(plan.promo[0].webm).toBe(sourceWebmPath('gameplay-demo'));
+    expect(plan.promo[0].series).toBe(sourceSeriesPath('gameplay-demo'));
+    expect(plan.promo[0].features).toContain('weapons');
+    expect(plan.uncoveredFeatures).toEqual(['pickups', 'enemies', 'boss']);
   });
 });

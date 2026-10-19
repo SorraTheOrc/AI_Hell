@@ -98,11 +98,69 @@ export interface EditPlan {
 export const DEFAULT_HIGHLIGHT_OPTIONS: HighlightOptions;
 export const CAPTURE_OUTPUT_DIR = 'capture-output';
 export const ACTION_SERIES_EXTENSION = '.action.jsonl';
+export const CAPTURE_ANCHOR_EXTENSION = '.capture.json';
 export const DEFAULT_TARGETS: CompileTargets;
 export const EDITORIAL_CATEGORIES: readonly string[];
 export const BREAKDOWN_TO_EDITORIAL_CATEGORY: Readonly<Record<string, string>>;
 export const DEDUPE_INTENSITY_TOLERANCE: number;
 export const DEDUPE_DURATION_TOLERANCE_MS: number;
+
+/** A parsed `.action.jsonl` series (AC1): the self-describing header + points. */
+export interface ParsedActionIntensitySeries {
+  readonly header: {
+    readonly schemaVersion: number | null;
+    readonly runSeed: number | null;
+    readonly sampleRateHz: number | null;
+    readonly categories: readonly string[];
+  } | null;
+  readonly points: readonly ActionIntensitySeriesPoint[];
+}
+
+/** A parsed `.capture.json` join anchor (AC1/§7.5). */
+export interface ParsedCaptureAnchor {
+  readonly captureStartedMs: number | null;
+  readonly runStartedAtMs: number | null;
+}
+
+/** The parsed CLI options (AC6). */
+export interface CompilePromoArgs {
+  readonly help: boolean;
+  readonly runs: readonly string[];
+  readonly durationMs: number | null;
+  readonly out: string;
+  readonly error: string | null;
+}
+
+/** The disk-backed inputs the CLI builds per run (AC6). */
+export interface LoadCompileSourcesInput {
+  readonly runs: readonly string[];
+  readonly durationMs?: number | null;
+  readonly fs: {
+    readFileSync: (path: string, encoding?: string) => string;
+    existsSync: (path: string) => boolean;
+    readdirSync: (dir: string) => string[];
+  };
+}
+
+/** The CLI result: exit code + stdout + the built plan (AC6). */
+export interface CompilePromoMainResult {
+  readonly code: number;
+  readonly stdout: string;
+  readonly plan: EditPlan | null;
+}
+
+/** Parses raw `.action.jsonl` text into a header + points (AC1). */
+export function parseActionIntensitySeries(text: string): ParsedActionIntensitySeries;
+
+/** Parses raw `.capture.json` anchor text (AC1/§7.5); unusable input → nulls. */
+export function parseCaptureAnchor(text: string): ParsedCaptureAnchor;
+
+/** Estimates a source duration from its series horizon + tail (pure path). */
+export function estimateSourceDurationMs(
+  points: readonly ActionIntensitySeriesPoint[],
+  anchor: ParsedCaptureAnchor,
+  options?: HighlightOptions,
+): number;
 
 /** Selects merged highlight windows from a series (§7.5 steps 2–3). */
 export function selectHighlightWindows(
@@ -123,6 +181,9 @@ export function sourceWebmPath(runId: string): string;
 /** `capture-output/<runId>.action.jsonl` (§7.3). */
 export function sourceSeriesPath(runId: string): string;
 
+/** `capture-output/<runId>.capture.json` (§7.5 anchor sidecar). */
+export function sourceAnchorPath(runId: string): string;
+
 /** Editorial categories evidenced inside a window (union of breakdowns). */
 export function windowFeatures(
   window: HighlightWindow,
@@ -135,3 +196,20 @@ export function buildEditPlan(
   targets?: CompileTargets,
   options?: HighlightOptions,
 ): EditPlan;
+
+/** `--help` text: inputs, outputs, prerequisites (AC6). */
+export const USAGE_TEXT: string;
+
+/** Parses CLI argv into options; errors on unknown flags (AC6). */
+export function parseCompileArgs(argv?: readonly string[]): CompilePromoArgs;
+
+/** Reads on-disk sources for the given run ids (AC6, injected fs). */
+export function loadCompileSources(
+  input: LoadCompileSourcesInput,
+): { sources: readonly CompileSource[]; errors: readonly string[] };
+
+/** CLI entry point; returns stdout/exit code (AC6, injectable fs). */
+export function compilePromoMain(
+  argv: readonly string[],
+  fsImpl?: LoadCompileSourcesInput['fs'],
+): CompilePromoMainResult;
