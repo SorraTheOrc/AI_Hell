@@ -325,6 +325,17 @@ describe('GymWeapons AC2: cumulative collection + reset', () => {
     player.physicsTick(0.5, scene.scale.width, scene.scale.height);
     scene.advanceBullets(1.0);
     expect(scene.getBullets()).toHaveLength(0);
+
+    // Anchor the shared beat clock so this volley assertion is independent of
+    // the legacy boot's phase: the real-time boot drains an unpredictable
+    // number of rAF frames under full-suite parallel load, so a
+    // one-shot-per-beat weapon (spread/dual, 750 ms) only lands its shot in a
+    // fixed 0.6 s tick for some boot phases (AH-0MVF2H8ZY0002W7X). Reset and
+    // re-attach the clock (the fire-cue precedent, AH-0MVF2HCPV003PQR4): every
+    // active weapon re-schedules on the t=0 grid tick and fires in the single
+    // tick below — no matter the boot phase.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     scene.tick(0.6);
 
     const bullets = scene.getBullets();
