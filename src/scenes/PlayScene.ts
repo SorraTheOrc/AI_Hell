@@ -1346,6 +1346,15 @@ export class PlayScene extends CombatScene<
     // the spawn window ends.
     const transit =
       origin && !(entity as { autonomousPositioning?: boolean }).autonomousPositioning;
+    // Orbital entities (the Phaser) expose a live formation-slot seam: the
+    // wormhole transit targets their orbital slot instead of the grid line,
+    // so they never appear in a line then snap onto the ring
+    // (AH-0MVEXVME1004SIIS, Q2=A). Every other enemy keeps the grid slot.
+    const orbitalSlot = (
+      entity as {
+        formationSlot?: (baseX: number, baseY: number) => { x: number; y: number };
+      }
+    ).formationSlot;
     startSpawnAnimation(
       entity,
       entity.scaleX,
@@ -1363,6 +1372,9 @@ export class PlayScene extends CombatScene<
               isMarch && this.marchState
                 ? this.marchState.y
                 : spawn.startY;
+            if (typeof orbitalSlot === 'function') {
+              return orbitalSlot.call(entity, baseX, baseY);
+            }
             return {
               x: baseX + spawn.offset.col * spawn.spacingX,
               y: baseY + spawn.offset.row * spawn.spacingY,

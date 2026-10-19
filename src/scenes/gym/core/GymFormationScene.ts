@@ -1708,6 +1708,15 @@ export class GymFormationScene<
           .autonomousPositioning &&
         typeof (entity as { setSpawning?: unknown }).setSpawning === 'function';
       if (!canTransit) entity.setPosition(slot.x, slot.y);
+      // Orbital entities (the Phaser) expose a live formation-slot seam: the
+      // wormhole transit targets their orbital slot instead of the grid line,
+      // so they never appear in a line then snap onto the ring
+      // (AH-0MVEXVME1004SIIS, Q2=A). Every other enemy keeps the grid slot.
+      const orbitalSlot = (
+        entity as {
+          formationSlot?: (baseX: number, baseY: number) => { x: number; y: number };
+        }
+      ).formationSlot;
       // Containers are not auto-added to the display list — without this
       // the enemies would never render (project convention, see Gym.ts).
       this.add.existing(entity);
@@ -1716,12 +1725,21 @@ export class GymFormationScene<
         entity.scaleX,
         WORMHOLE_OPEN_DURATION,
         canTransit
-          ? () => ({
+          ? () => {
               // Track the live slot so base drift/march during the transit
               // is followed and the entity lands exactly on its live slot.
-              x: this.formationBaseX + offset.col * this.config.spacingX,
-              y: this.formationBaseY + offset.row * this.config.spacingY,
-            })
+              if (typeof orbitalSlot === 'function') {
+                return orbitalSlot.call(
+                  entity,
+                  this.formationBaseX,
+                  this.formationBaseY,
+                );
+              }
+              return {
+                x: this.formationBaseX + offset.col * this.config.spacingX,
+                y: this.formationBaseY + offset.row * this.config.spacingY,
+              };
+            }
           : undefined,
       );
       entity.setSpawning?.(true);

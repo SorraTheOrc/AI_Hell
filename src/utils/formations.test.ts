@@ -16,7 +16,11 @@ import {
   buildVFormationOffsets,
   computeFormationPosition,
   computeFormationReanchorDelta,
+  computeOrbitalSlot,
+  DEFAULT_ORBITAL_FORMATION_COUNT,
   formationSpawnCount,
+  orbitalPhaseAngle,
+  orbitalPhaseIndex,
 } from './formations';
 import { sanitizeShotPattern, isValidShotPattern } from './enemyShotPatterns';
 
@@ -35,10 +39,15 @@ describe('FORMATION_BUILDERS registry', () => {
     }
   });
 
-  it('orbital builder uses phase columns', () => {
+  it('orbital builder uses phase columns and carries the group count', () => {
     expect(buildOrbitalPhaseOffsets(4)).toEqual([
-      { row: 0, col: 0 }, { row: 0, col: 1 }, { row: 0, col: 2 }, { row: 0, col: 3 },
+      { row: 0, col: 0, phaseCount: 4 },
+      { row: 0, col: 1, phaseCount: 4 },
+      { row: 0, col: 2, phaseCount: 4 },
+      { row: 0, col: 3, phaseCount: 4 },
     ]);
+    // A larger group advertises its actual size so phases spread evenly.
+    expect(buildOrbitalPhaseOffsets(12).every((o) => o.phaseCount === 12)).toBe(true);
   });
 
   it('march builder returns a rectangular block, wider than tall', () => {
@@ -177,6 +186,66 @@ describe('computeFormationReanchorDelta (shared Diver re-anchor rule)', () => {
     const after = computeFormationPosition(originX + dx, originY + dy, { row: 3, col: -2 }, spacingX, spacingY);
     expect(after.x - before.x).toBeCloseTo(dx, 10);
     expect(after.y - before.y).toBeCloseTo(dy, 10);
+  });
+});
+
+describe('orbital geometry (AH-0MVEXVME1004SIIS)', () => {
+  it('derives the phase index from the orbital builder offset', () => {
+    const offsets = buildOrbitalPhaseOffsets(5);
+    expect(offsets.map((o) => orbitalPhaseIndex(o))).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('N = 4 reproduces the existing square (0°, 90°, 180°, 270°)', () => {
+    const phases = [0, 1, 2, 3].map((i) => orbitalPhaseAngle(i, 4));
+    expect(phases).toEqual([0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]);
+  });
+
+  it.each([4, 5, 12])(
+    'distributes N = %i phases evenly across the full turn',
+    (count) => {
+      const phases = Array.from({ length: count }, (_, i) =>
+        orbitalPhaseAngle(i, count),
+      );
+      // phase_i = i × 2π / count.
+      for (let i = 0; i < count; i++) {
+        expect(phases[i]).toBeCloseTo((i * Math.PI * 2) / count, 12);
+      }
+      // Every phase is distinct (mod 2π) — no coincident slots.
+      const mod2pi = phases.map((p) => p % (Math.PI * 2));
+      expect(new Set(mod2pi.map((p) => p.toFixed(9))).size).toBe(count);
+    },
+  );
+
+  it('defaults to the four-member square when the count is unknown', () => {
+    expect(orbitalPhaseAngle(1)).toBeCloseTo(Math.PI / 2, 12);
+    expect(DEFAULT_ORBITAL_FORMATION_COUNT).toBe(4);
+  });
+
+  it('clamps a non-positive count to one full-turn phase (never divides by zero)', () => {
+    expect(orbitalPhaseAngle(0, 0)).toBe(0);
+    expect(Number.isFinite(orbitalPhaseAngle(3, 0))).toBe(true);
+  });
+
+  it('computeOrbitalSlot returns the ring point at phase + elapsedAngle', () => {
+    // Phase 0, no elapsed → (baseX + radius, baseY).
+    expect(computeOrbitalSlot(100, 50, 0, 80)).toEqual({ x: 180, y: 50 });
+    // Quarter turn → directly below the base (screen y grows downward).
+    const quarter = computeOrbitalSlot(100, 50, Math.PI / 2, 80);
+    expect(quarter.x).toBeCloseTo(100, 10);
+    expect(quarter.y).toBeCloseTo(130, 10);
+    // Elapsed angle advances the orbit by exactly that angle.
+    const advanced = computeOrbitalSlot(0, 0, 0, 80, Math.PI / 2);
+    expect(advanced.x).toBeCloseTo(0, 10);
+    expect(advanced.y).toBeCloseTo(80, 10);
+  });
+
+  it('regression — a >4-member group produces no coincident orbital slots', () => {
+    const count = 12;
+    const slots = Array.from({ length: count }, (_, i) =>
+      computeOrbitalSlot(0, 0, orbitalPhaseAngle(i, count), 80),
+    );
+    const keys = slots.map((s) => `${s.x.toFixed(6)},${s.y.toFixed(6)}`);
+    expect(new Set(keys).size).toBe(count);
   });
 });
 

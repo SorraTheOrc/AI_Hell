@@ -50,6 +50,7 @@ import { Ghost } from '../../entities/Ghost';
 import { Grunt } from '../../entities/Grunt';
 import { LaneTraffic } from '../../entities/LaneTraffic';
 import { Raider } from '../../entities/Raider';
+import { PHASER_ORBITAL_RADIUS, PhaserEntity } from '../../entities/Phaser';
 import { Harvester } from '../../entities/Harvester';
 import { OrbitalStrike } from '../../entities/OrbitalStrike';
 import { TANK_COLOR } from '../../entities/Tank';
@@ -389,6 +390,53 @@ describe('GymFodderEnemies — single reusable enemy gym', () => {
         expect(Math.abs(e.x - scene.formationX)).toBeLessThan(400);
         expect(Math.abs(e.y - scene.formationY)).toBeLessThan(400);
       }
+    }
+  });
+
+  it('Phasers transit from the wormhole straight to their orbital slots (gym parity, AH-0MVEXVME1004SIIS)', async () => {
+    const scene = await bootWithKey('phaser');
+    // Grow the group past four so the no-coincident-slot regression is
+    // pinned through the shared spawn path (phase_i = i × 2π / 12).
+    const countInput = document.querySelector<HTMLInputElement>(
+      'input[data-config="count"]',
+    )!;
+    countInput.value = '12';
+    countInput.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-respawn') as HTMLButtonElement).click();
+
+    const phasers = scene.formationEntities.filter(
+      (e): e is PhaserEntity => e instanceof PhaserEntity,
+    );
+    expect(phasers).toHaveLength(12);
+
+    // While still emerging the transit destination already targets the live
+    // orbital slots — every point on the ring around the formation base and
+    // none coincident (no line then snap).
+    const dests = phasers.map((p) =>
+      getSpawnState(p as unknown as SpawnAnimatable)?.destFn?.(),
+    );
+    expect(dests.every((d) => d !== undefined)).toBe(true);
+    for (const d of dests) {
+      expect(Math.hypot(d!.x - scene.formationX, d!.y - scene.formationY)).toBeCloseTo(
+        PHASER_ORBITAL_RADIUS,
+        3,
+      );
+    }
+    const keys = dests.map((d) => `${d!.x.toFixed(4)},${d!.y.toFixed(4)}`);
+    expect(new Set(keys).size).toBe(12);
+
+    // When the spawn window ends the Phasers settle onto those same slots
+    // with no visible position jump (≤ 1 px orbit step).
+    scene.finishSpawnAnimations();
+    const settled = phasers.map((p) => ({ x: p.x, y: p.y }));
+    scene.tick(0.001);
+    const after = scene.formationEntities.filter(
+      (e): e is PhaserEntity => e instanceof PhaserEntity,
+    );
+    for (let i = 0; i < after.length; i++) {
+      expect(
+        Math.hypot(after[i].x - settled[i].x, after[i].y - settled[i].y),
+      ).toBeLessThanOrEqual(1);
     }
   });
 

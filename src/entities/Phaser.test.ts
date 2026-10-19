@@ -18,6 +18,7 @@ import {
   PHASER_COLOR,
   PHASER_COLOR_NUMBER,
   PHASER_FIRE_INTERVAL,
+  PHASER_ORBITAL_RADIUS,
   PHASER_SIZE,
   PhaserEntity,
   PhaserConfig,
@@ -376,7 +377,86 @@ describe('Phaser SFX wiring (AH-0MU3VPIA900697E8)', () => {
   });
 });
 
-// ── Phaser radial projectile identity (AH-0MV822DRX009RYUB) ────────
+// ── Phaser orbital geometry (AH-0MVEXVME1004SIIS) ───────────────────
+
+describe('Phaser — count-based orbital geometry (AH-0MVEXVME1004SIIS)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  function makePhaser(offset: FormationOffset): PhaserEntity {
+    return new PhaserEntity(booted!.scene, { x: 0, y: 0, formationOffset: offset });
+  }
+
+  it('places the body on the orbital ring at its phase (applyFormationPosition)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = makePhaser({ row: 0, col: 0, phaseCount: 4 });
+
+    phaser.applyFormationPosition(100, 50, 0, 0, 0);
+
+    // Phase 0 sits one orbit radius directly right of the formation centre.
+    expect(phaser.x).toBeCloseTo(100 + PHASER_ORBITAL_RADIUS, 6);
+    expect(phaser.y).toBeCloseTo(50, 6);
+    expect(Math.hypot(phaser.x - 100, phaser.y - 50)).toBeCloseTo(
+      PHASER_ORBITAL_RADIUS,
+      6,
+    );
+  });
+
+  it('exposes a live formation-slot seam matching the placed position', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phaser = makePhaser({ row: 0, col: 1, phaseCount: 4 });
+
+    phaser.applyFormationPosition(100, 50, 0.5, 0, 0);
+    const slot = phaser.formationSlot(100, 50);
+
+    // The seam returns exactly where applyFormationPosition parked the body.
+    expect(slot.x).toBeCloseTo(phaser.x, 9);
+    expect(slot.y).toBeCloseTo(phaser.y, 9);
+    // Index 1 of 4 starts a quarter turn away from index 0.
+    const phase0 = makePhaser({ row: 0, col: 0, phaseCount: 4 });
+    const slot0 = phase0.formationSlot(100, 50);
+    expect(Math.atan2(slot0.y - 50, slot0.x - 100)).toBeCloseTo(0, 9);
+    expect(Math.atan2(slot.y - 50, slot.x - 100)).not.toBeCloseTo(0, 3);
+  });
+
+  it('gives N = 4 the existing square of four distinct on-ring slots', async () => {
+    booted = await bootScene([HarnessScene]);
+    const phasers = [0, 1, 2, 3].map((i) =>
+      makePhaser({ row: 0, col: i, phaseCount: 4 }),
+    );
+    for (const p of phasers) p.applyFormationPosition(100, 50, 0, 0, 0);
+
+    const angles = phasers.map((p) =>
+      Math.round(
+        (((Math.atan2(p.y - 50, p.x - 100) * 180) / Math.PI) + 360) % 360,
+      ),
+    );
+    expect(new Set(angles).size).toBe(4);
+    for (const p of phasers) {
+      expect(Math.hypot(p.x - 100, p.y - 50)).toBeCloseTo(
+        PHASER_ORBITAL_RADIUS,
+        6,
+      );
+    }
+  });
+
+  it('regression — a 12-member group produces no coincident slots', async () => {
+    booted = await bootScene([HarnessScene]);
+    const count = 12;
+    const phasers = Array.from({ length: count }, (_, i) =>
+      makePhaser({ row: 0, col: i, phaseCount: count }),
+    );
+    for (const p of phasers) p.applyFormationPosition(100, 50, 0, 0, 0);
+
+    const keys = phasers.map((p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`);
+    expect(new Set(keys).size).toBe(count);
+  });
+});
 
 describe('Phaser — radial projectile identity (AH-0MV822DRX009RYUB)', () => {
   let booted: BootedGame | null = null;

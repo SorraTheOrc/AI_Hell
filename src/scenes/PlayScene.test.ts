@@ -27,6 +27,7 @@ import * as collectAnimationModule from '../powerups/collectAnimation';
 import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
 import { getSpawnState, type SpawnAnimatable } from '../vfx/wormholeSpawn';
 import { Asteroid } from '../entities/Asteroid';
+import { PHASER_ORBITAL_RADIUS, PhaserEntity } from '../entities/Phaser';
 import { Ghost } from '../entities/Ghost';
 import { Centipede } from '../entities/Centipede';
 import { Grunt } from '../entities/Grunt';
@@ -6389,5 +6390,123 @@ describe('PlayScene — Frogger lane traffic (AH-0MV01EPM40008N8T)', () => {
 
     releaseLaneTraffic(scene);
     expect(liveTraffic(scene)).toHaveLength(0);
+  });
+});
+
+// ── Phaser orbital spawn transit (AH-0MVEXVME1004SIIS) ─────────────
+
+describe('PlayScene — Phaser orbital spawn transit (AH-0MVEXVME1004SIIS)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** Boots a single-wave campaign containing `count` orbital Phasers. */
+  async function bootPhaserWave(count: number): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Phaser orbital',
+        waves: [
+          {
+            groups: [
+              {
+                enemyKey: 'phaser',
+                formation: 'orbital',
+                count,
+                spacingX: 40,
+                spacingY: 40,
+                startX: GAME_WIDTH * 0.5,
+                startY: GAME_HEIGHT * 0.4,
+              },
+            ],
+            shootEnabled: false,
+          },
+        ],
+      },
+    ];
+    const { booted: game, scene } = await bootSceneWithLevels(levels, {
+      asteroidSpawner: false,
+    });
+    booted = game;
+    return scene;
+  }
+
+  function livePhasers(scene: PlayScene): PhaserEntity[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is PhaserEntity => e instanceof PhaserEntity && e.alive);
+  }
+
+  function spawnDest(p: PhaserEntity): { x: number; y: number } | undefined {
+    return getSpawnState(p as unknown as SpawnAnimatable)?.destFn?.();
+  }
+
+  it('transits 12 Phasers straight to their live orbital slots — no line then snap', async () => {
+    const scene = await bootPhaserWave(12);
+    const phasers = livePhasers(scene);
+    expect(phasers).toHaveLength(12);
+
+    // While still emerging from the wormhole the transit destination already
+    // resolves to the live orbital slots: all on one ring around the
+    // formation centre and all distinct (the reported bug stacked three
+    // Phasers on each of four points).
+    const dests = phasers.map(spawnDest);
+    expect(dests.every((d) => d !== undefined)).toBe(true);
+    const centre = {
+      x: dests.reduce((sum, d) => sum + d!.x, 0) / dests.length,
+      y: dests.reduce((sum, d) => sum + d!.y, 0) / dests.length,
+    };
+    for (const d of dests) {
+      expect(Math.hypot(d!.x - centre.x, d!.y - centre.y)).toBeCloseTo(
+        PHASER_ORBITAL_RADIUS,
+        3,
+      );
+    }
+    const keys = dests.map((d) => `${d!.x.toFixed(4)},${d!.y.toFixed(4)}`);
+    expect(new Set(keys).size).toBe(12);
+
+    // The destination is the point the orbit takes over: when the spawn
+    // window ends the Phaser settles onto it with no visible jump.
+    scene.finishSpawnAnimations();
+    const settled = livePhasers(scene).map((p) => ({ x: p.x, y: p.y }));
+    scene.tick(0.001);
+    const after = livePhasers(scene);
+    expect(after).toHaveLength(12);
+    for (let i = 0; i < after.length; i++) {
+      expect(
+        Math.hypot(after[i].x - settled[i].x, after[i].y - settled[i].y),
+      ).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('N = 4 reproduces the existing square of four distinct on-ring slots', async () => {
+    const scene = await bootPhaserWave(4);
+    const phasers = livePhasers(scene);
+    expect(phasers).toHaveLength(4);
+
+    const dests = phasers.map(spawnDest);
+    const centre = {
+      x: dests.reduce((sum, d) => sum + d!.x, 0) / dests.length,
+      y: dests.reduce((sum, d) => sum + d!.y, 0) / dests.length,
+    };
+    const angles = dests.map((d) =>
+      ((Math.atan2(d!.y - centre.y, d!.x - centre.x) * 180) / Math.PI + 360) %
+      360,
+    );
+    // Four evenly spaced phases: the slots are a quarter turn apart. The ring
+    // advances a little during the boot wait, so assert the *spacing* rather
+    // than absolute angles.
+    const sorted = [...new Set(angles)].sort((a, b) => a - b);
+    expect(sorted).toHaveLength(4);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i] - sorted[i - 1]).toBeCloseTo(90, 6);
+    }
+    expect(sorted[0] + 360 - sorted[sorted.length - 1]).toBeCloseTo(90, 6);
+    const keys = dests.map((d) => `${d!.x.toFixed(4)},${d!.y.toFixed(4)}`);
+    expect(new Set(keys).size).toBe(4);
   });
 });
