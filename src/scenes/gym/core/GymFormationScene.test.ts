@@ -4,7 +4,7 @@ import * as explosionModule from '../../../vfx/explosionParticles';
 import * as collectAnimationModule from '../../../powerups/collectAnimation';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../../../test/gameHarness';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
@@ -412,13 +412,13 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
       new StubBullet(enemy.scene, 0, 60),
     ]);
 
-    await new Promise((r) => setTimeout(r, 250));
+    await advanceGame(booted!.game, 250);
     expect(scene.activeBullets.length).toBeGreaterThan(0);
 
     const first = scene.activeBullets[0];
     const xBefore = first.graphics.x;
     const yBefore = first.graphics.y;
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
     const moved = scene.activeBullets.find((b) => b.graphics === first.graphics);
     // The bullet the base class owns moves downward each frame (vy > 0).
     expect(moved).toBeDefined();
@@ -436,7 +436,7 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
       return [new StubBullet(enemy.scene, 0, 2000, 0.1)]; // fast, short-lived
     });
 
-    await new Promise((r) => setTimeout(r, 300));
+    await advanceGame(booted!.game, 300);
     // The bullet wraps across the screen edges while alive and is removed
     // only once its lifetime (0.1s) elapses — never by off-screen position.
     expect(scene.activeBullets.length).toBe(0);

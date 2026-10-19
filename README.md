@@ -491,6 +491,18 @@ post-boot assertions flaky under load.
   budget if the condition is never met. This replaces `await`-ing a
   `setTimeout` that can be missed under full-suite parallel load
   (AH-0MUYALJ9S0002XXZ).
+- **Never wait on wall-clock time — advance simulated time instead.**
+  `await new Promise((r) => setTimeout(r, 350))` lets an unpredictable number
+  of animation frames drain, which is exactly what made suites flake under
+  full-suite parallel load. Use the harness helpers:
+  `await advanceGame(booted.game, 350)` (fixed-delta `game.step`, loop state
+  preserved, instant) to replace a settle wait, and
+  `stepGameUntil(game, label, predicate)` when you need to advance until a
+  condition holds (e.g. a `time.delayedCall` transition). Vitest fake timers
+  are the alternative for non-Phaser code. A repo-level guard
+  (`src/test/wallClockWaitGuard.test.ts`) fails if a wall-clock wait reappears
+  in a test file outside its documented, self-pruning allow-list
+  (AH-0MVF6VVDP003L39A).
 - **Isolate deterministic suites from the random asteroid spawner.** The
   offscreen asteroid (and Levels 4–10 Harvester) spawner plans its releases from
   `Math.random()` and releases them by elapsed wave time, so a `scene.tick(dt)`

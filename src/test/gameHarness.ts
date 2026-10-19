@@ -152,7 +152,6 @@ async function bootDeterministic(game: Phaser.Game): Promise<void> {
  * Stops Phaser's live `requestAnimationFrame` loop and advances the stopped
  * game's clock with fixed-delta `game.step` calls until `predicate` holds,
  * throwing a descriptive error if it never does.
- *
  * `game.step` drives the whole game — including every active scene's Phaser
  * `Clock` — so a production `this.time.delayedCall(...)` transition (for
  * example PlayScene's `VICTORY_TRANSITION_HOLD_MS` victory hold before
@@ -186,4 +185,53 @@ export function stepGameUntil(
     `stepGameUntil(${label}): condition not met after ${maxSteps} steps ` +
       `(~${((maxSteps * DETERMINISTIC_STEP_MS) / 1000).toFixed(1)}s simulated)`,
   );
+}
+
+/**
+ * Deterministically advances the booted game by `ms` of simulated time in
+ * fixed ~60 Hz `game.step` calls, then lets the promise chains started by
+ * those frames settle.
+ *
+ * This is the replacement for the wall-clock sleeps that used to pepper the
+ * Phaser suites:
+ *
+ * ```ts
+ * // before — load-sensitive, burns real time
+ * await new Promise((r) => setTimeout(r, 350));
+ * // after — deterministic, instant
+ * await advanceGame(booted.game, 350);
+ * ```
+ *
+ * The live loop is stopped for the duration and restored to its previous
+ * state afterwards, so it works in suites that drive the game manually as
+ * well as in suites that rely on the live loop. The `setImmediate` turn after
+ * the steps is a macrotask yield (never a sleep) that drains queued
+ * microtasks/IO callbacks — e.g. a texture `load` handler queued by a stepped
+ * frame — before the caller asserts.
+ *
+ * @param game — The booted game to advance.
+ * @param ms — Simulated milliseconds to advance.
+ * @param stepMs — Fixed step size (default ~60 fps).
+ */
+export async function advanceGame(
+  game: Phaser.Game,
+  ms: number,
+  stepMs: number = DETERMINISTIC_STEP_MS,
+): Promise<void> {
+  const wasRunning = game.loop.running;
+  game.loop.stop();
+
+  let time = window.performance.now();
+  const steps = Math.max(1, Math.ceil(ms / stepMs));
+  for (let i = 0; i < steps; i += 1) {
+    time += stepMs;
+    game.step(time, stepMs);
+  }
+
+  // Macrotask yield (not a wall-clock sleep) so queued callbacks run.
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
+
+  if (wasRunning) game.loop.start(game.step.bind(game));
 }

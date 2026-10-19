@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import { HUD } from '../../ui/HUD';
 import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -313,7 +313,7 @@ describe('GymPowerUpsUtility AC4: shared back button + HUD presence', () => {
     expect(button).toBeDefined();
 
     button!.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
   });
@@ -675,7 +675,7 @@ describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT400
 
 describe('GymPowerUpsUtility — help overlay (AH-0MUAYB67I002REOZ)', () => {
   let booted: BootedGame | null = null;
-  const settle = () => new Promise((r) => setTimeout(r, 150));
+  const settle = () => advanceGame(booted!.game, 150);
 
   afterEach(() => {
     booted?.game.destroy(true);

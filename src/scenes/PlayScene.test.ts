@@ -24,7 +24,7 @@ import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
-import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
 import { getSpawnState, type SpawnAnimatable } from '../vfx/wormholeSpawn';
 import { Asteroid } from '../entities/Asteroid';
 import { PHASER_ORBITAL_RADIUS, PhaserEntity } from '../entities/Phaser';
@@ -389,7 +389,7 @@ async function bootSceneWithLevels(
     scene.setAsteroidSpawnerEnabled(false);
   }
   scene.scene.restart();
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await advanceGame(scene.game, 200);
   return { booted: game, scene };
 }
 
@@ -1670,7 +1670,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const player = scene.getPlayer()!;
     scene.spawnEnemyBullet(player.x, player.y, 0, 0);
     scene.tick(0.016);
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(scene.game, 350);
 
     expect(gs.lives).toBe(0);
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
@@ -2985,7 +2985,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     // Simulate game restart: same as MenuScene → PlayScene. The restart is
     // queued by the SceneManager, so pump the loop before asserting.
     scene.scene.start('PlayScene');
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await advanceGame(scene.game, 150);
 
     // Phaser reuses the same scene instance — verify it is still active.
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
@@ -3931,7 +3931,7 @@ describe('PlayScene — campaign Harvester roaming spawns (F6)', () => {
     const scene = booted.scene as PlayScene;
     scene.getWaveManager().setLevels(levels);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     return scene;
   }
 
@@ -4740,7 +4740,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       );
       const scene = booted.scene as PlayScene;
       scene.scene.start('PlayScene', { demo: true });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
     });
 
@@ -4750,7 +4750,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       );
       const scene = booted.scene as PlayScene;
       scene.scene.start('PlayScene');
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(false);
     });
 
@@ -4775,13 +4775,13 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
         (scene as unknown as { getBotInput(): unknown }).getBotInput();
 
       scene.scene.start('PlayScene', { demo: true });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
       expect(botInput()).not.toBeNull();
 
       // The explicit `{ demo: false }` overwrites the stale payload.
       scene.scene.start('PlayScene', { demo: false });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(false);
       expect(botInput()).toBeNull();
     });
@@ -4818,7 +4818,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       // Start the demo with a short dwell so the test is quick
       // (AH-0MUXZ4CAE008QRFZ AC4 test override).
       scene.scene.start('PlayScene', { demo: true, demoDwellMs: 600 });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
 
       // Kill the player on the final life so the hit ends the run.
@@ -4826,7 +4826,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
 
       // Mid-dwell the demo holds on the outcome screen (not the menu).
-      await new Promise((r) => setTimeout(r, 200));
+      await advanceGame(scene.game, 200);
       expect(booted.game.scene.isActive('GameOverScene')).toBe(true);
       expect(booted.game.scene.isActive('MenuScene')).toBe(false);
       const over = booted.game.scene.getScene('GameOverScene') as GameOverScene;
@@ -4834,7 +4834,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(scene.isDemoMode()).toBe(false);
 
       // After the dwell it loops back to the menu.
-      await new Promise((r) => setTimeout(r, 800));
+      await advanceGame(scene.game, 800);
       expect(booted.game.scene.isActive('MenuScene')).toBe(true);
       expect(booted.game.scene.isActive('GameOverScene')).toBe(false);
     });
@@ -4848,7 +4848,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
 
       // Wait for the game-over transition
-      await new Promise((r) => setTimeout(r, 300));
+      await advanceGame(scene.game, 300);
 
       // Normal play should navigate to GameOverScene.
       const activeKey = scene.scene.isActive('GameOverScene')
@@ -4871,7 +4871,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
       const scene = booted.scene as PlayScene;
       scene.scene.start('PlayScene', { demo: true });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
       return scene;
     }
@@ -4894,7 +4894,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       const scene = await bootDemo();
 
       pressKey(scene, 'Escape');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
 
       // Exactly one ESC action applies: return to the menu, never pause.
       expect(scene.isPaused()).toBe(false);
@@ -4905,7 +4905,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC1 — ESC does not take over the run (no in-place hand-off)', async () => {
       const scene = await bootDemo();
       pressKey(scene, 'Escape');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
       // The demo was abandoned to the menu, not handed to the keyboard.
       expect(scene.isPaused()).toBe(false);
       expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
@@ -4980,7 +4980,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
 
       // The old default `w` is no longer movement → returns to the menu.
       pressKey(scene, 'w');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
       expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
     });
@@ -4990,7 +4990,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
 
       // Any non-movement key (e.g. space) returns to the main menu.
       pressKey(scene, ' ');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
 
       // MenuScene is now active and PlayScene is no longer.
       expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
@@ -5012,7 +5012,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(takeOverHandlerOf(scene)).toBeNull();
 
       pressKey(scene, 'Escape');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
 
       expect(scene.isPaused()).toBe(true);
       expect(booted.game.scene.isActive('PlayScene')).toBe(true);
@@ -5088,7 +5088,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(details).toEqual([{ won: true, score }]);
       // Normal play still reaches GameOverScene (AC3); the scene start is
       // queued to the next frame, so let it settle.
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     });
 
@@ -5149,7 +5149,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(window.__aiHellRunState).toBeUndefined();
       expect(details).toEqual([]);
       // The game-over transition is unaffected by the disabled signal.
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     });
   });
@@ -5474,7 +5474,7 @@ describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)
     scene.getWaveManager().setLevels(levels);
     scene.setGhostSpawnerEnabled(true);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     return scene;
   }
 
@@ -5641,7 +5641,7 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
     // released asteroid can absorb a player bullet meant for a segment.
     scene.setAsteroidSpawnerEnabled(false);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     return scene;
   }
 
@@ -5796,7 +5796,7 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     scene.getWaveManager().setLevels(levels);
     scene.setHordeSpawnerEnabled(true);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     return scene;
   }
 
@@ -5939,7 +5939,7 @@ describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
     const scene = booted.scene as PlayScene;
     scene.getWaveManager().setLevels(levels);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     // Complete the wormhole spawn so the raider is collision-active immediately
     // (the spawn animation protects spawning enemies).
     scene.finishSpawnAnimations();
@@ -6227,7 +6227,7 @@ describe('PlayScene — Frogger lane traffic (AH-0MV01EPM40008N8T)', () => {
     scene.setAsteroidSpawnerEnabled(false);
     scene.setLaneTrafficSpawnerEnabled(true);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     scene.finishSpawnAnimations();
     return scene;
   }
@@ -6373,7 +6373,7 @@ describe('PlayScene — Frogger lane traffic (AH-0MV01EPM40008N8T)', () => {
     scene.setAsteroidSpawnerEnabled(false);
     scene.setLaneTrafficSpawnerEnabled(true);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     scene.finishSpawnAnimations();
 
     releaseLaneTraffic(scene);

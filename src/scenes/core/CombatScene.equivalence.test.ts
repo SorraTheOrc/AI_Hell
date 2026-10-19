@@ -8,7 +8,7 @@ import * as effectsModule from '../../audio/effects';
 import { PLAYER_BULLET_SPEED } from '../../core/constants';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import { RULES_STORAGE_KEY } from '../../core/rules';
-import { bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
 import type { FormationOffset } from '../../utils/formations';
 import { PlayScene } from '../PlayScene';
 import { GameOverScene } from '../GameOverScene';
@@ -2580,7 +2580,7 @@ describe('live-aim seam — bot/level gym tracks the live player like PlayScene 
       waves: [diverWave()],
     };
     manager.start('GymLevel', { level });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(booted.game, 200);
     const scene = manager.getScene('GymLevel') as GymLevel;
     placePlayer(scene.getShip()!, PLAYER_X, PLAYER_Y);
     const diver = scene.getEnemies()[0] as Diver;
@@ -2633,7 +2633,7 @@ describe('live-aim seam — bot/level gym tracks the live player like PlayScene 
     games.push(booted);
     const manager = booted.game.scene;
     manager.start('GymFodderEnemies', { enemyKey: 'diver' });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(booted.game, 200);
     const scene = manager.getScene('GymFodderEnemies') as GymFodderEnemies;
     placePlayer(scene.getPlayer()!, PLAYER_X, PLAYER_Y);
     const diver = new Diver(scene, {
