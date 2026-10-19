@@ -13,17 +13,30 @@
  * @vitest-environment node
  */
 
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createServer, type ViteDevServer } from 'vite';
 
-// This test boots a real Vite dev server and loads the config graph through
-// its SSR module loader — the first `createServer` transform is inherently
-// slower than a plain unit test, and under full-suite parallel load it can
-// exceed the Vitest default 5 s timeout and report a spurious timeout
-// (AH-0MV8I2OCA009M9C1; same class as the Phaser suite's
-// AH-0MUIPP1UU000UT88). Give the boot headroom so a slow parallel run does
-// not fail on timing alone; the assertions themselves are unchanged.
-vi.setConfig({ testTimeout: 30000 });
+/**
+ * The 30 000 ms ceiling was hit twice (AH-0MV8I2OCA009M9C1 at 5 s, then
+ * AH-0MVFBNZZD002JGI3 at 30 s). Root cause (AH-0MVFBNZZD002JGI3): the Vite
+ * dev-server boot was doing work the SSR path never needs — client dependency
+ * pre-bundling (`optimizeDeps`) and file watching (`server.watch`) — which
+ * under full-suite parallel load stretches a ~2 s boot past the test timeout
+ * and can contend on the shared `node_modules/.vite` optimizer cache. Raising
+ * the timeout again is not durable; instead:
+ *
+ * 1. the boot is trimmed to what SSR loading needs (`optimizeDeps.noDiscovery`
+ *    with an empty `include`, `watch: null`, HMR off) so there is no optimizer
+ *    or watcher to stall or contend on;
+ * 2. the boot moved from the test body into `beforeAll` — setup, not the
+ *    behaviour under test — where a generous hook timeout costs nothing unless
+ *    a suite is genuinely pathological, while the assertions themselves stay
+ *    fast under a normal test timeout;
+ * 3. the behavioural coverage is duplicated in a deterministic, load-free unit
+ *    test (`configStore.test.ts` → "SSR fallback to bundled CSVs") so the
+ *    hydration contract is guarded even if the Vite environment is not.
+ */
+vi.setConfig({ testTimeout: 30000, hookTimeout: 180000 });
 
 /** The slice of the config-store module surface this spike needs. */
 interface SsrStore {
@@ -38,6 +51,22 @@ interface SsrStore {
 }
 
 let server: ViteDevServer | undefined;
+let store: SsrStore | undefined;
+
+beforeAll(async () => {
+  server = await createServer({
+    server: { middlewareMode: true, watch: null, hmr: false },
+    appType: 'custom',
+    logLevel: 'silent',
+    // SSR module loading transforms TS directly; it never needs the client
+    // dep optimizer, so skip discovery and scanning entirely (see above).
+    optimizeDeps: { noDiscovery: true, include: [] },
+  });
+  store = (await server.ssrLoadModule(
+    '/src/core/configStore.ts',
+  )) as SsrStore;
+  await store.loadConfigs();
+});
 
 afterAll(async () => {
   await server?.close();
@@ -45,15 +74,8 @@ afterAll(async () => {
 
 describe('SSR config hydration (evaluate.mjs path)', () => {
   it('serves CSV-backed enemy/ship/difficulty values under Vite SSR', async () => {
-    server = await createServer({
-      server: { middlewareMode: true },
-      appType: 'custom',
-      logLevel: 'silent',
-    });
-    const store = (await server.ssrLoadModule(
-      '/src/core/configStore.ts',
-    )) as SsrStore;
-    await store.loadConfigs();
+    expect(store).toBeDefined();
+    if (!store) throw new Error('SSR boot failed in beforeAll');
 
     const enemies = store.loadAllEnemyConfigs();
     const scout = enemies.find((enemy) => enemy.key === 'scout');

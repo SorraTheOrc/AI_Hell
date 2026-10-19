@@ -421,6 +421,51 @@ describe('Production fallback (AC4)', () => {
   });
 });
 
+// ── SSR fallback to the build-time bundle (AH-0MV81YPBG0028WNM AC5) ──
+
+describe('SSR fallback to bundled CSVs (AH-0MV81YPBG0028WNM AC5)', () => {
+  it('hydrates CSV-backed values when the /api/csv fetch cannot resolve', async () => {
+    // Under Vite SSR (`scripts/evaluate.mjs`) DEV is true, SSR is true and
+    // MODE is `development` (not `test`). A relative `/api/csv/...` fetch has
+    // no origin to resolve against, so loadConfigs must fall back to the CSVs
+    // bundled at build time (`src/core/bundledConfig.ts`).
+    const failingFetch = vi.fn(async () => {
+      throw new TypeError('Failed to parse URL from /api/csv/...');
+    });
+    vi.stubGlobal('fetch', failingFetch);
+    vi.stubEnv('SSR', true);
+    vi.stubEnv('MODE', 'development');
+
+    await loadConfigs();
+
+    // The enemy/ship fetches were attempted (and failed) — then the bundled
+    // fallback ran without any HTTP call.
+    expect(failingFetch).toHaveBeenCalledTimes(2);
+    // Distinguishes the committed CSV from the seed defaults.
+    expect(loadEnemyConfig('scout').bulletSpeed).toBe(90);
+    expect(loadEnemyConfig('scout').shotProbability).toBe(0.45);
+    expect(loadShipConfig().maxSpeed).toBe(175);
+    expect(loadShipConfig().asteroidsReverseEnabled).toBe(true);
+    expect(loadDifficultyCurves().length).toBeGreaterThan(0);
+  });
+
+  it('keeps the seed/default fallback when MODE is `test` (vitest)', async () => {
+    // The SSR-bundled branch is deliberately skipped under vitest's MODE
+    // `test`, so a failing fetch still falls back to the built-in defaults
+    // rather than reading the on-disk bundle.
+    const failingFetch = vi.fn(async () => {
+      throw new TypeError('Failed to parse URL from /api/csv/...');
+    });
+    vi.stubGlobal('fetch', failingFetch);
+    vi.stubEnv('SSR', true);
+    vi.stubEnv('MODE', 'test');
+
+    await loadConfigs();
+
+    expect(loadShipConfig().maxSpeed).toBe(DEFAULT_CONFIG.maxSpeed);
+  });
+});
+
 // ── AC5: Graceful degradation ───────────────────────────────────────
 
 describe('Graceful degradation (AC5)', () => {

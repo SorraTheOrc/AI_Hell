@@ -149,6 +149,13 @@ falls back to the built-in defaults (the store's `loadConfigs` never throws),
 so evaluation can never be blocked by a broken config file
 (`src/ai/eval/balanceConfig.ssr.test.ts` spikes the SSR branch).
 
+The spike boots a minimal Vite SSR server (client dependency pre-bundling and
+file watching disabled — neither is needed to transform modules for SSR, and
+they were the load- and lock-sensitive parts behind the recurring full-suite
+timeout, AH-0MVFBNZZD002JGI3). The same hydration contract is also covered by a
+fast, load-free unit test in `src/core/configStore.test.ts` ("SSR fallback to
+bundled CSVs").
+
 ## Metrics
 
 The report carries the metrics the epic asks for, extracted from telemetry:
