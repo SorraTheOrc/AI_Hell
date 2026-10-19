@@ -3,7 +3,7 @@
   "version": "0.1.13",
   "private": true,
   "type": "module",
-  "description": "AI Hell — a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
+  "description": "AI Hell \u2014 a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
   "scripts": {
     "dev": "vite",
     "build-audio": "scripts/build-audio.sh",
@@ -22,11 +22,12 @@
     "replay": "node scripts/replay-recording.mjs",
     "telemetry:inspect": "node scripts/inspect-telemetry.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --project unit --project integration",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage --project unit --project integration",
+    "test:e2e": "vitest run --project e2e"
   },
   "dependencies": {
     "phaser": "^4.2.1",

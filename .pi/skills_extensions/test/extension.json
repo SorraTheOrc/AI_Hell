@@ -1,6 +1,7 @@
 {
   "types": {
     "unit": ["npx vitest run --project unit"],
-    "coverage": ["npm run test:coverage -- --testTimeout=300000"]
+    "coverage": ["npm run test:coverage -- --testTimeout=300000"],
+    "e2e": ["npx vitest run --project e2e"]
   }
 }

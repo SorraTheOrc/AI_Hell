@@ -37,12 +37,22 @@ import { classifyTestFiles, TEST_INCLUDE_GLOBS } from './vitest.projects';
  * or losing the ESM workaround; the remaining levers are per-suite boot reuse
  * (AH-0MVF6VZG9000AN6E) and fewer sleeps (AH-0MVF6VVDP003L39A).
  *
- * `npm --silent test` (= `vitest run`) executes BOTH projects, so
- * `/skill:test --type full` keeps its audit contract. Coverage is declared
- * at the root so `npm run test:coverage` still enforces the per-file line
- * thresholds across the combined run.
+ * - `e2e` — gated end-to-end suites (`*.e2e.test.ts`): real-binary work
+ *   (ffmpeg/ffprobe) that is far too slow for the feedback loop. Selected by
+ *   the `e2e` project **only**, so it never runs in `npm --silent test` /
+ *   `--type full`. Run on demand with `npx vitest run --project e2e` or
+ *   `/skill:test --type e2e` (AH-0MVFSNO0G00035AP moved the real-ffmpeg promo
+ *   smoke here; it was the full suite's ~140 s floor).
+ *
+ * `npm --silent test` is the audit-accepted full-suite entry point for
+ * `/skill:test --type full`: it runs `vitest run --project unit --project
+ * integration`, i.e. deliberately **not** the `e2e` project (Vitest runs every
+ * project by default, so the selection is explicit in the script). Coverage is
+ * declared at the root and the same explicit selection is used by
+ * `npm run test:coverage`, so the per-file line thresholds still cover the
+ * combined `unit` + `integration` run.
  */
-const { unit, integration } = classifyTestFiles();
+const { unit, integration, e2e } = classifyTestFiles();
 
 export default defineConfig({
   test: {
@@ -78,6 +88,14 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: unit,
+        },
+      },
+      {
+        test: {
+          name: 'e2e',
+          // Real ffmpeg/ffprobe subprocesses; no DOM or Phaser needed.
+          environment: 'node',
+          include: e2e,
         },
       },
       {

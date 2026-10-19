@@ -22,8 +22,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import pkg from '../../package.json';
 import config from '../../vitest.config';
-import { allTestFiles, classifyTestFiles } from '../../vitest.projects';
+import { E2E_SUFFIX, allTestFiles, classifyTestFiles } from '../../vitest.projects';
 
 const ROOT = process.cwd();
 
@@ -46,24 +47,44 @@ describe('unit/integration project membership (AH-0MVF6XV87001NSEJ)', () => {
   const all = allTestFiles(ROOT);
 
   it('selects every test file: no orphans, no duplicates', () => {
-    const selected = [...classified.unit, ...classified.integration];
+    const selected = [...classified.unit, ...classified.integration, ...classified.e2e];
     expect(normalise(selected)).toEqual(normalise(all));
 
-    // Exactly one project each — the intersection is empty and the union is
-    // the whole suite (implied by the equality above plus this check).
-    const overlap = classified.unit.filter((f) => classified.integration.includes(f));
-    expect(overlap).toEqual([]);
+    // Exactly one project each: the union is the whole suite (equality above)
+    // and no file appears in two projects.
+    const groups = [classified.unit, classified.integration, classified.e2e];
+    for (let a = 0; a < groups.length; a += 1) {
+      for (let b = a + 1; b < groups.length; b += 1) {
+        const overlap = groups[a].filter((f) => groups[b].includes(f));
+        expect(overlap).toEqual([]);
+      }
+    }
     expect(selected.length).toBe(all.length);
+  });
+
+  it('keeps gated e2e suites out of the audit-accepted full-suite projects', () => {
+    for (const file of classified.e2e) {
+      expect(file.endsWith(E2E_SUFFIX), file).toBe(true);
+      expect(classified.unit, file).not.toContain(file);
+      expect(classified.integration, file).not.toContain(file);
+    }
+    // The real-ffmpeg promo smoke is the gated suite this split was made for
+    // (AH-0MVFSNO0G00035AP).
+    expect(classified.e2e).toContain('scripts/compile-promo.e2e.test.ts');
+    expect(classified.unit).not.toContain('scripts/compile-promo.e2e.test.ts');
+    expect(classified.integration).not.toContain('scripts/compile-promo.e2e.test.ts');
   });
 
   it('has a non-empty fast project and a non-empty heavy project', () => {
     expect(classified.unit.length).toBeGreaterThan(0);
     expect(classified.integration.length).toBeGreaterThan(0);
+    expect(classified.e2e.length).toBeGreaterThan(0);
   });
 
   it("the config's project includes match the classifier exactly", () => {
     expect(normalise(projectInclude('unit'))).toEqual(normalise(classified.unit));
     expect(normalise(projectInclude('integration'))).toEqual(normalise(classified.integration));
+    expect(normalise(projectInclude('e2e'))).toEqual(normalise(classified.e2e));
   });
 
   it('classifies a Phaser-booting scene suite as integration', () => {
@@ -84,10 +105,28 @@ describe('unit/integration project membership (AH-0MVF6XV87001NSEJ)', () => {
     }>;
     const unit = projects.find((p) => p.test?.name === 'unit')!;
     const integration = projects.find((p) => p.test?.name === 'integration')!;
+    const e2e = projects.find((p) => p.test?.name === 'e2e')!;
     expect(unit.test?.environment).toBe('node');
     expect(unit.test?.setupFiles).toBeUndefined();
     expect(integration.test?.environment).toBe('happy-dom');
     expect(integration.test?.setupFiles).toEqual(['src/test/setup.ts']);
+    // Gated e2e suites run in Node (real subprocesses), with no DOM setup.
+    expect(e2e.test?.environment).toBe('node');
+    expect(e2e.test?.setupFiles).toBeUndefined();
+  });
+
+  it('the default suite entry points select unit + integration only (never e2e)', () => {
+    // Vitest runs *every* project by default, so `npm test` must name the two
+    // audit-relevant projects explicitly; otherwise the gated e2e suites leak
+    // back into the full-suite run (observed while landing AH-0MVFSNO0G00035AP).
+    const scripts = (pkg as { scripts?: Record<string, string> }).scripts ?? {};
+    for (const name of ['test', 'test:coverage']) {
+      const script = scripts[name] ?? '';
+      expect(script, name).toContain('--project unit');
+      expect(script, name).toContain('--project integration');
+      expect(script, name).not.toContain('--project e2e');
+    }
+    expect(scripts['test:e2e']).toBe('vitest run --project e2e');
   });
 
   it('keeps every classified file existing on disk', () => {

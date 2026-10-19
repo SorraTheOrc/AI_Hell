@@ -50,6 +50,14 @@ export const TEST_INCLUDE_GLOBS = [
   'vite/**/*.test.ts',
 ] as const;
 
+/**
+ * Suffix marking a gated end-to-end test: real-binary (ffmpeg/ffprobe) or
+ * other slow external work. These run in the `e2e` project only, never in the
+ * audit-accepted `unit`/`integration` full-suite selection
+ * (AH-0MVFSNO0G00035AP).
+ */
+export const E2E_SUFFIX = '.e2e.test.ts';
+
 /** Module specifiers that force a test file into the integration project. */
 const INTEGRATION_SPECIFIERS = ['phaser'];
 
@@ -189,15 +197,29 @@ export function isIntegrationTest(root: string, file: string): boolean {
   return integration;
 }
 
-/** The classified suite: `unit` and `integration` project file lists. */
+/**
+ * The classified suite: `unit`, `integration` and `e2e` project file lists.
+ *
+ * `e2e` is decided by filename (`*.e2e.test.ts`) and takes precedence over the
+ * DOM/Phaser analysis, so a gated end-to-end suite is never pulled into the
+ * audit-accepted full-suite run.
+ */
 export function classifyTestFiles(root: string = process.cwd()): {
   unit: string[];
   integration: string[];
+  e2e: string[];
 } {
   const unit: string[] = [];
   const integration: string[] = [];
+  const e2e: string[] = [];
   for (const file of allTestFiles(root)) {
-    (isIntegrationTest(root, file) ? integration : unit).push(file);
+    if (file.endsWith(E2E_SUFFIX)) {
+      e2e.push(file);
+    } else if (isIntegrationTest(root, file)) {
+      integration.push(file);
+    } else {
+      unit.push(file);
+    }
   }
-  return { unit: unit.sort(), integration: integration.sort() };
+  return { unit: unit.sort(), integration: integration.sort(), e2e: e2e.sort() };
 }

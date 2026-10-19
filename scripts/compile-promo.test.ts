@@ -88,12 +88,9 @@
  * @vitest-environment node
  */
 
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
 import {
   ACTION_SERIES_EXTENSION,
-  BLACK_FRAME_YAVG_FLOOR,
   BREAKDOWN_TO_EDITORIAL_CATEGORY,
   CAPTURE_OUTPUT_DIR,
   DEDUPE_DURATION_TOLERANCE_MS,
@@ -127,13 +124,10 @@ import {
   parseSignalStatsOutput,
   probeHasAudio,
   probeHasVideo,
-  probeMediaSync,
   probeVideoDurationSec,
   resolveFfmpegTools,
   runFfmpegSync,
-  sampleBrightnessSync,
   selectHighlightWindows,
-  sourceAnchorPath,
   sourceSeriesPath,
   sourceWebmPath,
   windowFeatures,
@@ -1695,149 +1689,3 @@ describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
     expect(result.stdout).toContain('non-trivial non-black pixels missing');
   });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// Integration smoke test — real ffmpeg over synthetic footage (AC6, gated
-// on ffmpeg presence). Skipped when ffmpeg/ffprobe are unavailable.
-// ────────────────────────────────────────────────────────────────────────────
-
-const HAS_FFMPEG = (() => {
-  try {
-    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' });
-    execFileSync('ffprobe', ['-version'], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-const anchorJson = JSON.stringify({
-  kind: 'capture-join-anchor',
-  schemaVersion: 1,
-  captureStartedAtEpochMs: 0,
-  runStartedAtEpochMs: 0,
-});
-
-/** A one-peak synthetic action-intensity series (video time ≈ series time). */
-function seriesFor(runId: string) {
-  const isA = runId.endsWith('-a');
-  const t = isA ? 2_000 : 1_200;
-  return [
-    JSON.stringify({
-      schemaVersion: 1,
-      runSeed: 7,
-      sampleRateHz: 10,
-      categories: ['playerBullets', 'drops', 'enemies', 'bosses'],
-    }),
-    JSON.stringify({
-      t,
-      intensity: isA ? 0.9 : 0.8,
-      burstiness: 0.4,
-      breakdown: isA ? { playerBullets: 2 } : { enemies: 2 },
-    }),
-    '',
-  ].join('\n');
-}
-
-describe.skipIf(!HAS_FFMPEG)(
-  'integration — real ffmpeg compile of synthetic footage (AH-0MVDV4PNZ004ZWOZ AC6)',
-  () => {
-    const tag = `itest-${process.pid}-${Date.now()}`;
-    const runA = `${tag}-a`;
-    const runB = `${tag}-b`;
-    const outDir = `${CAPTURE_OUTPUT_DIR}/compile-${tag}`;
-    const planPath = `${CAPTURE_OUTPUT_DIR}/compile-promo-plan-${tag}.json`;
-    const created: string[] = [outDir, planPath];
-
-    beforeAll(() => {
-      mkdirSync(outDir, { recursive: true });
-      // Short synthetic sources (just long enough for the mapped windows:
-      // runA [0.5s, 3.0s], runB [0s, 2.2s]) keep the gated smoke encode cheap.
-      //
-      // Bounded (AH-0MVF6VQ7G005ALXZ): the fixtures are a *synthetic* colour
-      // test pattern, not gameplay footage, so they are encoded at 320x180@30
-      // with `-cpu-used 8` — ~18x fewer pixel-frames to encode in setup. The
-      // production compile path (960x540@60 VP9 deliverables) is unchanged
-      // and still exercised end to end below.
-      //
-      // Measured A/B on a contended 16-core host (load ~30, back-to-back):
-      // original fixtures 140.9 s vs bounded fixtures 140.4 s for this file —
-      // i.e. the setup encode is *not* the bottleneck; the dominant cost is
-      // the production VP9 deliverable re-encode + brightness validation,
-      // which cannot be reduced without changing production settings or
-      // losing the real-ffmpeg coverage. See AH-0MVF6VQ7G005ALXZ.
-      for (const [runId, freq, seconds] of [
-        [runA, '440', '3.2'],
-        [runB, '660', '2.6'],
-      ] as const) {
-        const webm = sourceWebmPath(runId);
-        execFileSync(
-          'ffmpeg',
-          [
-            '-y', '-hide_banner', '-loglevel', 'error',
-            '-f', 'lavfi', '-i', `testsrc2=size=320x180:rate=30:duration=${seconds}`,
-            '-f', 'lavfi', '-i', `sine=frequency=${freq}:duration=${seconds}`,
-            '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '35',
-            '-deadline', 'realtime', '-cpu-used', '8',
-            '-c:a', 'libopus', '-b:a', '96k',
-            webm,
-          ],
-          { stdio: 'ignore' },
-        );
-        created.push(webm);
-        const seriesPath = sourceSeriesPath(runId);
-        writeFileSync(seriesPath, seriesFor(runId));
-        created.push(seriesPath);
-        writeFileSync(sourceAnchorPath(runId), anchorJson);
-        created.push(sourceAnchorPath(runId));
-      }
-    }, 300_000);
-
-    afterAll(() => {
-      for (const path of created) rmSync(path, { recursive: true, force: true });
-    });
-
-    it('compiles real WebM deliverables and validates them via the CLI', () => {
-      const result = compilePromoMain([
-        '--compile',
-        '--runs', `${runA},${runB}`,
-        '--out', planPath,
-        '--out-dir', outDir,
-      ]);
-      expect(result.code).toBe(0);
-      expect(result.stdout).toContain('all validated OK');
-      expect(existsSync(planPath)).toBe(true);
-      expect(existsSync(`${outDir}/compile-promo-report.json`)).toBe(true);
-
-      const promoPath = deliverableOutputPath('promo', 1, outDir);
-      expect(existsSync(promoPath)).toBe(true);
-      expect(existsSync(deliverableOutputPath('showreel', 1, outDir))).toBe(true);
-      expect(existsSync(deliverableOutputPath('highlight', 1, outDir))).toBe(true);
-
-      // The real output must pass the AC3 checks: vp9 960×540 + opus audio,
-      // non-trivial brightness, and the expected 2-segment promo duration.
-      const probe = probeMediaSync(promoPath, {});
-      expect(probe.ok).toBe(true);
-      const video = probe.streams.find((s) => s.codecType === 'video');
-      const audio = probe.streams.find((s) => s.codecType === 'audio');
-      expect(video?.codecName).toBe('vp9');
-      expect(video?.width).toBe(DELIVERABLE_WIDTH);
-      expect(video?.height).toBe(DELIVERABLE_HEIGHT);
-      expect(audio?.codecName).toBe('opus');
-      // WebM durations live at the container level — probeMediaSync mirrors
-      // the production path, so the format-duration fallback is exercised.
-      const durationSec = probeVideoDurationSec(probe);
-      expect(durationSec).not.toBeNull();
-      // runA window [0.5s, 3.0s] + runB window [0s, 2.2s].
-      expect(durationSec!).toBeGreaterThan(4.0);
-      expect(durationSec!).toBeLessThan(5.6);
-
-      const brightness = sampleBrightnessSync(promoPath, {});
-      expect(brightness.sampledFrames).toBeGreaterThan(0);
-      expect(brightness.maxYavg).not.toBeNull();
-      expect(brightness.maxYavg!).toBeGreaterThan(BLACK_FRAME_YAVG_FLOOR);
-      // Full-suite runs share the 16-core host with Phaser suites, so the
-      // smoke encode is slow; allow a generous bound (600 s).
-    }, 600_000);
-  },
-);

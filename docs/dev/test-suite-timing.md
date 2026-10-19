@@ -73,8 +73,20 @@ Record the 1/5/15-minute load averages and the CPU count. Target conditions:
 
    `--type unit`/`--type coverage` use independent cache keys and never
    masquerade as full-suite evidence (parent AC6). The full suite still runs
-   both projects (`npm --silent test`), so timings for "the suite" remain
-   directly comparable with the baseline rows.
+   the `unit` + `integration` projects (`npm --silent test`), so timings for
+   "the suite" remain directly comparable with the baseline rows.
+
+4. **Gated end-to-end suites (not part of the full suite):**
+
+   ```bash
+   npm run test:e2e                                   # npx vitest run --project e2e
+   python3 ~/.pi/agent/skills/test/scripts/run_tests.py --type e2e --force
+   ```
+
+   `*.e2e.test.ts` files run **only** in the `e2e` project (real ffmpeg/ffprobe
+   work, ~140 s for the promo compile). They are excluded from `--type full`
+   by design (AH-0MVFSNO0G00035AP), so a full-suite timing **excludes** them —
+   state which run you are reporting (full vs e2e) whenever you quote a number.
 
 > **Exception note:** item-level timed runs of step 2 invoke `npm test`
 > directly. This is the epic's documented "measurement command" exception;

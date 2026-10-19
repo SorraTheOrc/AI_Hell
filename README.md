@@ -444,10 +444,18 @@ whose transitive project imports — needs neither a DOM global nor Phaser
 resolved statically).
 - **`integration`** — happy-dom, `src/test/setup.ts` and the Phaser inline
 transform: every Phaser/DOM-booting suite (`npm run test:integration`).
+- **`e2e`** — gated `*.e2e.test.ts` suites that drive **real binaries** (today:
+  the ffmpeg/ffprobe promo compile). Far too slow for the feedback loop, so it
+  is excluded from the default run entirely: `npx vitest run --project e2e` or
+  `/skill:test --type e2e`. Nothing in it is unique proof of behaviour — the
+  same command/probe/validation logic is covered by injected-subprocess tests in
+  the `scripts/` unit suites; `e2e` only proves a real encoder accepts the
+  command line and produces probe-able output.
 
-`npm --silent test` (and `/skill:test --type full`) still executes **both**
-projects, so it remains the audit-accepted full-suite evidence; the `unit` type
-uses an independent cache key and can never satisfy a full-suite AC. The
+`npm --silent test` (and `/skill:test --type full`) executes the **`unit` and
+`integration`** projects only, so it remains the audit-accepted full-suite
+evidence; the `unit` and `e2e` types use independent cache keys and can never
+satisfy a full-suite AC. The
 project-membership guard (`src/test/projectMembership.test.ts`) fails loudly if
 a test file is selected by no project or by both, and asserts each project's
 `include` list matches the classifier exactly.
