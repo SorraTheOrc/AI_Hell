@@ -878,19 +878,20 @@ life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
 
 ### 2.7 Wormhole spawn animation (AH-0MURBER4L00821RR)
 
-When a wave (or formation gym) spawns enemies, each enemy enters through a
-wormhole and grows from **1 pixel to its full size** instead of appearing
-fully formed. The same code runs in `PlayScene` and every formation gym, per
-the gym-parity convention (§5.1).
+When a wave (or formation gym) spawns enemies, each enemy emerges **at the
+wormhole**, **transits** from there to its formation slot and grows from
+**1 pixel to its full size** instead of appearing fully formed at its final
+position. The same code runs in `PlayScene` and every formation gym, per the
+gym-parity convention (§5.1).
 
 **Timeline** (scene-tick seconds, not wall-clock — so deterministic
 `scene.tick(dt)` tests drive it identically to a live run):
 
 | Phase | Duration | Behaviour |
 |-------|----------|-----------|
-| Wormhole opens | 1 s | The wormhole VFX scales from 0.01 to full at the spawn position. |
-| Enemy grows | 1.5 s | Each enemy eases from 0.01 scale to its full scale (ease-out cubic). |
-| Wormhole closes | 0.5 s | The wormhole scales to zero and fades out. |
+| Wormhole opens | 1 s | The wormhole VFX scales from 0.01 to full at the portal position. Each enemy holds at the wormhole origin, still at 0.01 scale. |
+| Enemy grows & transits | 1.5 s | Each enemy eases from 0.01 scale to its full scale **and** travels from the wormhole origin to its formation slot (both ease-out cubic, in lock-step). It is fully arrived by the end of this phase (t = 2.5 s). |
+| Wormhole closes | 0.5 s | The wormhole scales to zero and fades out. Enemies have already arrived. |
 
 Total spawn-protection window = **3 s**. During that window the spawning
 enemy is protected (AC4):
@@ -906,6 +907,39 @@ enemy is protected (AC4):
   `collectMinerals` (`src/scenes/core/mineralLayer.ts`) skips spawning
   enemies.
 
+**Transit movement (AH-0MV8BSMXC0097KLW).** Enemies do not pop into place:
+they emerge from the wormhole and traverse to their formation slot, so the
+spawn reads as cinematic and diegetic.
+
+- `SpawnState` records the **origin** (`originX`/`originY`, captured at spawn
+  time) and the **destination** (`destX`/`destY`, the formation slot).
+- `startSpawnAnimation(enemy, scale, delay?, destination?)` accepts an
+  optional destination — a fixed `{x, y}` or a **resolver function**
+  re-evaluated every frame (so a drifting/marching formation's live slot is
+  tracked and the enemy lands exactly on it, with no position pop when the
+  spawn window ends). Callers that omit it (e.g. boss minions, which are not
+  part of the wave's wormhole entry) keep the legacy in-place growth, so
+  nothing else changes.
+- During the wormhole-open delay the enemy **holds at the origin**; during
+  the growth phase `updateSpawnAnimation` interpolates its position from the
+  origin to the destination using the **same ease-out-cubic progress** as the
+  scale growth. Because the eased progress reaches 1 at the end of the growth
+  phase, the enemy is fully arrived at **t = 2.5 s — 0.5 s before the
+  wormhole closes** and strictly inside the 3 s protection window. A final
+  snap to the live destination guarantees the resting position is exact.
+- Spawn positions and timing are otherwise unchanged: the formation slot is
+  the destination, and nothing about wave pacing, counts, spacing or the
+  protection window moves.
+- Entities with autonomous positioning (`autonomousPositioning`, e.g. the
+  Raider, whose patrol/attack state machine drives its own position) are
+  exempt: they emerge at the portal and their own motion carries them out,
+  avoiding a position pop when the spawn window ends. Entities without the
+  spawning seams (e.g. test stubs) are created straight on their slot.
+- The Diver's existing movement pipeline (dive phase, re-anchor glide) is
+  untouched: transit only writes the container position while the entity is
+  spawning, and the formation/dive logic takes over once the spawn state is
+  cleared.
+
 **Implementation.**
 
 - `src/vfx/wormholeSpawn.ts` owns the wormhole VFX (`spawnWormholeOpen` /
@@ -915,16 +949,22 @@ enemy is protected (AC4):
   data, so any `Container`-based entity works.
 - `BaseEnemy` exposes `isSpawning` / `setSpawning()` — the single flag every
   shared collision/fire/absorption gate reads.
-- `PlayScene._spawnEnemy` starts the animation; `PlayScene._updateSpawnAnimations`
-  advances it before collisions so an enemy that finishes growing this frame
-  is collidable on the same frame; the wormhole closes once every wave enemy
-  has finished.
-- `GymFormationScene` starts the animation for each formation entity through
-  the shared `_spawnFormation()` helper (used by `create()` and the
-  wipe→respawn / carry-over respawn paths) and `_updateSpawnAnimations`
-  advances/closes it, so `GymFodderEnemies` and the other formation gyms are
-  in lock-step with the game — a respawned formation enters through a fresh
-  wormhole exactly as the game's next wave does.
+- `PlayScene._spawnEnemy` instantiates each enemy **at the wave's resolved
+  wormhole portal** (`_spawnEnemy(spawn, wormholeOrigin)`) instead of its
+  formation slot, starts the animation with a destination resolver for the configured
+  formation position (`spawn.startX/startY + offset × spacing`, tracking live
+  drift/march state), and `PlayScene._updateSpawnAnimations` advances it
+  before collisions so an enemy that finishes growing this frame is
+  collidable on the same frame; the wormhole closes once every wave enemy has
+  finished.
+- `GymFormationScene` builds the same pattern for each formation entity
+  through the shared `_spawnFormation()` helper (used by `create()` and the
+  wipe→respawn / carry-over respawn paths): the entity is created at the
+  portal (where the wormhole opens) with a destination resolver for its live
+  formation slot. `_updateSpawnAnimations` advances/closes it, so
+  `GymFodderEnemies` and the other formation gyms are in lock-step with the
+  game — a respawned formation enters through a fresh wormhole exactly as the
+  game's next wave does.
 - Both scenes expose a `finishSpawnAnimations()` test seam that completes the
   animation without advancing wave timers/asteroid spawns, so collision tests
   can observe fully-spawned enemies deterministically.
@@ -980,15 +1020,22 @@ the portal** rather than to the screen. The shared rule lives once in
   arithmetic.
 
 **Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters,
-  the dt-driven growth curve, the `WormholeController` single-live
-  lifecycle, and the placement/anchoring helpers (`placeWavePortal`:
+  the dt-driven growth curve, the **transit movement** (origin/destination
+  recorded in the spawn state, holding at the origin through the open delay,
+  moving toward the destination in lock-step with growth, arriving exactly on
+  it by the end of the 3 s window, monotonically dt-driven and never
+  overshooting, and staying put when no destination is supplied), the
+  `WormholeController` single-live lifecycle, and the placement/anchoring
+  helpers (`placeWavePortal`:
   far-anchor fast path, near-player rejection, trajectory projection,
   no-safe-candidate fallback, hull safety, gym no-player path;
   `anchorSpawnsToPortal`: portal-relative translation preserving spacing);
   `PlayScene.test.ts` (describe “wormhole spawn animation” and “wave portal
   placed away from the player”) and
   `GymFodderEnemies.test.ts` (describe “wormhole spawn animation parity”)
-  cover the spawn-protection gates in both scenes plus the regression cases
+  cover the transit from the wormhole origin to the formation destination
+  (game and gym, including arrival within the 3 s window) and the
+  spawn-protection gates **during transit** in both scenes plus the regression cases
   (second `spawnWave()` while a wormhole is live, transition/timeout
   mid-spawn, a gym wipe→respawn re-opening one wormhole, and the portal
   staying ≥ `D_MIN` away from the player and its trajectory).
