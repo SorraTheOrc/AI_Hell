@@ -60,15 +60,21 @@ Record the 1/5/15-minute load averages and the CPU count. Target conditions:
    prints it next to the load snapshot. It never writes to the repo and is
    not collected as a test.
 
-3. **Unit project fast loop (once child AH-0MVF6XV87001NSEJ lands):**
+3. **Unit project fast loop (AH-0MVF6XV87001NSEJ):**
 
    ```bash
-   npx vitest run --project unit                     # raw
+   npm run test:unit                                 # raw: npx vitest run --project unit
    python3 ~/.pi/agent/skills/test/scripts/run_tests.py --type unit --force
+   # heavy project alone (Phaser/DOM suites):
+   npm run test:integration
+   # coverage thresholds (registered as a project test type):
+   python3 ~/.pi/agent/skills/test/scripts/run_tests.py --type coverage --force
    ```
 
-   `--type unit` uses an independent cache key and never masquerades as
-   full-suite evidence (parent AC6).
+   `--type unit`/`--type coverage` use independent cache keys and never
+   masquerade as full-suite evidence (parent AC6). The full suite still runs
+   both projects (`npm --silent test`), so timings for "the suite" remain
+   directly comparable with the baseline rows.
 
 > **Exception note:** item-level timed runs of step 2 invoke `npm test`
 > directly. This is the epic's documented "measurement command" exception;

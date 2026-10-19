@@ -45,25 +45,30 @@ function collectTestFiles(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * Strips block and line comments so the static checks below assert on the
- * harness **code** only — the header documents the deleted
- * `setTimeout`-based boot by name, which must not be mistaken for a call.
+ * Strips block/line comments and string literals so the static checks below
+ * assert on the harness/**, test-file **code** only. Prose documents the
+ * deleted `setTimeout`-based boot by name, and a filename such as
+ * `deterministicBootGuard.test.ts` appears as a string literal in other
+ * tests — neither is a boot delay or an option pass.
  */
-function stripComments(source: string): string {
+function stripNonCode(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^[ \t]*\/\/.*$/gm, '');
+    .replace(/^[ \t]*\/\/.*$/gm, '')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/`(?:[^`\\]|\\.)*`/g, '``');
 }
 
 describe('deterministic-boot harness guard (AH-0MVF6XQIC005RY3P)', () => {
   it('the harness contains no wall-clock boot delay or setTimeout', () => {
-    const code = stripComments(fs.readFileSync(HARNESS, 'utf8'));
+    const code = stripNonCode(fs.readFileSync(HARNESS, 'utf8'));
     expect(code).not.toMatch(/setTimeout/);
     expect(code).not.toMatch(/\bbootDelay\b/);
   });
 
   it('the harness exposes only the deterministic boot path', () => {
-    const code = stripComments(fs.readFileSync(HARNESS, 'utf8'));
+    const code = stripNonCode(fs.readFileSync(HARNESS, 'utf8'));
     // Both boot entry points exist and share the fixed-delta boot flow.
     expect(code).toMatch(/async function bootScene\(/);
     expect(code).toMatch(/async function bootDeterministic\(/);
@@ -76,7 +81,7 @@ describe('deterministic-boot harness guard (AH-0MVF6XQIC005RY3P)', () => {
   it('no test file passes the legacy deterministicBoot option', () => {
     const offenders = collectTestFiles(path.resolve(process.cwd(), 'src'))
       .filter((file) => file !== SELF)
-      .filter((file) => /deterministicBoot/.test(fs.readFileSync(file, 'utf8')));
+      .filter((file) => /\bdeterministicBoot\b/.test(stripNonCode(fs.readFileSync(file, 'utf8'))));
     expect(offenders).toEqual([]);
   });
 });

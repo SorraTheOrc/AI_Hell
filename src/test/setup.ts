@@ -12,8 +12,10 @@
  * game loop ticks and scenes boot — no pixels are actually rendered.
  * Browser-level render verification remains a manual `npm run dev` step.
  *
- * The harness is a no-op under the Node test environment (used by the
- * Vite plugin tests), where no DOM globals exist.
+ * This module is loaded only by the **`integration`** Vitest project
+ * (`vitest.config.ts`, `setupFiles`); the `unit` project runs with
+ * `environment: 'node'` and never loads it. It is still a no-op when no DOM
+ * globals exist (defensive, e.g. a Node-only import of a scene module).
  */
 
 const hasDom =

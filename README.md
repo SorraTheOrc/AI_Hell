@@ -429,6 +429,29 @@ Editing the curve clears the preview (and its launch buttons) until **Regenerate
    shipped `PlayScene` (see [AGENTS.md § Game Architecture Conventions](./AGENTS.md#game-architecture-conventions)
    and `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §5.1).
 
+#### Test projects (unit / integration)
+
+The suite is split into two Vitest projects (`vitest.config.ts`, with the
+selection rule shared in `vitest.projects.ts` so the config and the guard test
+cannot drift):
+
+- **`unit`** — `environment: 'node'`, no DOM setup and no Phaser inline
+transform. This is the fast TDD loop: `npm run test:unit`
+(`npx vitest run --project unit`, or `/skill:test --type unit` via the
+project test-type extension). It selects every test file whose own source — or
+whose transitive project imports — needs neither a DOM global nor Phaser
+(`import.meta.glob` counts as Phaser-adjacent because its targets cannot be
+resolved statically).
+- **`integration`** — happy-dom, `src/test/setup.ts` and the Phaser inline
+transform: every Phaser/DOM-booting suite (`npm run test:integration`).
+
+`npm --silent test` (and `/skill:test --type full`) still executes **both**
+projects, so it remains the audit-accepted full-suite evidence; the `unit` type
+uses an independent cache key and can never satisfy a full-suite AC. The
+project-membership guard (`src/test/projectMembership.test.ts`) fails loudly if
+a test file is selected by no project or by both, and asserts each project's
+`include` list matches the classifier exactly.
+
 #### Testing conventions (deterministic scene boot)
 
 Phaser suites boot a real `Phaser.Game` through `bootScene()`

@@ -327,9 +327,20 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
 
   it('AC1 — formation advances at the configured drift speed', async () => {
     const scene = await bootGym();
+    const game = scene.game;
+    // Drive 0.35 s of simulated time in fixed 60 Hz steps instead of waiting
+    // on wall-clock frames: the drift is time-based, so a slow host (or
+    // coverage instrumentation) previously advanced less than the asserted
+    // 0.25 s worth and failed spuriously (parent AH-0MVF3BESP005ZDAV).
+    game.loop.stop();
     const baseBefore = scene.formationX;
 
-    await new Promise((r) => setTimeout(r, 350));
+    let simTime = performance.now();
+    const stepMs = 1000 / 60;
+    for (let i = 0; i < Math.ceil(350 / stepMs); i += 1) {
+      simTime += stepMs;
+      game.step(simTime, stepMs);
+    }
 
     const baseAfter = scene.formationX;
     expect(baseAfter).toBeGreaterThan(baseBefore);
