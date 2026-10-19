@@ -449,6 +449,7 @@ The following rules govern how enemy entities interact with each other and with 
 
 #### E4 — Phaser (Level 5+)
 - **Behavior**: Moves slowly in a fixed orbital path; fires in predictable, repeating cycles.
+- **Orbital formation & entry (AH-0MVEXVME1004SIIS)**: a Phaser group shares **one ring** around the formation centre (`PHASER_ORBITAL_RADIUS`, 80 px) and spreads its members **evenly by the group's actual count** — `phase_i = i × 2π / N` for `i = 0…N−1`. Four Phasers keep the familiar 0°/90°/180°/270° square, while a scaled group (e.g. the difficulty sequencer's `phaser × 12`) occupies twelve distinct slots with none coincident. A spawning Phaser transits from the wave wormhole **straight to its live orbital slot** (no line-then-snap), and the same shared orbital geometry drives both the transit destination and the per-frame orbit (gym↔game parity).
 - **Appearance**: Circular neon ring with a central core.
 - **Health**: 1 HP — destroyed by a single player bullet.
 - **Threat level**: Medium (but high pattern-based challenge).
@@ -629,7 +630,7 @@ on entry (AH-0MUJM746P000QAEO).
 | **Circle** | Enemies form a rotating circle, occasionally breaking out | 2, 3 |
 | **Wall** | Dense horizontal line of enemies that advances slowly; a density challenge — each enemy consumes one bullet (see §2.6) | 3 |
 | **Dive Bomb** | Enemies alternate between formation flight and diving toward the player | 3, 4 |
-| **Orbital** | Enemies in fixed orbital paths around a central point (Level 5+) | 5, 7, 8, 9, 10 |
+| **Orbital** | Enemies in fixed orbital paths around a central point (Level 5+); each member takes a distinct, evenly spaced phase (`phase_i = i × 2π / N`) and enters from the wormhole straight onto its live orbital slot | 5, 7, 8, 9, 10 |
 | **Boss Phases** | The boss cycles through 3–4 distinct attack patterns | Boss |
 
 > **Asteroids are not a wave structure.** Since the random offscreen spawner

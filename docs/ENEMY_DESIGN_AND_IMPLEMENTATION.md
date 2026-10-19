@@ -18,7 +18,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | E1 | Scout | `formation` | `projectile` | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
 | E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | `formation` | `projectile` | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
-| E4 | Phaser | `formation` | `projectile` | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
+| E4 | Phaser | `formation` | `projectile` | §4.1 (L5) | Fixed orbital path, predictable firing cycles; group members take distinct, evenly spaced phases (`phase_i = i × 2π / N`) on one ring, and spawn from the wormhole straight onto the live orbital slot (AH-0MVEXVME1004SIIS) | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | `formation` | `projectile` | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
 | E6 | Asteroid | `roamer` | `contact` | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
 | E7 | Harvester | `roamer` | `contact` | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
@@ -1019,6 +1019,33 @@ the portal** rather than to the screen. The shared rule lives once in
   with the portal pinned to the formation base this is byte-for-byte the old
   arithmetic.
 
+**Orbital-slot entry (AH-0MVEXVME1004SIIS).** A formation entity may expose a
+**live formation-slot seam** (`formationSlot(baseX, baseY)` — currently the
+Phaser). When it does, the wormhole transit targets the entity's **live
+orbital slot** rather than its grid/line slot, so a spawning Phaser streams
+out of the wormhole and settles directly onto the ring instead of appearing
+in a line and snapping. This reuses the existing per-frame destination
+resolver (`startSpawnAnimation`'s `destFn`):
+
+- `PlayScene._spawnEnemy` and `GymFormationScene._spawnFormation` resolve
+  `entity.formationSlot(baseX, baseY)` every frame when the seam is present;
+  every other enemy keeps the grid destination, unchanged.
+- The orbital maths lives **once** in `src/utils/formations.ts` —
+  `orbitalPhaseAngle(index, count)` (`phase_i = i × 2π / count`, default count
+  `DEFAULT_ORBITAL_FORMATION_COUNT = 4`), `orbitalPhaseIndex(offset)` and
+  `computeOrbitalSlot(baseX, baseY, phase, radius, elapsedAngle)` — and is
+  consumed by `PhaserEntity.applyFormationPosition` and, through the same
+  seam, by the two scene resolvers, so the game and the gym cannot diverge
+  (gym↔game parity, §5.1).
+- `buildOrbitalPhaseOffsets(count)` stamps the group's actual size on each
+  offset (`phaseCount`), so a scaled group (e.g. the difficulty sequencer's
+  `phaser × 12`) produces twelve distinct slots rather than repeating four
+  phases; single-entity constructors keep the four-point square.
+- Because the destination is re-resolved each frame and `applyFormationPosition`
+  uses the **same** shared helper, the Phaser lands on its live orbital slot
+  with no visible position jump when the spawn window ends (post-spawn delta
+  ≤ 1 px). The `isSpawning` gates and the 3 s protection window are unchanged.
+
 **Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters,
   the dt-driven growth curve, the **transit movement** (origin/destination
   recorded in the spawn state, holding at the origin through the open delay,
@@ -1107,7 +1134,11 @@ paths, E5 clusters, Boss phases), extend the entity's
 `applyFormationPosition` or add periodic per-frame hooks **in the entity**,
 not by copying the scene boilerplate. If the base class genuinely needs a
 new seam, that belongs in `src/scenes/gym/core/GymFormationScene.ts` (plus
-its tests) — see §5.
+its tests) — see §5. The E4 Phaser's orbital slot is computed by the shared
+pure helpers in `src/utils/formations.ts` (`computeOrbitalSlot`,
+`orbitalPhaseAngle`) and exposed through the entity's `formationSlot()`
+seam, so the wormhole-transit resolver reuses the same geometry rather than
+duplicating it (AH-0MVEXVME1004SIIS).
 
 ---
 
@@ -1576,7 +1607,10 @@ Public loader helpers (unchanged signatures): `loadEnemyConfig(key)`
 
 ### 8.3 FormationKind & shot-pattern registries
 
-- `src/utils/formations.ts`: `buildOrbitalPhaseOffsets`, `buildSingleOffset`,
+- `src/utils/formations.ts`: `buildOrbitalPhaseOffsets` (stamps each offset
+  with the group's actual size via `phaseCount`), `buildSingleOffset`,
+  `orbitalPhaseAngle` / `orbitalPhaseIndex` / `computeOrbitalSlot` (the shared,
+  pure, count-based orbital geometry; `DEFAULT_ORBITAL_FORMATION_COUNT = 4`),
   `EnemyFormationKind`, `FORMATION_BUILDERS`, `getFormationBuilder(kind)` (unknown → `buildVFormationOffsets`),
   `formationSpawnCount(kind, count)` — the number of offsets a builder
   produces, used as the source of truth for a group's spawned size.
