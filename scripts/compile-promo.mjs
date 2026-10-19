@@ -28,7 +28,8 @@
  * @module scripts/compile-promo
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { accessSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -661,23 +662,32 @@ export function buildEditPlan(sources, targets = DEFAULT_TARGETS, options = DEFA
 // ────────────────────────────────────────────────────────────────────────────
 
 /** `--help` / `-h` text documenting inputs, outputs and prerequisites. */
-export const USAGE_TEXT = `Usage: node scripts/compile-promo.mjs [--runs <id1,id2,...>] [--duration-ms <ms>] [--out <path>] [--help]
+export const USAGE_TEXT = `Usage: node scripts/compile-promo.mjs [--runs <id1,id2,...>] [--duration-ms <ms>] [--out <path>] [--out-dir <dir>] [--compile] [--help]
 
-Pure selection/planning step of the promo compiler (AH-0MVDV4OKN001OT18).
+Promo compiler (AH-0MVDV4OKN001OT18 + AH-0MVDV4PNZ004ZWOZ). Two modes:
 
-Reads each captured run's action-intensity series and join anchor, computes
-the §7.5 highlight windows, maps them to video time, and emits an ordered
-edit plan sized to the three deliverable targets (promo ~45-60 s, showreel
-> 2 min, N highlight clips) together with the selection and coverage
-manifests — as JSON. This pure step runs WITHOUT ffmpeg.
+1. Plan only (default, no ffmpeg): reads each captured run's
+   action-intensity series and join anchor, computes the §7.5 highlight
+   windows, maps them to video time, and emits an ordered edit plan sized
+   to the three deliverable targets (promo ~45-60 s, showreel > 2 min, N
+   highlight clips) together with the selection and coverage manifests —
+   as JSON. This pure step runs WITHOUT ffmpeg.
+
+2. Compile + validate (--compile, what \`npm run compile:promo\` runs):
+   builds the plan, then drives ffmpeg to trim, reorder, concatenate and
+   mux the source clips deterministically into the three deliverable types
+   at the game's native 960x540 with the game's own SFX Opus track, and
+   validates each output (decodable, non-trivial non-black pixels, audio
+   track present, correct resolution).
 
 Inputs (per run under ${CAPTURE_OUTPUT_DIR}/):
   <run-id>.action.jsonl  the recorded action-intensity series (§7.5)
   <run-id>.capture.json  optional §7.5 join anchor (capture_started / run
                          startedAt); when missing, video mapping is
                          approximate (raw series time)
-  <run-id>.webm          the captured footage — checked to exist so a
-                         missing source is a clear error
+  <run-id>.webm          the captured footage (WebM, VP9+Opus or VP8
+                         fallback) — checked to exist so a missing source
+                         is a clear error
 
 Outputs:
   <out> (default ${CAPTURE_OUTPUT_DIR}/compile-promo.plan.json) — the
@@ -686,11 +696,19 @@ Outputs:
   manifest** (parent AC3): per editorial feature, which clip(s) and
   timestamp ranges show it; \`uncoveredFeatures\` lists categories
   with no evidence (visible gap).
+  <out-dir> (default ${CAPTURE_OUTPUT_DIR}/) — with --compile, the three
+  deliverable types: promo.webm (~45-60 s), showreel.webm (> 2 min),
+  highlight-01.webm … plus compile-promo-report.json (the per-deliverable
+  validation result). Never committed (gitignored).
 
 Prerequisites:
   Footage captured with \`npm run capture\` (which writes the series and
-  anchor sidecars). ffmpeg is NOT needed for this step; the ffmpeg cut/join
-  driver consumes this plan to build the deliverables.
+  anchor sidecars). --compile additionally needs a full ffmpeg install
+  (VP9 + Opus):
+    Debian/Ubuntu: sudo apt-get install ffmpeg
+    macOS (Homebrew): brew install ffmpeg
+    Static build: https://johnvansickle.com/ffmpeg/
+  FFMPEG_BIN / FFPROBE_BIN env overrides are honoured when set.
 
 Options:
   --runs <id1,id2,...>  limit to these run ids (default: scan
@@ -699,6 +717,9 @@ Options:
                         estimated per source from its series horizon + tail)
   --out <path>          plan output path (default
                         ${CAPTURE_OUTPUT_DIR}/compile-promo.plan.json)
+  --out-dir <dir>       deliverable + report directory (default
+                        ${CAPTURE_OUTPUT_DIR}/; only with --compile)
+  --compile             compile + validate the deliverables with ffmpeg
   --help, -h            show this help and exit
 `;
 
@@ -708,7 +729,8 @@ Options:
  *
  * @param {string[]} argv
  * @returns {{ help: boolean, runs: string[], durationMs: number|null,
- *             out: string, error: string|null }}
+ *             out: string, outDir: string, compile: boolean,
+ *             error: string|null }}
  */
 export function parseCompileArgs(argv = []) {
   const args = Array.isArray(argv) ? argv : [];
@@ -717,6 +739,8 @@ export function parseCompileArgs(argv = []) {
     runs: [],
     durationMs: null,
     out: `${CAPTURE_OUTPUT_DIR}/compile-promo.plan.json`,
+    outDir: CAPTURE_OUTPUT_DIR,
+    compile: false,
     error: null,
   };
   if (args.includes('--help') || args.includes('-h')) {
@@ -746,6 +770,15 @@ export function parseCompileArgs(argv = []) {
         return out;
       }
       out.out = value;
+    } else if (arg === '--out-dir') {
+      const value = args[++i];
+      if (value === undefined || value.length === 0) {
+        out.error = '--out-dir requires a directory path';
+        return out;
+      }
+      out.outDir = value;
+    } else if (arg === '--compile') {
+      out.compile = true;
     } else if (arg.startsWith('-') && arg !== '-') {
       out.error = `unknown option: ${arg}`;
       return out;
@@ -852,15 +885,27 @@ export function loadCompileSources({ runs, durationMs = null, fs }) {
  * CLI entry point. Returns stdout + exit code instead of writing directly,
  * so it is testable without spawning a subprocess.
  *
+ * With `--compile`, after writing the plan it drives ffmpeg to build and
+ * validate the three deliverable types (promo, showreel, highlights) and
+ * writes the validation report next to them (AC1–AC6). Every subprocess
+ * (binary resolution, run, probe, brightness) is injectable via `deps` for
+ * hermetic tests; the default implementations talk to a real ffmpeg found
+ * on PATH.
+ *
  * @param {string[]} argv
  * @param {{ readFileSync?: Function, writeFileSync?: Function,
  *           existsSync?: Function, readdirSync?: Function }} [fsImpl] -
  *   Injectable fs (defaults to node:fs).
- * @returns {{ code: number, stdout: string, plan: EditPlan|null }}
+ * @param {{ resolveTools?: () => ({ ffmpeg: string, ffprobe: string })|null,
+ *           run?: Function, probe?: Function, brightness?: Function }} [deps] -
+ *   Injectable subprocess implementations (defaults to real ffmpeg/ffprobe).
+ * @returns {{ code: number, stdout: string, plan: EditPlan|null,
+ *             compileResult?: CompileResult }}
  */
 export function compilePromoMain(
   argv,
   fsImpl = { readFileSync, writeFileSync, existsSync, readdirSync },
+  deps = {},
 ) {
   const parsed = parseCompileArgs(argv);
   if (parsed.help) {
@@ -898,7 +943,697 @@ export function compilePromoMain(
       plan,
     };
   }
-  return { code: 0, stdout: json, plan };
+
+  if (!parsed.compile) {
+    return { code: 0, stdout: json, plan };
+  }
+
+  // ── Compile mode (AC1–AC6): ffmpeg cut/join/mux + output validation ──
+  const resolveTools = deps.resolveTools ?? resolveFfmpegTools;
+  const tools = resolveTools();
+  if (!tools) {
+    return { code: 1, stdout: missingFfmpegError(), plan };
+  }
+  const compileResult = compileDeliverables(plan, {
+    ffmpeg: tools.ffmpeg,
+    ffprobe: tools.ffprobe,
+    outDir: parsed.outDir,
+    run: deps.run,
+    probe: deps.probe,
+    brightness: deps.brightness,
+  });
+  const reportPath = `${parsed.outDir}/compile-promo-report.json`;
+  try {
+    fsImpl.writeFileSync(
+      reportPath,
+      `${JSON.stringify(compileResult.report, null, 2)}\n`,
+    );
+  } catch (error) {
+    return {
+      code: compileResult.ok ? 0 : 1,
+      stdout: `${formatCompileSummary(compileResult)}\nerror: cannot write validation report ${reportPath}: ${error?.message ?? error}`,
+      plan,
+      compileResult,
+    };
+  }
+  return {
+    code: compileResult.ok ? 0 : 1,
+    stdout: `${formatCompileSummary(compileResult)}\nValidation report: ${reportPath}\n`,
+    plan,
+    compileResult,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// AC1/AC3/AC4/AC5/AC6 — ffmpeg compile driver + output validation
+// (AH-0MVDV4PNZ004ZWOZ; covers parent AC5, AC6)
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Game-native deliverable resolution (parent AC1: 960×540). */
+export const DELIVERABLE_WIDTH = 960;
+/** Game-native deliverable resolution (parent AC1: 960×540). */
+export const DELIVERABLE_HEIGHT = 540;
+/** Deliverable frame rate — the capture cadence (960×540 @ 60 fps). */
+export const DELIVERABLE_FPS = 60;
+/** libvpx-vp9 constant-quality target for the re-encode concat pass. */
+export const VP9_CRF = 32;
+/** libopus stereo bitrate (kbps) for the deliverable SFX track. */
+export const OPUS_BITRATE_K = 96;
+
+/**
+ * Validation knob: a sampled frame with signalstats YAVG above this counts
+ * as non-black. Studio black is 16 on the 0–255 luma scale, so 24 sits
+ * strictly above it while real game content (typically YAVG 50–150) clears
+ * it easily (AC3).
+ */
+export const BLACK_FRAME_YAVG_FLOOR = 24;
+
+/**
+ * Validation knob: brightness sampling cadence in frames per second of the
+ * output (via the fps filter) used to judge "non-trivial non-black pixels"
+ * (AC3).
+ */
+export const BRIGHTNESS_SAMPLE_RATE = 1;
+
+/**
+ * ffmpeg install hints (AC4) — surfaced on a missing-binary error and in
+ * `--help`.
+ */
+export const FFMPEG_INSTALL_HINTS = Object.freeze([
+  'Debian/Ubuntu: sudo apt-get install ffmpeg',
+  'macOS (Homebrew): brew install ffmpeg',
+  'Static build: https://johnvansickle.com/ffmpeg/',
+]);
+
+/**
+ * Resolves ffmpeg/ffprobe (AC4): `FFMPEG_BIN`/`FFPROBE_BIN` env overrides
+ * win, then PATH is searched. Returns null when either binary is missing so
+ * the CLI can emit the install hints instead of a stack trace.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {(path: string) => void} [access] - injectable access check
+ *   (defaults to node:fs accessSync) for hermetic tests.
+ * @returns {{ ffmpeg: string, ffprobe: string }|null}
+ */
+export function resolveFfmpegTools(env = process.env, access = accessSync) {
+  const envBin = (key) => {
+    const candidate = env?.[key];
+    if (!candidate) return null;
+    try {
+      access(candidate);
+      return candidate;
+    } catch {
+      return null;
+    }
+  };
+  let ffmpeg = envBin('FFMPEG_BIN');
+  let ffprobe = envBin('FFPROBE_BIN');
+  if (ffmpeg && ffprobe) return { ffmpeg, ffprobe };
+  const dirs = String(env?.PATH ?? '').split(':').filter(Boolean);
+  const find = (name) => {
+    for (const dir of dirs) {
+      const candidate = `${dir}/${name}`;
+      try {
+        access(candidate);
+        return candidate;
+      } catch {
+        // Keep searching.
+      }
+    }
+    return null;
+  };
+  ffmpeg = ffmpeg ?? find('ffmpeg');
+  ffprobe = ffprobe ?? find('ffprobe');
+  return ffmpeg && ffprobe ? { ffmpeg, ffprobe } : null;
+}
+
+/** The missing-ffmpeg error message (AC4): install hints, never a stack
+ * trace. */
+export function missingFfmpegError() {
+  return [
+    'error: ffmpeg/ffprobe not found on PATH.',
+    '',
+    'The compile step needs a full ffmpeg install (VP9 + Opus). Install one of:',
+    ...FFMPEG_INSTALL_HINTS.map((hint) => `  ${hint}`),
+    '',
+    'Verify with: ffmpeg -version && ffprobe -version',
+    'Then re-run: npm run compile:promo',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Parses `ffprobe -of json` stream output into a minimal stream summary.
+ * Tolerant of unparseable input → `{ streams: [] }` (pure).
+ *
+ * @param {string} text
+ * @returns {{ streams: ProbeStream[], formatDuration: number|null }}
+ */
+export function parseProbeJson(text) {
+  let record;
+  try {
+    record = JSON.parse(String(text));
+  } catch {
+    return { streams: [], formatDuration: null };
+  }
+  // ffprobe emits numeric fields as strings; a missing/absent field must
+  // stay null (Number(null) is 0 — a trap for “no duration” situations).
+  const numberOrNull = (value) =>
+    value === undefined || value === null
+      ? null
+      : Number.isFinite(Number(value))
+        ? Number(value)
+        : null;
+  const streams = [];
+  for (const raw of Array.isArray(record?.streams) ? record.streams : []) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    streams.push({
+      codecType: typeof raw.codec_type === 'string' ? raw.codec_type : null,
+      codecName: typeof raw.codec_name === 'string' ? raw.codec_name : null,
+      width: numberOrNull(raw.width),
+      height: numberOrNull(raw.height),
+      channels: numberOrNull(raw.channels),
+      sampleRate: numberOrNull(raw.sample_rate),
+      duration: numberOrNull(raw.duration),
+    });
+  }
+  return { streams, formatDuration: numberOrNull(record?.format?.duration) };
+}
+
+/** True when a probe summary contains an audio stream. */
+export function probeHasAudio(probe) {
+  return Array.isArray(probe?.streams) && probe.streams.some((s) => s?.codecType === 'audio');
+}
+
+/** True when a probe summary contains a video stream. */
+export function probeHasVideo(probe) {
+  return Array.isArray(probe?.streams) && probe.streams.some((s) => s?.codecType === 'video');
+}
+
+/**
+ * Seconds of the first video stream in a probe summary, falling back to the
+ * container format duration (WebM reports duration at the format level,
+ * not per stream). Null when neither is known.
+ *
+ * @param {{ streams: ProbeStream[], formatDuration?: number|null }|null} probe
+ * @returns {number|null}
+ */
+export function probeVideoDurationSec(probe) {
+  if (!probe || typeof probe !== 'object') return null;
+  const video = Array.isArray(probe.streams)
+    ? probe.streams.find((s) => s?.codecType === 'video')
+    : undefined;
+  const duration = video?.duration ?? probe.formatDuration ?? null;
+  if (duration === null || duration === undefined) return null;
+  return Number.isFinite(Number(duration)) ? Number(duration) : null;
+}
+
+/**
+ * Parses ffmpeg `metadata=print` YAVG lines into a brightness summary
+ * (pure).
+ *
+ * @param {string} text
+ * @returns {{ sampledFrames: number, maxYavg: number|null }}
+ */
+export function parseSignalStatsOutput(text) {
+  const yavgs = [];
+  for (const match of String(text).matchAll(/lavfi\.signalstats\.YAVG=([0-9.]+)/g)) {
+    const value = Number(match[1]);
+    if (Number.isFinite(value)) yavgs.push(value);
+  }
+  return {
+    sampledFrames: yavgs.length,
+    maxYavg: yavgs.length > 0 ? Math.max(...yavgs) : null,
+  };
+}
+
+/**
+ * Validation verdict for one deliverable (AC3): decodable, at the expected
+ * resolution, carrying an audio track, with non-trivial (non-black)
+ * sampled pixels. Pure and deterministic — operates on parsed probe and
+ * brightness summaries only, never on a subprocess.
+ *
+ * @param {{ streams: ProbeStream[] }|null} probe
+ * @param {{ sampledFrames: number, maxYavg: number|null }|null} brightness
+ * @param {{ width?: number, height?: number,
+ *           blackYavgFloor?: number }} [opts]
+ * @returns {{ ok: boolean, issues: string[] }}
+ */
+export function assessDeliverable(
+  probe,
+  brightness,
+  {
+    width = DELIVERABLE_WIDTH,
+    height = DELIVERABLE_HEIGHT,
+    blackYavgFloor = BLACK_FRAME_YAVG_FLOOR,
+  } = {},
+) {
+  const issues = [];
+  const validProbe = Array.isArray(probe?.streams) && probe.streams.length > 0;
+  if (!validProbe) {
+    issues.push('not decodable — ffprobe returned no usable streams');
+  } else {
+    const video = probe.streams.find((s) => s?.codecType === 'video');
+    const audio = probe.streams.find((s) => s?.codecType === 'audio');
+    if (!video) {
+      issues.push('no video stream');
+    } else if (video.width !== width || video.height !== height) {
+      issues.push(
+        `wrong resolution: ${video.width}x${video.height} (expected ${width}x${height})`,
+      );
+    }
+    if (!audio) {
+      issues.push('no audio track (expected the game SFX Opus track)');
+    }
+  }
+  if (!brightness || brightness.sampledFrames === 0 || brightness.maxYavg === null) {
+    issues.push('brightness could not be measured (no sampled frames)');
+  } else if (brightness.maxYavg <= blackYavgFloor) {
+    issues.push(
+      `non-trivial non-black pixels missing — brightest sampled frame YAVG=${brightness.maxYavg.toFixed(1)} is at or below ${blackYavgFloor}`,
+    );
+  }
+  return { ok: issues.length === 0, issues };
+}
+
+/**
+ * Deliverable output path under `outDir` (gitignored `capture-output/` by
+ * default): `promo.webm`, `showreel.webm`, `highlight-01.webm` … (AC2).
+ *
+ * @param {'promo'|'showreel'|'highlight'} kind
+ * @param {number} [index] - 1-based index for highlight clips.
+ * @param {string} [outDir]
+ * @returns {string}
+ */
+export function deliverableOutputPath(kind, index = 1, outDir = CAPTURE_OUTPUT_DIR) {
+  if (kind === 'promo' || kind === 'showreel') {
+    return `${outDir}/${kind}.webm`;
+  }
+  return `${outDir}/highlight-${String(index).padStart(2, '0')}.webm`;
+}
+
+/** Rounds milliseconds to seconds at 3 decimals (1 ms precision) for the
+ * filter args. */
+function secondsOf(ms) {
+  return Number((ms / 1000).toFixed(3));
+}
+
+/**
+ * The deterministic ffmpeg argv for one deliverable: trims each segment to
+ * its mapped in/out points, reorders implicitly by input order, normalises
+ * every input to width×height @ fps yuv420p + 48 kHz stereo, concatenates
+ * video and audio, and muxes a single VP9 + Opus WebM (AC1, AC2, parent
+ * AC5). Single segment → one trim chain; multi segment → one
+ * filter_complex concat, so the output is one contiguous clip and the edit
+ * decision (which segments, in which order, at which points) is exactly the
+ * plan's. Same plan + segments ⇒ byte-identical argv.
+ *
+ * @param {string} kind
+ * @param {number} index
+ * @param {readonly SelectionManifestEntry[]} segments - already clamped to
+ *   source durations.
+ * @param {{ width: number, height: number, fps: number, vp9Crf: number,
+ *           opusBitrateK: number, output: string }} opts
+ * @returns {string[]} - argv[0] is `ffmpeg`; the runner substitutes the
+ *   resolved binary path.
+ */
+export function buildDeliverableArgv(kind, index, segments, opts) {
+  const { width, height, fps, vp9Crf, opusBitrateK, output } = opts;
+  const args = ['-y', '-hide_banner', '-loglevel', 'error'];
+  for (const segment of segments) args.push('-i', segment.webm);
+
+  const inputs = segments.map((segment, i) => {
+    const start = secondsOf(segment.videoInMs);
+    const end = secondsOf(segment.videoOutMs);
+    const video =
+      `[${i}:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS,` +
+      `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+      `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
+      `fps=${fps},format=yuv420p,setsar=1[v${i}]`;
+    const audio =
+      `[${i}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS,` +
+      `aformat=sample_rates=48000:channel_layouts=stereo[a${i}]`;
+    return { video, audio };
+  });
+
+  let graph;
+  let mapVideo;
+  let mapAudio;
+  if (segments.length === 1) {
+    graph = `${inputs[0].video};${inputs[0].audio}`;
+    mapVideo = '[v0]';
+    mapAudio = '[a0]';
+  } else {
+    graph =
+      inputs.map((c) => `${c.video};${c.audio}`).join(';') +
+      `;${inputs.map((_, i) => `[v${i}][a${i}]`).join('')}concat=n=${segments.length}:v=1:a=1[v][a]`;
+    mapVideo = '[v]';
+    mapAudio = '[a]';
+  }
+  args.push('-filter_complex', graph, '-map', mapVideo, '-map', mapAudio);
+  args.push(
+    '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', String(vp9Crf),
+    '-deadline', 'good', '-cpu-used', '4', '-pix_fmt', 'yuv420p',
+    '-r', String(fps),
+    '-c:a', 'libopus', '-b:a', `${opusBitrateK}k`, '-ar', '48000',
+  );
+  const title = kind === 'highlight' ? `highlight-${String(index).padStart(2, '0')}` : kind;
+  args.push('-metadata', `title=${title}`, output);
+  return ['ffmpeg', ...args];
+}
+
+/**
+ * Builds the deterministic ffmpeg commands for every deliverable of the
+ * plan (pure — identical plan + probes ⇒ identical command list).
+ *
+ * Segments are clamped to the probed source duration so trim points never
+ * overshoot EOF, and a source that cannot be probed or has no audio stream
+ * fails that deliverable with an actionable message (the concat mux needs
+ * an SFX track per cut — AC1/AC3).
+ *
+ * @param {EditPlan} plan
+ * @param {{
+ *   probeByPath?: Record<string, { streams: ProbeStream[], error?: string }>,
+ *   outDir?: string, width?: number, height?: number, fps?: number,
+ *   vp9Crf?: number, opusBitrateK?: number,
+ * }} [opts]
+ * @returns {{ commands: DeliverableCommand[], errors: string[] }}
+ */
+export function buildDeliverableCommands(plan, opts = {}) {
+  const {
+    probeByPath = {},
+    outDir = CAPTURE_OUTPUT_DIR,
+    width = DELIVERABLE_WIDTH,
+    height = DELIVERABLE_HEIGHT,
+    fps = DELIVERABLE_FPS,
+    vp9Crf = VP9_CRF,
+    opusBitrateK = OPUS_BITRATE_K,
+  } = opts;
+  const errors = [];
+  const commands = [];
+  if (!plan) {
+    return { commands, errors: ['no edit plan supplied'] };
+  }
+
+  const add = (kind, index, segments) => {
+    const output = deliverableOutputPath(kind, index, outDir);
+    if (segments.length === 0) {
+      errors.push(
+        `${output}: no segments selected — capture footage with \`npm run capture\` first`,
+      );
+      return;
+    }
+    const clamped = [];
+    for (const segment of segments) {
+      const probe = probeByPath[segment.webm];
+      if (!probe || !Array.isArray(probe.streams) || probe.streams.length === 0) {
+        errors.push(
+          `${output}: cannot use ${segment.webm} — unfit source: ${probe?.error ?? 'no probe available (missing footage?)'}`,
+        );
+        return;
+      }
+      if (!probeHasAudio(probe)) {
+        errors.push(
+          `${output}: source ${segment.webm} has no audio track — re-capture it with \`npm run capture\` or exclude it via --runs`,
+        );
+        return;
+      }
+      const durationSec = probeVideoDurationSec(probe);
+      const durationMs = durationSec === null ? Infinity : durationSec * 1000;
+      const videoInMs = Math.max(0, Math.min(segment.videoInMs, Math.max(0, durationMs - 1)));
+      const videoOutMs = Math.max(0, Math.min(segment.videoOutMs, durationMs));
+      if (videoOutMs <= videoInMs) {
+        errors.push(
+          `${output}: segment of ${segment.runId} is empty after clamping to its source duration ` +
+            `(in=${segment.videoInMs}ms, out=${segment.videoOutMs}ms, source=${durationSec === null ? 'unknown' : `${durationSec.toFixed(1)}s`})`,
+        );
+        return;
+      }
+      clamped.push({ ...segment, videoInMs, videoOutMs });
+    }
+    commands.push({
+      kind,
+      index,
+      name: kind === 'highlight' ? `highlight-${String(index).padStart(2, '0')}` : kind,
+      output,
+      segments: clamped,
+      argv: buildDeliverableArgv(kind, index, clamped, {
+        width, height, fps, vp9Crf, opusBitrateK, output,
+      }),
+    });
+  };
+
+  add('promo', 1, plan.promo ?? []);
+  add('showreel', 1, plan.showreel ?? []);
+  (plan.highlights ?? []).forEach((segment, i) => add('highlight', i + 1, [segment]));
+
+  return { commands, errors };
+}
+
+/**
+ * Runs an ffmpeg-style argv synchronously, capturing stdout/stderr instead
+ * of throwing, so failures become actionable messages rather than stack
+ * traces (AC4).
+ *
+ * @param {string[]} argv
+ * @param {{ execFileSyncImpl?: Function, timeoutMs?: number }} [deps]
+ * @returns {{ ok: boolean, code: number, stdout: string, stderr: string }}
+ */
+export function runFfmpegSync(argv, { execFileSyncImpl = execFileSync, timeoutMs = 600_000 } = {}) {
+  try {
+    const stdout = execFileSyncImpl(argv[0], argv.slice(1), {
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return { ok: true, code: 0, stdout: String(stdout ?? ''), stderr: '' };
+  } catch (error) {
+    return {
+      ok: false,
+      code: typeof error?.code === 'number' ? error.code : 1,
+      stdout: String(error?.stdout ?? ''),
+      stderr: String(error?.stderr ?? ''),
+    };
+  }
+}
+
+/**
+ * Probes a media file with ffprobe (sync) and returns its stream summary
+ * (the AC3 "decodable" check and source-duration clamping input).
+ *
+ * @param {string} file
+ * @param {{ ffprobe?: string, execFileSyncImpl?: Function }} [deps]
+ * @returns {{ ok: boolean, streams: ProbeStream[], error?: string }}
+ */
+export function probeMediaSync(file, { ffprobe = 'ffprobe', execFileSyncImpl = execFileSync } = {}) {
+  try {
+    const stdout = execFileSyncImpl(
+      ffprobe,
+      ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name,width,height,channels,sample_rate,duration:format=duration', '-of', 'json', file],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+    );
+    return { ok: true, ...parseProbeJson(stdout) };
+  } catch (error) {
+    return { ok: false, streams: [], formatDuration: null, error: error?.message ?? String(error) };
+  }
+}
+
+/**
+ * Samples the frame brightness of a media file (sync) via the signalstats
+ * metadata filter and returns the sampled YAVG summary — the AC3
+ * "non-trivial non-black pixels" check.
+ *
+ * @param {string} file
+ * @param {{ ffmpeg?: string, execFileSyncImpl?: Function,
+ *           sampleRate?: number }} [deps]
+ * @returns {{ ok: boolean, sampledFrames: number, maxYavg: number|null,
+ *             error?: string }}
+ */
+export function sampleBrightnessSync(file, { ffmpeg = 'ffmpeg', execFileSyncImpl = execFileSync, sampleRate = BRIGHTNESS_SAMPLE_RATE } = {}) {
+  try {
+    const stdout = execFileSyncImpl(
+      ffmpeg,
+      ['-v', 'error', '-i', file, '-vf', `fps=${sampleRate},signalstats,metadata=print:file=-`, '-f', 'null', '-'],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+    );
+    return { ok: true, ...parseSignalStatsOutput(stdout) };
+  } catch (error) {
+    return { ok: false, sampledFrames: 0, maxYavg: null, error: error?.message ?? String(error) };
+  }
+}
+
+/** First non-empty trimmed line (for actionable ffmpeg error excerpts). */
+function firstLine(text) {
+  return String(text ?? '').split('\n').map((s) => s.trim()).find(Boolean) ?? '';
+}
+
+/** Compact probe summary for the validation report. */
+function summarizeProbe(probe) {
+  const video = Array.isArray(probe?.streams)
+    ? probe.streams.find((s) => s?.codecType === 'video')
+    : undefined;
+  const audio = Array.isArray(probe?.streams)
+    ? probe.streams.find((s) => s?.codecType === 'audio')
+    : undefined;
+  return {
+    codec: video?.codecName ?? null,
+    width: video?.width ?? null,
+    height: video?.height ?? null,
+    // WebM reports duration at the container level, not per stream.
+    durationSec: probeVideoDurationSec(probe),
+    audioCodec: audio?.codecName ?? null,
+    audioChannels: audio?.channels ?? null,
+  };
+}
+
+/** Mean motivating intensity of the segments (parent AC4 measured band). */
+function meanIntensity(segments) {
+  if (!Array.isArray(segments) || segments.length === 0) return null;
+  const sum = segments.reduce((acc, segment) => acc + Number(segment.intensity ?? 0), 0);
+  return Number((sum / segments.length).toFixed(3));
+}
+
+/**
+ * Compiles all three deliverable types from an edit plan and validates each
+ * output (AC1–AC3, AC6). Command construction is deterministic; every
+ * subprocess is injectable so the orchestration is unit-testable hermetically
+ * (the integration smoke test only needs real ffmpeg for the actual encode).
+ *
+ * @param {EditPlan} plan
+ * @param {{
+ *   ffmpeg?: string, ffprobe?: string, outDir?: string,
+ *   run?: Function, probe?: Function, brightness?: Function,
+ * }} [deps]
+ * @returns {{ ok: boolean, deliverables: CompiledDeliverable[],
+ *             errors: string[], report: object }}
+ */
+export function compileDeliverables(plan, deps = {}) {
+  const {
+    ffmpeg = 'ffmpeg',
+    ffprobe = 'ffprobe',
+    outDir = CAPTURE_OUTPUT_DIR,
+    run = runFfmpegSync,
+    probe = probeMediaSync,
+    brightness = sampleBrightnessSync,
+  } = deps;
+  const errors = [];
+
+  // Probe every unique source once (streams + durations for clamping).
+  const sourcePaths = [];
+  for (const segment of [
+    ...(plan?.promo ?? []),
+    ...(plan?.showreel ?? []),
+    ...(plan?.highlights ?? []),
+  ]) {
+    if (!sourcePaths.includes(segment.webm)) sourcePaths.push(segment.webm);
+  }
+  const probeByPath = {};
+  for (const path of sourcePaths) probeByPath[path] = probe(path, { ffprobe });
+
+  const built = buildDeliverableCommands(plan, { probeByPath, outDir });
+  errors.push(...built.errors);
+
+  const deliverables = [];
+  for (const command of built.commands) {
+    const argv = [ffmpeg, ...command.argv.slice(1)];
+    const runResult = run(argv, {});
+    if (!runResult.ok) {
+      const detail =
+        firstLine(runResult.stderr) || firstLine(runResult.stdout) || `exit code ${runResult.code}`;
+      deliverables.push({
+        kind: command.kind,
+        index: command.index,
+        name: command.name,
+        output: command.output,
+        ok: false,
+        issues: [`ffmpeg failed: ${detail}`],
+        segments: command.segments,
+      });
+      errors.push(`${command.output}: ffmpeg failed: ${detail}`);
+      continue;
+    }
+    const probed = probe(command.output, { ffprobe });
+    const bright = brightness(command.output, { ffmpeg });
+    const verdict = assessDeliverable(probed, bright);
+    deliverables.push({
+      kind: command.kind,
+      index: command.index,
+      name: command.name,
+      output: command.output,
+      ok: verdict.ok,
+      issues: verdict.issues,
+      probe: summarizeProbe(probed),
+      brightness: {
+        sampledFrames: bright?.sampledFrames ?? 0,
+        maxYavg: bright?.maxYavg ?? null,
+      },
+      segments: command.segments,
+      measuredMeanIntensity: meanIntensity(command.segments),
+    });
+    if (!verdict.ok) errors.push(`${command.output}: ${verdict.issues.join('; ')}`);
+  }
+
+  const ok =
+    errors.length === 0 &&
+    built.commands.length > 0 &&
+    deliverables.length > 0 &&
+    deliverables.every((d) => d.ok);
+  const report = {
+    schemaVersion: 1,
+    ok,
+    ffmpeg,
+    ffprobe,
+    outDir,
+    deliverables,
+    errors,
+  };
+  return { ok, deliverables, errors, report };
+}
+
+/**
+ * Human-readable compile/validation summary for stdout (deterministic,
+ * pure).
+ *
+ * @param {{ ok: boolean, deliverables: CompiledDeliverable[],
+ *           errors: string[] }} result
+ * @returns {string}
+ */
+export function formatCompileSummary(result) {
+  const lines = [];
+  lines.push(
+    result?.ok
+      ? 'Compiled deliverables — all validated OK:'
+      : 'Compiled deliverables — validation FAILED:',
+  );
+  for (const d of result?.deliverables ?? []) {
+    const probe = d.probe ?? {};
+    const bright = d.brightness ?? {};
+    const duration =
+      probe.durationSec != null ? `${probe.durationSec.toFixed(1)}s` : 'unknown length';
+    const video =
+      probe.width && probe.height ? `${probe.width}x${probe.height}` : 'no video';
+    const audio = probe.audioCodec
+      ? `${probe.audioCodec}${probe.audioChannels ? ` ${probe.audioChannels}ch` : ''}`
+      : 'no audio';
+    const extra = [];
+    if (d.ok) {
+      const cuts = d.segments?.length ?? 0;
+      extra.push(`${cuts} cut${cuts === 1 ? '' : 's'}`);
+      if (bright.maxYavg != null) extra.push(`maxYAVG ${bright.maxYavg.toFixed(1)}`);
+      if (d.measuredMeanIntensity != null) {
+        extra.push(`meanIntensity ${d.measuredMeanIntensity.toFixed(2)}`);
+      }
+    } else {
+      extra.push(...(d.issues ?? []));
+    }
+    lines.push(
+      `  ${d.ok ? 'ok  ' : 'FAIL'}  ${d.output}  ${duration}  ${video} ${audio}${
+        extra.length ? `  (${extra.join(', ')})` : ''
+      }`,
+    );
+  }
+  for (const error of result?.errors ?? []) lines.push(`  error: ${error}`);
+  return lines.join('\n');
 }
 
 // Main guard — only runs when executed directly, never on import (so the

@@ -88,26 +88,52 @@
  * @vitest-environment node
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import {
   ACTION_SERIES_EXTENSION,
+  BLACK_FRAME_YAVG_FLOOR,
   BREAKDOWN_TO_EDITORIAL_CATEGORY,
   CAPTURE_OUTPUT_DIR,
   DEDUPE_DURATION_TOLERANCE_MS,
   DEDUPE_INTENSITY_TOLERANCE,
   DEFAULT_HIGHLIGHT_OPTIONS,
   DEFAULT_TARGETS,
+  DELIVERABLE_FPS,
+  DELIVERABLE_HEIGHT,
+  DELIVERABLE_WIDTH,
   EDITORIAL_CATEGORIES,
   EDITORIAL_CONFIG,
+  FFMPEG_INSTALL_HINTS,
+  OPUS_BITRATE_K,
   USAGE_TEXT,
+  VP9_CRF,
+  assessDeliverable,
   buildCoverageManifest,
+  buildDeliverableArgv,
+  buildDeliverableCommands,
   buildEditPlan,
+  compileDeliverables,
   compilePromoMain,
+  deliverableOutputPath,
+  formatCompileSummary,
   mapTimeToVideo,
+  missingFfmpegError,
   parseActionIntensitySeries,
   parseCaptureAnchor,
   parseCompileArgs,
+  parseProbeJson,
+  parseSignalStatsOutput,
+  probeHasAudio,
+  probeHasVideo,
+  probeMediaSync,
+  probeVideoDurationSec,
+  resolveFfmpegTools,
+  runFfmpegSync,
+  sampleBrightnessSync,
   selectHighlightWindows,
+  sourceAnchorPath,
   sourceSeriesPath,
   sourceWebmPath,
   windowFeatures,
@@ -1097,3 +1123,692 @@ describe('compile-promo CLI — AC6 contract (AH-0MVDV4OKN001OT18)', () => {
     expect(plan.uncoveredFeatures).toEqual(['pickups', 'enemies', 'boss']);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// ffmpeg compile driver + output validation (AH-0MVDV4PNZ004ZWOZ;
+// parent AC5/AC6 — AC1 trim/reorder/join/mux, AC2 three deliverable types,
+// AC3 output validation, AC4 clear errors, AC6 hermetic separation)
+// ────────────────────────────────────────────────────────────────────────────
+
+/** A selection-manifest-shaped segment fixture for command building. */
+function seg(runId: string, videoInMs: number, videoOutMs: number) {
+  return {
+    runId,
+    webm: sourceWebmPath(runId),
+    series: sourceSeriesPath(runId),
+    videoInMs,
+    videoOutMs,
+    intensity: 0.8,
+    burstiness: 0.3,
+    features: ['weapons'],
+  };
+}
+
+/** A minimal edit plan fixture (promo/showreel/highlights as named). */
+function planOf(
+  promo: ReturnType<typeof seg>[] = [seg('runA', 500, 3_000), seg('runB', 0, 2_200)],
+  showreel: ReturnType<typeof seg>[] = [seg('runB', 0, 2_200), seg('runA', 500, 3_000)],
+  highlights: ReturnType<typeof seg>[] = [seg('runA', 500, 3_000)],
+) {
+  return { promo, showreel, highlights, coverage: [], uncoveredFeatures: [] };
+}
+
+/** A valid ffprobe-style summary (960×540 vp9 + stereo opus) for fixtures. */
+interface TestProbeStream {
+  codecType: string | null;
+  codecName: string | null;
+  width: number | null;
+  height: number | null;
+  channels: number | null;
+  sampleRate: number | null;
+  duration: number | null;
+}
+
+function probeOf(
+  overrides: Partial<{
+    audio: boolean;
+    width: number | null;
+    height: number | null;
+    duration: number | null;
+  }> = {},
+): { ok: boolean; streams: TestProbeStream[]; formatDuration: number | null } {
+  const streams: TestProbeStream[] = [
+    {
+      codecType: 'video',
+      codecName: 'vp9',
+      width: overrides.width ?? DELIVERABLE_WIDTH,
+      height: overrides.height ?? DELIVERABLE_HEIGHT,
+      channels: null,
+      sampleRate: null,
+      duration: overrides.duration ?? 30,
+    },
+  ];
+  if (overrides.audio !== false) {
+    streams.push({
+      codecType: 'audio',
+      codecName: 'opus',
+      width: null,
+      height: null,
+      channels: 2,
+      sampleRate: 48_000,
+      duration: 30,
+    });
+  }
+  return { ok: true, streams, formatDuration: overrides.duration ?? 30 };
+}
+
+/** A per-source probe map keyed by WebM path for a plan fixture. */
+function probeMap(plan: ReturnType<typeof planOf>) {
+  const map: Record<string, ReturnType<typeof probeOf>> = {};
+  for (const s of [...plan.promo, ...plan.showreel, ...plan.highlights]) {
+    map[s.webm] = probeOf();
+  }
+  return map;
+}
+
+describe('ffmpeg driver — binary resolution & missing-ffmpeg errors (AC4)', () => {
+  it('resolves both binaries from PATH', () => {
+    const tools = resolveFfmpegTools(
+      { PATH: '/tool/bin:/other/bin', FFMPEG_BIN: '', FFPROBE_BIN: '' },
+      () => undefined,
+    );
+    expect(tools).toEqual({
+      ffmpeg: '/tool/bin/ffmpeg',
+      ffprobe: '/tool/bin/ffprobe',
+    });
+  });
+
+  it('honours FFMPEG_BIN / FFPROBE_BIN env overrides over PATH', () => {
+    const tools = resolveFfmpegTools(
+      { PATH: '/nowhere', FFMPEG_BIN: '/custom/ffmpeg', FFPROBE_BIN: '/custom/ffprobe' },
+      (p) => {
+        if (p !== '/custom/ffmpeg' && p !== '/custom/ffprobe') throw new Error('no access');
+      },
+    );
+    expect(tools).toEqual({ ffmpeg: '/custom/ffmpeg', ffprobe: '/custom/ffprobe' });
+  });
+
+  it('returns null when either binary is missing (the CLI then shows hints)', () => {
+    const onlyFFprobe = resolveFfmpegTools(
+      { PATH: '/tool/bin', FFMPEG_BIN: '', FFPROBE_BIN: '' },
+      (p) => {
+        if (p !== '/tool/bin/ffprobe') throw new Error('no access');
+      },
+    );
+    expect(onlyFFprobe).toBeNull();
+    const onlyFFmpeg = resolveFfmpegTools(
+      { PATH: '/tool/bin', FFMPEG_BIN: '', FFPROBE_BIN: '' },
+      (p) => {
+        if (p !== '/tool/bin/ffmpeg') throw new Error('no access');
+      },
+    );
+    expect(onlyFFmpeg).toBeNull();
+  });
+
+  it('missing-ffmpeg message carries install hints and no stack trace', () => {
+    const msg = missingFfmpegError();
+    expect(msg).toContain('ffmpeg/ffprobe not found on PATH');
+    for (const hint of FFMPEG_INSTALL_HINTS) expect(msg).toContain(hint);
+    expect(msg).toContain('npm run compile:promo');
+    expect(msg).not.toContain('    at ');
+    expect(msg).not.toContain('Error: ');
+  });
+});
+
+describe('ffmpeg driver — probe & brightness parsing (AC3, pure)', () => {
+  it('parses ffprobe JSON into a stream summary', () => {
+    const probe = parseProbeJson(
+      JSON.stringify({
+        format: { duration: '12.3' },
+        streams: [
+          { codec_type: 'video', codec_name: 'vp9', width: 960, height: 540, duration: '12.3' },
+          { codec_type: 'audio', codec_name: 'opus', channels: 2, sample_rate: '48000' },
+        ],
+      }),
+    );
+    expect(probe.streams).toHaveLength(2);
+    expect(probe.streams[0]).toEqual({
+      codecType: 'video',
+      codecName: 'vp9',
+      width: 960,
+      height: 540,
+      channels: null,
+      sampleRate: null,
+      duration: 12.3,
+    });
+    expect(probeHasVideo(probe)).toBe(true);
+    expect(probeHasAudio(probe)).toBe(true);
+    expect(probeVideoDurationSec(probe)).toBe(12.3);
+  });
+
+  it('falls back to the container format duration when streams omit it', () => {
+    const probe = parseProbeJson(
+      JSON.stringify({
+        format: { duration: '6.008' },
+        streams: [{ codec_type: 'video', codec_name: 'vp9', width: 960, height: 540 }],
+      }),
+    );
+    expect(probeVideoDurationSec(probe)).toBeCloseTo(6.008, 3);
+    // A missing duration is a missing duration — not 0 (Number(null) trap).
+    expect(probeVideoDurationSec({ streams: [], formatDuration: null })).toBeNull();
+  });
+
+  it('is tolerant of unparseable probe output (undecodable file)', () => {
+    expect(parseProbeJson('not json at all')).toEqual({ streams: [], formatDuration: null });
+    expect(parseProbeJson('')).toEqual({ streams: [], formatDuration: null });
+    expect(probeHasVideo({ streams: [], formatDuration: null })).toBe(false);
+    expect(probeHasAudio(null)).toBe(false);
+    expect(probeVideoDurationSec({ streams: [], formatDuration: null })).toBeNull();
+  });
+
+  it('parses signalstats YAVG lines into a brightness summary', () => {
+    const text = 'lavfi.signalstats.YAVG=125.5\nlavfi.signalstats.YAVG=16\nlavfi.signalstats.YMIN=4\n';
+    expect(parseSignalStatsOutput(text)).toEqual({ sampledFrames: 2, maxYavg: 125.5 });
+    expect(parseSignalStatsOutput('')).toEqual({ sampledFrames: 0, maxYavg: null });
+  });
+});
+
+describe('ffmpeg driver — deterministic command building (AC1/AC2, pure)', () => {
+  it('trims, reorders and concatenates the promo segments into one WebM', () => {
+    const plan = planOf();
+    const { commands, errors } = buildDeliverableCommands(plan, {
+      probeByPath: probeMap(plan),
+    });
+    expect(errors).toEqual([]);
+    const promo = commands.find((c) => c.kind === 'promo');
+    expect(promo).toBeDefined();
+    expect(promo!.output).toBe(deliverableOutputPath('promo'));
+    // Inputs appear in plan (rank) order → reordering is implicit.
+    expect(promo!.argv.filter((_entry, i, arr) => arr[i - 1] === '-i')).toEqual([
+      sourceWebmPath('runA'),
+      sourceWebmPath('runB'),
+    ]);
+    const graph = promo!.argv[promo!.argv.indexOf('-filter_complex') + 1];
+    expect(graph).toContain('[0:v]trim=start=0.5:end=3,setpts=PTS-STARTPTS');
+    expect(graph).toContain('[1:v]trim=start=0:end=2.2,setpts=PTS-STARTPTS');
+    expect(graph).toContain('aformat=sample_rates=48000:channel_layouts=stereo');
+    expect(graph).toContain(
+      `scale=${DELIVERABLE_WIDTH}:${DELIVERABLE_HEIGHT}:force_original_aspect_ratio=decrease,` +
+        `pad=${DELIVERABLE_WIDTH}:${DELIVERABLE_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,` +
+        `fps=${DELIVERABLE_FPS},format=yuv420p,setsar=1`,
+    );
+    expect(graph).toContain('[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]');
+    expect(promo!.argv).toContain('[v]');
+    expect(promo!.argv).toContain('[a]');
+    const joined = promo!.argv.join(' ');
+    expect(joined).toContain(`-c:v libvpx-vp9 -b:v 0 -crf ${VP9_CRF}`);
+    expect(joined).toContain('-deadline good -cpu-used 4');
+    expect(joined).toContain(`-c:a libopus -b:a ${OPUS_BITRATE_K}k -ar 48000`);
+    expect(joined).toContain('-metadata title=promo');
+  });
+
+  it('keeps the showreel in plan order and gives highlights their own clips', () => {
+    const plan = planOf();
+    const { commands } = buildDeliverableCommands(plan, { probeByPath: probeMap(plan) });
+    const showreel = commands.find((c) => c.kind === 'showreel');
+    expect(showreel!.output).toBe(deliverableOutputPath('showreel'));
+    expect(showreel!.argv.filter((_entry, i, arr) => arr[i - 1] === '-i')).toEqual([
+      sourceWebmPath('runB'),
+      sourceWebmPath('runA'),
+    ]);
+    const highlights = commands.filter((c) => c.kind === 'highlight');
+    expect(highlights.map((h) => h.output)).toEqual([
+      deliverableOutputPath('highlight', 1),
+    ]);
+    expect(highlights[0].argv.join(' ')).not.toContain('concat=');
+    expect(highlights[0].argv.join(' ')).toContain('-metadata title=highlight-01');
+  });
+
+  it('builds a single-segment command with a trim-only filter graph', () => {
+    const argv = buildDeliverableArgv('highlight', 1, [seg('runA', 1_234, 4_567)], {
+      width: DELIVERABLE_WIDTH,
+      height: DELIVERABLE_HEIGHT,
+      fps: DELIVERABLE_FPS,
+      vp9Crf: VP9_CRF,
+      opusBitrateK: OPUS_BITRATE_K,
+      output: deliverableOutputPath('highlight', 1),
+    });
+    const graph = argv[argv.indexOf('-filter_complex') + 1];
+    expect(graph).not.toContain('concat=');
+    expect(graph).toContain('trim=start=1.234:end=4.567');
+  });
+
+  it('is deterministic — identical plan + probes produce identical commands', () => {
+    const plan = planOf();
+    const a = buildDeliverableCommands(plan, { probeByPath: probeMap(plan) });
+    const b = buildDeliverableCommands(structuredClone(plan), {
+      probeByPath: probeMap(plan),
+    });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it('clamps segment points to the probed source duration', () => {
+    const plan = planOf([seg('runA', 500, 40_000)], [seg('runA', 500, 40_000)], [seg('runA', 500, 40_000)]);
+    const map: Record<string, ReturnType<typeof probeOf>> = {};
+    map[sourceWebmPath('runA')] = probeOf({ duration: 10 });
+    const { commands, errors } = buildDeliverableCommands(plan, { probeByPath: map });
+    expect(errors).toEqual([]);
+    const promo = commands[0];
+    expect(promo.segments[0].videoInMs).toBe(500);
+    expect(promo.segments[0].videoOutMs).toBe(10_000);
+    expect(promo.argv.join(' ')).toContain('trim=start=0.5:end=10');
+  });
+
+  it('errors with actionable messages for unfit sources (AC4)', () => {
+    // No audio track on runA → every deliverable touching it fails loudly.
+    const plan = planOf();
+    const map = probeMap(plan);
+    map[sourceWebmPath('runA')] = probeOf({ audio: false });
+    const noAudio = buildDeliverableCommands(plan, { probeByPath: map });
+    expect(noAudio.commands.find((c) => c.kind === 'promo')).toBeUndefined();
+    expect(
+      noAudio.errors.some(
+        (e) => e.includes('no audio track') && e.includes('capture-output/runA.webm'),
+      ),
+    ).toBe(true);
+
+    // Unprobeable source (missing footage).
+    const unprobeable = buildDeliverableCommands(plan, { probeByPath: {} });
+    expect(
+      unprobeable.errors.some((e) => e.includes('cannot use') && e.includes('missing footage')),
+    ).toBe(true);
+
+    // A segment that collapses to zero length after clamping.
+    const collapsedMap: Record<string, ReturnType<typeof probeOf>> = {};
+    collapsedMap[sourceWebmPath('runA')] = probeOf({ duration: 0 });
+    const collapsed = buildDeliverableCommands(
+      planOf([seg('runA', 500, 3_000)], [], []),
+      { probeByPath: collapsedMap },
+    );
+    expect(
+      collapsed.errors.some((e) => e.includes('empty after clamping to its source duration')),
+    ).toBe(true);
+
+    // Empty deliverable (nothing selected) — promo + showreel are required;
+    // highlights are only emitted per-segment so an empty list adds nothing.
+    const empty = buildDeliverableCommands(planOf([], [], []), { probeByPath: {} });
+    expect(empty.commands).toEqual([]);
+    expect(empty.errors.length).toBe(2);
+    expect(empty.errors[0]).toContain('no segments selected');
+  });
+});
+
+describe('ffmpeg driver — validation verdict (AC3, pure)', () => {
+  it('passes a decodable 960x540 + audio + non-black deliverable', () => {
+    expect(
+      assessDeliverable(probeOf(), { sampledFrames: 44, maxYavg: 128.3 }),
+    ).toEqual({ ok: true, issues: [] });
+  });
+
+  it('fails a video-only deliverable (missing SFX audio track)', () => {
+    const verdict = assessDeliverable(probeOf({ audio: false }), {
+      sampledFrames: 44,
+      maxYavg: 128.3,
+    });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.issues.some((i) => i.includes('no audio track'))).toBe(true);
+  });
+
+  it('fails a non-native-resolution deliverable', () => {
+    const verdict = assessDeliverable(probeOf({ width: 1280, height: 720 }), {
+      sampledFrames: 44,
+      maxYavg: 128.3,
+    });
+    expect(verdict.ok).toBe(false);
+    expect(
+      verdict.issues.some((i) => i.includes('wrong resolution: 1280x720 (expected 960x540)')),
+    ).toBe(true);
+  });
+
+  it('fails a black / near-black clip', () => {
+    const verdict = assessDeliverable(probeOf(), { sampledFrames: 44, maxYavg: 16 });
+    expect(verdict.ok).toBe(false);
+    expect(
+      verdict.issues.some((i) => i.includes('non-trivial non-black pixels missing')),
+    ).toBe(true);
+  });
+
+  it('fails an undecodable file and a file with no sampled brightness', () => {
+    expect(
+      assessDeliverable(null, { sampledFrames: 44, maxYavg: 128.3 }).issues.some((i) =>
+        i.includes('not decodable'),
+      ),
+    ).toBe(true);
+    expect(
+      assessDeliverable(probeOf(), { sampledFrames: 0, maxYavg: null }).issues.some((i) =>
+        i.includes('brightness could not be measured'),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('ffmpeg driver — compile orchestration with injected subprocesses (AC6)', () => {
+  const outDir = `${CAPTURE_OUTPUT_DIR}/compile-unit`;
+
+  it('compiles and validates every deliverable hermetically', () => {
+    const plan = planOf();
+    const ran: (readonly string[])[] = [];
+    const result = compileDeliverables(plan, {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      probe: () => probeOf(),
+      brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 128.3 }),
+      run: (argv: readonly string[]) => {
+        ran.push(argv);
+        return { ok: true, code: 0, stdout: '', stderr: '' };
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(ran).toHaveLength(3);
+    expect(result.deliverables.map((d) => d.name)).toEqual([
+      'promo',
+      'showreel',
+      'highlight-01',
+    ]);
+    for (const d of result.deliverables) {
+      expect(d.ok).toBe(true);
+      expect(d.probe.width).toBe(DELIVERABLE_WIDTH);
+      expect(d.probe.height).toBe(DELIVERABLE_HEIGHT);
+      expect(d.probe.audioCodec).toBe('opus');
+      expect(d.brightness.maxYavg).toBe(128.3);
+      expect(d.measuredMeanIntensity).toBeCloseTo(0.8, 3);
+    }
+    // The resolved binary replaces argv[0] for the actual run.
+    expect(ran[0][0]).toBe('/fake/ffmpeg');
+    expect(ran[0]).toContain('-crf');
+  });
+
+  it('reports an ffmpeg failure as an actionable message, not a stack trace', () => {
+    const result = compileDeliverables(planOf(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      probe: () => probeOf(),
+      brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 128.3 }),
+      run: () => ({
+        ok: false,
+        code: 1,
+        stdout: '',
+        stderr: 'Assertion failed\nError while filtering\nsome stack',
+      }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.deliverables.every((d) => !d.ok)).toBe(true);
+    // The first non-empty stderr line is surfaced as the actionable excerpt.
+    expect(result.errors.some((e) => e.includes('Assertion failed'))).toBe(true);
+  });
+
+  it('flags a validation failure (black output) and fails the compile', () => {
+    const result = compileDeliverables(planOf(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      probe: () => probeOf(),
+      brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 0 }),
+      run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.deliverables.every((d) => !d.ok)).toBe(true);
+    expect(
+      result.errors.some((e) => e.includes('non-trivial non-black pixels missing')),
+    ).toBe(true);
+  });
+
+  it('formats a readable summary for stdout', () => {
+    const result = compileDeliverables(planOf(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      probe: () => probeOf(),
+      brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 128.3 }),
+      run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+    });
+    const text = formatCompileSummary(result);
+    expect(text).toContain('all validated OK');
+    expect(text).toContain('promo.webm');
+    expect(text).toContain('meanIntensity');
+    expect(text).toContain('opus 2ch');
+  });
+
+  it('captures subprocess failure output instead of throwing', () => {
+    const failure = runFfmpegSync(['ffmpeg', '-i', 'x'], {
+      execFileSyncImpl: () => {
+        const error = new Error('spawn ENOENT') as Error & {
+          code?: number;
+          stderr?: Buffer;
+        };
+        error.code = 127;
+        error.stderr = Buffer.from('ffmpeg: error while loading');
+        throw error;
+      },
+    });
+    expect(failure.ok).toBe(false);
+    expect(failure.code).toBe(127);
+    expect(failure.stderr).toContain('error while loading');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// CLI --compile mode (AC5): npm entry point contract with injected tools
+// ────────────────────────────────────────────────────────────────────────────
+
+const demoSeries = `{"schemaVersion":1,"runSeed":7,"sampleRateHz":10,"categories":["playerBullets","drops","enemies","bosses"]}\n{"t":3000,"intensity":0.8,"burstiness":0.3,"breakdown":{"playerBullets":2}}\n`;
+
+/** An in-memory fs mirroring the capture-output layout. */
+function memoryFs(files: Record<string, string>) {
+  return {
+    readFileSync: (path: string) => files[path] ?? '',
+    writeFileSync: (path: string, content: string) => {
+      files[path] = content;
+    },
+    existsSync: (path: string) => path in files,
+    readdirSync: () => Object.keys(files),
+  };
+}
+
+describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
+  it('parses --compile and --out-dir', () => {
+    expect(parseCompileArgs(['--compile']).compile).toBe(true);
+    expect(parseCompileArgs(['x']).compile).toBe(false);
+    expect(parseCompileArgs(['--out-dir', 'videos']).outDir).toBe('videos');
+    expect(parseCompileArgs(['--out-dir']).error).toContain('--out-dir');
+    expect(parseCompileArgs(['--compile']).outDir).toBe(CAPTURE_OUTPUT_DIR);
+  });
+
+  it('fails loudly with install hints when ffmpeg is missing (AC4)', () => {
+    const files: Record<string, string> = {
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.action.jsonl`]: demoSeries,
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.webm`]: '',
+    };
+    const result = compilePromoMain(
+      ['--compile', '--runs', 'gameplay-demo', '--out-dir', `${CAPTURE_OUTPUT_DIR}/unit`],
+      memoryFs(files),
+      { resolveTools: () => null },
+    );
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('not found on PATH');
+    expect(result.stdout).toContain('sudo apt-get install ffmpeg');
+    expect(result.stdout).toContain('npm run compile:promo');
+    expect(result.stdout).not.toContain('    at ');
+    expect(files[`${CAPTURE_OUTPUT_DIR}/unit/compile-promo-report.json`]).toBeUndefined();
+  });
+
+  it('compiles + validates end to end through the CLI (injected subprocesses)', () => {
+    const files: Record<string, string> = {
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.action.jsonl`]: demoSeries,
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.webm`]: '',
+    };
+    const result = compilePromoMain(
+      ['--compile', '--runs', 'gameplay-demo', '--out', 'plan.json', '--out-dir', `${CAPTURE_OUTPUT_DIR}/unit`],
+      memoryFs(files),
+      {
+        resolveTools: () => ({ ffmpeg: '/fake/ffmpeg', ffprobe: '/fake/ffprobe' }),
+        probe: () => probeOf(),
+        brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 128.3 }),
+        run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+      },
+    );
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('all validated OK');
+    expect(result.stdout).toContain('promo.webm');
+    expect(files['plan.json']).toContain('"promo"');
+    expect(
+      files[`${CAPTURE_OUTPUT_DIR}/unit/compile-promo-report.json`],
+    ).toContain('"ok": true');
+  });
+
+  it('returns a failing exit code when a deliverable fails validation', () => {
+    const files: Record<string, string> = {
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.action.jsonl`]: demoSeries,
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.webm`]: '',
+    };
+    const result = compilePromoMain(
+      ['--compile', '--runs', 'gameplay-demo', '--out-dir', `${CAPTURE_OUTPUT_DIR}/unit`],
+      memoryFs(files),
+      {
+        resolveTools: () => ({ ffmpeg: '/fake/ffmpeg', ffprobe: '/fake/ffprobe' }),
+        probe: () => probeOf(),
+        brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 0 }),
+        run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+      },
+    );
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('validation FAILED');
+    expect(result.stdout).toContain('non-trivial non-black pixels missing');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Integration smoke test — real ffmpeg over synthetic footage (AC6, gated
+// on ffmpeg presence). Skipped when ffmpeg/ffprobe are unavailable.
+// ────────────────────────────────────────────────────────────────────────────
+
+const HAS_FFMPEG = (() => {
+  try {
+    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' });
+    execFileSync('ffprobe', ['-version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+const anchorJson = JSON.stringify({
+  kind: 'capture-join-anchor',
+  schemaVersion: 1,
+  captureStartedAtEpochMs: 0,
+  runStartedAtEpochMs: 0,
+});
+
+/** A one-peak synthetic action-intensity series (video time ≈ series time). */
+function seriesFor(runId: string) {
+  const isA = runId.endsWith('-a');
+  const t = isA ? 2_000 : 1_200;
+  return [
+    JSON.stringify({
+      schemaVersion: 1,
+      runSeed: 7,
+      sampleRateHz: 10,
+      categories: ['playerBullets', 'drops', 'enemies', 'bosses'],
+    }),
+    JSON.stringify({
+      t,
+      intensity: isA ? 0.9 : 0.8,
+      burstiness: 0.4,
+      breakdown: isA ? { playerBullets: 2 } : { enemies: 2 },
+    }),
+    '',
+  ].join('\n');
+}
+
+describe.skipIf(!HAS_FFMPEG)(
+  'integration — real ffmpeg compile of synthetic footage (AH-0MVDV4PNZ004ZWOZ AC6)',
+  () => {
+    const tag = `itest-${process.pid}-${Date.now()}`;
+    const runA = `${tag}-a`;
+    const runB = `${tag}-b`;
+    const outDir = `${CAPTURE_OUTPUT_DIR}/compile-${tag}`;
+    const planPath = `${CAPTURE_OUTPUT_DIR}/compile-promo-plan-${tag}.json`;
+    const created: string[] = [outDir, planPath];
+
+    beforeAll(() => {
+      mkdirSync(outDir, { recursive: true });
+      // Short synthetic sources (just long enough for the mapped windows:
+      // runA [0.5s, 3.0s], runB [0s, 2.2s]) keep the gated smoke encode cheap.
+      for (const [runId, freq, seconds] of [
+        [runA, '440', '3.2'],
+        [runB, '660', '2.6'],
+      ] as const) {
+        const webm = sourceWebmPath(runId);
+        execFileSync(
+          'ffmpeg',
+          [
+            '-y', '-hide_banner', '-loglevel', 'error',
+            '-f', 'lavfi', '-i', `testsrc2=size=960x540:rate=60:duration=${seconds}`,
+            '-f', 'lavfi', '-i', `sine=frequency=${freq}:duration=${seconds}`,
+            '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '35',
+            '-deadline', 'good', '-cpu-used', '4',
+            '-c:a', 'libopus', '-b:a', '96k',
+            webm,
+          ],
+          { stdio: 'ignore' },
+        );
+        created.push(webm);
+        const seriesPath = sourceSeriesPath(runId);
+        writeFileSync(seriesPath, seriesFor(runId));
+        created.push(seriesPath);
+        writeFileSync(sourceAnchorPath(runId), anchorJson);
+        created.push(sourceAnchorPath(runId));
+      }
+    }, 300_000);
+
+    afterAll(() => {
+      for (const path of created) rmSync(path, { recursive: true, force: true });
+    });
+
+    it('compiles real WebM deliverables and validates them via the CLI', () => {
+      const result = compilePromoMain([
+        '--compile',
+        '--runs', `${runA},${runB}`,
+        '--out', planPath,
+        '--out-dir', outDir,
+      ]);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('all validated OK');
+      expect(existsSync(planPath)).toBe(true);
+      expect(existsSync(`${outDir}/compile-promo-report.json`)).toBe(true);
+
+      const promoPath = deliverableOutputPath('promo', 1, outDir);
+      expect(existsSync(promoPath)).toBe(true);
+      expect(existsSync(deliverableOutputPath('showreel', 1, outDir))).toBe(true);
+      expect(existsSync(deliverableOutputPath('highlight', 1, outDir))).toBe(true);
+
+      // The real output must pass the AC3 checks: vp9 960×540 + opus audio,
+      // non-trivial brightness, and the expected 2-segment promo duration.
+      const probe = probeMediaSync(promoPath, {});
+      expect(probe.ok).toBe(true);
+      const video = probe.streams.find((s) => s.codecType === 'video');
+      const audio = probe.streams.find((s) => s.codecType === 'audio');
+      expect(video?.codecName).toBe('vp9');
+      expect(video?.width).toBe(DELIVERABLE_WIDTH);
+      expect(video?.height).toBe(DELIVERABLE_HEIGHT);
+      expect(audio?.codecName).toBe('opus');
+      // WebM durations live at the container level — probeMediaSync mirrors
+      // the production path, so the format-duration fallback is exercised.
+      const durationSec = probeVideoDurationSec(probe);
+      expect(durationSec).not.toBeNull();
+      // runA window [0.5s, 3.0s] + runB window [0s, 2.2s].
+      expect(durationSec!).toBeGreaterThan(4.0);
+      expect(durationSec!).toBeLessThan(5.6);
+
+      const brightness = sampleBrightnessSync(promoPath, {});
+      expect(brightness.sampledFrames).toBeGreaterThan(0);
+      expect(brightness.maxYavg).not.toBeNull();
+      expect(brightness.maxYavg!).toBeGreaterThan(BLACK_FRAME_YAVG_FLOOR);
+      // Full-suite runs share the 16-core host with Phaser suites, so the
+      // smoke encode is slow; allow a generous bound (600 s).
+    }, 600_000);
+  },
+);

@@ -151,6 +151,10 @@ export interface CompilePromoArgs {
   readonly runs: readonly string[];
   readonly durationMs: number | null;
   readonly out: string;
+  /** Deliverable + validation-report directory (--out-dir, with --compile). */
+  readonly outDir: string;
+  /** When true the CLI also compiles + validates with ffmpeg (AC5). */
+  readonly compile: boolean;
   readonly error: string | null;
 }
 
@@ -170,6 +174,8 @@ export interface CompilePromoMainResult {
   readonly code: number;
   readonly stdout: string;
   readonly plan: EditPlan | null;
+  /** Present in --compile mode (AC5): the per-deliverable result. */
+  readonly compileResult?: CompileResult;
 }
 
 /** Parses raw `.action.jsonl` text into a header + points (AC1). */
@@ -240,4 +246,237 @@ export function loadCompileSources(
 export function compilePromoMain(
   argv: readonly string[],
   fsImpl?: LoadCompileSourcesInput['fs'],
+  deps?: CompileDeps,
 ): CompilePromoMainResult;
+
+// ────────────────────────────────────────────────────────────────────────────
+// ffmpeg compile driver + output validation (AH-0MVDV4PNZ004ZWOZ; parent
+// AC5/AC6) — AC1 trim/reorder/join/mux, AC2 three deliverable types, AC3
+// output validation, AC4 clear errors, AC5 npm entry point, AC6 hermetic
+// separation.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Game-native deliverable resolution (960×540, parent AC1). */
+export const DELIVERABLE_WIDTH: number;
+export const DELIVERABLE_HEIGHT: number;
+/** Deliverable frame rate — the capture cadence (960×540 @ 60 fps). */
+export const DELIVERABLE_FPS: number;
+/** libvpx-vp9 constant-quality target for the re-encode concat pass. */
+export const VP9_CRF: number;
+/** libopus stereo bitrate (kbps) for the deliverable SFX track. */
+export const OPUS_BITRATE_K: number;
+/** A sampled frame with YAVG above this counts as non-black (AC3). */
+export const BLACK_FRAME_YAVG_FLOOR: number;
+/** Brightness sampling cadence (frames/second of the output). */
+export const BRIGHTNESS_SAMPLE_RATE: number;
+/** ffmpeg install hints shown on a missing-binary error (AC4). */
+export const FFMPEG_INSTALL_HINTS: readonly string[];
+
+/** One parsed ffprobe stream. */
+export interface ProbeStream {
+  readonly codecType: string | null;
+  readonly codecName: string | null;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly channels: number | null;
+  readonly sampleRate: number | null;
+  readonly duration: number | null;
+}
+
+/** A parsed ffprobe file summary. */
+export interface ProbeSummary {
+  readonly streams: readonly ProbeStream[];
+  /** Container-level duration (WebM reports duration at format level). */
+  readonly formatDuration: number | null;
+}
+
+/** A parsed signalstats brightness summary. */
+export interface BrightnessSummary {
+  readonly sampledFrames: number;
+  readonly maxYavg: number | null;
+}
+
+/** One deliverable's validation verdict (AC3). */
+export interface DeliverableVerdict {
+  readonly ok: boolean;
+  readonly issues: readonly string[];
+}
+
+/** One deterministic ffmpeg command for a deliverable (AC1/AC2). */
+export interface DeliverableCommand {
+  readonly kind: 'promo' | 'showreel' | 'highlight';
+  readonly index: number;
+  readonly name: string;
+  readonly output: string;
+  /** Segments clamped to source durations. */
+  readonly segments: readonly SelectionManifestEntry[];
+  readonly argv: readonly string[];
+}
+
+/** A compiled deliverable: output + validation result (AC3). */
+export interface CompiledDeliverable {
+  readonly kind: 'promo' | 'showreel' | 'highlight';
+  readonly index: number;
+  readonly name: string;
+  readonly output: string;
+  readonly ok: boolean;
+  readonly issues: readonly string[];
+  readonly probe: {
+    readonly codec: string | null;
+    readonly width: number | null;
+    readonly height: number | null;
+    readonly durationSec: number | null;
+    readonly audioCodec: string | null;
+    readonly audioChannels: number | null;
+  };
+  readonly brightness: BrightnessSummary;
+  readonly segments: readonly SelectionManifestEntry[];
+  /** Mean motivating intensity of the cuts (parent AC4 measured band). */
+  readonly measuredMeanIntensity: number | null;
+}
+
+/** The full compile result (OK only when every deliverable validates). */
+export interface CompileResult {
+  readonly ok: boolean;
+  readonly deliverables: readonly CompiledDeliverable[];
+  readonly errors: readonly string[];
+  readonly report: Readonly<{
+    readonly schemaVersion: number;
+    readonly ok: boolean;
+    readonly ffmpeg: string;
+    readonly ffprobe: string;
+    readonly outDir: string;
+    readonly deliverables: readonly CompiledDeliverable[];
+    readonly errors: readonly string[];
+  }>;
+}
+
+/** Injectable subprocess implementations for hermetic tests (AC6). */
+export interface CompileDeps {
+  readonly resolveTools?: () => { ffmpeg: string; ffprobe: string } | null;
+  readonly run?: (argv: readonly string[], opts?: object) => RunResult;
+  readonly probe?: (file: string, opts?: object) => ProbeSyncResult;
+  readonly brightness?: (file: string, opts?: object) => BrightnessSyncResult;
+}
+
+/** A sync subprocess run result. */
+export interface RunResult {
+  readonly ok: boolean;
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/** A sync ffprobe result. */
+export interface ProbeSyncResult extends ProbeSummary {
+  readonly ok: boolean;
+  readonly error?: string;
+}
+
+/** A sync brightness-sampling result. */
+export interface BrightnessSyncResult extends BrightnessSummary {
+  readonly ok: boolean;
+  readonly error?: string;
+}
+
+/** Deliverable output path under `outDir` (AC2 naming). */
+export function deliverableOutputPath(
+  kind: 'promo' | 'showreel' | 'highlight',
+  index?: number,
+  outDir?: string,
+): string;
+
+/** Parses `ffprobe -of json` text into stream summaries (pure). */
+export function parseProbeJson(text: string): ProbeSummary;
+
+/** True when a probe summary carries an audio stream. */
+export function probeHasAudio(probe: ProbeSummary | null): boolean;
+
+/** True when a probe summary carries a video stream. */
+export function probeHasVideo(probe: ProbeSummary | null): boolean;
+
+/** Seconds of the first video stream in a probe summary, or null. */
+export function probeVideoDurationSec(probe: ProbeSummary | null): number | null;
+
+/** Parses signalstats YAVG lines into a brightness summary (pure). */
+export function parseSignalStatsOutput(text: string): BrightnessSummary;
+
+/** Validation verdict for one deliverable (pure, AC3). */
+export function assessDeliverable(
+  probe: ProbeSummary | null,
+  brightness: BrightnessSummary | null,
+  opts?: { width?: number; height?: number; blackYavgFloor?: number },
+): DeliverableVerdict;
+
+/** The deterministic ffmpeg argv for one deliverable (pure, AC1). */
+export function buildDeliverableArgv(
+  kind: 'promo' | 'showreel' | 'highlight',
+  index: number,
+  segments: readonly SelectionManifestEntry[],
+  opts: {
+    width: number;
+    height: number;
+    fps: number;
+    vp9Crf: number;
+    opusBitrateK: number;
+    output: string;
+  },
+): string[];
+
+/** Builds the deterministic ffmpeg commands for every deliverable (pure). */
+export function buildDeliverableCommands(
+  plan: EditPlan | null,
+  opts?: {
+    probeByPath?: Record<string, ProbeSyncResult>;
+    outDir?: string;
+    width?: number;
+    height?: number;
+    fps?: number;
+    vp9Crf?: number;
+    opusBitrateK?: number;
+  },
+): { commands: readonly DeliverableCommand[]; errors: readonly string[] };
+
+/** Resolves ffmpeg/ffprobe on PATH (env overrides win); null when missing. */
+export function resolveFfmpegTools(
+  env?: NodeJS.ProcessEnv,
+  access?: (path: string) => void,
+): { ffmpeg: string; ffprobe: string } | null;
+
+/** The missing-ffmpeg error message with install hints (AC4). */
+export function missingFfmpegError(): string;
+
+/** Runs an ffmpeg argv synchronously, capturing output (AC4). */
+export function runFfmpegSync(
+  argv: readonly string[],
+  deps?: { execFileSyncImpl?: Function; timeoutMs?: number },
+): RunResult;
+
+/** Probes a media file with ffprobe (sync). */
+export function probeMediaSync(
+  file: string,
+  deps?: { ffprobe?: string; execFileSyncImpl?: Function },
+): ProbeSyncResult;
+
+/** Samples frame brightness via signalstats (sync). */
+export function sampleBrightnessSync(
+  file: string,
+  deps?: { ffmpeg?: string; execFileSyncImpl?: Function; sampleRate?: number },
+): BrightnessSyncResult;
+
+/** Compiles + validates all deliverables from the plan. */
+export function compileDeliverables(
+  plan: EditPlan | null,
+  deps?: Omit<CompileDeps, 'resolveTools'> & {
+    ffmpeg?: string;
+    ffprobe?: string;
+    outDir?: string;
+  },
+): CompileResult;
+
+/** Human-readable compile/validation summary for stdout (pure). */
+export function formatCompileSummary(result: {
+  ok: boolean;
+  deliverables: readonly CompiledDeliverable[];
+  errors: readonly string[];
+}): string;
