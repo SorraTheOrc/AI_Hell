@@ -83,9 +83,14 @@ import { RULES_STORAGE_KEY } from '../core/rules';
 // These integration tests boot full Phaser games and walk the run to the
 // boss; under the full-suite parallel load the Vitest default 5 s timeout
 // is too tight and the heaviest boss-encounter test reports a spurious
-// timeout (AH-0MUIPP1UU000UT88). Give the file headroom so a slow parallel
-// run does not fail on timing alone.
-vi.setConfig({ testTimeout: 60000 });
+// timeout (AH-0MUIPP1UU000UT88, raised to 60 s for the ten-level campaign in
+// AH-0MV396OK0001FX14). The AC4 "defeating all 4 phases" run — the heaviest
+// in the file, because it adds the deterministic victory transition on top
+// of the ten-level walk — still breached the 60 s ceiling at 67 s under
+// full-suite parallel load (AH-0MVF2H4UL007IJT4). Raise to 120 s, matching
+// the other full-game suites (SceneNavigation) and the README testing
+// conventions, so a slow parallel run does not fail on timing alone.
+vi.setConfig({ testTimeout: 120000 });
 
 // These gameplay tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
