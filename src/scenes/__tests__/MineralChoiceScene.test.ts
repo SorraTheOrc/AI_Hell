@@ -361,9 +361,7 @@ describe('MineralChoiceScene', () => {
     it('AC1/AC2 — a fire schedule plays reduced-volume ghost fire on the beat grid, active weapons only', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       // Stop the live loop: drive the game with fixed-delta steps so the
       // metronome advances by a known, deterministic amount.
       booted!.game.loop.stop();
@@ -415,9 +413,7 @@ describe('MineralChoiceScene', () => {
     it('AC2 — omitting a fire schedule keeps the overlay silent (no ghost fire)', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
@@ -434,9 +430,7 @@ describe('MineralChoiceScene', () => {
     it('a selection keeps the metronome running under the countdown, then it ends when the overlay closes', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
@@ -483,9 +477,7 @@ describe('MineralChoiceScene', () => {
 
   describe('beat-locked 3-2-1 countdown (AH-0MV55OAQT004NMSN)', () => {
     it('selecting starts a 3-2-1 countdown and defers onSelect until it completes', async () => {
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       const calls: Array<{ index: number; option: ChoiceOption }> = [];
       booted!.game.scene.start('MineralChoiceScene', {
@@ -541,9 +533,7 @@ describe('MineralChoiceScene', () => {
     it('plays the countdown tick cue once per count (recording provider)', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
@@ -575,9 +565,7 @@ describe('MineralChoiceScene', () => {
     it('rises the tick tone with each beat (recording provider) (AH-0MV722WJS0075UTZ)', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
@@ -608,9 +596,7 @@ describe('MineralChoiceScene', () => {
     });
 
     it('removes the choice screen the moment the countdown starts (AH-0MV722WJS0075UTZ)', async () => {
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [

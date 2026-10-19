@@ -25,7 +25,7 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     const scene = booted.scene as PlayScene;
     // Complete the wormhole spawn animation so enemies are collidable.
     scene.finishSpawnAnimations();

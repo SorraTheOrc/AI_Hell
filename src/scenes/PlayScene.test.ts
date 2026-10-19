@@ -380,7 +380,7 @@ async function bootSceneWithLevels(
     RULES_STORAGE_KEY,
     JSON.stringify({ sequencedWavesEnabled: false }),
   );
-  const game = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+  const game = await bootScene([PlayScene, GameOverScene, MenuScene]);
   const scene = game.scene as PlayScene;
   scene.getWaveManager().setLevels(levels);
   if (options.asteroidSpawner === false) {
@@ -432,7 +432,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     // This suite predates the dynamic spawner and asserts deterministic
     // wave/banner/transition behaviour; isolate it from random asteroid
     // spawns (the spawner is covered by its own integration suites).
@@ -1698,7 +1698,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
   }
 
@@ -2049,7 +2049,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
   }
 
@@ -3033,9 +3033,7 @@ describe('PlayScene — asteroid Extra Life kill drop (AH-0MV6M2M9P0078N4S)', ()
         asteroidExtraLifeDropChance: 1,
       }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     const scene = booted.scene as PlayScene;
     scene.setAsteroidSpawnerEnabled(false);
     scene.setRng(() => 0.99);
@@ -3243,7 +3241,7 @@ describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () 
   const SEED = 20260925;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
   }
 
@@ -3475,7 +3473,7 @@ describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)
   const SEED = 424242;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
   }
 
@@ -3835,7 +3833,7 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
   });
 
   async function bootToggleScene(): Promise<PlayScene> {
-    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return toggleBooted.scene as PlayScene;
   }
 
@@ -4039,9 +4037,7 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
     return booted.scene as PlayScene;
   }
@@ -4595,7 +4591,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
   }
 
@@ -4741,7 +4737,6 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC1 — demo mode is set when started with { demo: true }', async () => {
       const booted = await bootScene(
         [PlayScene, GameOverScene, MenuScene],
-        { deterministicBoot: true },
       );
       const scene = booted.scene as PlayScene;
       scene.scene.start('PlayScene', { demo: true });
@@ -4752,7 +4747,6 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC6 — demo mode is false when started normally', async () => {
       const booted = await bootScene(
         [PlayScene, GameOverScene, MenuScene],
-        { deterministicBoot: true },
       );
       const scene = booted.scene as PlayScene;
       scene.scene.start('PlayScene');
@@ -4775,7 +4769,6 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC2/AC5 — an explicit non-demo start clears stale demo data on the reused scene', async () => {
       const booted = await bootScene(
         [PlayScene, GameOverScene, MenuScene],
-        { deterministicBoot: true },
       );
       const scene = booted.scene as PlayScene;
       const botInput = () =>
@@ -4819,7 +4812,6 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC4 — demo run holds on the game-over screen, then returns to MenuScene', async () => {
       const booted = await bootScene(
         [PlayScene, GameOverScene, MenuScene],
-        { deterministicBoot: true },
       );
       const scene = booted.scene as PlayScene;
 
@@ -4876,9 +4868,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   describe('Narrowed demo take-over (AH-0MUYP6M6W006Z1AY)', () => {
     /** Boots a live game and starts the demo, returning the PlayScene. */
     async function bootDemo(): Promise<PlayScene> {
-      booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
       const scene = booted.scene as PlayScene;
       scene.scene.start('PlayScene', { demo: true });
       await new Promise((r) => setTimeout(r, 50));
@@ -5016,9 +5006,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     });
 
     it('AC5 — normal play registers no take-over listener and ESC still pauses', async () => {
-      booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
       const scene = booted.scene as PlayScene;
       expect(scene.isDemoMode()).toBe(false);
       expect(takeOverHandlerOf(scene)).toBeNull();

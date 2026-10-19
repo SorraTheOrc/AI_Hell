@@ -7,11 +7,11 @@
  *
  * ## Deterministic boot (AH-0MVF1M4PB0080GEP)
  *
- * Every scene here boots through {@link bootScene} with
- * `{ deterministicBoot: true }` and its live loop is stopped before the
- * tuning scene is restarted, so no wall-clock frames drain between
- * `create()` and a test's first assertion. The legacy real-time boot waited
- * 150 ms + 200 ms of wall-clock while the rAF loop ran an unpredictable
+ * Every scene here boots through {@link bootScene} (deterministic boot is
+ * now the default) and its live loop is stopped before the tuning scene is
+ * restarted, so no wall-clock frames drain between `create()` and a test's
+ * first assertion. The legacy real-time boot waited 150 ms + 200 ms of
+ * wall-clock while the rAF loop ran an unpredictable
  * number of frames; under full-suite test-slot contention that both shifted
  * the bot's start state and stretched `has the bot play the generated random
  * level`'s 300-frame synchronous drain past Vitest's 5 s timeout (it failed
@@ -113,7 +113,7 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     // stopped live loop: `SceneManager.start` runs `init()` + `create()`
     // synchronously, so the restarted scene's generated level (and its first
     // wave) exists the moment this resolves — no frame drain can shift it.
-    booted = await bootScene([GymBotTuning], { deterministicBoot: true });
+    booted = await bootScene([GymBotTuning]);
     booted.game.loop.stop();
     const manager = booted.game.scene;
     manager.start(GYM_BOT_TUNING_SCENE_KEY, data);

@@ -7,10 +7,10 @@
  * bullets, or canvases).
  *
  * Determinism: these suites boot through the shared `bootScene()` harness
- * with `deterministicBoot` and then stop the live loop, so every scene
+ * (deterministic boot is now the default — see README "Testing conventions
+ * (deterministic scene boot)") and then stop the live loop, so every scene
  * transition is driven by an explicit fixed-delta `game.step` rather than
- * wall-clock animation frames. See README "Testing conventions
- * (deterministic scene boot)" — the previous real-time `sleep()` waits were
+ * wall-clock animation frames. The previous real-time `sleep()` waits were
  * load-sensitive and flaked under full-suite parallel execution
  * (AH-0MUKMJRCI0002VBP).
  */
@@ -63,7 +63,6 @@ async function bootAllGames(): Promise<Phaser.Game> {
   );
   const booted = await bootScene(
     [MenuScene, PlayScene, GameOverScene, GymIndex],
-    { deterministicBoot: true },
   );
   // The harness resumes the live loop after boot; stop it so the state a
   // test observes is driven only by explicit steps.

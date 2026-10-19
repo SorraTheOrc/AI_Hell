@@ -134,7 +134,6 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
         MineralChoiceScene,
         GymIndex,
       ],
-      { deterministicBoot: true },
     );
     return booted.scene as MenuScene;
   }
@@ -805,7 +804,6 @@ describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
   async function bootMenu(): Promise<MenuScene> {
     booted = await bootScene(
       [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
-      { deterministicBoot: true },
     );
     return booted.scene as MenuScene;
   }
@@ -843,9 +841,7 @@ describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
     values.competent['mineralSeekRange'] = 999;
     saveBotTuningAs('ShouldNotApply', values);
 
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     const play = booted.scene as PlayScene;
     expect(play.isDemoMode()).toBe(false);
     expect(play.getBotTuningConfigName()).toBeNull();
@@ -857,9 +853,7 @@ describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
     values.human['skill'] = 0.4;
     saveBotTuningAs('MidSession', values);
 
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     const play = booted.scene as PlayScene;
     expect(play.getBotTuningConfigName()).toBeNull();
 
@@ -913,7 +907,6 @@ describe('Demo flies the bundled bot-tuning baseline in a fresh profile (AH-0MV9
 
     booted = await bootScene(
       [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
-      { deterministicBoot: true },
     );
     const menu = booted.scene as MenuScene;
     menu.startDemo();
@@ -937,7 +930,6 @@ describe('Demo flies the bundled bot-tuning baseline in a fresh profile (AH-0MV9
 
     booted = await bootScene(
       [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
-      { deterministicBoot: true },
     );
     (booted.scene as MenuScene).startDemo();
     await wait(150);
@@ -961,9 +953,7 @@ describe('Demo live-thruster config (AH-0MV268RXJ007M7A9)', () => {
   /** Boots a live PlayScene demo (asteroids scheme, the shipped default). */
   async function bootDemo(): Promise<PlayScene> {
     seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene, GymBotTuning], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene, GymBotTuning]);
     booted.game.scene.start('PlayScene', { demo: true, seed: 42 });
     await wait(150);
     return booted.game.scene.getScene('PlayScene') as PlayScene;

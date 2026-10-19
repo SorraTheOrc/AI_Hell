@@ -432,19 +432,16 @@ Editing the curve clears the preview (and its launch buttons) until **Regenerate
 #### Testing conventions (deterministic scene boot)
 
 Phaser suites boot a real `Phaser.Game` through `bootScene()`
-(`src/test/gameHarness.ts`). By default the harness waits a fixed **real-time**
-150 ms while the live requestAnimationFrame loop runs, so the scene drains an
-unpredictable number of frames — frame timing varies under full-suite parallel
-load, which makes assertions taken right after boot flaky.
+(`src/test/gameHarness.ts`). Boot is **deterministic by default**: the live
+requestAnimationFrame loop is stopped before its first frame and the scene is
+booted with fixed-delta `game.step` calls (150 ms of simulated time, matching
+the legacy settle window), so the state a test observes is identical on every
+run, independent of wall-clock frame timing and host load. The loop is then
+resumed so tests that `await` a scene transition (for example the game-over
+flow) still work. The legacy real-time boot (`setTimeout(150)` wall-clock
+sleep) was deleted — it cost ~89 s of sleeping per full run and made
+post-boot assertions flaky under load.
 
-- **Opt into deterministic boot** for suites that assert on scene state:
-  `bootScene([...], { deterministicBoot: true })`. The live loop is stopped
-  before its first frame, the scene is booted with fixed-delta `game.step`
-  calls (150 ms of simulated time, matching the legacy settle window), and the
-  loop is then resumed so tests that `await` a scene transition (for example
-  the game-over flow) still work. The PlayScene suites (`PlayScene.test.ts`,
-  `PlaySceneHUD.test.ts`, `PlayScenePause.test.ts`) and `SceneNavigation.test.ts`
-  opt in.
 - **Drive behaviour with explicit `scene.tick(dt)`**, accumulating deterministic
   time and polling for the expected condition, rather than wall-clock waits.
   This is the established idiom for former flakes (AH-0MTFTIZX7005DNFW,

@@ -76,7 +76,6 @@ describe('Demo flies a non-default bundled baseline (discriminating, AH-0MV9GZD2
 
     booted = await bootScene(
       [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
-      { deterministicBoot: true },
     );
     (booted.scene as MenuScene).startDemo();
     await wait(150);

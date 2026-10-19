@@ -115,9 +115,7 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
     recorder: BufferedTelemetryRecorder;
   }> {
     simTime = 0;
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     const sink = new CaptureSink();
@@ -295,9 +293,7 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
   it('AC5 — telemetry off is a strict no-op and records nothing', async () => {
     localStorage.removeItem(TELEMETRY_JSONL_STORAGE_KEY);
     simTime = 0;
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
     const play = restartAndSettle(booted.game, { seed: SEED });
 
@@ -316,9 +312,7 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
 
     // Run B: recording disabled (no injection) — same seed, same ticks.
     simTime = 0;
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
     const playB = restartAndSettle(booted.game, { seed: SEED });
     step(booted.game, 120);

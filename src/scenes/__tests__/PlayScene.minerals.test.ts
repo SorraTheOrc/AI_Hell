@@ -486,7 +486,6 @@ describe('PlayScene mineral wiring', () => {
     // driven only by fixed game steps.
     const bootedGame = await bootScene(
       [PlayScene, MineralChoiceScene, GameOverScene, MenuScene],
-      { deterministicBoot: true },
     );
     booted = bootedGame;
     booted!.game.loop.stop();

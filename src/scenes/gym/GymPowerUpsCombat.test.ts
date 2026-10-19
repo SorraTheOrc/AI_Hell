@@ -54,7 +54,7 @@ beforeEach(() => {
  * identical on every run.
  */
 async function bootCombat(): Promise<GymPowerUpsCombat> {
-  const booted = await bootScene([GymPowerUpsCombat], { deterministicBoot: true });
+  const booted = await bootScene([GymPowerUpsCombat]);
   return booted!.scene as GymPowerUpsCombat;
 }
 

@@ -127,12 +127,10 @@ describe('power-up level path — game ↔ GymPowerUpLeveling parity (AC1/AC2)',
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
       PLAY_HOST,
-      { deterministicBoot: true },
     );
     const gym = await bootScene(
       [GymPowerUpLeveling, MineralChoiceScene],
       GYM_HOST,
-      { deterministicBoot: true },
     );
     games.push(play, gym);
     return { play: play.scene as PlayScene, gym: gym.scene as GymPowerUpLeveling };
