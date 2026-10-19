@@ -240,19 +240,22 @@ export function parseActionIntensitySeries(text) {
  * @returns {{ captureStartedMs: number|null, runStartedAtMs: number|null }}
  */
 export function parseCaptureAnchor(text) {
+  /** Epoch-ms field reader: explicit null/absent is `null`, never `0`. */
+  const epoch = (value) => {
+    if (value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
   let record;
   try {
     record = JSON.parse(text);
   } catch {
     return { captureStartedMs: null, runStartedAtMs: null };
   }
-  const captureStartedMs = Number.isFinite(Number(record?.captureStartedAtEpochMs))
-    ? Number(record.captureStartedAtEpochMs)
-    : null;
-  const runStartedAtMs = Number.isFinite(Number(record?.runStartedAtEpochMs))
-    ? Number(record.runStartedAtEpochMs)
-    : null;
-  return { captureStartedMs, runStartedAtMs };
+  return {
+    captureStartedMs: epoch(record?.captureStartedAtEpochMs),
+    runStartedAtMs: epoch(record?.runStartedAtEpochMs),
+  };
 }
 
 /**

@@ -1022,6 +1022,22 @@ describe('parseCaptureAnchor — join anchor sidecar (§7.5)', () => {
       parseCaptureAnchor(JSON.stringify({ captureStartedAtEpochMs: 'bogus' })),
     ).toEqual({ captureStartedMs: null, runStartedAtMs: null });
   });
+
+  it('treats explicit null join timestamps as approximate, not epoch 0', () => {
+    // Regression (AH-0MVDV4SYG008X8TY): `Number(null)` is 0, so a null
+    // timestamp previously produced a 0 ms epoch and a bogus offset instead
+    // of the documented approximate fallback.
+    expect(
+      parseCaptureAnchor(
+        JSON.stringify({
+          captureStartedAtEpochMs: null,
+          runStartedAtEpochMs: null,
+          offsetMs: null,
+          approximate: true,
+        }),
+      ),
+    ).toEqual({ captureStartedMs: null, runStartedAtMs: null });
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────

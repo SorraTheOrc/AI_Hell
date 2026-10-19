@@ -150,6 +150,41 @@ series (AC3). The dev JSONL sink stores the run in the page's `localStorage`
 storage quota — the sink then writes a *prefix* of the run and the series is
 partial (still schema-valid; see §7.3 of the action-intensity doc).
 
+## Pool inventory
+
+`npm run list:pool` prints an inventory of the captured source pool
+(AH-0MVDV4SYG008X8TY): which runs are usable and which gameplay features
+(weapons, pickups, enemies, boss) each one actually shows. It is the
+evidence that the pool covers the editorial categories before compiling —
+the same `EDITORIAL_CONFIG` feature mapping the promo compiler uses, so the
+inventory cannot drift from the coverage manifest.
+
+A run is **retained** only when all three artefacts exist:
+`<run>.webm` + `<run>.action.jsonl` + `<run>.capture.json`. A WebM without
+its series/anchor (e.g. footage captured before the export landed) is
+**excluded and reported**, never silently counted as usable material. A
+header-only series is a valid partial run, but evidences no features.
+
+```bash
+# human-readable inventory of capture-output/
+npm run list:pool
+
+# machine-readable manifest, kept next to the footage
+npm run list:pool -- --json > capture-output/pool-inventory.json
+
+# scan a different directory, or limit to explicit run ids
+npm run list:pool -- --dir clips
+npm run list:pool -- --runs boss-2026-10-19T16-25-05-656Z
+```
+
+Features are recognised from the series breakdown (`playerBullets` →
+weapons, `drops` → pickups, `enemies` → enemies, `bosses` → boss) and each
+is reported with its sample count and first/last series time. The manifest
+also lists `missingFeatures`, so a gap is visible instead of being inferred.
+The lister is pure apart from a thin `node:fs` scan, and is unit-tested
+hermetically (`scripts/list-capture-pool.test.ts`) without footage, ffmpeg
+or a browser.
+
 ## Dev scenarios (`--scenario`)
 
 A real run reaches the Central AI boss only after all five levels, and the
@@ -792,7 +827,12 @@ Recommendation: run capture as an **opt-in local/CI job**, never as part of
 | `scripts/capture-progress.d.mts` | Types for the progress module |
 | `scripts/capture-run-lifecycle.mjs` | Pure run-lifecycle contracts: signal encode/decode, tail/cap arithmetic, the `waitForRunEnd` loop, run summary and demo dwell |
 | `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
+| `scripts/capture-series.mjs` | Pure §7.2 series serialiser + §7.5 join-anchor builder + telemetry extraction (shared with the action-intensity export) |
+| `scripts/capture-series.d.mts` | Types for the series/anchor module |
+| `scripts/list-capture-pool.mjs` | Capture-pool inventory: retains WebM + series + anchor triples, reports excluded runs and per-run feature evidence |
+| `scripts/list-capture-pool.d.mts` | Types for the pool inventory lister |
+| `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |
 | `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap and progress helpers |
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
-| `package.json` | `capture` / `capture:install` scripts; `playwright` devDependency |
+| `package.json` | `capture` / `capture:install` / `list:pool` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |
