@@ -75,6 +75,17 @@ export interface TelemetryTickRecord extends TelemetryRecordBase {
   readonly kind: 'tick';
   /** Zero-based tick counter; advances even for sampled-out ticks. */
   readonly tick: number;
+  /**
+   * Wall-clock time the tick was recorded at, epoch milliseconds.
+   *
+   * The tick counter alone cannot date a sample: it advances once per game
+   * loop iteration, whose real cadence varies with the host (a headless
+   * capture can step ~4–7 times per second while a desktop run steps at
+   * ~60 Hz). `recordedAt` is therefore the record's own clock and the
+   * authoritative time base for consumers that need real time — e.g. the
+   * action-intensity series' `t` axis (AH-0MVFI5OQN008XGBV).
+   */
+  readonly recordedAt: number;
   /** Gameplay state at this tick. */
   readonly state: TelemetryJson;
   /** Player input at this tick. */

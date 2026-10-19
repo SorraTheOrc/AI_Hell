@@ -256,9 +256,17 @@ export function hasActionIntensitySample(record) {
  * reuses the last value for the ticks in between), so identical consecutive
  * samples are collapsed into one series sample — the series has one line per
  * *recorded* tick of the metric, matching the documented artefact (§7.2).
- * Each emitted sample's `t` is the sample-grid time `i * 1000 / sampleRateHz`
- * (ms since run start), which mirrors the sampler's wall-clock cadence
- * (§6.5) and is what the §7.5 join expects.
+ *
+ * Each emitted sample's `t` is **real time since the run started**, not a
+ * count of retained samples: collapsing duplicates must not compress the
+ * timeline (AH-0MVFI5OQN008XGBV). The tick record's own wall clock
+ * (`recordedAt`, epoch ms — stamped by the telemetry recorder) is the time
+ * base, relative to the run header's `startedAt`; when the header carries no
+ * `startedAt` the first sample's clock becomes the origin, and when a record
+ * predates the origin the value is clamped to 0. A legacy capture whose
+ * ticks have no `recordedAt` falls back to the documented sample grid
+ * (`i * 1000 / sampleRateHz`), which is the pre-clock behaviour and is only
+ * as accurate as the grid.
  *
  * A run with telemetry disabled, or a run interrupted before any sample, is
  * valid: the result is a header with no samples (AC3 — header-only series).
@@ -283,6 +291,9 @@ export function extractActionIntensitySeriesFromRecords(
 
   let runSeed = null;
   let startedAt = null;
+  // Clock origin for the current run: the header `startedAt`, or (when the
+  // header has none) the first sample's own clock. Reset per run header.
+  let originMs = null;
   const samples = [];
 
   for (const record of Array.isArray(records) ? records : []) {
@@ -293,12 +304,24 @@ export function extractActionIntensitySeriesFromRecords(
     ) {
       // A new run starts here: adopt its identity and discard any ticks from
       // an earlier run sharing the same sink (batch items, reused pages).
+      // The identity is reset first, so an earlier run's header can never
+      // supply the new run's clock.
+      runSeed = null;
+      startedAt = null;
       if (Number.isFinite(Number(record.runSeed))) {
         runSeed = Number(record.runSeed);
       }
-      if (Number.isFinite(Number(record.startedAt))) {
+      // A null/absent/non-numeric `startedAt` means the run header carries
+      // no clock (legacy/partial) — never coerce null to 0 (which is a real
+      // epoch and would silently date the timeline to 1970).
+      if (
+        record.startedAt !== null &&
+        record.startedAt !== undefined &&
+        Number.isFinite(Number(record.startedAt))
+      ) {
         startedAt = Number(record.startedAt);
       }
+      originMs = startedAt;
       samples.length = 0;
       continue;
     }
@@ -314,8 +337,22 @@ export function extractActionIntensitySeriesFromRecords(
       continue;
     }
 
+    const recordedAt = Number(record.recordedAt);
+    let t;
+    if (Number.isFinite(recordedAt)) {
+      // Real time from the record's own wall clock (the authoritative base).
+      if (originMs === null) originMs = recordedAt;
+      t = Math.max(0, Math.round(recordedAt - originMs));
+    } else {
+      // Legacy capture: no per-tick clock, so fall back to the documented
+      // sampler grid — as accurate as that grid, never denser.
+      t = Math.round(samples.length * gridMs);
+    }
+    // A clock adjustment must never rewind the series.
+    if (previous) t = Math.max(t, previous.t);
+
     samples.push({
-      t: Math.round(samples.length * gridMs),
+      t,
       tick: Number(record.tick),
       actionIntensity: {
         rawScore: Number(ai.rawScore),

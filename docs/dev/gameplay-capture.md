@@ -128,8 +128,9 @@ Every clip exports two artefacts alongside the WebM (basename-matched, e.g.
   pure helpers in `scripts/capture-series.mjs` from the recorded telemetry
   ticks: a self-describing header (`schemaVersion`, `runSeed`,
   `sampleRateHz`, `categories`) plus one line per recorded action-intensity
-  sample (`t` on the 1/sampleRateHz grid, `tick`, the four scores, the
-  breakdown). It is **byte-for-byte compatible** with
+  sample (`t` = real ms since run start, from each tick's own `recordedAt`
+  clock — see §7.2; `tick`, the four scores, the breakdown). It is
+  **byte-for-byte compatible** with
   `src/scenes/core/actionIntensitySerialiser.ts` (the parity is asserted by
   `scripts/capture-gameplay.test.ts`) — no format is forked.
 - **`<stem>.capture.json`** — the §7.5 join anchor:

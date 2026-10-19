@@ -33,7 +33,10 @@ export interface ActionIntensitySampleLike {
 /** One series sample line (§7.2) plus the sample grid `t`. */
 export interface ActionIntensitySeriesLineLike {
   schemaVersion: number;
-  /** Milliseconds since run start, on the 1/sampleRateHz grid. */
+  /**
+   * Milliseconds since run start (real time, from the tick's own `recordedAt`
+   * clock; the sample grid only as a legacy fallback).
+   */
   t: number;
   /** Zero-based simulation tick the sample was current on. */
   tick: number;
@@ -61,6 +64,7 @@ export interface ExtractedActionIntensitySeries {
   /** Telemetry run-header `startedAt`, epoch ms, or null. */
   startedAt: number | null;
   samples: Array<{
+    /** Real ms since run start (tick `recordedAt`; grid-only for legacy ticks). */
     t: number;
     tick: number;
     actionIntensity: ActionIntensitySampleLike;

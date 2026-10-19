@@ -2334,14 +2334,18 @@ function telemetryRunHeader(runSeed = 123456789, startedAt = 1_700_000_000_000) 
   };
 }
 
-function telemetryTick(tick: number, actionIntensity: object) {
-  return {
+function telemetryTick(tick: number, actionIntensity: object, recordedAt?: number) {
+  const record: Record<string, unknown> = {
     schemaVersion: 1,
     kind: 'tick',
     tick,
     state: { actionIntensity },
     input: null,
   };
+  // A legacy capture predates the tick wall clock (§7.2): omit the field so
+  // the exporter's documented grid fallback stays exercised.
+  if (recordedAt !== undefined) record.recordedAt = recordedAt;
+  return record;
 }
 
 describe('actionIntensitySeriesFileName / captureAnchorFileName (AC1/AC4)', () => {
@@ -2419,6 +2423,78 @@ describe('extractActionIntensitySeriesFromRecords (AC1/AC4)', () => {
     expect(series.samples[1].t).toBe(100); // 10 Hz grid
     expect(series.samples[1].tick).toBe(6);
     expect(series.samples[1].actionIntensity.rawScore).toBe(13.5);
+  });
+
+  it('keeps real time on the t axis when identical samples are deduped (regression)', () => {
+    // The metric is computed on a 10 Hz sampler and reused between its ticks,
+    // so a run emits long runs of identical consecutive values. Collapsing
+    // those must NOT compress the timeline onto the collapsing counter: the
+    // tick wall clock (`recordedAt`) is the source of `t` (AH-0MVFI5OQN008XGBV).
+    const startedAt = 1_700_000_000_000;
+    const records = [
+      telemetryRunHeader(123456789, startedAt),
+      telemetryTick(0, actionSample(8, 0.21, 0.21, 0), startedAt + 20),
+      // Identical values 5 s later — collapsed, but time must still advance.
+      telemetryTick(31, actionSample(8, 0.21, 0.21, 0), startedAt + 5_000),
+      telemetryTick(38, actionSample(8, 0.21, 0.21, 0), startedAt + 6_200),
+      telemetryTick(70, actionSample(13.5, 0.31, 0.24, 0.07), startedAt + 11_400),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.samples).toHaveLength(2);
+    expect(series.samples.map((sample) => sample.t)).toEqual([20, 11_400]);
+    expect(series.samples[1].tick).toBe(70);
+  });
+
+  it('anchors the clock at the first sample when the run header omits startedAt', () => {
+    const records = [
+      { schemaVersion: 1, kind: 'run_header', runSeed: 5, build: {}, startedAt: null },
+      telemetryTick(0, actionSample(8, 0.21, 0.21, 0), 1_700_000_000_500),
+      telemetryTick(40, actionSample(9, 0.22, 0.21, 0.01), 1_700_000_008_000),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.startedAt).toBeNull();
+    expect(series.samples.map((sample) => sample.t)).toEqual([0, 7_500]);
+  });
+
+  it('falls back to the sample grid for legacy ticks without a wall clock', () => {
+    const records = [
+      telemetryRunHeader(),
+      telemetryTick(0, actionSample(8, 0.21, 0.21, 0)),
+      telemetryTick(1, actionSample(8, 0.21, 0.21, 0)), // collapsed duplicate
+      telemetryTick(6, actionSample(13.5, 0.31, 0.24, 0.07)),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.samples.map((sample) => sample.t)).toEqual([0, 100]);
+  });
+
+  it('clamps a clock that predates the run header to zero and stays monotonic', () => {
+    const startedAt = 1_700_000_000_000;
+    const records = [
+      telemetryRunHeader(123456789, startedAt),
+      telemetryTick(0, actionSample(8, 0.21, 0.21, 0), startedAt - 250),
+      telemetryTick(10, actionSample(9, 0.22, 0.21, 0.01), startedAt + 900),
+      // A non-monotonic clock (clock adjustment) must not rewind the series.
+      telemetryTick(20, actionSample(10, 0.23, 0.22, 0.02), startedAt + 400),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.samples.map((sample) => sample.t)).toEqual([0, 900, 900]);
+  });
+
+  it('restarts the clock origin at a new run header', () => {
+    const records = [
+      telemetryRunHeader(111, 1_000_000_000_000),
+      telemetryTick(0, actionSample(1, 0.1, 0.1, 0), 1_000_000_001_000),
+      telemetryRunHeader(222, 1_000_000_100_000),
+      telemetryTick(0, actionSample(7, 0.55, 0.4, 0.15), 1_000_000_105_000),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.samples).toHaveLength(1);
+    expect(series.samples[0].t).toBe(5_000);
   });
 
   it('tolerates a telemetry-less sink: null run identity and no samples', () => {

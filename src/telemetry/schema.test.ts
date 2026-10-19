@@ -29,6 +29,7 @@ const TICK: TelemetryTickRecord = {
   kind: 'tick',
   schemaVersion: TELEMETRY_SCHEMA_VERSION,
   tick: 7,
+  recordedAt: 1_700_000_000_050,
   state: { player: { x: 1, y: 2 } },
   input: { thrust: true },
 };

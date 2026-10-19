@@ -210,6 +210,10 @@ export class BufferedTelemetryRecorder implements TelemetryRecorder {
       kind: 'tick',
       schemaVersion: TELEMETRY_SCHEMA_VERSION,
       tick,
+      // The tick's own wall clock (epoch ms). The tick counter alone cannot
+      // date a sample — its real cadence depends on the host — so the series
+      // exporter derives its `t` axis from this value (AH-0MVFI5OQN008XGBV).
+      recordedAt: this.now(),
       state: sanitiseTelemetryValue(state),
       input: sanitiseTelemetryValue(input),
     });
