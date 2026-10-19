@@ -9,6 +9,28 @@
  * without updating the test suite.
  */
 
+/**
+ * The committed editorial configuration: feature categories + recognition
+ * mapping, deliverable targets, §7.5 highlight knobs and dedupe tolerances
+ * (epic AC1/AC4, AH-0MVDV4RJ300459ZF). Every exported constant in the
+ * module derives from the default instance of this shape.
+ */
+export interface EditorialConfig {
+  /** Editorial feature categories, in manifest order. */
+  readonly categories: readonly string[];
+  /** §7.2 breakdown category → editorial feature mapping. */
+  readonly breakdownToCategory: Readonly<Record<string, string>>;
+  /** The three deliverable targets the plan is sized to. */
+  readonly targets: CompileTargets;
+  /** §7.5 highlight-selection knobs. */
+  readonly highlightKnobs: HighlightOptions;
+  /** Near-identical window dedupe tolerances (AC1). */
+  readonly dedupeTolerances: {
+    readonly intensity: number;
+    readonly durationMs: number;
+  };
+}
+
 /** A point of a recorded action-intensity series, in ms-since-run-start. */
 export interface ActionIntensitySeriesPoint {
   readonly t: number;
@@ -96,6 +118,7 @@ export interface EditPlan {
 }
 
 export const DEFAULT_HIGHLIGHT_OPTIONS: HighlightOptions;
+export const EDITORIAL_CONFIG: EditorialConfig;
 export const CAPTURE_OUTPUT_DIR = 'capture-output';
 export const ACTION_SERIES_EXTENSION = '.action.jsonl';
 export const CAPTURE_ANCHOR_EXTENSION = '.capture.json';
@@ -189,6 +212,11 @@ export function windowFeatures(
   window: HighlightWindow,
   points: readonly ActionIntensitySeriesPoint[],
 ): string[];
+
+/** Builds the coverage manifest: per feature → clip timestamp ranges (AC3). */
+export function buildCoverageManifest(
+  segments: readonly SelectionManifestEntry[],
+): { coverage: readonly CoverageManifestEntry[]; uncoveredFeatures: readonly string[] };
 
 /** The deterministic edit plan sized to the targets + manifests. */
 export function buildEditPlan(

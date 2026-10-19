@@ -26,17 +26,17 @@
  * Node-importable — and `docs/dev/action-intensity.md` §7.3/§7.5).
  *
  * Constants (final, plain-asserted):
- * - `DEFAULT_HIGHLIGHT_OPTIONS` — `{ burstinessThreshold: 0.15,
- *   intensityThreshold: 0.7, mergeGapMs: 1000, leadMs: 1500, tailMs: 1000 }`.
+ * - `EDITORIAL_CONFIG` — top-level tunable config (AC1, AH-0MVDV4RJ300459ZF)
+ *   with `categories`, `breakdownToCategory`, `targets`, `highlightKnobs`,
+ *   and `dedupeTolerances` — all sub-configs frozen.
+ * - `DEFAULT_HIGHLIGHT_OPTIONS` — derived from `EDITORIAL_CONFIG.highlightKnobs`.
  * - `CAPTURE_OUTPUT_DIR` — `'capture-output'`; `ACTION_SERIES_EXTENSION` —
  *   `'.action.jsonl'`.
- * - `DEFAULT_TARGETS` — `{ promo: { minMs: 45_000, maxMs: 60_000 },
- *   showreel: { minMs: 120_000 }, highlights: { count: 5 } }`.
- * - `EDITORIAL_CATEGORIES` — `['weapons', 'pickups', 'enemies', 'boss']`.
- * - `BREAKDOWN_TO_EDITORIAL_CATEGORY` — `{ playerBullets: 'weapons',
- *   drops: 'pickups', enemies: 'enemies', bosses: 'boss' }`.
- * - `DEDUPE_INTENSITY_TOLERANCE` — `0.05`; `DEDUPE_DURATION_TOLERANCE_MS` —
- *   `250`.
+ * - `DEFAULT_TARGETS` — derived from `EDITORIAL_CONFIG.targets`.
+ * - `EDITORIAL_CATEGORIES` — derived from `EDITORIAL_CONFIG.categories`.
+ * - `BREAKDOWN_TO_EDITORIAL_CATEGORY` — derived from `EDITORIAL_CONFIG.breakdownToCategory`.
+ * - `DEDUPE_INTENSITY_TOLERANCE` — derived from `EDITORIAL_CONFIG.dedupeTolerances.intensity`.
+ * - `DEDUPE_DURATION_TOLERANCE_MS` — derived from `EDITORIAL_CONFIG.dedupeTolerances.durationMs`.
  *
  * Pure functions (asserted via plain `it(...)`):
  * - `selectHighlightWindows(points, options?)` → `HighlightWindow[]` in
@@ -98,7 +98,9 @@ import {
   DEFAULT_HIGHLIGHT_OPTIONS,
   DEFAULT_TARGETS,
   EDITORIAL_CATEGORIES,
+  EDITORIAL_CONFIG,
   USAGE_TEXT,
+  buildCoverageManifest,
   buildEditPlan,
   compilePromoMain,
   mapTimeToVideo,
@@ -376,6 +378,151 @@ describe('editorial feature mapping (AH-0MVDV47VO0081VUK AC5)', () => {
   it('exposes the dedupe tolerances used by the plan', () => {
     expect(DEDUPE_INTENSITY_TOLERANCE).toBe(0.05);
     expect(DEDUPE_DURATION_TOLERANCE_MS).toBe(250);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// AC1 — Editorial config (EDITORIAL_CONFIG) — single tunable source of truth
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('EDITORIAL_CONFIG (AC1)', () => {
+  it('is a top-level object that subsumes all tunable constants', () => {
+    // Categories
+    expect(EDITORIAL_CONFIG.categories).toEqual(['weapons', 'pickups', 'enemies', 'boss']);
+    // Breakdown mapping
+    expect(EDITORIAL_CONFIG.breakdownToCategory).toEqual({
+      playerBullets: 'weapons',
+      drops: 'pickups',
+      enemies: 'enemies',
+      bosses: 'boss',
+    });
+    // Deliverable targets
+    expect(EDITORIAL_CONFIG.targets).toEqual(DEFAULT_TARGETS);
+    // Highlight knobs
+    expect(EDITORIAL_CONFIG.highlightKnobs).toEqual(DEFAULT_HIGHLIGHT_OPTIONS);
+    // Dedupe tolerances
+    expect(EDITORIAL_CONFIG.dedupeTolerances.intensity).toBe(DEDUPE_INTENSITY_TOLERANCE);
+    expect(EDITORIAL_CONFIG.dedupeTolerances.durationMs).toBe(DEDUPE_DURATION_TOLERANCE_MS);
+  });
+
+  it('EDITORIAL_CATEGORIES derives from EDITORIAL_CONFIG.categories', () => {
+    expect(EDITORIAL_CATEGORIES).toBe(EDITORIAL_CONFIG.categories);
+  });
+
+  it('BREAKDOWN_TO_EDITORIAL_CATEGORY derives from EDITORIAL_CONFIG.breakdownToCategory', () => {
+    expect(BREAKDOWN_TO_EDITORIAL_CATEGORY).toBe(EDITORIAL_CONFIG.breakdownToCategory);
+  });
+
+  it('all sub-configs are frozen (immutability)', () => {
+    expect(Object.isFrozen(EDITORIAL_CONFIG)).toBe(true);
+    expect(Object.isFrozen(EDITORIAL_CONFIG.categories)).toBe(true);
+    expect(Object.isFrozen(EDITORIAL_CONFIG.breakdownToCategory)).toBe(true);
+    expect(Object.isFrozen(EDITORIAL_CONFIG.targets)).toBe(true);
+    expect(Object.isFrozen(EDITORIAL_CONFIG.highlightKnobs)).toBe(true);
+    expect(Object.isFrozen(EDITORIAL_CONFIG.dedupeTolerances)).toBe(true);
+  });
+
+  it('exposes the exact tunable knobs that §7.5 specifies', () => {
+    expect(EDITORIAL_CONFIG.highlightKnobs).toEqual({
+      burstinessThreshold: 0.15,
+      intensityThreshold: 0.7,
+      mergeGapMs: 1_000,
+      leadMs: 1_500,
+      tailMs: 1_000,
+    });
+  });
+
+  it('defines the dedupe tolerances for near-identical window detection', () => {
+    expect(EDITORIAL_CONFIG.dedupeTolerances).toEqual({
+      intensity: 0.05,
+      durationMs: 250,
+    });
+  });
+
+  it('prompts the four deliverable targets at their default sizes', () => {
+    expect(EDITORIAL_CONFIG.targets).toEqual({
+      promo: { minMs: 45_000, maxMs: 60_000 },
+      showreel: { minMs: 120_000 },
+      highlights: { count: 5 },
+    });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// AC3 — Coverage manifest (buildCoverageManifest)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('buildCoverageManifest (AC3)', () => {
+  // Minimal-but-valid SelectionManifestEntry (generator-style helper).
+  const makeSeg = (
+    runId: string,
+    videoIn: number,
+    videoOut: number,
+    features: string[],
+  ) => ({
+    runId,
+    webm: sourceWebmPath(runId),
+    series: sourceSeriesPath(runId),
+    videoInMs: videoIn,
+    videoOutMs: videoOut,
+    intensity: 0.8,
+    burstiness: 0.3,
+    features,
+  });
+
+  it('maps each feature to its clips in category order', () => {
+    const segments = [
+      makeSeg('run-A', 1_000, 2_000, ['weapons']),
+      makeSeg('run-B', 3_000, 4_000, ['pickups']),
+      makeSeg('run-C', 5_000, 6_000, ['enemies']),
+      makeSeg('run-D', 7_000, 8_000, ['weapons', 'enemies']),
+    ];
+    const result = buildCoverageManifest(segments);
+
+    expect(result.coverage).toEqual([
+      { feature: 'weapons', clips: [{ runId: 'run-A', videoInMs: 1_000, videoOutMs: 2_000 }, { runId: 'run-D', videoInMs: 7_000, videoOutMs: 8_000 }] },
+      { feature: 'pickups', clips: [{ runId: 'run-B', videoInMs: 3_000, videoOutMs: 4_000 }] },
+      { feature: 'enemies', clips: [{ runId: 'run-C', videoInMs: 5_000, videoOutMs: 6_000 }, { runId: 'run-D', videoInMs: 7_000, videoOutMs: 8_000 }] },
+    ]);
+    expect(result.uncoveredFeatures).toEqual(['boss']);
+  });
+
+  it('reports uncovered categories in EDITORIAL_CATEGORIES order', () => {
+    const segments = [makeSeg('run-A', 1_000, 2_000, ['weapons'])];
+    const result = buildCoverageManifest(segments);
+
+    expect(result.uncoveredFeatures).toEqual(['pickups', 'enemies', 'boss']);
+  });
+
+  it('covers all four categories when evidence is present for each', () => {
+    const segments = [
+      makeSeg('w', 100, 200, ['weapons']),
+      makeSeg('p', 300, 400, ['pickups']),
+      makeSeg('e', 500, 600, ['enemies']),
+      makeSeg('b', 700, 800, ['boss']),
+    ];
+    const result = buildCoverageManifest(segments);
+
+    expect(result.uncoveredFeatures).toEqual([]);
+    expect(result.coverage).toHaveLength(4);
+  });
+
+  it('returns empty coverage and all-uncovered for no segments', () => {
+    const result = buildCoverageManifest([]);
+    expect(result.coverage).toEqual([]);
+    expect(result.uncoveredFeatures).toEqual(['weapons', 'pickups', 'enemies', 'boss']);
+  });
+
+  it('dedupes clips by segment identity — same segment listed under multiple features', () => {
+    const segments = [
+      makeSeg('run-multi', 1_000, 2_000, ['weapons', 'pickups', 'enemies']),
+    ];
+    const result = buildCoverageManifest(segments);
+
+    expect(result.coverage).toHaveLength(3); // weapons, pickups, enemies
+    for (const entry of result.coverage) {
+      expect(entry.clips).toEqual([{ runId: 'run-multi', videoInMs: 1_000, videoOutMs: 2_000 }]);
+    }
   });
 });
 

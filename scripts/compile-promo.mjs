@@ -1,15 +1,23 @@
 /**
  * Pure edit-plan and selection logic for the promo compiler
- * (AH-0MVDV4OKN001OT18).
+ * (AH-0MVDV4OKN001OT18; editorial config AH-0MVDV4RJ300459ZF).
  *
  * Reads each captured run's action-intensity series (`<run>.action.jsonl`),
  * computes highlight windows with the §7.5 recipe, maps them to video time
  * via the persisted join anchor, and produces an ordered edit plan sized to
  * the three deliverable targets — emitting the **selection manifest**
- * (parent AC2). The core logic is dependency-free and side-effect-free (no
- * browser, no ffmpeg, no filesystem) so the hermetic test suite can import
- * it under plain Node; the small CLI entry point at the bottom adds the
- * filesystem reads and writes.
+ * (parent AC2) and the **coverage manifest** (parent AC3). The core logic
+ * is dependency-free and side-effect-free (no browser, no ffmpeg, no
+ * filesystem) so the hermetic test suite can import it under plain Node;
+ * the small CLI entry point at the bottom adds the filesystem reads and
+ * writes.
+ *
+ * Editorial decisions — feature categories + recognition mapping,
+ * deliverable targets, §7.5 highlight knobs, dedupe tolerances, and the
+ * pacing/ordering rules (open with action, cut on peaks, context via
+ * lead/tail) — live in the single `EDITORIAL_CONFIG` object (AC1, AC4) so
+ * the pipeline is intentional and tunable. The coverage manifest
+ * (buildCoverageManifest) accompanies the deliverables per feature.
  *
  * The pure logic mirrors `src/scenes/core/actionIntensityHighlights.ts`
  * (dev-gated TS, not Node-importable) and `docs/dev/action-intensity.md`
@@ -49,27 +57,107 @@ export const DEFAULT_TARGETS = Object.freeze({
   highlights: { count: 5 },
 });
 
-/** Editorial feature categories, in manifest order (epic AC3). */
-export const EDITORIAL_CATEGORIES = Object.freeze([
-  'weapons',
-  'pickups',
-  'enemies',
-  'boss',
-]);
+// ────────────────────────────────────────────────────────────────────────────
+// Editorial config — single source of truth (AC1, AC4: feature categories,
+// recognition mapping, targets, highlight knobs, dedupe tolerances) and the
+// pacing / ordering rules. Every constant above and below derives from
+// EDITORIAL_CONFIG so tuning one object retunes the whole pipeline.
+// ────────────────────────────────────────────────────────────────────────────
 
-/** §7.2 breakdown category → editorial feature mapping (epic AC3). */
-export const BREAKDOWN_TO_EDITORIAL_CATEGORY = Object.freeze({
-  playerBullets: 'weapons',
-  drops: 'pickups',
-  enemies: 'enemies',
-  bosses: 'boss',
+/**
+ * The committed editorial configuration: how the promo and showreel are
+ * recognised, sized, deduped and ordered (AC1, AC4).
+ *
+ * **Feature categories & recognition (AC1).** The four editorial categories
+ * (`weapons`, `pickups`, `enemies`, `boss`) are each recognised from the
+ * §7.2 `breakdown` counts mapped in `breakdownToCategory`:
+ *
+ * | breakdown key | editorial category |
+ * |---|---|
+ * | `playerBullets` | weapons |
+ * | `drops` | pickups |
+ * | `enemies` | enemies |
+ * | `bosses` | boss |
+ *
+ * A window evidences a category when any sample inside it has a positive
+ * count for a mapped key (windowFeatures). Categories with no footage in
+ * the pool land in `uncoveredFeatures` (the visible gap) so coverage is
+ * honest, never silently omitted.
+ *
+ * **Pacing & ordering rules (AC4).**
+ *
+ * 1. *Open with action.* The promo is presented in rank order (intensity
+ *    desc, burstiness desc), so the first cut is the single strongest peak
+ *    in the pool — no dead air in the opening ~5 s; lead/tail padding gives
+ *    each cut context without turning the open into a slow lead-in.
+ * 2. *Cut on peaks.* Highlights are the top `highlights.count` windows in
+ *    the same rank order — every cut lands on a peak, never an idle moment.
+ * 3. *Context shots.* Each window is expanded by `highlightKnobs.leadMs`
+ *    before the peak and `tailMs` after it, so the viewer sees what led to
+ *    and resolved the action; the showreel keeps the original video-time
+ *    chronology so the sequence reads as a coherent run rather than random
+ *    jump-cuts.
+ * 4. *Cadence is explicit and tunable.* Section §7.5 knobs (thresholds,
+ *    merge gap, lead/tail), the dedupe tolerances and the deliverable
+ *    targets are all fields of this object; changing one value propagates
+ *    through the whole pipeline.
+ *
+ * Shared by the promo compiler (this module) and the ffmpeg driver.
+ *
+ * @type {Readonly<{
+ *   categories: readonly string[],
+ *   breakdownToCategory: Readonly<Record<string, string>>,
+ *   targets: CompileTargets,
+ *   highlightKnobs: HighlightOptions,
+ *   dedupeTolerances: { intensity: number, durationMs: number },
+ * }>}
+ */
+export const EDITORIAL_CONFIG = Object.freeze({
+  /** Editorial feature categories, in manifest order (AC3). */
+  categories: Object.freeze(['weapons', 'pickups', 'enemies', 'boss']),
+
+  /** §7.2 breakdown category → editorial feature mapping (AC1). */
+  breakdownToCategory: Object.freeze({
+    playerBullets: 'weapons',
+    drops: 'pickups',
+    enemies: 'enemies',
+    bosses: 'boss',
+  }),
+
+  /** The three deliverable targets sized by the edit plan (epic). */
+  targets: Object.freeze({
+    promo: { minMs: 45_000, maxMs: 60_000 },
+    showreel: { minMs: 120_000 },
+    highlights: { count: 5 },
+  }),
+
+  /** §7.5 default highlight knobs (see docs/dev/action-intensity.md). */
+  highlightKnobs: Object.freeze({
+    burstinessThreshold: 0.15,
+    intensityThreshold: 0.7,
+    mergeGapMs: 1_000,
+    leadMs: 1_500,
+    tailMs: 1_000,
+  }),
+
+  /** Near-identical window dedupe tolerances (AC1). */
+  dedupeTolerances: Object.freeze({
+    intensity: 0.05,
+    durationMs: 250,
+  }),
 });
 
+/** Editorial feature categories, in manifest order (epic AC3). */
+export const EDITORIAL_CATEGORIES = EDITORIAL_CONFIG.categories;
+
+/** §7.2 breakdown category → editorial feature mapping (epic AC3). */
+export const BREAKDOWN_TO_EDITORIAL_CATEGORY = EDITORIAL_CONFIG.breakdownToCategory;
+
 /** Intensity tolerance for near-identical window dedupe. */
-export const DEDUPE_INTENSITY_TOLERANCE = 0.05;
+export const DEDUPE_INTENSITY_TOLERANCE = EDITORIAL_CONFIG.dedupeTolerances.intensity;
 
 /** Duration tolerance (ms) for near-identical window dedupe. */
-export const DEDUPE_DURATION_TOLERANCE_MS = 250;
+export const DEDUPE_DURATION_TOLERANCE_MS = EDITORIAL_CONFIG.dedupeTolerances.durationMs;
 
 // ────────────────────────────────────────────────────────────────────────────
 // AC1 — Series reader (pure text parser)
@@ -325,7 +413,7 @@ export function sourceAnchorPath(runId) {
 /**
  * Returns the editorial categories evidenced inside a window — the union of
  * all breakdown counts > 0 mapped via `BREAKDOWN_TO_EDITORIAL_CATEGORY`,
- * in `EDITORIAL_CATEGORIES` order.
+ * in `EDITORIAL_CATEGORIES` order (from `EDITORIAL_CONFIG`).
  *
  * @param {HighlightWindow} window - Series-time window (inclusive).
  * @param {readonly ActionIntensitySeriesPoint[]} points
@@ -404,6 +492,44 @@ function rankCompare(a, b) {
 function videoTimeCompare(a, b) {
   if (a.videoInMs !== b.videoInMs) return a.videoInMs - b.videoInMs;
   return a.runId.localeCompare(b.runId);
+}
+
+/**
+ * Builds the coverage manifest: per editorial feature, which clip(s) and
+ * timestamp ranges show it (AC3).
+ *
+ * Accepts the raw deduped segments so the same data can be consumed by both
+ * the coverage manifest and the full edit plan without duplicating the
+ * evidence-collection logic.
+ *
+ * Also returns `uncoveredFeatures` — categories with no footage in the pool
+ * — so the manifest is an honest, visible gap rather than a silent omission.
+ *
+ * @param {readonly SelectionManifestEntry[]} segments - The deduped segments.
+ * @returns {{ coverage: CoverageManifestEntry[], uncoveredFeatures: string[] }}
+ */
+export function buildCoverageManifest(segments) {
+  const evidence = new Map(); // feature → segments
+  for (const segment of segments) {
+    for (const feature of segment.features) {
+      if (!evidence.has(feature)) evidence.set(feature, []);
+      evidence.get(feature).push(segment);
+    }
+  }
+  const coverage = EDITORIAL_CATEGORIES.filter((feature) => evidence.has(feature)).map(
+    (feature) => ({
+      feature,
+      clips: evidence.get(feature).map((segment) => ({
+        runId: segment.runId,
+        videoInMs: segment.videoInMs,
+        videoOutMs: segment.videoOutMs,
+      })),
+    }),
+  );
+  const uncoveredFeatures = EDITORIAL_CATEGORIES.filter(
+    (feature) => !evidence.has(feature),
+  );
+  return { coverage, uncoveredFeatures };
 }
 
 /**
@@ -556,9 +682,10 @@ Inputs (per run under ${CAPTURE_OUTPUT_DIR}/):
 Outputs:
   <out> (default ${CAPTURE_OUTPUT_DIR}/compile-promo.plan.json) — the
   EditPlan JSON { promo, showreel, highlights, coverage,
-  uncoveredFeatures }; every selection entry lists source WebM, source
-  .action.jsonl, mapped video in/out timestamps (ms) and the motivating
-  intensity / burstiness values.
+  uncoveredFeatures }. The \`coverage\` field is the **coverage
+  manifest** (parent AC3): per editorial feature, which clip(s) and
+  timestamp ranges show it; \`uncoveredFeatures\` lists categories
+  with no evidence (visible gap).
 
 Prerequisites:
   Footage captured with \`npm run capture\` (which writes the series and
