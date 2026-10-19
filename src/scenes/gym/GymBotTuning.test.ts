@@ -4,6 +4,22 @@
  * Verifies the scene is discoverable, that its panel exposes one control per
  * tunable, that the bot actually plays the generated level, and that the
  * Save / Save As / Load wiring persists and restores configurations.
+ *
+ * ## Deterministic boot (AH-0MVF1M4PB0080GEP)
+ *
+ * Every scene here boots through {@link bootScene} with
+ * `{ deterministicBoot: true }` and its live loop is stopped before the
+ * tuning scene is restarted, so no wall-clock frames drain between
+ * `create()` and a test's first assertion. The legacy real-time boot waited
+ * 150 ms + 200 ms of wall-clock while the rAF loop ran an unpredictable
+ * number of frames; under full-suite test-slot contention that both shifted
+ * the bot's start state and stretched `has the bot play the generated random
+ * level`'s 300-frame synchronous drain past Vitest's 5 s timeout (it failed
+ * at 6079 ms). Fixed-delta stepping makes the bot's start state identical on
+ * every run, and the play assertion exits as soon as the bot demonstrably
+ * fires (the 300-frame budget stays as the hard bound), so the synchronous
+ * work no longer scales with host load. See `src/test/gameHarness.ts`
+ * (AH-0MUHA0MMP001DZ5C).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -93,10 +109,14 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
   });
 
   async function bootTuning(data?: GymBotTuningData): Promise<GymBotTuning> {
-    booted = await bootScene([GymBotTuning]);
+    // Deterministic boot (fixed-delta steps, no wall-clock settle) and a
+    // stopped live loop: `SceneManager.start` runs `init()` + `create()`
+    // synchronously, so the restarted scene's generated level (and its first
+    // wave) exists the moment this resolves — no frame drain can shift it.
+    booted = await bootScene([GymBotTuning], { deterministicBoot: true });
+    booted.game.loop.stop();
     const manager = booted.game.scene;
     manager.start(GYM_BOT_TUNING_SCENE_KEY, data);
-    await tick();
     return manager.getScene(GYM_BOT_TUNING_SCENE_KEY) as GymBotTuning;
   }
 
@@ -134,8 +154,12 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     const startX = scene.getShip()!.getMovementState().x;
     const startY = scene.getShip()!.getMovementState().y;
 
+    // Stop as soon as the bot demonstrably fires: the assertion is satisfied
+    // by either observable, and draining all 300 frames synchronously pushed
+    // the test past Vitest's 5 s timeout on a contended test slot
+    // (AH-0MVF1M4PB0080GEP). The 300-frame budget remains the hard bound.
     let fired = false;
-    for (let i = 0; i < 300; i += 1) {
+    for (let i = 0; i < 300 && !fired; i += 1) {
       scene.tick(1 / 60);
       if (scene.getPlayerBullets().length > 0) fired = true;
     }
