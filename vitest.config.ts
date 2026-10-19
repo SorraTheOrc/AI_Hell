@@ -14,8 +14,28 @@ import { classifyTestFiles, TEST_INCLUDE_GLOBS } from './vitest.projects';
  * - `integration` — happy-dom, `setupFiles: ['src/test/setup.ts']`,
  *   `server.deps.inline: ['phaser']` (the historical single-project layout,
  *   now scoped to the Phaser/DOM-booting files only). `deps.inline` avoids
- *   Node's ESM circular-module failure on the non-minified Phaser bundle;
- *   the `isolate`/pool experiments are child AH-0MVF6Y29M005TEOG.
+ *   Node's ESM circular-module failure on the non-minified Phaser bundle.
+ *
+ * ## Phaser transform-cost experiment (AH-0MVF6Y29M005TEOG) — baseline kept
+ *
+ * Four variants were measured on the integration project (134 files) with the
+ * host load recorded, because the load alone moves the wall clock ~36 %
+ * (240 s at load 2.7 vs 328 s at load 11.2 on 16 cpus):
+ *
+ * | Variant | Wall clock | transform | import | Load 1/5/15 | Result |
+ * |---|---|---|---|---|---|
+ * | baseline (isolate, forks, deps.inline) | 240.5 s | 147.5 s | 1090.8 s | 2.7/10.2/13.4 | green |
+ * | baseline re-measured | 328.3 s | 184.6 s | 1402.3 s | 11.2/22.6/21.3 | green |
+ * | `isolate: false` | 187.5 s | 176.8 s | 401.7 s | 9.7/15.3/15.2 | **rejected — 78 files / 1202 tests fail** (cross-test module state leaks) |
+ * | `pool: 'threads'` | 326.0 s | 234.1 s | 1277.1 s | 5.9/13.3/14.6 | rejected — slower than baseline |
+ * | `deps.optimizer.web.include: ['phaser']` (no inline) | 313.7 s cold / 348.1 s warm | 151.5 / 166.6 s | 1438.2 / 1461.1 s | 7.0/16.4/16.4, 9.9/20.6/19.0 | rejected — no transform saving, import grew |
+ *
+ * **No variant gives the ≥ 20 % integration-wall-clock reduction required to
+ * adopt it**, so the baseline settings are kept deliberately: `isolate: true`
+ * (leak-free) and `deps.inline: ['phaser']`. The transform cost is real but is
+ * not removable by pool/optimiser settings without either breaking isolation
+ * or losing the ESM workaround; the remaining levers are per-suite boot reuse
+ * (AH-0MVF6VZG9000AN6E) and fewer sleeps (AH-0MVF6VVDP003L39A).
  *
  * `npm --silent test` (= `vitest run`) executes BOTH projects, so
  * `/skill:test --type full` keeps its audit contract. Coverage is declared
