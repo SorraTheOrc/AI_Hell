@@ -30,9 +30,11 @@ import { GymIndex } from './GymIndex';
 // The heaviest walk-to-the-boss test boots a real Phaser game and walks the
 // full ten-level campaign; keep a generous timeout so a slow parallel run
 // does not fail on timing alone (AH-0MUINWNPI000G6MU, extended for the
-// AH-0MV396OK0001FX14 ten-level campaign). Deterministic stepping removes the
-// wall-clock flake, but booting still costs real time.
-vi.setConfig({ testTimeout: 60000 });
+// AH-0MV396OK0001FX14 ten-level campaign; raised again for
+// AH-0MVF1PD3X00634LV, which observed the AC4 boss-victory run breaching the
+// 60 s ceiling at 76 s under full-suite parallel load). Deterministic
+// stepping removes the wall-clock flake, but booting still costs real time.
+vi.setConfig({ testTimeout: 120000 });
 
 /** Fixed simulation step (~60 fps) used for deterministic scene stepping. */
 const STEP_MS = 1000 / 60;

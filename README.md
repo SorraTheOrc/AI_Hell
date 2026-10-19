@@ -492,7 +492,7 @@ load, which makes assertions taken right after boot flaky.
   spawning real `bash` + `node` subprocesses; under full-suite parallel load
   that process startup can exceed the Vitest default 5 s and report a spurious
   timeout even though the pipeline is fast. Such suites opt in with
-  `vi.setConfig({ testTimeout: 30000 })` (the full-game suites use 60000)
+  `vi.setConfig({ testTimeout: 30000 })` (the full-game suites use 120000)
   rather than weakening assertions (AH-0MV5L6CP4007HQP3).
 
 #### Automated gameplay capture (dev tooling)
