@@ -449,6 +449,18 @@ load, which makes assertions taken right after boot flaky.
   time and polling for the expected condition, rather than wall-clock waits.
   This is the established idiom for former flakes (AH-0MTFTIZX7005DNFW,
   AH-0MTFSM3IR001QR0C, AH-0MUHA0MMP001DZ5C).
+- **Anchor the shared beat clock before asserting fire cadence.** Player
+  auto-fire is phase-locked to an 80 BPM grid (`src/utils/beat.ts`) whose
+  elapsed time accumulates across every frame the scene has ticked, including
+  the unpredictable frames of a legacy (wall-clock) `bootScene` wait. A
+  freshly equipped weapon fires on the *next* grid tick — up to a full fire
+  interval away — so advancing a fixed sub-beat `dt` only delivers that shot
+  for some boot phases, which makes cue/cadence assertions load-sensitive
+  (AH-0MVF2HCPV003PQR4). Reset and re-attach the clock before equipping:
+  `scene.getBeatClock().reset(); player.setBeatClock(scene.getBeatClock());`
+  then `equipWeapon(...)` and tick a short frame to deliver exactly one
+  volley (`PlayScene.test.ts` per-weapon fire-audio and `GymWeapons.test.ts`
+  AC2 use this idiom).
 - **Advance Phaser timers with `game.step`, not wall-clock waits.** A
   production `this.time.delayedCall(...)` transition — for example the
   `VICTORY_TRANSITION_HOLD_MS` victory hold before `GameOverScene` — is driven

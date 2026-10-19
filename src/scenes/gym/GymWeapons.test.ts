@@ -670,15 +670,31 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
     return booted!.scene as GymWeapons;
   }
 
-  /** Fires one volley of the given weapon from a stationary heading. */
+  /**
+   * Fires exactly one volley of the given weapon from a stationary heading.
+   *
+   * The scene's shared beat clock is a real-time accumulator, so after the
+   * legacy (wall-clock) boot its phase varies with how many rAF frames
+   * happened to drain under full-suite parallel load. A weapon schedules its
+   * first shot on the next 750 ms grid tick, so advancing a fixed 0.6 s tick
+   * only reaches that tick for some boot phases — the dual cue test was
+   * load-sensitive for exactly that reason (AH-0MVF2HCPV003PQR4).
+   *
+   * Reset the shared beat clock to 0 and re-schedule the player's weapons on
+   * it (the PlayScene fire-cue precedent) so the equipped weapon's first shot
+   * lands on the t=0 grid tick and fires in the short frame below regardless
+   * of the boot phase. One short frame delivers exactly one volley.
+   */
   function fireOnce(scene: GymWeapons, weapon: 'cannon' | 'spread' | 'dual' | 'rapid'): void {
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
-    player.equipWeapon(weapon);
-    // Establish a heading (move right), then advance past the fire rate.
+    // Establish a heading (move right) without advancing the beat clock.
     player.setInput({ up: false, down: false, left: false, right: true });
     player.physicsTick(0.5, scene.scale.width, scene.scale.height);
-    scene.tick(0.6);
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+    player.equipWeapon(weapon);
+    scene.tick(0.05);
   }
 
   it('auto-firing the cannon plays the shared fire cue exactly once per shot', async () => {
@@ -716,6 +732,10 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
 
     fireOnce(scene, 'dual');
 
+    // Dual fires 2 bullets per shot and the permanently-active cannon fires
+    // too (cumulative model), but each weapon's cue plays exactly once per
+    // volley — not once per bullet.
+    expect(fireSound).toHaveBeenCalledTimes(2);
     expect(fireSound).toHaveBeenCalledWith('dual');
     expect(fireSound).toHaveBeenCalledWith('cannon');
   });
@@ -727,6 +747,8 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
 
     fireOnce(scene, 'rapid');
 
+    // Rapid fires 6 shots per beat; one volley is one cue per firing weapon.
+    expect(fireSound).toHaveBeenCalledTimes(2);
     expect(fireSound).toHaveBeenCalledWith('rapid');
     expect(fireSound).toHaveBeenCalledWith('cannon');
   });
