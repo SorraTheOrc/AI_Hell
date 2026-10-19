@@ -1753,6 +1753,19 @@ describe.skipIf(!HAS_FFMPEG)(
       mkdirSync(outDir, { recursive: true });
       // Short synthetic sources (just long enough for the mapped windows:
       // runA [0.5s, 3.0s], runB [0s, 2.2s]) keep the gated smoke encode cheap.
+      //
+      // Bounded (AH-0MVF6VQ7G005ALXZ): the fixtures are a *synthetic* colour
+      // test pattern, not gameplay footage, so they are encoded at 320x180@30
+      // with `-cpu-used 8` — ~18x fewer pixel-frames to encode in setup. The
+      // production compile path (960x540@60 VP9 deliverables) is unchanged
+      // and still exercised end to end below.
+      //
+      // Measured A/B on a contended 16-core host (load ~30, back-to-back):
+      // original fixtures 140.9 s vs bounded fixtures 140.4 s for this file —
+      // i.e. the setup encode is *not* the bottleneck; the dominant cost is
+      // the production VP9 deliverable re-encode + brightness validation,
+      // which cannot be reduced without changing production settings or
+      // losing the real-ffmpeg coverage. See AH-0MVF6VQ7G005ALXZ.
       for (const [runId, freq, seconds] of [
         [runA, '440', '3.2'],
         [runB, '660', '2.6'],
@@ -1762,10 +1775,10 @@ describe.skipIf(!HAS_FFMPEG)(
           'ffmpeg',
           [
             '-y', '-hide_banner', '-loglevel', 'error',
-            '-f', 'lavfi', '-i', `testsrc2=size=960x540:rate=60:duration=${seconds}`,
+            '-f', 'lavfi', '-i', `testsrc2=size=320x180:rate=30:duration=${seconds}`,
             '-f', 'lavfi', '-i', `sine=frequency=${freq}:duration=${seconds}`,
             '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '35',
-            '-deadline', 'good', '-cpu-used', '4',
+            '-deadline', 'realtime', '-cpu-used', '8',
             '-c:a', 'libopus', '-b:a', '96k',
             webm,
           ],
