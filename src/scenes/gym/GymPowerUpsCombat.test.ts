@@ -44,9 +44,17 @@ beforeEach(() => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/** Boots the combat gym scene via gameHarness. */
+/**
+ * Boots the combat gym scene via gameHarness with the deterministic boot
+ * (AH-0MUHA0MMP001DZ5C, README § Testing conventions). The legacy real-time
+ * boot lets the rAF loop drain an unpredictable amount of simulated time
+ * (~150 ms wall-clock, frame count varies under full-suite parallel load),
+ * which shifts the round-robin spawner's phase and makes the drop-field
+ * assertions (AH-0MVE4LT8C001TOOK) flaky. Fixed-delta boot keeps the phase
+ * identical on every run.
+ */
 async function bootCombat(): Promise<GymPowerUpsCombat> {
-  const booted = await bootScene([GymPowerUpsCombat]);
+  const booted = await bootScene([GymPowerUpsCombat], { deterministicBoot: true });
   return booted!.scene as GymPowerUpsCombat;
 }
 
