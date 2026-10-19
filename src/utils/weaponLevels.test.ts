@@ -15,7 +15,7 @@
  * contract.
  */
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import {
   BASE_WEAPON_DEFINITIONS,
@@ -42,6 +42,13 @@ import {
   type WeaponId,
 } from './weapons';
 import { beatPeriodMs, createBeatClock, isOnGrid } from './beat';
+
+// The AC4/AC5/AC6 sweeps resolve every weapon at every level 0..100 and
+// assert the invariant for every tunable variable, so they are dominated by
+// pure computation rather than I/O. Under full-suite parallel load they can
+// exceed the Vitest default 5 s and report a spurious timeout even though the
+// sweep is fast (AH-0MVF7CKRX005ZAP6); the assertions themselves stay exact.
+vi.setConfig({ testTimeout: 30000 });
 
 const WEAPON_IDS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
 

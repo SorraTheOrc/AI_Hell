@@ -509,6 +509,14 @@ load, which makes assertions taken right after boot flaky.
   victory test was raised from 60 s after breaching that ceiling under
   full-suite parallel load, AH-0MVF2H4UL007IJT4) rather than weakening
   assertions (AH-0MV5L6CP4007HQP3).
+- **Bump the file-level `testTimeout` for heavy property sweeps too.**
+  `src/utils/weaponLevels.test.ts` sweeps every weapon across levels 0..100
+  for every tunable variable; the sweep is pure computation and normally
+  completes in well under a second, but under full-suite parallel load it
+  breached the Vitest default 5 s and reported a spurious timeout. It opts in
+  to `vi.setConfig({ testTimeout: 30000 })` for the same reason as the
+  subprocess suites above — headroom for load, never weaker assertions
+  (AH-0MVF7CKRX005ZAP6).
 
 #### Automated gameplay capture (dev tooling)
 
