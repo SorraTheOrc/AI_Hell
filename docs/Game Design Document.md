@@ -375,21 +375,28 @@ The following rules govern how enemy entities interact with each other and with 
 > **Note**: "Moderate," "Large," and "Smaller" are relative. The exact enemy counts per level are design decisions that can be tuned during implementation, but the progression from no-bullets to bullets to fewer-but-patterned enemies must be preserved.
 
 > **Default sequenced campaigns (AH-0MUH6LEYY0054E63; per-wave modes
-> AH-0MUJSUQD8003FSUT; default-on AH-0MUJSUTLA006Q8E1).** The table above
+> AH-0MUJSUQD8003FSUT; default-on AH-0MUJSUTLA006Q8E1; 10-wave expansion
+> AH-0MVCC8XSS007P01Z / AH-0MVCYANT6003SG5C).** The table above
 > describes the hand-authored static campaign, which is now the opt-out. With
 > the `sequencedWavesEnabled` game rule on (default **on**), each wave is either
 > generated from `src/data/difficulty-curves.csv` (`curve`), kept verbatim from
 > `LEVELS` (`fixed`) or rebuilt at run start from a seeded curve (`dynamic`),
-> selected by the config's per-wave `generation` column (see §2.5.1). The
-> shipped default campaign mixes all three modes: the first four campaign waves
-> (L1W1, L1W2, L2W1, L2W2) are `dynamic` and open on a curated, varied,
-> non-firing mix; the remaining levels 1–3 waves are `fixed`; levels 4–5 are
-> `curve` with a final `dynamic` wave (AH-0MUOCJM0N000RW2B); levels 6–10 mix
-> hand-authored `fixed` showcase waves (each new archetype debuts on a fixed
-> wave so its showcase is guaranteed for a run seed) with `curve` tail waves. A **per-level
+> selected by the config's per-wave `generation` column (see §2.5.1). Every
+> level 1–10 now spans exactly **10 waves (100 waves total)**, and wave 10 of
+> every level is that level's hand-authored **mini-boss** encounter (flagged
+> `miniBoss: true` on the wave and consumed by `WaveManager`'s per-level
+> mini-boss gating); the final boss still triggers after Level 10's wave 10 is
+> cleared. The shipped default campaign mixes all three modes: the first four
+> campaign waves (L1W1, L1W2, L2W1, L2W2) are `dynamic` and open on a curated,
+> varied, non-firing mix; the remaining levels 1–3 waves are `fixed`; levels 4–
+> 10 keep their pre-existing `curve` rows (plus the level-5 `dynamic` wave) and
+> add hand-authored `fixed` filler + wave-10 mini-boss waves (each new
+> archetype still debuts on a fixed showcase wave so its showcase is guaranteed
+> for a run seed). A **per-level
 > archetype variety cap** (`MAX_ARCHETYPE_PER_LEVEL`, default **1** in
 > `src/core/difficultySequencer.ts`) keeps any single archetype — in particular
-> the orbital Phaser — to at most one wave per level, so the generated campaign
+> the orbital Phaser — to at most one **generated** wave per level, so the
+> generated campaign
 > escalates through varied movement styles instead of repeating one formation
 > once the target passes ~30 (AH-0MV2SGIX5005PFJT); authored `fixed` waves and
 > the gyms are not constrained. The static skeleton
@@ -607,7 +614,10 @@ defaults, and §1.5 for the rules, tunable constants and enforcement design.
 
 ### 4.2 Wave / Formation Structures
 
-Each level consists of one or more **waves** of enemies. A wave is a set of
+Each level consists of exactly **ten waves** (100 waves across the ten-level
+campaign); wave 10 of every level is that level's **mini-boss** encounter (a
+dense hand-authored wave flagged `miniBoss: true` in `src/waves/Formations.ts`).
+A wave is a set of
 enemy ships that spawn together and execute their pattern; the wave is
 **cleared when its enemy ships are destroyed**. Asteroids do **not** gate that
 clear: surviving asteroids persist in the field across wave and level
@@ -854,7 +864,10 @@ Every cap/rate is recorded with a written rationale beside it in `POWER_UP_LEVEL
 
 ### 4.6 Level Progression Mechanics
 
-- Beating a level advances to the next level automatically.
+- Every level spans **ten waves**; the 10th wave is that level's **mini-boss**.
+  Clearing the mini-boss advances to the next level automatically (the level
+  does not advance while the mini-boss is still alive — `WaveManager` gates on
+  it). Clearing Level 10's mini-boss triggers the multi-phase final boss.
 - If the player runs out of lives (3 starting; up to 5 with Extra Life power-up), the game ends and the **final score** is submitted to the local leaderboard.
 - There is **no continue** mechanic. Game over is final.
 - Players may restart from Level 1 at any time after a game over.

@@ -1904,16 +1904,16 @@ are not strictly monotonic across Levels 6–10.
 
 | Level | Theme | Difficulty (0–100) |
 |-------|-------|-------------------:|
-| 1 | Entry | 6.01 |
-| 2 | Descent | 10.95 |
-| 3 | The Core | 12.30 |
-| 4 | Firestorm | 20.87 |
-| 5 | Predictable Death | 28.56 |
-| 6 | Invasion | 19.36 |
-| 7 | Segmented Assault | 22.43 |
-| 8 | Gridlock | 19.80 |
-| 9 | Orbital Siege | 23.15 |
-| 10 | The Gauntlet | 22.12 |
+| 1 | Entry | 6.75 |
+| 2 | Descent | 12.85 |
+| 3 | The Core | 14.22 |
+| 4 | Firestorm | 21.44 |
+| 5 | Predictable Death | 28.64 |
+| 6 | Invasion | 17.12 |
+| 7 | Segmented Assault | 22.46 |
+| 8 | Gridlock | 20.83 |
+| 9 | Orbital Siege | 24.07 |
+| 10 | The Gauntlet | 22.84 |
 
 Per-archetype scores for the seed enemies (with firing where the archetype
 fires): Scout 13.57, Diver 21.46, Tank 27.08, Phaser 29.20, Swarm 18.87,
@@ -1929,8 +1929,10 @@ Asteroid's split-chain contribution).
 
 #### Campaign structure and design rules (10 levels)
 
-The ten-level campaign (parent epic AH-0MV29SBAQ000HQR2) interleaves the
-classic-arcade roster with the existing archetypes:
+The ten-level campaign (parent epic AH-0MV29SBAQ000HQR2; expanded to 10 waves
+per level by AH-0MVCC8XSS007P01Z / AH-0MVCYANT6003SG5C) interleaves the
+classic-arcade roster with the existing archetypes. Every level spans exactly
+ten waves, with wave 10 the level's mini-boss (`miniBoss: true`):
 
 | Level | Theme | Featured showcase |
 |-------|-------|-------------------|
@@ -1986,7 +1988,11 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
 - **Config:** `src/data/difficulty-curves.csv` — one row per `(level, wave)`.
   Columns: `level` (1-based), `levelName`, `wave` (1-based), `targetDifficulty`
   (0–100) and an optional `generation` (`curve` | `fixed` | `dynamic`, default
-  `curve`). The number of rows for a level sets its wave count; the level
+  `curve`). The number of rows for a level sets its wave count; in the
+  expanded campaign every level 1–10 has exactly **ten rows (100 waves)**, and
+  row 10 of every level is that level's hand-authored mini-boss wave
+  (`generation: fixed`, mapping to the `miniBoss: true` wave in
+  `Formations.ts`). The level
   count and names are therefore data-driven. The CSV is loaded through the same
   `configStore` / `configCsvPlugin` pipeline as the enemy/ship CSVs (editable in
   dev via `/api/csv/...`, bundled read-only in production) with the

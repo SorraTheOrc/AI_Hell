@@ -380,24 +380,25 @@ describe('WaveManager — globalWaveIndex accessor (AH-0MUDYS2SZ004H123)', () =>
   });
 
   it('globalWaveIndex increments correctly across levels', () => {
-    // Level 1 has 2 waves, Level 2 has 3 waves, Level 3 has 3 waves.
+    // Level 1 has 10 waves, Level 2 has 10 waves.
     const wm = new WaveManager();
     wm.beginGame();
-    // Clear Level 1 (2 waves) → L2 W1, globalWaveIndex = 2
+    // Clear Level 1 (10 waves) → L2 W1, globalWaveIndex = 10.
     expect(clearLevel(wm)).toBe('levelCleared');
-    expect(wm.globalWaveIndex).toBe(2);
-    clearWave(wm); // L2 W1 → L2 W2, globalWaveIndex = 3
-    expect(wm.globalWaveIndex).toBe(3);
-    clearWave(wm); // L2 W2 → L2 W3, globalWaveIndex = 4
-    expect(wm.globalWaveIndex).toBe(4);
-    clearWave(wm); // L2 W3 → L3 W1, globalWaveIndex = 5
-    expect(wm.globalWaveIndex).toBe(5);
+    expect(wm.globalWaveIndex).toBe(10);
+    clearWave(wm); // L2 W1 → L2 W2, globalWaveIndex = 11
+    expect(wm.globalWaveIndex).toBe(11);
+    clearWave(wm); // L2 W2 → L2 W3, globalWaveIndex = 12
+    expect(wm.globalWaveIndex).toBe(12);
+    clearWave(wm); // L2 W3 → L3 W1, globalWaveIndex = 13
+    expect(wm.globalWaveIndex).toBe(13);
   });
 
-  it('globalWaveIndex for the full campaign — last regular wave is index 28', () => {
+  it('globalWaveIndex for the full campaign — last regular wave is index 99', () => {
     const wm = new WaveManager();
     wm.beginGame();
-    // Clear all 10 levels (wave counts: 2+3+3+3+2+4+4+3+3+2 = 29 regular waves).
+    // Clear all 10 levels (the expanded campaign has 10 waves per level,
+    // 10 levels = 100 regular waves; AH-0MVCYANT6003SG5C).
     for (let level = 1; level <= LEVEL_COUNT; level++) {
       const levelStartGWI = wm.globalWaveIndex;
       const waveCount = wm.waveCount;
@@ -410,7 +411,7 @@ describe('WaveManager — globalWaveIndex accessor (AH-0MUDYS2SZ004H123)', () =>
     }
     // After clearing Level 10's final wave, the boss should trigger.
     expect(wm.bossTriggered).toBe(true);
-    expect(wm.globalWaveIndex).toBe(28);
+    expect(wm.globalWaveIndex).toBe(99);
   });
 
   it('globalWaveIndex is 0 during a boss encounter', () => {
@@ -803,9 +804,8 @@ describe('planGroupSpawns — range-based positioning (AH-0MUKIBAY60075GH5)', ()
 // gating landed (AH-0MVCRAV3B0069AIJ). The shipped-campaign test
 // (`LEVELS` exposing exactly 10 waves per level) still runs under
 // `it.fails(...)`: it depends on the 10-wave **data** (`Formations.ts`
-// `LEVELS`), whose deliverable is absent from the repo (AH-0MVCRAR89009C8GZ
-// claims completion but its work never landed; recovery tracked by
-// AH-0MVCYANT6003SG5C). It flips to a plain `it` once that data lands.
+// `LEVELS`), whose deliverable was re-landed by AH-0MVCYANT6003SG5C, so the
+// pin now runs as a plain `it` and hard-gates the shipped shape.
 describe('WaveManager — 10-wave mini-boss gating harness (AH-0MVCRAHWO0007US2)', () => {
   /**
    * A 10-wave level whose 10th wave is flagged as the mini-boss encounter.
@@ -822,7 +822,7 @@ describe('WaveManager — 10-wave mini-boss gating harness (AH-0MVCRAHWO0007US2)
     return level(n, name, waves);
   }
 
-  it.fails('AC1/AC4 — the shipped campaign exposes exactly 10 waves per level', () => {
+  it('AC1/AC4 — the shipped campaign exposes exactly 10 waves per level', () => {
     const wm = new WaveManager();
     wm.beginGame();
     for (let n = 1; n <= LEVEL_COUNT; n++) {

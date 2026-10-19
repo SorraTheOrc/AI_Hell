@@ -776,17 +776,21 @@ instead.
 - **Fire rule:** `curve`/`dynamic` levels 1–3 do not fire; levels 4+ do
   (GDD §2.4/§2.5); `fixed` waves keep `LEVELS`' own per-wave `shootEnabled`
   flags.
-- **Ten-level showcase campaign:** the shipped default curve defines ten
-  levels. Levels 1–3 stay the no-fire onboarding section; Level 4 introduces
+- **Ten-level, ten-wave showcase campaign:** the shipped default curve defines
+  ten levels, each spanning exactly **10 waves (100 waves total)**, with wave 10
+  of every level that level's hand-authored **mini-boss** encounter
+  (`miniBoss: true`, expansion AH-0MVCC8XSS007P01Z / AH-0MVCYANT6003SG5C).
+  Levels 1–3 stay the no-fire onboarding section; Level 4 introduces
   fire and Level 5 is the sparse predictable-pattern level; Levels 6–10 debut
   the classic-arcade roster, each archetype appearing first on a hand-authored
   `fixed` showcase wave so it is guaranteed for a given run seed. The campaign
-  invariant tests pin the design rules: every classic archetype appears at
-  least once (`src/waves/campaignRoster.test.ts`), every wave that fields a
-  player-targeting archetype (`capturer`, `ghost-*`, `grunt`, `raider`) also
-  fields a non-player-targeting kind (same file), and adjacent levels differ in
-  their dominant movement/attack style with a non-decreasing target curve
-  (`src/waves/campaignInvariants.test.ts`).
+  invariant tests pin the design rules: **every level defines exactly ten
+  waves** (100 total) with its 10th a mini-boss (same file), every classic
+  archetype appears at least once (`src/waves/campaignRoster.test.ts`), every
+  wave that fields a player-targeting archetype (`capturer`, `ghost-*`,
+  `grunt`, `raider`) also fields a non-player-targeting kind (same file), and
+  adjacent levels differ in their dominant movement/attack style with a
+  non-decreasing target curve (`src/waves/campaignInvariants.test.ts`).
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
   skeleton, so levels 1–10 are always present. A configured level overrides its
   static counterpart (and a configured level numbered beyond the static ten is

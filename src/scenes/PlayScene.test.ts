@@ -409,6 +409,29 @@ function plainCampaign(): LevelDefinition[] {
   }));
 }
 
+/**
+ * A one-level campaign for boss-reaching tests (AH-0MVCYANT6003SG5C).
+ *
+ * `WaveManager.isFinalLevel` is true the moment the campaign has a single
+ * level, so clearing that level's waves triggers the final boss. Boss tests
+ * therefore boot **one** level instead of walking the whole 10-level / 100-wave
+ * campaign to reach the same encounter — the same code path, a tenth of the
+ * simulated waves.
+ */
+function singleLevelCampaign(): LevelDefinition[] {
+  const level = CAMPAIGN_LEVELS[0];
+  return [
+    {
+      ...level,
+      level: 1,
+      waves: level.waves.map((w) => ({
+        ...w,
+        groups: w.groups.map((g) => ({ ...g })),
+      })),
+    },
+  ];
+}
+
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   let booted: BootedGame | null = null;
 
@@ -438,6 +461,19 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // spawns (the spawner is covered by its own integration suites).
     (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
     return booted.scene as PlayScene;
+  }
+
+  /**
+   * Boots a **single-level** campaign for the two boss-label tests
+   * (AH-0MVCYANT6003SG5C). A one-level campaign makes `isFinalLevel` true
+   * from the start, so `reachBoss` triggers the final boss without walking
+   * the whole ten-level campaign.
+   */
+  async function bootPlayAtBoss(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    booted = game;
+    scene.setAsteroidSpawnerEnabled(false);
+    return scene;
   }
 
   it('F5 — the Harvester is worth ≈400 points (between Tank 300 and the boss phases)', () => {
@@ -1067,7 +1103,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   // ── Boss label unchanged (AH-0MU7JTEY3004EXR2 AC3 / AH-0MUMMBRCC0093MGV AC4) ──
 
   it('AH-0MU7JTEY3004EXR2 AC3 — the boss encounter shows "Boss" instead of a numeric level', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
 
     expect(scene.getWaveManager().bossActive).toBe(true);
@@ -1076,7 +1112,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   it('AH-0MUMMBRCC0093MGV AC4 — the boss encounter still shows "Boss" (no level name)', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
 
     expect(scene.getLevelText()).toBe('Boss');
@@ -1578,19 +1614,18 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const wm = scene.getWaveManager();
     const asteroid = findAsteroids(scene)[0];
 
-    // Clear wave 1 and wave 2 of Level 1; the asteroid lives through both.
-    killNonAsteroidEnemies(scene);
-    expect(scene.isTransitioning()).toBe(true);
-    finishTransition(scene);
-    expect(wm.waveNumber).toBe(2);
-    expect(asteroid.alive).toBe(true);
-
-    killNonAsteroidEnemies(scene);
-    expect(scene.isTransitioning()).toBe(true);
-    finishTransition(scene);
+    // Clear Level 1 (the expanded campaign levels now span ten waves,
+    // AH-0MVCYANT6003SG5C); the asteroid lives through every wave and the
+    // level transition into Level 2.
+    for (let wave = 0; wave < wm.waveCount; wave++) {
+      killNonAsteroidEnemies(scene);
+      expect(scene.isTransitioning()).toBe(true);
+      finishTransition(scene);
+    }
 
     // Now on Level 2 with the carried-over asteroid still alive.
     expect(wm.level).toBe(2);
+    expect(wm.waveNumber).toBe(1);
     expect(asteroid.alive).toBe(true);
     expect(findAsteroids(scene)).toContain(asteroid);
   });
@@ -1697,9 +1732,16 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     localStorage.clear();
   });
 
-  async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+  /**
+   * Boots a **single-level** campaign for the boss tests (AH-0MVCYANT6003SG5C).
+   * With one level `isFinalLevel` is true from the start, so `reachBoss`
+   * clears that level's waves and triggers the final boss without walking
+   * the other nine levels. Same encounter, ~1/10 the simulated waves.
+   */
+  async function bootPlayAtBoss(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    booted = game;
+    return scene;
   }
 
   /** Boots with a deterministic large asteroid placed outside the wave
@@ -1719,7 +1761,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   }
 
   it('AC1 — the Central AI spawns after the final level is cleared, with Phase-1 minions', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
 
     const boss = scene.getBoss();
@@ -1734,7 +1776,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AC2 — the 4-phase health bar depletes and advances the phase on hits', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     expect(boss.getPhaseNumber()).toBe(1);
@@ -1746,7 +1788,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AC3 — advancing a phase summons that phase’s minion wave', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
 
@@ -1763,7 +1805,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   it('AC4 — phase score is awarded on phase depletion, not per hit (phase score per GDD §4.5)', async () => {
     // Separate scenario: the boss deals no bullets here; assert the score
     // awarded per destroyed phase follows the GDD table (1000/2000/3000/5000).
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
@@ -1782,7 +1824,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AC4 — defeating all 4 phases wins the run at the game-over screen', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
@@ -1811,7 +1853,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
 
   it('AC5 — a player bullet hit registers a per-hit impact VFX at the hit point', async () => {
     const cue = vi.spyOn(effectsModule, 'playBossHitSound');
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     vi.clearAllMocks();
@@ -1839,7 +1881,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   }
 
   it('AC1/AC2 — partial-phase hits award no score and spawn no minions', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
@@ -1857,7 +1899,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AC3/AC4 — depletion awards the phase score and spawns minions exactly once', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
@@ -1907,7 +1949,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   }
 
   it('AC6 — a fully levelled AOE weapon deals one hit per blast, not a whole phase', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const def = fullyLevelWeapon(scene, 'nova');
@@ -1927,7 +1969,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AC6 — a fully levelled weapon still requires 200 hits to destroy the boss', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const def = fullyLevelWeapon(scene, 'nova');
@@ -1946,7 +1988,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('scenario — boss bullets are collected as enemy bullets', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
 
@@ -1973,7 +2015,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   // ── Boss-entry asteroid cleanup (AH-0MUCG5TIU000VPVO) ──────────
 
   it('AH-0MUCG5TIU000VPVO AC1/AC2/AC5 — carried-over asteroids are destroyed on boss entry with no split children', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     timeOutToBoss(scene);
 
     // The boss spawned and no carried-over asteroid survived.
@@ -1984,7 +2026,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AH-0MUCG5TIU000VPVO AC3 — the boss spawn path is otherwise unchanged (Phase-1 minions arrive)', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     timeOutToBoss(scene);
 
     expect(scene.getBoss()).not.toBeNull();
@@ -2014,7 +2056,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   // ── Hold-full pause resilience for the boss-walk helpers (AH-0MV5L6BVN005DP4I) ──
 
   it('AH-0MV5L6BVN005DP4I — timeOutToBoss resolves an open hold-full choice', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     // The carried-over pile generates enough mineral drops that the hold
     // fills mid-walk; open the overlay here to pin the regression
     // deterministically (it pauses the simulation exactly as real play does).
@@ -2028,7 +2070,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AH-0MV5L6BVN005DP4I — reachBoss resolves an open hold-full choice', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     scene.openMineralChoice();
     expect(scene.isMineralChoiceOpen()).toBe(true);
 
@@ -3799,9 +3841,17 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
   });
 
   it('runs a mixed fixed+curve campaign when the toggle is on, static LEVELS when off', () => {
+    // Level 1 is authored as a full all-fixed level (ten waves, matching the
+    // expanded campaign width — AH-0MVCYANT6003SG5C) so the sequencer returns
+    // it verbatim; level 2 exercises the curve path.
     seedDifficultyCurves([
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, generation: 'fixed' },
-      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 9, generation: 'fixed' },
+      ...Array.from({ length: CAMPAIGN_LEVELS[0].waves.length }, (_, index) => ({
+        level: 1,
+        levelName: 'Entry',
+        wave: index + 1,
+        targetDifficulty: 5 + index,
+        generation: 'fixed' as const,
+      })),
       { level: 2, levelName: 'Generated Descent', wave: 1, targetDifficulty: 20, generation: 'curve' },
     ]);
 
@@ -4596,6 +4646,17 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   }
 
   /**
+   * Boots a **single-level** campaign for the victory tests
+   * (AH-0MVCYANT6003SG5C): a one-level campaign is final from the start, so
+   * `reachBoss` triggers the boss without walking the whole campaign.
+   */
+  async function bootPlayAtBoss(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    booted = game;
+    return scene;
+  }
+
+  /**
    * Drives the boss through all four phases so the run is won
    * (BOSS_HIT_POINTS_PER_PHASE hits per phase, 200 total).
    */
@@ -4607,7 +4668,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   }
 
   it('AC1/AC2 — defeating the boss plays the fanfare once and spawns the shared celebration once', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
@@ -4678,7 +4739,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   it('AC1 — the fanfare and celebration fire exactly once even across extra ticks', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
@@ -4707,7 +4768,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   it('AC4 — the victory celebration is destroyed on SHUTDOWN (no leaks)', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     defeatBoss(scene);
 

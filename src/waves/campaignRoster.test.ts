@@ -243,11 +243,10 @@ describe('Campaign roster coverage and player-targeter pairing (AH-0MV3953EO005V
 // continue to hold across the expanded grid (they are data-driven, so they
 // automatically span the 100 waves once the production data lands).
 //
-// RED against today's 29-wave campaign (AC5); run under `it.fails(...)` so the
-// gate stays green. Flip each `it.fails` back to a plain `it` once the
-// campaign-data item (AH-0MVCRAR89009C8GZ) lands the 10-wave rows.
+// GREEN once the campaign-data item (AH-0MVCYANT6003SG5C) landed the 10-wave
+// rows, so the pins run as plain `it` and hard-gate the shipped shape.
 describe('10-wave campaign verification harness — expanded grid (AH-0MVCRAHWO0007US2)', () => {
-  it.fails('AC1 — the merged campaign spans exactly 10 waves per level, 100 in total', () => {
+  it('AC1 — the merged campaign spans exactly 10 waves per level, 100 in total', () => {
     const merged = buildSequencedLevels();
     expect(merged).toHaveLength(10);
     const total = merged.reduce((sum, level) => sum + level.waves.length, 0);
@@ -257,7 +256,7 @@ describe('10-wave campaign verification harness — expanded grid (AH-0MVCRAHWO0
     }
   });
 
-  it.fails('AC2/AC3 — every wave-10 mini-boss wave is part of the covered 100-wave grid', () => {
+  it('AC2/AC3 — every wave-10 mini-boss wave is part of the covered 100-wave grid', () => {
     const merged = buildSequencedLevels();
     for (const labelled of allWaves(merged)) {
       if (labelled.label.endsWith('W10')) {

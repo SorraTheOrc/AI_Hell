@@ -23,6 +23,7 @@ import { RULES_STORAGE_KEY } from '../core/rules';
 import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
 import { LEVEL_TRANSITION_SECONDS, PlayScene } from './PlayScene';
+import { LEVELS as CAMPAIGN_LEVELS, type LevelDefinition } from '../waves/Formations';
 import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
@@ -173,6 +174,23 @@ function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
   if (!scene.isMineralChoiceOpen()) return false;
   scene.selectMineralChoice(0);
   return true;
+}
+
+/**
+ * A one-level campaign for the navigation boss walk (AH-0MVCYANT6003SG5C).
+ * With a single level `isFinalLevel` is true immediately, so clearing it
+ * triggers the final boss without walking the whole ten-level campaign.
+ */
+function singleLevelForNavigation(): LevelDefinition {
+  const level = CAMPAIGN_LEVELS[0];
+  return {
+    ...level,
+    level: 1,
+    waves: level.waves.map((w) => ({
+      ...w,
+      groups: w.groups.map((g) => ({ ...g })),
+    })),
+  };
 }
 
 /**
@@ -347,6 +365,12 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     navigateTo(game, menu, '▶  Play Game', 'PlayScene');
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
+
+    // Boot a single-level campaign so the boss walk clears one level (final by
+    // construction) instead of the whole ten-level run (AH-0MVCYANT6003SG5C).
+    play.getWaveManager().setLevels([singleLevelForNavigation()]);
+    play.getWaveManager().beginGame();
+    play.spawnWave();
 
     // Walk to the boss deterministically: resolve any hold-full pause (a
     // paused scene ignores tick()), complete spawn sequences before killing,

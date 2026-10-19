@@ -305,13 +305,9 @@ describe('Campaign design invariants for the ten-level campaign (AH-0MV398ZWL009
 // level's mini-boss encounter, and the difficulty targets across all 100 waves
 // must stay non-decreasing.
 //
-// These pins are **RED** against today's 29-wave campaign (AC5), so they run
-// under Vitest's `it.fails(...)` — the repo's expected-failure convention (see
-// `difficultySequencer.variety.test.ts`): the assertion genuinely fails now
-// while the suite stays green at the build → test → commit gate. When the
-// production features land (AH-0MVCRAR89009C8GZ data foundation, then the
-// gating/reward items), flip each `it.fails` back to a plain `it` — the
-// assertions then hard-gate the shipped shape.
+// These pins went GREEN once the production data landed (AH-0MVCYANT6003SG5C
+// re-landed the 10-wave campaign data foundation), so they run as plain `it`
+// and hard-gate the shipped shape.
 describe('10-wave campaign & mini-boss verification harness (AH-0MVCRAHWO0007US2)', () => {
   /**
    * The wave-10 mini-boss marker the data foundation lands on every level's
@@ -327,7 +323,7 @@ describe('10-wave campaign & mini-boss verification harness (AH-0MVCRAHWO0007US2
     return level.waves[9];
   }
 
-  it.fails('AC1 — every level 1–10 in LEVELS defines exactly 10 waves', () => {
+  it('AC1 — every level 1–10 in LEVELS defines exactly 10 waves', () => {
     expect(LEVELS).toHaveLength(10);
     for (const level of LEVELS) {
       expect(
@@ -337,7 +333,7 @@ describe('10-wave campaign & mini-boss verification harness (AH-0MVCRAHWO0007US2
     }
   });
 
-  it.fails('AC1/AC2 — the merged campaign has exactly 10 waves per level, 100 in total', () => {
+  it('AC1/AC2 — the merged campaign has exactly 10 waves per level, 100 in total', () => {
     const merged = buildSequencedLevels();
     expect(merged).toHaveLength(10);
     const total = merged.reduce((sum, level) => sum + level.waves.length, 0);
@@ -347,7 +343,7 @@ describe('10-wave campaign & mini-boss verification harness (AH-0MVCRAHWO0007US2
     }
   });
 
-  it.fails("AC2 — wave 10 of every merged level is flagged as that level's mini-boss", () => {
+  it("AC2 — wave 10 of every merged level is flagged as that level's mini-boss", () => {
     for (const level of buildSequencedLevels()) {
       const wave = tenthWave(level);
       expect(wave, `L${level.level} has no 10th wave`).toBeDefined();
@@ -358,7 +354,7 @@ describe('10-wave campaign & mini-boss verification harness (AH-0MVCRAHWO0007US2
     }
   });
 
-  it.fails('AC3 — the default difficulty curve spans exactly 100 waves, 10 per level, non-decreasing', () => {
+  it('AC3 — the default difficulty curve spans exactly 100 waves, 10 per level, non-decreasing', () => {
     const rows = [...defaultDifficultyCurves()].sort(
       (a, b) => a.level - b.level || a.wave - b.wave,
     );

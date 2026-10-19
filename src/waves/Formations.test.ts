@@ -190,11 +190,10 @@ describe('Levels 6–10 — classic-arcade campaign (AH-0MV396OK0001FX14)', () =
 // every authored level must define exactly 10 waves with the 10th used as that
 // level's mini-boss encounter (9 regular waves + mini-boss). 
 //
-// RED against today's 2–4-wave authored levels (AC5); run under `it.fails(...)`
-// so the gate stays green. Flip each `it.fails` back to a plain `it` once
-// `LEVELS` in `Formations.ts` grows to 10 waves per level (AH-0MVCRAR89009C8GZ).
+// now landed (AH-0MVCYANT6003SG5C), so the pins are GREEN and run as plain
+// `it` — they hard-gate the shipped 10-wave shape.
 describe('10-wave campaign verification harness — authored levels (AH-0MVCRAHWO0007US2)', () => {
-  it.fails('AC1 — every authored level 1–10 defines exactly 10 waves', () => {
+  it('AC1 — every authored level 1–10 defines exactly 10 waves', () => {
     expect(LEVELS).toHaveLength(10);
     for (const level of LEVELS) {
       expect(
@@ -204,7 +203,7 @@ describe('10-wave campaign verification harness — authored levels (AH-0MVCRAHW
     }
   });
 
-  it.fails('AC2 — the 10th wave of every authored level is its mini-boss encounter', () => {
+  it('AC2 — the 10th wave of every authored level is its mini-boss encounter', () => {
     for (const level of LEVELS) {
       const wave = level.waves[9];
       expect(wave, `L${level.level} (${level.name}) has no 10th wave`).toBeDefined();

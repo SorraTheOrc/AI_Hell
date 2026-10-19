@@ -55,11 +55,14 @@ import {
 } from '../../entities/Diver';
 import type { Player } from '../../entities/Player';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
+import { LEVELS } from '../../waves/Formations';
 
 // These equivalence tests boot full Phaser games and walk PlayScene to the
 // boss encounter; under full-suite parallel load the Vitest default 5 s
 // timeout is too tight (AH-0MUIPP1UU000UT88). Give the file headroom so a
 // slow parallel run does not fail on timing alone (AH-0MUII3GOO001XEBB).
+// The expanded campaign (AH-0MVCYANT6003SG5C) walks ten waves per level to
+// the boss; the parity walk seeds a single-level campaign so it stays short.
 vi.setConfig({ testTimeout: 60000 });
 
 /** The nine shared combat/lifecycle template methods (parent AC1/AC2). */
@@ -1774,6 +1777,27 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
 // ── Shared boss integration (AH-0MUII3E5E006A93F, gap 6) ───────────
 
 /**
+ * Seeds a booted PlayScene with a **single-level** campaign so the boss walk
+ * clears one level (final by construction) instead of all ten
+ * (AH-0MVCYANT6003SG5C). Same encounter, ~1/10 the simulated waves.
+ */
+function seedSingleLevelCampaign(play: PlayScene): void {
+  const level = LEVELS[0];
+  play.getWaveManager().setLevels([
+    {
+      ...level,
+      level: 1,
+      waves: level.waves.map((w) => ({
+        ...w,
+        groups: w.groups.map((g) => ({ ...g })),
+      })),
+    },
+  ]);
+  play.getWaveManager().beginGame();
+  play.spawnWave();
+}
+
+/**
  * Walks the PlayScene run to the boss encounter (the final level cleared) by
  * destroying every enemy deterministically. Robust to the ten-level campaign:
  * it advances spawned enemies past their spawn animation, and ticks the scene
@@ -1782,11 +1806,14 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
  */
 function reachPlayBoss(play: PlayScene): void {
   play.getGameState().lives = 99;
-  for (let guard = 0; guard < 1200; guard++) {
+  // The expanded campaign (AH-0MVCYANT6003SG5C) has 100 waves (10 per level)
+  // plus occasional spawner-delivered crowds; scale the walker budget up from
+  // the original 29-wave campaign so it can clear the whole run.
+  for (let guard = 0; guard < 4000; guard++) {
     const wm = play.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
     play.finishSpawnAnimations();
-    for (let inner = 0; inner < 500; inner++) {
+    for (let inner = 0; inner < 2000; inner++) {
       const enemy = play.getEnemies().find((e) => e.alive);
       if (!enemy) break;
       play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
@@ -1852,6 +1879,7 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
     const playScene = play.scene as PlayScene;
     const gymScene = gym.scene as GymBoss;
 
+    seedSingleLevelCampaign(playScene);
     reachPlayBoss(playScene);
     expect(playScene.getBoss()).not.toBeNull();
 
@@ -1920,6 +1948,7 @@ describe('boss encounter — game↔gym parity (AH-0MUZMTU3Y001Y8XZ)', () => {
     );
     games.push(play);
     const scene = play.scene as PlayScene;
+    seedSingleLevelCampaign(scene);
     reachPlayBoss(scene);
     return scene;
   }

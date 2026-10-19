@@ -460,11 +460,10 @@ describe('shipped campaign playability (AC5)', () => {
 // the shipped curve must configure exactly 10 waves per level (100 rows), so
 // the balance audit spans the full expanded grid.
 //
-// RED against today's 29-row curve (AC5); run under `it.fails(...)` so the
-// gate stays green. Flip each `it.fails` back to a plain `it` once the
-// campaign-data item (AH-0MVCRAR89009C8GZ) lands the 10-wave rows.
+// GREEN once the campaign-data item (AH-0MVCYANT6003SG5C) landed the 10-wave
+// rows, so the pins run as plain `it` and hard-gate the shipped shape.
 describe('10-wave campaign verification harness — wave counts (AH-0MVCRAHWO0007US2)', () => {
-  it.fails('AC3 — the shipped curve configures exactly 10 waves per level (100 rows)', () => {
+  it('AC3 — the shipped curve configures exactly 10 waves per level (100 rows)', () => {
     const rows = campaignRows();
     expect(rows).toHaveLength(100);
     const perLevel = new Map<number, number>();
@@ -476,7 +475,7 @@ describe('10-wave campaign verification harness — wave counts (AH-0MVCRAHWO000
     }
   });
 
-  it.fails('AC2 — every level has a wave-10 row to map its mini-boss encounter', () => {
+  it('AC2 — every level has a wave-10 row to map its mini-boss encounter', () => {
     const rows = campaignRows();
     for (let level = 1; level <= 10; level++) {
       expect(
