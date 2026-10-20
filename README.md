@@ -460,6 +460,47 @@ project-membership guard (`src/test/projectMembership.test.ts`) fails loudly if
 a test file is selected by no project or by both, and asserts each project's
 `include` list matches the classifier exactly.
 
+Project test types are registered in
+`.pi/skills_extensions/test/extension.json` — the supported project-local
+mechanism for typed runs (see
+[docs/dev/skill-extensions.md](./docs/dev/skill-extensions.md)). The current
+registration exposes `unit` (`npx vitest run --project unit`), `coverage`
+(`npm run test:coverage`) and `e2e` (`npx vitest run --project e2e`); `full`
+falls back to the `npm --silent test` suite command. Each non-`full` type
+writes its own cache key, so `/skill:test --type unit` can never masquerade as
+full-suite evidence.
+
+#### Test execution and timing expectations
+
+| Goal | Sanctioned command | Cache key |
+|---|---|---|
+| Audit-accepted full-suite evidence | `npm --silent test` / `/skill:test --type full` | `test_type: full` over `unit` + `integration` |
+| Fast TDD loop (non-Phaser files) | `npm run test:unit` / `/skill:test --type unit` | independent `unit` key |
+| DOM/Phaser suites only | `npm run test:integration` | not cached as full-suite evidence |
+| Coverage thresholds | `npm run test:coverage` / `/skill:test --type coverage` | independent `coverage` key |
+| Real-binary e2e (not in the default run) | `npm run test:e2e` / `/skill:test --type e2e` | independent `e2e` key |
+
+**Wall clock is load-sensitive** — the same full suite spans roughly 58 %
+between an idle and a contended 16-core host, so every quote below records the
+load it was measured under. The repeatable procedure (and the cache/load
+evidence) lives in
+[docs/dev/test-suite-timing.md](./docs/dev/test-suite-timing.md).
+
+Measured while this split landed (2026-10-19, 16 cpus):
+
+| Scope | Files | Tests | Wall clock | Load 1/5/15 |
+|---|---:|---:|---:|---|
+| `unit` | 140 | 2,497 (2,488 passed + 9 expected fail) | **43.5 s** | 26.5 / 27.4 / 24.0 |
+| `integration` | 133 | 3,540 (3,526 passed + 14 expected fail) | ~300–445 s | loaded (varies) |
+| full `npm --silent test` | 273 | 6,037 (6,014 passed + 23 expected fail) | 362.9 s | 16.2 / — / — |
+
+Deterministic boot (below) removed the wall-clock boot sleeps and per-file
+game-shell reuse removed a further ~17 % off the boot-dense gym suites, but the
+suite was still measured **loaded**, not on an idle host; the definitive
+idle-host comparison and the parent timing targets are tracked by
+AH-0MVF6W8NC006RT2B. Do not compare a loaded run with an idle one — re-measure
+under the target condition instead.
+
 #### Testing conventions (deterministic scene boot)
 
 Phaser suites boot a real `Phaser.Game` through `bootScene()`
@@ -479,8 +520,9 @@ post-boot assertions flaky under load.
   AH-0MTFSM3IR001QR0C, AH-0MUHA0MMP001DZ5C).
 - **Anchor the shared beat clock before asserting fire cadence.** Player
   auto-fire is phase-locked to an 80 BPM grid (`src/utils/beat.ts`) whose
-  elapsed time accumulates across every frame the scene has ticked, including
-  the unpredictable frames of a legacy (wall-clock) `bootScene` wait. A
+  elapsed time accumulates across every frame the scene has ticked — under the
+  legacy wall-clock `bootScene` wait that included an unpredictable number of
+  real animation frames. A
   freshly equipped weapon fires on the *next* grid tick — up to a full fire
   interval away — so advancing a fixed sub-beat `dt` only delivers that shot
   for some boot phases, which makes cue/cadence assertions load-sensitive
@@ -646,8 +688,9 @@ added by AH-0MUWTNPYJ0031FQE):
   predicates are pure and unit-tested in `scripts/capture-gameplay.test.ts`.
 - **Fully opt-in:** the tool lives under `scripts/` and is never imported by
   `src/` (the audio tap is injected page-side, so the shipped bundle is
-  untouched), `playwright` is a devDependency, and `npm test` / `npm run build`
-  are unchanged. Output is WebM/VP9 **with the game's own Opus audio** (no MP4
+  untouched), `playwright` is a devDependency, and `npm --silent test` (the
+  `unit` + `integration` full suite) / `npm run build` are unchanged. Output is
+  WebM/VP9 **with the game's own Opus audio** (no MP4
   — no full ffmpeg in the Playwright bundle); runs are not yet
   frame-reproducible because wave/spawn RNG is unseeded.
 - **Recommendation, rejected alternatives and measured CI cost:** see

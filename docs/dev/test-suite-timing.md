@@ -14,6 +14,34 @@ concurrently, and each run spawns fork workers over the shared
 meaningless** — the epic's AC3/AC5 comparisons are only valid when taken
 under the same (ideally idle) load and recorded alongside the numbers.
 
+## Current state (post-split, deterministic boot default)
+
+Since child AH-0MVF6XQIC005RY3P the harness boots **deterministically by
+default** (no opt-in flag): `bootScene()` / `bootCombat()` advance the scene by
+fixed-delta `game.step` calls instead of a `setTimeout(150)` wall-clock sleep,
+and the legacy real-time path is deleted (guarded by
+`src/test/deterministicBootGuard.test.ts`). Since AH-0MVF6VZG9000AN6E heavy
+suites may share one `Phaser.Game` shell per file via `createReusableBoot()`.
+The suite is split (AH-0MVF6XV87001NSEJ) into `unit` (node env, no DOM/Phaser
+inline; the fast TDD loop) and `integration` (happy-dom + `src/test/setup.ts` +
+`deps.inline: ['phaser']`); the typed run commands below are registered as
+project test types in `.pi/skills_extensions/test/extension.json`
+(`unit`/`coverage`/`e2e`), while `--type full` falls back to
+`npm --silent test`.
+
+Expectation summary (each figure carries its load; the full rows live on the
+epic AH-0MVF3BESP005ZDAV — the definitive idle-host baseline is the final
+validation child AH-0MVF6W8NC006RT2B):
+
+- **`unit`** — measured **43.5 s** (140 files, 2,497 tests) at load
+  26.5/27.4/24.0; target ≤ 60 s on an idle host.
+- **`integration`** — ~300–445 s *loaded*; transform/import dominate (the
+  Phaser bundle re-transform per worker; pool/isolate/optimiser experiments
+  were measured and rejected — see `vitest.config.ts`).
+- **full `npm --silent test`** — measured 362.9 s (273 files, 6,037 tests) at
+  load 16.2, and 304.05 s at load 5.45/17.22/21.11 on the post-C2 tree. Load
+  alone moves this span ~58 %; never compare runs taken under different loads.
+
 ## The load snapshot
 
 Run before (and, for long runs, after) every measured suite:

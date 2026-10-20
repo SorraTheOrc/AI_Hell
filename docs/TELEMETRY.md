@@ -466,5 +466,7 @@ The framework is covered by hermetic unit tests under
 | [`telemetryConsentStore.test.ts`](../src/core/telemetryConsentStore.test.ts) | consent persistence, corrupt/absent fallback |
 | [`inspect-telemetry.test.ts`](../scripts/inspect-telemetry.test.ts) | JSONL parsing, summary and formatting |
 
-Run them with `npx vitest run src/telemetry` (or the full suite via
-`/skill:test`).
+Run them with `npx vitest run src/telemetry` (the per-file project split
+automatically sends the pure `node`-env suites to `unit` and the scene-booting
+suites to `integration`), or run the audit-accepted full suite with
+`npm --silent test` / `/skill:test --type full`.

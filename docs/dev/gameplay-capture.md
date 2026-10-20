@@ -805,7 +805,8 @@ Measured on the reference host (2026-10-06):
   a separate download).
 
 Recommendation: run capture as an **opt-in local/CI job**, never as part of
-`npm test` / `npm run build`.
+the audit-accepted test suite (`npm --silent test`, i.e. `/skill:test --type
+full`) or `npm run build`.
 
 ### Additive / opt-in guarantee
 
@@ -814,7 +815,8 @@ Recommendation: run capture as an **opt-in local/CI job**, never as part of
 - `playwright` is a **devDependency**; browser binaries are downloaded by an
   explicit command.
 - `capture-output/` is git-ignored.
-- `npm test` and `npm run build` are unchanged and still pass.
+- `npm --silent test` (the `unit` + `integration` full suite) and
+  `npm run build` are unchanged and still pass.
 
 ## Files
 

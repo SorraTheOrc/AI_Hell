@@ -1850,7 +1850,8 @@ each wave. This is what fixed the producer-audit rejection of this work item.
    configured `health`).
 5. **CSV hygiene.** The committed CSV is the source of truth; a missing or
    malformed file (or a failed dev fetch) falls back to the seed defaults
-   without throwing, and `npm test` resets the registry between suites. The
+   without throwing, and the full suite (`npm --silent test`, i.e.
+   `/skill:test --type full`) resets the registry between suites. The
    dev plugin validates every write before touching the file and writes
    atomically, so an interrupted write cannot corrupt the committed CSV.
 

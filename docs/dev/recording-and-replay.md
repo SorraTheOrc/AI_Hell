@@ -165,8 +165,12 @@ comparing two different seeded runs is meaningless.
 | [`scripts/recording-analysis.test.ts`](../../scripts/recording-analysis.test.ts) | Every statistics metric with exact expected values |
 | [`src/core/devScenario.test.ts`](../../src/core/devScenario.test.ts) | The dev-gated `?seed=N` override |
 
-Run them with:
+Run them with (all three are `unit`-project files, so the fast loop also works):
 
 ```bash
-npx vitest run scripts/recording.test.ts scripts/recording-analysis.test.ts src/core/devScenario.test.ts
+npx vitest run --project unit scripts/recording.test.ts scripts/recording-analysis.test.ts src/core/devScenario.test.ts
 ```
+
+`scripts/recording-cli.test.ts` spawns real subprocesses and lives in the
+`integration` project. The audit-accepted full suite is `npm --silent test`
+(`/skill:test --type full`), which runs `unit` + `integration`.
