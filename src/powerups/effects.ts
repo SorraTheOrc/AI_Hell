@@ -378,17 +378,15 @@ export class EffectsRegistry {
    */
   private _forceFieldRemaining = 0;
 
-  // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ───────────────
+  // ── Mystery UFO collector drone (AH-0MV9G113S009B37I) ──────────────
   /**
-   * Pending Mystery UFO instant mineral bounty: accumulated when a
-   * `mystery_ufo` drop is collected and drained by the scene via
-   * {@link consumeMysteryBonus} (minerals into the ship's hold; the instant
-   * score burst is retired with the collector-drone epic,
-   * AH-0MV9G113S009B37I). `null` when no pickup is pending; cleared by
-   * {@link reset}. Repeated collections before a drain accumulate, so no
-   * pickup is lost.
+   * Pending one-shot collector-drone spawns: incremented for every
+   * **field** `mystery_ufo` pickup and drained by the shared scene pass via
+   * {@link consumeMysteryUfoSpawns}. A full-hull (permanent) reward does not
+   * queue a one-shot — it is owned through the level store's permanent grant
+   * and drives the periodic auto-spawn instead. Cleared by {@link reset}.
    */
-  private _mysteryBonus: { minerals: number } | null = null;
+  private _mysteryUfoPendingSpawns = 0;
 
   // ── Thorn Field ram budget (AH-0MVCRC1Q0007JAV1) ──────────────────
   /**
@@ -577,13 +575,13 @@ export class EffectsRegistry {
         );
         break;
       case 'mystery_ufo':
-        // mystery_ufo: an instant mineral bounty (Space Invaders homage,
-        // AH-0MV1BIXFO006Z1I7). There is no timed window and no consumable
-        // state — the level-resolved mineral burst is queued for the scene
-        // to grant immediately (minerals into the hold) via
-        // consumeMysteryBonus(). The instant score burst is retired with the
-        // collector-drone epic (AH-0MV9G113S009B37I).
-        this._queueMysteryBonus(stats);
+        // mystery_ufo: a visible collector drone (Space Invaders homage,
+        // AH-0MV1BIXFO006Z1I7 → AH-0MV9G113S009B37I). A field pickup queues
+        // exactly one drone spawn for the shared scene pass; a full-hull
+        // permanent reward owns the periodic auto-spawn through the level
+        // store's permanent grant. There is no instant mineral or score
+        // burst any more.
+        if (!permanent) this._mysteryUfoPendingSpawns += 1;
         break;
       case 'frenzy':
         // frenzy: a timed damage amplifier. No registry-local consumable
@@ -642,21 +640,6 @@ export class EffectsRegistry {
         // the level store owns charges/stacks/lives.
         break;
     }
-  }
-
-  /**
-   * Accumulates the level-resolved Mystery UFO instant mineral bounty for the
-   * scene to drain via {@link consumeMysteryBonus}. The mineral count is
-   * rounded to a whole number and clamped non-negative, so the hold only ever
-   * receives whole values. (The instant score burst is retired with the
-   * collector-drone epic — AH-0MV9G113S009B37I.)
-   */
-  private _queueMysteryBonus(stats: PowerUpLevelStats): void {
-    const minerals = Math.max(0, Math.round(stats.mysteryUfoMinerals ?? 0));
-    if (minerals === 0) return;
-    this._mysteryBonus = {
-      minerals: (this._mysteryBonus?.minerals ?? 0) + minerals,
-    };
   }
 
   /** Starts a timed effect or refreshes it to the (possibly new) duration. */
@@ -854,35 +837,42 @@ export class EffectsRegistry {
     return SHIP_SIZE * FORCE_FIELD_RADIUS_FACTOR;
   }
 
-  // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ────────────────
+  // ── Mystery UFO collector drone (AH-0MV9G113S009B37I) ────────────────
 
   /**
-   * Drains and returns the accumulated Mystery UFO instant mineral bounty
-   * (`{ minerals }`), or `null` when no pickup is pending.
-   *
-   * The scene applies the minerals to its hold; the registry itself owns no
-   * hold, so the same code serves the game and every gym. The bounty is
-   * drained (not merely read) so a pickup is granted exactly once.
+   * Drains and returns the number of collector drones a field
+   * `mystery_ufo` pickup has queued since the last drain. The shared scene
+   * pass spawns exactly that many drones, so every pickup produces exactly
+   * one visible collector. Draining (not merely reading) means a pickup is
+   * granted exactly once, even if two land in the same frame.
    */
-  consumeMysteryBonus(): { minerals: number } | null {
-    const bonus = this._mysteryBonus;
-    this._mysteryBonus = null;
-    return bonus;
+  consumeMysteryUfoSpawns(): number {
+    const pending = this._mysteryUfoPendingSpawns;
+    this._mysteryUfoPendingSpawns = 0;
+    return pending;
   }
 
   /**
-   * The level-resolved mineral bounty the next Mystery UFO pickup grants
-   * (whole minerals, non-negative). Surfaced for help/tests. (The score axis
-   * is retired with the collector-drone epic — AH-0MV9G113S009B37I.)
+   * Whether the full-hull (permanent) Mystery UFO reward has been taken —
+   * i.e. the ship owns at least one permanent grant. While true the shared
+   * scene pass keeps a collector drone spawning on the level-resolved
+   * interval.
    */
-  mysteryUfoMinerals(): number {
-    const nextLevel = this._levelStore.getEffectiveLevel('mystery_ufo');
+  isMysteryUfoPermanent(): boolean {
+    return this._levelStore.permanentGrants('mystery_ufo') > 0;
+  }
+
+  /**
+   * The level-resolved interval (seconds) between permanent collector-drone
+   * spawns: 30 s at level 0, descending by 2 s per level to a 12 s floor.
+   * Surfaced for the HUD/help copy, tests and the shared spawn timer.
+   */
+  mysteryUfoSpawnInterval(): number {
+    const level = this._levelStore.getEffectiveLevel('mystery_ufo');
     return Math.max(
       0,
-      Math.round(
-        resolvePowerUpAtLevel('mystery_ufo', nextLevel).mysteryUfoMinerals ??
-          0,
-      ),
+      resolvePowerUpAtLevel('mystery_ufo', level).mysteryUfoSpawnInterval ??
+        0,
     );
   }
 
@@ -1613,7 +1603,7 @@ export class EffectsRegistry {
     this._smartBombPulseTimer = 0;
     this._smartBombPulsePending = false;
     this._forceFieldRemaining = 0;
-    this._mysteryBonus = null;
+    this._mysteryUfoPendingSpawns = 0;
     this._thornsRemaining = 0;
     this._strikePermanent = false;
     this._strikePulseTimer = 0;

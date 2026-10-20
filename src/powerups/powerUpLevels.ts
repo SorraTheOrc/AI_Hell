@@ -168,9 +168,6 @@ export type PowerUpLevelVariable =
   | 'forceFieldDuration'
   /** Force Field — bullets the field reflects before it stops. */
   | 'forceFieldReflects'
-  /** Mystery UFO — minerals granted instantly by one pickup (interim: the
-   * instant mineral burst is retired with the collector-drone epic). */
-  | 'mysteryUfoMinerals'
   /** Mystery UFO — collector-drone lifetime in seconds. */
   | 'mysteryUfoLifetime'
   /** Mystery UFO — minerals one collector drone can carry before returning. */
@@ -222,7 +219,6 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'smartBombInterval',
   'forceFieldDuration',
   'forceFieldReflects',
-  'mysteryUfoMinerals',
   'mysteryUfoLifetime',
   'mysteryUfoCapacity',
   'mysteryUfoRadius',
@@ -653,30 +649,11 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
 
   // Mystery UFO — Space Invaders-inspired bonus pickup (AH-0MV1BIXFO006Z1I7).
   // With the collector-drone epic (AH-0MV9G113S009B37I) the instant
-  // mineral/score bounty is being replaced by a visible collector drone; its
-  // level axes (lifetime, capacity, collector radius and permanent spawn
-  // interval) resolve here so the drone grows with the run without re-tuning
-  // code. The retired instant-bounty score axis (base 250 / cap 1500) no
-  // longer exists, and `mysteryUfoMinerals` remains while the instant path
-  // is being torn down.
+  // mineral/score bounty is replaced by a visible collector drone; its level
+  // axes (lifetime, capacity, collector radius and permanent spawn interval)
+  // resolve here so the drone grows with the run without re-tuning code. The
+  // instant-burst axes (score and minerals) no longer exist.
   mystery_ufo: [
-    {
-      variable: 'mysteryUfoMinerals',
-      powerUpId: 'mystery_ufo',
-      label: 'Bonus minerals',
-      unit: '',
-      description: 'Minerals granted instantly by one Mystery UFO pickup.',
-      curve: 'exponential-saturation',
-      base: 2,
-      cap: 6,
-      k: 0.3,
-      discrete: true,
-      rationale:
-        'A small, capped mineral burst (2 → 6) accelerates the ship\'s hold ' +
-        'without flooding it; k=0.3 grants a third mineral at the first ' +
-        'upgrade, so early pickups feel rewarding before the curve flattens. ' +
-        'Discrete so the hold only ever receives whole minerals.',
-    },
     {
       variable: 'mysteryUfoLifetime',
       powerUpId: 'mystery_ufo',
@@ -1080,8 +1057,6 @@ export interface PowerUpLevelStats {
   forceFieldDuration?: number;
   /** Force Field — bullets the field reflects before it stops. */
   forceFieldReflects?: number;
-  /** Mystery UFO — minerals granted instantly by one pickup (interim). */
-  mysteryUfoMinerals?: number;
   /** Mystery UFO — collector-drone lifetime in seconds. */
   mysteryUfoLifetime?: number;
   /** Mystery UFO — minerals one collector drone can carry before returning. */

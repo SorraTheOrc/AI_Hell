@@ -66,11 +66,15 @@ import type { Mineral } from '../../entities/Mineral';
 import { MysteryUfoDrone } from '../../entities/MysteryUfoDrone';
 import {
   NOOP_DRONE_MINERAL_SINK,
+  DEFAULT_DRONE_CAPACITY,
+  DEFAULT_DRONE_COLLECTOR_RADIUS,
+  DEFAULT_DRONE_LIFETIME_SECONDS,
   spawnDrone,
   tickDrones,
   type DroneMineralSink,
   type DroneSpawnConfig,
 } from './combatDrone';
+import { resolvePowerUpAtLevel } from '../../powerups/powerUpLevels';
 import { spawnMuzzleFlash } from '../../vfx/muzzleFlash';
 import {
   CLUSTER_SPLIT_BURST_RADIUS,
@@ -326,6 +330,13 @@ export class CombatCoreScene<
    * behaviour (AH-0MV9G113S009B37I).
    */
   protected drones: MysteryUfoDrone[] = [];
+
+  /**
+   * Countdown (seconds) to the next permanent collector-drone spawn, or
+   * `null` when the full-hull (permanent) reward is not owned. Armed from the
+   * level-resolved interval by {@link CombatCoreScene._updateDroneSpawning}.
+   */
+  private _droneSpawnTimer: number | null = null;
 
   /**
    * Mineral field used by {@link CombatCoreScene.getDroneMineralField} for
@@ -647,22 +658,71 @@ export class CombatCoreScene<
   protected onWeaponCollected(_drop: TDrop): void {}
 
   /**
-   * Drains and applies any pending Mystery UFO instant mineral bounty
-   * (AH-0MV1BIXFO006Z1I7) from the shared effects registry through the
-   * supplied scene sink into the ship's hold. Defined once here so the game
-   * and every gym grant the bounty through the same code; the instant score
-   * burst is retired with the collector-drone epic (AH-0MV9G113S009B37I).
+   * Drains pending Mystery UFO collector-drone spawns and advances the
+   * permanent auto-spawn timer (AH-0MV9G113S009B37I).
    *
-   * @param sinks — the scene's hold mutator.
-   * @returns true when a bounty was pending and applied.
+   * Defined once here so the game and every gym turn a `mystery_ufo` pickup
+   * into the same visible drone: a field pickup queues exactly one spawn
+   * (drained here), while the full-hull permanent reward owns a drone that
+   * re-spawns on the level-resolved interval (30 s at level 0, descending to
+   * a 12 s floor). The instant mineral/score bounty is retired.
+   *
+   * Called at the start of {@link CombatCoreScene._tickPlayer}. No player →
+   * nothing spawns and pending requests stay queued for the next tick with a
+   * ship on screen.
+   *
+   * @param dt — frame delta (seconds).
    */
-  protected _applyPendingMysteryBonus(sinks: {
-    addMinerals: (amount: number) => void;
-  }): boolean {
-    const bonus = this.getEffectsRegistry().consumeMysteryBonus();
-    if (!bonus) return false;
-    if (bonus.minerals > 0) sinks.addMinerals(bonus.minerals);
-    return true;
+  protected _updateDroneSpawning(dt: number): void {
+    if (!this.getPlayer()) return;
+    const registry = this.getEffectsRegistry();
+
+    // Field pickups: exactly one drone per pickup, even if several landed in
+    // the same frame (the registry accumulates them).
+    for (let pending = registry.consumeMysteryUfoSpawns(); pending > 0; pending -= 1) {
+      this._spawnMysteryUfoDrone();
+    }
+
+    // Full-hull reward: one drone every resolved interval for the rest of
+    // the run. The first spawn lands one interval after the reward.
+    if (!registry.isMysteryUfoPermanent()) {
+      this._droneSpawnTimer = null;
+      return;
+    }
+    const interval = registry.mysteryUfoSpawnInterval();
+    if (this._droneSpawnTimer === null) {
+      this._droneSpawnTimer = interval;
+    } else {
+      this._droneSpawnTimer -= dt;
+    }
+    if (this._droneSpawnTimer <= 0) {
+      this._droneSpawnTimer = interval;
+      this._spawnMysteryUfoDrone();
+    }
+  }
+
+  /**
+   * Spawns one collector drone at the ship through the single shared spawn
+   * path, with the level-resolved lifetime, capacity and collector radius.
+   * Returns `null` when there is no ship to launch from.
+   */
+  protected _spawnMysteryUfoDrone(): MysteryUfoDrone | null {
+    const player = this.getPlayer();
+    if (!player) return null;
+    const stats = resolvePowerUpAtLevel(
+      'mystery_ufo',
+      this.getDroneLevel(),
+    );
+    return this.spawnCollectorDrone({
+      x: player.x,
+      y: player.y,
+      homeX: player.x,
+      homeY: player.y,
+      lifetime: stats.mysteryUfoLifetime ?? DEFAULT_DRONE_LIFETIME_SECONDS,
+      capacity: stats.mysteryUfoCapacity ?? DEFAULT_DRONE_CAPACITY,
+      collectorRadius:
+        stats.mysteryUfoRadius ?? DEFAULT_DRONE_COLLECTOR_RADIUS,
+    });
   }
 
   // ── Shared template methods ───────────────────────────────────────
@@ -761,6 +821,9 @@ export class CombatCoreScene<
       this._updateDrones(dt);
       return;
     }
+    // Turn this frame's `mystery_ufo` pickups into visible drones and advance
+    // the permanent auto-spawn timer before the drones tick.
+    this._updateDroneSpawning(dt);
     // Flush any cluster warheads queued by a split on the previous frame so
     // they take part in this frame's advance/collision passes
     // (AH-0MV1BIVIJ007KYXU).

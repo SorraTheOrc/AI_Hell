@@ -3425,16 +3425,16 @@ describe('CombatScene — Options orbit-emitter parity (AH-0MV1BIVVK0043TEM)', (
   });
 });
 
-// ── Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7) ───────────
+// ── Mystery UFO collector-drone spawn parity (AH-0MV9G113S009B37I) ─────
 
-describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7)', () => {
+describe('CombatScene — Mystery UFO collector-drone spawn parity (AH-0MV9G113S009B37I)', () => {
   const games: BootedGame[] = [];
 
   afterEach(() => {
     for (const game of games.splice(0)) game.game.destroy(true);
   });
 
-  it('shares the single _applyPendingMysteryBonus drain across the game and the gym', () => {
+  it('shares the single _spawnMysteryUfoDrone path across the game and the gym', () => {
     for (const [name, prototype] of [
       ['PlayScene', PlayScene.prototype],
       ['GymPowerUpsUtility', GymPowerUpsUtility.prototype],
@@ -3442,21 +3442,21 @@ describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7
       expect(
         Object.prototype.hasOwnProperty.call(
           prototype,
-          '_applyPendingMysteryBonus',
+          '_spawnMysteryUfoDrone',
         ),
-        `${name} must not define its own mystery-bonus drain`,
+        `${name} must not define its own collector-drone spawn`,
       ).toBe(false);
       expect(
         (prototype as unknown as Record<string, unknown>)
-          ._applyPendingMysteryBonus,
+          ._spawnMysteryUfoDrone,
       ).toBe(
         (CombatCoreScene.prototype as unknown as Record<string, unknown>)
-          ._applyPendingMysteryBonus,
+          ._spawnMysteryUfoDrone,
       );
     }
   });
 
-  it('grants the same instant mineral bounty in the game and the utility gym', async () => {
+  it('spawns exactly one collector drone (and no instant minerals) in the game and the utility gym', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
       'mystery-play-host',
@@ -3466,7 +3466,8 @@ describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7
     const playScene = play.scene as PlayScene;
     const gymScene = gym.scene as GymPowerUpsUtility;
 
-    // Clear the gym's random mineral field so only the mystery burst lands.
+    // Clear the gym's random mineral field so only the drone's own sortie can
+    // move minerals into the gym hold.
     const gymMinerals = (gymScene as unknown as { minerals: Mineral[] })
       .minerals;
     for (const mineral of gymMinerals) mineral.destroy();
@@ -3493,20 +3494,27 @@ describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7
       vy: 0,
       facing: 0,
     };
+    // Frame 1 collects the drop (queues the spawn); frame 2 runs the shared
+    // spawn pass that turns the request into a visible drone.
+    playScene.tick(0.016);
     playScene.tick(0.016);
 
     gymScene.spawnDrop('mystery_ufo', 480, 270);
     gymScene.advanceDrops(0.5);
     gymScene.getPlayer()!.setPosition(480, 270);
     gymScene.tick(1 / 60);
+    gymScene.tick(1 / 60);
 
-    // Both grant the same base mineral bounty (+2 minerals) and level up once.
-    expect(playScene.getGameState().minerals).toBe(playBefore + 2);
-    expect(gymScene.getMineralHold().store).toBe(gymBefore + 2);
+    // Both scenes spawn exactly one visible drone and grant no instant
+    // mineral/score burst (the retired invisible bounty).
+    expect(playScene.getDrones()).toHaveLength(1);
+    expect(gymScene.getDrones()).toHaveLength(1);
+    expect(playScene.getGameState().minerals).toBe(playBefore);
+    expect(gymScene.getMineralHold().store).toBe(gymBefore);
     expect(playScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
     expect(gymScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
-    expect(playScene.getEffectsRegistry().mysteryUfoMinerals()).toBe(
-      gymScene.getEffectsRegistry().mysteryUfoMinerals(),
+    expect(playScene.getEffectsRegistry().mysteryUfoSpawnInterval()).toBe(
+      gymScene.getEffectsRegistry().mysteryUfoSpawnInterval(),
     );
   });
 });

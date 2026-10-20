@@ -3163,21 +3163,9 @@ export class PlayScene extends CombatScene<
       this.gameState.addLife();
       this.effectsRegistry.setLives(this.gameState.lives);
     }
-    if (drop.dropId === 'mystery_ufo') {
-      // Instant mineral bounty (Space Invaders homage, AH-0MV1BIXFO006Z1I7):
-      // grant it through the shared registry drain so the game and every gym
-      // apply the same burst, then sync the hold HUD and open the hold-full
-      // choice if the burst filled the hold. The instant score burst is
-      // retired with the collector-drone epic (AH-0MV9G113S009B37I), so only
-      // minerals flow.
-      this._applyPendingMysteryBonus({
-        addMinerals: (amount) => {
-          this.gameState.addMinerals(amount);
-        },
-      });
-      this._syncMineralHud();
-      if (this.gameState.isHoldFull()) this.openMineralChoice();
-    }
+    // `mystery_ufo` needs no scene-local work: the pickup queues a drone spawn
+    // in the shared registry and the shared `_updateDroneSpawning` pass turns
+    // it into the visible collector drone (AH-0MV9G113S009B37I).
   }
 
   /** Weapon pickup hook: records the discrete pickup event (AC3). */

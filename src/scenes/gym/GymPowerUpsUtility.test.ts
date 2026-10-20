@@ -886,33 +886,37 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
     expect(registry.scoopEffectStacks()).toBe(2);
   });
 
-  it('a Mystery UFO field pickup grants the mineral burst into the shared hold (AH-0MV1BIXFO006Z1I7)', async () => {
+  it('a Mystery UFO field pickup spawns one visible collector drone and grants no instant minerals (AH-0MV9G113S009B37I)', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // Base burst = 2 minerals, 250 score (level 0).
     expect(scene.getMineralHold().store).toBe(0);
+    expect(scene.getDrones()).toHaveLength(0);
     scene.spawnDrop('mystery_ufo', 480, 270);
     scene.advanceDrops(0.5);
-    scene.tick(1 / 60);
+    scene.tick(1 / 60); // the pickup queues the drone spawn
+    scene.tick(1 / 60); // the shared spawn pass launches the drone
 
-    // The bounty is granted immediately into the gym's hold; the power-up
-    // levels up (permanent path) and leaves no timed or consumable state.
-    expect(scene.getMineralHold().store).toBe(2);
+    // No instant mineral/score burst: one visible drone, hold untouched, and
+    // no timed or consumable registry state for the power-up.
+    expect(scene.getMineralHold().store).toBe(0);
+    expect(scene.getDrones()).toHaveLength(1);
     expect(player.getPowerUpLevelStore().getEffectiveLevel('mystery_ufo')).toBe(1);
     expect(registry.isActive('mystery_ufo')).toBe(false);
     expect(registry.remaining('mystery_ufo')).toBeUndefined();
     expect(registry.activeEffects().some((e) => e.id === 'mystery_ufo')).toBe(false);
-    // A second drain is a no-op: the bounty is granted exactly once.
-    expect(registry.consumeMysteryBonus()).toBeNull();
+    // The spawn request was drained exactly once.
+    expect(registry.consumeMysteryUfoSpawns()).toBe(0);
 
-    // A second pickup grants the escalated (level-1) burst: +3 minerals.
+    // A second field pickup spawns exactly one more drone (no payout).
     scene.spawnDrop('mystery_ufo', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
-    expect(scene.getMineralHold().store).toBe(5);
+    scene.tick(1 / 60);
+    expect(scene.getDrones()).toHaveLength(2);
+    expect(scene.getMineralHold().store).toBe(0);
   });
 
   it('a same-instance stop/restart clears the P10 scoop state and the field', async () => {

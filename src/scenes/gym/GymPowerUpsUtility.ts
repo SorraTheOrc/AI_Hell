@@ -332,23 +332,6 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   }
 
   /**
-   * Game/gym parity hook: after a power-up is collected, grant the instant
-   * Mystery UFO mineral bounty (Space Invaders homage, AH-0MV1BIXFO006Z1I7)
-   * through the shared registry drain. The gym has no score system, so only
-   * the mineral sink is supplied.
-   */
-  protected override onPowerUpCollected(drop: ActiveDrop): void {
-    super.onPowerUpCollected(drop);
-    if (drop.dropId !== 'mystery_ufo') return;
-    this._applyPendingMysteryBonus({
-      addMinerals: (amount) => {
-        this.mineralHold.collect(amount);
-      },
-    });
-    this._syncMineralHud();
-  }
-
-  /**
    * Advances every drop's lifecycle by `dt` seconds through the shared
    * helper (grow/hold/shrink). Public test seam.
    */

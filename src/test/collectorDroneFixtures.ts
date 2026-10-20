@@ -20,7 +20,7 @@
  *
  * | Parent AC | Behaviour pinned | Verifying test | Lands in |
  * |---|---|---|---|
- * | AC1 | field pickup spawns one drone, never a direct `_mysteryBonus` payout | `effects.test.ts` mystery_ufo group (survivor contract) + spawn-seam unit test | this item (survivor reframe) + AH-0MVBMQ04X0051002 |
+ * | AC1 | field pickup spawns one drone, never a direct instant mineral payout | `effects.test.ts` mystery_ufo group (survivor contract) + spawn-seam unit test | this item (survivor reframe) + AH-0MVBMQ04X0051002 |
  * | AC2 | seek → collect → return → pay out; lifetime/capacity termination | `MysteryUfoDrone.test.ts` / `src/scenes/core/combatDrone.test.ts` (shared-core) | AH-0MVBMPZFE00382DA, AH-0MVBMPZS90038715 |
  * | AC3 | lifetime/capacity/radius/spawn-interval resolve on the shared curve, monotonic | `powerUpLevels.test.ts` new-axis + monotonic tests | AH-0MVBMPZ2C0008VAE |
  * | AC4 | permanent timer fires at the resolved interval; field pickup spawns exactly one drone | `effects.test.ts` / `CombatCoreScene.test.ts` mock-clock test (`createSteppedClock`) | AH-0MVBMQ04X0051002 |

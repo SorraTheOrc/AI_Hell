@@ -86,7 +86,7 @@ const OBSERVABLE: Record<PowerUpId, (registry: EffectsRegistry) => number> = {
   // the shared effect-path consumers drive on (parity holds for game ↔ gym).
   smart_bomb: (r) => r.smartBombInterval(),
   force_field: (r) => r.forceFieldRemaining(),
-  mystery_ufo: (r) => r.mysteryUfoMinerals(),
+  mystery_ufo: (r) => r.mysteryUfoSpawnInterval(),
   // Net-new combat power-ups (AH-0MVCRC1Q0007JAV1): each observable is the
   // shared effect-path accessor the game and gyms both consume, so parity
   // holds for the new catalogue additions too.

@@ -36,6 +36,15 @@ import {
   type MysteryUfoDroneConfig,
 } from '../../entities/MysteryUfoDrone';
 
+/** Default sortie lifetime (s) when the resolved stats are unavailable. */
+export const DEFAULT_DRONE_LIFETIME_SECONDS = 5;
+
+/** Default hold capacity (minerals) when the resolved stats are unavailable. */
+export const DEFAULT_DRONE_CAPACITY = 10;
+
+/** Default vacuum radius (px) when the resolved stats are unavailable. */
+export const DEFAULT_DRONE_COLLECTOR_RADIUS = 20;
+
 /** Extra minerals a destroyed drone spills per power-up level (`2 × level`). */
 export const DRONE_DESTRUCTION_BONUS_PER_LEVEL = 2;
 

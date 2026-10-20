@@ -843,6 +843,58 @@ describe('Mystery UFO: run-scoped level contract (AH-0MV9G113S009B37I)', () => {
     expect(store.getEffectiveLevel('mystery_ufo')).toBe(0);
     expect(store.permanentGrants('mystery_ufo')).toBe(0);
   });
+
+  it('a field pickup queues exactly one collector-drone spawn and no payout (AC1)', () => {
+    const reg = new EffectsRegistry();
+
+    expect(reg.consumeMysteryUfoSpawns()).toBe(0);
+    reg.applyCollect('mystery_ufo');
+    expect(reg.consumeMysteryUfoSpawns()).toBe(1);
+    // Drained: a second drain grants nothing, so no pickup is double-spawned.
+    expect(reg.consumeMysteryUfoSpawns()).toBe(0);
+    // The permanent auto-spawn is only armed by the full-hull reward.
+    expect(reg.isMysteryUfoPermanent()).toBe(false);
+  });
+
+  it('accumulates one spawn per field pickup before a drain', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('mystery_ufo');
+    reg.applyCollect('mystery_ufo');
+    expect(reg.consumeMysteryUfoSpawns()).toBe(2);
+  });
+
+  it('a hold-full (permanent) reward arms the auto-spawn but queues no one-shot (AC4)', () => {
+    const reg = new EffectsRegistry();
+
+    reg.applyCollect('mystery_ufo', true);
+
+    expect(reg.isMysteryUfoPermanent()).toBe(true);
+    expect(reg.consumeMysteryUfoSpawns()).toBe(0);
+  });
+
+  it('resolves the permanent spawn interval from the shared curve (30 s base, descending)', () => {
+    const reg = new EffectsRegistry();
+
+    // Level 0 (unowned) is the curve base: 30 s.
+    expect(reg.mysteryUfoSpawnInterval()).toBe(30);
+    // The first collection resolves at level 1; the interval descends.
+    reg.applyCollect('mystery_ufo');
+    expect(reg.mysteryUfoSpawnInterval()).toBe(
+      resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoSpawnInterval,
+    );
+    expect(reg.mysteryUfoSpawnInterval()).toBeLessThan(30);
+  });
+
+  it('reset() clears the pending spawns and re-disarms the permanent reward', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('mystery_ufo');
+    reg.applyCollect('mystery_ufo', true);
+
+    reg.reset();
+
+    expect(reg.consumeMysteryUfoSpawns()).toBe(0);
+    expect(reg.isMysteryUfoPermanent()).toBe(false);
+  });
 });
 
 // ── Phase Shift ───────────────────────────────────────────────────
