@@ -37,6 +37,7 @@ import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
 import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
+import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss } from '../entities/MiniBoss';
 import { minionCountForPhase } from '../waves/BossMinions';
 import type { WeaponDefinition } from '../utils/weapons';
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
@@ -133,16 +134,85 @@ function finishSpawnSequence(scene: PlayScene): void {
   scene.tick(0.001);
 }
 
-/** Destroys every live enemy via player bullets (deterministic). */
-function killAllEnemies(scene: PlayScene): void {
+/** Destroys every live spawned enemy via player bullets (deterministic). */
+function killSpawnedEnemies(scene: PlayScene): void {
   // Enemies are protected until their spawn animation completes; advance
   // past it first so the kill loop can actually damage them.
   finishSpawnSequence(scene);
-  for (let guard = 0; guard < 500 && scene.getAliveCount() > 0; guard++) {
+  for (let guard = 0; guard < 2000 && scene.getAliveCount() > 0; guard++) {
+    // A hold-full choice pauses the scene (tick() no-ops) — resolve it so the
+    // kill loop keeps making progress (AH-0MV5L6BVN005DP4I).
+    if (resolveMineralChoiceIfOpen(scene)) continue;
     const enemy = scene.getEnemies().find((e) => e.alive)!;
     scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
-    scene.tick(0.016);
+    // A zero-length step still resolves collisions but moves nothing, so the
+    // bullet is guaranteed to overlap the (possibly fast-moving, carried-over)
+    // target — a 16 ms step lets a diving enemy dodge a stationary bullet and
+    // stall the walk.
+    scene.tick(0);
   }
+}
+
+/**
+ * Clears the current level's mini-boss wave through the normal damage path:
+ * every spawned escort plus the encounter entity itself (the wave has no time
+ * limit, so it can never be carried past by a timeout).
+ */
+function clearMiniBossWave(scene: PlayScene): void {
+  // The wave is flagged active until it is fully wiped, so gate on the wave
+  // state rather than the entity (which may already be dead while escorts
+  // remain).
+  for (let guard = 0; guard < 50; guard++) {
+    if (resolveMineralChoiceIfOpen(scene)) continue;
+    const wm = scene.getWaveManager();
+    if (!wm.miniBossActive || wm.bossTriggered || scene.isTransitioning()) return;
+    killAllEnemies(scene);
+    if (scene.getAliveCount() === 0 && !scene.getMiniBoss()) return;
+  }
+}
+
+/**
+ * Destroys the active level's mini-boss (if any) via player bullets, disabling
+ * auto-fire and the spawned-enemy hit list so only the mini-boss takes the
+ * damage. A no-op outside the mini-boss encounter
+ * (AH-0MVCRBISU006NUN5).
+ */
+function killMiniBoss(scene: PlayScene): void {
+  const miniBoss = scene.getMiniBoss();
+  if (!miniBoss?.alive) return;
+  const isolated = scene as unknown as {
+    getEnemyEntities(): readonly unknown[];
+    autoFireEnabled(): boolean;
+  };
+  const originalGetEnemyEntities = isolated.getEnemyEntities;
+  const originalAutoFireEnabled = isolated.autoFireEnabled;
+  isolated.getEnemyEntities = () => [];
+  isolated.autoFireEnabled = () => false;
+  try {
+    const hits =
+      miniBoss.getPhaseCount() * MINI_BOSS_DEFAULT_HP_PER_PHASE;
+    let fired = 0;
+    // The extra guard headroom absorbs hold-full pauses (tick() no-ops while
+    // the choice overlay is open), resolved as they appear. A zero-length
+    // step guarantees the bullet overlaps the moving entity.
+    for (let guard = 0; guard < hits * 4 && fired < hits && miniBoss.alive; guard++) {
+      if (resolveMineralChoiceIfOpen(scene)) continue;
+      scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+      fired += 1;
+      scene.tick(0);
+    }
+  } finally {
+    isolated.getEnemyEntities = originalGetEnemyEntities;
+    isolated.autoFireEnabled = originalAutoFireEnabled;
+  }
+}
+
+/** Destroys every live enemy via player bullets (deterministic). */
+function killAllEnemies(scene: PlayScene): void {
+  killSpawnedEnemies(scene);
+  // The wave-10 mini-boss gates its level, so it must be defeated too before
+  // the next wave/level can begin (AH-0MVCRBISU006NUN5).
+  killMiniBoss(scene);
 }
 
 /**
@@ -324,6 +394,7 @@ function isolateEnemyForKill(scene: PlayScene, enemy: unknown): () => void {
 function timeOutToBoss(scene: PlayScene): void {
   const gs = scene.getGameState();
   gs.lives = 99; // absorb incidental enemy fire while timeouts advance the run.
+  let miniBossIterations = 0;
   for (let guard = 0; guard < 1000; guard++) {
     const wm = scene.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
@@ -333,6 +404,16 @@ function timeOutToBoss(scene: PlayScene): void {
     if (resolveMineralChoiceIfOpen(scene)) continue;
     if (scene.isTransitioning()) {
       finishTransition(scene);
+      continue;
+    }
+    // The mini-boss encounter has no wave time limit (it gates its level), so
+    // a timeout can never advance it: clear the escorts and the encounter
+    // entity directly to keep the walk moving (AH-0MVCRBISU006NUN5). Gate on
+    // the wave state, not the entity — the entity may die first while escorts
+    // remain.
+    if (wm.miniBossActive) {
+      miniBossIterations += 1;
+      clearMiniBossWave(scene);
       continue;
     }
     scene.setWaveTimerRemaining(0.001);
@@ -348,11 +429,22 @@ function timeOutToBoss(scene: PlayScene): void {
   const boss = scene.getBoss();
   if (!boss) {
     const wm = scene.getWaveManager();
+    const miniBoss = scene.getMiniBoss();
+    const aliveNames = scene
+      .getEnemies()
+      .filter((e) => e.alive)
+      .slice(0, 8)
+      .map((e) => e.constructor.name);
     throw new Error(
       `Failed to reach boss encounter via timeout after 1000 iterations: ` +
         `bossTriggered=${wm.bossTriggered} bossActive=${wm.bossActive} ` +
         `level=${wm.level} wave=${wm.waveNumber} ` +
-        `enemiesAlive=${wm.enemiesAlive} aliveCount=${scene.getAliveCount()}`,
+        `enemiesAlive=${wm.enemiesAlive} aliveCount=${scene.getAliveCount()} ` +
+        `miniBossAlive=${miniBoss ? miniBoss.alive : 'null'} ` +
+        `miniBossActive=${wm.miniBossActive} ` +
+        `miniBossIterations=${miniBossIterations} ` +
+        `transitioning=${scene.isTransitioning()} ` +
+        `aliveNames=${aliveNames.join(',')}`,
     );
   }
 }
@@ -1644,6 +1736,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // level transition into Level 2.
     for (let wave = 0; wave < wm.waveCount; wave++) {
       killNonAsteroidEnemies(scene);
+      // The wave-10 mini-boss is a separate gating entity (not part of the
+      // spawned set); defeat it too so the level can transition
+      // (AH-0MVCRBISU006NUN5).
+      killMiniBoss(scene);
       expect(scene.isTransitioning()).toBe(true);
       finishTransition(scene);
     }
@@ -6582,5 +6678,224 @@ describe('PlayScene — Phaser orbital spawn transit (AH-0MVEXVME1004SIIS)', () 
     expect(sorted[0] + 360 - sorted[sorted.length - 1]).toBeCloseTo(90, 6);
     const keys = dests.map((d) => `${d!.x.toFixed(4)},${d!.y.toFixed(4)}`);
     expect(new Set(keys).size).toBe(4);
+  });
+});
+
+/**
+ * Mini-boss integration (AH-0MVCRBISU006NUN5, epic AH-0MVCC8XSS007P01Z).
+ *
+ * The wave manager already recognises each level's wave-10 mini-boss
+ * (AH-0MVCRAV3B0069AIJ) and the config-driven `MiniBoss` entity already exists
+ * (AH-0MVCRAYSH0014BQJ). These tests cover the PlayScene wiring: spawn on the
+ * mini-boss wave, level gating on its defeat, the reward/checkpoint defeat
+ * hooks, HUD reflection, and the final-level path into the final boss.
+ */
+describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * A compact campaign whose last wave of each level is the mini-boss
+   * encounter. Tiny formations keep the deterministic walks fast while
+   * exercising the same shared wave/mini-boss code paths as the shipped
+   * 10-wave levels.
+   */
+  function miniBossCampaign(levelCount = 2): LevelDefinition[] {
+    const scoutGroup = (count: number) => ({
+      enemyKey: 'scout',
+      formation: 'v' as const,
+      count,
+      spacingX: 30,
+      spacingY: 26,
+      startX: GAME_WIDTH * 0.2,
+      startY: GAME_HEIGHT * 0.38,
+    });
+    const levels: LevelDefinition[] = [];
+    for (let i = 0; i < levelCount; i++) {
+      levels.push({
+        level: i + 1,
+        name: i === 0 ? 'Entry' : 'Descent',
+        waves: [
+          { groups: [scoutGroup(2)], shootEnabled: false },
+          { groups: [scoutGroup(2)], shootEnabled: false, miniBoss: true },
+        ],
+      });
+    }
+    return levels;
+  }
+
+  async function bootMiniBossCampaign(
+    levelCount = 2,
+  ): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(
+      miniBossCampaign(levelCount),
+    );
+    booted = game;
+    scene.setAsteroidSpawnerEnabled(false);
+    return scene;
+  }
+
+  /** Clears every regular wave until the level's mini-boss wave is current. */
+  function advanceToMiniBoss(scene: PlayScene): void {
+    const wm = scene.getWaveManager();
+    scene.getGameState().lives = 99; // survive incidental fire while walking.
+    for (let guard = 0; guard < 20 && !wm.miniBossActive; guard++) {
+      if (resolveMineralChoiceIfOpen(scene)) continue;
+      killSpawnedEnemies(scene);
+      finishTransition(scene);
+    }
+    expect(wm.miniBossActive).toBe(true);
+  }
+
+  it('AC1 — the mini-boss wave spawns the active level\'s mini-boss config', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+
+    const miniBoss = scene.getMiniBoss();
+    expect(miniBoss).not.toBeNull();
+    expect(miniBoss!.alive).toBe(true);
+    expect(miniBoss).toBeInstanceOf(MiniBoss);
+    // The generic default config names the active level until the bespoke
+    // mini-boss designs feature lands (AC3).
+    expect(miniBoss!.resolvedConfig.level).toBe(scene.getWaveManager().level);
+    expect(miniBoss!.resolvedConfig.name).toBe('Mini-Boss');
+    // The shared boss accessor targets the encounter so the live entity is
+    // advanced/targeted by the shared combat core.
+    expect(scene.getBoss()).toBe(miniBoss);
+  });
+
+  it('AC2 — the level does not advance while the mini-boss is alive, and completes only on its defeat', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const wm = scene.getWaveManager();
+    expect(wm.level).toBe(1);
+
+    // Wipe the wave's escorts: the encounter (and the level) must be held.
+    killSpawnedEnemies(scene);
+    expect(scene.getMiniBoss()!.alive).toBe(true);
+    expect(wm.level).toBe(1);
+    expect(wm.miniBossActive).toBe(true);
+    expect(scene.isTransitioning()).toBe(false);
+
+    // Defeating the mini-boss completes the level; the next level begins at
+    // wave 1.
+    killMiniBoss(scene);
+    expect(scene.getMiniBoss()).toBeNull();
+    expect(wm.miniBossActive).toBe(false);
+    expect(wm.level).toBe(2);
+    expect(wm.waveNumber).toBe(1);
+
+    finishTransition(scene);
+    expect(wm.level).toBe(2);
+    expect(wm.waveNumber).toBe(1);
+  });
+
+  it('AC3 — defeat fires exactly one reward hook and one checkpoint hook at the defeat moment', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const reward = vi.fn();
+    const checkpoint = vi.fn();
+    scene.setMiniBossRewardHook(reward);
+    scene.setMiniBossCheckpointHook(checkpoint);
+    expect(scene.getMiniBossDefeatCount()).toBe(0);
+
+    killMiniBoss(scene);
+
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+    expect(reward).toHaveBeenCalledTimes(1);
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+    const expected = {
+      level: 1,
+      waveNumber: 2,
+      miniBossName: 'Mini-Boss',
+      isFinalLevel: false,
+    };
+    expect(reward).toHaveBeenCalledWith(expected);
+    expect(checkpoint).toHaveBeenCalledWith(expected);
+
+    // Further ticks (e.g. the level transition) never re-fire the hooks.
+    scene.tick(0.016);
+    finishTransition(scene);
+    expect(reward).toHaveBeenCalledTimes(1);
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+  });
+
+  it('AC3 — the defeat hooks are guarded until a consumer installs them', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+
+    // No hooks installed: defeating the mini-boss must not throw and must
+    // still advance the level.
+    expect(() => killAllEnemies(scene)).not.toThrow();
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+    expect(scene.getWaveManager().level).toBe(2);
+  });
+
+  it('AC4 — the HUD shows wave 10 of N and the mini-boss health bar during the encounter', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const wm = scene.getWaveManager();
+    const miniBoss = scene.getMiniBoss()!;
+
+    // The shared progress label reflects the wave-10 wave of N position.
+    expect(wm.waveNumber).toBe(wm.waveCount);
+    expect(scene.getLevelText()).toBe(
+      `Level 1: Entry, Wave: ${wm.waveCount} of ${wm.waveCount}`,
+    );
+    // The shared health bar renders for the encounter (same Boss machinery).
+    expect(scene.getBossPhase()).toBe(1);
+    expect(miniBoss.getHpFraction()).toBe(1);
+    expect(miniBoss.getHealthBarGraphics().visible).toBe(true);
+
+    // A hit depletes the visible health fraction.
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.getEnemyEntities = () => [];
+    isolated.autoFireEnabled = () => false;
+    try {
+      scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+      scene.tick(0.016);
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    expect(miniBoss.getHpFraction()).toBeLessThan(1);
+  });
+
+  it('AC5 — on the final level, defeating the mini-boss triggers the final boss', async () => {
+    // One level: `isFinalLevel` is true from the start, so the level's
+    // mini-boss defeat must trigger the Central AI boss.
+    const scene = await bootMiniBossCampaign(1);
+    advanceToMiniBoss(scene);
+    expect(scene.getWaveManager().isFinalLevel).toBe(true);
+
+    killAllEnemies(scene);
+    const wm = scene.getWaveManager();
+    expect(wm.bossTriggered).toBe(true);
+    expect(scene.getMiniBoss()).toBeNull();
+
+    finishTransition(scene);
+    expect(wm.bossActive).toBe(true);
+    const boss = scene.getBoss();
+    expect(boss).not.toBeNull();
+    expect(boss).not.toBeInstanceOf(MiniBoss);
+    expect(boss!.alive).toBe(true);
   });
 });

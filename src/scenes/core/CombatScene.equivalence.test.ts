@@ -1814,10 +1814,30 @@ function reachPlayBoss(play: PlayScene): void {
     if (wm.bossTriggered || wm.bossActive) break;
     play.finishSpawnAnimations();
     for (let inner = 0; inner < 2000; inner++) {
+      // A hold-full choice pauses the scene (tick() no-ops) — resolve it.
+      if (play.isMineralChoiceOpen()) {
+        play.selectMineralChoice(0);
+        continue;
+      }
       const enemy = play.getEnemies().find((e) => e.alive);
       if (!enemy) break;
       play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
       play.tick(0.016);
+    }
+    // The wave-10 mini-boss is a separate gating entity (not part of the
+    // spawned set): defeat it too, otherwise the level never completes
+    // (AH-0MVCRBISU006NUN5 AC2).
+    const miniBoss = play.getMiniBoss();
+    if (miniBoss?.alive) {
+      for (let hits = 0; hits < 800 && miniBoss.alive; hits++) {
+        if (play.isMineralChoiceOpen()) {
+          play.selectMineralChoice(0);
+          continue;
+        }
+        play.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+        // A zero-length step resolves collisions without moving the target.
+        play.tick(0);
+      }
     }
     // Nothing alive but the wave still has accounted enemies: advance the
     // scene so pending dynamic spawns are released and the wave timer runs.

@@ -204,6 +204,7 @@ import {
 } from '../waves/LaneTrafficSpawner';
 import { LaneTraffic } from '../entities/LaneTraffic';
 import { Boss, BossPhase } from '../entities/Boss';
+import { MiniBoss, type MiniBossConfig } from '../entities/MiniBoss';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
   CombatScene,
@@ -242,6 +243,32 @@ export {
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './core/waveTimeout';
+
+// ── Mini-boss defeat hooks (epic AH-0MVCC8XSS007P01Z) ─────────────
+
+/**
+ * Context delivered to the mini-boss reward/checkpoint hooks at the moment
+ * of defeat (before the run state advances), so `level`/`waveNumber` name
+ * the level whose mini-boss was just defeated.
+ */
+export interface MiniBossDefeatContext {
+  /** Campaign level whose mini-boss was defeated (1-based). */
+  level: number;
+  /** Wave number of the defeated mini-boss encounter within the level. */
+  waveNumber: number;
+  /** Display name of the defeated mini-boss entity. */
+  miniBossName: string;
+  /** Whether this was the final level's mini-boss (the final boss follows). */
+  isFinalLevel: boolean;
+}
+
+/**
+ * Reward callback fired **exactly once** when a mini-boss is defeated
+ * (AH-0MVCRBISU006NUN5 AC3). Consumed by the mini-boss reward feature; the
+ * call is guarded while no hook is installed. Until the mini-boss designs
+ * feature lands, every level uses the generic default mini-boss.
+ */
+export type MiniBossDefeatHook = (context: MiniBossDefeatContext) => void;
 
 // ── Scoring (GDD §4.5) ──────────────────────────────────────────────
 
@@ -518,6 +545,35 @@ export class PlayScene extends CombatScene<
 
   /** The Central AI boss, spawned after the final level (null until then). */
   private boss: Boss | null = null;
+
+  /**
+   * The active level's wave-10 mini-boss entity (epic AH-0MVCC8XSS007P01Z),
+   * spawned when the {@link WaveManager} opens the level's mini-boss wave and
+   * held until it is defeated — the level only completes on its defeat.
+   * Null outside the mini-boss encounter.
+   */
+  private miniBoss: MiniBoss | null = null;
+
+  /**
+   * Optional reward hook fired **exactly once** per mini-boss defeat
+   * (consumer: mini-boss reward feature). `null` until a consumer installs
+   * one; the call is guarded while absent (AC3).
+   */
+  private miniBossRewardHook: MiniBossDefeatHook | null = null;
+
+  /** Optional checkpoint hook — see {@link miniBossRewardHook}. */
+  private miniBossCheckpointHook: MiniBossDefeatHook | null = null;
+
+  /** Total mini-bosses defeated this run (AC3: exactly one hook per defeat). */
+  private miniBossDefeats = 0;
+
+  /**
+   * Campaign level whose mini-boss has already been spawned this run. Guards
+   * {@link _spawnMiniBossIfDue} against re-spawning (and double-registering
+   * the gating spawn) if `spawnWave` were ever re-entered while the wave's
+   * escorts are still alive.
+   */
+  private miniBossSpawnedLevel: number | null = null;
 
   /** Resolved DOM key name that toggles pause (from the bindings). */
   private pauseKeyName = 'Escape';
@@ -937,6 +993,9 @@ export class PlayScene extends CombatScene<
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
     this.boss = null;
+    this.miniBoss = null;
+    this.miniBossDefeats = 0;
+    this.miniBossSpawnedLevel = null;
     this.driftX = 0;
     this.driftDir = 1;
     this.diverAnchorX = 0;
@@ -1015,6 +1074,8 @@ export class PlayScene extends CombatScene<
     this.player = null;
     this.boss?.destroy();
     this.boss = null;
+    this.miniBoss?.destroy();
+    this.miniBoss = null;
     this.bannerText?.destroy();
     this.bannerText = null;
     this.waveTimerBar?.destroy();
@@ -1284,12 +1345,64 @@ export class PlayScene extends CombatScene<
       // in full: fresh march spawns join the single rigid block (mirroring
       // the gym's carry-over respawn).
     }
+    this._spawnMiniBossIfDue();
     this._startWaveTimer();
     this.runTelemetry.waveStart(
       this.waveManager.level,
       this.waveManager.waveNumber,
       this.waveManager.waveCount,
     );
+  }
+
+  /**
+   * Spawns the level's mini-boss when the active wave is the flagged
+   * wave-10 mini-boss encounter (epic AH-0MVCC8XSS007P01Z, AC1). Called from
+   * {@link spawnWave} — i.e. once per wave/level transition — so the entity
+   * appears as the mini-boss wave begins. Idempotent: an already-live entity
+   * is never re-spawned.
+   *
+   * The entity is registered with the {@link WaveManager} as a gating spawn,
+   * so the level clears only once the mini-boss **and** the wave's escorts
+   * are destroyed (AC2). Its defeat then replays one destruction through the
+   * shared wave state machine (see {@link _damageMiniBoss}).
+   */
+  private _spawnMiniBossIfDue(): void {
+    if (!this.waveManager.miniBossActive) return;
+    if (this.miniBoss?.alive) return;
+
+    const level = this.waveManager.level;
+    // One encounter per level: never re-register the gating spawn (a second
+    // registration would require a second destruction and stall the wave).
+    if (this.miniBossSpawnedLevel === level) return;
+    this.miniBossSpawnedLevel = level;
+    this.miniBoss = new MiniBoss(this, this.miniBossConfigFor(level));
+    this.add.existing(this.miniBoss);
+    // Gate the level on the mini-boss: the wave cannot clear (and the level
+    // cannot advance) until this registration is itself destroyed.
+    this.waveManager.registerDynamicSpawn(1);
+    // No per-wave time limit applies to the encounter (like the final boss).
+    this._hideWaveTimer();
+  }
+
+  /**
+   * Builds the config for the active level's mini-boss (extension point for
+   * the per-level mini-boss designs feature, epic AH-0MVCC8XSS007P01Z).
+   *
+   * Until those designs land this returns the **generic default** mini-boss
+   * — config-driven phases, patterns, HP and colour defaulted by
+   * {@link MiniBoss} — positioned like the final boss at the screen centre.
+   * An override supplies a per-level design without changing the share/defeat
+   * wiring.
+   */
+  protected miniBossConfigFor(level: number): MiniBossConfig {
+    return {
+      level,
+      name: 'Mini-Boss',
+      x: GAME_WIDTH / 2,
+      y: GAME_HEIGHT / 2 - 80,
+      formationOffset: { row: 0, col: 0 },
+      rng: this.rng,
+    };
   }
 
   /**
@@ -2199,7 +2312,16 @@ export class PlayScene extends CombatScene<
    * Handles a wave/level/boss transition after an enemy death.
    */
   private _advanceAfterKill(): void {
-    const event = this.waveManager.onEnemyDestroyed();
+    this._handleWaveEvent(this.waveManager.onEnemyDestroyed());
+  }
+
+  /**
+   * Reacts to a {@link WaveEvent} from the shared wave state machine. Split
+   * out of {@link _advanceAfterKill} so the mini-boss defeat path
+   * ({@link _damageMiniBoss}) replays exactly the same transition handling
+   * as an ordinary enemy death.
+   */
+  private _handleWaveEvent(event: WaveEvent): void {
     switch (event) {
       case 'continue':
         return;
@@ -2485,6 +2607,8 @@ export class PlayScene extends CombatScene<
       if (s.entity.alive) s.entity.destroySelf();
     }
     this.spawned = [];
+    this.miniBoss?.destroy();
+    this.miniBoss = null;
     for (const bullet of this.enemyBullets) bullet.graphics.destroy();
     this.enemyBullets = [];
     this.pendingAsteroidSpawns = [];
@@ -2582,6 +2706,52 @@ export class PlayScene extends CombatScene<
       this.runTelemetry.bossPhase(boss.getPhaseNumber());
       this._spawnMinions(boss.getPhaseNumber());
     }
+  }
+
+  /**
+   * Handles one player hit on the active level's mini-boss (epic
+   * AH-0MVCC8XSS007P01Z, AH-0MVCRBISU006NUN5). The shared `takeDamage()`
+   * contract drives phases/patterns; on the lethal blow the encounter is
+   * finalised exactly once:
+   *
+   * 1. the reward and checkpoint hooks fire (capturing the level just
+   *    completed, before the run state advances) — AC3;
+   * 2. the registered gating spawn is replayed through the shared wave state
+   *    machine, which advances the level (or triggers the final boss on the
+   *    final level) — AC2/AC3.
+   */
+  private _damageMiniBoss(hitX?: number, hitY?: number): void {
+    const miniBoss = this.miniBoss;
+    if (!miniBoss || !miniBoss.alive) return;
+
+    const result = miniBoss.takeDamage(hitX, hitY);
+    if (!result.destroyed) return;
+
+    const context: MiniBossDefeatContext = {
+      level: this.waveManager.level,
+      waveNumber: this.waveManager.waveNumber,
+      miniBossName: miniBoss.resolvedConfig.name,
+      isFinalLevel: this.waveManager.isFinalLevel,
+    };
+    this.miniBoss = null;
+    this._fireMiniBossDefeatHooks(context);
+
+    // The mini-boss was registered as a gating dynamic spawn when it spawned,
+    // so this single destruction closes its encounter and advances the level
+    // (or triggers the final boss) through the ordinary wave path.
+    this._handleWaveEvent(this.waveManager.onEnemyDestroyed());
+  }
+
+  /**
+   * Fires the reward then checkpoint hooks exactly once for one mini-boss
+   * defeat (AC3). Both are optional — guarded while no consumer is installed,
+   * so the gameplay path is unchanged until the reward/checkpoint features
+   * land.
+   */
+  private _fireMiniBossDefeatHooks(context: MiniBossDefeatContext): void {
+    this.miniBossDefeats += 1;
+    this.miniBossRewardHook?.(context);
+    this.miniBossCheckpointHook?.(context);
   }
 
   /**
@@ -2817,13 +2987,7 @@ export class PlayScene extends CombatScene<
    * (the multi-hit boss is not handled by the generic enemy loop).
    */
   protected override onPlayerBulletHitsBoss(pb: PlayerBullet): boolean {
-    if (
-      this.boss?.alive &&
-      this._overlaps(
-        pb.x, pb.y, PLAYER_BULLET_RADIUS,
-        this.boss.x, this.boss.y, this.boss.getHitRadius(),
-      )
-    ) {
+    if (this._playerBulletHitsEntity(pb, this.boss)) {
       if (pb.aoeWeapon) {
         // An `'onImpact'` AOE projectile detonates instead of dealing a direct
         // phase hit; the blast damages the boss through `onAoeHitsBoss`.
@@ -2834,30 +2998,65 @@ export class PlayScene extends CombatScene<
       pb.destroy();
       return true;
     }
+    // Mini-boss encounter (the final boss is not spawned at the same time).
+    if (this._playerBulletHitsEntity(pb, this.miniBoss)) {
+      if (pb.aoeWeapon) {
+        this.detonateAoeProjectile(pb);
+      } else {
+        this._damageMiniBoss(pb.x, pb.y);
+      }
+      pb.destroy();
+      return true;
+    }
     return false;
   }
 
+  /** Whether a player bullet overlaps a live multi-hit boss-style entity. */
+  private _playerBulletHitsEntity(
+    pb: PlayerBullet,
+    entity: Boss | MiniBoss | null,
+  ): boolean {
+    return Boolean(
+      entity?.alive &&
+        this._overlaps(
+          pb.x, pb.y, PLAYER_BULLET_RADIUS,
+          entity.x, entity.y, entity.getHitRadius(),
+        ),
+    );
+  }
+
   /**
-   * AOE effect hits the boss: routes through the same `_damageBoss()` path a
-   * player bullet uses, so multi-phase pacing, phase scoring and minion
-   * summons are identical (parent AH-0MUOOB3OR001V8CD AC5).
+   * AOE effect hits the boss (final boss or mini-boss): routes through the
+   * same damage path a player bullet uses, so multi-phase pacing, phase scores
+   * and minion summons are identical (parent AH-0MUOOB3OR001V8CD AC5).
    */
   protected override onAoeHitsBoss(
     x: number,
     y: number,
     radius: number,
   ): boolean {
-    if (
-      this.boss?.alive &&
-      this._overlaps(
-        x, y, radius,
-        this.boss.x, this.boss.y, this.boss.getHitRadius(),
-      )
-    ) {
+    if (this._aoeHitsEntity(x, y, radius, this.boss)) {
       this._damageBoss(x, y);
       return true;
     }
+    if (this._aoeHitsEntity(x, y, radius, this.miniBoss)) {
+      this._damageMiniBoss(x, y);
+      return true;
+    }
     return false;
+  }
+
+  /** Whether an AOE effect overlaps a live multi-hit boss-style entity. */
+  private _aoeHitsEntity(
+    x: number,
+    y: number,
+    radius: number,
+    entity: Boss | MiniBoss | null,
+  ): boolean {
+    return Boolean(
+      entity?.alive &&
+        this._overlaps(x, y, radius, entity.x, entity.y, entity.getHitRadius()),
+    );
   }
 
   /** Ramming an enemy destroys it but awards no score. */
@@ -2869,14 +3068,22 @@ export class PlayScene extends CombatScene<
     this._onEnemyKilled(s, false);
   }
 
-  /** Ramming the boss only costs the player a life. */
+  /** Ramming the active boss-style encounter only costs the player a life. */
   protected override onPlayerRamsBoss(): boolean {
-    if (!this.player || !this.boss?.alive) return false;
+    if (!this.player) return false;
     const playerHull = SHIP_SIZE / 2;
-    return this._overlaps(
-      this.player.x, this.player.y, playerHull,
-      this.boss.x, this.boss.y, this.boss.getHitRadius(),
-    );
+    for (const entity of [this.boss, this.miniBoss]) {
+      if (!entity?.alive) continue;
+      if (
+        this._overlaps(
+          this.player.x, this.player.y, playerHull,
+          entity.x, entity.y, entity.getHitRadius(),
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Mineral collection/absorption runs between the shared collision passes. */
@@ -3180,7 +3387,11 @@ export class PlayScene extends CombatScene<
     if (
       this.waveManager.bossTriggered ||
       this.waveManager.bossActive ||
-      this.waveManager.bossDefeated
+      this.waveManager.bossDefeated ||
+      // The mini-boss encounter has no wave time limit (like the final boss):
+      // the level only completes when the mini-boss is defeated, so a timeout
+      // must never carry the level past an undefeated mini-boss (AC2).
+      this.waveManager.miniBossActive
     ) {
       this._hideWaveTimer();
       return;
@@ -3222,6 +3433,12 @@ export class PlayScene extends CombatScene<
    * detonation helper (`core/waveTimeout.ts`) is now a no-op.
    */
   private _timeoutWave(): void {
+    // The mini-boss encounter is not time-limited: a timeout must never carry
+    // the level past an undefeated mini-boss (AC2).
+    if (this.waveManager.miniBossActive) {
+      this._hideWaveTimer();
+      return;
+    }
     const survivors = this.spawned.filter((s) => s.entity.alive);
     if (survivors.length === 0) {
       // No enemies left to carry over — the penalty does not apply.
@@ -3454,14 +3671,52 @@ export class PlayScene extends CombatScene<
     return this.effectsRegistry.isPhased;
   }
 
-  /** The Central AI boss, or null before it spawns. */
+  /**
+   * The active multi-hit boss encounter entity: the level's mini-boss while
+   * it is active, otherwise the Central AI final boss (null before either
+   * spawns). The shared combat core advances/targets whichever is active, so
+   * the mini-boss runs the same tick, health bar and teleport avoidance as
+   * the final boss.
+   */
   getBoss(): Boss | null {
-    return this.boss;
+    return this.miniBoss ?? this.boss;
+  }
+
+  /** The active level's mini-boss entity, or null outside its encounter. */
+  getMiniBoss(): MiniBoss | null {
+    return this.miniBoss;
+  }
+
+  /**
+   * Installs the mini-boss reward-consumer hook (reward feature seam). Fired
+   * exactly once per mini-boss defeat, before the level advances (AC3).
+   * Pass `null` to remove it.
+   */
+  setMiniBossRewardHook(hook: MiniBossDefeatHook | null): void {
+    this.miniBossRewardHook = hook;
+  }
+
+  /**
+   * Installs the mini-boss checkpoint-consumer hook (checkpoint feature seam).
+   * Fired exactly once per mini-boss defeat, before the level advances (AC3).
+   * Pass `null` to remove it.
+   */
+  setMiniBossCheckpointHook(hook: MiniBossDefeatHook | null): void {
+    this.miniBossCheckpointHook = hook;
+  }
+
+  /**
+   * Number of mini-boss encounters defeated this run (test/telemetry seam;
+   * AC3 asserts the defeat hooks fire exactly once per increment).
+   */
+  getMiniBossDefeatCount(): number {
+    return this.miniBossDefeats;
   }
 
   /** The boss's current health phase (1–4); 0 while no boss is present. */
   getBossPhase(): number {
-    return this.boss ? this.boss.getPhaseNumber() : 0;
+    const boss = this.getBoss();
+    return boss ? boss.getPhaseNumber() : 0;
   }
 
   /** Live enemies (one per spawned entity, destroyed ones included). */

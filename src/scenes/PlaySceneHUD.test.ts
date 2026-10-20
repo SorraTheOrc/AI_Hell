@@ -124,6 +124,22 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
         scene.spawnPlayerBullet(e.x, e.y, 0, 0);
         scene.tick(0.016);
       }
+      // The wave-10 mini-boss is a separate gating entity (not part of the
+      // spawned set): defeat it too so the level can complete
+      // (AH-0MVCRBISU006NUN5).
+      const miniBoss = scene.getMiniBoss();
+      if (miniBoss?.alive) {
+        for (let h = 0; h < 400 && miniBoss.alive; h++) {
+          // Resolve a hold-full pause so each tick resolves the bullet.
+          if (scene.isMineralChoiceOpen()) {
+            scene.selectMineralChoice(0);
+            continue;
+          }
+          scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+          // A zero-length step resolves collisions without moving the target.
+          scene.tick(0);
+        }
+      }
       if (scene.isTransitioning()) scene.tick(1.6);
     }
 

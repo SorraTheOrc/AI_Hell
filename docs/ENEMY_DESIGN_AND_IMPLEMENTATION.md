@@ -1135,6 +1135,21 @@ advances phases at the configured HP. It is surfaced as a dedicated
 **Mini-Boss** row in the gym index's ENEMIES column
 (`MINI_BOSS_SCENE_KEY`).
 
+**Game wiring (AH-0MVCRBISU006NUN5).** `PlayScene` spawns the active level's
+mini-boss when the `WaveManager` opens the level's flagged wave-10 encounter
+(`miniBossTriggered`/`miniBossActive`, AH-0MVCRAV3B0069AIJ) and registers it as
+a gating dynamic spawn, so the level completes only once the mini-boss **and**
+the wave's escorts are destroyed. It builds the entity through
+`miniBossConfigFor(level)` — the generic no-config-safe default until the
+per-level mini-boss designs land — and routes it through the shared
+`getBoss()`/`_advanceBoss()` tick, so phases, the screen-fixed health bar and
+Teleport avoidance are the same `Boss` machinery as the final boss. The
+mini-boss wave has **no wave time limit** (like the final boss), so a timeout
+can never carry the run past an undefeated encounter. On defeat, `PlayScene`
+fires the reward then checkpoint hooks exactly once
+(`setMiniBossRewardHook` / `setMiniBossCheckpointHook`, guarded while the
+reward/checkpoint features are absent) before advancing the level.
+
 ---
 
 ## 4. Known gotchas (browser rendering & conventions)

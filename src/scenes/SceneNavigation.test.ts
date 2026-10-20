@@ -146,6 +146,40 @@ function killAllEnemies(scene: PlayScene): void {
     scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
     scene.tick(0.016);
   }
+  // The wave-10 mini-boss gates its level, so the boss walk must defeat it
+  // too before the campaign can reach the final boss (AH-0MVCRBISU006NUN5).
+  killMiniBoss(scene);
+}
+
+/**
+ * Destroys the active level's mini-boss (if any) via player bullets, with
+ * auto-fire and spawned-enemy collisions isolated so only the mini-boss takes
+ * the damage. A no-op outside the mini-boss encounter
+ * (AH-0MVCRBISU006NUN5).
+ */
+function killMiniBoss(scene: PlayScene): void {
+  const miniBoss = scene.getMiniBoss();
+  if (!miniBoss?.alive) return;
+  const isolated = scene as unknown as {
+    getEnemyEntities(): readonly unknown[];
+    autoFireEnabled(): boolean;
+  };
+  const originalGetEnemyEntities = isolated.getEnemyEntities;
+  const originalAutoFireEnabled = isolated.autoFireEnabled;
+  isolated.getEnemyEntities = () => [];
+  isolated.autoFireEnabled = () => false;
+  try {
+    for (let guard = 0; guard < 800 && miniBoss.alive; guard++) {
+      // Resolve a hold-full pause so each tick resolves the spawned bullet.
+      if (resolveMineralChoiceIfOpen(scene)) continue;
+      scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+      // A zero-length step resolves collisions without moving the target.
+      scene.tick(0);
+    }
+  } finally {
+    isolated.getEnemyEntities = originalGetEnemyEntities;
+    isolated.autoFireEnabled = originalAutoFireEnabled;
+  }
 }
 
 /**

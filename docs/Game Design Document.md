@@ -866,8 +866,10 @@ Every cap/rate is recorded with a written rationale beside it in `POWER_UP_LEVEL
 
 - Every level spans **ten waves**; the 10th wave is that level's **mini-boss**.
   Clearing the mini-boss advances to the next level automatically (the level
-  does not advance while the mini-boss is still alive — `WaveManager` gates on
-  it). Clearing Level 10's mini-boss triggers the multi-phase final boss.
+  does not advance while the mini-boss is still alive — `WaveManager` gates the
+  wave, and `PlayScene` gates on the spawned encounter entity). The mini-boss
+  wave has no time limit. Clearing Level 10's mini-boss triggers the
+  multi-phase final boss.
 - If the player runs out of lives (3 starting; up to 5 with Extra Life power-up), the game ends and the **final score** is submitted to the local leaderboard.
 - There is **no continue** mechanic. Game over is final.
 - Players may restart from Level 1 at any time after a game over.
