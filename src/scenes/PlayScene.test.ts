@@ -143,13 +143,14 @@ function killSpawnedEnemies(scene: PlayScene): void {
     // A hold-full choice pauses the scene (tick() no-ops) — resolve it so the
     // kill loop keeps making progress (AH-0MV5L6BVN005DP4I).
     if (resolveMineralChoiceIfOpen(scene)) continue;
+    // A long multi-group wave (e.g. the wave-10 mini-boss escorts) keeps
+    // emerging from the wormhole while the loop runs; those entities are
+    // spawn-protected until their growth completes, so fast-forward any
+    // pending spawn animation each iteration or the loop can never kill them.
+    scene.finishSpawnAnimations();
     const enemy = scene.getEnemies().find((e) => e.alive)!;
     scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
-    // A zero-length step still resolves collisions but moves nothing, so the
-    // bullet is guaranteed to overlap the (possibly fast-moving, carried-over)
-    // target — a 16 ms step lets a diving enemy dodge a stationary bullet and
-    // stall the walk.
-    scene.tick(0);
+    scene.tick(0.016);
   }
 }
 
@@ -1862,6 +1863,11 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   async function bootPlayAtBoss(): Promise<PlayScene> {
     const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
     booted = game;
+    // Isolate the deterministic boss walk from the random asteroid spawner:
+    // a timeout walk simulates a lot of game time, and freely spawning
+    // asteroids would keep the carried-over pile growing faster than the kill
+    // helpers can clear it (AH-0MVCRBISU006NUN5).
+    scene.setAsteroidSpawnerEnabled(false);
     return scene;
   }
 

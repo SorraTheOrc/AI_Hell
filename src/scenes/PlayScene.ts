@@ -2739,7 +2739,20 @@ export class PlayScene extends CombatScene<
     // The mini-boss was registered as a gating dynamic spawn when it spawned,
     // so this single destruction closes its encounter and advances the level
     // (or triggers the final boss) through the ordinary wave path.
-    this._handleWaveEvent(this.waveManager.onEnemyDestroyed());
+    let event = this.waveManager.onEnemyDestroyed();
+
+    // Defeat reconciliation (AC2 — the level completes on the mini-boss
+    // defeat). The wave-timeout carry-over path can leave the manager's alive
+    // count above zero for enemies that are no longer on the field; without
+    // this the mini-boss encounter — the one wave that cannot be timed out —
+    // would stall forever. When the field is empty, the mini-boss defeat is
+    // the authoritative gate, so clear the stale residual through the shared
+    // "removed without a destruction event" seam and replay the clear once.
+    if (this.waveManager.miniBossActive && this.getAliveCount() === 0) {
+      this.waveManager.unregisterDynamicSpawn(this.waveManager.enemiesAlive);
+      event = this.waveManager.onEnemyDestroyed();
+    }
+    this._handleWaveEvent(event);
   }
 
   /**
@@ -3454,39 +3467,54 @@ export class PlayScene extends CombatScene<
     // No detonation, no life loss: advance the wave/level, then adopt the
     // surviving non-asteroid enemies so they count toward the next wave's
     // alive target (AH-0MUNS3ZQ1002DJ9S AC1/AC2).
-    this._advanceAfterTimeout();
-    this.waveManager.adoptCarriedSurvivors(carried.length);
+    //
+    // Adopt ONLY when the timeout actually advanced the wave/level. A
+    // `continue` event means the manager did not transition (it believed the
+    // wave was already clear, or the run is in a boss/over state); adopting
+    // the survivors then would add phantom enemies to a wave that will never
+    // be destroyed — permanently stuck wave accounting (AH-0MVCRBISU006NUN5
+    // AC2). The survivors are still alive in that case and stay accounted by
+    // whichever wave owns them.
+    const event = this._advanceAfterTimeout();
+    if (event === 'waveCleared' || event === 'levelCleared') {
+      this.waveManager.adoptCarriedSurvivors(carried.length);
+    }
   }
 
   /**
    * Advances the wave/level state machine after a timeout while keeping the
    * survivors alive: replays one destruction per remaining enemy so the
    * manager emits exactly one clear event, then reacts like any other wipe.
-   * The caller re-adopts the survivors afterwards so they gate the next wave.
+   * The caller re-adopts the survivors afterwards so they gate the next wave —
+   * but only when the returned event shows the wave/level actually advanced
+   * (`waveCleared` / `levelCleared`), never on `continue` (which would add
+   * phantom, undestroyable enemies — AH-0MVCRBISU006NUN5 AC2).
+   *
+   * @returns the {@link WaveEvent} the replay produced.
    */
-  private _advanceAfterTimeout(): void {
+  private _advanceAfterTimeout(): WaveEvent {
     const wm = this.waveManager;
     let event: WaveEvent = 'continue';
     const defeated = wm.enemiesAlive;
     for (let i = 0; i < defeated; i += 1) event = wm.onEnemyDestroyed();
     switch (event) {
       case 'continue':
-        return;
+        return event;
       case 'waveCleared':
         this.runTelemetry.waveCleared(wm.level, wm.waveNumber);
         this._startTransition();
-        return;
+        return event;
       case 'levelCleared':
         this.runTelemetry.levelCleared(wm.level);
         this._announceLevel();
         this._startTransition();
-        return;
+        return event;
       case 'bossTriggered':
         this.runTelemetry.bossTriggered();
         this.onBossTriggered();
-        return;
+        return event;
       case 'gameComplete':
-        return;
+        return event;
     }
   }
 
