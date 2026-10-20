@@ -13,10 +13,11 @@
  * base entry replaced by its level-up offer (see
  * {@link buildChoiceCandidates}) — degrading gracefully (returning fewer
  * options) when the list cannot supply the requested count. Owned level-up
- * offers (`weapon-level`/`power-up-level`) carry a 1.25× weight
+ * offers (`weapon-level`/`power-up-level`) carry a 1.35× weight
  * ({@link OWNED_UPGRADE_BONUS_WEIGHT}) while unowned base entries keep 1.0×,
- * so an owned upgrade appears 25% more often than it would under a uniform
- * draw (AH-0MUY47W62005FF74, retuned to 25% by AH-0MVCFB00Y004AQ2Z).
+ * so an owned upgrade appears 35% more often than it would under a uniform
+ * draw (AH-0MUY47W62005FF74; retuned 1.1×→1.25× then 1.25×→1.35× by
+ * AH-0MVCFB00Y004AQ2Z).
  *
  * @module src/powerups/choice
  */
@@ -211,14 +212,15 @@ export function toChoiceOption(id: DropId): ChoiceOption {
 /**
  * Weight multiplier applied to an owned level-up offer (`weapon-level` or
  * `power-up-level`) during candidate selection. Unowned base-pool entries keep
- * a weight of 1.0, so an owned upgrade is 1.25× as likely to be drawn as an
- * unowned item — a 25% bias toward continuing an existing build (retuned from
- * 1.1×/10% by AH-0MVCFB00Y004AQ2Z).
+ * a weight of 1.0, so an owned upgrade is 1.35× as likely to be drawn as an
+ * unowned item — a 35% bias toward continuing an existing build (retuned
+ * from 1.1×/10% to 1.25×/25%, then to 1.35×/35% by AH-0MVCFB00Y004AQ2Z after
+ * a producer audit asked for "another 10 points").
  *
  * Named and exported so the bias can be tuned without hunting for a magic
  * number (AH-0MUY47W62005FF74 AC4).
  */
-export const OWNED_UPGRADE_BONUS_WEIGHT = 1.25;
+export const OWNED_UPGRADE_BONUS_WEIGHT = 1.35;
 
 /**
  * Selection weight for a candidate option (AH-0MUY47W62005FF74 AC1). Owned
@@ -363,7 +365,7 @@ export function buildChoiceCandidates(
  * Draws `count` **distinct** candidates by weighted sampling without
  * replacement: each draw picks an option with probability proportional to its
  * {@link choiceCandidateWeight}, then removes it so no option can be offered
- * twice. Living here (and only here) keeps the 1.25× owned-upgrade bias in the
+ * twice. Living here (and only here) keeps the 1.35× owned-upgrade bias in the
  * strategy layer rather than in {@link buildChoiceCandidates} (AC2).
  */
 function drawWeightedWithoutReplacement(
@@ -396,7 +398,7 @@ function drawWeightedWithoutReplacement(
 /**
  * Creates a strategy that draws `count` distinct options at **weighted**
  * random from `pool` — owned `weapon-level`/`power-up-level` offers carry a
- * {@link OWNED_UPGRADE_BONUS_WEIGHT} (1.25×) bias, unowned base entries 1.0× —
+ * {@link OWNED_UPGRADE_BONUS_WEIGHT} (1.35×) bias, unowned base entries 1.0× —
  * with each owned item's base-pool entry suppressed and its level-up offer
  * appended (see {@link buildChoiceCandidates}). When the candidate list holds
  * fewer than `count` entries, all of them are returned (graceful
