@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { addEntry } from '../core/Leaderboard';
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { LeaderboardScene } from './LeaderboardScene';
 import { MenuScene } from './MenuScene';
 
@@ -79,7 +79,7 @@ describe('LeaderboardScene — full view (AH-0MUD9ZNZJ001P7RF)', () => {
     const scene = await bootLeaderboard();
 
     findText(scene, '←  Back')!.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('LeaderboardScene')).toBe(false);
@@ -93,7 +93,7 @@ describe('LeaderboardScene — full view (AH-0MUD9ZNZJ001P7RF)', () => {
       preventDefault: () => {},
       key: 'Enter',
     } as KeyboardEvent);
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
   });

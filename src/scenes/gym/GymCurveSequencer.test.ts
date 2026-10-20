@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../../utils/gymNavigation';
 import { GymIndex } from '../GymIndex';
@@ -53,7 +53,6 @@ import { GymLevel } from './GymLevel';
 import type { ShootableWave } from '../../core/difficultySequencer';
 
 /** Waits for Phaser scene transitions to settle. */
-const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
 
 /** Finds an on-screen text by exact label. */
 function findText(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text | undefined {
@@ -119,6 +118,8 @@ function findLaunchButtons(
 
 describe('GymCurveSequencer — curve editor and preview (AC3-AC6, AC9)', () => {
   let booted: BootedGame | null = null;
+
+  const tick = () => advanceGame(booted!.game, 200);
 
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';

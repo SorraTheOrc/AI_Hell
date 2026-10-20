@@ -8,7 +8,7 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { type BootedGame, createReusableBoot } from '../../test/gameHarness';
+import { advanceGame, type BootedGame, createReusableBoot } from '../../test/gameHarness';
 import * as effectsModule from '../../audio/effects';
 import { GymMinerals } from './GymMinerals';
 import { GymFodderEnemies } from './GymFodderEnemies';
@@ -306,7 +306,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     scene.setMineralChoiceStrategy({ choose: () => offered });
     const drawn = scene.openMineralChoice();
 
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await advanceGame(booted!.game, 80);
     const overlay = booted!.game.scene.getScene(
       'MineralChoiceScene',
     ) as MineralChoiceScene;

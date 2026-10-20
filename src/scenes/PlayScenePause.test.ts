@@ -11,7 +11,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
@@ -34,10 +34,11 @@ function pressKey(key: string): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { key }));
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
 
 describe('PlayScene — pause/resume simulation (AH-0MUA8B8B1008JLAN)', () => {
   let booted: BootedGame | null = null;
+
+  const settle = () => advanceGame(booted!.game, 100);
 
   afterEach(() => {
     booted?.game.destroy(true);

@@ -18,7 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
@@ -160,7 +160,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     // A paused scene's update is not called, so the clock holds its phase
     // while real animation frames elapse.
     scene.scene.pause();
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await advanceGame(booted!.game, 60);
     expect(scene.getBeatClock().now()).toBe(before);
   });
 
@@ -932,7 +932,7 @@ describe('GymWeapons — collection absorb VFX + pop SFX (AH-0MUBYXRT4002H3GY)',
 
 describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
   let booted: BootedGame | null = null;
-  const settle = () => new Promise((r) => setTimeout(r, 150));
+  const settle = () => advanceGame(booted!.game, 150);
 
   afterEach(() => {
     booted?.game.destroy(true);

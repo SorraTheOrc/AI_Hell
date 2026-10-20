@@ -10,7 +10,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import {
   loadSettings,
   saveSettings,
@@ -63,7 +63,7 @@ describe('SettingsScene — SFX volume slider + mute toggle (AH-0MUA8BEUR006RWCI
   async function bootSettings(origin = 'PauseScene'): Promise<SettingsScene> {
     booted = await bootScene([SettingsScene, PauseScene, MenuScene]);
     booted!.game.scene.start('SettingsScene', { origin });
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
     return booted!.game.scene.getScene('SettingsScene') as SettingsScene;
   }
 
@@ -178,7 +178,7 @@ describe('SettingsScene — SFX volume slider + mute toggle (AH-0MUA8BEUR006RWCI
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(true);
 
     scene.goBack();
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
 
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(false);
     expect(booted!.game.scene.isActive('PauseScene')).toBe(true);
@@ -187,7 +187,7 @@ describe('SettingsScene — SFX volume slider + mute toggle (AH-0MUA8BEUR006RWCI
   it('respects a MenuScene origin for Back', async () => {
     const scene = await bootSettings('MenuScene');
     scene.goBack();
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(false);
@@ -205,7 +205,7 @@ describe('SettingsScene — telemetry consent toggle (AH-0MUY08Y9P005ER7A)', () 
 
   async function bootSettings(): Promise<SettingsScene> {
     booted = await bootScene([SettingsScene, PauseScene, MenuScene]);
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
     return booted!.game.scene.getScene('SettingsScene') as SettingsScene;
   }
 
@@ -262,7 +262,7 @@ describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)'
 
   async function bootSettings(): Promise<SettingsScene> {
     booted = await bootScene([SettingsScene, PauseScene, MenuScene]);
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
     return booted!.game.scene.getScene('SettingsScene') as SettingsScene;
   }
 
@@ -274,7 +274,7 @@ describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)'
     const target = labels.indexOf(label);
     for (let i = 0; i < target; i++) {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
-      await new Promise((r) => setTimeout(r, 20));
+      await advanceGame(booted!.game, 20);
     }
   }
 
@@ -358,11 +358,11 @@ describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)'
     expect(scene.getFocusedLabel()).toBe('moveUp');
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-    await new Promise((r) => setTimeout(r, 30));
+    await advanceGame(booted!.game, 30);
     expect(scene.isCapturing()).toBe('moveUp');
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'i' }));
-    await new Promise((r) => setTimeout(r, 30));
+    await advanceGame(booted!.game, 30);
     expect(scene.isCapturing()).toBeNull();
     expect(scene.getBinding('moveUp')).toBe('i');
     expect(loadSettings().bindings.moveUp).toBe('i');
@@ -373,7 +373,7 @@ describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)'
     scene.beginCapturing('moveUp');
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-    await new Promise((r) => setTimeout(r, 30));
+    await advanceGame(booted!.game, 30);
 
     expect(scene.isCapturing()).toBeNull();
     expect(scene.getBinding('moveUp')).toBe('w');
@@ -384,7 +384,7 @@ describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)'
     scene.beginCapturing('moveUp');
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift' }));
-    await new Promise((r) => setTimeout(r, 30));
+    await advanceGame(booted!.game, 30);
 
     expect(scene.isCapturing()).toBe('moveUp');
     expect(scene.getBinding('moveUp')).toBe('w');
@@ -409,7 +409,7 @@ describe('SettingsScene — volume-change feedback (AH-0MUADK77K008RBMB)', () =>
 
   async function bootSettings(): Promise<SettingsScene> {
     booted = await bootScene([SettingsScene, PauseScene, MenuScene]);
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
     return booted!.game.scene.getScene('SettingsScene') as SettingsScene;
   }
 
@@ -433,15 +433,15 @@ describe('SettingsScene — volume-change feedback (AH-0MUADK77K008RBMB)', () =>
     // Phaser batches DOM keydown events per frame, so dispatch then settle
     // before asserting (the established pattern in this suite).
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-    await new Promise((r) => setTimeout(r, 30));
+    await advanceGame(booted!.game, 30);
     expect(playVolumeFeedbackMock).toHaveBeenLastCalledWith(0.95);
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-    await new Promise((r) => setTimeout(r, 30));
+    await advanceGame(booted!.game, 30);
     expect(playVolumeFeedbackMock).toHaveBeenLastCalledWith(0.9);
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-    await new Promise((r) => setTimeout(r, 30));
+    await advanceGame(booted!.game, 30);
     expect(playVolumeFeedbackMock).toHaveBeenLastCalledWith(0.95);
 
     // One blip per nudge — three nudges, three feedback calls.

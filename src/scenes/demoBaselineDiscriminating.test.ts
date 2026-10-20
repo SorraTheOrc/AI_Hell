@@ -14,7 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { seedConfigStore } from '../core/configStore';
 import { DEFAULT_CONFIG } from '../core/config';
 import { resetBotTuningStore } from '../core/botTuningStore';
@@ -48,10 +48,11 @@ import { LeaderboardScene } from './LeaderboardScene';
 import { MineralChoiceScene } from './MineralChoiceScene';
 import { GymIndex } from './GymIndex';
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('Demo flies a non-default bundled baseline (discriminating, AH-0MV9GZD2C005IIU3)', () => {
   let booted: BootedGame | null = null;
+
+  const wait = (ms: number) => advanceGame(booted!.game, ms);
 
   beforeEach(() => {
     seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' });

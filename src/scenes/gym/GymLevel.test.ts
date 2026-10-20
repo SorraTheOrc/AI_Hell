@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
-import { bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
 import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../../utils/gymNavigation';
 import { GymIndex } from '../GymIndex';
 import { MenuScene } from '../MenuScene';
@@ -27,7 +27,6 @@ import { Harvester } from '../../entities/Harvester';
 import { RULES_STORAGE_KEY } from '../../core/rules';
 
 /** Waits for Phaser scene transitions to settle. */
-const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
 
 /** Finds an on-screen text by exact label. */
 function findText(
@@ -65,6 +64,8 @@ function makeLevel(name: string, waves: WaveDefinition[]): LevelDefinition {
 
 describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
   let booted: BootedGame | null = null;
+
+  const tick = () => advanceGame(booted!.game, 200);
 
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';

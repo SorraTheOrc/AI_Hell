@@ -23,7 +23,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../test/gameHarness';
 import { GAME_WIDTH } from '../core/constants';
 import { FocusManager } from '../utils/focusManager';
 import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../utils/gymNavigation';
@@ -165,7 +165,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     const fodderRow = findTextAt(scene, FODDER_ENEMIES_LABEL, enemiesCol);
     expect(fodderRow.getData('sceneKey')).toBe(FODDER_ENEMIES_SCENE_KEY);
     fodderRow.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(true);
     expect(booted!.game.scene.isActive(BOSS_SCENE_KEY)).toBe(false);
@@ -187,7 +187,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     const bossRow = findTextAt(scene, BOSS_SCENE_LABEL, enemiesCol);
     expect(bossRow.getData('sceneKey')).toBe(BOSS_SCENE_KEY);
     bossRow.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive(BOSS_SCENE_KEY)).toBe(true);
     expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(false);
@@ -200,7 +200,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     const miniBossRow = findTextAt(scene, MINI_BOSS_SCENE_LABEL, enemiesCol);
     expect(miniBossRow.getData('sceneKey')).toBe(MINI_BOSS_SCENE_KEY);
     miniBossRow.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive(MINI_BOSS_SCENE_KEY)).toBe(true);
     expect(booted!.game.scene.isActive(BOSS_SCENE_KEY)).toBe(false);
@@ -228,7 +228,7 @@ describe('GymIndex — back to index from a gym scene (AC5)', () => {
 
     // Pointer-press the shared back button.
     findText(boss, BACK_TO_INDEX_LABEL).emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive(GYM_INDEX_KEY)).toBe(true);
     expect(booted!.game.scene.isActive('GymBoss')).toBe(false);
@@ -316,7 +316,7 @@ describe('GymIndex — Dev Utilities section (AH-0MUGXDVPH005TIZL)', () => {
 
     const devCol = GAME_WIDTH * GYM_INDEX_COLUMN_X.devUtilities;
     findTextAt(idx, 'CurveSequencer', devCol).emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted.game.scene.isActive('GymCurveSequencer')).toBe(true);
   });
@@ -344,7 +344,7 @@ describe('GymIndex — ESC key navigation (AH-0MU9LRTK3004KR04)', () => {
     // Phaser's keyboard manager listens on window (inputKeyboardEventTarget),
     // so dispatch on window rather than document.
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(scene.sys.isActive()).toBe(false);
@@ -358,7 +358,7 @@ describe('GymIndex — ESC key navigation (AH-0MU9LRTK3004KR04)', () => {
 
     // Fire an inert key (not Enter/Space — those activate the focused row).
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q' }));
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(scene.sys.isActive()).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
@@ -470,7 +470,7 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(scene.getFocusedLabel()).toBe(first.label);
 
     pressKey(scene, { key: 'Enter' });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive(first.key)).toBe(true);
     expect(booted!.game.scene.isActive('GymIndex')).toBe(false);
@@ -488,7 +488,7 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(scene.getFocusedLabel()).toBe(FODDER_ENEMIES_LABEL);
 
     pressKey(scene, { key: ' ' });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(true);
     const gym = booted!.game.scene.getScene(FODDER_ENEMIES_SCENE_KEY) as unknown as {
@@ -507,7 +507,7 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(scene.getFocusedLabel()).toBe(BOSS_SCENE_LABEL);
 
     pressKey(scene, { key: 'Enter' });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive(BOSS_SCENE_KEY)).toBe(true);
     expect(booted!.game.scene.isActive(FODDER_ENEMIES_SCENE_KEY)).toBe(false);
@@ -525,7 +525,7 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
     expect(scene.getFocusedLabel()).toBe(dev!.label);
 
     pressKey(scene, { key: 'Enter' });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive(dev!.key)).toBe(true);
   });
@@ -539,7 +539,7 @@ describe('GymIndex — keyboard navigation (AH-0MUDZFBYY008P7ZE)', () => {
 
       // ESC navigation is untouched by the added keyboard handling.
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-      await new Promise((r) => setTimeout(r, 350));
+      await advanceGame(booted!.game, 350);
 
       expect(booted.game.scene.isActive('MenuScene')).toBe(true);
       expect(shutdownSpy).toHaveBeenCalled();

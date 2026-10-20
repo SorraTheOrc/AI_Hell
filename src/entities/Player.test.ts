@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../test/gameHarness';
 import { ShipConfig, DEFAULT_CONFIG } from '../core/config';
 import { seedConfigStore } from '../core/configStore';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
@@ -44,7 +44,7 @@ describe('Player ship entity', () => {
     document.body.innerHTML = '';
   });
 
-  const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
+  const tick = () => advanceGame(booted!.game, 200);
 
   async function bootPlayerScene(): Promise<Phaser.Scene> {
     booted = await bootScene([GymPlayer]);
@@ -1388,7 +1388,7 @@ describe('Player — Asteroids control scheme', () => {
     document.body.innerHTML = '';
   });
 
-  const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
+  const tick = () => advanceGame(booted!.game, 200);
 
   async function bootPlayerScene(): Promise<Phaser.Scene> {
     booted = await bootScene([GymPlayer]);
@@ -1878,7 +1878,7 @@ describe('Player — Thruster hum wiring', () => {
     vi.restoreAllMocks();
   });
 
-  const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
+  const tick = () => advanceGame(booted!.game, 200);
 
   async function bootPlayerScene(): Promise<Phaser.Scene> {
     booted = await bootScene([GymPlayer]);
@@ -2039,7 +2039,7 @@ describe('Player — Thruster hum wiring', () => {
 
 describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
   let booted: BootedGame | null = null;
-  const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
+  const tick = () => advanceGame(booted!.game, 200);
 
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';

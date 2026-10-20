@@ -117,6 +117,24 @@ export async function bootScene(
 }
 
 /**
+ * Resolves once the game has finished its asynchronous boot
+ * (`Phaser.Core.Events.READY`) — no wall-clock delay, no fallback sleep.
+ *
+ * Shared by the deterministic boot and by `advanceGame`, so a suite that
+ * constructs its own `Phaser.Game` can step it deterministically even when the
+ * boot has not completed yet (AH-0MVFPMT4P005UHZL). Stepping a not-yet-booted
+ * game is a no-op, which used to be masked by a wall-clock sleep.
+ *
+ * @param game — The game whose boot to await (immediate when already booted).
+ */
+export async function awaitGameReady(game: Phaser.Game): Promise<void> {
+  if (game.isBooted) return;
+  await new Promise<void>((resolve) => {
+    game.events.once(Phaser.Core.Events.READY, () => resolve());
+  });
+}
+
+/**
  * Boots `game` without letting the live loop advance the scene by an
  * unpredictable amount.
  *
@@ -136,20 +154,7 @@ export async function bootScene(
  * @param game — The freshly constructed game to boot.
  */
 async function bootDeterministic(game: Phaser.Game): Promise<void> {
-  const ready = new Promise<void>((resolve) => {
-    // `isBooted` covers the defensive case where READY already fired before
-    // the handler could be registered — without a wall-clock fallback delay.
-    if (game.isBooted) {
-      resolve();
-      return;
-    }
-    game.events.once(Phaser.Core.Events.READY, () => resolve());
-  });
-
-  // Wait for the async game boot only. READY normally fires after
-  // construction, so this resolves without any wall-clock delay; if it has
-  // already fired, `isBooted` above resolves the promise immediately.
-  await ready;
+  await awaitGameReady(game);
 
   // Stop the loop synchronously, before the first animation frame can run.
   game.loop.stop();
@@ -360,7 +365,10 @@ export function stepGameUntil(
  *
  * The live loop is stopped for the duration and restored to its previous
  * state afterwards, so it works in suites that drive the game manually as
- * well as in suites that rely on the live loop. The `setImmediate` turn after
+ * well as in suites that rely on the live loop. A game that is still booting
+ * (a suite constructing its own `Phaser.Game`) is awaited to READY first —
+ * never a wall-clock delay — so the steps actually reach a scene
+ * (AH-0MVFPMT4P005UHZL). The `setImmediate` turn after
  * the steps is a macrotask yield (never a sleep) that drains queued
  * microtasks/IO callbacks — e.g. a texture `load` handler queued by a stepped
  * frame — before the caller asserts.
@@ -374,6 +382,10 @@ export async function advanceGame(
   ms: number,
   stepMs: number = DETERMINISTIC_STEP_MS,
 ): Promise<void> {
+  // A suite that constructs its own `Phaser.Game` may still be mid-boot: wait
+  // for READY (no wall-clock delay) so the steps actually reach a scene.
+  await awaitGameReady(game);
+
   const wasRunning = game.loop.running;
   game.loop.stop();
 

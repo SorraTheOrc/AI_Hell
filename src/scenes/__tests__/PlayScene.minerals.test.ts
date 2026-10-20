@@ -10,7 +10,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
 import * as effectsModule from '../../audio/effects';
 import { PlayScene } from '../PlayScene';
 import { MineralChoiceScene } from '../MineralChoiceScene';
@@ -118,7 +118,7 @@ describe('PlayScene mineral wiring', () => {
 
     // Paused at the SceneManager level (mirrors PauseScene). The pause op is
     // applied on the next game step, so allow a frame to elapse.
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    await advanceGame(booted!.game, 40);
     expect(scene.scene.isPaused()).toBe(true);
 
     const options = scene.getMineralChoiceOptions();
@@ -137,7 +137,7 @@ describe('PlayScene mineral wiring', () => {
     const drawn = scene.openMineralChoice();
 
     // The overlay is launched asynchronously; allow its create() to run.
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await advanceGame(booted!.game, 80);
     const overlay = booted!.game.scene.getScene(
       'MineralChoiceScene',
     ) as MineralChoiceScene;

@@ -21,6 +21,11 @@
  * migrating a file forces the list to shrink. Every entry records why it is
  * still there and links the work item that owns it.
  *
+ * The list is now **empty** — every suite was migrated by
+ * AH-0MVFPMT4P005UHZL (the final batch), completing the sweep started in
+ * AH-0MVF6VVDP003L39A. A new wall-clock wait therefore fails immediately;
+ * use `advanceGame` / `stepGameUntil` instead.
+ *
  * @module test/wallClockWaitGuard
  */
 
@@ -37,62 +42,10 @@ import { advanceGame, bootScene } from './gameHarness';
  * guard below).
  */
 const ALLOW_LIST: Record<string, string> = {
-  'src/scenes/GameOverScene.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/MenuScene.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/SettingsScene.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/GymIndex.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/__tests__/MineralChoiceScene.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/TelemetryConsentScene.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/entities/Player.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymWeapons.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymPowerUpsCombat.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymBoss.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/__tests__/PlayScene.minerals.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/LeaderboardScene.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/PauseSettingsIntegration.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/demoMode.integration.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/demoBaselineDiscriminating.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/RebindableControls.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/PlayScenePause.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/PauseScene.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/HelpScene.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/utils/gymHelp.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/core/Game.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymPlayer.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymLevel.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymMinerals.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymPowerUpLeveling.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymWeaponLeveling.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymBotTuning.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
-  'src/scenes/gym/GymCurveSequencer.test.ts':
-    'pending migration — owned by the follow-up batch item for the remaining suites',
+  // Empty: every suite is migrated (AH-0MVFPMT4P005UHZL). Genuine external
+  // async (child process, file I/O, telemetry flush) lives in the subprocess
+  // suites, which never wait on animation frames — keep this list empty so a
+  // new wall-clock wait fails the guard instead of being allow-listed.
 };
 
 const ROOT = process.cwd();

@@ -14,7 +14,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { BootedGame, createReusableBoot } from '../../test/gameHarness';
+import { advanceGame, BootedGame, createReusableBoot } from '../../test/gameHarness';
 import { HUD } from '../../ui/HUD';
 import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -757,7 +757,7 @@ describe('GymPowerUpsCombat AC1: shared back button', () => {
     expect(button).toBeDefined();
 
     button!.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
   });
@@ -826,7 +826,7 @@ describe('GymPowerUpsCombat — collection absorb VFX + pop SFX (AH-0MUBYXRT4002
 
 describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
   let booted: BootedGame | null = null;
-  const settle = () => new Promise((r) => setTimeout(r, 150));
+  const settle = () => advanceGame(booted!.game, 150);
 
   async function bootHelp(): Promise<GymPowerUpsCombat> {
     booted = await reuse.boot([GymPowerUpsCombat, HelpScene]);

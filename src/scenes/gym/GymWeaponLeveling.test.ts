@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
 import { GymWeaponLeveling } from './GymWeaponLeveling';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 import { discoverGymScenes } from '../../utils/gymDiscovery';
@@ -179,7 +179,7 @@ describe('GymWeaponLeveling', () => {
     const scene = await boot();
     expect(scene.getPlayer()).not.toBeNull();
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await advanceGame(booted!.game, 60);
     expect(scene.getPlayer()).not.toBeNull();
   });
 });

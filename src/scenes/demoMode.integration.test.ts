@@ -19,7 +19,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { HOLD_FULL_COUNTDOWN_DURATION_MS } from './core/holdFullCountdown';
 import * as leaderboardModule from '../core/Leaderboard';
 import { DEFAULT_CONFIG } from '../core/config';
@@ -60,7 +60,7 @@ import { GymIndex } from './GymIndex';
 import { GYM_BOT_TUNING_SCENE_KEY, GymBotTuning } from './gym/GymBotTuning';
 import { bundledBotTuningJson } from '../core/bundledConfig';
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const wait = (game: Phaser.Game, ms: number) => advanceGame(game, ms);
 
 /**
  * Short demo game-over dwell driven through `MenuScene.startDemo(...)` so the
@@ -143,7 +143,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     const menu = await bootMenu();
 
     menu.startDemo(TEST_DWELL_MS);
-    await wait(150);
+    await wait(booted!.game, 150);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
@@ -154,7 +154,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     // so shortly after the death it is NOT yet back at the menu.
     play.getGameState().lives = 1;
     killPlayer(play);
-    await wait(250);
+    await wait(booted!.game, 250);
 
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
@@ -169,7 +169,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     // AC1 — after the dwell the demo loops back to the menu, never the
     // interactive score-entry flow.
-    await wait(TEST_DWELL_MS + DWELL_MARGIN_MS);
+    await wait(booted!.game, TEST_DWELL_MS + DWELL_MARGIN_MS);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(false);
     expect(addEntrySpy).not.toHaveBeenCalled();
@@ -181,7 +181,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC1 — the demo bot drives the ship through the live shared input path', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -210,7 +210,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC14 — the live scene exposes its wave timer state to the bot snapshot', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     const state = play.getWaveState();
@@ -223,7 +223,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC1/AC3 — the committed steering is held at a human cadence, not every tick', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -252,7 +252,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC4 — the demo bot resolves the hold-full choice instead of stalling', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -263,12 +263,12 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(play.isMineralChoiceOpen()).toBe(true);
 
     // The launch is queued; give Phaser a step to activate the overlay.
-    await wait(80);
+    await wait(booted!.game, 80);
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(true);
 
     // The overlay auto-selects after the human-like delay, applies the choice
     // and resumes play — the run never stalls.
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
+    await wait(booted!.game, BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     expect(play.isMineralChoiceOpen()).toBe(false);
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
@@ -277,12 +277,12 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC6 — the demo auto-select routes through the 3-2-1 countdown and resumes on the beat', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
     play.openMineralChoice();
-    await wait(80);
+    await wait(booted!.game, 80);
 
     const overlay = booted!.game.scene.getScene(
       'MineralChoiceScene',
@@ -292,19 +292,19 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     // The bot auto-selects after the human-like delay: the choice is made but
     // NOT yet applied — the beat-locked 3-2-1 countdown is running ("3"
     // shown), and play stays paused.
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + 120);
+    await wait(booted!.game, BOT_MINERAL_CHOICE_DELAY_MS + 120);
     expect(overlay.getCountdownText()).toBe('3');
     expect(play.isMineralChoiceOpen()).toBe(true);
     expect(play.isPaused()).toBe(true);
 
     // After one beat the countdown advances to "2", still not applied.
-    await wait(800);
+    await wait(booted!.game, 800);
     expect(overlay.getCountdownText()).toBe('2');
     expect(play.isMineralChoiceOpen()).toBe(true);
 
     // The countdown completes and the run resumes on the beat after "1" —
     // same selection → countdown → resume path as a human choice.
-    await wait(HOLD_FULL_COUNTDOWN_DURATION_MS);
+    await wait(booted!.game, HOLD_FULL_COUNTDOWN_DURATION_MS);
     expect(play.isMineralChoiceOpen()).toBe(false);
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
     expect(play.isPaused()).toBe(false);
@@ -313,7 +313,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC1 — the demo bot takes an offered Extra Life below the cap', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -331,7 +331,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const selected = vi.spyOn(play, 'selectMineralChoice');
     play.openMineralChoice();
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
+    await wait(booted!.game, BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     // The bot took the Extra Life (index 2) rather than the first option.
     expect(selected).toHaveBeenCalledWith(2);
@@ -341,7 +341,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC1 — the demo bot falls back to the first option at the life cap', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     play.setMineralChoiceStrategy({
@@ -356,7 +356,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const selected = vi.spyOn(play, 'selectMineralChoice');
     play.openMineralChoice();
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
+    await wait(booted!.game, BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     expect(selected).toHaveBeenCalledWith(0);
     expect(play.isMineralChoiceOpen()).toBe(false);
@@ -365,7 +365,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC1 — the demo bot takes the first option when no Extra Life is offered', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     play.setMineralChoiceStrategy({
@@ -379,7 +379,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     const selected = vi.spyOn(play, 'selectMineralChoice');
     play.openMineralChoice();
-    await wait(BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
+    await wait(booted!.game, BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400);
 
     expect(selected).toHaveBeenCalledWith(0);
     expect(play.isMineralChoiceOpen()).toBe(false);
@@ -393,7 +393,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       repeat: false,
       preventDefault: () => {},
     } as KeyboardEvent);
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(false);
@@ -413,14 +413,14 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC2 — a normal restart after a demo resets the demo flag (no leak)', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
 
     // Restart PlayScene normally (no demo data) — init must clear the flag.
     play.scene.restart({});
-    await wait(150);
+    await wait(booted!.game, 150);
     const restarted = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(restarted.isDemoMode()).toBe(false);
   });
@@ -430,7 +430,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC1 — ESC during the demo returns to the live MenuScene, not pause', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -440,7 +440,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       repeat: false,
       preventDefault: () => {},
     } as KeyboardEvent);
-    await wait(150);
+    await wait(booted!.game, 150);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
@@ -450,7 +450,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC2 — a movement key takes over the live demo in place', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -477,7 +477,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC1 — a non-movement key during the live demo returns to the main menu', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -489,7 +489,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     } as KeyboardEvent);
 
     // The demo is abandoned for the main menu (scene transition is async).
-    await wait(80);
+    await wait(booted!.game, 80);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
@@ -497,7 +497,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
   it('AC3 — the pointer during the live demo stays ignored', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -523,7 +523,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
 
     // 1. Watch Demo — `{ demo: true }` is written to the reused PlayScene.
     menu.startDemo(TEST_DWELL_MS);
-    await wait(150);
+    await wait(booted!.game, 150);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
     expect(botInputOf(play)).not.toBeNull();
@@ -533,12 +533,12 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     //    menu becomes active again (AH-0MUXZ4CAE008QRFZ).
     play.getGameState().lives = 1;
     killPlayer(play);
-    await wait(TEST_DWELL_MS + DWELL_MARGIN_MS);
+    await wait(booted!.game, TEST_DWELL_MS + DWELL_MARGIN_MS);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
 
     // 3. Normal Play Game via the pointer handler.
     findText(booted!.scene, '▶  Play Game').emit('pointerdown');
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const fresh = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(fresh.isDemoMode()).toBe(false);
@@ -559,7 +559,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     const menu = await bootMenu();
 
     menu.startDemo(TEST_DWELL_MS);
-    await wait(150);
+    await wait(booted!.game, 150);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
 
@@ -567,7 +567,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     // settings.data is kept).
     play.getGameState().lives = 1;
     killPlayer(play);
-    await wait(TEST_DWELL_MS + DWELL_MARGIN_MS);
+    await wait(booted!.game, TEST_DWELL_MS + DWELL_MARGIN_MS);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
 
     // Activate the focused Play Game control (the FocusManager entry point).
@@ -576,7 +576,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
       repeat: false,
       preventDefault: () => {},
     } as KeyboardEvent);
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const fresh = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(fresh.isDemoMode()).toBe(false);
@@ -597,7 +597,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     it('keeps the ship on its configured asteroid scheme', async () => {
       const menu = await bootMenu();
       menu.startDemo();
-      await wait(150);
+      await wait(booted!.game, 150);
 
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
       expect(play.isDemoMode()).toBe(true);
@@ -607,7 +607,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     it('emits asteroid input (W/A/D + reverse) — never four-directional fields', async () => {
       const menu = await bootMenu();
       menu.startDemo();
-      await wait(150);
+      await wait(booted!.game, 150);
 
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
       const input = botInputOf(play);
@@ -628,7 +628,7 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     it('rotates the hull under asteroid controls (a four-directional ship never turns)', async () => {
       const menu = await bootMenu();
       menu.startDemo();
-      await wait(150);
+      await wait(booted!.game, 150);
 
       const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
       const player = play.getPlayer()!;
@@ -816,7 +816,7 @@ describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
 
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.getBotTuningConfigName()).toBe('AggroRecruit');
@@ -830,7 +830,7 @@ describe('Demo bot-tuning configuration (AH-0MV6MFDYG001E6PL)', () => {
   it('AC1 — an empty store keeps the factory defaults (behaviour unchanged)', async () => {
     const menu = await bootMenu();
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.getBotTuningConfigName()).toBe(DEFAULT_BOT_TUNING_NAME);
@@ -910,7 +910,7 @@ describe('Demo flies the bundled bot-tuning baseline in a fresh profile (AH-0MV9
     );
     const menu = booted.scene as MenuScene;
     menu.startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     // The demo consulted the store, which seeded the Git-tracked bundle (not
@@ -932,7 +932,7 @@ describe('Demo flies the bundled bot-tuning baseline in a fresh profile (AH-0MV9
       [MenuScene, PlayScene, GameOverScene, LeaderboardScene, MineralChoiceScene, GymIndex],
     );
     (booted.scene as MenuScene).startDemo();
-    await wait(150);
+    await wait(booted!.game, 150);
 
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     const expected = resolveCompetentTunables(
@@ -955,7 +955,7 @@ describe('Demo live-thruster config (AH-0MV268RXJ007M7A9)', () => {
     seedConfigStore([], { ...DEFAULT_CONFIG, controlScheme: 'asteroids' });
     booted = await bootScene([PlayScene, GameOverScene, MenuScene, GymBotTuning]);
     booted.game.scene.start('PlayScene', { demo: true, seed: 42 });
-    await wait(150);
+    await wait(booted!.game, 150);
     return booted.game.scene.getScene('PlayScene') as PlayScene;
   }
 
@@ -1024,7 +1024,7 @@ describe('Demo live-thruster config (AH-0MV268RXJ007M7A9)', () => {
   it('AC4 — demo and tuning-gym apply the identical tunable mapping (explicit override > live > default)', async () => {
     await bootDemo();
     booted!.game.scene.start(GYM_BOT_TUNING_SCENE_KEY, { seed: 42 });
-    await wait(150);
+    await wait(booted!.game, 150);
     const gym = booted!.game.scene.getScene(GYM_BOT_TUNING_SCENE_KEY) as GymBotTuning;
 
     // Both scenes rebuild the brain from the same persisted config through

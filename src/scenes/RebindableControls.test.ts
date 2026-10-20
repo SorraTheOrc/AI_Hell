@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import {
   DEFAULT_BINDINGS,
   saveSettings,
@@ -59,7 +59,6 @@ interface PlayInternals {
   pauseKeyName: string;
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 120));
 
 function pressKey(key: string): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { key }));
@@ -67,6 +66,8 @@ function pressKey(key: string): void {
 
 describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () => {
   let booted: BootedGame | null = null;
+
+  const settle = () => advanceGame(booted!.game, 120);
 
   afterEach(() => {
     booted?.game.destroy(true);

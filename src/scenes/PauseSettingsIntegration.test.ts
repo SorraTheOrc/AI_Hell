@@ -17,6 +17,7 @@ import {
   findConflict,
   loadSettings,
 } from '../core/settingsStore';
+import { advanceGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
 import { MenuScene } from './MenuScene';
@@ -24,7 +25,7 @@ import { PauseScene } from './PauseScene';
 import { PlayScene } from './PlayScene';
 import { SettingsScene } from './SettingsScene';
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (game: Phaser.Game | null, ms: number) => advanceGame(game!, ms);
 
 function pressKey(key: string): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { key }));
@@ -53,14 +54,14 @@ async function bootAllGames(): Promise<Phaser.Game> {
     parent: 'game-container',
     scene: [MenuScene, PlayScene, PauseScene, SettingsScene, GameOverScene, GymIndex],
   });
-  await sleep(300);
+  await sleep(game, 300);
   return game;
 }
 
 /** Starts PlayScene from the menu and returns the scene. */
 async function startPlay(game: Phaser.Game): Promise<PlayScene> {
   clickText(game.scene.getScene('MenuScene'), '▶  Play Game');
-  await sleep(350);
+  await sleep(game, 350);
   const play = game.scene.getScene('PlayScene') as PlayScene;
   expect(play.sys.isActive()).toBe(true);
   return play;
@@ -87,7 +88,7 @@ describe('End-to-end pause/settings integration (AH-0MUA8BP19000ORCG)', () => {
 
     // ESC opens the pause menu.
     pressKey('Escape');
-    await sleep(200);
+    await sleep(game, 200);
     expect(game.scene.isActive('PauseScene')).toBe(true);
     expect(play.isPaused()).toBe(true);
     expect(game.scene.isPaused('PlayScene')).toBe(true);
@@ -100,7 +101,7 @@ describe('End-to-end pause/settings integration (AH-0MUA8BP19000ORCG)', () => {
 
     // ESC again resumes the run (PlayScene active and playable).
     pressKey('Escape');
-    await sleep(200);
+    await sleep(game, 200);
     expect(game.scene.isActive('PauseScene')).toBe(false);
     expect(play.isPaused()).toBe(false);
     expect(game.scene.isPaused('PlayScene')).toBe(false);
@@ -115,12 +116,12 @@ describe('End-to-end pause/settings integration (AH-0MUA8BP19000ORCG)', () => {
     const play = await startPlay(game);
 
     pressKey('Escape');
-    await sleep(200);
+    await sleep(game, 200);
     const pause = game.scene.getScene('PauseScene') as PauseScene;
 
     // Open settings from the pause menu.
     clickText(pause, '⚙  Settings');
-    await sleep(200);
+    await sleep(game, 200);
     const settings = game.scene.getScene('SettingsScene') as SettingsScene;
     expect(game.scene.isActive('SettingsScene')).toBe(true);
     expect(game.scene.isActive('PauseScene')).toBe(false);
@@ -139,13 +140,13 @@ describe('End-to-end pause/settings integration (AH-0MUA8BP19000ORCG)', () => {
 
     // Back returns to the pause menu, Resume returns to the game.
     clickText(settings, '←  Back');
-    await sleep(200);
+    await sleep(game, 200);
     expect(game.scene.isActive('PauseScene')).toBe(true);
     expect(game.scene.isActive('SettingsScene')).toBe(false);
 
     const pause2 = game.scene.getScene('PauseScene') as PauseScene;
     clickText(pause2, '▶  Resume');
-    await sleep(200);
+    await sleep(game, 200);
     expect(play.isPaused()).toBe(false);
     expect(game.scene.isPaused('PlayScene')).toBe(false);
     expect(game.scene.isActive('PauseScene')).toBe(false);
@@ -159,9 +160,9 @@ describe('End-to-end pause/settings integration (AH-0MUA8BP19000ORCG)', () => {
 
     // Configure settings via the pause → settings path.
     pressKey('Escape');
-    await sleep(200);
+    await sleep(game, 200);
     clickText(game.scene.getScene('PauseScene'), '⚙  Settings');
-    await sleep(200);
+    await sleep(game, 200);
     const settings = game.scene.getScene('SettingsScene') as SettingsScene;
     settings.setVolume(0.45);
     settings.setMuted(true);
@@ -175,7 +176,7 @@ describe('End-to-end pause/settings integration (AH-0MUA8BP19000ORCG)', () => {
 
     // Re-open settings from the main menu: values are restored.
     clickText(game.scene.getScene('MenuScene'), '⚙  Settings');
-    await sleep(200);
+    await sleep(game, 200);
     const settings2 = game.scene.getScene('SettingsScene') as SettingsScene;
     expect(settings2.getSfxVolume()).toBe(0.45);
     expect(settings2.isSfxMuted()).toBe(true);
@@ -191,12 +192,12 @@ describe('End-to-end pause/settings integration (AH-0MUA8BP19000ORCG)', () => {
     const menu = game.scene.getScene('MenuScene');
 
     clickText(menu, '⚙  Settings');
-    await sleep(200);
+    await sleep(game, 200);
     expect(game.scene.isActive('SettingsScene')).toBe(true);
     expect(game.scene.isActive('MenuScene')).toBe(false);
 
     clickText(game.scene.getScene('SettingsScene'), '←  Back');
-    await sleep(200);
+    await sleep(game, 200);
     expect(game.scene.isActive('MenuScene')).toBe(true);
     expect(game.scene.isActive('SettingsScene')).toBe(false);
   });

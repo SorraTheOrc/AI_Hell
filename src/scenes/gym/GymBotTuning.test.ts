@@ -24,7 +24,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
 import {
   BOT_TUNING_CONFIG_SELECT_ID,
   BOT_TUNING_EXPORT_ID,
@@ -90,10 +90,11 @@ function makeLevel(name: string, waves: WaveDefinition[]): LevelDefinition {
 }
 
 /** Waits for Phaser scene transitions to settle. */
-const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
 
 describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
   let booted: BootedGame | null = null;
+
+  const tick = () => advanceGame(booted!.game, 200);
 
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';
