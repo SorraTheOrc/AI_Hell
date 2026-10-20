@@ -30,17 +30,56 @@ project test types in `.pi/skills_extensions/test/extension.json`
 `npm --silent test`.
 
 Expectation summary (each figure carries its load; the full rows live on the
-epic AH-0MVF3BESP005ZDAV — the definitive idle-host baseline is the final
-validation child AH-0MVF6W8NC006RT2B):
+epic AH-0MVF3BESP005ZDAV and its final validation child AH-0MVF6W8NC006RT2B):
 
 - **`unit`** — measured **43.5 s** (140 files, 2,497 tests) at load
-  26.5/27.4/24.0; target ≤ 60 s on an idle host.
-- **`integration`** — ~300–445 s *loaded*; transform/import dominate (the
+  26.5/27.4/24.0, **83–101 s** (141 files, 2,517 tests) at load 24–44. The
+  former "≤ 60 s on an idle host" target was **dropped by the producer
+  (2026-10-20)**: the host is shared, an idle window is not obtainable on
+  demand, and the fast loop's *relative* win (seconds, not minutes) is what
+  matters. Report the measured figure with its load; do not chase a target.
+- **`integration`** — ~250–350 s *loaded*; transform/import dominate (the
   Phaser bundle re-transform per worker; pool/isolate/optimiser experiments
   were measured and rejected — see `vitest.config.ts`).
-- **full `npm --silent test`** — measured 362.9 s (273 files, 6,037 tests) at
-  load 16.2, and 304.05 s at load 5.45/17.22/21.11 on the post-C2 tree. Load
-  alone moves this span ~58 %; never compare runs taken under different loads.
+- **full `npm --silent test`** — measured **346.56 / 370.75 / 408.96 s**
+  (280 files, 6,137 tests) at load 12.7–24.7 in the final validation, against
+  a pre-epic baseline of 262–415 s (median 314 s). Load alone moves this span
+  ~58 %; never compare runs taken under different loads.
+
+### What the suite is expected to cost now (restated target)
+
+The epic's original target — *full suite ≤ 50 % of the 314 s baseline, i.e.
+≤ ~150 s* — was **evaluated and redefined by the producer (2026-10-20,
+option (a))**. Every lever available under the epic's constraints was used or
+measured negative: deterministic boot (C2), the project split (C3), `scripts/`
+bounding plus gating the real-ffmpeg promo smoke out of the default suite
+(C5/AH-0MVFSNO0G00035AP), removal of all wall-clock waits (C6, completed by AH-0MVFPMT4P005UHZL), per-describe
+boot reuse (C7, −17 % of the adopted suites' test phase) and the Phaser
+transform experiment (C4, **rejected**: `isolate: false` breaks 78 files /
+1,202 tests; `pool: 'threads'` and the optimiser variant are slower). The
+remaining cost is the per-file Phaser transform/import under `isolate: true`
+(summed `import` 674–789 s per run), which cannot be removed without either
+losing test isolation or taking heavy work out of the audit-accepted suite.
+
+The expectation is therefore **qualitative and enforced by tests, not by a
+wall-clock number**:
+
+1. **No wall-clock waiting in tests.** Zero `setTimeout`-based boot delays and
+   zero wall-clock waits remain; any new one fails
+   `src/test/deterministicBootGuard.test.ts` or
+   `src/test/wallClockWaitGuard.test.ts` (its allow-list is empty).
+2. **Deterministic and repeatable.** Boot is fixed-delta by default; runs pass
+   under load without retries.
+3. **The default suite excludes real-binary work** (the ~140 s ffmpeg promo
+   compile lives in the gated `e2e` type), so the feedback loop pays only for
+   assertion work plus the unavoidable Phaser transform.
+4. **The fast loop stays sub-minute on a quiet host** (`unit`, ≈43 s measured);
+   under shared-host load it degrades with load like everything else, and the
+   measured figure is reported with its load rather than against a target.
+
+A future change that wants to halve the wall clock must first take a
+producer-authorised scope decision (see the closed item AH-0MVGRR51H008WP2N for
+the measured trade-offs of each option).
 
 ## The load snapshot
 

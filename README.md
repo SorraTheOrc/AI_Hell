@@ -485,20 +485,29 @@ load it was measured under. The repeatable procedure (and the cache/load
 evidence) lives in
 [docs/dev/test-suite-timing.md](./docs/dev/test-suite-timing.md).
 
-Measured while this split landed (2026-10-19, 16 cpus):
+Measured after the timing work landed (2026-10-20, 16 cpus, final validation
+AH-0MVF6W8NC006RT2B): each figure carries the load it was taken under, because
+the same suite spans ~58 % between a quiet and a contended host.
 
 | Scope | Files | Tests | Wall clock | Load 1/5/15 |
 |---|---:|---:|---:|---|
-| `unit` | 140 | 2,497 (2,488 passed + 9 expected fail) | **43.5 s** | 26.5 / 27.4 / 24.0 |
-| `integration` | 133 | 3,540 (3,526 passed + 14 expected fail) | ~300–445 s | loaded (varies) |
-| full `npm --silent test` | 273 | 6,037 (6,014 passed + 23 expected fail) | 362.9 s | 16.2 / — / — |
+| `unit` | 141 | 2,517 | **83–101 s** (43.5 s at load 26.5 when the split landed) | 24–44 |
+| `integration` | 139 | 3,620 | ~250–350 s | loaded (varies) |
+| full `npm --silent test` | 280 | 6,137 (6,127 passed + 10 expected fail) | **346.56 / 370.75 / 408.96 s** | 12.7 / 15.4 / 24.7 |
 
-Deterministic boot (below) removed the wall-clock boot sleeps and per-file
-game-shell reuse removed a further ~17 % off the boot-dense gym suites, but the
-suite was still measured **loaded**, not on an idle host; the definitive
-idle-host comparison and the parent timing targets are tracked by
-AH-0MVF6W8NC006RT2B. Do not compare a loaded run with an idle one — re-measure
-under the target condition instead.
+**The timing target is qualitative, not a wall-clock number** (producer
+decision, 2026-10-20, option (a) of AH-0MVGRR51H008WP2N). The suite is expected
+to (1) contain **no wall-clock waiting** — deterministic boot is the default and
+every wall-clock wait has been replaced by `advanceGame`/`stepGameUntil`, both
+enforced by guard tests; (2) be **deterministic and repeatable under load** —
+three consecutive full runs at load 12.7–24.7 were green with no retries; and
+(3) keep **real-binary work out of the default run** — the ~140 s ffmpeg promo
+compile lives in the gated `e2e` type. Halving the wall clock was evaluated and
+is not achievable under the current constraints: the residual cost is the
+per-file Phaser transform/import under `isolate: true`, and every lever that
+attacks it either breaks test isolation (`isolate: false`) or removes coverage
+from the audit-accepted suite. Report measured figures **with their load**; do
+not chase a number.
 
 #### Testing conventions (deterministic scene boot)
 
