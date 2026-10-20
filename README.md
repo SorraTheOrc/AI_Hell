@@ -462,13 +462,12 @@ a test file is selected by no project or by both, and asserts each project's
 
 Project test types are registered in
 `.pi/skills_extensions/test/extension.json` — the supported project-local
-mechanism for typed runs (see
-[docs/dev/skill-extensions.md](./docs/dev/skill-extensions.md)). The current
-registration exposes `unit` (`npx vitest run --project unit`), `coverage`
-(`npm run test:coverage`) and `e2e` (`npx vitest run --project e2e`); `full`
-falls back to the `npm --silent test` suite command. Each non-`full` type
-writes its own cache key, so `/skill:test --type unit` can never masquerade as
-full-suite evidence.
+mechanism for typed runs (see the test skill's "Typed runs" contract). The
+current registration exposes `unit` (`npx vitest run --project unit`),
+`coverage` (`npm run test:coverage`) and `e2e` (`npx vitest run --project
+e2e`); `full` falls back to the `npm --silent test` suite command. Each
+non-`full` type writes its own cache key, so `/skill:test --type unit` can
+never masquerade as full-suite evidence.
 
 #### Test execution and timing expectations
 
