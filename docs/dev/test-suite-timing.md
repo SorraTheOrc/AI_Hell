@@ -92,6 +92,22 @@ Record the 1/5/15-minute load averages and the CPU count. Target conditions:
 > directly. This is the epic's documented "measurement command" exception;
 > verification/evidence runs always go through step 1.
 
+## Per-file boot reuse (AH-0MVF6VZG9000AN6E)
+
+Heavy Phaser suites can share one `Phaser.Game` shell for the whole file and
+reboot into fresh scene instances per test via `createReusableBoot()`
+(`src/test/gameHarness.ts`). Measure a reuse change by running the same file set
+on the pre-change tree and the changed tree **under the same load**, comparing
+the vitest `tests` phase and per-file test sums (the boot cost lives there), not
+just the wall clock — transform/import dominate the wall clock and swamp the
+saving.
+
+Measured adoption (four gym suites, concurrent baseline/after runs at load
+~33 on 16 cpus): test phase 34.9 s → 28.7 s (**−17 %**); wall clock 52.0 s →
+49.6 s (−4 %). Per-boot medians on the same host: fresh 21–78 ms vs reused
+11–75 ms (the saving is the removed game construction/destroy; scene
+`create()` still runs).
+
 ## Recording format
 
 One table row per measured run, in a work-item comment on the epic

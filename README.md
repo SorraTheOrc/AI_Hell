@@ -519,6 +519,22 @@ post-boot assertions flaky under load.
   public `scene.setAsteroidSpawnerEnabled(false)` seam (the `PlayScene.test.ts`
   and `PlayScenePause.test.ts` suites do), and compare captured entities by
   identity where a list is involved (AH-0MUZDXF2U001MJW1).
+- **Reuse one game *shell* per file where a fresh scene reset is safe.**
+  Constructing and destroying a whole `Phaser.Game` per test dominated the
+  boot-dense gym suites. `createReusableBoot()` (`src/test/gameHarness.ts`)
+  lazily boots one game per file and every `reuse.boot([...])` creates **fresh
+  scene instances** on it: queued scene ops from the previous test are drained
+  first, each old scene is shut down and destroyed, and only then are the new
+  instances added, so per-test state isolation is identical to a fresh game.
+  Adopted by `GymPowerUpsCombat.test.ts`, `GymPowerUpsUtility.test.ts`,
+  `GymMinerals.test.ts` and `GymFormationScene.test.ts`, which cut ~17 % off
+  their test phase in a load-matched comparison (AH-0MVF6VZG9000AN6E). Suites
+  that keep per-test `bootScene()` boots do so because their reset is not
+  provably safe with one shared canvas: `PlayScene.test.ts` (every test injects
+  a different campaign/level fixture and asserts across a scene restart),
+  `CombatScene.equivalence.test.ts` (each test compares a distinct
+  scene-class/host combination), and suites that replace the DOM host with
+  `document.body.innerHTML` (`GymWeapons`, `GymPlayer`, `GymFodderEnemies`, …).
 - **Never weaken an assertion to hide a flake** — fix the nondeterminism at its
   source (assertions stay exact; a guard may poll with bounded deterministic
   ticks and fail loudly with diagnostic state).

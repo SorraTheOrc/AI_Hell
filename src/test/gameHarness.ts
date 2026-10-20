@@ -33,6 +33,40 @@ export interface BootedGame {
   scene: Phaser.Scene;
 }
 
+/**
+ * A game shell created lazily on the first `boot()` and reused for every later
+ * `boot()` (AH-0MVF6VZG9000AN6E).
+ *
+ * Creating a `Phaser.Game` (renderer, canvas context, scene manager) costs a
+ * material share of a deterministic boot (measured ~10–27 ms of the ~20–90 ms
+ * a gym boot takes on a loaded 16-core host), so heavy suites that boot once
+ * per test can reuse the game shell and only pay for the scene `create()` +
+ * the fixed-delta boot steps.
+ *
+ * **Why this is safe:** every `boot()` call shuts down and destroys the
+ * previous scene instances and creates **new** instances of the requested
+ * scene classes — the same per-test scene state isolation a fresh game gives.
+ * What is shared is only the Phaser game shell (renderer +
+ * `game.registry`/`game.textures`/`game.anims`), which the gym scenes and
+ * `PlayScene` do not mutate. Suites that mutate game-global state or replace
+ * the DOM host (`document.body.innerHTML`) must keep per-test `bootScene()`.
+ */
+export interface ReusableBoot {
+  /**
+   * The reused game, or `null` before the first `boot()`. Do **not** call
+   * `destroy()` on it; call `dispose()`.
+   */
+  readonly game: Phaser.Game | null;
+  /**
+   * Replaces every scene on the reused game (creating the game on first use)
+   * with fresh instances of `sceneClasses` and runs the deterministic boot,
+   * resolving with the first active scene.
+   */
+  boot(sceneClasses: (typeof Phaser.Scene)[]): Promise<BootedGame>;
+  /** Destroys the reused game (no-op if never booted). */
+  dispose(): void;
+}
+
 /** Fixed simulation step used to boot the scene deterministically (~60 fps). */
 const DETERMINISTIC_STEP_MS = 1000 / 60;
 /**
@@ -120,15 +154,32 @@ async function bootDeterministic(game: Phaser.Game): Promise<void> {
   // Stop the loop synchronously, before the first animation frame can run.
   game.loop.stop();
 
-  // Boot the scene with fixed-delta steps — no wall-clock frames — then
-  // advance a fixed simulated time so the state does not depend on how
-  // many frames happened to drain during a real-time boot.
-  //
-  // The simulated clock is anchored to the real clock so `scene.time.now`
-  // keeps the semantics the legacy real-time boot had (an absolute,
-  // monotonically increasing timestamp). Only the *origin* is real: the
-  // step count and the resulting scene state stay fixed-delta and
-  // deterministic (AH-0MVF6XQIC005RY3P).
+  runDeterministicBootSteps(game);
+
+  // Resume the live loop so tests that `await` a scene transition still
+  // work. The next animation frame cannot run before the synchronous part
+  // of the calling test has finished, so the booted state stays
+  // deterministic.
+  game.loop.start(game.step.bind(game));
+}
+
+/**
+ * Boots the (loop-stopped) game with fixed-delta steps — no wall-clock frames
+ * — then advances a fixed simulated time so the state does not depend on how
+ * many frames happened to drain during a real-time boot.
+ *
+ * The simulated clock is anchored to the real clock so `scene.time.now`
+ * keeps the semantics the legacy real-time boot had (an absolute,
+ * monotonically increasing timestamp). Only the *origin* is real: the step
+ * count and the resulting scene state stay fixed-delta and deterministic
+ * (AH-0MVF6XQIC005RY3P).
+ *
+ * Shared by the first (fresh-game) boot and every reusable-boot reboot
+ * (AH-0MVF6VZG9000AN6E) so both paths advance the scene identically.
+ *
+ * @param game — A booted game whose live loop is stopped.
+ */
+function runDeterministicBootSteps(game: Phaser.Game): void {
   let time = window.performance.now();
   let activeAtStep = -1;
   const settleSteps = Math.ceil(DETERMINISTIC_SETTLE_MS / DETERMINISTIC_STEP_MS);
@@ -140,12 +191,117 @@ async function bootDeterministic(game: Phaser.Game): Promise<void> {
     }
     if (activeAtStep >= 0 && i - activeAtStep >= settleSteps) break;
   }
+}
 
-  // Resume the live loop so tests that `await` a scene transition still
-  // work. The next animation frame cannot run before the synchronous part
-  // of the calling test has finished, so the booted state stays
-  // deterministic.
-  game.loop.start(game.step.bind(game));
+/**
+ * Creates a lazy reusable boot for suites that want to boot **once per test
+ * file** (one game shell) instead of once per test (AH-0MVF6VZG9000AN6E).
+ *
+ * Typical use — one pool per file, disposed by the file-level `afterAll`:
+ *
+ * ```ts
+ * const reuse = createReusableBoot();
+ * afterAll(() => reuse.dispose());
+ *
+ * describe('GymWeapons …', () => {
+ *   let booted: BootedGame | null = null;
+ *   afterEach(() => { booted = null; });
+ *
+ *   async function bootWeapons(): Promise<GymWeapons> {
+ *     booted = await reuse.boot([GymWeapons]);
+ *     return booted.scene as GymWeapons;
+ *   }
+ * });
+ * ```
+ *
+ * The first `boot()` is the normal deterministic `bootScene()` boot, so the
+ * first test observes exactly what a per-test boot would produce; every later
+ * `boot()` pays only for the scene `create()` + boot steps. Scenes are always
+ * fresh instances — only the game shell is shared.
+ *
+ * @param parent — DOM element id that hosts the canvas (fixed for the pool).
+ */
+export function createReusableBoot(parent = 'game-container'): ReusableBoot {
+  let game: Phaser.Game | null = null;
+
+  async function boot(nextSceneClasses: (typeof Phaser.Scene)[]): Promise<BootedGame> {
+    if (!game) {
+      const first = await bootScene(nextSceneClasses, parent);
+      game = first.game;
+      return first;
+    }
+
+    game.loop.stop();
+
+    // Drain any scene operations the previous test queued (e.g.
+    // `ScenePlugin.launch`/`pause` queue `start`/`pause` ops). If left in the
+    // queue they would run inside the first boot step and target the *fresh*
+    // scene instances we add below — a stale overlay `start` would even become
+    // the "active" scene and a stale `pause` would freeze the new gym
+    // (observed in GymMinerals). Draining first applies them to the old
+    // instances we are about to destroy.
+    game.scene.processQueue();
+
+    // Shut down and destroy every previous scene instance so no per-test scene
+    // state can leak into the next test (fresh instance == fresh game, except
+    // for the shared game shell). `SceneManager.remove` destroys a scene's
+    // systems and display list but does **not** emit `SHUTDOWN` (nor does
+    // `Game#destroy`), so emit it explicitly first: scene cleanup handlers
+    // (DOM panels, listeners) must run or reused games accumulate debris.
+    for (const stale of [...game.scene.getScenes(false)]) {
+      const sys = stale.sys;
+      if (sys.settings.status !== Phaser.Scenes.DESTROYED) sys.shutdown();
+      game.scene.remove(sys.settings.key);
+    }
+    // `remove` queues itself while the manager is processing; drain again so
+    // the old scenes are gone before the fresh instances reuse their keys.
+    game.scene.processQueue();
+    const leftovers = game.scene.getScenes(false);
+    if (leftovers.length > 0) {
+      throw new Error(
+        `scene removal did not complete (${leftovers
+          .map((s) => s.sys.settings.key)
+          .join(', ')})`,
+      );
+    }
+
+    nextSceneClasses.forEach((SceneClass, index) => {
+      // `SceneManager.add(key, sceneConfig, autoStart)`: the class has to be
+      // the *second* argument, and `createSceneFromFunction` replaces the
+      // placeholder key with the instance's own scene key.
+      game!.scene.add(SceneClass.name, SceneClass, index === 0);
+    });
+    // An added scene with `autoStart` boots `create()` synchronously; the
+    // yield lets any microtask-deferred work it scheduled (e.g. happy-dom's
+    // deferred image `src` assignment) settle before the boot steps run.
+    await yieldMacrotask();
+
+    runDeterministicBootSteps(game);
+
+    const scene = game.scene.getScenes(true)[0];
+    if (!scene) throw new Error('no active scene after reboot');
+
+    game.loop.start(game.step.bind(game));
+    return { game, scene };
+  }
+
+  return {
+    get game() {
+      return game;
+    },
+    boot,
+    dispose: () => {
+      game?.destroy(true);
+      game = null;
+    },
+  };
+}
+
+/** Macrotask yield (never a wall-clock sleep). */
+async function yieldMacrotask(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 /**

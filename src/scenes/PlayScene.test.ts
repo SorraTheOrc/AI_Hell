@@ -435,6 +435,19 @@ function singleLevelCampaign(): LevelDefinition[] {
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   let booted: BootedGame | null = null;
 
+  /**
+   * Fixed RNG for the asteroid fixtures below (AH-0MVG23LT7000CG4R).
+   *
+   * An asteroid picks its drift heading from the scene RNG, so an unseeded
+   * (Math.random-backed) run could send the carried-over rock into the player
+   * or the auto-fire path and fail the persistence assertions — which is
+   * exactly what happened under full-suite parallel load. Seeding the scene
+   * RNG makes the heading (and every other roll in these tests) identical on
+   * every run.
+   */
+  const ASTEROID_SEED = 1;
+  const FIXED_RNG = createSeededRng(ASTEROID_SEED);
+
   beforeEach(() => {
     // Use the deterministic static campaign for these wave/transition tests so
     // their assertions do not depend on the runtime-sequenced campaign's
@@ -489,13 +502,25 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // restarts so these asteroid-behaviour tests are not perturbed by random
     // spawns, then place one deterministic large asteroid through the public
     // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
-    const { booted: game, scene } = await bootSceneWithLevels(
+    const result = await bootSceneWithLevels(
       plainCampaign(),
       { asteroidSpawner: false },
     );
-    booted = game;
-    scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
-    return scene;
+    booted = result.booted;
+    // Seed the scene RNG: an asteroid picks its drift heading from it, so an
+    // unseeded run could send the carried-over rock into the player or the
+    // player's auto-fire and fail the persistence assertions (observed under
+    // full-suite parallel load, AH-0MVG23LT7000CG4R). A fixed seed keeps the
+    // heading (and the wave-1..N spawn plans) identical on every run.
+    result.scene.setRng(FIXED_RNG);
+    // These tests drive every step explicitly (the kill/clear/transition
+    // helpers all use `scene.tick`), so stop the live rAF loop the harness
+    // resumes at the end of `bootScene()`. Otherwise an unpredictable real
+    // frame can run between the test's `await` points (e.g. inside
+    // `bootSceneWithLevels`'s `advanceGame`) with a large real-time delta.
+    result.booted.game.loop.stop();
+    result.scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
+    return result.scene;
   }
 
   // ── AC1: five-level scene + wave spawning ──────────────────────

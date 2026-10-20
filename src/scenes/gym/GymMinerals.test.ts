@@ -5,10 +5,10 @@
  * and the 100-mineral seeding applied to the gym scenes.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, type BootedGame } from '../../test/gameHarness';
+import { type BootedGame, createReusableBoot } from '../../test/gameHarness';
 import * as effectsModule from '../../audio/effects';
 import { GymMinerals } from './GymMinerals';
 import { GymFodderEnemies } from './GymFodderEnemies';
@@ -21,6 +21,15 @@ import { Asteroid } from '../../entities/Asteroid';
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from '../../core/rules';
 import { RULES_STORAGE_KEY } from '../../core/rules';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
+
+/**
+ * One Phaser game shell per file, rebooted into a fresh scene instance per
+ * test (AH-0MVF6VZG9000AN6E). Constructing/destroying a `Phaser.Game` per test
+ * dominated this suite's boot cost; every `reuse.boot()` still creates new
+ * scene instances, so per-test state isolation is unchanged.
+ */
+const reuse = createReusableBoot();
+afterAll(() => reuse.dispose());
 
 /** Live asteroid entities of the given tier in a mineral gym. */
 function liveAsteroids(scene: GymMinerals): Asteroid[] {
@@ -43,13 +52,8 @@ function clearMinerals(scene: GymMinerals): void {
 describe('GymMinerals', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   it('seeds 100 random minerals on create', async () => {
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
 
     expect(scene.getSeededMineralCount()).toBe(100);
@@ -62,7 +66,7 @@ describe('GymMinerals', () => {
   });
 
   it('shows the mineral hold bar on the HUD', async () => {
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
 
     const bar = scene.getHUD()?.getMineralBarState();
@@ -77,7 +81,7 @@ describe('GymMinerals', () => {
   });
 
   it('the player collects an overlapping mineral into the hold', async () => {
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
     const player = scene.getPlayer()!;
     const mineral = scene.getMinerals()[0];
@@ -89,7 +93,7 @@ describe('GymMinerals', () => {
   });
 
   it('AC5 — the shared P10 scoop pulls an in-range mineral toward the ship', async () => {
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
     const player = scene.getPlayer()!;
     const registry = scene.getEffectsRegistry();
@@ -107,7 +111,7 @@ describe('GymMinerals', () => {
   });
 
   it('P6 phase blocks mineral collection and resumes on expiry (Q7)', async () => {
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
     const player = scene.getPlayer()!;
     const mineral = scene.getMinerals()[0];
@@ -136,7 +140,7 @@ describe('GymMinerals', () => {
   });
 
   it('existing gym scenes are seeded with 100 minerals too', async () => {
-    booted = await bootScene([GymFodderEnemies, MineralChoiceScene]);
+    booted = await reuse.boot([GymFodderEnemies, MineralChoiceScene]);
     const scene = booted.scene as GymFodderEnemies;
 
     expect(scene.getSeededMineralCount()).toBe(100);
@@ -144,7 +148,7 @@ describe('GymMinerals', () => {
   });
 
   it('a destroyed small asteroid drops exactly one mineral at its position (AC1)', async () => {
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
     // Complete the wormhole spawn animation so the asteroids are collidable.
     scene.finishSpawnAnimations();
@@ -197,7 +201,7 @@ describe('GymMinerals', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ asteroidExtraLifeDropChance: 1 }),
     );
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
     scene.finishSpawnAnimations();
     scene.tick(0.001);
@@ -254,11 +258,6 @@ describe('GymMinerals', () => {
 describe('GymMinerals — hold-full rewards are functional', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   /** Clears the seeded minerals so a stationary player never fills the hold. */
   function clearMinerals(scene: GymMinerals): void {
     (scene as unknown as { minerals: unknown[] }).minerals.length = 0;
@@ -288,7 +287,7 @@ describe('GymMinerals — hold-full rewards are functional', () => {
   }
 
   async function bootMinerals(): Promise<GymMinerals> {
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     const scene = booted.scene as GymMinerals;
     clearMinerals(scene);
     // A stationary ship must not auto-fire a bullet that could intercept the
@@ -435,13 +434,8 @@ describe('GymMinerals — hold-full rewards are functional', () => {
 describe('GymMinerals — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootMinerals(): Promise<GymMinerals> {
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     return booted.scene as GymMinerals;
   }
 
@@ -480,12 +474,10 @@ describe('GymMinerals — shared wave-timeout (AH-0MUNR5LM1004B223)', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    booted?.game.destroy(true);
-    booted = null;
   });
 
   async function boot(): Promise<GymMinerals> {
-    booted = await bootScene([GymMinerals, MineralChoiceScene]);
+    booted = await reuse.boot([GymMinerals, MineralChoiceScene]);
     return booted.scene as GymMinerals;
   }
 
