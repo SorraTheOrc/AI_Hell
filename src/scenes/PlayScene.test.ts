@@ -86,6 +86,7 @@ import {
   MINI_BOSS_LOCKED_WEAPONS,
   lockedWeaponIds,
 } from '../powerups/unlocks';
+import { CHECKPOINT_STORAGE_KEY, loadCheckpoint } from '../core/checkpointStore';
 
 // These integration tests boot full Phaser games and walk the run to the
 // boss; under the full-suite parallel load the Vitest default 5 s timeout
@@ -6976,6 +6977,28 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     });
     expect(stillLocked).not.toContain('railgun');
     expect(MINI_BOSS_LOCKED_WEAPONS).toContain('railgun');
+  });
+
+  it('AC2 — a mini-boss defeat auto-saves the run checkpoint', async () => {
+    localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    scene.getGameState().score = 4321;
+    scene.getGameState().lives = 2;
+    scene.getGameState().minerals = 5;
+    scene.getPlayer()!.equipWeapon('spread', true);
+
+    killMiniBoss(scene, false);
+
+    const saved = loadCheckpoint();
+    expect(saved).not.toBeNull();
+    expect(saved!.level).toBe(2); // resume at the level AFTER the mini-boss
+    expect(saved!.wave).toBe(1);
+    expect(saved!.lives).toBe(2);
+    expect(saved!.score).toBe(4321);
+    expect(saved!.minerals).toBe(5);
+    expect(saved!.runSeed).toBe(scene.getRunSeed());
+    expect(saved!.weaponLevels.some((entry) => entry.id === 'spread')).toBe(true);
   });
 
   it('AC5 — on the final level, defeating the mini-boss triggers the final boss', async () => {

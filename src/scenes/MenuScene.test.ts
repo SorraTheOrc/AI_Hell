@@ -19,6 +19,11 @@ import { addEntry } from '../core/Leaderboard';
 import { GAME_HEIGHT } from '../core/constants';
 import { GAME_VERSION } from '../core/version';
 import { LEVEL_COUNT } from '../waves/Formations';
+import {
+  CHECKPOINT_STORAGE_KEY,
+  CHECKPOINT_VERSION,
+  hasCheckpoint,
+} from '../core/checkpointStore';
 import { GITHUB_REPO_URL, GITHUB_LOGO_TEXTURE_KEY, MenuScene, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { PauseScene } from './PauseScene';
@@ -938,5 +943,103 @@ describe('MenuScene — version label (AH-0MUZM9053008YXOZ)', () => {
     expect(focused.size).toBe(6);
     // Wraps back to the default control, preserving keyboard parity (GDD §2.1).
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+  });
+});
+
+describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
+  });
+
+  /** Seeds a resumable checkpoint at the given level. */
+  function seedCheckpoint(level = 4): void {
+    localStorage.setItem(
+      CHECKPOINT_STORAGE_KEY,
+      JSON.stringify({
+        version: CHECKPOINT_VERSION,
+        level,
+        wave: 1,
+        lives: 2,
+        score: 9876,
+        minerals: 3,
+        weaponLevels: [{ id: 'spread', level: 2 }],
+        powerUpLevels: [{ id: 'shield', level: 1 }],
+        unlockedWeapons: ['railgun'],
+        runSeed: 4242,
+        savedAt: '2026-10-20T00:00:00.000Z',
+      }),
+    );
+  }
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([MenuScene, PlayScene, GameOverScene, GymIndex]);
+    return booted!.scene as MenuScene;
+  }
+
+  it('AC3 — Continue is hidden when no checkpoint exists', async () => {
+    const scene = await bootMenu();
+    const continueButton = scene.children.list.find(
+      (child) =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.text.startsWith('⏵  Continue'),
+    );
+    expect(continueButton).toBeUndefined();
+  });
+
+  it('AC3 — Continue is offered when a checkpoint exists', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+    const continueButton = scene.children.list.find(
+      (child): child is Phaser.GameObjects.Text =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.text.startsWith('⏵  Continue'),
+    );
+    expect(continueButton).toBeDefined();
+    expect(continueButton!.text).toContain('Level 4');
+  });
+
+  it('AC3/AC4 — Continue resumes the run at the saved level with its stats', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+
+    scene.children.list
+      .find(
+        (child): child is Phaser.GameObjects.Text =>
+          child instanceof Phaser.GameObjects.Text &&
+          child.text.startsWith('⏵  Continue'),
+      )!
+      .emit('pointerdown');
+    await advanceGame(booted!.game, 500);
+
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getWaveManager().level).toBe(4);
+    expect(play.getWaveManager().waveNumber).toBe(1);
+    expect(play.getGameState().lives).toBe(2);
+    expect(play.getGameState().score).toBe(9876);
+    expect(play.getGameState().minerals).toBe(3);
+    expect(play.getUnlockedWeapons()).toContain('railgun');
+    expect(play.getRunSeed()).toBe(4242);
+    expect(
+      play
+        .getPlayer()!
+        .getWeaponLevels()
+        .some((entry) => entry.id === 'spread' && entry.level === 2),
+    ).toBe(true);
+  });
+
+  it('AC4 — a New Game clears the checkpoint', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+    findText(scene, '▶  Play Game').emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+
+    expect(hasCheckpoint()).toBe(false);
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getWaveManager().level).toBe(1);
   });
 });

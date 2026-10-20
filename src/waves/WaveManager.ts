@@ -116,9 +116,18 @@ export class WaveManager {
 
   // ── Lifecycle ───────────────────────────────────────────────────
 
-  /** Resets to Level 1, Wave 1 and marks the session started. */
-  beginGame(): void {
-    this._levelIndex = 0;
+  /**
+   * Resets to the given level's Wave 1 and marks the session started.
+   *
+   * @param startLevel - 1-based campaign level to begin at (default 1). The
+   *   checkpoint resume path starts a run at the saved level; out-of-range
+   *   values clamp to the campaign bounds.
+   */
+  beginGame(startLevel = 1): void {
+    const clamped = Number.isFinite(startLevel)
+      ? Math.min(Math.max(1, Math.floor(startLevel)), this.levels.length)
+      : 1;
+    this._levelIndex = clamped - 1;
     this._waveIndex = 0;
     this._bossTriggered = false;
     this._bossActive = false;

@@ -43,7 +43,7 @@ import {
   POWER_UP_DROP_SIZE,
   SHIP_SIZE,
 } from '../core/constants';
-import { GameState, MAX_LIVES } from '../core/GameState';
+import { GameState, MAX_LEVEL, MAX_LIVES } from '../core/GameState';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import {
   DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
@@ -114,6 +114,12 @@ import {
   unlockWeapon,
   type MiniBossUnlockState,
 } from '../powerups/unlocks';
+import {
+  CHECKPOINT_VERSION,
+  loadCheckpoint,
+  saveCheckpoint,
+  type Checkpoint,
+} from '../core/checkpointStore';
 import { PowerUp } from '../powerups/PowerUp';
 import { EXTRA_LIFE_DROP_ID, getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
@@ -585,6 +591,12 @@ export class PlayScene extends CombatScene<
   /** True while the mini-boss reward choice overlay is open. */
   private miniBossRewardOpen = false;
 
+  /** Whether `create()` should resume from the persisted checkpoint. */
+  private resumeFromCheckpoint = false;
+
+  /** The checkpoint loaded in `init()`, applied once the run exists. */
+  private pendingResumeCheckpoint: Checkpoint | null = null;
+
   /** The options offered by the open mini-boss reward overlay. */
   private miniBossRewardOptions: ChoiceOption[] = [];
 
@@ -826,8 +838,23 @@ export class PlayScene extends CombatScene<
    * explicit `{ demo: false }` (see `MenuScene`). This guard only protects a
    * genuinely absent payload; it cannot distinguish a stale one.
    */
-  init(data?: { demo?: boolean; seed?: number; demoDwellMs?: number }): void {
+  init(data?: {
+    demo?: boolean;
+    seed?: number;
+    demoDwellMs?: number;
+    resume?: boolean;
+  }): void {
     this.demoMode = data?.demo === true;
+    // Continue from the last checkpoint (AH-0MVCRBTNF000DK51). It is loaded
+    // here so the saved run seed seeds the RNG before anything draws from it;
+    // the rest of the run state is applied in `create()`.
+    this.resumeFromCheckpoint = data?.resume === true;
+    this.pendingResumeCheckpoint = this.resumeFromCheckpoint
+      ? loadCheckpoint()
+      : null;
+    if (this.pendingResumeCheckpoint) {
+      this.injectedRunSeed = this.pendingResumeCheckpoint.runSeed;
+    }
     // The bot seam is inert outside demo mode; clear any name applied by a
     // previous demo so a normal (re)start never reports a stale config
     // (AH-0MV6MFDYG001E6PL).
@@ -944,7 +971,13 @@ export class PlayScene extends CombatScene<
         ),
       );
     }
-    this.waveManager.beginGame();
+    // Checkpoint resume (AH-0MVCRBTNF000DK51): start at the saved level and
+    // restore the run stats/permanent progress before the first wave spawns.
+    const resume = this.pendingResumeCheckpoint;
+    this.pendingResumeCheckpoint = null;
+    this.resumeFromCheckpoint = false;
+    this.waveManager.beginGame(resume?.level ?? 1);
+    if (resume) this._restoreCheckpoint(resume);
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();
     this.spawnWave();
@@ -2787,6 +2820,8 @@ export class PlayScene extends CombatScene<
    */
   private _fireMiniBossDefeatHooks(context: MiniBossDefeatContext): void {
     this.miniBossDefeats += 1;
+    // Auto-save the checkpoint at every mini-boss defeat (AC2).
+    this._saveCheckpoint(context);
     this.miniBossRewardHook?.(context);
     this.miniBossCheckpointHook?.(context);
     // Reward loop (AH-0MVCRBNO6003E1CH AC1): a defeat offers exactly ONE
@@ -2863,6 +2898,62 @@ export class PlayScene extends CombatScene<
       this.scene.resume();
     }
     return option;
+  }
+
+  /**
+   * Writes the run checkpoint after a mini-boss defeat (AC2). The saved level
+   * is the level the run **resumes** at — the one after the defeated
+   * mini-boss (capped at the final level), at wave 1 — so Continue always
+   * restarts cleanly at the beginning of a level.
+   */
+  private _saveCheckpoint(context: MiniBossDefeatContext): void {
+    const resumeLevel = Math.min(context.level + 1, MAX_LEVEL);
+    const checkpoint: Checkpoint = {
+      version: CHECKPOINT_VERSION,
+      level: resumeLevel,
+      wave: 1,
+      lives: this.gameState.lives,
+      score: this.gameState.score,
+      minerals: this.gameState.minerals,
+      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      unlockedWeapons: this.getUnlockedWeapons(),
+      runSeed: this.getRunSeed(),
+      savedAt: new Date().toISOString(),
+    };
+    saveCheckpoint(checkpoint);
+  }
+
+  /**
+   * Restores a checkpoint into a freshly created run (AC3/AC4): run stats,
+   * the run seed (reproducibility/leaderboard validity), permanent weapon and
+   * power-up levels and the mini-boss unlock state. The WaveManager has
+   * already started at the checkpoint level.
+   */
+  private _restoreCheckpoint(checkpoint: Checkpoint): void {
+    this.gameState.lives = checkpoint.lives;
+    this.gameState.score = checkpoint.score;
+    this.gameState.minerals = checkpoint.minerals;
+    this.gameState.runSeed = checkpoint.runSeed;
+    this.injectedRunSeed = checkpoint.runSeed;
+    this.effectsRegistry.setLives(checkpoint.lives);
+    // Replay the permanent grants through the ordinary collection seam so the
+    // restored levels are identical to a run that earned them.
+    for (const entry of checkpoint.weaponLevels) {
+      for (let i = 0; i < entry.level; i += 1) {
+        this.player?.equipWeapon(entry.id, true);
+      }
+    }
+    for (const entry of checkpoint.powerUpLevels) {
+      for (let i = 0; i < entry.level; i += 1) {
+        this.player?.collectPowerUp(entry.id, true);
+      }
+    }
+    const unlocked = new Set<WeaponId>(this.miniBossUnlockState.unlockedWeapons);
+    for (const weaponId of checkpoint.unlockedWeapons) unlocked.add(weaponId);
+    this.miniBossUnlockState = { unlockedWeapons: unlocked };
+    this._syncMineralHud();
+    this._refreshHudText();
   }
 
   /** The options offered by the open (or most recent) mini-boss reward. */
