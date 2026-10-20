@@ -205,6 +205,7 @@ import {
 import { LaneTraffic } from '../entities/LaneTraffic';
 import { Boss, BossPhase } from '../entities/Boss';
 import { MiniBoss, type MiniBossConfig } from '../entities/MiniBoss';
+import { miniBossConfigForLevel } from '../waves/miniBossDesigns';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
   CombatScene,
@@ -1395,14 +1396,14 @@ export class PlayScene extends CombatScene<
    * wiring.
    */
   protected miniBossConfigFor(level: number): MiniBossConfig {
-    return {
-      level,
-      name: 'Mini-Boss',
+    // The ten bespoke per-level designs are the single data source for the
+    // encounter (AH-0MVCRBXSS008JSV0); the gym consumes the same helper.
+    return miniBossConfigForLevel(level, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2 - 80,
       formationOffset: { row: 0, col: 0 },
       rng: this.rng,
-    };
+    });
   }
 
   /**

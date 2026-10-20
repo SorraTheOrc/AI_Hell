@@ -81,6 +81,7 @@ import {
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
 import { RULES_STORAGE_KEY } from '../core/rules';
+import { miniBossDesignForLevel } from '../waves/miniBossDesigns';
 
 // These integration tests boot full Phaser games and walk the run to the
 // boss; under the full-suite parallel load the Vitest default 5 s timeout
@@ -6773,10 +6774,12 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(miniBoss).not.toBeNull();
     expect(miniBoss!.alive).toBe(true);
     expect(miniBoss).toBeInstanceOf(MiniBoss);
-    // The generic default config names the active level until the bespoke
-    // mini-boss designs feature lands (AC3).
+    // The active level's bespoke design supplies the identity (AC1/AC3,
+    // AH-0MVCRBXSS008JSV0).
     expect(miniBoss!.resolvedConfig.level).toBe(scene.getWaveManager().level);
-    expect(miniBoss!.resolvedConfig.name).toBe('Mini-Boss');
+    expect(miniBoss!.resolvedConfig.name).toBe(
+      miniBossDesignForLevel(scene.getWaveManager().level).archetype,
+    );
     // The shared boss accessor targets the encounter so the live entity is
     // advanced/targeted by the shared combat core.
     expect(scene.getBoss()).toBe(miniBoss);
@@ -6825,7 +6828,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     const expected = {
       level: 1,
       waveNumber: 2,
-      miniBossName: 'Mini-Boss',
+      miniBossName: miniBossDesignForLevel(1).archetype,
       isFinalLevel: false,
     };
     expect(reward).toHaveBeenCalledWith(expected);

@@ -19,12 +19,18 @@ import {
   GymMiniBoss,
   MINI_BOSS_GYM_COLOR,
   MINI_BOSS_GYM_HP_PER_PHASE,
-  MINI_BOSS_GYM_MINIONS,
+  MINI_BOSS_GYM_LEVEL,
   MINI_BOSS_GYM_NAME,
   MINI_BOSS_GYM_PHASES,
   MINI_BOSS_FORMATION_START_X,
   MINI_BOSS_FORMATION_START_Y,
+  selectGymMiniBossDesign,
 } from './GymMiniBoss';
+import {
+  MINI_BOSS_DESIGN_LEVELS,
+  MINI_BOSS_DESIGNS,
+  miniBossDesignForLevel,
+} from '../../waves/miniBossDesigns';
 
 /** Finds an on-screen text button by label. */
 function findButton(
@@ -62,7 +68,7 @@ describe('GymMiniBoss — config-driven mini-boss gym (AH-0MVCRAYSH0014BQJ)', ()
     expect(scene.children.list.includes(boss)).toBe(true);
     expect(boss.bodyVisible).toBe(true);
 
-    // Demo config is applied: phase set, HP, colour and identity.
+    // The level-1 bespoke design is applied: phase set, colour and identity.
     expect(boss.getPhaseCount()).toBe(MINI_BOSS_GYM_PHASES.length);
     expect(boss.getPhaseNumber()).toBe(1);
     expect(boss.getColor()).toBe(MINI_BOSS_GYM_COLOR);
@@ -108,16 +114,16 @@ describe('GymMiniBoss — config-driven mini-boss gym (AH-0MVCRAYSH0014BQJ)', ()
     expect(boss.getPhaseNumber()).toBe(2);
   });
 
-  it('AC3 — the three demo phases can be traversed and the boss defeated', async () => {
+  it('AC3 — every design phase can be traversed and the boss defeated', async () => {
     const scene = await bootGym();
     const boss = scene.formationMiniBoss;
+    const phaseCount = miniBossDesignForLevel(MINI_BOSS_GYM_LEVEL).phases.length;
 
-    const totalHits =
-      MINI_BOSS_GYM_HP_PER_PHASE * MINI_BOSS_GYM_PHASES.length;
+    const totalHits = MINI_BOSS_GYM_HP_PER_PHASE * phaseCount;
     for (let hit = 0; hit < totalHits - 1; hit++) scene.damageMiniBoss();
 
     expect(boss.alive).toBe(true);
-    expect(boss.getPhaseNumber()).toBe(MINI_BOSS_GYM_PHASES.length);
+    expect(boss.getPhaseNumber()).toBe(phaseCount);
 
     scene.damageMiniBoss();
     expect(boss.alive).toBe(false);
@@ -125,17 +131,20 @@ describe('GymMiniBoss — config-driven mini-boss gym (AH-0MVCRAYSH0014BQJ)', ()
   });
 
   it('AC3 — config-summoned minions join the shared collision pass', async () => {
+    // Level 3's design (Shard Matron) summons a phase-1 scout wave; select it
+    // and rebuild the scene so the real design's minions are exercised.
+    selectGymMiniBossDesign(3);
     const scene = await bootGym();
     const boss = scene.formationMiniBoss;
 
-    const expectedPhase1Minions = MINI_BOSS_GYM_MINIONS.filter(
-      (wave) => wave.phase === 1,
-    ).reduce(
-      (total, wave) =>
-        total +
-        wave.groups.reduce((count, group) => count + group.count, 0),
-      0,
-    );
+    const expectedPhase1Minions = miniBossDesignForLevel(3)
+      .minions!.filter((wave) => wave.phase === 1)
+      .reduce(
+        (total, wave) =>
+          total +
+          wave.groups.reduce((count, group) => count + group.count, 0),
+        0,
+      );
     expect(expectedPhase1Minions).toBeGreaterThan(0);
     expect(boss.getMinions()).toHaveLength(expectedPhase1Minions);
 
@@ -147,6 +156,7 @@ describe('GymMiniBoss — config-driven mini-boss gym (AH-0MVCRAYSH0014BQJ)', ()
     for (const minion of boss.getMinions()) {
       expect(collidable).toContain(minion);
     }
+    selectGymMiniBossDesign(1);
   });
 
   it('AC3 — the gym keeps the shared HUD controls (EXPLODE, SHOOT, back to index)', async () => {
@@ -163,5 +173,36 @@ describe('GymMiniBoss — config-driven mini-boss gym (AH-0MVCRAYSH0014BQJ)', ()
     expect(boss.x).toBeLessThan(GAME_WIDTH);
     expect(boss.y).toBeGreaterThan(0);
     expect(boss.y).toBeLessThan(GAME_HEIGHT);
+  });
+
+  it('AC3/AC4 — every bespoke design boots and runs in the gym through the shared core', async () => {
+    // Iterate the full design catalogue: each level's bespoke encounter is
+    // exercised by the gym (parity) and matches the catalogue 1:1.
+    expect(MINI_BOSS_DESIGNS).toHaveLength(MINI_BOSS_DESIGN_LEVELS);
+    for (let level = 1; level <= MINI_BOSS_DESIGN_LEVELS; level++) {
+      selectGymMiniBossDesign(level);
+      expect(miniBossDesignForLevel(level).level).toBe(level);
+
+      // Rebuild the gym for this design and drive one shared tick.
+      booted?.game.destroy(true);
+      booted = await bootScene([GymMiniBoss]);
+      const gym = booted!.scene as GymMiniBoss;
+      const boss = gym.formationMiniBoss;
+      const design = miniBossDesignForLevel(level);
+
+      expect(boss.resolvedConfig.level).toBe(level);
+      expect(boss.resolvedConfig.name).toBe(design.archetype);
+      expect(boss.getColor()).toBe(design.color);
+      expect(boss.getPhaseCount()).toBe(design.phases.length);
+      expect(boss.getHpFraction()).toBe(1);
+
+      // The shared tick advances the encounter (no per-design code path).
+      boss.shootEnabled = true;
+      boss._simulateTelegraphElapsed();
+      gym.time.now = 2_000_000;
+      gym.tick(1 / 60);
+      expect(boss.alive).toBe(true);
+    }
+    selectGymMiniBossDesign(1);
   });
 });

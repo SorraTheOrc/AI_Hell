@@ -28,10 +28,14 @@ import Phaser from 'phaser';
 
 import {
   MiniBoss,
-  MINI_BOSS_DEFAULT_COLOR,
   type MiniBossPhaseConfig,
   type MiniBossMinionWaveConfig,
 } from '../../entities/MiniBoss';
+import {
+  MINI_BOSS_DESIGN_LEVELS,
+  miniBossConfigForLevel,
+  miniBossDesignForLevel,
+} from '../../waves/miniBossDesigns';
 import type { BossBullet } from '../../entities/Boss';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import type { EnemyEntity } from '../../entities/enemyFactory';
@@ -52,49 +56,57 @@ export const MINI_BOSS_FORMATION_SPACING_X = 0;
 export const MINI_BOSS_FORMATION_SPACING_Y = 0;
 export const MINI_BOSS_FORMATION_DRIFT_SPEED = 0;
 
-/** Demo config surfaced to tests and the gym index row. */
+/** The design level the dedicated gym row boots (level 1's bespoke design). */
 export const MINI_BOSS_GYM_LEVEL = 1;
-export const MINI_BOSS_GYM_NAME = 'Gym Sentinel';
+/**
+ * Gym-only hit pool. The designs' real escalation pool is used in the game;
+ * the gym keeps a small pool so a tester can step through every phase quickly
+ * on the DAMAGE button (patterns/colours/minions/name still come from the
+ * real design).
+ */
 export const MINI_BOSS_GYM_HP_PER_PHASE = 5;
-export const MINI_BOSS_GYM_COLOR = MINI_BOSS_DEFAULT_COLOR;
-export const MINI_BOSS_GYM_DESPERATION_COLOR = 0xff88ff;
-export const MINI_BOSS_GYM_PHASES: readonly MiniBossPhaseConfig[] = [
-  { pattern: 'spread' },
-  { pattern: 'spiral' },
-  { pattern: 'pulse' },
-];
-export const MINI_BOSS_GYM_MINIONS: readonly MiniBossMinionWaveConfig[] = [
-  {
-    phase: 1,
-    shootEnabled: true,
-    groups: [
-      {
-        enemyKey: 'scout',
-        formation: 'v',
-        count: 2,
-        spacingX: 28,
-        spacingY: 24,
-        startX: GAME_WIDTH * 0.15,
-        startY: GAME_HEIGHT * 0.3,
-      },
-    ],
-  },
-  {
-    phase: 2,
-    shootEnabled: true,
-    groups: [
-      {
-        enemyKey: 'diver',
-        formation: 'diver',
-        count: 2,
-        spacingX: 30,
-        spacingY: 26,
-        startX: GAME_WIDTH * 0.65,
-        startY: GAME_HEIGHT * 0.2,
-      },
-    ],
-  },
-];
+
+// Level-1 design constants, surfaced for the gym's tests and the index row.
+// They mirror the bespoke catalogue rather than a separate demo config, so a
+// design change can never drift from what the gym exercises.
+const LEVEL_ONE_DESIGN = miniBossDesignForLevel(MINI_BOSS_GYM_LEVEL);
+export const MINI_BOSS_GYM_NAME = LEVEL_ONE_DESIGN.archetype;
+export const MINI_BOSS_GYM_COLOR = LEVEL_ONE_DESIGN.color;
+export const MINI_BOSS_GYM_DESPERATION_COLOR =
+  LEVEL_ONE_DESIGN.desperationColor ?? LEVEL_ONE_DESIGN.color;
+export const MINI_BOSS_GYM_PHASES: readonly MiniBossPhaseConfig[] =
+  LEVEL_ONE_DESIGN.phases.map((pattern) => ({ pattern }));
+export const MINI_BOSS_GYM_MINIONS: readonly MiniBossMinionWaveConfig[] =
+  LEVEL_ONE_DESIGN.minions ?? [];
+
+/**
+ * The design level the gym currently exercises (1–10). The dedicated gym row
+ * boots level 1; the DESIGN button cycles through the catalogue so every
+ * bespoke design is exercised through the same shared entity/core code
+ * (AH-0MVCRBXSS008JSV0 AC3).
+ */
+let selectedDesignLevel = MINI_BOSS_GYM_LEVEL;
+
+/** Selects the design level the gym boots (used by the DESIGN button/tests). */
+export function selectGymMiniBossDesign(level: number): number {
+  if (!Number.isInteger(level) || level < 1 || level > MINI_BOSS_DESIGN_LEVELS) {
+    throw new RangeError(
+      `Mini-boss design level must be an integer 1–${MINI_BOSS_DESIGN_LEVELS} (got ${String(level)}).`,
+    );
+  }
+  selectedDesignLevel = level;
+  return selectedDesignLevel;
+}
+
+/** The design level the gym will boot next. */
+export function getSelectedGymMiniBossDesign(): number {
+  return selectedDesignLevel;
+}
+
+/** The design the gym will boot next (catalogue entry). */
+export function selectedGymMiniBossDesign() {
+  return miniBossDesignForLevel(selectedDesignLevel);
+}
 
 const MINI_BOSS_CONFIG: EnemyFormationConfig<MiniBoss | EnemyEntity, BossBullet> = {
   sceneKey: 'GymMiniBoss',
@@ -118,21 +130,19 @@ const MINI_BOSS_CONFIG: EnemyFormationConfig<MiniBoss | EnemyEntity, BossBullet>
     y: number,
     formationOffset: FormationOffset,
   ): MiniBoss =>
-    new MiniBoss(scene, {
-      level: MINI_BOSS_GYM_LEVEL,
-      name: MINI_BOSS_GYM_NAME,
-      x,
-      y,
-      formationOffset,
-      color: MINI_BOSS_GYM_COLOR,
-      desperationColor: MINI_BOSS_GYM_DESPERATION_COLOR,
-      hpPerPhase: MINI_BOSS_GYM_HP_PER_PHASE,
-      phases: MINI_BOSS_GYM_PHASES.map((phase) => ({ ...phase })),
-      minions: MINI_BOSS_GYM_MINIONS.map((wave) => ({
-        ...wave,
-        groups: wave.groups.map((group) => ({ ...group })),
-      })),
-    }),
+    // The same config helper the game uses, so the gym exercises the real
+    // per-level design (phases, colour, minions, archetype name). The gym
+    // alone overrides the hit pool so a tester can step through every phase
+    // quickly on the DAMAGE button.
+    new MiniBoss(
+      scene,
+      miniBossConfigForLevel(selectedDesignLevel, {
+        x,
+        y,
+        formationOffset,
+        hpPerPhase: MINI_BOSS_GYM_HP_PER_PHASE,
+      }),
+    ),
   collectBullets: () => [],
 };
 
@@ -159,6 +169,16 @@ export class GymMiniBoss extends GymFormationScene<
       LABEL_STYLE,
     );
     this.damageButton.on('pointerdown', () => this.damageMiniBoss());
+
+    // Cycle through the ten bespoke per-level designs; restarting the scene
+    // rebuilds the entity through the same shared config helper.
+    this._addButton(explodeButton.x - 240, explodeButton.y, 'DESIGN', LABEL_STYLE)
+      .on('pointerdown', () => {
+        selectGymMiniBossDesign(
+          (selectedDesignLevel % MINI_BOSS_DESIGN_LEVELS) + 1,
+        );
+        this.scene.restart();
+      });
 
     this._refreshStatus();
   }
