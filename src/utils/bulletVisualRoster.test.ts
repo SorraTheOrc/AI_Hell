@@ -39,6 +39,11 @@ const CATALOGUE_WEAPON_IDS: readonly WeaponId[] = [
   'nova',
   'mortar',
   'arc',
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
 ];
 
 function round2(n: number): number {
@@ -72,7 +77,7 @@ function enemySignature(
 }
 
 describe('player weapon roster — every weapon is visually unique in flight (AC1)', () => {
-  it('resolves a distinct visual signature for each of the 11 catalogue weapons', () => {
+  it('resolves a distinct visual signature for each of the 16 catalogue weapons', () => {
     const signatures = new Set(
       CATALOGUE_WEAPON_IDS.map((id) =>
         playerSignature(resolvePlayerBulletVisual(WEAPON_CATALOGUE[id])),

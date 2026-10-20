@@ -2068,7 +2068,7 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
       ...DEFAULT_RULES,
       beatBpm: 120,
       // 120 BPM → 500 ms/beat; cannon 2/beat → 250 ms.
-      weaponSubdivisions: { cannon: 2, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1 },
+      weaponSubdivisions: { cannon: 2, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2,broadside: 0.5,railgun: 0.25,shard_swarm: 1,heavy_slug: 0.5 },
     });
 
     const player = await bootGridPlayer();
@@ -2081,7 +2081,7 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
     saveRules({
       ...DEFAULT_RULES,
       // 80 BPM → 750 ms/beat; cannon 1/beat → 750 ms (half the default rate).
-      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1 },
+      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2,broadside: 0.5,railgun: 0.25,shard_swarm: 1,heavy_slug: 0.5 },
     });
 
     const player = await bootGridPlayer();
@@ -2094,7 +2094,7 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
 
     player.setRules({
       ...DEFAULT_RULES,
-      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1 },
+      weaponSubdivisions: { cannon: 1, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2,broadside: 0.5,railgun: 0.25,shard_swarm: 1,heavy_slug: 0.5 },
     });
 
     expect(player.getFireInterval('cannon')).toBe(750);
@@ -2105,7 +2105,7 @@ describe('Player — configurable beat grid (AH-0MUAYB8EH005RJ8B)', () => {
   it('the configured cadence gates real shots on the beat grid', async () => {
     saveRules({
       ...DEFAULT_RULES,
-      weaponSubdivisions: { cannon: 3, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1 },
+      weaponSubdivisions: { cannon: 3, spread: 1, dual: 1, rapid: 6, wave_laser: 1, ricochet: 1, cluster: 0.5, options: 1, nova: 0.25, mortar: 0.5, arc: 1, rear_guard: 2,broadside: 0.5,railgun: 0.25,shard_swarm: 1,heavy_slug: 0.5 },
     });
 
     const player = await bootGridPlayer();

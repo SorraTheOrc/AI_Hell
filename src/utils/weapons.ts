@@ -74,7 +74,14 @@ export type WeaponId =
   | 'options'
   | 'nova'
   | 'mortar'
-  | 'arc';
+  | 'arc'
+  // Net-new (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC52P001YIPW): the unlock-pool
+  // weapons spread across the campaign's later levels.
+  | 'rear_guard'
+  | 'broadside'
+  | 'railgun'
+  | 'shard_swarm'
+  | 'heavy_slug';
 
 // ── AOE descriptors ─────────────────────────────────────────────────
 
@@ -207,6 +214,11 @@ export const DEFAULT_WEAPON_SUBDIVISIONS: WeaponSubdivisions = {
   nova: 0.25,
   mortar: 0.5,
   arc: 1,
+  rear_guard: 2,
+  broadside: 0.5,
+  railgun: 0.25,
+  shard_swarm: 1,
+  heavy_slug: 0.5,
 };
 
 /** Default cannon subdivision (2 shots per beat). */
@@ -241,6 +253,20 @@ export const WEAPON_NOVA_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.nova;
 export const WEAPON_MORTAR_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.mortar;
 /** Default Arc subdivision (once per beat → 750 ms at 80 BPM). */
 export const WEAPON_ARC_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.arc;
+/** Default Rear Guard subdivision (2 shots per beat → 375 ms at 80 BPM). */
+export const WEAPON_REAR_GUARD_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.rear_guard;
+/** Default Broadside subdivision (once every 2 beats → 1500 ms at 80 BPM). */
+export const WEAPON_BROADSIDE_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.broadside;
+/** Default Railgun subdivision (once every 4 beats → 3000 ms at 80 BPM). */
+export const WEAPON_RAILGUN_SUBDIVISION = DEFAULT_WEAPON_SUBDIVISIONS.railgun;
+/** Default Shard Swarm subdivision (once per beat → 750 ms at 80 BPM). */
+export const WEAPON_SHARD_SWARM_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.shard_swarm;
+/** Default Heavy Slug subdivision (once every 2 beats → 1500 ms at 80 BPM). */
+export const WEAPON_HEAVY_SLUG_SUBDIVISION =
+  DEFAULT_WEAPON_SUBDIVISIONS.heavy_slug;
 
 /**
  * Derives a weapon's fire interval (ms) from a subdivision of the beat:
@@ -338,6 +364,26 @@ export const WEAPON_MORTAR_FIRE_RATE = beatSubdivisionMs(WEAPON_MORTAR_SUBDIVISI
  * the default 80 BPM), the fastest AOE cadence.
  */
 export const WEAPON_ARC_FIRE_RATE = beatSubdivisionMs(WEAPON_ARC_SUBDIVISION);
+/** Fire rate interval for the Rear Guard (ms) — 2 shots per beat (375 ms). */
+export const WEAPON_REAR_GUARD_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_REAR_GUARD_SUBDIVISION,
+);
+/** Fire rate interval for the Broadside (ms) — once every 2 beats (1500 ms). */
+export const WEAPON_BROADSIDE_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_BROADSIDE_SUBDIVISION,
+);
+/** Fire rate interval for the Railgun (ms) — once every 4 beats (3000 ms). */
+export const WEAPON_RAILGUN_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_RAILGUN_SUBDIVISION,
+);
+/** Fire rate interval for the Shard Swarm (ms) — once per beat (750 ms). */
+export const WEAPON_SHARD_SWARM_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_SHARD_SWARM_SUBDIVISION,
+);
+/** Fire rate interval for the Heavy Slug (ms) — once every 2 beats (1500 ms). */
+export const WEAPON_HEAVY_SLUG_FIRE_RATE = beatSubdivisionMs(
+  WEAPON_HEAVY_SLUG_SUBDIVISION,
+);
 
 /** Bullet speed in pixels per second (used by all weapons). */
 export const BULLET_SPEED = 350;
@@ -395,6 +441,25 @@ export const WEAPON_BULLET_LIFETIME = {
   mortar: 1.0,
   /** Arc — the bolt resolves instantly; no travelling bullet. */
   arc: 0.25,
+  /**
+   * Rear Guard — matches the cannon's reach (~262 px); its identity is the
+   * backward coverage, not range.
+   */
+  rear_guard: 0.75,
+  /** Broadside — a generous reach (~280 px) for the perpendicular pair. */
+  broadside: 0.8,
+  /**
+   * Railgun — a very long reach (~490 px) so the piercing tracer crosses the
+   * arena; the slow cadence and pass-through budget are its identity.
+   */
+  railgun: 1.4,
+  /** Shard Swarm — short reach (~193 px); the fan density is its identity. */
+  shard_swarm: 0.55,
+  /**
+   * Heavy Slug — a long, slow reach (~420 px); the heavy size and slow cadence
+   * are its identity.
+   */
+  heavy_slug: 1.2,
 } as const;
 
 // ── Bullet visual definitions ───────────────────────────────────────
@@ -426,6 +491,16 @@ export const BULLET_COLORS = {
   mortar: 0xff6600,
   /** Arc chaining bolt — electric purple. */
   arc: 0xcc66ff,
+  /** Rear Guard — warm rose, matching its backward-covering shot. */
+  rear_guard: 0xff5599,
+  /** Broadside — bright teal, matching its perpendicular pair. */
+  broadside: 0x44ffdd,
+  /** Railgun — sky blue, matching its long piercing tracer. */
+  railgun: 0x66aaff,
+  /** Shard Swarm — lime, matching its narrow shard fan. */
+  shard_swarm: 0xc0ff33,
+  /** Heavy Slug — deep red, matching its slow heavy shell. */
+  heavy_slug: 0xff2222,
 };
 
 /**
@@ -1194,6 +1269,106 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
       clearsEnemyBullets: true,
       chains: 2,
     },
+  },
+  // ── Net-new unlock-pool weapons (epic AH-0MVCC8XSS007P01Z) ────────
+  //
+  // AH-0MVCRC52P001YIPW adds five net-new weapons beyond the original 11.
+  // They are the campaign's unlock-pool rewards (mini-boss reward feature)
+  // rather than members of the starting drop rotation, so `WEAPON_DROP_ORDER`
+  // deliberately still cycles spread → dual → rapid. Every one uses an
+  // existing shared firing seam (pattern offsets / piercing), so the game and
+  // every gym fire them through identical core code.
+  rear_guard: {
+    id: 'rear_guard',
+    name: 'Rear Guard',
+    description: 'Adds a backward shot that covers the ship\u2019s tail.',
+    // A single shot directly behind the heading — the catalogue's only
+    // rearward weapon, complementing the forward-facing cannon family.
+    offsets: [Math.PI],
+    fireRateMs: WEAPON_REAR_GUARD_FIRE_RATE,
+    bulletColor: BULLET_COLORS.rear_guard,
+    // A compact trailing pellet, distinct from every other weapon's shape.
+    bulletShape: 'pellet',
+    bulletRim: 0xffd0e0,
+    bulletTrail: 1.6,
+    bulletSize: 0.9,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.rear_guard,
+  },
+  broadside: {
+    id: 'broadside',
+    name: 'Broadside',
+    description: 'Adds two shots perpendicular to the heading (left and right).',
+    // A perpendicular pair — no forward shot at all, so the weapon is a
+    // distinct tactical trade (wide coverage, no nose coverage).
+    offsets: [(-90 * Math.PI) / 180, (90 * Math.PI) / 180],
+    fireRateMs: WEAPON_BROADSIDE_FIRE_RATE,
+    bulletColor: BULLET_COLORS.broadside,
+    // Sleek darts read as the sideways lances leaving the hull.
+    bulletShape: 'dart',
+    bulletShapeLength: 2.4,
+    bulletThickness: 1.4,
+    bulletTrail: 1.4,
+    bulletSize: 0.9,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.broadside,
+  },
+  railgun: {
+    id: 'railgun',
+    name: 'Railgun',
+    description:
+      'Adds a slow, long-range tracer that pierces a line of enemies.',
+    // A single aimed shot along the heading, like the wave laser, but with a
+    // larger pass-through budget and a much slower, heavier cadence.
+    offsets: [0],
+    fireRateMs: WEAPON_RAILGUN_FIRE_RATE,
+    bulletColor: BULLET_COLORS.railgun,
+    // A long bright tracer reads as the rail's streak.
+    bulletShape: 'tracer',
+    bulletShapeLength: 8,
+    bulletRim: 0xe0f0ff,
+    bulletThickness: 2.2,
+    bulletTrail: 4.5,
+    bulletSize: 1.15,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.railgun,
+    // Base extra pass-through greater than the wave laser's (3) — the rail's
+    // identity is the line-piercing shot.
+    piercing: 5,
+  },
+  shard_swarm: {
+    id: 'shard_swarm',
+    name: 'Shard Swarm',
+    description: 'Adds a tight five-shard fan (±15°).',
+    // A narrow five-way fan: denser than spread but with a much tighter arc,
+    // so it reads as a shotgun burst rather than a broad fan.
+    offsets: [
+      (-15 * Math.PI) / 180,
+      (-7.5 * Math.PI) / 180,
+      0,
+      (7.5 * Math.PI) / 180,
+      (15 * Math.PI) / 180,
+    ],
+    fireRateMs: WEAPON_SHARD_SWARM_FIRE_RATE,
+    bulletColor: BULLET_COLORS.shard_swarm,
+    // Small angular shards — the swarm's identity in flight.
+    bulletShape: 'shard',
+    bulletShapeLength: 1.6,
+    bulletTrail: 1.2,
+    bulletSize: 0.72,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.shard_swarm,
+  },
+  heavy_slug: {
+    id: 'heavy_slug',
+    name: 'Heavy Slug',
+    description: 'Adds one huge, slow, long-range slug per shot.',
+    offsets: [0],
+    fireRateMs: WEAPON_HEAVY_SLUG_FIRE_RATE,
+    bulletColor: BULLET_COLORS.heavy_slug,
+    // The catalogue's heaviest round: a thick shell at the largest scale.
+    bulletShape: 'heavy-shell',
+    bulletThickness: 3,
+    bulletRim: 0xffb0b0,
+    bulletTrail: 2.4,
+    bulletSize: 1.7,
+    bulletLifetime: WEAPON_BULLET_LIFETIME.heavy_slug,
   },
 };
 

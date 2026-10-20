@@ -67,6 +67,12 @@ const WEAPON_ICON_COLORS: Record<WeaponId, number> = {
   nova: 0x66ffff, // pale cyan — expanding ring
   mortar: 0xff6600, // deep orange — shell/blast
   arc: 0xcc66ff, // electric purple — chaining bolt
+  // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW).
+  rear_guard: 0xff5599, // warm rose — backward-covering shot
+  broadside: 0x44ffdd, // bright teal — perpendicular pair
+  railgun: 0x66aaff, // sky blue — long piercing tracer
+  shard_swarm: 0xc0ff33, // lime — narrow shard fan
+  heavy_slug: 0xff2222, // deep red — heavy slow slug
 };
 
 /** Icon stroke colour for the Reset drop (returns ship to cannon). */
@@ -715,6 +721,23 @@ function _drawWeaponIcon(
     case 'arc':
       drawArcIcon(graphics, x, y, size);
       break;
+    // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW): each glyph hints at
+    // the weapon's firing geometry so the drop reads at a glance.
+    case 'rear_guard':
+      drawRearGuardIcon(graphics, x, y, size);
+      break;
+    case 'broadside':
+      drawBroadsideIcon(graphics, x, y, size);
+      break;
+    case 'railgun':
+      drawRailgunIcon(graphics, x, y, size);
+      break;
+    case 'shard_swarm':
+      drawShardSwarmIcon(graphics, x, y, size);
+      break;
+    case 'heavy_slug':
+      drawHeavySlugIcon(graphics, x, y, size);
+      break;
   }
 }
 
@@ -1021,6 +1044,109 @@ function drawArcIcon(
   g.lineTo(x + s * 0.45, y - s * 0.05);
   g.lineTo(x + s * 0.05, y - s * 0.05);
   g.closePath();
+  g.strokePath();
+}
+
+/**
+ * Rear Guard icon — a chevron pointing backwards (down) with a small
+ * trailing dot, hinting at the rearward shot (AH-0MVCRC52P001YIPW).
+ */
+function drawRearGuardIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.beginPath();
+  g.moveTo(x - s * 0.7, y - s * 0.35);
+  g.lineTo(x, y + s * 0.35);
+  g.lineTo(x + s * 0.7, y - s * 0.35);
+  g.strokePath();
+  g.beginPath();
+  g.arc(x, y - s * 0.75, s * 0.16, 0, Math.PI * 2, false);
+  g.strokePath();
+}
+
+/**
+ * Broadside icon — two horizontal lances leaving the hull in opposite
+ * directions, hinting at the perpendicular pair (AH-0MVCRC52P001YIPW).
+ */
+function drawBroadsideIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.beginPath();
+  g.moveTo(x - s * 0.95, y);
+  g.lineTo(x - s * 0.2, y);
+  g.moveTo(x + s * 0.2, y);
+  g.lineTo(x + s * 0.95, y);
+  g.strokePath();
+  // Arrowheads at both lance tips.
+  g.beginPath();
+  g.moveTo(x - s * 0.6, y - s * 0.22);
+  g.lineTo(x - s * 0.95, y);
+  g.lineTo(x - s * 0.6, y + s * 0.22);
+  g.moveTo(x + s * 0.6, y - s * 0.22);
+  g.lineTo(x + s * 0.95, y);
+  g.lineTo(x + s * 0.6, y + s * 0.22);
+  g.strokePath();
+}
+
+/**
+ * Railgun icon — a long horizontal tracer with speed lines, hinting at the
+ * piercing line shot (AH-0MVCRC52P001YIPW).
+ */
+function drawRailgunIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.beginPath();
+  g.moveTo(x - s * 0.95, y);
+  g.lineTo(x + s * 0.95, y);
+  g.moveTo(x - s * 0.55, y - s * 0.3);
+  g.lineTo(x + s * 0.5, y - s * 0.3);
+  g.moveTo(x - s * 0.55, y + s * 0.3);
+  g.lineTo(x + s * 0.5, y + s * 0.3);
+  g.strokePath();
+}
+
+/**
+ * Shard Swarm icon — a tight five-way fan of short shards, hinting at the
+ * narrow multi-shot burst (AH-0MVCRC52P001YIPW).
+ */
+function drawShardSwarmIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  for (const degrees of [-30, -15, 0, 15, 30]) {
+    const rad = (degrees * Math.PI) / 180;
+    g.beginPath();
+    g.moveTo(x, y + s * 0.6);
+    g.lineTo(x + Math.sin(rad) * s * 0.85, y + s * 0.6 - Math.cos(rad) * s * 0.85);
+    g.strokePath();
+  }
+}
+
+/**
+ * Heavy Slug icon — a thick shell with a heavy outline, hinting at the slow,
+ * oversized round (AH-0MVCRC52P001YIPW).
+ */
+function drawHeavySlugIcon(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  s: number,
+): void {
+  g.strokeRect(x - s * 0.5, y - s * 0.7, s, s * 1.4);
+  g.beginPath();
+  g.moveTo(x - s * 0.5, y - s * 0.35);
+  g.lineTo(x + s * 0.5, y - s * 0.35);
   g.strokePath();
 }
 

@@ -557,6 +557,14 @@ describe('range halved at every level (AH-0MUU131PU006O7ZD AC3)', () => {
     nova: 0.5,
     mortar: 2.0,
     arc: 0.5,
+    // Net-new weapons (AH-0MVCRC52P001YIPW): the catalogue-wide halving
+    // invariant applies to them too, so their pre-change value is 2x the
+    // shipped base lifetime.
+    rear_guard: 1.5,
+    broadside: 1.6,
+    railgun: 2.8,
+    shard_swarm: 1.1,
+    heavy_slug: 2.4,
   };
   const PRE_CHANGE_AOE_RADIUS = { nova: 90, mortar: 70, arc: 120 } as const;
 
@@ -735,10 +743,20 @@ describe('wave-laser piercing budget (AH-0MV1BIUSJ0090W92)', () => {
   });
 
   test('weapons without a base piercing budget never gain one', () => {
+    // The Railgun (AH-0MVCRC52P001YIPW) is the second weapon with a base
+    // pass-through budget; every other weapon has none.
+    const withBasePiercing = new Set<WeaponId>(['wave_laser', 'railgun']);
     for (const id of WEAPON_IDS) {
-      if (id === 'wave_laser') continue;
+      if (withBasePiercing.has(id)) continue;
       expect(resolveWeaponDefinition(id, 50).piercing).toBeUndefined();
     }
+  });
+
+  test('the Railgun carries a deeper base pierce budget than the wave laser', () => {
+    expect(resolveWeaponDefinition('railgun', 0).piercing).toBe(5);
+    expect(resolveWeaponDefinition('railgun', 0).piercing!).toBeGreaterThan(
+      resolveWeaponDefinition('wave_laser', 0).piercing!,
+    );
   });
 });
 
