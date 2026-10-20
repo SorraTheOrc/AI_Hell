@@ -78,9 +78,10 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     // The Force Field turns incoming fire into offence and protects the ship:
     // value it just below the smart bomb (AH-0MV1BIX1W006XF95).
     { id: 'force_field', value: 1.3 },
-    // The Mystery UFO is a rare, purely economic bonus (mineral burst, with
-    // the collector-drone epic adding a visible ferry), so value it modestly
-    // above the neutral default (AH-0MV1BIXFO006Z1I7 / AH-0MV9G113S009B37I).
+    // The Mystery UFO is a rare, purely economic bonus: a field pickup spawns
+    // a visible collector drone that ferries minerals home, so value it
+    // modestly above the neutral default (AH-0MV1BIXFO006Z1I7 /
+    // AH-0MV9G113S009B37I).
     { id: 'mystery_ufo', value: 1.2 },
     { id: 'teleport', value: 0.9 },
     // Net-new combat power-ups (AH-0MVCRC1Q0007JAV1). The timed amplifiers

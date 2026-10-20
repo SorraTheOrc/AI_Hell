@@ -37,11 +37,14 @@
  *   its incoming direction as a player-owned bullet that damages enemies.
  *   A level-resolved reflect budget caps how many bullets one field returns
  *   before it stops reflecting; the bubble expires after its timed window.
- * - **Mystery UFO** — Space Invaders-inspired instant bounty
- *   (AH-0MV1BIXFO006Z1I7): collecting it immediately grants a level-resolved
- *   burst of minerals (into the ship's hold) and score, and levels the
- *   power-up so later pickups pay more. It has no timed window and stores no
- *   consumable state; deliberately rare (weight 3, rarer than the standard 4).
+ * - **Mystery UFO** — Space Invaders-inspired visible collector drone
+ *   (AH-0MV1BIXFO006Z1I7 → AH-0MV9G113S009B37I): a field pickup spawns one
+ *   small, code-drawn copy of the player ship that seeks the nearest mineral,
+ *   vacuums those inside its collector radius, flies home and pays them into
+ *   the hold. A full-hull (permanent) reward keeps a drone spawning on a
+ *   level-resolved interval. Enemy fire or an enemy body destroys a drone
+ *   (spilling its hold plus a 2 × level bonus); the player's own fire passes
+ *   through. Deliberately rare (weight 3, rarer than the standard 4).
  *
  * The five net-new power-ups (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC1Q0007JAV1)
  * extend the catalogue beyond the original 11:
@@ -215,11 +218,12 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'mystery_ufo',
     name: 'Mystery UFO',
     description:
-      'A rare Space Invaders-inspired bonus: grants a burst of minerals. ' +
-      'Each pickup levels it up so the next bounty — or your collector ' +
-      'drone — is stronger.',
-    // Instant, non-timed: no duration and no stored state; the reward is
-    // granted on collection and the level advances (AH-0MV1BIXFO006Z1I7).
+      'A rare Space Invaders-inspired collector drone: a small copy of your ' +
+      'ship seeks out minerals, hoovers them up and brings them home. Each ' +
+      'pickup levels it up, so the next drone flies longer and carries more.',
+    // Not timed and no stored consumable state: a field pickup spawns exactly
+    // one drone through the shared core pass, and a full-hull reward keeps a
+    // drone respawning on the level-resolved interval (AH-0MV9G113S009B37I).
     // The collector-drone level axes (lifetime/capacity/radius/spawn
     // interval) resolve from the shared curve (AH-0MVBMPZ2C0008VAE).
   },

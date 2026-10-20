@@ -160,9 +160,9 @@ export const DEFAULT_SMART_BOMB_WEIGHT = 2;
 
 /**
  * Default relative weight for the Mystery UFO (AH-0MV1BIXFO006Z1I7). Rarer
- * than a standard drop (3 vs 4): it is a high-value mineral/score bonus, not a
- * combat tool, so it stays a special find without being as rare as the Smart
- * Bomb (2).
+ * than a standard drop (3 vs 4): it spawns a high-value collector drone that
+ * ferries minerals home, not a combat tool, so it stays a special find
+ * without being as rare as the Smart Bomb (2).
  */
 export const DEFAULT_MYSTERY_UFO_WEIGHT = 3;
 

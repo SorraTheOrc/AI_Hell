@@ -50,9 +50,8 @@ export const DRONE_DESTRUCTION_BONUS_PER_LEVEL = 2;
 
 /**
  * The scene's hold mutator the drone pays its collected minerals into — the
- * same `addMinerals` seam the instant Mystery UFO bounty and every other
- * mineral source use. The game routes it to the run hold, the gyms to their
- * local hold.
+ * same `addMinerals` seam every other mineral source uses. The game routes it
+ * to the run hold, the gyms to their local hold.
  */
 export interface DroneMineralSink {
   /** Adds `amount` minerals to the scene's hold. */

@@ -125,8 +125,9 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   private minerals: Mineral[] = [];
   /**
    * Run-scoped ship's hold, shared with the game. Collecting minerals fills it
-   * and the Mystery UFO bounty tops it up, so the hold progression shown by
-   * the HUD is the same model the game uses (AH-0MV1BIXFO006Z1I7).
+   * and the Mystery UFO collector drone pays its ferried minerals into it, so
+   * the hold progression shown by the HUD is the same model the game uses
+   * (AH-0MV9G113S009B37I).
    */
   private mineralHold = new MineralHold();
   /** Per-scene round-robin spawner (fresh index per scene instance). */
@@ -166,8 +167,8 @@ export class GymPowerUpsUtility extends CombatCoreScene<
 
     // Standalone HUD — attaches to this scene, renders above gameplay.
     this.hud = new HUD(this, this.effectsRegistry);
-    // Show the shared mineral hold bar so the Mystery UFO mineral burst and
-    // mineral pickups are observable here (AH-0MV1BIXFO006Z1I7).
+    // Show the shared mineral hold bar so the Mystery UFO collector drone and
+    // mineral pickups are observable here (AH-0MV9G113S009B37I).
     this._syncMineralHud();
 
     // Mineral field: seeded so the Mineral Scoop runs the same shared
