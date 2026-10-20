@@ -43,6 +43,7 @@ import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from 
 import { Player } from '../../entities/Player';
 import { Mineral } from '../../entities/Mineral';
 import { collectMinerals } from '../core/mineralLayer';
+import type { DroneMineralSink } from '../core/combatDrone';
 import { MineralHold } from '../../core/mineralHold';
 import { loadRules } from '../../core/rules';
 import { HUD } from '../../ui/HUD';
@@ -422,6 +423,28 @@ export class GymPowerUpsUtility extends CombatCoreScene<
 
   getEffectsRegistry(): EffectsRegistry {
     return this.effectsRegistry;
+  }
+
+  /**
+   * Mineral field the collector drones (Mystery UFO reward) seek, vacuum and
+   * drop into — the gym's live field (gym↔game parity, AC6 of
+   * AH-0MV9G113S009B37I).
+   */
+  protected override getDroneMineralField(): Mineral[] {
+    return this.minerals;
+  }
+
+  /**
+   * Hold sink for a collector drone's ferried minerals: the gym's local
+   * mineral hold, mirrored onto the HUD exactly like every other pickup.
+   */
+  protected override getDroneMineralSink(): DroneMineralSink {
+    return {
+      addMinerals: (amount: number) => {
+        this.mineralHold.collect(amount);
+        this._syncMineralHud();
+      },
+    };
   }
 
   /** The gym's shared run-scoped mineral hold (test seam). */

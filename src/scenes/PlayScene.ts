@@ -208,6 +208,7 @@ import { planMinionSpawns } from '../waves/BossMinions';
 import {
   CombatScene,
 } from './core/CombatScene';
+import type { DroneMineralSink } from './core/combatDrone';
 import {
   advancePlayerBullets,
   advanceWrappingBullets,
@@ -3420,6 +3421,29 @@ export class PlayScene extends CombatScene<
   /** The active-effect registry. */
   getEffectsRegistry(): EffectsRegistry {
     return this.effectsRegistry;
+  }
+
+  /**
+   * Mineral field the collector drones (Mystery UFO reward) seek, vacuum and
+   * drop into — the game's live field, so the shared drone pass behaves
+   * exactly like it does in the gyms (AH-0MV9G113S009B37I).
+   */
+  protected override getDroneMineralField(): Mineral[] {
+    return this.minerals;
+  }
+
+  /**
+   * Hold sink for a collector drone's ferried minerals: the run hold, with
+   * the same HUD sync and hold-full choice every other mineral source uses.
+   */
+  protected override getDroneMineralSink(): DroneMineralSink {
+    return {
+      addMinerals: (amount: number) => {
+        this.gameState.addMinerals(amount);
+        this._syncMineralHud();
+        if (this.gameState.isHoldFull()) this.openMineralChoice();
+      },
+    };
   }
 
   /** The in-game HUD (lives counter + active effects), or null after teardown. */

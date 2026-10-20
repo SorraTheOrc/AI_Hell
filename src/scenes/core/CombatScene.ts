@@ -75,6 +75,7 @@ import {
   WAVE_TIMER_BAR_Y,
 } from './waveTimeout';
 import { Asteroid } from '../../entities/Asteroid';
+import { hitDrone } from './combatDrone';
 
 // Re-export the shared contracts so existing `from './CombatScene'`
 // imports keep working after they moved to the narrower base.
@@ -1151,6 +1152,13 @@ export abstract class CombatScene<
     }
     this.setEnemyBullets(keptEnemy);
 
+    // 2c. Enemy ordnance and enemy bodies vs collector drones (Mystery UFO
+    //     reward, AH-0MV9G113S009B37I). Only enemies can destroy a drone —
+    //     the player's own fire passes through — and the spill lands as
+    //     collectable minerals at the crash site. Runs before the mineral
+    //     pass so a same-frame drop joins the field this frame.
+    this._resolveDronesVsEnemies();
+
     this.onAfterBulletVsBullet();
 
     const player = this.getPlayer();
@@ -1230,6 +1238,71 @@ export abstract class CombatScene<
       }
       if (this.onPlayerRamsBoss()) {
         this._hitPlayer();
+      }
+    }
+  }
+
+  /**
+   * Resolves the shared collector-drone destruction pass: enemy bullets and
+   * enemy bodies destroy a drone, scattering its held minerals plus the
+   * `2 × level` destruction bonus at the crash site. Player bullets are not
+   * considered here, so the player's own fire passes straight through.
+   *
+   * Defined once here so the game and every combat gym run the identical
+   * rule (gym↔game parity, AH-0MV9G113S009B37I).
+   */
+  protected _resolveDronesVsEnemies(): void {
+    if (this.drones.length === 0) return;
+    const level = this.getDroneLevel();
+    const field = this.getDroneMineralField();
+    const bulletRadius = this.getEnemyBulletRadius();
+
+    // Enemy bullets: an intercepted shot is consumed and the drone spills.
+    const keptEnemy: TBullet[] = [];
+    for (const eb of this.getEnemyBullets()) {
+      let consumed = false;
+      for (const drone of this.drones) {
+        if (!drone.alive) continue;
+        if (
+          this._overlaps(
+            eb.graphics.x,
+            eb.graphics.y,
+            bulletRadius,
+            drone.x,
+            drone.y,
+            drone.getHitRadius(),
+          )
+        ) {
+          field.push(...hitDrone(this, drone, 'enemy-bullet', level));
+          eb.graphics.destroy();
+          consumed = true;
+          break;
+        }
+      }
+      if (!consumed) keptEnemy.push(eb);
+    }
+    this.setEnemyBullets(keptEnemy);
+
+    // Enemy bodies: contact destroys the drone (spawning enemies are still
+    // growing, so they cannot touch it yet — same rule as every collision).
+    for (const drone of this.drones) {
+      if (!drone.alive) continue;
+      for (const enemy of this.getEnemyEntities()) {
+        if (!enemy.alive) continue;
+        if ((enemy as unknown as { isSpawning?: boolean }).isSpawning) continue;
+        if (
+          this._overlaps(
+            drone.x,
+            drone.y,
+            drone.getHitRadius(),
+            enemy.x,
+            enemy.y,
+            enemy.getHitRadius(),
+          )
+        ) {
+          field.push(...hitDrone(this, drone, 'enemy-body', level));
+          break;
+        }
       }
     }
   }
