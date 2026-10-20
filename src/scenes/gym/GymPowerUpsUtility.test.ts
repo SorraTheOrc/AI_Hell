@@ -13,6 +13,7 @@ import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { Player } from '../../entities/Player';
+import type { Mineral } from '../../entities/Mineral';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { MINERAL_SEED_CLEARANCE, GymPowerUpsUtility } from './GymPowerUpsUtility';
@@ -917,6 +918,50 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
     scene.tick(1 / 60);
     expect(scene.getDrones()).toHaveLength(2);
     expect(scene.getMineralHold().store).toBe(0);
+  });
+
+  it('drives the full collector-drone lifecycle: spawn, seek, collect, return, payout (AH-0MVBMQ0HR0064THH)', async () => {
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // Clear the seeded field so only the deterministic minerals below exist.
+    for (const mineral of scene.getMinerals()) mineral.destroy();
+    (scene as unknown as { minerals: Mineral[] }).minerals.length = 0;
+
+    // Spawn the reward through the real pickup path (the shared drop layer).
+    scene.spawnDrop('mystery_ufo', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60); // the pickup queues the drone spawn
+    scene.tick(1 / 60); // the shared spawn pass launches the drone
+
+    const drones = scene.getDrones();
+    expect(drones).toHaveLength(1);
+    const drone = drones[0];
+    expect(drone.alive).toBe(true);
+    expect(drone.visible).toBe(true);
+
+    // One mineral inside the collector radius (taken this tick), one further
+    // out so the drone has a live seek target to steer toward.
+    const close = scene.spawnMineral(drone.x + 15, drone.y);
+    const distant = scene.spawnMineral(drone.x + 60, drone.y);
+    const holdBefore = scene.getMineralHold().store;
+
+    scene.tick(1 / 60);
+    expect(drone.heldMinerals).toBe(1);
+    expect(close.alive).toBe(false);
+    expect(drone.seekTargetX).toBe(distant.x);
+    expect(drone.seekTargetY).toBe(distant.y);
+
+    // Fly the sortie out: the drone reaches and vacuums the seek target, then
+    // its lifetime expires, it returns home and pays the hold into the gym.
+    for (let i = 0; i < 2000 && scene.getDrones().length > 0; i++) {
+      scene.tick(1 / 60);
+    }
+
+    expect(distant.alive).toBe(false);
+    expect(scene.getDrones()).toHaveLength(0);
+    expect(scene.getMineralHold().store).toBe(holdBefore + 2);
   });
 
   it('a same-instance stop/restart clears the P10 scoop state and the field', async () => {
