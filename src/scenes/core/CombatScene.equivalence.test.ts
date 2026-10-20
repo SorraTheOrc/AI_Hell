@@ -2445,12 +2445,16 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
     expect(definers).not.toContain('src/entities/Harvester.ts');
   });
 
-  it('defines the mineral-seek seam on the Harvester only (no per-scene copy)', () => {
+  it('defines the mineral-seek seam on seeker entities only (no per-scene copy)', () => {
     const entityDefiners = relativeProductionDefiners((source) =>
       definesMethod(source, 'setSeekTargets'),
     );
-    // The entity implements the seam; no scene defines its own version.
-    expect(entityDefiners).toEqual(['src/entities/Harvester.ts']);
+    // The seam is implemented by the seeker *entities* only — the Harvester
+    // and the Mystery UFO collector drone (AH-0MV9G113S009B37I) — and never
+    // by a scene, so the game and the gyms cannot diverge on seeking.
+    expect(entityDefiners.sort()).toEqual(
+      ['src/entities/Harvester.ts', 'src/entities/MysteryUfoDrone.ts'].sort(),
+    );
   });
 
   it('both PlayScene and the gym tick invoke the shared seek seam', () => {
