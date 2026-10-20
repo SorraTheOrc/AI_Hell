@@ -29,6 +29,36 @@ E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
 Boss is multi-hit via its 4-phase bar — **50 hits per phase (200 total)**. All enemies **never collide with each
 other** (GDD §2.6) — no collision system is installed in the gym scenes.
 
+### 1.0 Mini-boss roster — ten net-new archetypes (AH-0MVCRBXSS008JSV0)
+
+Beyond the regular-enemy catalogue, every level's **wave 10** is a bespoke
+mini-boss built on the reusable `MiniBoss` entity family (epic
+AH-0MVCC8XSS007P01Z). Each is a **net-new named archetype** (bringing the
+campaign to **27 enemy/mini-boss archetypes**: the 17 regular ones plus these
+10), driven by `src/waves/miniBossDesigns.ts` and exercised in `GymMiniBoss`.
+Phases map onto the shared Boss pattern implementations (`spread`, `spiral`,
+`pulse`, `combined`), so no firing code is duplicated.
+
+| Level | Archetype | Hops | Phases (pattern set) | HP/phase | Minions |
+|-------|-----------|------|----------------------|----------|---------|
+| 1 | Pulse Warden | 2 | spread → pulse | 12 | — |
+| 2 | Coil Sentinel | 2 | spiral → combined | 14 | — |
+| 3 | Shard Matron | 3 | pulse → spiral → pulse | 16 | Scouts (phase 1) |
+| 4 | Void Herald | 3 | combined → spread → pulse | 18 | — |
+| 5 | Ion Tyrant | 3 | spiral → spiral → pulse | 20 | Divers (phase 2) |
+| 6 | Cinder Maw | 3 | pulse → combined → spread | 22 | — |
+| 7 | Prism Wraith | 3 | spread → pulse → combined | 24 | Scouts (phase 2) |
+| 8 | Gravemind | 4 | spiral → combined → spiral → pulse | 26 | — |
+| 9 | Star Eater | 4 | combined → pulse → spiral → spread | 28 | Divers (phase 3) |
+| 10 | The Hollow King | 4 | spread → spiral → pulse → combined | 32 | Scouts (phase 4) |
+
+Mini-boss health is multi-hit per phase (the shared `MiniBoss` bar); the
+mini-boss wave has **no time limit** and gates the level, so the level only
+completes on the mini-boss's defeat (parity: `PlayScene` and `GymMiniBoss` read
+the same config helper). `docs/Game Design Document.md` §3.3 documents the
+design intent; the catalogue is validated by
+`src/waves/miniBossDesigns.test.ts`.
+
 ### 1.1 Classic arcade research (AH-0MUYAQ6YH0010G52)
 
 The current roster (E1–E7 + Boss) is a self-contained set of seven archetypes.
@@ -2013,6 +2043,10 @@ ten waves, with wave 10 the level's mini-boss (`miniBoss: true`):
 | 8 | Gridlock | Frogger `laneTraffic` lanes + Robotron `horde` + Defender `raider` dive |
 | 9 | Orbital Siege | Missile-Command `orbital-strike` arcs + orbital Phasers + `ghosts` |
 | 10 | The Gauntlet | Dense mixed finale of the remaining roster |
+
+Wave 10 of **every** level is its bespoke mini-boss (see §1.0): Pulse Warden,
+Coil Sentinel, Shard Matron, Void Herald, Ion Tyrant, Cinder Maw, Prism Wraith,
+Gravemind, Star Eater and The Hollow King for levels 1–10 respectively.
 
 Three design rules are enforced by tests:
 

@@ -348,10 +348,13 @@ The following rules govern how enemy entities interact with each other and with 
 
 | Element | Value | Notes |
 |---------|-------|-------|
-| **Levels** | 10 | Levels 1–3: enemies-as-bullets formations; Levels 4–5: enemies fire bullets (Level 5 predictable patterns); Levels 6–10: the classic-arcade roster in curated, mixed encounters |
-| **Boss encounters** | 1 | Final boss after Level 10 |
-| **Lives** | 3 (up to 5 with Extra Life) | Per-run; no continue mechanic. Extra Life grants +1 life, capped at 5. |
-| **Power-up types** | ≥ 9 | Distinct types (see §4.4) |
+| **Levels** | 10 | Levels 1–3: enemies-as-bullets formations; Levels 4–5: enemies fire bullets (Level 5 predictable patterns); Levels 6–10: the classic-arcade roster in curated, mixed encounters. Every level spans **10 waves** (100 waves total) |
+| **Mini-bosses** | 10 | One bespoke mini-boss is wave 10 of every level (see §3.3); the final boss still follows Level 10 |
+| **Boss encounters** | 1 | Final boss after Level 10 (after its mini-boss) |
+| **Lives** | 3 (up to 5 with Extra Life) | Per-run; **Continue** resumes from the last mini-boss checkpoint |
+| **Power-up types** | 16 | Distinct types (see §4.4) |
+| **Weapon types** | 16 | 11 conventional/AOE weapons + **5 unlock-pool weapons** (see §4.4) |
+| **Checkpoint save** | 1 slot | Auto-saved at every mini-boss to `ai_hell_checkpoint`; Continue on the main menu (see §6.6) |
 | **Leaderboard** | Local storage | localStorage-based, single-machine |
 | **Difficulty scaling** | **Out of scope** | Not implemented in MVP |
 | **Multiplayer** | **Out of scope** | Single-player only in MVP |
@@ -423,6 +426,42 @@ The following rules govern how enemy entities interact with each other and with 
 > it never blocks progress. Its background panel is **60 % opaque**
 > (`rgba(0, 0, 0, 0.6)`, `BANNER_BACKGROUND_ALPHA`), letting the player see
 > the field behind the announcement while keeping the white label legible.
+
+---
+
+### 3.3 Mini-Boss Designs (wave 10 of every level)
+
+Every level's **10th wave is a bespoke mini-boss** (epic AH-0MVCC8XSS007P01Z;
+data source `src/waves/miniBossDesigns.ts`). Each is a **net-new named alien
+archetype** built on the reusable, config-driven `MiniBoss` entity family
+(phases/pattern sets, HP, colour, optional phase minions), so the game and the
+gyms run identical code. The hit pool escalates with the level (12→32 per
+phase; 2–4 phases) and stays below the final boss's 200-hit pool. The final
+boss still triggers once Level 10's mini-boss is defeated.
+
+| Level | Mini-boss archetype | Phases (pattern set) | HP/phase | Minion wave |
+|-------|---------------------|----------------------|----------|-------------|
+| 1 | **Pulse Warden** | spread → pulse | 12 | — |
+| 2 | **Coil Sentinel** | spiral → combined | 14 | — |
+| 3 | **Shard Matron** | pulse → spiral → pulse | 16 | Scouts (phase 1) |
+| 4 | **Void Herald** | combined → spread → pulse | 18 | — |
+| 5 | **Ion Tyrant** | spiral → spiral → pulse | 20 | Divers (phase 2) |
+| 6 | **Cinder Maw** | pulse → combined → spread | 22 | — |
+| 7 | **Prism Wraith** | spread → pulse → combined | 24 | Scouts (phase 2) |
+| 8 | **Gravemind** | spiral → combined → spiral → pulse | 26 | — |
+| 9 | **Star Eater** | combined → pulse → spiral → spread | 28 | Divers (phase 3) |
+| 10 | **The Hollow King** | spread → spiral → pulse → combined | 32 | Scouts (phase 4) |
+
+Patterns map onto the shared Boss implementations (`spread`, `spiral`, `pulse`,
+`combined`), so mini-bosses reuse the shipped firing code; the mini-boss wave
+has **no time limit** — the level only completes when the mini-boss (and its
+escorts) are destroyed. Defeating it opens the **one choice** reward (§4.4.3)
+and writes a **checkpoint** (§6.6). The gym scene `GymMiniBoss` cycles all ten
+designs through the same shared core.
+
+> **Net-new archetypes.** These ten named designs are the campaign's mini-boss
+> roster beyond the 17 regular enemy archetypes (§4.1). They are encounters,
+> not wave-filler enemies, and are exercised in `GymMiniBoss`.
 
 ---
 
@@ -726,6 +765,8 @@ The player collects power-ups dropped by destroyed enemies through the shared we
 
 > **Bullet range — per-type lifetime + four-edge wrap:** All bullets (player and enemy) **wrap around all four screen edges** (the same classic Asteroids model as the player ship and asteroids) and are **never culled for leaving the screen**. Each bullet type is instead destroyed once its own **lifetime in seconds** elapses, so its **effective range is `bulletSpeed × lifetime`**. Player-weapon lifetimes live on `WeaponDefinition` (`src/utils/weapons.ts`): Cannon **0.75 s** (~262 px at 350 px/s), Spread **0.7 s** (~245 px), Dual **0.7 s** (~245 px), Rapid **0.375 s** (~131 px); the AOE radii (`AOE_RADII`) are Nova **45 px**, Mortar **35 px** and Arc **60 px**. These base values were **halved** from the original tuning baseline to bring engagements closer and reduce on-screen bullet saturation (AH-0MUU131PU006O7ZD); because weapon-levelling applies **relative** multipliers to the base catalogue values (`resolveWeaponDefinition`, `src/utils/weaponLevels.ts`), the effective range at **every** weapon level is halved too, and the levelling curve itself is unchanged. Enemy bullet speeds were **halved** by AH-0MUWZ5GST003NMFQ so incoming fire is more readable and dodgeable; enemy bullet lifetimes are **unchanged** by that item and live on `EnemyConfig` (`src/core/enemyConfig.ts`), overridable through the existing enemy-config / CSV plumbing. Because effective range is `bulletSpeed × lifetime` and the lifetimes are unchanged, every enemy's effective range is also **halved**. Using the committed CSV lifetimes (the runtime source of truth), the effective ranges are now: Scout **1.4 s** (90 px/s ≈ 126 px), Diver **1.5 s** (110 px/s ≈ 165 px), Tank **1.5 s** (75 px/s ≈ 113 px), Phaser **1.75 s** (90 px/s ≈ 158 px), Swarm **1.5 s** (90 px/s ≈ 135 px), Boss Swarm **0.7 s** (80 px/s ≈ 56 px). The Central AI boss keeps its 2.0 s default lifetime. Because wrapping keeps more bullets alive, the lifetime caps on-screen density; the values above are the shipped tuning baseline (player weapons halved again after review, AH-0MUU131PU006O7ZD) and are safe to adjust without any architectural change. A bullet whose lifetime elapses is **destroyed and removed from the display list** — it never lingers on screen as a stationary projectile.
 
+> **Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW):** Five weapons extend the catalogue beyond the original 11 (16 total): **Rear Guard** (one backward shot; `pellet`), **Broadside** (a perpendicular left/right pair; `dart`), **Railgun** (a slow long-range tracer with a base pass-through of **5** — deeper than the Wave Laser — `tracer`), **Shard Swarm** (a tight symmetric five-shard fan within ±15°; `shard`) and **Heavy Slug** (the largest, slowest single round; `heavy-shell`). Each has its own beat-grid cadence, colour and code-drawn icon, and fires through the shared pattern/`piercing` seams, so the game and every gym run identical code. They are **not** in the basic spread→dual→rapid drop rotation; they are the **mini-boss unlock pool** (§4.4.4): at Level 1 exactly half of the 16-weapon catalogue (these five plus Wave Laser, Cluster Missile and Arc) is locked and becomes available through mini-boss rewards.
+
 > **Implemented in the GymWeapons gym (§6.4, `src/scenes/gym/GymWeapons.ts`):** The weapon power-ups (Cannon default, Spread, Dual, Rapid, **the wave laser, ricochet and cluster missile, the Options escort, plus the AOE family Nova/Mortar/Arc**) are implemented with **cumulative + timed (10 s)** semantics, along with auto-fire in the direction of travel (GDD §2.3). The scene demonstrates round-robin weapon-drop spawning (**Spread → Dual → Rapid → Wave Laser → Ricochet → Cluster Missile → Options → Nova → Mortar → Arc → Reset**, one drop at a time, 7 s lifetime) and cumulative collection — each collected drop **adds** its weapon to the active set, expired weapons are **silently dropped**, and Reset clears them all. It extends the shared `CombatScene` core so the AOE dispatch and VFX are inherited unchanged, and hosts **three inert practice targets** (an intentional gym-only divergence, F6 AC5) so the Nova ring, Mortar blast and Arc chain are visibly demonstrated; the targets respawn after a short delay once cleared. The weapon catalogue (`src/utils/weapons.ts`) provides pure definitions (pattern offsets, fire rates, bullet visuals, AOE descriptors) plus `isTimedWeapon()` (cannon = permanent, all other weapons = timed) and heading math (including the most-recent-heading fallback when stationary); `src/entities/Player.ts` exposes the cumulative weapon collection (`equipWeapon` adds, `resetWeapon` clears timed weapons), per-weapon 10 s timers (`tickWeaponTimers`), and **phase-locked beat scheduling** (`getBeatClock`/`getLastShotTime`, `tryFire` returns every active weapon whose next beat tick has elapsed this frame), and `src/entities/PlayerBullet.ts` the player projectile. Audio cues (spawn, despawn, collection, weapon-change, plus the AOE fire/detonation cues) are in `src/audio/effects.ts`, and icon shapes in `src/powerups/icons.ts` visually hint at each weapon's pattern: fan arc for Spread, parallel bars for Dual, stacked dots for Rapid, a pass-through beam for Wave Laser, a bank-shot zig-zag for Ricochet, a splitting warhead cluster for Cluster Missile, a ship ringed by orbiting pods for Options, concentric rings for Nova, arced shell for Mortar, jagged bolt for Arc, return/undo arrow for Reset.
 
 > **Implemented in the GymPowerUpsCombat gym (§6.4, `src/scenes/gym/GymPowerUpsCombat.ts`, AH-0MTC2P6G3007PJ40):** The combat-coupled power-ups **Shield (15 s, absorbs its level-resolved hits), Bomb (ranged periodic enemy-bullet clear, no enemy damage), Phase Shift (finite recharging charge pool, auto-triggered 1.5 s pass-through), and Teleport (finite recharging FIFO pool, automatic on danger → nearest safe spot in direction of travel + 1.5 s Phase Shift on arrival)** are demonstrated with **low-level scout threats** (3 scouts in V-formation, aimed fire). Round-robin spawning **Shield → Bomb → Phase Shift → Teleport** (one drop at a time, 5 s lifetime, grow/hold/shrink, 3% collection threshold, 32 px bubble + icon) mirrors the threat-free GymPowerUps gym but with live threats so shield absorb, bomb clear, phase pass-through and safe-spot teleport are observable. The shared automatic-defence feed consumes one Teleport stack when Teleport is selected; hit response respects Phase Shift pass-through > shield absorb (popping on its last absorption) > unshielded hit + brief invulnerability blink. teleport runs through the single shared `CombatScene.triggerTeleport` path — the gym supplies only its enemy list and hit radii through the `getEnemyEntities`/`getTeleportEnemyHitRadius`/`getTeleportBulletHitRadius` hooks, so game and gym cannot diverge on the teleport safety rule (gap 7, AH-0MUII3EPU0039R5O). `findTeleportDestination` resolves the nearest safe spot (free of enemies/bullets within `TELEPORT_SAFE_RADIUS`, clamped to screen bounds). The standalone HUD (`src/ui/HUD.ts`) is reused unchanged (reads Shield/Phase Shift timers, Phase Shift auto-activation charges and Teleport stacks from the shared `EffectsRegistry`).
@@ -840,6 +881,28 @@ Power-ups are **constantly upgradable**, exactly like weapons: every power-up ca
 | **Orbital Strike** | Strike interval (30 s → 10 s, −2 s/level, permanent only); Strike damage (1 → 3 HP, k=0.3) |
 
 Every cap/rate is recorded with a written rationale beside it in `POWER_UP_LEVEL_SPECS` so balance intent cannot drift from the numbers. The **Smart Bomb** was re-balanced in AH-0MV8GPGBL009M0D8: its pulse radius (**200 → 400 px**) and permanent pulse interval (**30 → 10 s**) resolve through the **linear/clamped** curve family (damage per pulse is unchanged, 1 → 3 HP), so a permanent smart bomb is a rare, modest panic-button clear rather than a continuous screen wipe. **Status:** the **design + catalogue + pure resolver + integration contract** is shipped, the hold-full choice integration (the launcher supplies `ChoiceContext.powerUpLevels` and a chosen `power-up-level` offer is applied through the shared `applyMineralChoiceReward` path — parent AH-0MUV5CLVO002ZHS9) is shipped, and the resolver/store is **wired into `EffectsRegistry`** and the shared effect path in `PlayScene` and every gym (AH-0MUV5CLW6005VF7K). The Shield multi-hit absorption and the Bomb ranged periodic bomb are wired by **AH-0MUVM9RAO004Y3LB**; the **recharge-time axes** (Phase recharge / Teleport recharge), the **per-charge recharging pools** (cap 3, `PowerUpLevelStore.tickRecharge`, AH-0MV82I7TX0009JMT) and the **HUD grey-out for empty pools** (AH-0MV82I97Y007MB6M) are wired by AH-0MV82I7TX0009JMT / AH-0MV82I8IL0012RXY; and the **power-up leveling gym** **`GymPowerUpLeveling`** (`src/scenes/gym/GymPowerUpLeveling.ts`, key `GymPowerUpLeveling`, label `PowerUpLeveling` — the power-up counterpart of the weapon-leveling gym, AH-0MUV5CLVQ006V9HR) ships as the canonical place to observe the curve: a threat-free gallery where the operator collects each power-up repeatedly (field drops) and takes hold-full permanent rewards, with the shared HUD showing each owned power-up's effective level and a gym-local `.gym-panel` readout listing every levelled power-up's run-scoped level plus its resolver-derived stats. It reads levels and stats only through `PowerUpLevelStore` / `resolvePowerUpAtLevel` / the shared `EffectsRegistry` — no duplicated curve, catalogue or arithmetic — and is covered by its integration suite (`src/scenes/gym/GymPowerUpLeveling.test.ts`) and the game↔gym parity sweep in `src/scenes/core/powerUpLeveling.parity.test.ts` (see the README). Coverage: `src/powerups/powerUpLevels.test.ts`, `src/utils/curve.test.ts`, the power-up choice tests, `src/powerups/effects.test.ts`, `src/scenes/__tests__/PlayScene.powerUpLevels.test.ts`, `src/scenes/gym/GymPowerUpLeveling.test.ts`, `src/scenes/core/powerUpLeveling.parity.test.ts`, `src/scenes/core/CombatScene.equivalence.test.ts` and `src/entities/Player.test.ts`.
+
+#### 4.4.4 Mini-Boss Reward — Upgrade or Unlock (AH-0MVCRBNO6003E1CH)
+
+Defeating a mini-boss (§3.3) grants **exactly one** choice, offered through
+the same launcher-agnostic `MineralChoiceScene` overlay as the hold-full
+choice (same pause, countdown and `onSelect` contract):
+
+- **Upgrade** — raise any **one** owned permanent weapon or power-up by one
+  level (the ordinary `weapon-level`/`power-up-level` offers, applied through
+  the permanent-level machinery, §4.4.2/§4.4.3); or
+- **Unlock** — add **one** weapon from the initially-locked pool
+  (`src/powerups/unlocks.ts`): at Level 1 exactly **8 of the 16** weapons are
+  locked (the five net-new unlock-pool weapons plus Wave Laser, Cluster Missile
+  and Arc), biased toward the newer and later-level picks.
+
+The chosen option is applied immediately through the shared
+`applyMineralChoiceReward` seam; an unlock is recorded in the run-scoped unlock
+state (exposed via `PlayScene.getUnlockedWeapons()`), which the
+**checkpoint** persists (§6.6) and the run keeps until it ends. Exactly one
+option is consumed per mini-boss. Coverage: `src/powerups/unlocks.test.ts`
+(the ~50 % locked-pool invariant, option builders, single consumption) and the
+`PlayScene — mini-boss encounter` reward tests.
 
 ### 4.5 Scoring System
 
@@ -1333,6 +1396,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 |-----|---------|
 | `ai_hell_leaderboard` | Leaderboard entries (see §5.2) |
 | `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, pause toggle). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
+| `ai_hell_checkpoint` | **Run checkpoint** (AH-0MVCRBTNF000DK51): auto-written after every mini-boss defeat. Stores the resume level (the level after the defeated mini-boss) and wave 1, plus lives, score, minerals, permanent weapon/power-up levels, unlocked weapons and the run seed. The main menu shows **Continue — Level N** only when a usable checkpoint exists; resuming starts that level at wave 1 with all state and the saved RNG seed restored. **Play Game (New Game)** clears it. Corrupt/invalid payloads load as "no checkpoint" (defensive parse, same fallback discipline as the leaderboard) |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
 
 **Migration note**: If the project later adds online leaderboards, the local storage layer should be abstracted behind an interface so it can be swapped for an API backend.

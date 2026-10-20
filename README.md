@@ -858,6 +858,20 @@ instead.
   `grunt`, `raider`) also fields a non-player-targeting kind (same file), and
   adjacent levels differ in their dominant movement/attack style with a
   non-decreasing target curve (`src/waves/campaignInvariants.test.ts`).
+- **Mini-bosses, rewards and checkpoints:** every level's wave 10 is a
+  **bespoke mini-boss** — ten net-new archetypes (Pulse Warden, Coil Sentinel,
+  Shard Matron, Void Herald, Ion Tyrant, Cinder Maw, Prism Wraith, Gravemind,
+  Star Eater, The Hollow King) driven by one config-driven entity family
+  (`src/waves/miniBossDesigns.ts`, exercised by `GymMiniBoss`). The mini-boss
+  wave has no time limit and gates its level. Defeating a mini-boss grants
+  **one** choice — upgrade an owned permanent weapon/power-up by one level, or
+  unlock a weapon from the ~50%-locked pool (`src/powerups/unlocks.ts`) — and
+  auto-writes a **checkpoint** (`ai_hell_checkpoint`) that the main menu's
+  **Continue** resumes from (level after the mini-boss, wave 1) with lives,
+  score, minerals, permanent levels, unlocks and the run seed restored. The
+  catalogue now ships **16 weapons** (the 5 net-new unlock-pool weapons are
+  Rear Guard, Broadside, Railgun, Shard Swarm and Heavy Slug) and **16
+  power-ups**.
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
   skeleton, so levels 1–10 are always present. A configured level overrides its
   static counterpart (and a configured level numbered beyond the static ten is
