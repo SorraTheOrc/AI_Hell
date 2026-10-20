@@ -2488,6 +2488,50 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
       definesMethod(PRODUCTION('src/entities/Harvester.ts'), 'takeDamage'),
     ).toBe(false);
   });
+
+  it('defines the collector-drone lifecycle helpers exactly once, in the shared core', () => {
+    // Every scene that can spawn the Mystery UFO drone consumes the single
+    // shared pass; a per-scene copy (or a second implementation) would break
+    // gym↔game parity (AH-0MV9G113S009B37I, AH-0MVBMRS4K000TTTP).
+    const production = collectProductionSourceFiles(
+      path.resolve(process.cwd(), 'src'),
+    );
+    const helperFile = 'src/scenes/core/combatDrone.ts';
+    for (const fn of [
+      'spawnDrone',
+      'tickDrones',
+      'hitDrone',
+      'destroyedDroneDropCount',
+    ]) {
+      const definers = production
+        .filter((file) => definesFunction(fs.readFileSync(file, 'utf8'), fn))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers, `${fn} must be defined once`).toEqual([helperFile]);
+    }
+  });
+
+  it('no retired Mystery UFO instant-bounty symbols remain in production source', () => {
+    // The invisible instant burst is retired (AH-0MV9G113S009B37I): the
+    // registry queues collector-drone spawns instead, so the old accumulator
+    // and its score axis must not linger as dead paths.
+    const production = collectProductionSourceFiles(
+      path.resolve(process.cwd(), 'src'),
+    );
+    for (const file of production) {
+      const source = fs.readFileSync(file, 'utf8');
+      for (const symbol of [
+        'consumeMysteryBonus',
+        '_mysteryBonus',
+        'mysteryUfoScore',
+      ]) {
+        expect(
+          source.includes(symbol),
+          `${path.relative(process.cwd(), file)} must not reference ${symbol}`,
+        ).toBe(false);
+      }
+    }
+  });
 });
 
 // ── Live-aim seam — bot/level gym ↔ PlayScene equivalence ───────────
