@@ -104,6 +104,12 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     { id: 'nova', value: 1 },
     { id: 'mortar', value: 1 },
     { id: 'arc', value: 1 },
+    // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW): equally useful.
+    { id: 'rear_guard', value: 1 },
+    { id: 'broadside', value: 1 },
+    { id: 'railgun', value: 1.1 },
+    { id: 'shard_swarm', value: 1 },
+    { id: 'heavy_slug', value: 1 },
     { id: 'reset', value: 0.5 },
   ],
 });

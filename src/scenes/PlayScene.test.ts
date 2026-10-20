@@ -82,6 +82,10 @@ import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
 import { RULES_STORAGE_KEY } from '../core/rules';
 import { miniBossDesignForLevel } from '../waves/miniBossDesigns';
+import {
+  MINI_BOSS_LOCKED_WEAPONS,
+  lockedWeaponIds,
+} from '../powerups/unlocks';
 
 // These integration tests boot full Phaser games and walk the run to the
 // boss; under the full-suite parallel load the Vitest default 5 s timeout
@@ -179,7 +183,7 @@ function clearMiniBossWave(scene: PlayScene): void {
  * damage. A no-op outside the mini-boss encounter
  * (AH-0MVCRBISU006NUN5).
  */
-function killMiniBoss(scene: PlayScene): void {
+function killMiniBoss(scene: PlayScene, resolveReward = true): void {
   const miniBoss = scene.getMiniBoss();
   if (!miniBoss?.alive) return;
   const isolated = scene as unknown as {
@@ -206,6 +210,13 @@ function killMiniBoss(scene: PlayScene): void {
   } finally {
     isolated.getEnemyEntities = originalGetEnemyEntities;
     isolated.autoFireEnabled = originalAutoFireEnabled;
+  }
+  // A defeat offers the one upgrade-or-unlock reward choice
+  // (AH-0MVCRBNO6003E1CH); a deterministic walk resolves it so play can
+  // continue, exactly as a player picking the first option would. Tests that
+  // need to inspect/choose the offer pass `resolveReward: false`.
+  if (resolveReward && scene.isMiniBossRewardOpen()) {
+    scene.selectMiniBossReward(0);
   }
 }
 
@@ -6886,6 +6897,85 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
       isolated.autoFireEnabled = originalAutoFireEnabled;
     }
     expect(miniBoss.getHpFraction()).toBeLessThan(1);
+  });
+
+  it('AC1/AC4 — a defeat offers exactly one upgrade-or-unlock choice', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    // Collect/own a weapon so the upgrade option set is non-empty.
+    scene.getPlayer()!.equipWeapon('spread', true);
+
+    killMiniBoss(scene, false);
+
+    const options = scene.getMiniBossRewardOptions();
+    expect(options.length).toBeGreaterThan(0);
+    // Both option families are present: owned-item upgrades and locked
+    // weapon unlocks.
+    expect(options.some((option) => option.kind === 'weapon-level')).toBe(true);
+    expect(options.some((option) => option.kind === 'weapon')).toBe(true);
+    // The unlock candidates are exactly the still-locked weapons.
+    const unlockIds = options
+      .filter((option) => option.kind === 'weapon')
+      .map((option) => option.id);
+    expect(unlockIds.sort()).toEqual(
+      [...lockedWeaponIds({ unlockedWeapons: new Set() })].sort(),
+    );
+  });
+
+  it('AC2/AC4 — choosing an upgrade raises an owned permanent item by one level', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    player.equipWeapon('railgun', true);
+    const before = player
+      .getWeaponLevels()
+      .find((entry) => entry.id === 'railgun')!.level;
+
+    killMiniBoss(scene, false);
+    const options = scene.getMiniBossRewardOptions();
+    const upgradeIndex = options.findIndex(
+      (option) => option.kind === 'weapon-level' && option.id === 'railgun',
+    );
+    expect(upgradeIndex).toBeGreaterThanOrEqual(0);
+
+    const chosen = scene.selectMiniBossReward(upgradeIndex);
+    expect(chosen).not.toBeNull();
+    const after = player
+      .getWeaponLevels()
+      .find((entry) => entry.id === 'railgun')!.level;
+    expect(after).toBe(before + 1);
+    // The reward is resolved exactly once (AC4).
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+    expect(scene.selectMiniBossReward(upgradeIndex)).toBeNull();
+  });
+
+  it('AC3/AC4 — choosing an unlock makes that locked weapon available for the run', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    expect(scene.getUnlockedWeapons()).toEqual([]);
+
+    killMiniBoss(scene, false);
+    const options = scene.getMiniBossRewardOptions();
+    const unlockIndex = options.findIndex(
+      (option) => option.kind === 'weapon' && option.id === 'railgun',
+    );
+    expect(unlockIndex).toBeGreaterThanOrEqual(0);
+
+    scene.selectMiniBossReward(unlockIndex);
+    expect(scene.getUnlockedWeapons()).toEqual(['railgun']);
+    // The unlocked weapon is genuinely equipped through the shared seam.
+    expect(
+      scene
+        .getPlayer()!
+        .getWeaponLevels()
+        .some((entry) => entry.id === 'railgun'),
+    ).toBe(true);
+    // And it is no longer offered as an unlock by the next encounter.
+    const stillLocked = lockedWeaponIds({
+      unlockedWeapons: new Set(scene.getUnlockedWeapons()),
+    });
+    expect(stillLocked).not.toContain('railgun');
+    expect(MINI_BOSS_LOCKED_WEAPONS).toContain('railgun');
   });
 
   it('AC5 — on the final level, defeating the mini-boss triggers the final boss', async () => {

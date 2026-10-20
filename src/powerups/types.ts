@@ -105,7 +105,14 @@ export type WeaponDropId =
   | 'reset'
   | 'nova'
   | 'mortar'
-  | 'arc';
+  | 'arc'
+  // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW): valid drop ids so the
+  // mini-boss reward can grant them, but never in the basic drop rotation.
+  | 'rear_guard'
+  | 'broadside'
+  | 'railgun'
+  | 'shard_swarm'
+  | 'heavy_slug';
 
 /**
  * Every drop the combat gyms can spawn: all power-up IDs plus the
@@ -307,6 +314,13 @@ export const WEAPON_DROP_IDS: readonly WeaponDropId[] = [
   'mortar',
   'arc',
   'reset',
+  // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW): valid weapon drops so
+  // the reward pool can grant them; never in the basic rotation.
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
 ] as const;
 
 /** Determines whether a drop ID is a weapon drop. */

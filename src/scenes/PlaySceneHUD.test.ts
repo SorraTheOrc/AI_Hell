@@ -124,9 +124,11 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
         scene.spawnPlayerBullet(e.x, e.y, 0, 0);
         scene.tick(0.016);
       }
-      // The wave-10 mini-boss is a separate gating entity (not part of the
-      // spawned set): defeat it too so the level can complete
-      // (AH-0MVCRBISU006NUN5).
+      // Resolve the mini-boss reward choice if the defeat offered one
+      // (AH-0MVCRBNO6003E1CH) so the walk can continue, then defeat the
+      // wave-10 mini-boss (a separate gating entity, not in the spawned set)
+      // so the level can complete (AH-0MVCRBISU006NUN5).
+      if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
       const miniBoss = scene.getMiniBoss();
       if (miniBoss?.alive) {
         for (let h = 0; h < 400 && miniBoss.alive; h++) {
@@ -139,6 +141,8 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
           // A zero-length step resolves collisions without moving the target.
           scene.tick(0);
         }
+        // The defeat offers the upgrade-or-unlock reward; resolve it.
+        if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
       }
       if (scene.isTransitioning()) scene.tick(1.6);
     }

@@ -24,6 +24,7 @@
 
 import {
   POWER_UP_CATALOGUE,
+  isWeaponDrop as isWeaponDropId,
   type DropId,
   type PowerUpId,
   type WeaponDropId,
@@ -149,6 +150,12 @@ const LEVELABLE_WEAPON_IDS: readonly WeaponDropId[] = [
   'nova',
   'mortar',
   'arc',
+  // Net-new unlock-pool weapons are upgradable like every other weapon.
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
 ];
 
 /** Display names for the collectable weapon drops. */
@@ -164,23 +171,20 @@ const WEAPON_NAMES: Record<WeaponDropId, string> = {
   mortar: 'Mortar',
   arc: 'Arc',
   reset: 'Reset',
+  rear_guard: 'Rear Guard',
+  broadside: 'Broadside',
+  railgun: 'Railgun',
+  shard_swarm: 'Shard Swarm',
+  heavy_slug: 'Heavy Slug',
 };
 
-/** Whether a drop id is a weapon drop. */
+/**
+ * Whether a drop id is a weapon drop — delegates to the canonical guard in
+ * `powerups/types` so a newly added weapon can never be mistaken for a
+ * power-up here (AH-0MVCRBNO6003E1CH).
+ */
 export function isWeaponDrop(id: DropId): id is WeaponDropId {
-  return (
-    id === 'spread' ||
-    id === 'dual' ||
-    id === 'rapid' ||
-    id === 'wave_laser' ||
-    id === 'ricochet' ||
-    id === 'cluster' ||
-    id === 'options' ||
-    id === 'nova' ||
-    id === 'mortar' ||
-    id === 'arc' ||
-    id === 'reset'
-  );
+  return isWeaponDropId(id);
 }
 
 /**

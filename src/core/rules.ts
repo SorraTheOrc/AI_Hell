@@ -229,6 +229,13 @@ export const WEAPON_WEIGHT_IDS: readonly WeaponDropId[] = [
   'mortar',
   'arc',
   'reset',
+  // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW) — weighted like every
+  // other weapon drop; they only enter play through a mini-boss unlock.
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
 ];
 
 /** Default minerals granted per collected mineral (GDD §4.5). */

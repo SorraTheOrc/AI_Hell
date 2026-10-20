@@ -103,9 +103,17 @@ import {
 import { EffectsRegistry } from '../powerups/effects';
 import {
   randomChoiceStrategy,
+  toChoiceOption,
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../powerups/choice';
+import {
+  buildUpgradeOptions,
+  initialUnlockState,
+  lockedWeaponIds,
+  unlockWeapon,
+  type MiniBossUnlockState,
+} from '../powerups/unlocks';
 import { PowerUp } from '../powerups/PowerUp';
 import { EXTRA_LIFE_DROP_ID, getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
@@ -569,6 +577,18 @@ export class PlayScene extends CombatScene<
   private miniBossDefeats = 0;
 
   /**
+   * Run-scoped mini-boss unlock state (AH-0MVCRBNO6003E1CH): which initially
+   * locked weapons this run has unlocked. The checkpoint feature persists it.
+   */
+  private miniBossUnlockState: MiniBossUnlockState = initialUnlockState();
+
+  /** True while the mini-boss reward choice overlay is open. */
+  private miniBossRewardOpen = false;
+
+  /** The options offered by the open mini-boss reward overlay. */
+  private miniBossRewardOptions: ChoiceOption[] = [];
+
+  /**
    * Campaign level whose mini-boss has already been spawned this run. Guards
    * {@link _spawnMiniBossIfDue} against re-spawning (and double-registering
    * the gating spawn) if `spawnWave` were ever re-entered while the wave's
@@ -997,6 +1017,9 @@ export class PlayScene extends CombatScene<
     this.miniBoss = null;
     this.miniBossDefeats = 0;
     this.miniBossSpawnedLevel = null;
+    this.miniBossUnlockState = initialUnlockState();
+    this.miniBossRewardOpen = false;
+    this.miniBossRewardOptions = [];
     this.driftX = 0;
     this.driftDir = 1;
     this.diverAnchorX = 0;
@@ -2766,6 +2789,95 @@ export class PlayScene extends CombatScene<
     this.miniBossDefeats += 1;
     this.miniBossRewardHook?.(context);
     this.miniBossCheckpointHook?.(context);
+    // Reward loop (AH-0MVCRBNO6003E1CH AC1): a defeat offers exactly ONE
+    // upgrade-or-unlock choice through the shared choice overlay. Off in the
+    // headless/dev scenarios and while a choice is already open.
+    if (!this.miniBossRewardOpen) this.openMiniBossReward(context);
+  }
+
+  /**
+   * Opens the mini-boss reward choice (AH-0MVCRBNO6003E1CH): one choice —
+   * upgrade an owned permanent weapon/power-up by one level, OR unlock a
+   * weapon from the initially-locked pool. Reuses the shared
+   * `MineralChoiceScene` overlay (launcher-agnostic) and pauses play exactly
+   * like the hold-full choice.
+   *
+   * @param _context - The defeated mini-boss's context (level/wave/name).
+   * @returns The offered options.
+   */
+  openMiniBossReward(_context: MiniBossDefeatContext): ChoiceOption[] {
+    if (this.miniBossRewardOpen) return [...this.miniBossRewardOptions];
+    // Option A — upgrade any one owned permanent weapon/power-up.
+    const owned: ChoiceOption[] = buildUpgradeOptions({
+      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+    });
+    // Option B — unlock one weapon still in the initially-locked pool.
+    const unlocks: ChoiceOption[] = lockedWeaponIds(
+      this.miniBossUnlockState,
+    ).map((weaponId) => toChoiceOption(weaponId as DropId));
+    const options = [...owned, ...unlocks];
+    this.miniBossRewardOptions = options;
+    this.miniBossRewardOpen = true;
+    this.mineralChoiceOpen = true;
+    this.setPaused(true);
+    if (this.scene.manager.getScene('MineralChoiceScene')) {
+      this.scene.pause();
+      this.scene.launch('MineralChoiceScene', {
+        origin: 'PlayScene-miniBoss',
+        options: [...this.miniBossRewardOptions],
+        // Single overlay contract: the launcher supplies one selection
+        // callback; `selectMineralChoice` routes it to the reward resolver
+        // while the reward is open.
+        onSelect: (index: number) => this.selectMineralChoice(index),
+      });
+    }
+    return [...this.miniBossRewardOptions];
+  }
+
+  /**
+   * Resolves the mini-boss reward: applies the chosen option through the
+   * shared reward seam (permanent upgrade or weapon unlock), records any
+   * unlock, resumes play and closes the overlay. Exactly one option is
+   * consumed per mini-boss (AC4).
+   *
+   * @returns The chosen option, or null for an out-of-range index.
+   */
+  selectMiniBossReward(index: number): ChoiceOption | null {
+    const option = this.miniBossRewardOptions[index];
+    if (!option) return null;
+    applyMineralChoiceReward(option, this.effectsRegistry, this.player);
+    // An unlock option names a locked weapon: record it so the run (and the
+    // checkpoint) knows the weapon is now available.
+    if (option.kind === 'weapon') {
+      this.miniBossUnlockState = unlockWeapon(
+        option.id as WeaponId,
+        this.miniBossUnlockState,
+      );
+    }
+    this.miniBossRewardOpen = false;
+    this.miniBossRewardOptions = [];
+    this.mineralChoiceOpen = false;
+    this.setPaused(false);
+    if (this.scene.manager.getScene('MineralChoiceScene')) {
+      this.scene.resume();
+    }
+    return option;
+  }
+
+  /** The options offered by the open (or most recent) mini-boss reward. */
+  getMiniBossRewardOptions(): ChoiceOption[] {
+    return [...this.miniBossRewardOptions];
+  }
+
+  /** Whether the mini-boss reward overlay is open. */
+  isMiniBossRewardOpen(): boolean {
+    return this.miniBossRewardOpen;
+  }
+
+  /** The weapons this run has unlocked through mini-boss rewards. */
+  getUnlockedWeapons(): WeaponId[] {
+    return [...this.miniBossUnlockState.unlockedWeapons];
   }
 
   /**
@@ -4083,6 +4195,9 @@ export class PlayScene extends CombatScene<
    * or null for an out-of-range index.
    */
   selectMineralChoice(index: number): ChoiceOption | null {
+    // The mini-boss reward reuses the overlay; route its selection through
+    // the reward resolver (no hold reset — a reward is not a hold-full drop).
+    if (this.miniBossRewardOpen) return this.selectMiniBossReward(index);
     const option = this.mineralChoiceOptions[index];
     if (!option) return null;
     this.runTelemetry.choiceSelected(index, option.id);

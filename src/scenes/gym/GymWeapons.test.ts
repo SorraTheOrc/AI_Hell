@@ -414,14 +414,31 @@ describe('GymWeapons AC3: round-robin spawn order & lifecycle', () => {
     return booted!.scene as GymWeapons;
   }
 
-  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → wave laser → ricochet → cluster → options → nova → mortar → arc → reset', async () => {
+  it('spawns exactly one drop at a time in round-robin order spread → … → arc → the five net-new unlock-pool weapons → reset', async () => {
     const scene = await bootWeapons();
     // First drop spawned in create().
     expect(scene.getDrops()).toHaveLength(1);
     expect(scene.getDrops()[0].weaponType).toBe('spread');
 
-    // Cycle through the rest of the order (conventional, wave laser, ricochet, cluster, options, AOE, then Reset).
-    for (const expected of ['dual', 'rapid', 'wave_laser', 'ricochet', 'cluster', 'options', 'nova', 'mortar', 'arc', 'reset']) {
+    // Cycle through the rest of the order (conventional, wave laser, ricochet,
+    // cluster, options, AOE, the five net-new unlock-pool weapons, then Reset).
+    for (const expected of [
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'options',
+      'nova',
+      'mortar',
+      'arc',
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
+      'reset',
+    ]) {
       scene.tick(7.1); // previous despawns (>7 s), next spawns
       const drops = scene.getDrops();
       expect(drops).toHaveLength(1); // one at a time (AC3)
@@ -974,6 +991,11 @@ describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'nova',
       'mortar',
       'arc',
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
       'reset',
     ]);
   });

@@ -180,6 +180,9 @@ function killMiniBoss(scene: PlayScene): void {
     isolated.getEnemyEntities = originalGetEnemyEntities;
     isolated.autoFireEnabled = originalAutoFireEnabled;
   }
+  // The mini-boss defeat offers the upgrade-or-unlock reward
+  // (AH-0MVCRBNO6003E1CH); resolve it so the walk can continue.
+  if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
 }
 
 /**

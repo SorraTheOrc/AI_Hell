@@ -1839,6 +1839,9 @@ function reachPlayBoss(play: PlayScene): void {
         play.tick(0);
       }
     }
+    // The mini-boss defeat offers the one upgrade-or-unlock reward choice
+    // (AH-0MVCRBNO6003E1CH); resolve it so play can continue.
+    if (play.isMiniBossRewardOpen()) play.selectMiniBossReward(0);
     // Nothing alive but the wave still has accounted enemies: advance the
     // scene so pending dynamic spawns are released and the wave timer runs.
     if (wm.enemiesAlive > 0 && play.getAliveCount() === 0) play.tick(0.25);
