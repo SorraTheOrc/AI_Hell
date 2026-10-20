@@ -2751,6 +2751,10 @@ export class PlayScene extends CombatScene<
       this.gameState.addScore(BOSS_PHASE_SCORES[previousPhase] ?? 0);
       this.waveManager.onBossDefeated();
       this.runTelemetry.bossDefeated();
+      // The body's death VFX is intentional, but the health-bar box must not
+      // linger as a dark rectangle through the victory celebration
+      // (AH-0MVH85XXZ008INE2).
+      boss.getHealthBarGraphics().setVisible(false);
       this._triggerVictoryCelebration(deathX, deathY);
       this._finishRunWithPurpose(true);
       return;
@@ -2790,6 +2794,12 @@ export class PlayScene extends CombatScene<
       miniBossName: miniBoss.resolvedConfig.name,
       isFinalLevel: this.waveManager.isFinalLevel,
     };
+    // Fully tear the encounter down. `takeDamage()` only fades the body and
+    // darkens the health bar; the entity's scene-level Graphics (the health
+    // bar and the telegraph/pulse-wave ring) live outside the container and
+    // would otherwise remain frozen on screen after the level advances
+    // (AH-0MVH85XXZ008INE2). `destroy()` removes them (and any minions).
+    miniBoss.destroy();
     this.miniBoss = null;
     this._fireMiniBossDefeatHooks(context);
 

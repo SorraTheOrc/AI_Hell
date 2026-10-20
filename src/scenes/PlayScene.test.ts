@@ -7001,6 +7001,30 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(saved!.weaponLevels.some((entry) => entry.id === 'spread')).toBe(true);
   });
 
+  it('AH-0MVH85XXZ008INE2 — a defeated mini-boss leaves no graphics behind', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const miniBoss = scene.getMiniBoss()!;
+    // The encounter owns a scene-level health-bar Graphics (the "box").
+    const healthBar = miniBoss.getHealthBarGraphics();
+    expect(healthBar.visible).toBe(true);
+
+    killMiniBoss(scene, false);
+
+    // The shared accessors no longer report the encounter, so the shared tick
+    // cannot re-draw any of its graphics.
+    expect(scene.getMiniBoss()).toBeNull();
+    expect(scene.getBoss()).toBeNull();
+    // The entity is fully destroyed: its container and the scene-level health
+    // bar are gone (not merely faded/darkened) — no leftover box or ring.
+    expect(miniBoss.active).toBe(false);
+    expect(miniBoss.scene).toBeUndefined();
+    expect(healthBar.active).toBe(false);
+    expect(healthBar.scene).toBeUndefined();
+    // And nothing on the display list still draws the old health bar.
+    expect(scene.children.list.includes(healthBar as unknown as Phaser.GameObjects.GameObject)).toBe(false);
+  });
+
   it('AC5 — on the final level, defeating the mini-boss triggers the final boss', async () => {
     // One level: `isFinalLevel` is true from the start, so the level's
     // mini-boss defeat must trigger the Central AI boss.
