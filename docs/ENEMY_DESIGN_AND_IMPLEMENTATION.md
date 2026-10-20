@@ -1076,6 +1076,7 @@ resolver (`startSpawnAnimation`'s `destFn`):
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (entity-level, one cue+thump pair per burst inside `tryFireRadialBurst()`, no gap between cue and thump) |
 | `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (`playSwarmBurstSound()`, entity-level, once per volley, no advance cue) |
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
+| `GymMiniBoss` | `MiniBoss` | single entity (centred) | config-driven per-phase set (spread / spiral / pulse / combined) with configurable HP, colour and optional per-phase minions | shared Boss cues (per-phase telegraph + once-per-volley fire sound) |
 
 `GymBoss` also consumes the shared boss hooks (§2.1): its `tick(dt)`
 advances the Boss through `CombatScene._advanceBoss`, teleports avoid the
@@ -1083,6 +1084,56 @@ boss via the shared `getAdditionalTeleportBodies()`, and its phase minions
 are summoned from the shared `planMinionSpawns()` plan and advanced on the
 same tick path through `onBossAdvanced()` — so the gym Boss runs the same
 code as the shipped game's Boss (AH-0MUII3E5E006A93F).
+
+### 3.3 Config-driven mini-bosses (`MiniBoss` / `GymMiniBoss`)
+
+The mini-boss family (`src/entities/MiniBoss.ts`, AH-0MVCRAYSH0014BQJ) is the
+config-driven parallel of the Boss: it **extends** `Boss`, so the telegraph →
+volley → interval cycle, the per-phase health bar, the damage/defeat result,
+figure-of-eight movement and the shared `CombatScene._advanceBoss` tick are
+the single shipped implementation. `Boss` gained only additive,
+default-preserving config hooks (`phaseCount`, `hitPointsPerPhase`,
+`bodyColor`, `desperationColor`, overridable `firePhase()`); the shipped
+four-phase Boss behaviour is unchanged.
+
+A `MiniBossConfig` supplies a per-level identity (`level`, `name`), a
+`pattern` per phase, a uniform `hpPerPhase`, a body colour and optional
+per-phase minion waves:
+
+```ts
+new MiniBoss(scene, {
+  level: 4,
+  name: 'Violet Warden',
+  x, y, formationOffset,
+  color: 0xcc44ff,
+  hpPerPhase: 20,
+  phases: [{ pattern: 'spread' }, { pattern: 'spiral' }, { pattern: 'pulse' }],
+  minions: [
+    { phase: 1, groups: [{ enemyKey: 'scout', formation: 'v', count: 4,
+      spacingX: 28, spacingY: 24, startX: 120, startY: 140 }] },
+  ],
+});
+```
+
+- **No-config-safe default** — `{ x, y, formationOffset }` alone is valid
+  (one `spread` phase, `MINI_BOSS_DEFAULT_HP_PER_PHASE` hits, default colour).
+- **Validation** — `resolveMiniBossConfig()` / `validateMiniBossConfig()`
+  throw `MiniBossConfigError` for an empty phase list (phases ≥ 1), a
+  non-positive HP value, an unknown pattern, or an out-of-range minion phase.
+- **Pattern set reuses Boss code** — each phase dispatches to the shipped
+  `tryFireSpreadBullets` / `tryFireSpiralBullets` / `tryFirePulseBullets` /
+  `tryFireDesperationBullets`, so there is no forked firing logic.
+- **Optional minions live in the entity** — they spawn from the shared
+  `planGroupSpawns()` planner, are built through `createEnemyFromConfig()`,
+  and fire through the shared `fireForEnemy()` dispatcher on the same tick,
+  so the game and every gym run identical minion code.
+
+`GymMiniBoss` boots one `MiniBoss` through `GymFormationScene` and mirrors
+`GymBoss`: `getBoss()` feeds the shared tick, `getEnemyEntities()` includes the
+config-summoned minions in the shared collision pass, and the DAMAGE button
+advances phases at the configured HP. It is surfaced as a dedicated
+**Mini-Boss** row in the gym index's ENEMIES column
+(`MINI_BOSS_SCENE_KEY`).
 
 ---
 

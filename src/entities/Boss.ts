@@ -160,11 +160,38 @@ function resolveInitialHp(
   return Math.min(totalHp, Math.max(1, Math.floor(initialHp)));
 }
 
-/** Resolves the boss's starting phase, clamped to the four valid phases. */
-function resolveInitialPhase(initialPhase: number | undefined): number {
+/** Resolves the starting phase, clamped to the boss's configured phase count. */
+function resolveInitialPhase(
+  initialPhase: number | undefined,
+  phaseCount: number,
+): number {
   if (initialPhase === undefined || !Number.isFinite(initialPhase)) return 1;
-  return Math.min(BOSS_PHASE_COUNT, Math.max(1, Math.floor(initialPhase)));
+  return Math.min(phaseCount, Math.max(1, Math.floor(initialPhase)));
 }
+
+/** Resolves a config-supplied phase count, clamped to at least one phase. */
+function resolvePhaseCount(phaseCount: number | undefined): number {
+  if (phaseCount === undefined || !Number.isFinite(phaseCount)) {
+    return BOSS_PHASE_COUNT;
+  }
+  return Math.max(1, Math.floor(phaseCount));
+}
+
+/** Resolves a config-supplied hits-per-phase value, clamped to at least one. */
+function resolveHitPointsPerPhase(hits: number | undefined): number {
+  if (hits === undefined || !Number.isFinite(hits)) {
+    return BOSS_HIT_POINTS_PER_PHASE;
+  }
+  return Math.max(1, Math.floor(hits));
+}
+
+/**
+ * Health-bar / phase colour ramp, shared by the bar fill, the spiral bullet
+ * tint and the health-bar segment colour. The default four-phase Boss maps
+ * exactly to green → yellow → orange → red; a config-driven boss interpolates
+ * its phase position across the ramp.
+ */
+const PHASE_HEALTH_COLORS = [0x00ff00, 0xffcc00, 0xff8800, 0xff0000] as const;
 
 /** Health bar width in px. */
 export const BOSS_HEALTH_BAR_WIDTH = 300;
@@ -205,6 +232,24 @@ export interface BossConfig {
    * its final, desperation visuals. Defaults to 1; clamped to the phase range.
    */
   initialPhase?: number;
+  /**
+   * Optional number of attack/health phases (defaults to
+   * {@link BOSS_PHASE_COUNT}). Config-driven mini-bosses use this to run any
+   * number of phases through the same telegraph/damage machinery.
+   */
+  phaseCount?: number;
+  /**
+   * Optional hits required to deplete one phase (defaults to
+   * {@link BOSS_HIT_POINTS_PER_PHASE}).
+   */
+  hitPointsPerPhase?: number;
+  /** Optional body colour (defaults to {@link BOSS_COLOR}). */
+  bodyColor?: number;
+  /**
+   * Optional final-phase body colour (defaults to
+   * {@link BOSS_DESPERATION_COLOR}).
+   */
+  desperationColor?: number;
 }
 
 // ── Bullet types ────────────────────────────────────────────────────
@@ -256,6 +301,15 @@ export class Boss extends Phaser.GameObjects.Container {
 
   private readonly formationOffset: FormationOffset;
 
+  /** Number of attack/health phases (config-driven; defaults to 4). */
+  protected readonly phaseCount: number;
+  /** Hits required to deplete one phase (defaults to 50). */
+  protected readonly hitPointsPerPhase: number;
+  /** Body colour (defaults to {@link BOSS_COLOR}). */
+  protected readonly bodyColor: number;
+  /** Final-phase body colour (defaults to {@link BOSS_DESPERATION_COLOR}). */
+  protected readonly desperationColor: number;
+
   private _alive = true;
   private _shootEnabled = true; // Boss always "shoots" (pattern-driven)
   private readonly _shotProbability: number;
@@ -302,6 +356,10 @@ export class Boss extends Phaser.GameObjects.Container {
     this.formationOffset = config.formationOffset;
     this._shotProbability = config.shotProbability ?? 1.0;
     this._rng = config.rng ?? Math.random;
+    this.phaseCount = resolvePhaseCount(config.phaseCount);
+    this.hitPointsPerPhase = resolveHitPointsPerPhase(config.hitPointsPerPhase);
+    this.bodyColor = config.bodyColor ?? BOSS_COLOR;
+    this.desperationColor = config.desperationColor ?? BOSS_DESPERATION_COLOR;
 
     // The figure-of-eight anchor starts at the spawn point; `update()` traces
     // the lemniscate about it in the shared core, so `PlayScene` and every
@@ -335,9 +393,12 @@ export class Boss extends Phaser.GameObjects.Container {
     this.healthBarGraphics = scene.add.graphics();
     this.healthBarGraphics.setDepth(100);
     this.healthBarGraphics.setScrollFactor(0); // fixed on screen
-    this._totalHp = BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE;
+    this._totalHp = this.phaseCount * this.hitPointsPerPhase;
     this._currentHp = resolveInitialHp(config.initialHp, this._totalHp);
-    this._currentPhaseNumber = resolveInitialPhase(config.initialPhase);
+    this._currentPhaseNumber = resolveInitialPhase(
+      config.initialPhase,
+      this.phaseCount,
+    );
     this._currentPhase = this._currentPhaseNumber as BossPhase;
 
     this._drawBody();
@@ -350,8 +411,8 @@ export class Boss extends Phaser.GameObjects.Container {
   /** Draws the Boss body (hexagonal geometric structure). */
   private _drawBody(): void {
     this.bodyGraphics.clear();
-    const isDesperation = this._currentPhaseNumber === 4;
-    const color = isDesperation ? BOSS_DESPERATION_COLOR : BOSS_COLOR;
+    const isDesperation = this.isDesperation();
+    const color = isDesperation ? this.desperationColor : this.bodyColor;
 
     this.bodyGraphics.lineStyle(3, color, 1);
     this.bodyGraphics.fillStyle(color, 0.15);
@@ -374,7 +435,7 @@ export class Boss extends Phaser.GameObjects.Container {
   /** Draws the pulsing central core. */
   _drawCore(): void {
     this.coreGraphics.clear();
-    const isDesperation = this._currentPhaseNumber === 4;
+    const isDesperation = this.isDesperation();
     const baseAlpha = isDesperation ? 0.9 : 0.6;
     // Pulse effect: brightness oscillates.
     const pulse =
@@ -396,7 +457,7 @@ export class Boss extends Phaser.GameObjects.Container {
   /** Draws the outer core glow ring. */
   _drawCoreGlow(): void {
     this.coreGlowGraphics.clear();
-    const isDesperation = this._currentPhaseNumber === 4;
+    const isDesperation = this.isDesperation();
     const pulse =
       0.5 + 0.5 * Math.sin(this._corePulsePhase * this._corePulseSpeed * 0.7);
     const baseAlpha = isDesperation ? 0.3 : 0.15;
@@ -428,23 +489,18 @@ export class Boss extends Phaser.GameObjects.Container {
     this.healthBarGraphics.lineStyle(2, 0xff4444, 1);
     this.healthBarGraphics.strokeRect(x, y, w, h);
 
-    // Health fill — green in phase 1, yellow in 2, orange in 3, red in 4.
+    // Health fill — the current phase's colour on the shared ramp
+    // (default four phases: green, yellow, orange, red).
     const fillWidth = (this._currentHp / this._totalHp) * w;
-    const healthColors: Record<number, number> = {
-      4: 0xff0000,
-      3: 0xff8800,
-      2: 0xffcc00,
-      1: 0x00ff00,
-    };
-    const healthColor =
-      healthColors[this._currentPhaseNumber] ?? 0xff0000;
+    const healthColor = this._phaseHealthColor();
     this.healthBarGraphics.fillStyle(healthColor, 0.85);
     this.healthBarGraphics.fillRect(x, y, fillWidth, h);
 
-    // Segment dividers.
-    const segWidth = w / BOSS_HEALTH_SEGMENTS;
+    // Segment dividers — one per configured phase.
+    const segments = this.phaseCount;
+    const segWidth = w / segments;
     this.healthBarGraphics.lineStyle(1, 0x666666, 0.5);
-    for (let i = 1; i < BOSS_HEALTH_SEGMENTS; i++) {
+    for (let i = 1; i < segments; i++) {
       const segX = x + i * segWidth;
       this.healthBarGraphics.moveTo(segX, y);
       this.healthBarGraphics.lineTo(segX, y + h);
@@ -455,6 +511,20 @@ export class Boss extends Phaser.GameObjects.Container {
     this.healthBarGraphics.strokeRect(x, y - 2, w, h + 4);
 
     this.healthBarGraphics.setDepth(100);
+  }
+
+  /**
+   * The current phase's colour on the shared green→red health ramp. With the
+   * default four phases this is exactly green/yellow/orange/red; a
+   * config-driven boss interpolates across the configured phase count.
+   */
+  private _phaseHealthColor(): number {
+    if (this.phaseCount <= 1) return PHASE_HEALTH_COLORS[0];
+    const t = (this._currentPhaseNumber - 1) / (this.phaseCount - 1);
+    const index = Math.round(t * (PHASE_HEALTH_COLORS.length - 1));
+    return PHASE_HEALTH_COLORS[
+      Math.min(PHASE_HEALTH_COLORS.length - 1, Math.max(0, index))
+    ];
   }
 
   // ── Telegraphing ────────────────────────────────────────────────
@@ -481,20 +551,19 @@ export class Boss extends Phaser.GameObjects.Container {
     // volley actually fires, otherwise _shouldFire would compare against
     // this same frame and never fire.)
     this._telegraphState = TelegraphState.Attacking;
-    this._corePulseSpeed = this._currentPhaseNumber === 4 ? 4.0 : 2.5;
+    this._corePulseSpeed = this.isDesperation() ? 4.0 : 2.5;
   }
 
   /** Checks if the attack phase has completed and resets to idle. */
   checkAttackComplete(now: number): boolean {
     if (this._telegraphState !== TelegraphState.Attacking) return false;
     // Attack is considered complete after one volley interval.
-    const interval =
-      this._currentPhaseNumber === 4
-        ? BOSS_DESPERATION_ATTACK_INTERVAL
-        : BOSS_ATTACK_INTERVAL;
+    const interval = this.isDesperation()
+      ? BOSS_DESPERATION_ATTACK_INTERVAL
+      : BOSS_ATTACK_INTERVAL;
     if (now - this._lastAttackTime > interval) {
       this._telegraphState = TelegraphState.Idle;
-      this._corePulseSpeed = this._currentPhaseNumber === 4 ? 4.0 : 2.0;
+      this._corePulseSpeed = this.isDesperation() ? 4.0 : 2.0;
       return true;
     }
     return false;
@@ -538,7 +607,7 @@ export class Boss extends Phaser.GameObjects.Container {
 
     const speed = this._bulletSpeed();
     const bullets: BossBullet[] = [];
-    const count = this._currentPhaseNumber === 4 ? 9 : 7;
+    const count = this.isDesperation() ? 9 : 7;
     const spreadAngle = Math.PI * 0.6; // 108° total spread
     const startAngle = Math.PI / 2 + spreadAngle / 2;
 
@@ -594,7 +663,7 @@ export class Boss extends Phaser.GameObjects.Container {
 
     const speed = this._bulletSpeed();
     const bullets: BossBullet[] = [];
-    const count = this._currentPhaseNumber === 4 ? 16 : 12;
+    const count = this.isDesperation() ? 16 : 12;
 
     for (let i = 0; i < count; i++) {
       const angle = this._attackAngle + (Math.PI * 2 * i) / count;
@@ -673,7 +742,7 @@ export class Boss extends Phaser.GameObjects.Container {
 
     // Aimed shots toward player's last known position.
     const speed = this._bulletSpeed();
-    const aimCount = this._currentPhaseNumber === 4 ? 4 : 3;
+    const aimCount = this.isDesperation() ? 4 : 3;
     for (let i = 0; i < aimCount; i++) {
       const dx = this._playerTargetX - this.x;
       const dy = this._playerTargetY - this.y;
@@ -808,10 +877,9 @@ export class Boss extends Phaser.GameObjects.Container {
 
   private _shouldFire(now: number): boolean {
     if (!this._alive || !this._shootEnabled) return false;
-    const interval =
-      this._currentPhaseNumber === 4
-        ? BOSS_DESPERATION_ATTACK_INTERVAL
-        : BOSS_ATTACK_INTERVAL;
+    const interval = this.isDesperation()
+      ? BOSS_DESPERATION_ATTACK_INTERVAL
+      : BOSS_ATTACK_INTERVAL;
     if (now - this._lastAttackTime < interval) return false;
     // Probability gate at the fire decision point: a failed roll consumes
     // this cycle so the next volley rolls again (default 1.0 — unchanged).
@@ -823,26 +891,20 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
   private _bulletSpeed(): number {
-    return this._currentPhaseNumber === 4
+    return this.isDesperation()
       ? BOSS_BULLET_SPEED * BOSS_DESPERATION_SPEED_MULT
       : BOSS_BULLET_SPEED;
   }
 
   /**
-   * The Boss's current phase colour — the same mapping the health bar uses
-   * (green phase 1, yellow 2, orange 3, red 4). The spiral pattern's
-   * projectiles carry it as their core tint so the Firestorm volley visually
-   * tracks the Boss's phase (AH-0MV822F5J006WFR0). Single shared source so
-   * the game and every gym tint the spiral pellets identically.
+   * The Boss's current phase colour on the shared health ramp (green phase 1
+   * → red final phase). The spiral pattern's projectiles carry it as their
+   * core tint so the Firestorm volley visually tracks the Boss's phase
+   * (AH-0MV822F5J006WFR0). Single shared source so the game and every gym
+   * tint the spiral pellets identically, including config-driven bosses.
    */
   private _phaseBulletTint(): number {
-    const tints: Record<number, number> = {
-      4: 0xff0000,
-      3: 0xff8800,
-      2: 0xffcc00,
-      1: 0x00ff00,
-    };
-    return tints[this._currentPhaseNumber] ?? 0xff0000;
+    return this._phaseHealthColor();
   }
 
   private _createBullet(
@@ -917,14 +979,14 @@ export class Boss extends Phaser.GameObjects.Container {
     }
 
     // Check if the current phase just depleted.
-    const phaseHpRemainder = this._currentHp % BOSS_HIT_POINTS_PER_PHASE;
+    const phaseHpRemainder = this._currentHp % this.hitPointsPerPhase;
     const phaseAdvanced = phaseHpRemainder === 0;
 
     if (phaseAdvanced) {
       // Advance to the next phase.
       this._currentPhaseNumber++;
-      if (this._currentPhaseNumber > BOSS_PHASE_COUNT) {
-        this._currentPhaseNumber = BOSS_PHASE_COUNT;
+      if (this._currentPhaseNumber > this.phaseCount) {
+        this._currentPhaseNumber = this.phaseCount;
       }
       this._currentPhase = this._currentPhaseNumber as BossPhase;
     }
@@ -940,9 +1002,19 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
 
-  /** Returns the current phase number (1–4). */
+  /** Returns the current phase number (1..{@link getPhaseCount}). */
   getPhaseNumber(): number {
     return this._currentPhaseNumber;
+  }
+
+  /** Returns the configured number of attack/health phases. */
+  getPhaseCount(): number {
+    return this.phaseCount;
+  }
+
+  /** Returns the configured body colour (final phase may use a brighter one). */
+  getColor(): number {
+    return this.bodyColor;
   }
 
   /** Returns the current phase. */
@@ -955,7 +1027,7 @@ export class Boss extends Phaser.GameObjects.Container {
     // Returns the number of phases remaining as a legacy accessor (0 when
     // the boss is destroyed).
     if (!this._alive) return 0;
-    const phasesRemaining = BOSS_PHASE_COUNT - this._currentPhaseNumber + 1;
+    const phasesRemaining = this.phaseCount - this._currentPhaseNumber + 1;
     return phasesRemaining > 0 ? phasesRemaining : 0;
   }
 
@@ -976,9 +1048,9 @@ export class Boss extends Phaser.GameObjects.Container {
     return this.healthBarGraphics;
   }
 
-  /** Returns true if in desperation phase. */
+  /** Returns true if in the final (previously "desperation") phase. */
   isDesperation(): boolean {
-    return this._currentPhaseNumber === 4;
+    return this._currentPhaseNumber === this.phaseCount;
   }
 
   /** Returns true if currently telegraphing an attack. */
@@ -1126,7 +1198,7 @@ export class Boss extends Phaser.GameObjects.Container {
       scene,
       this.x,
       this.y,
-      BOSS_COLOR,
+      this.bodyColor,
       BOSS_RADIUS,
       { patterns: resolvePatterns('boss'), kind: 'boss' },
     );
@@ -1177,21 +1249,10 @@ export class Boss extends Phaser.GameObjects.Container {
       // Check if telegraph period elapsed — fire attack.
       this.checkTelegraph(now);
 
-      // Fire the attack pattern for the current phase.
-      switch (this._currentPhase) {
-        case BossPhase.Spread:
-          bullets.push(...this.tryFireSpreadBullets(now));
-          break;
-        case BossPhase.Spiral:
-          bullets.push(...this.tryFireSpiralBullets(now));
-          break;
-        case BossPhase.Pulse:
-          bullets.push(...this.tryFirePulseBullets(now));
-          break;
-        case BossPhase.Desperation:
-          bullets.push(...this.tryFireDesperationBullets(now));
-          break;
-      }
+      // Fire the attack pattern for the current phase through the shared
+      // overridable dispatcher (config-driven mini-bosses swap the pattern
+      // set without forking the telegraph/volley machinery).
+      bullets.push(...this.firePhase(now));
 
       // Advance pulse wave if active.
       this.advancePulseWave(dt, sceneWidth, sceneHeight);
@@ -1201,6 +1262,27 @@ export class Boss extends Phaser.GameObjects.Container {
     }
 
     return bullets;
+  }
+
+  /**
+   * Fires the current phase's attack pattern. The default implementation
+   * dispatches the four built-in Boss patterns; subclasses may override to
+   * drive a config-defined pattern set while reusing the telegraph, volley
+   * timing, bullet collection and damage machinery.
+   */
+  protected firePhase(now: number): BossBullet[] {
+    switch (this._currentPhase) {
+      case BossPhase.Spread:
+        return this.tryFireSpreadBullets(now);
+      case BossPhase.Spiral:
+        return this.tryFireSpiralBullets(now);
+      case BossPhase.Pulse:
+        return this.tryFirePulseBullets(now);
+      case BossPhase.Desperation:
+        return this.tryFireDesperationBullets(now);
+      default:
+        return [];
+    }
   }
 
   // ── Destruction audio (FormationSceneEntity hook) ───────────────
