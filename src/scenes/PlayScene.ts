@@ -148,6 +148,7 @@ import { loadEnemyConfig } from '../core/enemyConfig';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
   createTelemetryRecorder,
+  loadDevTelemetryUploader,
   resolveBuildInfo,
   resolveEffectiveTelemetryConfig,
   type TelemetryRecorder,
@@ -3886,6 +3887,10 @@ export class PlayScene extends CombatScene<
     // `window` receives the `aihell:run-ended` CustomEvent and the
     // `window.__aiHellRunState` fallback; `npm run capture` consumes both.
     emitRunEndedSignal(won, this.gameState.score);
+    // Dev-gated auto-upload of the accumulated local sink (AH-0MVBMRK6X0069QDI).
+    // Fire-and-forget: the flush + POST must never block or crash run end, so
+    // the scene transitions below happen regardless of its outcome.
+    void this.flushAndUploadDevTelemetry();
     if (this.demoMode) {
       // Non-scoring demo (AC2): start the shared GameOverScene in demo mode so
       // it renders VICTORY/DEFEAT + final score without leaderboard
@@ -3904,6 +3909,41 @@ export class PlayScene extends CombatScene<
       return;
     }
     this.scene.start('GameOverScene', { won, score: this.gameState.score });
+  }
+
+  /**
+   * Flushes the recorder's buffered records into the local JSONL sink, then
+   * delivers the accumulated sink to the dev server (AH-0MVBMRK6X0069QDI).
+   *
+   * Fire-and-forget by contract: the caller uses `void`, every failure is
+   * caught here (a dev-server outage must never block or crash run end), and
+   * the uploader itself is a no-op outside a dev build or when the
+   * share-telemetry setting is off.
+   *
+   * The uploader is loaded dynamically through the gate module
+   * ({@link loadDevTelemetryUploader}): Vite folds the loader's dev check to
+   * `false` in a production build, so the dev-only endpoint never ships in
+   * the bundle (`npm run check-bundle`, F1 AC4).
+   */
+  private async flushAndUploadDevTelemetry(): Promise<void> {
+    try {
+      // Push what the recorder still holds into the sink before reading it.
+      await this.runTelemetry.flush();
+    } catch (error) {
+      reportDevTelemetryFailure(error);
+    }
+    try {
+      const upload = await loadDevTelemetryUploader();
+      if (!upload) return;
+      await upload({
+        setting: loadSettings(),
+        onError: reportDevTelemetryFailure,
+      });
+    } catch (error) {
+      // Covers a dynamic-import failure in a dev build; the uploader itself
+      // never rejects. Either way run end is unaffected.
+      reportDevTelemetryFailure(error);
+    }
   }
 
   // ── Public test / integration accessors ─────────────────────────
@@ -4732,6 +4772,15 @@ export class PlayScene extends CombatScene<
       this.laneTrafficSpawnedThisWave = 0;
     }
   }
+}
+
+/**
+ * Reports a dev-mode telemetry failure without ever propagating it: the
+ * recorder flush and the end-of-run upload are fire-and-forget, so a failing
+ * dev server must not affect the game (AH-0MVBMRK6X0069QDI).
+ */
+function reportDevTelemetryFailure(error: unknown): void {
+  console.warn('[telemetry] dev upload skipped after an error:', error);
 }
 
 /** Re-exported so consumers need not import from `core/rules` directly. */

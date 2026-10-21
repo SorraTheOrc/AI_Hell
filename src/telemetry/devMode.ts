@@ -65,6 +65,41 @@ export function isDevTelemetryBuild(env: DevModeEnv = import.meta.env): boolean 
 }
 
 /**
+ * Loads the dev-only telemetry uploader, or `undefined` when this build has
+ * no dev upload path at all.
+ *
+ * Vite statically replaces `import.meta.env.DEV` in this literal position
+ * (the branch becomes `if (true)`/`if (false)` before bundling), so in a
+ * production build Rollup eliminates the dynamic import — the dev-only
+ * `devUpload` module and its endpoint never reach the shipped bundle
+ * (enforced by `scripts/check-bundle-hygiene.mjs` / F1 AC4). This helper is
+ * deliberately the **only** dynamic-entry point into `devUpload`: keeping it
+ * here, inside the gate module, is what lets the scan treat this module as
+ * the single dev-flag decision point while still statically eliminating the
+ * upload path in production.
+ *
+ * The runtime gate ({@link isDevTelemetryUploadEnabled}) still decides
+ * whether an actual upload happens at run end; this loader only decides
+ * whether the uploader exists in the build.
+ *
+ * @returns The uploader in a dev build; `undefined` in a production build.
+ */
+export async function loadDevTelemetryUploader(): Promise<DevTelemetryUploader | undefined> {
+  // Statically replaced by Vite: `false` in a production build, `true` in dev.
+  if (!import.meta.env.DEV) return undefined;
+  const { uploadDevTelemetry } = await import('./devUpload');
+  return uploadDevTelemetry;
+}
+
+/** The uploader call signature `PlayScene` needs (devMode keeps no devUpload refs). */
+export type DevTelemetryUploader = (options: {
+  /** Persisted settings slice carrying the share-telemetry flag. */
+  readonly setting?: DevTelemetrySetting;
+  /** Failure reporter; never thrown to the caller. */
+  readonly onError?: (error: unknown) => void;
+}) => Promise<boolean>;
+
+/**
  * True when this dev build may **collect** telemetry by default.
  *
  * Requires an explicit opt-in setting: enabling dev collection is never

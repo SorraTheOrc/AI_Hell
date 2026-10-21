@@ -11,12 +11,13 @@
  * is needed.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   isDevTelemetryBuild,
   isDevTelemetryCollectionEnabled,
   isDevTelemetryUploadEnabled,
+  loadDevTelemetryUploader,
   type DevModeEnv,
   type DevTelemetrySetting,
 } from './devMode';
@@ -137,5 +138,24 @@ describe('dev-only telemetry gate — public surface', () => {
     expect(barrelCollection(PROD_BUILD, ON)).toBe(false);
     expect(barrelUpload(DEV_BUILD, ON)).toBe(true);
     expect(barrelUpload(PROD_BUILD, ON)).toBe(false);
+  });
+});
+
+describe('loadDevTelemetryUploader — build-folded dev-only loader', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('resolves to the uploader in a dev build', async () => {
+    const uploader = await loadDevTelemetryUploader();
+
+    expect(typeof uploader).toBe('function');
+  });
+
+  it('resolves to undefined in a production build (uploader never loaded)', async () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('PROD', true);
+
+    await expect(loadDevTelemetryUploader()).resolves.toBeUndefined();
   });
 });

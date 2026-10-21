@@ -49,8 +49,10 @@ export {
   isDevTelemetryBuild,
   isDevTelemetryCollectionEnabled,
   isDevTelemetryUploadEnabled,
+  loadDevTelemetryUploader,
   type DevModeEnv,
   type DevTelemetrySetting,
+  type DevTelemetryUploader,
 } from './devMode';
 
 export {
