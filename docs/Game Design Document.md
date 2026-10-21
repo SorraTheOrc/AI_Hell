@@ -39,7 +39,7 @@
 > applied in every gym scene (enemy, power-up and weapons) via
 > `player.getScheme()`-keyed input handlers (`FourDirectionalInputHandler` and
 > `AsteroidsInputHandler` in `src/utils/movementModel.ts`). The table above
-> describes the **4-directional scheme (default)**. Under the **Asteroids
+> describes the **4-directional scheme**. Under the **Asteroids
 > scheme** the movement keys are re-mapped: `W`/Arrow Up = **forward thrust**
 > (in the current facing direction), `A`/Arrow Left = **turn left**, `D`/Arrow
 > Right = **turn right** — never 4-directional movement. Turning uses a
@@ -52,6 +52,34 @@
 > tunable or disabled in the Player gym (§2.2). The 4-directional scheme does
 > not use reverse thrust, so `S` / `↓` keep their backward-thrust meaning
 > there.
+
+**Choosing the scheme in-game (AH-0MVI7LRCJ006Q8SA).** The control scheme is a
+player-facing setting: **Settings → Controls → Control Scheme** cycles between
+`Asteroids` and `Four Directional` with **Left/Right**, and **Enter** (or a
+click) advances the selection. The options come from the `ControlScheme` union
+(`CONTROL_SCHEMES` in `src/core/settingsStore.ts`), so a scheme added to the
+union appears in the list automatically. The choice is stored **per player, per
+device** in `ai_hell_settings.controlScheme` (§6.6) and is remembered across
+runs. It takes effect on the **next run / next ship spawn** — a change made
+mid-run never reshapes the ship you are already flying.
+
+The effective scheme is resolved by one helper,
+`resolvePlayerControlScheme()` (`src/core/playerScheme.ts`), with an explicit
+precedence:
+
+1. the player's saved setting (`ai_hell_settings.controlScheme`), when present
+   and valid;
+2. otherwise the designer-owned `controlScheme` in
+   [`src/data/ship-config.csv`](src/data/ship-config.csv);
+3. otherwise the built-in default, `asteroids`.
+
+The settings screen only ever writes the per-player setting — it never writes
+`ship-config.csv`, which stays the designer's shipped default. The Settings
+Controls rows are **relabelled** for the selected scheme (Asteroids: *Thrust /
+Turn Left / Turn Right / Reverse*; four-directional: *Move Up / Move Down /
+Move Left / Move Right*) while the key **bindings stay shared** across both
+schemes — there are no per-scheme bindings. Gyms are unaffected: they keep
+their own scheme toggle and stay config-driven.
 
 #### Menu & UI navigation (keyboard)
 
@@ -1405,7 +1433,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Key | Content |
 |-----|---------|
 | `ai_hell_leaderboard` | Leaderboard entries (see §5.2) |
-| `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, pause toggle). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
+| `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, pause toggle), `shareTelemetryDev` (dev-build only), `controlScheme` (per-player ship control scheme: `asteroids` (default) or `fourDirectional`; a missing, non-string or out-of-union value falls back to `asteroids`; overrides the `ship-config.csv` `controlScheme` for the player and applies on the next run/ship spawn — see §2.2). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
 | `ai_hell_checkpoint` | **Run checkpoint** (AH-0MVCRBTNF000DK51): auto-written after every mini-boss defeat. Stores the resume level (the level after the defeated mini-boss) and wave 1, plus lives, score, minerals, permanent weapon/power-up levels, unlocked weapons and the run seed. The main menu shows **Continue — Level N** only when a usable checkpoint exists; resuming starts that level at wave 1 with all state and the saved RNG seed restored. **Play Game (New Game)** clears it. Corrupt/invalid payloads load as "no checkpoint" (defensive parse, same fallback discipline as the leaderboard) |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
 
