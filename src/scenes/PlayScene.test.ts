@@ -82,6 +82,7 @@ import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
 import { RULES_STORAGE_KEY } from '../core/rules';
 import { miniBossDesignForLevel } from '../waves/miniBossDesigns';
+import { scaledEncounterHp } from '../core/difficultyScaling';
 import {
   MINI_BOSS_LOCKED_WEAPONS,
   lockedWeaponIds,
@@ -350,7 +351,7 @@ function reachBoss(scene: PlayScene): void {
  */
 function damageBossPhase(
   scene: PlayScene,
-  boss: { x: number; y: number },
+  boss: { x: number; y: number; getHitPointsPerPhase(): number },
 ): void {
   const isolated = scene as unknown as {
     getEnemyEntities(): readonly unknown[];
@@ -361,7 +362,8 @@ function damageBossPhase(
   isolated.getEnemyEntities = () => [];
   isolated.autoFireEnabled = () => false;
   try {
-    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
+    // The encounter's effective pool (power-scaled — AH-0MVH87A3L004VOLD).
+    for (let i = 0; i < boss.getHitPointsPerPhase(); i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
     }
@@ -1900,6 +1902,30 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     return scene;
   }
 
+  it('AH-0MVH87A3L004VOLD — the final boss hit pool scales with permanent upgrades', async () => {
+    const scene = await bootPlayAtBoss();
+    const player = scene.getPlayer()!;
+    for (let i = 0; i < 6; i += 1) player.equipWeapon('spread', true);
+    const score = scene.getPlayerPowerScore();
+    expect(score).toBe(6);
+
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    // The walk may earn a few more permanent grants (hold-full choices), so
+    // read the score the boss actually spawned with.
+    const spawnScore = scene.getPlayerPowerScore();
+    expect(spawnScore).toBeGreaterThanOrEqual(score);
+    // One hit reveals the total pool through the health fraction.
+    boss.takeDamage();
+    const total = Math.round(1 / (1 - boss.getHpFraction()));
+    // The total pool is BOSS_PHASE_COUNT phases of the scaled per-phase pool.
+    expect(total).toBe(
+      BOSS_PHASE_COUNT *
+        scaledEncounterHp(BOSS_HIT_POINTS_PER_PHASE, spawnScore),
+    );
+    expect(total).toBeGreaterThan(BOSS_HIT_POINTS_PER_PHASE);
+  });
+
   it('AC1 — the Central AI spawns after the final level is cleared, with Phase-1 minions', async () => {
     const scene = await bootPlayAtBoss();
     reachBoss(scene);
@@ -1921,7 +1947,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     expect(boss.getPhaseNumber()).toBe(1);
 
-    // One phase requires BOSS_HIT_POINTS_PER_PHASE player bullets.
+    // One phase requires the encounter's effective per-phase hit pool.
     damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(scene.getBossPhase()).toBe(2);
@@ -1956,7 +1982,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(scene.getGameState().score - scoreBefore).toBe(0);
 
     // The phase-depleting hit awards the phase score exactly once.
-    for (let i = 1; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
+    for (let i = 1; i < boss.getHitPointsPerPhase(); i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
     }
@@ -1969,7 +1995,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
 
-    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (200 total).
+    // Four phases, the encounter's effective per-phase pool each.
     for (let phase = 0; phase < 4; phase++) {
       damageBossPhase(scene, boss);
     }
@@ -2028,7 +2054,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const minionsBefore = liveMinions(scene);
 
     // Non-depleting partial hits: phase 1 must survive with no rewards.
-    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
+    for (let i = 0; i < boss.getHitPointsPerPhase() - 1; i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
     }
@@ -2096,7 +2122,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(def.aoe).toBeDefined();
 
     // Non-depleting max-level blasts: phase 1 survives (each blast is one hit).
-    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
+    for (let i = 0; i < boss.getHitPointsPerPhase() - 1; i++) {
       applyAoe(scene, def, boss.x, boss.y);
     }
     expect(boss.getPhaseNumber()).toBe(1);
@@ -2108,12 +2134,12 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(boss.alive).toBe(true);
   });
 
-  it('AC6 — a fully levelled weapon still requires 200 hits to destroy the boss', async () => {
+  it('AC6 — a fully levelled weapon still requires the full hit pool to destroy the boss', async () => {
     const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const def = fullyLevelWeapon(scene, 'nova');
-    const totalHits = 4 * BOSS_HIT_POINTS_PER_PHASE;
+    const totalHits = boss.getTotalHp();
 
     // Leave the boss alive on its final phase (one hit short).
     for (let i = 0; i < totalHits - 1; i++) {
@@ -7169,6 +7195,37 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
 
     // The nearest (1-HP scout) is destroyed by the strike.
     expect(nearest.alive).toBe(false);
+    if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+  });
+
+  it('AH-0MVH87A3L004VOLD — a fresh run faces the base mini-boss hit pool', async () => {
+    const scene = await bootMiniBossCampaign();
+    expect(scene.getPlayerPowerScore()).toBe(0);
+    advanceToMiniBoss(scene);
+    expect(scene.getMiniBoss()!.resolvedConfig.hpPerPhase).toBe(
+      miniBossDesignForLevel(1).hpPerPhase,
+    );
+  });
+
+  it('AH-0MVH87A3L004VOLD — mini-boss and boss strength scale with permanent upgrades', async () => {
+    // Earn permanent upgrades before the encounters spawn.
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    for (let i = 0; i < 4; i += 1) player.equipWeapon('railgun', true);
+    for (let i = 0; i < 3; i += 1) {
+      scene.getEffectsRegistry().applyCollect('shield', true);
+    }
+    const score = scene.getPlayerPowerScore();
+    expect(score).toBe(7);
+
+    advanceToMiniBoss(scene);
+    const miniBoss = scene.getMiniBoss()!;
+    expect(miniBoss.resolvedConfig.hpPerPhase).toBe(
+      scaledEncounterHp(miniBossDesignForLevel(1).hpPerPhase, score),
+    );
+    expect(miniBoss.resolvedConfig.hpPerPhase).toBeGreaterThan(
+      miniBossDesignForLevel(1).hpPerPhase,
+    );
     if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
   });
 

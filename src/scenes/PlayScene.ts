@@ -217,9 +217,13 @@ import {
   type LaneTrafficSpawnEvent,
 } from '../waves/LaneTrafficSpawner';
 import { LaneTraffic } from '../entities/LaneTraffic';
-import { Boss, BossPhase } from '../entities/Boss';
+import { Boss, BossPhase, BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { MiniBoss, type MiniBossConfig } from '../entities/MiniBoss';
-import { miniBossConfigForLevel } from '../waves/miniBossDesigns';
+import { miniBossConfigForLevel, miniBossDesignForLevel } from '../waves/miniBossDesigns';
+import {
+  playerPowerScore,
+  scaledEncounterHp,
+} from '../core/difficultyScaling';
 import { planMinionSpawns } from '../waves/BossMinions';
 import {
   CombatScene,
@@ -1454,12 +1458,28 @@ export class PlayScene extends CombatScene<
   protected miniBossConfigFor(level: number): MiniBossConfig {
     // The ten bespoke per-level designs are the single data source for the
     // encounter (AH-0MVCRBXSS008JSV0); the gym consumes the same helper.
+    // The hit pool scales with the player's total permanent upgrade levels
+    // (AH-0MVH87A3L004VOLD) so an upgraded ship faces a tougher encounter.
+    const design = miniBossDesignForLevel(level);
     return miniBossConfigForLevel(level, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2 - 80,
       formationOffset: { row: 0, col: 0 },
       rng: this.rng,
+      hpPerPhase: scaledEncounterHp(design.hpPerPhase, this.getPlayerPowerScore()),
     });
+  }
+
+  /**
+   * The run's firepower: the total permanent weapon + power-up levels
+   * (AH-0MVH87A3L004VOLD). 0 on a fresh run. Used to scale the mini-boss and
+   * final-boss hit pools.
+   */
+  getPlayerPowerScore(): number {
+    return playerPowerScore(
+      this.player?.getWeaponLevels() ?? [],
+      this.player?.getPowerUpLevels() ?? [],
+    );
   }
 
   /**
@@ -2558,6 +2578,16 @@ export class PlayScene extends CombatScene<
       rng: this.rng,
       initialHp: options.initialHp,
       initialPhase: options.initialPhase,
+      // The final boss strengthens with the player's permanent upgrades
+      // exactly like the mini-bosses (AH-0MVH87A3L004VOLD). Dev scenarios
+      // that pin `initialHp` keep their explicit pool.
+      hitPointsPerPhase:
+        options.initialHp === undefined
+          ? scaledEncounterHp(
+              BOSS_HIT_POINTS_PER_PHASE,
+              this.getPlayerPowerScore(),
+            )
+          : undefined,
     });
     this.add.existing(this.boss);
     this.runTelemetry.bossSpawn();

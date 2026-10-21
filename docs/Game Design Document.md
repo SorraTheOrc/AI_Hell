@@ -463,6 +463,15 @@ designs through the same shared core.
 > roster beyond the 17 regular enemy archetypes (§4.1). They are encounters,
 > not wave-filler enemies, and are exercised in `GymMiniBoss`.
 
+> **Power scaling (AH-0MVH87A3L004VOLD).** Both the mini-boss and the final
+> boss strengthen with the ship's firepower. The run's **power score** is the
+> total of every permanent upgrade level (permanent weapon levels + permanent
+> power-up levels; 0 on a fresh run). The per-phase hit pool is
+> `round(baseHp × min(1 + 0.06 × score, 2))` — each permanent upgrade adds 6 %
+> and the pool never exceeds **twice** the base (`src/core/difficultyScaling.ts`).
+> Scaling is applied once, when the encounter spawns, so it is deterministic
+> and an unupgraded player always sees the base values.
+
 ---
 
 ## 4. Content Catalogs
@@ -694,6 +703,7 @@ on entry (AH-0MUJM746P000QAEO).
 **Boss: The Central AI**
 
 - **Appearance**: A large, glowing neon geometric structure (e.g., a rotating dodecahedron or layered ring system) at the center of the screen, with the name "AI_Hell" or a stylized symbol.
+- **Power scaling**: the per-phase hit pool scales with the player's total permanent upgrade levels using the same bounded formula as the mini-bosses (§3.3: `round(base × min(1 + 0.06 × score, 2))`; `src/core/difficultyScaling.ts`), so a heavily upgraded ship faces a tougher final boss (AH-0MVH87A3L004VOLD).
 - **Health**: A single health bar fixed to the **top-centre of the screen** (`BOSS_HEALTH_BAR_Y = 60`; camera-fixed via `setScrollFactor(0)` so it never moves with the boss), divided into **4 phases**, each requiring **50 player hits** (**200 hits total**, `BOSS_HIT_POINTS_PER_PHASE = 50`). The bar is always visible during the encounter and its fill is proportional to remaining total HP (`getHpFraction()`), so every hit visibly reduces it; the four phase-segment dividers are retained. A hit that does not deplete the current phase leaves the phase unchanged; score and the next phase's minions are granted only on the **depleting** hit (hits 50, 100, 150 and 200). Every hit also plays a dedicated boss-hit cue (`playBossHitSound` → `aihell-boss-hit`) and spawns a hot-yellow impact flash (`spawnBulletImpact`, `BOSS_IMPACT_COLOR = 0xffee44`) at the hit point, from the shared feedback path used by both the game and the boss gym; a depleting hit additionally plays the existing phase-transition cue.
 - **Movement**: The boss traces a **figure-of-eight (Gerono lemniscate)** around its spawn anchor: `x = anchorX + BOSS_MOVE_AMPLITUDE_X · sin(θ)`, `y = anchorY + BOSS_MOVE_AMPLITUDE_Y · sin(2θ)`, where `θ = 2π · elapsedMs / BOSS_MOVE_PERIOD_MS`. Horizontal amplitude is **≈120 px**, vertical amplitude **≈60 px**, and one full cycle takes **≈8 s** (`BOSS_MOVE_AMPLITUDE_X = 120`, `BOSS_MOVE_AMPLITUDE_Y = 60`, `BOSS_MOVE_PERIOD_MS = 8000`). The traced position is clamped to the playfield (`BOSS_RADIUS` inset) so the boss never leaves the screen; hit detection uses the boss's live position while the health bar stays put.
 - **Phases**:

@@ -24,7 +24,6 @@ import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
 import { LEVEL_TRANSITION_SECONDS, PlayScene } from './PlayScene';
 import { LEVELS as CAMPAIGN_LEVELS, type LevelDefinition } from '../waves/Formations';
-import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
 
@@ -415,8 +414,9 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
     reachBoss(play);
     const boss = play.getBoss()!;
     expect(boss).not.toBeNull();
-    // 4 phases, BOSS_HIT_POINTS_PER_PHASE hits each (200 total).
-    for (let i = 0; i < 4 * BOSS_HIT_POINTS_PER_PHASE; i++) {
+    // The encounter's effective total pool (power-scaled —
+    // AH-0MVH87A3L004VOLD).
+    for (let i = 0; i < boss.getTotalHp(); i++) {
       play.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       play.tick(0.016);
     }

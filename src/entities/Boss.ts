@@ -1002,6 +1002,19 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
 
+  /**
+   * Returns the encounter's **effective** hits per phase (the configured,
+   * possibly power-scaled pool). AH-0MVH87A3L004VOLD.
+   */
+  getHitPointsPerPhase(): number {
+    return this.hitPointsPerPhase;
+  }
+
+  /** Returns the encounter's effective total hit pool (all phases). */
+  getTotalHp(): number {
+    return this._totalHp;
+  }
+
   /** Returns the current phase number (1..{@link getPhaseCount}). */
   getPhaseNumber(): number {
     return this._currentPhaseNumber;
