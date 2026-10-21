@@ -25,7 +25,8 @@
  *
  * Dev-mode telemetry (AH-0MVBHRLY8004BGDN) is decided only by
  * {@link isDevTelemetryCollectionEnabled} / {@link isDevTelemetryUploadEnabled}
- * in `./devMode`.
+ * in `./devMode`; dev-only UI asks {@link isDevTelemetryBuild} instead of
+ * reading `import.meta.env.DEV` directly.
  *
  * @module src/telemetry
  */
@@ -45,6 +46,7 @@ export {
 } from './schema';
 
 export {
+  isDevTelemetryBuild,
   isDevTelemetryCollectionEnabled,
   isDevTelemetryUploadEnabled,
   type DevModeEnv,

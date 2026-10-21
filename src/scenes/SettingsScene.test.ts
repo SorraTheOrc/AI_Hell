@@ -46,6 +46,7 @@ function customSettings(partial: Partial<SettingsRecord>): SettingsRecord {
     sfxVolume: 1,
     sfxMuted: false,
     bindings: { ...DEFAULT_BINDINGS },
+    shareTelemetryDev: true,
     ...partial,
   };
 }
@@ -247,6 +248,98 @@ describe('SettingsScene — telemetry consent toggle (AH-0MUY08Y9P005ER7A)', () 
 
     expect(scene2.isTelemetryConsentGranted()).toBe(true);
     expect(scene2.hasDecidedTelemetryConsent()).toBe(true);
+  });
+});
+
+describe('SettingsScene — dev telemetry sharing toggle (AH-0MVBMQZR50069QV3)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  async function bootSettings(): Promise<SettingsScene> {
+    booted = await bootScene([SettingsScene, PauseScene, MenuScene]);
+    await advanceGame(booted!.game, 150);
+    return booted!.game.scene.getScene('SettingsScene') as SettingsScene;
+  }
+
+  it('shows the dev-share row in a dev build', async () => {
+    vi.stubEnv('DEV', true);
+    const scene = await bootSettings();
+
+    expect(scene.hasDevTelemetryToggle()).toBe(true);
+    expect(scene.getControlLabels()).toContain('telemetryDev');
+  });
+
+  it('defaults to sharing with the dev server', async () => {
+    vi.stubEnv('DEV', true);
+    window.localStorage.clear();
+    const scene = await bootSettings();
+
+    expect(scene.isShareTelemetryDevEnabled()).toBe(true);
+    expect(loadSettings().shareTelemetryDev).toBe(true);
+  });
+
+  it('toggling persists the opt-out and restores it on reload', async () => {
+    vi.stubEnv('DEV', true);
+    const scene = await bootSettings();
+
+    expect(scene.toggleShareTelemetryDev()).toBe(false);
+    expect(scene.isShareTelemetryDevEnabled()).toBe(false);
+    expect(loadSettings().shareTelemetryDev).toBe(false);
+
+    booted!.game.destroy(true);
+    booted = null;
+    const scene2 = await bootSettings();
+
+    expect(scene2.isShareTelemetryDevEnabled()).toBe(false);
+  });
+
+  it('keyboard: Enter on the focused row flips and persists the value', async () => {
+    vi.stubEnv('DEV', true);
+    const scene = await bootSettings();
+
+    // Focus order: volume → mute → telemetry → telemetryDev.
+    for (let i = 0; i < 3; i++) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+      await advanceGame(booted!.game, 20);
+    }
+    expect(scene.getFocusedLabel()).toBe('telemetryDev');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    await advanceGame(booted!.game, 20);
+
+    expect(scene.isShareTelemetryDevEnabled()).toBe(false);
+    expect(loadSettings().shareTelemetryDev).toBe(false);
+  });
+
+  it('keeps the preference when another setting changes', async () => {
+    vi.stubEnv('DEV', true);
+    const scene = await bootSettings();
+
+    scene.toggleShareTelemetryDev();
+    scene.setVolume(0.5);
+
+    expect(loadSettings().shareTelemetryDev).toBe(false);
+    expect(loadSettings().sfxVolume).toBe(0.5);
+  });
+
+  it('omits the row and keeps the value inert in a production build', async () => {
+    vi.stubEnv('DEV', false);
+    const scene = await bootSettings();
+
+    expect(scene.hasDevTelemetryToggle()).toBe(false);
+    expect(scene.getControlLabels()).not.toContain('telemetryDev');
+    // Inert: neither the toggle nor a load-time write can change the stored
+    // preference, and nothing in the scene acts on it.
+    expect(scene.toggleShareTelemetryDev()).toBe(true);
+    expect(scene.isShareTelemetryDevEnabled()).toBe(true);
+    expect(loadSettings().shareTelemetryDev).toBe(true);
   });
 });
 

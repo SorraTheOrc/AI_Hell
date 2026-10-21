@@ -1,11 +1,11 @@
 /**
  * Settings persistence module (GDD §6.6 — `ai_hell_settings`).
  *
- * Typed settings record (SFX volume, SFX mute, key bindings) with
- * `loadSettings()`, `saveSettings()`, and `resetSettings()`. Mirrors the
- * `src/core/config.ts` pattern: defaults, merge-over-defaults, corrupt-JSON
- * fallback, SSR-safe storage guard. Every menu child reads/writes settings
- * through this module.
+ * Typed settings record (SFX volume, SFX mute, key bindings, dev telemetry
+ * sharing) with `loadSettings()`, `saveSettings()`, and `resetSettings()`.
+ * Mirrors the `src/core/config.ts` pattern: defaults, merge-over-defaults,
+ * corrupt-JSON fallback, SSR-safe storage guard. Every menu child reads/writes
+ * settings through this module.
  *
  * @module settingsStore
  */
@@ -32,6 +32,13 @@ export interface SettingsRecord {
   sfxMuted: boolean;
   /** Maps each `ActionName` to its current key label (Phaser key string). */
   bindings: Record<ActionName, string>;
+  /**
+   * Whether the player shares run telemetry with the dev server
+   * (`AH-0MVBMQZR50069QV3`, parent `AH-0MVBHRLY8004BGDN`). Defaults to
+   * `true`; the value is **inert** outside a dev build — the decision is
+   * made by the single dev gate in `src/telemetry/devMode.ts`.
+   */
+  shareTelemetryDev: boolean;
 }
 
 /** localStorage key (matches GDD §6.6). */
@@ -53,6 +60,10 @@ export const DEFAULT_SETTINGS: SettingsRecord = {
   sfxVolume: 1,
   sfxMuted: false,
   bindings: { ...DEFAULT_BINDINGS },
+  // Dev-mode telemetry sharing is on by default: a stock `npm run dev`
+  // collects and uploads at run end unless the player opts out. The value is
+  // inert in a production build (see `src/telemetry/devMode.ts`).
+  shareTelemetryDev: true,
 };
 
 /** Ordered list of action names for iteration (e.g. SettingsScene lists). */
@@ -154,6 +165,13 @@ export function loadSettings(): SettingsRecord {
       ...DEFAULT_SETTINGS,
       ...parsed,
       bindings: resolveBindings(parsed.bindings as Partial<Record<ActionName, string>> | undefined),
+      // Explicit coercion (AC of AH-0MVBMQZR50069QV3): a legacy record
+      // without the field, or a stored non-boolean, resolves to the
+      // default (on) rather than leaking `undefined`/a truthy string.
+      shareTelemetryDev:
+        typeof parsed.shareTelemetryDev === 'boolean'
+          ? parsed.shareTelemetryDev
+          : DEFAULT_SETTINGS.shareTelemetryDev,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

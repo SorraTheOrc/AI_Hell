@@ -44,7 +44,7 @@ const REBOUND: Record<ActionName, string> = {
 };
 
 function persistBindings(bindings: Record<ActionName, string>): void {
-  saveSettings({ sfxVolume: 1, sfxMuted: false, bindings });
+  saveSettings({ sfxVolume: 1, sfxMuted: false, bindings, shareTelemetryDev: true });
 }
 
 interface PlayInternals {

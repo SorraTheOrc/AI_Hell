@@ -17,6 +17,13 @@
  *
  * Entry points: PauseScene → origin 'PauseScene' (Back returns to the
  * pause menu); MenuScene → origin 'MenuScene' (Back returns to the menu).
+ *
+ * Dev builds additionally expose a dev-only "share telemetry with the dev
+ * server" toggle (`AH-0MVBMQZR50069QV3`), read from and persisted to
+ * `ai_hell_settings.shareTelemetryDev` (default on). The row is absent in a
+ * production build, where the value is inert; the build question is asked via
+ * the telemetry gate module (`isDevTelemetryBuild`) so no other module reads
+ * the dev flag alongside telemetry code.
  */
 
 import Phaser from 'phaser';
@@ -39,6 +46,7 @@ import {
   setTelemetryConsent,
 } from '../core/telemetryConsentStore';
 import { type TelemetryConsentState } from '../telemetry';
+import { isDevTelemetryBuild } from '../telemetry/devMode';
 
 /** Neon-cyan colour for the section heading (GDD §7.1). */
 const SETTINGS_TEXT_COLOR = '#00ffff';
@@ -102,6 +110,10 @@ export class SettingsScene extends Phaser.Scene {
   private sfxMuted = DEFAULT_SETTINGS.sfxMuted;
   private bindings: Record<ActionName, string> = { ...DEFAULT_BINDINGS };
   private telemetryConsent: TelemetryConsentState = { ...DEFAULT_TELEMETRY_CONSENT };
+  /** Dev-mode telemetry sharing (persisted in the settings record). */
+  private shareTelemetryDev = DEFAULT_SETTINGS.shareTelemetryDev;
+  /** Whether this build exposes the dev-share toggle at all. */
+  private devTelemetryAvailable = false;
 
   private controls: SettingsControl[] = [];
   private focusedIndex = 0;
@@ -113,6 +125,8 @@ export class SettingsScene extends Phaser.Scene {
   private volumeText!: Phaser.GameObjects.Text;
   private muteText!: Phaser.GameObjects.Text;
   private telemetryText!: Phaser.GameObjects.Text;
+  /** Dev-only share toggle; `undefined` in a production build. */
+  private devTelemetryText?: Phaser.GameObjects.Text;
   private backText!: Phaser.GameObjects.Text;
   private resetText!: Phaser.GameObjects.Text;
   private conflictText!: Phaser.GameObjects.Text;
@@ -143,6 +157,10 @@ export class SettingsScene extends Phaser.Scene {
     // the toggle below can grant or revoke it, and it survives a settings
     // reset of audio/controls.
     this.telemetryConsent = loadTelemetryConsent();
+    // Dev-mode telemetry sharing is a plain setting (default on); it only has
+    // a UI row in a dev build and is inert elsewhere.
+    this.shareTelemetryDev = settings.shareTelemetryDev;
+    this.devTelemetryAvailable = isDevTelemetryBuild();
     // Menu navigation honours the configured bindings (parent
     // AH-0MU9LPZ0G0015292): pause key = Back, move up/down = focus cycle.
     const configured = resolveBindings(settings.bindings);
@@ -182,6 +200,9 @@ export class SettingsScene extends Phaser.Scene {
       },
       { label: 'mute', activate: () => this._toggleMute() },
       { label: 'telemetry', activate: () => this.toggleTelemetryConsent() },
+      ...(this.devTelemetryAvailable
+        ? [{ label: 'telemetryDev', activate: () => this.toggleShareTelemetryDev() }]
+        : []),
       ...ACTION_NAMES.map((action) => ({
         label: action,
         activate: () => this.beginCapturing(action),
@@ -274,6 +295,24 @@ export class SettingsScene extends Phaser.Scene {
     this.telemetryText.setInteractive({ useHandCursor: true });
     this.telemetryText.on('pointerdown', () => this.toggleTelemetryConsent());
     this.focusStyles.set('telemetry', this.telemetryText);
+
+    // Dev-only row (absent from a production build): opt out of sharing the
+    // run's telemetry with the dev server. `isDevTelemetryBuild()` keeps the
+    // dev-flag decision inside the telemetry gate module.
+    if (this.devTelemetryAvailable) {
+      this.devTelemetryText = this.add
+        .text(AUDIO_COL_X, 336, '', {
+          fontFamily: 'monospace',
+          fontSize: '15px',
+          color: SETTINGS_DIM_COLOR,
+          backgroundColor: '#111111',
+          padding: { x: 12, y: 6 },
+        })
+        .setOrigin(0.5);
+      this.devTelemetryText.setInteractive({ useHandCursor: true });
+      this.devTelemetryText.on('pointerdown', () => this.toggleShareTelemetryDev());
+      this.focusStyles.set('telemetryDev', this.devTelemetryText);
+    }
   }
 
   // ── Controls (key bindings) section ─────────────────────────────
@@ -371,6 +410,11 @@ export class SettingsScene extends Phaser.Scene {
     this.telemetryText.text = this.telemetryConsent.granted
       ? 'Telemetry: ON'
       : 'Telemetry: OFF';
+    if (this.devTelemetryText) {
+      this.devTelemetryText.text = `Share with dev server: ${
+        this.shareTelemetryDev ? 'ON' : 'OFF'
+      }`;
+    }
   }
 
   private _drawBindings(): void {
@@ -440,6 +484,39 @@ export class SettingsScene extends Phaser.Scene {
   /** Whether the player has made an explicit telemetry decision. */
   hasDecidedTelemetryConsent(): boolean {
     return this.telemetryConsent.decided;
+  }
+
+  // ── Dev-mode telemetry sharing (AH-0MVBMQZR50069QV3) ─────────────
+
+  /**
+   * Whether the player shares run telemetry with the dev server. Persisted
+   * and defaulted to `true`; only meaningful in a dev build.
+   */
+  isShareTelemetryDevEnabled(): boolean {
+    return this.shareTelemetryDev;
+  }
+
+  /** Whether this build exposes the dev-share toggle row at all. */
+  hasDevTelemetryToggle(): boolean {
+    return this.devTelemetryAvailable;
+  }
+
+  /**
+   * Sets the dev-share value and persists it. A no-op in a production build,
+   * where the setting is inert (no row, no storing of a choice that nothing
+   * reads). Returns the resulting value.
+   */
+  setShareTelemetryDev(enabled: boolean): boolean {
+    if (!this.devTelemetryAvailable) return this.shareTelemetryDev;
+    this.shareTelemetryDev = enabled;
+    this._drawTelemetry();
+    this._persist();
+    return this.shareTelemetryDev;
+  }
+
+  /** Flips the dev-share value. Returns the resulting value. */
+  toggleShareTelemetryDev(): boolean {
+    return this.setShareTelemetryDev(!this.shareTelemetryDev);
   }
 
   private _sliderFromPointer(x: number): void {
@@ -512,12 +589,13 @@ export class SettingsScene extends Phaser.Scene {
     }
   }
 
-  /** Persists the full settings record (audio + bindings). */
+  /** Persists the full settings record (audio + bindings + dev sharing). */
   private _persist(): void {
     saveSettings({
       sfxVolume: this.sfxVolume,
       sfxMuted: this.sfxMuted,
       bindings: this.bindings,
+      shareTelemetryDev: this.shareTelemetryDev,
     });
   }
 

@@ -110,6 +110,7 @@ describe('settingsStore', () => {
         sfxVolume: 0.7,
         sfxMuted: true,
         bindings: { ...DEFAULT_BINDINGS, moveUp: 'I' },
+        shareTelemetryDev: false,
       };
       mockLocalStorage({ ai_hell_settings: JSON.stringify(custom) });
       expect(loadSettings()).toEqual(custom);
@@ -143,6 +144,7 @@ describe('settingsStore', () => {
         sfxVolume: 0.3,
         sfxMuted: true,
         bindings: { ...DEFAULT_BINDINGS, moveUp: 'I', moveDown: 'K' },
+        shareTelemetryDev: false,
       };
       mockLocalStorage({});
       saveSettings(custom);
@@ -161,6 +163,7 @@ describe('settingsStore', () => {
         sfxVolume: 0.5,
         sfxMuted: false,
         bindings: rebinding,
+        shareTelemetryDev: true,
       };
       mockLocalStorage({});
       saveSettings(custom);
@@ -180,6 +183,7 @@ describe('settingsStore', () => {
         sfxVolume: 0.1,
         sfxMuted: true,
         bindings: { ...DEFAULT_BINDINGS, moveUp: 'X' },
+        shareTelemetryDev: false,
       };
       mockLocalStorage({});
       saveSettings(custom);
@@ -289,6 +293,54 @@ describe('settingsStore', () => {
       const loaded = loadSettings();
       expect(loaded.bindings.moveUp).toBe('i');
       expect(loaded.bindings.moveDown).toBe(DEFAULT_BINDINGS.moveDown);
+    });
+  });
+
+  describe('dev telemetry sharing (AH-0MVBMQZR50069QV3)', () => {
+    beforeEach(() => {
+      restoreLocalStorage();
+    });
+
+    it('defaults on', () => {
+      expect(DEFAULT_SETTINGS.shareTelemetryDev).toBe(true);
+      mockLocalStorage({});
+      expect(loadSettings().shareTelemetryDev).toBe(true);
+    });
+
+    it('resolves a legacy record without the field to on', () => {
+      mockLocalStorage({
+        ai_hell_settings: JSON.stringify({ sfxVolume: 0.4, bindings: { moveUp: 'i' } }),
+      });
+      expect(loadSettings().shareTelemetryDev).toBe(true);
+    });
+
+    it('falls back to on for non-boolean stored values', () => {
+      for (const bad of ['false', 0, 1, null, {}, []]) {
+        mockLocalStorage({
+          ai_hell_settings: JSON.stringify({ shareTelemetryDev: bad }),
+        });
+        expect(loadSettings().shareTelemetryDev).toBe(true);
+      }
+    });
+
+    it('falls back to on when the stored JSON is corrupt', () => {
+      mockLocalStorage({ ai_hell_settings: '{broken' });
+      expect(loadSettings().shareTelemetryDev).toBe(true);
+    });
+
+    it('round-trips a persisted opt-out', () => {
+      mockLocalStorage({});
+      saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
+      expect(loadSettings().shareTelemetryDev).toBe(false);
+    });
+
+    it('resetSettings restores the on default', () => {
+      mockLocalStorage({});
+      saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
+      expect(loadSettings().shareTelemetryDev).toBe(false);
+
+      resetSettings();
+      expect(loadSettings().shareTelemetryDev).toBe(true);
     });
   });
 });

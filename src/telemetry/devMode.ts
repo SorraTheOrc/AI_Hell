@@ -26,6 +26,11 @@
  * decision — `src/telemetry/devModeEnforcement.test.ts` fails the suite if one
  * does.
  *
+ * {@link isDevTelemetryBuild} is the only way other modules may ask "is this a
+ * dev build?". Keeping that question here means the enforcement scan still
+ * sees this module as the sole dev-flag decision point, even for dev-only UI
+ * such as the Settings toggle.
+ *
  * @module src/telemetry/devMode
  */
 
@@ -44,6 +49,22 @@ export interface DevTelemetrySetting {
 }
 
 /**
+ * True when this is a Vite **dev** build — the only build in which dev-mode
+ * telemetry (and its Settings toggle) exists at all.
+ *
+ * Fails closed on a contradictory environment (both `DEV` and `PROD` true),
+ * matching the collection/upload gate. Dev-only UI must use this predicate
+ * rather than reading `import.meta.env.DEV` itself, so the gate module stays
+ * the single dev-flag decision point (enforced by
+ * `src/telemetry/devModeEnforcement.test.ts`).
+ *
+ * @param env - The build environment, defaulting to `import.meta.env`.
+ */
+export function isDevTelemetryBuild(env: DevModeEnv = import.meta.env): boolean {
+  return env.DEV === true && env.PROD !== true;
+}
+
+/**
  * True when this dev build may **collect** telemetry by default.
  *
  * Requires an explicit opt-in setting: enabling dev collection is never
@@ -57,7 +78,7 @@ export function isDevTelemetryCollectionEnabled(
   env: DevModeEnv = import.meta.env,
   setting?: DevTelemetrySetting,
 ): boolean {
-  return env.DEV === true && env.PROD !== true && setting?.shareTelemetryDev === true;
+  return isDevTelemetryBuild(env) && setting?.shareTelemetryDev === true;
 }
 
 /**

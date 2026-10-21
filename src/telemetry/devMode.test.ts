@@ -2,22 +2,26 @@
  * Unit tests for the single dev-only telemetry gate
  * (AH-0MVBMR0BG0005BBI, parent AH-0MVBHRLY8004BGDN).
  *
- * The gate decides whether dev-mode telemetry may be collected and uploaded.
- * These tests pin the full truth table — dev+on, dev+off, prod+on, prod+off,
- * plus a missing/undefined setting and a contradictory environment — for both
- * exported predicates, and assert that upload can never exceed collection.
- * The gate is pure, so no build or browser is needed.
+ * The gate decides whether dev-mode telemetry may be collected and uploaded,
+ * and whether dev-only telemetry UI exists at all (`isDevTelemetryBuild`, used
+ * by the Settings toggle). These tests pin the full truth table — dev+on,
+ * dev+off, prod+on, prod+off, plus a missing/undefined setting and a
+ * contradictory environment — for every exported predicate, and assert that
+ * upload can never exceed collection. The gate is pure, so no build or browser
+ * is needed.
  */
 
 import { describe, expect, it } from 'vitest';
 
 import {
+  isDevTelemetryBuild,
   isDevTelemetryCollectionEnabled,
   isDevTelemetryUploadEnabled,
   type DevModeEnv,
   type DevTelemetrySetting,
 } from './devMode';
 import {
+  isDevTelemetryBuild as barrelBuild,
   isDevTelemetryCollectionEnabled as barrelCollection,
   isDevTelemetryUploadEnabled as barrelUpload,
 } from './index';
@@ -26,6 +30,31 @@ const DEV_BUILD: DevModeEnv = { DEV: true };
 const PROD_BUILD: DevModeEnv = { DEV: false, PROD: true };
 const ON: DevTelemetrySetting = { shareTelemetryDev: true };
 const OFF: DevTelemetrySetting = { shareTelemetryDev: false };
+
+describe('isDevTelemetryBuild — dev-build predicate', () => {
+  it('is true in a dev build', () => {
+    expect(isDevTelemetryBuild(DEV_BUILD)).toBe(true);
+  });
+
+  it('is false in a production build', () => {
+    expect(isDevTelemetryBuild(PROD_BUILD)).toBe(false);
+  });
+
+  it('is false for an empty environment', () => {
+    expect(isDevTelemetryBuild({})).toBe(false);
+  });
+
+  it('fails closed on a contradictory environment (DEV and PROD both true)', () => {
+    expect(isDevTelemetryBuild({ DEV: true, PROD: true })).toBe(false);
+  });
+
+  it('defaults its environment to import.meta.env (a dev build under test)', () => {
+    expect(isDevTelemetryBuild(undefined)).toBe(
+      import.meta.env.DEV === true && import.meta.env.PROD !== true,
+    );
+    expect(isDevTelemetryBuild()).toBe(true);
+  });
+});
 
 describe('isDevTelemetryCollectionEnabled — truth table', () => {
   it('collects in a dev build with the setting on (dev+on)', () => {
@@ -101,7 +130,9 @@ describe('isDevTelemetryUploadEnabled — truth table', () => {
 });
 
 describe('dev-only telemetry gate — public surface', () => {
-  it('exports both gate predicates from the telemetry barrel', () => {
+  it('exports the gate predicates from the telemetry barrel', () => {
+    expect(barrelBuild(DEV_BUILD)).toBe(true);
+    expect(barrelBuild(PROD_BUILD)).toBe(false);
     expect(barrelCollection(DEV_BUILD, ON)).toBe(true);
     expect(barrelCollection(PROD_BUILD, ON)).toBe(false);
     expect(barrelUpload(DEV_BUILD, ON)).toBe(true);
