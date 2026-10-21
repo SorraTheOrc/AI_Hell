@@ -14,6 +14,7 @@ import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { RULES_STORAGE_KEY } from '../core/rules';
+import { DEFAULT_SETTINGS, saveSettings } from '../core/settingsStore';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
   BufferedTelemetryRecorder,
@@ -291,6 +292,9 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
   });
 
   it('AC5 — telemetry off is a strict no-op and records nothing', async () => {
+    // Dev collection is on by default (AH-0MVBMRIB800201KK), so the opt-out
+    // is what makes this a stock "off" run.
+    saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
     localStorage.removeItem(TELEMETRY_JSONL_STORAGE_KEY);
     simTime = 0;
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
@@ -300,6 +304,38 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
     expect(play.isTelemetryEnabled()).toBe(false);
     step(booted.game, 30);
     expect(localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY)).toBeNull();
+  });
+
+  it('dev collection is on by default: a stock dev run writes the JSONL sink', async () => {
+    vi.stubEnv('DEV', true);
+    saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: true });
+    localStorage.removeItem(TELEMETRY_JSONL_STORAGE_KEY);
+    simTime = 0;
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted.game.loop.stop();
+    const play = restartAndSettle(booted.game, { seed: SEED });
+
+    // No injected recorder and no VITE_TELEMETRY_* env var: the persisted
+    // setting alone puts a stock dev session into recording (AC2/AC3).
+    expect(play.isTelemetryEnabled()).toBe(true);
+
+    // Stepping past the recorder's batch size forces a flush of the buffered
+    // records into the local JSONL sink.
+    step(booted.game, 120);
+
+    await vi.waitFor(
+      () => {
+        const stored = localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY);
+        expect(stored).toBeTruthy();
+        const records = stored!
+          .trimEnd()
+          .split('\n')
+          .map((line) => JSON.parse(line) as TelemetryRecord);
+        expect(records[0]?.kind).toBe('run_header');
+        expect(records.some((record) => record.kind === 'tick')).toBe(true);
+      },
+      { timeout: 5000 },
+    );
   });
 
   it('AC5 — enabling recording does not change the run (regression)', async () => {

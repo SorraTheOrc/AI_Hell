@@ -137,6 +137,59 @@ describe('applyUserConsent (AC1)', () => {
   });
 });
 
+/**
+ * Dev collection-on-by-default (AH-0MVBMRIB800201KK): the option is injected
+ * by the caller that applies the single dev gate
+ * (`src/telemetry/devMode.ts`), so it records with no `VITE_TELEMETRY_*`
+ * variable set while the environment configuration stays authoritative.
+ */
+describe('dev collection option (AH-0MVBMRIB800201KK)', () => {
+  it('records to the jsonl sink with no VITE_TELEMETRY_* variable at all', () => {
+    const config = resolveTelemetryConfig({ DEV: true }, { devCollectionEnabled: true });
+
+    expect(config.enabled).toBe(false);
+    expect(config.devCollection).toBe(true);
+    expect(config.recording).toBe(true);
+    expect(config.sink).toBe('jsonl');
+  });
+
+  it('stays a strict no-op when the flag is absent or false', () => {
+    const absent = resolveTelemetryConfig({ DEV: true });
+    const off = resolveTelemetryConfig({ DEV: true }, { devCollectionEnabled: false });
+
+    expect(absent.devCollection).toBe(false);
+    expect(absent.recording).toBe(false);
+    expect(absent.sink).toBe('none');
+    expect(off.devCollection).toBe(false);
+    expect(off.recording).toBe(false);
+    expect(off.sink).toBe('none');
+  });
+
+  it('leaves the explicit environment configuration authoritative when both apply', () => {
+    const config = resolveTelemetryConfig(
+      {
+        DEV: true,
+        VITE_TELEMETRY_ENABLED: 'true',
+        VITE_TELEMETRY_SINK: 'remote',
+        VITE_TELEMETRY_ENDPOINT: 'https://telemetry.example/ingest',
+      },
+      { devCollectionEnabled: true },
+    );
+
+    expect(config.devCollection).toBe(true);
+    expect(config.recording).toBe(true);
+    expect(config.sink).toBe('remote');
+    expect(config.endpoint).toBe('https://telemetry.example/ingest');
+  });
+
+  it('keeps a dev-collection recorder on when a consent decision is applied', () => {
+    const base = resolveTelemetryConfig({ DEV: true }, { devCollectionEnabled: true });
+
+    expect(applyUserConsent(base, false).recording).toBe(true);
+    expect(applyUserConsent(base, true).recording).toBe(true);
+  });
+});
+
 describe('telemetry build info', () => {
   it('defaults when no build variables are present', () => {
     expect(resolveBuildInfo({})).toEqual({ appVersion: '0.0.0-dev', commit: 'unknown' });

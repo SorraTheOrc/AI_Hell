@@ -48,6 +48,7 @@ function enabledConfig(overrides: Partial<TelemetryConfig> = {}): TelemetryConfi
     sampleRate: 1,
     bufferCapacity: 16,
     batchSize: 4,
+    devCollection: false,
     recording: true,
     ...overrides,
   };

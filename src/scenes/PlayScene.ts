@@ -4560,10 +4560,19 @@ export class PlayScene extends CombatScene<
    * build) and the `run_start` event.
    */
   private _initTelemetry(): void {
+    // The persisted settings carry the dev share-telemetry flag; the dev gate
+    // is applied once, inside `resolveEffectiveTelemetryConfig` (see
+    // `src/telemetry/devMode.ts`), so a stock dev session records from run
+    // start (AH-0MVBMRIB800201KK).
+    const settings = loadSettings();
     const recorder =
       this.injectedTelemetryRecorder ??
       createTelemetryRecorder(
-        resolveEffectiveTelemetryConfig(import.meta.env, loadTelemetryConsent()),
+        resolveEffectiveTelemetryConfig(
+          import.meta.env,
+          loadTelemetryConsent(),
+          settings,
+        ),
         { build: resolveBuildInfo() },
       );
     this.runTelemetry = new RunTelemetry(recorder);

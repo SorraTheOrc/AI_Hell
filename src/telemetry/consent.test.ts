@@ -89,3 +89,77 @@ describe('resolveEffectiveTelemetryConfig', () => {
     expect(config.endpoint).toBe('https://telemetry.example/ingest');
   });
 });
+
+/**
+ * Dev collection-on-by-default (AH-0MVBMRIB800201KK, parent
+ * AH-0MVBHRLY8004BGDN AC2/AC3): the (dev/prod) × (setting on/off) matrix,
+ * proved through the composed resolution the game actually calls. The dev
+ * collection flag is derived from the single dev gate
+ * (`src/telemetry/devMode.ts`) — never re-implemented here.
+ */
+describe('resolveEffectiveTelemetryConfig — dev collection (AH-0MVBMRIB800201KK)', () => {
+  const DEV_BUILD = { DEV: true } as const;
+  const PROD_BUILD = { PROD: true } as const;
+  const SHARE_ON = { shareTelemetryDev: true } as const;
+  const SHARE_OFF = { shareTelemetryDev: false } as const;
+
+  it('dev + setting on: records to the jsonl sink with no env vars at all', () => {
+    const config = resolveEffectiveTelemetryConfig(DEV_BUILD, UNDECIDED, SHARE_ON);
+
+    expect(config.devCollection).toBe(true);
+    expect(config.recording).toBe(true);
+    expect(config.enabled).toBe(false);
+    expect(config.sink).toBe('jsonl');
+  });
+
+  it('dev + setting off: neither collects nor records', () => {
+    const config = resolveEffectiveTelemetryConfig(DEV_BUILD, UNDECIDED, SHARE_OFF);
+
+    expect(config.devCollection).toBe(false);
+    expect(config.recording).toBe(false);
+    expect(config.sink).toBe('none');
+  });
+
+  it('prod + setting on: the setting is inert and nothing records without consent', () => {
+    const config = resolveEffectiveTelemetryConfig(PROD_BUILD, UNDECIDED, SHARE_ON);
+
+    expect(config.devCollection).toBe(false);
+    expect(config.production).toBe(true);
+    expect(config.recording).toBe(false);
+    expect(config.sink).toBe('none');
+  });
+
+  it('prod + setting off: unchanged (still disabled without env opt-in)', () => {
+    const config = resolveEffectiveTelemetryConfig(PROD_BUILD, UNDECIDED, SHARE_OFF);
+
+    expect(config.devCollection).toBe(false);
+    expect(config.recording).toBe(false);
+  });
+
+  it('treats an omitted settings slice as "no dev collection"', () => {
+    expect(resolveEffectiveTelemetryConfig(DEV_BUILD, UNDECIDED).recording).toBe(false);
+    expect(resolveEffectiveTelemetryConfig(DEV_BUILD, UNDECIDED, {}).recording).toBe(false);
+  });
+
+  it('keeps the explicit dev env opt-in working when the setting is off', () => {
+    const env = { DEV: true, VITE_TELEMETRY_ENABLED: 'true' } as const;
+    const config = resolveEffectiveTelemetryConfig(env, UNDECIDED, SHARE_OFF);
+
+    expect(config.devCollection).toBe(false);
+    expect(config.recording).toBe(true);
+    expect(config.sink).toBe('jsonl');
+  });
+
+  it('prod consent path unchanged (regression): setting on never bypasses consent', () => {
+    const undecided = resolveEffectiveTelemetryConfig(PROD_REMOTE, UNDECIDED, SHARE_ON);
+    const granted = resolveEffectiveTelemetryConfig(PROD_REMOTE, GRANTED, SHARE_ON);
+    const denied = resolveEffectiveTelemetryConfig(PROD_REMOTE, DENIED, SHARE_ON);
+
+    expect(undecided.recording).toBe(false);
+    expect(granted.consent).toBe(true);
+    expect(granted.recording).toBe(true);
+    expect(granted.sink).toBe('remote');
+    expect(granted.endpoint).toBe('https://telemetry.example/ingest');
+    expect(denied.recording).toBe(false);
+  });
+});

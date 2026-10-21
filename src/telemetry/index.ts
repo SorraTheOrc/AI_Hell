@@ -73,6 +73,7 @@ export {
   resolveBuildInfo,
   resolveTelemetryConfig,
   type TelemetryConfig,
+  type TelemetryConfigOptions,
   type TelemetryEnv,
   type TelemetrySinkKind,
 } from './config';
