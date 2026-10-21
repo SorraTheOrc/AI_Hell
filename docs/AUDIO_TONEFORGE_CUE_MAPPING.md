@@ -88,8 +88,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playPowerUpCollectPopSound` | Saw 600→100 Hz + filtered noise transient, ≤ 0.08 s | Power-up pickup (tactile pop) | `dropLayer` | new | `aihell-pickup-pop` |
 | `playWeaponChangeSound` | Distinctive whoosh ("armed with new weapon") | Weapon change | **none** (no call sites) | **retired** | — (see Retired cues) |
 | `playSwarmBurstSound` | Saw buzz 120→80 Hz + sine whoosh 200→600 Hz, ~0.2 s | Swarm volley buzz | `entities/Swarm` | new | `aihell-swarm-burst` |
-| `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
-| `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s, scheduled at cue end | Enemy fire / no-gap | `entities/Phaser` | new | `aihell-phaser-fire` |
+| `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
+| `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s, scheduled at cue end; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) | Enemy fire / no-gap | `entities/Phaser` | new | `aihell-phaser-fire` |
 | `playScoutAdvanceCue` | Rising sine, pitched above Phaser, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Scout`, `entities/OrbitalStrike` | new | `aihell-scout-advance` |
 | `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Scout` | new | `aihell-scout-fire` (since AC4, AH-0MVCRR2H2007VPDU) |
 | `playDiverDiveStartSound` | Rising saw 150→600 Hz + filtered noise, ~0.25 s | Dive danger cue | `entities/Diver` | new | `aihell-diver-dive-start` |
@@ -187,6 +187,13 @@ analysis report (pre-change spread ~7.9× peak / ~9.3× RMS and post-change per-
 Scout fire cue was re-created as the in-repo `aihell-scout-fire` recipe under AC4
 (AH-0MVCRR2H2007VPDU) and sits in the Heavy tier; `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×) runtime
 behaviour is unchanged.
+
+The two Phaser fire-sequence cues (`playPhaserAdvanceCue`, `playPhaserFireSound`) are **runtime-
+trimmed** at ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) even though their baked assets
+sit inside the Subtle tier — a deliberate constraint deviation (doc `AUDIO_ENEMY_BALANCE.md` §4.3) so
+the Phaser sequence reads level with the Tank/Scout ×0.5 advance+fire pairs. The `mix`-bus tier
+tables above are the **baked** tier; effective playback RMS is half of the baked value for these two
+cues (advance 0.0564→0.0282, fire 0.0550→0.0275).
 
 ### A-minor scale conformance (AC3 — AH-0MVCRR203005HKVZ)
 

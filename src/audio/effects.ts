@@ -306,14 +306,31 @@ export function playTankFireSound(): void {
 /** Duration (seconds) of the Phaser advance tell. */
 export const PHASER_ADVANCE_CUE_DURATION = 0.6;
 
-/** Rising warning blip — E4 Phaser firing advance cue. */
+/**
+ * Linear gain applied to the Phaser **fire sequence** — the advance tell *and*
+ * the shot cue — so it sits level with the Tank/Scout advance+fire pairs in
+ * the mix (AH-0MVFHE6VP006GEX0). Those pairs already run through
+ * `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×), so an unscaled Phaser sequence read
+ * ~6 dB louder by ear even though its baked assets sit inside the AC2 Subtle
+ * amplitude tier. This is a deliberate runtime-trim deviation from the parent
+ * constraint that prefers baked-asset balance: the baked Phaser assets are
+ * already correctly tiered and pinned by the balance guard, so the audible
+ * defect is the missing playback trim, expressed through the same named-constant
+ * mechanism as `TANK_SCOUT_FIRE_VOLUME_SCALE` and `HOLD_FULL_FIRE_VOLUME_SCALE`.
+ */
+export const PHASER_FIRE_VOLUME_SCALE = 0.5;
+
+/** Rising warning blip — E4 Phaser firing advance cue (half volume). */
 export function playPhaserAdvanceCue(): void {
-  playCue('playPhaserAdvanceCue');
+  playCue('playPhaserAdvanceCue', { volume: PHASER_FIRE_VOLUME_SCALE });
 }
 
-/** Short sharp blip — E4 Phaser fire, scheduled at the advance cue's end. */
+/** Short sharp blip — E4 Phaser fire, scheduled at the advance cue's end (half volume). */
 export function playPhaserFireSound(): void {
-  playCue('playPhaserFireSound', { delay: PHASER_ADVANCE_CUE_DURATION });
+  playCue('playPhaserFireSound', {
+    delay: PHASER_ADVANCE_CUE_DURATION,
+    volume: PHASER_FIRE_VOLUME_SCALE,
+  });
 }
 
 /** Duration (seconds) of the Scout advance tell. */

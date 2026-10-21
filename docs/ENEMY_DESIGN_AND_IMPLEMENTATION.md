@@ -2227,7 +2227,7 @@ checklist item 6). Scope rules matter — base-class-owned sounds are played
 | E1 Scout | `playScoutAdvanceCue()` — at tell start, ≥ 500 ms lead | `playScoutFireSound()` — at the shot | **entity-level** two-phase tell, per aimed shot |
 | E2 Diver | none (no advance cue — fire sound alone is the tell); `playDiverDiveStartSound()` — rising whoosh/crack once at the FORMATION→DIVING transition (the dive danger cue) | `playDiverFireSound()` — short low/nasal crack; `playDiveSound()`/`stopDiveSound()` — refcounted shared sustained dive whoosh for the ~2 s dive (stopped at the end of the dive, `destroySelf()`, and `destroy()`) | **entity-level**, fire exactly once per spread burst inside `tryFireSpreadBurst()`; dive-start cue once per dive in `_startDive()` |
 | E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **entity-level**, one cue+thump pair per radial burst inside `tryFireRadialBurst()` — the cue flows with **no gap** into the thump |
-| E4 Phaser | `playPhaserAdvanceCue()` — rising sine 660→880 Hz (replaces the old inline `_playAdvanceCue()`, `PHASER_ADVANCE_CUE_DURATION`) | `playPhaserFireSound()` — short sharp blip, scheduled at the cue's end | **entity-level**, one advance cue + fire sound pair at tell start inside `applyFormationPosition()` (matching the Scout no-gap pattern) — no audio on the firing branch (no double-play) |
+| E4 Phaser | `playPhaserAdvanceCue()` — rising sine 660→880 Hz (replaces the old inline `_playAdvanceCue()`, `PHASER_ADVANCE_CUE_DURATION`); runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`) | `playPhaserFireSound()` — short sharp blip, scheduled at the cue's end; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`) | **entity-level**, one advance cue + fire sound pair at tell start inside `applyFormationPosition()` (matching the Scout no-gap pattern) — no audio on the firing branch (no double-play) |
 | E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **entity-level** volley burst, once per volley inside `tryFireBurstBullet()` |
 | Boss | `playBossPhaseCue()` — per-phase telegraph tone (retained) | `playBossFireSound()` — deep resonant boom (in `src/audio/effects.ts`) | **entity-level**, once per volley in each attack method (`tryFireSpreadBullets`, `tryFireSpiralBullets`, `tryFirePulseBullets`, `tryFireDesperationBullets`) |
 
@@ -2235,6 +2235,15 @@ Orchestration rule: entity-specific fire sounds are invoked **where the shots
 are produced** — the entity's own fire/tell logic (Tank's `tryFireRadialBurst`,
 Swarm's `tryFireBurstBullet`, Phaser's tell, the Boss's attack methods, the
 Scout's two-phase tell) — never re-added in a thin scene class.
+
+**Runtime volume-scaling precedents.** Loudness is trimmed at playback through named constants in
+`src/audio/effects.ts` where a baked asset is already correctly tiered but needs to sit lower in the
+mix: `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×) for the Tank and Scout advance+fire pairs
+(AH-0MV74ROYR009X8U3), `HOLD_FULL_FIRE_VOLUME_SCALE` for the hold-to-full-fire warning, and
+`PHASER_FIRE_VOLUME_SCALE` (0.5×) for the Phaser advance+fire pair (AH-0MVFHE6VP006GEX0), which
+brought the previously full-volume Phaser sequence level with the Tank/Scout cues. Prefer a runtime
+scale when the asset tier is already correct and guard-pinned; prefer a recipe `mix`-bus retune when
+the baked amplitude itself is off-tier (see `docs/AUDIO_ENEMY_BALANCE.md`).
 
 **ToneForge recipes per cue:** Scout advance `aihell-scout-advance`, Scout fire
 `aihell-scout-fire` (baked, seed 32181 — AC4, AH-0MVCRR2H2007VPDU; replaces the

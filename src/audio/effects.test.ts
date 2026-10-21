@@ -426,6 +426,36 @@ describe('Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3)', () => {
   });
 });
 
+// ── 3a-ii. Phaser fire-sequence volume (AH-0MVFHE6VP006GEX0) ─────────
+
+describe('Phaser fire-sequence volume (AH-0MVFHE6VP006GEX0)', () => {
+  it('PHASER_FIRE_VOLUME_SCALE is a single named 0.5 tunable', () => {
+    expect(effects.PHASER_FIRE_VOLUME_SCALE).toBe(0.5);
+  });
+
+  it('playPhaserAdvanceCue plays the phaser advance tell at half volume', () => {
+    effects.playPhaserAdvanceCue();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      assetUrlFor(cueEntry('playPhaserAdvanceCue')),
+    );
+    expect(recording.plays[0].volume).toBe(effects.PHASER_FIRE_VOLUME_SCALE);
+    // The no-gap advance cue is not delayed.
+    expect(recording.plays[0].delay).toBe(0);
+  });
+
+  it('playPhaserFireSound plays the baked phaser-fire asset at half volume', () => {
+    effects.playPhaserFireSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      assetUrlFor(cueEntry('playPhaserFireSound')),
+    );
+    expect(recording.plays[0].volume).toBe(effects.PHASER_FIRE_VOLUME_SCALE);
+    // The advance-cue no-gap delay is preserved unchanged.
+    expect(recording.plays[0].delay).toBe(effects.PHASER_ADVANCE_CUE_DURATION);
+  });
+});
+
 // ── 3b. Shared player-weapon fire dispatcher (AH-0MV55O9R5005W6J0) ──
 
 describe('playWeaponFireSound — shared player-fire path', () => {

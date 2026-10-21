@@ -206,6 +206,33 @@ Audition note: the cue is a bright, square-edged descending sweep over 0.108 s; 
 a perfect fourth (E5 → A4) within A natural minor, so the character is preserved while the
 pitch content now sits in the battle-scenes' tonal world.
 
+### 4.3 Phaser fire-sequence runtime trim (AH-0MVFHE6VP006GEX0 — post-audit)
+
+**Why:** the producer audit of this parent (2026-10-18) rejected the palette with "The Phaser is still
+way too loud." The baked Phaser assets are already inside the AC2 Subtle tier (§4 table: advance
+0.0564 RMS, fire 0.0550 RMS) and the amplitude guard pins them, but the Phaser was the only enemy
+fire sequence still played at **full runtime volume**. The Tank and Scout advance+fire pairs run
+through `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×, AH-0MV74ROYR009X8U3), so their advance cues read an
+effective ~0.028 RMS while the Phaser's sustained advance tell and shot played unscaled — ~6 dB
+louder by ear despite the green numeric guard.
+
+**Fix (runtime trim):** `PHASER_FIRE_VOLUME_SCALE = 0.5` is exported from `src/audio/effects.ts` and
+applied to both `playPhaserAdvanceCue()` and `playPhaserFireSound()`, mirroring the established
+Tank/Scout mechanism. This sets both Phaser cues to ~0.028 effective RMS — level with the Tank/Scout
+advance cues. The baked assets, recipes and `public/audio/sfx/checksums.json` are **unchanged**, so
+the AC2 amplitude-tier guard and the AC3 A-minor scale guard remain green; the no-gap
+`PHASER_ADVANCE_CUE_DURATION` (0.6 s) scheduling is preserved.
+
+**Constraint deviation (deliberate):** the parent constraint prefers balance changes to be baked into
+assets. A runtime trim is used here because the baked Phaser assets are already correctly tiered and
+pinned by the guard; the audible defect is the missing playback trim relative to the Tank/Scout
+precedent. Expressing it as a named constant keeps it tunable and testable without a pipeline change.
+
+| Cue | Baked RMS | Previous effective RMS | New effective RMS (×0.5) |
+|---|---|---|---|
+| `playPhaserAdvanceCue` | 0.0564 | 0.0564 | 0.0282 |
+| `playPhaserFireSound` | 0.0550 | 0.0550 | 0.0275 |
+
 ## 5. Reproducibility
 
 - The raw per-file JSON produced by `tf analyze` (27 files) is byte-deterministic for a given
