@@ -16,6 +16,7 @@ import Phaser from 'phaser';
 import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import {
   DEFAULT_BINDINGS,
+  DEFAULT_SETTINGS,
   saveSettings,
   type ActionName,
 } from '../core/settingsStore';
@@ -44,7 +45,7 @@ const REBOUND: Record<ActionName, string> = {
 };
 
 function persistBindings(bindings: Record<ActionName, string>): void {
-  saveSettings({ sfxVolume: 1, sfxMuted: false, bindings, shareTelemetryDev: true });
+  saveSettings({ ...DEFAULT_SETTINGS, bindings });
 }
 
 interface PlayInternals {

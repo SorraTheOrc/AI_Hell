@@ -112,6 +112,12 @@ export class SettingsScene extends Phaser.Scene {
   private telemetryConsent: TelemetryConsentState = { ...DEFAULT_TELEMETRY_CONSENT };
   /** Dev-mode telemetry sharing (persisted in the settings record). */
   private shareTelemetryDev = DEFAULT_SETTINGS.shareTelemetryDev;
+  /**
+   * Per-player control scheme (persisted in the settings record,
+   * `AH-0MVI7LRCJ006Q8SA`). The Control Scheme row lives below in the
+   * Controls section.
+   */
+  private controlScheme = DEFAULT_SETTINGS.controlScheme;
   /** Whether this build exposes the dev-share toggle at all. */
   private devTelemetryAvailable = false;
 
@@ -160,6 +166,7 @@ export class SettingsScene extends Phaser.Scene {
     // Dev-mode telemetry sharing is a plain setting (default on); it only has
     // a UI row in a dev build and is inert elsewhere.
     this.shareTelemetryDev = settings.shareTelemetryDev;
+    this.controlScheme = settings.controlScheme;
     this.devTelemetryAvailable = isDevTelemetryBuild();
     // Menu navigation honours the configured bindings (parent
     // AH-0MU9LPZ0G0015292): pause key = Back, move up/down = focus cycle.
@@ -589,13 +596,14 @@ export class SettingsScene extends Phaser.Scene {
     }
   }
 
-  /** Persists the full settings record (audio + bindings + dev sharing). */
+  /** Persists the full settings record (audio + bindings + dev sharing + scheme). */
   private _persist(): void {
     saveSettings({
       sfxVolume: this.sfxVolume,
       sfxMuted: this.sfxMuted,
       bindings: this.bindings,
       shareTelemetryDev: this.shareTelemetryDev,
+      controlScheme: this.controlScheme,
     });
   }
 

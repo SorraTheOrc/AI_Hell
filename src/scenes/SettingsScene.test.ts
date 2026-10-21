@@ -47,6 +47,7 @@ function customSettings(partial: Partial<SettingsRecord>): SettingsRecord {
     sfxMuted: false,
     bindings: { ...DEFAULT_BINDINGS },
     shareTelemetryDev: true,
+    controlScheme: 'asteroids',
     ...partial,
   };
 }

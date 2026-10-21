@@ -12,6 +12,8 @@
 
 // ── Types ─────────────────────────────────────────────────────────────
 
+import type { ControlScheme } from './configTypes';
+
 /**
  * Named actions that the player can remap in SettingsScene.
  */
@@ -39,6 +41,16 @@ export interface SettingsRecord {
    * made by the single dev gate in `src/telemetry/devMode.ts`.
    */
   shareTelemetryDev: boolean;
+  /**
+   * Per-player ship control scheme (`AH-0MVI7LRCJ006Q8SA`).
+   *
+   * This is the player's personal override for the designer-owned
+   * `src/data/ship-config.csv` `controlScheme`; settings never write the CSV.
+   * Resolve the value the game actually uses through
+   * `resolvePlayerControlScheme()` in `src/core/playerScheme.ts` (precedence:
+   * this setting → ship config → built-in default).
+   */
+  controlScheme: ControlScheme;
 }
 
 /** localStorage key (matches GDD §6.6). */
@@ -64,7 +76,37 @@ export const DEFAULT_SETTINGS: SettingsRecord = {
   // collects and uploads at run end unless the player opts out. The value is
   // inert in a production build (see `src/telemetry/devMode.ts`).
   shareTelemetryDev: true,
+  // Today's shipped behaviour (AH-0MUFE1N36007X48T) is the per-player
+  // default too, so an untouched settings record changes nothing.
+  controlScheme: 'asteroids',
 };
+
+/**
+ * Ordered list of selectable control schemes, derived from the `ControlScheme`
+ * union so a future scheme becomes selectable in Settings without new UI
+ * wiring (`AH-0MVI7LRCJ006Q8SA` AC1). The order is the Left/Right cycling
+ * order in `SettingsScene`.
+ */
+export const CONTROL_SCHEMES: readonly ControlScheme[] = ['asteroids', 'fourDirectional'];
+
+/**
+ * Type guard: whether `value` is a member of {@link CONTROL_SCHEMES}.
+ * Legacy/corrupt records can hold anything, so callers validate rather than
+ * trust the stored JSON.
+ */
+export function isControlScheme(value: unknown): value is ControlScheme {
+  return (
+    typeof value === 'string' && (CONTROL_SCHEMES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Resolves the persisted control scheme, falling back to the default when the
+ * stored value is missing, non-string, blank or outside the union (AC2).
+ */
+export function resolveControlScheme(stored: unknown): ControlScheme {
+  return isControlScheme(stored) ? stored : DEFAULT_SETTINGS.controlScheme;
+}
 
 /** Ordered list of action names for iteration (e.g. SettingsScene lists). */
 export const ACTION_NAMES: ActionName[] = [
@@ -172,6 +214,11 @@ export function loadSettings(): SettingsRecord {
         typeof parsed.shareTelemetryDev === 'boolean'
           ? parsed.shareTelemetryDev
           : DEFAULT_SETTINGS.shareTelemetryDev,
+      // Explicit coercion (AC2 of AH-0MVI7LRCJ006Q8SA): a legacy record
+      // without the field, a stored non-string, a blank string or a value
+      // outside the union resolves to the default rather than leaking an
+      // unvalidated value into the movement model.
+      controlScheme: resolveControlScheme(parsed.controlScheme),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
