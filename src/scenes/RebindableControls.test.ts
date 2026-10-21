@@ -45,7 +45,12 @@ const REBOUND: Record<ActionName, string> = {
 };
 
 function persistBindings(bindings: Record<ActionName, string>): void {
-  saveSettings({ ...DEFAULT_SETTINGS, bindings });
+  // This suite drives four-directional movement (see the seeded ship config in
+  // `beforeEach`). The per-player control-scheme setting outranks that config
+  // (AH-0MVI7LRCJ006Q8SA), so the saved record must select the same scheme the
+  // movement assertions expect — otherwise the ship boots Asteroids and 'i'
+  // becomes a turn rather than move-up.
+  saveSettings({ ...DEFAULT_SETTINGS, bindings, controlScheme: 'fourDirectional' });
 }
 
 interface PlayInternals {

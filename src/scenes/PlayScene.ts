@@ -171,10 +171,13 @@ import {
   DEFAULT_BINDINGS,
   keyFor,
   loadSettings,
+  loadStoredControlScheme,
   resolveBindings,
   type ActionName,
 } from '../core/settingsStore';
 import { loadTelemetryConsent } from '../core/telemetryConsentStore';
+import { resolvePlayerControlScheme } from '../core/playerScheme';
+import { loadShipConfig } from '../core/configStore';
 import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
 import { LEVELS, type LevelDefinition } from '../waves/Formations';
@@ -899,7 +902,20 @@ export class PlayScene extends CombatScene<
       .setDepth(PLAYSCENE_BACKGROUND_DEPTH);
 
     // Player ship (auto-fire, weapons, effects).
-    this.player = new Player(this, { x: GAME_WIDTH / 2, y: GAME_HEIGHT - 80 });
+    //
+    // The control scheme is resolved once, at spawn, from the per-player
+    // setting → the designer-owned ship config → the built-in default
+    // (AH-0MVI7LRCJ006Q8SA AC4). Resolving here means a Settings change takes
+    // effect on the next run/ship spawn and never mid-run; the ship gets a
+    // copy of the config, so neither the store nor `ship-config.csv` is
+    // touched. Gyms keep their own config/toggle-driven scheme.
+    const shipConfig = loadShipConfig();
+    const playerScheme = resolvePlayerControlScheme(loadStoredControlScheme(), shipConfig);
+    this.player = new Player(this, {
+      x: GAME_WIDTH / 2,
+      y: GAME_HEIGHT - 80,
+      config: { ...shipConfig, controlScheme: playerScheme },
+    });
     this.add.existing(this.player);
     // The demo drives whichever control scheme the ship is configured with
     // (the shipped default is `asteroids`); the human-like governor resolves

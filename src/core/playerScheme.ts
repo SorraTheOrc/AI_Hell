@@ -11,17 +11,17 @@
  *   2. otherwise the ship config's `controlScheme`;
  *   3. otherwise the built-in default (`asteroids`).
  *
- * The resolver is **pure**: it never mutates the settings record or the
- * supplied ship config, and never touches the CSV store — settings never
+ * The input is the **raw** persisted `controlScheme` value (from
+ * {@link loadStoredControlScheme} or the record field read directly), not the
+ * defaulted `loadSettings()` field — a missing setting must be distinguishable
+ * from a player explicitly choosing `asteroids`, or precedence level 2 would
+ * never be reached. The resolver is **pure**: it never mutates the passed ship
+ * config or settings object, and never touches the CSV store — settings never
  * write `ship-config.csv`.
  */
 
 import type { ControlScheme, ShipConfig } from './configTypes';
-import {
-  DEFAULT_SETTINGS,
-  isControlScheme,
-  type SettingsRecord,
-} from './settingsStore';
+import { DEFAULT_SETTINGS, isControlScheme } from './settingsStore';
 
 /** The scheme the game falls back to when nothing else is configured. */
 export const DEFAULT_PLAYER_CONTROL_SCHEME: ControlScheme =
@@ -31,22 +31,22 @@ export const DEFAULT_PLAYER_CONTROL_SCHEME: ControlScheme =
  * Resolves the effective player control scheme with the documented
  * precedence: stored player setting → ship-config `controlScheme` → built-in
  * default. Invalid or absent inputs degrade to the next level rather than
- * throwing, and the helper never mutates either input object.
+ * throwing, and the helper never mutates either input.
  */
 export function resolvePlayerControlScheme(
-  stored: Pick<SettingsRecord, 'controlScheme'> | undefined,
+  storedControlScheme: unknown,
   shipConfig: ShipConfig | undefined,
 ): ControlScheme {
   // Level 1 — the stored player setting, when present and valid, wins over
   // the designer config outright (either union member, including the
   // Asteroids default, beats the config below).
-  if (isControlScheme(stored?.controlScheme)) {
-    return stored!.controlScheme;
+  if (isControlScheme(storedControlScheme)) {
+    return storedControlScheme;
   }
   // Level 2 — the ship config's `controlScheme`, when it carries a valid
   // value (a legacy/gym CSV may omit it, in which case coerce defaults apply).
-  if (isControlScheme(shipConfig?.controlScheme)) {
-    return shipConfig!.controlScheme;
+  if (shipConfig && isControlScheme(shipConfig.controlScheme)) {
+    return shipConfig.controlScheme;
   }
   // Level 3 — the built-in default.
   return DEFAULT_PLAYER_CONTROL_SCHEME;

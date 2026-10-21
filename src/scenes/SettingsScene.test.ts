@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import {
+  CONTROL_SCHEMES,
   loadSettings,
   saveSettings,
   DEFAULT_BINDINGS,
@@ -423,7 +424,10 @@ describe('SettingsScene — key-binding remapping + reset (AH-0MUA8BGE0006UAU4)'
 
     expect(conflict).toBe('moveRight');
     expect(scene.getBinding('moveUp')).toBe('d');
-    expect(scene.getConflictMessage()).toContain('Move Right');
+    // The warning names the row as it is displayed under the selected scheme
+    // (AH-0MVI7LRCJ006Q8SA AC6): the shipped default is Asteroids, where the
+    // move-right binding reads "Turn Right".
+    expect(scene.getConflictMessage()).toContain('Turn Right');
     expect(loadSettings().bindings.moveUp).toBe('d');
   });
 
@@ -593,5 +597,206 @@ describe('SettingsScene — volume-change feedback (AH-0MUADK77K008RBMB)', () =>
     // A further pointer-up with no intervening drag adds nothing.
     scene.input.emit('pointerup');
     expect(playVolumeFeedbackMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Control scheme setting (AH-0MVI7LRCJ006Q8SA) ────────────────────
+//
+// AC1 — a Control Scheme row driven by the ControlScheme union options
+// AC5 — reachable in the focus order, Left/Right + Enter/click operable,
+//        the selected value announced in the row text
+// AC6 — movement rows are relabelled per scheme over one shared binding set
+//
+// The scene-level coverage of AC1/AC5/AC6 lives here; the PlayScene half of
+// this test item lives in `PlayScene.controlScheme.test.ts` so the settings
+// UI and the scene-boot integration stay independently readable.
+
+describe('SettingsScene — control scheme setting (AH-0MVI7LRCJ006Q8SA)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  async function bootSettings(): Promise<SettingsScene> {
+    booted = await bootScene([SettingsScene, PauseScene, MenuScene]);
+    await advanceGame(booted!.game, 150);
+    return booted!.game.scene.getScene('SettingsScene') as SettingsScene;
+  }
+
+  /** Moves focus from `volume` to a control label via ArrowDown. */
+  async function focusLabel(label: string): Promise<void> {
+    const scene = booted!.game.scene.getScene('SettingsScene') as SettingsScene;
+    const target = scene.getControlLabels().indexOf(label);
+    expect(target).toBeGreaterThanOrEqual(0);
+    for (let i = 0; i < target; i++) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+      await advanceGame(booted!.game, 20);
+    }
+    expect(scene.getFocusedLabel()).toBe(label);
+  }
+
+  async function press(key: string): Promise<void> {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key }));
+    await advanceGame(booted!.game, 20);
+  }
+
+  // ── AC1 — the control exists and is data-driven ─────────────────
+
+  it('AC1 — the Controls section shows a Control Scheme row in the focus order', async () => {
+    const scene = await bootSettings();
+
+    const labels = scene.getControlLabels();
+    expect(labels).toContain('controlScheme');
+    // Sits in the Controls section, before the binding rows (not in Audio).
+    expect(labels.indexOf('controlScheme')).toBeGreaterThan(labels.indexOf('mute'));
+    expect(labels.indexOf('controlScheme')).toBeLessThan(labels.indexOf('moveUp'));
+  });
+
+  it('AC1 — the options are exactly the exported CONTROL_SCHEMES union list', async () => {
+    const scene = await bootSettings();
+
+    // Cycling once through as many steps as there are schemes returns to the
+    // start: the row offers precisely the union-derived list, no more, no
+    // fewer, and in the documented order.
+    const start = scene.getControlScheme();
+    const seen = [start];
+    for (let i = 1; i < CONTROL_SCHEMES.length; i++) {
+      seen.push(scene.nextControlScheme());
+    }
+    expect(seen).toEqual([...CONTROL_SCHEMES]);
+    expect(scene.nextControlScheme()).toBe(start);
+  });
+
+  it('AC1 — the row announces the current value', async () => {
+    const scene = await bootSettings();
+    expect(scene.getControlScheme()).toBe('asteroids');
+    expect(scene.getControlSchemeRowText()).toContain('Asteroids');
+
+    scene.setControlScheme('fourDirectional');
+    expect(scene.getControlSchemeRowText()).toContain('Four Directional');
+  });
+
+  // ── AC5 — keyboard + pointer operable ───────────────────────────
+
+  it('AC5 — ArrowRight / ArrowLeft cycle and persist the scheme', async () => {
+    const scene = await bootSettings();
+    await focusLabel('controlScheme');
+
+    await press('ArrowRight');
+    expect(scene.getControlScheme()).toBe('fourDirectional');
+    expect(loadSettings().controlScheme).toBe('fourDirectional');
+    expect(scene.getControlSchemeRowText()).toContain('Four Directional');
+
+    await press('ArrowLeft');
+    expect(scene.getControlScheme()).toBe('asteroids');
+    expect(loadSettings().controlScheme).toBe('asteroids');
+  });
+
+  it('AC5 — Enter activates the focused row and persists the change', async () => {
+    const scene = await bootSettings();
+    await focusLabel('controlScheme');
+
+    await press('Enter');
+    expect(scene.getControlScheme()).toBe('fourDirectional');
+    expect(loadSettings().controlScheme).toBe('fourDirectional');
+  });
+
+  it('AC5 — a pointer click on the row activates and persists it', async () => {
+    const scene = await bootSettings();
+
+    scene.activateControlSchemeRow();
+
+    expect(scene.getControlScheme()).toBe('fourDirectional');
+    expect(loadSettings().controlScheme).toBe('fourDirectional');
+  });
+
+  it('AC5 — cycling wraps in both directions', async () => {
+    const scene = await bootSettings();
+    expect(scene.getControlScheme()).toBe(CONTROL_SCHEMES[0]);
+
+    scene.cycleControlScheme(-1);
+    expect(scene.getControlScheme()).toBe(
+      CONTROL_SCHEMES[CONTROL_SCHEMES.length - 1],
+    );
+
+    scene.cycleControlScheme(1);
+    expect(scene.getControlScheme()).toBe(CONTROL_SCHEMES[0]);
+  });
+
+  it('AC5 — the choice survives a reload', async () => {
+    const scene = await bootSettings();
+    scene.setControlScheme('fourDirectional');
+
+    booted!.game.destroy(true);
+    booted = null;
+    const scene2 = await bootSettings();
+
+    expect(scene2.getControlScheme()).toBe('fourDirectional');
+  });
+
+  it('AC5 — the other settings keep their values when the scheme changes', async () => {
+    const scene = await bootSettings();
+    scene.setVolume(0.35);
+    scene.rebind('moveUp', 'i');
+
+    scene.setControlScheme('fourDirectional');
+
+    const stored = loadSettings();
+    expect(stored.controlScheme).toBe('fourDirectional');
+    expect(stored.sfxVolume).toBe(0.35);
+    expect(stored.bindings.moveUp).toBe('i');
+  });
+
+  // ── AC6 — movement rows reflect the scheme ──────────────────────
+
+  it('AC6 — Asteroids labels the movement rows Thrust / Turn Left / Turn Right / Reverse', async () => {
+    const scene = await bootSettings();
+    scene.setControlScheme('asteroids');
+
+    expect(scene.getBindingRowText('moveUp')).toContain('Thrust');
+    expect(scene.getBindingRowText('moveDown')).toContain('Reverse');
+    expect(scene.getBindingRowText('moveLeft')).toContain('Turn Left');
+    expect(scene.getBindingRowText('moveRight')).toContain('Turn Right');
+  });
+
+  it('AC6 — four-directional labels the movement rows Move Up / Down / Left / Right', async () => {
+    const scene = await bootSettings();
+    scene.setControlScheme('fourDirectional');
+
+    expect(scene.getBindingRowText('moveUp')).toContain('Move Up');
+    expect(scene.getBindingRowText('moveDown')).toContain('Move Down');
+    expect(scene.getBindingRowText('moveLeft')).toContain('Move Left');
+    expect(scene.getBindingRowText('moveRight')).toContain('Move Right');
+  });
+
+  it('AC6 — both schemes share one binding set (no per-scheme storage)', async () => {
+    const scene = await bootSettings();
+
+    scene.setControlScheme('asteroids');
+    scene.rebind('moveUp', 'i');
+    expect(scene.getBindingRowText('moveUp')).toContain('i');
+
+    scene.setControlScheme('fourDirectional');
+    // The same binding value is shown under the four-directional label.
+    expect(scene.getBindingRowText('moveUp')).toContain('Move Up');
+    expect(scene.getBindingRowText('moveUp')).toContain('i');
+    expect(scene.getBinding('moveUp')).toBe('i');
+    expect(loadSettings().bindings.moveUp).toBe('i');
+    // A reload under either scheme sees the same single binding set.
+    expect(Object.keys(loadSettings().bindings).sort()).toEqual(
+      Object.keys(DEFAULT_BINDINGS).sort(),
+    );
+  });
+
+  it('AC6 — the pause row keeps its label under both schemes', async () => {
+    const scene = await bootSettings();
+    scene.setControlScheme('asteroids');
+    expect(scene.getBindingRowText('pauseToggle')).toContain('Pause');
+    scene.setControlScheme('fourDirectional');
+    expect(scene.getBindingRowText('pauseToggle')).toContain('Pause');
   });
 });

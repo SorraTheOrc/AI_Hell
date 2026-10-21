@@ -108,6 +108,33 @@ export function resolveControlScheme(stored: unknown): ControlScheme {
   return isControlScheme(stored) ? stored : DEFAULT_SETTINGS.controlScheme;
 }
 
+/**
+ * Reads the **raw** persisted `controlScheme` field, without defaulting.
+ *
+ * Returns `undefined` when nothing is stored, storage is unavailable, the
+ * stored JSON is corrupt, or the record has no such field — i.e. whenever the
+ * player has made no explicit choice. {@link loadSettings} deliberately
+ * normalises a missing field to the `asteroids` default, which cannot be told
+ * apart from a player explicitly choosing Asteroids; the effective-scheme
+ * resolver needs that distinction so the designer-owned ship-config value can
+ * apply when the player has not chosen (`AH-0MVI7LRCJ006Q8SA` AC3).
+ */
+export function loadStoredControlScheme(): unknown {
+  const store = storage();
+  if (!store) return undefined;
+  const raw = store.getItem(SETTINGS_STORAGE_KEY);
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown> | null;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined;
+    }
+    return parsed.controlScheme;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Ordered list of action names for iteration (e.g. SettingsScene lists). */
 export const ACTION_NAMES: ActionName[] = [
   'moveUp',

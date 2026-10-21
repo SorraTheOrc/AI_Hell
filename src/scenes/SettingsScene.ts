@@ -31,6 +31,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import {
   ACTION_NAMES,
+  CONTROL_SCHEMES,
   DEFAULT_BINDINGS,
   DEFAULT_SETTINGS,
   findConflict,
@@ -39,6 +40,7 @@ import {
   saveSettings,
   type ActionName,
 } from '../core/settingsStore';
+import type { ControlScheme } from '../core/configTypes';
 import { playVolumeFeedback, setSfxMuted, setSfxVolume } from '../audio/effects';
 import {
   DEFAULT_TELEMETRY_CONSENT,
@@ -79,6 +81,50 @@ const ACTION_DISPLAY_NAMES: Record<ActionName, string> = {
   moveRight: 'Move Right',
   pauseToggle: 'Pause',
 };
+
+/**
+ * Human-readable scheme names for the Control Scheme row. Exhaustive over the
+ * `ControlScheme` union, so a scheme added to the union fails the build here
+ * until it is named — but the *options* themselves come from the ordered
+ * `CONTROL_SCHEMES` list, never from a per-scheme UI branch (AC1).
+ */
+const CONTROL_SCHEME_DISPLAY_NAMES: Record<ControlScheme, string> = {
+  asteroids: 'Asteroids',
+  fourDirectional: 'Four Directional',
+};
+
+/**
+ * Movement-row labels per scheme (AC6). The same single binding set is shown
+ * under whichever labels the selected scheme gives it — Asteroids reuses the
+ * four movement bindings as Thrust / Turn Left / Turn Right / Reverse. Actions
+ * absent from a scheme's map (e.g. `pauseToggle`) keep
+ * {@link ACTION_DISPLAY_NAMES}.
+ */
+const MOVEMENT_ROW_LABELS: Record<
+  ControlScheme,
+  Partial<Record<ActionName, string>>
+> = {
+  asteroids: {
+    moveUp: 'Thrust',
+    moveDown: 'Reverse',
+    moveLeft: 'Turn Left',
+    moveRight: 'Turn Right',
+  },
+  fourDirectional: {
+    moveUp: 'Move Up',
+    moveDown: 'Move Down',
+    moveLeft: 'Move Left',
+    moveRight: 'Move Right',
+  },
+};
+
+/**
+ * The label for `action` under `scheme` — scheme-specific for the movement
+ * rows, the shared display name otherwise (AC6).
+ */
+function actionLabel(action: ActionName, scheme: ControlScheme): string {
+  return MOVEMENT_ROW_LABELS[scheme][action] ?? ACTION_DISPLAY_NAMES[action];
+}
 
 /** Keys that should not be captured as a binding. */
 const NON_CAPTURABLE_KEYS = new Set([
@@ -138,6 +184,8 @@ export class SettingsScene extends Phaser.Scene {
   private conflictText!: Phaser.GameObjects.Text;
   private captureText!: Phaser.GameObjects.Text;
   private bindingRows = new Map<ActionName, Phaser.GameObjects.Text>();
+  /** The Control Scheme row text (Controls section, above the bindings). */
+  private controlSchemeText!: Phaser.GameObjects.Text;
   private dragging = false;
   /** Action currently awaiting a key press, or null when not capturing. */
   private capturing: ActionName | null = null;
@@ -210,6 +258,15 @@ export class SettingsScene extends Phaser.Scene {
       ...(this.devTelemetryAvailable
         ? [{ label: 'telemetryDev', activate: () => this.toggleShareTelemetryDev() }]
         : []),
+      // Control scheme (AH-0MVI7LRCJ006Q8SA): Left/Right and Enter/click all
+      // advance the selection; the change persists immediately and applies to
+      // the next ship spawn/run (never mid-run).
+      {
+        label: 'controlScheme',
+        onLeft: () => this.cycleControlScheme(-1),
+        onRight: () => this.cycleControlScheme(1),
+        activate: () => this.cycleControlScheme(1),
+      },
       ...ACTION_NAMES.map((action) => ({
         label: action,
         activate: () => this.beginCapturing(action),
@@ -221,6 +278,7 @@ export class SettingsScene extends Phaser.Scene {
     this._drawSlider();
     this._drawMute();
     this._drawTelemetry();
+    this._drawControlScheme();
     this._drawBindings();
     this._setFocus(0);
 
@@ -333,11 +391,26 @@ export class SettingsScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
+    // Control Scheme row — the first Controls row, so the binding rows below
+    // it read in the context of the selected scheme (AC1/AC5/AC6).
+    this.controlSchemeText = this.add
+      .text(CONTROLS_COL_X, CONTROLS_ROW_Y, '', {
+        fontFamily: 'monospace',
+        fontSize: '16px',
+        color: SETTINGS_DIM_COLOR,
+        backgroundColor: '#111111',
+        padding: { x: 10, y: 4 },
+      })
+      .setOrigin(0.5);
+    this.controlSchemeText.setInteractive({ useHandCursor: true });
+    this.controlSchemeText.on('pointerdown', () => this.activateControlSchemeRow());
+    this.focusStyles.set('controlScheme', this.controlSchemeText);
+
     ACTION_NAMES.forEach((action, i) => {
       const row = this.add
         .text(
           CONTROLS_COL_X,
-          CONTROLS_ROW_Y + i * CONTROLS_ROW_GAP,
+          CONTROLS_ROW_Y + (i + 1) * CONTROLS_ROW_GAP,
           '',
           {
             fontFamily: 'monospace',
@@ -427,8 +500,16 @@ export class SettingsScene extends Phaser.Scene {
   private _drawBindings(): void {
     for (const action of ACTION_NAMES) {
       const row = this.bindingRows.get(action);
-      if (row) row.text = `${ACTION_DISPLAY_NAMES[action]} — ${this.bindings[action]}`;
+      if (row) {
+        row.text = `${actionLabel(action, this.controlScheme)} — ${this.bindings[action]}`;
+      }
     }
+  }
+
+  private _drawControlScheme(): void {
+    this.controlSchemeText.text = `Control Scheme: ${
+      CONTROL_SCHEME_DISPLAY_NAMES[this.controlScheme]
+    }  ◀ ▶`;
   }
 
   // ── Audio actions ───────────────────────────────────────────────
@@ -558,7 +639,7 @@ export class SettingsScene extends Phaser.Scene {
     this.capturing = action;
     this.conflictText.setVisible(false);
     this.captureText
-      .setText(`Press a key for ${ACTION_DISPLAY_NAMES[action]}…`)
+      .setText(`Press a key for ${actionLabel(action, this.controlScheme)}…`)
       .setVisible(true);
     const index = this.controls.findIndex((c) => c.label === action);
     if (index >= 0) this._setFocus(index);
@@ -586,10 +667,71 @@ export class SettingsScene extends Phaser.Scene {
     this._showConflict(null, '');
   }
 
+  // ── Control scheme actions (AH-0MVI7LRCJ006Q8SA) ──────────────
+
+  /** The player's selected control scheme (persisted). */
+  getControlScheme(): ControlScheme {
+    return this.controlScheme;
+  }
+
+  /**
+   * Sets the player's control scheme, redrawing the row and the scheme-aware
+   * movement labels and persisting the choice. A no-op when the value is
+   * unchanged, so an accidental re-activation never rewrites storage. The
+   * change applies to the next run/ship spawn, never the current one.
+   */
+  setControlScheme(scheme: ControlScheme): void {
+    if (scheme === this.controlScheme) return;
+    this.controlScheme = scheme;
+    this._drawControlScheme();
+    this._drawBindings();
+    this._persist();
+  }
+
+  /**
+   * Moves the selection by `delta` places through the ordered
+   * `CONTROL_SCHEMES` list, wrapping at both ends (AC5). Returns the new
+   * scheme.
+   */
+  cycleControlScheme(delta: number): ControlScheme {
+    const count = CONTROL_SCHEMES.length;
+    const current = CONTROL_SCHEMES.indexOf(this.controlScheme);
+    const next = CONTROL_SCHEMES[(((current + delta) % count) + count) % count];
+    this.setControlScheme(next);
+    return this.controlScheme;
+  }
+
+  /** Advances to the next scheme in the list and returns it. */
+  nextControlScheme(): ControlScheme {
+    return this.cycleControlScheme(1);
+  }
+
+  /** Pointer activation of the Control Scheme row (same as Enter). */
+  activateControlSchemeRow(): ControlScheme {
+    return this.nextControlScheme();
+  }
+
+  /**
+   * The rendered Control Scheme row text, e.g. `Control Scheme: Asteroids`
+   * (AC5 — the selected value is announced in the row).
+   */
+  getControlSchemeRowText(): string {
+    return this.controlSchemeText.text;
+  }
+
+  /**
+   * The rendered binding row text for `action` under the current scheme
+   * (AC6 — proves the movement labels follow the selected scheme over the
+   * shared binding set).
+   */
+  getBindingRowText(action: ActionName): string {
+    return this.bindingRows.get(action)?.text ?? '';
+  }
+
   private _showConflict(conflict: ActionName | null, key: string): void {
     if (conflict) {
       this.conflictText
-        .setText(`⚠ '${key}' is also used by ${ACTION_DISPLAY_NAMES[conflict]}`)
+        .setText(`⚠ '${key}' is also used by ${actionLabel(conflict, this.controlScheme)}`)
         .setVisible(true);
     } else {
       this.conflictText.setText('').setVisible(false);
