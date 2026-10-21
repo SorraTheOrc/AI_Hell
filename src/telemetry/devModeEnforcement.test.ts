@@ -52,11 +52,15 @@ const DEV_CONSUMER_MARKERS = ['TELEMETRY_JSONL_STORAGE_KEY', 'ai_hell_telemetry_
 /**
  * Sites that *name* the markers without acting on them: the sink defines the
  * storage key, and the barrel re-exports it. Neither decides or performs a
- * dev-telemetry action, so neither needs the gate.
+ * dev-telemetry action, so neither needs the gate. The dev-server upload
+ * middleware (Node-only, never shipped in the bundle) likewise *declares* the
+ * endpoint it serves; its dev-only-ness is enforced by the `apply: 'serve'`
+ * scan below and the bundle-hygiene marker.
  */
 const DECLARATION_SITES: ReadonlySet<string> = new Set([
   'src/telemetry/sinks.ts',
   'src/telemetry/index.ts',
+  'vite/plugins/telemetryUploadPlugin.ts',
 ]);
 
 /** Production source roots scanned for dev-telemetry decisions. */
@@ -274,6 +278,21 @@ describe('dev-only telemetry gate — consumers (AC3a)', () => {
 
     expect(ungatedDevTelemetryConsumers(files)).toEqual([]);
     expect(ungatedDevTelemetryConsumers(files, new Set())).toEqual(['src/telemetry/sinks.ts']);
+  });
+
+  it('exempts the Node-only dev upload middleware that declares the endpoint', () => {
+    const files = [
+      fixture(
+        'vite/plugins/telemetryUploadPlugin.ts',
+        `export const TELEMETRY_UPLOAD_PATH = '${DEV_UPLOAD_ENDPOINT}';`,
+      ),
+    ];
+
+    expect(ungatedDevTelemetryConsumers(files)).toEqual([]);
+    // The exemption is load-bearing: without it the plugin is flagged.
+    expect(ungatedDevTelemetryConsumers(files, new Set())).toEqual([
+      'vite/plugins/telemetryUploadPlugin.ts',
+    ]);
   });
 });
 
