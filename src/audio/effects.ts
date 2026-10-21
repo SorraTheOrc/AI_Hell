@@ -34,6 +34,7 @@ import {
   cueAssetUrl,
   cueSeeds,
 } from './cueManifest';
+import { cueVoiceLimiter } from './cueVoiceLimiter';
 import {
   WebAudioSfxProvider,
   webAudioSfxProvider,
@@ -150,6 +151,14 @@ function playCue(
   cue: string,
   options: SfxPlayOptions & { seed?: number } = {},
 ): SfxSoundHandle | null {
+  // Per-cue concurrent-voice cap (AH-0MVH8RQR7007QG8E): a dense firefight or
+  // mass kill can dispatch dozens of identical cues in one instant, which
+  // clips the mix. Requests beyond the cap are dropped here, at the single
+  // funnel every cue uses, so the game and every gym are limited identically.
+  // Beat-scheduled accents (`delay`) are exempt: they are already capped per
+  // accent tick (`EXPLOSION_PER_TICK_CAP`) and are dispatched together, so
+  // applying the concurrency window would drop the tail of a valid accent.
+  if (!options.delay && !cueVoiceLimiter.allow(cue)) return null;
   const seed = options.seed ?? pickCueSeed(cue);
   const url = cueAssetUrl(cue, seed);
   if (url === undefined) return null;
@@ -886,6 +895,7 @@ export function playVolumeFeedback(volume: number): void {
  */
 export function _resetAudioContextForTests(): void {
   provider = webAudioSfxProvider;
+  cueVoiceLimiter.reset();
   webAudioSfxProvider.reset();
   resetThrusterHumForTests();
   diveSound = null;

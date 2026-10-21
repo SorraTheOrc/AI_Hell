@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as effects from './effects';
+import { MAX_CONCURRENT_CUE_VOICES } from './cueVoiceLimiter';
 import {
   CUE_MANIFEST,
   RETIRED_CUES,
@@ -781,5 +782,19 @@ describe('headless no-op', () => {
     expect(() => effects.setSfxVolume(0.5)).not.toThrow();
     expect(() => effects.setSfxMuted(true)).not.toThrow();
     expect(effects.getAudioContext()).toBeNull();
+  });
+});
+
+describe('per-cue concurrent-voice cap (AH-0MVH8RQR7007QG8E)', () => {
+  it('a burst of one cue dispatches at most the cap to the provider', () => {
+    // The suite's beforeEach installs the recording provider and the shared
+    // limiter is cleared by _resetAudioContextForTests between cases.
+    const bursts = MAX_CONCURRENT_CUE_VOICES + 12;
+    for (let i = 0; i < bursts; i += 1) effects.playWeaponFireSound('cannon');
+    expect(recording.plays.length).toBe(MAX_CONCURRENT_CUE_VOICES);
+
+    // Another cue still has its own independent budget.
+    effects.playWeaponFireSound('spread');
+    expect(recording.plays.length).toBe(MAX_CONCURRENT_CUE_VOICES + 1);
   });
 });
