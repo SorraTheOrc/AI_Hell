@@ -29,12 +29,36 @@
  *   `Content-Length` or discovered while streaming the request body.
  * - File names are collision-safe: an upload never overwrites an existing
  *   file; when the timestamped name is occupied a numeric suffix is used.
+ * - After a successful store the human evaluation pipeline
+ *   (`scripts/evaluate.mjs --human <file> --out <dir>`) is triggered
+ *   **asynchronously** as a spawned child process (AH-0MVBMRO27008KRZ0), so
+ *   the HTTP response returns immediately and the dev server never blocks on
+ *   the evaluation. The existing `npm run record` / `npm run evaluate --
+ *   --human` flows are unchanged — the CLI is reused as-is.
+ *
+ * ## Background evaluation rules (pinned by the same test suite)
+ *
+ * - Each stored recording enqueues one evaluation whose output lands in a
+ *   timestamped directory under `eval-output/uploaded/<session-stamp>/`; the
+ *   child's stdout/stderr are appended to `evaluation.log` in that directory.
+ * - Evaluations are **serialised** ({@link DEFAULT_MAX_CONCURRENT_EVALUATIONS}),
+ *   so a burst of uploads cannot spawn unbounded child processes.
+ * - Start, exit code and a completion summary line are logged. A spawn error
+ *   or non-zero exit is caught and logged; the dev server is never crashed and
+ *   the remaining queued evaluations continue.
  *
  * @module vite/plugins/telemetryUploadPlugin
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawn as spawnChildProcess } from 'node:child_process';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin, ViteDevServer } from 'vite';
 
@@ -57,6 +81,244 @@ export const DEFAULT_MAX_UPLOAD_BYTES = 16 * 1024 * 1024;
 /** Collision-safety attempts before giving up on a unique file name. */
 const MAX_NAME_ATTEMPTS = 100;
 
+/** Timestamped per-recording output roots live under this directory. */
+export const EVALUATION_OUTPUT_DIR = 'eval-output/uploaded';
+
+/** File name of the per-evaluation log inside its output directory. */
+export const EVALUATION_LOG_FILE = 'evaluation.log';
+
+/** Evaluations run one at a time by default (bounded child processes). */
+export const DEFAULT_MAX_CONCURRENT_EVALUATIONS = 1;
+
+/** Longest completion-summary line echoed from the evaluation log. */
+const MAX_SUMMARY_LENGTH = 160;
+
+/** One queued human evaluation run. */
+export interface EvaluationJob {
+  /** Absolute path to the stored recording passed to `--human`. */
+  readonly recordingPath: string;
+  /** Absolute output directory passed to `--out`. */
+  readonly outputDir: string;
+  /** File the child's stdout/stderr is appended to. */
+  readonly logPath: string;
+}
+
+/** The child-process surface the queue needs (a subset of `ChildProcess`). */
+export interface EvaluationChildProcess {
+  on(
+    event: 'exit',
+    listener: (code: number | null, signal: string | null) => void,
+  ): unknown;
+  on(event: 'error', listener: (error: Error) => void): unknown;
+}
+
+/** Arguments the queue hands to the injected spawn implementation. */
+export interface EvaluationSpawnRequest {
+  /** The Node binary used to run the evaluation CLI. */
+  readonly command: string;
+  /** CLI arguments (`<script> --human <file> --out <dir>`). */
+  readonly args: readonly string[];
+  /** Working directory the child runs in. */
+  readonly cwd: string;
+  /** File the child's stdout/stderr is appended to (created if absent). */
+  readonly logPath: string;
+}
+
+/** Injectable spawn dependency (tests inject a spy; default is real spawn). */
+export type SpawnEvaluation = (
+  request: EvaluationSpawnRequest,
+) => EvaluationChildProcess;
+
+/** Default spawn: detached child whose output is appended to `logPath`. */
+export const defaultSpawnEvaluation: SpawnEvaluation = (request) => {
+  mkdirSync(dirname(request.logPath), { recursive: true });
+  const logFd = openSync(request.logPath, 'a');
+  try {
+    const stdio: Array<'ignore' | number> = ['ignore', logFd, logFd];
+    const child = spawnChildProcess(request.command, [...request.args], {
+      cwd: request.cwd,
+      detached: true,
+      stdio,
+    });
+    // Let the dev server exit without waiting on the evaluation.
+    child.unref();
+    return child as unknown as EvaluationChildProcess;
+  } finally {
+    closeSync(logFd);
+  }
+};
+
+/** Default lifecycle logger (dev-server console). */
+const defaultEvaluationLog = (message: string): void => {
+  console.info(`[telemetry-evaluation] ${message}`);
+};
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Reads the last non-empty line of an evaluation log as its summary.
+ * Best-effort: a missing/unreadable log yields `null` (never throws).
+ */
+export function readEvaluationSummary(logPath: string): string | null {
+  try {
+    const lines = readFileSync(logPath, 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const last = lines[lines.length - 1];
+    if (!last) return null;
+    return last.length > MAX_SUMMARY_LENGTH
+      ? `${last.slice(0, MAX_SUMMARY_LENGTH)}…`
+      : last;
+  } catch {
+    return null;
+  }
+}
+
+export interface EvaluationQueueOptions {
+  /** Project root the evaluation runs against (child cwd). */
+  readonly root: string;
+  /** Absolute path to the evaluation CLI script. */
+  readonly scriptPath: string;
+  /** Spawn implementation (injected for tests). */
+  readonly spawnEvaluation: SpawnEvaluation;
+  /** Maximum concurrent child processes (clamped to at least 1). */
+  readonly maxConcurrent?: number;
+  /** Lifecycle logger. */
+  readonly log?: (message: string) => void;
+}
+
+/**
+ * Serialises background evaluations and logs their lifecycle.
+ *
+ * Enqueuing a job never blocks: it starts immediately when a slot is free,
+ * otherwise it waits in FIFO order. A spawn error or non-zero exit is logged
+ * and the queue moves on to the next job — a failed evaluation can never take
+ * down the dev server or strand the queue.
+ */
+export class EvaluationQueue {
+  private readonly root: string;
+  private readonly scriptPath: string;
+  private readonly spawnEvaluation: SpawnEvaluation;
+  private readonly maxConcurrent: number;
+  private readonly log: (message: string) => void;
+  private readonly pending: EvaluationJob[] = [];
+  private readonly idleWaiters: Array<() => void> = [];
+  private active = 0;
+  private lastFailure: string | null = null;
+
+  constructor(options: EvaluationQueueOptions) {
+    this.root = options.root;
+    this.scriptPath = options.scriptPath;
+    this.spawnEvaluation = options.spawnEvaluation;
+    this.maxConcurrent = Math.max(1, Math.trunc(options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT_EVALUATIONS));
+    this.log = options.log ?? defaultEvaluationLog;
+  }
+
+  /** Number of child processes currently running. */
+  get activeCount(): number {
+    return this.active;
+  }
+
+  /** Number of jobs waiting for a slot. */
+  get pendingCount(): number {
+    return this.pending.length;
+  }
+
+  /** The most recent failure message, if any. */
+  get lastError(): string | null {
+    return this.lastFailure;
+  }
+
+  /** Adds a job and starts it when a concurrency slot is free. */
+  enqueue(job: EvaluationJob): void {
+    this.pending.push(job);
+    this.startNext();
+  }
+
+  /** Resolves once every queued and active evaluation has settled. */
+  whenIdle(): Promise<void> {
+    if (this.active === 0 && this.pending.length === 0) return Promise.resolve();
+    return new Promise((resolveIdle) => {
+      this.idleWaiters.push(resolveIdle);
+    });
+  }
+
+  private startNext(): void {
+    while (this.active < this.maxConcurrent && this.pending.length > 0) {
+      const job = this.pending.shift();
+      if (job) this.run(job);
+    }
+  }
+
+  private run(job: EvaluationJob): void {
+    this.active += 1;
+    let settled = false;
+    const settle = (message: string, failed: boolean): void => {
+      if (settled) return;
+      settled = true;
+      if (failed) this.lastFailure = message;
+      this.log(message);
+      this.active -= 1;
+      this.startNext();
+      this.resolveIdleIfIdle();
+    };
+
+    this.log(
+      `evaluation started: ${job.recordingPath} → ${job.outputDir} (log: ${job.logPath})`,
+    );
+
+    let child: EvaluationChildProcess;
+    try {
+      child = this.spawnEvaluation({
+        command: process.execPath,
+        args: [
+          this.scriptPath,
+          '--human',
+          job.recordingPath,
+          '--out',
+          job.outputDir,
+        ],
+        cwd: this.root,
+        logPath: job.logPath,
+      });
+    } catch (error) {
+      settle(
+        `evaluation failed to spawn for ${job.recordingPath}: ${describeError(error)}`,
+        true,
+      );
+      return;
+    }
+
+    child.on('error', (error) => {
+      settle(
+        `evaluation failed for ${job.recordingPath}: ${describeError(error)}`,
+        true,
+      );
+    });
+
+    child.on('exit', (code, signal) => {
+      const succeeded = code === 0;
+      let message = succeeded
+        ? `evaluation finished for ${job.recordingPath}: exit code 0`
+        : `evaluation failed for ${job.recordingPath}: exit code ${code === null ? 'null' : code}`;
+      if (!succeeded && signal) message += ` (signal ${signal})`;
+      if (succeeded) {
+        const summary = readEvaluationSummary(job.logPath);
+        if (summary) message += ` — ${summary}`;
+      }
+      settle(message, !succeeded);
+    });
+  }
+
+  private resolveIdleIfIdle(): void {
+    if (this.active !== 0 || this.pending.length !== 0) return;
+    for (const waiter of this.idleWaiters.splice(0)) waiter();
+  }
+}
+
 export interface TelemetryUploadPluginOptions {
   /** Project root the `recordings/` directory resolves against.
    * Defaults to `process.cwd()`. */
@@ -64,6 +326,14 @@ export interface TelemetryUploadPluginOptions {
   /** Maximum accepted request body size in bytes
    * (defaults to {@link DEFAULT_MAX_UPLOAD_BYTES}). */
   maxBytes?: number;
+  /** Injected evaluation spawn (tests); defaults to
+   * {@link defaultSpawnEvaluation}. */
+  spawnEvaluation?: SpawnEvaluation;
+  /** Maximum concurrent evaluations (default
+   * {@link DEFAULT_MAX_CONCURRENT_EVALUATIONS} — serialised). */
+  maxConcurrentEvaluations?: number;
+  /** Lifecycle logger for background evaluations. */
+  log?: (message: string) => void;
 }
 
 export type TelemetryUploadValidation =
@@ -218,6 +488,8 @@ function storeRecording(recordingsDir: string, body: string): string {
 function handleUpload(
   root: string,
   maxBytes: number,
+  evaluationQueue: EvaluationQueue,
+  log: (message: string) => void,
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
@@ -237,9 +509,26 @@ function handleUpload(
       }
       const recordingsDir = join(root, RECORDINGS_DIR);
       const fileName = storeRecording(recordingsDir, result.body);
+      const storedPath = `${RECORDINGS_DIR}/${fileName}`;
+      // Fire-and-forget: enqueue first, respond after — the spawn itself is
+      // non-blocking and never awaited, so the game gets its 2xx immediately.
+      // A failure here must never fail the upload, so it is caught and logged.
+      try {
+        const runName = basename(fileName, '.jsonl');
+        const outputDir = join(root, EVALUATION_OUTPUT_DIR, runName);
+        evaluationQueue.enqueue({
+          recordingPath: join(root, storedPath),
+          outputDir,
+          logPath: join(outputDir, EVALUATION_LOG_FILE),
+        });
+      } catch (err) {
+        log(
+          `evaluation enqueue failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       sendJson(res, 200, {
         ok: true,
-        storedPath: `${RECORDINGS_DIR}/${fileName}`,
+        storedPath,
         recordCount: validation.recordCount,
         runCount: validation.runCount,
       });
@@ -268,12 +557,24 @@ function isDevServer(server: ViteDevServer): boolean {
  * @param options.root — project root (defaults to `process.cwd()`).
  * @param options.maxBytes — upload body size limit
  *   (defaults to {@link DEFAULT_MAX_UPLOAD_BYTES}).
+ * @param options.spawnEvaluation — injectable evaluation spawn (tests);
+ *   defaults to {@link defaultSpawnEvaluation}.
+ * @param options.maxConcurrentEvaluations — concurrent evaluation cap.
+ * @param options.log — background-evaluation lifecycle logger.
  */
 export function telemetryUploadPlugin(
   options: TelemetryUploadPluginOptions = {},
 ): Plugin {
   const root = options.root ?? process.cwd();
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_UPLOAD_BYTES;
+  const log = options.log ?? defaultEvaluationLog;
+  const evaluationQueue = new EvaluationQueue({
+    root,
+    scriptPath: resolve(root, 'scripts', 'evaluate.mjs'),
+    spawnEvaluation: options.spawnEvaluation ?? defaultSpawnEvaluation,
+    maxConcurrent: options.maxConcurrentEvaluations,
+    log,
+  });
 
   return {
     name: 'ai-hell:telemetry-upload',
@@ -295,7 +596,7 @@ export function telemetryUploadPlugin(
           });
           return;
         }
-        handleUpload(root, maxBytes, req, res);
+        handleUpload(root, maxBytes, evaluationQueue, log, req, res);
       });
     },
   };
