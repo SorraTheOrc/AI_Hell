@@ -64,6 +64,39 @@ npm run record -- --bot --seed 12345 --output recordings/bot.jsonl
 npm run replay  -- recordings/human.jsonl --bot-file recordings/bot.jsonl --svg ghost.svg
 ```
 
+### Automatic dev-mode upload and automatic evaluation at run end
+
+> Landed in **Dev-mode telemetry upload to dev server with automatic evaluation**
+> (AH-0MVBHRLY8004BGDN; docs slice AH-0MVBMRR4R004UOLH). See
+> [../TELEMETRY.md#dev-mode-auto-upload-and-automatic-evaluation-dev-builds-only](../TELEMETRY.md)
+> for the full contract.
+
+A **stock** `npm run dev` (no `VITE_TELEMETRY_*` variables) is enough for the
+recording + evaluation loop: the game collects the run into the local JSONL
+sink by default (Settings → **Share with dev server: ON**, see
+[../TELEMETRY.md](../TELEMETRY.md)) and at run end POSTs the sink content to the
+dev server's `POST /api/telemetry/upload`. The dev-only middleware
+(`vite/plugins/telemetryUploadPlugin.ts`) validates the body against the
+recording reader, stores it as a collision-safe `recordings/session-<timestamp>.jsonl`,
+then runs the existing `--human` evaluation as a background, serialised child
+process:
+
+```
+recordings/session-<timestamp>.jsonl
+                      └→ eval-output/uploaded/<session-stamp>/
+                           ├── evaluation.log          (child stdout/stderr, summary)
+                           ├── human-balance-report.json
+                           ├── comparison.json         (same-seed human vs bot)
+                           └── ghost.svg
+```
+
+The upload and the evaluation are fire-and-forget: run end, the upload response
+and the dev server never block on them, and the local sink is left intact so the
+`npm run record` / `npm run telemetry:inspect` / `npm run replay` flows above
+keep working. Turning the setting off stops both collection and upload. None of
+this is reachable from a production build — see the TELEMETRY docs section
+linked above.
+
 ## 2. Dataset format and versioning (AC4)
 
 A recording is newline-delimited JSON. Each line is one schema-versioned
