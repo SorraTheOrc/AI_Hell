@@ -229,7 +229,7 @@ import {
   advancePlayerBullets,
   advanceWrappingBullets,
 } from './core/bulletLifecycle';
-import { resolveMineralKillDrops } from './core/mineralKillDrops';
+import { resolveMineralKillDrops, scatterMineralDrops } from './core/mineralKillDrops';
 import {
   rollAsteroidExtraLife,
   type AsteroidKillDropEntity,
@@ -3171,7 +3171,11 @@ export class PlayScene extends CombatScene<
     // Shared projectile lifecycle: enemy bullets wrap at all four edges and
     // expire by lifetime; player bullets advance through the same shared
     // `advanceAndCull` path every scene uses (AH-0MUII3CF00024EDM, gap 3).
-    advanceWrappingBullets(this.enemyBullets, dt, GAME_WIDTH, GAME_HEIGHT);
+    // Chrono Field (AH-0MVH80ZJ7009W18Z) scales the enemy-bullet time step
+    // while its window is active; player bullets are never slowed.
+    const enemyDt =
+      dt * this.effectsRegistry.enemyBulletTimeScale();
+    advanceWrappingBullets(this.enemyBullets, enemyDt, GAME_WIDTH, GAME_HEIGHT);
     this.playerBullets = advancePlayerBullets(this.playerBullets, dt);
   }
 
@@ -3220,7 +3224,11 @@ export class PlayScene extends CombatScene<
         // phase hit; the blast damages the boss through `onAoeHitsBoss`.
         this.detonateAoeProjectile(pb);
       } else {
-        this._damageBoss(pb.x, pb.y);
+        // Frenzy amplifies each bullet into `1 + bonus` phase hits
+        // (AH-0MVH80ZJ7009W18Z); the damage path stops once the boss dies.
+        for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+          this._damageBoss(pb.x, pb.y);
+        }
       }
       pb.destroy();
       return true;
@@ -3230,7 +3238,9 @@ export class PlayScene extends CombatScene<
       if (pb.aoeWeapon) {
         this.detonateAoeProjectile(pb);
       } else {
-        this._damageMiniBoss(pb.x, pb.y);
+        for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+          this._damageMiniBoss(pb.x, pb.y);
+        }
       }
       pb.destroy();
       return true;
@@ -3263,11 +3273,15 @@ export class PlayScene extends CombatScene<
     radius: number,
   ): boolean {
     if (this._aoeHitsEntity(x, y, radius, this.boss)) {
-      this._damageBoss(x, y);
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageBoss(x, y);
+      }
       return true;
     }
     if (this._aoeHitsEntity(x, y, radius, this.miniBoss)) {
-      this._damageMiniBoss(x, y);
+      for (let hit = 0; hit <= this.effectsRegistry.frenzyBonusHits(); hit += 1) {
+        this._damageMiniBoss(x, y);
+      }
       return true;
     }
     return false;
@@ -3387,6 +3401,15 @@ export class PlayScene extends CombatScene<
     this.minerals.push(
       ...resolveMineralKillDrops(this, s.entity, this.rng),
     );
+    // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
+    // the wreck of a destroyed enemy ship (hazards excluded — they are not
+    // bounty targets).
+    const salvageBonus = this.effectsRegistry.salvageBonusMinerals();
+    if (salvageBonus > 0 && !isNonBlockingHazard(s.enemyKey)) {
+      this.minerals.push(
+        ...scatterMineralDrops(this, s.entity.x, s.entity.y, salvageBonus, this.rng),
+      );
+    }
     // Non-blocking hazards (asteroids, lane traffic) are not wave-accounted
     // (AH-0MUJM746P000QAEO, AH-0MV01EPM40008N8T): destroying one must not
     // advance the wave. Only non-hazard enemy ships drive wave/level/boss

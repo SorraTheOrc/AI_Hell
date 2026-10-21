@@ -7025,6 +7025,153 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(scene.children.list.includes(healthBar as unknown as Phaser.GameObjects.GameObject)).toBe(false);
   });
 
+  it('AH-0MVH80ZJ7009W18Z — Frenzy amplifies each boss-style hit', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const miniBoss = scene.getMiniBoss()!;
+    const registry = scene.getEffectsRegistry();
+    // Permanent Frenzy at its base level (1 bonus hit).
+    registry.applyCollect('frenzy', true);
+    expect(registry.frenzyBonusHits()).toBe(1);
+
+    const totalHp =
+      miniBoss.resolvedConfig.hpPerPhase * miniBoss.getPhaseCount();
+    const before = miniBoss.getHpFraction() * totalHp;
+
+    // One isolated bullet (auto-fire and other enemies disabled).
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.getEnemyEntities = () => [];
+    isolated.autoFireEnabled = () => false;
+    try {
+      scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+      scene.tick(0);
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+
+    const after = miniBoss.getHpFraction() * totalHp;
+    // One shot consumes 1 + bonus hits (2), not 1.
+    expect(Math.round(before - after)).toBe(2);
+  });
+
+  it('AH-0MVH80ZJ7009W18Z — Chrono Field slows enemy bullets while active', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    const baseline = scene.spawnEnemyBullet(100, 100, 100, 0, 0xff0000, 5);
+    scene.tick(1);
+    const normalStep = baseline.graphics.x - 100;
+    expect(normalStep).toBeCloseTo(100, 1);
+
+    registry.applyCollect('chrono', true);
+    const slowed = scene.spawnEnemyBullet(100, 100, 100, 0, 0xff0000, 5);
+    scene.tick(1);
+    const slowedStep = slowed.graphics.x - 100;
+    // Default chronoSlowFactor 0.5 → the bullet advances at half speed.
+    expect(slowedStep).toBeCloseTo(normalStep * registry.enemyBulletTimeScale(), 1);
+    expect(slowedStep).toBeLessThan(normalStep);
+  });
+
+  it('AH-0MVH80ZJ7009W18Z — Thorn Field absorbs a ram instead of costing a life', async () => {
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    const livesBefore = scene.getGameState().lives;
+    // The player's own fire must not destroy the ram target first.
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    scene.finishSpawnAnimations();
+
+    scene.getEffectsRegistry().applyCollect('thorns', true);
+    const charges = scene.getEffectsRegistry().thornsRemaining();
+    expect(charges).toBeGreaterThan(0);
+
+    // Park the ship on the first live enemy (movement state spread so physics
+    // does not pull it away before the collision pass).
+    const target = scene.getEnemies().find((e) => e.alive)!;
+    player.setPosition(target.x, target.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: typeof state })._movementState = {
+      ...state,
+      x: target.x,
+      y: target.y,
+    };
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+
+    const ramSpy = vi.spyOn(
+      scene as unknown as { onPlayerRamsEnemy: (e: unknown) => void },
+      'onPlayerRamsEnemy',
+    );
+    scene.tick(0.001);
+
+    // The ram registered on a live enemy and was absorbed: the rammed enemy
+    // is destroyed, the player loses no life and one charge is consumed.
+    expect(ramSpy).toHaveBeenCalledTimes(1);
+    const victim = ramSpy.mock.calls[0][0] as { alive: boolean };
+    expect(victim.alive).toBe(false);
+    expect(scene.getGameState().lives).toBe(livesBefore);
+    expect(scene.getEffectsRegistry().thornsRemaining()).toBe(charges - 1);
+  });
+
+  it('AH-0MVH80ZJ7009W18Z — Salvage adds bonus minerals at a destroyed enemy', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    scene.finishSpawnAnimations();
+    const enemies = scene.getEnemies().filter((e) => e.alive);
+
+    // Control: one kill with no Salvage window.
+    const before = scene.getMinerals().length;
+    scene.spawnPlayerBullet(enemies[0].x, enemies[0].y, 0, 0);
+    scene.tick(0);
+    const controlDrops = scene.getMinerals().length - before;
+
+    // Level Salvage up so the bonus dominates the ≤1-mineral base drop.
+    for (let i = 0; i < 8; i += 1) registry.applyCollect('salvage', true);
+    const bonus = registry.salvageBonusMinerals();
+    expect(bonus).toBeGreaterThanOrEqual(3);
+
+    // Salvaged: the same single kill now also drops the bonus bounty.
+    const beforeSalvage = scene.getMinerals().length;
+    scene.spawnPlayerBullet(enemies[1].x, enemies[1].y, 0, 0);
+    scene.tick(0);
+    const salvagedDrops = scene.getMinerals().length - beforeSalvage;
+
+    expect(salvagedDrops).toBeGreaterThan(controlDrops);
+    expect(salvagedDrops).toBeGreaterThanOrEqual(bonus);
+  });
+
+  it('AH-0MVH80ZJ7009W18Z — Orbital Strike damages the nearest enemy on pickup', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    scene.finishSpawnAnimations();
+    const player = scene.getPlayer()!;
+    const nearest = [...scene.getEnemies()]
+      .filter((e) => e.alive)
+      .sort(
+        (a, b) =>
+          Math.hypot(a.x - player.x, a.y - player.y) -
+          Math.hypot(b.x - player.x, b.y - player.y),
+      )[0];
+    expect(nearest).toBeDefined();
+
+    // A field pickup queues exactly one immediate bolt.
+    registry.applyCollect('strike', true);
+    scene.tick(1 / 60);
+
+    // The nearest (1-HP scout) is destroyed by the strike.
+    expect(nearest.alive).toBe(false);
+    if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+  });
+
   it('AC5 — on the final level, defeating the mini-boss triggers the final boss', async () => {
     // One level: `isFinalLevel` is true from the start, so the level's
     // mini-boss defeat must trigger the Central AI boss.

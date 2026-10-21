@@ -130,6 +130,7 @@ import {
 } from '../../core/bulletLifecycle';
 import {
   resolveMineralKillDrops,
+  scatterMineralDrops,
   type MineralKillDropEntity,
 } from '../../core/mineralKillDrops';
 import {
@@ -1860,6 +1861,20 @@ export class GymFormationScene<
       this._sceneRng,
     );
     if (drops.length > 0) this.minerals.push(...drops);
+    // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
+    // the wreck of a destroyed enemy ship (asteroids are not bounty targets).
+    const salvageBonus = this.getEffectsRegistry().salvageBonusMinerals();
+    if (salvageBonus > 0 && typeof (entity as unknown as { getSizeTier?: unknown }).getSizeTier !== 'function') {
+      this.minerals.push(
+        ...scatterMineralDrops(
+          this,
+          entity.x,
+          entity.y,
+          salvageBonus,
+          this._sceneRng,
+        ),
+      );
+    }
   }
 
   /** Advances player bullets and removes those whose lifetime has elapsed. */
@@ -1873,7 +1888,14 @@ export class GymFormationScene<
    * (AH-0MUII3CF00024EDM, gap 3).
    */
   private _advanceEnemyBullets(dt: number): void {
-    advanceWrappingBullets(this.bullets, dt, GAME_WIDTH, GAME_HEIGHT);
+    // Chrono Field (AH-0MVH80ZJ7009W18Z): enemy bullets slow while the
+    // window is active, identically to the game.
+    advanceWrappingBullets(
+      this.bullets,
+      dt * this.getEffectsRegistry().enemyBulletTimeScale(),
+      GAME_WIDTH,
+      GAME_HEIGHT,
+    );
   }
 
   /**

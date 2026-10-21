@@ -857,6 +857,11 @@ export class CombatCoreScene<
     // screen-wide area effect when one is due (AH-0MV1BIWP9003EHRQ). The
     // pulse resolves through the scene's AOE seam via `onSmartBombPulse`.
     this._updateSmartBomb(dt);
+    // Orbital Strike (AH-0MVH80ZJ7009W18Z): a field pickup fires one bolt at
+    // the nearest enemy; a permanent reward then strikes on its resolved
+    // interval. Detection lives in this shared step, application behind one
+    // hook, so the game and every gym cannot diverge.
+    this._updateOrbitalStrike(dt);
     // Collector drones (Mystery UFO reward) run after physics so they track
     // the ship's current position on their return leg; minerals vacuumed
     // this step are cleaned up by the same frame's later mineral pass
@@ -1568,6 +1573,29 @@ export class CombatCoreScene<
     if (!player) return;
     this.onSmartBombPulse(registry.smartBombAoe(), player.x, player.y);
   }
+
+  /**
+   * Advances the shared Orbital Strike state and, when a bolt is due,
+   * resolves it through {@link onOrbitalStrike}. Mirrors
+   * {@link _updateSmartBomb} so the strike runs in the game and every gym
+   * from one implementation (AH-0MVH80ZJ7009W18Z).
+   *
+   * @param dt - Frame delta in seconds.
+   */
+  protected _updateOrbitalStrike(dt: number): void {
+    const registry = this.getEffectsRegistry();
+    if (!registry.updateStrike(dt)) return;
+    this.onOrbitalStrike(registry.strikeDamage());
+  }
+
+  /**
+   * Resolves one Orbital Strike bolt for `damage` hits. Default no-op (the
+   * enemy-damage seam lives in {@link CombatScene}); the concrete combat
+   * scene overrides it to pick the nearest enemy and apply the damage + VFX.
+   *
+   * @param _damage - Level-resolved strike damage (whole hits).
+   */
+  protected onOrbitalStrike(_damage: number): void {}
 
   /**
    * Resolves one Smart Bomb pulse at (x, y) through the shared area-effect
