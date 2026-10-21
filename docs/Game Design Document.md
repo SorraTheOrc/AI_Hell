@@ -60,8 +60,9 @@ click) advances the selection. The options come from the `ControlScheme` union
 (`CONTROL_SCHEMES` in `src/core/settingsStore.ts`), so a scheme added to the
 union appears in the list automatically. The choice is stored **per player, per
 device** in `ai_hell_settings.controlScheme` (§6.6) and is remembered across
-runs. It takes effect on the **next run / next ship spawn** — a change made
-mid-run never reshapes the ship you are already flying.
+runs. It takes effect immediately: a change made in the in-game Settings
+applies to the running game when you return from the pause menu (mid-run), as
+well as to every subsequent run from the first frame (AH-0MVIMPC11001F7WU).
 
 The effective scheme is resolved by one helper,
 `resolvePlayerControlScheme()` (`src/core/playerScheme.ts`), with an explicit
@@ -1433,7 +1434,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | Key | Content |
 |-----|---------|
 | `ai_hell_leaderboard` | Leaderboard entries (see §5.2) |
-| `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, pause toggle), `shareTelemetryDev` (dev-build only), `controlScheme` (per-player ship control scheme: `asteroids` (default) or `fourDirectional`; a missing, non-string or out-of-union value falls back to `asteroids`; overrides the `ship-config.csv` `controlScheme` for the player and applies on the next run/ship spawn — see §2.2). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
+| `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, pause toggle), `shareTelemetryDev` (dev-build only), `controlScheme` (per-player ship control scheme: `asteroids` (default) or `fourDirectional`; a missing, non-string or out-of-union value falls back to `asteroids`; overrides the `ship-config.csv` `controlScheme` for the player and applies to the running game on resume from the in-game Settings and to every subsequent run — see §2.2). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
 | `ai_hell_checkpoint` | **Run checkpoint** (AH-0MVCRBTNF000DK51): auto-written after every mini-boss defeat. Stores the resume level (the level after the defeated mini-boss) and wave 1, plus lives, score, minerals, permanent weapon/power-up levels, unlocked weapons and the run seed. The main menu shows **Continue — Level N** only when a usable checkpoint exists; resuming starts that level at wave 1 with all state and the saved RNG seed restored. **Play Game (New Game)** clears it. Corrupt/invalid payloads load as "no checkpoint" (defensive parse, same fallback discipline as the leaderboard) |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
 

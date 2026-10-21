@@ -906,9 +906,11 @@ export class PlayScene extends CombatScene<
     // The control scheme is resolved once, at spawn, from the per-player
     // setting → the designer-owned ship config → the built-in default
     // (AH-0MVI7LRCJ006Q8SA AC4). Resolving here means a Settings change takes
-    // effect on the next run/ship spawn and never mid-run; the ship gets a
-    // copy of the config, so neither the store nor `ship-config.csv` is
-    // touched. Gyms keep their own config/toggle-driven scheme.
+    // effect on the next run/ship spawn; on RESUME the live ship is
+    // re-resolved too, so a mid-run change is honoured on return to the
+    // paused game (AH-0MVIMPC11001F7WU). The ship gets a copy of the config,
+    // so neither the store nor `ship-config.csv` is touched. Gyms keep their
+    // own config/toggle-driven scheme.
     const shipConfig = loadShipConfig();
     const playerScheme = resolvePlayerControlScheme(loadStoredControlScheme(), shipConfig);
     this.player = new Player(this, {
@@ -1005,13 +1007,41 @@ export class PlayScene extends CombatScene<
     this._announceLevel();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
-    // A rebind made in SettingsScene must take effect when the player
-    // returns to the paused game (parent AH-0MU9LPZ0G0015292).
-    this.events.on(Phaser.Scenes.Events.RESUME, () => this._applyBindings());
+    // Settings changes made in the pause menu must take effect when the
+    // player returns to the paused game: rebinds re-apply immediately
+    // (parent AH-0MU9LPZ0G0015292), and a control-scheme change is applied
+    // to the live ship mid-run (AH-0MVIMPC11001F7WU). Spawn-time
+    // application in create() still covers every new run.
+    this.events.on(Phaser.Scenes.Events.RESUME, () => {
+      this._applyResolvedControlScheme();
+      this._applyBindings();
+    });
 
     // Dev-gated recorder scenario (AH-0MUWZ5HCV0034H44): when the URL asks
     // for one, drop straight into the boss encounter. No-op in production.
     this._applyDevScenarioFromUrl();
+  }
+
+  /**
+   * Re-resolves the effective player control scheme and applies it to the
+   * live ship when the stored choice has changed. Called on RESUME so a
+   * scheme chosen in the in-game Settings takes effect when the player
+   * returns to the running game (mid-run), not only from the next spawn
+   * (AH-0MVIMPC11001F7WU). Spawn-time application in create() is untouched,
+   * so a stored scheme still drives the ship from the first frame of every
+   * run. `Player.setScheme` swaps the movement model and input shape live;
+   * the shared `mapControlInput` seam reads `player.getScheme()` per tick,
+   * keeping gym↔game parity. An unchanged scheme is a no-op.
+   */
+  private _applyResolvedControlScheme(): void {
+    if (!this.player) return;
+    const resolved = resolvePlayerControlScheme(
+      loadStoredControlScheme(),
+      loadShipConfig(),
+    );
+    if (resolved !== this.player.getScheme()) {
+      this.player.setScheme(resolved);
+    }
   }
 
   /**

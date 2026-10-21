@@ -678,7 +678,9 @@ export class SettingsScene extends Phaser.Scene {
    * Sets the player's control scheme, redrawing the row and the scheme-aware
    * movement labels and persisting the choice. A no-op when the value is
    * unchanged, so an accidental re-activation never rewrites storage. The
-   * change applies to the next run/ship spawn, never the current one.
+   * change applies to the next run/ship spawn and — when made from the
+   * in-game pause menu — to the running game on resume
+   * (AH-0MVIMPC11001F7WU).
    */
   setControlScheme(scheme: ControlScheme): void {
     if (scheme === this.controlScheme) return;

@@ -6,7 +6,8 @@
  * `fourDirectional` setting makes the spawned ship drive four-directionally,
  * a saved `asteroids` setting (or nothing saved) makes it drive Asteroids, and
  * the resolution never mutates the loaded ship config or the CSV. A change
- * made mid-run only takes effect on the next ship spawn.
+ * made in the in-game Settings is applied to the live ship when the player
+ * resumes (AH-0MVIMPC11001F7WU) as well as on the next ship spawn.
  *
  * Lives in its own file rather than growing the 7k-line `PlayScene.test.ts`:
  * it seeds `ai_hell_settings` (the suite-wide `beforeEach` there seeds the
@@ -14,6 +15,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Phaser from 'phaser';
 
 import { DEFAULT_CONFIG } from '../core/config';
 import { loadShipConfig, seedConfigStore } from '../core/configStore';
@@ -27,7 +29,9 @@ import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { Player } from '../entities/Player';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
+import { PauseScene } from './PauseScene';
 import { PlayScene } from './PlayScene';
+import { SettingsScene } from './SettingsScene';
 
 /** Internals the movement assertions need (the shared `wasd` key objects). */
 interface PlayInternals {
@@ -68,6 +72,47 @@ describe('PlayScene — resolved control scheme applied at spawn (AH-0MVI7LRCJ00
     // about the ship's input mapping, not about dodging rocks.
     scene.setAsteroidSpawnerEnabled(false);
     return scene;
+  }
+
+  /**
+   * Boots the game with the pause menu and Settings registered, so the real
+   * in-game Settings flow can be driven end to end.
+   */
+  async function bootPlayWithMenus(): Promise<PlayScene> {
+    booted = await bootScene([
+      PlayScene,
+      GameOverScene,
+      MenuScene,
+      PauseScene,
+      SettingsScene,
+    ]);
+    const scene = booted.scene as PlayScene;
+    scene.setAsteroidSpawnerEnabled(false);
+    return scene;
+  }
+
+  /** Runs the real Play → Esc → Settings → scheme → Back → Resume flow. */
+  async function chooseSchemeMidRun(scheme: 'asteroids' | 'fourDirectional'): Promise<void> {
+    const game = booted!.game;
+    const scene = booted!.scene as PlayScene;
+
+    scene.togglePause();
+    await advanceGame(game, 100);
+    const pause = game.scene.getScene('PauseScene') as PauseScene;
+    expect(game.scene.isActive('PauseScene')).toBe(true);
+
+    pause.openSettings();
+    await advanceGame(game, 100);
+    const settings = game.scene.getScene('SettingsScene') as SettingsScene;
+    expect(game.scene.isActive('SettingsScene')).toBe(true);
+    settings.setControlScheme(scheme);
+    expect(loadSettings().controlScheme).toBe(scheme);
+
+    settings.goBack();
+    await advanceGame(game, 100);
+    const pauseAgain = game.scene.getScene('PauseScene') as PauseScene;
+    pauseAgain.resumeGame();
+    await advanceGame(game, 100);
   }
 
   function heldKeys(scene: PlayScene): NonNullable<PlayInternals['wasd']> {
@@ -152,24 +197,67 @@ describe('PlayScene — resolved control scheme applied at spawn (AH-0MVI7LRCJ00
     expect(loadShipConfig().controlScheme).toBe('asteroids');
   });
 
-  it('does not swap the current ship when the setting changes mid-run', async () => {
+  it('applies a scheme chosen mid-run to the live ship on resume', async () => {
     saveScheme('asteroids');
-    const scene = await bootPlay();
+    const scene = await bootPlayWithMenus();
     const player = scene.getPlayer()!;
     expect(player.getScheme()).toBe('asteroids');
 
-    // The player visits Settings mid-run and picks four-directional.
-    saveScheme('fourDirectional');
-    scene.tick(0.1);
+    // The player pauses, visits Settings and picks four-directional.
+    await chooseSchemeMidRun('fourDirectional');
 
-    // The live ship keeps its scheme — the change applies next run/spawn.
+    // The same live ship is still flying, now with the chosen scheme: the
+    // setting is honoured during gameplay, not only from the next run.
+    expect(scene.isPaused()).toBe(false);
+    expect(scene.getPlayer()).toBe(player);
+    expect(player.getScheme()).toBe('fourDirectional');
+
+    // Four-directional behaviour is live: A translates left without rotating.
+    const xBefore = player.getMovementState().x;
+    hold(scene, 'A', 0.2);
+    expect(player.getMovementState().x).toBeLessThan(xBefore);
+    expect(Math.abs(facingOf(player))).toBeLessThan(0.05);
+  });
+
+  it('applies a switch back to Asteroids mid-run on resume', async () => {
+    saveScheme('fourDirectional');
+    const scene = await bootPlayWithMenus();
+    const player = scene.getPlayer()!;
+    expect(player.getScheme()).toBe('fourDirectional');
+
+    await chooseSchemeMidRun('asteroids');
+
     expect(scene.getPlayer()).toBe(player);
     expect(player.getScheme()).toBe('asteroids');
 
-    // Asteroids turning still behaves as Asteroids after the change.
+    // Asteroids behaviour is live: A turns the hull without translating.
+    const xBefore = player.getMovementState().x;
     const facingBefore = facingOf(player);
     hold(scene, 'A', 0.2);
     expect(facingOf(player)).not.toBeCloseTo(facingBefore, 5);
+    expect(Math.abs(player.getMovementState().x - xBefore)).toBeLessThan(1);
+  });
+
+  it('does not disturb the live ship when the scheme is unchanged', async () => {
+    saveScheme('asteroids');
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+
+    // Get the hull spinning (Asteroids turning) so there is live state that
+    // `setScheme` would snap back to zero on an (incorrect) re-application.
+    hold(scene, 'A', 0.2);
+    const facingBefore = facingOf(player);
+    const angularBefore = player.getMovementState().angularVelocity ?? 0;
+    expect(facingBefore).not.toBeCloseTo(0, 5);
+
+    // A real resume (e.g. after visiting Settings without changing the scheme);
+    // the paused game is PlayScene-only here, so emit the RESUME seam directly.
+    scene.events.emit(Phaser.Scenes.Events.RESUME);
+
+    // Same scheme, and no live-state reset: facing/angular velocity survive.
+    expect(player.getScheme()).toBe('asteroids');
+    expect(player.getMovementState().facing).toBeCloseTo(facingBefore, 5);
+    expect(player.getMovementState().angularVelocity ?? 0).toBeCloseTo(angularBefore, 5);
   });
 
   it('spawns the ship with the resolved scheme on a new run', async () => {
