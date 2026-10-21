@@ -23,6 +23,10 @@ import { Mineral } from './Mineral';
 import {
   MYSTERY_UFO_DRONE_ARRIVE_DISTANCE,
   MYSTERY_UFO_DRONE_COLOR,
+  MYSTERY_UFO_DRONE_DOME_COLOR,
+  MYSTERY_UFO_DRONE_LIGHT_COLOR,
+  MYSTERY_UFO_DRONE_LIGHT_COUNT,
+  saucerGeometry,
   MYSTERY_UFO_DRONE_DEPTH,
   MYSTERY_UFO_DRONE_SIZE,
   MYSTERY_UFO_DRONE_SPEED,
@@ -110,7 +114,7 @@ describe('MysteryUfoDrone collector entity', () => {
 
   // ── Rendering: a code-drawn scaled-down ship ─────────────────────
 
-  it('renders a scaled-down, code-drawn neon ship hull (no external art)', async () => {
+  it('renders a code-drawn neon saucer hull (no external art)', async () => {
     const scene = await boot();
     const drone = makeDrone(scene);
 
@@ -121,13 +125,41 @@ describe('MysteryUfoDrone collector entity', () => {
     expect(drone.visible).toBe(true);
     expect(drone.depth).toBe(MYSTERY_UFO_DRONE_DEPTH);
 
-    // The hull is the player ship's cyan hexagon, scaled down.
+    // The hull keeps the ship's cyan palette at a smaller size.
     expect(MYSTERY_UFO_DRONE_COLOR).toBe(SHIP_COLOR);
     expect(MYSTERY_UFO_DRONE_SIZE).toBeLessThan(SHIP_SIZE);
 
     const buf = drone.commandBuffer as number[];
     expect(buf).toContain(LINE_STYLE);
     expect(buf).toContain(MYSTERY_UFO_DRONE_COLOR);
+  });
+
+  it('AH-0MVH7ZC5N003JS92 — renders a classic flying saucer (rim, dome, lights)', async () => {
+    const scene = await boot();
+    const drone = makeDrone(scene);
+
+    // Geometry: a wide disc, a domed hull above it and a ring of lights.
+    const g = saucerGeometry(MYSTERY_UFO_DRONE_SIZE);
+    expect(g.rimHalfWidth).toBeGreaterThan(g.rimHalfHeight);
+    expect(g.domeRadius).toBeGreaterThan(0);
+    expect(g.domeOffsetY).toBeLessThan(0);
+    expect(g.lights).toHaveLength(MYSTERY_UFO_DRONE_LIGHT_COUNT);
+    for (const light of g.lights) {
+      expect(light.radius).toBeGreaterThan(0);
+      expect(Math.abs(light.x)).toBeLessThanOrEqual(g.rimHalfWidth);
+      expect(Math.abs(light.y)).toBeLessThanOrEqual(g.rimHalfHeight);
+    }
+    // The lights are distinct points around the rim (not stacked).
+    const unique = new Set(g.lights.map((l) => `${l.x.toFixed(3)},${l.y.toFixed(3)}`));
+    expect(unique.size).toBe(g.lights.length);
+
+    // The draw call emits the saucer's parts: rim + dome strokes in the hull/
+    // dome colours, plus the warm running lights.
+    const buf = drone.commandBuffer as number[];
+    expect(buf).toContain(MYSTERY_UFO_DRONE_COLOR);
+    expect(buf).toContain(MYSTERY_UFO_DRONE_DOME_COLOR);
+    expect(buf).toContain(MYSTERY_UFO_DRONE_LIGHT_COLOR);
+    expect(buf.length).toBeGreaterThan(20);
   });
 
   // ── Seeking ──────────────────────────────────────────────────────

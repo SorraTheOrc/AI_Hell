@@ -43,14 +43,66 @@ import type { Mineral } from './Mineral';
 
 // ── Visual / behaviour tuning ───────────────────────────────────────
 
-/** Hull colour — the player ship's cyan hexagon (a scaled ship copy). */
+/** Hull colour — neon cyan, matching the ship's palette. */
 export const MYSTERY_UFO_DRONE_COLOR = SHIP_COLOR;
 
+/** Warm rim-light colour of the saucer's running lights. */
+export const MYSTERY_UFO_DRONE_LIGHT_COLOR = 0xffdd66;
+
+/** Dome glass tint (a paler cyan than the rim). */
+export const MYSTERY_UFO_DRONE_DOME_COLOR = 0xaeffff;
+
 /**
- * Visual half-size (circumradius) of the drone's hexagon hull in px — a
- * scaled-down player ship (the ship is 20 px across, the drone 12 px).
+ * Visual half-size (circumradius) of the drone in px. The saucer's drawn rim
+ * is wider than tall (see {@link saucerGeometry}), so the drone reads as a
+ * classic flying saucer rather than a ship copy.
  */
 export const MYSTERY_UFO_DRONE_SIZE = 6;
+
+/** Number of running lights around the saucer rim. */
+export const MYSTERY_UFO_DRONE_LIGHT_COUNT = 6;
+
+/** Geometry of the code-drawn saucer, derived from its half-size. */
+export interface MysteryUfoSaucerGeometry {
+  /** Half-width of the elliptical rim (px). */
+  rimHalfWidth: number;
+  /** Half-height of the elliptical rim (px). */
+  rimHalfHeight: number;
+  /** Radius of the domed upper hull (px). */
+  domeRadius: number;
+  /** Vertical centre of the dome, relative to the drone origin (px). */
+  domeOffsetY: number;
+  /** Running-light positions around the rim, relative to the origin. */
+  lights: Array<{ x: number; y: number; radius: number }>;
+}
+
+/**
+ * Builds the saucer's geometry from the drone's half-size. Pure so the shape
+ * is unit-testable: a wide rim (2× the half-size across), a domed upper hull
+ * sitting above the rim, and a ring of evenly spaced running lights.
+ *
+ * @param size - The drone's visual half-size (px).
+ */
+export function saucerGeometry(size: number): MysteryUfoSaucerGeometry {
+  const rimHalfWidth = size * 2;
+  const rimHalfHeight = size * 0.7;
+  const domeRadius = size * 0.95;
+  const domeOffsetY = -size * 0.28;
+  const lights: Array<{ x: number; y: number; radius: number }> = [];
+  for (let i = 0; i < MYSTERY_UFO_DRONE_LIGHT_COUNT; i += 1) {
+    // Follow the front (lower) half of the rim ellipse so the lights read as
+    // a row of windows around the saucer's visible edge, each at a distinct
+    // point on the arc.
+    const t =
+      Math.PI - (Math.PI * (i + 0.5)) / MYSTERY_UFO_DRONE_LIGHT_COUNT;
+    lights.push({
+      x: Math.cos(t) * rimHalfWidth * 0.75,
+      y: Math.sin(t) * rimHalfHeight * 0.55 + rimHalfHeight * 0.1,
+      radius: Math.max(0.6, size * 0.13),
+    });
+  }
+  return { rimHalfWidth, rimHalfHeight, domeRadius, domeOffsetY, lights };
+}
 
 /** Seek / return cruise speed in px/s (tuned in the gyms). */
 export const MYSTERY_UFO_DRONE_SPEED = 120;
@@ -364,24 +416,51 @@ export class MysteryUfoDrone extends Phaser.GameObjects.Graphics {
 
   // ── Internals ────────────────────────────────────────────────────
 
-  /** Draw the hull: a code-drawn cyan hexagon — the scaled player ship. */
+  /**
+   * Draws the classic flying-saucer silhouette (AH-0MVH7ZC5N003JS92): a wide
+   * elliptical rim with glowing running lights, a domed upper hull and a
+   * small under-hull glow. Pure code-drawn geometry (no external art) from
+   * {@link saucerGeometry}, so the game and every gym render the same saucer.
+   */
   private _drawBody(): void {
     this.clear();
-    this.lineStyle(2, MYSTERY_UFO_DRONE_COLOR, 1);
+    const g = saucerGeometry(this._size);
 
-    const r = this._size;
-    const sx = (r * Math.sqrt(3)) / 2; // r·cos(30°) — half-width
-    const sy = r / 2; // r·sin(30°) — corner y-offset
+    // Under-hull glow (a soft disc beneath the rim suggests the saucer's
+    // drive glow).
+    this.fillStyle(MYSTERY_UFO_DRONE_COLOR, 0.18);
+    this.fillEllipse(0, g.rimHalfHeight * 0.55, g.rimHalfWidth * 1.05, g.rimHalfHeight * 0.9);
+
+    // Wide elliptical rim — the saucer's defining disc.
+    this.lineStyle(2, MYSTERY_UFO_DRONE_COLOR, 1);
+    this.strokeEllipse(0, 0, g.rimHalfWidth * 2, g.rimHalfHeight * 2);
+
+    // Domed upper hull — a half-circle sitting on the rim.
+    this.fillStyle(MYSTERY_UFO_DRONE_DOME_COLOR, 0.35);
     this.beginPath();
-    this.moveTo(0, -r);
-    this.lineTo(sx, -sy);
-    this.lineTo(sx, sy);
-    this.lineTo(0, r);
-    this.lineTo(-sx, sy);
-    this.lineTo(-sx, -sy);
-    this.lineTo(0, -r); // explicit closing edge back to the top vertex
+    this.arc(0, g.domeOffsetY, g.domeRadius, Math.PI, 0, false);
+    this.closePath();
+    this.fillPath();
+    this.lineStyle(2, MYSTERY_UFO_DRONE_DOME_COLOR, 0.95);
+    this.beginPath();
+    this.arc(0, g.domeOffsetY, g.domeRadius, Math.PI, 0, false);
     this.closePath();
     this.strokePath();
+
+    // Running lights around the rim.
+    this.fillStyle(MYSTERY_UFO_DRONE_LIGHT_COLOR, 1);
+    for (const light of g.lights) {
+      this.fillCircle(light.x, light.y, light.radius);
+    }
+
+    // Rim accent band: a thin inner ellipse to read the disc's depth.
+    this.lineStyle(1, MYSTERY_UFO_DRONE_COLOR, 0.5);
+    this.strokeEllipse(
+      0,
+      g.rimHalfHeight * 0.15,
+      g.rimHalfWidth * 1.45,
+      g.rimHalfHeight * 1.15,
+    );
   }
 
   /** Select the nearest live mineral as the seek target (clears when none). */
