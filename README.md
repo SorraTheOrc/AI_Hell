@@ -613,8 +613,9 @@ post-boot assertions flaky under load.
   `vi.setConfig({ testTimeout: 30000 })` (the full-game suites use 120000,
   including `PlayScene.test.ts`'s ten-level boss walk — its heaviest AC4
   victory test was raised from 60 s after breaching that ceiling under
-  full-suite parallel load, AH-0MVF2H4UL007IJT4) rather than weakening
-  assertions (AH-0MV5L6CP4007HQP3).
+  full-suite parallel load, AH-0MVF2H4UL007IJT4 — and the `PlaySceneHUD.test.ts`
+  AC4 level walk, AH-0MVHCC9XI007DARU) rather than weakening assertions
+  (AH-0MV5L6CP4007HQP3).
 - **Bump the file-level `testTimeout` for heavy property sweeps too.**
   `src/utils/weaponLevels.test.ts` sweeps every weapon across levels 0..100
   for every tunable variable; the sweep is pure computation and normally

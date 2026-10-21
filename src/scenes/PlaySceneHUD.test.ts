@@ -7,13 +7,21 @@
  * player damage.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
+
+// The AC4 walk clears all of Level 1 (ten waves plus the wave-10 mini-boss)
+// with deterministic ticks. That is pure computation, but it needs well over
+// Vitest's default 5 s under full-suite parallel load (observed 6.5-8.0 s),
+// which reported a spurious timeout (AH-0MVHCC9XI007DARU). Same convention as
+// the other full-level walks (PlayScene.test.ts, SceneNavigation.test.ts):
+// headroom for load, never weaker assertions.
+vi.setConfig({ testTimeout: 120000 });
 
 describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
   let booted: BootedGame | null = null;
