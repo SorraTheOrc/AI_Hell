@@ -25,6 +25,7 @@ import {
   type DistributionStats,
   type TelemetryRecord,
   type TuneComparison,
+  type TuneMetricDelta,
 } from './types';
 
 /** A per-run report entry. */
@@ -242,6 +243,32 @@ function n(value: number, digits = 2): string {
   return Number.isFinite(value) ? value.toFixed(digits) : 'n/a';
 }
 
+/**
+ * Resolves the {@link TuneMetricDelta} behind a `movedMetrics` /
+ * `shapeChangedMetrics` id.
+ *
+ * Ids are either a bare metric name (an entry of `comparison.metrics`) or a
+ * prefixed per-key id (`upgradesSelected.<key>` /
+ * `enemiesKilledByArchetype.<key>`), so the per-key maps must be looked up by
+ * the key that follows the prefix — looking the whole id up in the map misses
+ * every per-upgrade/per-archetype move (AH-0MVBNLM2V008XC8T).
+ */
+function tuneDeltaFor(
+  comparison: TuneComparison,
+  id: string,
+): TuneMetricDelta | undefined {
+  const direct = comparison.metrics[id];
+  if (direct) return direct;
+  const keyed: [string, Readonly<Record<string, TuneMetricDelta>>][] = [
+    ['upgradesSelected.', comparison.upgradesSelected],
+    ['enemiesKilledByArchetype.', comparison.enemiesKilledByArchetype],
+  ];
+  for (const [prefix, map] of keyed) {
+    if (id.startsWith(prefix)) return map[id.slice(prefix.length)];
+  }
+  return undefined;
+}
+
 /** Renders a human-readable single-policy report. */
 export function formatEvaluationReport(report: EvaluationReport): string {
   const lines: string[] = [];
@@ -346,9 +373,7 @@ export function formatTuneSummary(comparison: TuneComparison): string {
 
   lines.push('Metrics moved beyond threshold (mean/median):');
   for (const metric of comparison.movedMetrics) {
-    const delta = comparison.metrics[metric] ??
-      comparison.upgradesSelected[metric] ??
-      comparison.enemiesKilledByArchetype[metric];
+    const delta = tuneDeltaFor(comparison, metric);
     if (!delta) continue;
     const meanRel = delta.meanRelativeDelta === null
       ? 'n/a'
@@ -371,7 +396,16 @@ export function formatTuneSummary(comparison: TuneComparison): string {
     lines.push('  (none)');
   } else {
     for (const metric of comparison.shapeChangedMetrics) {
-      lines.push(`  ${metric}`);
+      const delta = tuneDeltaFor(comparison, metric);
+      if (!delta) {
+        lines.push(`  ${metric}`);
+        continue;
+      }
+      lines.push(
+        `  ${metric.padEnd(30)} stdDev ${n(delta.baseline.stdDev)} → ` +
+          `${n(delta.candidate.stdDev)} (Δ ${n(delta.delta.stdDev)})  ` +
+          `median ${n(delta.baseline.median)} → ${n(delta.candidate.median)}`,
+      );
     }
   }
   lines.push('');
