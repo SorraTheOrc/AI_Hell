@@ -15,19 +15,19 @@ import { RecordingSfxProvider } from './audioTestDouble';
 describe('RecordingSfxProvider', () => {
   it('records the asset URL for every play', () => {
     const provider = new RecordingSfxProvider();
-    provider.play('audio/sfx/weapon-laser-zap.1.wav');
+    provider.play('audio/sfx/aihell-scout-fire.32181.wav');
     provider.play('audio/sfx/card-token-earn.1.wav');
     expect(provider.plays.map((p) => p.url)).toEqual([
-      'audio/sfx/weapon-laser-zap.1.wav',
+      'audio/sfx/aihell-scout-fire.32181.wav',
       'audio/sfx/card-token-earn.1.wav',
     ]);
   });
 
   it('normalises delay, volume, loop and rate defaults when options are omitted', () => {
     const provider = new RecordingSfxProvider();
-    provider.play('audio/sfx/weapon-laser-zap.1.wav');
+    provider.play('audio/sfx/aihell-scout-fire.32181.wav');
     expect(provider.plays[0]).toEqual({
-      url: 'audio/sfx/weapon-laser-zap.1.wav',
+      url: 'audio/sfx/aihell-scout-fire.32181.wav',
       delay: 0,
       volume: 1,
       loop: false,
@@ -37,14 +37,14 @@ describe('RecordingSfxProvider', () => {
 
   it('records the explicit per-play options verbatim (incl. the rising countdown rate)', () => {
     const provider = new RecordingSfxProvider();
-    provider.play('audio/sfx/weapon-laser-zap.1.wav', {
+    provider.play('audio/sfx/aihell-scout-fire.32181.wav', {
       delay: 0.375,
       volume: 0.3,
       loop: true,
       rate: 1.26,
     });
     expect(provider.plays[0]).toEqual({
-      url: 'audio/sfx/weapon-laser-zap.1.wav',
+      url: 'audio/sfx/aihell-scout-fire.32181.wav',
       delay: 0.375,
       volume: 0.3,
       loop: true,
@@ -54,7 +54,7 @@ describe('RecordingSfxProvider', () => {
 
   it('returns a handle whose stop() calls are counted', () => {
     const provider = new RecordingSfxProvider();
-    const handle = provider.play('audio/sfx/weapon-laser-zap.1.wav');
+    const handle = provider.play('audio/sfx/aihell-scout-fire.32181.wav');
     expect(provider.stops).toBe(0);
     handle.stop();
     handle.stop();
@@ -84,7 +84,7 @@ describe('RecordingSfxProvider', () => {
 
   it('reset clears every record and the borrowed context', () => {
     const provider = new RecordingSfxProvider();
-    const handle = provider.play('audio/sfx/weapon-laser-zap.1.wav');
+    const handle = provider.play('audio/sfx/aihell-scout-fire.32181.wav');
     handle.stop();
     provider.setVolume(1);
     provider.setMuted(true);

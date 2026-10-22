@@ -1,4 +1,4 @@
-# AI Hell cue: aihell-boss-hit — Boss hit — punchy saw impact 320 to 60 Hz + square click + HP noise crack.
+# AI Hell cue: aihell-boss-hit — Boss hit — punchy saw impact (E4 to B1) + square click (D6 to D5) + HP noise crack.
 version: "0.1"
 meta:
   name: aihell-boss-hit
@@ -13,15 +13,15 @@ nodes:
     kind: oscillator
     params:
       type: sawtooth
-      frequency: 320
+      frequency: 329.63
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 320
+          value: 329.63
         - kind: exponentialRamp
           time: 0.15
-          value: 60
+          value: 61.74
   e0:
     kind: envelope
     params:
@@ -37,15 +37,15 @@ nodes:
     kind: oscillator
     params:
       type: square
-      frequency: 1200
+      frequency: 1174.66
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 1200
+          value: 1174.66
         - kind: exponentialRamp
           time: 0.03
-          value: 600
+          value: 587.33
   e1:
     kind: envelope
     params:

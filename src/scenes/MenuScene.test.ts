@@ -14,11 +14,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import packageJson from '../../package.json';
-import { bootScene, BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../test/gameHarness';
 import { addEntry } from '../core/Leaderboard';
 import { GAME_HEIGHT } from '../core/constants';
 import { GAME_VERSION } from '../core/version';
 import { LEVEL_COUNT } from '../waves/Formations';
+import {
+  CHECKPOINT_STORAGE_KEY,
+  CHECKPOINT_VERSION,
+  hasCheckpoint,
+} from '../core/checkpointStore';
 import { GITHUB_REPO_URL, GITHUB_LOGO_TEXTURE_KEY, MenuScene, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { PauseScene } from './PauseScene';
@@ -91,7 +96,7 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
 
     findText(scene, '▶  Play Game').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
@@ -102,7 +107,7 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
     expect(booted!.game.scene.isActive('GymIndex')).toBe(false);
 
     findText(scene, '⚙  Gym Scene Index (dev)').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
@@ -121,7 +126,7 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
     });
 
     findText(scene, '▶  Play Game').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     // Audio context initialised on the user gesture…
     expect(resume).toHaveBeenCalledOnce();
@@ -139,7 +144,7 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
     });
 
     findText(scene, '▶  Play Game').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(resume).not.toHaveBeenCalled();
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
@@ -209,7 +214,7 @@ describe('MenuScene — Settings button (AH-0MUA8BLMA003U18N)', () => {
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(false);
 
     findText(scene, '⚙  Settings').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
 
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
@@ -218,11 +223,11 @@ describe('MenuScene — Settings button (AH-0MUA8BLMA003U18N)', () => {
   it('AC2 — Back from menu-opened settings returns to MenuScene', async () => {
     const scene = await bootMenu();
     findText(scene, '⚙  Settings').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
 
     const settings = booted!.game.scene.getScene('SettingsScene') as SettingsScene;
     settings.goBack();
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(false);
@@ -237,7 +242,7 @@ describe('MenuScene — Settings button (AH-0MUA8BLMA003U18N)', () => {
     });
 
     findText(scene, '⚙  Settings').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
 
     expect(resume).toHaveBeenCalledOnce();
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(true);
@@ -353,7 +358,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
     pressKey(scene, { key: 'Enter' });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(resume).toHaveBeenCalledOnce();
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
@@ -363,7 +368,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
   it('AC4 — Space on focused Play Game starts PlayScene', async () => {
     const scene = await bootMenu();
     pressKey(scene, { key: ' ' });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
   });
@@ -375,7 +380,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
 
     pressKey(scene, { key: 'Enter' });
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
 
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
@@ -391,7 +396,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
 
     pressKey(scene, { key: ' ' });
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
 
     expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
@@ -400,7 +405,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
   it('AC7 — pointerdown still navigates (regression preserved)', async () => {
     const scene = await bootMenu();
     findText(scene, '▶  Play Game').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
   });
 });
@@ -460,7 +465,7 @@ describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
 
     const scene = await bootMenu();
     findText(scene, '🏆  Leaderboard').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('LeaderboardScene')).toBe(true);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
@@ -483,7 +488,7 @@ describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
     expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
 
     pressKey(scene, { key: 'Enter' });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('LeaderboardScene')).toBe(true);
   });
@@ -491,11 +496,11 @@ describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
   it('AC3 — returning from the leaderboard restores the menu with Play focused', async () => {
     const scene = await bootMenu();
     findText(scene, '🏆  Leaderboard').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     const leaderboard = booted!.game.scene.getScene('LeaderboardScene') as LeaderboardScene;
     leaderboard.returnToMenu();
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect((booted!.game.scene.getScene('MenuScene') as MenuScene).getFocusedLabel()).toBe(
@@ -535,7 +540,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
   it('AC2 — activating Watch Demo starts PlayScene in demo mode', async () => {
     await bootMenu();
     findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
@@ -547,7 +552,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
     pressKey(scene, { key: 'Tab' }); // Watch Demo
     expect(scene.getFocusedLabel()).toBe('👁  Watch Demo');
     pressKey(scene, { key: 'Enter' });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     expect((booted!.game.scene.getScene('PlayScene') as PlayScene).isDemoMode()).toBe(true);
@@ -556,7 +561,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
   it('AC1 — the idle-attract timer starts the demo after the delay', async () => {
     const scene = await bootMenu();
     scene.scheduleAttractTimer(60);
-    await new Promise((r) => setTimeout(r, 250));
+    await advanceGame(booted!.game, 250);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     expect((booted!.game.scene.getScene('PlayScene') as PlayScene).isDemoMode()).toBe(true);
@@ -565,14 +570,14 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
   it('AC4 — any input resets the idle-attract timer', async () => {
     const scene = await bootMenu();
     scene.scheduleAttractTimer(300);
-    await new Promise((r) => setTimeout(r, 50));
+    await advanceGame(booted!.game, 50);
     // A keypress restarts the countdown…
     pressKey(scene, { key: 'Tab' });
     // …so 200 ms after the original deadline the menu is still waiting.
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     // …and the demo starts shortly after the reset delay.
-    await new Promise((r) => setTimeout(r, 250));
+    await advanceGame(booted!.game, 250);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
   });
 
@@ -581,7 +586,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
     scene.scheduleAttractTimer(60);
     // Leave the menu normally before the timer elapses.
     findText(scene, '▶  Play Game').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
     expect((booted!.game.scene.getScene('PlayScene') as PlayScene).isDemoMode()).toBe(false);
@@ -590,7 +595,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
   it('AC3 — pressing a control during the demo takes over as normal play', async () => {
     await bootMenu();
     findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -608,7 +613,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
   it('AC1 — a non-movement key during the demo returns to the main menu', async () => {
     await bootMenu();
     findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -620,7 +625,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
     } as KeyboardEvent);
 
     // Any non-movement key returns to the main menu (scene transition is async).
-    await new Promise((r) => setTimeout(r, 80));
+    await advanceGame(booted!.game, 80);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
@@ -628,7 +633,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
   it('AC1 — ESC during the demo returns to the main menu (not pause)', async () => {
     await bootMenu();
     findText(booted!.scene, '👁  Watch Demo').emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
@@ -638,7 +643,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
       repeat: false,
       preventDefault: () => {},
     } as KeyboardEvent);
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
   });
@@ -938,5 +943,103 @@ describe('MenuScene — version label (AH-0MUZM9053008YXOZ)', () => {
     expect(focused.size).toBe(6);
     // Wraps back to the default control, preserving keyboard parity (GDD §2.1).
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+  });
+});
+
+describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
+  });
+
+  /** Seeds a resumable checkpoint at the given level. */
+  function seedCheckpoint(level = 4): void {
+    localStorage.setItem(
+      CHECKPOINT_STORAGE_KEY,
+      JSON.stringify({
+        version: CHECKPOINT_VERSION,
+        level,
+        wave: 1,
+        lives: 2,
+        score: 9876,
+        minerals: 3,
+        weaponLevels: [{ id: 'spread', level: 2 }],
+        powerUpLevels: [{ id: 'shield', level: 1 }],
+        unlockedWeapons: ['railgun'],
+        runSeed: 4242,
+        savedAt: '2026-10-20T00:00:00.000Z',
+      }),
+    );
+  }
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([MenuScene, PlayScene, GameOverScene, GymIndex]);
+    return booted!.scene as MenuScene;
+  }
+
+  it('AC3 — Continue is hidden when no checkpoint exists', async () => {
+    const scene = await bootMenu();
+    const continueButton = scene.children.list.find(
+      (child) =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.text.startsWith('⏵  Continue'),
+    );
+    expect(continueButton).toBeUndefined();
+  });
+
+  it('AC3 — Continue is offered when a checkpoint exists', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+    const continueButton = scene.children.list.find(
+      (child): child is Phaser.GameObjects.Text =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.text.startsWith('⏵  Continue'),
+    );
+    expect(continueButton).toBeDefined();
+    expect(continueButton!.text).toContain('Level 4');
+  });
+
+  it('AC3/AC4 — Continue resumes the run at the saved level with its stats', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+
+    scene.children.list
+      .find(
+        (child): child is Phaser.GameObjects.Text =>
+          child instanceof Phaser.GameObjects.Text &&
+          child.text.startsWith('⏵  Continue'),
+      )!
+      .emit('pointerdown');
+    await advanceGame(booted!.game, 500);
+
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getWaveManager().level).toBe(4);
+    expect(play.getWaveManager().waveNumber).toBe(1);
+    expect(play.getGameState().lives).toBe(2);
+    expect(play.getGameState().score).toBe(9876);
+    expect(play.getGameState().minerals).toBe(3);
+    expect(play.getUnlockedWeapons()).toContain('railgun');
+    expect(play.getRunSeed()).toBe(4242);
+    expect(
+      play
+        .getPlayer()!
+        .getWeaponLevels()
+        .some((entry) => entry.id === 'spread' && entry.level === 2),
+    ).toBe(true);
+  });
+
+  it('AC4 — a New Game clears the checkpoint', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+    findText(scene, '▶  Play Game').emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+
+    expect(hasCheckpoint()).toBe(false);
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getWaveManager().level).toBe(1);
   });
 });

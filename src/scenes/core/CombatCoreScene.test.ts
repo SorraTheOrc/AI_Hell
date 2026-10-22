@@ -10,6 +10,7 @@ import {
 import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
+import { resolvePowerUpAtLevel } from '../../powerups/powerUpLevels';
 import { PowerUp } from '../../powerups/PowerUp';
 import type { ControlInput } from '../../utils/movementModel';
 import { DEFAULT_CONFIG } from '../../core/config';
@@ -141,6 +142,9 @@ class BareCoreScene extends CombatCoreScene {
   }
   runTickPlayer(dt: number): void {
     this._tickPlayer(dt);
+  }
+  runUpdateDroneSpawning(dt: number): void {
+    this._updateDroneSpawning(dt);
   }
   /** Drives the four-directional right key for the shared-step tests. */
   pressRight(down: boolean): void {
@@ -896,5 +900,111 @@ describe('CombatCoreScene — shared base class', () => {
     }
     const scene = new ShortInvulnScene();
     expect(scene.runGetInvulnerabilityDuration()).toBe(0.8);
+  });
+});
+
+// ── Collector-drone spawn wiring (AH-0MVBMQ04X0051002) ────────────────
+//
+// A `mystery_ufo` field pickup queues one drone spawn in the shared registry;
+// the shared `_updateDroneSpawning` step turns that request into a visible
+// collector drone, and the full-hull (permanent) reward re-spawns one on the
+// level-resolved interval. These tests drive the step directly with a
+// stepped clock, so the schedule is deterministic and load-independent.
+
+describe('CombatCoreScene — collector-drone spawn wiring (AH-0MVBMQ04X0051002)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  async function bootDroneScene(): Promise<BareCoreScene> {
+    const booted = await bootScene([BareCoreScene]);
+    games.push(booted);
+    return booted.scene as unknown as BareCoreScene;
+  }
+
+  /** Advances the spawn step in small deterministic slices totalling `seconds`. */
+  function advance(scene: BareCoreScene, seconds: number): void {
+    const step = 1 / 60;
+    let remaining = seconds;
+    while (remaining > 1e-9) {
+      const dt = Math.min(step, remaining);
+      scene.runUpdateDroneSpawning(dt);
+      remaining -= dt;
+    }
+  }
+
+  it('a field pickup spawns exactly one visible drone at the ship', async () => {
+    const scene = await bootDroneScene();
+    scene.addPlayer({ x: 320, y: 240 });
+
+    scene.effects.applyCollect('mystery_ufo');
+    scene.runUpdateDroneSpawning(1 / 60);
+
+    const drones = scene.getDrones();
+    expect(drones).toHaveLength(1);
+    expect(drones[0].x).toBe(320);
+    expect(drones[0].y).toBe(240);
+    expect(drones[0].lifetimeSeconds).toBe(
+      resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoLifetime,
+    );
+  });
+
+  it('spawns one drone per field pickup and never on a timer without the permanent reward', async () => {
+    const scene = await bootDroneScene();
+    scene.addPlayer({ x: 320, y: 240 });
+
+    scene.effects.applyCollect('mystery_ufo');
+    advance(scene, 1 / 60);
+    expect(scene.getDrones()).toHaveLength(1);
+
+    // No permanent reward → no periodic spawn, however long the run lasts.
+    advance(scene, 120);
+    expect(scene.getDrones()).toHaveLength(1);
+  });
+
+  it('the permanent reward re-spawns a drone on the resolved interval (AC4)', async () => {
+    const scene = await bootDroneScene();
+    scene.addPlayer({ x: 320, y: 240 });
+
+    scene.effects.applyCollect('mystery_ufo', true);
+    const interval = scene.effects.mysteryUfoSpawnInterval();
+    expect(scene.effects.isMysteryUfoPermanent()).toBe(true);
+    // 30 s at the curve base, descending 2 s per level: level 1 → 28 s.
+    expect(interval).toBe(
+      resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoSpawnInterval,
+    );
+    expect(interval).toBeLessThan(30);
+
+    // The first permanent spawn lands one interval after the reward. The
+    // arming step runs on the first call and does not consume `dt`.
+    scene.runUpdateDroneSpawning(1 / 60);
+    advance(scene, interval - 0.05);
+    expect(scene.getDrones()).toHaveLength(0);
+    advance(scene, 0.1);
+    expect(scene.getDrones()).toHaveLength(1);
+
+    // And again on the next interval.
+    advance(scene, interval - 0.1);
+    expect(scene.getDrones()).toHaveLength(1);
+    advance(scene, 0.2);
+    expect(scene.getDrones()).toHaveLength(2);
+  });
+
+  it('does not spawn without a ship and leaves the request queued', async () => {
+    const scene = await bootDroneScene();
+
+    scene.effects.applyCollect('mystery_ufo');
+    scene.runUpdateDroneSpawning(1 / 60);
+    expect(scene.getDrones()).toHaveLength(0);
+    // Still queued, so the drone appears as soon as a ship exists.
+    expect(scene.effects.consumeMysteryUfoSpawns()).toBe(1);
+
+    // Re-queue and add a ship: the next step spawns it.
+    scene.effects.applyCollect('mystery_ufo');
+    scene.addPlayer({ x: 320, y: 240 });
+    scene.runUpdateDroneSpawning(1 / 60);
+    expect(scene.getDrones()).toHaveLength(1);
   });
 });

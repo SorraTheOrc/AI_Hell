@@ -342,6 +342,18 @@ the instrumentation layer, not a framework schema bump. The concrete shape
 above is owned by the instrumentation child
 ([§8](#8-telemetry-integration--gymgame-parity)).
 
+**Per-tick wall clock.** Outside the opaque `state`, every `tick` record also
+carries `recordedAt` (epoch ms) — the tick's own timestamp, stamped by the
+recorder (AH-0MVFI5OQN008XGBV). The tick **counter** cannot date a sample: it
+advances once per game-loop iteration, whose real cadence depends on the host
+(a headless capture can step ~4–7 times per second, a desktop run ~60 Hz).
+`recordedAt` is what the derived series' `t` axis is built from
+([§7.2](#72-derived-time-series-artefact)).
+
+```jsonc
+{"schemaVersion":1,"kind":"tick","tick":22,"recordedAt":1792428675300,"state":{...},"input":{...}}
+```
+
 ### 7.2 Derived time-series artefact
 
 For consumers that want the series alone (video editing, analysis), the run's
@@ -350,8 +362,8 @@ tolerant of partial runs and append-friendly:
 
 ```jsonc
 {"schemaVersion":1,"runSeed":123456789,"sampleRateHz":10,"categories":["playerBullets","enemyBullets","enemies","asteroids","drops","enemyExplosions","bossExplosions","playerExplosions","bosses"]}
-{"t":0,"tick":0,"rawScore":8.0,"intensity":0.21,"smoothed":0.21,"burstiness":0.0,"breakdown":{"playerBullets":3,"enemyBullets":0,"enemies":1,"asteroids":0,"drops":0,"enemyExplosions":0,"bossExplosions":0,"playerExplosions":0,"bosses":0}}
-{"t":100,"tick":6,"rawScore":0.0,"intensity":0.31,"smoothed":0.24,"burstiness":0.07,"breakdown":{...}}
+{"t":20,"tick":0,"rawScore":8.0,"intensity":0.21,"smoothed":0.21,"burstiness":0.0,"breakdown":{"playerBullets":3,"enemyBullets":0,"enemies":1,"asteroids":0,"drops":0,"enemyExplosions":0,"bossExplosions":0,"playerExplosions":0,"bosses":0}}
+{"t":1145,"tick":22,"rawScore":0.0,"intensity":0.31,"smoothed":0.24,"burstiness":0.07,"breakdown":{...}}
 ```
 
 - **First line** is a self-describing header: `schemaVersion`, `runSeed`,
@@ -361,6 +373,26 @@ tolerant of partial runs and append-friendly:
   (zero-based simulation tick), the four scores, and the `breakdown`.
 - **Schema version** is on the header **and** on every sample line, so a
   truncated file is still self-identifying.
+
+**`t` is real time, derived from the tick's own wall clock.** Since
+AH-0MVFI5OQN008XGBV every telemetry `tick` record carries `recordedAt`
+(epoch ms, stamped by the recorder), and the exporter sets
+`t = recordedAt − run_header.startedAt`. The `tick` counter alone cannot date
+a sample: it advances once per game-loop iteration, whose real cadence
+depends on the host (a headless capture can step ~4–7 times per second while
+a desktop run steps at ~60 Hz). Identical consecutive samples are still
+**collapsed** (the metric is computed on its own 10 Hz sampler and reused
+between its ticks), so the series has one line per *recorded* sample — and
+collapsing duplicates never compresses the timeline: a run whose values
+repeat for many ticks still reports its true duration on the `t` axis.
+
+Edge cases: when the run header has no `startedAt`, the first sample's
+`recordedAt` is the origin (`t = 0`); a clock that predates the origin is
+clamped to 0; a clock that steps backwards never rewinds the series
+(monotonic). A **legacy capture** whose ticks predate the clock has no
+`recordedAt`, so the exporter falls back to the documented sample grid
+(`t = i * 1000 / sampleRateHz`), which is only as accurate as that grid —
+re-capture if the timeline matters.
 
 ### 7.3 Location, format and naming
 
@@ -372,8 +404,23 @@ tolerant of partial runs and append-friendly:
   WebM basename (`capture-output/gameplay-<timestamp>.webm` →
   `gameplay-<timestamp>.action.jsonl`). Dev runs may alternatively write to
   the telemetry JSONL sink (`localStorage`) and export on demand.
+- **Capture wiring (AH-0MVDV4DMY001Z7CU):** `npm run capture` now performs
+  that export automatically — it opts the page into telemetry
+  (`VITE_TELEMETRY_ENABLED=true`/`VITE_TELEMETRY_SINK=jsonl`), reads the
+  recorded run back from the page's JSONL sink at run end, and writes
+  `<run-id>.action.jsonl` next to each WebM using the canonical serialiser
+  format (ported byte-for-byte into `scripts/capture-series.mjs`; parity
+  asserted by `scripts/capture-gameplay.test.ts`). It also writes the §7.5
+  join anchor as `<run-id>.capture.json` (chosen over extending the versioned
+  series header, so the series format stays the documented one). See
+  [docs/dev/gameplay-capture.md](./gameplay-capture.md) →
+  [Action-intensity export](./gameplay-capture.md#action-intensity-export).
 - **Size bound:** at 10 Hz and ~120 B/sample, a 30-minute run is ≈ 18000
-  samples ≈ 2.2 MB raw — negligible next to the WebM.
+  samples ≈ 2.2 MB raw — negligible next to the WebM. (The telemetry sink
+  that feeds the export records the full per-tick state, so the page's
+  `localStorage` quota — not the series file — is the practical bound on how
+  much of a very long run the export can cover; the export tolerates a
+  prefix/partial series.)
 
 ### 7.4 Run identity and clock anchor
 
@@ -384,8 +431,9 @@ Every artefact carries:
 - `schemaVersion` — from the telemetry envelope.
 - a run-start epoch timestamp — from the telemetry run header's
   `startedAt` (epoch ms), giving a common wall-clock anchor.
-- `t` is **ms since run start**, so the series is independent of wall-clock
-  drift and directly comparable across runs.
+- `t` is **ms since run start** (real time, from the per-tick `recordedAt`
+  clock — see [§7.2](#72-derived-time-series-artefact)), so the series is
+  independent of wall-clock drift and directly comparable across runs.
 
 ### 7.5 Joining to captured video for highlight selection
 
@@ -397,16 +445,23 @@ WebM playback timeline.
 
 **Anchor:** record a dev-gated **`capture_started`** marker (epoch ms) at the
 moment `MediaRecorder` starts — the same injection point that already hosts
-the run-end listener. Then, for a WebM whose first frame is `capture_started`:
+the run-end listener. `npm run capture` now **persists the anchor**: after
+each run it writes `<run-id>.capture.json` (sidecar, §7.3) containing the
+`capture_started` marker, the telemetry run-header `startedAt` (epoch ms),
+and the precomputed `offsetMs = capture_started − run_startedAt`
+(`kind: 'capture-join-anchor'`, `schemaVersion: 1`), so `mapTimeToVideo` can
+run **offline and deterministically** without re-running the game
+(AH-0MVDV4DMY001Z7CU, AC2). Then, for a WebM whose first frame is
+`capture_started`:
 
 ```
-videoTimeMs(t)  ≈  t − ( capture_started − run_startedAt )
+videoTimeMs(t)  ≈  t − offsetMs          (offsetMs = capture_started − run_startedAt)
 ```
 
 Because the first recorded sample may predate `capture_started` (warm-up), a
-consumer clamps at 0. If the marker is absent (e.g. an older capture), fall
-back to the telemetry `startedAt` plus the known `--warmup` value, and flag
-the join as approximate.
+consumer clamps at 0. If the marker is absent (e.g. an older capture, or the
+anchor flags itself `approximate`), fall back to the telemetry `startedAt`
+plus the known `--warmup` value, and flag the join as approximate.
 
 **Highlight recipe** (for the video-editor consumer):
 

@@ -79,6 +79,11 @@ const LEVELING_DROP_ORDER: readonly WeaponDropId[] = [
   'nova',
   'mortar',
   'arc',
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
 ];
 
 /** Deterministic drop spawn position (top-centre, easy to fly into). */

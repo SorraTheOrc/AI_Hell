@@ -298,7 +298,7 @@ describe('contract — cue to asset mapping', () => {
   });
 
   it('game-specific recipes use the aihell- prefix', () => {
-    const existing = new Set(['weapon-laser-zap', 'card-token-earn']);
+    const existing = new Set(['card-token-earn']);
     for (const entry of CUE_MANIFEST) {
       if (!existing.has(entry.recipe)) {
         expect(entry.recipe.startsWith('aihell-'), `${entry.cue} recipe ${entry.recipe}`).toBe(

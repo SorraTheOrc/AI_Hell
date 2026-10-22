@@ -1,27 +1,35 @@
-# AI Hell cue: aihell-enemy-destruction — Enemy destroyed — descending saw 440 to 60 Hz with per-kill pitch jitter.
-# Seed range 32110-32112: renders three pitch-jittered variants (original +/-15% jitter).
+# AI Hell cue: aihell-enemy-destruction — Enemy destroyed — descending saw 440 to 55 Hz with per-kill scale-degree variants.
+# Seed range (seeds 32113, 32128, 32144): three A-minor scale-degree variants — each seed starts
+# on a distinct A-minor note (A3/A4/E5) and descends to an A-minor note (A1), preserving per-kill
+# variation without off-scale pitches (AC3, AH-0MVCRR203005HKVZ).
 version: "0.1"
 meta:
   name: aihell-enemy-destruction
-  description: Enemy destroyed — descending saw 440 to 60 Hz with per-kill pitch jitter.
+  description: Enemy destroyed — descending saw to A-minor scale-degree variants.
   category: AIHell
   tags:
     - enemy
     - destruction
   duration: 0.28
   parameters:
-    - name: startFreq
-      type: number
-      min: 374
-      max: 506
-      unit: Hz
-      default: 440
-    - name: endFreq
-      type: number
-      min: 51
-      max: 69
-      unit: Hz
-      default: 60
+    - name: endSlot
+      type: integer
+      min: 1
+      max: 2
+      unit: int
+      overrides:
+        - target: v0.automation.frequency.exponentialRamp.value
+          expression: "endSlot * 27.5"
+    - name: startSlot
+      type: integer
+      min: 1
+      max: 3
+      unit: int
+      overrides:
+        - target: v0.frequency
+          expression: "startSlot * 220"
+        - target: v0.automation.frequency.set.value
+          expression: "startSlot * 220"
 nodes:
   v0:
     kind: oscillator
@@ -35,7 +43,7 @@ nodes:
           value: 440
         - kind: exponentialRamp
           time: 0.276
-          value: 60
+          value: 55
   e0:
     kind: envelope
     params:

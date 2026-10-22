@@ -97,6 +97,11 @@ const ROUND_ROBIN_ORDER: readonly DropType[] = [
   'nova',
   'mortar',
   'arc',
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
   'reset',
 ];
 

@@ -209,6 +209,80 @@ diff /tmp/a/balance-report.json /tmp/b/balance-report.json
 # (empty output == reproducible)
 ```
 
+## Tuning loop (baseline → edit → re-run → compare)
+
+> Delivered by the automated-balancing work item AH-0MV8Q5EYE001R715
+> (children AH-0MVBNIS59000MXW1, AH-0MVBNISIZ003C20U, AH-0MVBNISWE009QFBL,
+> AH-0MVBNITA0005VQGN).
+
+The tuning loop automates the manual chore of measuring **one** balance edit:
+run a baseline batch, apply a single declarative CSV edit, re-run the
+**identical** sweep against the edited file and write a versioned
+before/after comparison — one auditable, repeatable command instead of the
+hand diff shown in the §Acceptance-verification run.
+
+### One-command loop
+
+```bash
+# baseline (100 games) → edit boss health 1 → 6 → identical re-run → compare
+node scripts/evaluate.mjs --tune --set enemy-configs.csv boss.health=6 --games 100 --out tune-health-6
+```
+
+The command writes four artifacts under `--out`:
+
+| Artifact | Contents |
+|---|---|
+| `tune-baseline-report.json` | The baseline batch report (stable JSON). |
+| `tune-candidate-report.json` | The post-edit batch report (stable JSON). |
+| `tune-comparison.json` | The versioned before/after comparison (schema v2): per-metric count/mean/median/min/max/stdDev deltas, per-upgrade and per-archetype deltas, the `edit` record (file/row/field/previous/new) and the `movedMetrics`/`shapeChangedMetrics` summaries. |
+| `tune-comparison.txt` | The same comparison rendered as a readable text summary. |
+
+The readable summary is printed to stdout (`--json` prints the comparison
+artifact instead).
+
+### Tune flags
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--tune` | Enable the tune loop (baseline → edit → re-run → compare). | off |
+| `--set <file> <assignment>` | The single declarative edit, e.g. `--set enemy-configs.csv boss.health=6` (`<rowKey>.<field>=<value>`, or `<field>=<value>` for single-row files such as `ship-config.csv`). | — |
+| `--threshold <pct>` | Relative significance threshold in percent. | `10` (±10 %) |
+| `--keep-edit` | Keep the CSV edit after the run instead of restoring it. | off (restore) |
+
+The batch sweep itself uses the usual flags (`--games`, `--policies`,
+`--ticks`, `--dt`, `--sample-every`, `--out`).
+
+### Guards and guarantees
+
+- **Same-sweep guard:** the comparison refuses to diff two batches whose
+  sweep configuration (`policies`, `seeds`, `ticks`, `dt`,
+  `sampleEveryTicks`) differs — refused **before** any delta is computed.
+- **Side-effect check:** an identical-config re-run whose per-run telemetry
+  hashes drift errors (`SameSweepGuardError`), so a non-determinism or I/O
+  leak cannot silently corrupt a comparison.
+- **Determinism:** same edit + same seeds → byte-identical
+  `tune-comparison.json`; a no-op edit yields zero deltas.
+- **Checkout hygiene:** after the run the edited CSV is byte-identical to its
+  pre-run state on success **and** failure paths, unless `--keep-edit` is
+  given — the working tree stays clean.
+
+### Reading the comparison — worked example
+
+Tuning `boss.health` from `1` to `6` (the same edit as the
+§Acceptance-verification run) produces a comparison whose
+`enemiesKilledByArchetype.boss` row shows the kill-rate drop — e.g. mean
+`0.97 → 0.57` — while survival, minerals and avoidable-hit metrics move in
+the same direction. `movedMetrics` lists every metric whose mean or median
+moved beyond the configured threshold (default ±10 %); the shape-change
+lines call out stdDev growth (variance increase) and median shifts.
+
+```bash
+node scripts/evaluate.mjs --tune --set enemy-configs.csv boss.health=6 --games 100 --out tune-boss-6
+```
+
+This produces the same evidence as the hand-CSV-edit diff below, without any
+manual steps.
+
 ## Fidelity boundary and limitations
 
 The batch runs the same **closed-loop headless arena** as the single-run
@@ -233,7 +307,14 @@ pixel-accurate, full-stack verification use the browser capture path
 - `src/ai/eval/report.test.ts` — stable serialisation and the human-readable
   balance summary.
 - `src/ai/eval/cli.test.ts` and `scripts/evaluate-args.test.ts` — batch flag
-  parsing and pure CLI-core behaviour.
+  parsing and pure CLI-core behaviour, plus the tune-loop comparison core
+  (`runBalanceBatch`, `buildTuneComparisonArtifacts`) and `--tune`/`--set`
+  flag parsing (AH-0MVBNITA0005VQGN).
+- `src/ai/eval/tune.test.ts` — the versioned before/after comparison and the
+  same-sweep guard (determinism, empty deltas, threshold classification).
+- `src/utils/csvEdit.test.ts` and `scripts/csvEdit-shell.test.ts` — the
+  declarative `--set` editor and guaranteed byte-identical restore on
+  success/failure paths (`--keep-edit` opt-out).
 - `src/ai/eval/balancingDocs.test.ts` — this document's contract.
 
 ## Acceptance-verification run (2026-10-14, AH-0MV81Z9EI005TQMB)

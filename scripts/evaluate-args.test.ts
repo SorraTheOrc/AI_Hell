@@ -124,3 +124,46 @@ describe('resolveArtifactPath', () => {
     );
   });
 });
+
+describe('--tune flags (AH-0MVBNITA0005VQGN)', () => {
+  it('parses --tune with its declarative --set edit', () => {
+    const options = parseEvaluateArgs([
+      '--tune',
+      '--set',
+      'enemy-configs.csv',
+      'boss.health=6',
+      '--games',
+      '100',
+      '--out',
+      'tune-out',
+    ]);
+    expect(options.tune).toBe(true);
+    expect(options.tuneFile).toBe('enemy-configs.csv');
+    expect(options.tuneAssignment).toBe('boss.health=6');
+    expect(options.games).toBe(100);
+    expect(options.outputDir).toBe('tune-out');
+  });
+
+  it('defaults the threshold to ±10 % and honours --keep-edit', () => {
+    const defaults = parseEvaluateArgs(['--tune', '--set', 'ship-config.csv', 'thrustAcceleration=320']);
+    expect(defaults.threshold).toBe(10);
+    expect(defaults.keepEdit).toBe(false);
+    const kept = parseEvaluateArgs([
+      '--tune',
+      '--set',
+      'enemy-configs.csv',
+      'boss.health=6',
+      '--threshold',
+      '25',
+      '--keep-edit',
+    ]);
+    expect(kept.threshold).toBe(25);
+    expect(kept.keepEdit).toBe(true);
+  });
+
+  it('rejects --set without an assignment token', () => {
+    expect(() => parseEvaluateArgs(['--set', 'enemy-configs.csv'])).toThrow(
+      /Missing value for --set/,
+    );
+  });
+});

@@ -256,6 +256,7 @@ describe('recorder → remote transport integration (AC2/AC6)', () => {
       sampleRate: 1,
       bufferCapacity: 8,
       batchSize: 4,
+      devCollection: false,
       recording: true,
     };
     const recorder = createTelemetryRecorder(config, {
@@ -290,6 +291,7 @@ describe('recorder → remote transport integration (AC2/AC6)', () => {
       sampleRate: 1,
       bufferCapacity: 8,
       batchSize: 4,
+      devCollection: false,
       recording: false,
     };
     const recorder = createTelemetryRecorder(disabled, {

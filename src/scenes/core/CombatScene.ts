@@ -59,6 +59,12 @@ import {
   findTeleportDestination,
   type TeleportBody,
 } from '../../powerups/teleport';
+
+// ── Orbital Strike reward VFX (AH-0MVH80ZJ7009W18Z) ──────────────────
+/** Visual radius of the reward strike's expanding ring (px). */
+export const ORBITAL_STRIKE_RADIUS = 40;
+/** Distinct cyan-white colour for the reward strike's ring/impact. */
+export const ORBITAL_STRIKE_COLOR = 0x9ffcff;
 import {
   CombatCoreScene,
   SMART_BOMB_PULSE_COLOR,
@@ -75,6 +81,7 @@ import {
   WAVE_TIMER_BAR_Y,
 } from './waveTimeout';
 import { Asteroid } from '../../entities/Asteroid';
+import { hitDrone } from './combatDrone';
 
 // Re-export the shared contracts so existing `from './CombatScene'`
 // imports keep working after they moved to the narrower base.
@@ -410,7 +417,13 @@ export abstract class CombatScene<
     // (AH-0MV8228YW0050IXS AC4).
     this.resolveWeaponImpactFx(bullet);
     if (enemy.takeDamage) {
-      enemy.takeDamage();
+      // Frenzy (AH-0MVH80ZJ7009W18Z): while its window is active each bullet
+      // applies its bonus hits, so multi-hit targets (Harvester/mini-boss/
+      // boss) die faster. Inactive = exactly one hit, unchanged.
+      const extraHits = this.getEffectsRegistry().frenzyBonusHits();
+      for (let hit = 0; hit <= extraHits && enemy.alive; hit += 1) {
+        enemy.takeDamage();
+      }
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
       // (the entity's `takeDamage()` has already run `destroySelf()` and
       // cleared `alive`). A non-lethal hit flashes at the impact point so the
@@ -510,7 +523,10 @@ export abstract class CombatScene<
         aoe.radius,
         this.getEnemyEntities(),
       );
-      const damage = Math.max(1, Math.floor(aoe.damage ?? 1));
+      // Frenzy also strengthens area effects (same shared damage seam).
+      const damage =
+        Math.max(1, Math.floor(aoe.damage ?? 1)) +
+        this.getEffectsRegistry().frenzyBonusHits();
       for (const enemy of targets) this.damageEnemyViaAoe(enemy, damage);
     }
 
@@ -552,6 +568,43 @@ export abstract class CombatScene<
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
     }
+  }
+
+  /**
+   * Resolves one Orbital Strike bolt (AH-0MVH80ZJ7009W18Z): picks the live
+   * enemy nearest the ship and applies the level-resolved damage through the
+   * shared AOE kill seam (so score/drop/wave accounting runs exactly once),
+   * with a shared expanding-ring + impact flash at the target. Lights up in
+   * the game and every gym because the detection lives in the shared
+   * {@link CombatCoreScene._updateOrbitalStrike}.
+   *
+   * @param damage - Level-resolved strike damage (whole hits).
+   */
+  protected override onOrbitalStrike(damage: number): void {
+    const player = this.getPlayer();
+    if (!player) return;
+    let target: TEnemy | null = null;
+    let best = Number.POSITIVE_INFINITY;
+    for (const enemy of this.getEnemyEntities()) {
+      if (!enemy.alive) continue;
+      const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+      if (distance < best) {
+        best = distance;
+        target = enemy;
+      }
+    }
+    if (!target) return;
+    const x = target.x;
+    const y = target.y;
+    spawnNovaRing(this, x, y, ORBITAL_STRIKE_RADIUS, {
+      registry: this.aoeEffects,
+      color: ORBITAL_STRIKE_COLOR,
+    });
+    spawnBulletImpact(this, x, y, {
+      color: ORBITAL_STRIKE_COLOR,
+      registry: this.bulletImpactEffects,
+    });
+    this.damageEnemyViaAoe(target, damage);
   }
 
   /**
@@ -1151,6 +1204,13 @@ export abstract class CombatScene<
     }
     this.setEnemyBullets(keptEnemy);
 
+    // 2c. Enemy ordnance and enemy bodies vs collector drones (Mystery UFO
+    //     reward, AH-0MV9G113S009B37I). Only enemies can destroy a drone —
+    //     the player's own fire passes through — and the spill lands as
+    //     collectable minerals at the crash site. Runs before the mineral
+    //     pass so a same-frame drop joins the field this frame.
+    this._resolveDronesVsEnemies();
+
     this.onAfterBulletVsBullet();
 
     const player = this.getPlayer();
@@ -1224,12 +1284,83 @@ export abstract class CombatScene<
           )
         ) {
           this.onPlayerRamsEnemy(enemy);
-          this._hitPlayer();
+          // Thorn Field (AH-0MVH80ZJ7009W18Z): an active field absorbs the
+          // ram — the enemy still dies, but the player takes no hit.
+          if (!this.getEffectsRegistry().tryConsumeThornsRam()) {
+            this._hitPlayer();
+          }
           break;
         }
       }
       if (this.onPlayerRamsBoss()) {
-        this._hitPlayer();
+        if (!this.getEffectsRegistry().tryConsumeThornsRam()) {
+          this._hitPlayer();
+        }
+      }
+    }
+  }
+
+  /**
+   * Resolves the shared collector-drone destruction pass: enemy bullets and
+   * enemy bodies destroy a drone, scattering its held minerals plus the
+   * `2 × level` destruction bonus at the crash site. Player bullets are not
+   * considered here, so the player's own fire passes straight through.
+   *
+   * Defined once here so the game and every combat gym run the identical
+   * rule (gym↔game parity, AH-0MV9G113S009B37I).
+   */
+  protected _resolveDronesVsEnemies(): void {
+    if (this.drones.length === 0) return;
+    const level = this.getDroneLevel();
+    const field = this.getDroneMineralField();
+    const bulletRadius = this.getEnemyBulletRadius();
+
+    // Enemy bullets: an intercepted shot is consumed and the drone spills.
+    const keptEnemy: TBullet[] = [];
+    for (const eb of this.getEnemyBullets()) {
+      let consumed = false;
+      for (const drone of this.drones) {
+        if (!drone.alive) continue;
+        if (
+          this._overlaps(
+            eb.graphics.x,
+            eb.graphics.y,
+            bulletRadius,
+            drone.x,
+            drone.y,
+            drone.getHitRadius(),
+          )
+        ) {
+          field.push(...hitDrone(this, drone, 'enemy-bullet', level));
+          eb.graphics.destroy();
+          consumed = true;
+          break;
+        }
+      }
+      if (!consumed) keptEnemy.push(eb);
+    }
+    this.setEnemyBullets(keptEnemy);
+
+    // Enemy bodies: contact destroys the drone (spawning enemies are still
+    // growing, so they cannot touch it yet — same rule as every collision).
+    for (const drone of this.drones) {
+      if (!drone.alive) continue;
+      for (const enemy of this.getEnemyEntities()) {
+        if (!enemy.alive) continue;
+        if ((enemy as unknown as { isSpawning?: boolean }).isSpawning) continue;
+        if (
+          this._overlaps(
+            drone.x,
+            drone.y,
+            drone.getHitRadius(),
+            enemy.x,
+            enemy.y,
+            enemy.getHitRadius(),
+          )
+        ) {
+          field.push(...hitDrone(this, drone, 'enemy-body', level));
+          break;
+        }
       }
     }
   }

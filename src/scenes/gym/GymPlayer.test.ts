@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import { DEFAULT_CONFIG, loadShipConfig, type ShipConfig } from '../../core/config';
 import { resetConfigStore, seedConfigStore } from '../../core/configStore';
 
@@ -50,7 +50,7 @@ describe('GymPlayer ship config panel', () => {
     document.body.innerHTML = '';
   });
 
-  const tick = () => new Promise((resolve) => setTimeout(resolve, 200));
+  const tick = () => advanceGame(booted!.game, 200);
 
   const panel = () =>
     document.querySelector('#gym-config-panel') as HTMLDivElement | null;

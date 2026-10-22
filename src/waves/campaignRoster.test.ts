@@ -234,3 +234,44 @@ describe('Campaign roster coverage and player-targeter pairing (AH-0MV3953EO005V
     },
   );
 });
+
+// ── 10-wave campaign verification harness (AH-0MVCRAHWO0007US2) ──
+//
+// Test-first verification for the expanded campaign (epic AH-0MVCC8XSS007P01Z):
+// every level must grow to exactly 10 waves (100 in total) with the 10th wave
+// flagged as its mini-boss encounter, and the roster/pairing invariants above
+// continue to hold across the expanded grid (they are data-driven, so they
+// automatically span the 100 waves once the production data lands).
+//
+// GREEN once the campaign-data item (AH-0MVCYANT6003SG5C) landed the 10-wave
+// rows, so the pins run as plain `it` and hard-gate the shipped shape.
+describe('10-wave campaign verification harness — expanded grid (AH-0MVCRAHWO0007US2)', () => {
+  it('AC1 — the merged campaign spans exactly 10 waves per level, 100 in total', () => {
+    const merged = buildSequencedLevels();
+    expect(merged).toHaveLength(10);
+    const total = merged.reduce((sum, level) => sum + level.waves.length, 0);
+    expect(total, 'campaign wave total').toBe(100);
+    for (const level of merged) {
+      expect(level.waves.length, `L${level.level}`).toBe(10);
+    }
+  });
+
+  it('AC2/AC3 — every wave-10 mini-boss wave is part of the covered 100-wave grid', () => {
+    const merged = buildSequencedLevels();
+    for (const labelled of allWaves(merged)) {
+      if (labelled.label.endsWith('W10')) {
+        // The roster helpers must still recognise the mini-boss wave: it
+        // delivers at least one enemy group (the mini-boss) and participates
+        // in the archetype-reuse invariants like any other wave.
+        expect(
+          enemyKeysInWave(labelled.wave).length,
+          `${labelled.label} mini-boss wave has no enemies`,
+        ).toBeGreaterThan(0);
+      }
+    }
+    // The grid really is 100 waves: without the expansion this loop sees no
+    // W10 rows at all and the pairing/coverage invariants above would be
+    // trivially vacuous for the mini-boss waves.
+    expect(allWaves(merged).filter((l) => l.label.endsWith('W10'))).toHaveLength(10);
+  });
+});

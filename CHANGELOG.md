@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.1.14 (2026-10-22)
+> **Release focus:** This release restructures every level into ten waves capped by a unique mini-boss, adding new enemies, weapons, power-ups, and save checkpoints while making bosses scale with permanent upgrades. It also improves upgrade choices so owned items appear more often, turns the Mystery UFO into a visible mineral-collecting saucer drone, and adds a remembered ship control scheme. Numerous fixes polish combat clarity, including coordinated ghost packs, safer wormholes, smoother phaser orbits, balanced audio, and working power-ups like Frenzy and Orbital Strike.
+### Features
+- Every level now has 10 waves ending in a unique mini-boss, with new enemies, weapons, power-ups, rewards, and save checkpoints. (AH-0MVCC8XSS007P01Z)
+- The Mystery UFO is now a visible drone that collects minerals for you. (AH-0MV9G113S009B37I)
+- Balance tuning is now a single command that shows exactly what changed and by how much. (AH-0MV8Q5EYE001R715)
+- Owned items now appear much more often when choosing upgrades, so your build keeps improving. (AH-0MVCFB00Y004AQ2Z)
+- Dev mode now auto-saves your runs to the dev server and evaluates them, with a new setting to opt out. (AH-0MVBHRLY8004BGDN)
+- Choose your ship's control scheme in Settings and it'll be remembered for next time. (AH-0MVI7LRCJ006Q8SA)
+- Ghosts now spawn together as a coordinated pack, closing in as a group. (AH-0MV9G78DO0053MGK)
+- The Mystery UFO now looks like a proper classic flying saucer. (AH-0MVH7ZC5N003JS92)
+- Prevents loud sound stacking during big fights so explosions and gunfire stay clear. (AH-0MVH8RQR7007QG8E)
+- Bosses now scale with your permanent upgrades, keeping fights challenging as you grow stronger. (AH-0MVH87A3L004VOLD)
+### Bug Fixes
+- Control scheme changes now apply instantly when you resume your run. (AH-0MVIMPC11001F7WU)
+- The wormhole now always disappears after enemies arrive, so it never lingers into the next wave. (AH-0MV9KHLV8006GMX6)
+- Surviving enemies now keep flying in place when the next wave begins, instead of snapping back. (AH-0MV9FUG4J008OHKA)
+- Phasers now emerge smoothly into their orbit, and large groups spread out evenly instead of overlapping. (AH-0MVEXVME1004SIIS)
+- Teleport help now correctly says it fires automatically when you're in danger. (AH-0MVBKQAKU004NQ77)
+- Weapon level stats are now verified to stay within their intended limits at every level. (AH-0MVF7CKRX005ZAP6)
+- Fixed action intensity timestamps so highlight clips now sync to the correct moments in gameplay video. (AH-0MVFI5OQN008XGBV)
+- Test results now always reflect your latest code changes, so you won't see outdated pass or fail results. (AH-0MVFGIV6700329SZ)
+- Enemy sounds are now evenly balanced and no longer drown out the mix. (AH-0MVAUU594007S92Q)
+- Wormholes now open safely away from your ship, so enemies never erupt on top of you. (AH-0MV8BR9Y70079TKC)
+- Defeated mini-bosses no longer leave behind leftover health bars or visual effects. (AH-0MVH85XXZ008INE2)
+- New power-ups now actually work: Frenzy, Chrono Field, Thorn Field, Salvage, and Orbital Strike all have real effects. (AH-0MVH80ZJ7009W18Z)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.13 (2026-10-16)
 > **Release focus:** This release focuses on clearer combat readability and fairer balance, with distinct weapon visuals and sounds, quieter shots, better ship-facing feedback, and fairer wave composition. It also speeds up builds, makes power-ups and escapes more reliable, and adds data-driven tuning through simulated games and bot-versus-human stats.
 ### Features

@@ -75,6 +75,7 @@ import {
 } from '../../../audio/effects';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
 import {
+  computeFormationPosition,
   computeFormationReanchorDelta,
   FormationOffset,
   type FormationReanchorRequest,
@@ -129,6 +130,7 @@ import {
 } from '../../core/bulletLifecycle';
 import {
   resolveMineralKillDrops,
+  scatterMineralDrops,
   type MineralKillDropEntity,
 } from '../../core/mineralKillDrops';
 import {
@@ -149,12 +151,14 @@ import {
 } from '../../../powerups/choice';
 import { type WeaponId } from '../../../utils/weapons';
 import {
-  spawnWormholeOpen,
-  spawnWormholeClose,
+  WORMHOLE_OPEN_DURATION,
+  WormholeController,
+  formationExtents,
+  getSpawnState,
+  placeWavePortal,
   startSpawnAnimation,
   updateSpawnAnimation,
   type SpawnAnimatable,
-  type WormholeHandle,
 } from '../../../vfx/wormholeSpawn';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
@@ -495,8 +499,12 @@ export class GymFormationScene<
   /** Resolved march bounds (px) for the current formation. */
   private marchBounds: { minX: number; maxX: number } = { minX: 0, maxX: 0 };
 
-  /** Live wormhole handle for the current formation spawn, or null. */
-  private _spawnWormhole: WormholeHandle | null = null;
+  /**
+   * Single-live-wormhole lifecycle, shared with `PlayScene` (parity,
+   * AH-0MV9KHLV8006GMX6): any new formation spawn closes a still-open
+   * wormhole first, and close is idempotent across respawns and resets.
+   */
+  private readonly _wormhole = new WormholeController(this);
 
   // Wipe → 3s countdown → respawn and the opt-in wave-timeout lifecycle now
   // live in the shared `CombatScene` core (AH-0MUNR5LM1004B223) so every
@@ -644,27 +652,7 @@ export class GymFormationScene<
     const offsets = config.buildOffsets(config.count);
     // Wormhole opens at the formation origin; every entity grows from
     // 1 px to its full size while protected (AC1–AC4, gym parity).
-    for (const offset of offsets) {
-      const entity = config.createEntity(
-        this,
-        this.formationBaseX + offset.col * config.spacingX,
-        this.formationBaseY + offset.row * config.spacingY,
-        offset,
-      );
-      // Containers are not auto-added to the display list — without this
-      // the enemies would never render (project convention, see Gym.ts).
-      this.add.existing(entity);
-      startSpawnAnimation(entity as unknown as SpawnAnimatable, entity.scaleX);
-      entity.setSpawning?.(true);
-      this.entities.push(entity);
-    }
-    if (offsets.length > 0) {
-      this._spawnWormhole = spawnWormholeOpen(
-        this,
-        this.formationBaseX,
-        this.formationBaseY,
-      );
-    }
+    this._spawnFormation(offsets);
     playSpawnSound();
 
     // ── Player ship (optional per-scene opt-in) ────────────────────
@@ -786,7 +774,7 @@ export class GymFormationScene<
     this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
-    this._spawnWormhole = null;
+    this._wormhole.close();
     this._resolveFormationBase();
   }
 
@@ -933,11 +921,20 @@ export class GymFormationScene<
   private _powerUpPlacementContext(): PlacementContext {
     const enemies = this.entities
       .filter((entity) => entity.alive)
-      .map((entity) => ({
-        x: entity.x,
-        y: entity.y,
-        radius: entity.getHitRadius(),
-      }));
+      .map((entity) => {
+        // (AH-0MV8BSMXC0097KLW) A spawning entity is mid-emergence — its
+        // transient transit position hugs the wormhole and would mislead drop
+        // placement (drops may land under a magnet-drawn player later in the
+        // formation's arrival). Avoid the slot it settles on instead.
+        let x = entity.x;
+        let y = entity.y;
+        const state = getSpawnState(entity as unknown as SpawnAnimatable);
+        if (state) {
+          x = state.destX;
+          y = state.destY;
+        }
+        return { x, y, radius: entity.getHitRadius() };
+      });
     const player = this.player
       ? { x: this.player.x, y: this.player.y, radius: SHIP_SIZE / 2 }
       : { x: -1e6, y: -1e6, radius: 0 };
@@ -1050,7 +1047,7 @@ export class GymFormationScene<
     drop.powerUp.tryCollect();
   }
 
-  // ── Teleport (Teleport, S/↓) ───────────────────────────────────────────
+  // ── Teleport (automatic on danger) ─────────────────────────────────────
 
   /**
    * Teleports are allowed when the opt-in drop layer is active, or whenever
@@ -1641,10 +1638,7 @@ export class GymFormationScene<
         entity.setSpawning?.(false);
       }
     }
-    if (!anySpawning && this._spawnWormhole) {
-      spawnWormholeClose(this, this._spawnWormhole);
-      this._spawnWormhole = null;
-    }
+    if (!anySpawning) this._wormhole.close();
   }
 
   /**
@@ -1658,9 +1652,104 @@ export class GymFormationScene<
       updateSpawnAnimation(entity as unknown as SpawnAnimatable, 10);
       entity.setSpawning?.(false);
     }
-    if (this._spawnWormhole) {
-      spawnWormholeClose(this, this._spawnWormhole);
-      this._spawnWormhole = null;
+    this._wormhole.close();
+  }
+
+  /** True while the formation's wormhole is live (single-live controller). */
+  isWormholeOpen(): boolean {
+    return this._wormhole.isOpen;
+  }
+
+  /**
+   * Instantiates a fresh formation at the current base and, for parity with
+   * `PlayScene.spawnWave()`, marks every entity spawning (1 px growth) and
+   * opens the formation's wormhole through the shared single-live controller
+   * (AH-0MV9KHLV8006GMX6). Used by `create()`, `respawnFormation()` and
+   * `respawnWithCarriedSurvivors()` so the fresh-spawn path cannot drift.
+   */
+  private _spawnFormation(offsets: readonly FormationOffset[]): void {
+    // Shared portal placement (AH-0MV8BR9Y70079TKC, AC5): with no player
+    // ship the portal stays at the formation base and the formation is laid
+    // out relative to it — the same `placeWavePortal` code path `PlayScene`
+    // uses (gym↔game parity), so gym behaviour is unchanged.
+    const portal = placeWavePortal({
+      formation: formationExtents(
+        offsets.map((offset) =>
+          computeFormationPosition(
+            0,
+            0,
+            offset,
+            this.config.spacingX,
+            this.config.spacingY,
+          ),
+        ),
+      ),
+      anchor: { x: this.formationBaseX, y: this.formationBaseY },
+      playfield: { width: GAME_WIDTH, height: GAME_HEIGHT },
+    });
+    for (const offset of offsets) {
+      // Wormhole-entry transit (AH-0MV8BSMXC0097KLW): spawning-capable
+      // entities emerge at the portal (where the wormhole opens) and traverse
+      // to their slot over the spawn window — parity with `PlayScene.spawnWave`
+      // (composed with the portal placement AH-0MV8BR9Y70079TKC). Autonomous
+      // movers (`autonomousPositioning`, e.g. the Raider) are exempt: they
+      // emerge at the portal and their own motion carries them out, avoiding a
+      // position pop when the spawn window ends. Entities without the spawning
+      // seams (e.g. test stubs) are created straight on their slot.
+      const slot = computeFormationPosition(
+        portal.x,
+        portal.y,
+        offset,
+        this.config.spacingX,
+        this.config.spacingY,
+      );
+      const entity = this.config.createEntity(this, portal.x, portal.y, offset);
+      const canTransit =
+        !(entity as { autonomousPositioning?: boolean })
+          .autonomousPositioning &&
+        typeof (entity as { setSpawning?: unknown }).setSpawning === 'function';
+      if (!canTransit) entity.setPosition(slot.x, slot.y);
+      // Orbital entities (the Phaser) expose a live formation-slot seam: the
+      // wormhole transit targets their orbital slot instead of the grid line,
+      // so they never appear in a line then snap onto the ring
+      // (AH-0MVEXVME1004SIIS, Q2=A). Every other enemy keeps the grid slot.
+      const orbitalSlot = (
+        entity as {
+          formationSlot?: (baseX: number, baseY: number) => { x: number; y: number };
+        }
+      ).formationSlot;
+      // Containers are not auto-added to the display list — without this
+      // the enemies would never render (project convention, see Gym.ts).
+      this.add.existing(entity);
+      startSpawnAnimation(
+        entity as unknown as SpawnAnimatable,
+        entity.scaleX,
+        WORMHOLE_OPEN_DURATION,
+        canTransit
+          ? () => {
+              // Track the live slot so base drift/march during the transit
+              // is followed and the entity lands exactly on its live slot.
+              if (typeof orbitalSlot === 'function') {
+                return orbitalSlot.call(
+                  entity,
+                  this.formationBaseX,
+                  this.formationBaseY,
+                );
+              }
+              return {
+                x: this.formationBaseX + offset.col * this.config.spacingX,
+                y: this.formationBaseY + offset.row * this.config.spacingY,
+              };
+            }
+          : undefined,
+      );
+      entity.setSpawning?.(true);
+      this.entities.push(entity);
+    }
+    // The fresh formation enters through a wormhole; the controller closes
+    // any still-open previous wormhole first (single-live invariant).
+    if (offsets.length > 0) {
+      this._wormhole.open(portal.x, portal.y);
     }
   }
 
@@ -1772,6 +1861,20 @@ export class GymFormationScene<
       this._sceneRng,
     );
     if (drops.length > 0) this.minerals.push(...drops);
+    // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
+    // the wreck of a destroyed enemy ship (asteroids are not bounty targets).
+    const salvageBonus = this.getEffectsRegistry().salvageBonusMinerals();
+    if (salvageBonus > 0 && typeof (entity as unknown as { getSizeTier?: unknown }).getSizeTier !== 'function') {
+      this.minerals.push(
+        ...scatterMineralDrops(
+          this,
+          entity.x,
+          entity.y,
+          salvageBonus,
+          this._sceneRng,
+        ),
+      );
+    }
   }
 
   /** Advances player bullets and removes those whose lifetime has elapsed. */
@@ -1785,7 +1888,14 @@ export class GymFormationScene<
    * (AH-0MUII3CF00024EDM, gap 3).
    */
   private _advanceEnemyBullets(dt: number): void {
-    advanceWrappingBullets(this.bullets, dt, GAME_WIDTH, GAME_HEIGHT);
+    // Chrono Field (AH-0MVH80ZJ7009W18Z): enemy bullets slow while the
+    // window is active, identically to the game.
+    advanceWrappingBullets(
+      this.bullets,
+      dt * this.getEffectsRegistry().enemyBulletTimeScale(),
+      GAME_WIDTH,
+      GAME_HEIGHT,
+    );
   }
 
   /**
@@ -1880,19 +1990,10 @@ export class GymFormationScene<
     // Rebuild a fresh formation alongside the survivors at the current base
     // (no resample, so the survivors do not jump when the formation base is
     // regenerated). The fresh formation is a complete formation for the
-    // configured geometry.
+    // configured geometry, entering through a wormhole like the initial
+    // spawn (carry-over parity — AH-0MUNS3ZQ1002DJ9S).
     const wasShooting = this.shootEnabled;
-    const offsets = this.config.buildOffsets(this.config.count);
-    for (const offset of offsets) {
-      const entity = this.config.createEntity(
-        this,
-        this.formationBaseX + offset.col * this.config.spacingX,
-        this.formationBaseY + offset.row * this.config.spacingY,
-        offset,
-      );
-      this.add.existing(entity);
-      this.entities.push(entity);
-    }
+    this._spawnFormation(this.config.buildOffsets(this.config.count));
     // Preserve SHOOT toggle across the respawn (no surprise toggle).
     for (const entity of this.entities) entity.shootEnabled = wasShooting;
 
@@ -1933,17 +2034,9 @@ export class GymFormationScene<
     for (const entity of this.entities) entity.destroy();
     this.entities.length = 0;
     this._resolveFormationBase();
-    const offsets = this.config.buildOffsets(this.config.count);
-    for (const offset of offsets) {
-      const entity = this.config.createEntity(
-        this,
-        this.formationBaseX + offset.col * this.config.spacingX,
-        this.formationBaseY + offset.row * this.config.spacingY,
-        offset,
-      );
-      this.add.existing(entity);
-      this.entities.push(entity);
-    }
+    // Fresh formation enters through a wormhole like the initial spawn
+    // (core respawn parity — AH-0MV9KHLV8006GMX6).
+    this._spawnFormation(this.config.buildOffsets(this.config.count));
     // Preserve SHOOT toggle across the respawn (no surprise toggle).
     for (const entity of this.entities) entity.shootEnabled = wasShooting;
 

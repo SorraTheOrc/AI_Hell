@@ -14,6 +14,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { cliSpawnEnv } from './cliChildEnv';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -70,7 +71,23 @@ import {
   START_KEY_GAP_MS,
   BOT_TUNING_STORAGE_KEY,
   installBotTuningConfig,
+  writeCaptureSeriesArtifacts,
 } from './capture-gameplay.mjs';
+import {
+  ACTION_INTENSITY_SERIES_SCHEMA_VERSION as SERIES_SCHEMA_VERSION,
+  ACTION_INTENSITY_SERIES_CATEGORIES,
+  CAPTURE_ANCHOR_KIND,
+  actionIntensitySeriesFileName,
+  buildCaptureJoinAnchor,
+  captureAnchorFileName,
+  extractActionIntensitySeriesFromRecords,
+  serialiseActionIntensitySeries,
+} from './capture-series.mjs';
+import {
+  ACTION_INTENSITY_SERIES_SCHEMA_VERSION,
+  parseActionIntensitySeries,
+  serialiseActionIntensitySeries as serialiseActionIntensitySeriesTs,
+} from '../src/scenes/core/actionIntensitySerialiser';
 import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
 import {
   CAPTURE_STARTED_EVENT,
@@ -87,7 +104,8 @@ import {
   shouldDemoReturnToMenu,
   summariseCaptureRun,
   waitForRunEnd,
-} from './capture-run-lifecycle.mjs';
+} from './capture-run-lifecycle.mjs'
+
 
 describe('buildCaptureStartedMarker (AH-0MUZQG13S006KL8K)', () => {
   it('emits the epoch-ms marker at recording start', () => {
@@ -1697,18 +1715,21 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
     }
   });
 
-  it('the spawned CLI lists every scenario, exits 0 and boots no browser or server', () => {
+  it('the spawned CLI lists every scenario, exits 0 and boots no browser or server', { timeout: 60_000 }, () => {
     // Instrumentation of the real `main()` entry point: spawn the CLI with
-    // --list-scenarios and assert the listing with a boot-discriminating
-    // timeout. If `main` ever reached `runCapture`, the child would start
-    // Vite + Chromium and record a full run — far beyond this bound — and the
-    // test would fail with a timeout instead of a listing.
+    // --list-scenarios and assert the listing within the child's own 30 s
+    // execFileSync bound. The per-test timeout is generous (60 s) because a
+    // loaded vitest run can spend >5 s just spawning the Vite-SSR loader
+    // (load flake, AH-0MVE112BV006EDSZ); if `main` ever reached `runCapture`,
+    // the child would start Vite + Chromium and record a full run — far
+    // beyond the 30 s bound — and the test fails with a timeout instead of a
+    // listing.
     const script = resolve(process.cwd(), 'scripts/capture-gameplay.mjs');
 
     const human = execFileSync(
       process.execPath,
       [script, '--list-scenarios'],
-      { encoding: 'utf8', timeout: 30_000 },
+      { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
     );
     for (const { name, effect } of CAPTURE_SCENARIOS) {
       expect(human).toContain(name);
@@ -1718,19 +1739,13 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
     const jsonOutput = execFileSync(
       process.execPath,
       [script, '--list-scenarios', '--json'],
-      { encoding: 'utf8', timeout: 30_000 },
+      { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
     );
     const parsed = JSON.parse(jsonOutput) as Array<{ name: string }>;
     expect(parsed.map((scenario) => scenario.name)).toEqual(
       CAPTURE_SCENARIOS.map((scenario) => scenario.name),
     );
     expect(parsed).not.toHaveProperty('iterations');
-  });
-});
-
-describe('bot-tuning config injection (AH-0MV6MFDYG001E6PL)', () => {
-  it('names the store key the gym persists under', () => {
-    expect(BOT_TUNING_STORAGE_KEY).toBe('ai-hell-bot-tuning');
   });
 
   it('installBotTuningConfig writes the exported state into localStorage', () => {
@@ -2279,5 +2294,358 @@ describe('--all-scenarios batch capture (AH-0MV6JGQFK007MXGX)', () => {
     // The single-clip output resolution is untouched by the new flags.
     const [single] = resolveOutputPaths(null, 1);
     expect(basename(single)).toMatch(/^gameplay-.*\.webm$/);
+  });
+});
+
+// ── Action-intensity series export (AH-0MVDV4DMY001Z7CU) ─────────────
+
+function actionSample(
+  rawScore: number,
+  intensity: number,
+  smoothed: number,
+  burstiness: number,
+) {
+  return {
+    rawScore,
+    intensity,
+    smoothed,
+    burstiness,
+    breakdown: {
+      playerBullets: 4,
+      enemyBullets: 11,
+      enemies: 6,
+      asteroids: 0,
+      drops: 1,
+      enemyExplosions: 0,
+      bossExplosions: 0,
+      playerExplosions: 0,
+      bosses: 0,
+    },
+  };
+}
+
+function telemetryRunHeader(runSeed = 123456789, startedAt = 1_700_000_000_000) {
+  return {
+    schemaVersion: 1,
+    kind: 'run_header',
+    runSeed,
+    build: { appVersion: '0.0.0-dev', commit: 'unknown' },
+    startedAt,
+  };
+}
+
+function telemetryTick(tick: number, actionIntensity: object, recordedAt?: number) {
+  const record: Record<string, unknown> = {
+    schemaVersion: 1,
+    kind: 'tick',
+    tick,
+    state: { actionIntensity },
+    input: null,
+  };
+  // A legacy capture predates the tick wall clock (§7.2): omit the field so
+  // the exporter's documented grid fallback stays exercised.
+  if (recordedAt !== undefined) record.recordedAt = recordedAt;
+  return record;
+}
+
+describe('actionIntensitySeriesFileName / captureAnchorFileName (AC1/AC4)', () => {
+  it('maps a WebM basename to a matching .action.jsonl and .capture.json', () => {
+    expect(actionIntensitySeriesFileName('gameplay-2026-10-18T10-00-00-000Z.webm')).toBe(
+      'gameplay-2026-10-18T10-00-00-000Z.action.jsonl',
+    );
+    expect(captureAnchorFileName('gameplay-2026-10-18T10-00-00-000Z.webm')).toBe(
+      'gameplay-2026-10-18T10-00-00-000Z.capture.json',
+    );
+  });
+
+  it('keeps indexed/count suffixes and absolute paths intact', () => {
+    expect(actionIntensitySeriesFileName('clips/demo-2.webm')).toBe('demo-2.action.jsonl');
+    expect(actionIntensitySeriesFileName('/tmp/x/gameplay-a.webm')).toBe('gameplay-a.action.jsonl');
+  });
+
+  it('leaves a no-extension path unchanged (no phantom stem)', () => {
+    expect(actionIntensitySeriesFileName('demo')).toBe('demo.action.jsonl');
+    expect(captureAnchorFileName('demo')).toBe('demo.capture.json');
+  });
+});
+
+describe('serialiseActionIntensitySeries (AC1/AC4) — canonical-format parity', () => {
+  const samples = [
+    { t: 0, tick: 0, actionIntensity: actionSample(8, 0.21, 0.21, 0) },
+    { t: 100, tick: 6, actionIntensity: actionSample(13.5, 0.31, 0.24, 0.07) },
+  ];
+  const input = { runSeed: 123456789, sampleRateHz: 10, samples };
+
+  it('is byte-identical to the canonical TS serialiser for the same input', () => {
+    const tsOutput = serialiseActionIntensitySeriesTs(input);
+    expect(serialiseActionIntensitySeries(input)).toBe(tsOutput);
+  });
+
+  it('round-trips through the canonical TS parser with header + 2 samples', () => {
+    const parsed = parseActionIntensitySeries(serialiseActionIntensitySeries(input));
+    expect(parsed.header).not.toBeNull();
+    expect(parsed.header?.runSeed).toBe(123456789);
+    expect(parsed.header?.sampleRateHz).toBe(10);
+    expect(parsed.header?.categories).toEqual([...ACTION_INTENSITY_SERIES_CATEGORIES]);
+    expect(parsed.samples).toHaveLength(2);
+    expect(parsed.samples[0].t).toBe(0);
+    expect(parsed.samples[1].t).toBe(100);
+    expect(parsed.samples[1].tick).toBe(6);
+  });
+
+  it('writes a header-only file for an empty run (partial-run tolerance, AC3)', () => {
+    const output = serialiseActionIntensitySeries({ runSeed: 7, sampleRateHz: 10, samples: [] });
+    const lines = output.trimEnd().split('\n');
+    expect(lines).toHaveLength(1);
+    const header = JSON.parse(lines[0]);
+    expect(header.schemaVersion).toBe(ACTION_INTENSITY_SERIES_SCHEMA_VERSION);
+    expect(header.runSeed).toBe(7);
+  });
+});
+
+describe('extractActionIntensitySeriesFromRecords (AC1/AC4)', () => {
+  const runHeader = telemetryRunHeader();
+
+  it('extracts the run seed/startedAt and one sample per distinct tick', () => {
+    const records = [
+      runHeader,
+      telemetryTick(0, actionSample(8, 0.21, 0.21, 0)),
+      telemetryTick(1, actionSample(8, 0.21, 0.21, 0)), // duplicate reuse — collapsed
+      telemetryTick(6, actionSample(13.5, 0.31, 0.24, 0.07)),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.runSeed).toBe(123456789);
+    expect(series.startedAt).toBe(1_700_000_000_000);
+    expect(series.samples).toHaveLength(2);
+    expect(series.samples[0].t).toBe(0);
+    expect(series.samples[0].tick).toBe(0);
+    expect(series.samples[1].t).toBe(100); // 10 Hz grid
+    expect(series.samples[1].tick).toBe(6);
+    expect(series.samples[1].actionIntensity.rawScore).toBe(13.5);
+  });
+
+  it('keeps real time on the t axis when identical samples are deduped (regression)', () => {
+    // The metric is computed on a 10 Hz sampler and reused between its ticks,
+    // so a run emits long runs of identical consecutive values. Collapsing
+    // those must NOT compress the timeline onto the collapsing counter: the
+    // tick wall clock (`recordedAt`) is the source of `t` (AH-0MVFI5OQN008XGBV).
+    const startedAt = 1_700_000_000_000;
+    const records = [
+      telemetryRunHeader(123456789, startedAt),
+      telemetryTick(0, actionSample(8, 0.21, 0.21, 0), startedAt + 20),
+      // Identical values 5 s later — collapsed, but time must still advance.
+      telemetryTick(31, actionSample(8, 0.21, 0.21, 0), startedAt + 5_000),
+      telemetryTick(38, actionSample(8, 0.21, 0.21, 0), startedAt + 6_200),
+      telemetryTick(70, actionSample(13.5, 0.31, 0.24, 0.07), startedAt + 11_400),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.samples).toHaveLength(2);
+    expect(series.samples.map((sample) => sample.t)).toEqual([20, 11_400]);
+    expect(series.samples[1].tick).toBe(70);
+  });
+
+  it('anchors the clock at the first sample when the run header omits startedAt', () => {
+    const records = [
+      { schemaVersion: 1, kind: 'run_header', runSeed: 5, build: {}, startedAt: null },
+      telemetryTick(0, actionSample(8, 0.21, 0.21, 0), 1_700_000_000_500),
+      telemetryTick(40, actionSample(9, 0.22, 0.21, 0.01), 1_700_000_008_000),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.startedAt).toBeNull();
+    expect(series.samples.map((sample) => sample.t)).toEqual([0, 7_500]);
+  });
+
+  it('falls back to the sample grid for legacy ticks without a wall clock', () => {
+    const records = [
+      telemetryRunHeader(),
+      telemetryTick(0, actionSample(8, 0.21, 0.21, 0)),
+      telemetryTick(1, actionSample(8, 0.21, 0.21, 0)), // collapsed duplicate
+      telemetryTick(6, actionSample(13.5, 0.31, 0.24, 0.07)),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.samples.map((sample) => sample.t)).toEqual([0, 100]);
+  });
+
+  it('clamps a clock that predates the run header to zero and stays monotonic', () => {
+    const startedAt = 1_700_000_000_000;
+    const records = [
+      telemetryRunHeader(123456789, startedAt),
+      telemetryTick(0, actionSample(8, 0.21, 0.21, 0), startedAt - 250),
+      telemetryTick(10, actionSample(9, 0.22, 0.21, 0.01), startedAt + 900),
+      // A non-monotonic clock (clock adjustment) must not rewind the series.
+      telemetryTick(20, actionSample(10, 0.23, 0.22, 0.02), startedAt + 400),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.samples.map((sample) => sample.t)).toEqual([0, 900, 900]);
+  });
+
+  it('restarts the clock origin at a new run header', () => {
+    const records = [
+      telemetryRunHeader(111, 1_000_000_000_000),
+      telemetryTick(0, actionSample(1, 0.1, 0.1, 0), 1_000_000_001_000),
+      telemetryRunHeader(222, 1_000_000_100_000),
+      telemetryTick(0, actionSample(7, 0.55, 0.4, 0.15), 1_000_000_105_000),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+
+    expect(series.samples).toHaveLength(1);
+    expect(series.samples[0].t).toBe(5_000);
+  });
+
+  it('tolerates a telemetry-less sink: null run identity and no samples', () => {
+    const series = extractActionIntensitySeriesFromRecords([]);
+    expect(series.runSeed).toBeNull();
+    expect(series.startedAt).toBeNull();
+    expect(series.samples).toEqual([]);
+  });
+
+  it('skips malformed/partial tick records instead of failing', () => {
+    const records = [
+      runHeader,
+      { schemaVersion: 1, kind: 'tick', tick: 0, state: { actionIntensity: null }, input: null },
+      { schemaVersion: 1, kind: 'event', tick: 0, event: 'wave_start', payload: {} },
+      telemetryTick(3, actionSample(0, 0.05, 0.02, 0.03)),
+      telemetryTick(6, actionSample(13.5, 0.31, 0.24, 0.07)),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+    expect(series.samples).toHaveLength(2);
+    expect(series.samples[0].tick).toBe(3);
+  });
+
+  it('describes the LAST run when the sink holds several (batch isolation)', () => {
+    const records = [
+      telemetryRunHeader(111, 1_000_000_000_000),
+      telemetryTick(0, actionSample(1, 0.1, 0.1, 0)),
+      telemetryTick(6, actionSample(2, 0.2, 0.15, 0.05)),
+      // A second run in the same sink:
+      telemetryRunHeader(222, 1_000_000_000_500),
+      telemetryTick(0, actionSample(7, 0.55, 0.4, 0.15)),
+    ];
+    const series = extractActionIntensitySeriesFromRecords(records);
+    expect(series.runSeed).toBe(222);
+    expect(series.startedAt).toBe(1_000_000_000_500);
+    expect(series.samples).toHaveLength(1);
+    expect(series.samples[0].actionIntensity.rawScore).toBe(7);
+    expect(series.samples[0].t).toBe(0);
+  });
+});
+
+describe('buildCaptureJoinAnchor (AC2/AC4)', () => {
+  it('computes offsetMs from both epoch inputs and is exact', () => {
+    const anchor = buildCaptureJoinAnchor({
+      captureStarted: { event: CAPTURE_STARTED_EVENT, atEpochMs: 1_700_000_000_500 },
+      runStartedAtEpochMs: 1_700_000_000_000,
+    });
+    expect(anchor.kind).toBe(CAPTURE_ANCHOR_KIND);
+    expect(anchor.captureStartedAtEpochMs).toBe(1_700_000_000_500);
+    expect(anchor.runStartedAtEpochMs).toBe(1_700_000_000_000);
+    expect(anchor.offsetMs).toBe(500);
+    expect(anchor.approximate).toBe(false);
+  });
+
+  it('flags the join approximate when either epoch is missing', () => {
+    expect(buildCaptureJoinAnchor({ runStartedAtEpochMs: 1_700_000_000_000 }).approximate).toBe(true);
+    expect(
+      buildCaptureJoinAnchor({
+        captureStarted: { event: CAPTURE_STARTED_EVENT, atEpochMs: 1_700_000_000_500 },
+      }).approximate,
+    ).toBe(true);
+    expect(
+      buildCaptureJoinAnchor({
+        captureStarted: { event: CAPTURE_STARTED_EVENT, atEpochMs: Number.NaN },
+        runStartedAtEpochMs: 1_700_000_000_000,
+      }).approximate,
+    ).toBe(true);
+    expect(buildCaptureJoinAnchor({ runStartedAtEpochMs: 1_700_000_000_000 }).offsetMs).toBeNull();
+  });
+
+  it('exposes the whole anchor under the documented sidecar key', () => {
+    const anchor = buildCaptureJoinAnchor({
+      captureStarted: { event: CAPTURE_STARTED_EVENT, atEpochMs: 18 },
+      runStartedAtEpochMs: 6,
+    });
+    expect(JSON.parse(JSON.stringify(anchor))).toEqual({
+      schemaVersion: SERIES_SCHEMA_VERSION,
+      kind: CAPTURE_ANCHOR_KIND,
+      captureStartedAtEpochMs: 18,
+      runStartedAtEpochMs: 6,
+      offsetMs: 12,
+      approximate: false,
+    });
+  });
+});
+
+describe('writeCaptureSeriesArtifacts (AC1/AC2/AC4)', () => {
+  const freshWritten = () => ({} as Record<string, string>);
+  let written = freshWritten();
+  const mkdir = () => undefined;
+  const writeFile = (path: string, content: string) => {
+    written[path] = content;
+  };
+
+  it('writes a matching-basename series + anchor next to the WebM', () => {
+    written = freshWritten();
+    const exportData = writeCaptureSeriesArtifacts({
+      jsonl: [
+        JSON.stringify(telemetryRunHeader()),
+        JSON.stringify(telemetryTick(0, actionSample(8, 0.21, 0.21, 0))),
+        JSON.stringify(telemetryTick(6, actionSample(13.5, 0.31, 0.24, 0.07))),
+      ].join('\n'),
+      outputPath: '/out/capture-output/gameplay-2026-10-18T10-00-00-000Z.webm',
+      captureStarted: { event: CAPTURE_STARTED_EVENT, atEpochMs: 1_700_000_000_500 },
+      mkdir,
+      writeFile,
+    });
+
+    const seriesPath = '/out/capture-output/gameplay-2026-10-18T10-00-00-000Z.action.jsonl';
+    const anchorPath = '/out/capture-output/gameplay-2026-10-18T10-00-00-000Z.capture.json';
+    expect(exportData.seriesOutput).toBe(seriesPath);
+    expect(exportData.anchorOutput).toBe(anchorPath);
+    expect(Object.keys(written)).toEqual([seriesPath, anchorPath]);
+    expect(exportData.seriesSampleCount).toBe(2);
+    expect(exportData.anchorApproximate).toBe(false);
+
+    // The series round-trips through the canonical parser (format reuse).
+    expect(parseActionIntensitySeries(written[seriesPath]).samples).toHaveLength(2);
+    const anchor = JSON.parse(written[anchorPath]);
+    expect(anchor.kind).toBe(CAPTURE_ANCHOR_KIND);
+    expect(anchor.offsetMs).toBe(500);
+  });
+
+  it('writes a header-only series and an approximate anchor for a bare sink', () => {
+    written = freshWritten();
+    const exportData = writeCaptureSeriesArtifacts({
+      jsonl: '',
+      outputPath: 'capture-output/gameplay-x.webm',
+      captureStarted: null,
+      mkdir,
+      writeFile,
+    });
+    expect(exportData.seriesSampleCount).toBe(0);
+    expect(exportData.seriesRunSeed).toBeNull();
+    expect(exportData.anchorApproximate).toBe(true);
+    const parsed = parseActionIntensitySeries(written['capture-output/gameplay-x.action.jsonl']);
+    expect(parsed.header).not.toBeNull();
+    expect(parsed.samples).toEqual([]);
+    expect(JSON.parse(written['capture-output/gameplay-x.capture.json']).approximate).toBe(true);
+  });
+
+  it('never names a sidecar after the canonical captured-artefact long form', () => {
+    // The historical capture output dir is git-ignored and lives under
+    // `capture-output/`; ensuring the sidecar path stays in the same dir.
+    written = freshWritten();
+    const exportData = writeCaptureSeriesArtifacts({
+      jsonl: '',
+      outputPath: 'capture-output/run.webm',
+      mkdir,
+      writeFile,
+    });
+    expect(dirname(exportData.seriesOutput!)).toBe('capture-output');
+    expect(basename(exportData.seriesOutput!)).toBe('run.action.jsonl');
   });
 });

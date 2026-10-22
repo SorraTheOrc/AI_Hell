@@ -12,6 +12,7 @@ import {
   buildBalanceReport,
   fnv1aHash,
   formatBalanceReport,
+  formatTuneSummary,
   serialiseRecordsJsonl,
   serialiseReport,
   stableStringify,
@@ -24,6 +25,7 @@ import { BALANCE_STATISTICS_SCHEMA_VERSION as SHARED_SCHEMA_VERSION } from './in
 import { runBatch } from './engine';
 import { resolvePolicyFactory } from './policies';
 import { aggregateBalanceStats } from './metrics';
+import { compareBalanceAggregates } from './tune';
 import {
   EVAL_DATASET_VERSION,
   type BalanceRunStats,
@@ -182,5 +184,57 @@ describe('formatBalanceReport (AH-0MV81YY2T0069W19: human-readable summary)', ()
     expect(text).toContain('Enemies killed (per archetype):');
     expect(text).toContain('scout');
     expect(text).toContain('schema v');
+  });
+});
+describe('formatTuneSummary (AH-0MVBNLM2V008XC8T: per-key moves are surfaced)', () => {
+  /** A per-run statistics fixture with per-archetype kills and no metrics. */
+  const stat = (seed: number, kills: Record<string, number>): BalanceRunStats => ({
+    schemaVersion: SHARED_SCHEMA_VERSION,
+    seed,
+    mineralsCollected: 0,
+    upgradesSelected: {},
+    enemiesKilledByArchetype: kills,
+    asteroidsDestroyed: 0,
+    powerUpsCollected: 0,
+    avoidableHits: 0,
+    survivalSeconds: 0,
+    waveReached: 0,
+    levelReached: 0,
+  });
+
+  const baseline = aggregateBalanceStats([
+    stat(1, { boss: 1, scout: 1 }),
+    stat(2, { boss: 1, scout: 1 }),
+  ]);
+  // boss kills halve (mean 1 → 0.5); scout kills spread out (mean 1 → 2, sd 0 → 1).
+  const candidate = aggregateBalanceStats([
+    stat(1, { boss: 0, scout: 1 }),
+    stat(2, { boss: 1, scout: 3 }),
+  ]);
+  const comparison = compareBalanceAggregates(baseline, candidate);
+  const summary = formatTuneSummary(comparison);
+
+  /** The rendered slice between two section headers. */
+  const section = (from: string, to: string): string =>
+    summary.split(from)[1].split(to)[0];
+
+  it('lists a moved per-archetype metric with its relative mean/median delta', () => {
+    expect(comparison.movedMetrics).toContain('enemiesKilledByArchetype.boss');
+    const moved = section(
+      'Metrics moved beyond threshold (mean/median):',
+      'Distribution-shape changes',
+    );
+    expect(moved).toContain('enemiesKilledByArchetype.boss');
+    expect(moved).toContain('-50.0%');
+  });
+
+  it('echoes the stdDev shift of a shape-changed per-archetype metric', () => {
+    expect(comparison.shapeChangedMetrics).toContain('enemiesKilledByArchetype.scout');
+    const shape = section(
+      'Distribution-shape changes (stdDev growth / median shift):',
+      'Per-metric deltas',
+    );
+    expect(shape).toContain('enemiesKilledByArchetype.scout');
+    expect(shape).toContain('stdDev 0.00 → 1.00 (Δ 1.00)');
   });
 });

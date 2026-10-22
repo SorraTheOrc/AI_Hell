@@ -18,7 +18,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
@@ -160,7 +160,7 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     // A paused scene's update is not called, so the clock holds its phase
     // while real animation frames elapse.
     scene.scene.pause();
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await advanceGame(booted!.game, 60);
     expect(scene.getBeatClock().now()).toBe(before);
   });
 
@@ -192,6 +192,11 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
       nova: [],
       mortar: [],
       arc: [],
+      rear_guard: [],
+      broadside: [],
+      railgun: [],
+      shard_swarm: [],
+      heavy_slug: [],
     };
     const original = scene.spawnPlayerBullet.bind(scene);
     vi.spyOn(scene, 'spawnPlayerBullet').mockImplementation(
@@ -325,6 +330,17 @@ describe('GymWeapons AC2: cumulative collection + reset', () => {
     player.physicsTick(0.5, scene.scale.width, scene.scale.height);
     scene.advanceBullets(1.0);
     expect(scene.getBullets()).toHaveLength(0);
+
+    // Anchor the shared beat clock so this volley assertion is independent of
+    // the legacy boot's phase: the real-time boot drains an unpredictable
+    // number of rAF frames under full-suite parallel load, so a
+    // one-shot-per-beat weapon (spread/dual, 750 ms) only lands its shot in a
+    // fixed 0.6 s tick for some boot phases (AH-0MVF2H8ZY0002W7X). Reset and
+    // re-attach the clock (the fire-cue precedent, AH-0MVF2HCPV003PQR4): every
+    // active weapon re-schedules on the t=0 grid tick and fires in the single
+    // tick below — no matter the boot phase.
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
     scene.tick(0.6);
 
     const bullets = scene.getBullets();
@@ -398,14 +414,31 @@ describe('GymWeapons AC3: round-robin spawn order & lifecycle', () => {
     return booted!.scene as GymWeapons;
   }
 
-  it('spawns exactly one drop at a time in round-robin order spread → dual → rapid → wave laser → ricochet → cluster → options → nova → mortar → arc → reset', async () => {
+  it('spawns exactly one drop at a time in round-robin order spread → … → arc → the five net-new unlock-pool weapons → reset', async () => {
     const scene = await bootWeapons();
     // First drop spawned in create().
     expect(scene.getDrops()).toHaveLength(1);
     expect(scene.getDrops()[0].weaponType).toBe('spread');
 
-    // Cycle through the rest of the order (conventional, wave laser, ricochet, cluster, options, AOE, then Reset).
-    for (const expected of ['dual', 'rapid', 'wave_laser', 'ricochet', 'cluster', 'options', 'nova', 'mortar', 'arc', 'reset']) {
+    // Cycle through the rest of the order (conventional, wave laser, ricochet,
+    // cluster, options, AOE, the five net-new unlock-pool weapons, then Reset).
+    for (const expected of [
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'options',
+      'nova',
+      'mortar',
+      'arc',
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
+      'reset',
+    ]) {
       scene.tick(7.1); // previous despawns (>7 s), next spawns
       const drops = scene.getDrops();
       expect(drops).toHaveLength(1); // one at a time (AC3)
@@ -670,15 +703,31 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
     return booted!.scene as GymWeapons;
   }
 
-  /** Fires one volley of the given weapon from a stationary heading. */
+  /**
+   * Fires exactly one volley of the given weapon from a stationary heading.
+   *
+   * The scene's shared beat clock is a real-time accumulator, so after the
+   * legacy (wall-clock) boot its phase varies with how many rAF frames
+   * happened to drain under full-suite parallel load. A weapon schedules its
+   * first shot on the next 750 ms grid tick, so advancing a fixed 0.6 s tick
+   * only reaches that tick for some boot phases — the dual cue test was
+   * load-sensitive for exactly that reason (AH-0MVF2HCPV003PQR4).
+   *
+   * Reset the shared beat clock to 0 and re-schedule the player's weapons on
+   * it (the PlayScene fire-cue precedent) so the equipped weapon's first shot
+   * lands on the t=0 grid tick and fires in the short frame below regardless
+   * of the boot phase. One short frame delivers exactly one volley.
+   */
   function fireOnce(scene: GymWeapons, weapon: 'cannon' | 'spread' | 'dual' | 'rapid'): void {
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
-    player.equipWeapon(weapon);
-    // Establish a heading (move right), then advance past the fire rate.
+    // Establish a heading (move right) without advancing the beat clock.
     player.setInput({ up: false, down: false, left: false, right: true });
     player.physicsTick(0.5, scene.scale.width, scene.scale.height);
-    scene.tick(0.6);
+    scene.getBeatClock().reset();
+    player.setBeatClock(scene.getBeatClock());
+    player.equipWeapon(weapon);
+    scene.tick(0.05);
   }
 
   it('auto-firing the cannon plays the shared fire cue exactly once per shot', async () => {
@@ -716,6 +765,10 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
 
     fireOnce(scene, 'dual');
 
+    // Dual fires 2 bullets per shot and the permanently-active cannon fires
+    // too (cumulative model), but each weapon's cue plays exactly once per
+    // volley — not once per bullet.
+    expect(fireSound).toHaveBeenCalledTimes(2);
     expect(fireSound).toHaveBeenCalledWith('dual');
     expect(fireSound).toHaveBeenCalledWith('cannon');
   });
@@ -727,6 +780,8 @@ describe('GymWeapons AC2 — player shoot audio per equipped weapon (AC6b)', () 
 
     fireOnce(scene, 'rapid');
 
+    // Rapid fires 6 shots per beat; one volley is one cue per firing weapon.
+    expect(fireSound).toHaveBeenCalledTimes(2);
     expect(fireSound).toHaveBeenCalledWith('rapid');
     expect(fireSound).toHaveBeenCalledWith('cannon');
   });
@@ -899,7 +954,7 @@ describe('GymWeapons — collection absorb VFX + pop SFX (AH-0MUBYXRT4002H3GY)',
 
 describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
   let booted: BootedGame | null = null;
-  const settle = () => new Promise((r) => setTimeout(r, 150));
+  const settle = () => advanceGame(booted!.game, 150);
 
   afterEach(() => {
     booted?.game.destroy(true);
@@ -936,6 +991,11 @@ describe('GymWeapons — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'nova',
       'mortar',
       'arc',
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
       'reset',
     ]);
   });

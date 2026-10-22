@@ -53,9 +53,7 @@ describe('PlayScene — deterministic run seeding (AH-0MUY08V6W001SJJN)', () => 
   /** Boots PlayScene and stops the live loop for explicit stepping. */
   async function bootStopped(): Promise<Phaser.Game> {
     simTime = 0;
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
     return booted.game;
   }

@@ -466,44 +466,57 @@ needed because the behaviour is defensive, not a weapon pattern.
 random intervals; shooting it awards a large, hidden points bonus (50–300
 points), making it a high-value target of opportunity.
 
-**AI_Hell adaptation:** A rare, short-lived **bonus pickup** that occasionally
-crosses the arena (as an inert, collectible drop) and grants a burst of
-minerals (feeding the ship's hold and the hold-full power-up choice) plus a
-score bonus when collected. It translates the "shoot the mystery ship for a
-surprise reward" loop into a collectible that rewards the player for leaving
-their lane.
+**AI_Hell adaptation:** A rare reward that spawns a **visible collector drone**
+— a small, code-drawn copy of the player ship. The drone seeks the nearest
+mineral, vacuums any whose centre enters its collector radius, flies back to
+the ship and pays the minerals into the hold. It translates the "shoot the
+mystery ship for a surprise reward" loop into a friendly entity the player can
+watch working for them.
 
 **Divergence from original:** AI_Hell's drop pipeline is collection-based, not
-shooting-based, so the UFO is a moving field drop the player flies into rather
-than an enemy to shoot. The reward is a burst of **minerals and score** rather
-than a pure points value, so it feeds the existing economy and choice system.
+shooting-based, so the UFO is a field drop the player flies into rather than an
+enemy to shoot. The reward is **minerals ferried home** rather than a pure
+points value, so it feeds the existing economy and choice system; the original
+instant mineral/score bounty was retired with the visible-drone epic
+(AH-0MV9G113S009B37I).
 
 **Type:** power-up.
 
 **Pipeline fit:**
 
 - `PowerUpId`: `'mystery_ufo'`; a new `POWER_UP_CATALOGUE` entry.
-- Semantics: **permanent** — the bonus is applied immediately on collection and
-  never expires; each pickup levels the power-up and increases the mineral and
-  score burst, matching the permanent reward path.
-- `powerUpLevels.ts` variables: **Bonus minerals** (`mysteryUfoMinerals`, base
-  2 → cap 6, k=0.3) and **Bonus score** (`mysteryUfoScore`, base 250 → cap
-  1500, k=0.3) — a new `PowerUpLevelVariable` pair.
+- Semantics: **permanent level, one-shot spawn**. A field pickup spawns exactly
+  one drone; a full-hull (permanent) reward keeps one spawning on the
+  level-resolved interval for the rest of the run. There is no timed effect
+  window and no stored consumable state.
+- `powerUpLevels.ts` variables: **Drone lifetime** (`mysteryUfoLifetime`,
+  5 → 8 s), **Drone capacity** (`mysteryUfoCapacity`, 10 → 20), **Collector
+  radius** (`mysteryUfoRadius`, 20 → 40 px) and **Spawn interval**
+  (`mysteryUfoSpawnInterval`, 30 → 12 s descending, permanent only), all on
+  the shared curve (`k=0.3`). The retired instant-bounty `mysteryUfoMinerals`
+  and `mysteryUfoScore` axes no longer exist.
+- Destruction rule: an enemy bullet or an enemy body destroys the drone
+  (the player's own fire passes through); it spills its held minerals plus a
+  `2 × level` bonus at the crash site as collectable field minerals.
 - Code-drawn icon: a classic neon flying saucer (added to
-  `src/powerups/icons.ts`).
+  `src/powerups/icons.ts`); the drone itself is a code-drawn scaled player
+  ship (`src/entities/MysteryUfoDrone.ts`).
 - `powerUpWeights` drop weight: **3** (rarer than standard 4 — it is a bonus,
   not a combat tool) in `src/core/rules.ts`.
-- Seam: **catalogue entry plus the `EffectsRegistry`** — the reward routes
-  through the shared effects registry (minerals into the ship's hold, score
-  into the run total); no new combat-core dispatch seam is needed.
+- Seam: **catalogue entry plus the shared combat core** — the registry queues
+  the spawn (`consumeMysteryUfoSpawns` / `isMysteryUfoPermanent`) and the
+  shared `src/scenes/core/combatDrone.ts` pass spawns, ticks, pays out and
+  tears the drone down for the game and every gym.
 
 **Balance / coverage:** Purely economic, so it cannot trivialise combat; the
-mineral burst is capped and the drop is rare, so it accelerates the hold-full
-choice without flooding it.
+mineral payload is carried home rather than granted instantly, the hold
+capacity caps a single sortie, and the drop is rare, so the drone accelerates
+the hold-full choice without flooding it.
 
 **Gym scene:** `GymPowerUpsUtility` (threat-free drop gym with a live mineral
-field) — the mineral burst and the hold progression are observable, and the
-shared `EffectsRegistry` path is the same one the game runs.
+field) — the drone's spawn → seek → collect → return → payout lifecycle and
+the shared-core payout path are observable, identical to the game; destruction
+is covered by the shared-core tests.
 
 ---
 
@@ -538,7 +551,7 @@ one-line deferral reason so the pool can be revisited.
 | Pac-Man power pellet | power-up | — (removed, AH-0MV5CB6KO0079N08) | — | — (removed) | — (removed) | — (removed) |
 | Defender smart bomb | power-up | `PowerUpId: 'smart_bomb'` / `POWER_UP_CATALOGUE` | — | Existing `AoEDescriptor`/`AoETrigger` seam (`screenPulse`) | `aoeRadius`, `smartBombDamage`, `smartBombInterval` | `GymPowerUpsCombat` |
 | Gradius force field | power-up | `PowerUpId: 'force_field'` / `POWER_UP_CATALOGUE` | — | New shared bullet-reflection seam | `forceFieldDuration`, `forceFieldReflects` | `GymPowerUpsCombat` |
-| Space Invaders mystery UFO | power-up | `PowerUpId: 'mystery_ufo'` / `POWER_UP_CATALOGUE` | — | None — catalogue entry + `EffectsRegistry` | `mysteryUfoMinerals`, `mysteryUfoScore` | `GymPowerUpsUtility` |
+| Space Invaders mystery UFO | power-up | `PowerUpId: 'mystery_ufo'` / `POWER_UP_CATALOGUE` | — | Shared collector-drone pass (`scenes/core/combatDrone.ts`) | `mysteryUfoLifetime`, `mysteryUfoCapacity`, `mysteryUfoRadius`, `mysteryUfoSpawnInterval` | `GymPowerUpsUtility` |
 
 **Existing seams reused without modification:** `WeaponDefinition.offsets` /
 `sideOffsets`, `AoEDescriptor` (`'onImpact'` retained as the AOE projectile

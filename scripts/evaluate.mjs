@@ -25,6 +25,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename as pathBasename, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Parses `process.argv`-style flags into a plain options object. */
@@ -45,6 +46,11 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     policies: null,
     humanFile: null,
     humanSeed: null,
+    tune: false,
+    tuneFile: null,
+    tuneAssignment: null,
+    threshold: 10,
+    keepEdit: false,
     help: false,
   };
   const explicitSeeds = [];
@@ -106,6 +112,19 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
       case '--batch':
         options.batch = true;
         break;
+      case '--tune':
+        options.tune = true;
+        break;
+      case '--set':
+        options.tuneFile = next();
+        options.tuneAssignment = next();
+        break;
+      case '--threshold':
+        options.threshold = Number(next());
+        break;
+      case '--keep-edit':
+        options.keepEdit = true;
+        break;
       case '--video':
         options.video = true;
         break;
@@ -133,7 +152,10 @@ Options:
   --seed <n>           A seed (repeatable)
   --seeds <count>      Use seeds 1..count (default 3)
   --batch              Batch mode: sweep seeds x policies, emit the balance report
-  --games <count>      Games (seeds 1..count) in batch mode (default 100)
+  --tune               Tune loop: baseline batch → one CSV edit → identical re-run → compare
+  --set <file> <a>     The declarative edit for --tune, e.g. --set enemy-configs.csv boss.health=6
+  --threshold <pct>    Relative significance threshold for --tune (default 10 = ±10%%)
+  --keep-edit          Keep the --set CSV edit after the tune run (default: restore)  --games <count>      Games (seeds 1..count) in batch mode (default 100)
   --policies <a,b>     Comma-separated policies to sweep in batch mode
   --ticks <n>          Max ticks per run (default 1800)
   --dt <seconds>       Fixed simulation step (default 1/60)
@@ -146,8 +168,7 @@ Options:
   --help               Show this help
 `;
 
-/** Resolves the seeds list from parsed options. */
-export function resolveSeeds(options) {
+/** Resolves the seeds list from parsed options. */export function resolveSeeds(options) {
   if (Array.isArray(options.seeds)) return options.seeds.map((seed) => Number(seed));
   // `--games` is the explicit batch-size flag and takes precedence; a batch
   // defaults to 100 games (epic AC2 "~100 deterministic bot games") while a
@@ -176,12 +197,163 @@ export async function loadCore() {
   return { server, core: await server.ssrLoadModule('/src/ai/eval/cli.ts') };
 }
 
+/**
+ * The pure CSV-edit surface the shell consumes from the SSR-loaded core
+ * ({@link applyCsvEditFile} accepts it for testability without SSR boot).
+ * @typedef {object} CsvEditCore
+ * @property {(csv: string, spec: {file: string; rowKey: string | null; field: string; value: string}) => {csv: string; previousValue: string; newValue: string; changed: boolean}} applyCsvEdit
+ * @property {(file: string, assignment: string) => {file: string; rowKey: string | null; field: string; value: string}} parseEditSpec
+ * @property {new (code: string, message: string) => Error} [CsvEditError]
+ */
+
+/**
+ * Applies one declarative `--set` edit to a balance CSV and persists it
+ * (AC1, AH-0MVBNISWE009QFBL). Reads the file, parses the assignment via the
+ * pure core, applies the pure editor, writes the edited text back and returns
+ * the change record (previous/new value + both texts) the tune loop needs.
+ * The caller retains `originalText` so it can restore byte-identical state
+ * afterwards (see {@link restoreCsvFile}).
+ *
+ * @param {string} filePath
+ * @param {string} assignment
+ * @param {CsvEditCore | null} csvEditCore
+ */
+export async function applyCsvEditFile(
+  filePath,
+  assignment,
+  csvEditCore = null,
+) {
+  const core = csvEditCore ?? (await loadCore()).core;
+  const originalText = readFileSync(filePath, 'utf8');
+  const spec = core.parseEditSpec(pathBasename(filePath), assignment);
+  const outcome = core.applyCsvEdit(originalText, spec);
+  writeFileSync(filePath, outcome.csv);
+  return {
+    fileName: spec.file,
+    spec,
+    previousValue: outcome.previousValue,
+    newValue: outcome.newValue,
+    originalText,
+    editedText: outcome.csv,
+  };
+}
+
+/**
+ * Restores a balance CSV to its pre-edit text (AC4, AH-0MVBNISWE009QFBL).
+ * Without the `--keep-edit` opt-out the file is written back byte-identically
+ * on success **and** failure paths; with `keepEdit` the edited text stays.
+ */
+export async function restoreCsvFile(
+  filePath,
+  originalText,
+  keepEdit = false,
+) {
+  if (keepEdit) {
+    return { action: 'kept-edited' };
+  }
+  writeFileSync(filePath, originalText);
+  return { action: 'restored' };
+}
+
+
+/**
+ * The `--tune` loop: baseline batch → one declarative CSV edit → identical
+ * re-run → before/after comparison (AH-0MVBNITA0005VQGN, parent AC1/AC2/AC4/AC5).
+ *
+ * Runs the baseline batch, applies the `--set` edit, re-hydrates the shared
+ * config store so the re-run reads the edited values through the single
+ * source of truth, runs the identical sweep again, enforces the same-sweep
+ * guard, writes the three artifacts (baseline report, candidate report, and
+ * the versioned comparison + readable txt) and restores the CSV on success
+ * **and** failure (or keeps it with `--keep-edit`).
+ *
+ * @param {ReturnType<typeof parseEvaluateArgs>} options
+ * @param {{out: {write(s: string): void}, err: {write(s: string): void}}} io
+ */
+export async function executeTune(options, io) {
+  const { server, core } = await loadCore();
+  const root = resolvePath(import.meta.dirname, '..');
+  const csvPath = resolvePath(root, 'src/data', options.tuneFile);
+  const sweep = {
+    ...options,
+    batch: false,
+    seeds: resolveSeeds(options),
+    policies: options.policies ?? [],
+    humanRecordingText: null,
+    humanSeed: null,
+  };
+  try {
+    await core.hydrateBalanceConfig();
+    const baseline = core.runBalanceBatch(sweep);
+
+    // Apply the single declarative edit and refresh the store so the re-run
+    // reads the edited values through the shared loaders (never a divergent
+    // copy). `attempt` carries the original text for the restore below.
+    let attempt = null;
+    try {
+      attempt = await applyCsvEditFile(
+        csvPath,
+        options.tuneAssignment,
+        { applyCsvEdit: core.applyCsvEdit, parseEditSpec: core.parseEditSpec },
+      );
+      // The SSR config store reads the CSVs bundled at build/load time.
+      // Invalidate the Vite module graph so the re-hydrate below re-reads
+      // the just-edited CSV files (the re-run consumes the edited values
+      // through the shared loaders — single source of truth, parent AC1).
+      server.moduleGraph?.invalidateAll?.();
+      await core.hydrateBalanceConfig();
+      const candidate = core.runBalanceBatch(sweep);
+
+      const artifacts = core.buildTuneComparisonArtifacts({
+        baseline,
+        candidate,
+        edit: {
+          file: attempt.fileName,
+          rowKey: attempt.spec.rowKey,
+          field: attempt.spec.field,
+          previousValue: attempt.previousValue,
+          newValue: attempt.newValue,
+        },
+        thresholdPct: options.threshold,
+      });
+      mkdirSync(options.outputDir, { recursive: true });
+      const files = [
+        ['tune-baseline-report.json', baseline.json],
+        ['tune-candidate-report.json', candidate.json],
+        ['tune-comparison.json', artifacts.comparisonJson],
+        ['tune-comparison.txt', artifacts.summaryText],
+      ];
+      for (const [name, content] of files) {
+        writeFileSync(resolveArtifactPath(options.outputDir, name), content);
+      }
+      if (options.json) io.out.write(artifacts.comparisonJson);
+      else io.out.write(artifacts.summaryText);
+      io.out.write(`Wrote 4 artifact(s) to ${options.outputDir}\n`);
+      return 0;
+    } finally {
+      if (attempt) {
+        await restoreCsvFile(csvPath, attempt.originalText, options.keepEdit);
+      }
+    }
+  } finally {
+    await server.close();
+  }
+}
+
 /** CLI entry point; returns the process exit code. */
 export async function main(argv, io = { out: process.stdout, err: process.stderr }) {
   const options = parseEvaluateArgs(argv);
   if (options.help) {
     io.out.write(EVALUATE_USAGE);
     return 0;
+  }
+
+  if (options.tune) {
+    if (!options.tuneFile || !options.tuneAssignment) {
+      io.err.write('--tune requires --set <file> <assignment> (e.g. --set enemy-configs.csv boss.health=6)\n');
+      return 2;
+    }
+    return await executeTune(options, io);
   }
 
   const humanRecordingText = options.humanFile ? readFileSync(options.humanFile, 'utf8') : null;

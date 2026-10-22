@@ -423,15 +423,15 @@ describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
   });
 
   it('preserves an authored fixed wave containing the orbital Phaser verbatim', () => {
-    // Static level 5 is two orbital Phaser waves. A `fixed` selection must
-    // return the static level byte-for-byte — the per-level archetype cap
-    // only constrains generated (curve/dynamic) waves, so the orbital Phaser
-    // stays authorable (AH-0MV2SGIX5005PFJT).
+    // Static level 5 is ten orbital Phaser waves (the expanded campaign
+    // AH-0MVCYANT6003SG5C fills the level out while keeping its phaser-only
+    // identity). A `fixed` selection must return the static wave byte-for-byte
+    // — the per-level archetype cap only constrains generated (curve/dynamic)
+    // waves, so the orbital Phaser stays authorable (AH-0MV2SGIX5005PFJT).
     const spy = vi.fn(sequencer);
-    const rows = modeRows(5, 'Predictable Death', [
-      { target: 43.5, generation: 'fixed' },
-      { target: 62, generation: 'fixed' },
-    ]);
+    const rows = modeRows(5, 'Predictable Death', Array.from({ length: 10 }, (_, i) =>
+      ({ target: 43.5 + i, generation: 'fixed' as const }),
+    ));
     const levels = buildSequencedLevels(rows, undefined, { sequencer: spy });
     const level5 = levelOf(levels, 5);
 
@@ -514,8 +514,11 @@ describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
   });
 
   it('maps the legacy per-level `source` column: scripted → fixed, generated → curve', () => {
+    // The `scripted` level must declare all ten waves so `buildConfiguredLevel`
+    // maps every row to its static counterpart and returns the static level
+    // byte-for-byte (the static level is the expanded 10-wave campaign).
     const rows: DifficultyCurveRow[] = [
-      ...sourcedRows(1, 'Entry', [5, 9], 'scripted'),
+      ...sourcedRows(1, 'Entry', Array.from({ length: 10 }, (_, i) => 5 + i), 'scripted'),
       ...sourcedRows(4, 'Firestorm', [20, 24, 28], 'generated'),
     ];
     const levels = buildSequencedLevels(rows);
@@ -569,7 +572,7 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
 
   it('merges a scripted level (verbatim static) with a generated level', () => {
     const rows = [
-      ...sourcedRows(2, 'Descent', [10, 12, 14], 'scripted'),
+      ...sourcedRows(2, 'Descent', Array.from({ length: 10 }, (_, i) => 10 + i), 'scripted'),
       ...sourcedRows(4, 'Firestorm', [20, 24, 28], 'generated'),
     ];
     const levels = buildSequencedLevels(rows);
@@ -586,7 +589,7 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
   });
 
   it('a scripted level is the static definition verbatim and is never sequenced', () => {
-    const rows = sourcedRows(1, 'Entry', [99, 99], 'scripted');
+    const rows = sourcedRows(1, 'Entry', Array.from({ length: 10 }, () => 99), 'scripted');
     const levels = buildSequencedLevels(rows);
     const levelOne = levelOf(levels, 1);
     // Byte-for-byte static: same object, not a sequencer-produced copy.
@@ -630,7 +633,9 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
     const rows = [
       ...sourcedRows(1, 'Entry', [4], 'generated'),
       ...sourcedRows(4, 'Firestorm', [20], 'generated'),
-      ...sourcedRows(5, 'Predictable Death', [30, 34], 'scripted'),
+      // Declare all ten scripted waves so the level maps to the static
+      // definition byte-for-byte (expanded campaign AH-0MVCYANT6003SG5C).
+      ...sourcedRows(5, 'Predictable Death', Array.from({ length: 10 }, (_, i) => 30 + i), 'scripted'),
     ];
     const levels = buildSequencedLevels(rows);
 
@@ -647,7 +652,7 @@ describe('Mixed generated and scripted campaigns (AH-0MUH7Q6HN0006QPD)', () => {
 
   it('falls back per level when one generated curve is malformed, preserving the rest', () => {
     const rows: DifficultyCurveRow[] = [
-      ...sourcedRows(1, 'Entry', [5, 8], 'scripted'),
+      ...sourcedRows(1, 'Entry', Array.from({ length: 10 }, (_, i) => 5 + i), 'scripted'),
       ...sourcedRows(2, 'Descent', [10, 12], 'generated'),
       {
         level: 4,
@@ -800,24 +805,30 @@ describe('Retuned default campaign (AH-0MUJSUTXI008NP8K)', () => {
     // original target-reaching groups and their counts are unchanged. rules
     // win over exact target match, so the appended group tracks the remaining
     // gap rather than overshooting the target.
-    const composition = (levelNumber: number) =>
+    //
+    // Expanded campaign (AH-0MVCYANT6003SG5C): only the PRE-EXISTING
+    // `curve` rows stay generated (L4 W1–3, L5 W1) and keep their exact
+    // targets, so these compositions are unchanged; the filler + mini-boss
+    // waves are authored `fixed` rows (claimed verbatim from LEVELS). This
+    // pin therefore checks the curve-generated row for each level.
+    const curveRow = (levelNumber: number, wave: number) =>
       defaultCampaign()
         .find((level) => level.level === levelNumber)!
-        .waves.map(
-          (wave) =>
-            wave.groups
-              .map((group) => `${group.enemyKey}x${group.count}`)
-              .join('+') || 'none',
-        );
-    expect(composition(4)).toEqual([
-      'scoutx18+ghost-chasex1',
-      'diverx18+ghost-ambushx1',
-      'tankx18+ghost-flankx1',
-    ]);
-    expect(composition(5)).toEqual([
-      'phaserx12+scoutx18+ghost-chasex1',
+        .waves[wave - 1];
+    const compose = (wave: WaveDefinition) =>
+      wave.groups
+        .map((group) => `${group.enemyKey}x${group.count}`)
+        .join('+') || 'none';
+    expect(compose(curveRow(4, 1))).toBe('scoutx18+ghost-chasex1');
+    expect(compose(curveRow(4, 2))).toBe('diverx18+ghost-ambushx1');
+    expect(compose(curveRow(4, 3))).toBe('tankx18+ghost-flankx1');
+    expect(compose(curveRow(5, 1))).toBe('phaserx12+scoutx18+ghost-chasex1');
+    // L5 W2 is the mixed-programme `dynamic` wave: its effective target is
+    // seed-jittered, so at any fixed seed it composes from the pool (not a
+    // byte-copy of the authored waves).
+    expect(compose(curveRow(5, 2))).toBe(
       'tankx18+tankx18+diverx18+ghost-ambushx1',
-    ]);
+    );
   });
 
   it('ships at least one wave of each generation mode and regenerates the dynamic wave per seed', () => {
@@ -888,9 +899,21 @@ describe('L4–L5 re-calibration after bullet-speed halving (AH-0MUX60S9L0006NJ0
     }
   });
 
-  it('AC1 — the L4–L5 compositions differ within each level at the default seed', () => {
+  it('AC1 — the L4–L5 GENERATED compositions differ within each level at the default seed', () => {
+    // The sequencer must vary its composed waves within a level (the variety
+    // regression AH-0MV2SGIX5005PFJT). The expanded campaign's filler rows are
+    // authored `fixed`, so only the generated (`curve`/`dynamic`) rows are
+    // checked for in-level variety (AH-0MVCYANT6003SG5C).
+    const generatedRows = defaultDifficultyCurves().filter(
+      (row) =>
+        (row.level === 4 || row.level === 5)
+        && (row.generation ?? 'curve') !== 'fixed',
+    );
     for (const levelNumber of FIRING_LEVELS) {
-      const compositions = levelOf(camp(), levelNumber).waves.map(compositionOf);
+      const level = levelOf(camp(), levelNumber);
+      const compositions = generatedRows
+        .filter((row) => row.level === levelNumber)
+        .map((row) => compositionOf(level.waves[row.wave - 1]));
       expect(new Set(compositions).size, `L${levelNumber}`).toBe(
         compositions.length,
       );
@@ -910,26 +933,34 @@ describe('L4–L5 re-calibration after bullet-speed halving (AH-0MUX60S9L0006NJ0
     }
   });
 
-  it('AC1 — restores the pre-halving L4 compositions (scout/diver/tank ×18)', () => {
+  it('AC1 — restores the pre-halving L4 curve-row compositions (scout/diver/tank ×18)', () => {
     // The pre-halving target-reaching groups (scout/diver/tank ×18) are
-    // preserved unchanged; F3 (AH-0MV84TKK8008KF98) appends a tuned contact
-    // group to each so the firing wave satisfies R3 (bounded ranged mix) — a
-    // rules-wins-over-target consequence, not a re-calibration.
-    const waves = levelOf(camp(), 4).waves;
+    // preserved unchanged in the three curve-generated rows; F3
+    // (AH-0MV84TKK8008KF98) appends a tuned contact group to each so the
+    // firing wave satisfies R3 (bounded ranged mix) — a
+    // rules-wins-over-target consequence, not a re-calibration. The expanded
+    // campaign's filler + mini-boss waves (AH-0MVCYANT6003SG5C) are authored
+    // `fixed` rows, so only the curve-generated leading rows are checked.
+    const waves = levelOf(camp(), 4).waves.slice(0, 3);
     const targetGroups = waves.map((wave) =>
       compositionOf({ ...wave, groups: wave.groups.slice(0, 1) }),
     );
     expect(targetGroups).toEqual(['scoutx18', 'diverx18', 'tankx18']);
-    // Every L4 wave still carries an effective-contact group for R3.
+    // Every L4 curve-row wave still carries an effective-contact group for R3.
     for (const wave of waves) {
       expect(wave.groups.length).toBeGreaterThanOrEqual(2);
     }
   });
 
-  it('AC2 — the sequencer meets each L4–L5 target within ±1.0 of its difficulty scale', () => {
+  it('AC2 — the sequencer meets each L4–L5 generated target within ±1.0 of its difficulty scale', () => {
     const pool = defaultCandidatePool();
+    // Only the pre-existing generated (`curve`/`dynamic`) L4–L5 rows are
+    // sequenced; the expanded-campaign filler waves are authored `fixed`
+    // (AH-0MVCYANT6003SG5C), so they are not sequencer targets.
     const rows = defaultDifficultyCurves().filter(
-      (row) => row.level === 4 || row.level === 5,
+      (row) =>
+        (row.level === 4 || row.level === 5)
+        && (row.generation ?? 'curve') !== 'fixed',
     );
     expect(rows).toHaveLength(5);
     for (const row of rows) {
@@ -1096,18 +1127,20 @@ describe('Dynamic varied opening (AH-0MUOCJM0N000RW2B)', () => {
   });
 
   it('AC5 — default targets stay non-decreasing across the opening into the later campaign', () => {
-    const rows = defaultRows();
+    const rows = [...defaultRows()].sort((a, b) => a.level - b.level || a.wave - b.wave);
     const openingTargets = OPENING.map(
       ({ level, wave }) =>
         rows.find((r) => r.level === level && r.wave === wave)!.targetDifficulty,
     );
     expect(openingTargets).toEqual([6, 8, 9, 10]);
-    // Level 2 wave 3 and the level-3 targets are unchanged from the retune.
-    expect(
-      rows
-        .filter((r) => r.level === 3)
-        .map((r) => r.targetDifficulty),
-    ).toEqual([11.4, 11.85, 12.3]);
+    // The expanded campaign keeps the whole 100-row ladder non-decreasing
+    // (AH-0MVCYANT6003SG5C), including the onboarding levels and the
+    // transition into the curve-generated later levels.
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i].targetDifficulty, `row ${i}`).toBeGreaterThanOrEqual(
+        rows[i - 1].targetDifficulty,
+      );
+    }
   });
 });
 
@@ -1176,11 +1209,16 @@ describe('Classification-driven opening curation (AH-0MV84TQTG004ZKPV)', () => {
 
   it('AC4 — fixed opening waves are untouched: never sequenced, never R1-guarded', () => {
     const spy = vi.fn(sequencer);
-    const rows: DifficultyCurveRow[] = [
-      // Both level-1 waves are opening positions, hand-authored `fixed`.
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 99, generation: 'fixed' },
-      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 99, generation: 'fixed' },
-    ];
+    // Declare all ten level-1 waves as hand-authored `fixed` so the level
+    // maps to the static definition verbatim (expanded campaign
+    // AH-0MVCYANT6003SG5C).
+    const rows: DifficultyCurveRow[] = Array.from({ length: 10 }, (_, i) => ({
+      level: 1,
+      levelName: 'Entry',
+      wave: i + 1,
+      targetDifficulty: 99,
+      generation: 'fixed' as const,
+    }));
     const levels = buildSequencedLevels(rows, undefined, { sequencer: spy });
 
     // The whole level is the static definition verbatim; the sequencer never
@@ -1244,14 +1282,27 @@ describe('Shipped campaign archetype variety (AH-0MV2SGIX5005PFJT)', () => {
     }
   });
 
-  it('uses the orbital/Phaser archetype in at most one wave per level', () => {
+  it('uses the orbital/Phaser archetype in at most one GENERATED wave per level', () => {
+    // The per-level archetype cap is a **sequencer** constraint: it limits how
+    // many waves the auto-sequencer may fill with one archetype. Hand-authored
+    // `fixed` waves are exempt by design (a curated level may deliberately
+    // repeat an archetype — Level 5 "Predictable Death" is built entirely from
+    // orbital Phasers). This assertion therefore checks the generated
+    // (`curve`/`dynamic`) rows only, which is exactly what the cap governs.
+    const generatedKeys = new Set(
+      defaultDifficultyCurves()
+        .filter((row) => (row.generation ?? 'curve') !== 'fixed')
+        .map((row) => `${row.level}:${row.wave}`),
+    );
     for (const level of campaign()) {
-      const orbitalWaves = level.waves.filter((wave) =>
-        wave.groups.some((group) => group.formation === 'orbital'),
+      const orbitalGeneratedWaves = level.waves.filter((wave, index) =>
+        wave.groups.some((group) => group.formation === 'orbital')
+        && generatedKeys.has(`${level.level}:${index + 1}`),
       );
-      expect(orbitalWaves.length, `level ${level.level}`).toBeLessThanOrEqual(
-        1,
-      );
+      expect(
+        orbitalGeneratedWaves.length,
+        `level ${level.level}`,
+      ).toBeLessThanOrEqual(1);
     }
   });
 

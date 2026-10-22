@@ -23,7 +23,14 @@ import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
 import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import { playPhaserAdvanceCue, playPhaserFireSound } from '../audio/effects';
-import { FormationOffset } from '../utils/formations';
+import {
+  computeOrbitalSlot,
+  DEFAULT_ORBITAL_FORMATION_COUNT,
+  FormationOffset,
+  FormationPosition,
+  orbitalPhaseAngle,
+  orbitalPhaseIndex,
+} from '../utils/formations';
 import { type ExplosionHandle } from '../vfx/explosionParticles';
 
 // ── Visual / behaviour tuning (per GDD §4.1) ────────────────────────
@@ -64,17 +71,33 @@ export const PHASER_BULLET_SPEED = 90;
 /** Ring stroke width in px. */
 export const PHASER_RING_WIDTH = 2;
 
-/** Number of Phasers in the orbital formation. */
-export const PHASER_FORMATION_COUNT = 4;
+/** Number of Phasers in the orbital formation when the group count is unknown. */
+export const PHASER_FORMATION_COUNT = DEFAULT_ORBITAL_FORMATION_COUNT;
 
-/** Orbital spacing — phase offset between Phasers (fraction of 2π). */
-export const PHASER_ORBITAL_PHASE_SPACING = Math.PI / 2;
+/**
+ * Orbital spacing — phase offset between adjacent Phasers for the default
+ * four-member square (a full turn split four ways). Superseded by the
+ * count-based {@link orbitalPhaseAngle} for groups of any size
+ * (AH-0MVEXVME1004SIIS); retained for callers that reference the constant.
+ */
+export const PHASER_ORBITAL_PHASE_SPACING = (Math.PI * 2) / PHASER_FORMATION_COUNT;
 
 export interface PhaserConfig {
   x: number;
   y: number;
-  /** Offset within the orbital formation; used to determine orbit phase. */
+  /**
+   * Offset within the orbital formation; used to determine orbit phase. When
+   * it carries a `phaseCount` (populated by `buildOrbitalPhaseOffsets`) that
+   * group count governs the even phase distribution (AH-0MVEXVME1004SIIS).
+   */
   formationOffset: FormationOffset;
+  /**
+   * Number of Phasers in this group's orbital formation. Drives the even
+   * phase distribution `phase_i = i × 2π / count`. Defaults to the offset's
+   * `phaseCount`, then to {@link PHASER_FORMATION_COUNT} (4) so
+   * single-entity constructors are unchanged (AH-0MVEXVME1004SIIS).
+   */
+  formationCount?: number;
   size?: number;
   color?: number;
   bulletColor?: number;
@@ -136,6 +159,12 @@ export class PhaserEntity extends BaseEnemy {
   private _tellStartTime = 0;
   private _isTelling = false;
   private _orbitalPhase: number;
+  /**
+   * Number of Phasers in this group's orbital formation — drives the even
+   * phase distribution. Defaults to 4 when the group count is unknown
+   * (AH-0MVEXVME1004SIIS).
+   */
+  private readonly _formationCount: number;
   /** Local phase accumulator for orbital rotation (seconds, dt-driven;
    *  replaces `scene.time.now`).  Allows the entity to compute its orbital
    *  position without a `scene` ref, which is required for correctness when
@@ -165,7 +194,13 @@ export class PhaserEntity extends BaseEnemy {
     };
     super(scene, config.x, config.y, baseConfig);
 
-    // Each Phaser gets a unique orbital phase based on its offset index.
+    // Each Phaser gets a unique orbital phase evenly distributed across the
+    // group's actual size (`phase_i = i × 2π / count`), so a group of any
+    // count occupies distinct orbital slots (AH-0MVEXVME1004SIIS).
+    this._formationCount =
+      config.formationCount ??
+      config.formationOffset.phaseCount ??
+      PHASER_FORMATION_COUNT;
     this._orbitalPhase = this._computeOrbitalPhase(config.formationOffset);
     this._colorNumber = config.color ?? PHASER_COLOR_NUMBER;
     this._burstCount = config.burstCount ?? 8;
@@ -210,11 +245,12 @@ export class PhaserEntity extends BaseEnemy {
 
   /**
    * Computes the orbital phase for this Phaser based on its formation
-   * offset. The phase determines where in the orbit this Phaser sits.
+   * offset and the group's actual count. Phases are evenly distributed
+   * across the full turn, so a group of `N` Phasers occupies `N` distinct
+   * slots (AH-0MVEXVME1004SIIS).
    */
   private _computeOrbitalPhase(offset: FormationOffset): number {
-    const index = offset.row * 10 + offset.col;
-    return index * PHASER_ORBITAL_PHASE_SPACING;
+    return orbitalPhaseAngle(orbitalPhaseIndex(offset), this._formationCount);
   }
 
   // ── Drawing ──────────────────────────────────────────────────────
@@ -419,6 +455,23 @@ export class PhaserEntity extends BaseEnemy {
   }
 
   /**
+   * The Phaser's live orbital slot around the formation base `(baseX, baseY)`
+   * (AH-0MVEXVME1004SIIS). The shared orbital-slot seam consumed by the
+   * scenes' wormhole-transit destination resolvers, so a spawning Phaser
+   * travels straight to the point it will orbit on — no line-then-snap.
+   * Re-evaluated every frame, so it tracks the advancing orbit.
+   */
+  formationSlot(baseX: number, baseY: number): FormationPosition {
+    return computeOrbitalSlot(
+      baseX,
+      baseY,
+      this._orbitalPhase,
+      PHASER_ORBITAL_RADIUS,
+      this._localPhase * PHASER_ORBITAL_SPEED,
+    );
+  }
+
+  /**
    * Applies the orbital movement for this frame. Instead of a flat
    * grid translation, each Phaser orbits around the formation centre
    * at its assigned phase offset.
@@ -432,22 +485,15 @@ export class PhaserEntity extends BaseEnemy {
   ): void {
     if (!this._alive) return;
 
-    // The orbital centre is the formation base.
-    const centerX = baseX;
-    const centerY = baseY;
-
-    // Advance orbital angle using a local phase accumulator instead of
+    // Advance the orbital angle using a local phase accumulator instead of
     // `scene.time.now` so the entity does not crash when its `scene` is
     // undefined (stale after a scene restart — the SHUTDOWN teardown
-    // destroys it first).
+    // destroys it first). The position comes from the shared orbital-slot
+    // helper, the same one the transit-destination resolver consumes through
+    // `formationSlot` (AH-0MVEXVME1004SIIS).
     this._localPhase += dt;
-    const currentAngle =
-      this._orbitalPhase + this._localPhase * PHASER_ORBITAL_SPEED;
-
-    // Compute orbital position.
-    const x = centerX + PHASER_ORBITAL_RADIUS * Math.cos(currentAngle);
-    const y = centerY + PHASER_ORBITAL_RADIUS * Math.sin(currentAngle);
-    this.setPosition(x, y);
+    const slot = this.formationSlot(baseX, baseY);
+    this.setPosition(slot.x, slot.y);
 
     // Handle tell animation if firing is enabled.
     if (this._shootEnabled && this._isTelling) {

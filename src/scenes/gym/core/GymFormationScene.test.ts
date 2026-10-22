@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as effectsModule from '../../../audio/effects';
 import * as explosionModule from '../../../vfx/explosionParticles';
 import * as collectAnimationModule from '../../../powerups/collectAnimation';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../../test/gameHarness';
+import { advanceGame, BootedGame, createReusableBoot } from '../../../test/gameHarness';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
@@ -51,6 +51,15 @@ import {
 import { DEFAULT_CONFIG } from '../../../core/config';
 import { seedConfigStore } from '../../../core/configStore';
 import { PHASE_GHOST_ALPHA } from '../../core/CombatEffectVisuals';
+
+/**
+ * One Phaser game shell per file, rebooted into a fresh scene instance per
+ * test (AH-0MVF6VZG9000AN6E). Constructing/destroying a `Phaser.Game` per test
+ * dominated this suite's boot cost; every `reuse.boot()` still creates new
+ * scene instances, so per-test state isolation is unchanged.
+ */
+const reuse = createReusableBoot();
+afterAll(() => reuse.dispose());
 
 // These scene tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -239,16 +248,11 @@ type BootedScene = GymFormationScene<StubEnemy, StubBullet>;
 describe('GymFormationScene — shared gym formation-scene base class', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootGym(
     collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
     player?: { x: number; y: number },
   ): Promise<BootedScene> {
-    booted = await bootScene([makeStubScene(collect, player)]);
+    booted = await reuse.boot([makeStubScene(collect, player)]);
     return booted!.scene as BootedScene;
   }
 
@@ -327,9 +331,20 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
 
   it('AC1 — formation advances at the configured drift speed', async () => {
     const scene = await bootGym();
+    const game = scene.game;
+    // Drive 0.35 s of simulated time in fixed 60 Hz steps instead of waiting
+    // on wall-clock frames: the drift is time-based, so a slow host (or
+    // coverage instrumentation) previously advanced less than the asserted
+    // 0.25 s worth and failed spuriously (parent AH-0MVF3BESP005ZDAV).
+    game.loop.stop();
     const baseBefore = scene.formationX;
 
-    await new Promise((r) => setTimeout(r, 350));
+    let simTime = performance.now();
+    const stepMs = 1000 / 60;
+    for (let i = 0; i < Math.ceil(350 / stepMs); i += 1) {
+      simTime += stepMs;
+      game.step(simTime, stepMs);
+    }
 
     const baseAfter = scene.formationX;
     expect(baseAfter).toBeGreaterThan(baseBefore);
@@ -401,13 +416,13 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
       new StubBullet(enemy.scene, 0, 60),
     ]);
 
-    await new Promise((r) => setTimeout(r, 250));
+    await advanceGame(booted!.game, 250);
     expect(scene.activeBullets.length).toBeGreaterThan(0);
 
     const first = scene.activeBullets[0];
     const xBefore = first.graphics.x;
     const yBefore = first.graphics.y;
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
     const moved = scene.activeBullets.find((b) => b.graphics === first.graphics);
     // The bullet the base class owns moves downward each frame (vy > 0).
     expect(moved).toBeDefined();
@@ -425,7 +440,7 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
       return [new StubBullet(enemy.scene, 0, 2000, 0.1)]; // fast, short-lived
     });
 
-    await new Promise((r) => setTimeout(r, 300));
+    await advanceGame(booted!.game, 300);
     // The bullet wraps across the screen edges while alive and is removed
     // only once its lifetime (0.1s) elapses — never by off-screen position.
     expect(scene.activeBullets.length).toBe(0);
@@ -435,20 +450,15 @@ describe('GymFormationScene — shared gym formation-scene base class', () => {
 describe('GymFormationScene — player spawn (core scene AC1)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootGym(
     collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
   ): Promise<BootedScene> {
-    booted = await bootScene([makeStubScene(collect)]);
+    booted = await reuse.boot([makeStubScene(collect)]);
     return booted!.scene as BootedScene;
   }
 
   it('spawns the configured Player entity and adds it to the display list', async () => {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 200, y: 300 }),
     ]);
     const scene = booted!.scene as BootedScene;
@@ -470,7 +480,7 @@ describe('GymFormationScene — player spawn (core scene AC1)', () => {
   });
 
   it('instantiates the player in create() while the formation is also present', async () => {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 480 }),
     ]);
     const scene = booted!.scene as BootedScene;
@@ -483,13 +493,8 @@ describe('GymFormationScene — player spawn (core scene AC1)', () => {
 describe('GymFormationScene — player keyboard input (core scene AC2)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootWithPlayer(): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }),
     ]);
     return booted!.scene as BootedScene;
@@ -540,13 +545,8 @@ describe('GymFormationScene — player keyboard input (core scene AC2)', () => {
 describe('GymFormationScene — scheme-aware input routing (parent AC1/AC2/AC3)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootWithPlayer(): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }),
     ]);
     return booted!.scene as BootedScene;
@@ -653,13 +653,8 @@ describe('GymFormationScene — scheme-aware input routing (parent AC1/AC2/AC3)'
 describe('GymFormationScene — player auto-fire (core scene AC3)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootWithPlayer(): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }),
     ]);
     return booted!.scene as BootedScene;
@@ -777,11 +772,6 @@ describe('GymFormationScene — player auto-fire (core scene AC3)', () => {
 describe('GymFormationScene — collision detection and player hit/respawn (core scene AC1–AC5)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   /** Player spawn far from the formation so auto-fire bullets never
    *  interfere with collision assertions (bullets fly right/off-screen,
    *  away from the formation at x ≈ 240–360). */
@@ -814,7 +804,7 @@ describe('GymFormationScene — collision detection and player hit/respawn (core
       return [b];
     };
 
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(collect, PLAYER_SPAWN, collide),
     ]);
     const scene = booted!.scene as BootedScene;
@@ -1081,15 +1071,10 @@ describe('GymFormationScene — enemy live aim tracking (parent AC1–AC3)', () 
   // Upper-area spawn, far from the bottom-centre stand-in.
   const PLAYER_AIM_SPAWN = { x: 700, y: 120 };
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootGym(
     player?: { x: number; y: number },
   ): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], player, undefined, AimStubEnemy),
     ]);
     return booted!.scene as BootedScene;
@@ -1170,7 +1155,7 @@ describe('GymFormationScene — enemy live aim tracking (parent AC1–AC3)', () 
   });
 
   it('AC6 — a plain entity without the seam never breaks the tick when a player IS present', async () => {
-    booted = await bootScene([makeStubScene(() => [], PLAYER_AIM_SPAWN)]);
+    booted = await reuse.boot([makeStubScene(() => [], PLAYER_AIM_SPAWN)]);
     const scene = booted!.scene as BootedScene;
     expect(scene.getPlayer()).not.toBeNull();
     expect(() => scene.tick(0.25)).not.toThrow();
@@ -1181,15 +1166,10 @@ describe('GymFormationScene — enemy live aim tracking (parent AC1–AC3)', () 
 describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MTFXKA5Q003LBH5)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootGym(
     player?: { x: number; y: number },
   ): Promise<BootedScene> {
-    booted = await bootScene([makeStubScene(() => [], player)]);
+    booted = await reuse.boot([makeStubScene(() => [], player)]);
     return booted!.scene as BootedScene;
   }
 
@@ -1286,7 +1266,7 @@ describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MT
       b.graphics.setPosition(10, 10);
       return [b];
     };
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(collect, { x: 480, y: 270 }),
     ]);
     const scene = booted!.scene as BootedScene;
@@ -1369,8 +1349,7 @@ describe('GymFormationScene — wipe detection, 3s countdown and respawn (AH-0MT
     expect(scene.getRespawnCountdownRemaining()).toBe(0);
 
     // Destroy and re-boot a fresh scene — no stale countdown.
-    booted!.game.destroy(true);
-    booted = await bootScene([makeStubScene(() => [], undefined)]);
+    booted = await reuse.boot([makeStubScene(() => [], undefined)]);
     const fresh = booted!.scene as BootedScene;
     expect(fresh.isRespawnCountdownActive()).toBe(false);
     expect(fresh.aliveCount).toBe(FORMATION_COUNT);
@@ -1418,12 +1397,10 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
 
   afterEach(() => {
     vi.restoreAllMocks();
-    booted?.game.destroy(true);
-    booted = null;
   });
 
   async function bootWithTimeout(duration: number): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], undefined, undefined, StubEnemy, undefined, duration),
     ]);
     return booted!.scene as BootedScene;
@@ -1443,7 +1420,7 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
   });
 
   it('AC1 — a missing duration leaves the timeout inactive (boss/non-enemy gyms opt out)', async () => {
-    booted = await bootScene([makeStubScene(() => [])]);
+    booted = await reuse.boot([makeStubScene(() => [])]);
     const scene = booted!.scene as BootedScene;
 
     expect(scene.isWaveTimeoutActive()).toBe(false);
@@ -1552,7 +1529,7 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
   });
 
   it('AC4 — a disabled timeout never detonates the formation', async () => {
-    booted = await bootScene([makeStubScene(() => [])]);
+    booted = await reuse.boot([makeStubScene(() => [])]);
     const scene = booted!.scene as BootedScene;
 
     scene.tick(120);
@@ -1564,13 +1541,8 @@ describe('GymFormationScene — opt-in wave-timeout (AH-0MUNR5LM1004B223)', () =
 describe('GymFormationScene — stop/restart of the same instance clears stale entities (AH-0MTPLHLZ3006MOC4)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootGym(): Promise<BootedScene> {
-    booted = await bootScene([makeStubScene(() => [])]);
+    booted = await reuse.boot([makeStubScene(() => [])]);
     return booted!.scene as BootedScene;
   }
 
@@ -1600,7 +1572,7 @@ describe('GymFormationScene — stop/restart of the same instance clears stale e
   });
 
   it('AC4 — with a player: SHUTDOWN teardown nulls the player and clears player bullets; restart spawns a fresh ship', async () => {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }),
     ]);
     const scene = booted!.scene as BootedScene;
@@ -1654,15 +1626,10 @@ describe('GymFormationScene — stop/restart of the same instance clears stale e
 describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W8PT)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   const PLAYER_SPAWN = { x: 480, y: 270 };
 
   async function bootWithPlayer(): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], PLAYER_SPAWN),
     ]);
     return booted!.scene as BootedScene;
@@ -1823,7 +1790,7 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
   it('AC3 — collision uses the entity hit radius from getHitRadius()', async () => {
     // Use a custom (small) entity hit radius via getHitRadius().
     const smallRadius = 5;
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], PLAYER_SPAWN, { entityHitRadius: smallRadius }),
     ]);
     const scene = booted!.scene as BootedScene;
@@ -1894,11 +1861,6 @@ describe('GymFormationScene — player-vs-enemy-body collision (AH-0MTV7JOLU006W
 describe('GymFormationScene — power-up layer (AH-0MU44M9CA007GBTZ)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   const INTERVAL = 15;
 
   /** Deterministic layer: round-robin IDs, seeded placement, short interval. */
@@ -1911,14 +1873,14 @@ describe('GymFormationScene — power-up layer (AH-0MU44M9CA007GBTZ)', () => {
   }
 
   async function bootWithLayer(powerUps: PowerUpLayerConfig): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
     ]);
     return booted.scene as BootedScene;
   }
 
   it('AC1 — is disabled by default (no drops without a config block)', async () => {
-    booted = await bootScene([makeStubScene(() => [], { x: 480, y: 270 })]);
+    booted = await reuse.boot([makeStubScene(() => [], { x: 480, y: 270 })]);
     const scene = booted.scene as BootedScene;
 
     expect(scene.isPowerUpLayerEnabled()).toBe(false);
@@ -2023,11 +1985,6 @@ describe('GymFormationScene — power-up layer (AH-0MU44M9CA007GBTZ)', () => {
 describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9NQ0006613)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   // Long interval so cadence spawns never interfere with the assertions.
   const INTERVAL = 1000;
   const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
@@ -2036,7 +1993,7 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     powerUps: PowerUpLayerConfig,
     collect: (enemy: StubEnemy, now: number) => StubBullet[] = () => [],
   ): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(collect, { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
     ]);
     return booted.scene as BootedScene;
@@ -2225,16 +2182,11 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
 describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0MU3VOQKH005YOBH)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   const INTERVAL = 1000;
   const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
 
   async function boot(powerUps: PowerUpLayerConfig): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
     ]);
     return booted.scene as BootedScene;
@@ -2430,16 +2382,11 @@ describe('GymFormationScene — weapon drops in the combat power-up layer (AH-0M
 describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005Y30S)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   const INTERVAL = 1000;
   const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
 
   async function boot(powerUps: PowerUpLayerConfig): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, powerUps),
     ]);
     return booted.scene as BootedScene;
@@ -2508,11 +2455,6 @@ describe('GymFormationScene — collection absorb VFX + pop SFX (AH-0MUBYXRFT005
 describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES0027QQV)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   const PLAYER_SPAWN = { x: 480, y: 270 };
   const INTERVAL = 1000;
   const CLEAR: PowerUpPlacement = { place: () => ({ x: 10, y: 10 }) };
@@ -2546,7 +2488,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
       placement: CLEAR,
       spawnInterval: INTERVAL,
     };
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(collect, PLAYER_SPAWN, undefined, StubEnemy, powerUps),
     ]);
     const scene = booted.scene as BootedScene;
@@ -2695,7 +2637,7 @@ describe('GymFormationScene — P3 shield / P6 phase hit-gating (AH-0MUHM66ES002
       placement: CLEAR,
       spawnInterval: INTERVAL,
     };
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], undefined, undefined, StubEnemy, powerUps),
     ]);
     const scene = booted.scene as BootedScene;
@@ -2770,13 +2712,8 @@ class MineralKillDropGym extends GymFormationScene<
 describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootMineralGym(): Promise<MineralKillDropGym> {
-    booted = await bootScene([MineralKillDropGym]);
+    booted = await reuse.boot([MineralKillDropGym]);
     return booted.scene as MineralKillDropGym;
   }
 
@@ -2842,13 +2779,8 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
 describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootReanchorGym(): Promise<GymFormationScene<StubEnemy, StubBullet>> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], undefined, undefined, ReanchorStubEnemy),
     ]);
     return booted.scene as GymFormationScene<StubEnemy, StubBullet>;
@@ -2995,7 +2927,7 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
     // seam, so there is nothing that could request a re-anchor. The drift
     // must advance at exactly the configured rate and the vertical base must
     // stay pinned — no re-anchor is applied anywhere.
-    booted = await bootScene([makeStubScene(() => [])]);
+    booted = await reuse.boot([makeStubScene(() => [])]);
     const scene = booted.scene as GymFormationScene<StubEnemy, StubBullet>;
     const all = scene.formationEntities as StubEnemy[];
     expect(all.length).toBeGreaterThan(0);
@@ -3057,7 +2989,7 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
         super(config);
       }
     };
-    booted = await bootScene([Mixed]);
+    booted = await reuse.boot([Mixed]);
     return booted.scene as GymFormationScene<StubEnemy, StubBullet>;
   }
 
@@ -3114,13 +3046,8 @@ describe('GymFormationScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)
 describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootWithPlayer(): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }),
     ]);
     return booted!.scene as BootedScene;
@@ -3169,7 +3096,7 @@ describe('GymFormationScene — restart/teardown parity (AH-0MUII3FYN0072QRT, ga
   });
 
   it('AC1 — a power-up-enabled gym restart keeps its HUD bound to the same, freshly-reset registry', async () => {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }, undefined, StubEnemy, {}),
     ]);
     const scene = booted!.scene as BootedScene;
@@ -3232,12 +3159,10 @@ describe('GymFormationScene — shared multi-hit kill finalisation (F2)', () => 
   let booted: BootedGame | null = null;
   afterEach(() => {
     vi.restoreAllMocks();
-    booted?.game.destroy(true);
-    booted = null;
   });
 
   async function bootTough(): Promise<BootedScene> {
-    booted = await bootScene([
+    booted = await reuse.boot([
       makeStubScene(() => [], { x: 480, y: 270 }, undefined, ToughStubEnemy as typeof StubEnemy),
     ]);
     return booted!.scene as BootedScene;

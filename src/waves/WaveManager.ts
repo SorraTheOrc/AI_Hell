@@ -91,6 +91,9 @@ export class WaveManager {
   private _bossTriggered = false;
   private _bossActive = false;
   private _bossDefeated = false;
+  private _miniBossTriggered = false;
+  private _miniBossActive = false;
+  private _miniBossDefeated = false;
   private _started = false;
 
   /**
@@ -113,13 +116,25 @@ export class WaveManager {
 
   // ── Lifecycle ───────────────────────────────────────────────────
 
-  /** Resets to Level 1, Wave 1 and marks the session started. */
-  beginGame(): void {
-    this._levelIndex = 0;
+  /**
+   * Resets to the given level's Wave 1 and marks the session started.
+   *
+   * @param startLevel - 1-based campaign level to begin at (default 1). The
+   *   checkpoint resume path starts a run at the saved level; out-of-range
+   *   values clamp to the campaign bounds.
+   */
+  beginGame(startLevel = 1): void {
+    const clamped = Number.isFinite(startLevel)
+      ? Math.min(Math.max(1, Math.floor(startLevel)), this.levels.length)
+      : 1;
+    this._levelIndex = clamped - 1;
     this._waveIndex = 0;
     this._bossTriggered = false;
     this._bossActive = false;
     this._bossDefeated = false;
+    this._miniBossTriggered = false;
+    this._miniBossActive = false;
+    this._miniBossDefeated = false;
     this._started = true;
     this._enemiesAlive = this._waveSize(this.currentWave());
   }
@@ -132,6 +147,9 @@ export class WaveManager {
     this._bossTriggered = false;
     this._bossActive = false;
     this._bossDefeated = false;
+    this._miniBossTriggered = false;
+    this._miniBossActive = false;
+    this._miniBossDefeated = false;
     this._started = false;
   }
 
@@ -218,6 +236,36 @@ export class WaveManager {
   /** Whether the boss has been defeated. */
   get bossDefeated(): boolean {
     return this._bossDefeated;
+  }
+
+  /**
+   * Whether the current level's wave-10 mini-boss has been reached (its
+   * wave is current — or, once defeated, has been current this level).
+   * Per-level encounter state, distinct from the run-level final boss
+   * (`bossTriggered`). Always `false` before the mini-boss wave is current.
+   */
+  get miniBossTriggered(): boolean {
+    return this._miniBossTriggered;
+  }
+
+  /**
+   * Whether the current level's mini-boss is the **active** wave (current
+   * and not yet defeated). The scene uses this to spawn/render the mini-boss
+   * encounter and to hold the level until it is wiped. Distinct from the
+   * final-boss `bossActive` state.
+   */
+  get miniBossActive(): boolean {
+    return this._miniBossActive;
+  }
+
+  /**
+   * Whether the current level's mini-boss wave has been wiped. Set the
+   * moment the mini-boss is defeated and remains latched until the next
+   * mini-boss encounter triggers (or `beginGame`/`reset`). Distinct from the
+   * final-boss `bossDefeated` state.
+   */
+  get miniBossDefeated(): boolean {
+    return this._miniBossDefeated;
   }
 
   /** The active level definition, or null before `beginGame()`. */
@@ -356,7 +404,26 @@ export class WaveManager {
     if (level && this._waveIndex < level.waves.length - 1) {
       this._waveIndex += 1;
       this._enemiesAlive = this._waveSize(this.currentWave());
+      // Advancing onto a wave flagged as this level's mini-boss opens the
+      // per-level mini-boss encounter (AH-0MVCRAV3B0069AIJ AC2): the gating
+      // is flag-driven, so a 10th wave without the marker — or a level with
+      // fewer waves — progresses exactly as a regular wave and never hangs
+      // (AC5).
+      if (this.currentWave()?.miniBoss === true) {
+        this._miniBossTriggered = true;
+        this._miniBossActive = true;
+        this._miniBossDefeated = false;
+      }
       return 'waveCleared';
+    }
+
+    // The last wave of the level was wiped. If it was the mini-boss wave,
+    // record the defeat and close the encounter so the level can advance
+    // (AC2: the level does not advance until the mini-boss is defeated).
+    const wipedMiniBoss = level?.waves[this._waveIndex]?.miniBoss === true;
+    if (wipedMiniBoss) {
+      this._miniBossActive = false;
+      this._miniBossDefeated = true;
     }
 
     // Level wiped — advance to the next level, or trigger the boss.
@@ -364,6 +431,9 @@ export class WaveManager {
       this._levelIndex += 1;
       this._waveIndex = 0;
       this._enemiesAlive = this._waveSize(this.currentWave());
+      // Each level owns its mini-boss encounter; the next level starts fresh.
+      this._miniBossTriggered = false;
+      this._miniBossActive = false;
       return 'levelCleared';
     }
 

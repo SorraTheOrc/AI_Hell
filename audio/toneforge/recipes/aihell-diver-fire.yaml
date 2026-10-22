@@ -1,4 +1,5 @@
-# AI Hell cue: aihell-diver-fire — Diver fire — saw drop 280 to 120 Hz.
+# AI Hell cue: aihell-diver-fire — Diver fire — saw drop D4 to B2 (293.66 to 123.47 Hz).
+# Amplitude tier: subtle one-shot (target RMS 0.055 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-diver-fire
@@ -13,15 +14,15 @@ nodes:
     kind: oscillator
     params:
       type: sawtooth
-      frequency: 280
+      frequency: 293.66
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 280
+          value: 293.66
         - kind: linearRamp
           time: 0.08
-          value: 120
+          value: 123.47
   e0:
     kind: envelope
     params:
@@ -36,7 +37,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 1.2415
   out:
     kind: destination
 routing:

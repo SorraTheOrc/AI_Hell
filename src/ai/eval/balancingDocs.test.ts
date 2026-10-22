@@ -134,3 +134,34 @@ describe('Automated balancing is documented (AH-0MV81Z2EJ006HD5T)', () => {
     expect(evaluation).toContain('BALANCING.md');
   });
 });
+
+describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('documents the one-command loop with its worked example (parent AC7)', () => {
+    expect(doc).toContain('## Tuning loop (baseline → edit → re-run → compare)');
+    expect(doc).toContain('node scripts/evaluate.mjs --tune --set enemy-configs.csv boss.health=6 --games 100');
+  });
+
+  it('documents the tune flags and artifacts', () => {
+    for (const symbol of ['--tune', '--set <file> <assignment>', '--threshold', '--keep-edit']) {
+      expect(doc).toContain(symbol);
+    }
+    for (const artifact of ['tune-baseline-report.json', 'tune-candidate-report.json', 'tune-comparison.json', 'tune-comparison.txt']) {
+      expect(doc).toContain(artifact);
+    }
+  });
+
+  it('documents the guards (same-sweep, determinism, checkout hygiene)', () => {
+    expect(doc).toMatch(/Same-sweep guard/);
+    expect(doc).toMatch(/byte-identical/);
+    expect(doc).toMatch(/checkout hygiene|Checkout hygiene/);
+  });
+
+  it('is cross-linked from the README and EVALUATION.md flags', () => {
+    const readme = fs.readFileSync(README_PATH, 'utf8');
+    const evaluation = fs.readFileSync(EVALUATION_PATH, 'utf8');
+    expect(readme).toMatch(/tuning loop/i);
+    expect(evaluation).toContain('--tune');
+  });
+});

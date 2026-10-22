@@ -14,6 +14,7 @@ import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { RULES_STORAGE_KEY } from '../core/rules';
+import { DEFAULT_SETTINGS, saveSettings } from '../core/settingsStore';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
   BufferedTelemetryRecorder,
@@ -22,6 +23,7 @@ import {
   type TelemetryRecord,
   type TelemetrySink,
 } from '../telemetry';
+import type { DevUploadFetch } from '../telemetry/devUpload';
 import {
   RUN_TELEMETRY_EVENT_VERSION,
   RUN_TELEMETRY_STATE_VERSION,
@@ -115,9 +117,7 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
     recorder: BufferedTelemetryRecorder;
   }> {
     simTime = 0;
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     const sink = new CaptureSink();
@@ -293,17 +293,50 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
   });
 
   it('AC5 — telemetry off is a strict no-op and records nothing', async () => {
+    // Dev collection is on by default (AH-0MVBMRIB800201KK), so the opt-out
+    // is what makes this a stock "off" run.
+    saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
     localStorage.removeItem(TELEMETRY_JSONL_STORAGE_KEY);
     simTime = 0;
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
     const play = restartAndSettle(booted.game, { seed: SEED });
 
     expect(play.isTelemetryEnabled()).toBe(false);
     step(booted.game, 30);
     expect(localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY)).toBeNull();
+  });
+
+  it('dev collection is on by default: a stock dev run writes the JSONL sink', async () => {
+    vi.stubEnv('DEV', true);
+    saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: true });
+    localStorage.removeItem(TELEMETRY_JSONL_STORAGE_KEY);
+    simTime = 0;
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted.game.loop.stop();
+    const play = restartAndSettle(booted.game, { seed: SEED });
+
+    // No injected recorder and no VITE_TELEMETRY_* env var: the persisted
+    // setting alone puts a stock dev session into recording (AC2/AC3).
+    expect(play.isTelemetryEnabled()).toBe(true);
+
+    // Stepping past the recorder's batch size forces a flush of the buffered
+    // records into the local JSONL sink.
+    step(booted.game, 120);
+
+    await vi.waitFor(
+      () => {
+        const stored = localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY);
+        expect(stored).toBeTruthy();
+        const records = stored!
+          .trimEnd()
+          .split('\n')
+          .map((line) => JSON.parse(line) as TelemetryRecord);
+        expect(records[0]?.kind).toBe('run_header');
+        expect(records.some((record) => record.kind === 'tick')).toBe(true);
+      },
+      { timeout: 5000 },
+    );
   });
 
   it('AC5 — enabling recording does not change the run (regression)', async () => {
@@ -316,9 +349,7 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
 
     // Run B: recording disabled (no injection) — same seed, same ticks.
     simTime = 0;
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
     const playB = restartAndSettle(booted.game, { seed: SEED });
     step(booted.game, 120);
@@ -362,5 +393,173 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
       turnLeft: false,
       turnRight: false,
     });
+  });
+});
+
+describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  /** A marker line the local sink would hold at run end. */
+  const SINK_LINE = '{"kind":"run_header","runSeed":7}\n';
+
+  /** A `fetch` spy typed like the uploader's seam. */
+  function uploadFetchSpy(): ReturnType<typeof vi.fn<DevUploadFetch>> {
+    return vi.fn<DevUploadFetch>(async () => ({ ok: true, status: 200 }));
+  }
+
+  /** Drains pending promise jobs (the fire-and-forget bridge) without timers. */
+  async function drainMicrotasks(turns = 20): Promise<void> {
+    for (let i = 0; i < turns; i += 1) await Promise.resolve();
+  }
+
+  /** Steps the stopped game until `predicate` holds (or fails loudly). */
+  function stepUntil(label: string, predicate: () => boolean): void {
+    for (let i = 0; i < 600; i += 1) {
+      if (predicate()) return;
+      simTime += STEP_MS;
+      booted!.game.step(simTime, STEP_MS);
+    }
+    throw new Error(`stepUntil(${label}): condition not met after 600 steps`);
+  }
+
+  /** Restarts PlayScene and steps until the new `create()` has completed. */
+  function restartAndSettle(game: Phaser.Game, data?: { seed?: number }): PlayScene {
+    const play = game.scene.getScene('PlayScene') as PlayScene;
+    let created = false;
+    play.events.once(Phaser.Scenes.Events.CREATE, () => {
+      created = true;
+    });
+    simTime = 0;
+    play.scene.restart(data);
+    stepUntil('scene create after restart', () => created);
+    return play;
+  }
+
+  /**
+   * Boots a settled PlayScene, then seeds the local JSONL sink and applies the
+   * run-end share setting.
+   *
+   * Dev collection is off while the scene boots, so the stock dev recorder can
+   * never append to `localStorage`; the injected capturing recorder and the
+   * post-restart seed then make the upload payload exactly {@link SINK_LINE}.
+   * The uploader reads the setting at run end, so applying it afterwards is the
+   * state the run-end hook sees.
+   */
+  async function bootWithSeededSink(shareTelemetryDev: boolean): Promise<PlayScene> {
+    saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
+    simTime = 0;
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted.game.loop.stop();
+    const play = booted.game.scene.getScene('PlayScene') as PlayScene;
+    play.setTelemetryRecorder(
+      new BufferedTelemetryRecorder(new CaptureSink(), {
+        capacity: 8192,
+        batchSize: 8192,
+        sampleRate: 1,
+      }),
+    );
+    restartAndSettle(booted.game, { seed: SEED });
+    localStorage.setItem(TELEMETRY_JSONL_STORAGE_KEY, SINK_LINE);
+    saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev });
+    return play;
+  }
+
+  /** Ram the final-life ship into a live enemy: synchronously ends the run. */
+  function endRun(play: PlayScene): void {
+    // Warm the wave spawners (mirroring the fatal-hit telemetry test) so a
+    // target exists to ram.
+    for (let i = 0; i < 60; i += 1) {
+      simTime += STEP_MS;
+      booted!.game.step(simTime, STEP_MS);
+    }
+    play.finishSpawnAnimations();
+    const target = play.getEnemies().find((enemy) => enemy.alive);
+    if (!target) throw new Error('no live enemy to end the run with');
+    play.getGameState().lives = 1;
+    play.getPlayer()!.respawn(target.x, target.y);
+    simTime += STEP_MS;
+    booted!.game.step(simTime, STEP_MS);
+  }
+
+  it('dev+on — posts the sink content at run end and still reaches GameOverScene', async () => {
+    const play = await bootWithSeededSink(true);
+    const uploadFetch = uploadFetchSpy();
+    vi.stubGlobal('fetch', uploadFetch);
+
+    endRun(play);
+    // Phaser queues `scene.start`; step once so the transition is processed.
+    stepUntil('GameOverScene active', () => booted!.game.scene.isActive('GameOverScene'));
+
+    await vi.waitFor(
+      () => expect(uploadFetch).toHaveBeenCalledTimes(1),
+      { timeout: 5000 },
+    );
+    const [url, init] = uploadFetch.mock.calls[0]!;
+    expect(url).toBe('/api/telemetry/upload');
+    expect(init).toMatchObject({
+      method: 'POST',
+      headers: { 'content-type': 'application/x-ndjson' },
+      body: SINK_LINE,
+    });
+    // The scene transition still happened alongside the upload.
+    expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
+    // Parent constraint: the sink content is left intact after upload.
+    expect(localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY)).toBe(SINK_LINE);
+  });
+
+  it('dev+off — no fetch, run end still transitions', async () => {
+    const play = await bootWithSeededSink(false);
+    const uploadFetch = uploadFetchSpy();
+    vi.stubGlobal('fetch', uploadFetch);
+
+    endRun(play);
+    stepUntil('GameOverScene active', () => booted!.game.scene.isActive('GameOverScene'));
+    // Let the fire-and-forget bridge settle before asserting it never fired.
+    await drainMicrotasks();
+    expect(uploadFetch).not.toHaveBeenCalled();
+  });
+
+  it('prod build — no fetch, run end still transitions', async () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('PROD', true);
+    const play = await bootWithSeededSink(true);
+    const uploadFetch = uploadFetchSpy();
+    vi.stubGlobal('fetch', uploadFetch);
+
+    endRun(play);
+    stepUntil('GameOverScene active', () => booted!.game.scene.isActive('GameOverScene'));
+    await drainMicrotasks();
+    expect(uploadFetch).not.toHaveBeenCalled();
+  });
+
+  it('failed upload — swallowed, run end still transitions', async () => {
+    const play = await bootWithSeededSink(true);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<DevUploadFetch>(async () => {
+        throw new Error('dev server unreachable');
+      }),
+    );
+
+    endRun(play);
+    stepUntil('GameOverScene active', () => booted!.game.scene.isActive('GameOverScene'));
+
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
   });
 });

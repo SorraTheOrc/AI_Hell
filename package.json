@@ -1,18 +1,20 @@
 {
   "name": "ai-hell",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "private": true,
   "type": "module",
-  "description": "AI Hell — a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
+  "description": "AI Hell \u2014 a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
   "scripts": {
     "dev": "vite",
     "build-audio": "scripts/build-audio.sh",
     "build-audio:render": "scripts/build-audio.sh --render",
-    "build-audio:verify": "scripts/build-audio.sh --verify",
+    "build-audio:verify": "scripts/build-audio.sh --verify && node scripts/audio-balance-guard.mjs",
     "check-bundle": "node scripts/check-bundle-hygiene.mjs",
     "build": "npm run build-audio && tsc --noEmit && vite build && npm run check-bundle",
     "preview": "vite preview --port 4173",
     "capture": "node scripts/capture-gameplay.mjs",
+    "list:pool": "node scripts/list-capture-pool.mjs",
+    "compile:promo": "node scripts/compile-promo.mjs --compile",
     "evaluate": "node scripts/evaluate.mjs",
     "capture:install": "playwright install chromium",
     "record": "node scripts/record-session.mjs",
@@ -20,9 +22,12 @@
     "replay": "node scripts/replay-recording.mjs",
     "telemetry:inspect": "node scripts/inspect-telemetry.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --project unit --project integration",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage --project unit --project integration",
+    "test:e2e": "vitest run --project e2e"
   },
   "dependencies": {
     "phaser": "^4.2.1",

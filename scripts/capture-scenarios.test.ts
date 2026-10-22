@@ -18,6 +18,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { cliSpawnEnv } from './cliChildEnv';
 
 import { describe, expect, it } from 'vitest';
 
@@ -78,7 +79,7 @@ describe('CAPTURE_SCENARIOS registry', () => {
       '--input-type=module',
       '-e',
       script,
-    ], { encoding: 'utf8' });
+    ], { encoding: 'utf8', env: cliSpawnEnv() });
 
     expect(output.trim()).toBe(String(CAPTURE_SCENARIOS.length));
   });

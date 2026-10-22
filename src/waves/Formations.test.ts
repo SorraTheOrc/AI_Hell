@@ -183,3 +183,39 @@ describe('Levels 6–10 — classic-arcade campaign (AH-0MV396OK0001FX14)', () =
     }
   });
 });
+
+// ── 10-wave campaign verification harness (AH-0MVCRAHWO0007US2) ──
+//
+// Test-first verification for the expanded campaign (epic AH-0MVCC8XSS007P01Z):
+// every authored level must define exactly 10 waves with the 10th used as that
+// level's mini-boss encounter (9 regular waves + mini-boss). 
+//
+// now landed (AH-0MVCYANT6003SG5C), so the pins are GREEN and run as plain
+// `it` — they hard-gate the shipped 10-wave shape.
+describe('10-wave campaign verification harness — authored levels (AH-0MVCRAHWO0007US2)', () => {
+  it('AC1 — every authored level 1–10 defines exactly 10 waves', () => {
+    expect(LEVELS).toHaveLength(10);
+    for (const level of LEVELS) {
+      expect(
+        level.waves.length,
+        `L${level.level} (${level.name}) has ${level.waves.length} waves`,
+      ).toBe(10);
+    }
+  });
+
+  it('AC2 — the 10th wave of every authored level is its mini-boss encounter', () => {
+    for (const level of LEVELS) {
+      const wave = level.waves[9];
+      expect(wave, `L${level.level} (${level.name}) has no 10th wave`).toBeDefined();
+      // The wave data that ships with the expansion must identify the wave as
+      // the mini-boss (the same `miniBoss: true` boolean flag the data
+      // foundation lands on the merged campaign waves). Until then the
+      // authored wave carries no such flag, so this fails red.
+      const marked = wave as WaveDefinition & { miniBoss?: boolean };
+      expect(
+        marked.miniBoss,
+        `L${level.level} wave 10 is not marked as a mini-boss`,
+      ).toBe(true);
+    }
+  });
+});

@@ -39,6 +39,7 @@ export {
   EVAL_DATASET_VERSION,
   EVAL_TELEMETRY_SCHEMA_VERSION,
   BALANCE_STATISTICS_SCHEMA_VERSION,
+  TUNE_COMPARISON_SCHEMA_VERSION,
   type ArenaBalanceConfig,
   type ArenaConfig,
   type ArenaInput,
@@ -53,6 +54,10 @@ export {
   type TelemetryRecord,
   type TelemetryRunHeaderRecord,
   type TelemetryTickRecord,
+  type TuneComparison,
+  type TuneEditRecord,
+  type TuneMetricDelta,
+  type TuneThresholds,
 } from './types';
 export {
   abEvaluate,
@@ -94,14 +99,35 @@ export {
   formatAbReport,
   formatBalanceReport,
   formatEvaluationReport,
+  formatTuneSummary,
   serialiseRecordsJsonl,
   serialiseReport,
+  serialiseTuneComparison,
   stableStringify,
   type AbReport,
   type BalanceReport,
   type EvaluationReport,
   type RunReport,
 } from './report';
+export {
+  assertNoSideEffects,
+  assertSameSweep,
+  compareBalanceAggregates,
+  compareDistribution,
+  DEFAULT_TUNE_THRESHOLD,
+  recordsHashDifferences,
+  SameSweepGuardError,
+  sweepConfigDifferences,
+  SWEEP_CONFIG_FIELDS,
+  TUNE_COMPARED_METRICS,
+  type RunHashDifference,
+  type SameSweepDifference,
+  type SameSweepGuardCode,
+  type SweepConfigDifference,
+  type SweepConfigField,
+  type TuneComparedMetric,
+  type TuneComparisonOptions,
+} from './tune';
 export {
   compareRecordings,
   runAbEvaluation,
@@ -119,6 +145,12 @@ export {
   type PolicyFactory,
   type SeedRunOutput,
 } from './engine';
+export {
+  buildTuneComparisonArtifacts,
+  runBalanceBatch,
+  type TuneArtifactInput,
+  type TuneArtifacts,
+} from './cli';
 export {
   buildSideBySideCapturePlan,
   SIDE_BY_SIDE_DEFAULTS,

@@ -8,7 +8,7 @@ import * as effectsModule from '../../audio/effects';
 import { PLAYER_BULLET_SPEED } from '../../core/constants';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import { RULES_STORAGE_KEY } from '../../core/rules';
-import { bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
 import type { FormationOffset } from '../../utils/formations';
 import { PlayScene } from '../PlayScene';
 import { GameOverScene } from '../GameOverScene';
@@ -55,11 +55,14 @@ import {
 } from '../../entities/Diver';
 import type { Player } from '../../entities/Player';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
+import { LEVELS } from '../../waves/Formations';
 
 // These equivalence tests boot full Phaser games and walk PlayScene to the
 // boss encounter; under full-suite parallel load the Vitest default 5 s
 // timeout is too tight (AH-0MUIPP1UU000UT88). Give the file headroom so a
 // slow parallel run does not fail on timing alone (AH-0MUII3GOO001XEBB).
+// The expanded campaign (AH-0MVCYANT6003SG5C) walks ten waves per level to
+// the boss; the parity walk seeds a single-level campaign so it stays short.
 vi.setConfig({ testTimeout: 60000 });
 
 /** The nine shared combat/lifecycle template methods (parent AC1/AC2). */
@@ -1774,6 +1777,27 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
 // ── Shared boss integration (AH-0MUII3E5E006A93F, gap 6) ───────────
 
 /**
+ * Seeds a booted PlayScene with a **single-level** campaign so the boss walk
+ * clears one level (final by construction) instead of all ten
+ * (AH-0MVCYANT6003SG5C). Same encounter, ~1/10 the simulated waves.
+ */
+function seedSingleLevelCampaign(play: PlayScene): void {
+  const level = LEVELS[0];
+  play.getWaveManager().setLevels([
+    {
+      ...level,
+      level: 1,
+      waves: level.waves.map((w) => ({
+        ...w,
+        groups: w.groups.map((g) => ({ ...g })),
+      })),
+    },
+  ]);
+  play.getWaveManager().beginGame();
+  play.spawnWave();
+}
+
+/**
  * Walks the PlayScene run to the boss encounter (the final level cleared) by
  * destroying every enemy deterministically. Robust to the ten-level campaign:
  * it advances spawned enemies past their spawn animation, and ticks the scene
@@ -1782,16 +1806,42 @@ describe('shared scheme→input mapping — defined once and consumed by GymPlay
  */
 function reachPlayBoss(play: PlayScene): void {
   play.getGameState().lives = 99;
-  for (let guard = 0; guard < 1200; guard++) {
+  // The expanded campaign (AH-0MVCYANT6003SG5C) has 100 waves (10 per level)
+  // plus occasional spawner-delivered crowds; scale the walker budget up from
+  // the original 29-wave campaign so it can clear the whole run.
+  for (let guard = 0; guard < 4000; guard++) {
     const wm = play.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
     play.finishSpawnAnimations();
-    for (let inner = 0; inner < 500; inner++) {
+    for (let inner = 0; inner < 2000; inner++) {
+      // A hold-full choice pauses the scene (tick() no-ops) — resolve it.
+      if (play.isMineralChoiceOpen()) {
+        play.selectMineralChoice(0);
+        continue;
+      }
       const enemy = play.getEnemies().find((e) => e.alive);
       if (!enemy) break;
       play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
       play.tick(0.016);
     }
+    // The wave-10 mini-boss is a separate gating entity (not part of the
+    // spawned set): defeat it too, otherwise the level never completes
+    // (AH-0MVCRBISU006NUN5 AC2).
+    const miniBoss = play.getMiniBoss();
+    if (miniBoss?.alive) {
+      for (let hits = 0; hits < 800 && miniBoss.alive; hits++) {
+        if (play.isMineralChoiceOpen()) {
+          play.selectMineralChoice(0);
+          continue;
+        }
+        play.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+        // A zero-length step resolves collisions without moving the target.
+        play.tick(0);
+      }
+    }
+    // The mini-boss defeat offers the one upgrade-or-unlock reward choice
+    // (AH-0MVCRBNO6003E1CH); resolve it so play can continue.
+    if (play.isMiniBossRewardOpen()) play.selectMiniBossReward(0);
     // Nothing alive but the wave still has accounted enemies: advance the
     // scene so pending dynamic spawns are released and the wave timer runs.
     if (wm.enemiesAlive > 0 && play.getAliveCount() === 0) play.tick(0.25);
@@ -1852,6 +1902,7 @@ describe('shared boss integration — advanced by one tick in both scenes (AH-0M
     const playScene = play.scene as PlayScene;
     const gymScene = gym.scene as GymBoss;
 
+    seedSingleLevelCampaign(playScene);
     reachPlayBoss(playScene);
     expect(playScene.getBoss()).not.toBeNull();
 
@@ -1920,6 +1971,7 @@ describe('boss encounter — game↔gym parity (AH-0MUZMTU3Y001Y8XZ)', () => {
     );
     games.push(play);
     const scene = play.scene as PlayScene;
+    seedSingleLevelCampaign(scene);
     reachPlayBoss(scene);
     return scene;
   }
@@ -2416,12 +2468,16 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
     expect(definers).not.toContain('src/entities/Harvester.ts');
   });
 
-  it('defines the mineral-seek seam on the Harvester only (no per-scene copy)', () => {
+  it('defines the mineral-seek seam on seeker entities only (no per-scene copy)', () => {
     const entityDefiners = relativeProductionDefiners((source) =>
       definesMethod(source, 'setSeekTargets'),
     );
-    // The entity implements the seam; no scene defines its own version.
-    expect(entityDefiners).toEqual(['src/entities/Harvester.ts']);
+    // The seam is implemented by the seeker *entities* only — the Harvester
+    // and the Mystery UFO collector drone (AH-0MV9G113S009B37I) — and never
+    // by a scene, so the game and the gyms cannot diverge on seeking.
+    expect(entityDefiners.sort()).toEqual(
+      ['src/entities/Harvester.ts', 'src/entities/MysteryUfoDrone.ts'].sort(),
+    );
   });
 
   it('both PlayScene and the gym tick invoke the shared seek seam', () => {
@@ -2454,6 +2510,50 @@ describe('F8 — health-finalise and mineral-seek seams are single-sourced (AH-0
     expect(
       definesMethod(PRODUCTION('src/entities/Harvester.ts'), 'takeDamage'),
     ).toBe(false);
+  });
+
+  it('defines the collector-drone lifecycle helpers exactly once, in the shared core', () => {
+    // Every scene that can spawn the Mystery UFO drone consumes the single
+    // shared pass; a per-scene copy (or a second implementation) would break
+    // gym↔game parity (AH-0MV9G113S009B37I, AH-0MVBMRS4K000TTTP).
+    const production = collectProductionSourceFiles(
+      path.resolve(process.cwd(), 'src'),
+    );
+    const helperFile = 'src/scenes/core/combatDrone.ts';
+    for (const fn of [
+      'spawnDrone',
+      'tickDrones',
+      'hitDrone',
+      'destroyedDroneDropCount',
+    ]) {
+      const definers = production
+        .filter((file) => definesFunction(fs.readFileSync(file, 'utf8'), fn))
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers, `${fn} must be defined once`).toEqual([helperFile]);
+    }
+  });
+
+  it('no retired Mystery UFO instant-bounty symbols remain in production source', () => {
+    // The invisible instant burst is retired (AH-0MV9G113S009B37I): the
+    // registry queues collector-drone spawns instead, so the old accumulator
+    // and its score axis must not linger as dead paths.
+    const production = collectProductionSourceFiles(
+      path.resolve(process.cwd(), 'src'),
+    );
+    for (const file of production) {
+      const source = fs.readFileSync(file, 'utf8');
+      for (const symbol of [
+        'consumeMysteryBonus',
+        '_mysteryBonus',
+        'mysteryUfoScore',
+      ]) {
+        expect(
+          source.includes(symbol),
+          `${path.relative(process.cwd(), file)} must not reference ${symbol}`,
+        ).toBe(false);
+      }
+    }
   });
 });
 
@@ -2580,7 +2680,7 @@ describe('live-aim seam — bot/level gym tracks the live player like PlayScene 
       waves: [diverWave()],
     };
     manager.start('GymLevel', { level });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(booted.game, 200);
     const scene = manager.getScene('GymLevel') as GymLevel;
     placePlayer(scene.getShip()!, PLAYER_X, PLAYER_Y);
     const diver = scene.getEnemies()[0] as Diver;
@@ -2633,7 +2733,7 @@ describe('live-aim seam — bot/level gym tracks the live player like PlayScene 
     games.push(booted);
     const manager = booted.game.scene;
     manager.start('GymFodderEnemies', { enemyKey: 'diver' });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(booted.game, 200);
     const scene = manager.getScene('GymFodderEnemies') as GymFodderEnemies;
     placePlayer(scene.getPlayer()!, PLAYER_X, PLAYER_Y);
     const diver = new Diver(scene, {
@@ -3392,16 +3492,16 @@ describe('CombatScene — Options orbit-emitter parity (AH-0MV1BIVVK0043TEM)', (
   });
 });
 
-// ── Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7) ───────────
+// ── Mystery UFO collector-drone spawn parity (AH-0MV9G113S009B37I) ─────
 
-describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7)', () => {
+describe('CombatScene — Mystery UFO collector-drone spawn parity (AH-0MV9G113S009B37I)', () => {
   const games: BootedGame[] = [];
 
   afterEach(() => {
     for (const game of games.splice(0)) game.game.destroy(true);
   });
 
-  it('shares the single _applyPendingMysteryBonus drain across the game and the gym', () => {
+  it('shares the single _spawnMysteryUfoDrone path across the game and the gym', () => {
     for (const [name, prototype] of [
       ['PlayScene', PlayScene.prototype],
       ['GymPowerUpsUtility', GymPowerUpsUtility.prototype],
@@ -3409,21 +3509,21 @@ describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7
       expect(
         Object.prototype.hasOwnProperty.call(
           prototype,
-          '_applyPendingMysteryBonus',
+          '_spawnMysteryUfoDrone',
         ),
-        `${name} must not define its own mystery-bonus drain`,
+        `${name} must not define its own collector-drone spawn`,
       ).toBe(false);
       expect(
         (prototype as unknown as Record<string, unknown>)
-          ._applyPendingMysteryBonus,
+          ._spawnMysteryUfoDrone,
       ).toBe(
         (CombatCoreScene.prototype as unknown as Record<string, unknown>)
-          ._applyPendingMysteryBonus,
+          ._spawnMysteryUfoDrone,
       );
     }
   });
 
-  it('grants the same instant mineral bounty in the game and the utility gym', async () => {
+  it('spawns exactly one collector drone (and no instant minerals) in the game and the utility gym', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
       'mystery-play-host',
@@ -3433,7 +3533,8 @@ describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7
     const playScene = play.scene as PlayScene;
     const gymScene = gym.scene as GymPowerUpsUtility;
 
-    // Clear the gym's random mineral field so only the mystery burst lands.
+    // Clear the gym's random mineral field so only the drone's own sortie can
+    // move minerals into the gym hold.
     const gymMinerals = (gymScene as unknown as { minerals: Mineral[] })
       .minerals;
     for (const mineral of gymMinerals) mineral.destroy();
@@ -3460,23 +3561,27 @@ describe('CombatScene — Mystery UFO instant bounty parity (AH-0MV1BIXFO006Z1I7
       vy: 0,
       facing: 0,
     };
+    // Frame 1 collects the drop (queues the spawn); frame 2 runs the shared
+    // spawn pass that turns the request into a visible drone.
+    playScene.tick(0.016);
     playScene.tick(0.016);
 
     gymScene.spawnDrop('mystery_ufo', 480, 270);
     gymScene.advanceDrops(0.5);
     gymScene.getPlayer()!.setPosition(480, 270);
     gymScene.tick(1 / 60);
+    gymScene.tick(1 / 60);
 
-    // Both grant the same base bounty (+2 minerals) and level up once.
-    expect(playScene.getGameState().minerals).toBe(playBefore + 2);
-    expect(gymScene.getMineralHold().store).toBe(gymBefore + 2);
+    // Both scenes spawn exactly one visible drone and grant no instant
+    // mineral/score burst (the retired invisible bounty).
+    expect(playScene.getDrones()).toHaveLength(1);
+    expect(gymScene.getDrones()).toHaveLength(1);
+    expect(playScene.getGameState().minerals).toBe(playBefore);
+    expect(gymScene.getMineralHold().store).toBe(gymBefore);
     expect(playScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
     expect(gymScene.getPlayer()!.getPowerUpLevel('mystery_ufo')).toBe(1);
-    expect(playScene.getEffectsRegistry().mysteryUfoMinerals()).toBe(
-      gymScene.getEffectsRegistry().mysteryUfoMinerals(),
-    );
-    expect(playScene.getEffectsRegistry().mysteryUfoScore()).toBe(
-      gymScene.getEffectsRegistry().mysteryUfoScore(),
+    expect(playScene.getEffectsRegistry().mysteryUfoSpawnInterval()).toBe(
+      gymScene.getEffectsRegistry().mysteryUfoSpawnInterval(),
     );
   });
 });

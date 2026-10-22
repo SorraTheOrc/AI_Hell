@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  CONTROL_SCHEMES,
   DEFAULT_BINDINGS,
   DEFAULT_SETTINGS,
   ACTION_NAMES,
   findConflict,
+  isControlScheme,
   keyFor,
   loadSettings,
   resolveBindings,
@@ -110,6 +112,8 @@ describe('settingsStore', () => {
         sfxVolume: 0.7,
         sfxMuted: true,
         bindings: { ...DEFAULT_BINDINGS, moveUp: 'I' },
+        shareTelemetryDev: false,
+        controlScheme: 'fourDirectional',
       };
       mockLocalStorage({ ai_hell_settings: JSON.stringify(custom) });
       expect(loadSettings()).toEqual(custom);
@@ -143,6 +147,8 @@ describe('settingsStore', () => {
         sfxVolume: 0.3,
         sfxMuted: true,
         bindings: { ...DEFAULT_BINDINGS, moveUp: 'I', moveDown: 'K' },
+        shareTelemetryDev: false,
+        controlScheme: 'asteroids',
       };
       mockLocalStorage({});
       saveSettings(custom);
@@ -161,6 +167,8 @@ describe('settingsStore', () => {
         sfxVolume: 0.5,
         sfxMuted: false,
         bindings: rebinding,
+        shareTelemetryDev: true,
+        controlScheme: 'fourDirectional',
       };
       mockLocalStorage({});
       saveSettings(custom);
@@ -180,6 +188,8 @@ describe('settingsStore', () => {
         sfxVolume: 0.1,
         sfxMuted: true,
         bindings: { ...DEFAULT_BINDINGS, moveUp: 'X' },
+        shareTelemetryDev: false,
+        controlScheme: 'fourDirectional',
       };
       mockLocalStorage({});
       saveSettings(custom);
@@ -289,6 +299,145 @@ describe('settingsStore', () => {
       const loaded = loadSettings();
       expect(loaded.bindings.moveUp).toBe('i');
       expect(loaded.bindings.moveDown).toBe(DEFAULT_BINDINGS.moveDown);
+    });
+  });
+
+  describe('dev telemetry sharing (AH-0MVBMQZR50069QV3)', () => {
+    beforeEach(() => {
+      restoreLocalStorage();
+    });
+
+    it('defaults on', () => {
+      expect(DEFAULT_SETTINGS.shareTelemetryDev).toBe(true);
+      mockLocalStorage({});
+      expect(loadSettings().shareTelemetryDev).toBe(true);
+    });
+
+    it('resolves a legacy record without the field to on', () => {
+      mockLocalStorage({
+        ai_hell_settings: JSON.stringify({ sfxVolume: 0.4, bindings: { moveUp: 'i' } }),
+      });
+      expect(loadSettings().shareTelemetryDev).toBe(true);
+    });
+
+    it('falls back to on for non-boolean stored values', () => {
+      for (const bad of ['false', 0, 1, null, {}, []]) {
+        mockLocalStorage({
+          ai_hell_settings: JSON.stringify({ shareTelemetryDev: bad }),
+        });
+        expect(loadSettings().shareTelemetryDev).toBe(true);
+      }
+    });
+
+    it('falls back to on when the stored JSON is corrupt', () => {
+      mockLocalStorage({ ai_hell_settings: '{broken' });
+      expect(loadSettings().shareTelemetryDev).toBe(true);
+    });
+
+    it('round-trips a persisted opt-out', () => {
+      mockLocalStorage({});
+      saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
+      expect(loadSettings().shareTelemetryDev).toBe(false);
+    });
+
+    it('resetSettings restores the on default', () => {
+      mockLocalStorage({});
+      saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
+      expect(loadSettings().shareTelemetryDev).toBe(false);
+
+      resetSettings();
+      expect(loadSettings().shareTelemetryDev).toBe(true);
+    });
+  });
+
+  // ── Per-player control scheme (AH-0MVIA7LRCJ006Q8SA AC1/AC2) ──────
+  describe('controlScheme (AH-0MVI7LRCJ006Q8SA AC1/AC2)', () => {
+    beforeEach(() => {
+      restoreLocalStorage();
+    });
+
+    it('exposes the ordered scheme list derived from the union', () => {
+      // The list drives the Settings UI; every member must be reachable and
+      // the order must be stable so Left/Right cycling is predictable.
+      expect(CONTROL_SCHEMES).toEqual(['asteroids', 'fourDirectional']);
+      expect(new Set(CONTROL_SCHEMES).size).toBe(CONTROL_SCHEMES.length);
+    });
+
+    it('defaults to the shipped Asteroids scheme', () => {
+      expect(DEFAULT_SETTINGS.controlScheme).toBe('asteroids');
+      mockLocalStorage({});
+      expect(loadSettings().controlScheme).toBe('asteroids');
+    });
+
+    it('round-trips each valid scheme, leaving other settings untouched', () => {
+      for (const scheme of CONTROL_SCHEMES) {
+        mockLocalStorage({});
+        saveSettings({ ...DEFAULT_SETTINGS, controlScheme: scheme, sfxVolume: 0.42 });
+        const loaded = loadSettings();
+        expect(loaded.controlScheme).toBe(scheme);
+        expect(loaded.sfxVolume).toBe(0.42);
+        expect(loaded.sfxMuted).toBe(DEFAULT_SETTINGS.sfxMuted);
+        expect(loaded.bindings).toEqual(DEFAULT_BINDINGS);
+        expect(loaded.shareTelemetryDev).toBe(DEFAULT_SETTINGS.shareTelemetryDev);
+      }
+    });
+
+    it('resolves a legacy record without the field to Asteroids, preserving the rest', () => {
+      mockLocalStorage({
+        ai_hell_settings: JSON.stringify({
+          sfxVolume: 0.25,
+          sfxMuted: true,
+          bindings: { moveUp: 'i' },
+          shareTelemetryDev: false,
+        }),
+      });
+      const loaded = loadSettings();
+      expect(loaded.controlScheme).toBe('asteroids');
+      expect(loaded.sfxVolume).toBe(0.25);
+      expect(loaded.sfxMuted).toBe(true);
+      expect(loaded.bindings.moveUp).toBe('i');
+      expect(loaded.shareTelemetryDev).toBe(false);
+    });
+
+    it('falls back to Asteroids for non-string stored values', () => {
+      for (const bad of [0, 1, true, null, {}, []]) {
+        mockLocalStorage({
+          ai_hell_settings: JSON.stringify({ controlScheme: bad }),
+        });
+        expect(loadSettings().controlScheme).toBe('asteroids');
+      }
+    });
+
+    it('falls back to Asteroids for blank and out-of-union strings', () => {
+      for (const bad of ['', '   ', 'orbital', 'Asteroids', 'FOURDIRECTIONAL']) {
+        mockLocalStorage({
+          ai_hell_settings: JSON.stringify({ controlScheme: bad }),
+        });
+        expect(loadSettings().controlScheme).toBe('asteroids');
+      }
+    });
+
+    it('falls back to Asteroids when the stored JSON is corrupt', () => {
+      mockLocalStorage({ ai_hell_settings: '{broken' });
+      expect(loadSettings().controlScheme).toBe('asteroids');
+    });
+
+    it('resetSettings restores the Asteroids default', () => {
+      mockLocalStorage({});
+      saveSettings({ ...DEFAULT_SETTINGS, controlScheme: 'fourDirectional' });
+      expect(loadSettings().controlScheme).toBe('fourDirectional');
+
+      resetSettings();
+      expect(loadSettings().controlScheme).toBe('asteroids');
+    });
+
+    it('isControlScheme accepts only union members', () => {
+      for (const scheme of CONTROL_SCHEMES) {
+        expect(isControlScheme(scheme)).toBe(true);
+      }
+      for (const bad of ['', 'orbital', 'Asteroids', 0, null, undefined, {}]) {
+        expect(isControlScheme(bad)).toBe(false);
+      }
     });
   });
 });

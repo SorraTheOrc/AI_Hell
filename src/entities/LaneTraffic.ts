@@ -83,6 +83,13 @@ export class LaneTraffic extends BaseEnemy {
   /** Constant horizontal velocity (px/s). */
   private readonly _vx: number;
 
+  /**
+   * Lane traffic crosses on its own constant velocity, so the wormhole
+   * transit interpolation must not override its position; it still emerges
+   * at the wormhole origin and crosses out from there (AH-0MV8BSMXC0097KLW).
+   */
+  readonly autonomousPositioning = true;
+
   constructor(scene: Phaser.Scene, config: LaneTrafficConfig) {
     const baseConfig: BaseEnemyConfig = {
       formationOffset: config.formationOffset,

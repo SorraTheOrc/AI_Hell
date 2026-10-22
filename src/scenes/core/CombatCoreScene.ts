@@ -62,6 +62,19 @@ import {
 } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { PlayerBullet, createPlayerBullet } from '../../entities/PlayerBullet';
+import type { Mineral } from '../../entities/Mineral';
+import { MysteryUfoDrone } from '../../entities/MysteryUfoDrone';
+import {
+  NOOP_DRONE_MINERAL_SINK,
+  DEFAULT_DRONE_CAPACITY,
+  DEFAULT_DRONE_COLLECTOR_RADIUS,
+  DEFAULT_DRONE_LIFETIME_SECONDS,
+  spawnDrone,
+  tickDrones,
+  type DroneMineralSink,
+  type DroneSpawnConfig,
+} from './combatDrone';
+import { resolvePowerUpAtLevel } from '../../powerups/powerUpLevels';
 import { spawnMuzzleFlash } from '../../vfx/muzzleFlash';
 import {
   CLUSTER_SPLIT_BURST_RADIUS,
@@ -311,6 +324,29 @@ export class CombatCoreScene<
   private phaseShiftJuice: PhaseShiftJuice | null = null;
 
   /**
+   * Collector drones (the visible Mystery UFO reward) active in this scene.
+   * The lifecycle pass that spawns, ticks and retires them lives once in
+   * `./combatDrone`, so the game and every gym run identical drone
+   * behaviour (AH-0MV9G113S009B37I).
+   */
+  protected drones: MysteryUfoDrone[] = [];
+
+  /**
+   * Countdown (seconds) to the next permanent collector-drone spawn, or
+   * `null` when the full-hull (permanent) reward is not owned. Armed from the
+   * level-resolved interval by {@link CombatCoreScene._updateDroneSpawning}.
+   */
+  private _droneSpawnTimer: number | null = null;
+
+  /**
+   * Mineral field used by {@link CombatCoreScene.getDroneMineralField} for
+   * scenes that do not own a field of their own (threat-free/non-mineral
+   * scenes). Keeping a stable array means a drone can never write into a
+   * throwaway list.
+   */
+  private readonly _droneMineralFallback: Mineral[] = [];
+
+  /**
    * The single shared beat clock driving phase-locked player auto-fire
    * (AH-0MUAYB8EH005RJ8B). Created once per scene and anchored at scene
    * start (t=0); it is shared with the player so every shot lands on one
@@ -432,6 +468,70 @@ export class CombatCoreScene<
 
   /** Replaces the enemy-bullet collection after a collision pass. */
   protected setEnemyBullets(_bullets: TBullet[]): void {}
+
+  // ── Collector drones (Mystery UFO reward) ─────────────────────────
+
+  /**
+   * The scene's live collector drones. Exposed read-only so HUD/tests can
+   * observe the reward without mutating the scene's drone list.
+   */
+  getDrones(): readonly MysteryUfoDrone[] {
+    return this.drones;
+  }
+
+  /**
+   * The scene's live mineral field: the drones' seek targets, vacuum
+   * candidates and the field their destruction drops land in. Scenes with
+   * minerals override this with their own field; the default is a stable
+   * empty list.
+   */
+  protected getDroneMineralField(): Mineral[] {
+    return this._droneMineralFallback;
+  }
+
+  /**
+   * The hold sink a drone pays its ferried minerals into. Scenes override
+   * this with their own hold (the game's run hold, a gym's local hold); the
+   * default discards the payout so a drone-less scene stays inert.
+   */
+  protected getDroneMineralSink(): DroneMineralSink {
+    return NOOP_DRONE_MINERAL_SINK;
+  }
+
+  /**
+   * The Mystery UFO power-up level, used by the destruction bonus
+   * (`2 × level`) and by the permanent auto-spawn cadence. Read from the
+   * shared registry so the value is identical in the game and every gym.
+   */
+  protected getDroneLevel(): number {
+    return this.getEffectsRegistry().powerUpLevel('mystery_ufo');
+  }
+
+  /**
+   * Spawns a collector drone through the **single** shared spawn path
+   * (`./combatDrone` → {@link spawnDrone}), wiring the hold sink exactly
+   * once. Scenes must not construct `MysteryUfoDrone` directly.
+   */
+  protected spawnCollectorDrone(config: DroneSpawnConfig): MysteryUfoDrone {
+    return spawnDrone(this, config, this.drones, this.getDroneMineralSink());
+  }
+
+  /**
+   * Shared collector-drone step: feeds every drone the live mineral field
+   * and the ship's current position, advances its seek → collect → return →
+   * payout lifecycle and removes finished drones. Called from
+   * {@link CombatCoreScene._tickPlayer} so the game and every gym inherit the
+   * identical ordering (AH-0MV9G113S009B37I).
+   *
+   * @param dt — frame delta (seconds).
+   */
+  protected _updateDrones(dt: number): void {
+    this.drones = tickDrones(this.drones, {
+      dt,
+      minerals: this.getDroneMineralField(),
+      player: this.getPlayer(),
+    });
+  }
 
   // ── Overridable hooks ─────────────────────────────────────────────
 
@@ -558,24 +658,71 @@ export class CombatCoreScene<
   protected onWeaponCollected(_drop: TDrop): void {}
 
   /**
-   * Drains and applies any pending Mystery UFO instant bounty
-   * (AH-0MV1BIXFO006Z1I7) from the shared effects registry through the
-   * supplied scene sinks: minerals into the ship's hold, score into the run
-   * total. Defined once here so the game and every gym grant the bounty
-   * through the same code; a scene with no score system may omit `addScore`.
+   * Drains pending Mystery UFO collector-drone spawns and advances the
+   * permanent auto-spawn timer (AH-0MV9G113S009B37I).
    *
-   * @param sinks — the scene's hold/score mutators.
-   * @returns true when a bounty was pending and applied.
+   * Defined once here so the game and every gym turn a `mystery_ufo` pickup
+   * into the same visible drone: a field pickup queues exactly one spawn
+   * (drained here), while the full-hull permanent reward owns a drone that
+   * re-spawns on the level-resolved interval (30 s at level 0, descending to
+   * a 12 s floor). The instant mineral/score bounty is retired.
+   *
+   * Called at the start of {@link CombatCoreScene._tickPlayer}. No player →
+   * nothing spawns and pending requests stay queued for the next tick with a
+   * ship on screen.
+   *
+   * @param dt — frame delta (seconds).
    */
-  protected _applyPendingMysteryBonus(sinks: {
-    addMinerals: (amount: number) => void;
-    addScore?: (amount: number) => void;
-  }): boolean {
-    const bonus = this.getEffectsRegistry().consumeMysteryBonus();
-    if (!bonus) return false;
-    if (bonus.minerals > 0) sinks.addMinerals(bonus.minerals);
-    if (bonus.score > 0) sinks.addScore?.(bonus.score);
-    return true;
+  protected _updateDroneSpawning(dt: number): void {
+    if (!this.getPlayer()) return;
+    const registry = this.getEffectsRegistry();
+
+    // Field pickups: exactly one drone per pickup, even if several landed in
+    // the same frame (the registry accumulates them).
+    for (let pending = registry.consumeMysteryUfoSpawns(); pending > 0; pending -= 1) {
+      this._spawnMysteryUfoDrone();
+    }
+
+    // Full-hull reward: one drone every resolved interval for the rest of
+    // the run. The first spawn lands one interval after the reward.
+    if (!registry.isMysteryUfoPermanent()) {
+      this._droneSpawnTimer = null;
+      return;
+    }
+    const interval = registry.mysteryUfoSpawnInterval();
+    if (this._droneSpawnTimer === null) {
+      this._droneSpawnTimer = interval;
+    } else {
+      this._droneSpawnTimer -= dt;
+    }
+    if (this._droneSpawnTimer <= 0) {
+      this._droneSpawnTimer = interval;
+      this._spawnMysteryUfoDrone();
+    }
+  }
+
+  /**
+   * Spawns one collector drone at the ship through the single shared spawn
+   * path, with the level-resolved lifetime, capacity and collector radius.
+   * Returns `null` when there is no ship to launch from.
+   */
+  protected _spawnMysteryUfoDrone(): MysteryUfoDrone | null {
+    const player = this.getPlayer();
+    if (!player) return null;
+    const stats = resolvePowerUpAtLevel(
+      'mystery_ufo',
+      this.getDroneLevel(),
+    );
+    return this.spawnCollectorDrone({
+      x: player.x,
+      y: player.y,
+      homeX: player.x,
+      homeY: player.y,
+      lifetime: stats.mysteryUfoLifetime ?? DEFAULT_DRONE_LIFETIME_SECONDS,
+      capacity: stats.mysteryUfoCapacity ?? DEFAULT_DRONE_CAPACITY,
+      collectorRadius:
+        stats.mysteryUfoRadius ?? DEFAULT_DRONE_COLLECTOR_RADIUS,
+    });
   }
 
   // ── Shared template methods ───────────────────────────────────────
@@ -667,7 +814,16 @@ export class CombatCoreScene<
    */
   protected _tickPlayer(dt: number): void {
     const player = this.getPlayer();
-    if (!player) return;
+    if (!player) {
+      // Collector drones keep flying even while the ship is respawning: they
+      // retain their last home target and finish their sortie rather than
+      // freezing mid-air (AH-0MV9G113S009B37I).
+      this._updateDrones(dt);
+      return;
+    }
+    // Turn this frame's `mystery_ufo` pickups into visible drones and advance
+    // the permanent auto-spawn timer before the drones tick.
+    this._updateDroneSpawning(dt);
     // Flush any cluster warheads queued by a split on the previous frame so
     // they take part in this frame's advance/collision passes
     // (AH-0MV1BIVIJ007KYXU).
@@ -701,6 +857,16 @@ export class CombatCoreScene<
     // screen-wide area effect when one is due (AH-0MV1BIWP9003EHRQ). The
     // pulse resolves through the scene's AOE seam via `onSmartBombPulse`.
     this._updateSmartBomb(dt);
+    // Orbital Strike (AH-0MVH80ZJ7009W18Z): a field pickup fires one bolt at
+    // the nearest enemy; a permanent reward then strikes on its resolved
+    // interval. Detection lives in this shared step, application behind one
+    // hook, so the game and every gym cannot diverge.
+    this._updateOrbitalStrike(dt);
+    // Collector drones (Mystery UFO reward) run after physics so they track
+    // the ship's current position on their return leg; minerals vacuumed
+    // this step are cleaned up by the same frame's later mineral pass
+    // (AH-0MV9G113S009B37I).
+    this._updateDrones(dt);
   }
 
   /**
@@ -1407,6 +1573,29 @@ export class CombatCoreScene<
     if (!player) return;
     this.onSmartBombPulse(registry.smartBombAoe(), player.x, player.y);
   }
+
+  /**
+   * Advances the shared Orbital Strike state and, when a bolt is due,
+   * resolves it through {@link onOrbitalStrike}. Mirrors
+   * {@link _updateSmartBomb} so the strike runs in the game and every gym
+   * from one implementation (AH-0MVH80ZJ7009W18Z).
+   *
+   * @param dt - Frame delta in seconds.
+   */
+  protected _updateOrbitalStrike(dt: number): void {
+    const registry = this.getEffectsRegistry();
+    if (!registry.updateStrike(dt)) return;
+    this.onOrbitalStrike(registry.strikeDamage());
+  }
+
+  /**
+   * Resolves one Orbital Strike bolt for `damage` hits. Default no-op (the
+   * enemy-damage seam lives in {@link CombatScene}); the concrete combat
+   * scene overrides it to pick the nearest enemy and apply the damage + VFX.
+   *
+   * @param _damage - Level-resolved strike damage (whole hits).
+   */
+  protected onOrbitalStrike(_damage: number): void {}
 
   /**
    * Resolves one Smart Bomb pulse at (x, y) through the shared area-effect

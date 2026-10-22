@@ -16,8 +16,10 @@ import {
   formatAbReport,
   formatBalanceReport,
   formatEvaluationReport,
+  formatTuneSummary,
   serialiseRecordsJsonl,
   serialiseReport,
+  serialiseTuneComparison,
   stableStringify,
 } from './report';
 import {
@@ -25,18 +27,33 @@ import {
   runBatch,
   runEvaluation,
   compareRecordings,
+  type BatchOutput,
 } from './engine';
+import {
+  assertSameSweep,
+  compareBalanceAggregates,
+  type TuneComparisonOptions,
+} from './tune';
 import { resolvePolicyFactory } from './policies';
 import { extractMetricPoint, type MetricPoint } from './metrics';
 import { extractHumanBalanceStats } from './humanStats';
 import { buildSideBySideCapturePlan } from './video';
-import type { TelemetryRecord } from './types';
+import type { TelemetryRecord, TuneComparison, TuneEditRecord } from './types';
 
 export { hydrateBalanceConfig } from './balanceConfig';
 // Dev tools load the TS core via Vite SSR and need the shared human helper + 
 // stable serialisation at the eval-core surface (AH-0MV7WVEWL005XEMN).
 export { extractHumanBalanceStats, HUMAN_BALANCE_POLICY } from './humanStats';
-export { serialiseReport } from './report';
+export { serialiseReport, serialiseTuneComparison } from './report';
+// The tune loop's declarative CSV edit surface (AH-0MVBNISWE009QFBL): pure
+// parse/apply helpers re-exported so the Node shell can drive edits via the
+// SSR-loaded core without a second, divergent CSV editor.
+export {
+  applyCsvEdit,
+  CsvEditError,
+  KNOWN_BALANCE_CSV_FILES,
+  parseEditSpec,
+} from '../../utils/csvEdit';
 
 /** Parsed CLI options (produced by the `scripts/evaluate.mjs` shell). */
 export interface CliOptions {
@@ -252,6 +269,73 @@ export function defaultOptions(): CliOptions {
     policies: [],
     humanRecordingText: null,
     humanSeed: null,
+  };
+}
+
+/**
+ * Runs one balance batch over the sweep implied by {@link CliOptions} and
+ * returns the raw {@link BatchOutput} (pure; no file I/O). The tune loop
+ * calls it twice — once before, once after the declarative CSV edit — so the
+ * baseline and candidate use the identical sweep configuration (parent AC1).
+ */
+export function runBalanceBatch(options: CliOptions): BatchOutput {
+  const policyFactories = (
+    options.policies.length > 0 ? options.policies : [options.policy]
+  ).map((name) => resolvePolicyFactory(name));
+  return runBatch({
+    seeds: options.seeds,
+    ticks: options.ticks,
+    dt: options.dt,
+    sampleEveryTicks: options.sampleEveryTicks,
+    policies: policyFactories,
+  });
+}
+
+/** Input for {@link buildTuneComparisonArtifacts}. */
+export interface TuneArtifactInput {
+  /** The baseline batch (run before the edit). */
+  readonly baseline: BatchOutput;
+  /** The candidate batch (run after the edit). */
+  readonly candidate: BatchOutput;
+  /** The applied edit, recorded inside the comparison artifact (AC1). */
+  readonly edit: TuneEditRecord | null;
+  /** Relative threshold in percent (e.g. `10` == ±10 % of baseline). */
+  readonly thresholdPct: number;
+}
+
+/** The tune step's deterministic artifacts (AC1/AC5). */
+export interface TuneArtifacts {
+  /** The versioned before/after comparison (bears `edit` when supplied). */
+  readonly comparison: TuneComparison;
+  /** The comparison serialised byte-stably (the `tune-comparison.json`). */
+  readonly comparisonJson: string;
+  /** The human-readable summary (printed and written as `tune-comparison.txt`). */
+  readonly summaryText: string;
+}
+
+/**
+ * Builds the versioned before/after comparison of a baseline and a candidate
+ * batch (parent AC1): enforces the same-sweep guard (AC2), diffs the two
+ * aggregates against the configured relative threshold and returns the
+ * deterministic artifacts. Pure: no file I/O, no wall clock — the shell
+ * persists the artifacts.
+ */
+export function buildTuneComparisonArtifacts(
+  input: TuneArtifactInput,
+): TuneArtifacts {
+  assertSameSweep(input.baseline.report, input.candidate.report);
+  const thresholds = {
+    mean: input.thresholdPct / 100,
+    median: input.thresholdPct / 100,
+  };
+  const options: TuneComparisonOptions = { thresholds };
+  const comparison: TuneComparison = input.edit
+    ? { ...compareBalanceAggregates(input.baseline.report.aggregate, input.candidate.report.aggregate, options), edit: input.edit }
+    : compareBalanceAggregates(input.baseline.report.aggregate, input.candidate.report.aggregate, options);
+  return {
+    comparison,
+    comparisonJson: serialiseTuneComparison(comparison),
+    summaryText: formatTuneSummary(comparison),
   };
 }
 

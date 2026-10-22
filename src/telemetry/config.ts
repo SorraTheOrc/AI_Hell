@@ -5,7 +5,9 @@
  * Telemetry is **disabled by default**. It is enabled explicitly through
  * Vite environment variables (`VITE_TELEMETRY_*`), and in a production build
  * it additionally requires the explicit **consent** flag — no production
- * recording happens without opt-in. Development recording needs no consent.
+ * recording happens without opt-in. Development recording needs no consent,
+ * and a dev build may enable collection-on-by-default via an injected
+ * `devCollectionEnabled` flag (the caller applies the single dev gate).
  *
  * Resolution is a pure function of an injected environment object (defaults
  * to `import.meta.env`), so every policy decision is unit-testable without a
@@ -63,9 +65,15 @@ export interface TelemetryConfig {
   /** Records per flushed batch. */
   readonly batchSize: number;
   /**
-   * The effective gate: `true` only when telemetry is enabled **and** (it is
-   * not a production build **or** consent was given). When `false` the
-   * recorder is a strict no-op.
+   * Whether dev-mode collection is enabled (caller applies the dev gate before
+   * passing the flag; this module does not re-derive it).
+   */
+  readonly devCollection: boolean;
+  /**
+   * The effective gate: `true` when telemetry is enabled **and** (it is
+   * not a production build **or** consent was given), **or** when dev-mode
+   * collection is enabled (which overrides the consent path in a dev build).
+   * When `false` the recorder is a strict no-op.
    */
   readonly recording: boolean;
 }
@@ -79,14 +87,27 @@ export const DEFAULT_TELEMETRY_BATCH_SIZE = 64;
 /** Default sampling rate: record every tick. */
 export const DEFAULT_TELEMETRY_SAMPLE_RATE = 1;
 
+/** Optional parameters for {@link resolveTelemetryConfig}. */
+export interface TelemetryConfigOptions {
+  /**
+   * When `true`, dev-mode collection is enabled. The caller must have applied
+   * the dev gate (only true in a dev build with the share-telemetry setting
+   * on); this module does not re-derive it from the environment or settings
+   * (AH-0MVBMRIB800201KK, AC3b).
+   */
+  readonly devCollectionEnabled?: boolean;
+}
+
 /**
  * Resolves telemetry configuration from the environment (AC3).
  *
  * @param env - The environment slice, defaulting to `import.meta.env`.
+ * @param options - Optional parameters (e.g. {@link devCollectionEnabled}).
  * @returns The resolved, consent-gated configuration.
  */
 export function resolveTelemetryConfig(
   env: TelemetryEnv = import.meta.env,
+  options: TelemetryConfigOptions = {},
 ): TelemetryConfig {
   const enabled = parseBoolean(env.VITE_TELEMETRY_ENABLED);
   const consent = parseBoolean(env.VITE_TELEMETRY_CONSENT);
@@ -105,14 +126,21 @@ export function resolveTelemetryConfig(
   );
 
   const isProduction = env.PROD === true;
-  const recording = enabled && (!isProduction || consent);
+  const devCollection = options.devCollectionEnabled === true;
+  // In a dev build, collection on by default (when the gate is applied).
+  // In production, the existing env+consent path applies unchanged.
+  const recording = devCollection || (enabled && (!isProduction || consent));
+  // When dev collection turns recording on (but env is disabled), sink is
+  // jsonl; explicit env settings still override (e.g. VITE_TELEMETRY_SINK).
+  const effectiveSink = enabled ? sink : devCollection ? 'jsonl' : 'none';
 
   return {
     enabled,
     consent,
-    sink: enabled ? sink : 'none',
+    sink: effectiveSink,
     production: isProduction,
-    endpoint: sink === 'remote' ? endpoint : undefined,
+    devCollection,
+    endpoint: effectiveSink === 'remote' ? endpoint : undefined,
     sampleRate,
     bufferCapacity,
     batchSize,
@@ -137,7 +165,10 @@ export function applyUserConsent(
   return {
     ...config,
     consent,
-    recording: config.enabled && (!config.production || consent),
+    // Dev collection is consent-free (the dev gate already governs it), so a
+    // production-consent decision never disables an active dev collection
+    // (AH-0MVBMRIB800201KK).
+    recording: config.devCollection || (config.enabled && (!config.production || consent)),
   };
 }
 

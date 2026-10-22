@@ -120,6 +120,18 @@ export interface WaveDefinition {
    * the wave exactly as it was.
    */
   laneTraffic?: boolean;
+  /**
+   * Opt-in marker for this level's wave-10 mini-boss encounter (epic
+   * AH-0MVCC8XSS007P01Z). When `true` the `WaveManager` treats the wave as
+   * the level's mini-boss: it exposes the encounter through the per-level
+   * mini-boss accessors (`miniBossTriggered`/`miniBossActive`/
+   * `miniBossDefeated`, cf. AH-0MVCRAV3B0069AIJ) and holds the level until
+   * the mini-boss wave is wiped. The gating is **flag-driven** — a 9th or
+   * 10th wave *without* this marker behaves exactly like a regular wave, so
+   * an unmarked wave can never stall progression. Absent (the default)
+   * leaves the wave exactly as it was.
+   */
+  miniBoss?: boolean;
 }
 
 /** An ordered sequence of waves forming one level. */
@@ -197,6 +209,24 @@ export const LEVELS: LevelDefinition[] = [
         group('scout', 'v', 6, { spacingX: 28, spacingY: 22 }),
       ),
       noFire(group('scout', 'v', 8, { spacingX: 34, spacingY: 24 })),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): gentle scout escalation
+      // fills the 10-wave grid before the wave-10 mini-boss.
+      noFire(group('scout', 'v', 8, { spacingX: 30, spacingY: 20 })),
+      noFire(group('scout', 'v', 10, { spacingX: 30, spacingY: 20 })),
+      noFire(group('scout', 'v', 10, { spacingX: 28, spacingY: 18 })),
+      noFire(group('scout', 'v', 12, { spacingX: 28, spacingY: 18 })),
+      noFire(group('scout', 'v', 12, { spacingX: 26, spacingY: 16 })),
+      noFire(group('scout', 'v', 14, { spacingX: 26, spacingY: 16 })),
+      noFire(group('scout', 'v', 16, { spacingX: 26, spacingY: 14 })),
+      {
+        ...noFire(
+          group('scout', 'v', 24, { spacingX: 26, spacingY: 12 }),
+        ),
+        // The wave-10 mini-boss of the expanded campaign. Level 1 keeps its
+        // scout-only identity (the onboarding test pins Scout V-formations):
+        // the "mini-boss" is a dense scout phalanx that closes the level.
+        miniBoss: true,
+      },
     ],
   },
   {
@@ -207,6 +237,26 @@ export const LEVELS: LevelDefinition[] = [
       noFire(group('scout', 'v', 8)),
       noFire(group('diver', 'diver', 8, { spacingY: 28 })),
       noFire(group('swarm', 'swarm', 10, { spacingX: 26, spacingY: 22 })),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): escalation continues across
+      // the 10-wave grid. Level 2 keeps its single-group identity (the
+      // onboarding test pins one archetype per wave), every wave spawns a
+      // single archetype, and the dive elements outnumber the swarms (the
+      // campaign invariant pins a distinct dominant movement style per
+      // adjacent pair — L2's scout/dive character differs from L3's cores).
+      noFire(group('diver', 'diver', 10, { spacingY: 28 })),
+      noFire(group('diver', 'diver', 12, { spacingY: 28 })),
+      noFire(group('swarm', 'swarm', 12, { spacingX: 26, spacingY: 20 })),
+      noFire(group('diver', 'diver', 14, { spacingY: 28 })),
+      noFire(group('swarm', 'swarm', 14, { spacingX: 26, spacingY: 18 })),
+      noFire(group('diver', 'diver', 16, { spacingY: 28 })),
+      {
+        ...noFire(
+          group('diver', 'diver', 20, { spacingY: 28 }),
+        ),
+        // Wave-10 mini-boss: a dive surge — the level's heaviest single
+        // archetype wave, and its closing mini-boss.
+        miniBoss: true,
+      },
     ],
   },
   {
@@ -226,6 +276,41 @@ export const LEVELS: LevelDefinition[] = [
         group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
         group('swarm', 'swarm', 10, { startX: START_X + 140, spacingX: 24 }),
       ),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): the mixed-pair identity
+      // persists as the 10-wave grid fills in, with the tank cores remaining
+      // the level's dominant movement style (distinct from L2's dive surge).
+      noFire(
+        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
+        group('scout', 'v', 4, { startX: START_X + 120, spacingX: 26 }),
+      ),
+      noFire(
+        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
+        group('swarm', 'swarm', 8, { startX: START_X + 140, spacingX: 24 }),
+      ),
+      noFire(
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42 }),
+        group('diver', 'diver', 6, { spacingY: 28 }),
+      ),
+      noFire(
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42 }),
+        group('swarm', 'swarm', 10, { startX: START_X + 140, spacingX: 24 }),
+      ),
+      noFire(
+        group('tank', 'rect', 12, { spacingX: 46, spacingY: 40 }),
+        group('diver', 'diver', 8, { spacingY: 28 }),
+      ),
+      noFire(
+        group('tank', 'rect', 12, { spacingX: 46, spacingY: 40 }),
+        group('swarm', 'swarm', 12, { startX: START_X + 140, spacingX: 24 }),
+      ),
+      {
+        ...noFire(
+          group('tank', 'rect', 14, { spacingX: 46, spacingY: 40 }),
+          group('swarm', 'swarm', 14, { startX: START_X + 140, spacingX: 24 }),
+        ),
+        // Wave-10 mini-boss: a double-tank core with a swarm escort.
+        miniBoss: true,
+      },
     ],
   },
   {
@@ -236,6 +321,31 @@ export const LEVELS: LevelDefinition[] = [
       openFire(group('diver', 'diver', 6, { spacingY: 30 })),
       openFire(group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 })),
       openFire(group('swarm', 'swarm', 10, { spacingX: 26, spacingY: 22 })),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): firing escalation across the
+      // full 10-wave grid before the wave-10 mini-boss.
+      openFire(group('diver', 'diver', 8, { spacingY: 30 })),
+      openFire(group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 })),
+      openFire(group('swarm', 'swarm', 12, { spacingX: 26, spacingY: 20 })),
+      openFire(
+        group('diver', 'diver', 10, { spacingY: 28 }),
+        group('swarm', 'swarm', 8, { startX: START_X + 140, spacingX: 24 }),
+      ),
+      openFire(
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42 }),
+        group('diver', 'diver', 8, { spacingY: 30 }),
+      ),
+      openFire(
+        group('swarm', 'swarm', 14, { spacingX: 26, spacingY: 18 }),
+        group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
+      ),
+      {
+        ...openFire(
+          group('tank', 'rect', 12, { spacingX: 48, spacingY: 42 }),
+          group('swarm', 'swarm', 14, { startX: START_X + 140, spacingX: 24 }),
+        ),
+        // Wave-10 mini-boss: the heaviest tank/swarm pair yet.
+        miniBoss: true,
+      },
     ],
   },
   {
@@ -245,6 +355,23 @@ export const LEVELS: LevelDefinition[] = [
     waves: [
       openFire(group('phaser', 'orbital', 4, { spacingX: 84, spacingY: 84 })),
       openFire(group('phaser', 'orbital', 5, { spacingX: 80, spacingY: 80 })),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): the crosshair grid deepens
+      // to fill out the 10-wave encounter.
+      openFire(group('phaser', 'orbital', 5, { spacingX: 78, spacingY: 78 })),
+      openFire(group('phaser', 'orbital', 6, { spacingX: 78, spacingY: 78 })),
+      openFire(group('phaser', 'orbital', 6, { spacingX: 76, spacingY: 76 })),
+      openFire(group('phaser', 'orbital', 7, { spacingX: 76, spacingY: 76 })),
+      openFire(group('phaser', 'orbital', 7, { spacingX: 74, spacingY: 74 })),
+      openFire(group('phaser', 'orbital', 8, { spacingX: 74, spacingY: 74 })),
+      openFire(group('phaser', 'orbital', 8, { spacingX: 72, spacingY: 72 })),
+      {
+        ...openFire(
+          group('phaser', 'orbital', 10, { spacingX: 72, spacingY: 72 }),
+          group('tank', 'rect', 6, { startX: START_X + 160, spacingX: 52 }),
+        ),
+        // Wave-10 mini-boss: a phalanx of phasers anchored by tanks.
+        miniBoss: true,
+      },
     ],
   },
   {
@@ -273,6 +400,39 @@ export const LEVELS: LevelDefinition[] = [
         group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
         group('swarm', 'swarm', 10, { spacingX: 26 }),
       ),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): the classic roster stays in
+      // rotation as the 10-wave grid fills in before the wave-10 mini-boss.
+      // The marching columns dominate the level (the campaign invariant pins
+      // adjacent authored levels with distinct dominant movement styles).
+      openFire(
+        group('march', 'march', 11, { spacingX: 26, spacingY: 24 }),
+        group('swarm', 'swarm', 8, { startX: START_X + 150, spacingX: 24 }),
+      ),
+      openFire(
+        group('march', 'march', 11, { spacingX: 26, spacingY: 24 }),
+        group('diver', 'diver', 8, { spacingY: 28 }),
+      ),
+      openFire(
+        group('march', 'march', 11, { spacingX: 26, spacingY: 24 }),
+        group('phaser', 'orbital', 5, { spacingX: 80, spacingY: 80 }),
+      ),
+      openFire(
+        group('march', 'march', 11, { spacingX: 26, spacingY: 24 }),
+        group('diver', 'diver', 10, { spacingY: 28 }),
+      ),
+      openFire(
+        group('march', 'march', 16, { spacingX: 26, spacingY: 22 }),
+        group('swarm', 'swarm', 10, { spacingX: 26 }),
+      ),
+      {
+        ...openFire(
+          group('march', 'march', 16, { spacingX: 26, spacingY: 22 }),
+          group('tank', 'rect', 8, { startX: START_X + 150, spacingX: 48 }),
+          group('capturer', 'single', 1, { startX: START_X + 220, startY: START_Y - 40 }),
+        ),
+        // Wave-10 mini-boss: the captured march pinned by its tank escort.
+        miniBoss: true,
+      },
     ],
   },
   {
@@ -306,6 +466,38 @@ export const LEVELS: LevelDefinition[] = [
         group('diver', 'diver', 8, { spacingY: 28 }),
         group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
       ),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): the segmented identity —
+      // chain or pursuit — stays in the showcase waves; the filler waves are
+      // plain (non-spawner) group mixes so the campaign walker and wave
+      // accounting stay bounded like the original campaign.
+      openFire(
+        group('diver', 'diver', 8, { spacingY: 28 }),
+        group('swarm', 'swarm', 8, { spacingX: 26 }),
+      ),
+      openFire(
+        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
+        group('scout', 'v', 6, { startX: START_X + 140, spacingX: 26 }),
+      ),
+      openFire(
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42 }),
+        group('phaser', 'orbital', 5, { spacingX: 80, spacingY: 80 }),
+      ),
+      openFire(
+        group('diver', 'diver', 10, { spacingY: 28 }),
+        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
+      ),
+      openFire(
+        group('phaser', 'orbital', 6, { spacingX: 78, spacingY: 78 }),
+        group('swarm', 'swarm', 12, { spacingX: 26 }),
+      ),
+      {
+        ...openFire(
+          group('tank', 'rect', 12, { spacingX: 48, spacingY: 42 }),
+          group('swarm', 'swarm', 12, { startX: START_X + 140, spacingX: 24 }),
+        ),
+        // Wave-10 mini-boss: the segmented chain anchored by a tank phalanx.
+        miniBoss: true,
+      },
     ],
   },
   {
@@ -338,6 +530,44 @@ export const LEVELS: LevelDefinition[] = [
         group('phaser', 'orbital', 5, { spacingX: 80, spacingY: 80 }),
         group('swarm', 'swarm', 10, { spacingX: 26 }),
       ),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): Gridlock keeps its lane /
+      // horde / raider trio as hand-authored showcases; the filler waves are
+      // plain group mixes (spawner flags stay as sparse as the original).
+      openFire(
+        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
+        group('swarm', 'swarm', 8, { spacingX: 26 }),
+      ),
+      openFire(
+        group('diver', 'diver', 8, { spacingY: 28 }),
+        group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
+      ),
+      openFire(
+        group('raider', 'single', 1, { startX: START_X + 220, startY: START_Y - 60 }),
+        group('diver', 'diver', 8, { spacingY: 28 }),
+        group('swarm', 'swarm', 10, { spacingX: 26 }),
+      ),
+      openFire(
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42 }),
+        group('scout', 'v', 6, { startX: START_X + 140, spacingX: 26 }),
+      ),
+      openFire(
+        group('diver', 'diver', 10, { spacingY: 28 }),
+        group('swarm', 'swarm', 10, { spacingX: 26 }),
+      ),
+      openFire(
+        group('raider', 'single', 1, { startX: START_X + 220, startY: START_Y + 60 }),
+        group('phaser', 'orbital', 6, { spacingX: 78, spacingY: 78 }),
+        group('swarm', 'swarm', 12, { spacingX: 26 }),
+      ),
+      {
+        ...openFire(
+          group('raider', 'single', 1, { startX: START_X + 220, startY: START_Y - 40 }),
+          group('tank', 'rect', 12, { startX: START_X + 140, spacingX: 48 }),
+          group('swarm', 'swarm', 12, { startX: START_X + 200, spacingX: 24 }),
+        ),
+        // Wave-10 mini-boss: a raider-pinned tank and swarm cordon.
+        miniBoss: true,
+      },
     ],
   },
   {
@@ -369,6 +599,48 @@ export const LEVELS: LevelDefinition[] = [
         group('diver', 'diver', 8, { spacingY: 28 }),
         group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
       ),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): Orbital Siege keeps its
+      // siege mix — phaser, one pursuit wave, heavy crowd — the pursuit flag
+      // stays sparse (one showcase + one filler) so wave accounting stays
+      // bounded.
+      openFire(
+        group('phaser', 'orbital', 7, { spacingX: 76, spacingY: 76 }),
+        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
+      ),
+      openFire(
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42 }),
+        group('swarm', 'swarm', 10, { spacingX: 26 }),
+      ),
+      openFire(
+        group('phaser', 'orbital', 7, { spacingX: 76, spacingY: 76 }),
+        group('diver', 'diver', 10, { spacingY: 28 }),
+        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
+      ),
+      {
+        ...openFire(
+          group('tank', 'rect', 10, { spacingX: 48, spacingY: 42 }),
+          group('diver', 'diver', 10, { spacingY: 28 }),
+        ),
+        ghosts: true,
+      },
+      openFire(
+        group('phaser', 'orbital', 8, { spacingX: 74, spacingY: 74 }),
+        group('swarm', 'swarm', 12, { spacingX: 26 }),
+      ),
+      openFire(
+        group('phaser', 'orbital', 8, { spacingX: 74, spacingY: 74 }),
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42 }),
+        group('diver', 'diver', 10, { spacingY: 28 }),
+      ),
+      {
+        ...openFire(
+          group('phaser', 'orbital', 10, { spacingX: 72, spacingY: 72 }),
+          group('tank', 'rect', 12, { startX: START_X + 140, spacingX: 48 }),
+          group('swarm', 'swarm', 12, { startX: START_X + 200, spacingX: 24 }),
+        ),
+        // Wave-10 mini-boss: a phaser siege line behind a tank/swarm wall.
+        miniBoss: true,
+      },
     ],
   },
   {
@@ -397,6 +669,58 @@ export const LEVELS: LevelDefinition[] = [
         group('swarm', 'swarm', 12, { spacingX: 26 }),
         group('raider', 'single', 1, { startX: START_X + 240, startY: START_Y }),
       ),
+      // Expanded campaign (AH-0MVCYANT6003SG5C): every remaining threat
+      // rotates through the dense finale before the wave-10 mini-boss. The
+      // final level keeps its player-targeter core and reuses the horde/ghost
+      // spawners sparingly (the campaign walker and wave accounting stay
+      // bounded, as in the original).
+      openFire(
+        group('tank', 'rect', 12, { spacingX: 48, spacingY: 42 }),
+        group('swarm', 'swarm', 12, { spacingX: 26 }),
+        group('phaser', 'orbital', 6, { spacingX: 78, spacingY: 78 }),
+      ),
+      openFire(
+        group('diver', 'diver', 12, { spacingY: 28 }),
+        group('tank', 'rect', 10, { spacingX: 48, spacingY: 42 }),
+      ),
+      openFire(
+        group('phaser', 'orbital', 8, { spacingX: 76, spacingY: 76 }),
+        group('swarm', 'swarm', 14, { spacingX: 26 }),
+        group('diver', 'diver', 10, { spacingY: 28 }),
+      ),
+      openFire(
+        group('tank', 'rect', 12, { spacingX: 48, spacingY: 42 }),
+        group('swarm', 'swarm', 12, { spacingX: 26 }),
+      ),
+      openFire(
+        group('phaser', 'orbital', 10, { spacingX: 72, spacingY: 72 }),
+        group('tank', 'rect', 12, { spacingX: 48, spacingY: 42 }),
+        group('raider', 'single', 1, { startX: START_X + 200, startY: START_Y - 40 }),
+      ),
+      {
+        ...openFire(
+          group('diver', 'diver', 12, { spacingY: 28 }),
+          group('swarm', 'swarm', 14, { spacingX: 26 }),
+        ),
+        horde: true,
+      },
+      openFire(
+        group('phaser', 'orbital', 10, { spacingX: 72, spacingY: 72 }),
+        group('tank', 'rect', 14, { spacingX: 46, spacingY: 40 }),
+        group('swarm', 'swarm', 16, { spacingX: 26 }),
+      ),
+      {
+        ...openFire(
+          group('raider', 'single', 1, { startX: START_X + 220, startY: START_Y - 40 }),
+          group('raider', 'single', 1, { startX: START_X + 260, startY: START_Y + 40 }),
+          group('tank', 'rect', 12, { startX: START_X + 140, spacingX: 46 }),
+          group('swarm', 'swarm', 16, { startX: START_X + 200, spacingX: 24 }),
+        ),
+        ghosts: true,
+        // Wave-10 mini-boss: the final double-raider cordon, the campaign's
+        // closing mini-boss before the Level-10 end return.
+        miniBoss: true,
+      },
     ],
   },
 ];

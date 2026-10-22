@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 import { PauseScene } from './PauseScene';
@@ -28,7 +28,7 @@ class StubSettingsScene extends Phaser.Scene {
   }
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+const settle = (game: Phaser.Game) => advanceGame(game, 150);
 
 function pressKey(key: string): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { key }));
@@ -56,7 +56,7 @@ describe('PauseScene — in-game pause menu (AH-0MUA8BDG4004AEIP)', () => {
   /** Opens the pause menu via ESC and returns the PauseScene instance. */
   async function openPause(): Promise<PauseScene> {
     pressKey('Escape');
-    await settle();
+    await settle(booted!.game);
     return pauseScene();
   }
 
@@ -92,7 +92,7 @@ describe('PauseScene — in-game pause menu (AH-0MUA8BDG4004AEIP)', () => {
     const scene = await openPause();
 
     scene.getControl('▶  Resume')!.emit('pointerdown');
-    await settle();
+    await settle(booted!.game);
 
     expect(play.isPaused()).toBe(false);
     expect(booted!.game.scene.isPaused('PlayScene')).toBe(false);
@@ -104,7 +104,7 @@ describe('PauseScene — in-game pause menu (AH-0MUA8BDG4004AEIP)', () => {
     await openPause();
 
     pressKey('Escape');
-    await settle();
+    await settle(booted!.game);
 
     expect(play.isPaused()).toBe(false);
     expect(booted!.game.scene.isPaused('PlayScene')).toBe(false);
@@ -116,7 +116,7 @@ describe('PauseScene — in-game pause menu (AH-0MUA8BDG4004AEIP)', () => {
     const scene = await openPause();
 
     scene.getControl('✕  Quit')!.emit('pointerdown');
-    await settle();
+    await settle(booted!.game);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('PauseScene')).toBe(false);
@@ -130,7 +130,7 @@ describe('PauseScene — in-game pause menu (AH-0MUA8BDG4004AEIP)', () => {
     const scene = await openPause();
 
     scene.getControl('⚙  Settings')!.emit('pointerdown');
-    await settle();
+    await settle(booted!.game);
 
     expect(booted!.game.scene.isActive('SettingsScene')).toBe(true);
     expect(booted!.game.scene.isActive('PauseScene')).toBe(false);
@@ -150,25 +150,25 @@ describe('PauseScene — in-game pause menu (AH-0MUA8BDG4004AEIP)', () => {
     const scene = await openPause();
 
     pressKey('Tab');
-    await settle();
+    await settle(booted!.game);
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
 
     pressKey('ArrowDown');
-    await settle();
+    await settle(booted!.game);
     expect(scene.getFocusedLabel()).toBe('✕  Quit');
 
     // Wrap forward past the last control back to the first.
     pressKey('ArrowRight');
-    await settle();
+    await settle(booted!.game);
     expect(scene.getFocusedLabel()).toBe('▶  Resume');
 
     // Wrap backward from the first control to the last.
     pressKey('ArrowUp');
-    await settle();
+    await settle(booted!.game);
     expect(scene.getFocusedLabel()).toBe('✕  Quit');
 
     pressKey('ArrowLeft');
-    await settle();
+    await settle(booted!.game);
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
   });
 
@@ -179,11 +179,11 @@ describe('PauseScene — in-game pause menu (AH-0MUA8BDG4004AEIP)', () => {
     // Focus Settings (default Resume → Tab once), then check Enter routes
     // to the focused control by returning to Resume and activating it.
     pressKey('Tab');
-    await settle();
+    await settle(booted!.game);
     pressKey('ArrowUp');
-    await settle(); // back to Resume
+    await settle(booted!.game); // back to Resume
     pressKey('Enter');
-    await settle();
+    await settle(booted!.game);
 
     expect(play.isPaused()).toBe(false);
     expect(booted!.game.scene.isActive('PauseScene')).toBe(false);
@@ -194,7 +194,7 @@ describe('PauseScene — in-game pause menu (AH-0MUA8BDG4004AEIP)', () => {
     await openPause();
 
     pressKey(' ');
-    await settle();
+    await settle(booted!.game);
 
     expect(play.isPaused()).toBe(false);
     expect(booted!.game.scene.isActive('PauseScene')).toBe(false);
@@ -216,7 +216,7 @@ describe('PauseScene — shared FocusManager integration (AH-0MUBZUQBL0080B88)',
 
   async function openPause(): Promise<PauseScene> {
     pressKey('Escape');
-    await settle();
+    await settle(booted!.game);
     return booted!.game.scene.getScene('PauseScene') as PauseScene;
   }
 
@@ -237,7 +237,7 @@ describe('PauseScene — shared FocusManager integration (AH-0MUBZUQBL0080B88)',
 
     const resume = scene.getControl('▶  Resume')!;
     pressKey('Tab');
-    await settle();
+    await settle(booted!.game);
 
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
     // The previously-focused control must no longer render a border.
@@ -250,16 +250,16 @@ describe('PauseScene — shared FocusManager integration (AH-0MUBZUQBL0080B88)',
 
     // Default moveDown binding is 's'.
     pressKey('s');
-    await settle();
+    await settle(booted!.game);
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
 
     pressKey('s');
-    await settle();
+    await settle(booted!.game);
     expect(scene.getFocusedLabel()).toBe('✕  Quit');
 
     // Default moveUp binding is 'w'.
     pressKey('w');
-    await settle();
+    await settle(booted!.game);
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
   });
 

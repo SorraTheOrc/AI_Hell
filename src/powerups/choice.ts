@@ -13,16 +13,18 @@
  * base entry replaced by its level-up offer (see
  * {@link buildChoiceCandidates}) — degrading gracefully (returning fewer
  * options) when the list cannot supply the requested count. Owned level-up
- * offers (`weapon-level`/`power-up-level`) carry a 1.1× weight
+ * offers (`weapon-level`/`power-up-level`) carry a 1.35× weight
  * ({@link OWNED_UPGRADE_BONUS_WEIGHT}) while unowned base entries keep 1.0×,
- * so an owned upgrade appears 10% more often than it would under a uniform
- * draw (AH-0MUY47W62005FF74).
+ * so an owned upgrade appears 35% more often than it would under a uniform
+ * draw (AH-0MUY47W62005FF74; retuned 1.1×→1.25× then 1.25×→1.35× by
+ * AH-0MVCFB00Y004AQ2Z).
  *
  * @module src/powerups/choice
  */
 
 import {
   POWER_UP_CATALOGUE,
+  isWeaponDrop as isWeaponDropId,
   type DropId,
   type PowerUpId,
   type WeaponDropId,
@@ -148,6 +150,12 @@ const LEVELABLE_WEAPON_IDS: readonly WeaponDropId[] = [
   'nova',
   'mortar',
   'arc',
+  // Net-new unlock-pool weapons are upgradable like every other weapon.
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
 ];
 
 /** Display names for the collectable weapon drops. */
@@ -163,23 +171,20 @@ const WEAPON_NAMES: Record<WeaponDropId, string> = {
   mortar: 'Mortar',
   arc: 'Arc',
   reset: 'Reset',
+  rear_guard: 'Rear Guard',
+  broadside: 'Broadside',
+  railgun: 'Railgun',
+  shard_swarm: 'Shard Swarm',
+  heavy_slug: 'Heavy Slug',
 };
 
-/** Whether a drop id is a weapon drop. */
+/**
+ * Whether a drop id is a weapon drop — delegates to the canonical guard in
+ * `powerups/types` so a newly added weapon can never be mistaken for a
+ * power-up here (AH-0MVCRBNO6003E1CH).
+ */
 export function isWeaponDrop(id: DropId): id is WeaponDropId {
-  return (
-    id === 'spread' ||
-    id === 'dual' ||
-    id === 'rapid' ||
-    id === 'wave_laser' ||
-    id === 'ricochet' ||
-    id === 'cluster' ||
-    id === 'options' ||
-    id === 'nova' ||
-    id === 'mortar' ||
-    id === 'arc' ||
-    id === 'reset'
-  );
+  return isWeaponDropId(id);
 }
 
 /**
@@ -211,13 +216,15 @@ export function toChoiceOption(id: DropId): ChoiceOption {
 /**
  * Weight multiplier applied to an owned level-up offer (`weapon-level` or
  * `power-up-level`) during candidate selection. Unowned base-pool entries keep
- * a weight of 1.0, so an owned upgrade is 1.1× as likely to be drawn as an
- * unowned item — a 10% bias toward continuing an existing build.
+ * a weight of 1.0, so an owned upgrade is 1.35× as likely to be drawn as an
+ * unowned item — a 35% bias toward continuing an existing build (retuned
+ * from 1.1×/10% to 1.25×/25%, then to 1.35×/35% by AH-0MVCFB00Y004AQ2Z after
+ * a producer audit asked for "another 10 points").
  *
  * Named and exported so the bias can be tuned without hunting for a magic
  * number (AH-0MUY47W62005FF74 AC4).
  */
-export const OWNED_UPGRADE_BONUS_WEIGHT = 1.1;
+export const OWNED_UPGRADE_BONUS_WEIGHT = 1.35;
 
 /**
  * Selection weight for a candidate option (AH-0MUY47W62005FF74 AC1). Owned
@@ -362,7 +369,7 @@ export function buildChoiceCandidates(
  * Draws `count` **distinct** candidates by weighted sampling without
  * replacement: each draw picks an option with probability proportional to its
  * {@link choiceCandidateWeight}, then removes it so no option can be offered
- * twice. Living here (and only here) keeps the 1.1× owned-upgrade bias in the
+ * twice. Living here (and only here) keeps the 1.35× owned-upgrade bias in the
  * strategy layer rather than in {@link buildChoiceCandidates} (AC2).
  */
 function drawWeightedWithoutReplacement(
@@ -395,7 +402,7 @@ function drawWeightedWithoutReplacement(
 /**
  * Creates a strategy that draws `count` distinct options at **weighted**
  * random from `pool` — owned `weapon-level`/`power-up-level` offers carry a
- * {@link OWNED_UPGRADE_BONUS_WEIGHT} (1.1×) bias, unowned base entries 1.0× —
+ * {@link OWNED_UPGRADE_BONUS_WEIGHT} (1.35×) bias, unowned base entries 1.0× —
  * with each owned item's base-pool entry suppressed and its level-up offer
  * appended (see {@link buildChoiceCandidates}). When the candidate list holds
  * fewer than `count` entries, all of them are returned (graceful

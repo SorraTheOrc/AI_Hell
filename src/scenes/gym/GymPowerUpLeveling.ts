@@ -82,6 +82,7 @@ import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
 import { buildChoiceCandidates, CHOICE_POOL } from '../../powerups/choice';
 import { applyMineralChoiceReward } from '../core/mineralLayer';
+import type { DroneMineralSink } from '../core/combatDrone';
 
 /** Id of the level/stats readout panel (plain-DOM `.gym-panel`). */
 export const POWER_UP_READOUT_PANEL_ID = 'gym-powerup-level-readout';
@@ -407,6 +408,12 @@ export class GymPowerUpLeveling extends CombatScene<
     const collectRadius = 18;
     const remaining: LevelingMineral[] = [];
     for (const mineral of this.minerals) {
+      // A collector drone may have vacuumed this mineral (marked dead and
+      // hidden by the shared drone pass): reap it so the field stays clean.
+      if (!mineral.entity.alive) {
+        mineral.destroy();
+        continue;
+      }
       const dx = mineral.entity.x - player.x;
       const dy = mineral.entity.y - player.y;
       if (dx * dx + dy * dy <= collectRadius * collectRadius) {
@@ -586,13 +593,28 @@ export class GymPowerUpLeveling extends CombatScene<
     return this.effectsRegistry;
   }
 
-  /** Applies the instant Mystery UFO bounty into the gym's shared hold. */
-  protected override onPowerUpCollected(drop: LevelingDrop): void {
-    super.onPowerUpCollected(drop);
-    if (drop.dropId !== 'mystery_ufo') return;
-    this._applyPendingMysteryBonus({
-      addMinerals: (amount) => this.hold.collect(amount),
-    });
+  /**
+   * Mineral field the collector drones (Mystery UFO reward) seek, vacuum and
+   * drop into. This gym stores each mineral in a `{ entity, destroy }`
+   * wrapper, so the live {@link Mineral} entities are projected for the shared
+   * drone pass. The gym spawns no enemies, so a drone can never be destroyed
+   * here and no destruction drops are lost by the projection.
+   */
+  protected override getDroneMineralField(): Mineral[] {
+    return this.minerals.map((mineral) => mineral.entity);
+  }
+
+  /**
+   * Hold sink for a collector drone's ferried minerals: the gym's shared
+   * hold, mirrored onto the HUD exactly like a player pickup.
+   */
+  protected override getDroneMineralSink(): DroneMineralSink {
+    return {
+      addMinerals: (amount: number) => {
+        this.hold.collect(amount);
+        this.hud?.setMineralStore(this.hold.store, this.hold.capacity);
+      },
+    };
   }
 
   // ── Public test accessors ────────────────────────────────────────

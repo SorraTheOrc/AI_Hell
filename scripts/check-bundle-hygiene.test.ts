@@ -69,6 +69,34 @@ describe('checkBundleHygiene', () => {
     expect(result.violations.map((v) => v.marker)).toContain('node:fs');
   });
 
+  it('fails when the dev-only telemetry upload endpoint leaks into the bundle', () => {
+    writeFileSync(
+      join(distDir, 'assets', 'index.js'),
+      'fetch("/api/telemetry/upload", { method: "POST" });',
+    );
+
+    const result = checkBundleHygiene({ distDir });
+
+    expect(result.ok).toBe(false);
+    expect(result.violations).toHaveLength(1);
+    expect(result.violations[0].marker).toBe('/api/telemetry/upload');
+    expect(result.violations[0].label).toBe('Dev-only telemetry upload endpoint');
+  });
+
+  it('keeps the production local-sink key legal in a bundle', () => {
+    // The JSONL sink (and its storage key) is production-reachable, so it must
+    // not be a forbidden marker — only the dev-only upload endpoint is.
+    writeFileSync(
+      join(distDir, 'assets', 'index.js'),
+      'const key = "ai_hell_telemetry_jsonl"; console.log(key);',
+    );
+
+    const result = checkBundleHygiene({ distDir });
+
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
   it('reports a missing bundle as a failure', () => {
     rmSync(distDir, { recursive: true, force: true });
 

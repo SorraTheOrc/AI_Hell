@@ -102,6 +102,94 @@ const consent = loadTelemetryConsent();
 const config = resolveEffectiveTelemetryConfig(import.meta.env, consent);
 ```
 
+## Dev-mode auto-upload and automatic evaluation (dev builds only)
+
+> Landed in **Dev-mode telemetry upload to dev server with automatic evaluation**
+> (AH-0MVBHRLY8004BGDN; docs slice AH-0MVBMRR4R004UOLH). **Dev-only:** none of
+> this exists in a production build, `vite preview`, `vite build` output or a
+> static host — the upload endpoint is registered with `apply: 'serve'` only and
+> the bundle-hygiene gate forbids the endpoint in `dist/`.
+
+A stock `npm run dev` — no `VITE_TELEMETRY_*` variables — **collects** the run's
+telemetry into the local JSONL sink (`ai_hell_telemetry_jsonl`) and, at run end,
+**delivers** it to the dev server that served the page. The server validates and
+stores it as a recording under `recordings/session-<timestamp>.jsonl`, then runs
+the existing human evaluation on it automatically. The local sink is **left
+intact** after upload, so `npm run record`, `npm run telemetry:inspect` and the
+replay/ghost tooling keep working unchanged.
+
+### The setting (on by default)
+
+Settings → **Share with dev server: ON/OFF** (the `shareTelemetryDev` field of
+the `ai_hell_settings` store, default **on**, `src/core/settingsStore.ts`). The
+row exists only in a dev build. When the setting is **off** the dev game neither
+collects nor uploads telemetry: the sink stays untouched and no upload request
+is made. The stored `shareTelemetryDev` value is inert outside a dev build.
+
+### The single dev gate
+
+Every dev-telemetry decision — collection and upload — routes through
+[`src/telemetry/devMode.ts`](../src/telemetry/devMode.ts): `isDevTelemetryBuild`
+(the only dev-flag decision point), `isDevTelemetryCollectionEnabled` and
+`isDevTelemetryUploadEnabled` (upload is a strict subset of collection). Vite
+statically replaces `import.meta.env.DEV`, so in a production build the
+predicates compile to `false` and Rollup drops the dev uploader and its endpoint
+from the shipped bundle. `src/telemetry/devModeEnforcement.test.ts` fails the
+suite if any production module re-implements the decision, and
+`npm run check-bundle` fails if `/api/telemetry/upload` reaches `dist/`.
+
+### Upload at run end
+
+`PlayScene._finishRun()` flushes the recorder into the local sink and POSTs the
+sink content to `POST /api/telemetry/upload` (same-origin,
+`application/x-ndjson`) through [`src/telemetry/devUpload.ts`](../src/telemetry/devUpload.ts).
+The upload is **fire-and-forget**: failures are caught and reported through an
+optional error seam, never thrown — upload can never block or crash run end.
+
+### Server-side receipt and storage
+
+The dev-only Vite plugin
+[`vite/plugins/telemetryUploadPlugin.ts`](../vite/plugins/telemetryUploadPlugin.ts)
+registers the endpoint with `apply: 'serve'`, mirroring `configCsvPlugin`:
+
+- **Validation** — the body is checked against the recording reader
+  (`scripts/recording.mjs`, `parseRecording`): at least one schema-valid record
+  with a supported `schemaVersion` and known record kind. Malformed bodies are
+  rejected with `400` **before** anything is written.
+- **Size** — bodies over 16 MiB are rejected with `413` (declared
+  `Content-Length` or discovered while streaming).
+- **Storage** — a valid body is written verbatim as a collision-safe
+  `recordings/session-<timestamp>.jsonl` (never overwriting an existing file).
+
+### Automatic evaluation
+
+After a valid store the plugin enqueues the existing human evaluation
+
+```bash
+node scripts/evaluate.mjs --human <recordings/session-...jsonl> \
+  --out eval-output/uploaded/<session-stamp>
+```
+
+as a detached child process, **serialised** (one at a time), so the HTTP
+response returns immediately and a burst of uploads cannot spawn unbounded
+processes. Progress and a completion summary are logged to the dev-server
+console as `[telemetry-evaluation] …` and appended to
+`eval-output/uploaded/<session-stamp>/evaluation.log`. The output directory
+receives the same artifacts as `npm run record` / `npm run evaluate -- --human`:
+`human-balance-report.json` plus its companions (`comparison.json`, `ghost.svg`).
+
+### Verifying the flow
+
+1. `npm run dev` (no env vars) and play a run to completion.
+2. A new `recordings/session-*.jsonl` appears; the console logs
+   `[telemetry-evaluation] evaluation started …` then `… finished …`.
+3. `eval-output/uploaded/<session-stamp>/human-balance-report.json` and
+   `evaluation.log` appear.
+4. Turn the setting off and play again: **no** new recording file and **no**
+   upload request.
+5. `npm run build` passes and ships no upload endpoint; `vite preview` returns
+   the SPA fallback (never the upload JSON) for `POST /api/telemetry/upload`.
+
 ## Schema reference (version 1)
 
 Every record carries `schemaVersion` (currently `1`). Bump it on any
@@ -466,5 +554,7 @@ The framework is covered by hermetic unit tests under
 | [`telemetryConsentStore.test.ts`](../src/core/telemetryConsentStore.test.ts) | consent persistence, corrupt/absent fallback |
 | [`inspect-telemetry.test.ts`](../scripts/inspect-telemetry.test.ts) | JSONL parsing, summary and formatting |
 
-Run them with `npx vitest run src/telemetry` (or the full suite via
-`/skill:test`).
+Run them with `npx vitest run src/telemetry` (the per-file project split
+automatically sends the pure `node`-env suites to `unit` and the scene-booting
+suites to `integration`), or run the audit-accepted full suite with
+`npm --silent test` / `/skill:test --type full`.

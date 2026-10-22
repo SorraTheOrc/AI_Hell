@@ -10,6 +10,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
+import { getSpawnState, type SpawnAnimatable, type SpawnState } from '../../vfx/wormholeSpawn';
+
 import * as effectsModule from '../../audio/effects';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS } from '../../core/enemyConfig';
@@ -48,6 +50,7 @@ import { Ghost } from '../../entities/Ghost';
 import { Grunt } from '../../entities/Grunt';
 import { LaneTraffic } from '../../entities/LaneTraffic';
 import { Raider } from '../../entities/Raider';
+import { PHASER_ORBITAL_RADIUS, PhaserEntity } from '../../entities/Phaser';
 import { Harvester } from '../../entities/Harvester';
 import { OrbitalStrike } from '../../entities/OrbitalStrike';
 import { TANK_COLOR } from '../../entities/Tank';
@@ -369,6 +372,12 @@ describe('GymFodderEnemies — single reusable enemy gym', () => {
     // For non-orbital/swarm kinds, each entity sits on its slot (Scout wiggles ±2px).
     // Phaser orbits around the base (spacing unused) and Swarm weaves (±30% spacing),
     // so only assert slot fidelity for v/diver/rect/single.
+    // (AH-0MV8BSMXC0097KLW) The fresh formation is mid-transit from the
+    // wormhole, so complete the spawn animation first — slot fidelity is
+    // asserted at the post-transit resting position, then a settle tick lets
+    // the base-driven pass re-place entities on the live (drifted) base.
+    scene.finishSpawnAnimations();
+    scene.tick(0.016);
     if (cfg.formationKind === 'v' || cfg.formationKind === 'diver' || cfg.formationKind === 'rect' || cfg.formationKind === 'single') {
       for (const e of scene.formationEntities) {
         const { row, col } = (e as unknown as { offset: { row: number; col: number } }).offset;
@@ -381,6 +390,53 @@ describe('GymFodderEnemies — single reusable enemy gym', () => {
         expect(Math.abs(e.x - scene.formationX)).toBeLessThan(400);
         expect(Math.abs(e.y - scene.formationY)).toBeLessThan(400);
       }
+    }
+  });
+
+  it('Phasers transit from the wormhole straight to their orbital slots (gym parity, AH-0MVEXVME1004SIIS)', async () => {
+    const scene = await bootWithKey('phaser');
+    // Grow the group past four so the no-coincident-slot regression is
+    // pinned through the shared spawn path (phase_i = i × 2π / 12).
+    const countInput = document.querySelector<HTMLInputElement>(
+      'input[data-config="count"]',
+    )!;
+    countInput.value = '12';
+    countInput.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-respawn') as HTMLButtonElement).click();
+
+    const phasers = scene.formationEntities.filter(
+      (e): e is PhaserEntity => e instanceof PhaserEntity,
+    );
+    expect(phasers).toHaveLength(12);
+
+    // While still emerging the transit destination already targets the live
+    // orbital slots — every point on the ring around the formation base and
+    // none coincident (no line then snap).
+    const dests = phasers.map((p) =>
+      getSpawnState(p as unknown as SpawnAnimatable)?.destFn?.(),
+    );
+    expect(dests.every((d) => d !== undefined)).toBe(true);
+    for (const d of dests) {
+      expect(Math.hypot(d!.x - scene.formationX, d!.y - scene.formationY)).toBeCloseTo(
+        PHASER_ORBITAL_RADIUS,
+        3,
+      );
+    }
+    const keys = dests.map((d) => `${d!.x.toFixed(4)},${d!.y.toFixed(4)}`);
+    expect(new Set(keys).size).toBe(12);
+
+    // When the spawn window ends the Phasers settle onto those same slots
+    // with no visible position jump (≤ 1 px orbit step).
+    scene.finishSpawnAnimations();
+    const settled = phasers.map((p) => ({ x: p.x, y: p.y }));
+    scene.tick(0.001);
+    const after = scene.formationEntities.filter(
+      (e): e is PhaserEntity => e instanceof PhaserEntity,
+    );
+    for (let i = 0; i < after.length; i++) {
+      expect(
+        Math.hypot(after[i].x - settled[i].x, after[i].y - settled[i].y),
+      ).toBeLessThanOrEqual(1);
     }
   });
 
@@ -2027,6 +2083,47 @@ describe('GymFodderEnemies — wormhole spawn animation parity (AH-0MURBER4L0082
     return booted.scene as unknown as GymFodderEnemies;
   }
 
+  it('AC5 — opens the fresh portal at the formation base through the shared placement helper (gym parity, AH-0MV8BR9Y70079TKC)', async () => {
+    const PORTAL_BASE_X = 240;
+    const PORTAL_BASE_Y = 120;
+    class PinnedBaseWrapper extends GymFodderEnemies {
+      override init(_data?: { enemyKey?: string }): void {
+        super.init({ enemyKey: 'scout' });
+      }
+      // Pin the base so the assertion cannot race the per-frame drift that
+      // starts as soon as the scene boots.
+      protected override _resolveFormationBase(): void {
+        super._resolveFormationBase();
+        this.formationBaseX = PORTAL_BASE_X;
+        this.formationBaseY = PORTAL_BASE_Y;
+      }
+    }
+    Object.defineProperty(PinnedBaseWrapper, 'name', {
+      value: 'Wrapper_scout_gym_portal_test',
+    });
+    booted = await bootScene([PinnedBaseWrapper as unknown as typeof Phaser.Scene]);
+    const scene = booted.scene as unknown as GymFodderEnemies;
+
+    // With no player ship the shared `placeWavePortal` returns the anchor
+    // unchanged, so the wormhole sits exactly on the formation base — the
+    // same code path `PlayScene` uses, keeping gym behaviour unchanged.
+    const handle = (
+      scene as unknown as {
+        _wormhole: { handle: { container: Phaser.GameObjects.Container } | null };
+      }
+    )._wormhole.handle;
+    expect(handle).not.toBeNull();
+    expect(handle!.container.x).toBe(PORTAL_BASE_X);
+    expect(handle!.container.y).toBe(PORTAL_BASE_Y);
+    expect(scene.isWormholeOpen()).toBe(true);
+  });
+
+  /** True when the spawn state records a transit (dest differs from origin). */
+  function stateIsMover(state: SpawnState | null): boolean {
+    return (
+      !!state && (state.originX !== state.destX || state.originY !== state.destY)
+    );
+  }
   it('spawns enemies at 1 pixel, marked spawning, and grows them to full size', async () => {
     const scene = await bootGym();
     const entities = scene.formationEntities.filter(
@@ -2063,5 +2160,159 @@ describe('GymFodderEnemies — wormhole spawn animation parity (AH-0MURBER4L0082
     expect(victim.isSpawning).toBe(true);
     expect(victim.alive).toBe(true);
     expect(scene.aliveCount).toBe(before);
+  });
+
+  it('a wipe→respawn while the wormhole is live re-opens one for the fresh formation (AH-0MV9KHLV8006GMX6)', async () => {
+    const scene = await bootGym();
+    // The initial formation enters through a live wormhole.
+    expect(scene.isWormholeOpen()).toBe(true);
+
+    // Wipe the formation mid-spawn (still growing) — the wipe→respawn
+    // countdown begins on the next tick.
+    for (const e of scene.formationEntities) e.destroySelf();
+    scene.tick(0.016);
+    expect(scene.isRespawnCountdownActive()).toBe(true);
+
+    // Fast-forward past the 3 s countdown: the respawned formation must enter
+    // through a fresh wormhole (single-live controller re-opens it) with
+    // every entity growing from 1 px — parity with PlayScene.spawnWave().
+    scene.tick(1.0);
+    scene.tick(1.0);
+    scene.tick(1.0);
+    expect(scene.isRespawnCountdownActive()).toBe(false);
+    expect(scene.isWormholeOpen()).toBe(true);
+    for (const entity of scene.formationEntities) {
+      const e = entity as unknown as { scaleX: number; isSpawning: boolean };
+      expect(e.isSpawning).toBe(true);
+      expect(e.scaleX).toBeCloseTo(0.01, 5);
+    }
+  });
+
+  it('AH-0MV8BSMXC0097KLW — formation enemies begin at the wormhole base and arrive at their slots (game↔gym parity)', async () => {
+    const scene = await bootGym();
+    const entities = scene.formationEntities.filter(
+      (e) => (e as unknown as { alive: boolean }).alive,
+    );
+    expect(entities.length).toBeGreaterThan(0);
+
+    // Every entity emerges from the formation base, where the wormhole opens
+    // (mirrors PlayScene: enemies emerge from the wave wormhole — AC1).
+    let movers = 0;
+    for (const entity of entities) {
+      const state = getSpawnState(entity as unknown as SpawnAnimatable);
+      expect(state).not.toBeNull();
+      // Emerges from the base (wormhole): within a band of the live base far
+      // inside the nearest slot (the base drifts a few px during boot).
+      expect(
+        Math.abs(
+          (entity as unknown as { x: number }).x - scene.formationX,
+        ),
+      ).toBeLessThan(10);
+      expect(
+        Math.abs(
+          (entity as unknown as { y: number }).y - scene.formationY,
+        ),
+      ).toBeLessThan(10);
+      if (stateIsMover(getSpawnState(entity as unknown as SpawnAnimatable))) {
+        movers += 1;
+      }
+    }
+    expect(movers).toBeGreaterThan(0);
+
+    // Partway through the grow phase every entity is still spawning and the
+    // movers have begun to travel away from the base.
+    const origins = entities.map((e) => ({
+      x: (e as unknown as { x: number }).x,
+      y: (e as unknown as { y: number }).y,
+    }));
+    scene.tick(1.2);
+    entities.forEach((entity, i) => {
+      expect(
+        getSpawnState(entity as unknown as SpawnAnimatable),
+        'still in transit',
+      ).not.toBeNull();
+      if (
+        stateIsMover(getSpawnState(entity as unknown as SpawnAnimatable))
+      ) {
+        expect(
+          Math.abs((entity as unknown as { x: number }).x - origins[i].x) +
+            Math.abs((entity as unknown as { y: number }).y - origins[i].y),
+        ).toBeGreaterThan(1);
+      }
+    });
+
+    // Completing the spawn animation and settling on the live base lands
+    // every entity on its configured slot (parity with the placement test
+    // above; scout wiggle is ±2 px).
+    scene.finishSpawnAnimations();
+    scene.tick(0.016);
+    const cfg = DEFAULT_ENEMY_CONFIGS.scout;
+    for (const entity of entities) {
+      const { row, col } = (entity as unknown as {
+        offset: { row: number; col: number };
+      }).offset;
+      expect(
+        Math.abs(
+          (entity as unknown as { x: number }).x -
+            (scene.formationX + col * cfg.spacingX),
+        ),
+      ).toBeLessThanOrEqual(3);
+      expect(
+        Math.abs(
+          (entity as unknown as { y: number }).y -
+            (scene.formationY + row * cfg.spacingY),
+        ),
+      ).toBeLessThanOrEqual(3);
+      expect((entity as unknown as { isSpawning: boolean }).isSpawning).toBe(
+        false,
+      );
+    }
+  });
+
+  it('AH-0MV8BSMXC0097KLW — gym spawn protection holds while enemies are in transit (parity)', async () => {
+    const scene = await bootGym();
+    const victim = scene.formationEntities.find((entity) => {
+      if (!(entity as unknown as { alive: boolean }).alive) return false;
+      const state = getSpawnState(entity as unknown as SpawnAnimatable);
+      return (
+        !!state &&
+        (state.originX !== state.destX || state.originY !== state.destY)
+      );
+    })! as unknown as {
+      alive: boolean;
+      x: number;
+      y: number;
+      isSpawning: boolean;
+      shootEnabled: boolean;
+    };
+    expect(victim).toBeDefined();
+    const aliveBefore = scene.aliveCount;
+
+    // Advance into the transit window (still protected, still mid-flight).
+    scene.tick(1.2);
+    expect(victim.isSpawning).toBe(true);
+    const state = getSpawnState(victim as unknown as SpawnAnimatable);
+    expect(state).not.toBeNull();
+    expect(
+      Math.abs(victim.x - state!.originX) + Math.abs(victim.y - state!.originY),
+    ).toBeGreaterThan(1);
+
+    // Player bullets pass through a transiting enemy.
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.016);
+    expect(victim.alive).toBe(true);
+    expect(scene.aliveCount).toBe(aliveBefore);
+
+    // A transiting enemy cannot shoot.
+    victim.shootEnabled = true;
+    scene.tick(0.1);
+    expect(scene.activeBullets).toHaveLength(0);
+
+    // Once transit completes the entity becomes vulnerable, as in the game.
+    scene.finishSpawnAnimations();
+    scene.tick(0.001); // settle the slot/wiggle position before aiming
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.016);
+    expect(victim.alive).toBe(false);
   });
 });

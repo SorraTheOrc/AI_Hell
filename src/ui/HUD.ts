@@ -485,10 +485,25 @@ export class HUD extends Phaser.GameObjects.Container {
         // (AH-0MV1BIX1W006XF95).
         return reg.isForceFieldActive();
       case 'mystery_ufo':
-        // The Mystery UFO has no timed window, so show its row for as long as
-        // the player owns it (any collection advanced its level); the row
-        // renders the effective level and ∞ (AH-0MV1BIXFO006Z1I7).
+        // The Mystery UFO is a visible collector drone with no timed window, so
+        // show its row for as long as the player owns it (any collection
+        // advanced its level); the row renders the effective level (drone
+        // lifetime/capacity/radius) and ∞ (AH-0MV9G113S009B37I).
         return reg.powerUpLevel('mystery_ufo') > 0;
+      case 'frenzy':
+      case 'chrono':
+      case 'salvage':
+        // Timed net-new power-ups (AH-0MVCRC1Q0007JAV1): show the row while
+        // their window is active, so the player can read the countdown.
+        return reg.isActive(id);
+      case 'thorns':
+        // Thorn Field: visible while active OR a ram budget remains (the
+        // budget is the informative part, like the Force Field absorb row).
+        return reg.isActive('thorns') || reg.thornsRemaining() > 0;
+      case 'strike':
+        // Orbital Strike: a permanent bolt is a run-scoped active effect; a
+        // field pickup is a one-shot and leaves no row (mirrors Smart Bomb).
+        return reg.isStrikePermanent();
       default:
         return false;
     }
@@ -512,6 +527,10 @@ export class HUD extends Phaser.GameObjects.Container {
         return reg.teleportStacks() || undefined;
       case 'force_field':
         return reg.forceFieldRemaining() || undefined;
+      case 'thorns':
+        // Thorn Field carries its remaining ram absorbs so the HUD renders
+        // `Thorn Field xN` and updates as rams are absorbed.
+        return reg.thornsRemaining() || undefined;
       default:
         return undefined;
     }

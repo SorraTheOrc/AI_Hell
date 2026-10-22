@@ -18,7 +18,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | E1 | Scout | `formation` | `projectile` | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
 | E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | `formation` | `projectile` | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
-| E4 | Phaser | `formation` | `projectile` | §4.1 (L5) | Fixed orbital path, predictable firing cycles | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
+| E4 | Phaser | `formation` | `projectile` | §4.1 (L5) | Fixed orbital path, predictable firing cycles; group members take distinct, evenly spaced phases (`phase_i = i × 2π / N`) on one ring, and spawn from the wormhole straight onto the live orbital slot (AH-0MVEXVME1004SIIS) | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | `formation` | `projectile` | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
 | E6 | Asteroid | `roamer` | `contact` | §4.1 | Free-roaming straight-line drift (screen wrap), continuous rotation, splits into two smaller rocks when shot | Jagged procedural neon polygon (grey), 3 size tiers | **never fires** |
 | E7 | Harvester | `roamer` | `contact` | §4.1 | Large, slow roaming mineral-seeker: always steers to the nearest live mineral and absorbs it on overlap; holds station with no mineral; **5 HP**; rare Levels 4–5 roaming spawn (wave-accounted) | Large violet hexagonal "collector" | **never fires** |
@@ -28,6 +28,36 @@ Regular-enemy health is **data-driven** (`EnemyConfig.health`, default **1**):
 E1–E6 are 1 HP (one bullet destroys them) and E7 Harvester is **5 HP**; the
 Boss is multi-hit via its 4-phase bar — **50 hits per phase (200 total)**. All enemies **never collide with each
 other** (GDD §2.6) — no collision system is installed in the gym scenes.
+
+### 1.0 Mini-boss roster — ten net-new archetypes (AH-0MVCRBXSS008JSV0)
+
+Beyond the regular-enemy catalogue, every level's **wave 10** is a bespoke
+mini-boss built on the reusable `MiniBoss` entity family (epic
+AH-0MVCC8XSS007P01Z). Each is a **net-new named archetype** (bringing the
+campaign to **27 enemy/mini-boss archetypes**: the 17 regular ones plus these
+10), driven by `src/waves/miniBossDesigns.ts` and exercised in `GymMiniBoss`.
+Phases map onto the shared Boss pattern implementations (`spread`, `spiral`,
+`pulse`, `combined`), so no firing code is duplicated.
+
+| Level | Archetype | Hops | Phases (pattern set) | HP/phase | Minions |
+|-------|-----------|------|----------------------|----------|---------|
+| 1 | Pulse Warden | 2 | spread → pulse | 12 | — |
+| 2 | Coil Sentinel | 2 | spiral → combined | 14 | — |
+| 3 | Shard Matron | 3 | pulse → spiral → pulse | 16 | Scouts (phase 1) |
+| 4 | Void Herald | 3 | combined → spread → pulse | 18 | — |
+| 5 | Ion Tyrant | 3 | spiral → spiral → pulse | 20 | Divers (phase 2) |
+| 6 | Cinder Maw | 3 | pulse → combined → spread | 22 | — |
+| 7 | Prism Wraith | 3 | spread → pulse → combined | 24 | Scouts (phase 2) |
+| 8 | Gravemind | 4 | spiral → combined → spiral → pulse | 26 | — |
+| 9 | Star Eater | 4 | combined → pulse → spiral → spread | 28 | Divers (phase 3) |
+| 10 | The Hollow King | 4 | spread → spiral → pulse → combined | 32 | Scouts (phase 4) |
+
+Mini-boss health is multi-hit per phase (the shared `MiniBoss` bar); the
+mini-boss wave has **no time limit** and gates the level, so the level only
+completes on the mini-boss's defeat (parity: `PlayScene` and `GymMiniBoss` read
+the same config helper). `docs/Game Design Document.md` §3.3 documents the
+design intent; the catalogue is validated by
+`src/waves/miniBossDesigns.test.ts`.
 
 ### 1.1 Classic arcade research (AH-0MUYAQ6YH0010G52)
 
@@ -61,7 +91,9 @@ of these to be implemented as a full vertical slice. Four non-firing CSV rows
 (`ghost-chase`, `ghost-ambush`, `ghost-flank`, `ghost-wander`) share the pure
 `src/scenes/core/ghostSteering.ts` targeting policy and the
 `src/entities/Ghost.ts` entity; `src/waves/GhostSpawner.ts` plans the
-four-personality group and `PlayScene` registers every released ghost with the
+four-personality group as a tight cluster from one entry point (released
+within a single ~90 ms window, AH-0MV9G78DO0053MGK) and `PlayScene` registers
+every released ghost with the
 `WaveManager`, gated behind a per-wave `ghosts: true` opt-in (so existing wave
 data is unchanged). The entity never fires — body contact is the threat — and
 its `tryFireNone` dispatch entry keeps it out of the aimed-shot fallback.
@@ -607,7 +639,7 @@ the first three enemy gym scenes duplicated:
   the same code as the shipped game — plus the shared bullet/effect/animation
   registries; `SHUTDOWN` calls `teardownRunState()`, which destroys those
   registries and resets the effects registry. `CombatScene` overrides both to
-  add invulnerability, hit-count, teleport-key and bullet-impact state;
+  add invulnerability, hit-count, teleport-arrival and bullet-impact state;
   `GymFormationScene`, `GymWeapons`, `GymPowerUpsCombat`,
   `GymPowerUpsUtility` and `GymPlayer` override them to add their own object
   families (enemies, drops, minerals, player, obstacles, HUD) and call
@@ -851,6 +883,16 @@ life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
   complete. A full wipe with no survivors falls back to a clean-slate
   `respawnFormation`/base reset. The timeout pauses while a countdown is
   active and restarts on every respawn.
+- **The game keeps survivors physically continuous (AH-0MV9FUG4J008OHKA).**
+  In `PlayScene`, `spawnWave()` was resetting the shared formation state on
+  every wave boundary, so carried-over survivors snapped back to their spawn
+  origins the moment the next wave spawned. It now preserves the continuing
+  base whenever a formation survivor carries over: the drift position,
+  direction and Diver anchors stay put, and a carried march block keeps its
+  march state (fresh march spawns join the continuing block as one rigid
+  body, mirroring `respawnWithCarriedSurvivors`). The fresh wave's enemies
+  join the continuing base. A clean start with no survivors resets exactly
+  as before.
 - **UI.** A depleting top-of-screen bar mirrors `PlayScene._drawWaveTimer()`
   and shares its geometry constants and drawing code.
 - **Parity guard.** `CombatScene.equivalence.test.ts` asserts the shared
@@ -866,19 +908,20 @@ life/formation wipe (carry-over semantics, AH-0MUNS3ZQ1002DJ9S):
 
 ### 2.7 Wormhole spawn animation (AH-0MURBER4L00821RR)
 
-When a wave (or formation gym) spawns enemies, each enemy enters through a
-wormhole and grows from **1 pixel to its full size** instead of appearing
-fully formed. The same code runs in `PlayScene` and every formation gym, per
-the gym-parity convention (§5.1).
+When a wave (or formation gym) spawns enemies, each enemy emerges **at the
+wormhole**, **transits** from there to its formation slot and grows from
+**1 pixel to its full size** instead of appearing fully formed at its final
+position. The same code runs in `PlayScene` and every formation gym, per the
+gym-parity convention (§5.1).
 
 **Timeline** (scene-tick seconds, not wall-clock — so deterministic
 `scene.tick(dt)` tests drive it identically to a live run):
 
 | Phase | Duration | Behaviour |
 |-------|----------|-----------|
-| Wormhole opens | 1 s | The wormhole VFX scales from 0.01 to full at the spawn position. |
-| Enemy grows | 1.5 s | Each enemy eases from 0.01 scale to its full scale (ease-out cubic). |
-| Wormhole closes | 0.5 s | The wormhole scales to zero and fades out. |
+| Wormhole opens | 1 s | The wormhole VFX scales from 0.01 to full at the portal position. Each enemy holds at the wormhole origin, still at 0.01 scale. |
+| Enemy grows & transits | 1.5 s | Each enemy eases from 0.01 scale to its full scale **and** travels from the wormhole origin to its formation slot (both ease-out cubic, in lock-step). It is fully arrived by the end of this phase (t = 2.5 s). |
+| Wormhole closes | 0.5 s | The wormhole scales to zero and fades out. Enemies have already arrived. |
 
 Total spawn-protection window = **3 s**. During that window the spawning
 enemy is protected (AC4):
@@ -894,30 +937,165 @@ enemy is protected (AC4):
   `collectMinerals` (`src/scenes/core/mineralLayer.ts`) skips spawning
   enemies.
 
+**Transit movement (AH-0MV8BSMXC0097KLW).** Enemies do not pop into place:
+they emerge from the wormhole and traverse to their formation slot, so the
+spawn reads as cinematic and diegetic.
+
+- `SpawnState` records the **origin** (`originX`/`originY`, captured at spawn
+  time) and the **destination** (`destX`/`destY`, the formation slot).
+- `startSpawnAnimation(enemy, scale, delay?, destination?)` accepts an
+  optional destination — a fixed `{x, y}` or a **resolver function**
+  re-evaluated every frame (so a drifting/marching formation's live slot is
+  tracked and the enemy lands exactly on it, with no position pop when the
+  spawn window ends). Callers that omit it (e.g. boss minions, which are not
+  part of the wave's wormhole entry) keep the legacy in-place growth, so
+  nothing else changes.
+- During the wormhole-open delay the enemy **holds at the origin**; during
+  the growth phase `updateSpawnAnimation` interpolates its position from the
+  origin to the destination using the **same ease-out-cubic progress** as the
+  scale growth. Because the eased progress reaches 1 at the end of the growth
+  phase, the enemy is fully arrived at **t = 2.5 s — 0.5 s before the
+  wormhole closes** and strictly inside the 3 s protection window. A final
+  snap to the live destination guarantees the resting position is exact.
+- Spawn positions and timing are otherwise unchanged: the formation slot is
+  the destination, and nothing about wave pacing, counts, spacing or the
+  protection window moves.
+- Entities with autonomous positioning (`autonomousPositioning`, e.g. the
+  Raider, whose patrol/attack state machine drives its own position) are
+  exempt: they emerge at the portal and their own motion carries them out,
+  avoiding a position pop when the spawn window ends. Entities without the
+  spawning seams (e.g. test stubs) are created straight on their slot.
+- The Diver's existing movement pipeline (dive phase, re-anchor glide) is
+  untouched: transit only writes the container position while the entity is
+  spawning, and the formation/dive logic takes over once the spawn state is
+  cleared.
+
 **Implementation.**
 
 - `src/vfx/wormholeSpawn.ts` owns the wormhole VFX (`spawnWormholeOpen` /
-  `spawnWormholeClose`) and the dt-driven growth helpers
-  (`startSpawnAnimation`, `updateSpawnAnimation`, `isEnemySpawning`). The
-  spawn state is stored as entity data, so any `Container`-based entity works.
+  `spawnWormholeClose`), the dt-driven growth helpers
+  (`startSpawnAnimation`, `updateSpawnAnimation`, `isEnemySpawning`) and the
+  `WormholeController` shared lifecycle. The spawn state is stored as entity
+  data, so any `Container`-based entity works.
 - `BaseEnemy` exposes `isSpawning` / `setSpawning()` — the single flag every
   shared collision/fire/absorption gate reads.
-- `PlayScene._spawnEnemy` starts the animation; `PlayScene._updateSpawnAnimations`
-  advances it before collisions so an enemy that finishes growing this frame
-  is collidable on the same frame; the wormhole closes once every wave enemy
-  has finished.
-- `GymFormationScene.create` starts the animation for each formation entity
-  and `_updateSpawnAnimations` advances/closes it, so `GymFodderEnemies` and the
-  other formation gyms are in lock-step with the game.
+- `PlayScene._spawnEnemy` instantiates each enemy **at the wave's resolved
+  wormhole portal** (`_spawnEnemy(spawn, wormholeOrigin)`) instead of its
+  formation slot, starts the animation with a destination resolver for the configured
+  formation position (`spawn.startX/startY + offset × spacing`, tracking live
+  drift/march state), and `PlayScene._updateSpawnAnimations` advances it
+  before collisions so an enemy that finishes growing this frame is
+  collidable on the same frame; the wormhole closes once every wave enemy has
+  finished.
+- `GymFormationScene` builds the same pattern for each formation entity
+  through the shared `_spawnFormation()` helper (used by `create()` and the
+  wipe→respawn / carry-over respawn paths): the entity is created at the
+  portal (where the wormhole opens) with a destination resolver for its live
+  formation slot. `_updateSpawnAnimations` advances/closes it, so
+  `GymFodderEnemies` and the other formation gyms are in lock-step with the
+  game — a respawned formation enters through a fresh wormhole exactly as the
+  game's next wave does.
 - Both scenes expose a `finishSpawnAnimations()` test seam that completes the
   animation without advancing wave timers/asteroid spawns, so collision tests
   can observe fully-spawned enemies deterministically.
 
-**Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters and
-  the dt-driven growth curve; `PlayScene.test.ts` (describe
-  “wormhole spawn animation”) and `GymFodderEnemies.test.ts` (describe
-  “wormhole spawn animation parity”) cover the spawn-protection gates in both
-  scenes.
+**Single-live lifecycle (AH-0MV9KHLV8006GMX6).** At most **one** wormhole is
+live at a time. Both scenes owns a `WormholeController` (`vfx/wormholeSpawn.ts`):
+`open(x, y)` first closes any still-open wormhole (so a second `spawnWave()` /
+formation respawn never strands the previous one), and `close()` is idempotent.
+The close is driven everywhere a live wormhole could otherwise be left behind:
+
+- `_updateSpawnAnimations`/`finishSpawnAnimations` close once every entity has
+  finished growing (scale→0, alpha→0, registry removal, destroy).
+- `PlayScene._startTransition` closes any wormhole still open when a
+  wave/level/boss transition begins — the normal close tick is gated behind
+  the non-transition branch, so a mid-spawn timeout/carry-over no longer
+  leaves the wormhole frozen on screen.
+- `resetRunState` closes on run reset/restart.
+- Gym formation respawns re-open a wormhole through the controller (which
+  closes any previous first), keeping the gym matched to the game.
+
+**Portal placement (AH-0MV8BR9Y70079TKC).** The wave wormhole is opened at
+an **independent position well away from the player** — never at the first
+enemy's formation slot — and every formation enemy is anchored **relative to
+the portal** rather than to the screen. The shared rule lives once in
+`src/vfx/wormholeSpawn.ts` (gym↔game parity, §5.1):
+
+- `placeWavePortal()` is a pure function of (formation geometry, playfield
+  bounds, player state) with an injected RNG (used only for exact-distance
+  ties — deterministic replays stay deterministic). With **no player** (the
+  formation gyms have no in-game ship) it returns the formation base
+  unchanged, so gym behaviour is unchanged.
+- **`D_MIN` = the largest of the formation's height or width**, derived from
+  the planned wave's bounding box (`formationExtents(spawns)`) — the single
+  source, never hard-coded per call site. The portal keeps `D_MIN` Euclidean
+  distance from the player's live position **and** from its position
+  projected `WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS` (2 s ≈ the
+  open+growth window) along its current velocity vector (AC1/AC2).
+- When the planned anchor already satisfies `D_MIN` it is kept untouched —
+  the formation stays exactly where the wave designer placed it. Otherwise
+  the nearest conforming candidate is chosen, so the formation displaces as
+  little as possible. When **no** in-bounds candidate meets `D_MIN`, the
+  furthest-available candidate is used and the position is still **never
+  placed inside the player's hull radius + a safety margin** (AC4).
+- `PlayScene.spawnWave()` derives the extents, calls `placeWavePortal()`
+  with the player's live movement state, then translates every planned spawn
+  onto the portal with `anchorSpawnsToPortal()` (portal-relative offsets —
+  spacing, counts, offsets and wave pacing unchanged; a moved portal moves the
+  whole formation with it). The gyms call the same `placeWavePortal()`
+  without a player and lay the formation out from the returned base.
+- `GymFormationScene._spawnFormation()` routes its entity placement through
+  `computeFormationPosition(portal, …)` so both scenes share one code path;
+  with the portal pinned to the formation base this is byte-for-byte the old
+  arithmetic.
+
+**Orbital-slot entry (AH-0MVEXVME1004SIIS).** A formation entity may expose a
+**live formation-slot seam** (`formationSlot(baseX, baseY)` — currently the
+Phaser). When it does, the wormhole transit targets the entity's **live
+orbital slot** rather than its grid/line slot, so a spawning Phaser streams
+out of the wormhole and settles directly onto the ring instead of appearing
+in a line and snapping. This reuses the existing per-frame destination
+resolver (`startSpawnAnimation`'s `destFn`):
+
+- `PlayScene._spawnEnemy` and `GymFormationScene._spawnFormation` resolve
+  `entity.formationSlot(baseX, baseY)` every frame when the seam is present;
+  every other enemy keeps the grid destination, unchanged.
+- The orbital maths lives **once** in `src/utils/formations.ts` —
+  `orbitalPhaseAngle(index, count)` (`phase_i = i × 2π / count`, default count
+  `DEFAULT_ORBITAL_FORMATION_COUNT = 4`), `orbitalPhaseIndex(offset)` and
+  `computeOrbitalSlot(baseX, baseY, phase, radius, elapsedAngle)` — and is
+  consumed by `PhaserEntity.applyFormationPosition` and, through the same
+  seam, by the two scene resolvers, so the game and the gym cannot diverge
+  (gym↔game parity, §5.1).
+- `buildOrbitalPhaseOffsets(count)` stamps the group's actual size on each
+  offset (`phaseCount`), so a scaled group (e.g. the difficulty sequencer's
+  `phaser × 12`) produces twelve distinct slots rather than repeating four
+  phases; single-entity constructors keep the four-point square.
+- Because the destination is re-resolved each frame and `applyFormationPosition`
+  uses the **same** shared helper, the Phaser lands on its live orbital slot
+  with no visible position jump when the spawn window ends (post-spawn delta
+  ≤ 1 px). The `isSpawning` gates and the 3 s protection window are unchanged.
+
+**Tests.** `src/vfx/wormholeSpawn.test.ts` covers the VFX tween parameters,
+  the dt-driven growth curve, the **transit movement** (origin/destination
+  recorded in the spawn state, holding at the origin through the open delay,
+  moving toward the destination in lock-step with growth, arriving exactly on
+  it by the end of the 3 s window, monotonically dt-driven and never
+  overshooting, and staying put when no destination is supplied), the
+  `WormholeController` single-live lifecycle, and the placement/anchoring
+  helpers (`placeWavePortal`:
+  far-anchor fast path, near-player rejection, trajectory projection,
+  no-safe-candidate fallback, hull safety, gym no-player path;
+  `anchorSpawnsToPortal`: portal-relative translation preserving spacing);
+  `PlayScene.test.ts` (describe “wormhole spawn animation” and “wave portal
+  placed away from the player”) and
+  `GymFodderEnemies.test.ts` (describe “wormhole spawn animation parity”)
+  cover the transit from the wormhole origin to the formation destination
+  (game and gym, including arrival within the 3 s window) and the
+  spawn-protection gates **during transit** in both scenes plus the regression cases
+  (second `spawnWave()` while a wormhole is live, transition/timeout
+  mid-spawn, a gym wipe→respawn re-opening one wormhole, and the portal
+  staying ≥ `D_MIN` away from the player and its trajectory).
 
 ### 3.2 Existing scenes (reference implementations)
 
@@ -928,6 +1106,7 @@ enemy is protected (AC4):
 | `GymTank` | `Tank` | 3-column rectangle | radial burst (array) | mechanical-whine advance cue (≥ 500 ms) + cannon thump (entity-level, one cue+thump pair per burst inside `tryFireRadialBurst()`, no gap between cue and thump) |
 | `GymSwarm` | `Swarm` | loose 3–5 clusters (`buildSwarmClusterOffsets`) | coordinated burst (single per member) | volley burst sound (`playSwarmBurstSound()`, entity-level, once per volley, no advance cue) |
 | `GymBoss` | `Boss` | single entity (centred) | spread / spiral / pulse / desperation (phase-gated) | per-phase telegraph cue (`playBossPhaseCue()`) at telegraph start + `playBossFireSound()` once per volley (entity-level) |
+| `GymMiniBoss` | `MiniBoss` | single entity (centred) | config-driven per-phase set (spread / spiral / pulse / combined) with configurable HP, colour and optional per-phase minions | shared Boss cues (per-phase telegraph + once-per-volley fire sound) |
 
 `GymBoss` also consumes the shared boss hooks (§2.1): its `tick(dt)`
 advances the Boss through `CombatScene._advanceBoss`, teleports avoid the
@@ -935,6 +1114,71 @@ boss via the shared `getAdditionalTeleportBodies()`, and its phase minions
 are summoned from the shared `planMinionSpawns()` plan and advanced on the
 same tick path through `onBossAdvanced()` — so the gym Boss runs the same
 code as the shipped game's Boss (AH-0MUII3E5E006A93F).
+
+### 3.3 Config-driven mini-bosses (`MiniBoss` / `GymMiniBoss`)
+
+The mini-boss family (`src/entities/MiniBoss.ts`, AH-0MVCRAYSH0014BQJ) is the
+config-driven parallel of the Boss: it **extends** `Boss`, so the telegraph →
+volley → interval cycle, the per-phase health bar, the damage/defeat result,
+figure-of-eight movement and the shared `CombatScene._advanceBoss` tick are
+the single shipped implementation. `Boss` gained only additive,
+default-preserving config hooks (`phaseCount`, `hitPointsPerPhase`,
+`bodyColor`, `desperationColor`, overridable `firePhase()`); the shipped
+four-phase Boss behaviour is unchanged.
+
+A `MiniBossConfig` supplies a per-level identity (`level`, `name`), a
+`pattern` per phase, a uniform `hpPerPhase`, a body colour and optional
+per-phase minion waves:
+
+```ts
+new MiniBoss(scene, {
+  level: 4,
+  name: 'Violet Warden',
+  x, y, formationOffset,
+  color: 0xcc44ff,
+  hpPerPhase: 20,
+  phases: [{ pattern: 'spread' }, { pattern: 'spiral' }, { pattern: 'pulse' }],
+  minions: [
+    { phase: 1, groups: [{ enemyKey: 'scout', formation: 'v', count: 4,
+      spacingX: 28, spacingY: 24, startX: 120, startY: 140 }] },
+  ],
+});
+```
+
+- **No-config-safe default** — `{ x, y, formationOffset }` alone is valid
+  (one `spread` phase, `MINI_BOSS_DEFAULT_HP_PER_PHASE` hits, default colour).
+- **Validation** — `resolveMiniBossConfig()` / `validateMiniBossConfig()`
+  throw `MiniBossConfigError` for an empty phase list (phases ≥ 1), a
+  non-positive HP value, an unknown pattern, or an out-of-range minion phase.
+- **Pattern set reuses Boss code** — each phase dispatches to the shipped
+  `tryFireSpreadBullets` / `tryFireSpiralBullets` / `tryFirePulseBullets` /
+  `tryFireDesperationBullets`, so there is no forked firing logic.
+- **Optional minions live in the entity** — they spawn from the shared
+  `planGroupSpawns()` planner, are built through `createEnemyFromConfig()`,
+  and fire through the shared `fireForEnemy()` dispatcher on the same tick,
+  so the game and every gym run identical minion code.
+
+`GymMiniBoss` boots one `MiniBoss` through `GymFormationScene` and mirrors
+`GymBoss`: `getBoss()` feeds the shared tick, `getEnemyEntities()` includes the
+config-summoned minions in the shared collision pass, and the DAMAGE button
+advances phases at the configured HP. It is surfaced as a dedicated
+**Mini-Boss** row in the gym index's ENEMIES column
+(`MINI_BOSS_SCENE_KEY`).
+
+**Game wiring (AH-0MVCRBISU006NUN5).** `PlayScene` spawns the active level's
+mini-boss when the `WaveManager` opens the level's flagged wave-10 encounter
+(`miniBossTriggered`/`miniBossActive`, AH-0MVCRAV3B0069AIJ) and registers it as
+a gating dynamic spawn, so the level completes only once the mini-boss **and**
+the wave's escorts are destroyed. It builds the entity through
+`miniBossConfigFor(level)` — the generic no-config-safe default until the
+per-level mini-boss designs land — and routes it through the shared
+`getBoss()`/`_advanceBoss()` tick, so phases, the screen-fixed health bar and
+Teleport avoidance are the same `Boss` machinery as the final boss. The
+mini-boss wave has **no wave time limit** (like the final boss), so a timeout
+can never carry the run past an undefeated encounter. On defeat, `PlayScene`
+fires the reward then checkpoint hooks exactly once
+(`setMiniBossRewardHook` / `setMiniBossCheckpointHook`, guarded while the
+reward/checkpoint features are absent) before advancing the level.
 
 ---
 
@@ -986,7 +1230,11 @@ paths, E5 clusters, Boss phases), extend the entity's
 `applyFormationPosition` or add periodic per-frame hooks **in the entity**,
 not by copying the scene boilerplate. If the base class genuinely needs a
 new seam, that belongs in `src/scenes/gym/core/GymFormationScene.ts` (plus
-its tests) — see §5.
+its tests) — see §5. The E4 Phaser's orbital slot is computed by the shared
+pure helpers in `src/utils/formations.ts` (`computeOrbitalSlot`,
+`orbitalPhaseAngle`) and exposed through the entity's `formationSlot()`
+seam, so the wormhole-transit resolver reuses the same geometry rather than
+duplicating it (AH-0MVEXVME1004SIIS).
 
 ---
 
@@ -1455,7 +1703,10 @@ Public loader helpers (unchanged signatures): `loadEnemyConfig(key)`
 
 ### 8.3 FormationKind & shot-pattern registries
 
-- `src/utils/formations.ts`: `buildOrbitalPhaseOffsets`, `buildSingleOffset`,
+- `src/utils/formations.ts`: `buildOrbitalPhaseOffsets` (stamps each offset
+  with the group's actual size via `phaseCount`), `buildSingleOffset`,
+  `orbitalPhaseAngle` / `orbitalPhaseIndex` / `computeOrbitalSlot` (the shared,
+  pure, count-based orbital geometry; `DEFAULT_ORBITAL_FORMATION_COUNT = 4`),
   `EnemyFormationKind`, `FORMATION_BUILDERS`, `getFormationBuilder(kind)` (unknown → `buildVFormationOffsets`),
   `formationSpawnCount(kind, count)` — the number of offsets a builder
   produces, used as the source of truth for a group's spawned size.
@@ -1644,7 +1895,8 @@ each wave. This is what fixed the producer-audit rejection of this work item.
    configured `health`).
 5. **CSV hygiene.** The committed CSV is the source of truth; a missing or
    malformed file (or a failed dev fetch) falls back to the seed defaults
-   without throwing, and `npm test` resets the registry between suites. The
+   without throwing, and the full suite (`npm --silent test`, i.e.
+   `/skill:test --type full`) resets the registry between suites. The
    dev plugin validates every write before touching the file and writes
    atomically, so an interrupted write cannot corrupt the committed CSV.
 
@@ -1749,16 +2001,16 @@ are not strictly monotonic across Levels 6–10.
 
 | Level | Theme | Difficulty (0–100) |
 |-------|-------|-------------------:|
-| 1 | Entry | 6.01 |
-| 2 | Descent | 10.95 |
-| 3 | The Core | 12.30 |
-| 4 | Firestorm | 20.87 |
-| 5 | Predictable Death | 28.56 |
-| 6 | Invasion | 19.36 |
-| 7 | Segmented Assault | 22.43 |
-| 8 | Gridlock | 19.80 |
-| 9 | Orbital Siege | 23.15 |
-| 10 | The Gauntlet | 22.12 |
+| 1 | Entry | 6.75 |
+| 2 | Descent | 12.85 |
+| 3 | The Core | 14.22 |
+| 4 | Firestorm | 21.44 |
+| 5 | Predictable Death | 28.64 |
+| 6 | Invasion | 17.12 |
+| 7 | Segmented Assault | 22.46 |
+| 8 | Gridlock | 20.83 |
+| 9 | Orbital Siege | 24.07 |
+| 10 | The Gauntlet | 22.84 |
 
 Per-archetype scores for the seed enemies (with firing where the archetype
 fires): Scout 13.57, Diver 21.46, Tank 27.08, Phaser 29.20, Swarm 18.87,
@@ -1774,8 +2026,10 @@ Asteroid's split-chain contribution).
 
 #### Campaign structure and design rules (10 levels)
 
-The ten-level campaign (parent epic AH-0MV29SBAQ000HQR2) interleaves the
-classic-arcade roster with the existing archetypes:
+The ten-level campaign (parent epic AH-0MV29SBAQ000HQR2; expanded to 10 waves
+per level by AH-0MVCC8XSS007P01Z / AH-0MVCYANT6003SG5C) interleaves the
+classic-arcade roster with the existing archetypes. Every level spans exactly
+ten waves, with wave 10 the level's mini-boss (`miniBoss: true`):
 
 | Level | Theme | Featured showcase |
 |-------|-------|-------------------|
@@ -1789,6 +2043,10 @@ classic-arcade roster with the existing archetypes:
 | 8 | Gridlock | Frogger `laneTraffic` lanes + Robotron `horde` + Defender `raider` dive |
 | 9 | Orbital Siege | Missile-Command `orbital-strike` arcs + orbital Phasers + `ghosts` |
 | 10 | The Gauntlet | Dense mixed finale of the remaining roster |
+
+Wave 10 of **every** level is its bespoke mini-boss (see §1.0): Pulse Warden,
+Coil Sentinel, Shard Matron, Void Herald, Ion Tyrant, Cinder Maw, Prism Wraith,
+Gravemind, Star Eater and The Hollow King for levels 1–10 respectively.
 
 Three design rules are enforced by tests:
 
@@ -1831,7 +2089,11 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
 - **Config:** `src/data/difficulty-curves.csv` — one row per `(level, wave)`.
   Columns: `level` (1-based), `levelName`, `wave` (1-based), `targetDifficulty`
   (0–100) and an optional `generation` (`curve` | `fixed` | `dynamic`, default
-  `curve`). The number of rows for a level sets its wave count; the level
+  `curve`). The number of rows for a level sets its wave count; in the
+  expanded campaign every level 1–10 has exactly **ten rows (100 waves)**, and
+  row 10 of every level is that level's hand-authored mini-boss wave
+  (`generation: fixed`, mapping to the `miniBoss: true` wave in
+  `Formations.ts`). The level
   count and names are therefore data-driven. The CSV is loaded through the same
   `configStore` / `configCsvPlugin` pipeline as the enemy/ship CSVs (editable in
   dev via `/api/csv/...`, bundled read-only in production) with the
@@ -1965,7 +2227,7 @@ checklist item 6). Scope rules matter — base-class-owned sounds are played
 | E1 Scout | `playScoutAdvanceCue()` — at tell start, ≥ 500 ms lead | `playScoutFireSound()` — at the shot | **entity-level** two-phase tell, per aimed shot |
 | E2 Diver | none (no advance cue — fire sound alone is the tell); `playDiverDiveStartSound()` — rising whoosh/crack once at the FORMATION→DIVING transition (the dive danger cue) | `playDiverFireSound()` — short low/nasal crack; `playDiveSound()`/`stopDiveSound()` — refcounted shared sustained dive whoosh for the ~2 s dive (stopped at the end of the dive, `destroySelf()`, and `destroy()`) | **entity-level**, fire exactly once per spread burst inside `tryFireSpreadBurst()`; dive-start cue once per dive in `_startDive()` |
 | E3 Tank | `playTankAdvanceCue()` — mechanical whine (≥ 500 ms, `TANK_ADVANCE_CUE_DURATION`) | `playTankFireSound()` — heavy cannon thump | **entity-level**, one cue+thump pair per radial burst inside `tryFireRadialBurst()` — the cue flows with **no gap** into the thump |
-| E4 Phaser | `playPhaserAdvanceCue()` — rising sine 660→880 Hz (replaces the old inline `_playAdvanceCue()`, `PHASER_ADVANCE_CUE_DURATION`) | `playPhaserFireSound()` — short sharp blip, scheduled at the cue's end | **entity-level**, one advance cue + fire sound pair at tell start inside `applyFormationPosition()` (matching the Scout no-gap pattern) — no audio on the firing branch (no double-play) |
+| E4 Phaser | `playPhaserAdvanceCue()` — rising sine 660→880 Hz (replaces the old inline `_playAdvanceCue()`, `PHASER_ADVANCE_CUE_DURATION`); runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`) | `playPhaserFireSound()` — short sharp blip, scheduled at the cue's end; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`) | **entity-level**, one advance cue + fire sound pair at tell start inside `applyFormationPosition()` (matching the Scout no-gap pattern) — no audio on the firing branch (no double-play) |
 | E5 Swarm | none (no warning cue) | `playSwarmBurstSound()` | **entity-level** volley burst, once per volley inside `tryFireBurstBullet()` |
 | Boss | `playBossPhaseCue()` — per-phase telegraph tone (retained) | `playBossFireSound()` — deep resonant boom (in `src/audio/effects.ts`) | **entity-level**, once per volley in each attack method (`tryFireSpreadBullets`, `tryFireSpiralBullets`, `tryFirePulseBullets`, `tryFireDesperationBullets`) |
 
@@ -1974,15 +2236,25 @@ are produced** — the entity's own fire/tell logic (Tank's `tryFireRadialBurst`
 Swarm's `tryFireBurstBullet`, Phaser's tell, the Boss's attack methods, the
 Scout's two-phase tell) — never re-added in a thin scene class.
 
+**Runtime volume-scaling precedents.** Loudness is trimmed at playback through named constants in
+`src/audio/effects.ts` where a baked asset is already correctly tiered but needs to sit lower in the
+mix: `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×) for the Tank and Scout advance+fire pairs
+(AH-0MV74ROYR009X8U3), `HOLD_FULL_FIRE_VOLUME_SCALE` for the hold-to-full-fire warning, and
+`PHASER_FIRE_VOLUME_SCALE` (0.5×) for the Phaser advance+fire pair (AH-0MVFHE6VP006GEX0), which
+brought the previously full-volume Phaser sequence level with the Tank/Scout cues. Prefer a runtime
+scale when the asset tier is already correct and guard-pinned; prefer a recipe `mix`-bus retune when
+the baked amplitude itself is off-tier (see `docs/AUDIO_ENEMY_BALANCE.md`).
+
 **ToneForge recipes per cue:** Scout advance `aihell-scout-advance`, Scout fire
-`weapon-laser-zap`; Diver dive-start `aihell-diver-dive-start`, dive loop
+`aihell-scout-fire` (baked, seed 32181 — AC4, AH-0MVCRR2H2007VPDU; replaces the
+near-clipping `weapon-laser-zap`); Diver dive-start `aihell-diver-dive-start`, dive loop
 `aihell-diver-dive-loop`, fire `aihell-diver-fire`, destruction
-`aihell-diver-destruction` (multi-seed 32193–32195); Tank advance
+`aihell-diver-destruction` (multi-seed 32173/32176/32197 — AC3 scale-degree variants); Tank advance
 `aihell-tank-advance`, fire `aihell-tank-fire`; Phaser advance
 `aihell-phaser-advance`, fire `aihell-phaser-fire`; Swarm burst
 `aihell-swarm-burst`; Boss phase cue `aihell-boss-phase-cue` (per-phase seeds
-32204–32207), Boss fire `aihell-boss-fire`; spawn `aihell-enemy-spawn`;
-destruction `aihell-enemy-destruction` (multi-seed 32110–32112). Full catalogue:
+32242/32227/32207/32204 — AC3 scale-degree variants), Boss fire `aihell-boss-fire`; spawn `aihell-enemy-spawn`;
+destruction `aihell-enemy-destruction` (multi-seed 32113/32128/32144 — AC3 scale-degree variants). Full catalogue:
 [Audio cue-to-recipe mapping](AUDIO_TONEFORGE_CUE_MAPPING.md).
 
 ### Projectile identity & per-shot feel (per-enemy visuals epic)

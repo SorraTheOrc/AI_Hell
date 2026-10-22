@@ -207,4 +207,13 @@ export class Centipede extends BaseEnemy {
     const segment = this._chain.segment(this._segmentId);
     if (segment) this.setPosition(segment.x, segment.y);
   }
+
+  /**
+   * Centipede segments move as a linked chain (their own
+   * `applyFormationPosition` ignores the formation base), so the wormhole
+   * transit interpolation must not override their position; they still
+   * emerge at the wormhole origin and chain out from there
+   * (AH-0MV8BSMXC0097KLW).
+   */
+  readonly autonomousPositioning = true;
 }

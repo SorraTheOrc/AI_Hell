@@ -43,16 +43,18 @@ accessors). For each cue:
 3. A single disposition was assigned from exactly one of
    **`existing-recipe`**, **`new-recipe`**, or **`retired`**.
 
-Only two cues map to existing ToneForge recipes (`weapon-laser-zap`,
-`card-token-earn`); the remainder need game-specific recipes or stacks because
-the shipped catalogue is card-game oriented. Three cues are retired.
+Only one cue still maps to an existing ToneForge recipe (`card-token-earn`);
+the former `weapon-laser-zap` scout-fire mapping was swapped to the in-repo
+`aihell-scout-fire` recipe under AC4 (AH-0MVCRR2H2007VPDU); the remainder
+need game-specific recipes or stacks because the shipped catalogue is
+card-game oriented. Three cues are retired.
 
 ## Disposition summary
 
 | Disposition | Count | Notes |
 |-------------|-------|-------|
-| `existing-recipe` | 3 | Scout fire (`weapon-laser-zap`), power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
-| `new-recipe` | 37 | Game-specific cues in `effects.ts`, including the thruster hum |
+| `existing-recipe` | 2 | Power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
+| `new-recipe` | 38 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4), plus the thruster hum |
 | `new-recipe` (outside `effects.ts`) | 4 | `Boss.ts` inline cues using `blip()` — see the Boss.ts section |
 | `retired` | 3 | `playMajorExplosionSound`, `playTankDestructionSound`, `playWeaponChangeSound` |
 | control companion (in cue table) | 2 | `stopDiveSound`, `stopThrusterSound` — start/stop lifetime mapping |
@@ -86,10 +88,10 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playPowerUpCollectPopSound` | Saw 600→100 Hz + filtered noise transient, ≤ 0.08 s | Power-up pickup (tactile pop) | `dropLayer` | new | `aihell-pickup-pop` |
 | `playWeaponChangeSound` | Distinctive whoosh ("armed with new weapon") | Weapon change | **none** (no call sites) | **retired** | — (see Retired cues) |
 | `playSwarmBurstSound` | Saw buzz 120→80 Hz + sine whoosh 200→600 Hz, ~0.2 s | Swarm volley buzz | `entities/Swarm` | new | `aihell-swarm-burst` |
-| `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
-| `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s, scheduled at cue end | Enemy fire / no-gap | `entities/Phaser` | new | `aihell-phaser-fire` |
+| `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
+| `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s, scheduled at cue end; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) | Enemy fire / no-gap | `entities/Phaser` | new | `aihell-phaser-fire` |
 | `playScoutAdvanceCue` | Rising sine, pitched above Phaser, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Scout`, `entities/OrbitalStrike` | new | `aihell-scout-advance` |
-| `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Scout` | **existing** | `weapon-laser-zap` |
+| `playScoutFireSound` | High square laser sweep, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Scout` | new | `aihell-scout-fire` (since AC4, AH-0MVCRR2H2007VPDU) |
 | `playDiverDiveStartSound` | Rising saw 150→600 Hz + filtered noise, ~0.25 s | Dive danger cue | `entities/Diver` | new | `aihell-diver-dive-start` |
 | `playDiveSound` | Bandpass noise sweep 300→900 Hz, refcounted shared ~2 s voice | Diver dive | `entities/Diver` | new | `aihell-diver-dive-loop` |
 | `stopDiveSound` | Stops/releases the shared dive voice | Diver dive | `entities/Diver` | control | (companion to `aihell-diver-dive-loop`) |
@@ -167,18 +169,67 @@ baked durations must preserve the existing 0.6 s lead:
 | `playPhaserAdvanceCue` | `PHASER_ADVANCE_CUE_DURATION` 0.6 s | `playPhaserFireSound` |
 | `playTankAdvanceCue` | `TANK_ADVANCE_CUE_DURATION` 0.6 s | `playTankFireSound` |
 
+### Amplitude tiers (AC2 — AH-0MVD02WZI004QCTP)
+
+Every **enemy** cue is gain-staged onto a documented category-relative RMS tier, enforced by the
+balance guard (`scripts/audio-balance-guard.mjs`) as part of `npm run build-audio:verify`:
+
+| Tier | RMS target (±1.5 dB) | Peak ceiling | Cues |
+|---|---|---|---|
+| Ambience | ≤ 0.02 | 0.50 | `aihell-diver-dive-loop` (`playDiveSound`) |
+| Subtle one-shots | 0.055 | 0.50 | `aihell-enemy-spawn`, `aihell-tank-advance`, `aihell-scout-advance`, `aihell-phaser-advance`, `aihell-phaser-fire`, `aihell-diver-fire`, `aihell-swarm-burst`, `aihell-diver-dive-start`, `aihell-bullet-destruction` |
+| Heavy one-shots | 0.090 | 0.50 | `aihell-scout-fire`, `aihell-enemy-destruction`, `aihell-diver-destruction`, `aihell-boss-destruction`, `aihell-tank-fire`, `aihell-boss-fire`, `aihell-boss-hit`, `aihell-boss-phase-cue`, `aihell-boss-spawn`, `aihell-boss-phase-transition` |
+
+The tier is realised by the recipe's `mix` bus gain (one value per out-of-tier cue was retuned in AC2);
+multi-seed variant ranges (enemy/diver destruction, boss-phase-cue) are additionally checked to stay
+within < 0.5 dB of each other. See [`docs/AUDIO_ENEMY_BALANCE.md`](AUDIO_ENEMY_BALANCE.md) for the
+analysis report (pre-change spread ~7.9× peak / ~9.3× RMS and post-change per-asset values). The
+Scout fire cue was re-created as the in-repo `aihell-scout-fire` recipe under AC4
+(AH-0MVCRR2H2007VPDU) and sits in the Heavy tier; `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×) runtime
+behaviour is unchanged.
+
+The two Phaser fire-sequence cues (`playPhaserAdvanceCue`, `playPhaserFireSound`) are **runtime-
+trimmed** at ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) even though their baked assets
+sit inside the Subtle tier — a deliberate constraint deviation (doc `AUDIO_ENEMY_BALANCE.md` §4.3) so
+the Phaser sequence reads level with the Tank/Scout ×0.5 advance+fire pairs. The `mix`-bus tier
+tables above are the **baked** tier; effective playback RMS is half of the baked value for these two
+cues (advance 0.0564→0.0282, fire 0.0550→0.0275).
+
+### A-minor scale conformance (AC3 — AH-0MVCRR203005HKVZ)
+
+Every pitched oscillator automation point (static frequency, `set`/ramp start,
+ramp end, waypoints) in every **enemy** recipe snaps to the nearest **A natural
+minor** note (`A B C D E F G`, equal temperament, A4 = 440 Hz, within 10 cents).
+The multi-seed jitter ranges were converted to **scale-degree variants**: integer
+`startSlot`/`endSlot` parameters map each seed onto a distinct A-minor note pair
+via ToneForge's declarative override expressions (e.g. `startSlot * 220`),
+preserving per-kill variation without off-scale pitches. Filtered-noise-only
+cues (only `aihell-diver-dive-loop` / `playDiveSound` today) are unpitched and
+conformant by nature — the guard exempts them.
+
+The A natural minor note ladder used (equal temperament): A0 27.5, B0 30.87,
+C1 32.70, D1 36.71, E1 41.20, F1 43.65, G1 49.00, A2 110, B2 123.47, D3 146.83,
+E3 164.81, F3 174.61, G3 196, A3 220, B3 246.94, C4 261.63, D4 293.66, E4 329.63,
+F4 369.99, G4 392, A4 440, B4 493.88, C5 523.25, D5 587.33, E5 659.26, F5 698.46,
+G5 783.99, A5 880, B5 987.77, D6 1174.66, E6 1318.51. The balance guard
+(`scripts/audio-balance-guard.mjs`) asserts this invariant over every enemy cue
+as part of `npm run build-audio:verify` (AC5).
+
 ## New recipes to author (input to AH-0MUTYV8480019Z51)
 
 Seed block **32100–32199** is reserved for game-specific recipes to keep them
 clear of ToneForge's existing card/impact seeds. One-shots are rendered at a
 single seed; cues whose original character used per-invocation jitter
 (`EXPLOSION_PITCH_JITTER` ±15 %) are baked as a **3-variant seed range** so
-repeated kills still vary.
+repeated kills still vary. Under **A-minor scale conformance (AC3,
+AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
+**scale-degree variants**: each seed anchors on a distinct A-minor note pair
+(start + end), so per-kill variation is preserved without off-scale pitches.
 
 | Proposed slug | Source cue | Character to reproduce | Seed(s) |
 |---------------|------------|------------------------|---------|
 | `aihell-enemy-spawn` | `playSpawnSound` | Rising square blip 220→880 Hz, 0.18 s | 32101 |
-| `aihell-enemy-destruction` | `playDestructionSound` | Descending saw 440→60 Hz, 0.28 s | 32110–32112 |
+| `aihell-enemy-destruction` | `playDestructionSound` | Descending saw 440→60 Hz, 0.28 s — scale-degree variants: starts A3/A4/E5 → A1 (AC3) | 32113, 32128, 32144 |
 | `aihell-player-hull-breach` | `playPlayerDestructionSound` | Layered thump + body + HP noise tail (stack of three primitives) | 32120 |
 | `aihell-bullet-destruction` | `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s | 32130 |
 | `aihell-tank-advance` | `playTankAdvanceCue` | Saw 150→320 + square sub 75→160 Hz, 0.6 s | 32140 |
@@ -190,10 +241,11 @@ repeated kills still vary.
 | `aihell-phaser-advance` | `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s | 32170 |
 | `aihell-phaser-fire` | `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s | 32171 |
 | `aihell-scout-advance` | `playScoutAdvanceCue` | Rising sine above the Phaser tell, 0.6 s | 32180 |
+| `aihell-scout-fire` | `playScoutFireSound` | High square laser sweep (square, E5→A4), 0.108 s — AC4 swap (AH-0MVCRR2H2007VPDU) | 32181 |
 | `aihell-diver-dive-start` | `playDiverDiveStartSound` | Rising saw 150→600 Hz + noise, ~0.25 s | 32190 |
 | `aihell-diver-dive-loop` | `playDiveSound` | Bandpass noise sweep 300→900 Hz, loopable ~2 s | 32191 |
 | `aihell-diver-fire` | `playDiverFireSound` | Saw 280→120 Hz, 0.08 s | 32192 |
-| `aihell-diver-destruction` | `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s | 32193–32195 |
+| `aihell-diver-destruction` | `playDiverDestructionSound` | Saw 280→40 Hz + sine undertone, 0.35 s — scale-degree variants: starts E3/B3/E4 → E2, undertone E2→G0 (AC3) | 32173, 32176, 32197 |
 | `aihell-boss-fire` | `playBossFireSound` | Saw 200→50 Hz + low sine undertone | 32200 |
 | `aihell-boss-hit` | `playBossHitSound` | Punchy saw impact 320→60 Hz + square click + HP noise crack, ~0.16 s | 32208 |
 | `aihell-cannon-fire` | `playCannonFireSound` | Square 800→400 Hz, ~0.08 s | 32210 |
@@ -248,7 +300,7 @@ avoid a partially migrated palette. Discovered during this audit.
 | `playBossSpawnSound` | Sine 80→220 Hz, 0.45 s | `aihell-boss-spawn` | 32201 |
 | `playBossPhaseTransitionSound` | Square 220→880 Hz, 0.35 s | `aihell-boss-phase-transition` | 32202 |
 | `playBossDestructionSound` | Saw 180→20 Hz, 0.6 s | `aihell-boss-destruction` | 32203 |
-| `playBossPhaseCue(phase)` | Per-phase square rise (4 variants) | `aihell-boss-phase-cue` | 32204–32207 |
+| `playBossPhaseCue(phase)` | Per-phase square rise — scale-degree variants: phases rise A3/A4/E5/A5 → A5 (AC3) | `aihell-boss-phase-cue` | 32242, 32227, 32207, 32204 |
 
 ## Retired cues
 
@@ -270,7 +322,7 @@ synthesis branch, shrinking the dead-code surface.
 | `setSfxMuted(on)` | Retained. Routes to the shared Phaser sound manager mute (parent AC5). |
 | `getAudioContext()` | Retained as the single shared-context accessor; must continue to resolve to exactly one `AudioContext` under Phaser (parent AC6). |
 | `blip(freqStart, freqEnd, duration, type, volume)` | Retired synthesis helper: replaced by recipe-backed WAV playback. Its remaining caller (`Boss.ts`) is migrated to dedicated Boss recipes (above). |
-| `explosionPitchFactor()` / `EXPLOSION_PITCH_JITTER` | Retired as a runtime function; the ±15 % pitch variation is approximated at build time by the 3-variant seed ranges for `aihell-enemy-destruction` and `aihell-diver-destruction`. |
+| `explosionPitchFactor()` / `EXPLOSION_PITCH_JITTER` | Retired as a runtime function; the ±15 % pitch variation is approximated at build time by the **3-variant scale-degree seed ranges** for `aihell-enemy-destruction` and `aihell-diver-destruction` (each seed anchors on a distinct A-minor note pair — AC3, AH-0MVCRR203005HKVZ). |
 | `_get*ForTests()` / `_reset*ForTests()` accessors | Retained and re-pointed at the new playback layer so the contract tests (parent child AH-0MUTYV8RJ009MWKJ) can still assert the single-context and no-op invariants. |
 | Exported `*_HZ` / `*_VOLUME` / `*_DURATION` constants | Retained as the reference character for recipe authoring and for the audible-character audition on AH-0MUTYV8480019Z51; they are no longer runtime synthesis parameters. |
 
