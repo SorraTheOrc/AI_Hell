@@ -17,6 +17,15 @@ export interface FormationOffset {
   row: number;
   /** Formation column — negative values hug the left wing. */
   col: number;
+  /**
+   * Optional member count of the orbital formation this offset belongs to.
+   * Populated by {@link buildOrbitalPhaseOffsets} so the shared orbital
+   * geometry can distribute phases evenly across the group's **actual**
+   * size (AH-0MVEXVME1004SIIS). Absent for every non-orbital builder and
+   * for hand-written offsets; consumers fall back to
+   * {@link DEFAULT_ORBITAL_FORMATION_COUNT} (4).
+   */
+  phaseCount?: number;
 }
 
 /**
@@ -169,11 +178,55 @@ export function buildMarchFormationOffsets(count: number): FormationOffset[] {
 
 // ── Registry consumed by the enemy-config pipeline (AH-0MTFP7EIC004F1MN) ──
 
-/** Extra formation used by the Phaser orbital path (phase columns). */
+/**
+ * Extra formation used by the Phaser orbital path (phase columns).
+ *
+ * Each member's orbital phase index is encoded in `col` (row is always 0)
+ * and the group's actual size is carried on `phaseCount`, so the shared
+ * orbital geometry can spread the members evenly around the ring for any
+ * count (AH-0MVEXVME1004SIIS).
+ */
 export function buildOrbitalPhaseOffsets(count: number): FormationOffset[] {
   const offsets: FormationOffset[] = [];
-  for (let i = 0; i < count; i++) offsets.push({ row: 0, col: i });
+  for (let i = 0; i < count; i++) {
+    offsets.push({ row: 0, col: i, phaseCount: count });
+  }
   return offsets;
+}
+
+/**
+ * Default number of members in a single-ring orbital formation when the
+ * group's actual count is unknown. Preserves the historical four-point
+ * square (0°, 90°, 180°, 270°) so single-entity constructors and existing
+ * callers that omit a count are unaffected (AH-0MVEXVME1004SIIS).
+ */
+export const DEFAULT_ORBITAL_FORMATION_COUNT = 4;
+
+/**
+ * Orbital phase index of a formation offset. {@link buildOrbitalPhaseOffsets}
+ * encodes the member's index in `col` (row is always 0); the `row * 10` term
+ * keeps indices distinct if a multi-row orbital offset is ever produced.
+ * Pure and side-effect free.
+ */
+export function orbitalPhaseIndex(offset: FormationOffset): number {
+  return offset.row * 10 + offset.col;
+}
+
+/**
+ * Phase angle (radians) of orbital member `index` within a group of `count`
+ * members, evenly distributed across the full turn:
+ * `phase_i = i × 2π / count`, `i = 0…count−1` (AH-0MVEXVME1004SIIS).
+ *
+ * `count` defaults to {@link DEFAULT_ORBITAL_FORMATION_COUNT} and is clamped
+ * to at least 1, so an absent/zero count never divides by zero. Pure and
+ * side-effect free.
+ */
+export function orbitalPhaseAngle(
+  index: number,
+  count: number = DEFAULT_ORBITAL_FORMATION_COUNT,
+): number {
+  const n = Math.max(1, Math.floor(count));
+  return (index / n) * Math.PI * 2;
 }
 
 /**
@@ -305,5 +358,29 @@ export function computeFormationPosition(
   return {
     x: baseX + offset.col * spacingX,
     y: baseY + offset.row * spacingY,
+  };
+}
+
+/**
+ * World position of an orbital slot: the ring point at `phase + elapsedAngle`
+ * around the formation base `(baseX, baseY)` at `radius` (AH-0MVEXVME1004SIIS).
+ *
+ * This is the single shared orbital-slot calculation. `PhaserEntity` consumes
+ * it from both its `applyFormationPosition` (per-frame orbit) and its
+ * `formationSlot` seam; the scenes' transit-destination resolvers consume the
+ * same seam, so the gym and the game cannot diverge (AGENTS.md gym↔game
+ * parity). Pure and side-effect free — no Phaser runtime dependency.
+ */
+export function computeOrbitalSlot(
+  baseX: number,
+  baseY: number,
+  phase: number,
+  radius: number,
+  elapsedAngle = 0,
+): FormationPosition {
+  const angle = phase + elapsedAngle;
+  return {
+    x: baseX + radius * Math.cos(angle),
+    y: baseY + radius * Math.sin(angle),
   };
 }

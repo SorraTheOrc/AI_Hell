@@ -7,13 +7,21 @@
  * player damage.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
+
+// The AC4 walk clears all of Level 1 (ten waves plus the wave-10 mini-boss)
+// with deterministic ticks. That is pure computation, but it needs well over
+// Vitest's default 5 s under full-suite parallel load (observed 6.5-8.0 s),
+// which reported a spurious timeout (AH-0MVHCC9XI007DARU). Same convention as
+// the other full-level walks (PlayScene.test.ts, SceneNavigation.test.ts):
+// headroom for load, never weaker assertions.
+vi.setConfig({ testTimeout: 120000 });
 
 describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
   let booted: BootedGame | null = null;
@@ -25,7 +33,7 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     const scene = booted.scene as PlayScene;
     // Complete the wormhole spawn animation so enemies are collidable.
     scene.finishSpawnAnimations();
@@ -123,6 +131,26 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
         const e = scene.getEnemies().find((x) => x.alive)!;
         scene.spawnPlayerBullet(e.x, e.y, 0, 0);
         scene.tick(0.016);
+      }
+      // Resolve the mini-boss reward choice if the defeat offered one
+      // (AH-0MVCRBNO6003E1CH) so the walk can continue, then defeat the
+      // wave-10 mini-boss (a separate gating entity, not in the spawned set)
+      // so the level can complete (AH-0MVCRBISU006NUN5).
+      if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+      const miniBoss = scene.getMiniBoss();
+      if (miniBoss?.alive) {
+        for (let h = 0; h < 400 && miniBoss.alive; h++) {
+          // Resolve a hold-full pause so each tick resolves the bullet.
+          if (scene.isMineralChoiceOpen()) {
+            scene.selectMineralChoice(0);
+            continue;
+          }
+          scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+          // A zero-length step resolves collisions without moving the target.
+          scene.tick(0);
+        }
+        // The defeat offers the upgrade-or-unlock reward; resolve it.
+        if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
       }
       if (scene.isTransitioning()) scene.tick(1.6);
     }

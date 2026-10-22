@@ -43,6 +43,7 @@ import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from 
 import { Player } from '../../entities/Player';
 import { Mineral } from '../../entities/Mineral';
 import { collectMinerals } from '../core/mineralLayer';
+import type { DroneMineralSink } from '../core/combatDrone';
 import { MineralHold } from '../../core/mineralHold';
 import { loadRules } from '../../core/rules';
 import { HUD } from '../../ui/HUD';
@@ -124,8 +125,9 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   private minerals: Mineral[] = [];
   /**
    * Run-scoped ship's hold, shared with the game. Collecting minerals fills it
-   * and the Mystery UFO bounty tops it up, so the hold progression shown by
-   * the HUD is the same model the game uses (AH-0MV1BIXFO006Z1I7).
+   * and the Mystery UFO collector drone pays its ferried minerals into it, so
+   * the hold progression shown by the HUD is the same model the game uses
+   * (AH-0MV9G113S009B37I).
    */
   private mineralHold = new MineralHold();
   /** Per-scene round-robin spawner (fresh index per scene instance). */
@@ -165,8 +167,8 @@ export class GymPowerUpsUtility extends CombatCoreScene<
 
     // Standalone HUD — attaches to this scene, renders above gameplay.
     this.hud = new HUD(this, this.effectsRegistry);
-    // Show the shared mineral hold bar so the Mystery UFO mineral burst and
-    // mineral pickups are observable here (AH-0MV1BIXFO006Z1I7).
+    // Show the shared mineral hold bar so the Mystery UFO collector drone and
+    // mineral pickups are observable here (AH-0MV9G113S009B37I).
     this._syncMineralHud();
 
     // Mineral field: seeded so the Mineral Scoop runs the same shared
@@ -331,23 +333,6 @@ export class GymPowerUpsUtility extends CombatCoreScene<
   }
 
   /**
-   * Game/gym parity hook: after a power-up is collected, grant the instant
-   * Mystery UFO mineral bounty (Space Invaders homage, AH-0MV1BIXFO006Z1I7)
-   * through the shared registry drain. The gym has no score system, so only
-   * the mineral sink is supplied.
-   */
-  protected override onPowerUpCollected(drop: ActiveDrop): void {
-    super.onPowerUpCollected(drop);
-    if (drop.dropId !== 'mystery_ufo') return;
-    this._applyPendingMysteryBonus({
-      addMinerals: (amount) => {
-        this.mineralHold.collect(amount);
-      },
-    });
-    this._syncMineralHud();
-  }
-
-  /**
    * Advances every drop's lifecycle by `dt` seconds through the shared
    * helper (grow/hold/shrink). Public test seam.
    */
@@ -422,6 +407,28 @@ export class GymPowerUpsUtility extends CombatCoreScene<
 
   getEffectsRegistry(): EffectsRegistry {
     return this.effectsRegistry;
+  }
+
+  /**
+   * Mineral field the collector drones (Mystery UFO reward) seek, vacuum and
+   * drop into — the gym's live field (gym↔game parity, AC6 of
+   * AH-0MV9G113S009B37I).
+   */
+  protected override getDroneMineralField(): Mineral[] {
+    return this.minerals;
+  }
+
+  /**
+   * Hold sink for a collector drone's ferried minerals: the gym's local
+   * mineral hold, mirrored onto the HUD exactly like every other pickup.
+   */
+  protected override getDroneMineralSink(): DroneMineralSink {
+    return {
+      addMinerals: (amount: number) => {
+        this.mineralHold.collect(amount);
+        this._syncMineralHud();
+      },
+    };
   }
 
   /** The gym's shared run-scoped mineral hold (test seam). */

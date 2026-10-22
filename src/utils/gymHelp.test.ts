@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { POWER_UP_CATALOGUE, type PowerUpId } from '../powerups/types';
 import { RESET_DROP, WEAPON_CATALOGUE, type WeaponId } from './weapons';
 import {
@@ -24,7 +24,6 @@ import {
 import { addBackToIndexButton, BACK_TO_INDEX_LABEL } from './gymNavigation';
 import { HelpScene } from '../scenes/HelpScene';
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
 
 /** Minimal scene used only to allocate Graphics objects. */
 class BareScene extends Phaser.Scene {
@@ -139,6 +138,7 @@ describe('gymHelp — every resolved entry draws a code-drawn icon', () => {
 });
 
 describe('gymHelp — Help (?) button wiring', () => {
+  const settle = () => advanceGame(booted!.game, 150);
   let booted: BootedGame | null = null;
 
   afterEach(() => {

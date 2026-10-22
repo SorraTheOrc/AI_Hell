@@ -23,6 +23,11 @@
  * await recorder.flush();
  * ```
  *
+ * Dev-mode telemetry (AH-0MVBHRLY8004BGDN) is decided only by
+ * {@link isDevTelemetryCollectionEnabled} / {@link isDevTelemetryUploadEnabled}
+ * in `./devMode`; dev-only UI asks {@link isDevTelemetryBuild} instead of
+ * reading `import.meta.env.DEV` directly.
+ *
  * @module src/telemetry
  */
 
@@ -39,6 +44,16 @@ export {
   type TelemetryTickRecord,
   type TelemetryEventRecord,
 } from './schema';
+
+export {
+  isDevTelemetryBuild,
+  isDevTelemetryCollectionEnabled,
+  isDevTelemetryUploadEnabled,
+  loadDevTelemetryUploader,
+  type DevModeEnv,
+  type DevTelemetrySetting,
+  type DevTelemetryUploader,
+} from './devMode';
 
 export {
   TELEMETRY_REDACTED,
@@ -60,6 +75,7 @@ export {
   resolveBuildInfo,
   resolveTelemetryConfig,
   type TelemetryConfig,
+  type TelemetryConfigOptions,
   type TelemetryEnv,
   type TelemetrySinkKind,
 } from './config';

@@ -34,6 +34,7 @@ import {
   cueAssetUrl,
   cueSeeds,
 } from './cueManifest';
+import { cueVoiceLimiter } from './cueVoiceLimiter';
 import {
   WebAudioSfxProvider,
   webAudioSfxProvider,
@@ -150,6 +151,14 @@ function playCue(
   cue: string,
   options: SfxPlayOptions & { seed?: number } = {},
 ): SfxSoundHandle | null {
+  // Per-cue concurrent-voice cap (AH-0MVH8RQR7007QG8E): a dense firefight or
+  // mass kill can dispatch dozens of identical cues in one instant, which
+  // clips the mix. Requests beyond the cap are dropped here, at the single
+  // funnel every cue uses, so the game and every gym are limited identically.
+  // Beat-scheduled accents (`delay`) are exempt: they are already capped per
+  // accent tick (`EXPLOSION_PER_TICK_CAP`) and are dispatched together, so
+  // applying the concurrency window would drop the tail of a valid accent.
+  if (!options.delay && !cueVoiceLimiter.allow(cue)) return null;
   const seed = options.seed ?? pickCueSeed(cue);
   const url = cueAssetUrl(cue, seed);
   if (url === undefined) return null;
@@ -306,14 +315,31 @@ export function playTankFireSound(): void {
 /** Duration (seconds) of the Phaser advance tell. */
 export const PHASER_ADVANCE_CUE_DURATION = 0.6;
 
-/** Rising warning blip — E4 Phaser firing advance cue. */
+/**
+ * Linear gain applied to the Phaser **fire sequence** — the advance tell *and*
+ * the shot cue — so it sits level with the Tank/Scout advance+fire pairs in
+ * the mix (AH-0MVFHE6VP006GEX0). Those pairs already run through
+ * `TANK_SCOUT_FIRE_VOLUME_SCALE` (0.5×), so an unscaled Phaser sequence read
+ * ~6 dB louder by ear even though its baked assets sit inside the AC2 Subtle
+ * amplitude tier. This is a deliberate runtime-trim deviation from the parent
+ * constraint that prefers baked-asset balance: the baked Phaser assets are
+ * already correctly tiered and pinned by the balance guard, so the audible
+ * defect is the missing playback trim, expressed through the same named-constant
+ * mechanism as `TANK_SCOUT_FIRE_VOLUME_SCALE` and `HOLD_FULL_FIRE_VOLUME_SCALE`.
+ */
+export const PHASER_FIRE_VOLUME_SCALE = 0.5;
+
+/** Rising warning blip — E4 Phaser firing advance cue (half volume). */
 export function playPhaserAdvanceCue(): void {
-  playCue('playPhaserAdvanceCue');
+  playCue('playPhaserAdvanceCue', { volume: PHASER_FIRE_VOLUME_SCALE });
 }
 
-/** Short sharp blip — E4 Phaser fire, scheduled at the advance cue's end. */
+/** Short sharp blip — E4 Phaser fire, scheduled at the advance cue's end (half volume). */
 export function playPhaserFireSound(): void {
-  playCue('playPhaserFireSound', { delay: PHASER_ADVANCE_CUE_DURATION });
+  playCue('playPhaserFireSound', {
+    delay: PHASER_ADVANCE_CUE_DURATION,
+    volume: PHASER_FIRE_VOLUME_SCALE,
+  });
 }
 
 /** Duration (seconds) of the Scout advance tell. */
@@ -324,7 +350,12 @@ export function playScoutAdvanceCue(): void {
   playCue('playScoutAdvanceCue', { volume: TANK_SCOUT_FIRE_VOLUME_SCALE });
 }
 
-/** Sharp laser blip — E1 Scout fire, scheduled at the advance cue's end. */
+/**
+ * High square laser sweep (baked `aihell-scout-fire`, seed 32181) — E1 Scout
+ * fire, scheduled at the advance cue's end. AC4 (AH-0MVCRR2H2007VPDU)
+ * swapped the near-clipping existing-recipe `weapon-laser-zap` for this
+ * in-repo recipe; runtime volume scaling is unchanged.
+ */
 export function playScoutFireSound(): void {
   playCue('playScoutFireSound', {
     delay: SCOUT_ADVANCE_CUE_DURATION,
@@ -807,7 +838,8 @@ export function playBossDestructionSound(): void {
 
 /**
  * Per-phase Boss attack telegraph audio. Each of the four phases maps to its
- * own baked variant (seeds 32204–32207), so the tell is distinct per phase.
+ * own baked variant (seeds 32242/32227/32207/32204 — distinct A-minor square
+ * rises, AC3 AH-0MVCRR203005HKVZ), so the tell is distinct per phase.
  */
 export function playBossPhaseCue(phase: number): void {
   const seeds = cueSeeds('playBossPhaseCue');
@@ -863,6 +895,7 @@ export function playVolumeFeedback(volume: number): void {
  */
 export function _resetAudioContextForTests(): void {
   provider = webAudioSfxProvider;
+  cueVoiceLimiter.reset();
   webAudioSfxProvider.reset();
   resetThrusterHumForTests();
   diveSound = null;

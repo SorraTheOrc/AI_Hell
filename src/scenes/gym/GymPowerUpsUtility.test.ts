@@ -4,15 +4,16 @@
  * thrust movement and screen-wrap, overlap collection applying effects,
  * and the shared ← INDEX back button.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, BootedGame, createReusableBoot } from '../../test/gameHarness';
 import { HUD } from '../../ui/HUD';
 import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import { Player } from '../../entities/Player';
+import type { Mineral } from '../../entities/Mineral';
 import * as effectsModule from '../../audio/effects';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { MINERAL_SEED_CLEARANCE, GymPowerUpsUtility } from './GymPowerUpsUtility';
@@ -26,6 +27,15 @@ import {
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 
+/**
+ * One Phaser game shell per file, rebooted into a fresh scene instance per
+ * test (AH-0MVF6VZG9000AN6E). Constructing/destroying a `Phaser.Game` per test
+ * dominated this suite's boot cost; every `reuse.boot()` still creates new
+ * scene instances, so per-test state isolation is unchanged.
+ */
+const reuse = createReusableBoot();
+afterAll(() => reuse.dispose());
+
 // These scene tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
 beforeEach(() => {
@@ -35,11 +45,6 @@ beforeEach(() => {
 describe('GymPowerUpsUtility AC1: gym index discovery', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   it('is auto-discovered from the gym folder with label PowerUps', () => {
     const entries = discoverGymScenes(loadGymSceneModules());
     const entry = entries.find((e) => e.key === 'GymPowerUpsUtility');
@@ -48,14 +53,14 @@ describe('GymPowerUpsUtility AC1: gym index discovery', () => {
   });
 
   it('is listed by the real gym index', async () => {
-    booted = await bootScene([GymIndex]);
+    booted = await reuse.boot([GymIndex]);
     const index = booted!.scene as GymIndex;
     expect(index.listedScenes.map((s) => s.key)).toContain('GymPowerUpsUtility');
     expect(index.listedScenes.map((s) => s.label)).toContain('PowerUpsUtility');
   });
 
   it('registers the scene so the index can start it', async () => {
-    booted = await bootScene([GymIndex]);
+    booted = await reuse.boot([GymIndex]);
     expect(booted!.game.scene.getScene('GymPowerUpsUtility')).not.toBeNull();
   });
 });
@@ -63,13 +68,8 @@ describe('GymPowerUpsUtility AC1: gym index discovery', () => {
 describe('GymPowerUpsUtility AC2: scene boot + player ship movement', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootPowerUps(): Promise<GymPowerUpsUtility> {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     return booted!.scene as GymPowerUpsUtility;
   }
 
@@ -118,13 +118,8 @@ describe('GymPowerUpsUtility AC2: scene boot + player ship movement', () => {
 describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootPowerUps(): Promise<GymPowerUpsUtility> {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     return booted!.scene as GymPowerUpsUtility;
   }
 
@@ -283,13 +278,8 @@ describe('GymPowerUpsUtility AC3: overlap collection applies the effect', () => 
 describe('GymPowerUpsUtility AC4: shared back button + HUD presence', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   it('shows the shared ← INDEX back button', async () => {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     const scene = booted!.scene as GymPowerUpsUtility;
     const found = scene.children.list.find(
       (child): child is Phaser.GameObjects.Text =>
@@ -301,7 +291,7 @@ describe('GymPowerUpsUtility AC4: shared back button + HUD presence', () => {
 
   it('the ← INDEX back button navigates back to the gym index', async () => {
     // Boot the gym scene with the index registered alongside it.
-    booted = await bootScene([GymPowerUpsUtility, GymIndex]);
+    booted = await reuse.boot([GymPowerUpsUtility, GymIndex]);
     const scene = booted!.scene as GymPowerUpsUtility;
     expect(scene.sys.isActive()).toBe(true);
 
@@ -313,13 +303,13 @@ describe('GymPowerUpsUtility AC4: shared back button + HUD presence', () => {
     expect(button).toBeDefined();
 
     button!.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
   });
 
   it('attaches the standalone HUD rendering above gameplay', async () => {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     const scene = booted!.scene as GymPowerUpsUtility;
     const hud = scene.getHud();
     expect(hud).toBeInstanceOf(HUD);
@@ -331,13 +321,8 @@ describe('GymPowerUpsUtility AC4: shared back button + HUD presence', () => {
 describe('GymPowerUpsUtility spawn cadence (parent AC2 via the scene)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   it('spawns the first drop immediately and cycles P5 → P8 → P9 over time', async () => {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     const scene = booted!.scene as GymPowerUpsUtility;
 
     // First frame: a drop spawns immediately (spawnTimer starts at 0).
@@ -361,13 +346,8 @@ describe('GymPowerUpsUtility spawn cadence (parent AC2 via the scene)', () => {
 describe('GymPowerUpsUtility — scheme-aware input routing (parent AC1/AC2/AC3)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootPowerUps(): Promise<GymPowerUpsUtility> {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     return booted!.scene as GymPowerUpsUtility;
   }
 
@@ -465,13 +445,11 @@ describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC
   let booted: BootedGame | null = null;
 
   afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
     vi.restoreAllMocks();
   });
 
   async function bootPowerUps(): Promise<GymPowerUpsUtility> {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     return booted!.scene as GymPowerUpsUtility;
   }
 
@@ -540,13 +518,8 @@ describe('GymPowerUpsUtility — non-combat pickup activation audio per type (AC
 describe('GymPowerUpsUtility — larger drops with glowing bubble (AH-0MTG5MGPZ00986B4)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootPowerUps(): Promise<GymPowerUpsUtility> {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     return booted!.scene as GymPowerUpsUtility;
   }
 
@@ -614,13 +587,11 @@ describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT400
   let booted: BootedGame | null = null;
 
   afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
     vi.restoreAllMocks();
   });
 
   async function bootPowerUps(): Promise<GymPowerUpsUtility> {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     return booted!.scene as GymPowerUpsUtility;
   }
 
@@ -675,15 +646,10 @@ describe('GymPowerUpsUtility — collection absorb VFX + pop SFX (AH-0MUBYXRT400
 
 describe('GymPowerUpsUtility — help overlay (AH-0MUAYB67I002REOZ)', () => {
   let booted: BootedGame | null = null;
-  const settle = () => new Promise((r) => setTimeout(r, 150));
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
+  const settle = () => advanceGame(booted!.game, 150);
 
   async function bootHelp(): Promise<GymPowerUpsUtility> {
-    booted = await bootScene([GymPowerUpsUtility, HelpScene]);
+    booted = await reuse.boot([GymPowerUpsUtility, HelpScene]);
     return booted.scene as GymPowerUpsUtility;
   }
 
@@ -760,13 +726,8 @@ describe('GymPowerUpsUtility — re-based on the shared CombatCoreScene core', (
 describe('GymPowerUpsUtility — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function boot(): Promise<GymPowerUpsUtility> {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     return booted.scene as GymPowerUpsUtility;
   }
 
@@ -815,13 +776,8 @@ describe('GymPowerUpsUtility — restart/teardown parity (AH-0MUII3FYN0072QRT, g
 describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ AC5)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootPowerUps(): Promise<GymPowerUpsUtility> {
-    booted = await bootScene([GymPowerUpsUtility]);
+    booted = await reuse.boot([GymPowerUpsUtility]);
     return booted!.scene as GymPowerUpsUtility;
   }
 
@@ -886,33 +842,81 @@ describe('GymPowerUpsUtility — mineral field + P10 scoop (AH-0MUPMR9TX00756BQ 
     expect(registry.scoopEffectStacks()).toBe(2);
   });
 
-  it('a Mystery UFO field pickup grants the mineral burst into the shared hold (AH-0MV1BIXFO006Z1I7)', async () => {
+  it('a Mystery UFO field pickup spawns one visible collector drone and grants no instant minerals (AH-0MV9G113S009B37I)', async () => {
     const scene = await bootPowerUps();
     const registry = scene.getEffectsRegistry();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
 
-    // Base burst = 2 minerals, 250 score (level 0).
     expect(scene.getMineralHold().store).toBe(0);
+    expect(scene.getDrones()).toHaveLength(0);
     scene.spawnDrop('mystery_ufo', 480, 270);
     scene.advanceDrops(0.5);
-    scene.tick(1 / 60);
+    scene.tick(1 / 60); // the pickup queues the drone spawn
+    scene.tick(1 / 60); // the shared spawn pass launches the drone
 
-    // The bounty is granted immediately into the gym's hold; the power-up
-    // levels up (permanent path) and leaves no timed or consumable state.
-    expect(scene.getMineralHold().store).toBe(2);
+    // No instant mineral/score burst: one visible drone, hold untouched, and
+    // no timed or consumable registry state for the power-up.
+    expect(scene.getMineralHold().store).toBe(0);
+    expect(scene.getDrones()).toHaveLength(1);
     expect(player.getPowerUpLevelStore().getEffectiveLevel('mystery_ufo')).toBe(1);
     expect(registry.isActive('mystery_ufo')).toBe(false);
     expect(registry.remaining('mystery_ufo')).toBeUndefined();
     expect(registry.activeEffects().some((e) => e.id === 'mystery_ufo')).toBe(false);
-    // A second drain is a no-op: the bounty is granted exactly once.
-    expect(registry.consumeMysteryBonus()).toBeNull();
+    // The spawn request was drained exactly once.
+    expect(registry.consumeMysteryUfoSpawns()).toBe(0);
 
-    // A second pickup grants the escalated (level-1) burst: +3 minerals.
+    // A second field pickup spawns exactly one more drone (no payout).
     scene.spawnDrop('mystery_ufo', 480, 270);
     scene.advanceDrops(0.5);
     scene.tick(1 / 60);
-    expect(scene.getMineralHold().store).toBe(5);
+    scene.tick(1 / 60);
+    expect(scene.getDrones()).toHaveLength(2);
+    expect(scene.getMineralHold().store).toBe(0);
+  });
+
+  it('drives the full collector-drone lifecycle: spawn, seek, collect, return, payout (AH-0MVBMQ0HR0064THH)', async () => {
+    const scene = await bootPowerUps();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    // Clear the seeded field so only the deterministic minerals below exist.
+    for (const mineral of scene.getMinerals()) mineral.destroy();
+    (scene as unknown as { minerals: Mineral[] }).minerals.length = 0;
+
+    // Spawn the reward through the real pickup path (the shared drop layer).
+    scene.spawnDrop('mystery_ufo', 480, 270);
+    scene.advanceDrops(0.5);
+    scene.tick(1 / 60); // the pickup queues the drone spawn
+    scene.tick(1 / 60); // the shared spawn pass launches the drone
+
+    const drones = scene.getDrones();
+    expect(drones).toHaveLength(1);
+    const drone = drones[0];
+    expect(drone.alive).toBe(true);
+    expect(drone.visible).toBe(true);
+
+    // One mineral inside the collector radius (taken this tick), one further
+    // out so the drone has a live seek target to steer toward.
+    const close = scene.spawnMineral(drone.x + 15, drone.y);
+    const distant = scene.spawnMineral(drone.x + 60, drone.y);
+    const holdBefore = scene.getMineralHold().store;
+
+    scene.tick(1 / 60);
+    expect(drone.heldMinerals).toBe(1);
+    expect(close.alive).toBe(false);
+    expect(drone.seekTargetX).toBe(distant.x);
+    expect(drone.seekTargetY).toBe(distant.y);
+
+    // Fly the sortie out: the drone reaches and vacuums the seek target, then
+    // its lifetime expires, it returns home and pays the hold into the gym.
+    for (let i = 0; i < 2000 && scene.getDrones().length > 0; i++) {
+      scene.tick(1 / 60);
+    }
+
+    expect(distant.alive).toBe(false);
+    expect(scene.getDrones()).toHaveLength(0);
+    expect(scene.getMineralHold().store).toBe(holdBefore + 2);
   });
 
   it('a same-instance stop/restart clears the P10 scoop state and the field', async () => {

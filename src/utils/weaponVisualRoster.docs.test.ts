@@ -70,6 +70,11 @@ const CATALOGUE_WEAPON_IDS: readonly WeaponId[] = [
   'nova',
   'mortar',
   'arc',
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
 ];
 
 /** The twelve AC-named enemy-attack families, deduplicated (Scout+Invader = one). */
@@ -125,7 +130,7 @@ function enemySignature(archetype: EnemyBulletArchetype): string {
 }
 
 describe('player weapon roster — every weapon is visually unique in flight (AC1)', () => {
-  it('resolves a distinct in-flight visual signature for each of the 11 catalogue weapons', () => {
+  it('resolves a distinct in-flight visual signature for each of the 16 catalogue weapons', () => {
     const signatures = new Set(
       CATALOGUE_WEAPON_IDS.map((id) => playerSignature(WEAPON_CATALOGUE[id])),
     );
@@ -135,14 +140,14 @@ describe('player weapon roster — every weapon is visually unique in flight (AC
   it('the shape family is unique across the catalogue except the one intentional beam pair', () => {
     // The catalogue assigns one distinct shape per weapon; the Dual and the
     // Wave Laser are the only weapons that share a shape (`line`) — they are
-    // distinguished by length/rim/thickness instead. So 11 weapons yield
-    // exactly 10 distinct shapes, never fewer.
+    // distinguished by length/rim/thickness instead. So 16 weapons yield
+    // exactly 15 distinct shapes, never fewer.
     const shapes = new Set(
       CATALOGUE_WEAPON_IDS.map((id) =>
         canonicalShape(WEAPON_CATALOGUE[id].bulletShape),
       ),
     );
-    expect(shapes.size).toBe(10);
+    expect(shapes.size).toBe(15);
   });
 
   it('the Wave Laser and Dual render as a line/beam, never a dot', () => {

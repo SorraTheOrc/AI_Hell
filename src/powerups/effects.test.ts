@@ -784,73 +784,116 @@ describe('Force Field: timed bullet reflector (AH-0MV1BIX1W006XF95)', () => {
   });
 });
 
-// ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ────────────────
+// ── Mystery UFO: run-scoped level contract (collector-drone epic) ──
+//
+// The instant mineral+score bounty (AH-0MV1BIXFO006Z1I7) is retired by the
+// visible collector-drone epic (AH-0MV9G113S009B37I): a field pickup will
+// spawn a visible drone instead of granting a direct hold/score payout, and
+// the retired instant-bounty score axis is removed with the level-variable
+// feature (AH-0MVBMPZ2C0008VAE), which also anchors the collector-drone
+// lifetime/capacity/radius/spawn-interval axes on the shared curve. These tests pin only the **survivor registry
+// contract** — run-scoped level advancement, a permanent hold-full path and
+// reset semantics — so the suite stays green as the instant path is
+// removed. The "no direct payout, one drone spawn" behaviour is asserted by
+// the spawn-wiring feature's own tests (AH-0MVBMQ04X0051002) and the shared
+// fixtures in `src/test/collectorDroneFixtures.ts`.
 
-describe('Mystery UFO: instant mineral + score bounty (AH-0MV1BIXFO006Z1I7)', () => {
-  it('queues the base burst on collection and leaves no timed or stored state', () => {
+describe('Mystery UFO: run-scoped level contract (AH-0MV9G113S009B37I)', () => {
+  it('collecting advances the run-scoped level exactly once', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
 
     reg.applyCollect('mystery_ufo');
 
-    // Base bounty (level 0): 2 minerals / 250 score.
-    expect(reg.consumeMysteryBonus()).toEqual({ minerals: 2, score: 250 });
-    // The pickup advances the run-scoped level (permanent reward path).
     expect(store.getEffectiveLevel('mystery_ufo')).toBe(1);
-    // No timed window and no consumable state.
+  });
+
+  it('leaves no timed window or stored timed-effect state', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('mystery_ufo');
+
     expect(reg.isActive('mystery_ufo')).toBe(false);
     expect(reg.remaining('mystery_ufo')).toBeUndefined();
     expect(reg.activeEffects().some((e) => e.id === 'mystery_ufo')).toBe(false);
-    // Drained once — a second consume finds nothing.
-    expect(reg.consumeMysteryBonus()).toBeNull();
   });
 
-  it('escalates the burst as the power-up levels up', () => {
-    const reg = new EffectsRegistry();
+  it('a hold-full reward is a permanent grant and stacks with field pickups', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
 
+    // Field pickup → temporary stack only.
     reg.applyCollect('mystery_ufo');
-    const first = reg.consumeMysteryBonus()!;
-    reg.applyCollect('mystery_ufo');
-    const second = reg.consumeMysteryBonus()!;
+    expect(store.permanentGrants('mystery_ufo')).toBe(0);
+    expect(store.getEffectiveLevel('mystery_ufo')).toBe(1);
 
-    expect(second.minerals).toBeGreaterThan(first.minerals);
-    expect(second.score).toBeGreaterThan(first.score);
-    // The escalation tracks the shared level curve exactly.
-    expect(second.minerals).toBe(
-      Math.round(resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoMinerals!),
-    );
-    expect(second.score).toBe(
-      Math.round(resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoScore!),
-    );
-  });
-
-  it('accumulates repeated pickups before a drain and grants a permanent reward too', () => {
-    const reg = new EffectsRegistry();
-    reg.applyCollect('mystery_ufo');
-    reg.applyCollect('mystery_ufo');
-    const two = reg.consumeMysteryBonus()!;
-    expect(two.minerals).toBeGreaterThan(2);
-    expect(two.score).toBeGreaterThan(250);
-
-    // A hold-full reward also grants the bounty and becomes permanent.
+    // Hold-full reward → permanent grant, level stacks on top.
     reg.applyCollect('mystery_ufo', true);
-    expect(reg.consumeMysteryBonus()).not.toBeNull();
+    expect(store.permanentGrants('mystery_ufo')).toBe(1);
+    expect(store.getEffectiveLevel('mystery_ufo')).toBe(2);
   });
 
-  it('exposes the level-resolved next bounty and reset() clears the pending burst', () => {
-    const reg = new EffectsRegistry();
-    expect(reg.mysteryUfoMinerals()).toBe(2);
-    expect(reg.mysteryUfoScore()).toBe(250);
+  it('reset() clears the run-scoped level', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
 
     reg.applyCollect('mystery_ufo');
-    expect(reg.mysteryUfoMinerals()).toBe(
-      Math.round(resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoMinerals!),
-    );
+    expect(store.getEffectiveLevel('mystery_ufo')).toBe(1);
 
     reg.reset();
-    expect(reg.consumeMysteryBonus()).toBeNull();
-    expect(reg.mysteryUfoMinerals()).toBe(2);
-    expect(reg.mysteryUfoScore()).toBe(250);
+    expect(store.getEffectiveLevel('mystery_ufo')).toBe(0);
+    expect(store.permanentGrants('mystery_ufo')).toBe(0);
+  });
+
+  it('a field pickup queues exactly one collector-drone spawn and no payout (AC1)', () => {
+    const reg = new EffectsRegistry();
+
+    expect(reg.consumeMysteryUfoSpawns()).toBe(0);
+    reg.applyCollect('mystery_ufo');
+    expect(reg.consumeMysteryUfoSpawns()).toBe(1);
+    // Drained: a second drain grants nothing, so no pickup is double-spawned.
+    expect(reg.consumeMysteryUfoSpawns()).toBe(0);
+    // The permanent auto-spawn is only armed by the full-hull reward.
+    expect(reg.isMysteryUfoPermanent()).toBe(false);
+  });
+
+  it('accumulates one spawn per field pickup before a drain', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('mystery_ufo');
+    reg.applyCollect('mystery_ufo');
+    expect(reg.consumeMysteryUfoSpawns()).toBe(2);
+  });
+
+  it('a hold-full (permanent) reward arms the auto-spawn but queues no one-shot (AC4)', () => {
+    const reg = new EffectsRegistry();
+
+    reg.applyCollect('mystery_ufo', true);
+
+    expect(reg.isMysteryUfoPermanent()).toBe(true);
+    expect(reg.consumeMysteryUfoSpawns()).toBe(0);
+  });
+
+  it('resolves the permanent spawn interval from the shared curve (30 s base, descending)', () => {
+    const reg = new EffectsRegistry();
+
+    // Level 0 (unowned) is the curve base: 30 s.
+    expect(reg.mysteryUfoSpawnInterval()).toBe(30);
+    // The first collection resolves at level 1; the interval descends.
+    reg.applyCollect('mystery_ufo');
+    expect(reg.mysteryUfoSpawnInterval()).toBe(
+      resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoSpawnInterval,
+    );
+    expect(reg.mysteryUfoSpawnInterval()).toBeLessThan(30);
+  });
+
+  it('reset() clears the pending spawns and re-disarms the permanent reward', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('mystery_ufo');
+    reg.applyCollect('mystery_ufo', true);
+
+    reg.reset();
+
+    expect(reg.consumeMysteryUfoSpawns()).toBe(0);
+    expect(reg.isMysteryUfoPermanent()).toBe(false);
   });
 });
 

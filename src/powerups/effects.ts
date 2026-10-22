@@ -378,15 +378,38 @@ export class EffectsRegistry {
    */
   private _forceFieldRemaining = 0;
 
-  // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ───────────────
+  // ── Mystery UFO collector drone (AH-0MV9G113S009B37I) ──────────────
   /**
-   * Pending Mystery UFO instant bounty: accumulated when a `mystery_ufo` drop
-   * is collected and drained by the scene via {@link consumeMysteryBonus}
-   * (minerals into the ship's hold, score into the run total). `null` when no
-   * pickup is pending; cleared by {@link reset}. Repeated collections before a
-   * drain accumulate, so no pickup is lost.
+   * Pending one-shot collector-drone spawns: incremented for every
+   * **field** `mystery_ufo` pickup and drained by the shared scene pass via
+   * {@link consumeMysteryUfoSpawns}. A full-hull (permanent) reward does not
+   * queue a one-shot — it is owned through the level store's permanent grant
+   * and drives the periodic auto-spawn instead. Cleared by {@link reset}.
    */
-  private _mysteryBonus: { minerals: number; score: number } | null = null;
+  private _mysteryUfoPendingSpawns = 0;
+
+  // ── Thorn Field ram budget (AH-0MVCRC1Q0007JAV1) ──────────────────
+  /**
+   * Rams still absorbed by the active Thorn Field (resolved from the level
+   * store on every collection: base 2, cap 6). Run-scoped: reset() and window
+   * expiry clear it; zero means the field no longer counters rams.
+   */
+  private _thornsRemaining = 0;
+
+  // ── Orbital Strike bolt state (AH-0MVCRC1Q0007JAV1) ───────────────
+  /**
+   * True when a hold-full Strike granted a permanent bolt for the run: it
+   * never expires and strikes every {@link strikeInterval} seconds. Cleared
+   * only by `reset()`.
+   */
+  private _strikePermanent = false;
+  /** Seconds until the next permanent strike (unused when not permanent). */
+  private _strikePulseTimer = 0;
+  /**
+   * One-shot strike request queued by a field pickup: the next
+   * {@link updateStrike} fires exactly once and clears it.
+   */
+  private _strikePulsePending = false;
 
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
@@ -552,34 +575,71 @@ export class EffectsRegistry {
         );
         break;
       case 'mystery_ufo':
-        // mystery_ufo: an instant mineral + score bounty (Space Invaders
-        // homage, AH-0MV1BIXFO006Z1I7). There is no timed window and no
-        // consumable state — the level-resolved burst is queued for the scene
-        // to grant immediately (minerals into the hold, score into the run
-        // total) via consumeMysteryBonus().
-        this._queueMysteryBonus(stats);
+        // mystery_ufo: a visible collector drone (Space Invaders homage,
+        // AH-0MV1BIXFO006Z1I7 → AH-0MV9G113S009B37I). A field pickup queues
+        // exactly one drone spawn for the shared scene pass; a full-hull
+        // permanent reward owns the periodic auto-spawn through the level
+        // store's permanent grant. There is no instant mineral or score
+        // burst any more.
+        if (!permanent) this._mysteryUfoPendingSpawns += 1;
+        break;
+      case 'frenzy':
+        // frenzy: a timed damage amplifier. No registry-local consumable
+        // state — the shared bullet/AOE damage seams read the level-resolved
+        // bonus while the window is active (AH-0MVCRC1Q0007JAV1).
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.frenzyDuration ?? 8,
+          permanent,
+        );
+        break;
+      case 'chrono':
+        // chrono: a timed enemy-bullet slowdown. The shared enemy-bullet
+        // advance scales dt while the window is active (AH-0MVCRC1Q0007JAV1).
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.chronoDuration ?? 5,
+          permanent,
+        );
+        break;
+      case 'thorns':
+        // thorns: a timed ram counter. Refresh (never add) the absorb budget
+        // to the newly resolved count — a level-up mid-field strengthens it.
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.thornsDuration ?? 8,
+          permanent,
+        );
+        this._thornsRemaining = Math.max(0, Math.round(stats.thornsAbsorbs ?? 2));
+        break;
+      case 'salvage':
+        // salvage: a timed mineral bounty. The shared kill-drop seam adds the
+        // level-resolved bonus minerals while the window is active.
+        this._startOrRefreshTimed(
+          id,
+          id,
+          stats.salvageDuration ?? 10,
+          permanent,
+        );
+        break;
+      case 'strike':
+        // strike: a field pickup queues one immediate bolt; the hold-full
+        // reward makes it permanent and pulses on the resolved interval
+        // (mirrors the Bomb/Smart Bomb; AH-0MVCRC1Q0007JAV1).
+        this._strikePulsePending = true;
+        if (permanent) {
+          this._strikePermanent = true;
+          this._strikePulseTimer = this.strikeInterval();
+        }
         break;
       default:
         // Phase Shift phase, Teleport teleport, Extra Life life: no registry-local timed state —
         // the level store owns charges/stacks/lives.
         break;
     }
-  }
-
-  /**
-   * Accumulates the level-resolved Mystery UFO instant bounty (minerals +
-   * score) for the scene to drain via {@link consumeMysteryBonus}. Both
-   * components are rounded to whole numbers and clamped non-negative, so the
-   * hold and the score total only ever receive whole values.
-   */
-  private _queueMysteryBonus(stats: PowerUpLevelStats): void {
-    const minerals = Math.max(0, Math.round(stats.mysteryUfoMinerals ?? 0));
-    const score = Math.max(0, Math.round(stats.mysteryUfoScore ?? 0));
-    if (minerals === 0 && score === 0) return;
-    this._mysteryBonus = {
-      minerals: (this._mysteryBonus?.minerals ?? 0) + minerals,
-      score: (this._mysteryBonus?.score ?? 0) + score,
-    };
   }
 
   /** Starts a timed effect or refreshes it to the (possibly new) duration. */
@@ -692,6 +752,10 @@ export class EffectsRegistry {
     if (id === 'force_field') {
       this._forceFieldRemaining = 0;
     }
+    // The Thorn Field's ram budget ends with its window (AH-0MVCRC1Q0007JAV1).
+    if (id === 'thorns') {
+      this._thornsRemaining = 0;
+    }
   }
 
   /** Whether the given timed effect is currently active. */
@@ -773,49 +837,42 @@ export class EffectsRegistry {
     return SHIP_SIZE * FORCE_FIELD_RADIUS_FACTOR;
   }
 
-  // ── Mystery UFO instant bounty (AH-0MV1BIXFO006Z1I7) ────────────────
+  // ── Mystery UFO collector drone (AH-0MV9G113S009B37I) ────────────────
 
   /**
-   * Drains and returns the accumulated Mystery UFO instant bounty
-   * (`{ minerals, score }`), or `null` when no pickup is pending.
-   *
-   * The scene applies the minerals to its hold and the score to its run total;
-   * the registry itself owns no hold or score, so the same code serves the
-   * game and every gym. The bounty is drained (not merely read) so a pickup is
-   * granted exactly once.
+   * Drains and returns the number of collector drones a field
+   * `mystery_ufo` pickup has queued since the last drain. The shared scene
+   * pass spawns exactly that many drones, so every pickup produces exactly
+   * one visible collector. Draining (not merely reading) means a pickup is
+   * granted exactly once, even if two land in the same frame.
    */
-  consumeMysteryBonus(): { minerals: number; score: number } | null {
-    const bonus = this._mysteryBonus;
-    this._mysteryBonus = null;
-    return bonus;
+  consumeMysteryUfoSpawns(): number {
+    const pending = this._mysteryUfoPendingSpawns;
+    this._mysteryUfoPendingSpawns = 0;
+    return pending;
   }
 
   /**
-   * The level-resolved mineral bounty the next Mystery UFO pickup grants
-   * (whole minerals, non-negative). Surfaced for help/tests.
+   * Whether the full-hull (permanent) Mystery UFO reward has been taken —
+   * i.e. the ship owns at least one permanent grant. While true the shared
+   * scene pass keeps a collector drone spawning on the level-resolved
+   * interval.
    */
-  mysteryUfoMinerals(): number {
-    const nextLevel = this._levelStore.getEffectiveLevel('mystery_ufo');
-    return Math.max(
-      0,
-      Math.round(
-        resolvePowerUpAtLevel('mystery_ufo', nextLevel).mysteryUfoMinerals ??
-          0,
-      ),
-    );
+  isMysteryUfoPermanent(): boolean {
+    return this._levelStore.permanentGrants('mystery_ufo') > 0;
   }
 
   /**
-   * The level-resolved score bounty the next Mystery UFO pickup grants
-   * (whole points, non-negative). Surfaced for help/tests.
+   * The level-resolved interval (seconds) between permanent collector-drone
+   * spawns: 30 s at level 0, descending by 2 s per level to a 12 s floor.
+   * Surfaced for the HUD/help copy, tests and the shared spawn timer.
    */
-  mysteryUfoScore(): number {
-    const nextLevel = this._levelStore.getEffectiveLevel('mystery_ufo');
+  mysteryUfoSpawnInterval(): number {
+    const level = this._levelStore.getEffectiveLevel('mystery_ufo');
     return Math.max(
       0,
-      Math.round(
-        resolvePowerUpAtLevel('mystery_ufo', nextLevel).mysteryUfoScore ?? 0,
-      ),
+      resolvePowerUpAtLevel('mystery_ufo', level).mysteryUfoSpawnInterval ??
+        0,
     );
   }
 
@@ -974,6 +1031,134 @@ export class EffectsRegistry {
     }
     return false;
   }
+
+  // ── Frenzy damage amplifier (AH-0MVCRC1Q0007JAV1) ────────────────────
+
+  /**
+   * Bonus damage hits each player bullet currently applies, or 0 while the
+   * Frenzy window is inactive. The shared bullet/AOE damage seams read this
+   * so the game and every gym amplify identically.
+   */
+  frenzyBonusHits(): number {
+    if (!this._timed.has('frenzy')) return 0;
+    return Math.max(0, Math.floor(this._levelStore.stats('frenzy').frenzyBonusHits ?? 1));
+  }
+
+  // ── Chrono Field enemy-bullet slowdown (AH-0MVCRC1Q0007JAV1) ────────
+
+  /**
+   * Current enemy-bullet speed scale (1 = normal, <1 while the Chrono Field
+   * window is active). The shared enemy-bullet advance multiplies dt by this
+   * so the game and every gym slow bullets identically.
+   */
+  enemyBulletTimeScale(): number {
+    if (!this._timed.has('chrono')) return 1;
+    const slow = this._levelStore.stats('chrono').chronoSlowFactor ?? 0.5;
+    return Math.max(0, Math.min(1, 1 - slow));
+  }
+
+  // ── Thorn Field ram counter (AH-0MVCRC1Q0007JAV1) ──────────────────
+
+  /**
+   * Rams the active Thorn Field can still absorb (0 when inactive or
+   * exhausted). Surfaced for the HUD and consumed by the shared collision
+   * ram branch.
+   */
+  thornsRemaining(): number {
+    return this._thornsRemaining;
+  }
+
+  /**
+   * Whether the ramp counter can absorb another ram right now (window active
+   * and budget remaining).
+   */
+  hasThornsRam(): boolean {
+    return this._timed.has('thorns') && this._thornsRemaining > 0;
+  }
+
+  /**
+   * Consumes one ram absorb from the active Thorn Field. Returns true when
+   * a ram was absorbed (the player does not take the hit) and decrements the
+   * budget; false when there is no active field or its budget is spent. Once
+   * false, rams cost the player a hit normally again.
+   */
+  tryConsumeThornsRam(): boolean {
+    if (!this._timed.has('thorns')) return false;
+    if (this._thornsRemaining <= 0) return false;
+    this._thornsRemaining -= 1;
+    return true;
+  }
+
+  // ── Salvage mineral bounty (AH-0MVCRC1Q0007JAV1) ────────────────────
+
+  /**
+   * Bonus minerals each destroyed enemy currently drops, or 0 while the
+   * Salvage window is inactive. The shared kill-drop sears adds this at the
+   * wreck so the game and every gym pay out identically.
+   */
+  salvageBonusMinerals(): number {
+    if (!this._timed.has('salvage')) return 0;
+    return Math.max(0, Math.round(this._levelStore.stats('salvage').salvageMinerals ?? 1));
+  }
+
+  // ── Orbital Strike auto-targeting bolt (AH-0MVCRC1Q0007JAV1) ────────
+
+  /** Whether a permanent (hold-full) Orbital Strike is active for the run. */
+  isStrikePermanent(): boolean {
+    return this._strikePermanent;
+  }
+
+  /**
+   * The resolved strike interval in seconds: `max(10, 30 − 2×level)` (30 s on
+   * the first grant, 10 s at and beyond level 10). Mirrors the Smart Bomb
+   * descending interval schedule.
+   */
+  strikeInterval(): number {
+    const interval = this._levelStore.stats('strike').strikeInterval;
+    return interval !== undefined && Number.isFinite(interval) && interval > 0
+      ? interval
+      : Number.POSITIVE_INFINITY;
+  }
+
+  /**
+   * The level-resolved damage the Orbital Strike bolt deals (whole hits,
+   * minimum 1). The shared strike seam resolves this at the nearest enemy.
+   */
+  strikeDamage(): number {
+    return Math.max(1, Math.floor(this._levelStore.stats('strike').strikeDamage ?? 1));
+  }
+
+  /**
+   * Advances the Orbital Strike bolt state by `dt` and reports whether a
+   * bolt is due this frame.
+   *
+   * - A field-pickup request fires exactly once and is then gone.
+   * - A permanent strike fires immediately on grant and then once per
+   *   {@link strikeInterval} seconds for the rest of the run.
+   *
+   * The registry owns the decision; the shared combat core selects the
+   * nearest enemy and resolves the damage (AH-0MVCRC1Q0007JAV1).
+   *
+   * @param dt - Frame delta in seconds.
+   * @returns True when a bolt should strike this frame.
+   */
+  updateStrike(dt: number): boolean {
+    if (this._strikePulsePending) {
+      this._strikePulsePending = false;
+      if (this._strikePermanent) {
+        this._strikePulseTimer = this.strikeInterval();
+      }
+      return true;
+    }
+    if (!this._strikePermanent) return false;
+    this._strikePulseTimer -= dt;
+    if (this._strikePulseTimer <= 0) {
+      this._strikePulseTimer = this.strikeInterval();
+      return true;
+    }
+    return false;
+  }
+
 
   /**
    * Activates Phase Shift (upgrade-level duration for Teleport arrivals) —
@@ -1300,7 +1485,9 @@ export class EffectsRegistry {
           ? this._shieldRemaining
           : effect.id === 'force_field'
             ? this._forceFieldRemaining
-            : undefined;
+            : effect.id === 'thorns'
+              ? this._thornsRemaining
+              : undefined;
       // A permanent base with no active temporary window shows its full
       // duration (it never counts down); an active temporary window shows
       // the window remaining (AC1/AC2).
@@ -1356,6 +1543,15 @@ export class EffectsRegistry {
         permanent: true,
       });
     }
+    // A permanent Orbital Strike renders one run-scoped row; a field pickup
+    // (one immediate bolt) leaves no row (AH-0MVCRC1Q0007JAV1).
+    if (this._strikePermanent) {
+      result.push({
+        id: 'strike' as PowerUpId,
+        type: 'strike',
+        permanent: true,
+      });
+    }
     const teleportStacks = this._levelStore.teleportStacks();
     if (teleportStacks > 0) {
       result.push({
@@ -1407,7 +1603,11 @@ export class EffectsRegistry {
     this._smartBombPulseTimer = 0;
     this._smartBombPulsePending = false;
     this._forceFieldRemaining = 0;
-    this._mysteryBonus = null;
+    this._mysteryUfoPendingSpawns = 0;
+    this._thornsRemaining = 0;
+    this._strikePermanent = false;
+    this._strikePulseTimer = 0;
+    this._strikePulsePending = false;
     this._levelStore.reset();
   }
 }

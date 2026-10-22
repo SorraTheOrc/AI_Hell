@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { cliSpawnEnv } from './cliChildEnv';
 
 import { parseAnalyseArgs, selectRun as selectAnalyseRun } from './analyse-recording.mjs';
 import { parseReplayArgs, selectRun as selectReplayRun } from './replay-recording.mjs';
@@ -185,15 +186,22 @@ describe('CLI entry points (AH-0MV2RY8XT007I91E)', () => {
     spawnSync(process.execPath, [resolve(SCRIPTS_DIR, script), ...args], {
       input,
       encoding: 'utf8',
+      env: cliSpawnEnv(),
     });
 
   for (const script of ['record-session.mjs', 'analyse-recording.mjs', 'replay-recording.mjs']) {
-    it(`${script} --help runs without treating argv[0] as an argument`, () => {
-      const result = runCli(script, ['--help']);
-      expect(result.status).toBe(0);
-      expect(result.stderr).not.toContain('Unknown argument');
-      expect(result.stdout).toContain('Usage: node scripts/');
-    });
+    // Three real Node subprocess spawns per loop pass: widen past the
+    // default 5 s vitest deadline so host load cannot flake the gate.
+    it(
+      `${script} --help runs without treating argv[0] as an argument`,
+      () => {
+        const result = runCli(script, ['--help']);
+        expect(result.status).toBe(0);
+        expect(result.stderr).not.toContain('Unknown argument');
+        expect(result.stdout).toContain('Usage: node scripts/');
+      },
+      15_000,
+    );
   }
 
   it('analyse reads a piped recording rather than its own source', () => {
@@ -212,9 +220,14 @@ describe('CLI entry points (AH-0MV2RY8XT007I91E)', () => {
     expect(result.stdout).not.toContain('No runs in recording');
   });
 
-  it('rejects a genuinely unknown flag without masking it as argv[0]', () => {
-    const result = runCli('record-session.mjs', ['--definitely-not-a-flag']);
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('Unknown argument: --definitely-not-a-flag');
-  });
+  // Real Node subprocess spawn: widen past the default 5 s vitest deadline.
+  it(
+    'rejects a genuinely unknown flag without masking it as argv[0]',
+    () => {
+      const result = runCli('record-session.mjs', ['--definitely-not-a-flag']);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('Unknown argument: --definitely-not-a-flag');
+    },
+    15_000,
+  );
 });

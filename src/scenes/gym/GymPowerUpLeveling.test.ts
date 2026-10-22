@@ -11,7 +11,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
 import {
   GymPowerUpLeveling,
   POWER_UP_READOUT_PANEL_ID,
@@ -242,7 +242,7 @@ describe('GymPowerUpLeveling', () => {
     const scene = await boot();
     expect(scene.getPlayer()).not.toBeNull();
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await advanceGame(booted!.game, 60);
     expect(scene.getPlayer()).not.toBeNull();
     // The readout panel is rebuilt fresh (single DOM node for the instance).
     expect(

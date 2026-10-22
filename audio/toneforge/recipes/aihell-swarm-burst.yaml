@@ -1,4 +1,5 @@
-# AI Hell cue: aihell-swarm-burst — Swarm volley — saw buzz 120 to 80 Hz with a sine whoosh.
+# AI Hell cue: aihell-swarm-burst — Swarm volley — saw buzz (B2 to E2) with a sine whoosh (G3 to D5).
+# Amplitude tier: subtle one-shot (target RMS 0.055 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-swarm-burst
@@ -13,15 +14,15 @@ nodes:
     kind: oscillator
     params:
       type: sawtooth
-      frequency: 120
+      frequency: 123.47
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 120
+          value: 123.47
         - kind: linearRamp
           time: 0.15
-          value: 80
+          value: 82.41
   e0:
     kind: envelope
     params:
@@ -37,15 +38,15 @@ nodes:
     kind: oscillator
     params:
       type: sine
-      frequency: 200
+      frequency: 196
     automation:
       frequency:
         - kind: set
           time: 0
-          value: 200
+          value: 196
         - kind: exponentialRamp
           time: 0.18
-          value: 600
+          value: 587.33
   e1:
     kind: envelope
     params:
@@ -60,7 +61,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 1.4249
   out:
     kind: destination
 routing:

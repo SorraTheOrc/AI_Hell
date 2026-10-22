@@ -1,27 +1,35 @@
 # AI Hell cue: aihell-boss-phase-cue — Boss phase cue — per-phase square rise (4 seed variants).
-# Seed range 32204-32207: four distinct per-phase square rises (Spread/Spiral/Pulse/Desperation).
+# Seed range (seeds 32242, 32227, 32207, 32204): four distinct A-minor scale-degree rises — phase 1 starts
+# A3, phase 2 A4, phase 3 E5, phase 4 A5, each rising to A5 (880 Hz), per-phase tell preserved without
+# off-scale pitches (AC3, AH-0MVCRR203005HKVZ).
 version: "0.1"
 meta:
   name: aihell-boss-phase-cue
-  description: Boss phase cue — per-phase square rise (4 seed variants).
+  description: Boss phase cue — per-phase A-minor square rise (4 seed variants).
   category: AIHell
   tags:
     - boss
     - phase
   duration: 0.3
   parameters:
-    - name: startFreq
-      type: number
-      min: 220
-      max: 660
-      unit: Hz
-      default: 440
-    - name: endFreq
-      type: number
-      min: 440
-      max: 1320
-      unit: Hz
-      default: 660
+    - name: endSlot
+      type: integer
+      min: 3
+      max: 4
+      unit: int
+      overrides:
+        - target: v0.automation.frequency.exponentialRamp.value
+          expression: "endSlot * 220"
+    - name: startSlot
+      type: integer
+      min: 1
+      max: 4
+      unit: int
+      overrides:
+        - target: v0.frequency
+          expression: "startSlot * 220"
+        - target: v0.automation.frequency.set.value
+          expression: "startSlot * 220"
 nodes:
   v0:
     kind: oscillator

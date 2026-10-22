@@ -78,10 +78,20 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     // The Force Field turns incoming fire into offence and protects the ship:
     // value it just below the smart bomb (AH-0MV1BIX1W006XF95).
     { id: 'force_field', value: 1.3 },
-    // The Mystery UFO is a rare, purely economic bonus (minerals + score), so
-    // value it modestly above the neutral default (AH-0MV1BIXFO006Z1I7).
+    // The Mystery UFO is a rare, purely economic bonus: a field pickup spawns
+    // a visible collector drone that ferries minerals home, so value it
+    // modestly above the neutral default (AH-0MV1BIXFO006Z1I7 /
+    // AH-0MV9G113S009B37I).
     { id: 'mystery_ufo', value: 1.2 },
     { id: 'teleport', value: 0.9 },
+    // Net-new combat power-ups (AH-0MVCRC1Q0007JAV1). The timed amplifiers
+    // are worth collecting so the bot routes for them; the Orbital Strike's
+    // auto-targeting bolt is strong offence, so it ranks alongside the bomb.
+    { id: 'frenzy', value: 1.2 },
+    { id: 'chrono', value: 1 },
+    { id: 'thorns', value: 1.1 },
+    { id: 'salvage', value: 0.8 },
+    { id: 'strike', value: 1.15 },
     // Weapon drops (P1/P2) are all similarly useful; `reset` merely removes a
     // weapon, so it is the least desirable.
     { id: 'spread', value: 1 },
@@ -94,6 +104,12 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     { id: 'nova', value: 1 },
     { id: 'mortar', value: 1 },
     { id: 'arc', value: 1 },
+    // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW): equally useful.
+    { id: 'rear_guard', value: 1 },
+    { id: 'broadside', value: 1 },
+    { id: 'railgun', value: 1.1 },
+    { id: 'shard_swarm', value: 1 },
+    { id: 'heavy_slug', value: 1 },
     { id: 'reset', value: 0.5 },
   ],
 });

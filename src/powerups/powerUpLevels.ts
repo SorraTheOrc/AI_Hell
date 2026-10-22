@@ -168,11 +168,34 @@ export type PowerUpLevelVariable =
   | 'forceFieldDuration'
   /** Force Field — bullets the field reflects before it stops. */
   | 'forceFieldReflects'
-  /** Mystery UFO — minerals granted instantly by one pickup. */
-  | 'mysteryUfoMinerals'
-  /** Mystery UFO — score granted instantly by one pickup. */
-  | 'mysteryUfoScore';
-
+  /** Mystery UFO — collector-drone lifetime in seconds. */
+  | 'mysteryUfoLifetime'
+  /** Mystery UFO — minerals one collector drone can carry before returning. */
+  | 'mysteryUfoCapacity'
+  /** Mystery UFO — collector-drone vacuum radius in pixels. */
+  | 'mysteryUfoRadius'
+  /** Mystery UFO — seconds between permanent collector-drone spawns (descends). */
+  | 'mysteryUfoSpawnInterval'
+  /** Frenzy — bonus damage hits each player bullet applies. */
+  | 'frenzyBonusHits'
+  /** Frenzy — timed window during which bullets deal bonus hits. */
+  | 'frenzyDuration'
+  /** Chrono Field — fraction of enemy-bullet speed removed while active. */
+  | 'chronoSlowFactor'
+  /** Chrono Field — timed window during which enemy bullets crawl. */
+  | 'chronoDuration'
+  /** Thorn Field — rams absorbed before the counter ends. */
+  | 'thornsAbsorbs'
+  /** Thorn Field — timed window during which rams are free. */
+  | 'thornsDuration'
+  /** Salvage — bonus minerals each destroyed enemy drops. */
+  | 'salvageMinerals'
+  /** Salvage — timed window during which wrecks pay out. */
+  | 'salvageDuration'
+  /** Orbital Strike — seconds between bolts (descends; the strikes/s axis is its inverse). */
+  | 'strikeInterval'
+  /** Orbital Strike — hit points the bolt deals. */
+  | 'strikeDamage';
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'shieldDuration',
@@ -196,8 +219,20 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'smartBombInterval',
   'forceFieldDuration',
   'forceFieldReflects',
-  'mysteryUfoMinerals',
-  'mysteryUfoScore',
+  'mysteryUfoLifetime',
+  'mysteryUfoCapacity',
+  'mysteryUfoRadius',
+  'mysteryUfoSpawnInterval',
+  'frenzyBonusHits',
+  'frenzyDuration',
+  'chronoSlowFactor',
+  'chronoDuration',
+  'thornsAbsorbs',
+  'thornsDuration',
+  'salvageMinerals',
+  'salvageDuration',
+  'strikeInterval',
+  'strikeDamage',
 ];
 
 /**
@@ -414,7 +449,7 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Teleport — stored FIFO uses, S/↓ to activate.
+  // Teleport — stored FIFO uses, spent automatically when the ship is in danger.
   teleport: [
     {
       variable: 'teleportStacks',
@@ -612,43 +647,86 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Mystery UFO — Space Invaders-inspired instant mineral/score bounty
-  // (AH-0MV1BIXFO006Z1I7). No timed window: the burst is granted on
-  // collection and the level scales the next bounty.
+  // Mystery UFO — Space Invaders-inspired bonus pickup (AH-0MV1BIXFO006Z1I7).
+  // With the collector-drone epic (AH-0MV9G113S009B37I) the instant
+  // mineral/score bounty is replaced by a visible collector drone; its level
+  // axes (lifetime, capacity, collector radius and permanent spawn interval)
+  // resolve here so the drone grows with the run without re-tuning code. The
+  // instant-burst axes (score and minerals) no longer exist.
   mystery_ufo: [
     {
-      variable: 'mysteryUfoMinerals',
+      variable: 'mysteryUfoLifetime',
       powerUpId: 'mystery_ufo',
-      label: 'Bonus minerals',
-      unit: '',
-      description: 'Minerals granted instantly by one Mystery UFO pickup.',
+      label: 'Drone lifetime',
+      unit: 's',
+      description: 'How long one collector drone flies before returning.',
       curve: 'exponential-saturation',
-      base: 2,
-      cap: 6,
+      base: 5,
+      cap: 8,
       k: 0.3,
-      discrete: true,
+      discrete: false,
       rationale:
-        'A small, capped mineral burst (2 → 6) accelerates the ship\'s hold ' +
-        'without flooding it; k=0.3 grants a third mineral at the first ' +
-        'upgrade, so early pickups feel rewarding before the curve flattens. ' +
-        'Discrete so the hold only ever receives whole minerals.',
+        'A 5 s sortie keeps the level-0 drone a brief ferry, while the 8 s ' +
+        'cap lets a levelled drone reach minerals across the field before its ' +
+        'lifetime expires; k=0.3 front-loads ~0.8 s on the first upgrade so ' +
+        'the drone feels responsive early. Continuous so the lifetime can be ' +
+        'any second value the timer reads.',
     },
     {
-      variable: 'mysteryUfoScore',
+      variable: 'mysteryUfoCapacity',
       powerUpId: 'mystery_ufo',
-      label: 'Bonus score',
+      label: 'Drone capacity',
       unit: '',
-      description: 'Points granted instantly by one Mystery UFO pickup.',
+      description: 'Minerals one collector drone can carry before returning.',
       curve: 'exponential-saturation',
-      base: 250,
-      cap: 1500,
+      base: 10,
+      cap: 20,
       k: 0.3,
       discrete: true,
       rationale:
-        'A 250-point base echoes the classic Space Invaders mystery-ship ' +
-        'bounty band; the 1500-point cap keeps a levelled bonus meaningful ' +
-        'but finite, and k=0.3 front-loads the first upgrade (~350 points). ' +
-        'Discrete so the run total stays whole.',
+        'A 10-mineral hold at level 0 grows to 20 at the cap, so a levelled ' +
+        'drone ferries a full hold-full chunk per run; k=0.3 adds ~2.6 ' +
+        'minerals on the first upgrade for a visible step. Discrete so the ' +
+        'drone only ever holds whole minerals.',
+    },
+    {
+      variable: 'mysteryUfoRadius',
+      powerUpId: 'mystery_ufo',
+      label: 'Collector radius',
+      unit: 'px',
+      description: 'Distance at which the drone vacuums minerals into its hold.',
+      curve: 'exponential-saturation',
+      base: 20,
+      cap: 40,
+      k: 0.3,
+      discrete: false,
+      rationale:
+        'A 20 px vacuum radius (about one ship size) at level 0 widens to ' +
+        '40 px at the cap so a levelled drone sweeps a broader arc without ' +
+        'becoming a full-field magnet; k=0.3 adds ~5 px on the first upgrade. ' +
+        'Continuous so the radius can be any pixel value.',
+    },
+    {
+      variable: 'mysteryUfoSpawnInterval',
+      powerUpId: 'mystery_ufo',
+      label: 'Spawn interval',
+      unit: 's',
+      description: 'How often a permanent collector drone respawns.',
+      curve: 'linear-clamped',
+      // Descending interval: max(12, 30 − 2×level) s — 30 s on the first
+      // grant, −2 s per further level, floor 12 s. Mirrors the Smart Bomb /
+      // Orbital Strike permanent-interval schedules.
+      base: 30,
+      cap: 12,
+      k: -2,
+      discrete: true,
+      rationale:
+        'A permanent (full-hull) collector drone is free income, so it is ' +
+        'deliberately rare: 30 s between spawns, never more often than once ' +
+        'per 12 s (mirrors the Smart Bomb / Strike interval). The derived ' +
+        'spawns/second inverse stays monotonic non-decreasing, matching the ' +
+        'model\'s rate-axis contract. Discrete so the timer uses whole ' +
+        'seconds.',
     },
   ],
 
@@ -691,6 +769,200 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'infinite offence.',
     },
   ],
+
+  // Frenzy — timed damage amplification (epic AH-0MVCRC1Q0007JAV1): every
+  // player bullet applies a level-resolved number of bonus hits to the first
+  // enemy it damages, so multi-HP enemies (the 5-HP Harvester, the boss) fall
+  // faster while 1-HP regulars still die in one shot.
+  frenzy: [
+    {
+      variable: 'frenzyBonusHits',
+      powerUpId: 'frenzy',
+      label: 'Frenzy bonus',
+      unit: '',
+      description: 'Bonus damage hits each player bullet applies.',
+      curve: 'exponential-saturation',
+      base: 1,
+      cap: 3,
+      k: 0.5,
+      discrete: true,
+      rationale:
+        'The first upgrade already doubles the damage of every player shot, ' +
+        'and k=0.5 grants that second hit promptly; the 3-hit cap keeps the ' +
+        'amplifier a strong but finite burst window rather than trivialising ' +
+        'multi-HP encounters.',
+    },
+    {
+      variable: 'frenzyDuration',
+      powerUpId: 'frenzy',
+      label: 'Frenzy time',
+      unit: 's',
+      description: 'How long the damage amplifier lasts.',
+      curve: 'exponential-saturation',
+      base: 8,
+      cap: 16,
+      k: 0.12,
+      discrete: false,
+      rationale:
+        'Doubling the 8 s baseline is a meaningful but bounded damage window; ' +
+        'k=0.12 spreads the gain across the early levels so magnitude and ' +
+        'duration grow together (mirrors Speed Boost).',
+    },
+  ],
+
+  // Chrono Field — timed enemy-bullet slowdown (AH-0MVCRC1Q0007JAV1): while
+  // active, enemy bullets advance at `1 − chronoSlowFactor` of normal speed.
+  chrono: [
+    {
+      variable: 'chronoSlowFactor',
+      powerUpId: 'chrono',
+      label: 'Chrono slow',
+      unit: '',
+      description: 'Fraction of enemy-bullet speed removed while active.',
+      curve: 'exponential-saturation',
+      base: 0.5,
+      cap: 0.75,
+      k: 0.25,
+      discrete: false,
+      rationale:
+        'Stored as the fraction of speed *removed* (0.5 → 0.75) so the axis ' +
+        'stays monotonic; the effect computes `1 − slow` → bullets crawl at ' +
+        '50 % then 25 % of normal. The 25 % floor keeps the field a dodge ' +
+        'tool, never a complete freeze.',
+    },
+    {
+      variable: 'chronoDuration',
+      powerUpId: 'chrono',
+      label: 'Chrono time',
+      unit: 's',
+      description: 'How long enemy bullets crawl.',
+      curve: 'exponential-saturation',
+      base: 5,
+      cap: 12,
+      k: 0.12,
+      discrete: false,
+      rationale:
+        'Five seconds at level 0 is already a meaningful breather; the 12 s ' +
+        'cap keeps slowdown a finite relief so it cannot trivialise a whole ' +
+        'wave. k=0.12 spreads the gain across the early levels.',
+    },
+  ],
+
+  // Thorn Field — timed ram counter (AH-0MVCRC1Q0007JAV1): while active,
+  // ramming an enemy destroys it without costing the player a hit, up to a
+  // level-resolved absorb count.
+  thorns: [
+    {
+      variable: 'thornsAbsorbs',
+      powerUpId: 'thorns',
+      label: 'Thorn rams',
+      unit: '',
+      description: 'Rams absorbed before the counter ends.',
+      curve: 'exponential-saturation',
+      base: 2,
+      cap: 6,
+      k: 0.35,
+      discrete: true,
+      rationale:
+        'A free ram is an offence-plus-defence premium, so the base is a ' +
+        'modest 2 and the cap 6; k=0.35 front-loads the third absorb at the ' +
+        'first upgrade while never letting the field become permanent ' +
+        'immunity.',
+    },
+    {
+      variable: 'thornsDuration',
+      powerUpId: 'thorns',
+      label: 'Thorn time',
+      unit: 's',
+      description: 'How long the ram counter is active.',
+      curve: 'exponential-saturation',
+      base: 8,
+      cap: 16,
+      k: 0.12,
+      discrete: false,
+      rationale:
+        'An 8 → 16 s window bounds the free-ram window; k=0.12 spreads the ' +
+        'gain across the early levels (mirrors the other timed windows).',
+    },
+  ],
+
+  // Salvage — timed mineral bounty (AH-0MVCRC1Q0007JAV1): destroyed enemies
+  // drop the level-resolved bonus minerals at the wreck.
+  salvage: [
+    {
+      variable: 'salvageMinerals',
+      powerUpId: 'salvage',
+      label: 'Salvage minerals',
+      unit: '',
+      description: 'Bonus minerals each destroyed enemy drops.',
+      curve: 'exponential-saturation',
+      base: 1,
+      cap: 4,
+      k: 0.35,
+      discrete: true,
+      rationale:
+        'One bonus mineral per wreck from the first pickup, growing to four ' +
+        'so a mining frenzy stays rewarding without flooding the hold; ' +
+        'k=0.35 front-loads the second mineral at the first upgrade.',
+    },
+    {
+      variable: 'salvageDuration',
+      powerUpId: 'salvage',
+      label: 'Salvage time',
+      unit: 's',
+      description: 'How long the mining frenzy lasts.',
+      curve: 'exponential-saturation',
+      base: 10,
+      cap: 20,
+      k: 0.12,
+      discrete: false,
+      rationale:
+        'A 10 → 20 s window covers roughly one wave of wrecks; k=0.12 ' +
+        'spreads the gain across the early levels.',
+    },
+  ],
+
+  // Orbital Strike — periodic auto-targeting bolt (AH-0MVCRC1Q0007JAV1): a
+  // field pickup fires one immediate bolt at the nearest enemy; a hold-full
+  // reward repeats it on a level-resolved interval.
+  strike: [
+    {
+      variable: 'strikeInterval',
+      powerUpId: 'strike',
+      label: 'Strike interval',
+      unit: 's',
+      description: 'Seconds between strikes for a permanent strike.',
+      curve: 'linear-clamped',
+      // Descending interval: max(10, 30 − 2×level) s — 30 s on the first
+      // grant, −2 s per further level, floor 10 s. The stored strikes/second
+      // inverse stays monotonic non-decreasing.
+      base: 30,
+      cap: 10,
+      k: -2,
+      discrete: true,
+      rationale:
+        'A permanent bolt is strong offence, so it is deliberately rare: 30 s ' +
+        'between bolts, never faster than once per 10 s (mirrors the Smart ' +
+        'Bomb interval schedule). The derived frequency `1 / interval` stays ' +
+        'monotonic non-decreasing.',
+    },
+    {
+      variable: 'strikeDamage',
+      powerUpId: 'strike',
+      label: 'Strike damage',
+      unit: '',
+      description: 'Hit points the bolt deals to the nearest enemy.',
+      curve: 'exponential-saturation',
+      base: 1,
+      cap: 3,
+      k: 0.3,
+      discrete: true,
+      rationale:
+        'One hit from the first bolt (kills 1-HP regulars); the cap of 3 lets ' +
+        'a levelled strike chip the Harvester and the boss harder without ' +
+        'out-and-out deleting multi-hit enemies (mirrors Smart Bomb damage).',
+    },
+  ],
 };
 
 /**
@@ -709,7 +981,13 @@ export const POWER_UP_LEVEL_IDS: readonly PowerUpId[] = [
   'smart_bomb',
   'force_field',
   'mystery_ufo',
+  'frenzy',
+  'chrono',
+  'thorns',
+  'salvage',
+  'strike',
 ];
+
 
 // ── Resolved stats ──────────────────────────────────────────────────
 
@@ -779,10 +1057,47 @@ export interface PowerUpLevelStats {
   forceFieldDuration?: number;
   /** Force Field — bullets the field reflects before it stops. */
   forceFieldReflects?: number;
-  /** Mystery UFO — minerals granted instantly by one pickup. */
-  mysteryUfoMinerals?: number;
-  /** Mystery UFO — score granted instantly by one pickup. */
-  mysteryUfoScore?: number;
+  /** Mystery UFO — collector-drone lifetime in seconds. */
+  mysteryUfoLifetime?: number;
+  /** Mystery UFO — minerals one collector drone can carry before returning. */
+  mysteryUfoCapacity?: number;
+  /** Mystery UFO — collector-drone vacuum radius in pixels. */
+  mysteryUfoRadius?: number;
+  /**
+   * Mystery UFO — seconds between permanent collector-drone spawns
+   * (descending: `max(12, 30 − 2×level)`).
+   */
+  mysteryUfoSpawnInterval?: number;
+  /** Frenzy — bonus damage hits each player bullet applies while active. */
+  frenzyBonusHits?: number;
+  /** Frenzy — timed window duration in seconds. */
+  frenzyDuration?: number;
+  /** Chrono Field — fraction of enemy-bullet speed removed while active. */
+  chronoSlowFactor?: number;
+  /** Chrono Field — timed window duration in seconds. */
+  chronoDuration?: number;
+  /** Thorn Field — rams absorbed before the counter ends. */
+  thornsAbsorbs?: number;
+  /** Thorn Field — timed window duration in seconds. */
+  thornsDuration?: number;
+  /** Salvage — bonus minerals each destroyed enemy drops. */
+  salvageMinerals?: number;
+  /** Salvage — timed window duration in seconds. */
+  salvageDuration?: number;
+  /**
+   * Orbital Strike — seconds between bolts (descending: `max(10, 30 −
+   * 2×level)`). Its derived strikes/second inverse is non-decreasing.
+   */
+  strikeInterval?: number;
+  /** Orbital Strike — hit points the bolt deals. */
+  strikeDamage?: number;
+  /**
+   * Orbital Strike — permanent strike rate in strikes per second.
+   * **Derived** from {@link strikeInterval} (`1 / interval`) so the rate
+   * axis stays monotonic non-decreasing while the stored interval descends
+   * (mirrors the Smart Bomb frequency).
+   */
+  strikeFrequency?: number;
 }
 
 // ── Resolver ────────────────────────────────────────────────────────
@@ -820,6 +1135,13 @@ export function resolvePowerUpAtLevel(
   const interval = bucket.smartBombInterval;
   if (Number.isFinite(interval) && interval > 0) {
     bucket.smartBombFrequency = 1 / interval;
+  }
+  // The Orbital Strike interval mirrors the Smart Bomb: stored descending
+  // (linear-clamped), its strikes/second inverse is the monotonic rate axis
+  // (epic AH-0MVCRC1Q0007JAV1).
+  const strikeInterval = bucket.strikeInterval;
+  if (Number.isFinite(strikeInterval) && strikeInterval > 0) {
+    bucket.strikeFrequency = 1 / strikeInterval;
   }
   return stats;
 }

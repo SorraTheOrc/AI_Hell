@@ -24,6 +24,7 @@ import {
   type TelemetryConfig,
   type TelemetryEnv,
 } from './config';
+import { isDevTelemetryCollectionEnabled, type DevTelemetrySetting } from './devMode';
 
 /** The player's persisted telemetry-consent decision. */
 export interface TelemetryConsentState {
@@ -56,14 +57,23 @@ export function shouldPromptForTelemetryConsent(
  * Resolves the effective telemetry configuration: the environment config,
  * overridden by the player's persisted consent once they have decided.
  *
+ * Dev-mode collection is composed in here via the single dev gate: when the
+ * supplied settings enable dev collection (`isDevTelemetryCollectionEnabled`),
+ * recording is on even with no `VITE_TELEMETRY_*` env vars (AH-0MVBMRIB800201KK).
+ * In a production build the gate is always closed, so production behaviour is
+ * unchanged.
+ *
  * @param env - The environment slice, defaulting to `import.meta.env`.
  * @param state - The persisted consent state.
+ * @param settings - Optional settings slice carrying the dev-collection flag.
  */
 export function resolveEffectiveTelemetryConfig(
   env: TelemetryEnv = import.meta.env,
   state: TelemetryConsentState,
+  settings?: DevTelemetrySetting,
 ): TelemetryConfig {
-  const base = resolveTelemetryConfig(env);
+  const devCollectionEnabled = isDevTelemetryCollectionEnabled(env, settings);
+  const base = resolveTelemetryConfig(env, { devCollectionEnabled });
   if (!state.decided) return base;
   return applyUserConsent(base, state.granted);
 }

@@ -12,13 +12,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
+import {
+  WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS,
+  anchorSpawnsToPortal,
+  formationCentre,
+  formationExtents,
+} from '../vfx/wormholeSpawn';
+import type { EnemySpawn } from '../waves/WaveManager';
 import * as effectsModule from '../audio/effects';
 import * as playerDeathJuiceModule from '../vfx/playerDeathJuice';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
 import * as explosionParticlesModule from '../vfx/explosionParticles';
 import * as collectAnimationModule from '../powerups/collectAnimation';
-import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
+import { getSpawnState, type SpawnAnimatable } from '../vfx/wormholeSpawn';
 import { Asteroid } from '../entities/Asteroid';
+import { PHASER_ORBITAL_RADIUS, PhaserEntity } from '../entities/Phaser';
 import { Ghost } from '../entities/Ghost';
 import { Centipede } from '../entities/Centipede';
 import { Grunt } from '../entities/Grunt';
@@ -28,6 +37,7 @@ import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
 import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
+import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss } from '../entities/MiniBoss';
 import { minionCountForPhase } from '../waves/BossMinions';
 import type { WeaponDefinition } from '../utils/weapons';
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
@@ -61,16 +71,35 @@ import {
 } from '../waves/StrikeSpawner';
 import { OrbitalStrike } from '../entities/OrbitalStrike';
 import { CENTIPEDE_SEGMENT_COUNT } from '../waves/CentipedeSpawner';
+import {
+  GHOST_GROUP_CLUSTER_RADIUS,
+  GHOST_GROUP_ENTRY_X_FRACTION,
+  GHOST_GROUP_ENTRY_Y_FRACTION,
+  GHOST_GROUP_RELEASE_WINDOW_SECONDS,
+  type GhostSpawnEvent,
+} from '../waves/GhostSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
 import { RULES_STORAGE_KEY } from '../core/rules';
+import { miniBossDesignForLevel } from '../waves/miniBossDesigns';
+import { scaledEncounterHp } from '../core/difficultyScaling';
+import {
+  MINI_BOSS_LOCKED_WEAPONS,
+  lockedWeaponIds,
+} from '../powerups/unlocks';
+import { CHECKPOINT_STORAGE_KEY, loadCheckpoint } from '../core/checkpointStore';
 
 // These integration tests boot full Phaser games and walk the run to the
 // boss; under the full-suite parallel load the Vitest default 5 s timeout
 // is too tight and the heaviest boss-encounter test reports a spurious
-// timeout (AH-0MUIPP1UU000UT88). Give the file headroom so a slow parallel
-// run does not fail on timing alone.
-vi.setConfig({ testTimeout: 60000 });
+// timeout (AH-0MUIPP1UU000UT88, raised to 60 s for the ten-level campaign in
+// AH-0MV396OK0001FX14). The AC4 "defeating all 4 phases" run — the heaviest
+// in the file, because it adds the deterministic victory transition on top
+// of the ten-level walk — still breached the 60 s ceiling at 67 s under
+// full-suite parallel load (AH-0MVF2H4UL007IJT4). Raise to 120 s, matching
+// the other full-game suites (SceneNavigation) and the README testing
+// conventions, so a slow parallel run does not fail on timing alone.
+vi.setConfig({ testTimeout: 120000 });
 
 // These gameplay tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
@@ -112,16 +141,93 @@ function finishSpawnSequence(scene: PlayScene): void {
   scene.tick(0.001);
 }
 
-/** Destroys every live enemy via player bullets (deterministic). */
-function killAllEnemies(scene: PlayScene): void {
+/** Destroys every live spawned enemy via player bullets (deterministic). */
+function killSpawnedEnemies(scene: PlayScene): void {
   // Enemies are protected until their spawn animation completes; advance
   // past it first so the kill loop can actually damage them.
   finishSpawnSequence(scene);
-  for (let guard = 0; guard < 500 && scene.getAliveCount() > 0; guard++) {
+  for (let guard = 0; guard < 2000 && scene.getAliveCount() > 0; guard++) {
+    // A hold-full choice pauses the scene (tick() no-ops) — resolve it so the
+    // kill loop keeps making progress (AH-0MV5L6BVN005DP4I).
+    if (resolveMineralChoiceIfOpen(scene)) continue;
+    // A long multi-group wave (e.g. the wave-10 mini-boss escorts) keeps
+    // emerging from the wormhole while the loop runs; those entities are
+    // spawn-protected until their growth completes, so fast-forward any
+    // pending spawn animation each iteration or the loop can never kill them.
+    scene.finishSpawnAnimations();
     const enemy = scene.getEnemies().find((e) => e.alive)!;
     scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
     scene.tick(0.016);
   }
+}
+
+/**
+ * Clears the current level's mini-boss wave through the normal damage path:
+ * every spawned escort plus the encounter entity itself (the wave has no time
+ * limit, so it can never be carried past by a timeout).
+ */
+function clearMiniBossWave(scene: PlayScene): void {
+  // The wave is flagged active until it is fully wiped, so gate on the wave
+  // state rather than the entity (which may already be dead while escorts
+  // remain).
+  for (let guard = 0; guard < 50; guard++) {
+    if (resolveMineralChoiceIfOpen(scene)) continue;
+    const wm = scene.getWaveManager();
+    if (!wm.miniBossActive || wm.bossTriggered || scene.isTransitioning()) return;
+    killAllEnemies(scene);
+    if (scene.getAliveCount() === 0 && !scene.getMiniBoss()) return;
+  }
+}
+
+/**
+ * Destroys the active level's mini-boss (if any) via player bullets, disabling
+ * auto-fire and the spawned-enemy hit list so only the mini-boss takes the
+ * damage. A no-op outside the mini-boss encounter
+ * (AH-0MVCRBISU006NUN5).
+ */
+function killMiniBoss(scene: PlayScene, resolveReward = true): void {
+  const miniBoss = scene.getMiniBoss();
+  if (!miniBoss?.alive) return;
+  const isolated = scene as unknown as {
+    getEnemyEntities(): readonly unknown[];
+    autoFireEnabled(): boolean;
+  };
+  const originalGetEnemyEntities = isolated.getEnemyEntities;
+  const originalAutoFireEnabled = isolated.autoFireEnabled;
+  isolated.getEnemyEntities = () => [];
+  isolated.autoFireEnabled = () => false;
+  try {
+    const hits =
+      miniBoss.getPhaseCount() * MINI_BOSS_DEFAULT_HP_PER_PHASE;
+    let fired = 0;
+    // The extra guard headroom absorbs hold-full pauses (tick() no-ops while
+    // the choice overlay is open), resolved as they appear. A zero-length
+    // step guarantees the bullet overlaps the moving entity.
+    for (let guard = 0; guard < hits * 4 && fired < hits && miniBoss.alive; guard++) {
+      if (resolveMineralChoiceIfOpen(scene)) continue;
+      scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+      fired += 1;
+      scene.tick(0);
+    }
+  } finally {
+    isolated.getEnemyEntities = originalGetEnemyEntities;
+    isolated.autoFireEnabled = originalAutoFireEnabled;
+  }
+  // A defeat offers the one upgrade-or-unlock reward choice
+  // (AH-0MVCRBNO6003E1CH); a deterministic walk resolves it so play can
+  // continue, exactly as a player picking the first option would. Tests that
+  // need to inspect/choose the offer pass `resolveReward: false`.
+  if (resolveReward && scene.isMiniBossRewardOpen()) {
+    scene.selectMiniBossReward(0);
+  }
+}
+
+/** Destroys every live enemy via player bullets (deterministic). */
+function killAllEnemies(scene: PlayScene): void {
+  killSpawnedEnemies(scene);
+  // The wave-10 mini-boss gates its level, so it must be defeated too before
+  // the next wave/level can begin (AH-0MVCRBISU006NUN5).
+  killMiniBoss(scene);
 }
 
 /**
@@ -245,7 +351,7 @@ function reachBoss(scene: PlayScene): void {
  */
 function damageBossPhase(
   scene: PlayScene,
-  boss: { x: number; y: number },
+  boss: { x: number; y: number; getHitPointsPerPhase(): number },
 ): void {
   const isolated = scene as unknown as {
     getEnemyEntities(): readonly unknown[];
@@ -256,7 +362,8 @@ function damageBossPhase(
   isolated.getEnemyEntities = () => [];
   isolated.autoFireEnabled = () => false;
   try {
-    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
+    // The encounter's effective pool (power-scaled — AH-0MVH87A3L004VOLD).
+    for (let i = 0; i < boss.getHitPointsPerPhase(); i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
     }
@@ -303,6 +410,7 @@ function isolateEnemyForKill(scene: PlayScene, enemy: unknown): () => void {
 function timeOutToBoss(scene: PlayScene): void {
   const gs = scene.getGameState();
   gs.lives = 99; // absorb incidental enemy fire while timeouts advance the run.
+  let miniBossIterations = 0;
   for (let guard = 0; guard < 1000; guard++) {
     const wm = scene.getWaveManager();
     if (wm.bossTriggered || wm.bossActive) break;
@@ -312,6 +420,16 @@ function timeOutToBoss(scene: PlayScene): void {
     if (resolveMineralChoiceIfOpen(scene)) continue;
     if (scene.isTransitioning()) {
       finishTransition(scene);
+      continue;
+    }
+    // The mini-boss encounter has no wave time limit (it gates its level), so
+    // a timeout can never advance it: clear the escorts and the encounter
+    // entity directly to keep the walk moving (AH-0MVCRBISU006NUN5). Gate on
+    // the wave state, not the entity — the entity may die first while escorts
+    // remain.
+    if (wm.miniBossActive) {
+      miniBossIterations += 1;
+      clearMiniBossWave(scene);
       continue;
     }
     scene.setWaveTimerRemaining(0.001);
@@ -327,11 +445,22 @@ function timeOutToBoss(scene: PlayScene): void {
   const boss = scene.getBoss();
   if (!boss) {
     const wm = scene.getWaveManager();
+    const miniBoss = scene.getMiniBoss();
+    const aliveNames = scene
+      .getEnemies()
+      .filter((e) => e.alive)
+      .slice(0, 8)
+      .map((e) => e.constructor.name);
     throw new Error(
       `Failed to reach boss encounter via timeout after 1000 iterations: ` +
         `bossTriggered=${wm.bossTriggered} bossActive=${wm.bossActive} ` +
         `level=${wm.level} wave=${wm.waveNumber} ` +
-        `enemiesAlive=${wm.enemiesAlive} aliveCount=${scene.getAliveCount()}`,
+        `enemiesAlive=${wm.enemiesAlive} aliveCount=${scene.getAliveCount()} ` +
+        `miniBossAlive=${miniBoss ? miniBoss.alive : 'null'} ` +
+        `miniBossActive=${wm.miniBossActive} ` +
+        `miniBossIterations=${miniBossIterations} ` +
+        `transitioning=${scene.isTransitioning()} ` +
+        `aliveNames=${aliveNames.join(',')}`,
     );
   }
 }
@@ -359,7 +488,7 @@ async function bootSceneWithLevels(
     RULES_STORAGE_KEY,
     JSON.stringify({ sequencedWavesEnabled: false }),
   );
-  const game = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+  const game = await bootScene([PlayScene, GameOverScene, MenuScene]);
   const scene = game.scene as PlayScene;
   scene.getWaveManager().setLevels(levels);
   if (options.asteroidSpawner === false) {
@@ -368,7 +497,7 @@ async function bootSceneWithLevels(
     scene.setAsteroidSpawnerEnabled(false);
   }
   scene.scene.restart();
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await advanceGame(scene.game, 200);
   return { booted: game, scene };
 }
 
@@ -388,8 +517,44 @@ function plainCampaign(): LevelDefinition[] {
   }));
 }
 
+/**
+ * A one-level campaign for boss-reaching tests (AH-0MVCYANT6003SG5C).
+ *
+ * `WaveManager.isFinalLevel` is true the moment the campaign has a single
+ * level, so clearing that level's waves triggers the final boss. Boss tests
+ * therefore boot **one** level instead of walking the whole 10-level / 100-wave
+ * campaign to reach the same encounter — the same code path, a tenth of the
+ * simulated waves.
+ */
+function singleLevelCampaign(): LevelDefinition[] {
+  const level = CAMPAIGN_LEVELS[0];
+  return [
+    {
+      ...level,
+      level: 1,
+      waves: level.waves.map((w) => ({
+        ...w,
+        groups: w.groups.map((g) => ({ ...g })),
+      })),
+    },
+  ];
+}
+
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   let booted: BootedGame | null = null;
+
+  /**
+   * Fixed RNG for the asteroid fixtures below (AH-0MVG23LT7000CG4R).
+   *
+   * An asteroid picks its drift heading from the scene RNG, so an unseeded
+   * (Math.random-backed) run could send the carried-over rock into the player
+   * or the auto-fire path and fail the persistence assertions — which is
+   * exactly what happened under full-suite parallel load. Seeding the scene
+   * RNG makes the heading (and every other roll in these tests) identical on
+   * every run.
+   */
+  const ASTEROID_SEED = 1;
+  const FIXED_RNG = createSeededRng(ASTEROID_SEED);
 
   beforeEach(() => {
     // Use the deterministic static campaign for these wave/transition tests so
@@ -411,12 +576,25 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     // This suite predates the dynamic spawner and asserts deterministic
     // wave/banner/transition behaviour; isolate it from random asteroid
     // spawns (the spawner is covered by its own integration suites).
     (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
     return booted.scene as PlayScene;
+  }
+
+  /**
+   * Boots a **single-level** campaign for the two boss-label tests
+   * (AH-0MVCYANT6003SG5C). A one-level campaign makes `isFinalLevel` true
+   * from the start, so `reachBoss` triggers the final boss without walking
+   * the whole ten-level campaign.
+   */
+  async function bootPlayAtBoss(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    booted = game;
+    scene.setAsteroidSpawnerEnabled(false);
+    return scene;
   }
 
   it('F5 — the Harvester is worth ≈400 points (between Tank 300 and the boss phases)', () => {
@@ -432,13 +610,25 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // restarts so these asteroid-behaviour tests are not perturbed by random
     // spawns, then place one deterministic large asteroid through the public
     // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
-    const { booted: game, scene } = await bootSceneWithLevels(
+    const result = await bootSceneWithLevels(
       plainCampaign(),
       { asteroidSpawner: false },
     );
-    booted = game;
-    scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
-    return scene;
+    booted = result.booted;
+    // Seed the scene RNG: an asteroid picks its drift heading from it, so an
+    // unseeded run could send the carried-over rock into the player or the
+    // player's auto-fire and fail the persistence assertions (observed under
+    // full-suite parallel load, AH-0MVG23LT7000CG4R). A fixed seed keeps the
+    // heading (and the wave-1..N spawn plans) identical on every run.
+    result.scene.setRng(FIXED_RNG);
+    // These tests drive every step explicitly (the kill/clear/transition
+    // helpers all use `scene.tick`), so stop the live rAF loop the harness
+    // resumes at the end of `bootScene()`. Otherwise an unpredictable real
+    // frame can run between the test's `await` points (e.g. inside
+    // `bootSceneWithLevels`'s `advanceGame`) with a large real-time delta.
+    result.booted.game.loop.stop();
+    result.scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
+    return result.scene;
   }
 
   // ── AC1: five-level scene + wave spawning ──────────────────────
@@ -458,6 +648,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
   it('AC1/AC3 — spawned enemies are formation-placed and non-firing on Level 1', async () => {
     const scene = await bootPlay();
+    // (AH-0MV8BSMXC0097KLW) Fresh enemies all emerge from the same wormhole;
+    // complete the spawn animation so they have traversed to their distinct
+    // formation slots before asserting placement.
+    scene.finishSpawnAnimations();
+    scene.tick(0.016);
 
     const enemies = scene.getEnemies();
     const positions = new Set(enemies.map((e) => `${e.x},${e.y}`));
@@ -1041,7 +1236,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   // ── Boss label unchanged (AH-0MU7JTEY3004EXR2 AC3 / AH-0MUMMBRCC0093MGV AC4) ──
 
   it('AH-0MU7JTEY3004EXR2 AC3 — the boss encounter shows "Boss" instead of a numeric level', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
 
     expect(scene.getWaveManager().bossActive).toBe(true);
@@ -1050,7 +1245,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   it('AH-0MUMMBRCC0093MGV AC4 — the boss encounter still shows "Boss" (no level name)', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
 
     expect(scene.getLevelText()).toBe('Boss');
@@ -1552,19 +1747,22 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const wm = scene.getWaveManager();
     const asteroid = findAsteroids(scene)[0];
 
-    // Clear wave 1 and wave 2 of Level 1; the asteroid lives through both.
-    killNonAsteroidEnemies(scene);
-    expect(scene.isTransitioning()).toBe(true);
-    finishTransition(scene);
-    expect(wm.waveNumber).toBe(2);
-    expect(asteroid.alive).toBe(true);
-
-    killNonAsteroidEnemies(scene);
-    expect(scene.isTransitioning()).toBe(true);
-    finishTransition(scene);
+    // Clear Level 1 (the expanded campaign levels now span ten waves,
+    // AH-0MVCYANT6003SG5C); the asteroid lives through every wave and the
+    // level transition into Level 2.
+    for (let wave = 0; wave < wm.waveCount; wave++) {
+      killNonAsteroidEnemies(scene);
+      // The wave-10 mini-boss is a separate gating entity (not part of the
+      // spawned set); defeat it too so the level can transition
+      // (AH-0MVCRBISU006NUN5).
+      killMiniBoss(scene);
+      expect(scene.isTransitioning()).toBe(true);
+      finishTransition(scene);
+    }
 
     // Now on Level 2 with the carried-over asteroid still alive.
     expect(wm.level).toBe(2);
+    expect(wm.waveNumber).toBe(1);
     expect(asteroid.alive).toBe(true);
     expect(findAsteroids(scene)).toContain(asteroid);
   });
@@ -1644,7 +1842,7 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     const player = scene.getPlayer()!;
     scene.spawnEnemyBullet(player.x, player.y, 0, 0);
     scene.tick(0.016);
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(scene.game, 350);
 
     expect(gs.lives).toBe(0);
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
@@ -1671,9 +1869,21 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     localStorage.clear();
   });
 
-  async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
-    return booted.scene as PlayScene;
+  /**
+   * Boots a **single-level** campaign for the boss tests (AH-0MVCYANT6003SG5C).
+   * With one level `isFinalLevel` is true from the start, so `reachBoss`
+   * clears that level's waves and triggers the final boss without walking
+   * the other nine levels. Same encounter, ~1/10 the simulated waves.
+   */
+  async function bootPlayAtBoss(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    booted = game;
+    // Isolate the deterministic boss walk from the random asteroid spawner:
+    // a timeout walk simulates a lot of game time, and freely spawning
+    // asteroids would keep the carried-over pile growing faster than the kill
+    // helpers can clear it (AH-0MVCRBISU006NUN5).
+    scene.setAsteroidSpawnerEnabled(false);
+    return scene;
   }
 
   /** Boots with a deterministic large asteroid placed outside the wave
@@ -1692,8 +1902,32 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     return scene;
   }
 
+  it('AH-0MVH87A3L004VOLD — the final boss hit pool scales with permanent upgrades', async () => {
+    const scene = await bootPlayAtBoss();
+    const player = scene.getPlayer()!;
+    for (let i = 0; i < 6; i += 1) player.equipWeapon('spread', true);
+    const score = scene.getPlayerPowerScore();
+    expect(score).toBe(6);
+
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    // The walk may earn a few more permanent grants (hold-full choices), so
+    // read the score the boss actually spawned with.
+    const spawnScore = scene.getPlayerPowerScore();
+    expect(spawnScore).toBeGreaterThanOrEqual(score);
+    // One hit reveals the total pool through the health fraction.
+    boss.takeDamage();
+    const total = Math.round(1 / (1 - boss.getHpFraction()));
+    // The total pool is BOSS_PHASE_COUNT phases of the scaled per-phase pool.
+    expect(total).toBe(
+      BOSS_PHASE_COUNT *
+        scaledEncounterHp(BOSS_HIT_POINTS_PER_PHASE, spawnScore),
+    );
+    expect(total).toBeGreaterThan(BOSS_HIT_POINTS_PER_PHASE);
+  });
+
   it('AC1 — the Central AI spawns after the final level is cleared, with Phase-1 minions', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
 
     const boss = scene.getBoss();
@@ -1708,19 +1942,19 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AC2 — the 4-phase health bar depletes and advances the phase on hits', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     expect(boss.getPhaseNumber()).toBe(1);
 
-    // One phase requires BOSS_HIT_POINTS_PER_PHASE player bullets.
+    // One phase requires the encounter's effective per-phase hit pool.
     damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(scene.getBossPhase()).toBe(2);
   });
 
   it('AC3 — advancing a phase summons that phase’s minion wave', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
 
@@ -1737,7 +1971,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   it('AC4 — phase score is awarded on phase depletion, not per hit (phase score per GDD §4.5)', async () => {
     // Separate scenario: the boss deals no bullets here; assert the score
     // awarded per destroyed phase follows the GDD table (1000/2000/3000/5000).
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
@@ -1748,7 +1982,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(scene.getGameState().score - scoreBefore).toBe(0);
 
     // The phase-depleting hit awards the phase score exactly once.
-    for (let i = 1; i < BOSS_HIT_POINTS_PER_PHASE; i++) {
+    for (let i = 1; i < boss.getHitPointsPerPhase(); i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
     }
@@ -1756,12 +1990,12 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AC4 — defeating all 4 phases wins the run at the game-over screen', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
 
-    // Four phases, BOSS_HIT_POINTS_PER_PHASE hits each (200 total).
+    // Four phases, the encounter's effective per-phase pool each.
     for (let phase = 0; phase < 4; phase++) {
       damageBossPhase(scene, boss);
     }
@@ -1785,7 +2019,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
 
   it('AC5 — a player bullet hit registers a per-hit impact VFX at the hit point', async () => {
     const cue = vi.spyOn(effectsModule, 'playBossHitSound');
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     vi.clearAllMocks();
@@ -1813,14 +2047,14 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   }
 
   it('AC1/AC2 — partial-phase hits award no score and spawn no minions', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
     const minionsBefore = liveMinions(scene);
 
     // Non-depleting partial hits: phase 1 must survive with no rewards.
-    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
+    for (let i = 0; i < boss.getHitPointsPerPhase() - 1; i++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
     }
@@ -1831,7 +2065,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AC3/AC4 — depletion awards the phase score and spawns minions exactly once', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const scoreBefore = scene.getGameState().score;
@@ -1881,14 +2115,14 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   }
 
   it('AC6 — a fully levelled AOE weapon deals one hit per blast, not a whole phase', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const def = fullyLevelWeapon(scene, 'nova');
     expect(def.aoe).toBeDefined();
 
     // Non-depleting max-level blasts: phase 1 survives (each blast is one hit).
-    for (let i = 0; i < BOSS_HIT_POINTS_PER_PHASE - 1; i++) {
+    for (let i = 0; i < boss.getHitPointsPerPhase() - 1; i++) {
       applyAoe(scene, def, boss.x, boss.y);
     }
     expect(boss.getPhaseNumber()).toBe(1);
@@ -1900,12 +2134,12 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     expect(boss.alive).toBe(true);
   });
 
-  it('AC6 — a fully levelled weapon still requires 200 hits to destroy the boss', async () => {
-    const scene = await bootPlay();
+  it('AC6 — a fully levelled weapon still requires the full hit pool to destroy the boss', async () => {
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
     const def = fullyLevelWeapon(scene, 'nova');
-    const totalHits = 4 * BOSS_HIT_POINTS_PER_PHASE;
+    const totalHits = boss.getTotalHp();
 
     // Leave the boss alive on its final phase (one hit short).
     for (let i = 0; i < totalHits - 1; i++) {
@@ -1920,7 +2154,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('scenario — boss bullets are collected as enemy bullets', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const boss = scene.getBoss()!;
 
@@ -1947,7 +2181,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   // ── Boss-entry asteroid cleanup (AH-0MUCG5TIU000VPVO) ──────────
 
   it('AH-0MUCG5TIU000VPVO AC1/AC2/AC5 — carried-over asteroids are destroyed on boss entry with no split children', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     timeOutToBoss(scene);
 
     // The boss spawned and no carried-over asteroid survived.
@@ -1958,7 +2192,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AH-0MUCG5TIU000VPVO AC3 — the boss spawn path is otherwise unchanged (Phase-1 minions arrive)', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     timeOutToBoss(scene);
 
     expect(scene.getBoss()).not.toBeNull();
@@ -1988,7 +2222,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   // ── Hold-full pause resilience for the boss-walk helpers (AH-0MV5L6BVN005DP4I) ──
 
   it('AH-0MV5L6BVN005DP4I — timeOutToBoss resolves an open hold-full choice', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     // The carried-over pile generates enough mineral drops that the hold
     // fills mid-walk; open the overlay here to pin the regression
     // deterministically (it pauses the simulation exactly as real play does).
@@ -2002,7 +2236,7 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   });
 
   it('AH-0MV5L6BVN005DP4I — reachBoss resolves an open hold-full choice', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     scene.openMineralChoice();
     expect(scene.isMineralChoiceOpen()).toBe(true);
 
@@ -2023,7 +2257,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
   }
 
@@ -2959,7 +3193,7 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     // Simulate game restart: same as MenuScene → PlayScene. The restart is
     // queued by the SceneManager, so pump the loop before asserting.
     scene.scene.start('PlayScene');
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await advanceGame(scene.game, 150);
 
     // Phaser reuses the same scene instance — verify it is still active.
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
@@ -3007,9 +3241,7 @@ describe('PlayScene — asteroid Extra Life kill drop (AH-0MV6M2M9P0078N4S)', ()
         asteroidExtraLifeDropChance: 1,
       }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     const scene = booted.scene as PlayScene;
     scene.setAsteroidSpawnerEnabled(false);
     scene.setRng(() => 0.99);
@@ -3217,7 +3449,7 @@ describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () 
   const SEED = 20260925;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
   }
 
@@ -3449,7 +3681,7 @@ describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)
   const SEED = 424242;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
   }
 
@@ -3775,9 +4007,17 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
   });
 
   it('runs a mixed fixed+curve campaign when the toggle is on, static LEVELS when off', () => {
+    // Level 1 is authored as a full all-fixed level (ten waves, matching the
+    // expanded campaign width — AH-0MVCYANT6003SG5C) so the sequencer returns
+    // it verbatim; level 2 exercises the curve path.
     seedDifficultyCurves([
-      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 5, generation: 'fixed' },
-      { level: 1, levelName: 'Entry', wave: 2, targetDifficulty: 9, generation: 'fixed' },
+      ...Array.from({ length: CAMPAIGN_LEVELS[0].waves.length }, (_, index) => ({
+        level: 1,
+        levelName: 'Entry',
+        wave: index + 1,
+        targetDifficulty: 5 + index,
+        generation: 'fixed' as const,
+      })),
       { level: 2, levelName: 'Generated Descent', wave: 1, targetDifficulty: 20, generation: 'curve' },
     ]);
 
@@ -3809,7 +4049,7 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
   });
 
   async function bootToggleScene(): Promise<PlayScene> {
-    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return toggleBooted.scene as PlayScene;
   }
 
@@ -3907,7 +4147,7 @@ describe('PlayScene — campaign Harvester roaming spawns (F6)', () => {
     const scene = booted.scene as PlayScene;
     scene.getWaveManager().setLevels(levels);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     return scene;
   }
 
@@ -4013,9 +4253,7 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-      deterministicBoot: true,
-    });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
     return booted.scene as PlayScene;
   }
@@ -4119,6 +4357,436 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
     ).toBe(true);
     expect(scene.getEnemyBullets()).toHaveLength(0);
   });
+
+  it('AC3 — spawnWave() while a wormhole is still live closes the previous one first (AH-0MV9KHLV8006GMX6)', async () => {
+    const scene = await bootPlay();
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+    expect(registry).toHaveLength(1);
+    const previous = registry[0];
+
+    // A second wave spawn while the first wormhole is mid-spawn: the pre-fix
+    // code overwrote the live handle without closing it, stranding the
+    // previous wormhole on screen. The shared controller must schedule its
+    // close tween before the new wormhole opens.
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    scene.spawnWave();
+    const close = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets === previous && c.alpha === 0 && c.scale === 0);
+    expect(
+      close,
+      'spawnWave must schedule a close tween for the previous wormhole',
+    ).toBeDefined();
+    (close!.onComplete as () => void)();
+
+    // The previous wormhole is destroyed and removed from the effects
+    // registry; only the fresh wave's wormhole remains live.
+    expect(scene.children.list).not.toContain(previous);
+    expect(registry).toHaveLength(1);
+    expect(registry[0]).not.toBe(previous);
+  });
+
+  it('AC4 — a mid-spawn wave timeout closes the wormhole and the next wave opens only one (AH-0MV9KHLV8006GMX6)', async () => {
+    const scene = await bootPlay();
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+    expect(registry).toHaveLength(1);
+    const previous = registry[0];
+
+    // Timeout while the fresh wave is still growing: survivors are carried
+    // and a wave transition begins. The transition's update path skips
+    // `_updateSpawnAnimations`, so pre-fix the wormhole was never closed
+    // here and survived (still open) into the next wave.
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.1);
+    expect(scene.isTransitioning()).toBe(true);
+
+    // The transition start must close the still-open wormhole.
+    const close = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets === previous && c.alpha === 0 && c.scale === 0);
+    expect(
+      close,
+      'starting a transition must close a still-open wormhole',
+    ).toBeDefined();
+    (close!.onComplete as () => void)();
+
+    // Complete the transition: the next spawnWave() opens exactly one
+    // wormhole — never two live at once.
+    scene.tick(LEVEL_TRANSITION_SECONDS + 0.01);
+    expect(scene.children.list).not.toContain(previous);
+    expect(registry).toHaveLength(1);
+    expect(registry[0]).not.toBe(previous);
+  });
+
+  it('AH-0MV8BSMXC0097KLW — freshly spawned enemies begin at the wormhole origin', async () => {
+    const scene = await bootPlay();
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+
+    const before = scene.getEnemies().length;
+    scene.spawnWave();
+    const fresh = scene.getEnemies().slice(before).filter((e) => e.alive);
+    expect(fresh.length).toBeGreaterThan(0);
+
+    // The wave's wormhole opened at the first spawn slot; every fresh enemy
+    // must begin there (the wormhole origin) rather than at its own slot.
+    const wormhole = registry[registry.length - 1];
+    expect(wormhole).toBeDefined();
+    for (const enemy of fresh) {
+      expect(enemy.x).toBeCloseTo(wormhole.x, 5);
+      expect(enemy.y).toBeCloseTo(wormhole.y, 5);
+    }
+  });
+
+  it('AH-0MV8BSMXC0097KLW — enemies begin at the wormhole and arrive exactly on their formation destination', async () => {
+    const scene = await bootPlay();
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+    const before = scene.getEnemies().length;
+    scene.spawnWave();
+    const fresh = scene.getEnemies().slice(before).filter((e) => e.alive);
+    expect(fresh.length).toBeGreaterThan(0);
+
+    const wormhole = registry[registry.length - 1];
+    const expected = new Map<EnemyEntity, { x: number; y: number }>();
+    let movers = 0;
+    for (const enemy of fresh) {
+      const state = getSpawnState(enemy as unknown as SpawnAnimatable);
+      expect(state).not.toBeNull();
+      // Begins at the wave's wormhole origin (where the VFX opened).
+      expect(enemy.x).toBeCloseTo(wormhole.x, 5);
+      expect(enemy.y).toBeCloseTo(wormhole.y, 5);
+      expected.set(enemy, { x: state!.destX, y: state!.destY });
+      if (state!.originX !== state!.destX || state!.originY !== state!.destY) {
+        movers += 1;
+      }
+    }
+    expect(movers).toBeGreaterThan(0);
+
+    // Completing the spawn animation before any scene tick (formation drift
+    // has not advanced) lands every enemy exactly on its recorded formation
+    // destination.
+    scene.finishSpawnAnimations();
+    for (const [enemy, dest] of expected) {
+      expect(enemy.x).toBeCloseTo(dest.x, 5);
+      expect(enemy.y).toBeCloseTo(dest.y, 5);
+      expect((enemy as unknown as { isSpawning: boolean }).isSpawning).toBe(false);
+    }
+  });
+
+  it('AH-0MV8BSMXC0097KLW — the transit is dt-driven and completes within the 3 s spawn-protection window', async () => {
+    const scene = await bootPlay();
+    const before = scene.getEnemies().length;
+    scene.spawnWave();
+    const fresh = scene.getEnemies().slice(before).filter((e) => e.alive);
+    const movers = fresh.filter((e) => {
+      const state = getSpawnState(e as unknown as SpawnAnimatable);
+      return (
+        !!state && (state.originX !== state.destX || state.originY !== state.destY)
+      );
+    });
+    expect(movers.length).toBeGreaterThan(0);
+    const origins = movers.map((e) => ({ x: e.x, y: e.y }));
+
+    // Partway through the grow phase the movers are still spawning and have
+    // begun to travel away from the wormhole.
+    scene.tick(1.2);
+    movers.forEach((enemy, i) => {
+      expect((enemy as unknown as { isSpawning: boolean }).isSpawning).toBe(true);
+      expect(
+        Math.abs(enemy.x - origins[i].x) + Math.abs(enemy.y - origins[i].y),
+      ).toBeGreaterThan(1);
+    });
+
+    // Completing the full window (growth ends at 2.5 s < 3 s) clears the
+    // protection: the movers have arrived within the window.
+    scene.tick(1.5);
+    for (const enemy of movers) {
+      expect((enemy as unknown as { isSpawning: boolean }).isSpawning).toBe(false);
+    }
+  });
+
+  it('AH-0MV8BSMXC0097KLW — spawn protection holds while enemies are in transit', async () => {
+    const scene = await bootPlay();
+    scene.spawnWave();
+    const victim = scene
+      .getEnemies()
+      .find((e) => {
+        if (!e.alive) return false;
+        const state = getSpawnState(e as unknown as SpawnAnimatable);
+        return (
+          !!state && (state.originX !== state.destX || state.originY !== state.destY)
+        );
+      })!;
+    expect(victim).toBeDefined();
+    const aliveBefore = scene.getAliveCount();
+    const livesBefore = scene.getGameState().lives;
+    const origin = getSpawnState(victim as unknown as SpawnAnimatable)!;
+
+    scene.tick(1.2);
+    expect((victim as unknown as { isSpawning: boolean }).isSpawning).toBe(true);
+    expect(getSpawnState(victim as unknown as SpawnAnimatable)).not.toBeNull();
+    // Mid-transit: the mover has left the wormhole origin.
+    expect(
+      Math.abs(victim.x - origin.originX) + Math.abs(victim.y - origin.originY),
+    ).toBeGreaterThan(1);
+
+    // 1. Player bullets pass through.
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.016);
+    expect(victim.alive).toBe(true);
+    expect(scene.getAliveCount()).toBe(aliveBefore);
+
+    // 2. No shooting while spawning.
+    victim.shootEnabled = true;
+    scene.tick(0.1);
+    expect(scene.getEnemyBullets()).toHaveLength(0);
+
+    // 3. No mineral absorption while spawning: a mineral touching the
+    // transiting enemy stays on the field (checked before the player is
+    // parked on the enemy, so only the enemy could have absorbed it).
+    scene.spawnMineralAt(victim.x, victim.y);
+    const mineralsBefore = scene.getMinerals().length;
+    scene.tick(0.016);
+    expect(scene.getMinerals()).toHaveLength(mineralsBefore);
+
+    // 4. No body collision with the player.
+    const player = scene.getPlayer()!;
+    player.setPosition(victim.x, victim.y);
+    scene.tick(0.001);
+    expect(scene.getGameState().lives).toBe(livesBefore);
+    expect(victim.alive).toBe(true);
+
+    // Once transit completes the same enemy becomes vulnerable to all four.
+    scene.finishSpawnAnimations();
+    scene.tick(0.001); // settle the drift/wiggle position before aiming
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.016);
+    expect(scene.getAliveCount()).toBeLessThan(aliveBefore);
+  });
+});
+
+describe('PlayScene — wave portal placed away from the player (AH-0MV8BR9Y70079TKC)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** A deterministic V-formation scout wave near the top centre. */
+  const PORTAL_LEVELS: LevelDefinition[] = [
+    {
+      level: 1,
+      name: 'Portal Test',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 4,
+              spacingX: 28,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.5,
+              startY: GAME_HEIGHT * 0.24,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    },
+  ];
+
+  async function bootPortalScene(): Promise<PlayScene> {
+    const result = await bootSceneWithLevels(PORTAL_LEVELS, {
+      asteroidSpawner: false,
+    });
+    booted = result.booted;
+    return result.scene;
+  }
+
+  /** The live wormhole container after `spawnWave()` (single-live controller). */
+  function wavePortalContainer(scene: PlayScene): Phaser.GameObjects.Container {
+    const registry = (
+      scene as unknown as { wormholeEffects: Phaser.GameObjects.Container[] }
+    ).wormholeEffects;
+    return registry[registry.length - 1];
+  }
+
+  function livePoints(scene: PlayScene, from: number): { x: number; y: number }[] {
+    return scene
+      .getEnemies()
+      .slice(from)
+      .filter((e) => e.alive)
+      .map((e) => ({ x: e.x, y: e.y }));
+  }
+
+  function bounds(points: readonly { x: number; y: number }[]): {
+    cx: number;
+    cy: number;
+    width: number;
+    height: number;
+  } {
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    return {
+      cx: (minX + maxX) / 2,
+      cy: (minY + maxY) / 2,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }
+
+  /** Parks the player at (x, y) with the given velocity (test seam). */
+  function parkPlayer(
+    scene: PlayScene,
+    x: number,
+    y: number,
+    vx = 0,
+    vy = 0,
+  ): void {
+    const player = scene.getPlayer()!;
+    const state = player.getMovementState();
+    (
+      player as unknown as {
+        _movementState: { x: number; y: number; vx: number; vy: number };
+      }
+    )._movementState = { ...state, x, y, vx, vy };
+    player.setPosition(x, y);
+  }
+
+  /**
+   * The deterministic plan `spawnWave()` is about to emit: this level uses
+   * degenerate spawn ranges (no randomness consumed), so the plan is a pure
+   * function independent of the scene RNG.
+   */
+  function plannedSpawns(scene: PlayScene): EnemySpawn[] {
+    return scene.getWaveManager().planSpawns(() => 0.5);
+  }
+
+  it('AC1 — spawnWave() opens the portal ≥ D_MIN from the player when it hovers on the formation anchor', async () => {
+    const scene = await bootPortalScene();
+    const plan = plannedSpawns(scene);
+    const anchor = formationCentre(plan);
+    const dMin = Math.max(formationExtents(plan).width, formationExtents(plan).height);
+
+    // Park the player on the planned formation anchor: the pre-fix code
+    // opened the wormhole at the first enemy slot — right on or beside the
+    // player. The portal must now move to a conforming position.
+    parkPlayer(scene, anchor.x, anchor.y);
+    scene.spawnWave();
+    const portal = wavePortalContainer(scene);
+
+    expect(
+      Math.hypot(portal.x - anchor.x, portal.y - anchor.y),
+    ).toBeGreaterThanOrEqual(dMin - 1e-6);
+  });
+
+  it('AC2 — spawnWave() avoids the player’s ~2 s trajectory position as well', async () => {
+    const scene = await bootPortalScene();
+    const plan = plannedSpawns(scene);
+    const anchor = formationCentre(plan);
+    const dMin = Math.max(formationExtents(plan).width, formationExtents(plan).height);
+
+    // The player is 150 px below the anchor (already ≥ D_MIN away) but
+    // moving straight up at 100 px/s: after the 2 s open+growth window the
+    // ship is ~50 px past the anchor — well inside D_MIN.
+    const vy = -100;
+    parkPlayer(scene, anchor.x, anchor.y + 150, 0, vy);
+    scene.spawnWave();
+    const portal = wavePortalContainer(scene);
+    const projected = {
+      x: anchor.x,
+      y: anchor.y + 150 + vy * WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS,
+    };
+
+    expect(
+      Math.hypot(portal.x - projected.x, portal.y - projected.y),
+    ).toBeGreaterThanOrEqual(dMin - 1e-6);
+  });
+
+  it('AC3 — the fresh formation is anchored to the portal (a moved portal moves the whole formation)', async () => {
+    const scene = await bootPortalScene();
+    const plan = plannedSpawns(scene);
+    const anchor = formationCentre(plan);
+
+    // Force the portal away (player on the anchor), then check the formation
+    // hangs off the portal: its centre sits exactly on the portal and every
+    // enemy sits on its portal-anchored slot, keeping all spacing.
+    parkPlayer(scene, anchor.x, anchor.y);
+    const beforeCount = scene.getEnemies().length;
+    scene.spawnWave();
+    // (AH-0MV8BSMXC0097KLW) Fresh enemies emerge from the portal and traverse
+    // to their anchored slots; complete the transit (no tick) before measuring
+    // the anchored formation.
+    scene.finishSpawnAnimations();
+    const portal = wavePortalContainer(scene);
+    const fresh = livePoints(scene, beforeCount);
+    const expected = anchorSpawnsToPortal(plan, {
+      x: portal.x,
+      y: portal.y,
+    });
+    expect(fresh.length).toBe(expected.length);
+
+    const freshCentre = bounds(fresh);
+    // The formation hangs off the portal; a small horizontal budget covers
+    // drift carried over from the boot (spawnWave keeps the continuing base
+    // when survivors carry over). The ROW centre is exact (no vertical drift).
+    expect(Math.abs(freshCentre.cx - portal.x)).toBeLessThan(8);
+    expect(Math.abs(freshCentre.cy - portal.y)).toBeLessThan(1e-6);
+
+    const expectedCentre = bounds(expected);
+    for (let i = 0; i < fresh.length; i += 1) {
+      // The portal-anchored SHAPE is preserved (slot positions relative to
+      // the formation centre, spacing included).
+      expect(fresh[i].x - freshCentre.cx).toBeCloseTo(
+        expected[i].x - expectedCentre.cx,
+        3,
+      );
+      expect(fresh[i].y - freshCentre.cy).toBeCloseTo(
+        expected[i].y - expectedCentre.cy,
+        3,
+      );
+    }
+    // Spacing is preserved (spacingX/spacingY unchanged).
+    expect(fresh[1].x - fresh[0].x).toBeCloseTo(
+      expected[1].x - expected[0].x,
+      4,
+    );
+  });
+
+  it('with a parked player well away, the wave spawns at the planned centre (no gratuitous shift)', async () => {
+    const scene = await bootPortalScene();
+    const plan = plannedSpawns(scene);
+    const anchor = formationCentre(plan);
+    parkPlayer(scene, GAME_WIDTH - 60, GAME_HEIGHT - 40);
+
+    const beforeCount = scene.getEnemies().length;
+    scene.spawnWave();
+    const portal = wavePortalContainer(scene);
+    const fresh = livePoints(scene, beforeCount);
+    const freshCentre = bounds(fresh);
+
+    // The planned anchor already satisfies D_MIN, so the formation is not
+    // shifted at all — the portal sits on the planned formation centre.
+    expect(Math.abs(portal.x - anchor.x)).toBeLessThan(1);
+    expect(Math.abs(portal.y - anchor.y)).toBeLessThan(1);
+    expect(Math.abs(freshCentre.cx - anchor.x)).toBeLessThan(1);
+    expect(Math.abs(freshCentre.cy - anchor.y)).toBeLessThan(1);
+  });
 });
 
 describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () => {
@@ -4139,8 +4807,19 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene], { deterministicBoot: true });
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     return booted.scene as PlayScene;
+  }
+
+  /**
+   * Boots a **single-level** campaign for the victory tests
+   * (AH-0MVCYANT6003SG5C): a one-level campaign is final from the start, so
+   * `reachBoss` triggers the boss without walking the whole campaign.
+   */
+  async function bootPlayAtBoss(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    booted = game;
+    return scene;
   }
 
   /**
@@ -4155,7 +4834,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   }
 
   it('AC1/AC2 — defeating the boss plays the fanfare once and spawns the shared celebration once', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
@@ -4226,7 +4905,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   it('AC1 — the fanfare and celebration fire exactly once even across extra ticks', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
     const victorySpy = vi.spyOn(endOfRunModule, 'spawnVictoryJuice');
@@ -4255,7 +4934,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   it('AC4 — the victory celebration is destroyed on SHUTDOWN (no leaks)', async () => {
-    const scene = await bootPlay();
+    const scene = await bootPlayAtBoss();
     reachBoss(scene);
     defeatBoss(scene);
 
@@ -4285,22 +4964,20 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC1 — demo mode is set when started with { demo: true }', async () => {
       const booted = await bootScene(
         [PlayScene, GameOverScene, MenuScene],
-        { deterministicBoot: true },
       );
       const scene = booted.scene as PlayScene;
       scene.scene.start('PlayScene', { demo: true });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
     });
 
     it('AC6 — demo mode is false when started normally', async () => {
       const booted = await bootScene(
         [PlayScene, GameOverScene, MenuScene],
-        { deterministicBoot: true },
       );
       const scene = booted.scene as PlayScene;
       scene.scene.start('PlayScene');
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(false);
     });
 
@@ -4319,20 +4996,19 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC2/AC5 — an explicit non-demo start clears stale demo data on the reused scene', async () => {
       const booted = await bootScene(
         [PlayScene, GameOverScene, MenuScene],
-        { deterministicBoot: true },
       );
       const scene = booted.scene as PlayScene;
       const botInput = () =>
         (scene as unknown as { getBotInput(): unknown }).getBotInput();
 
       scene.scene.start('PlayScene', { demo: true });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
       expect(botInput()).not.toBeNull();
 
       // The explicit `{ demo: false }` overwrites the stale payload.
       scene.scene.start('PlayScene', { demo: false });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(false);
       expect(botInput()).toBeNull();
     });
@@ -4363,14 +5039,13 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC4 — demo run holds on the game-over screen, then returns to MenuScene', async () => {
       const booted = await bootScene(
         [PlayScene, GameOverScene, MenuScene],
-        { deterministicBoot: true },
       );
       const scene = booted.scene as PlayScene;
 
       // Start the demo with a short dwell so the test is quick
       // (AH-0MUXZ4CAE008QRFZ AC4 test override).
       scene.scene.start('PlayScene', { demo: true, demoDwellMs: 600 });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
 
       // Kill the player on the final life so the hit ends the run.
@@ -4378,7 +5053,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
 
       // Mid-dwell the demo holds on the outcome screen (not the menu).
-      await new Promise((r) => setTimeout(r, 200));
+      await advanceGame(scene.game, 200);
       expect(booted.game.scene.isActive('GameOverScene')).toBe(true);
       expect(booted.game.scene.isActive('MenuScene')).toBe(false);
       const over = booted.game.scene.getScene('GameOverScene') as GameOverScene;
@@ -4386,7 +5061,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(scene.isDemoMode()).toBe(false);
 
       // After the dwell it loops back to the menu.
-      await new Promise((r) => setTimeout(r, 800));
+      await advanceGame(scene.game, 800);
       expect(booted.game.scene.isActive('MenuScene')).toBe(true);
       expect(booted.game.scene.isActive('GameOverScene')).toBe(false);
     });
@@ -4400,7 +5075,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       (scene as unknown as { onPlayerHit(): void }).onPlayerHit();
 
       // Wait for the game-over transition
-      await new Promise((r) => setTimeout(r, 300));
+      await advanceGame(scene.game, 300);
 
       // Normal play should navigate to GameOverScene.
       const activeKey = scene.scene.isActive('GameOverScene')
@@ -4420,12 +5095,10 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   describe('Narrowed demo take-over (AH-0MUYP6M6W006Z1AY)', () => {
     /** Boots a live game and starts the demo, returning the PlayScene. */
     async function bootDemo(): Promise<PlayScene> {
-      booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
       const scene = booted.scene as PlayScene;
       scene.scene.start('PlayScene', { demo: true });
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
       return scene;
     }
@@ -4448,7 +5121,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       const scene = await bootDemo();
 
       pressKey(scene, 'Escape');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
 
       // Exactly one ESC action applies: return to the menu, never pause.
       expect(scene.isPaused()).toBe(false);
@@ -4459,7 +5132,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     it('AC1 — ESC does not take over the run (no in-place hand-off)', async () => {
       const scene = await bootDemo();
       pressKey(scene, 'Escape');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
       // The demo was abandoned to the menu, not handed to the keyboard.
       expect(scene.isPaused()).toBe(false);
       expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
@@ -4534,7 +5207,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
 
       // The old default `w` is no longer movement → returns to the menu.
       pressKey(scene, 'w');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
       expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
       expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
     });
@@ -4544,7 +5217,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
 
       // Any non-movement key (e.g. space) returns to the main menu.
       pressKey(scene, ' ');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
 
       // MenuScene is now active and PlayScene is no longer.
       expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
@@ -4560,15 +5233,13 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     });
 
     it('AC5 — normal play registers no take-over listener and ESC still pauses', async () => {
-      booted = await bootScene([PlayScene, GameOverScene, MenuScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
       const scene = booted.scene as PlayScene;
       expect(scene.isDemoMode()).toBe(false);
       expect(takeOverHandlerOf(scene)).toBeNull();
 
       pressKey(scene, 'Escape');
-      await new Promise((r) => setTimeout(r, 80));
+      await advanceGame(scene.game, 80);
 
       expect(scene.isPaused()).toBe(true);
       expect(booted.game.scene.isActive('PlayScene')).toBe(true);
@@ -4644,7 +5315,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(details).toEqual([{ won: true, score }]);
       // Normal play still reaches GameOverScene (AC3); the scene start is
       // queued to the next frame, so let it settle.
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     });
 
@@ -4705,7 +5376,7 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
       expect(window.__aiHellRunState).toBeUndefined();
       expect(details).toEqual([]);
       // The game-over transition is unaffected by the disabled signal.
-      await new Promise((r) => setTimeout(r, 50));
+      await advanceGame(scene.game, 50);
       expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     });
   });
@@ -4785,6 +5456,219 @@ describe('PlayScene — Space Invaders marching block (AH-0MV01EDZS0005R20)', ()
   });
 });
 
+// ── Carry-over position/motion across the next-wave spawn
+//    (AH-0MV9FUG4J008OHKA) ────────────────────────────────────────────
+
+describe('PlayScene — carried-over survivors keep formation position/motion across the next-wave spawn (AH-0MV9FUG4J008OHKA)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Suspends the player's auto-fire so carried-over survivors are not shot
+   * during the carry-over assertions (survivors are hittable in the
+   * transition pause, AH-0MUNS3ZQ1002DJ9S AC3).
+   */
+  function suspendAutoFire(scene: PlayScene): void {
+    (scene as unknown as { autoFireEnabled(): boolean }).autoFireEnabled =
+      () => false;
+  }
+
+  /**
+   * Two identical drift waves: wave 1 times out and its survivors carry
+   * over beside wave 2, which is configured identically so a clean start and
+   * a carry-over can be compared 1:1.
+   */
+  const DRIFT_LEVELS: LevelDefinition[] = [
+    {
+      level: 1,
+      name: 'Carry Drift',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 4,
+              spacingX: 28,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.35,
+              startY: GAME_HEIGHT * 0.3,
+            },
+          ],
+          shootEnabled: false,
+        },
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 4,
+              spacingX: 28,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.35,
+              startY: GAME_HEIGHT * 0.3,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    },
+  ];
+
+  async function bootCarryDrift(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(DRIFT_LEVELS, {
+      asteroidSpawner: false,
+    });
+    booted = game;
+    suspendAutoFire(scene);
+    return scene;
+  }
+
+  it('AC1/AC2 (drift) — carried-over survivors keep position and drift speed when the next wave spawns', async () => {
+    const scene = await bootCarryDrift();
+    finishSpawnSequence(scene);
+    const firstWaveX = scene.getEnemies()[0].x;
+
+    // Advance the drift so the carry-over has a non-zero shared base to
+    // preserve (28 px/s → ~28 px after one second).
+    scene.tick(1.0);
+    const survivor = scene.getEnemies()[0];
+    const xBefore = survivor.x;
+    expect(xBefore).toBeGreaterThan(firstWaveX + 20);
+
+    // Time out the wave → transition pause → next wave spawns with the
+    // surviving formation enemies carried over.
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.05);
+    expect(scene.isTransitioning()).toBe(true);
+    const xMid = survivor.x;
+    finishTransition(scene);
+    expect(survivor.alive).toBe(true);
+
+    // No snap: the survivor kept drifting through the transition AND the
+    // wave-2 spawn. The ~1.5 s transition tick (drift keeps advancing in the
+    // pause, AH-0MUNS3ZQ1002DJ9S AC3) plus the 0.001 s spawn tick advance
+    // the drift by ~42 px; a spawn-time reset would snap it back below the
+    // pre-timeout position instead.
+    const xAfter = survivor.x;
+    expect(xAfter).toBeGreaterThan(xBefore);
+    expect(xAfter - xMid).toBeGreaterThan(30);
+    expect(xAfter - xMid).toBeLessThan(55);
+  });
+
+  it('AC3 — a clean wipe (no survivors) still starts the next wave at its configured positions', async () => {
+    const scene = await bootCarryDrift();
+    finishSpawnSequence(scene);
+    const firstWaveX = scene.getEnemies().filter((e) => e.alive).map((e) => e.x);
+
+    // Deliberately advance the drift so the clean wipe has a non-zero base
+    // to erase: a leaked carry-over base would show up as an offset here
+    // (28 px/s × 2 s ≈ 56 px of drift).
+    scene.tick(2.0);
+    const driftedX = scene.getEnemies().filter((e) => e.alive).map((e) => e.x);
+    for (let i = 0; i < firstWaveX.length; i += 1) {
+      expect(driftedX[i]).toBeGreaterThan(firstWaveX[i] + 45);
+    }
+
+    // Wipe wave 1 with no survivors → transition → wave 2.
+    killAllEnemies(scene);
+    expect(scene.isTransitioning()).toBe(true);
+    finishTransition(scene);
+
+    const secondWaveX = scene.getEnemies().filter((e) => e.alive).map((e) => e.x);
+    expect(secondWaveX.length).toBe(firstWaveX.length);
+    // A clean start re-places the fresh wave at its configured startX — near
+    // where wave 1 began (bounded ±2 px wiggle each side, plus boot jitter),
+    // and nowhere near its drifted positions (a leaked carry-over base would
+    // keep the ~56+ px drift offset instead of erasing it).
+    for (let i = 0; i < firstWaveX.length; i += 1) {
+      expect(Math.abs(secondWaveX[i] - firstWaveX[i])).toBeLessThanOrEqual(12);
+      expect(secondWaveX[i]).toBeLessThan(driftedX[i] - 40);
+    }
+  });
+
+  /** Two identical march waves so a carried march survivor meets a fresh
+   * march block at the next-wave spawn. */
+  const MARCH_LEVELS: LevelDefinition[] = [
+    {
+      level: 1,
+      name: 'Carry March',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'march',
+              formation: 'march',
+              count: 11,
+              spacingX: 26,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.5,
+              startY: GAME_HEIGHT * 0.25,
+            },
+          ],
+          shootEnabled: false,
+        },
+        {
+          groups: [
+            {
+              enemyKey: 'march',
+              formation: 'march',
+              count: 11,
+              spacingX: 26,
+              spacingY: 24,
+              startX: GAME_WIDTH * 0.5,
+              startY: GAME_HEIGHT * 0.25,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    },
+  ];
+
+  async function bootCarryMarch(): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(MARCH_LEVELS, {
+      asteroidSpawner: false,
+    });
+    booted = game;
+    suspendAutoFire(scene);
+    return scene;
+  }
+
+  it('AC1/AC2 (march) — a carried march survivor keeps its step cadence when a fresh march block spawns alongside it', async () => {
+    const scene = await bootCarryMarch();
+    finishSpawnSequence(scene);
+
+    // One full step at full strength (step 20 / reference drift 20 → 1 s
+    // cadence, AH-0MV01EDZS0005R20).
+    scene.tick(1.0);
+    const survivor = scene.getEnemies()[0];
+    const xAfterStep = survivor.x;
+
+    scene.setWaveTimerRemaining(0.05);
+    scene.tick(0.05);
+    expect(scene.isTransitioning()).toBe(true);
+    const xMid = survivor.x;
+
+    // Advance the transition; the marched block keeps stepping — the ~1.5 s
+    // transition tick accrues just over one full step (1 s cadence).
+    finishTransition(scene);
+    expect(survivor.alive).toBe(true);
+
+    const xAfter = survivor.x;
+    // The survivor continued marching forward (a full step through the
+    // transition + spawn) rather than snapping back onto the fresh origin
+    // (which would put it at/behind its pre-timeout position).
+    expect(xAfter).toBeGreaterThan(xAfterStep + 10);
+    expect(xAfter - xMid).toBeGreaterThan(10);
+  });
+});
+
 // ── Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q) ─────────
 
 describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)', () => {
@@ -4817,7 +5701,7 @@ describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)
     scene.getWaveManager().setLevels(levels);
     scene.setGhostSpawnerEnabled(true);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     return scene;
   }
 
@@ -4858,6 +5742,46 @@ describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)
     }
     // Every spawned pursuer is registered with the wave accounting.
     expect(wm.enemiesAlive).toBe(4);
+  });
+
+  it('spawns the group as a tight cluster from a single entry point', async () => {
+    const scene = await bootWithGhostWave(true);
+    releaseGhosts(scene);
+    const info = scene as unknown as {
+      spawned: Array<{ entity: Ghost; startX: number; startY: number }>;
+    };
+    const records = info.spawned.filter((r) => r.entity instanceof Ghost);
+    expect(records).toHaveLength(4);
+    const entryX = GAME_WIDTH * GHOST_GROUP_ENTRY_X_FRACTION;
+    const entryY = GAME_HEIGHT * GHOST_GROUP_ENTRY_Y_FRACTION;
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (const r of records) {
+      xs.push(r.startX);
+      ys.push(r.startY);
+      // Every ghost starts within the cluster radius of one common point.
+      expect(Math.hypot(r.startX - entryX, r.startY - entryY)).toBeLessThanOrEqual(
+        GHOST_GROUP_CLUSTER_RADIUS + 1e-6,
+      );
+    }
+    const spread = Math.max(
+      Math.max(...xs) - Math.min(...xs),
+      Math.max(...ys) - Math.min(...ys),
+    );
+    // A tight pack — nothing like the four-edges spawn of the old planner.
+    expect(spread).toBeLessThanOrEqual(2 * GHOST_GROUP_CLUSTER_RADIUS);
+  });
+
+  it('plans the whole group within a single narrow release window', async () => {
+    const scene = await bootWithGhostWave(true);
+    const planned = (
+      scene as unknown as { pendingGhostSpawns: GhostSpawnEvent[] }
+    ).pendingGhostSpawns;
+    expect(planned).toHaveLength(4);
+    const times = planned.map((e) => e.timeSeconds);
+    expect(Math.max(...times) - Math.min(...times)).toBeLessThanOrEqual(
+      GHOST_GROUP_RELEASE_WINDOW_SECONDS + 1e-6,
+    );
   });
 
   it('pursuers never fire at any level (no enemy bullets)', async () => {
@@ -4944,7 +5868,7 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
     // released asteroid can absorb a player bullet meant for a segment.
     scene.setAsteroidSpawnerEnabled(false);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     return scene;
   }
 
@@ -5099,7 +6023,7 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     scene.getWaveManager().setLevels(levels);
     scene.setHordeSpawnerEnabled(true);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     return scene;
   }
 
@@ -5242,7 +6166,7 @@ describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
     const scene = booted.scene as PlayScene;
     scene.getWaveManager().setLevels(levels);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     // Complete the wormhole spawn so the raider is collision-active immediately
     // (the spawn animation protects spawning enemies).
     scene.finishSpawnAnimations();
@@ -5276,7 +6200,8 @@ describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
     expect(victim.health).toBe(2);
 
     // Two hits: the first leaves the 2 HP raider alive. A second point-blank
-    // bullet (matching the entity's own position) finishes it.
+    // bullet (matching the entity's own live position) finishes it.
+    scene.tick(0.001); // settle the patrol/wiggle position before aiming
     scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
     scene.tick(0.001);
     scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
@@ -5529,7 +6454,7 @@ describe('PlayScene — Frogger lane traffic (AH-0MV01EPM40008N8T)', () => {
     scene.setAsteroidSpawnerEnabled(false);
     scene.setLaneTrafficSpawnerEnabled(true);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     scene.finishSpawnAnimations();
     return scene;
   }
@@ -5675,10 +6600,652 @@ describe('PlayScene — Frogger lane traffic (AH-0MV01EPM40008N8T)', () => {
     scene.setAsteroidSpawnerEnabled(false);
     scene.setLaneTrafficSpawnerEnabled(true);
     scene.scene.restart();
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await advanceGame(scene.game, 200);
     scene.finishSpawnAnimations();
 
     releaseLaneTraffic(scene);
     expect(liveTraffic(scene)).toHaveLength(0);
+  });
+});
+
+// ── Phaser orbital spawn transit (AH-0MVEXVME1004SIIS) ─────────────
+
+describe('PlayScene — Phaser orbital spawn transit (AH-0MVEXVME1004SIIS)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** Boots a single-wave campaign containing `count` orbital Phasers. */
+  async function bootPhaserWave(count: number): Promise<PlayScene> {
+    const levels: LevelDefinition[] = [
+      {
+        level: 1,
+        name: 'Phaser orbital',
+        waves: [
+          {
+            groups: [
+              {
+                enemyKey: 'phaser',
+                formation: 'orbital',
+                count,
+                spacingX: 40,
+                spacingY: 40,
+                startX: GAME_WIDTH * 0.5,
+                startY: GAME_HEIGHT * 0.4,
+              },
+            ],
+            shootEnabled: false,
+          },
+        ],
+      },
+    ];
+    const { booted: game, scene } = await bootSceneWithLevels(levels, {
+      asteroidSpawner: false,
+    });
+    booted = game;
+    return scene;
+  }
+
+  function livePhasers(scene: PlayScene): PhaserEntity[] {
+    return scene
+      .getEnemies()
+      .filter((e): e is PhaserEntity => e instanceof PhaserEntity && e.alive);
+  }
+
+  function spawnDest(p: PhaserEntity): { x: number; y: number } | undefined {
+    return getSpawnState(p as unknown as SpawnAnimatable)?.destFn?.();
+  }
+
+  it('transits 12 Phasers straight to their live orbital slots — no line then snap', async () => {
+    const scene = await bootPhaserWave(12);
+    const phasers = livePhasers(scene);
+    expect(phasers).toHaveLength(12);
+
+    // While still emerging from the wormhole the transit destination already
+    // resolves to the live orbital slots: all on one ring around the
+    // formation centre and all distinct (the reported bug stacked three
+    // Phasers on each of four points).
+    const dests = phasers.map(spawnDest);
+    expect(dests.every((d) => d !== undefined)).toBe(true);
+    const centre = {
+      x: dests.reduce((sum, d) => sum + d!.x, 0) / dests.length,
+      y: dests.reduce((sum, d) => sum + d!.y, 0) / dests.length,
+    };
+    for (const d of dests) {
+      expect(Math.hypot(d!.x - centre.x, d!.y - centre.y)).toBeCloseTo(
+        PHASER_ORBITAL_RADIUS,
+        3,
+      );
+    }
+    const keys = dests.map((d) => `${d!.x.toFixed(4)},${d!.y.toFixed(4)}`);
+    expect(new Set(keys).size).toBe(12);
+
+    // The destination is the point the orbit takes over: when the spawn
+    // window ends the Phaser settles onto it with no visible jump.
+    scene.finishSpawnAnimations();
+    const settled = livePhasers(scene).map((p) => ({ x: p.x, y: p.y }));
+    scene.tick(0.001);
+    const after = livePhasers(scene);
+    expect(after).toHaveLength(12);
+    for (let i = 0; i < after.length; i++) {
+      expect(
+        Math.hypot(after[i].x - settled[i].x, after[i].y - settled[i].y),
+      ).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('N = 4 reproduces the existing square of four distinct on-ring slots', async () => {
+    const scene = await bootPhaserWave(4);
+    const phasers = livePhasers(scene);
+    expect(phasers).toHaveLength(4);
+
+    const dests = phasers.map(spawnDest);
+    const centre = {
+      x: dests.reduce((sum, d) => sum + d!.x, 0) / dests.length,
+      y: dests.reduce((sum, d) => sum + d!.y, 0) / dests.length,
+    };
+    const angles = dests.map((d) =>
+      ((Math.atan2(d!.y - centre.y, d!.x - centre.x) * 180) / Math.PI + 360) %
+      360,
+    );
+    // Four evenly spaced phases: the slots are a quarter turn apart. The ring
+    // advances a little during the boot wait, so assert the *spacing* rather
+    // than absolute angles.
+    const sorted = [...new Set(angles)].sort((a, b) => a - b);
+    expect(sorted).toHaveLength(4);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i] - sorted[i - 1]).toBeCloseTo(90, 6);
+    }
+    expect(sorted[0] + 360 - sorted[sorted.length - 1]).toBeCloseTo(90, 6);
+    const keys = dests.map((d) => `${d!.x.toFixed(4)},${d!.y.toFixed(4)}`);
+    expect(new Set(keys).size).toBe(4);
+  });
+});
+
+/**
+ * Mini-boss integration (AH-0MVCRBISU006NUN5, epic AH-0MVCC8XSS007P01Z).
+ *
+ * The wave manager already recognises each level's wave-10 mini-boss
+ * (AH-0MVCRAV3B0069AIJ) and the config-driven `MiniBoss` entity already exists
+ * (AH-0MVCRAYSH0014BQJ). These tests cover the PlayScene wiring: spawn on the
+ * mini-boss wave, level gating on its defeat, the reward/checkpoint defeat
+ * hooks, HUD reflection, and the final-level path into the final boss.
+ */
+describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /**
+   * A compact campaign whose last wave of each level is the mini-boss
+   * encounter. Tiny formations keep the deterministic walks fast while
+   * exercising the same shared wave/mini-boss code paths as the shipped
+   * 10-wave levels.
+   */
+  function miniBossCampaign(levelCount = 2): LevelDefinition[] {
+    const scoutGroup = (count: number) => ({
+      enemyKey: 'scout',
+      formation: 'v' as const,
+      count,
+      spacingX: 30,
+      spacingY: 26,
+      startX: GAME_WIDTH * 0.2,
+      startY: GAME_HEIGHT * 0.38,
+    });
+    const levels: LevelDefinition[] = [];
+    for (let i = 0; i < levelCount; i++) {
+      levels.push({
+        level: i + 1,
+        name: i === 0 ? 'Entry' : 'Descent',
+        waves: [
+          { groups: [scoutGroup(2)], shootEnabled: false },
+          { groups: [scoutGroup(2)], shootEnabled: false, miniBoss: true },
+        ],
+      });
+    }
+    return levels;
+  }
+
+  async function bootMiniBossCampaign(
+    levelCount = 2,
+  ): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(
+      miniBossCampaign(levelCount),
+    );
+    booted = game;
+    scene.setAsteroidSpawnerEnabled(false);
+    return scene;
+  }
+
+  /** Clears every regular wave until the level's mini-boss wave is current. */
+  function advanceToMiniBoss(scene: PlayScene): void {
+    const wm = scene.getWaveManager();
+    scene.getGameState().lives = 99; // survive incidental fire while walking.
+    for (let guard = 0; guard < 20 && !wm.miniBossActive; guard++) {
+      if (resolveMineralChoiceIfOpen(scene)) continue;
+      killSpawnedEnemies(scene);
+      finishTransition(scene);
+    }
+    expect(wm.miniBossActive).toBe(true);
+  }
+
+  it('AC1 — the mini-boss wave spawns the active level\'s mini-boss config', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+
+    const miniBoss = scene.getMiniBoss();
+    expect(miniBoss).not.toBeNull();
+    expect(miniBoss!.alive).toBe(true);
+    expect(miniBoss).toBeInstanceOf(MiniBoss);
+    // The active level's bespoke design supplies the identity (AC1/AC3,
+    // AH-0MVCRBXSS008JSV0).
+    expect(miniBoss!.resolvedConfig.level).toBe(scene.getWaveManager().level);
+    expect(miniBoss!.resolvedConfig.name).toBe(
+      miniBossDesignForLevel(scene.getWaveManager().level).archetype,
+    );
+    // The shared boss accessor targets the encounter so the live entity is
+    // advanced/targeted by the shared combat core.
+    expect(scene.getBoss()).toBe(miniBoss);
+  });
+
+  it('AC2 — the level does not advance while the mini-boss is alive, and completes only on its defeat', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const wm = scene.getWaveManager();
+    expect(wm.level).toBe(1);
+
+    // Wipe the wave's escorts: the encounter (and the level) must be held.
+    killSpawnedEnemies(scene);
+    expect(scene.getMiniBoss()!.alive).toBe(true);
+    expect(wm.level).toBe(1);
+    expect(wm.miniBossActive).toBe(true);
+    expect(scene.isTransitioning()).toBe(false);
+
+    // Defeating the mini-boss completes the level; the next level begins at
+    // wave 1.
+    killMiniBoss(scene);
+    expect(scene.getMiniBoss()).toBeNull();
+    expect(wm.miniBossActive).toBe(false);
+    expect(wm.level).toBe(2);
+    expect(wm.waveNumber).toBe(1);
+
+    finishTransition(scene);
+    expect(wm.level).toBe(2);
+    expect(wm.waveNumber).toBe(1);
+  });
+
+  it('AC3 — defeat fires exactly one reward hook and one checkpoint hook at the defeat moment', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const reward = vi.fn();
+    const checkpoint = vi.fn();
+    scene.setMiniBossRewardHook(reward);
+    scene.setMiniBossCheckpointHook(checkpoint);
+    expect(scene.getMiniBossDefeatCount()).toBe(0);
+
+    killMiniBoss(scene);
+
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+    expect(reward).toHaveBeenCalledTimes(1);
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+    const expected = {
+      level: 1,
+      waveNumber: 2,
+      miniBossName: miniBossDesignForLevel(1).archetype,
+      isFinalLevel: false,
+    };
+    expect(reward).toHaveBeenCalledWith(expected);
+    expect(checkpoint).toHaveBeenCalledWith(expected);
+
+    // Further ticks (e.g. the level transition) never re-fire the hooks.
+    scene.tick(0.016);
+    finishTransition(scene);
+    expect(reward).toHaveBeenCalledTimes(1);
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+  });
+
+  it('AC3 — the defeat hooks are guarded until a consumer installs them', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+
+    // No hooks installed: defeating the mini-boss must not throw and must
+    // still advance the level.
+    expect(() => killAllEnemies(scene)).not.toThrow();
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+    expect(scene.getWaveManager().level).toBe(2);
+  });
+
+  it('AC4 — the HUD shows wave 10 of N and the mini-boss health bar during the encounter', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const wm = scene.getWaveManager();
+    const miniBoss = scene.getMiniBoss()!;
+
+    // The shared progress label reflects the wave-10 wave of N position.
+    expect(wm.waveNumber).toBe(wm.waveCount);
+    expect(scene.getLevelText()).toBe(
+      `Level 1: Entry, Wave: ${wm.waveCount} of ${wm.waveCount}`,
+    );
+    // The shared health bar renders for the encounter (same Boss machinery).
+    expect(scene.getBossPhase()).toBe(1);
+    expect(miniBoss.getHpFraction()).toBe(1);
+    expect(miniBoss.getHealthBarGraphics().visible).toBe(true);
+
+    // A hit depletes the visible health fraction.
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.getEnemyEntities = () => [];
+    isolated.autoFireEnabled = () => false;
+    try {
+      scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+      scene.tick(0.016);
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    expect(miniBoss.getHpFraction()).toBeLessThan(1);
+  });
+
+  it('AC1/AC4 — a defeat offers exactly one upgrade-or-unlock choice', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    // Collect/own a weapon so the upgrade option set is non-empty.
+    scene.getPlayer()!.equipWeapon('spread', true);
+
+    killMiniBoss(scene, false);
+
+    const options = scene.getMiniBossRewardOptions();
+    expect(options.length).toBeGreaterThan(0);
+    // Both option families are present: owned-item upgrades and locked
+    // weapon unlocks.
+    expect(options.some((option) => option.kind === 'weapon-level')).toBe(true);
+    expect(options.some((option) => option.kind === 'weapon')).toBe(true);
+    // The unlock candidates are exactly the still-locked weapons.
+    const unlockIds = options
+      .filter((option) => option.kind === 'weapon')
+      .map((option) => option.id);
+    expect(unlockIds.sort()).toEqual(
+      [...lockedWeaponIds({ unlockedWeapons: new Set() })].sort(),
+    );
+  });
+
+  it('AC2/AC4 — choosing an upgrade raises an owned permanent item by one level', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    player.equipWeapon('railgun', true);
+    const before = player
+      .getWeaponLevels()
+      .find((entry) => entry.id === 'railgun')!.level;
+
+    killMiniBoss(scene, false);
+    const options = scene.getMiniBossRewardOptions();
+    const upgradeIndex = options.findIndex(
+      (option) => option.kind === 'weapon-level' && option.id === 'railgun',
+    );
+    expect(upgradeIndex).toBeGreaterThanOrEqual(0);
+
+    const chosen = scene.selectMiniBossReward(upgradeIndex);
+    expect(chosen).not.toBeNull();
+    const after = player
+      .getWeaponLevels()
+      .find((entry) => entry.id === 'railgun')!.level;
+    expect(after).toBe(before + 1);
+    // The reward is resolved exactly once (AC4).
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+    expect(scene.selectMiniBossReward(upgradeIndex)).toBeNull();
+  });
+
+  it('AC3/AC4 — choosing an unlock makes that locked weapon available for the run', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    expect(scene.getUnlockedWeapons()).toEqual([]);
+
+    killMiniBoss(scene, false);
+    const options = scene.getMiniBossRewardOptions();
+    const unlockIndex = options.findIndex(
+      (option) => option.kind === 'weapon' && option.id === 'railgun',
+    );
+    expect(unlockIndex).toBeGreaterThanOrEqual(0);
+
+    scene.selectMiniBossReward(unlockIndex);
+    expect(scene.getUnlockedWeapons()).toEqual(['railgun']);
+    // The unlocked weapon is genuinely equipped through the shared seam.
+    expect(
+      scene
+        .getPlayer()!
+        .getWeaponLevels()
+        .some((entry) => entry.id === 'railgun'),
+    ).toBe(true);
+    // And it is no longer offered as an unlock by the next encounter.
+    const stillLocked = lockedWeaponIds({
+      unlockedWeapons: new Set(scene.getUnlockedWeapons()),
+    });
+    expect(stillLocked).not.toContain('railgun');
+    expect(MINI_BOSS_LOCKED_WEAPONS).toContain('railgun');
+  });
+
+  it('AC2 — a mini-boss defeat auto-saves the run checkpoint', async () => {
+    localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    scene.getGameState().score = 4321;
+    scene.getGameState().lives = 2;
+    scene.getGameState().minerals = 5;
+    scene.getPlayer()!.equipWeapon('spread', true);
+
+    killMiniBoss(scene, false);
+
+    const saved = loadCheckpoint();
+    expect(saved).not.toBeNull();
+    expect(saved!.level).toBe(2); // resume at the level AFTER the mini-boss
+    expect(saved!.wave).toBe(1);
+    expect(saved!.lives).toBe(2);
+    expect(saved!.score).toBe(4321);
+    expect(saved!.minerals).toBe(5);
+    expect(saved!.runSeed).toBe(scene.getRunSeed());
+    expect(saved!.weaponLevels.some((entry) => entry.id === 'spread')).toBe(true);
+  });
+
+  it('AH-0MVH85XXZ008INE2 — a defeated mini-boss leaves no graphics behind', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const miniBoss = scene.getMiniBoss()!;
+    // The encounter owns a scene-level health-bar Graphics (the "box").
+    const healthBar = miniBoss.getHealthBarGraphics();
+    expect(healthBar.visible).toBe(true);
+
+    killMiniBoss(scene, false);
+
+    // The shared accessors no longer report the encounter, so the shared tick
+    // cannot re-draw any of its graphics.
+    expect(scene.getMiniBoss()).toBeNull();
+    expect(scene.getBoss()).toBeNull();
+    // The entity is fully destroyed: its container and the scene-level health
+    // bar are gone (not merely faded/darkened) — no leftover box or ring.
+    expect(miniBoss.active).toBe(false);
+    expect(miniBoss.scene).toBeUndefined();
+    expect(healthBar.active).toBe(false);
+    expect(healthBar.scene).toBeUndefined();
+    // And nothing on the display list still draws the old health bar.
+    expect(scene.children.list.includes(healthBar as unknown as Phaser.GameObjects.GameObject)).toBe(false);
+  });
+
+  it('AH-0MVH80ZJ7009W18Z — Frenzy amplifies each boss-style hit', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const miniBoss = scene.getMiniBoss()!;
+    const registry = scene.getEffectsRegistry();
+    // Permanent Frenzy at its base level (1 bonus hit).
+    registry.applyCollect('frenzy', true);
+    expect(registry.frenzyBonusHits()).toBe(1);
+
+    const totalHp =
+      miniBoss.resolvedConfig.hpPerPhase * miniBoss.getPhaseCount();
+    const before = miniBoss.getHpFraction() * totalHp;
+
+    // One isolated bullet (auto-fire and other enemies disabled).
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.getEnemyEntities = () => [];
+    isolated.autoFireEnabled = () => false;
+    try {
+      scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+      scene.tick(0);
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+
+    const after = miniBoss.getHpFraction() * totalHp;
+    // One shot consumes 1 + bonus hits (2), not 1.
+    expect(Math.round(before - after)).toBe(2);
+  });
+
+  it('AH-0MVH80ZJ7009W18Z — Chrono Field slows enemy bullets while active', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    const baseline = scene.spawnEnemyBullet(100, 100, 100, 0, 0xff0000, 5);
+    scene.tick(1);
+    const normalStep = baseline.graphics.x - 100;
+    expect(normalStep).toBeCloseTo(100, 1);
+
+    registry.applyCollect('chrono', true);
+    const slowed = scene.spawnEnemyBullet(100, 100, 100, 0, 0xff0000, 5);
+    scene.tick(1);
+    const slowedStep = slowed.graphics.x - 100;
+    // Default chronoSlowFactor 0.5 → the bullet advances at half speed.
+    expect(slowedStep).toBeCloseTo(normalStep * registry.enemyBulletTimeScale(), 1);
+    expect(slowedStep).toBeLessThan(normalStep);
+  });
+
+  it('AH-0MVH80ZJ7009W18Z — Thorn Field absorbs a ram instead of costing a life', async () => {
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    const livesBefore = scene.getGameState().lives;
+    // The player's own fire must not destroy the ram target first.
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    scene.finishSpawnAnimations();
+
+    scene.getEffectsRegistry().applyCollect('thorns', true);
+    const charges = scene.getEffectsRegistry().thornsRemaining();
+    expect(charges).toBeGreaterThan(0);
+
+    // Park the ship on the first live enemy (movement state spread so physics
+    // does not pull it away before the collision pass).
+    const target = scene.getEnemies().find((e) => e.alive)!;
+    player.setPosition(target.x, target.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: typeof state })._movementState = {
+      ...state,
+      x: target.x,
+      y: target.y,
+    };
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+
+    const ramSpy = vi.spyOn(
+      scene as unknown as { onPlayerRamsEnemy: (e: unknown) => void },
+      'onPlayerRamsEnemy',
+    );
+    scene.tick(0.001);
+
+    // The ram registered on a live enemy and was absorbed: the rammed enemy
+    // is destroyed, the player loses no life and one charge is consumed.
+    expect(ramSpy).toHaveBeenCalledTimes(1);
+    const victim = ramSpy.mock.calls[0][0] as { alive: boolean };
+    expect(victim.alive).toBe(false);
+    expect(scene.getGameState().lives).toBe(livesBefore);
+    expect(scene.getEffectsRegistry().thornsRemaining()).toBe(charges - 1);
+  });
+
+  it('AH-0MVH80ZJ7009W18Z — Salvage adds bonus minerals at a destroyed enemy', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    scene.finishSpawnAnimations();
+    const enemies = scene.getEnemies().filter((e) => e.alive);
+
+    // Control: one kill with no Salvage window.
+    const before = scene.getMinerals().length;
+    scene.spawnPlayerBullet(enemies[0].x, enemies[0].y, 0, 0);
+    scene.tick(0);
+    const controlDrops = scene.getMinerals().length - before;
+
+    // Level Salvage up so the bonus dominates the ≤1-mineral base drop.
+    for (let i = 0; i < 8; i += 1) registry.applyCollect('salvage', true);
+    const bonus = registry.salvageBonusMinerals();
+    expect(bonus).toBeGreaterThanOrEqual(3);
+
+    // Salvaged: the same single kill now also drops the bonus bounty.
+    const beforeSalvage = scene.getMinerals().length;
+    scene.spawnPlayerBullet(enemies[1].x, enemies[1].y, 0, 0);
+    scene.tick(0);
+    const salvagedDrops = scene.getMinerals().length - beforeSalvage;
+
+    expect(salvagedDrops).toBeGreaterThan(controlDrops);
+    expect(salvagedDrops).toBeGreaterThanOrEqual(bonus);
+  });
+
+  it('AH-0MVH80ZJ7009W18Z — Orbital Strike damages the nearest enemy on pickup', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    scene.finishSpawnAnimations();
+    const player = scene.getPlayer()!;
+    const nearest = [...scene.getEnemies()]
+      .filter((e) => e.alive)
+      .sort(
+        (a, b) =>
+          Math.hypot(a.x - player.x, a.y - player.y) -
+          Math.hypot(b.x - player.x, b.y - player.y),
+      )[0];
+    expect(nearest).toBeDefined();
+
+    // A field pickup queues exactly one immediate bolt.
+    registry.applyCollect('strike', true);
+    scene.tick(1 / 60);
+
+    // The nearest (1-HP scout) is destroyed by the strike.
+    expect(nearest.alive).toBe(false);
+    if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+  });
+
+  it('AH-0MVH87A3L004VOLD — a fresh run faces the base mini-boss hit pool', async () => {
+    const scene = await bootMiniBossCampaign();
+    expect(scene.getPlayerPowerScore()).toBe(0);
+    advanceToMiniBoss(scene);
+    expect(scene.getMiniBoss()!.resolvedConfig.hpPerPhase).toBe(
+      miniBossDesignForLevel(1).hpPerPhase,
+    );
+  });
+
+  it('AH-0MVH87A3L004VOLD — mini-boss and boss strength scale with permanent upgrades', async () => {
+    // Earn permanent upgrades before the encounters spawn.
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    for (let i = 0; i < 4; i += 1) player.equipWeapon('railgun', true);
+    for (let i = 0; i < 3; i += 1) {
+      scene.getEffectsRegistry().applyCollect('shield', true);
+    }
+    const score = scene.getPlayerPowerScore();
+    expect(score).toBe(7);
+
+    advanceToMiniBoss(scene);
+    const miniBoss = scene.getMiniBoss()!;
+    expect(miniBoss.resolvedConfig.hpPerPhase).toBe(
+      scaledEncounterHp(miniBossDesignForLevel(1).hpPerPhase, score),
+    );
+    expect(miniBoss.resolvedConfig.hpPerPhase).toBeGreaterThan(
+      miniBossDesignForLevel(1).hpPerPhase,
+    );
+    if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
+  });
+
+  it('AC5 — on the final level, defeating the mini-boss triggers the final boss', async () => {
+    // One level: `isFinalLevel` is true from the start, so the level's
+    // mini-boss defeat must trigger the Central AI boss.
+    const scene = await bootMiniBossCampaign(1);
+    advanceToMiniBoss(scene);
+    expect(scene.getWaveManager().isFinalLevel).toBe(true);
+
+    killAllEnemies(scene);
+    const wm = scene.getWaveManager();
+    expect(wm.bossTriggered).toBe(true);
+    expect(scene.getMiniBoss()).toBeNull();
+
+    finishTransition(scene);
+    expect(wm.bossActive).toBe(true);
+    const boss = scene.getBoss();
+    expect(boss).not.toBeNull();
+    expect(boss).not.toBeInstanceOf(MiniBoss);
+    expect(boss!.alive).toBe(true);
   });
 });

@@ -37,6 +37,10 @@ import { FocusManager } from '../utils/focusManager';
 import { installGameAudio } from '../audio/effects';
 import { loadTelemetryConsent } from '../core/telemetryConsentStore';
 import {
+  clearCheckpoint,
+  loadCheckpoint,
+} from '../core/checkpointStore';
+import {
   resolveTelemetryConfig,
   shouldPromptForTelemetryConsent,
   type TelemetryConsentState,
@@ -198,6 +202,41 @@ export class MenuScene extends Phaser.Scene {
       color: MENU_TEXT_COLOR,
     }).setOrigin(0.5);
 
+    // ── Continue (checkpoint resume) ────────────────────────────
+    // Shown only when a checkpoint exists (AH-0MVCRBTNF000DK51 AC3). Resumes
+    // from the level after the last mini-boss at wave 1, restoring lives,
+    // score, minerals, permanent levels, unlocks and the run seed.
+    const checkpoint = loadCheckpoint();
+    if (checkpoint) {
+      const continueButton = this.add.text(
+        GAME_WIDTH / 2,
+        170,
+        `⏵  Continue — Level ${checkpoint.level}`,
+        {
+          fontFamily: 'monospace',
+          fontSize: '22px',
+          color: '#88ffff',
+          backgroundColor: '#111111',
+          padding: { x: 16, y: 8 },
+        },
+      ).setOrigin(0.5);
+      continueButton.setInteractive({ useHandCursor: true });
+      continueButton.on('pointerover', () => {
+        continueButton.setStyle({ color: '#ffffff' });
+      });
+      continueButton.on('pointerout', () => {
+        continueButton.setStyle({ color: '#88ffff' });
+      });
+      continueButton.on('pointerdown', () => {
+        resumeAudioContext(this.sound);
+        this.scene.start('PlayScene', { demo: false, resume: true });
+      });
+      this.controls.push({
+        label: `⏵  Continue — Level ${checkpoint.level}`,
+        text: continueButton,
+      });
+    }
+
     // ── Play Game button ─────────────────────────────────────────
     const playButton = this.add.text(
       GAME_WIDTH / 2,
@@ -223,6 +262,9 @@ export class MenuScene extends Phaser.Scene {
     playButton.on('pointerdown', () => {
       // Initialise the Web Audio context on user gesture (autoplay policy).
       resumeAudioContext(this.sound);
+      // A New Game starts a fresh run: drop any stale checkpoint so Continue
+      // never resurfaces for the abandoned run (AH-0MVCRBTNF000DK51 AC4).
+      clearCheckpoint();
       // Explicit non-demo payload: Phaser only rewrites `settings.data` for a
       // truthy `data`, so a no-argument start after a demo would reuse the
       // stale `{ demo: true }` payload and leave the bot in control

@@ -13,9 +13,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import {
   DEFAULT_BINDINGS,
+  DEFAULT_SETTINGS,
   saveSettings,
   type ActionName,
 } from '../core/settingsStore';
@@ -44,7 +45,12 @@ const REBOUND: Record<ActionName, string> = {
 };
 
 function persistBindings(bindings: Record<ActionName, string>): void {
-  saveSettings({ sfxVolume: 1, sfxMuted: false, bindings });
+  // This suite drives four-directional movement (see the seeded ship config in
+  // `beforeEach`). The per-player control-scheme setting outranks that config
+  // (AH-0MVI7LRCJ006Q8SA), so the saved record must select the same scheme the
+  // movement assertions expect — otherwise the ship boots Asteroids and 'i'
+  // becomes a turn rather than move-up.
+  saveSettings({ ...DEFAULT_SETTINGS, bindings, controlScheme: 'fourDirectional' });
 }
 
 interface PlayInternals {
@@ -59,7 +65,6 @@ interface PlayInternals {
   pauseKeyName: string;
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 120));
 
 function pressKey(key: string): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { key }));
@@ -67,6 +72,8 @@ function pressKey(key: string): void {
 
 describe('Rebindable controls — gameplay + menus (AH-0MUA8BK1E001UZUC)', () => {
   let booted: BootedGame | null = null;
+
+  const settle = () => advanceGame(booted!.game, 120);
 
   afterEach(() => {
     booted?.game.destroy(true);

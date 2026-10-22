@@ -48,6 +48,7 @@ function enabledConfig(overrides: Partial<TelemetryConfig> = {}): TelemetryConfi
     sampleRate: 1,
     bufferCapacity: 16,
     batchSize: 4,
+    devCollection: false,
     recording: true,
     ...overrides,
   };
@@ -102,7 +103,29 @@ describe('telemetry recorder — run header and schema version (AC1/AC6)', () =>
       tick: 0,
       state: { player: { x: 1, y: 2 } },
       input: { thrust: true },
+      // The tick's own wall clock (epoch ms) — the series exporter derives its
+      // `t` axis from it (AH-0MVFI5OQN008XGBV).
+      recordedAt: 1234,
     });
+  });
+
+  it('stamps each tick with its own wall-clock time', async () => {
+    const sink = new CapturingSink();
+    let clock = 5_000;
+    const recorder = createTelemetryRecorder(enabledConfig(), {
+      sink,
+      now: () => clock,
+    });
+
+    recorder.startRun({ runSeed: 1 });
+    recorder.recordTick({}, {});
+    clock = 5_120;
+    recorder.recordTick({}, {});
+    await recorder.flush();
+
+    const ticks = sink.records.filter((record) => record.kind === 'tick');
+    expect(ticks.map((record) => record.recordedAt)).toEqual([5_000, 5_120]);
+    expect(sink.records[0]).toMatchObject({ kind: 'run_header', startedAt: 5_000 });
   });
 
   it('resets the tick counter when a new run starts', async () => {

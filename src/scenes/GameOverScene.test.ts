@@ -13,7 +13,7 @@ import Phaser from 'phaser';
 
 import * as effectsModule from '../audio/effects';
 import * as endOfRunModule from '../vfx/endOfRunJuice';
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { addEntry, getEntries, MAX_ENTRIES } from '../core/Leaderboard';
 import {
   LEADERBOARD_PREVIEW_COLOR,
@@ -62,7 +62,7 @@ describe('GameOverScene — score display & navigation (AH-0MU731426003FE71)', (
     booted = await bootGameOver();
     // Restart the active scene with the run's data (init → create).
     booted.game.scene.start('GameOverScene', { score: 4321, won: false });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
 
     const text = (scene.children.list as Phaser.GameObjects.Text[]).find(
@@ -84,7 +84,7 @@ describe('GameOverScene — score display & navigation (AH-0MU731426003FE71)', (
     expect(button!.input?.enabled).toBe(true);
 
     button!.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(false);
@@ -160,7 +160,7 @@ describe('GameOverScene — qualifying & skip UX (AC5)', () => {
   it('a qualifying score prompts for initials and persists one ranked entry', async () => {
     booted = await bootGameOver();
     booted.game.scene.start('GameOverScene', { score: 12345, won: false });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
 
     expect(scene.getQualifies()).toBe(true);
@@ -178,21 +178,21 @@ describe('GameOverScene — qualifying & skip UX (AC5)', () => {
     expect(entries[0]).toMatchObject({ rank: 1, initials: 'ABC', score: 12345 });
     expect(entries[0].date).toMatch(ISO_DATE);
 
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     expect(booted.game.scene.isActive('MenuScene')).toBe(true);
   });
 
   it('fewer than three initials cannot be submitted', async () => {
     booted = await bootGameOver();
     booted.game.scene.start('GameOverScene', { score: 500, won: false });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
 
     scene.handleInitialsKey('A');
     scene.handleInitialsKey('B');
     expect(scene.handleInitialsKey('Enter')).toBe(false);
 
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
     expect(booted.game.scene.isActive('GameOverScene')).toBe(true);
     expect(getEntries()).toEqual([]);
   });
@@ -204,7 +204,7 @@ describe('GameOverScene — qualifying & skip UX (AC5)', () => {
 
     booted = await bootGameOver();
     booted.game.scene.start('GameOverScene', { score: 50, won: false });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
 
     expect(scene.getQualifies()).toBe(false);
@@ -218,7 +218,7 @@ describe('GameOverScene — qualifying & skip UX (AC5)', () => {
     );
     expect(skip).toBeDefined();
     skip!.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted.game.scene.isActive('MenuScene')).toBe(true);
     expect(getEntries()).toEqual(before);
@@ -381,7 +381,7 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
     pressKey(scene, { key: 'Enter' });
     expect(getEntries()).toMatchObject([{ initials: 'ABC', score: 777, rank: 1 }]);
 
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
   });
 
@@ -390,7 +390,7 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
     pressKey(scene, { key: 'A' });
     pressKey(scene, { key: 'Enter' });
 
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(getEntries()).toEqual([]);
   });
@@ -407,7 +407,7 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
     pressKey(scene, { key: 'Enter' });
     expect(getEntries()).toMatchObject([{ initials: 'ABC', score: 321, rank: 1 }]);
 
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
   });
 
@@ -416,7 +416,7 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
     pressKey(scene, { key: 'Tab' }); // focus button
     pressKey(scene, { key: ' ' });
 
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(getEntries()).toEqual([]);
   });
@@ -428,7 +428,7 @@ describe('GameOverScene — keyboard focus model (AH-0MU9LKQEP008LCX9-C3)', () =
     );
     button!.emit('pointerdown');
 
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
   });
 });
@@ -459,7 +459,7 @@ describe('GameOverScene — live leaderboard preview (AH-0MUE86S5F002VVQD)', () 
   async function startWith(score: number): Promise<GameOverScene> {
     booted = await bootGameOver();
     booted.game.scene.start('GameOverScene', { score, won: false });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     return booted.game.scene.getScene('GameOverScene') as GameOverScene;
   }
 
@@ -542,7 +542,7 @@ describe('GameOverScene — live leaderboard preview (AH-0MUE86S5F002VVQD)', () 
     expect(scene.getPreviewEntry()).toBeNull();
 
     scene.submitScoreAndReturn();
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     expect(getEntries()).toEqual(before);
   });
 
@@ -582,7 +582,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
   }): Promise<GameOverScene> {
     booted = await bootGameOver();
     booted.game.scene.start('GameOverScene', data);
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     return booted.game.scene.getScene('GameOverScene') as GameOverScene;
   }
 
@@ -601,7 +601,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
 
     booted.game.scene.start('GameOverScene', { won: true, score: 100 });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
 
     expect(victorySpy).toHaveBeenCalledTimes(1);
@@ -632,7 +632,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     const stingSpy = vi.spyOn(effectsModule, 'playDefeatStingSound');
 
     booted.game.scene.start('GameOverScene', { won: false, score: 100 });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     const scene = booted.game.scene.getScene('GameOverScene') as GameOverScene;
 
     expect(defeatSpy).toHaveBeenCalledTimes(1);
@@ -649,7 +649,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     const stingSpy = vi.spyOn(effectsModule, 'playDefeatStingSound');
 
     booted.game.scene.start('GameOverScene', { won: true, score: 5000 });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(stingSpy).not.toHaveBeenCalled();
   });
@@ -702,7 +702,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     expect(button).toBeDefined();
     expect(button!.input?.enabled).toBe(true);
     button!.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(false);
@@ -715,7 +715,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
 
     // Restarting the scene fires SHUTDOWN on the old instance.
     scene.scene.start('MenuScene');
-    await new Promise((r) => setTimeout(r, 300));
+    await advanceGame(booted!.game, 300);
 
     expect(scene.getEndOfRunEffects()).toHaveLength(0);
     for (const effect of effects) {
@@ -729,7 +729,7 @@ describe('GameOverScene — end-of-run treatment (AH-0MUTYKDH1002I35C)', () => {
     expect(defeatEffects.length).toBeGreaterThan(0);
 
     booted!.game.scene.start('GameOverScene', { won: true, score: 200 });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     const victoryScene = booted!.game.scene.getScene('GameOverScene') as GameOverScene;
 
     // The old defeat treatment is gone…
@@ -761,7 +761,7 @@ describe('GameOverScene — end-of-run treatment input & teardown sweep (AH-0MUT
   }): Promise<GameOverScene> {
     booted = await bootGameOver();
     booted.game.scene.start('GameOverScene', data);
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     return booted.game.scene.getScene('GameOverScene') as GameOverScene;
   }
 
@@ -790,7 +790,7 @@ describe('GameOverScene — end-of-run treatment input & teardown sweep (AH-0MUT
     scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab' }));
     expect(scene.getFocusedIndex()).toBe(1);
     scene.handleKey(new KeyboardEvent('keydown', { key: 'Enter' }));
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
   });
@@ -801,7 +801,7 @@ describe('GameOverScene — end-of-run treatment input & teardown sweep (AH-0MUT
 
     scene.handleKey(new KeyboardEvent('keydown', { key: 'Tab' }));
     scene.handleKey(new KeyboardEvent('keydown', { key: ' ' }));
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
   });
@@ -817,7 +817,7 @@ describe('GameOverScene — end-of-run treatment input & teardown sweep (AH-0MUT
     );
     expect(skip).toBeDefined();
     skip!.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
   });
@@ -840,7 +840,7 @@ describe('GameOverScene — end-of-run treatment input & teardown sweep (AH-0MUT
 
     // Restart the scene: SHUTDOWN destroys the old treatment.
     scene.scene.restart({ won: true, score: 999 });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     for (const effect of effects) expect(effect.active).toBe(false);
 
@@ -869,7 +869,7 @@ describe('GameOverScene — demo game-over dwell (AH-0MUXZ4CAE008QRFZ)', () => {
   ): Promise<GameOverScene> {
     booted = await bootGameOver();
     booted.game.scene.start('GameOverScene', { demo: true, ...data });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     return booted.game.scene.getScene('GameOverScene') as GameOverScene;
   }
 
@@ -881,7 +881,7 @@ describe('GameOverScene — demo game-over dwell (AH-0MUXZ4CAE008QRFZ)', () => {
       won: true,
       score: 4321,
     });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     const victory = booted.game.scene.getScene('GameOverScene') as GameOverScene;
     expect(victory.isDemoMode()).toBe(true);
     expect(victory.getWon()).toBe(true);
@@ -895,7 +895,7 @@ describe('GameOverScene — demo game-over dwell (AH-0MUXZ4CAE008QRFZ)', () => {
       won: false,
       score: 7,
     });
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
     const defeat = booted.game.scene.getScene('GameOverScene') as GameOverScene;
     expect(findTextContaining(defeat, 'DEFEAT')).toBeDefined();
     expect(findTextContaining(defeat, 'Final Score: 7')).toBeDefined();
@@ -951,12 +951,12 @@ describe('GameOverScene — demo game-over dwell (AH-0MUXZ4CAE008QRFZ)', () => {
     });
 
     // Mid-dwell it is still the outcome screen.
-    await new Promise((r) => setTimeout(r, 200));
+    await advanceGame(booted!.game, 200);
     expect(booted.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted.game.scene.isActive('MenuScene')).toBe(false);
 
     // After the dwell it loops back to the menu.
-    await new Promise((r) => setTimeout(r, 800));
+    await advanceGame(booted!.game, 800);
     expect(booted.game.scene.isActive('MenuScene')).toBe(true);
     expect(booted.game.scene.isActive('GameOverScene')).toBe(false);
   });

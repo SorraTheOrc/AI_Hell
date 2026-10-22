@@ -14,9 +14,10 @@
  *   use, and the shared danger feed activates a 1.5 s pass-through when three
  *   or more hostile bodies/bullets close within 40 px (parent
  *   AH-0MUIYX1EE008FVS8).
- * - **Teleport** — stored FIFO stacks; S or ↓ teleports to the nearest
- *   safe spot free of enemies/bullets in the direction of travel,
- *   clamped to screen bounds; grants Phase Shift (1.5 s) on arrival. If no safe
+ * - **Teleport** — stored FIFO stacks; spent automatically when the ship is
+ *   in danger, to the nearest safe spot free of enemies/bullets in the
+ *   direction of travel, clamped to screen bounds; grants Phase Shift (1.5 s)
+ *   on arrival. If no safe
  *   spot exists, teleports to the nearest on-screen position along
  *   the heading ray.
  *

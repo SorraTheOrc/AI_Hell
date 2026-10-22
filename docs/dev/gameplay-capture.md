@@ -66,7 +66,7 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
 | Renderer | `Phaser.AUTO` → **WebGL**, via headless Chromium's software (SwiftShader) backend |
 | Encoder | browser-native `MediaRecorder`, preferring `video/webm;codecs=vp9,opus` (falls back to VP8+Opus, then plain WebM) |
 | Audio | the game's own SFX, tapped from its single shared `AudioContext` and encoded as **Opus 48 kHz stereo** |
-| Output | `.webm` (VP9 + Opus), **960×540 @ 60 fps** capture of the game canvas |
+| Output | `.webm` (VP9 + Opus), **960×540 @ 60 fps** capture of the game canvas, plus **`<stem>.action.jsonl`** (per-run action-intensity series) and **`<stem>.capture.json`** (§7.5 video-join anchor) alongside each WebM (AH-0MVDV4DMY001Z7CU) |
 
 ## What the command does (pipeline)
 
@@ -108,6 +108,83 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
    decodes the audio with `decodeAudioData` for **peak and RMS**.
 9. Streams the encoded chunks to Node over an `exposeFunction` binding and
    writes them to the output file.
+10. Before the game boots, opts the page **into telemetry**
+    (`VITE_TELEMETRY_ENABLED=true`, `VITE_TELEMETRY_SINK=jsonl` — the same
+    flags `scripts/record-session.mjs` uses) so the run's per-tick
+    `state.actionIntensity` metric lands in the page's dev JSONL sink. After
+    each clip it reads the sink back via `page.evaluate`, and writes the
+    **action-intensity series** (`<stem>.action.jsonl`) and the **§7.5
+    video-join anchor** (`<stem>.capture.json`) next to the WebM
+    (AH-0MVDV4DMY001Z7CU). See [Action-intensity export](#action-intensity-export).
+
+## Action-intensity export
+
+Every clip exports two artefacts alongside the WebM (basename-matched, e.g.
+`gameplay-2026-10-18T10-00-00-000Z.webm` →
+`gameplay-2026-10-18T10-00-00-000Z.action.jsonl` + `…capture.json`):
+
+- **`<stem>.action.jsonl`** — the standalone action-intensity series in the
+  canonical format (`docs/dev/action-intensity.md` §7.2–§7.3), built by the
+  pure helpers in `scripts/capture-series.mjs` from the recorded telemetry
+  ticks: a self-describing header (`schemaVersion`, `runSeed`,
+  `sampleRateHz`, `categories`) plus one line per recorded action-intensity
+  sample (`t` = real ms since run start, from each tick's own `recordedAt`
+  clock — see §7.2; `tick`, the four scores, the breakdown). It is
+  **byte-for-byte compatible** with
+  `src/scenes/core/actionIntensitySerialiser.ts` (the parity is asserted by
+  `scripts/capture-gameplay.test.ts`) — no format is forked.
+- **`<stem>.capture.json`** — the §7.5 join anchor:
+  `{ schemaVersion, kind: 'capture-join-anchor', captureStartedAtEpochMs,
+  runStartedAtEpochMs, offsetMs, approximate }`. `offsetMs =
+  capture_started − run_startedAt` is the exact constant a consumer
+  subtracts from series `t` to get WebM timeline time
+  (`videoTimeMs(t) = t − offsetMs`, clamped at 0). When either epoch is
+  missing (an older clip, telemetry off) the anchor flags itself
+  `approximate` and the consumer falls back to the documented `--warmup`
+  heuristic (§7.5).
+
+The export is **additive and tolerant**: it cannot fail a clip (a failed
+write degrades to `seriesOutput: null`/`anchorOutput: null` on the result),
+and a telemetry-less or interrupted run writes a valid **header-only**
+series (AC3). The dev JSONL sink stores the run in the page's `localStorage`
+(`ai_hell_telemetry_jsonl`), so very long busy runs can hit the browser's
+storage quota — the sink then writes a *prefix* of the run and the series is
+partial (still schema-valid; see §7.3 of the action-intensity doc).
+
+## Pool inventory
+
+`npm run list:pool` prints an inventory of the captured source pool
+(AH-0MVDV4SYG008X8TY): which runs are usable and which gameplay features
+(weapons, pickups, enemies, boss) each one actually shows. It is the
+evidence that the pool covers the editorial categories before compiling —
+the same `EDITORIAL_CONFIG` feature mapping the promo compiler uses, so the
+inventory cannot drift from the coverage manifest.
+
+A run is **retained** only when all three artefacts exist:
+`<run>.webm` + `<run>.action.jsonl` + `<run>.capture.json`. A WebM without
+its series/anchor (e.g. footage captured before the export landed) is
+**excluded and reported**, never silently counted as usable material. A
+header-only series is a valid partial run, but evidences no features.
+
+```bash
+# human-readable inventory of capture-output/
+npm run list:pool
+
+# machine-readable manifest, kept next to the footage
+npm run list:pool -- --json > capture-output/pool-inventory.json
+
+# scan a different directory, or limit to explicit run ids
+npm run list:pool -- --dir clips
+npm run list:pool -- --runs boss-2026-10-19T16-25-05-656Z
+```
+
+Features are recognised from the series breakdown (`playerBullets` →
+weapons, `drops` → pickups, `enemies` → enemies, `bosses` → boss) and each
+is reported with its sample count and first/last series time. The manifest
+also lists `missingFeatures`, so a gap is visible instead of being inferred.
+The lister is pure apart from a thin `node:fs` scan, and is unit-tested
+hermetically (`scripts/list-capture-pool.test.ts`) without footage, ffmpeg
+or a browser.
 
 ## Dev scenarios (`--scenario`)
 
@@ -728,7 +805,8 @@ Measured on the reference host (2026-10-06):
   a separate download).
 
 Recommendation: run capture as an **opt-in local/CI job**, never as part of
-`npm test` / `npm run build`.
+the audit-accepted test suite (`npm --silent test`, i.e. `/skill:test --type
+full`) or `npm run build`.
 
 ### Additive / opt-in guarantee
 
@@ -737,7 +815,8 @@ Recommendation: run capture as an **opt-in local/CI job**, never as part of
 - `playwright` is a **devDependency**; browser binaries are downloaded by an
   explicit command.
 - `capture-output/` is git-ignored.
-- `npm test` and `npm run build` are unchanged and still pass.
+- `npm --silent test` (the `unit` + `integration` full suite) and
+  `npm run build` are unchanged and still pass.
 
 ## Files
 
@@ -751,7 +830,12 @@ Recommendation: run capture as an **opt-in local/CI job**, never as part of
 | `scripts/capture-progress.d.mts` | Types for the progress module |
 | `scripts/capture-run-lifecycle.mjs` | Pure run-lifecycle contracts: signal encode/decode, tail/cap arithmetic, the `waitForRunEnd` loop, run summary and demo dwell |
 | `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
+| `scripts/capture-series.mjs` | Pure §7.2 series serialiser + §7.5 join-anchor builder + telemetry extraction (shared with the action-intensity export) |
+| `scripts/capture-series.d.mts` | Types for the series/anchor module |
+| `scripts/list-capture-pool.mjs` | Capture-pool inventory: retains WebM + series + anchor triples, reports excluded runs and per-run feature evidence |
+| `scripts/list-capture-pool.d.mts` | Types for the pool inventory lister |
+| `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |
 | `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap and progress helpers |
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
-| `package.json` | `capture` / `capture:install` scripts; `playwright` devDependency |
+| `package.json` | `capture` / `capture:install` / `list:pool` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |

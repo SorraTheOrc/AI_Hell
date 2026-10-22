@@ -71,6 +71,14 @@ export class Grunt extends BaseEnemy {
   private _targetY = 0;
   private _hasTarget = false;
 
+  /**
+   * The homing grunt self-steers every frame (gruntSteering), so the
+   * wormhole transit interpolation must not override its position; it still
+   * emerges at the wormhole origin and homes out from there
+   * (AH-0MV8BSMXC0097KLW).
+   */
+  readonly autonomousPositioning = true;
+
   constructor(scene: Phaser.Scene, config: GruntConfig) {
     const baseConfig: BaseEnemyConfig = {
       formationOffset: config.formationOffset,

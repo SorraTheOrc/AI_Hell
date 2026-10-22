@@ -29,11 +29,15 @@ export const REPO_ROOT = resolve(SCRIPT_DIR, '..');
 export const DEFAULT_DIST_DIR = join(REPO_ROOT, 'dist');
 
 /**
- * Node-only markers that must never appear in a browser bundle.
+ * Node-only markers that must never appear in a browser bundle, plus
+ * dev-only markers that must never reach a production bundle.
  *
  * Each entry is `{ marker, label }`; a bundle containing the marker fails the
- * check. The list targets the Node-only surfaces of the ToneForge toolchain and
- * Node built-ins, not generic library names.
+ * check. The Node-only entries target the Node-only surfaces of the ToneForge
+ * toolchain and Node built-ins, not generic library names. The dev-only
+ * telemetry entry (AH-0MVBMR0BG0005BBI) targets the dev-server upload endpoint
+ * only: the local JSONL sink key itself is a production-reachable marker (the
+ * `jsonl` sink ships with the telemetry framework) and must stay legal.
  */
 export const FORBIDDEN_MARKERS = [
   { marker: 'node-web-audio-api', label: 'Node-only audio backend' },
@@ -46,6 +50,10 @@ export const FORBIDDEN_MARKERS = [
   { marker: 'node:crypto', label: 'Node crypto module' },
   { marker: 'node:url', label: 'Node url module' },
   { marker: 'node:path', label: 'Node path module' },
+  {
+    marker: '/api/telemetry/upload',
+    label: 'Dev-only telemetry upload endpoint',
+  },
 ];
 
 /** Recursively collects every file under `dir` (returns absolute paths). */

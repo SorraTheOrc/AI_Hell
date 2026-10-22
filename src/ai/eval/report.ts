@@ -24,6 +24,8 @@ import {
   type BalanceAggregate,
   type DistributionStats,
   type TelemetryRecord,
+  type TuneComparison,
+  type TuneMetricDelta,
 } from './types';
 
 /** A per-run report entry. */
@@ -202,6 +204,14 @@ export function serialiseReport(report: EvaluationReport | AbReport | BalanceRep
   return stableStringify(report);
 }
 
+/**
+ * Serialises a tune comparison to stable, recursively key-sorted JSON so the
+ * same edit + seeds yields a byte-identical comparison artifact (parent AC3).
+ */
+export function serialiseTuneComparison(comparison: TuneComparison): string {
+  return stableStringify(comparison);
+}
+
 /** Builds a versioned balance-batch report (AC4). */
 export function buildBalanceReport(options: {
   policies: readonly string[];
@@ -231,6 +241,32 @@ export function buildBalanceReport(options: {
 /** Formats a number for the text report. */
 function n(value: number, digits = 2): string {
   return Number.isFinite(value) ? value.toFixed(digits) : 'n/a';
+}
+
+/**
+ * Resolves the {@link TuneMetricDelta} behind a `movedMetrics` /
+ * `shapeChangedMetrics` id.
+ *
+ * Ids are either a bare metric name (an entry of `comparison.metrics`) or a
+ * prefixed per-key id (`upgradesSelected.<key>` /
+ * `enemiesKilledByArchetype.<key>`), so the per-key maps must be looked up by
+ * the key that follows the prefix — looking the whole id up in the map misses
+ * every per-upgrade/per-archetype move (AH-0MVBNLM2V008XC8T).
+ */
+function tuneDeltaFor(
+  comparison: TuneComparison,
+  id: string,
+): TuneMetricDelta | undefined {
+  const direct = comparison.metrics[id];
+  if (direct) return direct;
+  const keyed: [string, Readonly<Record<string, TuneMetricDelta>>][] = [
+    ['upgradesSelected.', comparison.upgradesSelected],
+    ['enemiesKilledByArchetype.', comparison.enemiesKilledByArchetype],
+  ];
+  for (const [prefix, map] of keyed) {
+    if (id.startsWith(prefix)) return map[id.slice(prefix.length)];
+  }
+  return undefined;
 }
 
 /** Renders a human-readable single-policy report. */
@@ -309,6 +345,81 @@ export function formatBalanceReport(report: BalanceReport): string {
   formatPerKeySection('Upgrades selected (per choice id):', agg.upgradesSelected, lines);
   lines.push('');
   formatPerKeySection('Enemies killed (per archetype):', agg.enemiesKilledByArchetype, lines);
+  return lines.join('\n');
+}
+
+/**
+ * Renders the human-readable tune summary (parent AC5): the edit that was
+ * applied, every metric that moved beyond the configured relative threshold
+ * (mean/median), every distribution-shape change (stdDev growth / median
+ * shift), and a per-metric delta table echoing the same statistics as the
+ * machine-readable artifact.
+ */
+export function formatTuneSummary(comparison: TuneComparison): string {
+  const lines: string[] = [];
+  lines.push('Tune comparison');
+  lines.push('='.repeat(40));
+  lines.push(
+    `schema v${comparison.schemaVersion} · thresholds ±` +
+      `${(comparison.thresholds.mean * 100).toFixed(0)}% mean / ±` +
+      `${(comparison.thresholds.median * 100).toFixed(0)}% median`,
+  );
+  if (comparison.edit) {
+    const { edit } = comparison;
+    const key = edit.rowKey === null ? edit.file : `${edit.file} ${edit.rowKey}`;
+    lines.push(`edit: ${key}.${edit.field} ${edit.previousValue} → ${edit.newValue}`);
+  }
+  lines.push('');
+
+  lines.push('Metrics moved beyond threshold (mean/median):');
+  for (const metric of comparison.movedMetrics) {
+    const delta = tuneDeltaFor(comparison, metric);
+    if (!delta) continue;
+    const meanRel = delta.meanRelativeDelta === null
+      ? 'n/a'
+      : `${(delta.meanRelativeDelta * 100).toFixed(1)}%`;
+    const medianRel = delta.medianRelativeDelta === null
+      ? 'n/a'
+      : `${(delta.medianRelativeDelta * 100).toFixed(1)}%`;
+    lines.push(
+      `  ${metric.padEnd(30)} meanΔ ${meanRel.padStart(8)}  ` +
+        `medianΔ ${medianRel.padStart(8)}`,
+    );
+  }
+  if (comparison.movedMetrics.length === 0) {
+    lines.push('  (none)');
+  }
+  lines.push('');
+
+  lines.push('Distribution-shape changes (stdDev growth / median shift):');
+  if (comparison.shapeChangedMetrics.length === 0) {
+    lines.push('  (none)');
+  } else {
+    for (const metric of comparison.shapeChangedMetrics) {
+      const delta = tuneDeltaFor(comparison, metric);
+      if (!delta) {
+        lines.push(`  ${metric}`);
+        continue;
+      }
+      lines.push(
+        `  ${metric.padEnd(30)} stdDev ${n(delta.baseline.stdDev)} → ` +
+          `${n(delta.candidate.stdDev)} (Δ ${n(delta.delta.stdDev)})  ` +
+          `median ${n(delta.baseline.median)} → ${n(delta.candidate.median)}`,
+      );
+    }
+  }
+  lines.push('');
+
+  lines.push('Per-metric deltas (candidate − baseline):');
+  for (const metric of Object.keys(comparison.metrics).sort()) {
+    const delta = comparison.metrics[metric];
+    lines.push(
+      `  ${metric.padEnd(24)} mean ${n(delta.baseline.mean, 2).padStart(8)} → ` +
+        `${n(delta.candidate.mean, 2).padStart(8)}  (Δ ${n(delta.delta.mean, 2)})` +
+        `  median ${n(delta.baseline.median, 2)} → ${n(delta.candidate.median, 2)}` +
+        `  sd ${n(delta.delta.stdDev, 2)}`,
+    );
+  }
   return lines.join('\n');
 }
 

@@ -99,6 +99,24 @@ describe('power-up catalogue (types)', () => {
   it('throws for an unknown power-up id', () => {
     expect(() => getPowerUpById('P1' as PowerUpId)).toThrow('Unknown power-up');
   });
+
+  it('Teleport description describes automatic activation, not a key press (AH-0MVBKQAKU004NQ77)', () => {
+    // Teleport is automatic since AH-0MUZE4AIP009HZWC (S / ↓ are reserved for
+    // the reverse thruster). The player-facing copy — the single source the
+    // help overlay and choice overlay render — must say so and warn that the
+    // warp can be disorienting.
+    const description = POWER_UP_CATALOGUE.teleport.description;
+    expect(description).toBe(
+      'Stores up to 3 uses; when the ship is in danger, one is spent automatically to warp to the nearest safe spot and grant a short Phase Shift on arrival. Teleporting can be disorienting — keep your wits about you.',
+    );
+    expect(description).toMatch(/automatically/i);
+    expect(description).toMatch(/in danger/i);
+    expect(description).toMatch(/disorienting/i);
+    // No key-press activation wording may remain.
+    expect(description).not.toMatch(/press/i);
+    expect(description).not.toMatch(/S\s*(or|\/)\s*↓/i);
+    expect(description).not.toMatch(/warp to the nearest safe spot and gain/i);
+  });
 });
 
 // ── Round-robin spawner AC1: spawn order ────────────────────────────

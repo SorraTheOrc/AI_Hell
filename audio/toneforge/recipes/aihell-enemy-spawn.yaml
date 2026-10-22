@@ -1,4 +1,5 @@
 # AI Hell cue: aihell-enemy-spawn — Enemy spawn — rising square blip 220 to 880 Hz.
+# Amplitude tier: subtle one-shot (target RMS 0.055 ±1.5 dB, AC2 retune AH-0MVD02WZI004QCTP).
 version: "0.1"
 meta:
   name: aihell-enemy-spawn
@@ -36,7 +37,7 @@ nodes:
   mix:
     kind: gain
     params:
-      gain: 1
+      gain: 0.8088
   out:
     kind: destination
 routing:

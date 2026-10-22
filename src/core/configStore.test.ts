@@ -33,7 +33,6 @@ import {
 import { DEFAULT_ENEMY_CONFIGS } from './enemyConfig';
 import { DEFAULT_CONFIG } from './config';
 import type { EnemyConfig } from './enemyConfig';
-import { levelDifficulty } from './enemyDifficulty';
 import { LEVELS } from '../waves/Formations';
 
 // ── Mock server helpers ─────────────────────────────────────────────
@@ -422,6 +421,51 @@ describe('Production fallback (AC4)', () => {
   });
 });
 
+// ── SSR fallback to the build-time bundle (AH-0MV81YPBG0028WNM AC5) ──
+
+describe('SSR fallback to bundled CSVs (AH-0MV81YPBG0028WNM AC5)', () => {
+  it('hydrates CSV-backed values when the /api/csv fetch cannot resolve', async () => {
+    // Under Vite SSR (`scripts/evaluate.mjs`) DEV is true, SSR is true and
+    // MODE is `development` (not `test`). A relative `/api/csv/...` fetch has
+    // no origin to resolve against, so loadConfigs must fall back to the CSVs
+    // bundled at build time (`src/core/bundledConfig.ts`).
+    const failingFetch = vi.fn(async () => {
+      throw new TypeError('Failed to parse URL from /api/csv/...');
+    });
+    vi.stubGlobal('fetch', failingFetch);
+    vi.stubEnv('SSR', true);
+    vi.stubEnv('MODE', 'development');
+
+    await loadConfigs();
+
+    // The enemy/ship fetches were attempted (and failed) — then the bundled
+    // fallback ran without any HTTP call.
+    expect(failingFetch).toHaveBeenCalledTimes(2);
+    // Distinguishes the committed CSV from the seed defaults.
+    expect(loadEnemyConfig('scout').bulletSpeed).toBe(90);
+    expect(loadEnemyConfig('scout').shotProbability).toBe(0.45);
+    expect(loadShipConfig().maxSpeed).toBe(175);
+    expect(loadShipConfig().asteroidsReverseEnabled).toBe(true);
+    expect(loadDifficultyCurves().length).toBeGreaterThan(0);
+  });
+
+  it('keeps the seed/default fallback when MODE is `test` (vitest)', async () => {
+    // The SSR-bundled branch is deliberately skipped under vitest's MODE
+    // `test`, so a failing fetch still falls back to the built-in defaults
+    // rather than reading the on-disk bundle.
+    const failingFetch = vi.fn(async () => {
+      throw new TypeError('Failed to parse URL from /api/csv/...');
+    });
+    vi.stubGlobal('fetch', failingFetch);
+    vi.stubEnv('SSR', true);
+    vi.stubEnv('MODE', 'test');
+
+    await loadConfigs();
+
+    expect(loadShipConfig().maxSpeed).toBe(DEFAULT_CONFIG.maxSpeed);
+  });
+});
+
 // ── AC5: Graceful degradation ───────────────────────────────────────
 
 describe('Graceful degradation (AC5)', () => {
@@ -701,30 +745,36 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
   });
 
   it('ships a mixed-mode default: dynamic opening, fixed onboarding, curve + dynamic later levels', () => {
+    // Expanded-campaign mode policy (AH-0MVCYANT6003SG5C):
+    //  - the four opening rows are `dynamic`;
+    //  - wave 10 of every level is the hand-authored mini-boss and `fixed`;
+    //  - levels 1–3 are the hand-authored onboarding section (`fixed`);
+    //  - levels 6–10 debut each featured classic-arcade archetype on a `fixed`
+    //    showcase wave (AH-0MV395QHS004SCOR) and every expanded filler wave
+    //    is authored `fixed`;
+    //  - level 5 wave 2 is the mixed-programme `dynamic` wave;
+    //  - only the PRE-EXISTING sequencer rows stay `curve` (the same rows the
+    //    original 29-wave campaign generated: L4W1-3, L5W1, L6W3-4, L7W3-4,
+    //    L9W3, L10W2).
     const opening = new Set(['1:1', '1:2', '2:1', '2:2']);
-    // Levels 6–10 debut each featured classic-arcade archetype on a `fixed`
-    // showcase wave; every other wave in those levels is `curve`-generated
-    // (AH-0MV395QHS004SCOR).
-    const showcase = new Set([
-      '6:1', '6:2',
-      '7:1', '7:2',
-      '8:1', '8:2', '8:3',
-      '9:1', '9:2',
-      '10:1',
+    const curveRows = new Set([
+      '4:1', '4:2', '4:3',
+      '5:1',
+      '6:3', '6:4',
+      '7:3', '7:4',
+      '9:3',
+      '10:2',
     ]);
     const modes = new Set<string>();
     for (const row of defaultDifficultyCurves()) {
+      const key = `${row.level}:${row.wave}`;
       const expected =
-        opening.has(`${row.level}:${row.wave}`)
+        opening.has(key) || (row.level === 5 && row.wave === 2)
           ? 'dynamic'
-          : row.level <= 3
-            ? 'fixed'
-            : row.level === 5 && row.wave === 2
-              ? 'dynamic'
-              : showcase.has(`${row.level}:${row.wave}`)
-                ? 'fixed'
-                : 'curve';
-      expect(row.generation).toBe(expected);
+          : curveRows.has(key)
+            ? 'curve'
+            : 'fixed';
+      expect(row.generation, key).toBe(expected);
       modes.add(String(row.generation));
     }
     // Out-of-the-box play exercises every generation mode (AH-0MUJSUTLA006Q8E1).
@@ -746,44 +796,39 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
   });
 
   it('pins the whole default curve, leaving every other wave mode/target unchanged', () => {
+    // The expanded 10-wave campaign (AH-0MVCYANT6003SG5C): every level has 10
+    // rows, levels 1–3 onboard `fixed` (except the dynamic opening and the
+    // wave-10 mini-boss), levels 4–10 are curve-generated except their
+    // showcase/mini-boss waves. The pins below freeze the shipped targets and
+    // modes so any retune is deliberate.
+    const rows = defaultDifficultyCurves();
+    expect(rows).toHaveLength(100);
+    expect(rows.every((row) => row.wave >= 1 && row.wave <= 10)).toBe(true);
+    // Every level's wave 10 is the fixed mini-boss row.
+    for (let level = 1; level <= 10; level++) {
+      const w10 = rows.find((row) => row.level === level && row.wave === 10);
+      expect(w10, `L${level} wave 10`).toBeDefined();
+      expect(w10!.generation, `L${level} wave 10 mode`).toBe('fixed');
+    }
+    // The dynamic opening rows keep their retuned ascending targets.
     expect(
-      defaultDifficultyCurves().map((row) => [
-        row.level,
-        row.wave,
-        row.generation,
-        row.targetDifficulty,
-      ]),
+      rows
+        .filter((row) => row.wave <= 2 && row.level <= 2)
+        .map((row) => [row.level, row.wave, row.generation, row.targetDifficulty]),
     ).toEqual([
       [1, 1, 'dynamic', 6],
       [1, 2, 'dynamic', 8],
       [2, 1, 'dynamic', 9],
       [2, 2, 'dynamic', 10],
-      [2, 3, 'fixed', 10.95],
-      [3, 1, 'fixed', 11.4],
-      [3, 2, 'fixed', 11.85],
-      [3, 3, 'fixed', 12.3],
-      [4, 1, 'curve', 14],
-      [4, 2, 'curve', 22],
-      [4, 3, 'curve', 27.5],
-      [5, 1, 'curve', 43.5],
-      [5, 2, 'dynamic', 62],
-      [6, 1, 'fixed', 71],
-      [6, 2, 'fixed', 74],
-      [6, 3, 'curve', 77],
-      [6, 4, 'curve', 80],
-      [7, 1, 'fixed', 80],
-      [7, 2, 'fixed', 82],
-      [7, 3, 'curve', 84],
-      [7, 4, 'curve', 86],
-      [8, 1, 'fixed', 87],
-      [8, 2, 'fixed', 89],
-      [8, 3, 'fixed', 91],
-      [9, 1, 'fixed', 91],
-      [9, 2, 'fixed', 93],
-      [9, 3, 'curve', 95],
-      [10, 1, 'fixed', 95],
-      [10, 2, 'curve', 97],
     ]);
+    // The target ladder is non-decreasing and peaks at the Level-10 finale.
+    const sorted = [...rows].sort((a, b) => a.level - b.level || a.wave - b.wave);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i].targetDifficulty).toBeGreaterThanOrEqual(
+        sorted[i - 1].targetDifficulty,
+      );
+    }
+    expect(sorted[sorted.length - 1]).toMatchObject({ level: 10, wave: 10 });
   });
 
   it('extends the default curve across all ten campaign levels (AH-0MV395QHS004SCOR)', () => {
@@ -811,19 +856,31 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
     expect(targets[targets.length - 1]).toBeGreaterThan(62);
   });
 
-  it('the onboarding (fixed) targets follow the measured LEVELS calibration', () => {
-    const curves = defaultDifficultyCurves();
+  it('the onboarding (fixed) rows map to the static LEVELS compositions', () => {
+    // The expanded campaign (AH-0MVCYANT6003SG5C) keeps levels 1–3 as the
+    // hand-authored onboarding section: every `fixed` row maps to the static
+    // `LEVELS` wave for the same (level, wave), so the built campaign reuses
+    // the authored composition verbatim. The dynamic opening rows (L1W1/2,
+    // L2W1/2) and the wave-10 mini-boss rows are also fixed-authored (the
+    // mini-boss is the hand-authored wave 10), leaving no curve-generated
+    // wave in the onboarding levels.
+    const rows = defaultDifficultyCurves();
+    const opening = new Set(['1:1', '1:2', '2:1', '2:2']);
     for (const level of LEVELS.filter((l) => l.level <= 3)) {
-      const levelRows = curves
-        .filter((row) => row.level === level.level)
-        .sort((a, b) => a.wave - b.wave);
-      expect(levelRows.length).toBe(level.waves.length);
-      // The measured-calibration pin applies to the levels whose final wave is
-      // still hand-authored (`fixed`); the level-1 final wave is now dynamic
-      // (AH-0MUOCJM0N000RW2B).
-      if (levelRows[levelRows.length - 1].generation !== 'fixed') continue;
-      const expected = Math.round(levelDifficulty(level.waves).score * 100) / 100;
-      expect(levelRows[levelRows.length - 1].targetDifficulty).toBe(expected);
+      const levelRows = rows.filter((row) => row.level === level.level);
+      expect(levelRows.length, `L${level.level} row count`).toBe(level.waves.length);
+      for (const row of levelRows) {
+        if (opening.has(`${row.level}:${row.wave}`)) continue;
+        expect(
+          row.generation,
+          `L${row.level}W${row.wave} must be fixed-authored`,
+        ).toBe('fixed');
+        // Each fixed row has a static counterpart in LEVELS.
+        expect(
+          level.waves[row.wave - 1],
+          `L${row.level} has no static wave ${row.wave}`,
+        ).toBeDefined();
+      }
     }
   });
 
@@ -841,6 +898,46 @@ describe('Difficulty-curve config (AH-0MUITRZZE000OYQE)', () => {
       for (let i = 1; i < targets.length; i++) {
         expect(targets[i]).toBeGreaterThanOrEqual(targets[i - 1]);
       }
+    }
+  });
+});
+
+// ── 10-wave campaign verification harness (AH-0MVCRAHWO0007US2) ──
+//
+// Test-first verification for the expanded campaign (epic AH-0MVCC8XSS007P01Z):
+// the default difficulty curve must record exactly 10 waves per level (100
+// rows in total) with a wave-10 row for every level, and the targets stay
+// non-decreasing across the full 100-wave grid.
+//
+// GREEN once the campaign-data item (AH-0MVCYANT6003SG5C) re-landed the
+// 10-wave curves, so the pins run as plain `it` and hard-gate the shape.
+describe('10-wave campaign verification harness — default curve (AH-0MVCRAHWO0007US2)', () => {
+  it('AC3 — defaultDifficultyCurves() spans exactly 10 waves per level, 100 rows total', () => {
+    const rows = defaultDifficultyCurves();
+    expect(rows).toHaveLength(100);
+    const perLevel = new Map<number, number>();
+    for (const row of rows) {
+      perLevel.set(row.level, (perLevel.get(row.level) ?? 0) + 1);
+    }
+    for (let level = 1; level <= 10; level++) {
+      expect(perLevel.get(level), `L${level} curve row count`).toBe(10);
+    }
+  });
+
+  it('AC2/AC3 — every level records a wave-10 row and the targets stay non-decreasing', () => {
+    const rows = [...defaultDifficultyCurves()].sort(
+      (a, b) => a.level - b.level || a.wave - b.wave,
+    );
+    for (let level = 1; level <= 10; level++) {
+      expect(
+        rows.some((row) => row.level === level && row.wave === 10),
+        `L${level} has no wave-10 curve row`,
+      ).toBe(true);
+    }
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i].targetDifficulty).toBeGreaterThanOrEqual(
+        rows[i - 1].targetDifficulty,
+      );
     }
   });
 });

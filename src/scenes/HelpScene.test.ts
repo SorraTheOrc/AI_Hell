@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import {
   addHelpButton,
   getHelpEntry,
@@ -21,7 +21,6 @@ import { addBackToIndexButton, addBackToMenuOnEsc } from '../utils/gymNavigation
 import { HelpScene } from './HelpScene';
 import { MenuScene } from './MenuScene';
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
 
 /** Gym-like host scene exercising the real open/close lifecycle. */
 class HelpHostStub extends Phaser.Scene {
@@ -47,6 +46,8 @@ function pressKey(key: string): void {
 
 describe('HelpScene — overlay content and lifecycle (AH-0MUAYB67I002REOZ)', () => {
   let booted: BootedGame | null = null;
+
+  const settle = () => advanceGame(booted!.game, 150);
 
   afterEach(() => {
     booted?.game.destroy(true);

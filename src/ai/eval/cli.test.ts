@@ -6,17 +6,35 @@
  * tests drive `executeEvaluation` directly with an in-memory human recording.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
 
 import { runEvaluation } from './engine';
+import { resetConfigStore, seedConfigStore } from '../../core/configStore';
+import { DEFAULT_CONFIG, DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
+import type { EnemyConfig } from '../../core/configTypes';
 import { resolvePolicyFactory } from './policies';
-import { executeEvaluation, defaultOptions, seedRange } from './cli';
-import { BALANCE_STATISTICS_SCHEMA_VERSION } from './types';
+import { executeEvaluation, defaultOptions, seedRange, runBalanceBatch, buildTuneComparisonArtifacts } from './cli';
+import { SameSweepGuardError } from './tune';
+import { BALANCE_STATISTICS_SCHEMA_VERSION, TUNE_COMPARISON_SCHEMA_VERSION } from './types';
 import type { CliOptions } from './cli';
 
 /** Builds a full option object for the pure CLI core. */
 function options(overrides: Partial<CliOptions> = {}): CliOptions {
   return { ...defaultOptions(), seeds: [1], ticks: 120, sampleEveryTicks: 2, ...overrides };
+}
+
+/** Seeds the shared store with scout+boss at the given boss health. */
+function seedEnemies(bossHealth: number): void {
+  const enemies = Object.fromEntries(
+    Object.entries(DEFAULT_ENEMY_CONFIGS).filter(([key]) => key === 'scout' || key === 'boss'),
+  );
+  const boss: EnemyConfig = { ...enemies['boss'], health: bossHealth };
+  seedConfigStore([enemies['scout'], boss], DEFAULT_CONFIG);
+}
+
+/** A small tune-relevant sweep (seeds × one policy). */
+function tuneOptions(overrides: Partial<CliOptions> = {}): CliOptions {
+  return options({ policies: ['competent'], seeds: [1, 2], ...overrides });
 }
 
 describe('defaultOptions / seedRange', () => {
@@ -187,5 +205,93 @@ describe('executeEvaluation batch mode (AH-0MV81YY2T0069W19: CLI batch flags)', 
     expect(report.runs).toHaveLength(2);
     // --json prints the machine-readable artifact as stdout.
     expect(JSON.parse(result.stdout)).toEqual(report);
+  });
+});
+
+describe('runBalanceBatch (AH-0MVBNITA0005VQGN)', () => {
+  beforeEach(() => resetConfigStore());
+
+  it('returns a versioned balance batch whose sweep echo the CLI options', () => {
+    seedEnemies(1);
+    const batch = runBalanceBatch(tuneOptions());
+    expect(batch.report.kind).toBe('balance');
+    expect(batch.report.config.policies).toEqual(['competent']);
+    expect(batch.report.config.seeds).toEqual([1, 2]);
+    expect(batch.report.schemaVersion).toBe(BALANCE_STATISTICS_SCHEMA_VERSION);
+    expect(batch.aggregate.runs).toBe(2);
+  });
+});
+
+describe('buildTuneComparisonArtifacts (AH-0MVBNITA0005VQGN)', () => {
+  beforeEach(() => resetConfigStore());
+
+  it('produces all-zero deltas for two identical batches (AC3 empty deltas)', () => {
+    seedEnemies(1);
+    const same = runBalanceBatch(tuneOptions());
+    const artifacts = buildTuneComparisonArtifacts({
+      baseline: same,
+      candidate: runBalanceBatch(tuneOptions()),
+      edit: null,
+      thresholdPct: 10,
+    });
+    expect(artifacts.comparison.kind).toBe('tune-comparison');
+    expect(artifacts.comparison.schemaVersion).toBe(TUNE_COMPARISON_SCHEMA_VERSION);
+    expect(artifacts.comparison.movedMetrics).toEqual([]);
+    expect(artifacts.comparison.shapeChangedMetrics).toEqual([]);
+    expect(JSON.parse(artifacts.comparisonJson).movedMetrics).toEqual([]);
+  });
+
+  it('is byte-deterministic for the same inputs (AC3)', () => {
+    seedEnemies(1);
+    const baseline = runBalanceBatch(tuneOptions());
+    const candidate = runBalanceBatch(tuneOptions());
+    const first = buildTuneComparisonArtifacts({ baseline, candidate, edit: null, thresholdPct: 10 });
+    const second = buildTuneComparisonArtifacts({ baseline, candidate, edit: null, thresholdPct: 10 });
+    expect(first.comparisonJson).toBe(second.comparisonJson);
+  });
+
+  it('refuses cross-sweep baselines before computing deltas (AC2)', () => {
+    seedEnemies(1);
+    const baseline = runBalanceBatch(tuneOptions());
+    const differentSeeds = runBalanceBatch(tuneOptions({ seeds: [3, 4] }));
+    expect(() =>
+      buildTuneComparisonArtifacts({ baseline, candidate: differentSeeds, edit: null, thresholdPct: 10 }),
+    ).toThrow(SameSweepGuardError);
+  });
+
+  it('flags a boss-health edit with non-empty deltas and a self-describing edit record (AC1/AC5)', () => {
+    seedEnemies(1);
+    const baseline = runBalanceBatch(tuneOptions());
+    seedEnemies(8); // the tune edit: boss.health 1 → 8
+    const candidate = runBalanceBatch(tuneOptions({ seeds: [1, 2] }));
+    const artifacts = buildTuneComparisonArtifacts({
+      baseline,
+      candidate,
+      edit: {
+        file: 'enemy-configs.csv',
+        rowKey: 'boss',
+        field: 'health',
+        previousValue: '1',
+        newValue: '8',
+      },
+      thresholdPct: 10,
+    });
+    expect(artifacts.comparison.edit).toMatchObject({
+      file: 'enemy-configs.csv',
+      rowKey: 'boss',
+      previousValue: '1',
+      newValue: '8',
+    });
+    // A health change moves at least one metric (or its archetype kills).
+    const allKeys = [
+      ...Object.keys(artifacts.comparison.metrics),
+      ...Object.keys(artifacts.comparison.enemiesKilledByArchetype),
+    ];
+    expect(allKeys.length).toBeGreaterThan(0);
+    const summary = JSON.parse(artifacts.comparisonJson);
+    expect(summary.schemaVersion).toBe(TUNE_COMPARISON_SCHEMA_VERSION);
+    expect(summary.edit.newValue).toBe('8');
+    expect(artifacts.summaryText).toContain('Tune comparison');
+    expect(artifacts.summaryText).toContain('boss.health 1 → 8');
   });
 });

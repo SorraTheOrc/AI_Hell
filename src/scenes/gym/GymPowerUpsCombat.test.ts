@@ -11,10 +11,10 @@
  * AH-0MTC2P6G3007PJ40 — "Create combat gym scene for combat-coupled
  * power-ups with low-level enemy threats"
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, BootedGame, createReusableBoot } from '../../test/gameHarness';
 import { HUD } from '../../ui/HUD';
 import { GymIndex } from '../GymIndex';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
@@ -36,6 +36,15 @@ import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 
+/**
+ * One Phaser game shell per file, rebooted into a fresh scene instance per
+ * test (AH-0MVF6VZG9000AN6E). Constructing/destroying a `Phaser.Game` per test
+ * dominated this suite's boot cost; every `reuse.boot()` still creates new
+ * scene instances, so per-test state isolation is unchanged.
+ */
+const reuse = createReusableBoot();
+afterAll(() => reuse.dispose());
+
 // These scene tests drive the fourDirectional control scheme; the app
 // default is now Asteroids, so seed the scheme explicitly for the suite.
 beforeEach(() => {
@@ -44,9 +53,17 @@ beforeEach(() => {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/** Boots the combat gym scene via gameHarness. */
+/**
+ * Boots the combat gym scene via gameHarness with the deterministic boot
+ * (AH-0MUHA0MMP001DZ5C, README § Testing conventions). The legacy real-time
+ * boot lets the rAF loop drain an unpredictable amount of simulated time
+ * (~150 ms wall-clock, frame count varies under full-suite parallel load),
+ * which shifts the round-robin spawner's phase and makes the drop-field
+ * assertions (AH-0MVE4LT8C001TOOK) flaky. Fixed-delta boot keeps the phase
+ * identical on every run.
+ */
 async function bootCombat(): Promise<GymPowerUpsCombat> {
-  const booted = await bootScene([GymPowerUpsCombat]);
+  const booted = await reuse.boot([GymPowerUpsCombat]);
   return booted!.scene as GymPowerUpsCombat;
 }
 
@@ -76,28 +93,20 @@ describe('GymPowerUpsCombat AC1: gym index discovery', () => {
   });
 
   it('is listed by the real gym index by key', async () => {
-    const booted = await bootScene([GymIndex]);
+    const booted = await reuse.boot([GymIndex]);
     const index = booted!.scene as GymIndex;
     expect(index.listedScenes.map((s) => s.key)).toContain('GymPowerUpsCombat');
-    booted!.game.destroy(true);
   });
 
   it('registers the scene so the index can start it', async () => {
-    const booted = await bootScene([GymIndex]);
+    const booted = await reuse.boot([GymIndex]);
     expect(booted!.game.scene.getScene('GymPowerUpsCombat')).not.toBeNull();
-    booted!.game.destroy(true);
   });
 });
 
 // ── AC2: Scene boot + player ship + screen-wrap ────────────────────────
 
 describe('GymPowerUpsCombat AC2: scene boot + player ship', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   it('boots as an active scene and renders the player ship at the canvas centre', async () => {
     const scene = await bootCombat();
@@ -141,12 +150,6 @@ describe('GymPowerUpsCombat AC2: scene boot + player ship', () => {
 // ── AC2: Scout V-formation + SHOOT toggle ──────────────────────────────
 
 describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   it('spawns exactly 3 scouts in a V-formation', async () => {
     const scene = await bootCombat();
@@ -231,12 +234,6 @@ describe('GymPowerUpsCombat AC2: scout formation + SHOOT toggle', () => {
 // ── AC3: Round-robin spawn/lifecycle ───────────────────────────────────
 
 describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   it('spawns drops in the COMBAT_POWER_UP_IDS round-robin order, one every 12.5 s', async () => {
     const scene = await bootCombat();
@@ -295,12 +292,6 @@ describe('GymPowerUpsCombat AC3: round-robin spawn + lifecycle', () => {
 // ── Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ) ─────────────────────
 
 describe('GymPowerUpsCombat — Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ)', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   it('collecting the Smart Bomb destroys every scout inside the 200 px radius and spares the rest (AH-0MV8GPGBL009M0D8)', async () => {
     const scene = await bootCombat();
@@ -369,12 +360,6 @@ describe('GymPowerUpsCombat — Smart Bomb screen pulse (AH-0MV1BIWP9003EHRQ)', 
 // ── Force Field reflector (AH-0MV1BIX1W006XF95) ───────────────────────
 
 describe('GymPowerUpsCombat — Force Field reflector (AH-0MV1BIX1W006XF95)', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   /** Runs the shared collision pass (protected) without a full tick. */
   function resolveCollisions(scene: GymPowerUpsCombat): void {
@@ -511,13 +496,8 @@ describe('GymPowerUpsCombat — Force Field reflector (AH-0MV1BIX1W006XF95)', ()
 describe('GymPowerUpsCombat collection boundary: bubble contact', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function bootCombatBoundary(): Promise<GymPowerUpsCombat> {
-    booted = await bootScene([GymPowerUpsCombat]);
+    booted = await reuse.boot([GymPowerUpsCombat]);
     return booted.scene as GymPowerUpsCombat;
   }
 
@@ -551,12 +531,6 @@ describe('GymPowerUpsCombat collection boundary: bubble contact', () => {
 // ── AC4: Shield collection + visual ─────────────────────────────────
 
 describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   it('collecting P3 arms the shield effect', async () => {
     const scene = await bootCombat();
@@ -605,12 +579,6 @@ describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
 // ── AC5: Bomb collection + bullet clear + notice ────────────────────
 
 describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   it('collecting P4 clears enemy bullets within range and spares those outside', async () => {
     const scene = await bootCombat();
@@ -657,12 +625,6 @@ describe('GymPowerUpsCombat AC5: P4 Bomb collection + bullet clear + notice', ()
 // ── AC6: Phase Shift collection + ghost visual ──────────────────────
 
 describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   it('collecting P6 stores one auto-activation charge (no immediate phase)', async () => {
     const scene = await bootCombat();
@@ -714,12 +676,6 @@ describe('GymPowerUpsCombat AC6: P6 Phase Shift collection + ghost visual', () =
 // ── AC7: Teleport FIFO stacks + safe-spot ──────────────────────────
 
 describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   it('collecting P7 stacks FIFO', async () => {
     const scene = await bootCombat();
@@ -749,12 +705,6 @@ describe('GymPowerUpsCombat AC7: P7 Teleport FIFO stacks + safe-spot', () => {
 // ── AC8/AC9: Hit response + HUD ────────────────────────────────────────
 
 describe('GymPowerUpsCombat AC8/AC9: hit response + HUD (no lives)', () => {
-  let booted: BootedGame | null = null;
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
 
   it('hit response triggers flash/reset with no lives touched', async () => {
     const scene = await bootCombat();
@@ -783,7 +733,7 @@ describe('GymPowerUpsCombat AC8/AC9: hit response + HUD (no lives)', () => {
 
 describe('GymPowerUpsCombat AC1: shared back button', () => {
   it('shows the shared ← INDEX back button', async () => {
-    const booted = await bootScene([GymPowerUpsCombat]);
+    const booted = await reuse.boot([GymPowerUpsCombat]);
     const scene = booted!.scene as GymPowerUpsCombat;
 
     const found = scene.children.list.find(
@@ -792,11 +742,10 @@ describe('GymPowerUpsCombat AC1: shared back button', () => {
         child.text === BACK_TO_INDEX_LABEL,
     );
     expect(found).toBeDefined();
-    booted!.game.destroy(true);
   });
 
   it('the ← INDEX back button navigates back to the gym index', async () => {
-    const booted = await bootScene([GymPowerUpsCombat, GymIndex]);
+    const booted = await reuse.boot([GymPowerUpsCombat, GymIndex]);
     const scene = booted!.scene as GymPowerUpsCombat;
     expect(scene.sys.isActive()).toBe(true);
 
@@ -808,10 +757,9 @@ describe('GymPowerUpsCombat AC1: shared back button', () => {
     expect(button).toBeDefined();
 
     button!.emit('pointerdown');
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('GymIndex')).toBe(true);
-    booted!.game.destroy(true);
   });
 });
 
@@ -819,13 +767,11 @@ describe('GymPowerUpsCombat — collection absorb VFX + pop SFX (AH-0MUBYXRT4002
   let booted: BootedGame | null = null;
 
   afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
     vi.restoreAllMocks();
   });
 
   async function boot(): Promise<GymPowerUpsCombat> {
-    booted = await bootScene([GymPowerUpsCombat]);
+    booted = await reuse.boot([GymPowerUpsCombat]);
     return booted!.scene as GymPowerUpsCombat;
   }
 
@@ -880,15 +826,10 @@ describe('GymPowerUpsCombat — collection absorb VFX + pop SFX (AH-0MUBYXRT4002
 
 describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
   let booted: BootedGame | null = null;
-  const settle = () => new Promise((r) => setTimeout(r, 150));
-
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
+  const settle = () => advanceGame(booted!.game, 150);
 
   async function bootHelp(): Promise<GymPowerUpsCombat> {
-    booted = await bootScene([GymPowerUpsCombat, HelpScene]);
+    booted = await reuse.boot([GymPowerUpsCombat, HelpScene]);
     return booted.scene as GymPowerUpsCombat;
   }
 
@@ -912,6 +853,12 @@ describe('GymPowerUpsCombat — help overlay (AH-0MUAYB67I002REOZ)', () => {
       'teleport',
       'smart_bomb',
       'force_field',
+      // Net-new combat power-ups (AH-0MVCRC1Q0007JAV1): Frenzy, Chrono Field,
+      // Thorn Field and Orbital Strike join the combat gym drop pool.
+      'frenzy',
+      'chrono',
+      'thorns',
+      'strike',
     ]);
   });
 
@@ -972,7 +919,7 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
   });
 
   it('AC2 — supplies its teleport hit radii through the overridable CombatScene hooks', async () => {
-    const booted = await bootScene([GymPowerUpsCombat]);
+    const booted = await reuse.boot([GymPowerUpsCombat]);
     const scene = booted.scene as GymPowerUpsCombat;
     const hooks = scene as unknown as {
       getTeleportEnemyHitRadius(): number;
@@ -996,11 +943,10 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     expect(hooks.getTeleportEnemyHitRadius()).toBe(12);
     expect(hooks.getTeleportBulletHitRadius()).toBe(5);
 
-    booted.game.destroy(true);
   });
 
   it('AC5 — the inherited hit lifecycle uses the gym’s 0.8 s invulnerability hook', async () => {
-    const booted = await bootScene([GymPowerUpsCombat]);
+    const booted = await reuse.boot([GymPowerUpsCombat]);
     const scene = booted.scene as GymPowerUpsCombat;
 
     // A direct, unshielded hit arms the shared invuln window at 0.8 s.
@@ -1009,11 +955,10 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     expect(scene.getPlayerHitCount()).toBe(1);
     expect(scene.isPlayerInvulnerable()).toBe(true);
     expect(scene.getPlayerInvulnerableRemaining()).toBeCloseTo(0.8, 5);
-    booted.game.destroy(true);
   });
 
   it('AC5 — a shielded hit is absorbed without a hit, but still blinks', async () => {
-    const booted = await bootScene([GymPowerUpsCombat]);
+    const booted = await reuse.boot([GymPowerUpsCombat]);
     const scene = booted.scene as GymPowerUpsCombat;
     scene.getEffectsRegistry().applyCollect('shield');
     expect(scene.getEffectsRegistry().isShielded).toBe(true);
@@ -1023,11 +968,10 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
     expect(scene.getPlayerHitCount()).toBe(0);
     expect(scene.getEffectsRegistry().isShielded).toBe(false);
     expect(scene.getPlayerInvulnerableRemaining()).toBeCloseTo(0.8, 5);
-    booted.game.destroy(true);
   });
 
   it('AC1/AC3 — the shared automatic defence warps on danger with no key input', async () => {
-    const booted = await bootScene([GymPowerUpsCombat]);
+    const booted = await reuse.boot([GymPowerUpsCombat]);
     const scene = booted.scene as GymPowerUpsCombat;
     collectCombatDrop(scene, 'teleport');
     const registry = scene.getEffectsRegistry();
@@ -1045,7 +989,6 @@ describe('GymPowerUpsCombat — re-based on the shared CombatScene core', () => 
 
     expect(registry.hasTeleport()).toBe(false);
     expect(registry.isPhased).toBe(true);
-    booted.game.destroy(true);
   });
 });
 
@@ -1056,14 +999,12 @@ describe('GymPowerUpsCombat — composed player-death juice (F8)', () => {
   let booted: BootedGame | null = null;
 
   async function bootCombat(): Promise<GymPowerUpsCombat> {
-    booted = await bootScene([GymPowerUpsCombat]);
+    booted = await reuse.boot([GymPowerUpsCombat]);
     return booted.scene as GymPowerUpsCombat;
   }
 
   afterEach(() => {
     vi.restoreAllMocks();
-    booted?.game.destroy(true);
-    booted = null;
   });
 
   it('an unshielded hit plays the dedicated cue once and registers juice', async () => {
@@ -1117,13 +1058,8 @@ describe('GymPowerUpsCombat — composed player-death juice (F8)', () => {
 describe('GymPowerUpsCombat — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', () => {
   let booted: BootedGame | null = null;
 
-  afterEach(() => {
-    booted?.game.destroy(true);
-    booted = null;
-  });
-
   async function boot(): Promise<GymPowerUpsCombat> {
-    booted = await bootScene([GymPowerUpsCombat]);
+    booted = await reuse.boot([GymPowerUpsCombat]);
     return booted.scene as GymPowerUpsCombat;
   }
 
@@ -1179,12 +1115,10 @@ describe('GymPowerUpsCombat — shared wave-timeout (AH-0MUNR5LM1004B223)', () =
 
   afterEach(() => {
     vi.restoreAllMocks();
-    booted?.game.destroy(true);
-    booted = null;
   });
 
   async function boot(): Promise<GymPowerUpsCombat> {
-    booted = await bootScene([GymPowerUpsCombat]);
+    booted = await reuse.boot([GymPowerUpsCombat]);
     return booted.scene as GymPowerUpsCombat;
   }
 

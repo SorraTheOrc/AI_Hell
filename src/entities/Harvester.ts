@@ -85,6 +85,14 @@ export class Harvester extends BaseEnemy {
 
   private _rotation = 0;
 
+  /**
+   * The Harvester roams toward its live mineral seek target, so the
+   * wormhole transit interpolation must not override its position; it still
+   * emerges at the wormhole origin and seeks out from there
+   * (AH-0MV8BSMXC0097KLW).
+   */
+  readonly autonomousPositioning = true;
+
   constructor(scene: Phaser.Scene, config: HarvesterConfig) {
     const baseConfig: BaseEnemyConfig = {
       formationOffset: config.formationOffset,

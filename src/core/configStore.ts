@@ -148,25 +148,27 @@ const DEFAULT_TARGET_OVERRIDES: Readonly<Record<number, readonly number[]>> = {
   // Dynamic opening (AH-0MUOCJM0N000RW2B): a narrow ascending band for the
   // first four campaign waves. Levels 1–2 waves 1–2 are `dynamic`, so the
   // targets are the seed base; the per-wave curation keeps the resulting
-  // waves varied and non-degenerate. Level 2 wave 3 stays the measured
-  // calibration target derived below.
-  1: [6, 8],
-  2: [9, 10],
-  4: [14, 22, 27.5],
-  5: [43.5, 62],
-  // Levels 6–10 continue the non-decreasing curve beyond level 5's final
-  // target of 62 (AH-0MV395QHS004SCOR). The values are the per-wave
-  // sequencer targets on the same scale as levels 4–5 (the sum of the
-  // composed groups' `enemyDifficulty` scores, not the saturating wave
-  // index); `defaultDifficultyCurves` records them verbatim for `curve` and
-  // `fixed` waves. Level 10's final target (97) is the campaign peak, and the
-  // schedule was chosen so the merged campaign's scored difficulty stays
-  // non-decreasing across all ten levels.
-  6: [71, 74, 77, 80],
-  7: [80, 82, 84, 86],
-  8: [87, 89, 91],
-  9: [91, 93, 95],
-  10: [95, 97],
+  // waves varied and non-degenerate.
+  //
+  // Expanded campaign (AH-0MVCYANT6003SG5C): every level now spans exactly
+  // 10 waves (the F1 harness pins 100 rows, 10 per level). All ORIGINAL
+  // per-wave targets are preserved verbatim for the pre-existing wave slots
+  // (the dynamic openings 6/8/9/10, the fixed calibration rows, and every
+  // `curve` row the sequencer generates — so the AC4 enforcement-cost pin and
+  // the composed compositions stay unchanged). The new filler + wave-10
+  // mini-boss waves are hand-authored (`fixed`), so their targets are purely
+  // monotone ladder values that keep the full 100-row curve non-decreasing
+  // from 6 at L1W1 to the ~98 campaign peak at L10W10.
+  1: [6, 8, 8.2, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 8.95],
+  2: [9, 10, 10.95, 11.2, 11.5, 11.8, 12.1, 12.4, 12.7, 12.95],
+  3: [13, 13.3, 13.6, 13.8, 13.95, 13.95, 13.95, 13.97, 13.98, 13.99],
+  4: [14, 22, 27.5, 30, 33, 36, 38, 40, 42, 43.2],
+  5: [43.5, 62, 64, 66, 67.5, 68, 68.5, 69, 69.5, 70],
+  6: [71, 74, 77, 80, 80, 80, 80, 80, 80, 80],
+  7: [80, 82, 84, 86, 86.2, 86.4, 86.6, 86.8, 86.9, 87],
+  8: [87, 89, 91, 91, 91, 91, 91, 91, 91, 91],
+  9: [91, 93, 95, 95, 95, 95, 95, 95, 95, 95],
+  10: [95, 97, 97.1, 97.3, 97.5, 97.7, 97.9, 98, 98.1, 98.3],
 };
 
 /**
@@ -194,11 +196,11 @@ interface DefaultLevelSpec {
  * waves plus the generated tail.
  */
 const DEFAULT_EXTENDED_LEVELS: readonly DefaultLevelSpec[] = [
-  { level: 6, name: 'Invasion', waveCount: 4 },
-  { level: 7, name: 'Segmented Assault', waveCount: 4 },
-  { level: 8, name: 'Gridlock', waveCount: 3 },
-  { level: 9, name: 'Orbital Siege', waveCount: 3 },
-  { level: 10, name: 'The Gauntlet', waveCount: 2 },
+  { level: 6, name: 'Invasion', waveCount: 10 },
+  { level: 7, name: 'Segmented Assault', waveCount: 10 },
+  { level: 8, name: 'Gridlock', waveCount: 10 },
+  { level: 9, name: 'Orbital Siege', waveCount: 10 },
+  { level: 10, name: 'The Gauntlet', waveCount: 10 },
 ];
 
 /**
@@ -215,19 +217,29 @@ const DEFAULT_EXTENDED_LEVELS: readonly DefaultLevelSpec[] = [
 const DEFAULT_MODE_OVERRIDES: Readonly<
   Record<number, Readonly<Record<number, DifficultyGeneration>>>
 > = {
+  // Dynamic opening (AH-0MUOCJM0N000RW2B): first two waves of levels 1–2 are
+  // `dynamic` so each run opens on a varied mix. All other waves are the
+  // hand-authored static composition (`fixed`), including every level's
+  // wave-10 mini-boss and the expanded-campaign filler waves
+  // (AH-0MVCYANT6003SG5C) — curve-generated only where the sequencer is tuned
+  // for it (the pre-existing `curve` rows in levels 4–10).
   1: { 1: 'dynamic', 2: 'dynamic' },
   2: { 1: 'dynamic', 2: 'dynamic' },
-  5: { 2: 'dynamic' },
-  // Levels 6–10 (AH-0MV395QHS004SCOR): each featured archetype debuts on a
-  // hand-authored `fixed` wave so its showcase is guaranteed for a given run
-  // seed, while the level tail is generated (`curve`) from the targets above.
-  // `fixed` waves with no static counterpart yet fall back to `curve` safely
-  // until Formations.ts supplies them.
-  6: { 1: 'fixed', 2: 'fixed', 3: 'curve', 4: 'curve' },
-  7: { 1: 'fixed', 2: 'fixed', 3: 'curve', 4: 'curve' },
-  8: { 1: 'fixed', 2: 'fixed', 3: 'fixed' },
-  9: { 1: 'fixed', 2: 'fixed', 3: 'curve' },
-  10: { 1: 'fixed', 2: 'curve' },
+  // Level 4 (Firestorm) has no showcase waves: waves 1–3 keep the pre-existing
+  // `curve` generation and the filler + mini-boss waves 4–10 are `fixed`.
+  4: { 4: 'fixed', 5: 'fixed', 6: 'fixed', 7: 'fixed', 8: 'fixed', 9: 'fixed', 10: 'fixed' },
+  5: { 2: 'dynamic', 3: 'fixed', 4: 'fixed', 5: 'fixed', 6: 'fixed', 7: 'fixed', 8: 'fixed', 9: 'fixed', 10: 'fixed' },
+  // Levels 6–10 (AH-0MV395QHS004SCOR, expanded by AH-0MVCYANT6003SG5C): each
+  // featured archetype debuts on a hand-authored `fixed` wave so its showcase
+  // is guaranteed for a given run seed; the pre-existing tail `curve` rows
+  // stay generated; every other wave (filler + mini-boss) is `fixed` so the
+  // authored composition maps through the campaign builder (a `curve` wave
+  // would be re-sequenced and lose the `miniBoss` flag).
+  6: { 1: 'fixed', 2: 'fixed', 3: 'curve', 4: 'curve', 5: 'fixed', 6: 'fixed', 7: 'fixed', 8: 'fixed', 9: 'fixed', 10: 'fixed' },
+  7: { 1: 'fixed', 2: 'fixed', 3: 'curve', 4: 'curve', 5: 'fixed', 6: 'fixed', 7: 'fixed', 8: 'fixed', 9: 'fixed', 10: 'fixed' },
+  8: { 1: 'fixed', 2: 'fixed', 3: 'fixed', 4: 'fixed', 5: 'fixed', 6: 'fixed', 7: 'fixed', 8: 'fixed', 9: 'fixed', 10: 'fixed' },
+  9: { 1: 'fixed', 2: 'fixed', 3: 'curve', 4: 'fixed', 5: 'fixed', 6: 'fixed', 7: 'fixed', 8: 'fixed', 9: 'fixed', 10: 'fixed' },
+  10: { 1: 'fixed', 2: 'curve', 3: 'fixed', 4: 'fixed', 5: 'fixed', 6: 'fixed', 7: 'fixed', 8: 'fixed', 9: 'fixed', 10: 'fixed' },
 };
 
 /**

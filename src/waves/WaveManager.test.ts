@@ -380,24 +380,25 @@ describe('WaveManager — globalWaveIndex accessor (AH-0MUDYS2SZ004H123)', () =>
   });
 
   it('globalWaveIndex increments correctly across levels', () => {
-    // Level 1 has 2 waves, Level 2 has 3 waves, Level 3 has 3 waves.
+    // Level 1 has 10 waves, Level 2 has 10 waves.
     const wm = new WaveManager();
     wm.beginGame();
-    // Clear Level 1 (2 waves) → L2 W1, globalWaveIndex = 2
+    // Clear Level 1 (10 waves) → L2 W1, globalWaveIndex = 10.
     expect(clearLevel(wm)).toBe('levelCleared');
-    expect(wm.globalWaveIndex).toBe(2);
-    clearWave(wm); // L2 W1 → L2 W2, globalWaveIndex = 3
-    expect(wm.globalWaveIndex).toBe(3);
-    clearWave(wm); // L2 W2 → L2 W3, globalWaveIndex = 4
-    expect(wm.globalWaveIndex).toBe(4);
-    clearWave(wm); // L2 W3 → L3 W1, globalWaveIndex = 5
-    expect(wm.globalWaveIndex).toBe(5);
+    expect(wm.globalWaveIndex).toBe(10);
+    clearWave(wm); // L2 W1 → L2 W2, globalWaveIndex = 11
+    expect(wm.globalWaveIndex).toBe(11);
+    clearWave(wm); // L2 W2 → L2 W3, globalWaveIndex = 12
+    expect(wm.globalWaveIndex).toBe(12);
+    clearWave(wm); // L2 W3 → L3 W1, globalWaveIndex = 13
+    expect(wm.globalWaveIndex).toBe(13);
   });
 
-  it('globalWaveIndex for the full campaign — last regular wave is index 28', () => {
+  it('globalWaveIndex for the full campaign — last regular wave is index 99', () => {
     const wm = new WaveManager();
     wm.beginGame();
-    // Clear all 10 levels (wave counts: 2+3+3+3+2+4+4+3+3+2 = 29 regular waves).
+    // Clear all 10 levels (the expanded campaign has 10 waves per level,
+    // 10 levels = 100 regular waves; AH-0MVCYANT6003SG5C).
     for (let level = 1; level <= LEVEL_COUNT; level++) {
       const levelStartGWI = wm.globalWaveIndex;
       const waveCount = wm.waveCount;
@@ -410,7 +411,7 @@ describe('WaveManager — globalWaveIndex accessor (AH-0MUDYS2SZ004H123)', () =>
     }
     // After clearing Level 10's final wave, the boss should trigger.
     expect(wm.bossTriggered).toBe(true);
-    expect(wm.globalWaveIndex).toBe(28);
+    expect(wm.globalWaveIndex).toBe(99);
   });
 
   it('globalWaveIndex is 0 during a boss encounter', () => {
@@ -785,5 +786,164 @@ describe('planGroupSpawns — range-based positioning (AH-0MUKIBAY60075GH5)', ()
     );
     expect(spawns[0].startX).toBe(0);
     expect(spawns[1].startX).toBe(100);
+  });
+});
+
+// ── 10-wave mini-boss gating verification harness (AH-0MVCRAHWO0007US2) ──
+//
+// Test-first verification for the expanded campaign (epic AH-0MVCC8XSS007P01Z):
+// WaveManager must identify each level's 10th wave as its mini-boss encounter
+// and hold the level until that mini-boss is defeated, while the final boss
+// still triggers after Level 10 (item AH-0MVCRAV3B0069AIJ).
+//
+// The mini-boss wave is flagged `miniBoss: true` on the 10th `WaveDefinition`
+// and the manager exposes the encounter through its per-level mini-boss
+// accessors (`miniBossTriggered`/`miniBossActive`/`miniBossDefeated`, named in
+// AH-0MVCRAV3B0069AIJ AC1). The gating tests below pin the manager's
+// state-machine semantics with custom 10-wave levels and are GREEN since the
+// gating landed (AH-0MVCRAV3B0069AIJ). The shipped-campaign test
+// (`LEVELS` exposing exactly 10 waves per level) still runs under
+// `it.fails(...)`: it depends on the 10-wave **data** (`Formations.ts`
+// `LEVELS`), whose deliverable was re-landed by AH-0MVCYANT6003SG5C, so the
+// pin now runs as a plain `it` and hard-gates the shipped shape.
+describe('WaveManager — 10-wave mini-boss gating harness (AH-0MVCRAHWO0007US2)', () => {
+  /**
+   * A 10-wave level whose 10th wave is flagged as the mini-boss encounter.
+   */
+  function tenWaveMiniBossLevel(n: number, name: string): LevelDefinition {
+    const waves: WaveDefinition[] = [];
+    for (let w = 1; w <= 9; w++) {
+      waves.push(wave('scout', 'v', 2, n >= 4));
+    }
+    waves.push({
+      ...wave('raider', 'single', 1, n >= 4),
+      miniBoss: true,
+    });
+    return level(n, name, waves);
+  }
+
+  it('AC1/AC4 — the shipped campaign exposes exactly 10 waves per level', () => {
+    const wm = new WaveManager();
+    wm.beginGame();
+    for (let n = 1; n <= LEVEL_COUNT; n++) {
+      expect(wm.waveCount, `L${n} exposed wave count`).toBe(10);
+      if (n < LEVEL_COUNT) {
+        expect(clearLevel(wm)).toBe('levelCleared');
+      }
+    }
+  });
+
+  it('AC4 — a level advances only after its wave-10 mini-boss is wiped', () => {
+    const wm = new WaveManager([
+      tenWaveMiniBossLevel(1, 'Entry'),
+      tenWaveMiniBossLevel(2, 'Descent'),
+    ]);
+    wm.beginGame();
+
+    // The 8 leading regular waves each wipe cleanly within Level 1.
+    for (let w = 0; w < 8; w++) {
+      expect(clearWave(wm), `wave ${w + 1} must clear`).toBe('waveCleared');
+      expect(wm.level, `L1 must not advance on wave ${w + 1}`).toBe(1);
+    }
+
+    // Wiping the 9th regular wave brings the wave-10 mini-boss current; the
+    // manager exposes the encounter and still holds the level.
+    void clearWave(wm);
+    expect(wm.waveNumber).toBe(10);
+    expect(wm.miniBossTriggered, 'wave-10 mini-boss must be flagged').toBe(true);
+    expect(wm.miniBossActive, 'wave-10 mini-boss must be active').toBe(true);
+    expect(wm.level).toBe(1);
+
+    // Defeating the mini-boss is what advances the level.
+    expect(clearWave(wm)).toBe('levelCleared');
+    expect(wm.level).toBe(2);
+    expect(wm.miniBossDefeated, 'defeated flag must latch').toBe(true);
+  });
+
+  it('AC4 — the final boss still triggers after Level 10\'s mini-boss is defeated', () => {
+    const wm = new WaveManager([tenWaveMiniBossLevel(10, 'The Gauntlet')]);
+    wm.beginGame();
+
+    for (let w = 0; w < 8; w++) {
+      expect(clearWave(wm), `wave ${w + 1} must clear`).toBe('waveCleared');
+    }
+    void clearWave(wm); // wave 9 → wave 10 (the mini-boss)
+
+    expect(wm.miniBossActive, 'Level-10 mini-boss must be active').toBe(true);
+    expect(wm.bossTriggered, 'final boss is not due while the mini-boss is up').toBe(false);
+
+    // Defeating the Level-10 mini-boss triggers the final boss, exactly as
+    // the pre-mini-boss campaign did after clearing Level 10.
+    expect(clearWave(wm)).toBe('bossTriggered');
+    expect(wm.bossTriggered).toBe(true);
+    expect(wm.miniBossDefeated, 'L10 mini-boss defeat must latch').toBe(true);
+  });
+
+  // AC5 — the extra gating edge cases pinned by AH-0MVCRAV3B0069AIJ.
+  it('AC5 — a wave-10 that is NOT flagged miniBoss never hangs and clears normally', () => {
+    // Ten regular waves; the 10th carries no mini-boss marker. The gating is
+    // flag-driven, so the unmarked last wave must progress exactly like any
+    // other wave (waveCleared → levelCleared) and never hang the run.
+    const plainTen = (): LevelDefinition =>
+      level(1, 'Plain', [
+        wave('scout', 'v', 2),
+        wave('scout', 'v', 2),
+        wave('scout', 'v', 2),
+        wave('scout', 'v', 2),
+        wave('scout', 'v', 2),
+        wave('scout', 'v', 2),
+        wave('scout', 'v', 2),
+        wave('scout', 'v', 2),
+        wave('scout', 'v', 2),
+        wave('raider', 'single', 1),
+      ]);
+    // Two levels so the first level's unmarked wave-10 clear emits
+    // `levelCleared` (not the final-level `bossTriggered`).
+    const wm = new WaveManager([plainTen(), { ...plainTen(), level: 2, name: 'Second' }]);
+    wm.beginGame();
+
+    for (let w = 0; w < 8; w++) {
+      expect(clearWave(wm)).toBe('waveCleared');
+    }
+    expect(wm.waveNumber).toBe(9);
+    expect(wm.miniBossTriggered).toBe(false);
+    expect(wm.miniBossActive).toBe(false);
+
+    // The 10th unmarked wave is a regular wave: wiping it clears the level.
+    expect(clearWave(wm)).toBe('waveCleared');
+    expect(wm.waveNumber).toBe(10);
+    expect(wm.miniBossActive).toBe(false);
+    expect(clearWave(wm)).toBe('levelCleared');
+    expect(wm.miniBossDefeated).toBe(false);
+  });
+
+  it('AC5 — the mini-boss encounter resets per level (each level owns its own)', () => {
+    const wm = new WaveManager([
+      tenWaveMiniBossLevel(1, 'Entry'),
+      tenWaveMiniBossLevel(2, 'Descent'),
+    ]);
+    wm.beginGame();
+
+    // Clear L1 waves 1-9, then the L1 mini-boss → L2 wave 1.
+    for (let w = 0; w < 9; w++) {
+      expect(clearWave(wm)).toBe('waveCleared');
+    }
+    expect(wm.miniBossActive).toBe(true);
+    expect(clearWave(wm)).toBe('levelCleared');
+
+    // L2 wave 1 is current; L1's defeated flag may still latch, but
+    // triggered/active must describe the CURRENT level (L2 wave 1 → no).
+    expect(wm.level).toBe(2);
+    expect(wm.waveNumber).toBe(1);
+    expect(wm.miniBossTriggered).toBe(false);
+    expect(wm.miniBossActive).toBe(false);
+
+    // L2's mini-boss is its own encounter.
+    for (let w = 0; w < 8; w++) {
+      expect(clearWave(wm)).toBe('waveCleared');
+    }
+    void clearWave(wm);
+    expect(wm.miniBossActive).toBe(true);
+    expect(wm.level).toBe(2);
   });
 });

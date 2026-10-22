@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { cliSpawnEnv } from './cliChildEnv';
 import {
   chmodSync,
   existsSync,
@@ -106,12 +107,13 @@ function runScript(args: string[] = [], overrides: Record<string, string> = {}) 
   return spawnSync(BASH, [SCRIPT_PATH, ...args], {
     encoding: 'utf8',
     env: {
-      ...process.env,
-      PATH: `${stub.binDir}:${process.env.PATH ?? ''}`,
-      GH_STUB_LOG: stub.logFile,
-      GH_STUB_STATE: stub.stateFile,
-      GH_STUB_REPO: stub.repo,
-      ...overrides,
+      ...cliSpawnEnv({
+        PATH: `${stub.binDir}:${process.env.PATH ?? ''}`,
+        GH_STUB_LOG: stub.logFile,
+        GH_STUB_STATE: stub.stateFile,
+        GH_STUB_REPO: stub.repo,
+        ...overrides,
+      }),
     },
   });
 }
@@ -186,7 +188,7 @@ describe('setup-github-pages-environment.sh', () => {
 
     const result = spawnSync(BASH, [SCRIPT_PATH, '--repo', stub.repo], {
       encoding: 'utf8',
-      env: { ...process.env, PATH: emptyBin },
+      env: cliSpawnEnv({ PATH: emptyBin }),
     });
 
     expect(result.status).not.toBe(0);

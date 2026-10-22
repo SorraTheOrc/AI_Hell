@@ -10,7 +10,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
 import * as effectsModule from '../../audio/effects';
 import { PlayScene } from '../PlayScene';
 import { MineralChoiceScene } from '../MineralChoiceScene';
@@ -65,7 +65,7 @@ describe('PlayScene mineral wiring', () => {
     expect(scene.getGameState().minerals).toBe(before + 1);
   });
 
-  it('a Mystery UFO pickup grants an instant mineral + score bounty (AH-0MV1BIXFO006Z1I7)', async () => {
+  it('a Mystery UFO pickup spawns one visible collector drone and no instant bounty (AH-0MV9G113S009B37I)', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
     const gs = scene.getGameState();
@@ -75,29 +75,17 @@ describe('PlayScene mineral wiring', () => {
     const drop = scene.spawnPowerUpDrop('mystery_ufo', player.x, player.y)!;
     for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
     player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
+    scene.tick(0.016); // the pickup queues the drone spawn
+    scene.tick(0.016); // the shared spawn pass launches the drone
 
-    // Base bounty (level 0): +2 minerals into the hold, +250 score; the
-    // power-up levels up and leaves no timed/consumable state behind.
-    expect(gs.minerals).toBe(mineralsBefore + 2);
-    expect(gs.score).toBe(scoreBefore + 250);
+    // The retired instant mineral/score bounty grants nothing directly; the
+    // reward is the visible drone. The power-up levels up and leaves no
+    // timed/consumable state behind.
+    expect(scene.getDrones()).toHaveLength(1);
+    expect(gs.minerals).toBe(mineralsBefore);
+    expect(gs.score).toBe(scoreBefore);
     expect(player.getPowerUpLevel('mystery_ufo')).toBe(1);
     expect(scene.getEffectsRegistry().isActive('mystery_ufo')).toBe(false);
-  });
-
-  it('a Mystery UFO burst that fills the hold opens the hold-full choice (AH-0MV1BIXFO006Z1I7)', async () => {
-    const scene = await bootPlay();
-    const player = scene.getPlayer()!;
-    const gs = scene.getGameState();
-    gs.mineralCapacity = 2; // the base 2-mineral burst fills the hold exactly
-
-    const drop = scene.spawnPowerUpDrop('mystery_ufo', player.x, player.y)!;
-    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
-    player.setPosition(drop.x, drop.y);
-    scene.tick(0.016);
-
-    expect(gs.minerals).toBe(2);
-    expect(gs.isHoldFull()).toBe(true);
   });
 
   it('AC5 — the shared P10 scoop pulls an in-range mineral toward the ship', async () => {
@@ -130,7 +118,7 @@ describe('PlayScene mineral wiring', () => {
 
     // Paused at the SceneManager level (mirrors PauseScene). The pause op is
     // applied on the next game step, so allow a frame to elapse.
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    await advanceGame(booted!.game, 40);
     expect(scene.scene.isPaused()).toBe(true);
 
     const options = scene.getMineralChoiceOptions();
@@ -149,7 +137,7 @@ describe('PlayScene mineral wiring', () => {
     const drawn = scene.openMineralChoice();
 
     // The overlay is launched asynchronously; allow its create() to run.
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await advanceGame(booted!.game, 80);
     const overlay = booted!.game.scene.getScene(
       'MineralChoiceScene',
     ) as MineralChoiceScene;
@@ -484,7 +472,6 @@ describe('PlayScene mineral wiring', () => {
     // driven only by fixed game steps.
     const bootedGame = await bootScene(
       [PlayScene, MineralChoiceScene, GameOverScene, MenuScene],
-      { deterministicBoot: true },
     );
     booted = bootedGame;
     booted!.game.loop.stop();

@@ -376,10 +376,12 @@ Flow / scene keys:
 >
 > **Shared enemy-fire dispatch (`src/entities/enemyFire.ts`)** — the archetype-key → `tryFire*` mapping is owned once by `fireForEnemy(entity, enemyKey, now)`, which reads a single `ENEMY_FIRE_METHODS` table, normalises a `null`/single/array result to a bullet array and falls back to the aimed shot for unknown/custom keys. Consumed by `PlayScene`, `GymFodderEnemies` and `GymPowerUpsCombat`, so a new enemy archetype is wired once and every scene fires it with the same cadence. The helper takes the scene clock as an explicit `now` argument — never a frame-count accumulator — so the combat gym's fire timing matches the game's (AH-0MUII3BBW000XZ46, gap 2). Pinned by the repo-wide guard in `CombatScene.equivalence.test.ts` and the dispatch tests in `src/entities/enemyFire.test.ts`.
 - `PauseScene` — in-game pause menu: pressing **ESC** during play freezes the run and shows **Resume / Settings / Quit** (pointer- and keyboard-operable, default focus on Resume). Resume or **ESC** again continues the run exactly where it paused; **Quit** returns to the main menu.
-- `SettingsScene` — settings screen shared by the pause menu and the main menu: an **SFX volume slider** (0.0–1.0), an **SFX mute toggle**, and **key-binding remapping** (press-a-key to rebind, conflict warnings, **Reset to defaults**). All persisted to `ai_hell_settings` (see below); **Back** returns to wherever it was opened from.
+- `SettingsScene` — settings screen shared by the pause menu and the main menu: an **SFX volume slider** (0.0–1.0), an **SFX mute toggle**, a **Control Scheme** row (Left/Right or Enter/click cycles `Asteroids` ⇄ `Four Directional`), and **key-binding remapping** (press-a-key to rebind, conflict warnings, **Reset to defaults**). All persisted to `ai_hell_settings` (see below); **Back** returns to wherever it was opened from.
 - `GameOverScene` — final score, qualifying 3-letter initials entry, full ranked leaderboard with a live highlighted prospective row, return to menu / skip. The initials field is focused by default (**A–Z** / **Backspace** edit it, refreshing the prospective row live); **Tab**/arrow keys move focus to **Return to Menu**. A qualifying score shows a single row at the rank it will occupy (leading `▶` marker, distinct colour, `___` placeholders until typing). A non-qualifying score shows an explanatory message, renders no prospective row, and writes nothing.
 
-> **Pause, settings & rebinding** — ESC toggles the pause menu (the pause key and movement keys are rebindable in SettingsScene; arrow keys remain built-in movement defaults). Settings changes apply live and persist to `localStorage` under `ai_hell_settings` (`sfxVolume`, `sfxMuted`, `bindings`) across reloads.
+> **Pause, settings & rebinding** — ESC toggles the pause menu (the pause key and movement keys are rebindable in SettingsScene; arrow keys remain built-in movement defaults). Settings changes apply live and persist to `localStorage` under `ai_hell_settings` (`sfxVolume`, `sfxMuted`, `bindings`, `controlScheme`) across reloads.
+
+> **Pick your control scheme (AH-0MVI7LRCJ006Q8SA)** — **Settings → Control Scheme** switches the ship between the **Asteroids** scheme (the shipped default: W thrust, A/D turn, S reverse) and the **four-directional** scheme (W/A/S/D or arrows move directly). The choice is saved **per player, per device** in `ai_hell_settings.controlScheme` and applies to the running game as soon as you resume from the in-game Settings, and to every subsequent run from the first frame (AH-0MVIMPC11001F7WU). Precedence, highest first: the player's saved setting → the designer-owned `controlScheme` in `src/data/ship-config.csv` → the built-in default `asteroids` (resolved by `resolvePlayerControlScheme()` in `src/core/playerScheme.ts`). The Settings screen never writes the CSV, and the Controls rows are relabelled for the selected scheme (*Thrust / Turn Left / Turn Right / Reverse* under Asteroids) while the key bindings themselves stay shared across both schemes. Gyms keep their own scheme toggle and stay config-driven.
 
 > **Keyboard-only navigation** — the whole game is playable without a mouse. Menu-style scenes use a shared in-canvas focus model (`src/utils/focusManager.ts`, `FocusManager`): the primary control is focused by default and highlighted, **Tab** / **Shift+Tab** and the arrow keys cycle focus with wrap-around, and **Enter** / **Space** activate the focused control. On the menu, **Play Game** is focused by default, so pressing **Enter** starts a game; on game over, type your initials and press **Enter** (auto-submit) or **Tab** to **Return to Menu** and press **Enter**. The dev-mode **Gym Index** is keyboard-operable the same way: its rows are focused in reading order, **Tab**/arrows move between them, and **Enter**/**Space** launch the focused scene. Pointer interaction still works unchanged.
 
@@ -429,26 +431,116 @@ Editing the curve clears the preview (and its launch buttons) until **Regenerate
    shipped `PlayScene` (see [AGENTS.md § Game Architecture Conventions](./AGENTS.md#game-architecture-conventions)
    and `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §5.1).
 
+#### Test projects (unit / integration)
+
+The suite is split into two Vitest projects (`vitest.config.ts`, with the
+selection rule shared in `vitest.projects.ts` so the config and the guard test
+cannot drift):
+
+- **`unit`** — `environment: 'node'`, no DOM setup and no Phaser inline
+transform. This is the fast TDD loop: `npm run test:unit`
+(`npx vitest run --project unit`, or `/skill:test --type unit` via the
+project test-type extension). It selects every test file whose own source — or
+whose transitive project imports — needs neither a DOM global nor Phaser
+(`import.meta.glob` counts as Phaser-adjacent because its targets cannot be
+resolved statically).
+- **`integration`** — happy-dom, `src/test/setup.ts` and the Phaser inline
+transform: every Phaser/DOM-booting suite (`npm run test:integration`).
+- **`e2e`** — gated `*.e2e.test.ts` suites that drive **real binaries** (today:
+  the ffmpeg/ffprobe promo compile). Far too slow for the feedback loop, so it
+  is excluded from the default run entirely: `npx vitest run --project e2e` or
+  `/skill:test --type e2e`. Nothing in it is unique proof of behaviour — the
+  same command/probe/validation logic is covered by injected-subprocess tests in
+  the `scripts/` unit suites; `e2e` only proves a real encoder accepts the
+  command line and produces probe-able output.
+
+`npm --silent test` (and `/skill:test --type full`) executes the **`unit` and
+`integration`** projects only, so it remains the audit-accepted full-suite
+evidence; the `unit` and `e2e` types use independent cache keys and can never
+satisfy a full-suite AC. The
+project-membership guard (`src/test/projectMembership.test.ts`) fails loudly if
+a test file is selected by no project or by both, and asserts each project's
+`include` list matches the classifier exactly.
+
+Project test types are registered in
+`.pi/skills_extensions/test/extension.json` — the supported project-local
+mechanism for typed runs (see the test skill's "Typed runs" contract). The
+current registration exposes `unit` (`npx vitest run --project unit`),
+`coverage` (`npm run test:coverage`) and `e2e` (`npx vitest run --project
+e2e`); `full` falls back to the `npm --silent test` suite command. Each
+non-`full` type writes its own cache key, so `/skill:test --type unit` can
+never masquerade as full-suite evidence.
+
+#### Test execution and timing expectations
+
+| Goal | Sanctioned command | Cache key |
+|---|---|---|
+| Audit-accepted full-suite evidence | `npm --silent test` / `/skill:test --type full` | `test_type: full` over `unit` + `integration` |
+| Fast TDD loop (non-Phaser files) | `npm run test:unit` / `/skill:test --type unit` | independent `unit` key |
+| DOM/Phaser suites only | `npm run test:integration` | not cached as full-suite evidence |
+| Coverage thresholds | `npm run test:coverage` / `/skill:test --type coverage` | independent `coverage` key |
+| Real-binary e2e (not in the default run) | `npm run test:e2e` / `/skill:test --type e2e` | independent `e2e` key |
+
+**Wall clock is load-sensitive** — the same full suite spans roughly 58 %
+between an idle and a contended 16-core host, so every quote below records the
+load it was measured under. The repeatable procedure (and the cache/load
+evidence) lives in
+[docs/dev/test-suite-timing.md](./docs/dev/test-suite-timing.md).
+
+Measured after the timing work landed (2026-10-20, 16 cpus, final validation
+AH-0MVF6W8NC006RT2B): each figure carries the load it was taken under, because
+the same suite spans ~58 % between a quiet and a contended host.
+
+| Scope | Files | Tests | Wall clock | Load 1/5/15 |
+|---|---:|---:|---:|---|
+| `unit` | 141 | 2,517 | **83–101 s** (43.5 s at load 26.5 when the split landed) | 24–44 |
+| `integration` | 139 | 3,620 | ~250–350 s | loaded (varies) |
+| full `npm --silent test` | 280 | 6,137 (6,127 passed + 10 expected fail) | **346.56 / 370.75 / 408.96 s** | 12.7 / 15.4 / 24.7 |
+
+**The timing target is qualitative, not a wall-clock number** (producer
+decision, 2026-10-20, option (a) of AH-0MVGRR51H008WP2N). The suite is expected
+to (1) contain **no wall-clock waiting** — deterministic boot is the default and
+every wall-clock wait has been replaced by `advanceGame`/`stepGameUntil`, both
+enforced by guard tests; (2) be **deterministic and repeatable under load** —
+three consecutive full runs at load 12.7–24.7 were green with no retries; and
+(3) keep **real-binary work out of the default run** — the ~140 s ffmpeg promo
+compile lives in the gated `e2e` type. Halving the wall clock was evaluated and
+is not achievable under the current constraints: the residual cost is the
+per-file Phaser transform/import under `isolate: true`, and every lever that
+attacks it either breaks test isolation (`isolate: false`) or removes coverage
+from the audit-accepted suite. Report measured figures **with their load**; do
+not chase a number.
+
 #### Testing conventions (deterministic scene boot)
 
 Phaser suites boot a real `Phaser.Game` through `bootScene()`
-(`src/test/gameHarness.ts`). By default the harness waits a fixed **real-time**
-150 ms while the live requestAnimationFrame loop runs, so the scene drains an
-unpredictable number of frames — frame timing varies under full-suite parallel
-load, which makes assertions taken right after boot flaky.
+(`src/test/gameHarness.ts`). Boot is **deterministic by default**: the live
+requestAnimationFrame loop is stopped before its first frame and the scene is
+booted with fixed-delta `game.step` calls (150 ms of simulated time, matching
+the legacy settle window), so the state a test observes is identical on every
+run, independent of wall-clock frame timing and host load. The loop is then
+resumed so tests that `await` a scene transition (for example the game-over
+flow) still work. The legacy real-time boot (`setTimeout(150)` wall-clock
+sleep) was deleted — it cost ~89 s of sleeping per full run and made
+post-boot assertions flaky under load.
 
-- **Opt into deterministic boot** for suites that assert on scene state:
-  `bootScene([...], { deterministicBoot: true })`. The live loop is stopped
-  before its first frame, the scene is booted with fixed-delta `game.step`
-  calls (150 ms of simulated time, matching the legacy settle window), and the
-  loop is then resumed so tests that `await` a scene transition (for example
-  the game-over flow) still work. The PlayScene suites (`PlayScene.test.ts`,
-  `PlaySceneHUD.test.ts`, `PlayScenePause.test.ts`) and `SceneNavigation.test.ts`
-  opt in.
 - **Drive behaviour with explicit `scene.tick(dt)`**, accumulating deterministic
   time and polling for the expected condition, rather than wall-clock waits.
   This is the established idiom for former flakes (AH-0MTFTIZX7005DNFW,
   AH-0MTFSM3IR001QR0C, AH-0MUHA0MMP001DZ5C).
+- **Anchor the shared beat clock before asserting fire cadence.** Player
+  auto-fire is phase-locked to an 80 BPM grid (`src/utils/beat.ts`) whose
+  elapsed time accumulates across every frame the scene has ticked — under the
+  legacy wall-clock `bootScene` wait that included an unpredictable number of
+  real animation frames. A
+  freshly equipped weapon fires on the *next* grid tick — up to a full fire
+  interval away — so advancing a fixed sub-beat `dt` only delivers that shot
+  for some boot phases, which makes cue/cadence assertions load-sensitive
+  (AH-0MVF2HCPV003PQR4). Reset and re-attach the clock before equipping:
+  `scene.getBeatClock().reset(); player.setBeatClock(scene.getBeatClock());`
+  then `equipWeapon(...)` and tick a short frame to deliver exactly one
+  volley (`PlayScene.test.ts` per-weapon fire-audio and `GymWeapons.test.ts`
+  AC2 use this idiom).
 - **Advance Phaser timers with `game.step`, not wall-clock waits.** A
   production `this.time.delayedCall(...)` transition — for example the
   `VICTORY_TRANSITION_HOLD_MS` victory hold before `GameOverScene` — is driven
@@ -459,6 +551,18 @@ load, which makes assertions taken right after boot flaky.
   budget if the condition is never met. This replaces `await`-ing a
   `setTimeout` that can be missed under full-suite parallel load
   (AH-0MUYALJ9S0002XXZ).
+- **Never wait on wall-clock time — advance simulated time instead.**
+  `await new Promise((r) => setTimeout(r, 350))` lets an unpredictable number
+  of animation frames drain, which is exactly what made suites flake under
+  full-suite parallel load. Use the harness helpers:
+  `await advanceGame(booted.game, 350)` (fixed-delta `game.step`, loop state
+  preserved, instant) to replace a settle wait, and
+  `stepGameUntil(game, label, predicate)` when you need to advance until a
+  condition holds (e.g. a `time.delayedCall` transition). Vitest fake timers
+  are the alternative for non-Phaser code. A repo-level guard
+  (`src/test/wallClockWaitGuard.test.ts`) fails if a wall-clock wait reappears
+  in a test file outside its documented, self-pruning allow-list
+  (AH-0MVF6VVDP003L39A).
 - **Isolate deterministic suites from the random asteroid spawner.** The
   offscreen asteroid (and Levels 4–10 Harvester) spawner plans its releases from
   `Math.random()` and releases them by elapsed wave time, so a `scene.tick(dt)`
@@ -467,6 +571,22 @@ load, which makes assertions taken right after boot flaky.
   public `scene.setAsteroidSpawnerEnabled(false)` seam (the `PlayScene.test.ts`
   and `PlayScenePause.test.ts` suites do), and compare captured entities by
   identity where a list is involved (AH-0MUZDXF2U001MJW1).
+- **Reuse one game *shell* per file where a fresh scene reset is safe.**
+  Constructing and destroying a whole `Phaser.Game` per test dominated the
+  boot-dense gym suites. `createReusableBoot()` (`src/test/gameHarness.ts`)
+  lazily boots one game per file and every `reuse.boot([...])` creates **fresh
+  scene instances** on it: queued scene ops from the previous test are drained
+  first, each old scene is shut down and destroyed, and only then are the new
+  instances added, so per-test state isolation is identical to a fresh game.
+  Adopted by `GymPowerUpsCombat.test.ts`, `GymPowerUpsUtility.test.ts`,
+  `GymMinerals.test.ts` and `GymFormationScene.test.ts`, which cut ~17 % off
+  their test phase in a load-matched comparison (AH-0MVF6VZG9000AN6E). Suites
+  that keep per-test `bootScene()` boots do so because their reset is not
+  provably safe with one shared canvas: `PlayScene.test.ts` (every test injects
+  a different campaign/level fixture and asserts across a scene restart),
+  `CombatScene.equivalence.test.ts` (each test compares a distinct
+  scene-class/host combination), and suites that replace the DOM host with
+  `document.body.innerHTML` (`GymWeapons`, `GymPlayer`, `GymFodderEnemies`, …).
 - **Never weaken an assertion to hide a flake** — fix the nondeterminism at its
   source (assertions stay exact; a guard may poll with bounded deterministic
   ticks and fail loudly with diagnostic state).
@@ -492,8 +612,20 @@ load, which makes assertions taken right after boot flaky.
   spawning real `bash` + `node` subprocesses; under full-suite parallel load
   that process startup can exceed the Vitest default 5 s and report a spurious
   timeout even though the pipeline is fast. Such suites opt in with
-  `vi.setConfig({ testTimeout: 30000 })` (the full-game suites use 60000)
-  rather than weakening assertions (AH-0MV5L6CP4007HQP3).
+  `vi.setConfig({ testTimeout: 30000 })` (the full-game suites use 120000,
+  including `PlayScene.test.ts`'s ten-level boss walk — its heaviest AC4
+  victory test was raised from 60 s after breaching that ceiling under
+  full-suite parallel load, AH-0MVF2H4UL007IJT4 — and the `PlaySceneHUD.test.ts`
+  AC4 level walk, AH-0MVHCC9XI007DARU) rather than weakening assertions
+  (AH-0MV5L6CP4007HQP3).
+- **Bump the file-level `testTimeout` for heavy property sweeps too.**
+  `src/utils/weaponLevels.test.ts` sweeps every weapon across levels 0..100
+  for every tunable variable; the sweep is pure computation and normally
+  completes in well under a second, but under full-suite parallel load it
+  breached the Vitest default 5 s and reported a spurious timeout. It opts in
+  to `vi.setConfig({ testTimeout: 30000 })` for the same reason as the
+  subprocess suites above — headroom for load, never weaker assertions
+  (AH-0MVF7CKRX005ZAP6).
 
 #### Automated gameplay capture (dev tooling)
 
@@ -567,8 +699,9 @@ added by AH-0MUWTNPYJ0031FQE):
   predicates are pure and unit-tested in `scripts/capture-gameplay.test.ts`.
 - **Fully opt-in:** the tool lives under `scripts/` and is never imported by
   `src/` (the audio tap is injected page-side, so the shipped bundle is
-  untouched), `playwright` is a devDependency, and `npm test` / `npm run build`
-  are unchanged. Output is WebM/VP9 **with the game's own Opus audio** (no MP4
+  untouched), `playwright` is a devDependency, and `npm --silent test` (the
+  `unit` + `integration` full suite) / `npm run build` are unchanged. Output is
+  WebM/VP9 **with the game's own Opus audio** (no MP4
   — no full ffmpeg in the Playwright bundle); runs are not yet
   frame-reproducible because wave/spawn RNG is unseeded.
 - **Recommendation, rejected alternatives and measured CI cost:** see
@@ -612,7 +745,10 @@ kills per archetype, asteroids, power-ups, avoidable hits, survival, wave and
 level reached) with distribution summaries, written as versioned JSON plus a
 human-readable report. Run it with `npm run evaluate -- --batch`; see
 **[docs/BALANCING.md](./docs/BALANCING.md)** for the flags, the statistics
-schema and how to interpret the distributions (epic AH-0MV1DLUZ8009OCJW).
+schema and how to interpret the distributions (epic AH-0MV1DLUZ8009OCJW),
+plus the **tuning loop** (`--tune` baselines one declarative CSV edit against
+an identical re-run and writes a versioned before/after comparison —
+AH-0MV8Q5EYE001R715).
 
 #### Style matching from telemetry
 
@@ -710,17 +846,35 @@ instead.
 - **Fire rule:** `curve`/`dynamic` levels 1–3 do not fire; levels 4+ do
   (GDD §2.4/§2.5); `fixed` waves keep `LEVELS`' own per-wave `shootEnabled`
   flags.
-- **Ten-level showcase campaign:** the shipped default curve defines ten
-  levels. Levels 1–3 stay the no-fire onboarding section; Level 4 introduces
+- **Ten-level, ten-wave showcase campaign:** the shipped default curve defines
+  ten levels, each spanning exactly **10 waves (100 waves total)**, with wave 10
+  of every level that level's hand-authored **mini-boss** encounter
+  (`miniBoss: true`, expansion AH-0MVCC8XSS007P01Z / AH-0MVCYANT6003SG5C).
+  Levels 1–3 stay the no-fire onboarding section; Level 4 introduces
   fire and Level 5 is the sparse predictable-pattern level; Levels 6–10 debut
   the classic-arcade roster, each archetype appearing first on a hand-authored
   `fixed` showcase wave so it is guaranteed for a given run seed. The campaign
-  invariant tests pin the design rules: every classic archetype appears at
-  least once (`src/waves/campaignRoster.test.ts`), every wave that fields a
-  player-targeting archetype (`capturer`, `ghost-*`, `grunt`, `raider`) also
-  fields a non-player-targeting kind (same file), and adjacent levels differ in
-  their dominant movement/attack style with a non-decreasing target curve
-  (`src/waves/campaignInvariants.test.ts`).
+  invariant tests pin the design rules: **every level defines exactly ten
+  waves** (100 total) with its 10th a mini-boss (same file), every classic
+  archetype appears at least once (`src/waves/campaignRoster.test.ts`), every
+  wave that fields a player-targeting archetype (`capturer`, `ghost-*`,
+  `grunt`, `raider`) also fields a non-player-targeting kind (same file), and
+  adjacent levels differ in their dominant movement/attack style with a
+  non-decreasing target curve (`src/waves/campaignInvariants.test.ts`).
+- **Mini-bosses, rewards and checkpoints:** every level's wave 10 is a
+  **bespoke mini-boss** — ten net-new archetypes (Pulse Warden, Coil Sentinel,
+  Shard Matron, Void Herald, Ion Tyrant, Cinder Maw, Prism Wraith, Gravemind,
+  Star Eater, The Hollow King) driven by one config-driven entity family
+  (`src/waves/miniBossDesigns.ts`, exercised by `GymMiniBoss`). The mini-boss
+  wave has no time limit and gates its level. Defeating a mini-boss grants
+  **one** choice — upgrade an owned permanent weapon/power-up by one level, or
+  unlock a weapon from the ~50%-locked pool (`src/powerups/unlocks.ts`) — and
+  auto-writes a **checkpoint** (`ai_hell_checkpoint`) that the main menu's
+  **Continue** resumes from (level after the mini-boss, wave 1) with lives,
+  score, minerals, permanent levels, unlocks and the run seed restored. The
+  catalogue now ships **16 weapons** (the 5 net-new unlock-pool weapons are
+  Rear Guard, Broadside, Railgun, Shard Swarm and Heavy Slug) and **16
+  power-ups**.
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
   skeleton, so levels 1–10 are always present. A configured level overrides its
   static counterpart (and a configured level numbered beyond the static ten is
@@ -796,12 +950,12 @@ The scene is reachable from the gym index ("Swarm" entry) and returns to it via 
 
 #### GymPowerUpsUtility Gym Scene
 
-The GymPowerUpsUtility gym scene (Create gym scene for power-ups with spawning, collection, and standalone HUD) is a **threat-free** Phaser scene demonstrating power-up spawning, collection and HUD feedback for the non-combat power-ups Speed Boost, Extra Life, Magnet, Mineral Scoop and **Mystery UFO** (GDD §4.4). The classic-arcade **Smart Bomb** (Defender), **Force Field** (Gradius) and **Mystery UFO** (Space Invaders) are the implemented power-up picks from the research catalogue [`docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md`](docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md) (epic AH-0MV14SO0G0095IJ4), recorded per concept with its source game, adaptation and deferred alternatives. It also seeds a live **mineral field** so the scoop has a field to attract (minerals are inert — no enemies exist here):
+The GymPowerUpsUtility gym scene (Create gym scene for power-ups with spawning, collection, and standalone HUD) is a **threat-free** Phaser scene demonstrating power-up spawning, collection and HUD feedback for the non-combat power-ups Speed Boost, Extra Life, Magnet, Mineral Scoop and **Mystery UFO** (GDD §4.4). The Mystery UFO reward is a **visible collector drone** spawned through the same shared core pass the game uses, so the gym observes its spawn → seek → collect → return → payout lifecycle end to end. The classic-arcade **Smart Bomb** (Defender), **Force Field** (Gradius) and **Mystery UFO** (Space Invaders) are the implemented power-up picks from the research catalogue [`docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md`](docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md) (epic AH-0MV14SO0G0095IJ4), recorded per concept with its source game, adaptation and deferred alternatives. It also seeds a live **mineral field** so the scoop has a field to attract (minerals are inert — no enemies exist here):
 
 - `src/powerups/PowerUp.ts` — base drop class: delta-time grow → hold → shrink → despawn lifecycle, collection gated at **>3%** of full-size scale.
 - `src/powerups/spawner.ts` — pluggable spawner strategy layer: `PowerUpSpawner` interface, `RoundRobinSpawner` (deterministic gym behaviour: Speed Boost → Extra Life → Magnet → Mineral Scoop) and `WeightedRandomSpawner` (semi-random in-game drops; per-ID weights tunable mid-run).
-- `src/powerups/types.ts` — power-up catalogue (id, name, type, duration/stack semantics) for Speed Boost/Extra Life/Magnet/Mineral Scoop, the **Smart Bomb** (the Defender-inspired stored ship-centred pulse — a modest 200 → 400 px radius, permanent pulse on a 30 → 10 s interval; AH-0MV1BIWP9003EHRQ) and the **Force Field** (the Gradius-inspired timed bullet reflector; AH-0MV1BIX1W006XF95) and the **Mystery UFO** (the Space Invaders-inspired instant mineral/score bounty; AH-0MV1BIXFO006Z1I7).
-- `src/powerups/effects.ts` — engine-agnostic active-effects registry consumed by the game and every gym. Since AH-0MUV5CLW6005VF7K it consumes the **single** run-scoped `PowerUpLevelStore` owned by `Player` (injected by each scene via `setStoreResolver`, so a respawned player is picked up automatically) and delegates lives/stacks/charges to it: `EffectsRegistry.applyCollect` advances the level exactly once (field pickup or hold-full reward) and resolves effect strength from the catalogue — Shield/Speed Boost durations and the Speed Boost `speedMultiplier`, Phase Shift/Teleport durations, teleports, Phase Shift charges, Extra Life lives, Magnet/Mineral Scoop stack caps. Speed Boost is timed (refresh on re-collect, never additive), Extra Life lives start at 3 (level-cap 5), Magnet timed (15 s, refresh-only; the field window is the one non-levelled effect constant) + permanent magnet stacks sharing the magnet radius curve (`magnetEffectStacks()`; radius `1× ship size + 50% per stack`; attraction at `MAGNET_ATTRACTION_SPEED`, slower than ship max speed), Mineral Scoop timed (15 s, refresh-only) + permanent scoop stacks sharing the same radius curve (`scoopEffectStacks()`). Shield multi-hit absorption (`shieldAbsorptions`, 1 → 3) and the Bomb ranged periodic bomb (`bombRange` px / `bombFrequency` pulses/s) are wired by AH-0MUVM9RAO004Y3LB: the shield absorbs its level-resolved hits before popping, a field Bomb fires one ranged explosion, a permanent Bomb pulses on its resolved interval, and the level-up summary reports every axis (the deferred set is empty). The **Force Field** (AH-0MV1BIX1W006XF95) is a timed reflect bubble drawn by the shared `drawForceFieldBubble` helper; its bubble radius is the shared `EffectsRegistry.forceFieldRadius()`, so the drawn boundary and the gameplay reflection boundary cannot diverge. The **Mystery UFO** (AH-0MV1BIXFO006Z1I7) is an instant bonus: `applyCollect` queues the level-resolved `mysteryUfoMinerals`/`mysteryUfoScore` burst and each scene drains it with `consumeMysteryBonus()` through the shared `CombatCoreScene._applyPendingMysteryBonus` sink (minerals into the hold, score into the run total), leaving no timed window or consumable state. The **Smart Bomb** (AH-0MV1BIWP9003EHRQ; re-balanced in AH-0MV8GPGBL009M0D8) mirrors the Bomb: a field pickup queues one **ship-centred** pulse within the level-resolved radius (`aoeRadius`, **200 → 400 px**, linear-clamped, +2 % of base per level), the hold-full reward makes it permanent and repeating on the level-resolved interval (`smartBombInterval`, **30 → 10 s**, linear-clamped, −2 s per level; `smartBombPulse`/`updateSmartBomb`/`smartBombAoe`), and `smartBombAoe()` returns the level-resolved `AoEDescriptor` (`trigger: 'screenPulse'`, `damagesEnemies`, `clearsEnemyBullets`, `damage`, `aoeRadius`) that the shared combat core resolves through the same AOE seam as Nova/Mortar/Arc. The **Force Field** (AH-0MV1BIX1W006XF95) is a timed reflect bubble: `isForceFieldActive()` opens for the level-resolved `forceFieldDuration`, `tryConsumeForceFieldReflect()` spends the level-resolved `forceFieldReflects` budget once per bounced bullet, and `forceFieldRadius()` exposes the shared bubble radius used by both the combat-core reflect branch and the `drawForceFieldBubble` visual; the hold-full reward makes the bubble permanent for the run.
+- `src/powerups/types.ts` — power-up catalogue (id, name, type, duration/stack semantics) for Speed Boost/Extra Life/Magnet/Mineral Scoop, the **Smart Bomb** (the Defender-inspired stored ship-centred pulse — a modest 200 → 400 px radius, permanent pulse on a 30 → 10 s interval; AH-0MV1BIWP9003EHRQ) and the **Force Field** (the Gradius-inspired timed bullet reflector; AH-0MV1BIX1W006XF95) and the **Mystery UFO** (the Space Invaders-inspired visible collector drone — a field pickup spawns one code-drawn mini ship that seeks, vacuums, returns and pays minerals into the hold, while the full-hull reward auto-spawns on a level-resolved interval; AH-0MV1BIXFO006Z1I7 → AH-0MV9G113S009B37I).
+- `src/powerups/effects.ts` — engine-agnostic active-effects registry consumed by the game and every gym. Since AH-0MUV5CLW6005VF7K it consumes the **single** run-scoped `PowerUpLevelStore` owned by `Player` (injected by each scene via `setStoreResolver`, so a respawned player is picked up automatically) and delegates lives/stacks/charges to it: `EffectsRegistry.applyCollect` advances the level exactly once (field pickup or hold-full reward) and resolves effect strength from the catalogue — Shield/Speed Boost durations and the Speed Boost `speedMultiplier`, Phase Shift/Teleport durations, teleports, Phase Shift charges, Extra Life lives, Magnet/Mineral Scoop stack caps. Speed Boost is timed (refresh on re-collect, never additive), Extra Life lives start at 3 (level-cap 5), Magnet timed (15 s, refresh-only; the field window is the one non-levelled effect constant) + permanent magnet stacks sharing the magnet radius curve (`magnetEffectStacks()`; radius `1× ship size + 50% per stack`; attraction at `MAGNET_ATTRACTION_SPEED`, slower than ship max speed), Mineral Scoop timed (15 s, refresh-only) + permanent scoop stacks sharing the same radius curve (`scoopEffectStacks()`). Shield multi-hit absorption (`shieldAbsorptions`, 1 → 3) and the Bomb ranged periodic bomb (`bombRange` px / `bombFrequency` pulses/s) are wired by AH-0MUVM9RAO004Y3LB: the shield absorbs its level-resolved hits before popping, a field Bomb fires one ranged explosion, a permanent Bomb pulses on its resolved interval, and the level-up summary reports every axis (the deferred set is empty). The **Force Field** (AH-0MV1BIX1W006XF95) is a timed reflect bubble drawn by the shared `drawForceFieldBubble` helper; its bubble radius is the shared `EffectsRegistry.forceFieldRadius()`, so the drawn boundary and the gameplay reflection boundary cannot diverge. The **Mystery UFO** (AH-0MV1BIXFO006Z1I7 → AH-0MV9G113S009B37I) is a visible collector drone: `applyCollect` queues exactly one spawn per field pickup (`consumeMysteryUfoSpawns`), exposes the permanent-reward state (`isMysteryUfoPermanent`) and the level-resolved auto-spawn cadence (`mysteryUfoSpawnInterval`), and the shared `src/scenes/core/combatDrone.ts` pass spawns, ticks (seek → collect → return → payout into the scene's hold sink), handles the enemy-only destruction drop (held minerals + `2 × level`) and tears the drone down — leaving no instant mineral/score burst and no timed window. The **Smart Bomb** (AH-0MV1BIWP9003EHRQ; re-balanced in AH-0MV8GPGBL009M0D8) mirrors the Bomb: a field pickup queues one **ship-centred** pulse within the level-resolved radius (`aoeRadius`, **200 → 400 px**, linear-clamped, +2 % of base per level), the hold-full reward makes it permanent and repeating on the level-resolved interval (`smartBombInterval`, **30 → 10 s**, linear-clamped, −2 s per level; `smartBombPulse`/`updateSmartBomb`/`smartBombAoe`), and `smartBombAoe()` returns the level-resolved `AoEDescriptor` (`trigger: 'screenPulse'`, `damagesEnemies`, `clearsEnemyBullets`, `damage`, `aoeRadius`) that the shared combat core resolves through the same AOE seam as Nova/Mortar/Arc. The **Force Field** (AH-0MV1BIX1W006XF95) is a timed reflect bubble: `isForceFieldActive()` opens for the level-resolved `forceFieldDuration`, `tryConsumeForceFieldReflect()` spends the level-resolved `forceFieldReflects` budget once per bounced bullet, and `forceFieldRadius()` exposes the shared bubble radius used by both the combat-core reflect branch and the `drawForceFieldBubble` visual; the hold-full reward makes the bubble permanent for the run.
 - `src/powerups/mineralScoop.ts` — shared Mineral Scoop attraction helper (`applyMineralScoop`): live minerals within the shared radius are pulled toward the player at `MAGNET_ATTRACTION_SPEED` and their rendered positions synced (attract-only — collection stays with `collectMinerals`).
 - `src/powerups/icons.ts` — code-drawn neon icons shared by field drops and the HUD, plus the glowing drop bubble (`drawDropBubble`) and combined drop drawers (`drawPowerUpDrop`/`drawWeaponDrop`): every on-field drop renders a neon bubble (soft glow halo + crisp ring in the per-type aura colour) around its icon, `POWER_UP_DROP_SIZE` set to **16 px** (half the initial 32 px doubling; `POWER_UP_BUBBLE_*` constants tunable in `src/core/constants.ts`). The icon set includes the Gradius **Force Field** hexagon-with-arrows motif (AH-0MV1BIX1W006XF95). The bubble is also the pickup boundary: the shared `dropBubbleRadius()` / `dropCollectRadius()` helpers derive both the drawn ring and the collision radius from the same `POWER_UP_BUBBLE_RADIUS_FACTOR`, so the ship collects a drop as soon as its hull touches the visible ring (AH-0MTVYCM2N002NKE4).
 - `src/ui/HUD.ts` — **standalone HUD** (Phaser Container, depth above gameplay) attachable to any scene: **one merged row per owned/active power-up or weapon** (never separate permanent and temporary rows), each with the icon, a label carrying the current effective level (e.g. `Speed Boost Lvl 3`, plus a `×N` consumable count where relevant) and a value of `∞` (no temporary level-up window active) or a live `Ns` countdown, plus a lives counter.
@@ -830,7 +984,7 @@ The GymWeapons gym scene (Weapon power-ups (3 patterns + reset) with auto-fire a
 
 - `src/utils/weapons.ts` — pure, unit-testable weapon catalogue: `cannon` (single bullet, permanent), `spread` (3-bullet fan at -30°/0°/+30°), `dual` (2 bullets perpendicular to heading), `rapid` (single bullets at a markedly higher rate), `wave_laser` (**R-Type piercing beam** — a single slow, long-range bolt that passes through a budget of enemies, damaging each once, growing with the **Piercing** level variable; AH-0MV1BIUSJ0090W92), `ricochet` (**Centipede edge-bouncing shot** — a single **teardrop/streak pellet with a short fading trail** that reflects off the arena walls up to a bounce budget before expiring, firing a bright springy ping + green launch flash and playing a brief green edge-flash + soft bounce tick on every wall reflection through the shared impact seam; growing with the **Bounce** level variable; AH-0MV1BIV5L005NJAI, AH-0MV822AP1006W2F9), `cluster` (**Missile Command cluster/MIRV missile** — a single **small missile with a flickering exhaust flame, white-hot rim and short smoke trail** (AH-0MV822B1B0048UZT) that splits once, on impact or expiry, into a radial cluster of **small disc warheads** that damage enemies on contact, each connect playing the baked cluster detonation cue + hot-pink impact flash through the shared impact seam, fanned evenly around the direction of travel with a +90° phase offset (90°/270° at base), growing with the **Split** level variable; AH-0MV1BIVIJ007KYXU), `options` (**Gradius Options escort** — **two neon satellite pods** that orbit the ship and each fire a bullet **radially outward along their own orbit direction** (in the direction of the orb), the pod count growing with the **Projectiles** level variable; each shot renders as a **small pod dart with a pale-aqua rim tint and a short faint fading trail**, firing with a baked bright soft-tone cue + aqua launch flash and connecting with a baked soft-aqua pop + aqua impact flash through the shared impact seam (AH-0MV822BDN008IYL6); AH-0MV1BIVVK0043TEM), and the **AOE family** `nova` (onFire expanding ring — a bright **ring shockwave** from the ship with a bright pale-cyan launch flash and a baked expanding-ring impact cue through the shared AOE VFX seam, AH-0MV822BPT002GF17), `mortar` (onRandom random-area blast — an **arcing shell** with a hot deep-orange launch flash at the ship, a wispy inbound arcing shell trail into a bright blast flash and a baked mortar-impact crack layered under the heavy detonation boom through the shared AOE detonation seam, AH-0MV822C250051OVN) and `arc` (onFire chaining bolt — a **jagged lightning bolt** drawn through the chained targets by the shared AOE chain VFX, with an electric-purple launch flash at the ship and a baked electric impact crack + purple impact flash at every connected target through the shared impact seam, AH-0MV822CE7004MQ14) — each with its own fire rate (an **exact subdivision/multiple of the configurable 80 BPM beat** — cannon 2/beat = 375 ms, spread 1/beat = 750 ms, dual 1/beat = 750 ms, rapid 6/beat = 125 ms, wave_laser 1/beat = 750 ms, ricochet 1/beat = 750 ms, cluster 1/2-beat = 1500 ms, options 1/beat = 750 ms, nova 1/4-beat = 3000 ms, mortar 1/2-beat = 1500 ms, arc 1/beat = 750 ms — via `weaponFireRateMs`; `isOnBeatGrid` enforces the catalogue-wide invariant), bullet colour/shape, an optional `piercing` base budget, an optional `bounce` base budget, an optional `splits` base warhead count, an optional `orbit` descriptor (`{ pods, radius }`) for the Options escort, and an optional `aoe` descriptor (`{ trigger, radius, damagesEnemies, clearsEnemyBullets, chains?, projectileSpeed? }`) — plus `isTimedWeapon()` (cannon = permanent, all power-ups = timed) and heading math (`headingFromVelocity`, `absoluteAngle`, `computeHeading` — most-recent-heading fallback when stationary) and scene-facing helpers (`createBulletsFromHeading`, `angleToVelocity`).
 - `src/utils/weaponLevels.ts` — **weapon leveling (AH-0MUPMPCB2009J54J)**: the pure, testable level-curve maths behind constantly upgradable weapons. Exposes the 16-variable `WeaponUpgradeVariable` catalogue and `WEAPON_UPGRADE_SPECS` (per-variable base, finite cap, saturation rate `k`, MVP/planned tier and tuning rationale), the shared diminishing-returns curve `effective(level) = cap − (cap − base) × e^(−k × level)`, and `resolveWeaponAtLevel(weaponId, level)` / `resolveWeaponDefinition(weaponId, level)` (plus `expandWeaponPattern`/`quantiseFireRateMs`/`curveValue`). Levels are run-scoped, unbounded and monotonic non-decreasing, and never exceed their cap; fire-rate levels are quantised to the beat grid. `src/entities/Player.ts` tracks the per-weapon level (`getWeaponLevel`/`getWeaponLevels`/`resetWeaponLevels`), levels a weapon up on every collection (`equipWeapon`), exposes the level-resolved `getWeaponDef`, and re-quantises the fire interval on upgrade; the shared `CombatCoreScene._autoFire` consumes that resolved definition (projectile count, bullet size, lifetime, AOE radius) so the game and gyms cannot diverge; the hold-full choice offers a permanent `weapon-level` option (`src/powerups/choice.ts`, applied via `applyMineralChoiceReward`). The **weapon leveling gym** (`src/scenes/gym/GymWeaponLeveling.ts`, key `GymWeaponLeveling`, label `WeaponLeveling`) demonstrates temporary (drop) and permanent (choice) leveling interactively, with the per-weapon level readout in the HUD. Coverage: `src/utils/weaponLevels.test.ts` (catalogue completeness, curve monotonicity/caps, resolver purity, quantisation, leveled-definition shaping), `src/entities/Player.test.ts`, `src/scenes/gym/GymWeaponLeveling.test.ts`, `src/scenes/__tests__/PlayScene.weaponLevels.test.ts`, `src/weaponLevelingDocs.test.ts` (GDD/README guard) and the shared-core equivalence guard. See GDD §4.4.2.
-- `src/powerups/powerUpLevels.ts` — **power-up leveling (AH-0MUU2QJE2007JNR6)**: the shared, pure level model for power-ups all power-ups, mirroring weapon levelling. Exposes `POWER_UP_LEVEL_SPECS` (one or more base / finite cap / per-level parameter `k` / rationale specs per power-up, resolved through the shared `src/utils/curve.ts` curve family — exponential-saturation for most variables, **linear-clamped** for additive-capped schedules like the Smart Bomb radius/interval), the pure `resolvePowerUpAtLevel(powerUpId, level)` resolver, `summarisePowerUpLevelChange(powerUpId, from, to)` and the run-scoped `PowerUpLevelStore` (every collection — field pickup or hold-full reward — increments the level; it persists across a timed effect expiring and resets only on run restart). Existing stack/charge semantics are derived from the level model (Magnet/Mineral Scoop permanent stacks capped at 5, teleports and Phase Shift charges as level-derived grants minus consumes, Extra Life lives capped at 5), preserving the Magnet/Mineral Scoop hybrid (a field pickup levels up and refreshes the timed attraction but does not add a permanent stack). The hold-full choice contract is exposed via an optional `ChoiceContext.powerUpLevels`, which makes `buildChoiceCandidates` emit `power-up-level` offers (with a change summary and New badge) rendered by the existing generic `MineralChoiceScene` with **no display-code change**; the launcher integration — `PlayScene`/`GymFormationScene`/`GymWeaponLeveling` supply the player's run-scoped power-up levels and `applyMineralChoiceReward` applies a `power-up-level` pick through the shared permanent `EffectsRegistry.applyCollect(id, true)` path — is shipped (AH-0MUV5CLVO002ZHS9). The resolver/store is **wired into `EffectsRegistry`** and the shared effect path so every field pickup levels the power-up up, effect strength is catalogue-resolved and there is no double-count (AH-0MUV5CLW6005VF7K); the Shield multi-hit absorption + Bomb ranged periodic bomb (`bombRange`/`bombFrequency`) are wired by AH-0MUVM9RAO004Y3LB, the **Smart Bomb** screen-pulse axes (`aoeRadius` 200 → 400 px linear-clamped, `smartBombDamage` 1 → 3, `smartBombInterval` 30 → 10 s linear-clamped descending) are wired by AH-0MV1BIWP9003EHRQ (re-balanced in AH-0MV8GPGBL009M0D8), the **Force Field** reflect axes (`forceFieldDuration` 8 s → 18 s; `forceFieldReflects` 3 → 10) are wired by AH-0MV1BIX1W006XF95, the **Mystery UFO** instant-bounty axes (`mysteryUfoMinerals` 2 → 6; `mysteryUfoScore` 250 → 1500) are wired by AH-0MV1BIXFO006Z1I7, and the **power-up leveling gym** (`src/scenes/gym/GymPowerUpLeveling.ts`, key `GymPowerUpLeveling`, label `PowerUpLeveling`) is the canonical place to observe every power-up's level curve — a threat-free gallery where a field pickup or a hold-full permanent reward raises the level, with the shared HUD showing each owned power-up's effective level and a gym-local `.gym-panel` readout listing every levelled power-up's run-scoped level plus its resolver-derived stats (AH-0MUV5CLVQ006V9HR). Coverage: `src/powerups/powerUpLevels.test.ts`, `src/utils/curve.test.ts`, `src/powerups/__tests__/choice.test.ts`, `src/powerups/effects.test.ts`, `src/scenes/__tests__/PlayScene.powerUpLevels.test.ts`, `src/scenes/gym/GymPowerUpLeveling.test.ts`, `src/scenes/core/powerUpLeveling.parity.test.ts`, `src/scenes/core/CombatScene.equivalence.test.ts` and `src/entities/Player.test.ts`. See GDD §4.4.3.
+- `src/powerups/powerUpLevels.ts` — **power-up leveling (AH-0MUU2QJE2007JNR6)**: the shared, pure level model for power-ups all power-ups, mirroring weapon levelling. Exposes `POWER_UP_LEVEL_SPECS` (one or more base / finite cap / per-level parameter `k` / rationale specs per power-up, resolved through the shared `src/utils/curve.ts` curve family — exponential-saturation for most variables, **linear-clamped** for additive-capped schedules like the Smart Bomb radius/interval), the pure `resolvePowerUpAtLevel(powerUpId, level)` resolver, `summarisePowerUpLevelChange(powerUpId, from, to)` and the run-scoped `PowerUpLevelStore` (every collection — field pickup or hold-full reward — increments the level; it persists across a timed effect expiring and resets only on run restart). Existing stack/charge semantics are derived from the level model (Magnet/Mineral Scoop permanent stacks capped at 5, teleports and Phase Shift charges as level-derived grants minus consumes, Extra Life lives capped at 5), preserving the Magnet/Mineral Scoop hybrid (a field pickup levels up and refreshes the timed attraction but does not add a permanent stack). The hold-full choice contract is exposed via an optional `ChoiceContext.powerUpLevels`, which makes `buildChoiceCandidates` emit `power-up-level` offers (with a change summary and New badge) rendered by the existing generic `MineralChoiceScene` with **no display-code change**; the launcher integration — `PlayScene`/`GymFormationScene`/`GymWeaponLeveling` supply the player's run-scoped power-up levels and `applyMineralChoiceReward` applies a `power-up-level` pick through the shared permanent `EffectsRegistry.applyCollect(id, true)` path — is shipped (AH-0MUV5CLVO002ZHS9). The resolver/store is **wired into `EffectsRegistry`** and the shared effect path so every field pickup levels the power-up up, effect strength is catalogue-resolved and there is no double-count (AH-0MUV5CLW6005VF7K); the Shield multi-hit absorption + Bomb ranged periodic bomb (`bombRange`/`bombFrequency`) are wired by AH-0MUVM9RAO004Y3LB, the **Smart Bomb** screen-pulse axes (`aoeRadius` 200 → 400 px linear-clamped, `smartBombDamage` 1 → 3, `smartBombInterval` 30 → 10 s linear-clamped descending) are wired by AH-0MV1BIWP9003EHRQ (re-balanced in AH-0MV8GPGBL009M0D8), the **Force Field** reflect axes (`forceFieldDuration` 8 s → 18 s; `forceFieldReflects` 3 → 10) are wired by AH-0MV1BIX1W006XF95, the **Mystery UFO** collector-drone axes (`mysteryUfoLifetime` 5 → 8 s, `mysteryUfoCapacity` 10 → 20, `mysteryUfoRadius` 20 → 40 px, `mysteryUfoSpawnInterval` 30 → 12 s) are wired by AH-0MV9G113S009B37I (whose instant-bounty axes are retired), and the **power-up leveling gym** (`src/scenes/gym/GymPowerUpLeveling.ts`, key `GymPowerUpLeveling`, label `PowerUpLeveling`) is the canonical place to observe every power-up's level curve — a threat-free gallery where a field pickup or a hold-full permanent reward raises the level, with the shared HUD showing each owned power-up's effective level and a gym-local `.gym-panel` readout listing every levelled power-up's run-scoped level plus its resolver-derived stats (AH-0MUV5CLVQ006V9HR). Coverage: `src/powerups/powerUpLevels.test.ts`, `src/utils/curve.test.ts`, `src/powerups/__tests__/choice.test.ts`, `src/powerups/effects.test.ts`, `src/scenes/__tests__/PlayScene.powerUpLevels.test.ts`, `src/scenes/gym/GymPowerUpLeveling.test.ts`, `src/scenes/core/powerUpLeveling.parity.test.ts`, `src/scenes/core/CombatScene.equivalence.test.ts` and `src/entities/Player.test.ts`. See GDD §4.4.3.
 - `src/entities/Player.ts` — **cumulative + timed** weapon collection on the ship: `equipWeapon(id)` (adds to the active set, 10 s timer), `resetWeapon()` (clears all timed weapons), `tickWeaponTimers(dtMs)` (expires weapons silently), `getActiveWeapons()`, `getHeading()`, and **phase-locked beat scheduling** (`getBeatClock` shares the scene's single clock, `getFireInterval` exposes the derived cadence, `tryFire` returns every active weapon whose next beat tick elapsed this frame; `setRules` hot-reloads BPM/subdivisions and re-schedules). It also carries the run-scoped **power-up level store** (`collectPowerUp(id, permanent?)`, `getPowerUpLevel(id)`, `getPowerUpLevels()`, `resetPowerUpLevels()`) that the hold-full choice reads for its `ChoiceContext.powerUpLevels` (AH-0MUV5CLVO002ZHS9).
 - `src/entities/PlayerBullet.ts` — Graphics-drawn player bullet (`vx`/`vy`, filled circle, per-weapon lifetime), created via `createPlayerBullet` and advanced via `advanceAndCull`, which **wraps it across all four screen edges** and expires it once its lifetime elapses (never culled off-screen; no physics bodies, matching the ScoutBullet precedent).
 - `src/powerups/icons.ts` — distinctive code-drawn weapon icons (fan arc for Spread, parallel bars for Dual, waveform for Rapid, pass-through beam for Wave Laser, bank-shot zig-zag for Ricochet, splitting warhead cluster for Cluster Missile, orbiting satellite pods for Options, concentric rings for Nova, arced shell for Mortar, jagged bolt for Arc, return/undo arrow for Reset) with the same **glowing drop bubble** as non-combat drops (`drawWeaponDrop` lays the per-type neon bubble under the icon; enlarged to `WEAPON_DROP_SIZE` = 16 px, which is also the weapon-drop collection boundary via the shared `dropCollectRadius()` helper); `src/audio/effects.ts` — spawn/despawn/collection/weapon-change cues plus the AOE fire/detonation cues (Web Audio synthesis, safe no-op fallback).
@@ -858,7 +1012,7 @@ Asteroids drop **minerals** — small, stationary gold dots — which fill a run
 - `src/entities/BaseEnemy.ts` — per-enemy mineral accounting (`collectMineral()` / `mineralCount`) and the additive re-drop on death (`mineralRedropCount(rng)` = `round(collected + random(bonusMin, bonusMax))`, no upper cap; an enemy with no minerals still draws the bonus and may occasionally drop a single mineral) / `spawnMineralDrops()`, delegating the scatter maths to `src/entities/Mineral.ts`; `Asteroid` overrides `collectMineral()` as a no-op and `mineralRedropCount()` to always return 0.
 - `src/scenes/core/mineralKillDrops.ts` — the **single shared kill-drop rule** (`resolveMineralKillDrops(scene, entity, rng)`): small asteroid → one mineral at the death site, large/medium → none, non-asteroid enemy → its collected minerals plus a random additive bonus (no upper cap; an enemy that collected nothing may occasionally drop one), rounded and scattered near the death site. Consumed by **both** `PlayScene` and `GymFormationScene`, so the game and the gyms cannot diverge (pinned by the repo-wide guard in `CombatScene.equivalence.test.ts`).
 - `src/scenes/core/asteroidKillDrops.ts` — the **single shared asteroid Extra Life kill-drop rule** (`rollAsteroidExtraLife(entity, rng, chance)`, AH-0MV6M2M9P0078N4S): only a fully destroyed **small** asteroid rolls `rng() < chance` (`GameRules.asteroidExtraLifeDropChance`, default **0.05**); large/medium rocks split and never roll, and the tier gate runs before the RNG. A winning roll adds one `extra_life` pickup at the death site, **additive** to the generic per-kill pool and the mineral rule. Consumed by `PlayScene`, `GymFormationScene` (every asteroid-bearing gym, including `GymMinerals` with its cadence layer off) and `GymLevel`, so the game and the gyms cannot diverge (pinned by the repo-wide guard in `CombatScene.equivalence.test.ts`).
-- `src/powerups/choice.ts` — the **pluggable** choice strategy: the default draws **three distinct** options at **weighted random** from the full drop pool (all power-ups + Spread/Dual/Rapid/Nova/Mortar/Arc) and degrades gracefully below three entries. Owned `weapon-level`/`power-up-level` offers carry a **1.1×** weight (`OWNED_UPGRADE_BONUS_WEIGHT`) while unowned base entries keep 1.0×, so an owned upgrade appears **10% more often** than an unowned item relative to the pool (AH-0MUY47W62005FF74). When `ChoiceContext` supplies the player's run-scoped levels, an owned weapon's/power-up's base-pool entry is **suppressed** and replaced by its `weapon-level`/`power-up-level` offer, so each item is offered exactly once as a correctly-labelled upgrade (AH-0MUVRACE9001WVT2). Every option also carries a one-line `description` of what the item does, resolved from the shared catalogue via `getHelpDescription`, and the catalogue wording is **level-neutral** (accurate for both a timed field pickup and a permanent hold-full reward) so the overlay and the gym help show identical copy (AH-0MV2N2591007UGPD).
+- `src/powerups/choice.ts` — the **pluggable** choice strategy: the default draws **three distinct** options at **weighted random** from the full drop pool (all power-ups + Spread/Dual/Rapid/Nova/Mortar/Arc) and degrades gracefully below three entries. Owned `weapon-level`/`power-up-level` offers carry a **1.35×** weight (`OWNED_UPGRADE_BONUS_WEIGHT`) while unowned base entries keep 1.0×, so an owned upgrade appears **35% more often** than an unowned item relative to the pool (AH-0MUY47W62005FF74; retuned 1.1×→1.25× and then 1.25×→1.35× by AH-0MVCFB00Y004AQ2Z). When `ChoiceContext` supplies the player's run-scoped levels, an owned weapon's/power-up's base-pool entry is **suppressed** and replaced by its `weapon-level`/`power-up-level` offer, so each item is offered exactly once as a correctly-labelled upgrade (AH-0MUVRACE9001WVT2). Every option also carries a one-line `description` of what the item does, resolved from the shared catalogue via `getHelpDescription`, and the catalogue wording is **level-neutral** (accurate for both a timed field pickup and a permanent hold-full reward) so the overlay and the gym help show identical copy (AH-0MV2N2591007UGPD).
 - `src/powerups/effects.ts` / `src/entities/Player.ts` — permanent-effect support: `applyCollect(id, true)` / `applyWeapon(id, true)` and `equipWeapon(id, true)` mark a chosen effect permanent so it never expires for the run (cleared on reset).
 - `src/scenes/MineralChoiceScene.ts` — the modal hold-full overlay: three distinct options, each a **three-line block** (name → one-line shared-catalogue description → change summary / `★ New`), pointer + number-key selection, paused at the SceneManager level (mirroring `PauseScene`); the pick is applied after a beat-locked 3-2-1 countdown (one count per beat, each with its cue), while every active player weapon's fire cue keeps playing at 0.3× volume (`HOLD_FULL_FIRE_VOLUME_SCALE`) with no bullets; on the beat after "1" the choice is applied, play resumes phase-locked on the same beat grid, and the hold resets with overflow.
 - `src/scenes/PlayScene.ts` — wires the full loop through the shared rule: small asteroid kills drop minerals, player/enemy overlap collection, enemy re-drop on death, the HUD hold bar (which fills proportionally to the **current** capacity as it grows), and the hold-full choice.

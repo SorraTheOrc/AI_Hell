@@ -7,10 +7,10 @@
  * bullets, or canvases).
  *
  * Determinism: these suites boot through the shared `bootScene()` harness
- * with `deterministicBoot` and then stop the live loop, so every scene
+ * (deterministic boot is now the default — see README "Testing conventions
+ * (deterministic scene boot)") and then stop the live loop, so every scene
  * transition is driven by an explicit fixed-delta `game.step` rather than
- * wall-clock animation frames. See README "Testing conventions
- * (deterministic scene boot)" — the previous real-time `sleep()` waits were
+ * wall-clock animation frames. The previous real-time `sleep()` waits were
  * load-sensitive and flaked under full-suite parallel execution
  * (AH-0MUKMJRCI0002VBP).
  */
@@ -23,16 +23,18 @@ import { RULES_STORAGE_KEY } from '../core/rules';
 import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
 import { LEVEL_TRANSITION_SECONDS, PlayScene } from './PlayScene';
-import { BOSS_HIT_POINTS_PER_PHASE } from '../entities/Boss';
+import { LEVELS as CAMPAIGN_LEVELS, type LevelDefinition } from '../waves/Formations';
 import { GameOverScene } from './GameOverScene';
 import { GymIndex } from './GymIndex';
 
 // The heaviest walk-to-the-boss test boots a real Phaser game and walks the
 // full ten-level campaign; keep a generous timeout so a slow parallel run
 // does not fail on timing alone (AH-0MUINWNPI000G6MU, extended for the
-// AH-0MV396OK0001FX14 ten-level campaign). Deterministic stepping removes the
-// wall-clock flake, but booting still costs real time.
-vi.setConfig({ testTimeout: 60000 });
+// AH-0MV396OK0001FX14 ten-level campaign; raised again for
+// AH-0MVF1PD3X00634LV, which observed the AC4 boss-victory run breaching the
+// 60 s ceiling at 76 s under full-suite parallel load). Deterministic
+// stepping removes the wall-clock flake, but booting still costs real time.
+vi.setConfig({ testTimeout: 120000 });
 
 /** Fixed simulation step (~60 fps) used for deterministic scene stepping. */
 const STEP_MS = 1000 / 60;
@@ -61,7 +63,6 @@ async function bootAllGames(): Promise<Phaser.Game> {
   );
   const booted = await bootScene(
     [MenuScene, PlayScene, GameOverScene, GymIndex],
-    { deterministicBoot: true },
   );
   // The harness resumes the live loop after boot; stop it so the state a
   // test observes is driven only by explicit steps.
@@ -144,6 +145,43 @@ function killAllEnemies(scene: PlayScene): void {
     scene.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
     scene.tick(0.016);
   }
+  // The wave-10 mini-boss gates its level, so the boss walk must defeat it
+  // too before the campaign can reach the final boss (AH-0MVCRBISU006NUN5).
+  killMiniBoss(scene);
+}
+
+/**
+ * Destroys the active level's mini-boss (if any) via player bullets, with
+ * auto-fire and spawned-enemy collisions isolated so only the mini-boss takes
+ * the damage. A no-op outside the mini-boss encounter
+ * (AH-0MVCRBISU006NUN5).
+ */
+function killMiniBoss(scene: PlayScene): void {
+  const miniBoss = scene.getMiniBoss();
+  if (!miniBoss?.alive) return;
+  const isolated = scene as unknown as {
+    getEnemyEntities(): readonly unknown[];
+    autoFireEnabled(): boolean;
+  };
+  const originalGetEnemyEntities = isolated.getEnemyEntities;
+  const originalAutoFireEnabled = isolated.autoFireEnabled;
+  isolated.getEnemyEntities = () => [];
+  isolated.autoFireEnabled = () => false;
+  try {
+    for (let guard = 0; guard < 800 && miniBoss.alive; guard++) {
+      // Resolve a hold-full pause so each tick resolves the spawned bullet.
+      if (resolveMineralChoiceIfOpen(scene)) continue;
+      scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+      // A zero-length step resolves collisions without moving the target.
+      scene.tick(0);
+    }
+  } finally {
+    isolated.getEnemyEntities = originalGetEnemyEntities;
+    isolated.autoFireEnabled = originalAutoFireEnabled;
+  }
+  // The mini-boss defeat offers the upgrade-or-unlock reward
+  // (AH-0MVCRBNO6003E1CH); resolve it so the walk can continue.
+  if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
 }
 
 /**
@@ -172,6 +210,23 @@ function resolveMineralChoiceIfOpen(scene: PlayScene): boolean {
   if (!scene.isMineralChoiceOpen()) return false;
   scene.selectMineralChoice(0);
   return true;
+}
+
+/**
+ * A one-level campaign for the navigation boss walk (AH-0MVCYANT6003SG5C).
+ * With a single level `isFinalLevel` is true immediately, so clearing it
+ * triggers the final boss without walking the whole ten-level campaign.
+ */
+function singleLevelForNavigation(): LevelDefinition {
+  const level = CAMPAIGN_LEVELS[0];
+  return {
+    ...level,
+    level: 1,
+    waves: level.waves.map((w) => ({
+      ...w,
+      groups: w.groups.map((g) => ({ ...g })),
+    })),
+  };
 }
 
 /**
@@ -347,14 +402,21 @@ describe('Scene navigation — Menu → Play → GameOver → Menu (AH-0MU731IIZ
 
     const play = game.scene.getScene('PlayScene') as PlayScene;
 
+    // Boot a single-level campaign so the boss walk clears one level (final by
+    // construction) instead of the whole ten-level run (AH-0MVCYANT6003SG5C).
+    play.getWaveManager().setLevels([singleLevelForNavigation()]);
+    play.getWaveManager().beginGame();
+    play.spawnWave();
+
     // Walk to the boss deterministically: resolve any hold-full pause (a
     // paused scene ignores tick()), complete spawn sequences before killing,
     // and advance transitions — then fail loudly if the boss is never reached.
     reachBoss(play);
     const boss = play.getBoss()!;
     expect(boss).not.toBeNull();
-    // 4 phases, BOSS_HIT_POINTS_PER_PHASE hits each (200 total).
-    for (let i = 0; i < 4 * BOSS_HIT_POINTS_PER_PHASE; i++) {
+    // The encounter's effective total pool (power-scaled —
+    // AH-0MVH87A3L004VOLD).
+    for (let i = 0; i < boss.getTotalHp(); i++) {
       play.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       play.tick(0.016);
     }

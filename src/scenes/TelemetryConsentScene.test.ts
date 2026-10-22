@@ -9,7 +9,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { loadTelemetryConsent } from '../core/telemetryConsentStore';
 import { MenuScene } from './MenuScene';
 import { TelemetryConsentScene } from './TelemetryConsentScene';
@@ -26,7 +26,7 @@ describe('TelemetryConsentScene (AH-0MUY08Y9P005ER7A)', () => {
   async function bootConsent(origin = 'MenuScene'): Promise<TelemetryConsentScene> {
     booted = await bootScene([TelemetryConsentScene, MenuScene]);
     booted.game.scene.start('TelemetryConsentScene', { origin });
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
     return booted.game.scene.getScene('TelemetryConsentScene') as TelemetryConsentScene;
   }
 
@@ -47,7 +47,7 @@ describe('TelemetryConsentScene (AH-0MUY08Y9P005ER7A)', () => {
     const scene = await bootConsent('MenuScene');
 
     scene.allow();
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
 
     expect(loadTelemetryConsent()).toEqual({ granted: true, decided: true });
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
@@ -58,7 +58,7 @@ describe('TelemetryConsentScene (AH-0MUY08Y9P005ER7A)', () => {
     const scene = await bootConsent();
 
     scene.deny();
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
 
     expect(loadTelemetryConsent()).toEqual({ granted: false, decided: true });
   });
@@ -67,7 +67,7 @@ describe('TelemetryConsentScene (AH-0MUY08Y9P005ER7A)', () => {
     await bootConsent();
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-    await new Promise((r) => setTimeout(r, 150));
+    await advanceGame(booted!.game, 150);
 
     expect(loadTelemetryConsent()).toEqual({ granted: false, decided: true });
   });

@@ -64,8 +64,8 @@ import {
 import { beatPeriodMs, beatSubdivisionMs } from './beat';
 
 describe('WEAPON_CATALOGUE', () => {
-  test('contains the eight conventional/beam weapons plus the three AOE weapons', () => {
-    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(11);
+  test('contains the eight conventional/beam weapons, the three AOE weapons and the five net-new unlock-pool weapons', () => {
+    expect(Object.keys(WEAPON_CATALOGUE).length).toBe(16);
     expect(WEAPON_CATALOGUE.cannon).toBeDefined();
     expect(WEAPON_CATALOGUE.spread).toBeDefined();
     expect(WEAPON_CATALOGUE.dual).toBeDefined();
@@ -77,6 +77,12 @@ describe('WEAPON_CATALOGUE', () => {
     expect(WEAPON_CATALOGUE.nova).toBeDefined();
     expect(WEAPON_CATALOGUE.mortar).toBeDefined();
     expect(WEAPON_CATALOGUE.arc).toBeDefined();
+    // Net-new unlock-pool weapons (AH-0MVCRC52P001YIPW).
+    expect(WEAPON_CATALOGUE.rear_guard).toBeDefined();
+    expect(WEAPON_CATALOGUE.broadside).toBeDefined();
+    expect(WEAPON_CATALOGUE.railgun).toBeDefined();
+    expect(WEAPON_CATALOGUE.shard_swarm).toBeDefined();
+    expect(WEAPON_CATALOGUE.heavy_slug).toBeDefined();
   });
 
   test('cannon fires single bullet (pattern length 1)', () => {
@@ -706,6 +712,11 @@ describe('configurable beat subdivisions (AH-0MUAYB8EH005RJ8B AC2/AC6)', () => {
       nova: 0.25,
       mortar: 0.5,
       arc: 1,
+      rear_guard: 2,
+      broadside: 0.5,
+      railgun: 0.25,
+      shard_swarm: 1,
+      heavy_slug: 0.5,
     };
     for (const id of weaponIds) {
       const rate = weaponFireRateMs(id, subdivisions, bpm);
@@ -1034,5 +1045,99 @@ describe('Arc chaining-bolt feel (AH-0MV822CE7004MQ14)', () => {
     expect(WEAPON_CATALOGUE.arc.fireRateMs).toBe(750);
     expect(isAoeWeapon('arc')).toBe(true);
     expect(isOnBeatGrid(WEAPON_CATALOGUE.arc.fireRateMs)).toBe(true);
+  });
+});
+
+describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
+  // The five additions beyond the original 11. Each is exercised here through
+  // the public catalogue/pattern helpers (the shared firing seam the game and
+  // every gym consume), so these assertions cover real firing behaviour
+  // rather than the catalogue shape alone.
+  const NEW_WEAPON_IDS: readonly WeaponId[] = [
+    'rear_guard',
+    'broadside',
+    'railgun',
+    'shard_swarm',
+    'heavy_slug',
+  ];
+
+  test('every new weapon is a complete, on-grid catalogue entry', () => {
+    for (const id of NEW_WEAPON_IDS) {
+      const weapon = WEAPON_CATALOGUE[id];
+      expect(weapon.id, id).toBe(id);
+      expect(weapon.name.length, id).toBeGreaterThan(0);
+      expect(weapon.description.length, id).toBeGreaterThan(0);
+      expect(weapon.offsets.length, id).toBeGreaterThan(0);
+      expect(weapon.bulletSize, id).toBeGreaterThan(0);
+      expect(weapon.bulletLifetime, id).toBeGreaterThan(0);
+      expect(isOnBeatGrid(weapon.fireRateMs), id).toBe(true);
+    }
+  });
+
+  test('Rear Guard fires one bullet directly behind the heading', () => {
+    const bullets = createBulletsFromHeading(WEAPON_CATALOGUE.rear_guard, 0, 0, 0);
+    expect(bullets).toHaveLength(1);
+    expect(bullets[0].angleDeg).toBeCloseTo(180);
+  });
+
+  test('Broadside fires one bullet to each side and none forward', () => {
+    const bullets = createBulletsFromHeading(WEAPON_CATALOGUE.broadside, 0, 0, 0);
+    expect(bullets).toHaveLength(2);
+    const angles = bullets.map((b) => b.angleDeg).sort((a, b) => a - b);
+    expect(angles[0]).toBeCloseTo(-90);
+    expect(angles[1]).toBeCloseTo(90);
+    expect(angles.some((a) => Math.abs(a) < 1e-9)).toBe(false);
+  });
+
+  test('Railgun is a single slow shot with the catalogue\u2019s deepest pass-through', () => {
+    expect(WEAPON_CATALOGUE.railgun.offsets).toEqual([0]);
+    const piercing = WEAPON_CATALOGUE.railgun.piercing ?? 0;
+    // Deeper than every other weapon's base pass-through budget.
+    for (const id of Object.keys(WEAPON_CATALOGUE) as WeaponId[]) {
+      if (id === 'railgun') continue;
+      expect(WEAPON_CATALOGUE[id].piercing ?? 0, id).toBeLessThan(piercing);
+    }
+    // And slower than the wave laser it is a heavier alternative to.
+    expect(WEAPON_CATALOGUE.railgun.fireRateMs).toBeGreaterThan(
+      WEAPON_CATALOGUE.wave_laser.fireRateMs,
+    );
+  });
+
+  test('Shard Swarm fires a symmetric five-way fan within ±15°', () => {
+    const offsetsDeg = WEAPON_CATALOGUE.shard_swarm.offsets.map(
+      (o) => (o * 180) / Math.PI,
+    );
+    expect(offsetsDeg).toHaveLength(5);
+    for (const deg of offsetsDeg) {
+      expect(Math.abs(deg)).toBeLessThanOrEqual(15 + 1e-9);
+    }
+    expect(offsetsDeg).toContain(0);
+    // Symmetric about the heading.
+    expect(offsetsDeg[0]).toBeCloseTo(-offsetsDeg[offsetsDeg.length - 1]);
+    expect(offsetsDeg[1]).toBeCloseTo(-offsetsDeg[offsetsDeg.length - 2]);
+  });
+
+  test('Heavy Slug is the largest, slowest single round in the catalogue', () => {
+    expect(WEAPON_CATALOGUE.heavy_slug.offsets).toEqual([0]);
+    for (const id of Object.keys(WEAPON_CATALOGUE) as WeaponId[]) {
+      if (id === 'heavy_slug') continue;
+      expect(WEAPON_CATALOGUE[id].bulletSize, id).toBeLessThanOrEqual(
+        WEAPON_CATALOGUE.heavy_slug.bulletSize,
+      );
+    }
+    for (const id of ['cannon', 'spread', 'dual', 'rapid'] as const) {
+      expect(WEAPON_CATALOGUE.heavy_slug.fireRateMs).toBeGreaterThan(
+        WEAPON_CATALOGUE[id].fireRateMs,
+      );
+    }
+  });
+
+  test('the new weapons are not part of the starting drop rotation', () => {
+    // Unlock-pool weapons (mini-boss reward feature) stay out of the basic
+    // spread → dual → rapid cycle until the player unlocks them.
+    const rotation = weaponDropOrder();
+    for (const id of NEW_WEAPON_IDS) {
+      expect(rotation).not.toContain(id);
+    }
   });
 });

@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as effects from './effects';
+import { MAX_CONCURRENT_CUE_VOICES } from './cueVoiceLimiter';
 import {
   CUE_MANIFEST,
   RETIRED_CUES,
@@ -91,8 +92,6 @@ describe('cue → baked asset mapping', () => {
     // A genuinely existing ToneForge recipe uses the default seed.
     effects.playPowerUpCollectSound();
     expect(recording.plays[1].url).toBe('audio/sfx/card-token-earn.1.wav');
-    effects.playScoutFireSound();
-    expect(recording.plays[2].url).toBe('audio/sfx/weapon-laser-zap.1.wav');
   });
 
   it('playCountdownTickSound resolves to the baked countdown-tick asset (AH-0MV55OA93008OUL1)', () => {
@@ -421,10 +420,40 @@ describe('Tank/Scout fire-sequence volume (AH-0MV74ROYR009X8U3)', () => {
   it('playScoutFireSound plays the baked scout laser asset at half volume', () => {
     effects.playScoutFireSound();
     expect(recording.plays).toHaveLength(1);
-    expect(recording.plays[0].url).toBe('audio/sfx/weapon-laser-zap.1.wav');
+    expect(recording.plays[0].url).toBe('audio/sfx/aihell-scout-fire.32181.wav');
     expect(recording.plays[0].volume).toBe(effects.TANK_SCOUT_FIRE_VOLUME_SCALE);
     // The advance-cue no-gap delay is preserved.
     expect(recording.plays[0].delay).toBe(effects.SCOUT_ADVANCE_CUE_DURATION);
+  });
+});
+
+// ── 3a-ii. Phaser fire-sequence volume (AH-0MVFHE6VP006GEX0) ─────────
+
+describe('Phaser fire-sequence volume (AH-0MVFHE6VP006GEX0)', () => {
+  it('PHASER_FIRE_VOLUME_SCALE is a single named 0.5 tunable', () => {
+    expect(effects.PHASER_FIRE_VOLUME_SCALE).toBe(0.5);
+  });
+
+  it('playPhaserAdvanceCue plays the phaser advance tell at half volume', () => {
+    effects.playPhaserAdvanceCue();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      assetUrlFor(cueEntry('playPhaserAdvanceCue')),
+    );
+    expect(recording.plays[0].volume).toBe(effects.PHASER_FIRE_VOLUME_SCALE);
+    // The no-gap advance cue is not delayed.
+    expect(recording.plays[0].delay).toBe(0);
+  });
+
+  it('playPhaserFireSound plays the baked phaser-fire asset at half volume', () => {
+    effects.playPhaserFireSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      assetUrlFor(cueEntry('playPhaserFireSound')),
+    );
+    expect(recording.plays[0].volume).toBe(effects.PHASER_FIRE_VOLUME_SCALE);
+    // The advance-cue no-gap delay is preserved unchanged.
+    expect(recording.plays[0].delay).toBe(effects.PHASER_ADVANCE_CUE_DURATION);
   });
 });
 
@@ -753,5 +782,19 @@ describe('headless no-op', () => {
     expect(() => effects.setSfxVolume(0.5)).not.toThrow();
     expect(() => effects.setSfxMuted(true)).not.toThrow();
     expect(effects.getAudioContext()).toBeNull();
+  });
+});
+
+describe('per-cue concurrent-voice cap (AH-0MVH8RQR7007QG8E)', () => {
+  it('a burst of one cue dispatches at most the cap to the provider', () => {
+    // The suite's beforeEach installs the recording provider and the shared
+    // limiter is cleared by _resetAudioContextForTests between cases.
+    const bursts = MAX_CONCURRENT_CUE_VOICES + 12;
+    for (let i = 0; i < bursts; i += 1) effects.playWeaponFireSound('cannon');
+    expect(recording.plays.length).toBe(MAX_CONCURRENT_CUE_VOICES);
+
+    // Another cue still has its own independent budget.
+    effects.playWeaponFireSound('spread');
+    expect(recording.plays.length).toBe(MAX_CONCURRENT_CUE_VOICES + 1);
   });
 });

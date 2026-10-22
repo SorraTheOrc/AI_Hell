@@ -8,7 +8,7 @@ import {
   SHIP_SIZE,
 } from '../../core/constants';
 import { loadRules } from '../../core/rules';
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import {
   RoundRobinSpawner,
   WeightedRandomSpawner,
@@ -355,7 +355,7 @@ describe('GymBoss — The Central AI gym scene (AC1-AC10)', () => {
 
     // Boss doesn't drift (driftSpeed = 0).
     const baseXBefore = scene.formationX;
-    await new Promise((r) => setTimeout(r, 500));
+    await advanceGame(booted!.game, 500);
     const baseXAfter = scene.formationX;
     expect(baseXAfter).toBe(baseXBefore);
   });
@@ -621,7 +621,7 @@ describe('GymBoss — ESC key navigation (AH-0MU9LRTK3004KR04)', () => {
     // Phaser's keyboard manager listens on window (inputKeyboardEventTarget),
     // so dispatch on window rather than document.
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-    await new Promise((r) => setTimeout(r, 350));
+    await advanceGame(booted!.game, 350);
 
     expect(booted!.game.scene.isActive('MenuScene')).toBe(true);
     expect(scene.sys.isActive()).toBe(false);

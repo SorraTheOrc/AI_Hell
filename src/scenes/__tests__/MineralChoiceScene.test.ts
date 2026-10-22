@@ -12,7 +12,7 @@ import Phaser from 'phaser';
 import * as effects from '../../audio/effects';
 import { HOLD_FULL_FIRE_VOLUME_SCALE } from '../../core/rules';
 import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import { RecordingSfxProvider } from '../../test/audioTestDouble';
 import type { ChoiceOption } from '../../powerups/choice';
 import { MineralChoiceScene } from '../MineralChoiceScene';
@@ -76,7 +76,7 @@ describe('MineralChoiceScene', () => {
         { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
       ],
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await advanceGame(booted!.game, 50);
 
     const scene = booted.game.scene.getScene(
       'MineralChoiceScene',
@@ -99,7 +99,7 @@ describe('MineralChoiceScene', () => {
           },
         ],
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await advanceGame(booted!.game, 50);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -123,7 +123,7 @@ describe('MineralChoiceScene', () => {
           },
         ],
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await advanceGame(booted!.game, 50);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -140,7 +140,7 @@ describe('MineralChoiceScene', () => {
           { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
         ],
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await advanceGame(booted!.game, 50);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -162,7 +162,7 @@ describe('MineralChoiceScene', () => {
           },
         ],
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await advanceGame(booted!.game, 50);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -186,7 +186,7 @@ describe('MineralChoiceScene', () => {
           },
         ],
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await advanceGame(booted!.game, 50);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -211,7 +211,7 @@ describe('MineralChoiceScene', () => {
           },
         ],
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await advanceGame(booted!.game, 50);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -239,7 +239,7 @@ describe('MineralChoiceScene', () => {
           },
         ],
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await advanceGame(booted!.game, 50);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -256,7 +256,7 @@ describe('MineralChoiceScene', () => {
           { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
         ],
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await advanceGame(booted!.game, 50);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -279,7 +279,7 @@ describe('MineralChoiceScene', () => {
         autoSelectMs: 40,
         onSelect: (index: number) => calls.push(index),
       });
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await advanceGame(booted!.game, 250);
 
       // The auto-select records the choice and starts the 3-2-1 countdown;
       // the choice is applied when the countdown completes. Drive the
@@ -304,7 +304,7 @@ describe('MineralChoiceScene', () => {
         autoSelectIndex: 2,
         onSelect: (index: number) => calls.push(index),
       });
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await advanceGame(booted!.game, 250);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -320,7 +320,7 @@ describe('MineralChoiceScene', () => {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
         onSelect: (index: number) => calls.push(index),
       });
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await advanceGame(booted!.game, 250);
 
       expect(calls).toEqual([]);
       const scene = booted.game.scene.getScene(
@@ -341,7 +341,7 @@ describe('MineralChoiceScene', () => {
         autoSelectMs: 200,
         onSelect: (index: number) => calls.push(index),
       });
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await advanceGame(booted!.game, 40);
 
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
@@ -350,7 +350,7 @@ describe('MineralChoiceScene', () => {
       // The manual selection starts the countdown; complete it, then ensure
       // the cancelled auto-select timer does not fire a second selection.
       scene.update(0, HOLD_FULL_COUNTDOWN_DURATION_MS);
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await advanceGame(booted!.game, 300);
 
       // The late timer must not fire a second selection.
       expect(calls).toEqual([1]);
@@ -361,9 +361,7 @@ describe('MineralChoiceScene', () => {
     it('AC1/AC2 — a fire schedule plays reduced-volume ghost fire on the beat grid, active weapons only', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       // Stop the live loop: drive the game with fixed-delta steps so the
       // metronome advances by a known, deterministic amount.
       booted!.game.loop.stop();
@@ -415,9 +413,7 @@ describe('MineralChoiceScene', () => {
     it('AC2 — omitting a fire schedule keeps the overlay silent (no ghost fire)', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
@@ -434,9 +430,7 @@ describe('MineralChoiceScene', () => {
     it('a selection keeps the metronome running under the countdown, then it ends when the overlay closes', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
@@ -483,9 +477,7 @@ describe('MineralChoiceScene', () => {
 
   describe('beat-locked 3-2-1 countdown (AH-0MV55OAQT004NMSN)', () => {
     it('selecting starts a 3-2-1 countdown and defers onSelect until it completes', async () => {
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       const calls: Array<{ index: number; option: ChoiceOption }> = [];
       booted!.game.scene.start('MineralChoiceScene', {
@@ -541,9 +533,7 @@ describe('MineralChoiceScene', () => {
     it('plays the countdown tick cue once per count (recording provider)', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
@@ -575,9 +565,7 @@ describe('MineralChoiceScene', () => {
     it('rises the tick tone with each beat (recording provider) (AH-0MV722WJS0075UTZ)', async () => {
       const recording = new RecordingSfxProvider();
       effects.setSfxSoundProvider(recording);
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [{ id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' }],
@@ -608,9 +596,7 @@ describe('MineralChoiceScene', () => {
     });
 
     it('removes the choice screen the moment the countdown starts (AH-0MV722WJS0075UTZ)', async () => {
-      booted = await bootScene([HarnessScene, MineralChoiceScene], {
-        deterministicBoot: true,
-      });
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted!.game.loop.stop();
       booted!.game.scene.start('MineralChoiceScene', {
         options: [

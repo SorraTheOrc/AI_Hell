@@ -1,16 +1,18 @@
 /**
  * Settings persistence module (GDD §6.6 — `ai_hell_settings`).
  *
- * Typed settings record (SFX volume, SFX mute, key bindings) with
- * `loadSettings()`, `saveSettings()`, and `resetSettings()`. Mirrors the
- * `src/core/config.ts` pattern: defaults, merge-over-defaults, corrupt-JSON
- * fallback, SSR-safe storage guard. Every menu child reads/writes settings
- * through this module.
+ * Typed settings record (SFX volume, SFX mute, key bindings, dev telemetry
+ * sharing) with `loadSettings()`, `saveSettings()`, and `resetSettings()`.
+ * Mirrors the `src/core/config.ts` pattern: defaults, merge-over-defaults,
+ * corrupt-JSON fallback, SSR-safe storage guard. Every menu child reads/writes
+ * settings through this module.
  *
  * @module settingsStore
  */
 
 // ── Types ─────────────────────────────────────────────────────────────
+
+import type { ControlScheme } from './configTypes';
 
 /**
  * Named actions that the player can remap in SettingsScene.
@@ -32,6 +34,23 @@ export interface SettingsRecord {
   sfxMuted: boolean;
   /** Maps each `ActionName` to its current key label (Phaser key string). */
   bindings: Record<ActionName, string>;
+  /**
+   * Whether the player shares run telemetry with the dev server
+   * (`AH-0MVBMQZR50069QV3`, parent `AH-0MVBHRLY8004BGDN`). Defaults to
+   * `true`; the value is **inert** outside a dev build — the decision is
+   * made by the single dev gate in `src/telemetry/devMode.ts`.
+   */
+  shareTelemetryDev: boolean;
+  /**
+   * Per-player ship control scheme (`AH-0MVI7LRCJ006Q8SA`).
+   *
+   * This is the player's personal override for the designer-owned
+   * `src/data/ship-config.csv` `controlScheme`; settings never write the CSV.
+   * Resolve the value the game actually uses through
+   * `resolvePlayerControlScheme()` in `src/core/playerScheme.ts` (precedence:
+   * this setting → ship config → built-in default).
+   */
+  controlScheme: ControlScheme;
 }
 
 /** localStorage key (matches GDD §6.6). */
@@ -53,7 +72,68 @@ export const DEFAULT_SETTINGS: SettingsRecord = {
   sfxVolume: 1,
   sfxMuted: false,
   bindings: { ...DEFAULT_BINDINGS },
+  // Dev-mode telemetry sharing is on by default: a stock `npm run dev`
+  // collects and uploads at run end unless the player opts out. The value is
+  // inert in a production build (see `src/telemetry/devMode.ts`).
+  shareTelemetryDev: true,
+  // Today's shipped behaviour (AH-0MUFE1N36007X48T) is the per-player
+  // default too, so an untouched settings record changes nothing.
+  controlScheme: 'asteroids',
 };
+
+/**
+ * Ordered list of selectable control schemes, derived from the `ControlScheme`
+ * union so a future scheme becomes selectable in Settings without new UI
+ * wiring (`AH-0MVI7LRCJ006Q8SA` AC1). The order is the Left/Right cycling
+ * order in `SettingsScene`.
+ */
+export const CONTROL_SCHEMES: readonly ControlScheme[] = ['asteroids', 'fourDirectional'];
+
+/**
+ * Type guard: whether `value` is a member of {@link CONTROL_SCHEMES}.
+ * Legacy/corrupt records can hold anything, so callers validate rather than
+ * trust the stored JSON.
+ */
+export function isControlScheme(value: unknown): value is ControlScheme {
+  return (
+    typeof value === 'string' && (CONTROL_SCHEMES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Resolves the persisted control scheme, falling back to the default when the
+ * stored value is missing, non-string, blank or outside the union (AC2).
+ */
+export function resolveControlScheme(stored: unknown): ControlScheme {
+  return isControlScheme(stored) ? stored : DEFAULT_SETTINGS.controlScheme;
+}
+
+/**
+ * Reads the **raw** persisted `controlScheme` field, without defaulting.
+ *
+ * Returns `undefined` when nothing is stored, storage is unavailable, the
+ * stored JSON is corrupt, or the record has no such field — i.e. whenever the
+ * player has made no explicit choice. {@link loadSettings} deliberately
+ * normalises a missing field to the `asteroids` default, which cannot be told
+ * apart from a player explicitly choosing Asteroids; the effective-scheme
+ * resolver needs that distinction so the designer-owned ship-config value can
+ * apply when the player has not chosen (`AH-0MVI7LRCJ006Q8SA` AC3).
+ */
+export function loadStoredControlScheme(): unknown {
+  const store = storage();
+  if (!store) return undefined;
+  const raw = store.getItem(SETTINGS_STORAGE_KEY);
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown> | null;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined;
+    }
+    return parsed.controlScheme;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Ordered list of action names for iteration (e.g. SettingsScene lists). */
 export const ACTION_NAMES: ActionName[] = [
@@ -154,6 +234,18 @@ export function loadSettings(): SettingsRecord {
       ...DEFAULT_SETTINGS,
       ...parsed,
       bindings: resolveBindings(parsed.bindings as Partial<Record<ActionName, string>> | undefined),
+      // Explicit coercion (AC of AH-0MVBMQZR50069QV3): a legacy record
+      // without the field, or a stored non-boolean, resolves to the
+      // default (on) rather than leaking `undefined`/a truthy string.
+      shareTelemetryDev:
+        typeof parsed.shareTelemetryDev === 'boolean'
+          ? parsed.shareTelemetryDev
+          : DEFAULT_SETTINGS.shareTelemetryDev,
+      // Explicit coercion (AC2 of AH-0MVI7LRCJ006Q8SA): a legacy record
+      // without the field, a stored non-string, a blank string or a value
+      // outside the union resolves to the default rather than leaking an
+      // unvalidated value into the movement model.
+      controlScheme: resolveControlScheme(parsed.controlScheme),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
