@@ -13,7 +13,7 @@
  * @module vfx/wormholeSpawn
  */
 
-import type Phaser from 'phaser';
+import Phaser from 'phaser';
 
 import { SHIP_SIZE } from '../core/constants';
 
@@ -396,6 +396,214 @@ export function updateSpawnAnimation(
 
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
+}
+
+// ── Enemy emergence shimmer (per-entity, wormhole spawn path) ────────
+//
+// Per producer decision Q1/Q2 the emergence path gets a **per-entity**
+// shimmer/glitch and **no screen-wide overlay** (AH-0MV8BUKFK003Z23S AC3).
+// The treatment is driven entirely from the spawn-state window above, so
+// `PlayScene` and every combat gym get identical behaviour by calling the one
+// shared helper — there is no per-scene copy to drift.
+//
+// Every magnitude below is an exported tunable with a per-layer toggle,
+// mirroring the `phaseShiftJuice` pattern. Magnitudes are deliberately small
+// (sub-second burst, gentle ≈2–4 Hz flicker, a scale pulse well under the
+// growth curve's own motion) so the effect reads as "not solid yet" without
+// becoming a strobe (seizure-safety note in the epic's risk register).
+
+/**
+ * Lifetime (ms) of the ripple burst that fires as an enemy starts to
+ * materialise — the leading edge of the growth window. ~150–250 ms reads as
+ * a glitch hit without dragging on. Toggle: {@link ENEMY_SHIMMER_ENABLE_BURST}.
+ */
+export const ENEMY_SHIMMER_BURST_DURATION_MS = 200;
+
+/**
+ * Extra alpha added at the start of the burst, decaying linearly to zero over
+ * {@link ENEMY_SHIMMER_BURST_DURATION_MS}. Kept small so the clamp to 1 is
+ * rarely reached.
+ */
+export const ENEMY_SHIMMER_BURST_ALPHA_BOOST = 0.15;
+
+/**
+ * Extra scale (fraction of the growth scale) added at the start of the burst,
+ * decaying to zero over {@link ENEMY_SHIMMER_BURST_DURATION_MS} — the "ripple".
+ */
+export const ENEMY_SHIMMER_BURST_SCALE_BOOST = 0.06;
+
+/**
+ * Alpha-flicker rate (Hz) of the sustained shimmer. 2–4 Hz is a gentle pulse,
+ * never a rapid strobe (seizure-safety). Toggle: {@link ENEMY_SHIMMER_ENABLE_SHIMMER}.
+ */
+export const ENEMY_SHIMMER_FLICKER_HZ = 3;
+
+/** Lowest alpha the shimmer flickers to (must stay > 0 so the enemy never vanishes). */
+export const ENEMY_SHIMMER_ALPHA_MIN = 0.55;
+
+/** Highest alpha the shimmer flickers to (must stay <= 1). */
+export const ENEMY_SHIMMER_ALPHA_MAX = 0.85;
+
+/**
+ * Amplitude of the sustained scale pulse, as a fraction of the current growth
+ * scale. Deliberately tiny (< 0.1) so it never fights the growth curve.
+ */
+export const ENEMY_SHIMMER_SCALE_AMOUNT = 0.04;
+
+/**
+ * Soft colour-pulse range `[min, max]` (0..1) driven by the slow shimmer
+ * oscillation. Phaser 4 `Container`/`Graphics` expose no tint API (only
+ * `AlphaSingle`/`BlendMode`), so the pulse is expressed as a soft **additive
+ * bloom**: when the pulse is in its upper half the entity renders with
+ * `BlendModes.ADD` (brighter, colour-washed), in the lower half normally.
+ * The rate is far below the flicker so it reads as a colour breath, not a
+ * strobe. Toggle: {@link ENEMY_SHIMMER_ENABLE_COLOUR_PULSE}.
+ */
+export const ENEMY_SHIMMER_COLOUR_PULSE_RANGE: readonly [number, number] = [0.25, 0.75] as const;
+
+/** Slow colour-pulse period (seconds) — one full breath per cycle. */
+export const ENEMY_SHIMMER_COLOUR_PULSE_PERIOD = 1.6;
+
+/** Whether the leading ripple burst layer is enabled. */
+export const ENEMY_SHIMMER_ENABLE_BURST = true;
+
+/** Whether the sustained shimmer layers (alpha/scale flicker) are enabled. */
+export const ENEMY_SHIMMER_ENABLE_SHIMMER = true;
+
+/** Whether the soft additive colour-pulse layer is enabled. */
+export const ENEMY_SHIMMER_ENABLE_COLOUR_PULSE = true;
+
+/** Data key holding the per-entity shimmer clock (created lazily, reused). */
+const SHIMMER_STATE_KEY = '__shimmerState';
+
+/**
+ * Per-entity shimmer bookkeeping. Created once per enemy (on its first
+ * shimmering frame) and reused for every later frame — no per-frame
+ * allocations.
+ */
+interface ShimmerState {
+  /** Seconds since the shimmer started (its own clock, advanced by `dt`). */
+  elapsed: number;
+  /**
+   * Scale factor this helper applied on the previous frame. Dividing the
+   * current scale by it recovers the un-shimmered growth scale, so repeated
+   * calls never compound and the spawn animation's own scale is preserved.
+   */
+  lastScaleFactor: number;
+}
+
+/** Returns the shimmer clock for `enemy`, creating it on first use. */
+function ensureShimmerState(enemy: SpawnAnimatable): ShimmerState | null {
+  const existing = enemy.getData(SHIMMER_STATE_KEY) as ShimmerState | undefined;
+  if (existing) return existing;
+  const setData = (enemy as { setData?: (key: string, value: unknown) => unknown }).setData;
+  if (typeof setData !== 'function') return null;
+  const created: ShimmerState = { elapsed: 0, lastScaleFactor: 1 };
+  setData.call(enemy, SHIMMER_STATE_KEY, created);
+  return created;
+}
+
+/**
+ * Advances the per-entity emergence shimmer by `dt` seconds.
+ *
+ * The treatment is driven from the shared spawn state: it is inert until the
+ * enemy actually starts **growing** (`SpawnState.growing`, set by
+ * {@link updateSpawnAnimation}), sustains while the growth window is open, and
+ * stops the moment the spawn state is cleared. An enemy with no spawn state —
+ * or one still held at the wormhole-open delay — is left completely untouched,
+ * so this is a safe no-op for every non-emerging entity (and for headless test
+ * stubs, which never have spawn state).
+ *
+ * Layers (each with its own toggle):
+ *   - **burst** — a brief ripple (extra scale + alpha) decaying over
+ *     {@link ENEMY_SHIMMER_BURST_DURATION_MS};
+ *   - **shimmer** — gentle alpha flicker (`ENEMY_SHIMMER_FLICKER_HZ`) plus a
+ *     tiny scale pulse;
+ *   - **colour pulse** — soft additive bloom breathing at
+ *     {@link ENEMY_SHIMMER_COLOUR_PULSE_PERIOD}.
+ *
+ * Call it immediately **after** {@link updateSpawnAnimation} for the same
+ * entity each frame: the spawn animation writes the absolute growth scale and
+ * this helper layers its pulse on top without compounding.
+ *
+ * @param enemy - The emerging enemy (any container-like spawn entity).
+ * @param dt - Delta time in seconds (the scene tick step).
+ * @returns `true` while the shimmer is active (i.e. while the enemy is
+ *   growing), `false` when the entity is not emerging.
+ */
+export function updateEnemyShimmer(
+  enemy: SpawnAnimatable,
+  dt: number,
+): boolean {
+  const spawn = getSpawnState(enemy);
+  if (!spawn || !spawn.growing) return false;
+
+  const state = ensureShimmerState(enemy);
+  if (!state) return false;
+  state.elapsed += Math.max(0, dt);
+  const t = state.elapsed;
+
+  // Shimmer layers: alpha flicker + a tiny scale pulse.
+  let alpha = ENEMY_SHIMMER_ALPHA_MAX;
+  let scaleFactor = 1;
+  if (ENEMY_SHIMMER_ENABLE_SHIMMER) {
+    const flickerPhase = Math.PI * 2 * ENEMY_SHIMMER_FLICKER_HZ * t;
+    // u ∈ [0,1]: 0 at the flicker trough, 1 at the crest.
+    const u = 0.5 + 0.5 * Math.sin(flickerPhase);
+    alpha =
+      ENEMY_SHIMMER_ALPHA_MIN +
+      (ENEMY_SHIMMER_ALPHA_MAX - ENEMY_SHIMMER_ALPHA_MIN) * u;
+    scaleFactor = 1 + ENEMY_SHIMMER_SCALE_AMOUNT * (u * 2 - 1);
+  }
+
+  // Burst layer: a decaying ripple on the leading edge of the growth window.
+  if (ENEMY_SHIMMER_ENABLE_BURST) {
+    const burstDuration = ENEMY_SHIMMER_BURST_DURATION_MS / 1000;
+    if (t < burstDuration) {
+      const remaining = 1 - t / burstDuration;
+      alpha += ENEMY_SHIMMER_BURST_ALPHA_BOOST * remaining;
+      scaleFactor += ENEMY_SHIMMER_BURST_SCALE_BOOST * remaining;
+    }
+  }
+  enemy.setAlpha(Math.min(1, Math.max(0.01, alpha)));
+
+  // Scale: recover the un-shimmered growth scale, then re-apply this frame's
+  // factor. Writing the absolute value keeps the result stable no matter how
+  // many times the helper runs per frame.
+  const previousFactor = state.lastScaleFactor || 1;
+  const growthScale = enemy.scaleX / previousFactor;
+  enemy.setScale(growthScale * scaleFactor);
+  state.lastScaleFactor = scaleFactor;
+
+  // Colour pulse: soft additive bloom breathing far below the flicker rate.
+  if (ENEMY_SHIMMER_ENABLE_COLOUR_PULSE) {
+    const [pulseMin, pulseMax] = ENEMY_SHIMMER_COLOUR_PULSE_RANGE;
+    const breath =
+      0.5 +
+      0.5 *
+        Math.sin((Math.PI * 2 * t) / ENEMY_SHIMMER_COLOUR_PULSE_PERIOD);
+    const pulse = pulseMin + (pulseMax - pulseMin) * breath;
+    setEnemyBloom(enemy, pulse > (pulseMin + pulseMax) / 2);
+  }
+
+  return true;
+}
+
+/**
+ * Applies (or clears) the shimmer's additive bloom on `enemy`, when the
+ * entity supports `setBlendMode` (every Phaser 4 Container/Graphics does via
+ * the BlendMode component). Silently skipped otherwise, so a headless stub or
+ * a plain object never throws.
+ */
+function setEnemyBloom(enemy: SpawnAnimatable, bloom: boolean): void {
+  const setBlendMode = (
+    enemy as { setBlendMode?: (mode: unknown) => unknown }
+  ).setBlendMode;
+  if (typeof setBlendMode !== 'function') return;
+  const modes = (Phaser as unknown as { BlendModes?: Record<string, number> })
+    .BlendModes;
+  if (!modes) return;
+  setBlendMode.call(enemy, bloom ? modes.ADD : modes.NORMAL);
 }
 
 // ── Wave portal placement (AH-0MV8BR9Y70079TKC) ─────────────────────

@@ -631,7 +631,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     return enemy;
   }
 
-  it.fails('activates at the growing edge and sustains until the spawn window ends', async () => {
+  it('activates at the growing edge and sustains until the spawn window ends', async () => {
     const scene = await boot();
     const enemy = scene.add.container(50, 50);
     startSpawnAnimation(enemy, 1);
@@ -652,7 +652,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     expect(mod.updateEnemyShimmer(enemy, 0.016)).toBe(false);
   });
 
-  it.fails('applies a subtle alpha flicker between ticks while shimmering (no jump, stays in (0,1])', async () => {
+  it('applies a subtle alpha flicker between ticks while shimmering (no jump, stays in (0,1])', async () => {
     const scene = await boot();
     const enemy = startGrowth(scene);
     enemy.setAlpha(1);
@@ -670,7 +670,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     expect(enemy.alpha).toBeLessThanOrEqual(1);
   });
 
-  it.fails('is a no-op on an enemy that is not spawning (alpha untouched)', async () => {
+  it('is a no-op on an enemy that is not spawning (alpha untouched)', async () => {
     const scene = await boot();
     const enemy = scene.add.container(50, 50);
     enemy.setAlpha(0.7);
@@ -679,7 +679,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     expect(enemy.alpha).toBe(0.7);
   });
 
-  it.fails('exposes the documented tunable ranges and per-layer toggles (default on)', () => {
+  it('exposes the documented tunable ranges and per-layer toggles (default on)', () => {
     // Burst lifetime ≈150–250 ms.
     expect(mod.ENEMY_SHIMMER_BURST_DURATION_MS).toBeGreaterThanOrEqual(150);
     expect(mod.ENEMY_SHIMMER_BURST_DURATION_MS).toBeLessThanOrEqual(250);
@@ -703,7 +703,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     expect(mod.ENEMY_SHIMMER_ENABLE_SHIMMER).toBe(true);
   });
 
-  it.fails('is a safe no-op headless (a bare container-like object never throws)', () => {
+  it('is a safe no-op headless (a bare container-like object never throws)', () => {
     const bare = {
       alpha: 1,
       scaleX: 1,
