@@ -48,6 +48,10 @@ npm run capture -- --count 3 --output clips/demo.webm   # clips/demo-1..3.webm
 # record EVERY dev scenario in one process (one video per scenario, no demo)
 npm run capture -- --all-scenarios
 npm run capture -- --all-scenarios --output clips          # clips/<scenario>.webm
+
+# compile the captured pool into a promo + showreel + highlight clips
+# (needs a full ffmpeg — see Compiling a promo package below)
+npm run compile:promo
 ```
 
 This was proven end to end on 2026-10-06: a 12 s clip recorded at
@@ -189,6 +193,173 @@ also lists `missingFeatures`, so a gap is visible instead of being inferred.
 The lister is pure apart from a thin `node:fs` scan, and is unit-tested
 hermetically (`scripts/list-capture-pool.test.ts`) without footage, ffmpeg
 or a browser.
+
+## Compiling a promo package (`npm run compile:promo`)
+
+`npm run compile:promo` turns the captured pool into shareable material —
+a short promo, a longer showreel and individual highlight clips — by
+trimming, reordering, concatenating and muxing the source WebMs with
+`ffmpeg` (AH-0MVDV50Z20071RF4; the driver itself is
+AH-0MVDV4PNZ004ZWOZ). Nothing is hand-edited: the edit plan, the cut
+selection and the manifests all come from the recorded
+`.action.jsonl` series, so the package is reproducible from the pool.
+
+```bash
+# one-off: install a full ffmpeg (VP9 + Opus) — see Prerequisites below
+npm run compile:promo                     # plan + compile + validate
+
+# plan only (no ffmpeg required at all): writes the edit plan JSON to stdout
+node scripts/compile-promo.mjs | less
+
+# limit the pool to specific runs, or choose the output directory
+npm run capture -- --count 5              # ... capture more peaks first
+node scripts/compile-promo.mjs --runs gameplay-2026-10-23T12-28-08-402Z-3,boss-2026-10-19T16-25-05-656Z
+node scripts/compile-promo.mjs --compile --out capture-output/compile-promo.plan.json --out-dir capture-output
+
+# everything the tool accepts, with the prerequisites restated
+node scripts/compile-promo.mjs --help
+```
+
+### Prerequisites
+
+The compiler itself is pure Node (no dependencies beyond the repo) unless
+`--compile` is passed. `--compile` needs a **full `ffmpeg` install** — one
+with the **VP9 encoder (`libvpx-vp9`)** and the **Opus encoder
+(`libopus`)** — plus `ffprobe`, both on `PATH`:
+
+```bash
+sudo apt-get install ffmpeg        # Debian/Ubuntu
+brew install ffmpeg                # macOS (Homebrew)
+# static builds: https://johnvansickle.com/ffmpeg/
+```
+
+`FFMPEG_BIN` / `FFPROBE_BIN` override the resolved binaries (e.g. a static
+build in `~/.local/bin`). Playwright's bundled minimal ffmpeg is **not**
+sufficient (VP8-only, no VP9/Opus encoder).
+
+Detection is explicit and fails fast with an actionable message rather than
+an `ENOENT` stack: a missing `ffmpeg`/`ffprobe` exits non-zero and prints the
+install hints above plus `npm run compile:promo`. The output directory must
+already exist — a missing `--out-dir` is reported as such (with a `mkdir -p`
+suggestion) before any encoding starts.
+
+### Inputs
+
+Per retained run under `capture-output/` (see
+[Action-intensity export](#action-intensity-export)):
+
+| Input | Required | Role |
+|---|---|---|
+| `<run>.webm` | yes | Source footage (960×540, VP9 + Opus, the game's own SFX). |
+| `<run>.action.jsonl` | yes | Recorded action-intensity series — drives the cut selection (§7.5 of [docs/dev/action-intensity.md](./action-intensity.md)). |
+| `<run>.capture.json` | no | Join anchor mapping series time to video time. Without it (or when flagged `approximate`) the mapping falls back to raw series time and the cut is approximate. |
+
+Runs missing the WebM or the series are excluded from the pool, and a missing
+**source** is a clear error (`missing source webm/series`); `npm run list:pool`
+lists what is usable before compiling (see [Pool inventory](#pool-inventory)).
+
+### Outputs
+
+Written into `--out-dir` (default `capture-output/`, gitignored — the
+deliverables are **never committed**):
+
+| File | Target | Notes |
+|---|---|---|
+| `promo.webm` | 45–60 s | Hook-first: opens on the strongest peak, jump-cuts across peaks. |
+| `showreel.webm` | > 2 min | Every surviving peak cut, in source-time order. |
+| `highlight-01.webm` … | 5 clips | One short clip per top-ranked peak. |
+| `compile-promo.plan.json` | — | The edit plan: the **selection manifest** and the **coverage manifest**. |
+| `compile-promo-report.json` | — | Per-deliverable validation, pace verification and target sizing. |
+
+All deliverables are encoded at the game's **native 960×540**, 60 fps,
+VP9 (`-crf 32`) + Opus 96 kb/s stereo, so they match what the game renders
+and keep the game's own SFX.
+
+### Manifests
+
+`compile-promo.plan.json` is the **selection manifest** plus the
+**coverage manifest**:
+
+```json
+{
+  "promo": [
+    {
+      "runId": "gameplay-2026-10-23T12-28-08-402Z-3",
+      "webm": "capture-output/gameplay-2026-10-23T12-28-08-402Z-3.webm",
+      "series": "capture-output/gameplay-2026-10-23T12-28-08-402Z-3.action.jsonl",
+      "videoInMs": 203017,
+      "videoOutMs": 205695,
+      "intensity": 0.852,
+      "burstiness": 0.0356,
+      "features": ["weapons", "enemies"]
+    }
+  ],
+  "coverage": [
+    {
+      "feature": "pickups",
+      "clips": [
+        { "runId": "gameplay-2026-10-23T12-52-04-638Z-5", "videoInMs": 5150, "videoOutMs": 7839 }
+      ]
+    }
+  ],
+  "uncoveredFeatures": []
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `promo` / `showreel` / `highlights` | The ordered cuts per deliverable. Each carries the **source** (`runId`, `webm`, `series`), the **mapped video timestamps** (`videoInMs`/`videoOutMs` in the source WebM timeline, already clamped to the source duration), the **motivating recorded values** (`intensity`, `burstiness`) and the `features` visible in that cut. |
+| `coverage` | The coverage manifest: for each editorial feature (`weapons`, `pickups`, `enemies`, `boss`) the source clip(s) and timestamp ranges that show it. |
+| `uncoveredFeatures` | Features with **no** footage in the pool — a visible gap, never silently omitted. |
+
+Which feature is visible in a cut is decided from the series `breakdown`
+(`playerBullets` → weapons, `drops` → pickups, `enemies` → enemies,
+`bosses` → boss), the same mapping the pool inventory uses.
+
+`compile-promo-report.json` records the compiled result:
+
+| Field | Meaning |
+|---|---|
+| `deliverables[]` | One entry per output: `name`, `output`, `ok`, `issues`, `probe` (codec, width/height, duration, audio codec/channels), `brightness`, `segments` (the same cut records as the plan, so the coverage claim can be checked **against the delivered clip**), `measuredMeanIntensity`. |
+| `pace` | The promo's pace verdict: `ok`, `issues`, `band` and `measured` (`openingNonBlackRatio`, `nonBlackRatio`, `meanIntensity`). Band and calibration: [docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo). |
+| `targets` | The deliverable sizing verdict: measured promo/showreel lengths and highlight count against the targets, with per-target issues. |
+| `errors` | Every blocking issue, so a failed run is diagnosable from the report alone. |
+
+### Validation
+
+Every output is validated before the run is reported as successful
+(`npm run compile:promo` exits non-zero if anything fails):
+
+- **decodable** — `ffprobe` returns usable streams;
+- **correct resolution** — 960×540 video;
+- **audio present** — an Opus track (the game's SFX);
+- **non-trivial pixels** — sampled luma (`signalstats` `YAVG`) shows the frame
+  is not blank, using the calibrated screen-render floor documented in
+  [docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo);
+- **pace** — the promo opens with action (first 5 s) and its cuts are
+  peak-sourced (mean recorded intensity), against the same documented band;
+- **target sizing** — the delivered promo/showreel lengths and highlight
+  count meet the targets above, so a thin pool fails loudly instead of
+  shipping a 5 s showreel.
+
+The per-cut intensities and features are printed in the report, and the
+summary line names the measured duration, resolution, audio, cut count, mean
+intensity, pace verdict and target verdict — so a package can be reviewed
+without opening the manifests.
+
+### Practical notes
+
+- **Capture peaks, not just footage.** Only runs whose series contains §7.5
+  peaks contribute cuts; a full demo run is **minutes** of wall clock and
+  yields a handful of peak windows, so a 2-minute showreel needs a pool of
+  many runs. `npm run list:pool` shows which runs carry peaks before a long
+  compile.
+- **Wall clock.** Encoding is the slow step (VP9 at 60 fps): a 13-cut promo
+  plus a 34-cut showreel and 5 clips takes roughly **10 minutes** on the
+  reference host.
+- **Deliverables are gitignored.** `capture-output/` never enters the
+  repository; only the scripts, tests and documentation are committed.
+  Keep the produced files wherever you want to publish them.
 
 ## Dev scenarios (`--scenario`)
 
@@ -770,14 +941,18 @@ separately.
 
 ### No MP4 output (ffmpeg)
 
-There is **no `ffmpeg` on `PATH`**, and Playwright's bundled ffmpeg is a
-minimal build (VP8 only, no VP9/H.264 encoder), so it **cannot** transcode the
-VP9 WebM to MP4 or extract frames. Output is therefore **WebM only**. An MP4
-export needs a full ffmpeg install; if added, post-process *after* capture
-(e.g. `ffmpeg -i gameplay.webm -c:v libx264 gameplay.mp4`) rather than
-changing the capture path. The audio tap deliberately needs **no full
-`ffmpeg`**: the game's Opus track is muxed in-browser by `MediaRecorder` and
-the bundled minimal ffmpeg is never invoked.
+Capture writes **WebM only**. Playwright's bundled ffmpeg is a minimal build
+(VP8 only, no VP9/H.264 encoder), so it cannot transcode VP9 or extract
+frames, and the capture path never invokes a system ffmpeg. The **audio tap**
+deliberately needs no full `ffmpeg`: the game's Opus track is muxed in-browser
+by `MediaRecorder`.
+
+A full `ffmpeg` is required only by the **promo compiler**
+(`npm run compile:promo`, see
+[Compiling a promo package](#compiling-a-promo-package-npm-run-compilepromo)),
+which is a post-processing step over already-captured WebMs — it never
+changes the capture path. If an MP4 is ever needed, transcode the compiled
+WebM the same way (`ffmpeg -i promo.webm -c:v libx264 promo.mp4`).
 
 ### Rejected fallback: offline WAV + external mux
 
@@ -836,10 +1011,14 @@ full`) or `npm run build`.
 | `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
 | `scripts/capture-series.mjs` | Pure §7.2 series serialiser + §7.5 join-anchor builder + telemetry extraction (shared with the action-intensity export) |
 | `scripts/capture-series.d.mts` | Types for the series/anchor module |
+| `scripts/compile-promo.mjs` | Promo compiler + ffmpeg driver: edit plan from the recorded series, cut cadence, deliverable sizing, manifests, output validation and pace verification |
+| `scripts/compile-promo.d.mts` | Types for the promo compiler |
+| `scripts/compile-promo.test.ts` | Hermetic tests for the plan/selection/cadence/validation logic (no ffmpeg, no browser) |
+| `scripts/compile-promo.e2e.test.ts` | Gated end-to-end smoke test that compiles synthetic footage with real `ffmpeg`/`ffprobe` (skipped when absent) |
 | `scripts/list-capture-pool.mjs` | Capture-pool inventory: retains WebM + series + anchor triples, reports excluded runs and per-run feature evidence |
 | `scripts/list-capture-pool.d.mts` | Types for the pool inventory lister |
 | `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |
 | `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap and progress helpers |
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
-| `package.json` | `capture` / `capture:install` / `list:pool` scripts; `playwright` devDependency |
+| `package.json` | `capture` / `capture:install` / `list:pool` / `compile:promo` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |

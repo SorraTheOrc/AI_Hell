@@ -477,6 +477,15 @@ Defaults: `θ = 0.15`, `I_hi = 0.7`, `g = 1.0 s`. These are starting points;
 the calibration work in [§9](#9-risks-limitations--calibration) tunes them
 against human-selected highlights.
 
+**Consumer.** The reference implementation of this recipe is the promo
+compiler (`scripts/compile-promo.mjs`, `npm run compile:promo`): it reads
+`<run-id>.action.jsonl` plus the `<run-id>.capture.json` anchor, applies the
+recipe, splits each window into short cuts, and trims/joins/muxes them with
+`ffmpeg`. Inputs, outputs, the selection/coverage manifest formats and the
+validation gates are documented in
+[docs/dev/gameplay-capture.md](./gameplay-capture.md#compiling-a-promo-package-npm-run-compilepromo);
+the pace reference band its output is verified against is [§7.6](#76-pace-reference-band-for-the-compiled-promo).
+
 ### 7.6 Pace reference band for the compiled promo
 
 [§7.5](#75-joining-to-captured-video-for-highlight-selection) decides **which**
