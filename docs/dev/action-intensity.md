@@ -477,6 +477,108 @@ Defaults: `θ = 0.15`, `I_hi = 0.7`, `g = 1.0 s`. These are starting points;
 the calibration work in [§9](#9-risks-limitations--calibration) tunes them
 against human-selected highlights.
 
+### 7.6 Pace reference band for the compiled promo
+
+[§7.5](#75-joining-to-captured-video-for-highlight-selection) decides **which**
+moments are exciting; this section defines how the compiled promo's
+**attention-grabbing pace** is *verified* rather than merely asserted (parent
+AC3/AC4). The producer asked for an automated peak selection plus an editorial
+pass, and for the pace claim to be auditable — so every metric below is
+measured from the **delivered file** and printed in the compile report
+(`capture-output/compile-promo-report.json`) and the stdout summary.
+
+#### Measurement
+
+| Metric | How it is measured |
+|---|---|
+| **Sampled non-black ratio** | `ffmpeg -vf fps=<BRIGHTNESS_SAMPLE_RATE>,signalstats,metadata=print` samples luma (`YAVG`) once per second over the deliverable. A sampled frame is **non-black** when `YAVG > paceBand.blackYavgFloor` (`12`, the calibrated *screen-render* floor — see the calibration basis; deliberately below `BLACK_FRAME_YAVG_FLOOR = 24`, which answers the different "is there bright content?" question). The ratio is `nonBlackFrames / sampledFrames`. |
+| **Opening non-black ratio** | The same measurement restricted to the promo's **first `5 s`** (`-t 5`), i.e. the hook window. This is what makes "no dead air in the first ~5 s" a measurement instead of an editing intention. |
+| **Mean recorded intensity** | The arithmetic mean of the motivating `intensity` of the peak windows the promo is actually built from (the `intensity` field of each selection-manifest segment). This is the recorded series value, not a video proxy. |
+
+A metric that cannot be measured is a **failure**, never a silent pass: a
+promo whose pace cannot be evidenced is treated exactly like a promo below the
+band.
+
+#### The band
+
+The band lives in one place — `EDITORIAL_CONFIG.paceBand` in
+`scripts/compile-promo.mjs` — so the pipeline, the report and this document
+cannot drift apart:
+
+| Metric | Floor | Why |
+|---|---|---|
+| Opening non-black ratio (first 5 s) | **≥ 0.90** | At 1 fps sampling, up to 10 % black samples is headroom for a single fade/transition frame; more than that means the promo opens on a blank or near-blank screen (menu, fade-in, spawn pause), which is exactly the dead air the hook must avoid. |
+| Overall non-black ratio | **≥ 0.90** | The same tolerance applied across the whole promo: the package is gameplay, so black/near-black frames must stay exceptional rather than becoming the texture of the edit. |
+| Mean recorded intensity | **≥ 0.30** | Half-way between the pooled *idle* intensity and the §7.5 `I_hi = 0.7` peak threshold: a promo assembled from genuine peak windows clears it comfortably, while one padded out with ordinary play does not. See the calibration basis below. |
+
+#### Calibration basis
+
+Calibrated against the footage actually captured for this pipeline (35 retained
+runs in `capture-output/`, ~1,300 sampled frames), because the numbers are only
+meaningful for **this game's** luma range:
+
+| Measured on (1 fps sampling) | Frames | YAVG min | p50 | p90 | max | frac < 12 | frac < 24 |
+|---|---|---|---|---|---|---|---|
+| One full source run | 419 | 16.7 | 17.9 | 18.9 | 123.9 | 0.000 | 0.990 |
+| Compiled promo (57.9 s) | 58 | 17.8 | 19.0 | 28.2 | 93.6 | 0.000 | 0.845 |
+| Compiled showreel (126.3 s) | 126 | 17.0 | 18.7 | 24.1 | 93.6 | 0.000 | 0.897 |
+| Defeat scene (idle) | 10 | 17.5 | 17.5 | 25.0 | 25.0 | 0.000 | 0.900 |
+
+Two conclusions drove the final band:
+
+1. **The generic `BLACK_FRAME_YAVG_FLOOR = 24` cannot be the pace floor.** It
+   answers "is there *bright* content on screen?" (used for the per-deliverable
+   "non-trivial pixels" check) and correctly rejects an all-black encode — but
+   AI_Hell is a dark starfield: ordinary gameplay sits at **YAVG ≈ 17–19**, so
+   a 24 floor marked ~90 % of every real frame "black". The pace metric instead
+   uses a calibrated **screen-render floor of `12`**: nothing in 1,300 sampled
+   frames of genuine footage went below `16.7`, while a blank/failed render is
+   ~`0`, so 12 cleanly separates "the game is drawing" from "dead air".
+   `EDITORIAL_CONFIG.paceBand.blackYavgFloor` is that floor, and the compile
+   pipeline passes it to both the pace measurement and the per-deliverable
+   validation.
+2. **The promo is filled to `maxMs − safetyMs`.** Re-encoding each trimmed cut
+   lands slightly longer than its nominal length (≈0.2 s per cut: container and
+   frame granularity). A plan filled to a nominal 59.6 s produced a **62.6 s**
+   delivered promo — outside the ~45–60 s band — so the fill budget reserves
+   `safetyMs = 4000` (~0.2 s × 15 cuts + headroom). After calibration a 54.9 s
+   nominal plan delivered a **57.9 s** promo — inside the band.
+
+The intensity floor (`0.30`) is checked against the delivered package: the
+promo's cuts average **0.762** recorded intensity (band `≥ 0.30`) and the
+showreel's **0.65**, while the idle pool runs (boss/defeat, whose peak windows
+are empty) average 0.12–0.14 — so the floor discriminates peak-sourced edits
+from idle ones without being trivially true. The delivered promo measures
+**opening non-black 100 %** and **overall non-black 100 %** against the 90 %
+band, and the first 5 s sample as `18.9, 18.9, 28.2, 19.2, 93.6, 19.1` — action
+from the first frame, no dead air.
+
+#### Cut cadence
+
+The pace is not only measured, it is **authored**. `EDITORIAL_CONFIG.cutCadence`
+(`maxCutMs = 6000`, `minCutMs = 1000`) splits each §7.5 peak window into
+successive cuts — a sustained busy stretch merges into one long window, and
+presenting that as a single take gives a slow scene rather than the jump-cut
+rhythm the hook needs. Cuts stay contiguous (no footage is lost) and a
+remainder shorter than `minCutMs` is folded into its predecessor so no
+micro-cut is emitted. Each cut carries its own motivating intensity and
+feature set into the manifests, which is what makes the per-clip reporting in
+the selection manifest meaningful.
+
+#### Failure behaviour
+
+A promo below the band fails the compile: `npm run compile:promo` exits
+non-zero, the report's `pace` field carries `ok: false` plus the measured
+values and per-metric issues, and the stdout summary prints a `pace FAIL`
+line naming the offending metric(s). The band is deliberately applied to the
+**compiled output**, so a thin source pool or a mis-ordered edit surfaces as a
+build failure rather than as a quietly underwhelming promo.
+
+Deliverable **sizing** is verified the same way (parent AC1): the compiled
+promo, showreel and highlight clip count are measured from the outputs and
+compared with `EDITORIAL_CONFIG.targets` (promo 45–60 s, showreel > 2 min,
+five highlight clips), reported in the `targets` field of the compile report.
+
 ## 8. Telemetry integration & gym↔game parity
 
 ### 8.1 Dependencies

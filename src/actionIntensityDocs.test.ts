@@ -18,6 +18,7 @@
 import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { DELIVERABLE_TARGETS, PACE_BAND } from '../scripts/compile-promo.mjs';
 
 const DOC_PATH = path.resolve(process.cwd(), 'docs/dev/action-intensity.md');
 const README_PATH = path.resolve(process.cwd(), 'README.md');
@@ -75,6 +76,30 @@ describe('Action-intensity decision is documented (AH-0MUZCSJXQ004TREN)', () => 
   it('names the sibling implementation epic (AC5)', () => {
     expect(doc).toContain(EPIC_ID);
     expect(doc).toContain('discovered-from:AH-0MUZCSJXQ004TREN');
+  });
+
+  it('documents the promo pace reference band (AH-0MVDV50Z20071RF4 AC3)', () => {
+    // The band is the auditable claim behind the promo's pace, so the document
+    // must state it — and the numbers must match the editorial config the
+    // pipeline actually enforces (no doc/code drift).
+    expect(doc).toMatch(/### 7\.6 Pace reference band for the compiled promo/);
+    expect(doc).toMatch(/Calibration basis/);
+    for (const label of [
+      'Opening non-black ratio (first 5 s)',
+      'Overall non-black ratio',
+      'Mean recorded intensity',
+    ]) {
+      expect(doc).toContain(label);
+    }
+    expect(doc).toContain(`≥ ${PACE_BAND.minOpeningNonBlackRatio.toFixed(2)}`);
+    expect(doc).toContain(`≥ ${PACE_BAND.minNonBlackRatio.toFixed(2)}`);
+    expect(doc).toContain(`≥ ${PACE_BAND.minMeanIntensity.toFixed(2)}`);
+    expect(doc).toContain(`first \`${PACE_BAND.openingWindowMs / 1000} s\``);
+    // The measurement is defined in terms of the shared black-frame floor and
+    // the deliverable targets the report verifies (AC1).
+    expect(doc).toContain('BLACK_FRAME_YAVG_FLOOR');
+    expect(doc).toContain(`${DELIVERABLE_TARGETS.promo.minMs / 1000}–${DELIVERABLE_TARGETS.promo.maxMs / 1000} s`);
+    expect(doc).toContain(`> ${DELIVERABLE_TARGETS.showreel.minMs / 60_000} min`);
   });
 
   it('is cross-linked from the README and the telemetry reference (AC6)', () => {

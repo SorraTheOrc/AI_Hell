@@ -29,6 +29,32 @@ export interface EditorialConfig {
     readonly intensity: number;
     readonly durationMs: number;
   };
+  /** Editorial cut cadence (parent AC4). */
+  readonly cutCadence: CutCadence;
+  /** Pace reference band (parent AC3/AC4; doc §7.6). */
+  readonly paceBand: PaceBand;
+}
+
+/** The editorial cut cadence: the longest and shortest single cut. */
+export interface CutCadence {
+  /** No single cut runs longer than this (ms). */
+  readonly maxCutMs: number;
+  /** A remainder shorter than this is folded into the previous cut (ms). */
+  readonly minCutMs: number;
+}
+
+/** The documented pace reference band the delivered promo must clear. */
+export interface PaceBand {
+  /** Hook window at the head of the promo (ms). */
+  readonly openingWindowMs: number;
+  /** Required sampled non-black frame ratio inside the hook window. */
+  readonly minOpeningNonBlackRatio: number;
+  /** Required sampled non-black frame ratio across the whole promo. */
+  readonly minNonBlackRatio: number;
+  /** Required mean recorded action intensity of the promo's cuts. */
+  readonly minMeanIntensity: number;
+  /** Calibrated "the screen is rendering" luma floor (YAVG). */
+  readonly blackYavgFloor: number;
 }
 
 /** A point of a recorded action-intensity series, in ms-since-run-start. */
@@ -53,6 +79,8 @@ export interface HighlightOptions {
   readonly mergeGapMs: number;
   readonly leadMs: number;
   readonly tailMs: number;
+  /** Optional cut-cadence override (defaults to CUT_CADENCE). */
+  readonly cutCadence?: CutCadence;
 }
 
 /** One captured run's input to the edit plan. */
@@ -72,7 +100,12 @@ export interface CompileSource {
 
 /** The three deliverable targets the plan is sized to. */
 export interface CompileTargets {
-  readonly promo: { readonly minMs: number; readonly maxMs: number };
+  readonly promo: {
+    readonly minMs: number;
+    readonly maxMs: number;
+    /** Encode-overhead margin kept free when filling the promo (ms). */
+    readonly safetyMs?: number;
+  };
   readonly showreel: { readonly minMs: number };
   readonly highlights: { readonly count: number };
 }
@@ -127,6 +160,42 @@ export const EDITORIAL_CATEGORIES: readonly string[];
 export const BREAKDOWN_TO_EDITORIAL_CATEGORY: Readonly<Record<string, string>>;
 export const DEDUPE_INTENSITY_TOLERANCE: number;
 export const DEDUPE_DURATION_TOLERANCE_MS: number;
+/** The documented pace reference band (parent AC3/AC4). */
+export const PACE_BAND: PaceBand;
+/** The editorial cut cadence (parent AC4). */
+export const CUT_CADENCE: CutCadence;
+/** Deliverable length/count targets (parent AC1). */
+export const DELIVERABLE_TARGETS: CompileTargets;
+
+/** The measured pace metrics compared against {@link PACE_BAND}. */
+export interface PaceMetrics {
+  readonly openingNonBlackRatio: number | null;
+  readonly nonBlackRatio: number | null;
+  readonly meanIntensity: number | null;
+}
+
+/** The promo pace verdict + the evidence it was derived from. */
+export interface PaceVerdict {
+  readonly ok: boolean;
+  readonly issues: readonly string[];
+  readonly band: PaceBand;
+  readonly measured: PaceMetrics;
+}
+
+/** The measured deliverable lengths/count compared against the targets. */
+export interface TargetMetrics {
+  readonly promoMs: number | null;
+  readonly showreelMs: number | null;
+  readonly highlightCount: number | null;
+}
+
+/** The deliverable sizing verdict + the evidence it was derived from (AC1). */
+export interface TargetVerdict {
+  readonly ok: boolean;
+  readonly issues: readonly string[];
+  readonly targets: CompileTargets;
+  readonly measured: TargetMetrics;
+}
 
 /** A parsed `.action.jsonl` series (AC1): the self-describing header + points. */
 export interface ParsedActionIntensitySeries {
@@ -294,6 +363,12 @@ export interface ProbeSummary {
 export interface BrightnessSummary {
   readonly sampledFrames: number;
   readonly maxYavg: number | null;
+  /** Mean sampled YAVG (null when nothing was sampled). */
+  readonly meanYavg?: number | null;
+  /** Sampled frames strictly above the black floor. */
+  readonly nonBlackFrames?: number;
+  /** `nonBlackFrames / sampledFrames` (0–1), null when nothing was sampled. */
+  readonly nonBlackRatio?: number | null;
 }
 
 /** One deliverable's validation verdict (AC3). */
@@ -347,6 +422,10 @@ export interface CompileResult {
     readonly ffprobe: string;
     readonly outDir: string;
     readonly deliverables: readonly CompiledDeliverable[];
+    /** Promo pace verification (parent AC3/AC4); null when not measurable. */
+    readonly pace: PaceVerdict | null;
+    /** Deliverable length/count verification (parent AC1). */
+    readonly targets: TargetVerdict;
     readonly errors: readonly string[];
   }>;
 }
@@ -399,7 +478,28 @@ export function probeHasVideo(probe: ProbeSummary | null): boolean;
 export function probeVideoDurationSec(probe: ProbeSummary | null): number | null;
 
 /** Parses signalstats YAVG lines into a brightness summary (pure). */
-export function parseSignalStatsOutput(text: string): BrightnessSummary;
+export function parseSignalStatsOutput(
+  text: string,
+  options?: { blackYavgFloor?: number },
+): BrightnessSummary;
+
+/** Promo pace verdict against the documented reference band (pure, AC3/AC4). */
+export function assessPace(
+  measured?: Partial<PaceMetrics>,
+  band?: PaceBand,
+): PaceVerdict;
+
+/** Splits one peak window into successive cuts no longer than the cadence cap. */
+export function splitWindowIntoCuts(
+  window: { readonly startMs: number; readonly endMs: number },
+  cadence?: CutCadence,
+): { startMs: number; endMs: number }[];
+
+/** Deliverable length/count verdict (pure, AC1). */
+export function assessTargets(
+  measured?: Partial<TargetMetrics>,
+  targets?: CompileTargets,
+): TargetVerdict;
 
 /** Validation verdict for one deliverable (pure, AC3). */
 export function assessDeliverable(
@@ -461,7 +561,17 @@ export function probeMediaSync(
 /** Samples frame brightness via signalstats (sync). */
 export function sampleBrightnessSync(
   file: string,
-  deps?: { ffmpeg?: string; execFileSyncImpl?: Function; sampleRate?: number },
+  deps?: {
+    ffmpeg?: string;
+    execFileSyncImpl?: Function;
+    sampleRate?: number;
+    /** Optional window start (s) so part of a deliverable can be measured. */
+    startSec?: number | null;
+    /** Optional window length (s). */
+    durationSec?: number | null;
+    /** Non-black luma floor (default: BLACK_FRAME_YAVG_FLOOR). */
+    blackYavgFloor?: number;
+  },
 ): BrightnessSyncResult;
 
 /** Compiles + validates all deliverables from the plan. */
@@ -471,6 +581,10 @@ export function compileDeliverables(
     ffmpeg?: string;
     ffprobe?: string;
     outDir?: string;
+    /** Deliverable targets to verify against (default: DELIVERABLE_TARGETS). */
+    targets?: CompileTargets;
+    /** Calibrated non-black luma floor (default: paceBand.blackYavgFloor). */
+    blackYavgFloor?: number;
   },
 ): CompileResult;
 

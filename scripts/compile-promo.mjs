@@ -51,13 +51,6 @@ export const ACTION_SERIES_EXTENSION = '.action.jsonl';
 /** The join-anchor sidecar extension (AH-0MVDV4DMY001Z7CU, §7.5). */
 export const CAPTURE_ANCHOR_EXTENSION = '.capture.json';
 
-/** The three deliverable targets sized by the edit plan (epic). */
-export const DEFAULT_TARGETS = Object.freeze({
-  promo: { minMs: 45_000, maxMs: 60_000 },
-  showreel: { minMs: 120_000 },
-  highlights: { count: 5 },
-});
-
 // ────────────────────────────────────────────────────────────────────────────
 // Editorial config — single source of truth (AC1, AC4: feature categories,
 // recognition mapping, targets, highlight knobs, dedupe tolerances) and the
@@ -127,7 +120,14 @@ export const EDITORIAL_CONFIG = Object.freeze({
 
   /** The three deliverable targets sized by the edit plan (epic). */
   targets: Object.freeze({
-    promo: { minMs: 45_000, maxMs: 60_000 },
+    /**
+     * `safetyMs` is the measured concat/encode overhead kept free when filling
+     * the promo: each re-encoded cut lands slightly longer than its nominal
+     * trim (≈0.2 s per cut), so a plan filled exactly to `maxMs` produced a
+     * 62.6 s promo for a 59.6 s plan. Filling to `maxMs − safetyMs` keeps the
+     * delivered promo inside the band.
+     */
+    promo: { minMs: 45_000, maxMs: 60_000, safetyMs: 4_000 },
     showreel: { minMs: 120_000 },
     highlights: { count: 5 },
   }),
@@ -146,7 +146,58 @@ export const EDITORIAL_CONFIG = Object.freeze({
     intensity: 0.05,
     durationMs: 250,
   }),
+
+  /**
+   * Cut cadence (parent AC4 — attention-grabbing pace).
+   *
+   * §7.5 merges contiguous peaks, so a sustained busy stretch becomes one
+   * long window; used verbatim as a single cut, that yields a promo of one or
+   * two long takes rather than the jump-cut rhythm the hook needs. Every
+   * window is therefore split into successive cuts no longer than
+   * `maxCutMs`, and a remainder shorter than `minCutMs` is folded into the
+   * previous cut so no micro-cut is emitted. This is editorial judgement, not
+   * a change to the §7.5 peak recipe.
+   */
+  cutCadence: Object.freeze({
+    maxCutMs: 6_000,
+    minCutMs: 1_000,
+  }),
+
+  /**
+   * Pace reference band (parent AC3/AC4): the measured floors a delivered
+   * promo must clear. Calibration basis and the measured values behind the
+   * band are documented in `docs/dev/action-intensity.md` §7.6.
+   *
+   * - `openingWindowMs` — the hook window at the head of the promo.
+   * - `minOpeningNonBlackRatio` — sampled non-black frame ratio required
+   *   inside the hook window (no dead air on open).
+   * - `minNonBlackRatio` — sampled non-black frame ratio required across the
+   *   whole promo.
+   * - `minMeanIntensity` — mean recorded action intensity of the cuts the
+   *   promo is built from.
+   */
+  paceBand: Object.freeze({
+    openingWindowMs: 5_000,
+    minOpeningNonBlackRatio: 0.9,
+    minNonBlackRatio: 0.9,
+    minMeanIntensity: 0.3,
+    /**
+     * Calibrated "the screen is rendering" luma floor (YAVG). Deliberately
+     * below `BLACK_FRAME_YAVG_FLOOR` (24, an "is there bright content?" floor):
+     * this game is a dark starfield whose normal gameplay frames sit at YAVG
+     * ~17–19, so a 24 floor would classify ordinary gameplay as black. See
+     * docs/dev/action-intensity.md §7.6 for the measured calibration.
+     */
+    blackYavgFloor: 12,
+  }),
 });
+
+/**
+ * The three deliverable targets sized by the edit plan (epic AC1). Derived from
+ * {@link EDITORIAL_CONFIG} so the plan, the runtime verification and the docs
+ * cannot drift apart.
+ */
+export const DEFAULT_TARGETS = EDITORIAL_CONFIG.targets;
 
 /** Editorial feature categories, in manifest order (epic AC3). */
 export const EDITORIAL_CATEGORIES = EDITORIAL_CONFIG.categories;
@@ -159,6 +210,19 @@ export const DEDUPE_INTENSITY_TOLERANCE = EDITORIAL_CONFIG.dedupeTolerances.inte
 
 /** Duration tolerance (ms) for near-identical window dedupe. */
 export const DEDUPE_DURATION_TOLERANCE_MS = EDITORIAL_CONFIG.dedupeTolerances.durationMs;
+
+/** The documented pace reference band (parent AC3/AC4; doc §7.6). */
+export const PACE_BAND = EDITORIAL_CONFIG.paceBand;
+
+/** The editorial cut cadence (parent AC4): the longest/shortest single cut. */
+export const CUT_CADENCE = EDITORIAL_CONFIG.cutCadence;
+
+/**
+ * The deliverable length/count targets the produced package must meet
+ * (parent AC1). Shared with {@link buildEditPlan} so the plan and the
+ * runtime verification use one definition of "sized to target".
+ */
+export const DELIVERABLE_TARGETS = EDITORIAL_CONFIG.targets;
 
 // ────────────────────────────────────────────────────────────────────────────
 // AC1 — Series reader (pure text parser)
@@ -537,6 +601,48 @@ export function buildCoverageManifest(segments) {
 }
 
 /**
+ * Splits one §7.5 peak window into successive cuts (parent AC4 cut cadence).
+ *
+ * A long merged window is one unbroken busy stretch; presenting it as a
+ * single cut gives a slow take instead of the jump-cut rhythm the promo needs.
+ * Splitting keeps the same footage but restores the cadence: no cut is longer
+ * than `maxCutMs`, and a final remainder shorter than `minCutMs` is folded
+ * back into its predecessor so no micro-cut is emitted. Pure: the cuts are
+ * ordered, contiguous and exactly cover the input window.
+ *
+ * @param {{ startMs: number, endMs: number }} window
+ * @param {{ maxCutMs?: number, minCutMs?: number }} [cadence]
+ * @returns {{ startMs: number, endMs: number }[]}
+ */
+export function splitWindowIntoCuts(window, cadence = CUT_CADENCE) {
+  const start = Number(window?.startMs);
+  const end = Number(window?.endMs);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+  const maxCutMs = Number(cadence?.maxCutMs);
+  const minCutMs = Number(cadence?.minCutMs);
+  if (!Number.isFinite(maxCutMs) || maxCutMs <= 0) {
+    return [{ startMs: start, endMs: end }];
+  }
+  const cuts = [];
+  for (let cursor = start; cursor < end; cursor += maxCutMs) {
+    cuts.push({ startMs: cursor, endMs: Math.min(end, cursor + maxCutMs) });
+  }
+  if (
+    cuts.length > 1 &&
+    Number.isFinite(minCutMs) &&
+    minCutMs > 0 &&
+    cuts[cuts.length - 1].endMs - cuts[cuts.length - 1].startMs < minCutMs
+  ) {
+    const tail = cuts.pop();
+    cuts[cuts.length - 1] = {
+      startMs: cuts[cuts.length - 1].startMs,
+      endMs: tail.endMs,
+    };
+  }
+  return cuts;
+}
+
+/**
  * The deterministic edit plan sized to the targets + manifests.
  *
  * Steps (per the test-first contract):
@@ -572,7 +678,12 @@ export function buildEditPlan(sources, targets = DEFAULT_TARGETS, options = DEFA
   const segments = [];
   for (const source of sources) {
     const windows = selectHighlightWindows(source.points, opts);
-    for (const window of windows) {
+    // Each window becomes one or more cuts (AC4 cadence) — the same footage,
+    // presented as short cuts on peaks rather than as one long take.
+    const cuts = windows.flatMap((window) =>
+      splitWindowIntoCuts(window, opts.cutCadence ?? CUT_CADENCE),
+    );
+    for (const window of cuts) {
       const videoInMs = Math.min(
         source.durationMs,
         mapTimeToVideo(window.startMs, source.anchor.captureStartedMs, source.anchor.runStartedAtMs),
@@ -641,9 +752,12 @@ export function buildEditPlan(sources, targets = DEFAULT_TARGETS, options = DEFA
   }
   const promo = [];
   let promoMs = 0;
+  // Keep the measured concat/encode overhead free so the *delivered* promo —
+  // not just the nominal plan — lands inside the band (docs §7.6).
+  const promoBudgetMs = targets.promo.maxMs - (targets.promo.safetyMs ?? 0);
   for (const segment of globalRank) {
     const lengthMs = segment.videoOutMs - segment.videoInMs;
-    if (reserved.has(segment) || promoMs + lengthMs <= targets.promo.maxMs) {
+    if (reserved.has(segment) || promoMs + lengthMs <= promoBudgetMs) {
       promo.push(segment);
       promoMs += lengthMs;
     }
@@ -671,10 +785,12 @@ Promo compiler (AH-0MVDV4OKN001OT18 + AH-0MVDV4PNZ004ZWOZ). Two modes:
 
 1. Plan only (default, no ffmpeg): reads each captured run's
    action-intensity series and join anchor, computes the §7.5 highlight
-   windows, maps them to video time, and emits an ordered edit plan sized
-   to the three deliverable targets (promo ~45-60 s, showreel > 2 min, N
-   highlight clips) together with the selection and coverage manifests —
-   as JSON. This pure step runs WITHOUT ffmpeg.
+   windows, splits each window into short cuts (editorial cadence:
+   max ${CUT_CADENCE.maxCutMs / 1000} s per cut), maps them to video time, and emits an
+   ordered edit plan sized to the three deliverable targets
+   (promo ${DEFAULT_TARGETS.promo.minMs / 1000}-${DEFAULT_TARGETS.promo.maxMs / 1000} s, showreel > ${DEFAULT_TARGETS.showreel.minMs / 60_000} min,
+   ${DEFAULT_TARGETS.highlights.count} highlight clips) together with the selection and coverage
+   manifests — as JSON. This pure step runs WITHOUT ffmpeg.
 
 2. Compile + validate (--compile, what \`npm run compile:promo\` runs):
    builds the plan, then drives ffmpeg to trim, reorder, concatenate and
@@ -702,7 +818,21 @@ Outputs:
   <out-dir> (default ${CAPTURE_OUTPUT_DIR}/) — with --compile, the three
   deliverable types: promo.webm (~45-60 s), showreel.webm (> 2 min),
   highlight-01.webm … plus compile-promo-report.json (the per-deliverable
-  validation result). Never committed (gitignored).
+  validation result). The directory must already exist. Never committed
+  (gitignored).
+
+  The report also carries the **pace verification** (parent AC3/AC4): the
+  promo's sampled non-black frame ratio over its first
+  ${PACE_BAND.openingWindowMs / 1000} s (no dead air on open) and over the whole clip,
+  and the mean recorded action intensity of the cuts it is built from —
+  compared against the documented reference band in
+  docs/dev/action-intensity.md §7.6 (band: opening/overall non-black ≥
+  ${(PACE_BAND.minOpeningNonBlackRatio * 100).toFixed(0)}%, mean intensity ≥ ${PACE_BAND.minMeanIntensity.toFixed(2)}).
+  A promo below the band fails the compile, so the pace claim in the
+  manifests is always backed by measured output. The report's \`targets\`
+  field records the measured promo/showreel lengths and highlight count
+  against the targets above; an undersized package (thin source pool)
+  fails the compile too.
 
 Prerequisites:
   Footage captured with \`npm run capture\` (which writes the series and
@@ -957,6 +1087,19 @@ export function compilePromoMain(
   if (!tools) {
     return { code: 1, stdout: missingFfmpegError(), plan };
   }
+  // The output directory must exist before ffmpeg runs: otherwise every
+  // ffmpeg invocation fails with an opaque "No such file or directory" and the
+  // validation report cannot be written either (AC5 — clear, actionable
+  // errors instead of a stack of ffmpeg noise).
+  if (!fsImpl.existsSync(parsed.outDir)) {
+    return {
+      code: 1,
+      stdout:
+        `error: output directory ${parsed.outDir} does not exist — create it ` +
+        `first (e.g. mkdir -p ${parsed.outDir}), or pass --out-dir <existing dir>.`,
+      plan,
+    };
+  }
   const compileResult = compileDeliverables(plan, {
     ffmpeg: tools.ffmpeg,
     ffprobe: tools.ffprobe,
@@ -1158,16 +1301,168 @@ export function probeVideoDurationSec(probe) {
  * @param {string} text
  * @returns {{ sampledFrames: number, maxYavg: number|null }}
  */
-export function parseSignalStatsOutput(text) {
+export function parseSignalStatsOutput(text, options = {}) {
+  const floor = Number(options.blackYavgFloor);
+  const blackYavgFloor = Number.isFinite(floor) ? floor : BLACK_FRAME_YAVG_FLOOR;
   const yavgs = [];
   for (const match of String(text).matchAll(/lavfi\.signalstats\.YAVG=([0-9.]+)/g)) {
     const value = Number(match[1]);
     if (Number.isFinite(value)) yavgs.push(value);
   }
+  if (yavgs.length === 0) {
+    return {
+      sampledFrames: 0,
+      maxYavg: null,
+      meanYavg: null,
+      nonBlackFrames: 0,
+      nonBlackRatio: null,
+    };
+  }
+  const nonBlackFrames = yavgs.filter((value) => value > blackYavgFloor).length;
+  const sum = yavgs.reduce((acc, value) => acc + value, 0);
   return {
     sampledFrames: yavgs.length,
-    maxYavg: yavgs.length > 0 ? Math.max(...yavgs) : null,
+    maxYavg: Math.max(...yavgs),
+    meanYavg: Number((sum / yavgs.length).toFixed(3)),
+    nonBlackFrames,
+    // 3-decimal ratio: enough precision to compare against the documented
+    // band, stable across hosts (AC3).
+    nonBlackRatio: Number((nonBlackFrames / yavgs.length).toFixed(3)),
   };
+}
+
+/**
+ * Pace verdict for the delivered promo (parent AC3/AC4).
+ *
+ * Compares the three measured pace metrics against the documented reference
+ * band ({@link PACE_BAND}) and returns an actionable verdict. A metric that
+ * could not be measured is a **failure**, never a silent pass: the pace
+ * claim has to be auditable.
+ *
+ * @param {{
+ *   openingNonBlackRatio?: number|null,
+ *   nonBlackRatio?: number|null,
+ *   meanIntensity?: number|null,
+ * }} measured
+ * @param {typeof PACE_BAND} [band]
+ * @returns {{ ok: boolean, issues: string[], band: object,
+ *             measured: { openingNonBlackRatio: number|null,
+ *                         nonBlackRatio: number|null,
+ *                         meanIntensity: number|null } }}
+ */
+export function assessPace(measured = {}, band = PACE_BAND) {
+  const ratio = (value) => {
+    if (value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const norm = {
+    openingNonBlackRatio: ratio(measured.openingNonBlackRatio),
+    nonBlackRatio: ratio(measured.nonBlackRatio),
+    meanIntensity: ratio(measured.meanIntensity),
+  };
+  const pct = (value) => `${(value * 100).toFixed(1)}%`;
+  const bandPct = (value) => `${(value * 100).toFixed(1)}%`;
+  const issues = [];
+
+  if (norm.openingNonBlackRatio === null) {
+    issues.push('opening non-black ratio could not be measured');
+  } else if (norm.openingNonBlackRatio < band.minOpeningNonBlackRatio) {
+    issues.push(
+      `opening non-black ratio ${pct(norm.openingNonBlackRatio)} below the ` +
+        `${bandPct(band.minOpeningNonBlackRatio)} band (dead air in the first ` +
+        `${band.openingWindowMs / 1000}s)`,
+    );
+  }
+
+  if (norm.nonBlackRatio === null) {
+    issues.push('overall non-black ratio could not be measured');
+  } else if (norm.nonBlackRatio < band.minNonBlackRatio) {
+    issues.push(
+      `overall non-black ratio ${pct(norm.nonBlackRatio)} below the ` +
+        `${bandPct(band.minNonBlackRatio)} band`,
+    );
+  }
+
+  if (norm.meanIntensity === null) {
+    issues.push('mean recorded intensity could not be measured');
+  } else if (norm.meanIntensity < band.minMeanIntensity) {
+    issues.push(
+      `mean recorded intensity ${norm.meanIntensity.toFixed(2)} below the ` +
+        `${band.minMeanIntensity.toFixed(2)} reference band`,
+    );
+  }
+
+  return { ok: issues.length === 0, issues, band, measured: norm };
+}
+
+/**
+ * Deliverable length/count verdict (parent AC1).
+ *
+ * The three deliverables are only "produced" in the sense the epic requires
+ * when they are **sized to their targets**: a ~45–60 s promo, a > 2 min
+ * showreel and several highlight clips. Measuring the compiled output (rather
+ * than trusting the plan) keeps the AC auditable: a thin source pool shows up
+ * as an explicit, actionable failure instead of a silently short package.
+ *
+ * A missing measurement is a failure, never a silent pass.
+ *
+ * @param {{
+ *   promoMs?: number|null,
+ *   showreelMs?: number|null,
+ *   highlightCount?: number|null,
+ * }} measured
+ * @param {typeof DELIVERABLE_TARGETS} [targets]
+ * @returns {{ ok: boolean, issues: string[], targets: object,
+ *             measured: { promoMs: number|null, showreelMs: number|null,
+ *                         highlightCount: number|null } }}
+ */
+export function assessTargets(measured = {}, targets = DELIVERABLE_TARGETS) {
+  const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
+  const length = (value) => {
+    if (value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const norm = {
+    promoMs: length(measured.promoMs),
+    showreelMs: length(measured.showreelMs),
+    highlightCount: length(measured.highlightCount),
+  };
+  const issues = [];
+
+  if (norm.promoMs === null) {
+    issues.push('promo duration could not be measured');
+  } else if (norm.promoMs < targets.promo.minMs) {
+    issues.push(
+      `promo is ${seconds(norm.promoMs)}, below the ${seconds(targets.promo.minMs)} ` +
+        'target — capture more peak footage',
+    );
+  } else if (norm.promoMs > targets.promo.maxMs) {
+    issues.push(
+      `promo is ${seconds(norm.promoMs)}, above the ${seconds(targets.promo.maxMs)} target`,
+    );
+  }
+
+  if (norm.showreelMs === null) {
+    issues.push('showreel duration could not be measured');
+  } else if (norm.showreelMs < targets.showreel.minMs) {
+    issues.push(
+      `showreel is ${seconds(norm.showreelMs)}, below the ` +
+        `${seconds(targets.showreel.minMs)} target — capture more peak footage`,
+    );
+  }
+
+  if (norm.highlightCount === null) {
+    issues.push('highlight clip count could not be measured');
+  } else if (norm.highlightCount < targets.highlights.count) {
+    issues.push(
+      `only ${norm.highlightCount} highlight clip(s) produced, target ` +
+        `${targets.highlights.count} — capture more peak footage`,
+    );
+  }
+
+  return { ok: issues.length === 0, issues, targets, measured: norm };
 }
 
 /**
@@ -1452,22 +1747,72 @@ export function probeMediaSync(file, { ffprobe = 'ffprobe', execFileSyncImpl = e
  * @returns {{ ok: boolean, sampledFrames: number, maxYavg: number|null,
  *             error?: string }}
  */
-export function sampleBrightnessSync(file, { ffmpeg = 'ffmpeg', execFileSyncImpl = execFileSync, sampleRate = BRIGHTNESS_SAMPLE_RATE } = {}) {
+export function sampleBrightnessSync(
+  file,
+  {
+    ffmpeg = 'ffmpeg',
+    execFileSyncImpl = execFileSync,
+    sampleRate = BRIGHTNESS_SAMPLE_RATE,
+    startSec = null,
+    durationSec = null,
+    blackYavgFloor = BLACK_FRAME_YAVG_FLOOR,
+  } = {},
+) {
+  // An optional window measures part of the deliverable in isolation — the
+  // promo's opening hook (parent AC3) is the first N seconds only.
+  const seek = [];
+  const seekSec = Number(startSec);
+  if (Number.isFinite(seekSec) && seekSec > 0) seek.push('-ss', String(seekSec));
+  const limit = [];
+  const limitSec = Number(durationSec);
+  if (Number.isFinite(limitSec) && limitSec > 0) limit.push('-t', String(limitSec));
   try {
     const stdout = execFileSyncImpl(
       ffmpeg,
-      ['-v', 'error', '-i', file, '-vf', `fps=${sampleRate},signalstats,metadata=print:file=-`, '-f', 'null', '-'],
+      [
+        '-v', 'error',
+        ...seek,
+        '-i', file,
+        ...limit,
+        '-vf', `fps=${sampleRate},signalstats,metadata=print:file=-`,
+        '-f', 'null', '-',
+      ],
       { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
     );
-    return { ok: true, ...parseSignalStatsOutput(stdout) };
+    return { ok: true, ...parseSignalStatsOutput(stdout, { blackYavgFloor }) };
   } catch (error) {
-    return { ok: false, sampledFrames: 0, maxYavg: null, error: error?.message ?? String(error) };
+    return {
+      ok: false,
+      sampledFrames: 0,
+      maxYavg: null,
+      meanYavg: null,
+      nonBlackFrames: 0,
+      nonBlackRatio: null,
+      error: error?.message ?? String(error),
+    };
   }
 }
 
 /** First non-empty trimmed line (for actionable ffmpeg error excerpts). */
 function firstLine(text) {
   return String(text ?? '').split('\n').map((s) => s.trim()).find(Boolean) ?? '';
+}
+
+/**
+ * Actionable excerpt for a failed subprocess: the first meaningful stderr line,
+ * else stdout, else a message that says the failure produced no output at all
+ * (a killed/OOM'd ffmpeg looks exactly like that) plus the exit code and the
+ * number of concatenated cuts, so the failure is diagnosable from the report.
+ */
+function failureDetail(runResult, command) {
+  const cuts = command?.segments?.length ?? 0;
+  const excerpt = firstLine(runResult?.stderr) || firstLine(runResult?.stdout);
+  if (excerpt) return excerpt;
+  return (
+    `ffmpeg exited with code ${runResult?.code ?? 'unknown'} and no error output ` +
+    `(${cuts} cut${cuts === 1 ? '' : 's'} concatenated — the process may have ` +
+    'been killed, e.g. out of memory or by a signal)'
+  );
 }
 
 /** Compact probe summary for the validation report. */
@@ -1518,7 +1863,13 @@ export function compileDeliverables(plan, deps = {}) {
     run = runFfmpegSync,
     probe = probeMediaSync,
     brightness = sampleBrightnessSync,
+    targets = DELIVERABLE_TARGETS,
   } = deps;
+  // Calibrated "the screen is rendering" floor (docs §7.6): the generic 24
+  // floor asks "is there bright content?" and would flag ordinary gameplay in
+  // this dark starfield game as black.
+  const blackYavgFloor =
+    deps.blackYavgFloor ?? EDITORIAL_CONFIG.paceBand.blackYavgFloor;
   const errors = [];
 
   // Probe every unique source once (streams + durations for clamping).
@@ -1541,8 +1892,7 @@ export function compileDeliverables(plan, deps = {}) {
     const argv = [ffmpeg, ...command.argv.slice(1)];
     const runResult = run(argv, {});
     if (!runResult.ok) {
-      const detail =
-        firstLine(runResult.stderr) || firstLine(runResult.stdout) || `exit code ${runResult.code}`;
+      const detail = failureDetail(runResult, command);
       deliverables.push({
         kind: command.kind,
         index: command.index,
@@ -1556,8 +1906,11 @@ export function compileDeliverables(plan, deps = {}) {
       continue;
     }
     const probed = probe(command.output, { ffprobe });
-    const bright = brightness(command.output, { ffmpeg });
-    const verdict = assessDeliverable(probed, bright);
+    const bright = brightness(command.output, {
+      ffmpeg,
+      blackYavgFloor: blackYavgFloor,
+    });
+    const verdict = assessDeliverable(probed, bright, { blackYavgFloor });
     deliverables.push({
       kind: command.kind,
       index: command.index,
@@ -1569,6 +1922,9 @@ export function compileDeliverables(plan, deps = {}) {
       brightness: {
         sampledFrames: bright?.sampledFrames ?? 0,
         maxYavg: bright?.maxYavg ?? null,
+        meanYavg: bright?.meanYavg ?? null,
+        nonBlackFrames: bright?.nonBlackFrames ?? 0,
+        nonBlackRatio: bright?.nonBlackRatio ?? null,
       },
       segments: command.segments,
       measuredMeanIntensity: meanIntensity(command.segments),
@@ -1576,11 +1932,60 @@ export function compileDeliverables(plan, deps = {}) {
     if (!verdict.ok) errors.push(`${command.output}: ${verdict.issues.join('; ')}`);
   }
 
+  // ── Pace verification (parent AC3/AC4) — the promo only ──
+  // The hook is the first `openingWindowMs` of the delivered promo, measured
+  // from the real output (not the plan), so 'opens with action' is evidence
+  // rather than intent. The recorded mean intensity comes from the segments
+  // the promo is actually built from.
+  const promo = deliverables.find((d) => d.kind === 'promo');
+  let pace = null;
+  if (promo && promo.ok) {
+    const opening = brightness(promo.output, {
+      ffmpeg,
+      durationSec: PACE_BAND.openingWindowMs / 1000,
+      blackYavgFloor,
+    });
+    pace = assessPace({
+      openingNonBlackRatio: opening?.nonBlackRatio ?? null,
+      nonBlackRatio: promo.brightness?.nonBlackRatio ?? null,
+      meanIntensity: promo.measuredMeanIntensity,
+    });
+    if (!pace.ok) errors.push(`promo pace: ${pace.issues.join('; ')}`);
+  } else if (deliverables.length > 0) {
+    pace = assessPace({});
+    errors.push('promo pace: could not be measured (the promo did not validate)');
+  }
+
+  // ── Target sizing (parent AC1) — every deliverable, measured output ──
+  // Duration and count come from the compiled artefacts (probe summaries),
+  // so 'sized to target' is evidence rather than a plan-side hope.
+  const byKind = (kind) => deliverables.find((d) => d.kind === kind);
+  const promoDeliverable = byKind('promo');
+  const showreelDeliverable = byKind('showreel');
+  const highlights = deliverables.filter((d) => d.kind === 'highlight');
+  const targetVerdict = assessTargets({
+    promoMs:
+      promoDeliverable?.probe?.durationSec === null || promoDeliverable?.probe?.durationSec === undefined
+        ? null
+        : Number(promoDeliverable?.probe?.durationSec) * 1000,
+    showreelMs:
+      showreelDeliverable?.probe?.durationSec === null || showreelDeliverable?.probe?.durationSec === undefined
+        ? null
+        : Number(showreelDeliverable?.probe?.durationSec) * 1000,
+    highlightCount: highlights.length || null,
+  }, targets);
+  if (!targetVerdict.ok) {
+    errors.push(`deliverable targets: ${targetVerdict.issues.join('; ')}`);
+  }
+
   const ok =
     errors.length === 0 &&
     built.commands.length > 0 &&
     deliverables.length > 0 &&
-    deliverables.every((d) => d.ok);
+    deliverables.every((d) => d.ok) &&
+    pace !== null &&
+    pace.ok &&
+    targetVerdict.ok;
   const report = {
     schemaVersion: 1,
     ok,
@@ -1588,6 +1993,8 @@ export function compileDeliverables(plan, deps = {}) {
     ffprobe,
     outDir,
     deliverables,
+    pace,
+    targets: targetVerdict,
     errors,
   };
   return { ok, deliverables, errors, report };
@@ -1634,6 +2041,36 @@ export function formatCompileSummary(result) {
         extra.length ? `  (${extra.join(', ')})` : ''
       }`,
     );
+  }
+  if (result?.report?.pace) {
+    const pace = result.report.pace;
+    const measured = pace.measured ?? {};
+    const pct = (value) =>
+      value === null || value === undefined ? 'n/a' : `${(value * 100).toFixed(1)}%`;
+    const intensity =
+      measured.meanIntensity === null || measured.meanIntensity === undefined
+        ? 'n/a'
+        : measured.meanIntensity.toFixed(2);
+    lines.push(
+      `  pace ${pace.ok ? 'OK  ' : 'FAIL'}  opening non-black ${pct(measured.openingNonBlackRatio)} ` +
+        `(band ${pct(pace.band?.minOpeningNonBlackRatio)}), overall non-black ` +
+        `${pct(measured.nonBlackRatio)} (band ${pct(pace.band?.minNonBlackRatio)}), ` +
+        `mean intensity ${intensity} (band ${Number(pace.band?.minMeanIntensity).toFixed(2)})`,
+    );
+    for (const issue of pace.issues ?? []) lines.push(`  pace issue: ${issue}`);
+  }
+  if (result?.report?.targets) {
+    const targets = result.report.targets;
+    const measured = targets.measured ?? {};
+    const seconds = (ms) =>
+      ms === null || ms === undefined ? 'n/a' : `${(Number(ms) / 1000).toFixed(1)}s`;
+    lines.push(
+      `  targets ${targets.ok ? 'OK  ' : 'FAIL'}  promo ${seconds(measured.promoMs)} ` +
+        `(target ${seconds(targets.targets?.promo?.minMs)}–${seconds(targets.targets?.promo?.maxMs)}), ` +
+        `showreel ${seconds(measured.showreelMs)} (target > ${seconds(targets.targets?.showreel?.minMs)}), ` +
+        `highlights ${measured.highlightCount ?? 'n/a'} (target ${targets.targets?.highlights?.count ?? 'n/a'})`,
+    );
+    for (const issue of targets.issues ?? []) lines.push(`  target issue: ${issue}`);
   }
   for (const error of result?.errors ?? []) lines.push(`  error: ${error}`);
   return lines.join('\n');

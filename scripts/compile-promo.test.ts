@@ -96,7 +96,10 @@ import {
   DEDUPE_DURATION_TOLERANCE_MS,
   DEDUPE_INTENSITY_TOLERANCE,
   DEFAULT_HIGHLIGHT_OPTIONS,
+  BLACK_FRAME_YAVG_FLOOR,
+  CUT_CADENCE,
   DEFAULT_TARGETS,
+  DELIVERABLE_TARGETS,
   DELIVERABLE_FPS,
   DELIVERABLE_HEIGHT,
   DELIVERABLE_WIDTH,
@@ -107,6 +110,8 @@ import {
   USAGE_TEXT,
   VP9_CRF,
   assessDeliverable,
+  assessPace,
+  assessTargets,
   buildCoverageManifest,
   buildDeliverableArgv,
   buildDeliverableCommands,
@@ -127,7 +132,9 @@ import {
   probeVideoDurationSec,
   resolveFfmpegTools,
   runFfmpegSync,
+  sampleBrightnessSync,
   selectHighlightWindows,
+  splitWindowIntoCuts,
   sourceSeriesPath,
   sourceWebmPath,
   windowFeatures,
@@ -423,6 +430,8 @@ describe('EDITORIAL_CONFIG (AC1)', () => {
     // Dedupe tolerances
     expect(EDITORIAL_CONFIG.dedupeTolerances.intensity).toBe(DEDUPE_INTENSITY_TOLERANCE);
     expect(EDITORIAL_CONFIG.dedupeTolerances.durationMs).toBe(DEDUPE_DURATION_TOLERANCE_MS);
+    // Pace reference band (AC3/AC4 — documented in docs/dev/action-intensity.md)
+    expect(EDITORIAL_CONFIG.paceBand).toBeDefined();
   });
 
   it('EDITORIAL_CATEGORIES derives from EDITORIAL_CONFIG.categories', () => {
@@ -440,6 +449,8 @@ describe('EDITORIAL_CONFIG (AC1)', () => {
     expect(Object.isFrozen(EDITORIAL_CONFIG.targets)).toBe(true);
     expect(Object.isFrozen(EDITORIAL_CONFIG.highlightKnobs)).toBe(true);
     expect(Object.isFrozen(EDITORIAL_CONFIG.dedupeTolerances)).toBe(true);
+    expect(Object.isFrozen(EDITORIAL_CONFIG.paceBand)).toBe(true);
+    expect(Object.isFrozen(EDITORIAL_CONFIG.cutCadence)).toBe(true);
   });
 
   it('exposes the exact tunable knobs that §7.5 specifies', () => {
@@ -461,7 +472,7 @@ describe('EDITORIAL_CONFIG (AC1)', () => {
 
   it('prompts the four deliverable targets at their default sizes', () => {
     expect(EDITORIAL_CONFIG.targets).toEqual({
-      promo: { minMs: 45_000, maxMs: 60_000 },
+      promo: { minMs: 45_000, maxMs: 60_000, safetyMs: 4_000 },
       showreel: { minMs: 120_000 },
       highlights: { count: 5 },
     });
@@ -562,7 +573,7 @@ describe('buildEditPlan — sized plan (AH-0MVDV47VO0081VUK AC4)', () => {
 
   it('defaults the three deliverable targets', () => {
     expect(DEFAULT_TARGETS).toEqual({
-      promo: { minMs: 45_000, maxMs: 60_000 },
+      promo: { minMs: 45_000, maxMs: 60_000, safetyMs: 4_000 },
       showreel: { minMs: 120_000 },
       highlights: { count: 5 },
     });
@@ -616,6 +627,100 @@ describe('buildEditPlan — sized plan (AH-0MVDV47VO0081VUK AC4)', () => {
       ),
     ]);
     expect(plan.promo).toEqual([]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// AC4 — Cut cadence (attention-grabbing pace: short cuts on peaks)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('splitWindowIntoCuts — editorial cut cadence (parent AC4)', () => {
+  it('pins the committed cadence in the editorial config', () => {
+    expect(CUT_CADENCE).toEqual({ maxCutMs: 6_000, minCutMs: 1_000 });
+    expect(Object.isFrozen(EDITORIAL_CONFIG.cutCadence)).toBe(true);
+    expect(CUT_CADENCE).toBe(EDITORIAL_CONFIG.cutCadence);
+  });
+
+  it('keeps a window shorter than the maximum as a single cut', () => {
+    expect(splitWindowIntoCuts({ startMs: 1_000, endMs: 4_000 })).toEqual([
+      { startMs: 1_000, endMs: 4_000 },
+    ]);
+  });
+
+  it('splits a long merged window into contiguous cuts no longer than the maximum', () => {
+    const cuts = splitWindowIntoCuts({ startMs: 0, endMs: 20_000 });
+    expect(cuts.length).toBeGreaterThan(1);
+    for (const cut of cuts) {
+      expect(cut.endMs - cut.startMs).toBeLessThanOrEqual(CUT_CADENCE.maxCutMs);
+    }
+    // Contiguous and exactly covering the window — no footage is lost.
+    expect(cuts[0].startMs).toBe(0);
+    expect(cuts[cuts.length - 1].endMs).toBe(20_000);
+    for (let i = 1; i < cuts.length; i++) expect(cuts[i].startMs).toBe(cuts[i - 1].endMs);
+  });
+
+  it('folds a sub-minimum tail into the previous cut (no micro-cuts)', () => {
+    // 11 s at a 6 s maximum leaves a 5 s tail — kept. 11.5 s leaves 0.5 s.
+    const cuts = splitWindowIntoCuts({ startMs: 0, endMs: 11_500 });
+    expect(cuts).toEqual([
+      { startMs: 0, endMs: 6_000 },
+      { startMs: 6_000, endMs: 11_500 },
+    ]);
+  });
+
+  it('returns no cuts for a degenerate window and one cut when cadence is disabled', () => {
+    expect(splitWindowIntoCuts({ startMs: 5_000, endMs: 5_000 })).toEqual([]);
+    expect(splitWindowIntoCuts({ startMs: 5_000, endMs: 4_000 })).toEqual([]);
+    expect(
+      splitWindowIntoCuts({ startMs: 0, endMs: 20_000 }, { maxCutMs: 0, minCutMs: 0 }),
+    ).toEqual([{ startMs: 0, endMs: 20_000 }]);
+  });
+
+  it('splits long peak windows into several promo cuts (pace, not one long take)', () => {
+    // One continuous busy stretch of ~24 s: a single §7.5 window. Intensity
+    // falls steadily so each successive cut has a distinct motivating peak
+    // (otherwise the near-identical dedupe would legitimately keep only one).
+    const points = [];
+    for (let i = 0, t = 5_000; t <= 30_000; i++, t += 1_000) {
+      points.push(pt(t, Number((0.95 - i * 0.06).toFixed(2)), 0.3, { enemies: 1 }));
+    }
+    const plan = buildEditPlan([source('gameplay-run-LONG', points)]);
+    // The window is presented as multiple cuts, each within the cadence cap.
+    expect(plan.showreel.length).toBeGreaterThan(1);
+    for (const segment of plan.showreel) {
+      expect(segment.videoOutMs - segment.videoInMs).toBeLessThanOrEqual(CUT_CADENCE.maxCutMs);
+    }
+    // Every cut is contiguous with the next — the whole peak stretch is used.
+    const ordered = [...plan.showreel].sort((a, b) => a.videoInMs - b.videoInMs);
+    for (let i = 1; i < ordered.length; i++) {
+      expect(ordered[i].videoInMs).toBe(ordered[i - 1].videoOutMs);
+    }
+  });
+});
+
+describe('buildEditPlan — promo sizing keeps the encode safety margin (AC1)', () => {
+  it('fills the promo to the target ceiling minus the measured encode overhead', () => {
+    // A pool of many 6 s cuts at distinct intensities: without the safety
+    // margin the plan would fill to a nominal 60 s, which re-encodes to ~62.6 s
+    // and breaks the ~45–60 s band (measured in the label run, docs §7.6).
+    // 30 well-separated peaks whose motivating intensities differ by more than
+    // the dedupe tolerance and whose window lengths vary (2.5 / 2.9 / 3.3 s via
+    // a secondary peak inside the merge gap), so the pool yields ~90 s of
+    // distinct cuts — more than the promo can hold.
+    const points = [];
+    for (let i = 0; i < 30; i++) {
+      const t = 5_000 + i * 8_000;
+      const intensity = Number((0.99 - i * 0.06).toFixed(2));
+      points.push(pt(t, intensity, 0.2, { enemies: 1 }));
+      if (i % 3) points.push(pt(t + (i % 3) * 400, intensity, 0.2, { enemies: 1 }));
+    }
+    const plan = buildEditPlan([source('gameplay-run-BIG', points, { durationMs: 300_000 })]);
+    const nominalMs = plan.promo.reduce((sum, seg) => sum + (seg.videoOutMs - seg.videoInMs), 0);
+    expect(nominalMs).toBeLessThanOrEqual(
+      DEFAULT_TARGETS.promo.maxMs - (DEFAULT_TARGETS.promo.safetyMs ?? 0),
+    );
+    expect(nominalMs).toBeGreaterThanOrEqual(DEFAULT_TARGETS.promo.minMs);
+    expect(DEFAULT_TARGETS.promo.safetyMs).toBeGreaterThan(0);
   });
 });
 
@@ -1140,6 +1245,22 @@ describe('compile-promo CLI — AC6 contract (AH-0MVDV4OKN001OT18)', () => {
 // AC3 output validation, AC4 clear errors, AC6 hermetic separation)
 // ────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A healthy measured brightness sample (above the documented pace band):
+ * every sampled frame is non-black and the mean luma is well above the
+ * black floor.
+ */
+function brightFixture() {
+  return {
+    ok: true,
+    sampledFrames: 44,
+    maxYavg: 128.3,
+    meanYavg: 96.2,
+    nonBlackFrames: 44,
+    nonBlackRatio: 1,
+  };
+}
+
 /** A selection-manifest-shaped segment fixture for command building. */
 function seg(runId: string, videoInMs: number, videoOutMs: number) {
   return {
@@ -1161,6 +1282,15 @@ function planOf(
   highlights: ReturnType<typeof seg>[] = [seg('runA', 500, 3_000)],
 ) {
   return { promo, showreel, highlights, coverage: [], uncoveredFeatures: [] };
+}
+
+/** A plan with the full five highlight clips (the default target count). */
+function fullPlan() {
+  return planOf(
+    [seg('runA', 500, 3_000), seg('runB', 0, 2_200)],
+    [seg('runB', 0, 2_200), seg('runA', 500, 3_000)],
+    [1, 2, 3, 4, 5].map((i) => seg('runA', 500 + i * 400, 3_000 + i * 400)),
+  );
 }
 
 /** A valid ffprobe-style summary (960×540 vp9 + stereo opus) for fixtures. */
@@ -1205,6 +1335,19 @@ function probeOf(
     });
   }
   return { ok: true, streams, formatDuration: overrides.duration ?? 30 };
+}
+
+/**
+ * A probe whose duration is derived from the deliverable it describes, so the
+ * *default* target band (promo 45-60 s, showreel > 2 min) is exercised rather
+ * than bypassed: promo.webm reports 50 s, showreel.webm 130 s, highlights 3 s
+ * and source footage 30 s.
+ */
+function targetProbeOf(file: string) {
+  if (file.endsWith('showreel.webm')) return probeOf({ duration: 130 });
+  if (/promo\.webm$/.test(file)) return probeOf({ duration: 50 });
+  if (/highlight-\d+\.webm$/.test(file)) return probeOf({ duration: 3 });
+  return probeOf();
 }
 
 /** A per-source probe map keyed by WebM path for a plan fixture. */
@@ -1312,9 +1455,279 @@ describe('ffmpeg driver — probe & brightness parsing (AC3, pure)', () => {
   });
 
   it('parses signalstats YAVG lines into a brightness summary', () => {
-    const text = 'lavfi.signalstats.YAVG=125.5\nlavfi.signalstats.YAVG=16\nlavfi.signalstats.YMIN=4\n';
-    expect(parseSignalStatsOutput(text)).toEqual({ sampledFrames: 2, maxYavg: 125.5 });
-    expect(parseSignalStatsOutput('')).toEqual({ sampledFrames: 0, maxYavg: null });
+    const text =
+      'lavfi.signalstats.YAVG=125.5\nlavfi.signalstats.YAVG=16\nlavfi.signalstats.YAVG=88\nlavfi.signalstats.YMIN=4\n';
+    // Non-black counting uses the documented BLACK_FRAME_YAVG_FLOOR (AC3).
+    expect(parseSignalStatsOutput(text)).toEqual({
+      sampledFrames: 3,
+      maxYavg: 125.5,
+      meanYavg: 76.5,
+      nonBlackFrames: 2,
+      nonBlackRatio: 0.667,
+    });
+    expect(parseSignalStatsOutput('')).toEqual({
+      sampledFrames: 0,
+      maxYavg: null,
+      meanYavg: null,
+      nonBlackFrames: 0,
+      nonBlackRatio: null,
+    });
+  });
+
+  it('honours an explicit black-floor override when counting non-black frames', () => {
+    const text = 'lavfi.signalstats.YAVG=20\nlavfi.signalstats.YAVG=50\n';
+    expect(parseSignalStatsOutput(text, { blackYavgFloor: 40 })).toEqual({
+      sampledFrames: 2,
+      maxYavg: 50,
+      meanYavg: 35,
+      nonBlackFrames: 1,
+      nonBlackRatio: 0.5,
+    });
+  });
+});
+
+describe('calibrated luma floor — dark starfield footage (docs §7.6)', () => {
+  it('keeps the calibrated screen-render floor below the generic bright-content floor', () => {
+    // Measured gameplay frames sit at YAVG ~17–19; the generic 24 floor asks
+    // "is there bright content?" and would call ordinary gameplay black.
+    expect(EDITORIAL_CONFIG.paceBand.blackYavgFloor).toBe(12);
+    expect(EDITORIAL_CONFIG.paceBand.blackYavgFloor).toBeLessThan(BLACK_FRAME_YAVG_FLOOR);
+  });
+
+  it('counts ordinary dark-but-rendered gameplay frames as non-black', () => {
+    // Six 1 fps samples of real gameplay (YAVG 17–19) and one bright flash.
+    const text = [
+      'lavfi.signalstats.YAVG=18.7',
+      'lavfi.signalstats.YAVG=18.4',
+      'lavfi.signalstats.YAVG=19.0',
+      'lavfi.signalstats.YAVG=17.9',
+      'lavfi.signalstats.YAVG=93.2',
+      'lavfi.signalstats.YAVG=18.5',
+    ].join('\n');
+    const calibrated = parseSignalStatsOutput(text, { blackYavgFloor: 12 });
+    expect(calibrated.nonBlackRatio).toBe(1);
+    // The generic floor would have called five of the six frames black.
+    expect(parseSignalStatsOutput(text).nonBlackRatio).toBeCloseTo(0.167, 3);
+  });
+
+  it('passes the calibrated floor through the brightness sampler', () => {
+    const calls: string[][] = [];
+    const sample = sampleBrightnessSync('/tmp/dark.webm', {
+      ffmpeg: '/fake/ffmpeg',
+      blackYavgFloor: 12,
+      execFileSyncImpl: (_bin: string, argv: string[]) => {
+        calls.push(argv);
+        return 'lavfi.signalstats.YAVG=18.7\nlavfi.signalstats.YAVG=19.1\n';
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(sample.nonBlackRatio).toBe(1);
+  });
+
+  it('validates a deliverable whose brightest frame is ordinary gameplay luma', () => {
+    const probe = probeOf();
+    // Real 6 s cut: YAVG ~19 with no flash — genuine gameplay, not black air.
+    const dark = {
+      sampledFrames: 6,
+      maxYavg: 19.0,
+      meanYavg: 18.6,
+      nonBlackFrames: 6,
+      nonBlackRatio: 1,
+    };
+    // The generic floor rejects it...
+    expect(assessDeliverable(probe, dark).ok).toBe(false);
+    // ...the calibrated floor (used by the compile pipeline) accepts it.
+    expect(assessDeliverable(probe, dark, { blackYavgFloor: 12 }).ok).toBe(true);
+  });
+
+  it('still rejects a genuinely blank output at the calibrated floor', () => {
+    const black = {
+      sampledFrames: 6,
+      maxYavg: 0,
+      meanYavg: 0,
+      nonBlackFrames: 0,
+      nonBlackRatio: 0,
+    };
+    expect(assessDeliverable(probeOf(), black, { blackYavgFloor: 12 }).ok).toBe(false);
+  });
+
+  it('uses the calibrated floor end to end in compileDeliverables', () => {
+    const result = compileDeliverables(fullPlan(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir: `${CAPTURE_OUTPUT_DIR}/compile-unit`,
+      probe: targetProbeOf,
+      // Ordinary dark gameplay luma, above the calibrated floor and below the
+      // generic one.
+      brightness: () => ({
+        ok: true,
+        sampledFrames: 6,
+        maxYavg: 19,
+        meanYavg: 18.6,
+        nonBlackFrames: 6,
+        nonBlackRatio: 1,
+      }),
+      run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.report.pace!.measured.nonBlackRatio).toBe(1);
+  });
+});
+
+describe('promo pace — assessPace (AC3/AC4, pure)', () => {
+  const band = EDITORIAL_CONFIG.paceBand;
+
+  it('pins the documented reference band in the editorial config (AC3)', () => {
+    expect(band).toEqual({
+      openingWindowMs: 5_000,
+      minOpeningNonBlackRatio: 0.9,
+      minNonBlackRatio: 0.9,
+      minMeanIntensity: 0.3,
+      // Calibrated "the screen is rendering" floor (docs §7.6) — below the
+      // generic 24 floor because gameplay frames sit at YAVG ~17–19.
+      blackYavgFloor: 12,
+    });
+    expect(band.blackYavgFloor).toBeLessThan(BLACK_FRAME_YAVG_FLOOR);
+    expect(Object.isFrozen(band)).toBe(true);
+  });
+
+  it('passes a promo above the band', () => {
+    const verdict = assessPace({
+      openingNonBlackRatio: 1,
+      nonBlackRatio: 0.97,
+      meanIntensity: 0.42,
+    });
+    expect(verdict.ok).toBe(true);
+    expect(verdict.issues).toEqual([]);
+    expect(verdict.measured).toEqual({
+      openingNonBlackRatio: 1,
+      nonBlackRatio: 0.97,
+      meanIntensity: 0.42,
+    });
+  });
+
+  it('fails when the opening or overall sampled frame is dead air', () => {
+    const opening = assessPace({
+      openingNonBlackRatio: 0.3,
+      nonBlackRatio: 0.99,
+      meanIntensity: 0.5,
+    });
+    expect(opening.ok).toBe(false);
+    expect(opening.issues.some((i) => i.includes('opening non-black ratio 30.0% below the 90.0% band'))).toBe(true);
+
+    const overall = assessPace({
+      openingNonBlackRatio: 1,
+      nonBlackRatio: 0.6,
+      meanIntensity: 0.5,
+    });
+    expect(overall.ok).toBe(false);
+    expect(overall.issues.some((i) => i.includes('overall non-black ratio 60.0% below the 90.0% band'))).toBe(true);
+  });
+
+  it('fails when the recorded mean intensity is below the reference band', () => {
+    const verdict = assessPace({
+      openingNonBlackRatio: 1,
+      nonBlackRatio: 0.99,
+      meanIntensity: 0.1,
+    });
+    expect(verdict.ok).toBe(false);
+    expect(
+      verdict.issues.some((i) => i.includes('mean recorded intensity 0.10 below the 0.30 reference band')),
+    ).toBe(true);
+  });
+
+  it('fails when a required metric cannot be measured (never silently passes)', () => {
+    const verdict = assessPace({
+      openingNonBlackRatio: null,
+      nonBlackRatio: null,
+      meanIntensity: null,
+    });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.issues).toHaveLength(3);
+    expect(verdict.issues.every((i) => i.includes('could not be measured'))).toBe(true);
+  });
+});
+
+describe('deliverable targets — assessTargets (AC1, pure)', () => {
+  it('passes a package sized to its targets', () => {
+    const verdict = assessTargets({
+      promoMs: 50_000,
+      showreelMs: 140_000,
+      highlightCount: 5,
+    });
+    expect(verdict.ok).toBe(true);
+    expect(verdict.issues).toEqual([]);
+    expect(verdict.measured).toEqual({
+      promoMs: 50_000,
+      showreelMs: 140_000,
+      highlightCount: 5,
+    });
+  });
+
+  it('fails when the promo is shorter than its target', () => {
+    const verdict = assessTargets({
+      promoMs: 5_100,
+      showreelMs: 140_000,
+      highlightCount: 5,
+    });
+    expect(verdict.ok).toBe(false);
+    expect(
+      verdict.issues.some((i) => i.includes('promo is 5.1s, below the 45.0s target')),
+    ).toBe(true);
+  });
+
+  it('fails when the showreel is shorter than its target', () => {
+    const verdict = assessTargets({
+      promoMs: 50_000,
+      showreelMs: 80_000,
+      highlightCount: 5,
+    });
+    expect(verdict.ok).toBe(false);
+    expect(
+      verdict.issues.some((i) => i.includes('showreel is 80.0s, below the 120.0s target')),
+    ).toBe(true);
+  });
+
+  it('fails when too few highlight clips are produced', () => {
+    const verdict = assessTargets({
+      promoMs: 50_000,
+      showreelMs: 140_000,
+      highlightCount: 2,
+    });
+    expect(verdict.ok).toBe(false);
+    expect(
+      verdict.issues.some((i) => i.includes('only 2 highlight clip(s) produced, target 5')),
+    ).toBe(true);
+  });
+
+  it('fails when the promo exceeds its target ceiling', () => {
+    const verdict = assessTargets({
+      promoMs: 90_000,
+      showreelMs: 140_000,
+      highlightCount: 5,
+    });
+    expect(verdict.ok).toBe(false);
+    expect(
+      verdict.issues.some((i) => i.includes('above the 60.0s target')),
+    ).toBe(true);
+  });
+
+  it('fails when a measurement is missing (never silently passes)', () => {
+    const verdict = assessTargets({});
+    expect(verdict.ok).toBe(false);
+    expect(verdict.issues).toHaveLength(3);
+    expect(verdict.issues.every((i) => i.includes('could not be measured'))).toBe(true);
+  });
+
+  it('derives from EDITORIAL_CONFIG.targets (one source of truth)', () => {
+    expect(DELIVERABLE_TARGETS).toBe(EDITORIAL_CONFIG.targets);
+    expect(DELIVERABLE_TARGETS).toEqual({
+      promo: { minMs: 45_000, maxMs: 60_000, safetyMs: 4_000 },
+      showreel: { minMs: 120_000 },
+      highlights: { count: 5 },
+    });
+    expect(Object.isFrozen(DELIVERABLE_TARGETS)).toBe(true);
   });
 });
 
@@ -1496,14 +1909,18 @@ describe('ffmpeg driver — compile orchestration with injected subprocesses (AC
   const outDir = `${CAPTURE_OUTPUT_DIR}/compile-unit`;
 
   it('compiles and validates every deliverable hermetically', () => {
-    const plan = planOf();
+    const plan = fullPlan();
     const ran: (readonly string[])[] = [];
+    const measuredWindows: (number | null | undefined)[] = [];
     const result = compileDeliverables(plan, {
       ffmpeg: '/fake/ffmpeg',
       ffprobe: '/fake/ffprobe',
       outDir,
-      probe: () => probeOf(),
-      brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 128.3 }),
+      probe: targetProbeOf,
+      brightness: (_file: string, opts?: { durationSec?: number }) => {
+        measuredWindows.push(opts?.durationSec);
+        return brightFixture();
+      },
       run: (argv: readonly string[]) => {
         ran.push(argv);
         return { ok: true, code: 0, stdout: '', stderr: '' };
@@ -1511,11 +1928,15 @@ describe('ffmpeg driver — compile orchestration with injected subprocesses (AC
     });
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
-    expect(ran).toHaveLength(3);
+    expect(ran).toHaveLength(7);
     expect(result.deliverables.map((d) => d.name)).toEqual([
       'promo',
       'showreel',
       'highlight-01',
+      'highlight-02',
+      'highlight-03',
+      'highlight-04',
+      'highlight-05',
     ]);
     for (const d of result.deliverables) {
       expect(d.ok).toBe(true);
@@ -1523,11 +1944,43 @@ describe('ffmpeg driver — compile orchestration with injected subprocesses (AC
       expect(d.probe.height).toBe(DELIVERABLE_HEIGHT);
       expect(d.probe.audioCodec).toBe('opus');
       expect(d.brightness.maxYavg).toBe(128.3);
+      // Per-clip recorded intensity is printed in the report (AC4).
       expect(d.measuredMeanIntensity).toBeCloseTo(0.8, 3);
+      expect(d.brightness.nonBlackRatio).toBe(1);
     }
+    // The promo's opening hook is measured in its own window (AC3).
+    expect(measuredWindows).toContain(EDITORIAL_CONFIG.paceBand.openingWindowMs / 1000);
     // The resolved binary replaces argv[0] for the actual run.
     expect(ran[0][0]).toBe('/fake/ffmpeg');
     expect(ran[0]).toContain('-crf');
+    // The report carries the auditable pace verdict + its evidence.
+    const pace = result.report.pace!;
+    expect(pace.ok).toBe(true);
+    expect(pace.measured).toEqual({
+      openingNonBlackRatio: 1,
+      nonBlackRatio: 1,
+      meanIntensity: 0.8,
+    });
+    expect(pace.band).toBe(EDITORIAL_CONFIG.paceBand);
+  });
+
+  it('fails the compile when the promo opens on dead air or lacks intensity', () => {
+    const deadAir = compileDeliverables(planOf(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      probe: targetProbeOf,
+      brightness: (_file: string, opts?: { durationSec?: number }) => ({
+        ...brightFixture(),
+        nonBlackRatio: opts?.durationSec ? 0.2 : 1,
+      }),
+      run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+    });
+    expect(deadAir.ok).toBe(false);
+    expect(deadAir.report.pace!.ok).toBe(false);
+    expect(deadAir.errors.some((e) => e.includes('promo pace') && e.includes('opening'))).toBe(
+      true,
+    );
   });
 
   it('reports an ffmpeg failure as an actionable message, not a stack trace', () => {
@@ -1535,8 +1988,8 @@ describe('ffmpeg driver — compile orchestration with injected subprocesses (AC
       ffmpeg: '/fake/ffmpeg',
       ffprobe: '/fake/ffprobe',
       outDir,
-      probe: () => probeOf(),
-      brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 128.3 }),
+      probe: targetProbeOf,
+      brightness: brightFixture,
       run: () => ({
         ok: false,
         code: 1,
@@ -1550,13 +2003,34 @@ describe('ffmpeg driver — compile orchestration with injected subprocesses (AC
     expect(result.errors.some((e) => e.includes('Assertion failed'))).toBe(true);
   });
 
+  it('explains an ffmpeg failure that produced no output at all', () => {
+    // A killed (e.g. OOM'd) ffmpeg exits non-zero with empty stdout/stderr —
+    // the report must still say something actionable.
+    const result = compileDeliverables(fullPlan(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      probe: targetProbeOf,
+      brightness: brightFixture,
+      run: () => ({ ok: false, code: 1, stdout: '', stderr: '' }),
+    });
+    expect(result.ok).toBe(false);
+    expect(
+      result.errors.some(
+        (e) =>
+          e.includes('ffmpeg exited with code 1 and no error output') &&
+          e.includes('concatenated'),
+      ),
+    ).toBe(true);
+  });
+
   it('flags a validation failure (black output) and fails the compile', () => {
     const result = compileDeliverables(planOf(), {
       ffmpeg: '/fake/ffmpeg',
       ffprobe: '/fake/ffprobe',
       outDir,
-      probe: () => probeOf(),
-      brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 0 }),
+      probe: targetProbeOf,
+      brightness: () => ({ ...brightFixture(), maxYavg: 0, nonBlackRatio: 0, nonBlackFrames: 0 }),
       run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
     });
     expect(result.ok).toBe(false);
@@ -1567,12 +2041,12 @@ describe('ffmpeg driver — compile orchestration with injected subprocesses (AC
   });
 
   it('formats a readable summary for stdout', () => {
-    const result = compileDeliverables(planOf(), {
+    const result = compileDeliverables(fullPlan(), {
       ffmpeg: '/fake/ffmpeg',
       ffprobe: '/fake/ffprobe',
       outDir,
-      probe: () => probeOf(),
-      brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 128.3 }),
+      probe: targetProbeOf,
+      brightness: brightFixture,
       run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
     });
     const text = formatCompileSummary(result);
@@ -1580,6 +2054,59 @@ describe('ffmpeg driver — compile orchestration with injected subprocesses (AC
     expect(text).toContain('promo.webm');
     expect(text).toContain('meanIntensity');
     expect(text).toContain('opus 2ch');
+    // Pace evidence is printed so the claim is auditable from the summary.
+    expect(text).toContain('pace OK');
+    expect(text).toContain('opening non-black 100.0%');
+    expect(text).toContain('mean intensity 0.80');
+    // Target sizing evidence is printed so AC1 is auditable from the summary.
+    expect(text).toContain('targets OK');
+    expect(text).toContain('promo 50.0s');
+    expect(text).toContain('showreel 130.0s');
+    expect(text).toContain('highlights 5 (target 5)');
+  });
+
+  it('fails the compile when the package is undersized (thin source pool)', () => {
+    const result = compileDeliverables(planOf(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      // Every deliverable reports the default 30 s probe duration → the promo
+      // is below 45 s and the showreel below 2 min, so the whole compile fails
+      // even though each clip itself validates (AC1 must gate the package).
+      probe: () => probeOf(),
+      brightness: brightFixture,
+      run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.report.targets!.ok).toBe(false);
+    expect(result.errors.some((e) => e.includes('promo is 30.0s, below the 45.0s target'))).toBe(
+      true,
+    );
+    expect(result.errors.some((e) => e.includes('showreel is 30.0s, below the 120.0s target'))).toBe(
+      true,
+    );
+    expect(
+      result.errors.some((e) => e.includes('only 1 highlight clip(s) produced, target 5')),
+    ).toBe(true);
+  });
+
+  it('measures a brightness window by passing a seek/limit to the sampler', () => {
+    const calls: string[][] = [];
+    const sample = sampleBrightnessSync('/tmp/promo.webm', {
+      ffmpeg: '/fake/ffmpeg',
+      startSec: 1,
+      durationSec: 5,
+      execFileSyncImpl: (_bin: string, argv: string[]) => {
+        calls.push(argv);
+        return 'lavfi.signalstats.YAVG=90\nlavfi.signalstats.YAVG=110\n';
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('-ss');
+    expect(calls[0][calls[0].indexOf('-ss') + 1]).toBe('1');
+    expect(calls[0][calls[0].indexOf('-t') + 1]).toBe('5');
+    expect(sample.nonBlackRatio).toBe(1);
+    expect(sample.meanYavg).toBe(100);
   });
 
   it('captures subprocess failure output instead of throwing', () => {
@@ -1605,6 +2132,25 @@ describe('ffmpeg driver — compile orchestration with injected subprocesses (AC
 // ────────────────────────────────────────────────────────────────────────────
 
 const demoSeries = `{"schemaVersion":1,"runSeed":7,"sampleRateHz":10,"categories":["playerBullets","drops","enemies","bosses"]}\n{"t":3000,"intensity":0.8,"burstiness":0.3,"breakdown":{"playerBullets":2}}\n`;
+
+/**
+ * A series with five well-separated peaks, so the edit plan yields the full
+ * five highlight clips the default target band requires (peaks are spaced well
+ * beyond the 1 s merge gap and their intensities differ by more than the
+ * dedupe tolerance).
+ */
+const demoSeriesFivePeaks = [
+  '{"schemaVersion":1,"runSeed":7,"sampleRateHz":10,"categories":["playerBullets","drops","enemies","bosses"]}',
+  ...[[2000, 0.95], [5000, 0.88], [8000, 0.81], [11000, 0.74], [14000, 0.67]].map(
+    ([t, intensity], i) =>
+      JSON.stringify({
+        t,
+        intensity,
+        burstiness: 0.4,
+        breakdown: i === 1 ? { drops: 2 } : { playerBullets: 2, enemies: 1 },
+      }),
+  ),
+].join('\n') + '\n';
 
 /** An in-memory fs mirroring the capture-output layout. */
 function memoryFs(files: Record<string, string>) {
@@ -1647,16 +2193,17 @@ describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
 
   it('compiles + validates end to end through the CLI (injected subprocesses)', () => {
     const files: Record<string, string> = {
-      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.action.jsonl`]: demoSeries,
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.action.jsonl`]: demoSeriesFivePeaks,
       [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.webm`]: '',
+      [`${CAPTURE_OUTPUT_DIR}/unit`]: '',
     };
     const result = compilePromoMain(
       ['--compile', '--runs', 'gameplay-demo', '--out', 'plan.json', '--out-dir', `${CAPTURE_OUTPUT_DIR}/unit`],
       memoryFs(files),
       {
         resolveTools: () => ({ ffmpeg: '/fake/ffmpeg', ffprobe: '/fake/ffprobe' }),
-        probe: () => probeOf(),
-        brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 128.3 }),
+        probe: targetProbeOf,
+        brightness: brightFixture,
         run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
       },
     );
@@ -1669,10 +2216,33 @@ describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
     ).toContain('"ok": true');
   });
 
+  it('fails clearly when the output directory does not exist (AC5)', () => {
+    const files: Record<string, string> = {
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.action.jsonl`]: demoSeries,
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.webm`]: '',
+    };
+    const result = compilePromoMain(
+      ['--compile', '--runs', 'gameplay-demo', '--out-dir', `${CAPTURE_OUTPUT_DIR}/missing`],
+      memoryFs(files),
+      {
+        resolveTools: () => ({ ffmpeg: '/fake/ffmpeg', ffprobe: '/fake/ffprobe' }),
+        probe: targetProbeOf,
+        brightness: brightFixture,
+        run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+      },
+    );
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain(
+      `output directory ${CAPTURE_OUTPUT_DIR}/missing does not exist`,
+    );
+    expect(result.stdout).toContain('mkdir -p');
+  });
+
   it('returns a failing exit code when a deliverable fails validation', () => {
     const files: Record<string, string> = {
       [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.action.jsonl`]: demoSeries,
       [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.webm`]: '',
+      [`${CAPTURE_OUTPUT_DIR}/unit`]: '',
     };
     const result = compilePromoMain(
       ['--compile', '--runs', 'gameplay-demo', '--out-dir', `${CAPTURE_OUTPUT_DIR}/unit`],
@@ -1680,7 +2250,7 @@ describe('CLI --compile — AC5 entry point (AH-0MVDV4PNZ004ZWOZ)', () => {
       {
         resolveTools: () => ({ ffmpeg: '/fake/ffmpeg', ffprobe: '/fake/ffprobe' }),
         probe: () => probeOf(),
-        brightness: () => ({ ok: true, sampledFrames: 44, maxYavg: 0 }),
+        brightness: () => ({ ...brightFixture(), maxYavg: 0, nonBlackRatio: 0, nonBlackFrames: 0 }),
         run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
       },
     );
