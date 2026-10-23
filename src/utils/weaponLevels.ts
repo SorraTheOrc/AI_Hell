@@ -728,17 +728,25 @@ export function resolveVariable(
  * stats at `fromLevel` with those at `toLevel`.
  *
  * Only the MVP-visible variables
- * ({@link MVP_UPGRADE_VARIABLES}) are considered.  Each variable that
- * actually changes between the two levels contributes one formatted
- * fragment (see {@link formatDelta}); fragments are joined with `", "`.
+ * ({@link MVP_UPGRADE_VARIABLES}) are considered, and only those that can
+ * actually change *this* weapon's behaviour:
  *
- * When no MVP variable changes (the curve has flattened at the cap) the
- * result is the empty string.
+ * - The four MVP variables apply to every weapon.
+ * - `aoeRadius` is only listed for weapons that declare an `aoe`
+ *   descriptor (Nova, Mortar, Arc). A non-AoE weapon must never promise an
+ *   "Area" gain it cannot deliver (AH-0MVL9P2SF009QFON AC2).
+ *
+ * Each variable that actually changes between the two levels contributes one
+ * formatted fragment (see {@link formatDelta}); fragments are joined with
+ * `", "`.
+ *
+ * When no applicable MVP variable changes (the curve has flattened at the
+ * cap) the result is the empty string.
  *
  * This is the single source of truth for the hold-full choice overlay
- * (AH-0MUU1GOAU007RFVR).  The game and every gym consume the same
- * function so the displayed numbers can never drift from the level
- * maths.
+ * (AH-0MUU1GOAU007RFVR) **and** the mini-boss reward options
+ * (AH-0MVL9P2SF009QFON). The game and every gym consume the same function
+ * so the displayed numbers can never drift from the level maths.
  *
  * @param weaponId - The weapon to compare.
  * @param fromLevel - The current (pre-upgrade) level.
@@ -753,9 +761,18 @@ export function summariseWeaponLevelChange(
 ): string {
   const from = resolveWeaponAtLevel(weaponId, fromLevel);
   const to = resolveWeaponAtLevel(weaponId, toLevel);
+  // Applicability is a per-weapon property, so it is resolved once rather
+  // than inside the per-variable loop.
+  const hasAoe = getWeaponById(weaponId).aoe !== undefined;
 
   const parts: string[] = [];
   for (const variable of MVP_UPGRADE_VARIABLES) {
+    // `aoeRadius` only changes the behaviour of weapons with an AoE
+    // descriptor; every other weapon would otherwise report a fictional
+    // "+N% Area" delta (AH-0MVL9P2SF009QFON AC2).
+    if (variable === 'aoeRadius' && !hasAoe) {
+      continue;
+    }
     const delta = to[variable] - from[variable];
     if (Math.abs(delta) < 1e-9) {
       continue;

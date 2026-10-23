@@ -659,6 +659,43 @@ describe('summariseWeaponLevelChange (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
     expect(a).toBe(b);
   });
 
+  test('AC2 — a non-AoE weapon never reports an Area/AoE delta', () => {
+    // Only nova, mortar and arc declare an `aoe` descriptor; every other
+    // weapon must never promise an area gain it cannot deliver.
+    const nonAoeWeapons = [
+      'cannon',
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+      'options',
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
+    ] as const;
+    for (const weaponId of nonAoeWeapons) {
+      const summary = summariseWeaponLevelChange(weaponId, 2, 3);
+      expect(summary).not.toMatch(/Area/i);
+      expect(summary).not.toMatch(/AoE/i);
+    }
+  });
+
+  test('AC2 — AoE weapons still report their Area delta', () => {
+    for (const weaponId of ['nova', 'mortar', 'arc'] as const) {
+      expect(summariseWeaponLevelChange(weaponId, 2, 3)).toMatch(/Area/i);
+    }
+  });
+
+  test('AC4(iv) — the summary differs between levels where the maths differ', () => {
+    expect(summariseWeaponLevelChange('rapid', 1, 2)).not.toBe(
+      summariseWeaponLevelChange('rapid', 2, 3),
+    );
+  });
+
   test('uses the shared level maths (not duplicated values)', () => {
     // Verify that the summary matches what resolveWeaponAtLevel says.
     const weaponId = 'nova';

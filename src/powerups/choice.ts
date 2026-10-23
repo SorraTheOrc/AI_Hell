@@ -211,6 +211,90 @@ export function toChoiceOption(id: DropId): ChoiceOption {
   };
 }
 
+// ── Level-up option builder ─────────────────────────────────────────
+
+/**
+ * Builds the single level-up option for an owned item, offering
+ * `level + 1`.
+ *
+ * This is the **one** code path that turns an owned permanent level into a
+ * player-facing offer: the hold-full choice ({@link buildChoiceCandidates})
+ * and the mini-boss reward (`buildUpgradeOptions` in `./unlocks`) both use
+ * it, so the offered level, item description and change summary can never
+ * drift between the two surfaces (gym↔game parity — AH-0MVL9P2SF009QFON AC3).
+ *
+ * Returns `undefined` when the id cannot be levelled as a drop: the
+ * permanent cannon, the Reset utility, unknown power-ups, or a level below 1.
+ *
+ * @param id - The weapon drop or power-up id being upgraded.
+ * @param level - The item's current permanent level (≥ 1).
+ * @returns The `weapon-level`/`power-up-level` option, or `undefined`.
+ */
+export function buildLevelUpOption(
+  id: DropId,
+  level: number,
+): ChoiceOption | undefined {
+  if (!Number.isFinite(level) || level < 1) return undefined;
+
+  if (isWeaponDrop(id)) {
+    if (!LEVELABLE_WEAPON_IDS.includes(id)) return undefined;
+    return {
+      id,
+      name: `${WEAPON_NAMES[id]} Lv.${level + 1}`,
+      kind: 'weapon-level',
+      level: level + 1,
+      description: getHelpDescription(id),
+      changeSummary: summariseWeaponLevelChange(
+        id as WeaponId,
+        level,
+        level + 1,
+      ),
+    };
+  }
+
+  if (!POWER_UP_CATALOGUE[id as PowerUpId]) return undefined;
+  const powerUpId = id as PowerUpId;
+  return {
+    id: powerUpId,
+    name: `${POWER_UP_CATALOGUE[powerUpId].name} Lv.${level + 1}`,
+    kind: 'power-up-level',
+    level: level + 1,
+    description: getHelpDescription(powerUpId),
+    changeSummary: summarisePowerUpLevelChange(powerUpId, level, level + 1),
+  };
+}
+
+/**
+ * Builds the level-up offers for every owned permanent weapon and power-up
+ * in `context` — weapons first, then power-ups, matching the order both
+ * callers present.
+ *
+ * Shared by the hold-full choice and the mini-boss reward so both surfaces
+ * offer exactly the same options (AH-0MVL9P2SF009QFON AC1/AC3).
+ *
+ * @param context - The run's owned weapon/power-up levels.
+ * @returns One option per levellable owned item.
+ */
+export function buildOwnedLevelUpOptions(
+  context?: ChoiceContext,
+): ChoiceOption[] {
+  const options: ChoiceOption[] = [];
+
+  for (const { id, level } of context?.weaponLevels ?? []) {
+    const option = buildLevelUpOption(id as DropId, level);
+    // A weapon-level store must never produce a power-up option (or vice
+    // versa) — keeps the two stores' entries independent.
+    if (option?.kind === 'weapon-level') options.push(option);
+  }
+
+  for (const { id, level } of context?.powerUpLevels ?? []) {
+    const option = buildLevelUpOption(id, level);
+    if (option?.kind === 'power-up-level') options.push(option);
+  }
+
+  return options;
+}
+
 // ── Weighting ───────────────────────────────────────────────────────
 
 /**
@@ -324,44 +408,10 @@ export function buildChoiceCandidates(
     candidates.push(option);
   }
 
-  for (const { id, level } of context?.weaponLevels ?? []) {
-    if (!LEVELABLE_WEAPON_IDS.includes(id as WeaponDropId) || level < 1) {
-      continue;
-    }
-    const weaponId = id as WeaponDropId;
-    candidates.push({
-      id: weaponId,
-      name: `${WEAPON_NAMES[weaponId]} Lv.${level + 1}`,
-      kind: 'weapon-level',
-      level: level + 1,
-      // AC1: item description from the shared catalogue (AC4).
-      description: getHelpDescription(weaponId),
-      // AC1: change summary derived from the shared level maths.
-      changeSummary: summariseWeaponLevelChange(
-        weaponId as WeaponId,
-        level,
-        level + 1,
-      ),
-    });
-  }
-
-  // Power-up level-up offers (parent AH-0MUU2QJE2007JNR6, AC6). Mirrors the
-  // weapon-level path: one offer per owned power-up, carrying the level it
-  // grants and a change summary derived from the shared power-up resolver.
-  for (const { id, level } of context?.powerUpLevels ?? []) {
-    if (level < 1 || !POWER_UP_CATALOGUE[id]) {
-      continue;
-    }
-    candidates.push({
-      id,
-      name: `${POWER_UP_CATALOGUE[id].name} Lv.${level + 1}`,
-      kind: 'power-up-level',
-      level: level + 1,
-      // Item description from the shared catalogue (AC1/AC4).
-      description: getHelpDescription(id),
-      changeSummary: summarisePowerUpLevelChange(id, level, level + 1),
-    });
-  }
+  // Owned permanent levels become level-up offers through the single shared
+  // builder, so the hold-full choice and the mini-boss reward cannot drift
+  // (AH-0MVL9P2SF009QFON AC3).
+  candidates.push(...buildOwnedLevelUpOptions(context));
   return candidates;
 }
 

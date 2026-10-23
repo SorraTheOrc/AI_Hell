@@ -884,6 +884,8 @@ effective(level) = cap − (cap − base) × e^(−k × level)
 
 **Beat-grid invariant.** A fire-rate upgrade must not produce an off-grid interval: fire-rate levels map to the nearest valid beat subdivision so every shot stays on the shared 80 BPM grid (AH-0MUAYB8EH005RJ8B). Coverage: `src/utils/weaponLevels.test.ts` (monotonicity, caps, curve, catalogue completeness) and the fire-rate beat-grid work item.
 
+**Level-change summary (AH-0MVL9P2SF009QFON).** Every offered level-up — in the hold-full choice §4.5 **and** the mini-boss reward §4.4.4 — carries a level-accurate `changeSummary` derived from `summariseWeaponLevelChange` / `summarisePowerUpLevelChange`, so the option text states the real delta between the current and the offered level (e.g. `+1 Projectiles, +17% Fire rate`). The summary lists implemented (MVP) variables only, and `aoeRadius` appears **only** for weapons that declare an `aoe` descriptor (Nova, Mortar, Arc) — a non-AoE weapon never promises an `Area` gain it cannot deliver. Both surfaces build their level-up options through the single shared `buildOwnedLevelUpOptions` path in `src/powerups/choice.ts`, so the copy can never drift between the game and the gyms (gym↔game parity).
+
 #### 4.4.3 Power-Up Leveling (AH-0MUU2QJE2007JNR6)
 
 Power-ups are **constantly upgradable**, exactly like weapons: every power-up carries a **run-scoped integer level** and each level changes a set of tunable variables. The full catalogue lives in `src/powerups/powerUpLevels.ts`; the pure resolver is `resolvePowerUpAtLevel(powerUpId, level)`, backed by the **same** exponential-saturation curve as weapons (extracted into `src/utils/curve.ts` so there is exactly one curve implementation).
@@ -939,7 +941,12 @@ The chosen option is applied immediately through the shared
 `applyMineralChoiceReward` seam; an unlock is recorded in the run-scoped unlock
 state (exposed via `PlayScene.getUnlockedWeapons()`), which the
 **checkpoint** persists (§6.6) and the run keeps until it ends. Exactly one
-option is consumed per mini-boss. Coverage: `src/powerups/unlocks.test.ts`
+option is consumed per mini-boss. The **upgrade** options carry the same
+level-accurate `changeSummary` as the hold-full choice (§4.4.2) — built through
+the single shared `buildOwnedLevelUpOptions` path — so the reward text states
+what each owned weapon/power-up actually gains at the offered level and never
+promises an unimplemented or inapplicable effect (AH-0MVL9P2SF009QFON).
+Coverage: `src/powerups/unlocks.test.ts`
 (the ~50 % locked-pool invariant, option builders, single consumption) and the
 `PlayScene — mini-boss encounter` reward tests.
 

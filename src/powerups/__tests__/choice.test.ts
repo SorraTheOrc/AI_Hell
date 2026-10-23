@@ -22,6 +22,7 @@ import {
 } from '../choice';
 import { summariseWeaponLevelChange } from '../../utils/weaponLevels';
 import { summarisePowerUpLevelChange } from '../powerUpLevels';
+import { buildUpgradeOptions } from '../unlocks';
 import { getHelpDescription } from '../../utils/gymHelp';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import { POWER_UP_CATALOGUE } from '../types';
@@ -565,6 +566,24 @@ describe('power-up choice strategy', () => {
       for (const entry of entries) {
         expect(entry.description, entry.id).not.toMatch(temporaryDuration);
       }
+    });
+  });
+
+  describe('shared level-up option model (AH-0MVL9P2SF009QFON AC3)', () => {
+    it('the mini-boss reward reuses the hold-full level-up options verbatim', () => {
+      // Both surfaces must build their level-up offers through one code path,
+      // so the text (level, summary, description) cannot drift.
+      const context = {
+        weaponLevels: [
+          { id: 'rapid' as const, level: 2 },
+          { id: 'nova' as const, level: 1 },
+        ],
+        powerUpLevels: [{ id: 'shield' as const, level: 1 }],
+      };
+      const holdFull = buildChoiceCandidates(CHOICE_POOL, context).filter(
+        (o) => o.kind === 'weapon-level' || o.kind === 'power-up-level',
+      );
+      expect(buildUpgradeOptions(context)).toEqual(holdFull);
     });
   });
 });

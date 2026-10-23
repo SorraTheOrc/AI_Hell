@@ -18,6 +18,8 @@ import {
   unlockWeapon,
 } from './unlocks';
 import { WEAPON_CATALOGUE, type WeaponId } from '../utils/weapons';
+import { summariseWeaponLevelChange } from '../utils/weaponLevels';
+import { summarisePowerUpLevelChange } from './powerUpLevels';
 
 const ALL_WEAPONS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
 
@@ -94,6 +96,50 @@ describe('mini-boss reward unlock pool (AH-0MVCRBNO6003E1CH)', () => {
     const powerUp = options.find((option) => option.kind === 'power-up-level')!;
     expect(powerUp.id).toBe('shield');
     expect(powerUp.level).toBe(2);
+  });
+
+  it('AC1 — weapon-level rewards carry a level-accurate change summary', () => {
+    const options = buildUpgradeOptions({
+      weaponLevels: [{ id: 'rapid', level: 2 }],
+      powerUpLevels: [],
+    });
+    const weapon = options.find((option) => option.kind === 'weapon-level')!;
+    // Derived from the shared level maths, exactly like the hold-full choice.
+    expect(weapon.changeSummary).toBe(summariseWeaponLevelChange('rapid', 2, 3));
+    expect(weapon.changeSummary!.length).toBeGreaterThan(0);
+    // The offered level is reflected in the option's own label too.
+    expect(weapon.name).toContain('Lv.3');
+  });
+
+  it('AC1 — power-up-level rewards carry their change summary', () => {
+    const options = buildUpgradeOptions({
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+    });
+    const powerUp = options.find((option) => option.kind === 'power-up-level')!;
+    expect(powerUp.changeSummary).toBe(
+      summarisePowerUpLevelChange('shield', 1, 2),
+    );
+    expect(powerUp.changeSummary!.length).toBeGreaterThan(0);
+    expect(powerUp.name).toContain('Lv.2');
+  });
+
+  it('AC2 — a non-AoE weapon reward never promises an AoE gain', () => {
+    const options = buildUpgradeOptions({
+      weaponLevels: [{ id: 'rapid', level: 2 }],
+    });
+    expect(options[0].changeSummary).not.toMatch(/Area|AoE/i);
+  });
+
+  it('AC4 — the summary differs between levels where the maths differ', () => {
+    const early = buildUpgradeOptions({
+      weaponLevels: [{ id: 'rapid', level: 1 }],
+    })[0];
+    const late = buildUpgradeOptions({
+      weaponLevels: [{ id: 'rapid', level: 2 }],
+    })[0];
+    expect(early.level).toBe(2);
+    expect(late.level).toBe(3);
+    expect(early.changeSummary).not.toBe(late.changeSummary);
   });
 
   it('the cannon is never offered as a reward upgrade', () => {
