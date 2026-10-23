@@ -1523,8 +1523,13 @@ export abstract class CombatScene<
    */
   protected _drawWaveTimeoutBar(): void {
     const duration = this.getWaveTimeoutDuration();
-    // Opt-out scenes never allocate the bar.
-    if (duration <= 0) return;
+    // Opt-out scenes never allocate the bar; an already-drawn bar is hidden so
+    // a scene that becomes ineligible (e.g. level complete) cannot leave a
+    // stale timer on screen.
+    if (duration <= 0) {
+      this.waveTimeoutBar?.setVisible(false);
+      return;
+    }
     if (!this.waveTimeoutBar) {
       this.waveTimeoutBar = this.add.graphics();
       this.waveTimeoutBar.setDepth(400);

@@ -24,12 +24,18 @@ import {
 } from './GymLevel';
 import { Diver } from '../../entities/Diver';
 import { Harvester } from '../../entities/Harvester';
+import { Asteroid } from '../../entities/Asteroid';
+import type { EnemyEntity } from '../../entities/enemyFactory';
 import { RULES_STORAGE_KEY } from '../../core/rules';
 import {
   getSpawnState,
   type SpawnAnimatable,
 } from '../../vfx/wormholeSpawn';
 import { getFormationBuilder } from '../../utils/formations';
+import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
+import { createSeededRng } from '../../core/rng';
+import { computeSpawns } from '../../waves/AsteroidSpawner';
+import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 
 /** Waits for Phaser scene transitions to settle. */
 
@@ -42,6 +48,15 @@ function findText(
     (child): child is Phaser.GameObjects.Text =>
       child instanceof Phaser.GameObjects.Text && child.text === label,
   );
+}
+
+/**
+ * Formation enemies only — excludes the scheduled asteroid hazard, which is
+ * scenario content the level gym shares with the game (AH-0MV9AWR7A0084XJ0)
+ * and can spawn from the first frames of a wave.
+ */
+function formationEnemies(scene: GymLevel): EnemyEntity[] {
+  return scene.getEnemies().filter((enemy) => !(enemy instanceof Asteroid));
 }
 
 /** A single-group, non-firing wave with `count` scouts. */
@@ -106,9 +121,9 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     expect(scene.getWavesToPlayCount()).toBe(2);
     expect(scene.getCurrentWaveIndex()).toBe(0);
     expect(scene.isLevelComplete()).toBe(false);
-    // First wave spawned exactly its declared count.
-    expect(scene.getEnemies()).toHaveLength(2);
-    expect(scene.getEnemies().every((e) => e.alive)).toBe(true);
+    // First wave spawned exactly its declared formation count.
+    expect(formationEnemies(scene)).toHaveLength(2);
+    expect(formationEnemies(scene).every((e) => e.alive)).toBe(true);
   });
 
   it('AC3 — clearing a wave advances to the next without leftovers', async () => {
@@ -121,9 +136,9 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
 
     expect(scene.getCurrentWaveIndex()).toBe(1);
     expect(scene.isLevelComplete()).toBe(false);
-    // Exactly the second wave's enemies are live (no leftovers).
-    expect(scene.getEnemies()).toHaveLength(3);
-    expect(scene.getEnemies().every((e) => e.alive)).toBe(true);
+    // Exactly the second wave's formation enemies are live (no leftovers).
+    expect(formationEnemies(scene)).toHaveLength(3);
+    expect(formationEnemies(scene).every((e) => e.alive)).toBe(true);
   });
 
   it('AC3 — clearing the final wave completes the level and clears the field', async () => {
@@ -146,7 +161,7 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     });
 
     expect(scene.getWavesToPlayCount()).toBe(1);
-    expect(scene.getEnemies()).toHaveLength(4);
+    expect(formationEnemies(scene)).toHaveLength(4);
 
     scene.getEnemies().forEach((e) => e.destroySelf());
     scene.tick(0.016);
@@ -444,10 +459,8 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     expect(extra!.y).toBeCloseTo(234, 0);
   });
 });
-
 describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
   let booted: BootedGame | null = null;
-
   beforeEach(() => {
     document.body.innerHTML = '<div id="game-container"></div>';
     window.localStorage.clear();
@@ -460,7 +473,6 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
     vi.restoreAllMocks();
   });
 
-  /** Boots the gym on one wave and returns the scene. */
   async function bootWave(wave: WaveDefinition): Promise<GymLevel> {
     booted = await bootScene([GymLevel]);
     const manager = booted.game.scene;
@@ -476,7 +488,9 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
 
   it('emerges every wave enemy from a wormhole centred on the wave formation', async () => {
     const scene = await bootWave(scoutWave(4));
-    const enemies = scene.getEnemies();
+    // Formation enemies only: the scheduled asteroid hazard is scenario
+    // content that may spawn in the same window (AH-0MV9AWR7A0084XJ0).
+    const enemies = formationEnemies(scene);
     expect(enemies).toHaveLength(4);
 
     const effects = scene.getWormholeEffects();
@@ -521,7 +535,7 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
   it('lands every enemy exactly on its (live, drifting) formation slot at the end of the spawn animation', async () => {
     const wave = scoutWave(4);
     const scene = await bootWave(wave);
-    const enemies = scene.getEnemies();
+    const enemies = formationEnemies(scene);
     const group = wave.groups[0];
     // Enemies rest on their live formation slot: base + drift, plus the
     // shared formation offset (the same arithmetic `_moveEnemies` applies).
@@ -545,7 +559,7 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
 
   it('is dt-driven and fully arrives inside the 3 s spawn-protection window', async () => {
     const scene = await bootWave(scoutWave(4));
-    const enemies = scene.getEnemies();
+    const enemies = formationEnemies(scene);
     const origins = enemies.map((enemy) => ({ x: enemy.x, y: enemy.y }));
 
     // Partway through the grow phase every enemy is still spawning and has
@@ -567,7 +581,7 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
 
   it('holds spawn protection while enemies are in transit (gym parity)', async () => {
     const scene = await bootWave(firingScoutWave(4));
-    const victim = scene.getEnemies()[1];
+    const victim = formationEnemies(scene)[1];
     const livesBefore = scene.getEffectsRegistry().lives();
 
     scene.tick(1.2);
@@ -599,7 +613,7 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
 
   it('shimmers each emerging enemy from the shared spawn path, and restores it when growth ends (AH-0MVD2N9MM0007NGZ parity)', async () => {
     const scene = await bootWave(scoutWave(4));
-    const enemy = scene.getEnemies()[0];
+    const enemy = formationEnemies(scene)[0];
 
     // Still in the wormhole-open delay: no shimmer, alpha untouched.
     expect(enemy.isSpawning).toBe(true);
@@ -640,5 +654,203 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
     // controller with the registry attached — the close-vs-open contract.
     scene.finishSpawnAnimations();
     expect(scene.isWormholeOpen()).toBe(false);
+  });
+});
+
+/**
+ * AH-0MV9AWR7A0084XJ0 — the level gym (and the bot-tuning gym that inherits
+ * it) now plays the same scenario pressures the shipped demo does: a scheduled
+ * offscreen asteroid hazard and a timed wave window. Both are the shared
+ * implementations — `AsteroidHazardLayer` (the plan/release lifecycle
+ * `PlayScene` runs) and the shared `CombatScene` wave-timeout — so tuning in
+ * the gym transfers to the demo.
+ */
+describe('GymLevel — scheduled asteroid hazard + timed waves (AH-0MV9AWR7A0084XJ0)', () => {
+  let booted: BootedGame | null = null;
+
+  /** Seed for the deterministic hazard RNG injected by the test subclass. */
+  const HAZARD_SEED = 424242;
+
+  /**
+   * `GymLevel` with a deterministic hazard RNG. The production scene uses
+   * `Math.random` (or, in `GymBotTuning`, a seed-derived stream); the subclass
+   * makes the plan assertable without reaching into private state.
+   */
+  class SeededHazardGymLevel extends GymLevel {
+    override init(data?: GymLevelData): void {
+      super.init(data);
+      this.setHazardRng(createSeededRng(HAZARD_SEED));
+    }
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function bootSeeded(data: GymLevelData): Promise<GymLevel> {
+    booted = await bootScene([SeededHazardGymLevel]);
+    booted.game.loop.stop();
+    const manager = booted.game.scene;
+    // `SceneManager.start` runs `init()` + `create()` synchronously, so the
+    // scene (and its first wave plan) exists the moment this resolves.
+    manager.start('GymLevel', data);
+    return manager.getScene('GymLevel') as GymLevel;
+  }
+
+  /** The plan the shared planner produces for `globalWaveIndex`. */
+  function expectedPlan(
+    globalWaveIndex: number,
+  ): ReturnType<typeof computeSpawns> {
+    return computeSpawns(
+      globalWaveIndex,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      createSeededRng(HAZARD_SEED),
+    );
+  }
+
+  /** Sets the wave clock to `elapsed` seconds into the active wave. */
+  function setElapsed(scene: GymLevel, elapsed: number): void {
+    scene.setWaveTimeoutRemaining(WAVE_TIME_LIMIT_SECONDS - elapsed);
+  }
+
+  it('AC1 — plans the game asteroid schedule with the shared planner', async () => {
+    const scene = await bootSeeded({
+      level: makeLevel('Hazard', [scoutWave(2)]),
+    });
+
+    expect(scene.getPendingAsteroidSpawns()).toEqual(expectedPlan(0));
+    expect(scene.getReleasedAsteroidCount()).toBe(0);
+    // Nothing is on the field before its scheduled time.
+    expect(scene.getAsteroids()).toHaveLength(0);
+  });
+
+  it('AC1 — releases a planned asteroid at its scheduled time and it drifts inward', async () => {
+    const scene = await bootSeeded({
+      level: makeLevel('Hazard', [scoutWave(2)]),
+    });
+    const plan = scene.getPendingAsteroidSpawns();
+    expect(plan.length).toBeGreaterThan(0);
+    const first = plan[0];
+
+    if (first.timeSeconds > 0.02) {
+      setElapsed(scene, first.timeSeconds - 0.01);
+      scene.tick(0.001);
+      expect(scene.getAsteroids()).toHaveLength(0);
+    }
+
+    setElapsed(scene, first.timeSeconds + 1e-6);
+    scene.tick(0.001);
+
+    const asteroids = scene.getAsteroids();
+    expect(asteroids).toHaveLength(1);
+    expect(scene.getReleasedAsteroidCount()).toBe(1);
+    const asteroid = asteroids[0];
+    expect(asteroid.getSizeTier()).toBe(first.sizeTier);
+    // Spawned outside the viewport on its entry axis (offscreen origin).
+    const offscreen =
+      asteroid.x < 0 ||
+      asteroid.x > GAME_WIDTH ||
+      asteroid.y < 0 ||
+      asteroid.y > GAME_HEIGHT;
+    expect(offscreen).toBe(true);
+
+    // Drifting: the roamer advances its own motion (no formation drift).
+    const startX = asteroid.x;
+    const startY = asteroid.y;
+    scene.tick(0.5);
+    expect(
+      Math.hypot(asteroid.x - startX, asteroid.y - startY),
+    ).toBeGreaterThan(1);
+  });
+
+  it('AC1 — asteroids are non-blocking: a wave clears while they persist', async () => {
+    const scene = await bootSeeded({
+      level: makeLevel('Hazard', [scoutWave(1), scoutWave(1)]),
+    });
+    setElapsed(scene, scene.getPendingAsteroidSpawns()[0].timeSeconds + 1e-6);
+    scene.tick(0.001);
+    expect(scene.getAsteroids()).toHaveLength(1);
+
+    // Destroy every blocking enemy; the asteroid must not gate the wave.
+    scene
+      .getEnemies()
+      .filter((enemy) => !(enemy instanceof Asteroid))
+      .forEach((enemy) => enemy.destroySelf());
+    scene.tick(0.016);
+
+    expect(scene.getCurrentWaveIndex()).toBe(1);
+    expect(scene.isLevelComplete()).toBe(false);
+    // The hazard persists across the wave transition (game parity).
+    expect(scene.getAsteroids()).toHaveLength(1);
+  });
+
+  it('AC2 — every gym wave runs the shared 30 s timed-wave window', async () => {
+    const scene = await bootSeeded({
+      level: makeLevel('Timed', [scoutWave(2)]),
+    });
+
+    const initial = scene.getWaveState();
+    expect(initial.active).toBe(true);
+    expect(initial.timeLimit).toBe(WAVE_TIME_LIMIT_SECONDS);
+    expect(initial.timeRemaining).toBeCloseTo(WAVE_TIME_LIMIT_SECONDS, 3);
+
+    scene.tick(1);
+    const later = scene.getWaveState();
+    expect(later.active).toBe(true);
+    expect(later.timeRemaining).toBeCloseTo(
+      WAVE_TIME_LIMIT_SECONDS - 1,
+      3,
+    );
+  });
+
+  it('AC2 — the wave clock times out with carry-over survivors and a fresh wave', async () => {
+    const scene = await bootSeeded({
+      level: makeLevel('Timed', [scoutWave(2), scoutWave(2)]),
+    });
+    const survivors = scene
+      .getEnemies()
+      .filter((enemy) => !(enemy instanceof Asteroid));
+    expect(survivors).toHaveLength(2);
+
+    setElapsed(scene, WAVE_TIME_LIMIT_SECONDS);
+    scene.tick(0.001);
+
+    // The next wave started; the survivors were kept (carry-over parity).
+    expect(scene.getCurrentWaveIndex()).toBe(1);
+    const blocking = scene
+      .getEnemies()
+      .filter(
+        (enemy) => !(enemy instanceof Asteroid) && enemy.alive,
+      );
+    expect(blocking).toHaveLength(4);
+    // The new wave armed a fresh window.
+    expect(scene.getWaveState().active).toBe(true);
+    expect(scene.getWaveState().timeRemaining).toBeCloseTo(
+      WAVE_TIME_LIMIT_SECONDS,
+      2,
+    );
+  });
+
+  it('AC1 — the hazard can be disabled (tuning/test seam) and then never fires', async () => {
+    const scene = await bootSeeded({
+      level: makeLevel('Hazard', [scoutWave(1)]),
+    });
+    scene.setAsteroidSpawnerEnabled(false);
+
+    setElapsed(scene, WAVE_TIME_LIMIT_SECONDS - 0.001);
+    scene.tick(0.002);
+
+    expect(scene.getPendingAsteroidSpawns()).toEqual([]);
+    expect(scene.getAsteroids()).toHaveLength(0);
   });
 });

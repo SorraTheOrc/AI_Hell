@@ -38,10 +38,13 @@
  * The scene is a gym-only dev tool: it is reached from the gym index only and
  * never shipped in normal play. The bot's *behaviour* is the shared code; only
  * the scenario (random waves with the shared mineral/power-up/weapon supply
- * layer, no boss) and the tuning UI are gym-specific. The supply behaviour
- * itself is shared (inherited from `GymLevel`), so the bot sees and reacts to
- * minerals, power-ups and weapons exactly as it does in the game
- * (AH-0MV4D7LAD009XYR0 producer-audit fix).
+ * layer, the shared scheduled asteroid hazard, the shared timed-wave window,
+ * no boss) and the tuning UI are gym-specific. The supply behaviour, the
+ * asteroid hazard (`AsteroidHazardLayer`, the same plan/release lifecycle
+ * `PlayScene` runs) and the wave pressure signal are shared, so the bot sees
+ * and reacts to minerals, power-ups, weapons, drifting asteroids and the wave
+ * clock exactly as it does in the game (AH-0MV4D7LAD009XYR0,
+ * AH-0MV9AWR7A0084XJ0).
  *
  * @module src/scenes/gym/GymBotTuning
  */
@@ -128,8 +131,9 @@ export interface GymBotTuningData {
 }
 
 /**
- * Returns an inactive wave state (the tuning gym has no timed waves). Extracted
- * so the snapshot adapter stays declarative and testable.
+ * Returns an inactive wave state. Retained for callers that need an explicit
+ * "no timed wave" value; the gym itself now reports its **live** wave state
+ * (AH-0MV9AWR7A0084XJ0), so this is no longer used by the snapshot adapter.
  */
 export function inactiveWaveState(): { active: boolean; timeRemaining: number; timeLimit: number } {
   return { active: false, timeRemaining: 0, timeLimit: 0 };
@@ -164,6 +168,10 @@ export class GymBotTuning extends GymLevel {
     // Seed the inherited supply layer (minerals + drop placement) from the
     // same seed, so a seed reproduces the mineral field and drop sequence too.
     this.supplyRng = createSeededRng(this.seed);
+    // Seed the inherited asteroid hazard from the same seed (offset so the
+    // hazard schedule is its own stream), so a seed reproduces the asteroid
+    // plan as well (AH-0MV9AWR7A0084XJ0).
+    this.hazardRng = createSeededRng(this.seed + 1);
     this.tuningValues = coerceTuningValues(getCurrentBotTuningConfig().values);
     this.completionDwell = 0;
     const level = data?.level ?? generateRandomLevel({ seed: this.seed });
@@ -232,11 +240,13 @@ export class GymBotTuning extends GymLevel {
   }
 
   /**
-   * Builds the bot snapshot from the gym's live state. The supply layer
-   * inherits from `GymLevel`, so the bot sees the live power-up/weapon drops
-   * and minerals (the `collect-powerup`, `collect-mineral` and `secure-life`
-   * goals). The gym has no boss and no timed waves, so those read as
-   * null/inactive; the bot core handles the empty collections unchanged.
+   * Builds the bot snapshot from the gym's live state. The supply layer and the
+   * scheduled asteroid hazard inherit from `GymLevel`, so the bot sees the live
+   * power-up/weapon drops, minerals and drifting asteroids (the
+   * `collect-powerup`, `collect-mineral`, `secure-life` and hazard-avoidance
+   * goals) plus the **live timed-wave pressure** — the same fields the shipped
+   * demo's snapshot carries (AH-0MV9AWR7A0084XJ0). The gym has no boss, so
+   * that reads null; the bot core handles it unchanged.
    */
   private _buildSnapshot(): BotSnapshot {
     const source: BotSnapshotScene = {
@@ -249,7 +259,7 @@ export class GymBotTuning extends GymLevel {
       getDrops: () => this.getDrops(),
       getMinerals: () => this.getMinerals(),
       getAliveCount: () => this.getEnemies().filter((enemy) => enemy.alive).length,
-      getWaveState: () => inactiveWaveState(),
+      getWaveState: () => this.getWaveState(),
       getRunSeed: () => this.seed,
       getLives: () => BOT_TUNING_LIVES,
       getLivesCap: () => BOT_TUNING_LIVES_CAP,
@@ -286,6 +296,9 @@ export class GymBotTuning extends GymLevel {
   /** Generates a new random level and starts it on the existing field. */
   private _newRandomLevel(): void {
     this.seed = normaliseSeed(randomSeed());
+    // Re-seed the hazard stream for the new level so the asteroid schedule is
+    // reproducible from the new seed (AH-0MV9AWR7A0084XJ0).
+    this.hazardRng = createSeededRng(this.seed + 1);
     const level = generateRandomLevel({ seed: this.seed });
     this.loadLevel(level);
     this.completionDwell = 0;

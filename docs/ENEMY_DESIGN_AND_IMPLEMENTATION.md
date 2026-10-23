@@ -281,6 +281,15 @@ plan outside a regular wave and the release loop is guarded on boss state.
 `PlayScene.setAsteroidSpawnerEnabled(false)` is a tuning/test seam that
 suppresses the spawner entirely.
 
+The **level-based gyms run the same hazard** (AH-0MV9AWR7A0084XJ0): the
+plan → release → spawn lifecycle lives once in the shared layer
+`src/scenes/core/asteroidHazard.ts` (`AsteroidHazardLayer`,
+`createAsteroidFromEvent`) and is consumed by both `PlayScene` and `GymLevel`
+(hence the bot-tuning gym), so a gym and the demo cannot drift on the hazard.
+The gyms additionally opt into the shared timed-wave window
+(`CombatScene.getWaveTimeoutDuration`), so a tuning gym bot sees the same wave
+pressure (`getWaveState()`) the demo bot does.
+
 **Gym support**: the asteroid is selectable in the enemy gym (auto-discovery
 via `DEFAULT_ENEMY_CONFIGS`). `GymFormationScene` gained two small seams —
 optional `updatePosition(dt)` on `FormationSceneEntity` (roamer motion) and

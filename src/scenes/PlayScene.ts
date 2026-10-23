@@ -184,7 +184,11 @@ import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
 import { LEVELS, type LevelDefinition } from '../waves/Formations';
 import { buildSequencedLevels } from '../waves/sequencedLevels';
-import { computeSpawns, type SpawnEvent } from '../waves/AsteroidSpawner';
+import type { SpawnEvent } from '../waves/AsteroidSpawner';
+import {
+  AsteroidHazardLayer,
+  createAsteroidFromEvent,
+} from './core/asteroidHazard';
 import {
   computeSpawns as computeStrikeSpawns,
   type SpawnEvent as StrikeSpawnEvent,
@@ -255,6 +259,7 @@ import {
   drawShieldBubble,
 } from './core/CombatEffectVisuals';
 import {
+  isNonBlockingHazard,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMER_BAR_HEIGHT,
   WAVE_TIMER_BAR_WIDTH,
@@ -326,16 +331,6 @@ export const SCORE_VALUES: Record<string, number> = {
 
 /** Default score for an unknown archetype (falls back to the Scout value). */
 export const DEFAULT_SCORE_VALUE = 100;
-
-/**
- * True for non-blocking world hazards — archetypes that are never registered
- * with the `WaveManager`, never gate wave completion, and are never adopted as
- * survivors between waves (Asteroid accounting, AH-0MUJM746P000QAEO). The
- * Frogger lane traffic is the second such hazard (AH-0MV01EPM40008N8T).
- */
-function isNonBlockingHazard(enemyKey: string): boolean {
-  return enemyKey === 'asteroid' || enemyKey === 'lane-traffic';
-}
 
 /** Points awarded per destroyed boss phase (GDD §4.5). */
 export const BOSS_PHASE_SCORES: Record<number, number> = {
@@ -749,11 +744,12 @@ export class PlayScene extends CombatScene<
   private runTelemetry: RunTelemetry = RunTelemetry.noop();
 
   /**
-   * Asteroid spawn events planned for the active wave (empty outside a
-   * regular wave). Computed once per wave by `planAsteroidSpawns()` so the
-   * scene rng stream is only advanced at wave boundaries.
+   * Scheduled asteroid hazard for the active wave (shared with the level
+   * gyms, AH-0MV9AWR7A0084XJ0). Planned once per wave by
+   * `planAsteroidSpawns()` so the scene rng stream is only advanced at wave
+   * boundaries.
    */
-  private pendingAsteroidSpawns: SpawnEvent[] = [];
+  private readonly asteroidHazard = new AsteroidHazardLayer();
 
   /**
    * Planned Harvester spawns for the active regular wave (Levels 4–10 only),
@@ -799,9 +795,6 @@ export class PlayScene extends CombatScene<
   private pendingHordeSpawns: HordeSpawnEvent[] = [];
   /** Number of planned horde spawns already released this wave. */
   private hordeSpawnedThisWave = 0;
-
-  /** How many of the planned asteroid spawns have been released this wave. */
-  private asteroidsSpawnedThisWave = 0;
 
   /**
    * Whether telegraphed orbital-strike spawning is active (Missile Command
@@ -1114,8 +1107,7 @@ export class PlayScene extends CombatScene<
     this.bannerTimer = 0;
     this.waveTimer = 0;
     this.waveTimerActive = false;
-    this.pendingAsteroidSpawns = [];
-    this.asteroidsSpawnedThisWave = 0;
+    this.asteroidHazard.reset();
     this.pendingLaneTrafficSpawns = [];
     this.laneTrafficSpawnedThisWave = 0;
     this.pendingHarvesterSpawns = [];
@@ -1695,18 +1687,16 @@ export class PlayScene extends CombatScene<
       wm.bossActive ||
       wm.bossDefeated
     ) {
-      this.pendingAsteroidSpawns = [];
-      this.asteroidsSpawnedThisWave = 0;
+      this.asteroidHazard.reset();
       return;
     }
-    this.pendingAsteroidSpawns = computeSpawns(
+    this.asteroidHazard.plan(
       wm.globalWaveIndex,
       GAME_WIDTH,
       GAME_HEIGHT,
       WAVE_TIME_LIMIT_SECONDS,
       this.rng,
     );
-    this.asteroidsSpawnedThisWave = 0;
   }
 
   /**
@@ -1727,12 +1717,9 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.asteroidsSpawnedThisWave < this.pendingAsteroidSpawns.length) {
-      const event = this.pendingAsteroidSpawns[this.asteroidsSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledAsteroid(event);
-      this.asteroidsSpawnedThisWave += 1;
-    }
+    this.asteroidHazard.releaseDue(elapsed, (event) =>
+      this._spawnScheduledAsteroid(event),
+    );
   }
 
   /**
@@ -1742,17 +1729,7 @@ export class PlayScene extends CombatScene<
    * in the field across wave and level transitions.
    */
   private _spawnScheduledAsteroid(event: SpawnEvent): void {
-    const entity = new Asteroid(this, {
-      x: event.x,
-      y: event.y,
-      formationOffset: { row: 0, col: 0 },
-      sizeTier: event.sizeTier,
-      vx: event.vx,
-      vy: event.vy,
-      enterFromOffscreen: true,
-      rng: this.rng,
-    });
-    this.add.existing(entity);
+    const entity = createAsteroidFromEvent(this, event, this.rng);
     this.spawned.push({
       entity,
       enemyKey: 'asteroid',
@@ -2559,8 +2536,7 @@ export class PlayScene extends CombatScene<
   protected onBossTriggered(): void {
     // No random asteroids in the boss encounter: drop the last wave's plan
     // so no spawn can leak in after the transition (AH-0MUGCNZNE002D7QJ).
-    this.pendingAsteroidSpawns = [];
-    this.asteroidsSpawnedThisWave = 0;
+    this.asteroidHazard.reset();
     this.pendingGhostSpawns = [];
     this.ghostsSpawnedThisWave = 0;
     this.pendingCentipedeSpawn = null;
@@ -2752,9 +2728,8 @@ export class PlayScene extends CombatScene<
     this.miniBoss = null;
     for (const bullet of this.enemyBullets) bullet.graphics.destroy();
     this.enemyBullets = [];
-    this.pendingAsteroidSpawns = [];
+    this.asteroidHazard.reset();
     this.pendingHarvesterSpawns = [];
-    this.asteroidsSpawnedThisWave = 0;
     this.harvestersSpawnedThisWave = 0;
     this.pendingGhostSpawns = [];
     this.ghostsSpawnedThisWave = 0;
@@ -4756,10 +4731,7 @@ export class PlayScene extends CombatScene<
    */
   setAsteroidSpawnerEnabled(enabled: boolean): void {
     this.asteroidSpawnerEnabled = enabled;
-    if (!enabled) {
-      this.pendingAsteroidSpawns = [];
-      this.asteroidsSpawnedThisWave = 0;
-    }
+    if (!enabled) this.asteroidHazard.reset();
   }
 
   /**

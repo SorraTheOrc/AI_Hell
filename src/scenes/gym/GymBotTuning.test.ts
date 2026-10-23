@@ -45,7 +45,13 @@ import {
 import {
   COMPETENT_BOT_TUNABLES,
   buildBotWorld,
+  createCompetentBotBrain,
 } from '../../ai/framework';
+import { buildBotSnapshot } from '../../ai/botSnapshot';
+import { createSeededRng } from '../../core/rng';
+import { computeSpawns } from '../../waves/AsteroidSpawner';
+import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
+import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import { evaluateDirection } from '../../ai/framework/competent';
 import {
   bullet,
@@ -543,4 +549,134 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     expect(tooltip!.classList.contains(GYM_TOOLTIP_CLASS), `${key} class`).toBe(true);
     expect(tooltip!.textContent, `${key} text`).toBe(expectedText);
   }
+});
+
+/**
+ * AH-0MV9AWR7A0084XJ0 — the tuning gym now plays the demo's scenario
+ * pressures: the shared scheduled asteroid hazard and the shared timed-wave
+ * window (inherited from `GymLevel`). The bot snapshot therefore carries live
+ * wave pressure and asteroid hazards, and given equivalent snapshots the gym
+ * bot and the shipped demo bot make the same decision.
+ */
+describe('GymBotTuning — demo scenario parity (asteroids + timed waves, AH-0MV9AWR7A0084XJ0)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    resetBotTuningStore();
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function bootTuning(data?: GymBotTuningData): Promise<GymBotTuning> {
+    booted = await bootScene([GymBotTuning]);
+    booted.game.loop.stop();
+    const manager = booted.game.scene;
+    manager.start(GYM_BOT_TUNING_SCENE_KEY, data);
+    return manager.getScene(GYM_BOT_TUNING_SCENE_KEY) as GymBotTuning;
+  }
+
+  /** Sets the wave clock to `elapsed` seconds into the active wave. */
+  function setElapsed(scene: GymBotTuning, elapsed: number): void {
+    scene.setWaveTimeoutRemaining(WAVE_TIME_LIMIT_SECONDS - elapsed);
+  }
+
+  it('AC2 — plans the seed-derived asteroid schedule for the wave', async () => {
+    const seed = 777;
+    const scene = await bootTuning({ seed });
+
+    expect(scene.getPendingAsteroidSpawns()).toEqual(
+      computeSpawns(
+        0,
+        GAME_WIDTH,
+        GAME_HEIGHT,
+        WAVE_TIME_LIMIT_SECONDS,
+        createSeededRng(seed + 1),
+      ),
+    );
+  });
+
+  it('AC2 — the bot snapshot carries live timed-wave pressure, not an inactive stub', async () => {
+    const scene = await bootTuning({ seed: 808 });
+    setElapsed(scene, 12);
+
+    const snapshot = scene.getBotSnapshot();
+    expect(snapshot.wave).not.toBeNull();
+    expect(snapshot.wave!.active).toBe(true);
+    expect(snapshot.wave!.timeLimit).toBe(WAVE_TIME_LIMIT_SECONDS);
+    expect(snapshot.wave!.timeRemaining).toBeCloseTo(
+      WAVE_TIME_LIMIT_SECONDS - 12,
+      3,
+    );
+    // The derived world view exposes the pressure the wave-clear behaviours
+    // consume (`enemyWavePressurePort` / `waveClearBoost`).
+    const pressure = buildBotWorld(snapshot).wavePressure;
+    expect(pressure).toBeGreaterThan(0.3);
+    expect(pressure).toBeLessThan(0.5);
+  });
+
+  it('AC1/AC2 — the bot snapshot carries a live scheduled asteroid', async () => {
+    const scene = await bootTuning({ seed: 909 });
+    const first = scene.getPendingAsteroidSpawns()[0];
+    setElapsed(scene, first.timeSeconds + 1e-6);
+    scene.tick(0.001);
+
+    const asteroids = scene.getAsteroids();
+    expect(asteroids).toHaveLength(1);
+    const snapshot = scene.getBotSnapshot();
+    const hazard = snapshot.enemies.find((enemy) => enemy.archetype === 'asteroid');
+    expect(hazard).toBeDefined();
+    expect(hazard!.alive).toBe(true);
+    // The bot's world model partitions it as an asteroid hazard (not an enemy
+    // formation to clear).
+    expect(buildBotWorld(snapshot).liveAsteroids).toHaveLength(1);
+  });
+
+  it('AC3 — equivalent snapshots yield the same decision from the demo and gym bot stacks', async () => {
+    const seed = 606;
+    const scene = await bootTuning({ seed });
+    setElapsed(scene, 9);
+    scene.tick(1 / 60);
+
+    const gymSnapshot = scene.getBotSnapshot();
+    const ship = scene.getShip()!;
+    // The shipped demo builds its snapshot from the same live state through
+    // the same public getters; this stub is the demo-shaped source.
+    const demoSnapshot = buildBotSnapshot({
+      getPlayer: () => ship,
+      getBoss: () => null,
+      getBossPhase: () => 0,
+      getEnemies: () => scene.getEnemies(),
+      getEnemyBullets: () => scene.getEnemyBullets(),
+      getPlayerBullets: () => scene.getPlayerBullets(),
+      getDrops: () => scene.getDrops(),
+      getMinerals: () => scene.getMinerals(),
+      getAliveCount: () =>
+        scene.getEnemies().filter((enemy) => enemy.alive).length,
+      getWaveState: () => scene.getWaveState(),
+      getRunSeed: () => seed,
+      getLives: () => 3,
+      getLivesCap: () => 5,
+    });
+
+    // No scenario-derived field is lost in the gym snapshot ...
+    expect(demoSnapshot).toEqual(gymSnapshot);
+    // ... and the same tuning therefore decides identically on both.
+    const dt = 1 / 60;
+    const gymBot = createCompetentBotBrain({
+      tunables: scene.getAppliedBotTunables(),
+    });
+    const demoBot = createCompetentBotBrain({
+      tunables: scene.getAppliedBotTunables(),
+    });
+    expect(gymBot.decide(gymSnapshot, dt)).toEqual(
+      demoBot.decide(demoSnapshot, dt),
+    );
+  });
 });

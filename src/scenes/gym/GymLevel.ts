@@ -36,6 +36,17 @@
  * the spawn *source* (a cadence here, the game's own source) is gym-specific,
  * exactly as `GymFormationScene` documents (OQ6). The bot-tuning gym inherits
  * this so the bot can be tested against minerals, power-ups and weapons.
+ *
+ * ## Scenario pressures (AH-0MV9AWR7A0084XJ0)
+ *
+ * Like the shipped demo, every wave runs a 30 s timed window (the shared
+ * `CombatScene` wave-timeout, with `PlayScene`'s carry-over semantics) and a
+ * scheduled random offscreen asteroid hazard planned by the shared
+ * `AsteroidHazardLayer` (`computeSpawns`). Live asteroids are non-blocking —
+ * they never gate wave completion and persist across wave transitions
+ * (`isNonBlockingHazard`) — and `getWaveState()` reports the live wave clock,
+ * so a bot in a gym sees the same hazard and wave-pressure signals it sees in
+ * the game. `setAsteroidSpawnerEnabled(false)` is a tuning/test seam.
  */
 
 import Phaser from 'phaser';
@@ -104,6 +115,12 @@ import {
   rollAsteroidExtraLife,
   type AsteroidKillDropEntity,
 } from '../core/asteroidKillDrops';
+import {
+  AsteroidHazardLayer,
+  createAsteroidFromEvent,
+} from '../core/asteroidHazard';
+import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
+import type { SpawnEvent } from '../../waves/AsteroidSpawner';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 import {
   WORMHOLE_OPEN_DURATION,
@@ -169,6 +186,13 @@ export interface LevelSpawn {
   entity: EnemyEntity;
   /** Archetype key, for the shared fire dispatcher. */
   key: string;
+  /**
+   * True for a scheduled **non-blocking world hazard** spawn (the shared
+   * asteroid hazard). Hazards never gate wave completion and persist across
+   * wave transitions, exactly as in the game. Explicit (not key-derived) so a
+   * hazard-looking key inside a wave group still gates its wave.
+   */
+  hazard?: boolean;
   /** Formation base x at spawn (px). */
   startX: number;
   /** Formation base y at spawn (px). */
@@ -378,6 +402,38 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     return this.driftX;
   }
 
+  // ── Scheduled asteroid hazard + timed waves (AH-0MV9AWR7A0084XJ0) ──
+  //
+  // The shipped game plays a random offscreen asteroid hazard inside a timed
+  // wave window; the bot-tuning gym used to play formation-only levels with no
+  // hazard and no wave clock, so tuning there did not transfer to the demo.
+  // The level gym now runs the *same* shared pieces: the
+  // `AsteroidHazardLayer` plan/release lifecycle (also used by `PlayScene`)
+  // and the shared `CombatScene` wave-timeout carry-over window.
+
+  /**
+   * RNG for the asteroid hazard plan. Defaults to `Math.random`;
+   * `GymBotTuning` overrides it with a seeded RNG so a seed reproduces the
+   * same hazard schedule.
+   */
+  protected hazardRng: () => number = () => Math.random();
+
+  /** Scheduled asteroid hazard for the active wave (shared layer). */
+  private readonly asteroidHazard = new AsteroidHazardLayer();
+
+  /**
+   * Whether the gym schedules the game's offscreen asteroid hazard. Mirrors
+   * `PlayScene.setAsteroidSpawnerEnabled`; disabling drops any pending plan.
+   */
+  private asteroidHazardEnabled = true;
+
+  /**
+   * Cumulative 0-based index of the next wave to start, across this gym
+   * session — the asteroid escalation input, mirroring
+   * `WaveManager.globalWaveIndex` in the game.
+   */
+  private globalWaveIndex = 0;
+
   /** Current wave index (0-based). */
   private currentWaveIndex = 0;
   /** Waves to play in this session. */
@@ -404,6 +460,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.enemyBullets = [];
     this.driftX = 0;
     this.driftDir = 1;
+    this.globalWaveIndex = 0;
+    this.asteroidHazard.reset();
 
     const level = data?.level;
     if (!level || !Array.isArray(level.waves) || level.waves.length === 0) {
@@ -494,6 +552,16 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
         getDriftX: () => this.driftX,
       }),
     );
+    // Timed wave parity (AH-0MV9AWR7A0084XJ0): the game's regular waves run a
+    // 30 s window that carries survivors into the next wave. Arm the shared
+    // wave-timeout for every gym wave so the bot sees the same
+    // `getWaveState()` pressure signal the demo does.
+    this.startWaveTimeout();
+    // Plan this wave's random offscreen asteroid hazard with the same shared
+    // planner the game uses (one plan per wave, so the RNG stream only
+    // advances at wave boundaries).
+    this._planAsteroidSpawns();
+    this.globalWaveIndex += 1;
     // Spawn cue, matching the other gym scenes (GymFormationScene plays the
     // shared spawn sound once per wave). Without this the launched level is
     // silent on entry — the second half of the producer audit.
@@ -539,17 +607,129 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     return { x: portal.x, y: portal.y };
   }
 
+  /**
+   * Plans the active wave's scheduled asteroid hazard with the shared planner
+   * (`AsteroidHazardLayer` → `computeSpawns`). Called once per wave from
+   * {@link _spawnCurrentWave} so the RNG stream only advances at wave
+   * boundaries, exactly as `PlayScene.planAsteroidSpawns()` does.
+   */
+  private _planAsteroidSpawns(): void {
+    if (!this.asteroidHazardEnabled) {
+      this.asteroidHazard.reset();
+      return;
+    }
+    this.asteroidHazard.plan(
+      this.globalWaveIndex,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      WAVE_TIME_LIMIT_SECONDS,
+      this.hazardRng,
+    );
+  }
+
+  /**
+   * Releases every planned asteroid spawn whose scheduled time has passed.
+   * Runs before the wave clock advances (like `PlayScene`), so a wave timeout
+   * cannot release the rest of the plan.
+   */
+  private _releaseDueAsteroidSpawns(): void {
+    const duration = this.getWaveTimeoutDuration();
+    if (duration <= 0) return;
+    const elapsed = duration - this.getWaveTimeoutRemaining();
+    this.asteroidHazard.releaseDue(elapsed, (event) =>
+      this._spawnScheduledAsteroid(event),
+    );
+  }
+
+  /**
+   * Spawns one planned asteroid through the shared factory. Asteroids are
+   * non-blocking hazards: like the game, they never gate wave completion and
+   * persist across wave/level transitions (`isNonBlockingHazard`).
+   */
+  private _spawnScheduledAsteroid(event: SpawnEvent): void {
+    const entity = createAsteroidFromEvent(this, event, this.hazardRng);
+    this.spawned.push({
+      entity,
+      key: 'asteroid',
+      hazard: true,
+      startX: 0,
+      startY: 0,
+      spacingX: 0,
+      spacingY: 0,
+      // Roaming hazards ignore the formation slot; the offset is required by
+      // the spawn contract and is never used for transit positioning.
+      offset: { row: 0, col: 0 },
+    });
+  }
+
   /** Advances to the next wave once the current one is clear. */
   private _checkWaveComplete(): void {
     if (this.levelComplete) return;
-    if (!isWaveClear(this.spawned)) return;
+    // Non-blocking world hazards (the scheduled asteroids) never gate wave
+    // completion, exactly as in the game (AH-0MUJM746P000QAEO).
+    const blocking = this.spawned.filter((spawn) => !spawn.hazard);
+    if (!isWaveClear(blocking)) return;
 
     this.currentWaveIndex++;
     if (this.currentWaveIndex >= this.wavesToPlay.length) {
       this._onLevelComplete();
       return;
     }
-    cleanupWave(this.spawned, this.enemyBullets);
+    this._clearWaveEnemies();
+    this.driftX = 0;
+    this.driftDir = 1;
+    this._spawnCurrentWave();
+  }
+
+  /**
+   * Clears the finished wave's blocking enemies and stray enemy bullets while
+   * keeping live **non-blocking hazards** on the field — asteroids persist
+   * across wave/level transitions exactly as they do in the game
+   * (AH-0MUJM746P000QAEO).
+   */
+  private _clearWaveEnemies(): void {
+    for (const bullet of this.enemyBullets) {
+      try {
+        bullet.graphics.destroy();
+      } catch {
+        /* already destroyed */
+      }
+    }
+    this.enemyBullets = [];
+    for (const spawn of this.spawned) {
+      if (spawn.hazard) continue;
+      try {
+        spawn.entity.destroy();
+      } catch {
+        /* already destroyed */
+      }
+    }
+    this.spawned = this.spawned.filter(
+      (spawn) => spawn.hazard === true && spawn.entity.alive,
+    );
+  }
+
+  /**
+   * Wave-timeout expiry (carry-over semantics, mirroring `PlayScene`): living
+   * enemies stay on the field and the next wave spawns alongside them, so the
+   * wave only clears once the fresh spawns *and* the survivors are destroyed
+   * (AH-0MUNS3ZQ1002DJ9S). When the final wave times out there is no next wave
+   * to advance to: the survivors stay and the level completes once they are
+   * cleared.
+   */
+  protected override onWaveTimeoutExpired(): void {
+    if (this.levelComplete) return;
+    const hasNextWave = this.currentWaveIndex + 1 < this.wavesToPlay.length;
+    if (!hasNextWave) {
+      this.statusText?.setText(
+        `${this.label} — Wave ${this.wavesToPlay.length}/${this.wavesToPlay.length} (over time)`,
+      );
+      return;
+    }
+    this.currentWaveIndex++;
+    // Drop only the dead enemies; survivors keep their formation slots and
+    // continue moving/firing into the next wave (no timeout penalty wave).
+    this.spawned = this.spawned.filter((spawn) => spawn.entity.alive);
     this.driftX = 0;
     this.driftDir = 1;
     this._spawnCurrentWave();
@@ -558,6 +738,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   /** Marks the level complete and clears the field. */
   private _onLevelComplete(): void {
     this.levelComplete = true;
+    this.hideWaveTimeout();
+    this.asteroidHazard.reset();
     cleanupWave(this.spawned, this.enemyBullets);
     this.statusText?.setText(`${this.label} — COMPLETE`);
   }
@@ -575,6 +757,9 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.levelComplete = false;
     this.driftX = 0;
     this.driftDir = 1;
+    this.globalWaveIndex = 0;
+    this.hideWaveTimeout();
+    this.asteroidHazard.reset();
     cleanupWave(this.spawned, this.enemyBullets);
     this.spawned = [];
     this.enemyBullets = [];
@@ -866,7 +1051,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     return this.spawned.map((spawn) => spawn.entity);
   }
 
-  protected override getEnemyBullets(): readonly GymLevelBullet[] {
+  /** Enemy bullets in flight (public, mirroring `PlayScene.getEnemyBullets`). */
+  override getEnemyBullets(): readonly GymLevelBullet[] {
     return this.enemyBullets;
   }
 
@@ -941,7 +1127,14 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.effectsRegistry.tick(dt);
     this.hud?.refresh();
 
-    // Wave progression.
+    // Wave progression: release any asteroid spawns whose planned time has
+    // passed before the wave clock advances (so a timeout cannot release the
+    // rest of the plan), then advance the shared wave-timeout.
+    if (!this.levelComplete) {
+      this._releaseDueAsteroidSpawns();
+      this._advanceWaveTimeout(dt);
+    }
+    this._drawWaveTimeoutBar();
     this._checkWaveComplete();
   }
 
@@ -1014,6 +1207,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.levelComplete = false;
     this.driftX = 0;
     this.driftDir = 1;
+    this.globalWaveIndex = 0;
+    this.asteroidHazard.reset();
     // Supply layer state.
     this.minerals = [];
     this.mineralsSeeded = 0;
@@ -1034,6 +1229,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.cursors = undefined;
     this.wasd = undefined;
     cleanupWave(this.spawned, this.enemyBullets);
+    this.asteroidHazard.reset();
     this.statusText?.destroy();
     this.statusText = null;
     // Supply layer cleanup.
@@ -1133,5 +1329,68 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   /** Overrides the supply RNG (a seeded RNG for deterministic runs/tests). */
   setSupplyRng(rng: () => number): void {
     this.supplyRng = rng;
+  }
+
+  // ── Timed waves + asteroid hazard accessors (AH-0MV9AWR7A0084XJ0) ──
+
+  /**
+   * The active wave's timed state — the same shape as
+   * `PlayScene.getWaveState()` and the bot snapshot's `wave` field, so the
+   * gym reports real wave pressure instead of a hard-coded inactive state.
+   */
+  getWaveState(): { active: boolean; timeRemaining: number; timeLimit: number } {
+    return {
+      active: this.isWaveTimeoutActive(),
+      timeRemaining: this.getWaveTimeoutRemaining(),
+      timeLimit: this.getWaveTimeoutDuration(),
+    };
+  }
+
+  /**
+   * Opt the level gym into the shared wave-timeout (carry-over window), so a
+   * regular wave runs the game's 30 s clock (AH-0MV9AWR7A0084XJ0).
+   */
+  protected override getWaveTimeoutDuration(): number {
+    return this.wavesToPlay.length > 0 && !this.levelComplete
+      ? WAVE_TIME_LIMIT_SECONDS
+      : 0;
+  }
+
+  /** Live asteroids on the field (scheduled hazard spawns). */
+  getAsteroids(): Asteroid[] {
+    return this.spawned
+      .map((spawn) => spawn.entity)
+      .filter((entity): entity is Asteroid => entity instanceof Asteroid);
+  }
+
+  /** The planned asteroid spawn events for the active wave (copy). */
+  getPendingAsteroidSpawns(): readonly SpawnEvent[] {
+    return this.asteroidHazard.getPlan();
+  }
+
+  /** How many planned asteroid spawns have been released this wave. */
+  getReleasedAsteroidCount(): number {
+    return this.asteroidHazard.getReleasedCount();
+  }
+
+  /** How many waves have started this gym session. */
+  getGlobalWaveIndex(): number {
+    return this.globalWaveIndex;
+  }
+
+  /**
+   * Enables or disables the scheduled asteroid hazard (tuning/test seam,
+   * mirroring `PlayScene.setAsteroidSpawnerEnabled`). Disabling drops the
+   * current plan immediately.
+   */
+  setAsteroidSpawnerEnabled(enabled: boolean): void {
+    this.asteroidHazardEnabled = enabled;
+    if (!enabled) this.asteroidHazard.reset();
+  }
+
+  /** Overrides the asteroid-hazard RNG (seeded runs/tests); takes effect at
+   * the next wave's plan. */
+  setHazardRng(rng: () => number): void {
+    this.hazardRng = rng;
   }
 }
