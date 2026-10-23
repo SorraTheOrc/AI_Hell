@@ -25,6 +25,11 @@ import {
 import { Diver } from '../../entities/Diver';
 import { Harvester } from '../../entities/Harvester';
 import { RULES_STORAGE_KEY } from '../../core/rules';
+import {
+  getSpawnState,
+  type SpawnAnimatable,
+} from '../../vfx/wormholeSpawn';
+import { getFormationBuilder } from '../../utils/formations';
 
 /** Waits for Phaser scene transitions to settle. */
 
@@ -437,5 +442,158 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     expect(extra).toBeDefined();
     expect(extra!.x).toBeCloseTo(123, 0);
     expect(extra!.y).toBeCloseTo(234, 0);
+  });
+});
+
+describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  /** Boots the gym on one wave and returns the scene. */
+  async function bootWave(wave: WaveDefinition): Promise<GymLevel> {
+    booted = await bootScene([GymLevel]);
+    const manager = booted.game.scene;
+    manager.start('GymLevel', { level: makeLevel('Emergence', [wave]) });
+    await advanceGame(booted.game, 200);
+    return manager.getScene('GymLevel') as GymLevel;
+  }
+
+  /** A firing wave of `count` scouts. */
+  function firingScoutWave(count: number): WaveDefinition {
+    return { ...scoutWave(count), shootEnabled: true };
+  }
+
+  it('emerges every wave enemy from a wormhole centred on the wave formation', async () => {
+    const scene = await bootWave(scoutWave(4));
+    const enemies = scene.getEnemies();
+    expect(enemies).toHaveLength(4);
+
+    const effects = scene.getWormholeEffects();
+    const wormhole = effects[effects.length - 1];
+    expect(wormhole, 'no wormhole opened for the launched wave').toBeDefined();
+
+    // Every enemy starts at the wormhole origin (where the VFX opened).
+    for (const enemy of enemies) {
+      expect(enemy.x).toBeCloseTo(wormhole.x, 5);
+      expect(enemy.y).toBeCloseTo(wormhole.y, 5);
+    }
+
+    // The wormhole is centred on the formation the enemies settle into, so
+    // no enemy treks the full formation extent (the producer-audit
+    // requirement: final positions centred on the wormhole).
+    const dests = enemies.map((enemy) => {
+      const state = getSpawnState(enemy as unknown as SpawnAnimatable);
+      expect(state, 'enemy is not in its spawn animation').not.toBeNull();
+      return { x: state!.destX, y: state!.destY };
+    });
+    const xs = dests.map((d) => d.x);
+    const ys = dests.map((d) => d.y);
+    const centreX = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const centreY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    expect(wormhole.x).toBeCloseTo(centreX, 5);
+    expect(wormhole.y).toBeCloseTo(centreY, 5);
+
+    // Not the first slot (the pre-parity behaviour put the wormhole on it).
+    const apex = dests[0];
+    expect(Math.hypot(wormhole.x - apex.x, wormhole.y - apex.y)).toBeGreaterThan(1);
+
+    // ...and no enemy travels further than half the formation's diagonal.
+    const halfDiagonal =
+      Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2;
+    for (const dest of dests) {
+      expect(Math.hypot(dest.x - wormhole.x, dest.y - wormhole.y)).toBeLessThanOrEqual(
+        halfDiagonal + 1e-6,
+      );
+    }
+  });
+
+  it('lands every enemy exactly on its (live, drifting) formation slot at the end of the spawn animation', async () => {
+    const wave = scoutWave(4);
+    const scene = await bootWave(wave);
+    const enemies = scene.getEnemies();
+    const group = wave.groups[0];
+    // Enemies rest on their live formation slot: base + drift, plus the
+    // shared formation offset (the same arithmetic `_moveEnemies` applies).
+    const drift = scene.getFormationDriftX();
+    const slots = getFormationBuilder(group.formation)(group.count).map(
+      (offset) => ({
+        x: group.startX + drift + offset.col * group.spacingX,
+        y: group.startY + offset.row * group.spacingY,
+      }),
+    );
+
+    scene.finishSpawnAnimations();
+
+    enemies.forEach((enemy, index) => {
+      // The snap lands on the slot; scout wiggle is up to ±2 px around it.
+      expect(Math.abs(enemy.x - slots[index].x)).toBeLessThanOrEqual(3);
+      expect(Math.abs(enemy.y - slots[index].y)).toBeLessThanOrEqual(3);
+      expect(enemy.isSpawning).toBe(false);
+    });
+  });
+
+  it('is dt-driven and fully arrives inside the 3 s spawn-protection window', async () => {
+    const scene = await bootWave(scoutWave(4));
+    const enemies = scene.getEnemies();
+    const origins = enemies.map((enemy) => ({ x: enemy.x, y: enemy.y }));
+
+    // Partway through the grow phase every enemy is still spawning and has
+    // begun to travel away from the wormhole.
+    scene.tick(1.2);
+    enemies.forEach((enemy, index) => {
+      expect(enemy.isSpawning).toBe(true);
+      expect(
+        Math.abs(enemy.x - origins[index].x) + Math.abs(enemy.y - origins[index].y),
+      ).toBeGreaterThan(1);
+    });
+    expect(scene.isWormholeOpen()).toBe(true);
+
+    // Growth ends at 2.5 s, inside the 3 s protection window.
+    scene.tick(1.5);
+    for (const enemy of enemies) expect(enemy.isSpawning).toBe(false);
+    expect(scene.isWormholeOpen()).toBe(false);
+  });
+
+  it('holds spawn protection while enemies are in transit (gym parity)', async () => {
+    const scene = await bootWave(firingScoutWave(4));
+    const victim = scene.getEnemies()[1];
+    const livesBefore = scene.getEffectsRegistry().lives();
+
+    scene.tick(1.2);
+    expect(victim.isSpawning).toBe(true);
+
+    // Player bullets pass through a transiting enemy.
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.016);
+    expect(victim.alive).toBe(true);
+
+    // A transiting enemy cannot fire.
+    victim.shootEnabled = true;
+    scene.tick(0.1);
+    expect(scene.getActiveEnemyBullets()).toHaveLength(0);
+
+    // No body collision: parking the ship on a transiting enemy is harmless.
+    const player = scene.getShip()!;
+    player.setPosition(victim.x, victim.y);
+    scene.tick(0.001);
+    expect(scene.getEffectsRegistry().lives()).toBe(livesBefore);
+    expect(victim.alive).toBe(true);
+
+    // Once the transit completes the same enemy becomes vulnerable.
+    scene.finishSpawnAnimations();
+    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    scene.tick(0.016);
+    expect(victim.alive).toBe(false);
   });
 });

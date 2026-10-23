@@ -1629,13 +1629,18 @@ export class GymFormationScene<
    */
   private _updateSpawnAnimations(dt: number): void {
     let anySpawning = false;
-    for (const entity of this.entities) {
-      if (!entity.isSpawning) continue;
+    // `getEnemyEntities()` is the scene's full live set: the formation
+    // entities here, plus anything a subclass adds (GymBoss's phase minions),
+    // so a summoned minion's spawn animation advances on the shared tick too
+    // (AH-0MV8BSMXC0097KLW).
+    for (const entity of this.getEnemyEntities()) {
+      const spawnState = entity as unknown as { isSpawning?: boolean; setSpawning?(v: boolean): void };
+      if (!spawnState.isSpawning) continue;
       const stillGrowing = updateSpawnAnimation(entity as unknown as SpawnAnimatable, dt);
       if (stillGrowing) {
         anySpawning = true;
       } else {
-        entity.setSpawning?.(false);
+        spawnState.setSpawning?.(false);
       }
     }
     if (!anySpawning) this._wormhole.close();
@@ -1647,10 +1652,11 @@ export class GymFormationScene<
    * Not used by gameplay.
    */
   finishSpawnAnimations(): void {
-    for (const entity of this.entities) {
-      if (!entity.isSpawning) continue;
+    for (const entity of this.getEnemyEntities()) {
+      const spawnState = entity as unknown as { isSpawning?: boolean; setSpawning?(v: boolean): void };
+      if (!spawnState.isSpawning) continue;
       updateSpawnAnimation(entity as unknown as SpawnAnimatable, 10);
-      entity.setSpawning?.(false);
+      spawnState.setSpawning?.(false);
     }
     this._wormhole.close();
   }
@@ -1721,28 +1727,37 @@ export class GymFormationScene<
       // Containers are not auto-added to the display list — without this
       // the enemies would never render (project convention, see Gym.ts).
       this.add.existing(entity);
-      startSpawnAnimation(
-        entity as unknown as SpawnAnimatable,
-        entity.scaleX,
-        WORMHOLE_OPEN_DURATION,
-        canTransit
-          ? () => {
-              // Track the live slot so base drift/march during the transit
-              // is followed and the entity lands exactly on its live slot.
-              if (typeof orbitalSlot === 'function') {
-                return orbitalSlot.call(
-                  entity,
-                  this.formationBaseX,
-                  this.formationBaseY,
-                );
+      // Entities without the spawning seam (the Boss, test stubs) are not
+      // animated: they have no `isSpawning` flag for the update pass to
+      // advance, so shrinking them here would strand them at 1 px forever.
+      // The game spawns them fully formed (`PlayScene.spawnBoss`), so this is
+      // also the parity behaviour (AH-0MV8BSMXC0097KLW).
+      const animatable =
+        typeof (entity as { setSpawning?: unknown }).setSpawning === 'function';
+      if (animatable) {
+        startSpawnAnimation(
+          entity as unknown as SpawnAnimatable,
+          entity.scaleX,
+          WORMHOLE_OPEN_DURATION,
+          canTransit
+            ? () => {
+                // Track the live slot so base drift/march during the transit
+                // is followed and the entity lands exactly on its live slot.
+                if (typeof orbitalSlot === 'function') {
+                  return orbitalSlot.call(
+                    entity,
+                    this.formationBaseX,
+                    this.formationBaseY,
+                  );
+                }
+                return {
+                  x: this.formationBaseX + offset.col * this.config.spacingX,
+                  y: this.formationBaseY + offset.row * this.config.spacingY,
+                };
               }
-              return {
-                x: this.formationBaseX + offset.col * this.config.spacingX,
-                y: this.formationBaseY + offset.row * this.config.spacingY,
-              };
-            }
-          : undefined,
-      );
+            : undefined,
+        );
+      }
       entity.setSpawning?.(true);
       this.entities.push(entity);
     }

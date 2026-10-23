@@ -53,6 +53,7 @@ import { fireForEnemy } from '../../entities/enemyFire';
 import {
   computeFormationPosition,
   getFormationBuilder,
+  type FormationOffset,
 } from '../../utils/formations';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import {
@@ -104,6 +105,18 @@ import {
   type AsteroidKillDropEntity,
 } from '../core/asteroidKillDrops';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
+import {
+  WORMHOLE_OPEN_DURATION,
+  WormholeController,
+  formationCentre,
+  formationExtents,
+  getSpawnState,
+  placeWavePortal,
+  startSpawnAnimation,
+  updateSpawnAnimation,
+  type PortalPoint,
+  type SpawnAnimatable,
+} from '../../vfx/wormholeSpawn';
 
 // ── Initialisation data ────────────────────────────────────────────
 
@@ -163,6 +176,24 @@ export interface LevelSpawn {
   spacingX: number;
   /** Vertical formation spacing (px). */
   spacingY: number;
+  /** This enemy's formation offset (drives its live transit destination). */
+  offset: FormationOffset;
+}
+
+/**
+ * Options for {@link spawnWave}.
+ *
+ * The wormhole-entry options are how the level gym reproduces the game's
+ * spawn presentation (AH-0MV8BSMXC0097KLW, gym↔game parity): every enemy is
+ * created at the wave's wormhole origin and traverses to its formation slot
+ * over the spawn-protection window. Omitting them keeps the legacy in-place
+ * spawn (used by callers/tests that only need the plan).
+ */
+export interface GymLevelWaveSpawnOptions {
+  /** The wave's wormhole origin (px) — where every enemy emerges. */
+  origin?: PortalPoint;
+  /** Live formation drift (px) for this frame, read by the transit target. */
+  getDriftX?: () => number;
 }
 
 // ── Wave spawning ──────────────────────────────────────────────────
@@ -171,13 +202,22 @@ export interface LevelSpawn {
  * Spawns every group of one wave and returns the enemy bullets fired during
  * spawn. Uses the shared formation builders and the config-aware entity
  * factory so the level gym spawns the *same* entities as the game.
+ *
+ * With `options.origin` supplied (the launched wave's wormhole) each enemy is
+ * created **at the wormhole** and starts the shared spawn animation with a
+ * live destination resolver, so it grows from 1 px and transits to its
+ * slot exactly as `PlayScene._spawnEnemy` does. Entities with autonomous
+ * positioning (e.g. the Raider) emerge at the origin with no destination and
+ * their own motion carries them out (game parity).
  */
 export function spawnWave(
   scene: Phaser.Scene,
   wave: WaveDefinition,
   spawned: LevelSpawn[],
+  options: GymLevelWaveSpawnOptions = {},
 ): GymLevelBullet[] {
   const bullets: GymLevelBullet[] = [];
+  const origin = options.origin;
 
   for (const group of wave.groups) {
     const baseConfig = loadEnemyConfig(group.enemyKey);
@@ -194,7 +234,13 @@ export function spawnWave(
         group.spacingX,
         group.spacingY,
       );
-      const enemy = createEnemyFromConfig(scene, baseConfig, x, y, offset);
+      const enemy = createEnemyFromConfig(
+        scene,
+        baseConfig,
+        origin?.x ?? x,
+        origin?.y ?? y,
+        offset,
+      );
       scene.add.existing(enemy);
       spawned.push({
         entity: enemy,
@@ -203,7 +249,28 @@ export function spawnWave(
         startY: group.startY,
         spacingX: group.spacingX,
         spacingY: group.spacingY,
+        offset,
       });
+      // Wormhole-entry transit: the destination is the live formation slot
+      // (drift tracked every frame), matching `PlayScene._spawnEnemy`.
+      const autonomous =
+        (enemy as { autonomousPositioning?: boolean }).autonomousPositioning ===
+        true;
+      startSpawnAnimation(
+        enemy as unknown as SpawnAnimatable,
+        enemy.scaleX,
+        WORMHOLE_OPEN_DURATION,
+        origin && !autonomous
+          ? () => {
+              const drift = options.getDriftX?.() ?? 0;
+              return {
+                x: group.startX + drift + offset.col * group.spacingX,
+                y: group.startY + offset.row * group.spacingY,
+              };
+            }
+          : undefined,
+      );
+      enemy.setSpawning(true);
       for (const bullet of fireForEnemy<GymLevelBullet>(enemy, key, scene.time.now)) {
         bullets.push(bullet);
       }
@@ -258,6 +325,12 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   private player: Player | null = null;
   private spawned: LevelSpawn[] = [];
   private enemyBullets: GymLevelBullet[] = [];
+  /**
+   * Single-live wormhole lifecycle for the launched waves, shared with
+   * `PlayScene` and every formation gym (AH-0MV9KHLV8006GMX6) so a wave
+   * transition can never strand a live wormhole.
+   */
+  private readonly _wormhole = new WormholeController(this);
   private effectsRegistry = new EffectsRegistry();
   private statusText: Phaser.GameObjects.Text | null = null;
 
@@ -295,6 +368,14 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
    * same mineral field and drop sequence.
    */
   protected supplyRng: () => number = () => Math.random();
+
+  /**
+   * Live formation drift (px) applied to every non-roaming enemy slot.
+   * Test seam (parity with `GymFormationScene.formationX`).
+   */
+  getFormationDriftX(): number {
+    return this.driftX;
+  }
 
   /** Current wave index (0-based). */
   private currentWaveIndex = 0;
@@ -396,11 +477,65 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       `${this.label} — Wave ${this.currentWaveIndex + 1}/${this.wavesToPlay.length}`,
     );
 
-    this.enemyBullets.push(...spawnWave(this, wave, this.spawned));
+    // The wave enters through a wormhole exactly as it does in the game
+    // (AH-0MV8BSMXC0097KLW, gym↔game parity): the portal opens at the centre
+    // of the wave's formation (gyms have no ship to avoid, so the shared
+    // `placeWavePortal` keeps the anchor) and every enemy emerges there and
+    // transits to its slot over the spawn-protection window. The controller
+    // closes any still-open previous wormhole first (single-live invariant).
+    const portal = this._resolveWavePortal(wave);
+    if (portal) {
+      this._wormhole.open(portal.x, portal.y, this.wormholeEffects);
+    }
+    this.enemyBullets.push(
+      ...spawnWave(this, wave, this.spawned, {
+        origin: portal ?? undefined,
+        getDriftX: () => this.driftX,
+      }),
+    );
     // Spawn cue, matching the other gym scenes (GymFormationScene plays the
     // shared spawn sound once per wave). Without this the launched level is
     // silent on entry — the second half of the producer audit.
     playSpawnSound();
+  }
+
+  /**
+   * Chooses where the wave's wormhole opens.
+   *
+   * The portal is the **centre of the wave's planned formation**, computed
+   * from the same shared formation builders that lay the wave out, so the
+   * enemies' final positions are centred on the wormhole and no enemy
+   * traverses the full formation extent (producer audit on
+   * AH-0MV8BSMXC0097KLW). Gyms have no player ship, so `placeWavePortal`
+   * returns the anchor unchanged — the same shared code path `PlayScene`
+   * runs with a ship (AC4, gym↔game parity).
+   *
+   * @returns The portal position, or `null` for a wave with no enemies.
+   */
+  private _resolveWavePortal(wave: WaveDefinition): PortalPoint | null {
+    const points: PortalPoint[] = [];
+    for (const group of wave.groups) {
+      for (const offset of getFormationBuilder(group.formation)(group.count)) {
+        points.push(
+          computeFormationPosition(
+            group.startX,
+            group.startY,
+            offset,
+            group.spacingX,
+            group.spacingY,
+          ),
+        );
+      }
+    }
+    if (points.length === 0) return null;
+    const portal = placeWavePortal({
+      formation: formationExtents(points),
+      anchor: formationCentre(points),
+      playfield: { width: GAME_WIDTH, height: GAME_HEIGHT },
+      // Gyms have no in-game ship: the portal stays at the formation anchor.
+      player: null,
+    });
+    return { x: portal.x, y: portal.y };
   }
 
   /** Advances to the next wave once the current one is clear. */
@@ -552,7 +687,20 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   private _supplyPlacementContext(): PlacementContext {
     const enemies = this.getEnemyEntities()
       .filter((enemy) => enemy.alive)
-      .map((enemy) => ({ x: enemy.x, y: enemy.y, radius: enemy.getHitRadius() }));
+      .map((enemy) => {
+        // (AH-0MV8BSMXC0097KLW) A spawning enemy is mid-emergence — its
+        // transient transit position hugs the wormhole and would mislead drop
+        // placement. Avoid the slot it settles on instead (parity with
+        // `GymFormationScene._powerUpPlacementContext`).
+        let x = enemy.x;
+        let y = enemy.y;
+        const state = getSpawnState(enemy as unknown as SpawnAnimatable);
+        if (state) {
+          x = state.destX;
+          y = state.destY;
+        }
+        return { x, y, radius: enemy.getHitRadius() };
+      });
     const player = this.getPlayer();
     return {
       width: GAME_WIDTH,
@@ -709,7 +857,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     return this.player;
   }
 
-  protected override getEffectsRegistry(): EffectsRegistry {
+  getEffectsRegistry(): EffectsRegistry {
     return this.effectsRegistry;
   }
 
@@ -773,6 +921,11 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     // Automatic defence danger feed (shared), before collision gating.
     this._updateAutoDefence(dt);
 
+    // Advance the wormhole spawn animation before the shared collision pass,
+    // so an enemy that finishes growing this frame is collidable on the same
+    // frame it becomes whole (identical ordering to `PlayScene`).
+    this._updateSpawnAnimations(dt);
+
     // Shared collision pass.
     this._handleCollisions();
 
@@ -791,10 +944,62 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this._checkWaveComplete();
   }
 
+  /**
+   * Advances the wormhole spawn animation for every spawning enemy.
+   * Once every enemy has finished growing the wormhole closes and the spawn
+   * sequence is complete (AH-0MV8BSMXC0097KLW, gym parity with `PlayScene`).
+   */
+  private _updateSpawnAnimations(dt: number): void {
+    let anySpawning = false;
+    for (const spawn of this.spawned) {
+      if (!spawn.entity.isSpawning) continue;
+      const stillGrowing = updateSpawnAnimation(
+        spawn.entity as unknown as SpawnAnimatable,
+        dt,
+      );
+      if (stillGrowing) {
+        anySpawning = true;
+      } else {
+        spawn.entity.setSpawning(false);
+      }
+    }
+    if (!anySpawning) this._wormhole.close(this.wormholeEffects);
+  }
+
+  /**
+   * Test seam: immediately completes any in-progress wormhole spawn
+   * animations without ticking the whole scene (AH-0MURBER4L00821RR /
+   * AH-0MV8BSMXC0097KLW). Not used by gameplay.
+   */
+  finishSpawnAnimations(): void {
+    for (const spawn of this.spawned) {
+      if (!spawn.entity.isSpawning) continue;
+      updateSpawnAnimation(spawn.entity as unknown as SpawnAnimatable, 10);
+      spawn.entity.setSpawning(false);
+    }
+    this._wormhole.close(this.wormholeEffects);
+  }
+
+  /** True while the wave's wormhole is live (single-live controller). */
+  isWormholeOpen(): boolean {
+    return this._wormhole.isOpen;
+  }
+
+  /** Live wormhole VFX containers (test seam; a copy). */
+  getWormholeEffects(): Phaser.GameObjects.Container[] {
+    return [...this.wormholeEffects];
+  }
+
+  /** Enemy bullets in flight (test seam; a copy). */
+  getActiveEnemyBullets(): GymLevelBullet[] {
+    return [...this.enemyBullets];
+  }
+
   // ── Reset / teardown ─────────────────────────────────────────────
 
   protected override resetRunState(): void {
     super.resetRunState();
+    this._wormhole.reset();
     this.player?.destroy();
     this.player = null;
     this.spawned = [];
@@ -817,6 +1022,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
 
   protected override teardownRunState(): void {
     super.teardownRunState();
+    this._wormhole.reset();
     this.player?.destroy();
     this.player = null;
     this.cursors = undefined;

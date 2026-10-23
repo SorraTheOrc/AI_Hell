@@ -964,11 +964,28 @@ spawn reads as cinematic and diegetic.
   Raider, whose patrol/attack state machine drives its own position) are
   exempt: they emerge at the portal and their own motion carries them out,
   avoiding a position pop when the spawn window ends. Entities without the
-  spawning seams (e.g. test stubs) are created straight on their slot.
+  spawning seam (`setSpawning` — the Boss, test stubs) are created straight
+  on their slot with **no** spawn animation: shrinking them would strand them
+  at 1 px, and the game spawns them fully formed (`PlayScene.spawnBoss`).
 - The Diver's existing movement pipeline (dive phase, re-anchor glide) is
   untouched: transit only writes the container position while the entity is
   spawning, and the formation/dive logic takes over once the spawn state is
   cleared.
+- **Boss phase minions** (`PlayScene._spawnMinions` / `GymBoss._spawnBossMinions`)
+  are not part of a wave's wormhole entry, so they emerge **in place** with
+  the same 1 px → full-size growth and the same spawn protection in both the
+  game and the gym. `GymFormationScene`'s spawn-animation pass walks
+  `getEnemyEntities()` (not just the formation entities), so a summoned
+  minion's animation advances on the shared tick exactly as the Boss's own
+  formation does.
+- **Wave play in the level gyms** (`GymLevel`, and `GymBotTuning` which
+  extends it) enters the same way the game's waves do: `spawnWave()` is given
+  the wave's wormhole origin, creates every enemy there and starts the shared
+  spawn animation with a live slot resolver. The portal opens at the
+  **centre of the wave's formation** (`formationCentre` of the same shared
+  formation builders that lay the wave out) — gyms have no ship, so
+  `placeWavePortal()` returns that anchor unchanged. Enemies therefore travel
+  at most **half the formation's diagonal**, never the full extent.
 
 **Implementation.**
 
@@ -995,6 +1012,12 @@ spawn reads as cinematic and diegetic.
   `GymFodderEnemies` and the other formation gyms are in lock-step with the
   game — a respawned formation enters through a fresh wormhole exactly as the
   game's next wave does.
+- `GymLevel.spawnWave()` does the same for the launched level's waves: the
+  wormhole opens at the wave formation's **centre**
+  (`GymLevel._resolveWavePortal()` → the shared `placeWavePortal()` with no
+  player), every enemy is created there and transits to its live slot (drift
+  tracked per frame), and `GymLevel._updateSpawnAnimations` advances/closes
+  it before the shared collision pass — the same ordering as `PlayScene`.
 - Both scenes expose a `finishSpawnAnimations()` test seam that completes the
   animation without advancing wave timers/asteroid spawns, so collision tests
   can observe fully-spawned enemies deterministically.
@@ -1096,6 +1119,13 @@ resolver (`startSpawnAnimation`'s `destFn`):
   (second `spawnWave()` while a wormhole is live, transition/timeout
   mid-spawn, a gym wipe→respawn re-opening one wormhole, and the portal
   staying ≥ `D_MIN` away from the player and its trajectory).
+  `GymLevel.test.ts` (describe “wormhole emergence parity") covers the level
+  gym side: every wave enemy emerges from a wormhole **centred on the wave's
+  formation** (no enemy travels more than half the formation diagonal),
+  arrives exactly on its slot, transits dt-driven inside the 3 s window, and
+  keeps the spawn-protection gates mid-transit. `GymBoss.test.ts` covers the
+  boss-minion case (in-place growth + protection, matching the game) and
+  asserts the Boss itself is **not** shrunk to the 1 px starting scale.
 
 ### 3.2 Existing scenes (reference implementations)
 

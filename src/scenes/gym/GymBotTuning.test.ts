@@ -314,6 +314,9 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     // non-asteroid enemy deterministically leaves one mineral; then kill it
     // through the shared collision path (a player bullet).
     scene.setSupplyRng(() => 0.99);
+    // Enemies enter through the wormhole spawn animation (AH-0MV8BSMXC0097KLW)
+    // and are protected while emerging — settle it before the kill shot.
+    scene.finishSpawnAnimations();
     scene.getShip()!.respawn(20, 20);
     scene.spawnPlayerBullet(enemies[0].x, enemies[0].y, 0, 0, 0x00ffff, 10);
     scene.tick(1 / 60);

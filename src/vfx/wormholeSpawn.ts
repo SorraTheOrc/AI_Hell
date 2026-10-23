@@ -200,6 +200,16 @@ export class WormholeController {
     spawnWormholeClose(this.scene, this.handle, registry);
     this.handle = null;
   }
+
+  /**
+   * Clears the live-handle slot **without** animating. Use on scene
+   * reset/teardown, where the scene owns the container's destruction anyway:
+   * animating a close against an already-destroyed target would leave a tween
+   * pointing at a dead object on the next scene start.
+   */
+  reset(): void {
+    this.handle = null;
+  }
 }
 
 // ── Enemy spawn animation helpers ───────────────────────────────────

@@ -2682,6 +2682,10 @@ describe('live-aim seam — bot/level gym tracks the live player like PlayScene 
     manager.start('GymLevel', { level });
     await advanceGame(booted.game, 200);
     const scene = manager.getScene('GymLevel') as GymLevel;
+    // The launched wave enters through the wormhole spawn animation
+    // (AH-0MV8BSMXC0097KLW), during which enemies cannot fire; settle it so
+    // the gym Diver is fully spawned, like the hand-registered game Diver.
+    scene.finishSpawnAnimations();
     placePlayer(scene.getShip()!, PLAYER_X, PLAYER_Y);
     const diver = scene.getEnemies()[0] as Diver;
     return { scene, diver };

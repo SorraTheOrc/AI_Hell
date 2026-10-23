@@ -733,10 +733,48 @@ describe('GymBoss — shared boss integration (AH-0MUII3E5E006A93F, gap 6)', () 
     const minion = scene.getMinions().find((m) => m.alive);
     expect(minion).toBeDefined();
 
+    // Minions enter through the same spawn animation the game's boss minions
+    // run (AH-0MV8BSMXC0097KLW), so settle them before aiming: they are
+    // spawn-protected while emerging, exactly as in `PlayScene`.
+    scene.finishSpawnAnimations();
     scene.spawnPlayerBullet(minion!.x, minion!.y, 0, 0);
     scene.tick(0.016);
 
     expect(minion!.alive).toBe(false);
+  });
+
+  it('AH-0MV8BSMXC0097KLW — phase minions emerge with the game\'s in-place spawn animation', async () => {
+    const scene = await bootGym();
+    const expected = planMinionSpawns(1);
+    const minions = scene.getMinions();
+    expect(minions).toHaveLength(expected.length);
+
+    // Each minion emerges where the game's `_spawnEnemy(spawn)` puts it — on
+    // its planned slot — growing from 1 px and protected while it emerges.
+    // (Scout wiggle shifts the live position by up to ±2 px from the slot.)
+    minions.forEach((minion, index) => {
+      expect(minion.isSpawning).toBe(true);
+      expect(minion.scaleX).toBeLessThan(1);
+      expect(Math.abs(minion.x - expected[index].x)).toBeLessThanOrEqual(3);
+      expect(Math.abs(minion.y - expected[index].y)).toBeLessThanOrEqual(3);
+    });
+
+    scene.finishSpawnAnimations();
+
+    for (const minion of minions) {
+      expect(minion.isSpawning).toBe(false);
+      expect(minion.scaleX).toBeCloseTo(1, 5);
+    }
+  });
+
+  it('AH-0MV8BSMXC0097KLW — the boss itself is not shrunk by the formation spawn animation', async () => {
+    const scene = await bootGym();
+    const boss = scene.formationBoss;
+
+    // The game spawns the boss fully formed (`PlayScene.spawnBoss`), so the
+    // gym must not leave it stuck at the wormhole's 1 px starting scale.
+    expect(boss.scaleX).toBeCloseTo(1, 5);
+    expect(boss.scaleY).toBeCloseTo(1, 5);
   });
 
   // ── Reward gating on phase depletion (AH-0MUUJDG4X003PG3O) ─────
