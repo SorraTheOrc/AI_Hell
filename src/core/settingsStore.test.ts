@@ -142,6 +142,37 @@ describe('settingsStore', () => {
       // No error should be thrown; silently skipped
     });
 
+    it('never throws when storage is full, and warns exactly once (AC6)', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockLocalStorage({});
+      // Reproduce the reported failure: a full origin quota makes every
+      // write throw QuotaExceededError out of the settings row's handler.
+      vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+        throw new DOMException('Setting the value exceeded the quota.', 'QuotaExceededError');
+      });
+
+      expect(() => saveSettings(DEFAULT_SETTINGS)).not.toThrow();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain('Could not persist settings');
+      warn.mockRestore();
+      vi.restoreAllMocks();
+    });
+
+    it('never throws when storage access is denied (SecurityError) (AC6)', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockLocalStorage({});
+      vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+        throw new DOMException('Storage access denied.', 'SecurityError');
+      });
+
+      expect(() => saveSettings(DEFAULT_SETTINGS)).not.toThrow();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+      vi.restoreAllMocks();
+    });
+
     it('round-trips a custom settings record', () => {
       const custom: SettingsRecord = {
         sfxVolume: 0.3,

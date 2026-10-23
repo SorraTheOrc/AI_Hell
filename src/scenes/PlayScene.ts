@@ -148,6 +148,7 @@ import { loadEnemyConfig } from '../core/enemyConfig';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
   createTelemetryRecorder,
+  installDevTelemetryBuffer,
   loadDevTelemetryUploader,
   resolveBuildInfo,
   resolveEffectiveTelemetryConfig,
@@ -3958,8 +3959,9 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Flushes the recorder's buffered records into the local JSONL sink, then
-   * delivers the accumulated sink to the dev server (AH-0MVBMRK6X0069QDI).
+   * Flushes the recorder's buffered records into the dev JSONL sink, then
+   * delivers the run's in-memory buffer to the dev server
+   * (AH-0MVBMRK6X0069QDI, AH-0MVIRYGD1000JVY3).
    *
    * Fire-and-forget by contract: the caller uses `void`, every failure is
    * caught here (a dev-server outage must never block or crash run end), and
@@ -3983,6 +3985,9 @@ export class PlayScene extends CombatScene<
       if (!upload) return;
       await upload({
         setting: loadSettings(),
+        // The body is read straight out of the in-memory buffer; telemetry
+        // never touches localStorage (AC1).
+        readSink: () => this.runTelemetry.readBuffer(),
         onError: reportDevTelemetryFailure,
       });
     } catch (error) {
@@ -4662,6 +4667,12 @@ export class PlayScene extends CombatScene<
         { build: resolveBuildInfo() },
       );
     this.runTelemetry = new RunTelemetry(recorder);
+    // Dev-only page accessor over the run's in-memory buffer: the dev CLI
+    // tooling (`npm run record` / `capture` / `verify-dev-telemetry`) reads
+    // the run from here instead of the retired localStorage sink
+    // (AH-0MVIRYGD1000JVY3, AC5). The installer is dev-gated, so a production
+    // bundle never writes the global.
+    installDevTelemetryBuffer(() => this.runTelemetry.readBuffer());
     this.runTelemetry.startRun(this.getRunSeed());
   }
 

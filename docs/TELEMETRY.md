@@ -111,12 +111,27 @@ const config = resolveEffectiveTelemetryConfig(import.meta.env, consent);
 > the bundle-hygiene gate forbids the endpoint in `dist/`.
 
 A stock `npm run dev` — no `VITE_TELEMETRY_*` variables — **collects** the run's
-telemetry into the local JSONL sink (`ai_hell_telemetry_jsonl`) and, at run end,
-**delivers** it to the dev server that served the page. The server validates and
-stores it as a recording under `recordings/session-<timestamp>.jsonl`, then runs
-the existing human evaluation on it automatically. The local sink is **left
-intact** after upload, so `npm run record`, `npm run telemetry:inspect` and the
-replay/ghost tooling keep working unchanged.
+telemetry into an **in-memory, per-run buffer** and, at run end, **delivers** it
+to the dev server that served the page. The server validates and stores it as a
+recording under `recordings/session-<timestamp>.jsonl`, then runs the existing
+human evaluation on it automatically. The buffer is **left intact** after the
+upload (until the next run starts) and exposed to the Node tooling through the
+dev-gated `window.__aiHellTelemetry` accessor, so `npm run record`,
+`npm run capture` and `npm run verify-dev-telemetry` read exactly the run the
+page just recorded.
+
+**Telemetry never uses `localStorage`** (AH-0MVIRYGD1000JVY3). The buffer lives
+in the page's memory, so a long run can neither exhaust the origin's storage
+quota nor make unrelated writes throw: before this, the per-tick JSONL sink
+(~64 KB/s of play) filled the ~5 MiB quota after ~1.4 minutes, after which every
+`localStorage.setItem` — including saving Settings — threw
+`QuotaExceededError` and the change silently reverted. Two consequences worth
+knowing:
+
+- `startRun()` resets the buffer, so each uploaded recording contains **only
+  that run's** records (no cross-run duplication in `recordings/session-*.jsonl`).
+- A single run of any length is captured in full — there is no quota-based
+truncation, and nothing accumulates across runs.
 
 ### The setting (on by default)
 
@@ -288,9 +303,12 @@ where records go:
 - **`NoopTelemetrySink`** — used whenever recording is disabled; discards
   everything.
 - **`JsonlTelemetrySink`** — the local dev sink. Writes one JSON object per
-  line through a pluggable `TelemetryLineWriter`; the default writer appends
-  to browser `localStorage` under `ai_hell_telemetry_jsonl`, and an in-memory
-  writer is available for headless runs and tests.
+  line through a pluggable `TelemetryLineWriter`; the default writer is an
+  **in-memory buffer** (`createMemoryLineWriter()`), reset when `startRun()`
+  begins a new run. It never touches browser storage: the run-end upload and
+  the dev CLI tooling read the buffer directly (`recorder.readBuffer()` /
+  `window.__aiHellTelemetry.read()`), and the accessor is only installed in a
+  dev build (AH-0MVIRYGD1000JVY3).
 - **`RemoteTelemetrySink`** — the production sink. It forwards the
   recorder's batches to an HTTP transport. `createTelemetrySink()`
   auto-wires an `HttpTelemetryTransport` when `VITE_TELEMETRY_ENDPOINT` is
@@ -485,13 +503,15 @@ linked from the release notes.
   all further collection immediately. `clearTelemetryConsent()` resets the
   decision so the player is asked again.
 - **Offline / local dev.** Local development and offline play never upload:
-  the dev sink writes to `localStorage`, and the remote transport drops
-  batches when offline or when no endpoint is configured.
+  the dev sink is an in-memory, per-run buffer that is discarded with the run,
+  and the remote transport drops batches when offline or when no endpoint is
+  configured.
 
 ## Inspecting downloaded telemetry (AC5)
 
-`scripts/inspect-telemetry.mjs` reads a JSONL recording (the local dev sink's
-`localStorage` value, or a downloaded/exported production batch) and prints a
+`scripts/inspect-telemetry.mjs` reads a JSONL recording (the file written by
+`npm run record` / `npm run capture`, or a downloaded/exported production
+batch) and prints a
 summary: record counts by kind, schema version, run seeds, build ids, the tick
 range and the event histogram. Unknown/corrupt lines are skipped rather than
 crashing the reader.

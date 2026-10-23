@@ -16,8 +16,6 @@ export const CAPTURE_ANCHOR_EXTENSION: string;
 export const DEFAULT_ACTION_INTENSITY_SAMPLE_RATE_HZ: number;
 /** The ordered category list the series header carries (§6.1). */
 export const ACTION_INTENSITY_SERIES_CATEGORIES: readonly string[];
-/** `localStorage` key the page's dev JSONL telemetry sink appends to. */
-export const CAPTURE_TELEMETRY_JSONL_KEY: string;
 /** The discriminated kind of the join-anchor sidecar record. */
 export const CAPTURE_ANCHOR_KIND: 'capture-join-anchor';
 

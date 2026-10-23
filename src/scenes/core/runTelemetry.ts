@@ -479,6 +479,16 @@ export class RunTelemetry {
   }
 
   /**
+   * The current run's buffered NDJSON content (the dev sink's in-memory
+   * buffer), or `null` when the recorder buffers nothing. Used by the run-end
+   * upload and by the dev-gated `window.__aiHellTelemetry` accessor
+   * (AH-0MVIRYGD1000JVY3).
+   */
+  readBuffer(): string | null {
+    return this.recorder.readBuffer();
+  }
+
+  /**
    * Starts the run: writes the run header (seed + build) and a `run_start`
    * event (AC3, AC6). A no-op when disabled.
    *

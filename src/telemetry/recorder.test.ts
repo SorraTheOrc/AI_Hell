@@ -135,6 +135,9 @@ describe('telemetry recorder — run header and schema version (AC1/AC6)', () =>
     recorder.startRun({ runSeed: 1 });
     recorder.recordTick({}, {});
     recorder.recordEvent('wave_start');
+    // A run's records are run-scoped (AC2): settle run 1 before starting the
+    // next so its records reach the sink first.
+    await recorder.flush();
     recorder.startRun({ runSeed: 2 });
     recorder.recordTick({}, {});
     await recorder.flush();
@@ -148,6 +151,42 @@ describe('telemetry recorder — run header and schema version (AC1/AC6)', () =>
     ]);
     const ticks = sink.records.filter((record) => record.kind === 'tick');
     expect(ticks.map((record) => record.tick)).toEqual([0, 0]);
+  });
+
+  it('starts each run with a clean in-memory buffer: run 2 alone uploads (AC1/AC2)', async () => {
+    const recorder = createTelemetryRecorder(enabledConfig(), { now: () => 1 });
+
+    // Run 1: header + tick + event, flushed into the buffer.
+    recorder.startRun({ runSeed: 1 });
+    recorder.recordTick({ x: 1 }, { thrust: true });
+    recorder.recordEvent('enemy_killed', { archetype: 'scout' });
+    await recorder.flush();
+
+    const first = recorder.readBuffer();
+    expect(first).toContain('"runSeed":1');
+    expect(first!.trimEnd().split('\n')).toHaveLength(3);
+
+    // Run 2: `startRun` resets the buffer, so the second upload carries only
+    // this run's records — exactly one run_header and no run-1 leftovers.
+    recorder.startRun({ runSeed: 2 });
+    recorder.recordTick({ x: 2 }, { thrust: false });
+    await recorder.flush();
+
+    const second = recorder.readBuffer();
+    const lines = second!.trimEnd().split('\n');
+    expect(lines).toHaveLength(2); // run_header + tick
+    expect(second).toContain('"runSeed":2');
+    expect(second).not.toContain('"runSeed":1');
+    expect(second).not.toContain('enemy_killed');
+  });
+
+  it('reports a null buffer from a sink that does not buffer', async () => {
+    const recorder = createTelemetryRecorder(enabledConfig(), { sink: new CapturingSink() });
+    recorder.startRun({ runSeed: 1 });
+    recorder.recordTick({}, {});
+    await recorder.flush();
+
+    expect(recorder.readBuffer()).toBeNull();
   });
 });
 

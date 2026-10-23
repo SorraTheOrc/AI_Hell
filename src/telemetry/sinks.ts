@@ -6,8 +6,13 @@
  *
  * - {@link NoopTelemetrySink} — used whenever recording is disabled.
  * - {@link JsonlTelemetrySink} — the local dev sink: one JSON object per
- *   line, written through a pluggable {@link TelemetryLineWriter} (browser
- *   `localStorage` by default, in-memory for headless use/tests).
+ *   line, written through a pluggable {@link TelemetryLineWriter}. The
+ *   default writer is an **in-memory, run-scoped buffer**
+ *   ({@link createMemoryLineWriter}); it never touches browser storage, so a
+ *   long run can neither exhaust the origin's storage quota nor break
+ *   unrelated writes such as saving settings (AH-0MVIRYGD1000JVY3). The
+ *   buffer is read back directly for the run-end upload and by the dev CLI
+ *   tooling (`window.__aiHellTelemetry`), and is reset when a run starts.
  * - {@link RemoteTelemetrySink} — the production sink. It forwards batches
  *   to an injected transport; {@link createTelemetrySink} wires an HTTP
  *   transport automatically when an endpoint is configured, otherwise the
@@ -34,6 +39,13 @@ export interface TelemetrySink {
   write(records: readonly TelemetryRecord[]): void | Promise<void>;
   /** Flushes any buffered output, if the sink buffers. */
   flush?(): void | Promise<void>;
+  /**
+   * Reads the sink's buffered content as NDJSON, when the sink buffers in
+   * memory (the dev JSONL sink does; transport sinks return `null`).
+   */
+  read?(): string | null;
+  /** Discards the sink's buffered content, when the sink buffers in memory. */
+  reset?(): void;
   /** Releases the sink's resources. */
   close?(): void | Promise<void>;
 }
@@ -53,41 +65,48 @@ export interface TelemetryLineWriter {
   writeLine(line: string): void;
 }
 
-/** `localStorage` key the dev JSONL sink appends to. */
-export const TELEMETRY_JSONL_STORAGE_KEY = 'ai_hell_telemetry_jsonl';
+/**
+ * A line writer that keeps its lines in memory, so they can be read back as
+ * NDJSON and discarded without touching any storage.
+ */
+export interface TelemetryLineBuffer extends TelemetryLineWriter {
+  /** Every buffered line as newline-delimited JSON (`''` when empty). */
+  read(): string;
+  /** Discards every buffered line. */
+  reset(): void;
+}
 
-/** An in-memory line writer; useful for headless runs and tests. */
-export function createMemoryLineWriter(): TelemetryLineWriter & { readonly lines: string[] } {
+/**
+ * The dev JSONL sink's writer: an in-memory, run-scoped line buffer.
+ *
+ * Deliberately storage-free (AH-0MVIRYGD1000JVY3, AC1): the previous
+ * `localStorage` writer grew without bound until the origin quota filled,
+ * after which every unrelated `setItem` — including saving settings — threw
+ * `QuotaExceededError`. The buffer is read straight from memory for the
+ * run-end upload and the dev CLI tooling, and reset when a run starts.
+ */
+export function createMemoryLineWriter(): TelemetryLineBuffer & { readonly lines: string[] } {
   const lines: string[] = [];
   return {
     lines,
     writeLine(line: string): void {
       lines.push(line);
     },
+    read(): string {
+      return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
+    },
+    reset(): void {
+      lines.length = 0;
+    },
   };
 }
 
-/**
- * A line writer that appends newline-delimited JSON to `localStorage`
- * (AC2's local dev sink). Falls back to an in-memory writer when storage is
- * unavailable (SSR/tests), so it never throws.
- *
- * @param key - The storage key to append to.
- * @param storage - Storage to use; defaults to `globalThis.localStorage`.
- */
-export function createLocalStorageLineWriter(
-  key: string = TELEMETRY_JSONL_STORAGE_KEY,
-  storage?: Storage | null,
-): TelemetryLineWriter & { readonly lines?: string[] } {
-  const target = storage ?? resolveLocalStorage();
-  if (!target) return createMemoryLineWriter();
-
-  return {
-    writeLine(line: string): void {
-      const existing = target.getItem(key);
-      target.setItem(key, existing === null ? `${line}\n` : `${existing}${line}\n`);
-    },
-  };
+/** True when a writer can be read back as a buffer. */
+function isLineBuffer(writer: TelemetryLineWriter): writer is TelemetryLineBuffer {
+  return (
+    typeof (writer as Partial<TelemetryLineBuffer>).read === 'function' &&
+    typeof (writer as Partial<TelemetryLineBuffer>).reset === 'function'
+  );
 }
 
 /** The local JSONL dev sink: serialises each record to one JSON line. */
@@ -105,6 +124,19 @@ export class JsonlTelemetrySink implements TelemetrySink {
     for (const record of records) {
       this.writer.writeLine(JSON.stringify(record));
     }
+  }
+
+  /**
+   * The buffered NDJSON content, or `null` when the injected writer does not
+   * buffer (e.g. a test spy).
+   */
+  read(): string | null {
+    return isLineBuffer(this.writer) ? this.writer.read() : null;
+  }
+
+  /** Discards the buffered content, when the writer buffers. */
+  reset(): void {
+    if (isLineBuffer(this.writer)) this.writer.reset();
   }
 }
 
@@ -153,7 +185,7 @@ export class RemoteTelemetrySink implements TelemetrySink {
 
 /** Injected dependencies for {@link createTelemetrySink}. */
 export interface TelemetrySinkDeps {
-  /** Line writer for the JSONL sink (defaults to local storage). */
+  /** Line writer for the JSONL sink (defaults to an in-memory buffer). */
   readonly lineWriter?: TelemetryLineWriter;
   /** Transport for the remote sink; overrides endpoint auto-wiring. */
   readonly transport?: TelemetryTransport;
@@ -180,9 +212,7 @@ export function createTelemetrySink(
 
   switch (config.sink) {
     case 'jsonl':
-      return new JsonlTelemetrySink(
-        deps.lineWriter ?? createLocalStorageLineWriter(TELEMETRY_JSONL_STORAGE_KEY),
-      );
+      return new JsonlTelemetrySink(deps.lineWriter ?? createMemoryLineWriter());
     case 'remote': {
       const transport =
         deps.transport ?? createHttpTransport(config.endpoint, deps.transportOptions);
@@ -190,14 +220,5 @@ export function createTelemetrySink(
     }
     default:
       return new NoopTelemetrySink();
-  }
-}
-
-/** Resolves a usable `Storage`, or `null` when unavailable. */
-function resolveLocalStorage(): Storage | null {
-  try {
-    return typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage;
-  } catch {
-    return null;
   }
 }

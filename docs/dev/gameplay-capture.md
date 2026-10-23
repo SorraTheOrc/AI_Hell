@@ -146,10 +146,14 @@ Every clip exports two artefacts alongside the WebM (basename-matched, e.g.
 The export is **additive and tolerant**: it cannot fail a clip (a failed
 write degrades to `seriesOutput: null`/`anchorOutput: null` on the result),
 and a telemetry-less or interrupted run writes a valid **header-only**
-series (AC3). The dev JSONL sink stores the run in the page's `localStorage`
-(`ai_hell_telemetry_jsonl`), so very long busy runs can hit the browser's
-storage quota — the sink then writes a *prefix* of the run and the series is
-partial (still schema-valid; see §7.3 of the action-intensity doc).
+series (AC3). The dev JSONL sink keeps the run in an **in-memory, per-run
+buffer** (`startRun()` resets it), which the dev-gated
+`window.__aiHellTelemetry.read()` accessor exposes to the capture script
+(AH-0MVIRYGD1000JVY3). Telemetry never uses `localStorage`, so a long busy
+run is captured in full — there is no storage-quota truncation, and the
+previous prefix-only series for long runs can no longer occur. The accessor
+is installed only in a dev build, so a production bundle has no telemetry
+page global at all.
 
 ## Pool inventory
 

@@ -2,8 +2,8 @@
  * Game-side dev telemetry uploader (AH-0MVBMRK6X0069QDI, parent
  * AH-0MVBHRLY8004BGDN).
  *
- * The game half of the dev-mode auto-upload flow: at run end the local JSONL
- * sink already holds the run's recording (see `sinks.ts` /
+ * The game half of the dev-mode auto-upload flow: at run end the run's
+ * in-memory telemetry buffer holds the recording (see `sinks.ts` /
  * `isDevTelemetryCollectionEnabled`), and this module delivers that content to
  * the dev server the page was served from. The server side — the Vite
  * `POST /api/telemetry/upload` middleware — is a separate child (F5).
@@ -20,10 +20,12 @@
  *   {@link DevTelemetryUploadOptions.onError} seam. The promise always
  *   resolves — the run-end hook must never be blocked or crashed by an
  *   upload.
- * - **Sink content is canonical and left intact.** The body is the
- *   `ai_hell_telemetry_jsonl` localStorage content exactly as written;
- *   nothing is cleared after a successful upload, so `npm run record` and the
- *   inspection tools keep working.
+ * - **Sink content is canonical and read from memory.** The body is the dev
+ *   JSONL sink's in-memory buffer content read through the injected
+ *   {@link DevTelemetryUploadOptions.readSink} seam; nothing is cleared after
+ *   a successful upload, so `npm run record` and the inspection tools keep
+ *   working until the next run starts. Telemetry never touches `localStorage`
+ *   (AH-0MVIRYGD1000JVY3, AC1).
  * - **Same-origin.** The endpoint is a relative path
  *   ({@link DEV_TELEMETRY_UPLOAD_ENDPOINT}), so the browser POSTs to the dev
  *   server that served the page and no CORS work is needed.
@@ -39,7 +41,6 @@ import {
   type DevModeEnv,
   type DevTelemetrySetting,
 } from './devMode';
-import { TELEMETRY_JSONL_STORAGE_KEY } from './sinks';
 
 /**
  * Same-origin endpoint the dev server exposes for game-side uploads
@@ -77,8 +78,12 @@ export interface DevTelemetryUploadOptions {
   readonly env?: DevModeEnv;
   /** Persisted settings slice carrying the share-telemetry flag. */
   readonly setting?: DevTelemetrySetting;
-  /** Reads the accumulated local JSONL sink content; defaults to `localStorage`. */
-  readonly readSink?: () => string | null;
+  /**
+   * Reads the current run's buffered NDJSON content (the recorder's in-memory
+   * `readBuffer()`); returns `null`/empty when nothing is buffered. Required:
+   * there is no storage default any more (AC1).
+   */
+  readonly readSink: () => string | null;
   /** `fetch` implementation; defaults to `globalThis.fetch`. */
   readonly fetchImpl?: DevUploadFetch;
   /** Upload endpoint; defaults to {@link DEV_TELEMETRY_UPLOAD_ENDPOINT}. */
@@ -100,13 +105,12 @@ export interface DevTelemetryUploadOptions {
  * @returns `true` only when the dev server accepted the upload.
  */
 export async function uploadDevTelemetry(
-  options: DevTelemetryUploadOptions = {},
+  options: DevTelemetryUploadOptions,
 ): Promise<boolean> {
-  const { env = import.meta.env, setting, fetchImpl, onError } = options;
+  const { env = import.meta.env, setting, readSink, fetchImpl, onError } = options;
   if (!isDevTelemetryUploadEnabled(env, setting)) return false;
 
   try {
-    const readSink = options.readSink ?? readLocalSink;
     const body = readSink();
     if (body === null || body.trim().length === 0) return false;
 
@@ -123,16 +127,6 @@ export async function uploadDevTelemetry(
   } catch (error) {
     onError?.(error);
     return false;
-  }
-}
-
-/** Reads the local JSONL sink content, or `null` when storage is unavailable. */
-function readLocalSink(): string | null {
-  try {
-    if (typeof globalThis.localStorage === 'undefined') return null;
-    return globalThis.localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY);
-  } catch {
-    return null;
   }
 }
 

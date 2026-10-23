@@ -169,6 +169,11 @@ export function readRunEndedSignal(
   plan?: RunEndedListenerPlan,
   scope?: object,
 ): unknown;
+/**
+ * Reads the run's in-memory telemetry buffer from the page (dev-gated
+ * `window.__aiHellTelemetry`); `''` when the accessor or buffer is absent.
+ */
+export function readDevTelemetryBuffer(scope?: object): string;
 /** Writes exported bot-tuning state into the page's localStorage pre-boot. */
 export function installBotTuningConfig(
   state: BotTuningStoreState,

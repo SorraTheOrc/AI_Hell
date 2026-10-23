@@ -10,15 +10,15 @@
  * - the dev gate composition (dev+on uploads; dev+off, prod+on, prod+off and
  *   a missing setting never touch `fetch`);
  * - the request shape (same-origin endpoint, `POST`, NDJSON content type, the
- *   sink content verbatim as the body);
- * - every failure path (empty storage, unreadable storage, rejected fetch,
+ *   in-memory buffer content verbatim as the body);
+ * - every failure path (empty buffer, unreadable buffer, rejected fetch,
  *   non-2xx) resolves without throwing;
- * - the sink content is left intact after a successful upload (the parent's
- *   no-clear-after-upload constraint).
+ * - the buffer content is left intact after a successful upload (the parent's
+ *   no-clear-after-upload constraint) and nothing is ever read from
+ *   `localStorage` (AH-0MVIRYGD1000JVY3, AC1).
  *
- * `fetch`, the storage reader and the gate inputs are injected seams, so no
- * test needs a real network call or real `localStorage` (the one integrity
- * test uses the default reader against happy-dom's storage on purpose).
+ * `fetch` and the buffer reader are injected seams, so no test needs a real
+ * network call or real `localStorage`.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -30,7 +30,6 @@ import {
   type DevUploadFetch,
   type DevUploadFetchResponse,
 } from './devUpload';
-import { TELEMETRY_JSONL_STORAGE_KEY } from './sinks';
 import type { DevModeEnv, DevTelemetrySetting } from './devMode';
 
 const DEV: DevModeEnv = { DEV: true };
@@ -198,17 +197,33 @@ describe('uploadDevTelemetry — failure paths never throw', () => {
   });
 });
 
-describe('uploadDevTelemetry — injected/default seams', () => {
-  it('reads the local JSONL sink through the default reader and leaves it intact', async () => {
-    localStorage.setItem(TELEMETRY_JSONL_STORAGE_KEY, SINK_CONTENT);
+describe('uploadDevTelemetry — injected seams', () => {
+  it('reads the in-memory buffer through readSink and leaves it intact (AC1)', async () => {
     const fetchImpl = fetchSpy();
+    // With no storage configured at all, the body can only come from memory.
+    const readSink = vi.fn(() => SINK_CONTENT);
 
     await expect(
-      uploadDevTelemetry({ env: DEV, setting: ON, fetchImpl }),
+      uploadDevTelemetry({ env: DEV, setting: ON, readSink, fetchImpl }),
     ).resolves.toBe(true);
 
     expect(fetchImpl.mock.calls[0]?.[1].body).toBe(SINK_CONTENT);
-    expect(localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY)).toBe(SINK_CONTENT);
+    expect(readSink).toHaveBeenCalledTimes(1);
+    // Parent constraint: nothing clears the buffer after upload; the dev
+    // tooling reads the same run until the next one starts.
+    expect(readSink()).toBe(SINK_CONTENT);
+  });
+
+  it('never reads or writes localStorage while uploading', async () => {
+    const getItem = vi.fn(() => null);
+    const setItem = vi.fn();
+    vi.stubGlobal('localStorage', { getItem, setItem, removeItem: vi.fn(), clear: vi.fn() });
+    const fetchImpl = fetchSpy();
+
+    await uploadDevTelemetry(uploading(fetchImpl));
+
+    expect(getItem).not.toHaveBeenCalled();
+    expect(setItem).not.toHaveBeenCalled();
   });
 
   it('defaults to the global fetch when none is injected', async () => {

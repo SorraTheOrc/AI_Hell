@@ -62,6 +62,7 @@ import {
   planCaptureRun,
   readRunEndedSignal,
   renderScenarioListing,
+  readDevTelemetryBuffer,
   resolveCaptureMode,
   resolveOutputPaths,
   runCaptureIterations,
@@ -1131,6 +1132,34 @@ describe('run-end listener (AH-0MUXZ4CNS009RV40)', () => {
 
   it('is inert on a scope that cannot listen', () => {
     expect(installRunEndedListener(undefined, {})).toBeNull();
+  });
+});
+
+describe('dev telemetry buffer reader (AH-0MVIRYGD1000JVY3)', () => {
+  it('reads the run out of the dev-gated page accessor', () => {
+    const scope = {
+      __aiHellTelemetry: { read: () => '{"kind":"run_header"}\n' },
+    };
+
+    expect(readDevTelemetryBuffer(scope)).toBe('{"kind":"run_header"}\n');
+  });
+
+  it('returns an empty string when the accessor is absent or empty', () => {
+    expect(readDevTelemetryBuffer({})).toBe('');
+    expect(readDevTelemetryBuffer({ __aiHellTelemetry: { read: () => null } })).toBe('');
+    expect(readDevTelemetryBuffer({ __aiHellTelemetry: {} })).toBe('');
+  });
+
+  it('never throws on a page-side read failure', () => {
+    const scope = {
+      __aiHellTelemetry: {
+        read: () => {
+          throw new Error('boom');
+        },
+      },
+    };
+
+    expect(readDevTelemetryBuffer(scope)).toBe('');
   });
 });
 

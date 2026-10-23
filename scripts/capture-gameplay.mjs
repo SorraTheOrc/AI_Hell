@@ -85,7 +85,6 @@ import { listCaptureScenarios } from './capture-scenarios.mjs';
 import { parseTelemetryJsonl } from './inspect-telemetry.mjs';
 import {
   CAPTURE_ANCHOR_EXTENSION,
-  CAPTURE_TELEMETRY_JSONL_KEY,
   DEFAULT_ACTION_INTENSITY_SAMPLE_RATE_HZ,
   actionIntensitySeriesFileName,
   buildCaptureJoinAnchor,
@@ -592,6 +591,32 @@ export function readRunEndedSignal(
 }
 
 /**
+ * Reads the run's telemetry out of the page's in-memory buffer
+ * (AH-0MVIRYGD1000JVY3, AC5).
+ *
+ * Called through `page.evaluate`, which serialises the function into the page,
+ * so it must stay self-contained. The buffer accessor
+ * (`window.__aiHellTelemetry`) is installed by the dev-gated wiring in
+ * `PlayScene`; a page without it (production build, telemetry disabled, or
+ * before the run starts) reads back as an empty string, matching the old
+ * "missing `localStorage` key" behaviour. Telemetry never touches storage.
+ *
+ * @param {object} [scope]
+ * @returns {string}
+ */
+export function readDevTelemetryBuffer(scope = globalThis) {
+  const accessor = scope ? scope.__aiHellTelemetry : undefined;
+  if (!accessor || typeof accessor.read !== 'function') return '';
+  try {
+    const content = accessor.read();
+    return typeof content === 'string' ? content : '';
+  } catch {
+    // A page-side read failure must not fail the dev tooling.
+    return '';
+  }
+}
+
+/**
  * Self-contained pre-boot init script that seeds the page's `localStorage`
  * with an exported bot-tuning store state (AH-0MV6MFDYG001E6PL, AC4).
  *
@@ -1020,8 +1045,8 @@ export function summariseCaptureBatch(iterations = []) {
  * (AH-0MVDV4DMY001Z7CU, AC1/AC2).
  *
  * Pure logic, injected filesystem: parses the page's recorded telemetry
- * JSONL (read out of `localStorage` by the caller), extracts the deduped
- * action-intensity samples, serialises them with the canonical series
+ * JSONL (read out of the page's in-memory buffer by the caller), extracts the
+ * deduped action-intensity samples, serialises them with the canonical series
  * format (`capture-series.mjs` port of `actionIntensitySerialiser.ts`), and
  * builds the join anchor from the recording-start marker and the telemetry
  * run-header `startedAt`. Both artefacts are written next to the WebM with a
@@ -1149,21 +1174,11 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       await page.addInitScript(installBotTuningConfig, options.botTuningState);
     }
 
-    // Clear the page's telemetry JSONL sink before the game boots so a batch
-    // item (which shares the browser context's `localStorage`) can never read
-    // the previous item's records back — each series/anchor export covers
-    // exactly its own run (AH-0MVDV4DMY001Z7CU, AC1). Runs before any game
-    // script, so an empty sink is guaranteed for the run about to start.
-    await page.addInitScript(
-      (key) => {
-        try {
-          globalThis.localStorage?.removeItem(key);
-        } catch {
-          /* no-op: storage unavailable — the export will read an empty sink */
-        }
-      },
-      CAPTURE_TELEMETRY_JSONL_KEY,
-    );
+    // Telemetry now lives in a per-run in-memory buffer that `startRun`
+    // resets (AH-0MVIRYGD1000JVY3), and every batch item gets a fresh page,
+    // so a new page can never read a previous item's records. The old
+    // pre-boot `localStorage.removeItem` is therefore gone: there is no
+    // persistent sink to clear.
 
     // Stream encoded chunks to Node as they are produced (avoids one huge
     // base64 return value over the CDP bridge).
@@ -1314,16 +1329,13 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     writeFileSync(outputPath, video);
 
     // Action-intensity series + §7.5 join anchor export (AH-0MVDV4DMY001Z7CU,
-    // AC1/AC2): read the run back from the page's telemetry JSONL sink and
-    // write `<stem>.action.jsonl` / `<stem>.capture.json` next to the WebM.
-    // Additive and tolerant — the game flushed its recorder at run end; a
-    // missing/partial sink produces a header-only series (AC3).
+    // AC1/AC2): read the run back from the page's in-memory telemetry buffer
+    // and write `<stem>.action.jsonl` / `<stem>.capture.json` next to the
+    // WebM. Additive and tolerant — the game flushed its recorder at run end;
+    // a missing/partial buffer produces a header-only series (AC3).
     let seriesExport = null;
     try {
-      const jsonl = await page.evaluate(
-        (key) => globalThis.localStorage?.getItem(key) ?? '',
-        CAPTURE_TELEMETRY_JSONL_KEY,
-      );
+      const jsonl = await page.evaluate(readDevTelemetryBuffer);
       seriesExport = writeCaptureSeriesArtifacts({
         jsonl,
         outputPath,
@@ -1555,8 +1567,8 @@ export async function runCapture(
   reporter = createReporter(),
 ) {
   // Enable page telemetry (AH-0MVDV4DMY001Z7CU, AC1): the action-intensity
-  // series is exported from the run the game records into its dev JSONL
-  // sink (`localStorage` key `ai_hell_telemetry_jsonl`). Mirrors
+  // series is exported from the run the game records into its per-run,
+  // in-memory dev JSONL buffer (AH-0MVIRYGD1000JVY3). Mirrors
   // `scripts/record-session.mjs` — the metric is a strict no-op without the
   // flag, so the capture opts the page in before the Vite server reads the
   // `VITE_*` env (dev builds need no consent).

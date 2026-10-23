@@ -402,12 +402,13 @@ re-capture if the timeline matters.
 - **Location:** git-ignored output directory, alongside the capture output,
   e.g. `capture-output/<run-id>.action.jsonl`, where `<run-id>` matches the
   WebM basename (`capture-output/gameplay-<timestamp>.webm` →
-  `gameplay-<timestamp>.action.jsonl`). Dev runs may alternatively write to
-  the telemetry JSONL sink (`localStorage`) and export on demand.
+  `gameplay-<timestamp>.action.jsonl`). Dev runs may alternatively read the
+  run from the page's in-memory telemetry buffer and export on demand.
 - **Capture wiring (AH-0MVDV4DMY001Z7CU):** `npm run capture` now performs
   that export automatically — it opts the page into telemetry
   (`VITE_TELEMETRY_ENABLED=true`/`VITE_TELEMETRY_SINK=jsonl`), reads the
-  recorded run back from the page's JSONL sink at run end, and writes
+  recorded run back from the page's in-memory buffer (dev-gated
+  `window.__aiHellTelemetry`) at run end, and writes
   `<run-id>.action.jsonl` next to each WebM using the canonical serialiser
   format (ported byte-for-byte into `scripts/capture-series.mjs`; parity
   asserted by `scripts/capture-gameplay.test.ts`). It also writes the §7.5
@@ -417,10 +418,9 @@ re-capture if the timeline matters.
   [Action-intensity export](./gameplay-capture.md#action-intensity-export).
 - **Size bound:** at 10 Hz and ~120 B/sample, a 30-minute run is ≈ 18000
   samples ≈ 2.2 MB raw — negligible next to the WebM. (The telemetry sink
-  that feeds the export records the full per-tick state, so the page's
-  `localStorage` quota — not the series file — is the practical bound on how
-  much of a very long run the export can cover; the export tolerates a
-  prefix/partial series.)
+  that feeds the export records the full per-tick state in memory and is
+  reset at the start of each run, so there is no storage-quota bound on how
+  much of a very long run the export can cover.)
 
 ### 7.4 Run identity and clock anchor
 

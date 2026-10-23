@@ -7,7 +7,7 @@
  * settings persistence across a page reload, and the menu settings entry.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
@@ -153,6 +153,41 @@ describe('End-to-end pause/settings integration (AH-0MUA8BP19000ORCG)', () => {
   });
 
   // ── AC3 — persistence across reload ─────────────────────────────
+
+  it('AC3 — a full storage quota cannot break the settings flow from pause (AH-0MVIRYGD1000JVY3)', async () => {
+    game = await bootAllGames();
+    await startPlay(game);
+
+    pressKey('Escape');
+    await sleep(game, 200);
+    clickText(game.scene.getScene('PauseScene'), '⚙  Settings');
+    await sleep(game, 200);
+    const settings = game.scene.getScene('SettingsScene') as SettingsScene;
+
+    // Reproduce the reported failure mode: telemetry had filled the origin
+    // quota so every `setItem` threw QuotaExceededError. saveSettings must
+    // swallow it (one clear warn) and the input handler must never throw.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const setItem = vi
+      .spyOn(window.localStorage, 'setItem')
+      .mockImplementation(() => {
+        throw new DOMException('Setting the value exceeded the quota.', 'QuotaExceededError');
+      });
+
+    try {
+      expect(() => settings.setControlScheme('fourDirectional')).not.toThrow();
+      expect(settings.getControlSchemeRowText()).toContain('Four Directional');
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      setItem.mockRestore();
+      warn.mockRestore();
+    }
+
+    // Back still works; the game was not wedged by the failed write.
+    clickText(settings, '←  Back');
+    await sleep(game, 200);
+    expect(game.scene.isActive('PauseScene')).toBe(true);
+  });
 
   it('AC3 — a simulated reload restores volume, mute and bindings', async () => {
     game = await bootAllGames();

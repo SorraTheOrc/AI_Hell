@@ -46,11 +46,14 @@ export {
 } from './schema';
 
 export {
+  clearDevTelemetryBuffer,
+  installDevTelemetryBuffer,
   isDevTelemetryBuild,
   isDevTelemetryCollectionEnabled,
   isDevTelemetryUploadEnabled,
   loadDevTelemetryUploader,
   type DevModeEnv,
+  type DevTelemetryBuffer,
   type DevTelemetrySetting,
   type DevTelemetryUploader,
 } from './devMode';
@@ -91,10 +94,9 @@ export {
   JsonlTelemetrySink,
   NoopTelemetrySink,
   RemoteTelemetrySink,
-  TELEMETRY_JSONL_STORAGE_KEY,
-  createLocalStorageLineWriter,
   createMemoryLineWriter,
   createTelemetrySink,
+  type TelemetryLineBuffer,
   type TelemetryLineWriter,
   type TelemetrySink,
   type TelemetrySinkDeps,
