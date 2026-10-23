@@ -43,42 +43,22 @@ class VfxStubScene extends Phaser.Scene {
 //
 // Test-first companion for the "Player phase-shift juice: vivid split +
 // activation burst + shimmer" upgrade (AH-0MVD2MXAB004K0V4, parent epic
-// AH-0MV8BUKFK003Z23S). RED against today's module (split α 0.10 / 3 px,
-// no oscillation, no flicker, no burst, no colour-pulse), so every case runs
-// under Vitest's `it.fails(...)` — the repo's expected-failure convention
-// (see `src/waves/campaignInvariants.test.ts`): the assertion genuinely
-// fails now while the suite stays green at the build → test → commit gate.
-// When the juice upgrade lands, flip each `it.fails` back to a plain `it`.
+// AH-0MV8BUKFK003Z23S). The upgrade has now landed: the contract cases below
+// run as plain `it` against the real tunables (split α 0.20 / 6 px, slow
+// oscillation, ≈2–4 Hz flicker, ~200 ms activation burst, colour-pulse, and
+// the per-layer `PHASE_SHIFT_ENABLE_BURST` / `PHASE_SHIFT_ENABLE_SHIMMER`
+// toggles).
 //
-// Predicted API the upgrade must expose (the contract):
-//   constants: PHASE_SHIFT_SPLIT_ALPHA (~0.20), PHASE_SHIFT_SPLIT_OFFSET (~6),
-//     PHASE_SHIFT_OSCILLATION_PERIOD, PHASE_SHIFT_FLICKER_HZ (2–4),
-//     PHASE_SHIFT_BURST_DURATION_MS (150–250), PHASE_SHIFT_BURST_ALPHA,
-//     PHASE_SHIFT_COLOUR_PULSE_RANGE ([min, max] within 0..1),
-//     PHASE_SHIFT_ENABLE_BURST, PHASE_SHIFT_ENABLE_SHIMMER.
-//   params fields mirror each constant camelCased; the resolved params map
-//     every tunable/toggle verbatim from the exported constants.
+// The resolved params map every tunable/toggle verbatim from the exported
+// constants; the default overlay set on the rising edge is
+// 1 dim + 2 chromatic split + 2 activation-burst overlays (5).
 //
 // All steps use deterministic dt ticks (0.016 s); no sleeps or randomness.
 //
-// Read the params through this predicted shape (cast) today so the contract
-// tests compile before the production interface grows.
-interface PredictedJuiceParams extends PhaseShiftJuiceParams {
-  /** Slow oscillation period (s) of the pulsing split. */
-  oscillationPeriod?: number;
-  /** Subtle alpha flicker rate (Hz), ≈2–4. */
-  flickerHz?: number;
-  /** Activation burst lifetime (ms), ≈150–250. */
-  burstDurationMs?: number;
-  /** Activation burst peak alpha. */
-  burstAlpha?: number;
-  /** Soft colour-pulse range [min, max] between the two split hues. */
-  colourPulseRange?: readonly [number, number];
-  /** Whether the activation-burst layer set is enabled. */
-  burstEnabled?: boolean;
-  /** Whether the continuous shimmer layers are enabled. */
-  shimmerEnabled?: boolean;
-}
+// `PredictedJuiceParams` is kept as the contract's named type: the fields
+// child 1 predicted are now real members of `PhaseShiftJuiceParams`, so the
+// erased sub-type is just a readable alias over the real interface.
+interface PredictedJuiceParams extends PhaseShiftJuiceParams {}
 
 describe('resolvePhaseShiftJuiceParams — pure parameter model', () => {
   it('maps every tunable and toggle verbatim', () => {
@@ -159,9 +139,9 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
 
     expect(juice.update(true, 0.016)).toBe(true);
     expect(juice.isActive).toBe(true);
-    // 1 dim + 2 split overlays.
-    expect(juice.activeOverlays).toHaveLength(3);
-    expect(registry).toHaveLength(3);
+    // 1 dim + 2 split + 2 activation-burst overlays (default toggles on).
+    expect(juice.activeOverlays).toHaveLength(5);
+    expect(registry).toHaveLength(5);
     // Regression: Phase Shift must not shake the camera (player-death overlap).
     expect(shake).not.toHaveBeenCalled();
 
@@ -183,7 +163,7 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     juice.update(true, 0.016);
     juice.update(true, 0.016);
 
-    expect(juice.activeOverlays).toHaveLength(3);
+    expect(juice.activeOverlays).toHaveLength(5);
     expect(juice.activeOverlays).toEqual(first);
     expect(shake).not.toHaveBeenCalled();
   });
@@ -213,8 +193,8 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     juice.update(true, 0.016);
     juice.update(false, 0.016);
     expect(juice.update(true, 0.016)).toBe(true);
-    expect(juice.activeOverlays).toHaveLength(3);
-    expect(registry).toHaveLength(3);
+    expect(juice.activeOverlays).toHaveLength(5);
+    expect(registry).toHaveLength(5);
     expect(shake).not.toHaveBeenCalled();
   });
 
@@ -292,7 +272,7 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
 
   // ── Upgrade contract — params model (RED until AH-0MVD2MXAB004K0V4) ──
 
-  it.fails('maps the new vivid-split / oscillation / flicker / burst / colour-pulse tunables verbatim', () => {
+  it('maps the new vivid-split / oscillation / flicker / burst / colour-pulse tunables verbatim', () => {
     const mod = phaseShiftJuiceModule as unknown as Record<string, unknown>;
     const params = resolvePhaseShiftJuiceParams() as unknown as PredictedJuiceParams;
 
@@ -329,7 +309,7 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     expect(pulseMax).toBeGreaterThan(pulseMin);
   });
 
-  it.fails('exposes and honours the new per-layer burst/shimmer toggles (default on)', () => {
+  it('exposes and honours the new per-layer burst/shimmer toggles (default on)', () => {
     const mod = phaseShiftJuiceModule as unknown as Record<string, unknown>;
     const params = resolvePhaseShiftJuiceParams() as unknown as PredictedJuiceParams;
 
@@ -339,7 +319,7 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     expect(params.shimmerEnabled).toBe(mod.PHASE_SHIFT_ENABLE_SHIMMER);
   });
 
-  it.fails('rising edge creates the burst + shimmer layers; steady update does not duplicate; falling edge clears everything', async () => {
+  it('rising edge creates the burst + shimmer layers; steady update does not duplicate; falling edge clears everything', async () => {
     const scene = await boot();
     const shake = spyShake(scene);
     const registry: Phaser.GameObjects.GameObject[] = [];
