@@ -191,6 +191,18 @@ function attachWormholeRing(
   });
 }
 
+/**
+ * Opens the wormhole VFX at (x, y): a neon swirl that scales up over
+ * {@link WORMHOLE_OPEN_DURATION}, plus the glow/pulse ring
+ * ({@link WORMHOLE_RING_ENABLE}) tracked as a child of the container.
+ *
+ * @param scene - The owning scene (add factory + tween manager).
+ * @param x - World x position of the wormhole.
+ * @param y - World y position of the wormhole.
+ * @param options.registry - Optional caller-owned container registry (the
+ *   scenes' `wormholeEffects`), so scene teardown can destroy any leftovers.
+ * @returns The handle used to close the wormhole and observe completion.
+ */
 export function spawnWormholeOpen(
   scene: Phaser.Scene,
   x: number,
@@ -222,6 +234,16 @@ export function spawnWormholeOpen(
   return handle;
 }
 
+/**
+ * Closes the wormhole: scales and fades it out over
+ * {@link WORMHOLE_CLOSE_DURATION}, then — on tween completion — stops the
+ * ring's looping pulse, removes the container from the registry and destroys
+ * it exactly once. Idempotent: a second close on the same handle is a no-op.
+ *
+ * @param scene - The owning scene (tween manager).
+ * @param handle - The handle returned by {@link spawnWormholeOpen}.
+ * @param registry - Optional container registry to remove the wormhole from.
+ */
 export function spawnWormholeClose(
   scene: Phaser.Scene,
   handle: WormholeHandle,
