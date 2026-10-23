@@ -49,6 +49,51 @@ const WORMHOLE_RADIUS = 40;
 /** Starting scale for the wormhole (fully closed). */
 const WORMHOLE_START_SCALE = 0.01;
 
+// ── Wormhole glow/pulse ring tunables (AH-0MVD2N6AW0073X5M) ─────────
+//
+// While a wormhole is open for a wave it gets a subtle glow/pulse ring at the
+// wormhole position (epic AH-0MV8BUKFK003Z23S AC4). It is drawn **once per
+// wormhole** as a child of the wormhole container, so it is tracked by the
+// caller's existing `wormholeEffects` registry for free and is destroyed with
+// the container when the close tween completes (no separate teardown path to
+// leak). Pure Graphics — no new assets — and visually distinct from both the
+// phase-shift chromatic split and the player-death palette.
+
+/**
+ * Whether the wormhole glow/pulse ring layer is enabled. Off ⇒ the wormhole
+ * renders exactly as before (no ring child, no extra tween).
+ */
+export const WORMHOLE_RING_ENABLE = true;
+
+/**
+ * Ring colour — a soft violet-white that reads as glow against the dark
+ * playfield. Deliberately distinct from the phase-shift cyan/red split
+ * (`PHASE_SHIFT_SPLIT_COLOR_*`) and the player-death palette.
+ */
+export const WORMHOLE_RING_COLOR = 0xd9b3ff;
+
+/** Ring radius (px) at its neutral pulse position. */
+export const WORMHOLE_RING_RADIUS = 52;
+
+/** Ring stroke width (px). */
+export const WORMHOLE_RING_LINE_WIDTH = 3;
+
+/**
+ * Radius pulse multipliers `[min, max]` — the ring "breathes" around its
+ * neutral radius rather than sitting static. Applied as a scale tween on the
+ * ring graphics (a yoyo repeat), so no per-frame work is needed.
+ */
+export const WORMHOLE_RING_PULSE_RANGE: readonly [number, number] = [0.9, 1.15] as const;
+
+/** Duration (ms) of one pulse direction (min → max); the yoyo makes a full breath twice this. */
+export const WORMHOLE_RING_PULSE_DURATION_MS = 900;
+
+/** Soft glow alpha of the ring, within (0, 1]. */
+export const WORMHOLE_RING_GLOW_ALPHA = 0.45;
+
+/** Data key marking the ring graphics inside the wormhole container. */
+const WORMHOLE_RING_DATA_KEY = 'wormholeRing';
+
 // ── Types ───────────────────────────────────────────────────────────
 
 /**
@@ -103,6 +148,49 @@ function drawWormholeInitial(graphics: Phaser.GameObjects.Graphics): void {
 
 // ── Public API — Wormhole VFX ───────────────────────────────────────
 
+/**
+ * Adds the glow/pulse ring to an open wormhole container and starts its
+ * breathing pulse. A no-op when the layer is disabled or the scene exposes no
+ * tween manager (headless stub) — the wormhole itself is unaffected.
+ *
+ * @param scene - The wormhole's scene (owns the tween manager).
+ * @param container - The wormhole container the ring is parented to.
+ */
+function attachWormholeRing(
+  scene: Phaser.Scene,
+  container: Phaser.GameObjects.Container,
+): void {
+  if (!WORMHOLE_RING_ENABLE) return;
+  const add = scene?.add as
+    | { graphics?: () => Phaser.GameObjects.Graphics }
+    | undefined;
+  if (!add || typeof add.graphics !== 'function') return;
+
+  const ring = add.graphics();
+  ring.lineStyle(WORMHOLE_RING_LINE_WIDTH, WORMHOLE_RING_COLOR, WORMHOLE_RING_GLOW_ALPHA);
+  ring.strokeCircle(0, 0, WORMHOLE_RING_RADIUS);
+  // A wider, fainter second pass reads as the soft glow halo without a new
+  // texture or a second game object.
+  ring.lineStyle(WORMHOLE_RING_LINE_WIDTH * 3, WORMHOLE_RING_COLOR, WORMHOLE_RING_GLOW_ALPHA * 0.35);
+  ring.strokeCircle(0, 0, WORMHOLE_RING_RADIUS);
+  ring.setData(WORMHOLE_RING_DATA_KEY, true);
+  container.add(ring);
+
+  const tweens = scene?.tweens as
+    | { add?: (...args: unknown[]) => unknown }
+    | undefined;
+  if (!tweens || typeof tweens.add !== 'function') return;
+  const [pulseMin, pulseMax] = WORMHOLE_RING_PULSE_RANGE;
+  tweens.add({
+    targets: ring,
+    scale: { from: pulseMin, to: pulseMax },
+    duration: WORMHOLE_RING_PULSE_DURATION_MS,
+    ease: 'Sine.easeInOut',
+    yoyo: true,
+    repeat: -1,
+  });
+}
+
 export function spawnWormholeOpen(
   scene: Phaser.Scene,
   x: number,
@@ -128,6 +216,9 @@ export function spawnWormholeOpen(
     duration: WORMHOLE_OPEN_DURATION * 1000,
     ease: 'Cubic.easeOut',
   });
+  // The glow/pulse ring is layered on after the open tween so the wormhole's
+  // own open animation remains the first tween registered for the container.
+  attachWormholeRing(scene, container);
   return handle;
 }
 
@@ -148,6 +239,20 @@ export function spawnWormholeClose(
       if (registry) {
         const index = registry.indexOf(container);
         if (index >= 0) registry.splice(index, 1);
+      }
+      // Stop the ring's infinite pulse tween before destroying the container:
+      // a looping tween left pointing at a destroyed child would keep ticking
+      // against a dead object (the same hazard `WormholeController.reset`
+      // documents). `killTweensOf` is feature-detected so headless stubs and
+      // scene-less callers stay safe.
+      const tweens = scene?.tweens as
+        | { killTweensOf?: (target: unknown) => unknown }
+        | undefined;
+      const ring = container.list?.find(
+        (child) => child.getData?.(WORMHOLE_RING_DATA_KEY) === true,
+      );
+      if (ring && typeof tweens?.killTweensOf === 'function') {
+        tweens.killTweensOf(ring);
       }
       container.destroy();
     },
