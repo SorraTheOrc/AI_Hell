@@ -25,37 +25,138 @@ import { summarisePowerUpLevelChange } from '../powerUpLevels';
 import { buildUpgradeOptions } from '../unlocks';
 import { getHelpDescription } from '../../utils/gymHelp';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
-import { POWER_UP_CATALOGUE } from '../types';
+import {
+  POWER_UP_CATALOGUE,
+  WEAPON_DROP_IDS,
+  type DropId,
+} from '../types';
 
 describe('power-up choice strategy', () => {
-  it('offers the full drop pool: P3–P10 plus the collectable weapon drops', () => {
-    expect([...CHOICE_POOL].sort()).toEqual(
-      [
-        'shield',
-        'bomb',
-        'speed_boost',
-        'phase_shift',
-        'teleport',
-        'extra_life',
-        'magnet',
-        'mineral_scoop',
-        'smart_bomb',
-        'force_field',
-        'mystery_ufo',
-        'dual',
-        'rapid',
-        'spread',
-        'wave_laser',
-        'ricochet',
-        'cluster',
-        'options',
-        'nova',
-        'mortar',
-        'arc',
-      ].sort(),
-    );
-    // The reset utility drop is not a power-up choice.
+  it('offers every drop in the catalogue except the Reset utility (AH-0MVI4KTD8000FBJ7 AC1)', () => {
+    // Derived from the catalogues, not a hand-maintained list: a newly shipped
+    // power-up or weapon drop can never silently go missing from the
+    // hold-full choice again (the stale 21-entry list did exactly that).
+    const catalogue = new Set<DropId>([
+      ...(Object.keys(POWER_UP_CATALOGUE) as DropId[]),
+      ...WEAPON_DROP_IDS,
+    ]);
+    catalogue.delete('reset');
+
+    expect([...CHOICE_POOL].sort()).toEqual([...catalogue].sort());
+    // No duplicate ids: a repeat would double that item's draw weight.
+    expect(new Set(CHOICE_POOL).size).toBe(CHOICE_POOL.length);
+    // 16 power-ups + 15 weapon drops (every weapon except Reset).
+    expect(CHOICE_POOL).toHaveLength(31);
+    // The reset utility drop removes weapons rather than granting one.
     expect(CHOICE_POOL).not.toContain('reset');
+  });
+
+  describe('newly pooled drops (AH-0MVI4KTD8000FBJ7)', () => {
+    /** Power-ups shipped after the original pool was written. */
+    const NEW_POWER_UP_IDS = [
+      'frenzy',
+      'chrono',
+      'thorns',
+      'salvage',
+      'strike',
+    ] as const;
+    /** Mini-boss-pool weapons shipped after the original pool was written. */
+    const NEW_WEAPON_IDS = [
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
+    ] as const;
+
+    it('AC2 — each newly pooled power-up is offered as a New base option with catalogue copy', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+        powerUpLevels: [],
+      });
+      for (const id of NEW_POWER_UP_IDS) {
+        const option = candidates.find((o) => o.id === id);
+        expect(option, id).toBeDefined();
+        expect(option!.kind, id).toBe('powerup');
+        expect(option!.name, id).toBe(POWER_UP_CATALOGUE[id].name);
+        expect(option!.description, id).toBe(getHelpDescription(id));
+        // Unowned (empty permanent context) → ★ New badge.
+        expect(option!.isNew, id).toBe(true);
+      }
+    });
+
+    it('AC2 — each newly pooled weapon is offered as a New base option with catalogue copy', () => {
+      const expectedNames: Record<(typeof NEW_WEAPON_IDS)[number], string> = {
+        rear_guard: 'Rear Guard',
+        broadside: 'Broadside',
+        railgun: 'Railgun',
+        shard_swarm: 'Shard Swarm',
+        heavy_slug: 'Heavy Slug',
+      };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+        powerUpLevels: [],
+      });
+      for (const id of NEW_WEAPON_IDS) {
+        const option = candidates.find((o) => o.id === id);
+        expect(option, id).toBeDefined();
+        expect(option!.kind, id).toBe('weapon');
+        expect(option!.name, id).toBe(expectedNames[id]);
+        expect(option!.description, id).toBe(getHelpDescription(id));
+        expect(option!.isNew, id).toBe(true);
+      }
+    });
+
+    it('AC3 — an owned new weapon is offered once, as its level-up with a change summary', () => {
+      for (const id of NEW_WEAPON_IDS) {
+        const candidates = buildChoiceCandidates(CHOICE_POOL, {
+          weaponLevels: [{ id, level: 1 }],
+        });
+        const offers = candidates.filter((o) => o.id === id);
+        expect(offers, id).toHaveLength(1);
+        expect(offers[0].kind, id).toBe('weapon-level');
+        expect(offers[0].level, id).toBe(2);
+        expect(offers[0].changeSummary, id).toBe(
+          summariseWeaponLevelChange(id, 1, 2),
+        );
+        expect(offers[0].changeSummary!.length, id).toBeGreaterThan(0);
+      }
+    });
+
+    it('AC3 — an owned new power-up is offered once, as its level-up with a change summary', () => {
+      for (const id of NEW_POWER_UP_IDS) {
+        const candidates = buildChoiceCandidates(CHOICE_POOL, {
+          powerUpLevels: [{ id, level: 1 }],
+        });
+        const offers = candidates.filter((o) => o.id === id);
+        expect(offers, id).toHaveLength(1);
+        expect(offers[0].kind, id).toBe('power-up-level');
+        expect(offers[0].level, id).toBe(2);
+        expect(offers[0].changeSummary, id).toBe(
+          summarisePowerUpLevelChange(id, 1, 2),
+        );
+        expect(offers[0].changeSummary!.length, id).toBeGreaterThan(0);
+      }
+    });
+
+    it('AC1 — the default strategy can draw every newly pooled id', () => {
+      // Draw one option at a time with a deterministic sweep over the whole
+      // candidate list, proving eligibility rather than rarity.
+      const strategy = createRandomChoiceStrategy();
+      const seen = new Set<string>();
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+        powerUpLevels: [],
+      });
+      for (let i = 0; i < candidates.length; i++) {
+        // rng returning i/(n) with count 1 lands on the i-th candidate.
+        const pick = strategy.choose(1, () => i / candidates.length)[0];
+        seen.add(pick.id);
+      }
+      for (const id of [...NEW_POWER_UP_IDS, ...NEW_WEAPON_IDS]) {
+        expect(seen, id).toContain(id);
+      }
+    });
   });
 
   it('includes P10 Mineral Scoop in the hold-full choice pool (AH-0MUPMR9TX00756BQ AC1)', () => {

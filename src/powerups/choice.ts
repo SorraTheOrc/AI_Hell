@@ -8,9 +8,9 @@
  * choice scene or the PlayScene wiring.
  *
  * The default strategy draws `count` **distinct** entries at weighted random
- * from the candidate list — the base drop pool (Shield–Mineral Scoop plus the collectable
- * weapon drops spread/dual/rapid/nova/mortar/arc) with each owned item's
- * base entry replaced by its level-up offer (see
+ * from the candidate list — the base drop pool (every power-up and every
+ * collectable weapon drop, i.e. the full catalogue minus the `reset` utility)
+ * with each owned item's base entry replaced by its level-up offer (see
  * {@link buildChoiceCandidates}) — degrading gracefully (returning fewer
  * options) when the list cannot supply the requested count. Owned level-up
  * offers (`weapon-level`/`power-up-level`) carry a 1.35× weight
@@ -37,11 +37,21 @@ import { getHelpDescription } from '../utils/gymHelp';
 // ── Pool ────────────────────────────────────────────────────────────
 
 /**
- * Every drop the hold-full choice can offer: the power-ups Shield–Mineral Scoop plus the
- * collectable weapon drops (spread, dual, rapid). The `reset` utility drop is
- * intentionally excluded — it removes weapons rather than granting one.
+ * Every drop the hold-full choice can offer: the **whole** drop catalogue —
+ * all sixteen power-ups plus every collectable weapon drop — minus only the
+ * `reset` utility drop, which is intentionally excluded because it removes
+ * weapons rather than granting one.
+ *
+ * Kept catalogue-derived by the regression test in
+ * `__tests__/choice.test.ts` (pool === catalogue − `reset`), so a newly
+ * shipped power-up or weapon can never silently go missing from the choice
+ * again (AH-0MVI4KTD8000FBJ7). There is deliberately **no** unlock-state
+ * gating: every drop is a candidate in the game and in every gym, because
+ * both consume this one pool (gym↔game parity, AH-0MUGZDTFX004RBD1).
  */
 export const CHOICE_POOL: readonly DropId[] = [
+  // Power-ups (Shield–Mineral Scoop, the classic trio, and the net-new
+  // frenzy/chrono/thorns/salvage/strike).
   'shield',
   'bomb',
   'speed_boost',
@@ -53,6 +63,12 @@ export const CHOICE_POOL: readonly DropId[] = [
   'smart_bomb',
   'force_field',
   'mystery_ufo',
+  'frenzy',
+  'chrono',
+  'thorns',
+  'salvage',
+  'strike',
+  // Collectable weapon drops (every weapon except the Reset utility).
   'spread',
   'dual',
   'rapid',
@@ -63,13 +79,18 @@ export const CHOICE_POOL: readonly DropId[] = [
   'nova',
   'mortar',
   'arc',
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
 ];
 
 // ── Option model ────────────────────────────────────────────────────
 
 /**
  * The kind of option offered:
- * - `'powerup'` — a Shield–Mineral Scoop power-up grant,
+ * - `'powerup'` — a power-up grant (any catalogue power-up),
  * - `'weapon'` — a collectable weapon drop (grant \*or\* re-activate),
  * - `'weapon-level'` — a permanent level-up of a weapon the player already
  *   owns (parent AH-0MUPMPCB2009J54J),
