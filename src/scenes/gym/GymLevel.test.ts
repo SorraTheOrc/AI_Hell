@@ -596,4 +596,49 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
     scene.tick(0.016);
     expect(victim.alive).toBe(false);
   });
+
+  it('shimmers each emerging enemy from the shared spawn path, and restores it when growth ends (AH-0MVD2N9MM0007NGZ parity)', async () => {
+    const scene = await bootWave(scoutWave(4));
+    const enemy = scene.getEnemies()[0];
+
+    // Still in the wormhole-open delay: no shimmer, alpha untouched.
+    expect(enemy.isSpawning).toBe(true);
+    const beforeGrowth = enemy.alpha;
+
+    // Drive into the growth window: the shared `_updateSpawnAnimations` pass
+    // must apply the per-entity shimmer (alpha flickers off the base value).
+    scene.tick(1.05);
+    const duringGrowth = enemy.alpha;
+    expect(duringGrowth).not.toBe(beforeGrowth);
+    expect(duringGrowth).toBeGreaterThan(0);
+    expect(duringGrowth).toBeLessThanOrEqual(1);
+
+    // Growth ends → the shimmer is released and the exit is clean.
+    scene.finishSpawnAnimations();
+    scene.tick(0.016);
+    expect(enemy.isSpawning).toBe(false);
+    expect(enemy.alpha).toBe(1);
+  });
+
+  it('tracks the wormhole (and its glow/pulse ring) in the shared wormholeEffects registry (AH-0MVD2N9MM0007NGZ parity)', async () => {
+    const scene = await bootWave(scoutWave(4));
+
+    const effects = scene.getWormholeEffects();
+    expect(effects).toHaveLength(1);
+    const wormhole = effects[0];
+    // The ring hangs off the wormhole container, so the registry entry owns it
+    // and `SHUTDOWN` teardown clears it with the wormhole. The same close-time
+    // removal (destroy exactly once) is asserted at the VFX level in
+    // `wormholeSpawn.test.ts` (its `spawnWormholeClose` onComplete drives it
+    // deterministically); here we prove the gym passes its registry along so
+    // that teardown actually fires.
+    expect(
+      wormhole.list.filter((o) => o.getData?.('wormholeRing') === true),
+    ).toHaveLength(1);
+
+    // Closing the wormhole (end of the spawn window) goes through the shared
+    // controller with the registry attached — the close-vs-open contract.
+    scene.finishSpawnAnimations();
+    expect(scene.isWormholeOpen()).toBe(false);
+  });
 });

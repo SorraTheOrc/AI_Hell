@@ -157,6 +157,7 @@ import {
   getSpawnState,
   placeWavePortal,
   startSpawnAnimation,
+  updateEnemyShimmer,
   updateSpawnAnimation,
   type SpawnAnimatable,
 } from '../../../vfx/wormholeSpawn';
@@ -774,7 +775,11 @@ export class GymFormationScene<
     this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
-    this._wormhole.close();
+    // Pass the shared `wormholeEffects` registry exactly as `PlayScene` does,
+    // so closing on reset removes the live wormhole (and its glow/pulse ring)
+    // from the registry instead of leaving it for SHUTDOWN
+    // (AH-0MVD2N9MM0007NGZ parity).
+    this._wormhole.close(this.wormholeEffects);
     this._resolveFormationBase();
   }
 
@@ -1637,13 +1642,18 @@ export class GymFormationScene<
       const spawnState = entity as unknown as { isSpawning?: boolean; setSpawning?(v: boolean): void };
       if (!spawnState.isSpawning) continue;
       const stillGrowing = updateSpawnAnimation(entity as unknown as SpawnAnimatable, dt);
+      // Per-entity emergence shimmer (AH-0MVD2N333004VDA9) rides the same
+      // shared spawn path, immediately after the growth write so its scale
+      // pulse layers on the growth scale instead of fighting it
+      // (AH-0MVD2N9MM0007NGZ wiring).
+      updateEnemyShimmer(entity as unknown as SpawnAnimatable, dt);
       if (stillGrowing) {
         anySpawning = true;
       } else {
         spawnState.setSpawning?.(false);
       }
     }
-    if (!anySpawning) this._wormhole.close();
+    if (!anySpawning) this._wormhole.close(this.wormholeEffects);
   }
 
   /**
@@ -1658,7 +1668,7 @@ export class GymFormationScene<
       updateSpawnAnimation(entity as unknown as SpawnAnimatable, 10);
       spawnState.setSpawning?.(false);
     }
-    this._wormhole.close();
+    this._wormhole.close(this.wormholeEffects);
   }
 
   /** True while the formation's wormhole is live (single-live controller). */
@@ -1764,7 +1774,7 @@ export class GymFormationScene<
     // The fresh formation enters through a wormhole; the controller closes
     // any still-open previous wormhole first (single-live invariant).
     if (offsets.length > 0) {
-      this._wormhole.open(portal.x, portal.y);
+      this._wormhole.open(portal.x, portal.y, this.wormholeEffects);
     }
   }
 

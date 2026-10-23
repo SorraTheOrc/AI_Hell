@@ -494,6 +494,11 @@ export function updateSpawnAnimation(
       enemy.setPosition(dest.x, dest.y);
     }
     enemy.setData(SPAWN_STATE_KEY, undefined);
+    // The spawn window is the shimmer's lifetime: release it here so every
+    // caller — the live scene tick and the `finishSpawnAnimations()` test
+    // seam alike — leaves a fully-emerged enemy with its own alpha and blend
+    // mode back (no residual tint/bloom).
+    releaseShimmerIfAny(enemy);
     return false;
   }
   return true;
@@ -595,17 +600,56 @@ interface ShimmerState {
    * calls never compound and the spawn animation's own scale is preserved.
    */
   lastScaleFactor: number;
+  /**
+   * The entity's own alpha before the shimmer took it over, restored when the
+   * spawn window ends so no residual tint survives (teardown-clean).
+   */
+  baseAlpha: number;
 }
 
 /** Returns the shimmer clock for `enemy`, creating it on first use. */
 function ensureShimmerState(enemy: SpawnAnimatable): ShimmerState | null {
-  const existing = enemy.getData(SHIMMER_STATE_KEY) as ShimmerState | undefined;
+  const existing = getShimmerState(enemy);
   if (existing) return existing;
   const setData = (enemy as { setData?: (key: string, value: unknown) => unknown }).setData;
   if (typeof setData !== 'function') return null;
-  const created: ShimmerState = { elapsed: 0, lastScaleFactor: 1 };
+  const created: ShimmerState = {
+    elapsed: 0,
+    lastScaleFactor: 1,
+    baseAlpha: enemy.alpha,
+  };
   setData.call(enemy, SHIMMER_STATE_KEY, created);
   return created;
+}
+
+/** Returns the existing shimmer clock for `enemy`, or `undefined` if inert. */
+function getShimmerState(enemy: SpawnAnimatable): ShimmerState | undefined {
+  const getData = (enemy as { getData?: (key: string) => unknown }).getData;
+  if (typeof getData !== 'function') return undefined;
+  return getData.call(enemy, SHIMMER_STATE_KEY) as ShimmerState | undefined;
+}
+
+/**
+ * Restores the entity's own alpha and blend mode and drops the shimmer clock
+ * when one is present. A no-op for an entity that never shimmered.
+ */
+function releaseShimmerIfAny(enemy: SpawnAnimatable): void {
+  const state = getShimmerState(enemy);
+  if (state) releaseShimmer(enemy, state);
+}
+
+/**
+ * Restores the entity's own alpha and blend mode and drops the shimmer clock.
+ * Called when the spawn window closes, so the shimmer is teardown-clean and
+ * leaves no residual tint/bloom on a fully-emerged enemy.
+ */
+function releaseShimmer(enemy: SpawnAnimatable, state: ShimmerState): void {
+  enemy.setAlpha(state.baseAlpha);
+  setEnemyBloom(enemy, false);
+  const setData = (enemy as { setData?: (key: string, value: unknown) => unknown }).setData;
+  if (typeof setData === 'function') {
+    setData.call(enemy, SHIMMER_STATE_KEY, undefined);
+  }
 }
 
 /**
@@ -641,7 +685,15 @@ export function updateEnemyShimmer(
   dt: number,
 ): boolean {
   const spawn = getSpawnState(enemy);
-  if (!spawn || !spawn.growing) return false;
+  const prior = getShimmerState(enemy);
+  if (!spawn || !spawn.growing) {
+    // The spawn window never opened, or has just closed: restore the entity's
+    // own rendering state and drop the clock, so the shimmer leaves no
+    // residual alpha tint or additive bloom behind. An entity that was never
+    // shimmering is completely untouched.
+    if (prior) releaseShimmer(enemy, prior);
+    return false;
+  }
 
   const state = ensureShimmerState(enemy);
   if (!state) return false;

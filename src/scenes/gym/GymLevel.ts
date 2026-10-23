@@ -113,6 +113,7 @@ import {
   getSpawnState,
   placeWavePortal,
   startSpawnAnimation,
+  updateEnemyShimmer,
   updateSpawnAnimation,
   type PortalPoint,
   type SpawnAnimatable,
@@ -957,6 +958,11 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
         spawn.entity as unknown as SpawnAnimatable,
         dt,
       );
+      // Per-entity emergence shimmer (AH-0MVD2N333004VDA9) rides the same
+      // shared spawn path, immediately after the growth write so its scale
+      // pulse layers on the growth scale instead of fighting it
+      // (AH-0MVD2N9MM0007NGZ wiring).
+      updateEnemyShimmer(spawn.entity as unknown as SpawnAnimatable, dt);
       if (stillGrowing) {
         anySpawning = true;
       } else {
