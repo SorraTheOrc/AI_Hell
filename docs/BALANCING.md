@@ -54,11 +54,55 @@ batch-relevant flags are:
 | `--sample-every <n>` | Record one state tick every Nth tick (smaller artifacts). | `1` |
 | `--out <dir>` | Artifact output directory. | `eval-output` |
 | `--json` | Print the machine-readable report instead of the text summary. | text |
+| `--level <n>` | Play the **real campaign waves** of level `n` (1–10) with the real per-kill drop rule (per-level campaign mode) instead of the seeded skirmish. | off |
+| `--scale-levels <on\|off>` | Level-scaling curves in per-level mode: `on` resolves the enemy-count multiplier and per-kill drop chance at the selected level; `off` resolves **both to level 1** so a pre-change baseline is captured with identical harness code and seeds. | `on` |
 
 The number of games in a batch is `policies × seeds`. For example,
 `--policies competent,legacy --games 100` runs **200** games (two policies
 over seeds 1..100) — comfortably above the epic's "~100 deterministic games"
 requirement even for a single policy.
+
+### Per-level campaign runs
+
+```bash
+# play level 5 of the real campaign (scaled curves): per-kill drop chance 0.122, 2x enemies at level 10
+npm run evaluate -- --batch --level 5 --games 40 --out level5-out
+
+# the pre-change baseline for the same level: curves resolved to level 1
+npm run evaluate -- --batch --level 5 --scale-levels off --games 40 --out level5-base-out
+```
+
+With `--level <n>` the harness switches to an **additive** per-level campaign
+mode: each game plays the **real campaign waves** of that level (the shared
+`Formations.LEVELS` data through the level-scaling seam, as documented in
+[`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`](./ENEMY_DESIGN_AND_IMPLEMENTATION.md)
+§5.1) instead of the single-level spawn reservoir, and power-up supply comes
+from the **real per-kill drop rule** (the shared `src/core/levelScaling.ts`
+module, the same rule the game's `PlayScene` rolls) rather than the seeded
+power-up reservoir. Waves progress in level order — the next wave spawns the
+moment the current wave is wiped — and clearing the final wave emits
+`level_cleared`, so the report's `levelReached` faithfully reflects the
+selected level.
+
+| Flag | Meaning |
+|---|---|
+| `--level <n>` | Campaign level to play (1–10). |
+| `--scale-levels off` | Capture a **baseline** (curves at level 1) with identical harness code and seeds. |
+
+**Determinism.** Identical to the skirmish: same policy + config + seed ⇒
+**byte-identical** records, including per-level runs and baseline runs. The
+per-level mode uses only seeded streams (positions, shot probability, drop
+rolls, wave progression) and never reads the wall clock.
+
+**Fidelity boundaries.** Per-level mode is the same *closed-loop headless
+arena* as the skirmish: wave members are stationary hostiles whose stats come
+from their archetype's `EnemyConfig` — formation movement and Phaser spawner
+behaviour are not modelled, and spawner-delivered archetypes (`ghosts`,
+`horde`, `centipede`, `laneTraffic`) appear as ordinary config-driven hostiles
+so the roster matches the game's wave accounting. The seeded mineral harvest
+and the asteroid shadow-hazard stay live (so the small-asteroid Extra Life
+roll is exercised). The **seeded skirmish** (no `--level`) is unchanged — its
+drops still come from the seeded power-up reservoir.
 
 ## Statistics schema
 

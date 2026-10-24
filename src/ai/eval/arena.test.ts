@@ -346,8 +346,8 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     return seen;
   }
 
-  // RED until AH-0MVLJFB1I0099X4Z (level selection).
-  it.fails('plays the real campaign waves for levels 1, 5 and 10, not the spawn reservoir', () => {
+  // GREEN since AH-0MVLJFB1I0099X4Z (level selection).
+  it('plays the real campaign waves for levels 1, 5 and 10, not the spawn reservoir', () => {
     for (const level of [1, 5, 10]) {
       const seen = seenArchetypes(runArena(createLegacyBotPolicy(), perLevel(level)));
       expect(seen.size).toBeGreaterThan(0);
@@ -356,8 +356,8 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     }
   });
 
-  // RED until AH-0MVLJFB1I0099X4Z (level selection).
-  it.fails('selects the level: levels differ from each other and from the seeded skirmish', () => {
+  // GREEN since AH-0MVLJFB1I0099X4Z (level selection).
+  it('selects the level: levels differ from each other and from the seeded skirmish', () => {
     const run = (level: number): string =>
       stableStringify(runArena(createLegacyBotPolicy(), perLevel(level)).records);
     expect(run(1)).not.toBe(run(5));
@@ -370,8 +370,8 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     expect(run(5)).not.toBe(skirmish);
   });
 
-  // RED until AH-0MVLJFB1I0099X4Z (kill-time drop rule).
-  it.fails('uses the real kill-time drop rule instead of seeded power-ups', () => {
+  // GREEN since AH-0MVLJFB1I0099X4Z (kill-time drop rule).
+  it('uses the real kill-time drop rule instead of seeded power-ups', () => {
     const result = runArena(createLegacyBotPolicy(), perLevel(5, { ticks: 900 }));
     const ticks = result.records.filter(
       (record): record is TelemetryTickRecord => record.kind === 'tick',
@@ -418,8 +418,8 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     expect(stableStringify(baseline.records)).toBe(stableStringify(scaled.records));
   });
 
-  // RED until AH-0MVLJFB1I0099X4Z (baseline toggle).
-  it.fails('can disable the level curves to capture a pre-change baseline', () => {
+  // GREEN since AH-0MVLJFB1I0099X4Z (baseline toggle).
+  it('can disable the level curves to capture a pre-change baseline', () => {
     const scaled = runArena(createLegacyBotPolicy(), perLevel(10, { ticks: 900 }));
     const baseline = runArena(
       createLegacyBotPolicy(),

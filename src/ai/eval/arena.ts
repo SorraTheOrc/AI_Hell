@@ -38,12 +38,54 @@
  * counterpart to the browser capture path; both feed the same telemetry
  * schema.
  *
+ * ## Per-level campaign mode (AH-0MVLJFB1I0099X4Z)
+ *
+ * Setting {@link ArenaConfig.level} switches the arena to an **additive**
+ * per-level campaign mode: it plays the **real campaign waves** of that level
+ * — the shared `Formations.LEVELS` data through the level-scaling seam —
+ * instead of the single-level spawn reservoir, and power-up supply comes from
+ * the **real per-kill drop rule** (the shared `levelScaling` module, as the
+ * game's `PlayScene` uses) rather than the seeded power-up reservoir. Wave
+ * progression follows the level skeleton: wave `n+1` spawns the moment wave
+ * `n` is wiped, and clearing the final wave emits `level_cleared`, so the
+ * batch report's `levelReached` faithfully reflects the selected level.
+ *
+ * - {@link ArenaConfig.scaleLevels} defaults to `true` in this mode; `false`
+ *   resolves the enemy-count multiplier and the per-kill drop chance to
+ *   level 1, so a **pre-change baseline** is captured with the same harness
+ *   code and seeds. Level 1 is the identity: scaling on/off runs
+ *   byte-identically.
+ * - **Determinism** is unchanged: every position, every shot-probability draw
+ *   and every drop roll come from seeded streams (`createSeededRng`), so the
+ *   same policy + config + seed ⇒ byte-identical records in per-level mode
+ *   (and in baseline mode) exactly as in the skirmish.
+ * - **Fidelity boundary** (same approximation as the rest of the arena):
+ *   wave members are stationary hostiles whose stats come from their
+ *   archetype's `EnemyConfig` — formation movement and Phaser spawner
+ *   behaviour are not modelled. A wave's opt-in `ghosts`/`horde`/
+ *   `centipede`/`laneTraffic` flags add those archetypes as ordinary
+ *   config-driven hostiles so the roster matches the game's wave accounting.
+ *   The asteroid shadow-hazard stays live (seeded, respawning) so the
+ *   small-asteroid Extra Life roll is exercised.
+ *
  * @module src/ai/eval/arena
  */
 
 import { createSeededRng } from '../../core/rng';
 import { MAX_LIVES } from '../../core/GameState';
 import { loadBalanceConfig } from './balanceConfig';
+import {
+  applyEnemyCountScaling,
+  clampLevel,
+  extraLifeDropChance,
+  powerUpDropChance,
+} from '../../core/levelScaling';
+import { DEFAULT_RULES } from '../../core/rules';
+import { getLevelDefinition } from '../../waves/Formations';
+import { GHOST_ENEMY_KEYS } from '../../waves/GhostSpawner';
+import { GRUNT_ENEMY_KEY } from '../../waves/HordeSpawner';
+import { CENTIPEDE_ENEMY_KEY } from '../../waves/CentipedeSpawner';
+import { LANE_TRAFFIC_ENEMY_KEY } from '../../waves/LaneTrafficSpawner';
 import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
 import { AsteroidsModel } from '../../utils/movementModel';
 import type {
@@ -117,6 +159,11 @@ interface Hostile {
   alive: boolean;
   archetype: string;
   isAsteroid: boolean;
+  /**
+   * Campaign wave index this hostile belongs to; `-1` for hostiles outside
+   * wave accounting (the seeded reservoir and the asteroid shadow-hazard).
+   */
+  wave: number;
   /** Body-collision radius in px, from the archetype's config `size`. */
   radius: number;
   /** Remaining hit points (config `health`); reaches 0 → destroyed. */
@@ -296,6 +343,71 @@ function buildSpawnPlan(
   return { mineralReservoir, powerUpReservoir, hostileReservoir };
 }
 
+/** A per-level campaign wave plan: one `HostileSpec[]` per wave, in play order. */
+type LevelWavePlan = readonly (readonly HostileSpec[])[];
+
+/**
+ * A seeded field position drawn from a stream, inset from the playfield edge
+ * (the same margin the spawn reservoirs use).
+ */
+function seededPoint(rng: () => number, width: number, height: number): Vec {
+  const margin = 60;
+  return {
+    x: margin + rng() * (width - margin * 2),
+    y: margin + rng() * (height - margin * 2),
+  };
+}
+
+/** Draws `count` seeded field positions from a stream. */
+function seededFieldPoints(
+  rng: () => number,
+  count: number,
+  width: number,
+  height: number,
+): Vec[] {
+  return Array.from({ length: count }, () => seededPoint(rng, width, height));
+}
+
+/**
+ * Builds the per-level campaign fleet for an explicit level
+ * (AH-0MVLJFB1I0099X4Z) from the **real** `Formations.LEVELS` data: every
+ * wave's groups (scaled through the shared level-scaling seam when `scale`
+ * is true) plus the spawner-delivered archetypes the wave opts in to
+ * (`ghosts` / `horde` / `centipede` / `laneTraffic`), one seeded position
+ * per hostile, in wave order — the same wave skeleton the game plays.
+ * Returns an empty plan for a level with no definition.
+ */
+function buildLevelWavePlan(
+  level: number,
+  scale: boolean,
+  seed: number,
+  width: number,
+  height: number,
+): LevelWavePlan {
+  const definition = getLevelDefinition(level);
+  if (!definition) return [];
+  const rng = createSeededRng(seed);
+  const pushGroup = (members: HostileSpec[], archetype: string, count: number): void => {
+    for (let i = 0; i < count; i += 1) {
+      members.push({ ...seededPoint(rng, width, height), archetype, isAsteroid: false });
+    }
+  };
+  return definition.waves.map((wave) => {
+    const members: HostileSpec[] = [];
+    const scaledGroups = scale
+      ? applyEnemyCountScaling(level, wave.groups, DEFAULT_RULES)
+      : wave.groups;
+    for (const group of scaledGroups) {
+      pushGroup(members, group.enemyKey, Math.max(1, Math.trunc(group.count)));
+    }
+    if (wave.horde) pushGroup(members, GRUNT_ENEMY_KEY, 1);
+    if (wave.ghosts) for (const key of GHOST_ENEMY_KEYS) pushGroup(members, key, 1);
+    if (wave.centipede) pushGroup(members, CENTIPEDE_ENEMY_KEY, 1);
+    if (wave.laneTraffic) pushGroup(members, LANE_TRAFFIC_ENEMY_KEY, 1);
+    return members;
+  });
+}
+
 /** Builds a fresh world: the player starts centred, facing right. */
 function createWorld(width: number, height: number): ArenaWorld {
   return {
@@ -448,14 +560,53 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const archetypes = arenaArchetypes(balance.enemies);
   const hostileWaves = openingHostileWaves(balance.difficultyCurves);
   const shipAsteroids = shipToAsteroidsConfig(balance.ship);
-  const { mineralReservoir, powerUpReservoir, hostileReservoir } = buildSpawnPlan(
-    config.seed,
-    width,
-    height,
-    spawns,
-    archetypes,
-    hostileWaves,
-  );
+
+  // Per-level campaign mode (AH-0MVLJFB1I0099X4Z): an explicit `level` swaps
+  // the single-level spawn reservoir for the **real campaign waves** of that
+  // level and the **real per-kill drop rule** (the shared levelScaling
+  // module). `scaleLevels: false` resolves the level curves (enemy-count
+  // multiplier and per-kill drop chance) to level 1 so a pre-change baseline
+  // is captured with identical harness code and seeds. Level 1 is the
+  // identity: scaling on/off at level 1 runs byte-identically.
+  const perLevelEnabled = config.level !== undefined && config.level !== null;
+  const scaleLevels = perLevelEnabled ? config.scaleLevels !== false : false;
+  const campaignLevel = perLevelEnabled
+    ? clampLevel(config.level, DEFAULT_RULES.levelScalingMaxLevel)
+    : 1;
+  const resolvedLevel = scaleLevels ? campaignLevel : 1;
+  const dropChance = powerUpDropChance(resolvedLevel, DEFAULT_RULES);
+  const extraLifeChance = extraLifeDropChance(resolvedLevel, DEFAULT_RULES);
+  const wavePlan = perLevelEnabled
+    ? buildLevelWavePlan(campaignLevel, scaleLevels, config.seed, width, height)
+    : [];
+
+  let mineralReservoir: Vec[];
+  let powerUpReservoir: Vec[];
+  let hostileReservoir: HostileSpec[];
+  let asteroidReservoir: Vec[];
+  if (perLevelEnabled) {
+    // Per-level mode keeps the seeded mineral harvest and the asteroid
+    // shadow-hazard (so the Extra Life roll stays live) but **never** seeds
+    // power-up drops — supply comes from kills through the real drop rule.
+    const modeRng = createSeededRng(config.seed + 1);
+    mineralReservoir = seededFieldPoints(modeRng, spawns.minerals * 3, width, height);
+    powerUpReservoir = [];
+    hostileReservoir = [];
+    asteroidReservoir = seededFieldPoints(modeRng, spawns.asteroids * 3, width, height);
+  } else {
+    const plan = buildSpawnPlan(
+      config.seed,
+      width,
+      height,
+      spawns,
+      archetypes,
+      hostileWaves,
+    );
+    mineralReservoir = plan.mineralReservoir;
+    powerUpReservoir = plan.powerUpReservoir;
+    hostileReservoir = plan.hostileReservoir;
+    asteroidReservoir = [];
+  }
   // A dedicated seeded stream for the per-cycle shot-probability draws. It is
   // independent of the reservoir and governor streams, so the closed loop
   // stays deterministic without perturbing already-drawn scenario positions.
@@ -495,7 +646,8 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const initialHostiles = spawns.enemies + spawns.asteroids;
   const targetHostiles = Math.min(initialHostiles, hostileReservoir.length);
   let nextMineral = spawns.minerals * 3;
-  let nextPowerUp = spawns.powerUps * 3;
+  let nextPowerUp = perLevelEnabled ? 0 : spawns.powerUps * 3;
+  let nextAsteroid = spawns.asteroids * 3;
 
   // Seed the opening batch: the first `spawns.*` entries of each reservoir.
   const spawnMineral = (): void => {
@@ -512,8 +664,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       world.drops.push({ ...point });
     }
   };
-  const spawnHostile = (index: number): void => {
-    const spec = hostileReservoir[index];
+  const spawnHostile = (spec: HostileSpec | undefined, index: number, wave: number): void => {
     if (!spec) return;
     // Hostile behaviour comes from the archetype's shared EnemyConfig:
     // radius (size), hit points (health), fire cadence (fireInterval in ms),
@@ -528,6 +679,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       alive: true,
       archetype: spec.archetype,
       isAsteroid: spec.isAsteroid,
+      wave,
       radius: positiveOr(enemy?.size, FALLBACK_HOSTILE_RADIUS),
       health,
       fireTicks: fireIntervalTicks(
@@ -540,17 +692,89 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     });
   };
 
+  // Per-level campaign: a per-run hostile id counter staggers the fire
+  // warm-up across wave members (the skirmish uses reservoir indices).
+  let hostileId = 0;
+  const nextHostileId = (): number => {
+    const id = hostileId;
+    hostileId += 1;
+    return id;
+  };
+
+  /** Spawns every member of one per-level campaign wave. */
+  const spawnWave = (waveIndex: number): void => {
+    for (const member of wavePlan[waveIndex] ?? []) {
+      spawnHostile(member, nextHostileId(), waveIndex);
+    }
+  };
+
+  /** Spawns the next asteroid from the per-level shadow-hazard reservoir. */
+  const spawnAsteroid = (): void => {
+    const point = asteroidReservoir[asteroidReservoir.length - nextAsteroid];
+    if (point) {
+      nextAsteroid -= 1;
+      spawnHostile({ ...point, archetype: 'asteroid', isAsteroid: true }, nextHostileId(), -1);
+    }
+  };
+
   for (let i = 0; i < spawns.minerals; i += 1) spawnMineral();
   for (let i = 0; i < spawns.powerUps; i += 1) spawnPowerUp();
-  for (let i = 0; i < targetHostiles; i += 1) spawnHostile(i);
+  if (perLevelEnabled) {
+    // Per-level campaign mode: wave 1 spawns at the level start; the
+    // remaining waves spawn as each wave is cleared (wave gating in the loop).
+    if (wavePlan.length > 0) {
+      spawnWave(0);
+      pushEvent(0, 'wave_start', {
+        waveNumber: 1,
+        level: campaignLevel,
+        waveCount: wavePlan.length,
+      });
+    }
+    for (let i = 0; i < spawns.asteroids; i += 1) spawnAsteroid();
+  } else {
+    for (let i = 0; i < targetHostiles; i += 1) {
+      spawnHostile(hostileReservoir[i], i, -1);
+    }
+  }
 
   let fireCooldown = 0;
   let simulated = 0;
   let won = false;
   const hostileSpawned = targetHostiles;
+  let currentWave = 0;
+  let allWavesCleared = false;
 
   for (let tick = 0; tick < config.ticks; tick += 1) {
     simulated = tick + 1;
+
+    // Per-level campaign wave gate: the level plays its waves in order — the
+    // next wave spawns the moment the current wave's members are all dead,
+    // and clearing the final wave marks the level cleared. Wave-accounted
+    // hostiles carry their wave index; the asteroid shadow-hazard (wave −1)
+    // and the seeded reservoir never gate progression.
+    if (perLevelEnabled && wavePlan.length > 0 && !allWavesCleared) {
+      const waveLive = world.hostiles.some(
+        (hostile) => hostile.alive && hostile.wave === currentWave,
+      );
+      if (!waveLive) {
+        pushEvent(tick, 'wave_cleared', {
+          waveNumber: currentWave + 1,
+          level: campaignLevel,
+        });
+        if (currentWave >= wavePlan.length - 1) {
+          allWavesCleared = true;
+          pushEvent(tick, 'level_cleared', { level: campaignLevel });
+        } else {
+          currentWave += 1;
+          spawnWave(currentWave);
+          pushEvent(tick, 'wave_start', {
+            waveNumber: currentWave + 1,
+            level: campaignLevel,
+            waveCount: wavePlan.length,
+          });
+        }
+      }
+    }
 
     // 1. Decide + resolve input (the bot loop).
     const snapshot = snapshotOf(world, world.hostiles, config.seed);
@@ -643,6 +867,19 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
             archetype: hostile.archetype,
           },
         );
+        // Per-level campaign mode: the **real per-kill drop rule** (the
+        // shared levelScaling module) replaces the seeded power-up reservoir
+        // in this mode. A kill rolls the level's per-kill drop chance once; a
+        // destroyed asteroid additionally rolls the level-scaled Extra Life
+        // chance — at most one generic drop plus one Extra Life per kill.
+        if (perLevelEnabled) {
+          if (simRng() < dropChance) {
+            world.drops.push({ x: hostile.x, y: hostile.y });
+          }
+          if (hostile.isAsteroid && simRng() < extraLifeChance) {
+            world.drops.push({ x: hostile.x, y: hostile.y });
+          }
+        }
         break;
       }
     }
@@ -684,17 +921,27 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       return false;
     });
 
-    // 8. Replenish reservoirs so a long run stays populated.
+    // 8. Replenish reservoirs so a long run stays populated. In per-level
+    // mode the seeded power-up reservoir never refills (supply comes from
+    // kills through the real drop rule); the asteroid shadow-hazard refills
+    // on the same cadence as the skirmish.
     if (tick > 0 && tick % COLLECTABLE_RESPAWN_TICKS === 0) {
       if (world.minerals.length < spawns.minerals) spawnMineral();
-      if (world.drops.length < spawns.powerUps) spawnPowerUp();
+      if (!perLevelEnabled && world.drops.length < spawns.powerUps) spawnPowerUp();
     }
     if (tick > 0 && tick % HOSTILE_RESPAWN_TICKS === 0) {
-      const live = world.hostiles.filter((hostile) => hostile.alive).length;
-      const nextIndex =
-        hostileSpawned + Math.max(0, Math.floor(tick / HOSTILE_RESPAWN_TICKS) - 1);
-      if (live < spawns.enemies && nextIndex < hostileReservoir.length) {
-        spawnHostile(nextIndex);
+      if (perLevelEnabled) {
+        const liveAsteroids = world.hostiles.filter(
+          (hostile) => hostile.alive && hostile.isAsteroid,
+        ).length;
+        if (liveAsteroids < spawns.asteroids) spawnAsteroid();
+      } else {
+        const live = world.hostiles.filter((hostile) => hostile.alive).length;
+        const nextIndex =
+          hostileSpawned + Math.max(0, Math.floor(tick / HOSTILE_RESPAWN_TICKS) - 1);
+        if (live < spawns.enemies && nextIndex < hostileReservoir.length) {
+          spawnHostile(hostileReservoir[nextIndex], nextIndex, -1);
+        }
       }
     }
 

@@ -171,6 +171,24 @@ export interface ArenaConfig {
   /** Entity counts; omitted fields fall back to {@link DEFAULT_ARENA_SPAWNS}. */
   readonly spawns?: Partial<ArenaSpawns>;
   /**
+   * Explicit campaign level (1–10) for the **per-level campaign mode**
+   * (AH-0MVLJFB1I0099X4Z). When present, the arena plays the real campaign
+   * waves for that level — the shared `Formations.LEVELS` data through the
+   * level-scaling seam — instead of the single-level spawn reservoir, and
+   * power-up drops come from the **real per-kill drop rule** (the shared
+   * `src/core/levelScaling` module) rather than the seeded power-up
+   * reservoir. Absent → the unchanged seeded skirmish.
+   */
+  readonly level?: number;
+  /**
+   * Level-scaling curves toggle for per-level mode (default `true` when
+   * `level` is set). `false` resolves the enemy-count multiplier and the
+   * per-kill drop chance to level 1, so a pre-change **baseline** is
+   * captured with the same harness code and seeds. Ignored when `level` is
+   * absent (the seeded skirmish never scales).
+   */
+  readonly scaleLevels?: boolean;
+  /**
    * Resolved balance configuration (enemy archetypes, ship, difficulty
    * curves) built through the shared config loaders. When omitted,
    * `runArena` resolves it from the shared config store (seed defaults before

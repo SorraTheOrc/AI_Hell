@@ -51,6 +51,8 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     tuneAssignment: null,
     threshold: 10,
     keepEdit: false,
+    level: null,
+    scaleLevels: true,
     help: false,
   };
   const explicitSeeds = [];
@@ -125,6 +127,17 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
       case '--keep-edit':
         options.keepEdit = true;
         break;
+      case '--level':
+        options.level = Number(next());
+        break;
+      case '--scale-levels': {
+        const raw = next();
+        if (raw !== 'on' && raw !== 'off') {
+          throw new Error(`--scale-levels expects 'on' or 'off' (got '${raw}')`);
+        }
+        options.scaleLevels = raw === 'on';
+        break;
+      }
       case '--video':
         options.video = true;
         break;
@@ -163,6 +176,11 @@ Options:
   --out <dir>          Artifact output directory (default eval-output)
   --human <file.jsonl> Compare the bot against a recorded human run (same seed)
   --human-seed <n>     Which human run seed to compare (default: last run)
+  --level <n>          Play the real campaign waves of level n (1-10) instead of the seeded
+                       skirmish (per-level campaign mode, real per-kill drop rule)
+  --scale-levels <on|off>  Level curves in per-level mode: on (default) resolves counts and
+                       drop chance at the selected level; off resolves both to level 1 so a
+                       pre-change baseline is captured with identical harness code and seeds
   --video              Also emit the side-by-side capture plan (AC4)
   --json               Print the machine-readable report instead of text
   --help               Show this help

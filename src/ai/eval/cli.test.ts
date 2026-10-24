@@ -311,8 +311,8 @@ describe('buildTuneComparisonArtifacts (AH-0MVBNITA0005VQGN)', () => {
  * threads `level` through and flips it back to `it`.
  */
 describe('per-level campaign batch (AH-0MVLJF9HC007AOI6, pinned test-first)', () => {
-  // RED until AH-0MVLJFB1I0099X4Z (CliOptions.level → runBatch → arena).
-  it.fails('runs the real campaign at an explicit level and reports the per-level fields', () => {
+  // GREEN since AH-0MVLJFB1I0099X4Z (CliOptions.level → runBatch → arena).
+  it('runs the real campaign at an explicit level and reports the per-level fields', () => {
     const result = executeEvaluation({
       ...options({ batch: true, seeds: [1, 2], ticks: 300 }),
       level: 5,

@@ -75,6 +75,18 @@ export interface CliOptions {
   readonly humanRecordingText: string | null;
   /** The human run's seed to compare against; defaults to the last run. */
   readonly humanSeed: number | null;
+  /**
+   * Explicit campaign level (1–10) for the per-level campaign mode; `null`
+   * (default) keeps the unchanged seeded skirmish (AH-0MVLJFB1I0099X4Z).
+   */
+  readonly level: number | null;
+  /**
+   * Level-scaling curves for per-level mode: `true` (default) resolves the
+   * enemy-count multiplier and per-kill drop chance at the selected level;
+   * `false` resolves both to level 1 so a pre-change baseline is captured
+   * with the same harness code and seeds.
+   */
+  readonly scaleLevels: boolean;
 }
 
 /** A file the shell should write under the output directory. */
@@ -104,6 +116,10 @@ function runConfig(options: CliOptions) {
     ticks: options.ticks,
     dt: options.dt,
     sampleEveryTicks: options.sampleEveryTicks,
+    // Per-level campaign mode (AH-0MVLJFB1I0099X4Z): forwarded to every
+    // arena run; `null`/undefined keeps the unchanged seeded skirmish.
+    level: options.level ?? undefined,
+    scaleLevels: options.scaleLevels,
   };
 }
 
@@ -269,6 +285,8 @@ export function defaultOptions(): CliOptions {
     policies: [],
     humanRecordingText: null,
     humanSeed: null,
+    level: null,
+    scaleLevels: true,
   };
 }
 
@@ -288,6 +306,8 @@ export function runBalanceBatch(options: CliOptions): BatchOutput {
     dt: options.dt,
     sampleEveryTicks: options.sampleEveryTicks,
     policies: policyFactories,
+    level: options.level ?? undefined,
+    scaleLevels: options.scaleLevels,
   });
 }
 

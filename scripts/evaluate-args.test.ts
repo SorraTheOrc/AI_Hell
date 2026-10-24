@@ -92,6 +92,25 @@ describe('parseEvaluateArgs', () => {
     expect(options.batch).toBe(true);
     expect(options.seeds).toEqual([4, 9]);
   });
+
+  it('parses the per-level campaign flags (--level, --scale-levels)', () => {
+    const defaults = parseEvaluateArgs(['--batch']);
+    expect(defaults.level).toBeNull();
+    expect(defaults.scaleLevels).toBe(true);
+
+    const scaled = parseEvaluateArgs(['--batch', '--level', '10']);
+    expect(scaled.level).toBe(10);
+    expect(scaled.scaleLevels).toBe(true);
+
+    const baseline = parseEvaluateArgs(['--batch', '--level', '5', '--scale-levels', 'off']);
+    expect(baseline.level).toBe(5);
+    expect(baseline.scaleLevels).toBe(false);
+
+    // An explicit on re-enables the curves after an off.
+    const reenabled = parseEvaluateArgs(['--level', '3', '--scale-levels', 'on']);
+    expect(reenabled.level).toBe(3);
+    expect(reenabled.scaleLevels).toBe(true);
+  });
 });
 
 describe('resolveSeeds', () => {

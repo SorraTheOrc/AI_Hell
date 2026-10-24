@@ -79,6 +79,10 @@ export interface EvaluationRunConfig {
   readonly sampleEveryTicks?: number;
   readonly spawns?: Partial<ArenaSpawns>;
   readonly build?: EvalBuild;
+  /** Explicit campaign level (1–10); forwarded to the arena (per-level mode). */
+  readonly level?: number;
+  /** Level-scaling curves for per-level mode; `false` → level-1 baseline. */
+  readonly scaleLevels?: boolean;
 }
 
 /** One seed's raw records alongside its derived run and report entry. */
@@ -222,6 +226,18 @@ export interface BatchConfig {
   /** Build metadata stamped into each run header. */
   readonly build?: EvalBuild;
   /**
+   * Explicit campaign level (1–10) for the per-level campaign mode: every
+   * run plays the real campaign waves of that level with the real per-kill
+   * drop rule (AH-0MVLJFB1I0099X4Z). Absent → the unchanged seeded skirmish.
+   */
+  readonly level?: number;
+  /**
+   * Level-scaling curves for per-level mode (default `true`). `false`
+   * resolves the enemy-count multiplier and per-kill drop chance to level 1
+   * so a pre-change baseline is captured with the same harness code/seeds.
+   */
+  readonly scaleLevels?: boolean;
+  /**
    * Resolved balance config. Omitted → the batch consumes the **shared
    * config store** through `loadBalanceConfig()` (so a CSV edit changes batch
    * results, epic AC1/AC2).
@@ -281,6 +297,8 @@ export function runBatch(config: BatchConfig): BatchOutput {
         build: config.build,
         spawns: config.spawns,
         balance: config.balance,
+        level: config.level,
+        scaleLevels: config.scaleLevels,
       });
       const stats = extractBalanceStats(arena.records, { dtSeconds: dt });
       runs.push({
@@ -342,6 +360,8 @@ function runSeed(
     sampleEveryTicks: config.sampleEveryTicks,
     build: config.build,
     spawns: config.spawns,
+    level: config.level,
+    scaleLevels: config.scaleLevels,
   });
   const run = recordingRunFromRecords(arena.records, 0);
   const analysis = analyseRecording(run);

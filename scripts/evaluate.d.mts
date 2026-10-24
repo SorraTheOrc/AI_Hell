@@ -27,6 +27,10 @@ export interface ParsedEvaluateArgs {
   tuneAssignment: string | null;
   threshold: number;
   keepEdit: boolean;
+  /** Explicit campaign level (1–10) for per-level mode; null → seeded skirmish. */
+  level: number | null;
+  /** Level-scaling curves for per-level mode (true = curves at the level, false = level-1 baseline). */
+  scaleLevels: boolean;
 }
 
 export const EVALUATE_USAGE: string;
