@@ -44,7 +44,7 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState, MAX_LEVEL, MAX_LIVES } from '../core/GameState';
-import { POWER_UP_DROP_CHANCE } from '../core/levelScaling';
+import { applyEnemyCountScaling, POWER_UP_DROP_CHANCE } from '../core/levelScaling';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import {
   DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
@@ -420,31 +420,84 @@ const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
 };
 
 /**
+ * Rules the campaign resolution needs: the sequencing toggle plus whichever
+ * scaling tunables the caller supplies. Anything omitted falls back to
+ * {@link DEFAULT_RULES}, so unit tests can pass just the toggle.
+ */
+type CampaignResolutionRules = Pick<GameRules, 'sequencedWavesEnabled'> &
+  Partial<GameRules>;
+
+/**
+ * Apply the level enemy-count scaling to a whole campaign
+ * (AH-0MVLJF30O000E3J3).
+ *
+ * This is the **single** campaign-build seam: every group of every wave is
+ * scaled with {@link applyEnemyCountScaling} for its level, so both the
+ * static `LEVELS` campaign and the sequenced campaign receive the documented
+ * multiplier (level 1 is the identity). The input campaign is never mutated —
+ * a new `LevelDefinition[]` with new waves/groups is returned — which keeps
+ * repeated builds idempotent (no cumulative/double scaling) and leaves the
+ * authored `LEVELS` data as the pristine source every build scales from.
+ *
+ * @param campaign - Unscaled campaign (must be the authored/sequenced data, as
+ *   returned by `LEVELS` / `buildSequencedLevels`; never a previously scaled
+ *   campaign).
+ * @param rules - Live rules supplying the scaling tunables.
+ * @returns A new campaign whose group counts carry the level scaling.
+ */
+function scaleCampaignLevelCounts(
+  campaign: LevelDefinition[],
+  rules: CampaignResolutionRules,
+): LevelDefinition[] {
+  const tuning: GameRules = { ...DEFAULT_RULES, ...rules };
+  return campaign.map((level) => ({
+    ...level,
+    waves: level.waves.map((wave) => ({
+      ...wave,
+      groups: applyEnemyCountScaling(level.level, wave.groups, tuning),
+    })),
+  }));
+}
+
+/**
  * Resolve the campaign the run should play (AH-0MUITS1SM008GPR9).
  *
- * With the opt-in `sequencedWavesEnabled` toggle off (the default) the static
- * `LEVELS` campaign is returned unchanged. With it on, the campaign is
- * generated from the difficulty-curve config; if generation throws or yields
- * nothing the static campaign is used instead, so the game always boots into
- * a playable campaign.
+ * With the opt-in `sequencedWavesEnabled` toggle off the static `LEVELS`
+ * campaign is used. With it on, the campaign is generated from the
+ * difficulty-curve config; if generation throws or yields nothing the static
+ * campaign is used instead, so the game always boots into a playable
+ * campaign.
+ *
+ * Either way the resolved campaign then passes through the shared
+ * level-scaling seam exactly once (AH-0MVLJF30O000E3J3): each level's group
+ * counts are multiplied by `enemyCountMultiplier(level)` with the documented
+ * rounding, floor, per-group cap and `single`-group rule (see
+ * `src/core/levelScaling.ts`). Level 1 is the identity, so onboarding data is
+ * unchanged. The scaling reads the pristine source on every call, so it is
+ * idempotent — a rebuilt campaign is never scaled twice.
  *
  * Pass a `build` that closes over the run seed (AH-0MUJSUQD8003FSUT) so
  * `dynamic` waves are regenerated per run while staying reproducible for a
  * given seed; the default build is seed-free.
  *
- * Exported so the toggle/fallback decision can be unit-tested without
+ * Exported so the toggle/fallback/scaling decision can be unit-tested without
  * booting a Phaser scene; `PlayScene.create()` calls it with the live rules.
  */
 export function resolveCampaignLevels(
-  rules: Pick<GameRules, 'sequencedWavesEnabled'> = loadRules(),
+  rules: CampaignResolutionRules = loadRules(),
   build: () => LevelDefinition[] = () => buildSequencedLevels(),
 ): LevelDefinition[] {
-  if (!rules.sequencedWavesEnabled) return LEVELS;
+  if (!rules.sequencedWavesEnabled) {
+    return scaleCampaignLevelCounts(LEVELS, rules);
+  }
   try {
     const generated = build();
-    return generated.length > 0 ? generated : LEVELS;
+    return scaleCampaignLevelCounts(
+      generated.length > 0 ? generated : LEVELS,
+      rules,
+    );
   } catch {
-    return LEVELS;
+    return scaleCampaignLevelCounts(LEVELS, rules);
   }
 }
 
@@ -984,18 +1037,20 @@ export class PlayScene extends CombatScene<
     this.gameState.mineralHoldGrowthMultiplier =
       rules.mineralHoldGrowthMultiplier;
     this._syncMineralHud();
-    // Campaign source: static `LEVELS` by default, generated when the
-    // opt-in toggle is enabled (AH-0MUH6LEYY0054E63). Only override the
-    // manager's levels when enabled so an injected campaign (tests, future
-    // callers) is left untouched — preserving shipped behaviour. Never
-    // throws: `resolveCampaignLevels` falls back to `LEVELS`. The run seed
-    // (AH-0MUJSUQD8003FSUT) is threaded in so `dynamic` waves regenerate per
-    // run while staying reproducible for a given seed.
-    if (rules.sequencedWavesEnabled) {
+    // Campaign source (AH-0MVLJF30O000E3J3): always resolve through
+    // `resolveCampaignLevels`, which applies the level enemy-count scaling
+    // exactly once to the static `LEVELS` campaign and to the sequenced one.
+    // A campaign injected with `setLevels()` (tests, future callers) is left
+    // untouched so the caller keeps control of the campaign. Never throws:
+    // `resolveCampaignLevels` falls back to the (scaled) static campaign. The
+    // run seed (AH-0MUJSUQD8003FSUT) is threaded in so `dynamic` waves
+    // regenerate per run while staying reproducible for a given seed.
+    if (!this.waveManager.hasInjectedLevels) {
       this.waveManager.setLevels(
         resolveCampaignLevels(rules, () =>
           buildSequencedLevels(undefined, undefined, { seed: this.runSeed }),
         ),
+        { injected: false },
       );
     }
     // Checkpoint resume (AH-0MVCRBTNF000DK51): start at the saved level and

@@ -87,6 +87,7 @@ import {
   WEAPON_WEIGHT_IDS,
 } from '../core/rules';
 import {
+  applyEnemyCountScaling,
   extraLifeDropChance,
   powerUpDropChance,
 } from '../core/levelScaling';
@@ -3977,10 +3978,23 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
     },
   ];
 
+  /**
+   * The campaign's level identity (number + name). The resolved campaign is a
+   * fresh, level-scaled copy (AH-0MVLJF30O000E3J3), so identity assertions
+   * compare the campaign *shape* rather than object references; level 1 is
+   * the scaling identity, so its data can still be compared directly.
+   */
+  const shapeOf = (campaign: LevelDefinition[]): string[] =>
+    campaign.map((level) => `${level.level}:${level.name}`);
+
   it('returns the static LEVELS campaign when the toggle is off', () => {
-    expect(
-      resolveCampaignLevels({ sequencedWavesEnabled: false }, () => generated),
-    ).toBe(CAMPAIGN_LEVELS);
+    const resolved = resolveCampaignLevels(
+      { sequencedWavesEnabled: false },
+      () => generated,
+    );
+    expect(shapeOf(resolved)).toEqual(shapeOf(CAMPAIGN_LEVELS));
+    // Level 1 is the scaling identity, so onboarding data is unchanged.
+    expect(resolved[0]).toEqual(CAMPAIGN_LEVELS[0]);
   });
 
   it('returns the generated campaign when the toggle is on', () => {
@@ -3991,16 +4005,20 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
 
   it('falls back to static LEVELS when generation throws', () => {
     expect(
-      resolveCampaignLevels({ sequencedWavesEnabled: true }, () => {
-        throw new Error('sequencer exploded');
-      }),
-    ).toBe(CAMPAIGN_LEVELS);
+      shapeOf(
+        resolveCampaignLevels({ sequencedWavesEnabled: true }, () => {
+          throw new Error('sequencer exploded');
+        }),
+      ),
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
   });
 
   it('falls back to static LEVELS when generation returns nothing', () => {
     expect(
-      resolveCampaignLevels({ sequencedWavesEnabled: true }, () => []),
-    ).toBe(CAMPAIGN_LEVELS);
+      shapeOf(
+        resolveCampaignLevels({ sequencedWavesEnabled: true }, () => []),
+      ),
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
   });
 
   it('guarantees the static fallback under the default-on rule (AH-0MUJSUTLA006Q8E1)', () => {
@@ -4008,11 +4026,15 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
     // No explicit rules: the default (on) applies; a failing/degenerate build
     // must still leave the run playable via the static campaign.
     expect(
-      resolveCampaignLevels(undefined, () => {
-        throw new Error('missing/malformed curve');
-      }),
-    ).toBe(CAMPAIGN_LEVELS);
-    expect(resolveCampaignLevels(undefined, () => [])).toBe(CAMPAIGN_LEVELS);
+      shapeOf(
+        resolveCampaignLevels(undefined, () => {
+          throw new Error('missing/malformed curve');
+        }),
+      ),
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
+    expect(
+      shapeOf(resolveCampaignLevels(undefined, () => [])),
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
   });
 
   it('runs a mixed fixed+curve campaign when the toggle is on, static LEVELS when off', () => {
@@ -4034,17 +4056,20 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
       { sequencedWavesEnabled: true },
       () => buildSequencedLevels(),
     );
-    // An all-fixed level matching the static wave count is verbatim static;
-    // level 2 comes from the sequencer.
-    expect(mixed.find((l) => l.level === 1)).toBe(CAMPAIGN_LEVELS[0]);
+    // An all-fixed level matching the static wave count is the static level
+    // (level 1 is the scaling identity, so it is unchanged); level 2 comes
+    // from the sequencer.
+    expect(mixed.find((l) => l.level === 1)).toEqual(CAMPAIGN_LEVELS[0]);
     expect(mixed.find((l) => l.level === 2)?.name).toBe('Generated Descent');
     // The toggle off path ignores the mixed config entirely.
     expect(
-      resolveCampaignLevels(
-        { sequencedWavesEnabled: false },
-        () => buildSequencedLevels(),
+      shapeOf(
+        resolveCampaignLevels(
+          { sequencedWavesEnabled: false },
+          () => buildSequencedLevels(),
+        ),
       ),
-    ).toBe(CAMPAIGN_LEVELS);
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
   });
 });
 
@@ -4072,6 +4097,29 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
     expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
     expect(wm.currentLevel()?.name).toBe(CAMPAIGN_LEVELS[0].name);
     expect(wm.currentLevel()?.name).toBe('Entry');
+  });
+
+  it('plays the level-scaled static campaign when sequencing is disabled (AH-0MVLJF30O000E3J3)', async () => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    const scene = await bootToggleScene();
+    const wm = scene.getWaveManager();
+
+    // Jump to level 10, where the campaign multiplier is unmistakable (2.00):
+    // the static campaign the game plays must carry the documented scaling of
+    // the authored data, not the raw authored counts.
+    wm.beginGame(10);
+    const level10 = wm.currentLevel()!;
+    const authored = CAMPAIGN_LEVELS[9];
+    const expected = authored.waves.flatMap((wave) =>
+      applyEnemyCountScaling(10, wave.groups).map((group) => group.count),
+    );
+    const actual = level10.waves.flatMap((wave) =>
+      wave.groups.map((group) => group.count),
+    );
+    expect(actual).toEqual(expected);
   });
 
   it('runs the sequenced campaign by default (AH-0MUJSUTLA006Q8E1)', async () => {

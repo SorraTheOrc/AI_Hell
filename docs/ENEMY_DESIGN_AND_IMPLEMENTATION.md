@@ -2198,10 +2198,28 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   sequencer ramps the rest.
 - **Toggle:** the `GameRules.sequencedWavesEnabled` scalar
   (`src/core/rules.ts`, default **`true`** — AH-0MUJSUTLA006Q8E1) in the
-  `ai-hell-game-rules` localStorage record. `PlayScene.create()` overrides the
-  campaign with the sequenced one when it is `true`; persisting `false` opts
-  back into the static `LEVELS` campaign. A malformed/non-boolean value falls
-  back to the default.
+  `ai-hell-game-rules` localStorage record. `PlayScene.create()` resolves the
+  campaign through `resolveCampaignLevels()` on every run — the sequenced
+  campaign when the toggle is `true`, the static `LEVELS` campaign when it is
+  `false` — and applies the level enemy-count scaling to either (see below).
+  A campaign injected with `WaveManager.setLevels()` (tests, future callers)
+  is left untouched. A malformed/non-boolean toggle value falls back to the
+  default.
+- **Level enemy-count scaling (AH-0MVLJF30O000E3J3):** `resolveCampaignLevels()`
+  (`src/scenes/PlayScene.ts`) is the **single** campaign-build seam that applies
+  the shared `applyEnemyCountScaling()` helper (`src/core/levelScaling.ts`)
+  once per level, to **both** the static `LEVELS` campaign and the sequenced
+  campaign. Each group's `count` is multiplied by
+  `enemyCountMultiplier(level)` — 1.00 at level 1 rising linearly to 2.00 at
+  level 10 — rounded half up, floored at 1 and capped at
+  `GameRules.enemyCountCap` (200); `single`-formation groups stay at exactly 1.
+  Level 1 is the identity, so the onboarding/calibration data is unchanged. The
+  scaling always reads the pristine authored/sequenced source and returns new
+  level/wave/group objects, so repeated builds are idempotent (never
+  double-scaled) and the authored `LEVELS` data is never mutated. Determinism is
+  unaffected: same-seed sequenced builds stay byte-identical. The tuned values
+  live in `GameRules` (`enemyCountMultiplierAtMaxLevel`,
+  `levelScalingMaxLevel`, `enemyCountCap`), not in the seam.
 - **Fire rule:** derived from the 1-based level number for **`curve`/`dynamic`**
   waves — levels 1–3 do not fire, levels 4+ do (GDD §2.4/§2.5) — and passed to
   `sequencer()` as `defaultShootEnabled`; **`fixed`** waves keep their own

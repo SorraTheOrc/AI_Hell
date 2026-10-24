@@ -5,13 +5,15 @@
  * (`src/core/levelScaling.ts`, AH-0MVLJEE7O008RX9X) reaches the campaign —
  * the static `LEVELS` campaign and the sequenced campaign (all three
  * generation modes) — without breaking determinism or the authored campaign
- * invariants. The scaling seam itself is F2 (AH-0MVLJF30O000E3J3), so every
- * test that pins scaling *behaviour* is wrapped in Vitest's `it.fails(...)`
- * (the repo's red-before/green-after convention — see
- * `src/core/levelScaling.test.ts` and `src/powerups/powerUpIdNaming.test.ts`)
- * and therefore keeps the suite green on pre-change HEAD. **F2 flips each
- * `it.fails` back to `it`.** The guards that already hold (single scaling
- * module, composition invariance, campaign invariants, determinism) run as
+ * invariants. The scaling seam is F2 (AH-0MVLJF30O000E3J3): **F2 has since
+ * flipped every `it.fails` back to `it`** — the seam lives in
+ * `resolveCampaignLevels` (`src/scenes/PlayScene.ts`), which scales both the
+ * static `LEVELS` campaign and the sequenced campaign exactly once.
+ * (The repo's red-before/green-after convention is documented in
+ * `src/core/levelScaling.test.ts` and
+ * `src/powerups/powerUpIdNaming.test.ts`.) The guards that already held
+ * (single scaling module, composition invariance, campaign invariants,
+ * determinism) run as
  * plain `it` and hard-gate from day one.
  *
  * ## What is pinned, and where
@@ -305,7 +307,7 @@ describe('scaled static LEVELS campaign (AH-0MVLJF1PO000PB21)', () => {
     );
   });
 
-  it.fails(
+  it(
     'scales every level L by the documented multiplier at level L (no double scaling)',
     () => {
       const campaign = staticCampaign();
@@ -324,7 +326,7 @@ describe('scaled static LEVELS campaign (AH-0MVLJF1PO000PB21)', () => {
     },
   );
 
-  it.fails(
+  it(
     'grows a level-10 group by the documented 2.00× multiplier (explicit pin)',
     () => {
       // Level 10 wave 1 is authored `raider` (single), `capturer` (single),
@@ -335,7 +337,7 @@ describe('scaled static LEVELS campaign (AH-0MVLJF1PO000PB21)', () => {
     },
   );
 
-  it.fails(
+  it(
     'applies the documented rounding at the fractional levels (explicit pin)',
     () => {
       // L2 multiplier 1 + 1/9 = 1.111…: authored scout 8 → 8.888… → 9 (round
@@ -373,7 +375,7 @@ describe('scaled static LEVELS campaign (AH-0MVLJF1PO000PB21)', () => {
 // ── Sequenced campaign: fixed, curve and dynamic modes ───────────────
 
 describe('scaled sequenced campaign (AH-0MVLJF1PO000PB21)', () => {
-  it.fails(
+  it(
     'scales fixed, curve and dynamic waves alike (no mode is skipped)',
     () => {
       // Level 6 exercises the `single`-formation rule (authored wave 2 has a
@@ -416,7 +418,7 @@ describe('scaled sequenced campaign (AH-0MVLJF1PO000PB21)', () => {
     },
   );
 
-  it.fails(
+  it(
     'leaves single-formation groups at exactly 1 while scaling their wave',
     () => {
       // Authored L6W2: capturer (single) 1, tank 6, swarm 8. At level 6
@@ -435,7 +437,7 @@ describe('scaled sequenced campaign (AH-0MVLJF1PO000PB21)', () => {
     },
   );
 
-  it.fails(
+  it(
     'floors a scaled generated count at 1 and caps a large one at 200',
     () => {
       // Baseline 0 at the level-10 multiplier (2.00) would be 0 → floored to 1;
@@ -693,7 +695,7 @@ describe('scaling parity seam (AH-0MVLJF1PO000PB21)', () => {
     expect(unshared).toEqual([]);
   });
 
-  it.fails(
+  it(
     'has the campaign build seam consume the shared scaling helper',
     () => {
       // The seam applies the helper; it must not re-derive the multiplier
