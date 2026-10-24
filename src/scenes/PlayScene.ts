@@ -265,6 +265,7 @@ import {
   applyPhaseGhost,
   drawForceFieldBubble,
   drawShieldBubble,
+  drawThornsAura,
 } from './core/CombatEffectVisuals';
 import {
   isNonBlockingHazard,
@@ -691,6 +692,10 @@ export class PlayScene extends CombatScene<
   private shieldBubbleDrawn = false;
   /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
   private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
+  /** Thorn Field lime spike aura (AH-0MVJ8YKR70096C6T). */
+  private thornsAura: Phaser.GameObjects.Graphics | null = null;
+  /** Whether the aura was actually drawn in the last visual update. */
+  private thornsAuraDrawn = false;
 
   private driftX = 0;
   private driftDir = 1;
@@ -1001,6 +1006,10 @@ export class PlayScene extends CombatScene<
     // Force Field reflect bubble — above the shield bubble (below the HUD).
     this.forceFieldBubble = this.add.graphics();
     this.forceFieldBubble.setDepth(51);
+    // Thorn Field aura — outside the Force Field bubble so the spiked halo
+    // never reads as one of the round bubbles (AH-0MVJ8YKR70096C6T).
+    this.thornsAura = this.add.graphics();
+    this.thornsAura.setDepth(52);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, {
@@ -1195,6 +1204,7 @@ export class PlayScene extends CombatScene<
     this.pendingStrikeSpawns = [];
     this.strikesSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
+    this.thornsAuraDrawn = false;
     this._wormhole.close(this.wormholeEffects);
     this.paused = false;
   }
@@ -1244,6 +1254,9 @@ export class PlayScene extends CombatScene<
     this.shieldBubble = null;
     this.forceFieldBubble?.destroy();
     this.forceFieldBubble = null;
+    this.thornsAura?.destroy();
+    this.thornsAura = null;
+    this.thornsAuraDrawn = false;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -3686,6 +3699,17 @@ export class PlayScene extends CombatScene<
         this.effectsRegistry,
       );
     }
+    // Thorn Field aura: a lime spiked halo while the field is armed, scaling
+    // with the remaining ram budget and brightening as the next automatic
+    // recharge approaches (shared helper — game/gym parity).
+    if (this.thornsAura) {
+      this.thornsAuraDrawn = drawThornsAura(
+        this.thornsAura,
+        this.player,
+        this.effectsRegistry,
+        this.time.now / 1000,
+      );
+    }
     // Phase ghost: semi-transparent ship while Phase Shift is active (keeps the
     // blink alpha when invulnerable — see AC of AH-0MU8QVC9Y008R8I5).
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
@@ -4136,6 +4160,11 @@ export class PlayScene extends CombatScene<
   /** Whether the Shield shield bubble was drawn in the last visual update (for tests). */
   isShieldBubbleVisible(): boolean {
     return this.shieldBubbleDrawn;
+  }
+
+  /** Whether the Thorn Field aura was drawn in the last visual update (for tests). */
+  isThornsAuraVisible(): boolean {
+    return this.thornsAuraDrawn;
   }
 
   /** Whether the Phase Shift phase ghost is currently active (for tests). */

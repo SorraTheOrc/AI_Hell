@@ -62,6 +62,7 @@ import {
   applyPhaseGhost,
   drawForceFieldBubble,
   drawShieldBubble,
+  drawThornsAura,
 } from '../../core/CombatEffectVisuals';
 import {
   GAME_HEIGHT,
@@ -542,6 +543,10 @@ export class GymFormationScene<
   private shieldBubbleDrawn = false;
   /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
   private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
+  /** Thorn Field lime spike aura (AH-0MVJ8YKR70096C6T). */
+  private thornsAura: Phaser.GameObjects.Graphics | null = null;
+  /** Whether the thorns aura was drawn in the last visual update. */
+  private thornsAuraDrawn = false;
 
   // ── Formation glide (AH-0MUL15N63003PUDB)
 
@@ -680,6 +685,8 @@ export class GymFormationScene<
     this.shieldBubbleDrawn = false;
     this.forceFieldBubble = this.add.graphics();
     this.forceFieldBubble.setDepth(51);
+    this.thornsAura = this.add.graphics();
+    this.thornsAura.setDepth(52);
 
     // ── Controls (bottom-right HUD, minimal) ───────────────────────
     // AH-0MUAYB7O4009LWBF — repositioned from bottom-left to avoid
@@ -770,6 +777,8 @@ export class GymFormationScene<
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
     this.forceFieldBubble = null;
+    this.thornsAura = null;
+    this.thornsAuraDrawn = false;
     this.minerals = [];
     this.mineralsSeeded = 0;
     this.mineralHoldModel.reset();
@@ -826,6 +835,9 @@ export class GymFormationScene<
     this.shieldBubbleDrawn = false;
     this.forceFieldBubble?.destroy();
     this.forceFieldBubble = null;
+    this.thornsAura?.destroy();
+    this.thornsAura = null;
+    this.thornsAuraDrawn = false;
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.glide.clear();
@@ -1169,7 +1181,18 @@ export class GymFormationScene<
       this.player,
       this.effectsRegistry,
     );
+    this.thornsAuraDrawn = drawThornsAura(
+      this.thornsAura,
+      this.player,
+      this.effectsRegistry,
+      this.time.now / 1000,
+    );
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
+  }
+
+  /** Whether the Thorn Field aura was drawn in the last visual update. */
+  isThornsAuraVisible(): boolean {
+    return this.thornsAuraDrawn;
   }
 
   /** Whether the Shield shield bubble was drawn in the last visual update. */

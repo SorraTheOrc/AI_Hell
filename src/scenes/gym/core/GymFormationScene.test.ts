@@ -2061,6 +2061,24 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.getEffectsRegistry().magnetEffectStacks()).toBe(1);
   });
 
+  it('AH-0MVJ8YKR70096C6T — the shared lime thorns aura is drawn while the field is armed', async () => {
+    const scene = await boot(layer('thorns', CLEAR));
+    const player = scene.getPlayer()!;
+    expect(scene.isThornsAuraVisible()).toBe(false);
+
+    scene.spawnPowerUpDrop('thorns', player.x, player.y);
+    scene.tick(0.1);
+    expect(scene.getEffectsRegistry().thornsRemaining()).toBeGreaterThan(0);
+    expect(scene.isThornsAuraVisible()).toBe(true);
+
+    // Spend the budget: the aura clears through the same shared helper.
+    while (scene.getEffectsRegistry().thornsRemaining() > 0) {
+      scene.getEffectsRegistry().tryConsumeThornsRam();
+    }
+    scene.tick(0.1);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+  });
+
   it('AC4 — P5 applies movement AND fire-rate multipliers (gym parity)', async () => {
     const scene = await boot(layer('speed_boost', CLEAR));
     const player = scene.getPlayer()!;

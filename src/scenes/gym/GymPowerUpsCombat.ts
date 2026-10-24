@@ -72,6 +72,7 @@ import {
   applyPhaseGhost,
   drawForceFieldBubble,
   drawShieldBubble,
+  drawThornsAura,
 } from '../core/CombatEffectVisuals';
 import { Player } from '../../entities/Player';
 import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
@@ -168,6 +169,10 @@ export class GymPowerUpsCombat extends CombatScene<
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
   /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
   private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
+  /** Thorn Field lime spike aura (AH-0MVJ8YKR70096C6T). */
+  private thornsAura: Phaser.GameObjects.Graphics | null = null;
+  /** Whether the aura was actually drawn in the last visual update. */
+  private thornsAuraDrawn = false;
 
   // UI
   private shootButton: Phaser.GameObjects.Text | null = null;
@@ -207,6 +212,8 @@ export class GymPowerUpsCombat extends CombatScene<
     this.shieldBubble.setDepth(50);
     this.forceFieldBubble = this.add.graphics();
     this.forceFieldBubble.setDepth(51);
+    this.thornsAura = this.add.graphics();
+    this.thornsAura.setDepth(52);
 
     this.cursors = this.input.keyboard?.createCursorKeys();
     this.wasd = this.input.keyboard?.addKeys('W,A,S,D') as WasdKeysLike | undefined;
@@ -262,6 +269,8 @@ export class GymPowerUpsCombat extends CombatScene<
     this.shootEnabled = true;
     this.shieldBubble = null;
     this.forceFieldBubble = null;
+    this.thornsAura = null;
+    this.thornsAuraDrawn = false;
     this.shootButton = null;
     this.helpHandle = null;
   }
@@ -286,6 +295,9 @@ export class GymPowerUpsCombat extends CombatScene<
     this.shieldBubble = null;
     this.forceFieldBubble?.destroy();
     this.forceFieldBubble = null;
+    this.thornsAura?.destroy();
+    this.thornsAura = null;
+    this.thornsAuraDrawn = false;
     this.shootButton?.destroy();
     this.shootButton = null;
     this.helpHandle = null;
@@ -439,6 +451,11 @@ export class GymPowerUpsCombat extends CombatScene<
 
   // ── Visuals ──────────────────────────────────────────────────────
 
+  /** Whether the Thorn Field aura was drawn in the last visual update (for tests). */
+  isThornsAuraVisible(): boolean {
+    return this.thornsAuraDrawn;
+  }
+
   private _updateVisuals(): void {
     // Shield bubble: drawn around the ship while Shield is active (shared helper,
     // including the continuous rim pulse and ending fade).
@@ -452,6 +469,16 @@ export class GymPowerUpsCombat extends CombatScene<
         this.forceFieldBubble,
         this.player,
         this.effectsRegistry,
+      );
+    }
+    // Thorn Field aura: a lime spiked halo while the field is armed (shared
+    // helper — identical to PlayScene and GymFormationScene).
+    if (this.thornsAura) {
+      this.thornsAuraDrawn = drawThornsAura(
+        this.thornsAura,
+        this.player,
+        this.effectsRegistry,
+        this.time.now / 1000,
       );
     }
     // Phase ghost: semi-transparent ship while Phase Shift is active (keeps the

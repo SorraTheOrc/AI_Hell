@@ -53,6 +53,7 @@ import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } fr
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
 import type { AoEDescriptor, WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
+import { resolveThornsAbsorb } from '../../vfx/thornsAbsorb';
 import { EffectsRegistry } from '../../powerups/effects';
 import { isInDanger } from '../../powerups/dangerDetection';
 import {
@@ -132,6 +133,14 @@ export abstract class CombatScene<
    * on scene shutdown (AH-0MURBER4L00821RR).
    */
   protected wormholeEffects: Phaser.GameObjects.Container[] = [];
+
+  /**
+   * Live Thorn Field absorb bursts, tracked for observation and teardown on
+   * scene shutdown (AH-0MVJ8YKR70096C6T). Spawned by the shared ram branch
+   * through {@link _onThornsAbsorb}, so the game and every gym fire the same
+   * burst.
+   */
+  protected thornsAbsorbEffects: Phaser.GameObjects.Graphics[] = [];
 
   /** Seconds of post-hit invulnerability remaining (blinks while > 0). */
   protected invulnerable = 0;
@@ -1285,19 +1294,43 @@ export abstract class CombatScene<
         ) {
           this.onPlayerRamsEnemy(enemy);
           // Thorn Field (AH-0MVH80ZJ7009W18Z): an active field absorbs the
-          // ram — the enemy still dies, but the player takes no hit.
-          if (!this.getEffectsRegistry().tryConsumeThornsRam()) {
+          // ram — the enemy still dies, but the player takes no hit and the
+          // distinct absorb burst/cue fires (AH-0MVJ8YKR70096C6T).
+          if (this.getEffectsRegistry().tryConsumeThornsRam()) {
+            this._onThornsAbsorb(player.x, player.y);
+          } else {
             this._hitPlayer();
           }
           break;
         }
       }
       if (this.onPlayerRamsBoss()) {
-        if (!this.getEffectsRegistry().tryConsumeThornsRam()) {
+        if (this.getEffectsRegistry().tryConsumeThornsRam()) {
+          this._onThornsAbsorb(player.x, player.y);
+        } else {
           this._hitPlayer();
         }
       }
     }
+  }
+
+  /**
+   * Shared Thorn Field absorb feedback: plays the distinct lime spike-shatter
+   * burst and cue at the collision (AH-0MVJ8YKR70096C6T). Defined once here
+   * because the ram branch above is shared, so an absorbed ram never reads
+   * like a normal player hit — and no scene can hand-roll a divergent burst
+   * (gym↔game parity, AH-0MUGZDTFX004RBD1).
+   */
+  protected _onThornsAbsorb(x: number, y: number): void {
+    resolveThornsAbsorb(this, x, y, { registry: this.thornsAbsorbEffects });
+  }
+
+  /**
+   * Live Thorn Field absorb bursts (copy) — surfaced so tests can observe the
+   * feedback without pixel assertions (mirrors the other effect registries).
+   */
+  getThornsAbsorbEffects(): Phaser.GameObjects.Graphics[] {
+    return [...this.thornsAbsorbEffects];
   }
 
   /**
@@ -1700,6 +1733,7 @@ export abstract class CombatScene<
     this.bulletImpactEffects = [];
     this.aoeEffects = [];
     this.wormholeEffects = [];
+    this.thornsAbsorbEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
@@ -1724,6 +1758,8 @@ export abstract class CombatScene<
     this.aoeEffects = [];
     for (const effect of this.wormholeEffects) effect.destroy();
     this.wormholeEffects = [];
+    for (const effect of this.thornsAbsorbEffects) effect.destroy();
+    this.thornsAbsorbEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;

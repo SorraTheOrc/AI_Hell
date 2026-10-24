@@ -24,6 +24,7 @@
 import type Phaser from 'phaser';
 
 import { SHIP_SIZE, FORCE_FIELD_COLOR } from '../../core/constants';
+import { ICON_COLORS } from '../../powerups/icons';
 import type { EffectsRegistry } from '../../powerups/effects';
 
 /** Shield-bubble colour (Shield). */
@@ -70,6 +71,119 @@ export const SHIELD_BUBBLE_PULSE_RATE = 12;
 export const SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER = 0.35;
 /** Phase-ghost ship alpha while Phase Shift is active (and not blinking). */
 export const PHASE_GHOST_ALPHA = 0.45;
+
+// ── Thorn Field aura (AH-0MVJ8YKR70096C6T) ──────────────────────────
+
+/**
+ * Thorn-aura colour — the neon lime the Thorn Field drop icon uses
+ * (`ICON_COLORS.thorns`), so the in-world aura and the HUD icon read as one
+ * effect. Imported rather than re-declared so the two can never drift.
+ */
+export const THORNS_AURA_COLOR = ICON_COLORS.thorns;
+/** Thorn-aura spike line width (px). */
+export const THORNS_AURA_LINE_WIDTH = 2;
+/**
+ * Thorn-aura outer radius as a multiple of `SHIP_SIZE` — deliberately wider
+ * than the Shield bubble (1.6×) so the spiked halo sits outside it and the
+ * two effects never read as one.
+ */
+export const THORNS_AURA_RADIUS_FACTOR = 2.3;
+/** Inner (valley) radius of the spiked halo as a fraction of the outer radius. */
+export const THORNS_AURA_INNER_FACTOR = 0.62;
+/** Spike count at a single remaining ram (the weakest armed field). */
+export const THORNS_AURA_MIN_SPIKES = 8;
+/** Extra spikes per additional remaining ram, so the charge count is readable. */
+export const THORNS_AURA_SPIKES_PER_CHARGE = 2;
+/** Hard spike-count ceiling (the 6-ram cap yields 18). */
+export const THORNS_AURA_MAX_SPIKES = 18;
+/** Spike-star rotation rate (radians per second of caller clock). */
+export const THORNS_AURA_ROTATION_RATE = 1.6;
+/** Faint aura fill alpha (inside the hull, under the ship). */
+export const THORNS_AURA_FILL_ALPHA = 0.08;
+/** Dimmest stroke alpha — used at one remaining ram (still clearly visible). */
+export const THORNS_AURA_MIN_STROKE_ALPHA = 0.55;
+/** Brightest stroke alpha, reached at a full level-resolved budget. */
+export const THORNS_AURA_STROKE_ALPHA = 0.95;
+
+/**
+ * Clears *graphics* and draws the shared Thorn Field aura around *player*
+ * while the field is armed (active with at least one ram remaining).
+ *
+ * The aura is a rotating star of lime spikes echoing the Thorn Field drop
+ * icon (`drawThorns` in `powerups/icons.ts`): the spike count and the stroke
+ * alpha both scale with the remaining ram budget (a spent field is never
+ * haloed), and the rim brightens as the next automatic recharge approaches.
+ * Every input is registry state plus the caller's frame clock, so the game,
+ * every gym and unit tests agree frame for frame — and no scene can hand-roll
+ * a divergent halo (gym↔game parity, AH-0MUGZDTFX004RBD1).
+ *
+ * Cleared (never drawn) when there is no graphics, no player, the field is
+ * inactive, or its budget is spent — so an exhausted or expired field always
+ * removes the aura.
+ *
+ * @param graphics — the scene-owned thorns-aura graphics (may be null).
+ * @param player — the ship position (may be null).
+ * @param registry — the shared active-effect registry.
+ * @param elapsedSeconds — optional frame clock (seconds) driving the slow
+ *   rotation; deterministic for a given value (defaults to 0 = no rotation).
+ * @returns true when an aura was drawn.
+ */
+export function drawThornsAura(
+  graphics: Phaser.GameObjects.Graphics | null,
+  player: EffectVisualTarget | null,
+  registry: EffectsRegistry,
+  elapsedSeconds = 0,
+): boolean {
+  if (!graphics) return false;
+  graphics.clear();
+  if (!player) return false;
+
+  const charges = registry.thornsRemaining();
+  if (!registry.isActive('thorns') || charges <= 0) return false;
+
+  const maxCharges = Math.max(1, registry.thornsMaxAbsorbs());
+  const chargeFraction = Math.min(1, charges / maxCharges);
+  const spikeCount = Math.min(
+    THORNS_AURA_MAX_SPIKES,
+    THORNS_AURA_MIN_SPIKES + (charges - 1) * THORNS_AURA_SPIKES_PER_CHARGE,
+  );
+  const outerRadius = SHIP_SIZE * THORNS_AURA_RADIUS_FACTOR;
+  const innerRadius = outerRadius * THORNS_AURA_INNER_FACTOR;
+  const rotation = elapsedSeconds * THORNS_AURA_ROTATION_RATE;
+
+  // Brightness tracks the remaining budget: a nearly-spent field is dimmer
+  // and only regains its full glow as rams return.
+  let strokeAlpha =
+    THORNS_AURA_MIN_STROKE_ALPHA +
+    (THORNS_AURA_STROKE_ALPHA - THORNS_AURA_MIN_STROKE_ALPHA) * chargeFraction;
+
+  // Recharge readiness: brighten as the next ram approaches, so an armed
+  // field at zero recharge progress still reads as "working on it".
+  const interval = registry.thornsRechargeTime();
+  const rechargeRemaining = registry.thornsRechargeRemaining();
+  if (interval > 0 && rechargeRemaining > 0) {
+    const readiness = Math.min(1, Math.max(0, 1 - rechargeRemaining / interval));
+    strokeAlpha = Math.min(1, strokeAlpha + 0.15 * readiness);
+  }
+
+  graphics.fillStyle(THORNS_AURA_COLOR, THORNS_AURA_FILL_ALPHA * chargeFraction);
+  graphics.fillCircle(player.x, player.y, innerRadius);
+
+  graphics.lineStyle(THORNS_AURA_LINE_WIDTH, THORNS_AURA_COLOR, strokeAlpha);
+  graphics.beginPath();
+  const step = (Math.PI * 2) / (spikeCount * 2);
+  for (let i = 0; i < spikeCount * 2; i++) {
+    const radius = i % 2 === 0 ? outerRadius : innerRadius;
+    const angle = rotation + step * i - Math.PI / 2;
+    const px = player.x + Math.cos(angle) * radius;
+    const py = player.y + Math.sin(angle) * radius;
+    if (i === 0) graphics.moveTo(px, py);
+    else graphics.lineTo(px, py);
+  }
+  graphics.closePath();
+  graphics.strokePath();
+  return true;
+}
 
 /** Minimal positional target for the shield bubble (the ship). */
 export interface EffectVisualTarget {

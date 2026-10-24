@@ -188,6 +188,11 @@ export type PowerUpLevelVariable =
   | 'thornsAbsorbs'
   /** Thorn Field — timed window during which rams are free. */
   | 'thornsDuration'
+  /**
+   * Thorn Field — seconds between automatic ram recharges while active
+   * (descends; the derived rams/second axis is its monotonic inverse).
+   */
+  | 'thornsRecharge'
   /** Salvage — bonus minerals each destroyed enemy drops. */
   | 'salvageMinerals'
   /** Salvage — timed window during which wrecks pay out. */
@@ -229,6 +234,7 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'chronoDuration',
   'thornsAbsorbs',
   'thornsDuration',
+  'thornsRecharge',
   'salvageMinerals',
   'salvageDuration',
   'strikeInterval',
@@ -884,6 +890,29 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'An 8 → 16 s window bounds the free-ram window; k=0.12 spreads the ' +
         'gain across the early levels (mirrors the other timed windows).',
     },
+    {
+      variable: 'thornsRecharge',
+      powerUpId: 'thorns',
+      label: 'Thorn recharge',
+      unit: 's',
+      description: 'Seconds between automatic ram recharges while active.',
+      curve: 'linear-clamped',
+      // Descending interval: max(5, 12 − 1×level) s — a spent ram returns
+      // after 12 s on the first grant, one second sooner per further level,
+      // floored at 5 s. The derived rams/second inverse stays monotonic
+      // non-decreasing (mirrors `strikeInterval`).
+      base: 12,
+      cap: 5,
+      k: -1,
+      discrete: true,
+      rationale:
+        'A permanent (hold-full) Thorn Field must keep doing something for ' +
+        'the whole run, so a spent ram refills on a timer rather than being ' +
+        'spent once. Twelve seconds is deliberately slow — the field stays a ' +
+        'buff, not permanent immunity — and the 5 s floor caps the refill ' +
+        'rate exactly as the 6-ram absorb cap bounds the budget. The derived ' +
+        'rate `1 / interval` stays monotonic non-decreasing.',
+    },
   ],
 
   // Salvage — timed mineral bounty (AH-0MVCRC1Q0007JAV1): destroyed enemies
@@ -1080,6 +1109,18 @@ export interface PowerUpLevelStats {
   thornsAbsorbs?: number;
   /** Thorn Field — timed window duration in seconds. */
   thornsDuration?: number;
+  /**
+   * Thorn Field — seconds between automatic ram recharges while the field
+   * is active (descending: `max(5, 12 − level)`).
+   */
+  thornsRecharge?: number;
+  /**
+   * Thorn Field — ram recharge rate in rams per second. **Derived** from
+   * {@link thornsRecharge} (`1 / interval`) so the rate axis stays monotonic
+   * non-decreasing while the stored interval descends (mirrors the Smart
+   * Bomb frequency and Orbital Strike frequency).
+   */
+  thornsRechargeRate?: number;
   /** Salvage — bonus minerals each destroyed enemy drops. */
   salvageMinerals?: number;
   /** Salvage — timed window duration in seconds. */
@@ -1142,6 +1183,13 @@ export function resolvePowerUpAtLevel(
   const strikeInterval = bucket.strikeInterval;
   if (Number.isFinite(strikeInterval) && strikeInterval > 0) {
     bucket.strikeFrequency = 1 / strikeInterval;
+  }
+  // The Thorn Field recharge interval mirrors the same convention: stored
+  // descending (linear-clamped), its rams/second inverse is the monotonic
+  // rate axis (AH-0MVJ8YKR70096C6T).
+  const thornsRecharge = bucket.thornsRecharge;
+  if (Number.isFinite(thornsRecharge) && thornsRecharge > 0) {
+    bucket.thornsRechargeRate = 1 / thornsRecharge;
   }
   return stats;
 }

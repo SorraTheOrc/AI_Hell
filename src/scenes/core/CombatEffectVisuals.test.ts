@@ -14,10 +14,17 @@ import {
   applyPhaseGhost,
   drawForceFieldBubble,
   drawShieldBubble,
+  drawThornsAura,
   FORCE_FIELD_FILL_ALPHA,
   FORCE_FIELD_LINE_WIDTH,
   FORCE_FIELD_STROKE_ALPHA,
   PHASE_GHOST_ALPHA,
+  THORNS_AURA_COLOR,
+  THORNS_AURA_LINE_WIDTH,
+  THORNS_AURA_MAX_SPIKES,
+  THORNS_AURA_MIN_SPIKES,
+  THORNS_AURA_RADIUS_FACTOR,
+  THORNS_AURA_SPIKES_PER_CHARGE,
   SHIELD_BUBBLE_COLOR,
   SHIELD_BUBBLE_ENDING_FILL_ALPHA,
   SHIELD_BUBBLE_ENDING_SECONDS,
@@ -390,6 +397,88 @@ describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF9
     expect(drawForceFieldBubble(null, { x: 1, y: 2 }, forceFieldAt(5))).toBe(false);
     const g = new FakeGraphics();
     expect(drawForceFieldBubble(graphics(g), null, forceFieldAt(5))).toBe(false);
+    expect(g.cleared).toBe(1);
+  });
+});
+
+// ── Thorn Field aura (AH-0MVJ8YKR70096C6T) ───────────────────────────
+
+describe('CombatEffectVisuals — Thorn Field aura (AH-0MVJ8YKR70096C6T)', () => {
+  it('pins the shared aura tuning (neon-lime spikes outside the shield bubble)', () => {
+    expect(THORNS_AURA_COLOR).toBe(0x99ff33);
+    expect(THORNS_AURA_LINE_WIDTH).toBe(2);
+    // Wider than the Shield bubble (1.6×) so the halo reads as its own effect.
+    expect(THORNS_AURA_RADIUS_FACTOR).toBeGreaterThan(1.6);
+    expect(THORNS_AURA_MIN_SPIKES).toBeGreaterThan(0);
+    expect(THORNS_AURA_SPIKES_PER_CHARGE).toBeGreaterThan(0);
+    expect(THORNS_AURA_MAX_SPIKES).toBeGreaterThanOrEqual(THORNS_AURA_MIN_SPIKES);
+  });
+
+  it('draws a lime spiked halo around the ship while the field is armed', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('thorns', true);
+    const g = new FakeGraphics();
+
+    const drawn = drawThornsAura(graphics(g), { x: 100, y: 50 }, registry);
+
+    expect(drawn).toBe(true);
+    expect(g.cleared).toBe(1);
+    expect(g.lineStyleCalls[0][0]).toBe(THORNS_AURA_LINE_WIDTH);
+    expect(g.lineStyleCalls[0][1]).toBe(THORNS_AURA_COLOR);
+    expect(g.pathCommands).toBeGreaterThan(THORNS_AURA_MIN_SPIKES * 2);
+    // The aura is a spiked star, not another round bubble: no strokeCircle.
+    expect(g.strokeCircleCalls).toEqual([]);
+  });
+
+  it('scales the spike count with the remaining ram budget', () => {
+    const full = new EffectsRegistry();
+    full.applyCollect('thorns', true);
+    const gFull = new FakeGraphics();
+    drawThornsAura(graphics(gFull), { x: 0, y: 0 }, full);
+
+    // Spend most of the budget: fewer spikes and a dimmer stroke.
+    while (full.thornsRemaining() > 1) full.tryConsumeThornsRam();
+    const gSpent = new FakeGraphics();
+    drawThornsAura(graphics(gSpent), { x: 0, y: 0 }, full);
+
+    expect(gSpent.pathCommands).toBeLessThan(gFull.pathCommands);
+    expect(gSpent.lineStyleCalls[0][2]).toBeLessThan(gFull.lineStyleCalls[0][2]);
+  });
+
+  it('is deterministic for the same registry state and frame clock', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('thorns', true);
+    const a = new FakeGraphics();
+    const b = new FakeGraphics();
+    drawThornsAura(graphics(a), { x: 10, y: 20 }, registry, 2.5);
+    drawThornsAura(graphics(b), { x: 10, y: 20 }, registry, 2.5);
+    expect(b.lineStyleCalls).toEqual(a.lineStyleCalls);
+    expect(b.fillCircleCalls).toEqual(a.fillCircleCalls);
+    expect(b.pathCommands).toBe(a.pathCommands);
+  });
+
+  it('clears and draws nothing when the field is inactive or its budget is spent', () => {
+    const inactive = new FakeGraphics();
+    expect(
+      drawThornsAura(graphics(inactive), { x: 1, y: 2 }, new EffectsRegistry()),
+    ).toBe(false);
+    expect(inactive.cleared).toBe(1);
+    expect(inactive.pathCommands).toBe(0);
+
+    const spent = new EffectsRegistry();
+    spent.applyCollect('thorns', true);
+    while (spent.thornsRemaining() > 0) spent.tryConsumeThornsRam();
+    const gSpent = new FakeGraphics();
+    expect(drawThornsAura(graphics(gSpent), { x: 1, y: 2 }, spent)).toBe(false);
+    expect(gSpent.pathCommands).toBe(0);
+  });
+
+  it('is safe with no graphics or no player (and clears when only the player is missing)', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('thorns', true);
+    expect(drawThornsAura(null, { x: 1, y: 2 }, registry)).toBe(false);
+    const g = new FakeGraphics();
+    expect(drawThornsAura(graphics(g), null, registry)).toBe(false);
     expect(g.cleared).toBe(1);
   });
 });

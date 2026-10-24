@@ -7210,6 +7210,106 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(scene.getEffectsRegistry().thornsRemaining()).toBe(charges - 1);
   });
 
+  it('AH-0MVJ8YKR70096C6T — an absorbed ram fires the distinct thorns burst and cue', async () => {
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    const cueSpy = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    scene.finishSpawnAnimations();
+
+    scene.getEffectsRegistry().applyCollect('thorns', true);
+    const charges = scene.getEffectsRegistry().thornsRemaining();
+
+    const target = scene.getEnemies().find((e) => e.alive)!;
+    player.setPosition(target.x, target.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: typeof state })._movementState = {
+      ...state,
+      x: target.x,
+      y: target.y,
+    };
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+    // The shield/phase absorb paths would also suppress a hit — clear both so
+    // the thorn absorb is the only thing that can prevent it.
+    expect(scene.getThornsAbsorbEffects()).toHaveLength(0);
+
+    scene.tick(0.001);
+
+    // The absorb is visible: one burst at the collision, plus its shatter
+    // cue — the shared seam, not a silent life-free ram.
+    expect(scene.getThornsAbsorbEffects()).toHaveLength(1);
+    const burst = scene.getThornsAbsorbEffects()[0];
+    expect(burst.x).toBeCloseTo(player.x, 3);
+    expect(burst.y).toBeCloseTo(player.y, 3);
+    expect(cueSpy).toHaveBeenCalled();
+    expect(scene.getEffectsRegistry().thornsRemaining()).toBe(charges - 1);
+  });
+
+  it('AH-0MVJ8YKR70096C6T — the lime thorns aura is drawn only while armed', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+
+    // Inactive field: no aura.
+    scene.tick(0.001);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+
+    registry.applyCollect('thorns', true);
+    scene.tick(0.001);
+    expect(scene.isThornsAuraVisible()).toBe(true);
+
+    // Spend the whole budget: the aura clears (the field no longer counters).
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    scene.tick(0.001);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+  });
+
+  it('AH-0MVJ8YKR70096C6T — a permanent Thorn Field recharges and re-arms by itself', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('thorns', true);
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    expect(registry.thornsRemaining()).toBe(0);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+
+    // The shared per-frame step advances the recharge clock (never a
+    // scene-local timer), so the held budget returns on its own.
+    scene.tick(registry.thornsRechargeTime() + 0.01);
+    expect(registry.thornsRemaining()).toBeGreaterThan(0);
+    expect(scene.isThornsAuraVisible()).toBe(true);
+  });
+
+  it('AH-0MVJ8YKR70096C6T — an exhausted field no longer absorbs: the ram hurts normally', async () => {
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+    const livesBefore = scene.getGameState().lives;
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    scene.finishSpawnAnimations();
+
+    registry.applyCollect('thorns', true);
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    expect(registry.thornsRemaining()).toBe(0);
+
+    const target = scene.getEnemies().find((e) => e.alive)!;
+    player.setPosition(target.x, target.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: typeof state })._movementState = {
+      ...state,
+      x: target.x,
+      y: target.y,
+    };
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+
+    scene.tick(0.001);
+
+    // No absorb burst and a real hit: the field stays spent (it recharges on
+    // its own clock, not on contact).
+    expect(scene.getThornsAbsorbEffects()).toHaveLength(0);
+    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+  });
+
   it('AH-0MVH80ZJ7009W18Z — Salvage adds bonus minerals at a destroyed enemy', async () => {
     const scene = await bootMiniBossCampaign();
     const registry = scene.getEffectsRegistry();
