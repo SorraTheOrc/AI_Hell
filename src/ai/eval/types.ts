@@ -83,7 +83,7 @@ export interface ArenaState {
     readonly y: number;
     readonly type: string;
   }[];
-  readonly hold: { readonly minerals: number };
+  readonly hold: { readonly minerals: number; readonly capacity?: number };
   readonly boss: null;
 }
 
@@ -146,7 +146,27 @@ export interface ArenaBalanceConfig {
   readonly difficultyCurves: readonly DifficultyCurveRow[];
 }
 
-/** Arena configuration; only `seed` and `ticks` are required. */
+/**
+ * Optional tunables for the run's shared {@link MineralHold} model
+ * (capacity, per-pickup collect amount, growth multiplier) — the same
+ * model `GameState`/the gyms use, so the arena's hold-full cadence can be
+ * made fast/deterministic in tests (AH-0MVD1RIH2008YCNV AC1/AC5).
+ * Omitted fields fall back to the shipped rules defaults.
+ */
+export interface ArenaHoldOptions {
+  /** First-hold capacity (defaults to the shipped 5). */
+  readonly capacity?: number;
+  /** Minerals added per pickup (defaults to the shipped 1). */
+  readonly collectAmount?: number;
+  /** Capacity growth multiplier after each resolution (defaults to the shipped 2). */
+  readonly growthMultiplier?: number;
+}
+
+/**
+ * Config an evaluation harness can "play" a seeded arena run with
+ * (AH-0MUY08XLD009K4W4). Every field is optional except the seed and the tick
+ * budget, so a minimal consumer is `{ seed, ticks }`.
+ */
 export interface ArenaConfig {
   /** The run seed — drives every scenario draw and the bot governor's RNG. */
   readonly seed: number;
@@ -224,6 +244,8 @@ export interface ArenaConfig {
    * boot), so every arena path is config-driven (AH-0MV81YPBG0028WNM).
    */
   readonly balance?: ArenaBalanceConfig;
+  /** Hold tunables forwarded to each arena run (see {@link ArenaHoldOptions}). */
+  readonly hold?: ArenaHoldOptions;
 }
 
 /** The shaped result of one headless arena run. */

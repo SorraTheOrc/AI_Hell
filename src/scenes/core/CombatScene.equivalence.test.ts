@@ -2187,7 +2187,10 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   ['playDropPickupCue', 'src/scenes/core/dropLayer.ts'],
   ['applyMineralScoop', 'src/powerups/mineralScoop.ts'],
   ['collectMinerals', 'src/scenes/core/mineralLayer.ts'],
-  ['applyMineralChoiceReward', 'src/scenes/core/mineralLayer.ts'],
+  // The hold-full reward moved to the Phaser-free `powerups/choiceReward`
+  // so the headless eval arena shares one reward path without importing
+  // Phaser (AH-0MVD1RIH2008YCNV); `mineralLayer` re-exports it for scenes.
+  ['applyMineralChoiceReward', 'src/powerups/choiceReward.ts'],
   ['isMineralAbsorbingEnemy', 'src/scenes/core/mineralLayer.ts'],
   ['resolveMineralKillDrops', 'src/scenes/core/mineralKillDrops.ts'],
   // Per-kill Extra Life drop rule (AH-0MV6M2M9P0078N4S): the shared tier +

@@ -32,7 +32,7 @@ import {
 import type { WeaponId } from '../utils/weapons';
 import { summariseWeaponLevelChange } from '../utils/weaponLevels';
 import { summarisePowerUpLevelChange } from './powerUpLevels';
-import { getHelpDescription } from '../utils/gymHelp';
+import { getDropDescription } from './dropDescriptions';
 
 // ── Pool ────────────────────────────────────────────────────────────
 
@@ -125,7 +125,7 @@ export interface ChoiceOption {
   /**
    * Optional one-line player-facing description of what the item does
    * (e.g. `"Adds a 3-bullet fan (−30°/0°/+30°)."`). Populated for **every**
-   * option kind from the shared catalogue via {@link getHelpDescription}, so
+   * option kind from the shared catalogue via {@link getDropDescription}, so
    * an unfamiliar offer is self-explanatory and the overlay copy can never
    * drift from the gym help (AH-0MV2N2591007UGPD · AC1/AC4).
    */
@@ -220,7 +220,7 @@ export function isWeaponOption(option: ChoiceOption): boolean {
 export function toChoiceOption(id: DropId): ChoiceOption {
   // Item copy is resolved from the shared catalogues so the overlay and the
   // gym help can never diverge (AC4).
-  const description = getHelpDescription(id);
+  const description = getDropDescription(id);
   if (isWeaponDrop(id)) {
     return { id, name: WEAPON_NAMES[id], kind: 'weapon', description };
   }
@@ -264,7 +264,7 @@ export function buildLevelUpOption(
       name: `${WEAPON_NAMES[id]} Lv.${level + 1}`,
       kind: 'weapon-level',
       level: level + 1,
-      description: getHelpDescription(id),
+      description: getDropDescription(id),
       changeSummary: summariseWeaponLevelChange(
         id as WeaponId,
         level,
@@ -280,7 +280,7 @@ export function buildLevelUpOption(
     name: `${POWER_UP_CATALOGUE[powerUpId].name} Lv.${level + 1}`,
     kind: 'power-up-level',
     level: level + 1,
-    description: getHelpDescription(powerUpId),
+    description: getDropDescription(powerUpId),
     changeSummary: summarisePowerUpLevelChange(powerUpId, level, level + 1),
   };
 }

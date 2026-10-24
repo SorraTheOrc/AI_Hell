@@ -98,6 +98,30 @@
  *   authored group composition. Determinism is unchanged: the campaign is a
  *   pure function of `(rows, candidates, seed)` and every draw is seeded.
  *
+ * ## Hold-full upgrade choices (AH-0MVD1RIH2008YCNV)
+ *
+ * Minerals collect into the **shared {@link MineralHold} model** (capacity,
+ * growth multiplier, overflow carry — the same model `GameState` and the
+ * gyms use, seeded from the shipped rules or `config.hold`). When the hold
+ * fills, the arena runs the **same shared choice flow the game ships**
+ * (`chooseOptions(3, randomChoiceStrategy, seededRng, context)` from
+ * `src/powerups/choice.ts`): it emits `hold_full` with the offered option
+ * ids, the bot picks an option from the run's seeded RNG stream, the arena
+ * emits `choice_selected` `{ index, id }`, applies the reward through the
+ * shared `applyMineralChoiceReward` path (with the headless player adapter),
+ * and resolves the hold (capacity grows, overflow carries).
+ *
+ * Rewards permanently affect the run: owned weapons/power-ups feed the
+ * `choice` context, so later offers carry `weapon-level`/`power-up-level`
+ * upgrades exactly as the game does. **Fidelity boundary:** choices affect
+ * the ownership context used by later offers — the arena does **not** model
+ * the chosen weapon's fire pattern, shield/effect timing or Extra Life
+ * lifegain in the closed-loop simulation (the arena's auto-fire is fixed).
+ *
+ * The offer/selection draws come from a **dedicated stream seeded from the
+ * run seed** (like the campaign/sim streams), so the choice sequence is
+ * reproducible per seed and never perturbs the scenario/behaviour draws.
+ *
  * @module src/ai/eval/arena
  */
 
@@ -122,6 +146,17 @@ import { GRUNT_ENEMY_KEY } from '../../waves/HordeSpawner';
 import { CENTIPEDE_ENEMY_KEY } from '../../waves/CentipedeSpawner';
 import { LANE_TRAFFIC_ENEMY_KEY } from '../../waves/LaneTrafficSpawner';
 import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
+import { MineralHold } from '../../core/mineralHold';
+import { PowerUpLevelStore } from '../../powerups/powerUpLevels';
+import { EffectsRegistry } from '../../powerups/effects';
+import {
+  chooseOptions,
+  randomChoiceStrategy,
+  type ChoiceContext,
+} from '../../powerups/choice';
+import { applyMineralChoiceReward, type MineralChoicePlayer } from '../../powerups/choiceReward';
+import type { PowerUpId } from '../../powerups/types';
+import type { WeaponId } from '../../utils/weapons';
 import { AsteroidsModel } from '../../utils/movementModel';
 import type {
   AsteroidsConfig,
@@ -236,7 +271,8 @@ interface ArenaWorld {
   hostiles: Hostile[];
   playerBullets: Bullet[];
   enemyBullets: Bullet[];
-  holdMinerals: number;
+  /** The run-scoped shared mineral hold (capacity/growth/overflow). */
+  hold: MineralHold;
 }
 
 /** Coerces a finite positive number, else `fallback`. */
@@ -456,7 +492,7 @@ function buildLevelWavePlan(
 }
 
 /** Builds a fresh world: the player starts centred, facing right. */
-function createWorld(width: number, height: number): ArenaWorld {
+function createWorld(width: number, height: number, hold: MineralHold): ArenaWorld {
   return {
     player: {
       x: width / 2,
@@ -473,7 +509,7 @@ function createWorld(width: number, height: number): ArenaWorld {
     hostiles: [],
     playerBullets: [],
     enemyBullets: [],
-    holdMinerals: 0,
+    hold,
   };
 }
 
@@ -569,7 +605,7 @@ function stateOf(world: ArenaWorld): ArenaState {
       y: mineral.y,
       type: 'mineral',
     })),
-    hold: { minerals: world.holdMinerals },
+    hold: { minerals: world.hold.store, capacity: world.hold.capacity },
     boss: null,
   };
 }
@@ -582,6 +618,54 @@ function offField(point: Vec, width: number, height: number): boolean {
     point.y < -BULLET_MARGIN ||
     point.y > height + BULLET_MARGIN
   );
+}
+
+/**
+ * Headless run-scoped ownership for the hold-full choice (AC3) — the
+ * arena's counterpart to the game's {@link Player} weapon/power-up level
+ * stores. Rewards are applied through the **shared**
+ * {@link applyMineralChoiceReward} path; this object only *records* the
+ * resulting ownership so later offers carry accurate `weapon-level` /
+ * `power-up-level` context (no invented option model in `src/ai/eval/`).
+ *
+ * Mirrors the game's semantics: a permanent weapon grant raises the owned
+ * level by one (like `Player.equipWeapon(id, true)`), and power-up levels
+ * live in the same shared {@link PowerUpLevelStore} the `EffectsRegistry`
+ * consumes.
+ */
+export class HeadlessChoicePlayer implements MineralChoicePlayer {
+  readonly powerUpStore = new PowerUpLevelStore();
+  private readonly _weaponLevels = new Map<WeaponId, number>();
+
+  /** Permanent weapon grants raise the run-scoped level by one (AC3). */
+  equipWeapon(weaponId: WeaponId, permanent = false): void {
+    if (!permanent) return;
+    this._weaponLevels.set(
+      weaponId,
+      (this._weaponLevels.get(weaponId) ?? 0) + 1,
+    );
+  }
+
+  /** Owned weapon levels (id → level ≥ 1), the choice context shape. */
+  getWeaponLevels(): Array<{ id: WeaponId; level: number }> {
+    return [...this._weaponLevels.entries()].map(([id, level]) => ({
+      id,
+      level,
+    }));
+  }
+
+  /** Owned power-up levels (id → level ≥ 1), from the shared store. */
+  getPowerUpLevels(): Array<{ id: PowerUpId; level: number }> {
+    return this.powerUpStore.getLevels();
+  }
+
+  /** The `ChoiceContext` the shared flow consumes for offers. */
+  context(): ChoiceContext {
+    return {
+      weaponLevels: this.getWeaponLevels(),
+      powerUpLevels: this.getPowerUpLevels(),
+    };
+  }
 }
 
 /**
@@ -657,6 +741,29 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   // (independent of the reservoir, governor and sim streams).
   const campaignRng = campaignEnabled ? createSeededRng(config.seed) : null;
 
+  // ── Shared mineral hold + hold-full upgrade choices ────────────────
+  // (AH-0MVD1RIH2008YCNV) The hold is the **shared** `MineralHold` model
+  // (capacity, growth multiplier, overflow carry), seeded from the shipped
+  // rules or `config.hold`. The offer/selection draws share one dedicated
+  // seeded stream, so the choice sequence is a pure function of the run seed
+  // (AC4) and never perturbs the scenario/behaviour draws.
+  const hold = new MineralHold({
+    capacity: config.hold?.capacity ?? DEFAULT_RULES.mineralHoldCapacity,
+    collectAmount:
+      config.hold?.collectAmount ?? DEFAULT_RULES.mineralCollectAmount,
+    growthMultiplier:
+      config.hold?.growthMultiplier ?? DEFAULT_RULES.mineralHoldGrowthMultiplier,
+  });
+  const choiceRng = createSeededRng(config.seed);
+  // The headless equivalents of the scene's player + effect registry: the
+  // reward is applied through the **shared** `applyMineralChoiceReward` path,
+  // so a hold-full grant advances the same run-scoped level stores the game
+  // uses and later offers carry accurate ownership context (AC3).
+  const holdChoice = new HeadlessChoicePlayer();
+  const effects = new EffectsRegistry(holdChoice.powerUpStore);
+  effects.setRng(choiceRng);
+  let mineralsCollected = 0;
+
   let mineralReservoir: Vec[];
   let powerUpReservoir: Vec[];
   let hostileReservoir: HostileSpec[];
@@ -694,7 +801,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const reset = (policy as { reset?: () => void }).reset;
   if (typeof reset === 'function') reset.call(policy);
 
-  const world = createWorld(width, height);
+  const world = createWorld(width, height, hold);
   const records: TelemetryRecord[] = [
     {
       kind: 'run_header',
@@ -718,6 +825,35 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       payload,
     };
     records.push(record);
+  };
+
+  /**
+   * Offers and resolves the hold-full choice exactly as the game does: the
+   * **shared** strategy (`chooseOptions` + `randomChoiceStrategy`) draws three
+   * distinct options from the run's owned weapon/power-up context, `hold_full`
+   * records the offered ids, the bot picks one from the run's seeded stream,
+   * `choice_selected` records the canonical `{ index, id }` payload, the shared
+   * reward path applies the grant permanently, and the hold resolves (capacity
+   * grows, overflow carries).
+   */
+  const resolveHoldFull = (tick: number): void => {
+    const options = chooseOptions(
+      3,
+      randomChoiceStrategy,
+      choiceRng,
+      holdChoice.context(),
+    );
+    pushEvent(tick, 'hold_full', { options: options.map((option) => option.id) });
+    if (options.length > 0) {
+      const index = Math.min(
+        options.length - 1,
+        Math.max(0, Math.floor(choiceRng() * options.length)),
+      );
+      const chosen = options[index];
+      pushEvent(tick, 'choice_selected', { index, id: chosen.id });
+      applyMineralChoiceReward(chosen, effects, holdChoice);
+    }
+    world.hold.resolve();
   };
 
   const initialHostiles = spawns.enemies + spawns.asteroids;
@@ -1090,8 +1226,16 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // 7. Collectables.
     world.minerals = world.minerals.filter((mineral) => {
       if (distance(mineral, playerPoint) > COLLECT_RADIUS) return true;
-      world.holdMinerals += 1;
-      pushEvent(tick, 'mineral_collected', { x: mineral.x, y: mineral.y });
+      // Shared hold model: collect into the hold, and run the shared
+      // hold-full choice flow the moment it fills (AH-0MVD1RIH2008YCNV).
+      world.hold.collect();
+      mineralsCollected += 1;
+      pushEvent(tick, 'mineral_collected', {
+        x: mineral.x,
+        y: mineral.y,
+        total: world.hold.store,
+      });
+      if (world.hold.isFull) resolveHoldFull(tick);
       return false;
     });
     world.drops = world.drops.filter((drop, index) => {
@@ -1168,7 +1312,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     }
   }
   const score = Math.round(
-    world.holdMinerals * 4 +
+    mineralsCollected * 4 +
       (eventCounts.pickup ?? 0) * 3 +
       (eventCounts.enemy_killed ?? 0) * 2 +
       (eventCounts.asteroid_destroyed ?? 0) * 1 +

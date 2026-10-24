@@ -56,6 +56,7 @@ import {
 } from './report';
 import {
   type ArenaBalanceConfig,
+  type ArenaHoldOptions,
   type ArenaSpawns,
   type BalanceAggregate,
   type BalanceRunStats,
@@ -256,6 +257,8 @@ export interface BatchConfig {
    * results, epic AC1/AC2).
    */
   readonly balance?: ArenaBalanceConfig;
+  /** Hold tunables forwarded to every arena run (see {@link ArenaHoldOptions}). */
+  readonly hold?: ArenaHoldOptions;
   /**
    * Streaming sink invoked per run with its raw telemetry, in sweep order.
    * The records are handed over and not retained by `runBatch`.
@@ -313,6 +316,7 @@ export function runBatch(config: BatchConfig): BatchOutput {
         level: config.level,
         scaleLevels: config.scaleLevels,
         campaign: config.campaign,
+        hold: config.hold,
       });
       const stats = extractBalanceStats(arena.records, { dtSeconds: dt });
       runs.push({

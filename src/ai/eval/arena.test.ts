@@ -14,15 +14,24 @@ import { parseRecording } from '../../../scripts/recording.mjs';
 import { coerceEnemyConfig, parseCsvRows } from '../../core/csv';
 import { DEFAULT_CONFIG, DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
 import { resetConfigStore, seedConfigStore } from '../../core/configStore';
+import { createSeededRng } from '../../core/rng';
 import type { EnemyConfig } from '../../core/configTypes';
 import { createLegacyBotPolicy } from '../framework/legacyPolicy';
-import { runArena } from './arena';
+import { HeadlessChoicePlayer, runArena } from './arena';
 import { loadBalanceConfig } from './balanceConfig';
 import { runBatch } from './engine';
 import { extractBalanceStats } from './metrics';
 import { stableStringify } from './report';
 import { buildSequencedLevels } from '../../waves/sequencedLevels';
 import { defaultCandidatePool } from '../../core/difficultySequencer';
+import {
+  CHOICE_POOL,
+  chooseOptions,
+  randomChoiceStrategy,
+} from '../../powerups/choice';
+import { EffectsRegistry } from '../../powerups/effects';
+import { applyMineralChoiceReward } from '../../powerups/choiceReward';
+import { isWeaponDrop } from '../../powerups/types';
 import {
   getLevelDefinition,
   type LevelDefinition,
@@ -32,6 +41,7 @@ import {
   EVAL_TELEMETRY_SCHEMA_VERSION,
   type ArenaConfig,
   type ArenaRunResult,
+  type TelemetryEventRecord,
   type TelemetryTickRecord,
 } from './types';
 import { GHOST_ENEMY_KEYS } from '../../waves/GhostSpawner';
@@ -636,6 +646,163 @@ describe('full-campaign mode (AH-0MVD1RGKM005GW0C)', () => {
     for (const run of batch.runs) {
       expect(run.stats.waveReached).toBeGreaterThan(0);
       expect(run.stats.levelReached).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('hold-full upgrade choices through the shared choice flow (AH-0MVD1RIH2008YCNV)', () => {
+  /**
+   * A small, mineral-rich run with a capacity-1 hold, so the very first
+   * collected mineral fills the hold and the shared choice loop is exercised
+   * deterministically. No hostiles: the closed loop is pure bot-vs-minerals.
+   */
+  function runWithChoices(seed: number, ticks = 4_000): ArenaRunResult {
+    return runArena(createLegacyBotPolicy(), {
+      seed,
+      ticks,
+      sampleEveryTicks: 30,
+      hold: { capacity: 1 },
+      spawns: { minerals: 12, powerUps: 0, enemies: 0, asteroids: 0 },
+    });
+  }
+
+  it('offers shared-pool options and emits canonical hold_full/choice_selected payloads (AC1/AC2)', () => {
+    const result = runWithChoices(17);
+    // The bot collects minerals, so the hold fills at least once.
+    const choices = result.records.filter(
+      (record): record is TelemetryEventRecord =>
+        record.kind === 'event' &&
+        (record.event === 'hold_full' || record.event === 'choice_selected'),
+    );
+    expect(choices.length).toBeGreaterThanOrEqual(2);
+
+    // The events are paired in emission order: every hold_full is followed
+    // by exactly one choice_selected whose { index, id } names one offered
+    // option (the canonical payload contract).
+    let pending: readonly string[] | null = null;
+    let pairs = 0;
+    for (const record of result.records) {
+      if (record.kind !== 'event') continue;
+      const event = record as unknown as TelemetryEventRecord;
+      if (event.event === 'hold_full') {
+        const options = event.payload.options as readonly string[];
+        expect(Array.isArray(options)).toBe(true);
+        expect(options.length).toBeGreaterThan(0);
+        expect(options.length).toBeLessThanOrEqual(3);
+        // Distinct ids, all from the shared drop pool (no invented options).
+        expect(new Set(options).size).toBe(options.length);
+        for (const id of options) expect(CHOICE_POOL).toContain(id);
+        pending = options;
+      } else if (event.event === 'choice_selected') {
+        expect(pending).not.toBeNull();
+        const { index, id } = event.payload as { index: number; id: string };
+        expect(Number.isInteger(index)).toBe(true);
+        expect(pending![index]).toBe(id);
+        pending = null;
+        pairs += 1;
+      }
+    }
+    expect(pairs).toBeGreaterThan(0);
+    expect(pending).toBeNull();
+  });
+
+  it('grows the shared hold capacity and never overfills the store (AC1)', () => {
+    const result = runWithChoices(29, 8_000);
+    const capacities = result.records.flatMap((record) =>
+      record.kind === 'tick' ? [record.state.hold.capacity] : [],
+    );
+    // The first hold resolves 1 → 2 (growth multiplier), so a sampled tick
+    // must expose the grown shared model rather than a bare counter.
+    expect(capacities.some((capacity) => capacity === 2)).toBe(true);
+    // Shared `MineralHold` semantics: the store never exceeds capacity.
+    for (const record of result.records) {
+      if (record.kind !== 'tick') continue;
+      expect(record.state.hold.minerals).toBeLessThanOrEqual(
+        record.state.hold.capacity ?? 0,
+      );
+    }
+  });
+
+  it('carries overfilled minerals into the next hold (overflow semantics, AC1)', () => {
+    const result = runArena(createLegacyBotPolicy(), {
+      seed: 29,
+      ticks: 2_000,
+      sampleEveryTicks: 1,
+      // A two-mineral pickup cannot fit a one-mineral first hold: the shared
+      // model records the surplus and carries it into the grown hold.
+      hold: { capacity: 1, collectAmount: 2 },
+      spawns: { minerals: 12, powerUps: 0, enemies: 0, asteroids: 0 },
+    });
+    const overfilled = result.records.some(
+      (record) =>
+        record.kind === 'tick' &&
+        record.state.hold.capacity === 2 &&
+        record.state.hold.minerals === 1,
+    );
+    expect(overfilled).toBe(true);
+  });
+
+  it('applies rewards through the shared reward path and carries ownership context (AC3)', () => {
+    const player = new HeadlessChoicePlayer();
+    const registry = new EffectsRegistry(player.powerUpStore, createSeededRng(7));
+    const rng = createSeededRng(1);
+
+    // Fresh context: everything is unowned.
+    const first = chooseOptions(3, randomChoiceStrategy, rng, player.context());
+    const pick = first[0];
+
+    // Exactly the arena's reward call — the shared path the game runs.
+    applyMineralChoiceReward(pick, registry, player);
+
+    // The grant landed in the shared stores. (CHOICE_POOL excludes the
+    // `reset` utility, so an offered weapon id is a real WeaponId.)
+    if (isWeaponDrop(pick.id)) {
+      const weaponId = pick.id as import('../../utils/weapons').WeaponId;
+      expect(registry.hasWeapon(weaponId)).toBe(true);
+      expect(player.getWeaponLevels().find((w) => w.id === weaponId)?.level).toBe(1);
+    } else {
+      expect(registry.powerUpLevel(pick.id)).toBe(1);
+      expect(player.getPowerUpLevels().find((p) => p.id === pick.id)?.level).toBe(1);
+    }
+
+    // Later offers carry the ownership: the owned id is offered exactly once,
+    // as its level-up option (never twice, never as a base entry).
+    const second = chooseOptions(3, randomChoiceStrategy, rng, player.context());
+    const reoffers = second.filter((option) => option.id === pick.id);
+    expect(reoffers).toHaveLength(1);
+    expect(reoffers[0].kind).toBe(
+      isWeaponDrop(pick.id) ? 'weapon-level' : 'power-up-level',
+    );
+    expect(reoffers[0].level).toBe(2);
+  });
+
+  it('is byte-identical per seed, including the choice sequence (AC4)', () => {
+    const run = (seed: number): ArenaRunResult => runWithChoices(seed);
+    const first = run(111);
+    const second = run(111);
+    expect(stableStringify(second.records)).toBe(stableStringify(first.records));
+    // A different seed diverges in the seeded choice stream too.
+    const other = run(222);
+    expect(stableStringify(other.records)).not.toBe(stableStringify(first.records));
+  });
+
+  it('populates non-zero per-choice-id upgradesSelected in a batch report (AC2/AC6)', () => {
+    const batch = runBatch({
+      seeds: [211, 212],
+      ticks: 8_000,
+      sampleEveryTicks: 400,
+      hold: { capacity: 1 },
+      spawns: { minerals: 12, powerUps: 0, enemies: 2, asteroids: 0 },
+      policies: [{ name: 'legacy', create: () => createLegacyBotPolicy() }],
+    });
+
+    const ids = Object.keys(batch.aggregate.upgradesSelected);
+    expect(ids.length).toBeGreaterThan(0);
+    // Every run makes at least one selection, so the report's per-choice-id
+    // distributions are real (not the old empty/`(none)` buckets).
+    for (const run of batch.runs) {
+      expect(Object.values(run.stats.upgradesSelected).reduce((sum, n) => sum + n, 0))
+        .toBeGreaterThan(0);
     }
   });
 });

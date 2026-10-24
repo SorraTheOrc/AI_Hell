@@ -28,13 +28,14 @@ import Phaser from 'phaser';
 
 import { GAME_WIDTH } from '../core/constants';
 import { BACK_TO_INDEX_LABEL } from './gymNavigation';
-import {
-  POWER_UP_CATALOGUE,
-  type DropId,
-  type PowerUpId,
-} from '../powerups/types';
-import { RESET_DROP, WEAPON_CATALOGUE, type WeaponId } from './weapons';
+import { type DropId, type PowerUpId } from '../powerups/types';
+import { WEAPON_CATALOGUE, type WeaponId } from './weapons';
 import { drawPowerUpIcon, drawWeaponIcon } from '../powerups/icons';
+import {
+  getDropDescription,
+  getDropEntry,
+  type DescribableDropId,
+} from '../powerups/dropDescriptions';
 
 /** Scene key of the shared help overlay (registered in `gameConfig.ts`). */
 export const HELP_SCENE_KEY = 'HelpScene';
@@ -81,11 +82,16 @@ export interface HelpEntry {
  * @throws Error if the id is not present in any catalogue.
  */
 export function getHelpEntry(id: HelpDropId): HelpEntry {
+  // The catalogue copy (name + description) is resolved by the shared pure
+  // module (`powerups/dropDescriptions`), so the gym help and the headless
+  // arena cannot drift; only the Phaser-graphics `drawIcon` closure lives
+  // here (AH-0MVD1RIH2008YCNV).
+  const { name, description } = getDropEntry(id as DescribableDropId);
   if (id === 'reset') {
     return {
       id,
-      name: RESET_DROP.name,
-      description: RESET_DROP.description,
+      name,
+      description,
       drawIcon: (graphics, x, y, size) =>
         drawWeaponIcon(graphics, 'reset', x, y, size),
     };
@@ -93,25 +99,22 @@ export function getHelpEntry(id: HelpDropId): HelpEntry {
 
   // Every weapon id (cannon, spread, dual, rapid, nova, mortar, arc) comes
   // from the shared weapon catalogue — including the AOE family.
-  const weapon = WEAPON_CATALOGUE[id as WeaponId];
-  if (weapon) {
+  if (WEAPON_CATALOGUE[id as WeaponId]) {
     return {
       id,
-      name: weapon.name,
-      description: weapon.description,
+      name,
+      description,
       drawIcon: (graphics, x, y, size) =>
         drawWeaponIcon(graphics, id as WeaponId, x, y, size),
     };
   }
 
-  const powerUp = POWER_UP_CATALOGUE[id as PowerUpId];
-  if (!powerUp) throw new Error(`Unknown power-up for help: ${id}`);
   return {
     id,
-    name: powerUp.name,
-    description: powerUp.description,
+    name,
+    description,
     drawIcon: (graphics, x, y, size) =>
-      drawPowerUpIcon(graphics, powerUp.id, x, y, size),
+      drawPowerUpIcon(graphics, id as PowerUpId, x, y, size),
   };
 }
 
@@ -136,7 +139,7 @@ export function getHelpEntries(drops: readonly HelpDropId[]): HelpEntry[] {
  * @throws Error if the id is not present in any catalogue.
  */
 export function getHelpDescription(id: HelpDropId): string {
-  return getHelpEntry(id).description;
+  return getDropDescription(id);
 }
 
 /** Configuration for {@link addHelpButton}. */
