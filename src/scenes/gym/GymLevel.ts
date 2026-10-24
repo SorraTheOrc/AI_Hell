@@ -37,6 +37,32 @@
  * exactly as `GymFormationScene` documents (OQ6). The bot-tuning gym inherits
  * this so the bot can be tested against minerals, power-ups and weapons.
  *
+ * ## Level scaling and the formation-gym divergence (AH-0MVLJF886009584F)
+ *
+ * A launched level plays with the game's level scaling, so tuning in the gym
+ * transfers to the shipped campaign:
+ *
+ * - Every wave's group counts pass through the **same shared**
+ *   `applyEnemyCountScaling` seam `PlayScene.resolveCampaignLevels` uses, with
+ *   the launched `LevelDefinition.level` (rounding/floor/cap/`single` rules
+ *   included), so a level gym spawns the counts the game spawns.
+ * - The timed supply cadence is lengthened by the **inverse** per-kill
+ *   drop-chance ratio: `interval(level) = interval(1) × chance(1) /
+ *   chance(level)`, mirroring the game's falling drop chance, so high-level
+ *   gym runs are not over-supplied relative to the game.
+ *
+ * Single-wave launches (`GymCurveSequencer._launchWave`) send `level: 0`,
+ * which `clampLevel` resolves to level 1 — the identity transform for both
+ * axes, so single-wave behaviour is unchanged.
+ *
+ * **Documented divergence (parent AC "Gym parity", AH-0MVHT1M6O003PU7P):**
+ * the formation gyms (`GymFormationScene` and its scenes — `GymBoss`,
+ * `GymCentipede`, `GymFodderEnemies`, …) have **no campaign-level input at
+ * all**, so they keep their scene-specific flat
+ * `rules.powerUpSpawnInterval` supply source unchanged. Only the level-based
+ * gyms (`GymLevel` and `GymBotTuning` through inheritance) adopt the level
+ * curves.
+ *
  * ## Scenario pressures (AH-0MV9AWR7A0084XJ0)
  *
  * Like the shipped demo, every wave runs a 30 s timed window (the shared
@@ -73,7 +99,11 @@ import {
   POWER_UP_DROP_SIZE,
   SHIP_SIZE,
 } from '../../core/constants';
-import { loadRules } from '../../core/rules';
+import { loadRules, type GameRules } from '../../core/rules';
+import {
+  applyEnemyCountScaling,
+  dropChanceRatio,
+} from '../../core/levelScaling';
 import { playSpawnSound } from '../../audio/effects';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import type { WasdKeysLike } from '../../utils/input';
@@ -436,8 +466,14 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
 
   /** Current wave index (0-based). */
   private currentWaveIndex = 0;
-  /** Waves to play in this session. */
+  /** Waves to play in this session (already level-count-scaled). */
   private wavesToPlay: WaveDefinition[] = [];
+  /**
+   * Campaign level number of the launched level, driving the shared count
+   * scaling and the supply cadence (AH-0MVLJF886009584F). Single-wave
+   * launches pass `0`, which resolves to level 1 (the identity).
+   */
+  private levelNumber = 1;
   /** HUD label for the current level/wave. */
   private label = GYM_LEVEL_DEFAULT_LABEL;
   /** True once every wave has been cleared. */
@@ -466,11 +502,60 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     const level = data?.level;
     if (!level || !Array.isArray(level.waves) || level.waves.length === 0) {
       this.wavesToPlay = [];
+      this.levelNumber = 1;
       this.label = GYM_LEVEL_DEFAULT_LABEL;
       return;
     }
-    this.wavesToPlay = level.waves;
+    this._applyLevel(level);
+  }
+
+  /**
+   * Adopts a launched level: records its campaign level number (for the
+   * supply cadence) and stores its waves with the **shared** level
+   * enemy-count scaling applied, so the gym spawns exactly the counts the
+   * game's campaign build seam produces for that level
+   * (AH-0MVLJF886009584F).
+   *
+   * The authored `LevelDefinition` is never mutated — `applyEnemyCountScaling`
+   * returns fresh group objects — so reloading the same level scales from the
+   * pristine data (no cumulative scaling).
+   */
+  private _applyLevel(level: LevelDefinition): void {
+    this.levelNumber = level.level;
+    const rules = loadRules();
+    this.wavesToPlay = level.waves.map((wave) => ({
+      ...wave,
+      groups: applyEnemyCountScaling(level.level, wave.groups, rules),
+    }));
     this.label = level.name || GYM_LEVEL_DEFAULT_LABEL;
+  }
+
+  /**
+   * Level-resolved supply cadence: the flat rules interval lengthened by the
+   * inverse of the level's per-kill drop-chance ratio
+   * (`interval(1) × chance(1) / chance(level)`), mirroring the game's falling
+   * drop chance so a high-level run is not over-supplied
+   * (AH-0MVLJF886009584F). Level 1 (and single-wave launches, `level: 0`)
+   * resolve to the flat interval unchanged.
+   */
+  private _resolveSupplyInterval(rules: GameRules): number {
+    const ratio = dropChanceRatio(this.levelNumber, rules);
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+      return rules.powerUpSpawnInterval;
+    }
+    return rules.powerUpSpawnInterval / ratio;
+  }
+
+  /**
+   * Re-derives the supply cadence after a level change (see
+   * {@link loadLevel}). Clamps a pending spawn timer to the new interval so a
+   * lengthened cadence is never refilled by a stale short timer.
+   */
+  private _applySupplyInterval(rules: GameRules = loadRules()): void {
+    this.dropSpawnInterval = this._resolveSupplyInterval(rules);
+    if (this.dropSpawnTimer > this.dropSpawnInterval) {
+      this.dropSpawnTimer = this.dropSpawnInterval;
+    }
   }
 
   // ── Scene creation ───────────────────────────────────────────────
@@ -763,8 +848,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     cleanupWave(this.spawned, this.enemyBullets);
     this.spawned = [];
     this.enemyBullets = [];
-    this.wavesToPlay = level.waves;
-    this.label = level.name || GYM_LEVEL_DEFAULT_LABEL;
+    this._applyLevel(level);
+    // Keep the supply cadence consistent with the newly loaded level (the
+    // supply layer outlives the level; only the cadence is level-derived).
+    if (this.dropSpawner) this._applySupplyInterval();
     this.statusText?.setText(this.label);
     this._spawnCurrentWave();
   }
@@ -796,7 +883,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       this.supplyRng,
     );
     this.dropPlacement = new RandomAvoidingPlacement({ rng: this.supplyRng });
-    this.dropSpawnInterval = rules.powerUpSpawnInterval;
+    // Level-resolved cadence (AH-0MVLJF886009584F): the game's per-kill drop
+    // chance falls with the campaign level, so the gym's timed source
+    // lengthens by the inverse ratio instead of over-supplying a high level.
+    this.dropSpawnInterval = this._resolveSupplyInterval(rules);
     this.dropSpawnTimer = this.dropSpawnInterval;
     this.asteroidExtraLifeDropChance = rules.asteroidExtraLifeDropChance;
 

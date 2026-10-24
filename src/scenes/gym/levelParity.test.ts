@@ -8,22 +8,22 @@
  *
  * ## Red-before / green-after (repo convention)
  *
- * The level gyms (`GymLevel`, and `GymBotTuning` through inheritance)
- * currently spawn **authored (unscaled) counts** and run the **flat**
+ * The level gyms (`GymLevel`, and `GymBotTuning` through inheritance) used
+ * to spawn **authored (unscaled) counts** and run the **flat**
  * `rules.powerUpSpawnInterval` cadence — no campaign-level context. The
- * scaled-count and lengthened-cadence assertions below therefore fail on
- * the pre-change HEAD. They are wrapped in Vitest's `it.fails(...)` — the
- * repo's red-before/green-after convention (cf.
- * `src/scenes/PlayScene.test.ts` "per-level kill-drop chance",
- * AH-0MVLJF4DI000BKMQ) — so the suite stays green while the gym is
- * unscaled. **F1 (AH-0MVLJF886009584F) flips them back to `it`**: the
- * level gyms then resolve `LevelDefinition.level` through the *same*
- * `applyEnemyCountScaling` helper and derive the cadence from the shared
- * `dropChanceRatio`, and these flipped tests are the green evidence.
+ * scaled-count and lengthened-cadence assertions below therefore failed on
+ * the pre-F4 HEAD and were written as Vitest `it.fails(...)` (the repo's
+ * red-before/green-after convention, cf. `src/scenes/PlayScene.test.ts`
+ * "per-level kill-drop chance", AH-0MVLJF4DI000BKMQ). **F4
+ * (AH-0MVLJF886009584F) flipped them to `it`**: the level gyms now resolve
+ * `LevelDefinition.level` through the *same* `applyEnemyCountScaling` helper
+ * and derive the cadence from the shared `dropChanceRatio`, and these tests
+ * are the green evidence.
  *
- * The level-1 and single-wave (`level: 0`) assertions are plain `it`: they
- * pin the **unchanged** contracts (level 1 is the identity transform;
- * `level: 0` is treated as level 1) that hold both before and after.
+ * The level-1 and single-wave (`level: 0`) assertions were plain `it` before
+ * the change too: they pin the **unchanged** contracts (level 1 is the
+ * identity transform; `level: 0` is treated as level 1) that hold both before
+ * and after.
  *
  * ## No divergent copy
  *
@@ -233,13 +233,11 @@ describe('GymLevel — level-scaled enemy counts (AH-0MVLJF6ZD00164MG)', () => {
   }
 
   for (const levelNumber of PARITY_LEVELS) {
-    // Level 1 is the identity transform — the pinned *unchanged* contract.
-    // Levels 5/10 carry the scaling and are red on the pre-change HEAD.
-    const redBefore = levelNumber !== 1;
-    const run = redBefore ? it.fails : it;
-    run(
+    // Level 1 is the identity transform; levels 5/10 carry the shared
+    // scaling. All three are plain `it` since F4 scaled the gym.
+    it(
       `launched level ${levelNumber} reproduces the game campaign's per-group counts` +
-        (redBefore ? ' (scaled; red until F1 scales the gym)' : ' (identity)'),
+        (levelNumber === 1 ? ' (identity)' : ' (scaled)'),
       async () => {
         const scene = await bootLevel({ level: LEVELS[levelNumber - 1] });
         sweepCountParity(scene, levelNumber);
@@ -294,16 +292,16 @@ describe('GymLevel — level-resolved supply cadence (AH-0MVLJF6ZD00164MG)', () 
     expectCadenceAround(scene, expectedCadenceInterval(1));
   });
 
-  it.fails(
-    'AC2 — level 5 cadence lengthens by the inverse drop-chance ratio (red until F1)',
+  it(
+    'AC2 — level 5 cadence lengthens by the inverse drop-chance ratio',
     async () => {
       const scene = await bootCadenceProbe(5);
       expectCadenceAround(scene, expectedCadenceInterval(5));
     },
   );
 
-  it.fails(
-    'AC2 — level 10 cadence lengthens by the inverse drop-chance ratio (red until F1)',
+  it(
+    'AC2 — level 10 cadence lengthens by the inverse drop-chance ratio',
     async () => {
       const scene = await bootCadenceProbe(10);
       expectCadenceAround(scene, expectedCadenceInterval(10));
@@ -370,7 +368,7 @@ describe('GymBotTuning — inherits level-scaled counts and cadence (AH-0MVLJF6Z
     return scene;
   }
 
-  it.fails(
+  it(
     'AC2 — a level-10 probe runs the shared scaled counts and lengthened cadence (no fork)',
     async () => {
       const probeWaves = [scoutWave(3), scoutWave(4)];
