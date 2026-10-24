@@ -747,8 +747,8 @@ describe('R-Type wave laser (AH-0MV1BIUSJ0090W92)', () => {
     expect(isOnBeatGrid(WEAPON_CATALOGUE.wave_laser.fireRateMs)).toBe(true);
   });
 
-  test('supplies a base pierce budget of 3 (the level curve grows it)', () => {
-    expect(WEAPON_CATALOGUE.wave_laser.piercing).toBe(3);
+  test('supplies a base damage budget of 2 (the level curve grows it)', () => {
+    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
   });
 
   test('is a timed weapon drop (not permanent) and not part of the AOE family', () => {
@@ -815,12 +815,12 @@ describe('Centipede ricochet (AH-0MV1BIV5L005NJAI)', () => {
     expect(WEAPON_CATALOGUE.ricochet.aoe).toBeUndefined();
   });
 
-  test('carries a distinct neon-green pellet and no pierce budget', () => {
+  test('carries a distinct neon-green pellet and no damage budget', () => {
     expect(WEAPON_CATALOGUE.ricochet.bulletColor).toBe(BULLET_COLORS.ricochet);
     expect(WEAPON_CATALOGUE.ricochet.bulletColor).not.toBe(
       WEAPON_CATALOGUE.cannon.bulletColor,
     );
-    expect(WEAPON_CATALOGUE.ricochet.piercing).toBeUndefined();
+    expect(WEAPON_CATALOGUE.ricochet.maxHitPoints).toBeUndefined();
   });
 });
 describe('Missile Command cluster missile (AH-0MV1BIVIJ007KYXU)', () => {
@@ -854,12 +854,12 @@ describe('Missile Command cluster missile (AH-0MV1BIVIJ007KYXU)', () => {
     expect(WEAPON_CATALOGUE.cluster.aoe).toBeUndefined();
   });
 
-  test('carries a distinct neon-hot-pink colour and no pierce/bounce budget', () => {
+  test('carries a distinct neon-hot-pink colour and no damage/bounce budget', () => {
     expect(WEAPON_CATALOGUE.cluster.bulletColor).toBe(BULLET_COLORS.cluster);
     expect(WEAPON_CATALOGUE.cluster.bulletColor).not.toBe(
       WEAPON_CATALOGUE.cannon.bulletColor,
     );
-    expect(WEAPON_CATALOGUE.cluster.piercing).toBeUndefined();
+    expect(WEAPON_CATALOGUE.cluster.maxHitPoints).toBeUndefined();
     expect(WEAPON_CATALOGUE.cluster.bounce).toBeUndefined();
   });
 
@@ -921,7 +921,7 @@ describe('Gradius Options orbiting satellites (AH-0MV1BIVVK0043TEM)', () => {
     expect(isTimedWeapon('options')).toBe(true);
     expect(isAoeWeapon('options')).toBe(false);
     expect(WEAPON_CATALOGUE.options.aoe).toBeUndefined();
-    expect(WEAPON_CATALOGUE.options.piercing).toBeUndefined();
+    expect(WEAPON_CATALOGUE.options.maxHitPoints).toBeUndefined();
     expect(WEAPON_CATALOGUE.options.bounce).toBeUndefined();
     expect(WEAPON_CATALOGUE.options.splits).toBeUndefined();
   });
@@ -1091,11 +1091,11 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
 
   test('Railgun is a single slow shot with the catalogue\u2019s deepest pass-through', () => {
     expect(WEAPON_CATALOGUE.railgun.offsets).toEqual([0]);
-    const piercing = WEAPON_CATALOGUE.railgun.piercing ?? 0;
-    // Deeper than every other weapon's base pass-through budget.
+    const maxHitPoints = WEAPON_CATALOGUE.railgun.maxHitPoints ?? 0;
+    // Deeper than every other weapon's base damage budget.
     for (const id of Object.keys(WEAPON_CATALOGUE) as WeaponId[]) {
       if (id === 'railgun') continue;
-      expect(WEAPON_CATALOGUE[id].piercing ?? 0, id).toBeLessThan(piercing);
+      expect(WEAPON_CATALOGUE[id].maxHitPoints ?? 0, id).toBeLessThan(maxHitPoints);
     }
     // And slower than the wave laser it is a heavier alternative to.
     expect(WEAPON_CATALOGUE.railgun.fireRateMs).toBeGreaterThan(

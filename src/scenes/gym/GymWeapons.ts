@@ -312,10 +312,10 @@ export class GymWeapons extends CombatScene<
 
     // ── Player bullets vs the inert practice targets ───────────
     // Run the shared player-bullets-vs-enemies pass so every weapon —
-    // including the piercing wave laser — damages the practice targets
+    // including the damage-budget wave laser — damages the practice targets
     // through exactly the code the game's collision pass uses. Only this
     // pass runs (no enemy bullets, no ram): the gym stays threat-free
-    // (AH-0MV1BIUSJ0090W92).
+    // (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S).
     this._resolvePlayerBulletsVsEnemies();
 
     // ── Drop lifecycles (grow/hold/shrink) ─────────────────────

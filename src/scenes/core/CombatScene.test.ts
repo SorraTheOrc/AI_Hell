@@ -1380,9 +1380,9 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
   });
 });
 
-// ── R-Type wave-laser piercing budget (AH-0MV1BIUSJ0090W92) ──────────
+// ── R-Type wave-laser damage budget (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S) ─
 
-describe('piercing player bullets — pass-through budget (AH-0MV1BIUSJ0090W92)', () => {
+describe('damage-budget player bullets — Wave Laser maxHitPoints (AH-0MV97RISJ002WR2S)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -1403,7 +1403,11 @@ describe('piercing player bullets — pass-through budget (AH-0MV1BIUSJ0090W92)'
     return enemy;
   }
 
-  it('an ordinary bullet (piercing 0) damages one enemy and is consumed', async () => {
+  function destroyedHooks(scene: StubCombatScene): string[] {
+    return scene.hooks.filter((h) => h.startsWith('onEnemyDestroyed'));
+  }
+
+  it('an ordinary bullet (maxHitPoints 0) damages one enemy and is consumed', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 50, y: 50 });
     const first = addEnemy(scene, 200, 200);
@@ -1417,70 +1421,111 @@ describe('piercing player bullets — pass-through budget (AH-0MV1BIUSJ0090W92)'
     expect(scene.getPlayerBullets()).not.toContain(bullet);
   });
 
-  it('a piercing bullet damages its budget of enemies and survives each of them', async () => {
+  it('a budget-2 beam destroys two 1-HP enemies and is consumed on the second', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 50, y: 50 });
     const first = addEnemy(scene, 200, 200);
     const second = addEnemy(scene, 260, 200);
-    const third = addEnemy(scene, 320, 200);
+    const third: StubEnemy = new ToughStubEnemy(scene, 320, 200, 10, 3);
 
-    // Budget 2: survive the first two, consume on the third.
+    // Budget 2: destroy the first (budget 2 → 1, pass through), destroy the
+    // second (budget 1 → 0) and stop — the beam is consumed on the kill that
+    // spends the last damage point, so the third enemy is never touched.
     const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 2);
+    scene.add.existing(third);
+    scene.entities.push(third);
 
     scene.runCollisions(); // first
     expect(first.destroyed).toBe(true);
-    expect(bullet.piercing).toBe(1);
+    expect(bullet.maxHitPoints).toBe(1);
     expect(scene.getPlayerBullets()).toContain(bullet);
 
     bullet.setPosition(260, 200);
-    scene.runCollisions(); // second
+    scene.runCollisions(); // second — budget spent, beam consumed
     expect(second.destroyed).toBe(true);
-    expect(bullet.piercing).toBe(0);
+    expect(bullet.maxHitPoints).toBe(0);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
+
+    // The consumed beam never reaches the third enemy.
+    bullet.setPosition(320, 200);
+    scene.runCollisions();
+    expect((third as ToughStubEnemy).damageCalls).toBe(0);
+    expect((third as ToughStubEnemy).alive).toBe(true);
+    expect(destroyedHooks(scene)).toHaveLength(2);
+  });
+
+  it('deals its remaining damage to a tougher enemy behind a destroyed one', async () => {
+    const scene = await boot();
+    scene.addPlayer({ x: 50, y: 50 });
+    const tough1 = new ToughStubEnemy(scene, 200, 200, 10, 2);
+    const tough2 = new ToughStubEnemy(scene, 320, 200, 10, 2);
+    scene.add.existing(tough1);
+    scene.add.existing(tough2);
+    scene.entities.push(tough1, tough2);
+
+    // Budget 3: destroys the 2-HP first ship (2 damage, budget 3 → 1, pass
+    // through) then chips exactly 1 damage off the 2-HP second ship (budget
+    // 1 → 0) before the beam is consumed.
+    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 3);
+    scene.runCollisions(); // first — destroyed, beam passes through
+    expect(tough1.damageCalls).toBe(2);
+    expect(tough1.alive).toBe(false);
+    expect(bullet.maxHitPoints).toBe(1);
     expect(scene.getPlayerBullets()).toContain(bullet);
 
     bullet.setPosition(320, 200);
-    scene.runCollisions(); // third — budget exhausted, bullet consumed
-    expect(third.destroyed).toBe(true);
+    scene.runCollisions(); // second — partial hit, budget spent, consumed
+    expect(tough2.damageCalls).toBe(1);
+    expect(tough2.health).toBe(1);
+    expect(tough2.alive).toBe(true);
+    expect(bullet.maxHitPoints).toBe(0);
     expect(scene.getPlayerBullets()).not.toContain(bullet);
+    expect(destroyedHooks(scene)).toHaveLength(1);
   });
 
-  it('an enemy already passed through is never damaged twice', async () => {
+  it('caps per-enemy damage at the enemy\u2019s remaining HP', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 50, y: 50 });
+    // One 5-HP harvester-style enemy; a 3-budget beam spends all of its
+    // budget against it (3 damage, HP 5 → 2) and is consumed mid-fight: the
+    // enemy survives and per-enemy damage is capped at the remaining budget.
     const tough = new ToughStubEnemy(scene, 200, 200, 10, 5);
     scene.add.existing(tough);
     scene.entities.push(tough);
 
-    scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 3);
-    scene.runCollisions();
-    scene.runCollisions();
+    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 3);
     scene.runCollisions();
 
-    expect(tough.damageCalls).toBe(1);
+    expect(tough.damageCalls).toBe(3);
+    expect(tough.health).toBe(2);
     expect(tough.alive).toBe(true);
+    expect(bullet.maxHitPoints).toBe(0);
+    expect(scene.getPlayerBullets()).not.toContain(bullet);
   });
 
-  it('the budget boundary: a bullet with piercing 1 stops on its second enemy', async () => {
+  it('an enemy already charged is never damaged again across frames', async () => {
     const scene = await boot();
     scene.addPlayer({ x: 50, y: 50 });
-    const first = addEnemy(scene, 200, 200);
-    const second = addEnemy(scene, 260, 200);
-    const third = addEnemy(scene, 320, 200);
-    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 1);
+    // 2-HP enemy: the first contact spends 2 budget, destroys it and leaves
+    // 1 budget — the beam passes through and keeps scanning. Re-running the
+    // shared pass must not re-charge the remembered enemy.
+    const tough = new ToughStubEnemy(scene, 200, 200, 10, 2);
+    scene.add.existing(tough);
+    scene.entities.push(tough);
 
+    const bullet = scene.spawnPlayerBullet(200, 200, 0, 0, 0x3366ff, 1, 3, 3);
     scene.runCollisions();
-    expect(first.destroyed).toBe(true);
-    expect(bullet.piercing).toBe(0);
-    expect(scene.getPlayerBullets()).toContain(bullet); // survived the first
+    scene.runCollisions();
+    scene.runCollisions();
 
-    bullet.setPosition(260, 200);
-    scene.runCollisions();
-    expect(second.destroyed).toBe(true);
-    expect(third.destroyed).toBe(false);
-    expect(scene.getPlayerBullets()).not.toContain(bullet); // consumed on the second
+    expect(tough.damageCalls).toBe(2);
+    expect(tough.alive).toBe(false);
+    expect(bullet.maxHitPoints).toBe(1);
+    expect(scene.getPlayerBullets()).toContain(bullet);
+    expect(destroyedHooks(scene)).toHaveLength(1);
   });
 
-  it('auto-fire propagates the weapon piercing budget onto spawned bullets', async () => {
+  it('auto-fire propagates the weapon maxHitPoints budget onto spawned bullets', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     // Equip the wave laser permanently so it fires this frame.
@@ -1497,8 +1542,9 @@ describe('piercing player bullets — pass-through budget (AH-0MV1BIUSJ0090W92)'
       .filter((b) => b.color === WEAPON_CATALOGUE.wave_laser.bulletColor);
     expect(waveBullets.length).toBeGreaterThan(0);
     for (const bullet of waveBullets) {
-      expect(bullet.piercing).toBe(WEAPON_CATALOGUE.wave_laser.piercing);
+      expect(bullet.maxHitPoints).toBe(WEAPON_CATALOGUE.wave_laser.maxHitPoints);
     }
+    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
   });
 });
 

@@ -15,7 +15,7 @@
  * | Source | Shared path |
  * | --- | --- |
  * | normal bullet | `_handleCollisions` → `onPlayerBulletHitsEnemy` |
- * | piercing (Wave Laser) | the same bullet seam with `bullet.piercing > 0` |
+ * | damage-budget beam (Wave Laser) | the same bullet seam with `bullet.maxHitPoints > 0` |
  * | AOE weapon (Nova) | `_autoFire` → `applyAoEDescriptor` → `damageEnemyViaAoe` |
  * | Smart Bomb | `_updateSmartBomb` → `onSmartBombPulse` → `applyAoEDescriptor` |
  * | Orbital Strike | `_updateOrbitalStrike` → `onOrbitalStrike` → `damageEnemyViaAoe` |
@@ -151,7 +151,7 @@ class FieldSourceScene extends CombatScene<FieldTarget, StubBullet, StubDrop> {
     this.entities.push(enemy);
     return enemy;
   }
-  spawnBulletAt(x: number, y: number, piercing = 0): PlayerBullet {
+  spawnBulletAt(x: number, y: number, maxHitPoints = 0): PlayerBullet {
     const bullet = new PlayerBullet(
       this,
       x,
@@ -161,7 +161,7 @@ class FieldSourceScene extends CombatScene<FieldTarget, StubBullet, StubDrop> {
       PLAYER_BULLET_RADIUS,
       0xffffff,
     );
-    bullet.piercing = piercing;
+    bullet.maxHitPoints = maxHitPoints;
     this.playerBullets.push(bullet);
     return bullet;
   }
@@ -182,7 +182,7 @@ class FieldSourceScene extends CombatScene<FieldTarget, StubBullet, StubDrop> {
 /** Damage sources, one parameterised case each (parent AC2). */
 type DamageSource =
   | 'normal bullet'
-  | 'piercing (Wave Laser)'
+  | 'damage-budget beam (Wave Laser)'
   | 'AOE weapon (Nova)'
   | 'Smart Bomb'
   | 'Orbital Strike'
@@ -190,7 +190,7 @@ type DamageSource =
 
 const DAMAGE_SOURCES: DamageSource[] = [
   'normal bullet',
-  'piercing (Wave Laser)',
+  'damage-budget beam (Wave Laser)',
   'AOE weapon (Nova)',
   'Smart Bomb',
   'Orbital Strike',
@@ -230,7 +230,7 @@ describe('Enemy force field — every player damage source depletes it (AH-0MVM8
         scene.runCollisions();
         return 1;
       }
-      case 'piercing (Wave Laser)': {
+      case 'damage-budget beam (Wave Laser)': {
         scene.spawnBulletAt(target.x, target.y, 1);
         scene.runCollisions();
         return 1;

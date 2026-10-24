@@ -296,7 +296,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    * exactly once on the lethal blow. A hit against an already-destroyed enemy
    * is a no-op.
    *
-   * Every player damage source (bullet, piercing, AOE, Smart Bomb, Orbital
+   * Every player damage source (bullet, damage-budget beam, AOE, Smart Bomb, Orbital
    * Strike, Frenzy bonus hits) already routes through this single seam, so the
    * field depletes identically for all of them — there is no parallel damage
    * path.

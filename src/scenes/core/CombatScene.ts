@@ -371,11 +371,13 @@ export abstract class CombatScene<
    * same shared path runs in the game and the gyms, so the feedback cannot
    * diverge (parent AH-0MUI820PM0038HS2 — producer review).
    *
-   * A **piercing** bullet (`bullet.piercing > 0`, R-Type wave laser) damages
-   * the enemy but survives, decrementing its budget and remembering the enemy
-   * so it is never damaged twice; returning `false` lets the shared loop keep
-   * scanning. Once the budget is exhausted the next new enemy consumes the
-   * bullet (AH-0MV1BIUSJ0090W92).
+   * A **damage-budget** beam (`bullet.maxHitPoints > 0`, R-Type wave laser)
+   * spends up to its remaining budget on the enemy (one hit point per
+   * `takeDamage()`), remembers the enemy so its budget is never re-charged,
+   * and — if the enemy was destroyed and budget remains — returns `false` so
+   * the shared loop keeps scanning to the ships behind it. If the enemy
+   * survives a partial hit or the budget is spent the bullet is consumed
+   * (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S).
    *
    * @returns whether the bullet was consumed (stops the scan).
    */
@@ -404,45 +406,79 @@ export abstract class CombatScene<
       bullet.destroy();
       return true;
     }
-    // Already passed through this enemy on an earlier frame — never re-damage.
-    if (bullet.piercedEnemies.has(enemy)) {
+    // Already spent damage on this enemy on an earlier frame — never re-charge.
+    if (bullet.damagedEnemies.has(enemy)) {
       return false;
     }
-    // Damage the enemy identically for the piercing and consuming paths.
+    if (bullet.maxHitPoints > 0) {
+      // Damage-budget beam: apply up to the remaining budget, charge the
+      // enemy its actual damage and remember it. The beam passes through only
+      // when it destroyed the enemy and still has budget left; an enemy that
+      // survives a partial hit consumes the beam (it has nothing left to
+      // spend), as does an enemy destroyed exactly at zero budget.
+      bullet.damagedEnemies.add(enemy);
+      const applied = this.damageEnemyWithBullet(
+        enemy,
+        bullet,
+        bullet.maxHitPoints,
+      );
+      bullet.maxHitPoints = Math.max(0, bullet.maxHitPoints - applied);
+      if (!enemy.alive && bullet.maxHitPoints > 0) {
+        return false;
+      }
+      bullet.destroy();
+      return true;
+    }
+    // Ordinary single-hit bullet: one damage instance, then consumed.
     this.damageEnemyWithBullet(enemy, bullet);
-    // A piercing bullet survives the hit while it still has budget; remember
-    // the enemy and continue to the next one. Budget 0 falls through and
-    // consumes the bullet.
-    if (bullet.piercing > 0) {
-      bullet.piercedEnemies.add(enemy);
-      bullet.piercing -= 1;
-      return false;
-    }
     bullet.destroy();
     return true;
   }
 
   /**
-   * Applies one player-bullet damage instance to `enemy` through the shared
-   * kill seam **without** consuming the bullet: a multi-hit entity takes
-   * `takeDamage()` (finalised on the lethal blow, with the shared impact flash
-   * on a non-lethal hit); a single-hit entity is destroyed and finalised.
-   * Shared by the ordinary (consuming) and piercing bullet paths so both
-   * damage identically in the game and every gym (AH-0MV1BIUSJ0090W92).
+   * Applies player-bullet damage to `enemy` through the shared kill seam
+   * **without** consuming the bullet: a multi-hit entity takes one hit point
+   * per `takeDamage()` (finalised on the lethal blow, with the shared impact
+   * flash on a non-lethal hit); a single-hit entity is destroyed and
+   * finalised.
+   *
+   * `damage` is the number of hit points to attempt — 1 for an ordinary
+   * bullet, the beam's remaining `maxHitPoints` budget for the R-Type wave
+   * laser. The loop stops at the enemy's death, so per-enemy damage is capped
+   * at its remaining HP (AH-0MV97RISJ002WR2S).
+   *
+   * @returns the number of damage points actually applied — the budget
+   * caller deducts it from the bullet's `maxHitPoints`.
    */
-  private damageEnemyWithBullet(enemy: TEnemy, bullet: PlayerBullet): void {
+  private damageEnemyWithBullet(
+    enemy: TEnemy,
+    bullet: PlayerBullet,
+    damage = 1,
+  ): number {
     // Per-weapon hit feedback (cannon's distinct flash + hit cue) plays on
     // every connect through the shared impact seam — including the lethal
     // blow, which layers the shot's hit cue under the destruction audio
     // (AH-0MV8228YW0050IXS AC4).
     this.resolveWeaponImpactFx(bullet);
+    const points = Math.max(0, Math.floor(damage));
+    let applied = 0;
     if (enemy.takeDamage) {
-      // Frenzy (AH-0MVH80ZJ7009W18Z): while its window is active each bullet
-      // applies its bonus hits, so multi-hit targets (Harvester/mini-boss/
-      // boss) die faster. Inactive = exactly one hit, unchanged.
+      // Frenzy (AH-0MVH80ZJ7009W18Z): while its window is active a single
+      // ordinary-bullet contact applies its bonus hits, so multi-hit targets
+      // (Harvester/mini-boss/boss) die faster. Inactive = exactly one hit,
+      // unchanged. The damage-budget path applies one hit point per budget
+      // point instead, bounded by the enemy's remaining HP.
       const extraHits = this.getEffectsRegistry().frenzyBonusHits();
-      for (let hit = 0; hit <= extraHits && enemy.alive; hit += 1) {
-        enemy.takeDamage();
+      if (points === 1) {
+        for (let hit = 0; hit <= extraHits && enemy.alive; hit += 1) {
+          enemy.takeDamage();
+          applied += 1;
+        }
+      } else {
+        while (applied < points && enemy.alive) {
+          enemy.takeDamage();
+          applied += 1;
+        }
       }
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
       // (the entity's `takeDamage()` has already run `destroySelf()` and
@@ -459,7 +495,10 @@ export abstract class CombatScene<
     } else {
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
+      // A single-hit entity counts as 1 HP regardless of the offered damage.
+      applied = points > 0 ? 1 : 0;
     }
+    return applied;
   }
 
   /**
@@ -1140,12 +1179,12 @@ export abstract class CombatScene<
   /**
    * Resolves the shared player-bullets-vs-enemies pass (plus the boss via the
    * {@link CombatScene.onPlayerBulletHitsBoss} hook). Each live enemy is
-   * scanned until the bullet is consumed; a piercing bullet survives the hit
-   * and continues scanning (see
+   * scanned until the bullet is consumed; a damage-budget beam survives the
+   * hit and continues scanning (see
    * {@link CombatScene.onPlayerBulletHitsEnemy}). The game and every gym run
    * this one implementation, and `GymWeapons` calls it directly so its inert
-   * practice targets demonstrate weapon piercing through the same code
-   * (AH-0MV1BIUSJ0090W92).
+   * practice targets demonstrate the damage budget through the same code
+   * (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S).
    */
   protected _resolvePlayerBulletsVsEnemies(): void {
     const keptBullets: PlayerBullet[] = [];

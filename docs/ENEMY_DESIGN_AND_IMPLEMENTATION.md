@@ -1315,7 +1315,7 @@ for the governing principle (tracked by AH-0MUGZDTFX004RBD1).
 The classic-arcade power-up and weapon roster
 ([`CLASSIC_POWERUP_WEAPON_RESEARCH.md`](CLASSIC_POWERUP_WEAPON_RESEARCH.md),
 epic AH-0MV14SO0G0095IJ4) follows the same rule: every behaviour it adds runs
-in shared code — the shared piercing-collision, bullet-bounce and
+in shared code — the shared damage-budget collision, bullet-bounce and
 missile-split seams (`src/scenes/core/CombatCoreScene.ts`), the pure
 `src/scenes/core/optionsEscort.ts` orbit geometry, the screen-wide
 `AoEDescriptor` (`screenPulse`) pulse, and the shared `_reflectEnemyBullet`

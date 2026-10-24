@@ -100,7 +100,7 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
    * flash colour/size plus a baked hit cue that the shared impact seam
    * resolves when this bullet connects. `undefined` for bullets with no
    * weapon-specific impact (the generic impact flash, no hit cue). Set by
-   * the shared spawn path from the weapon definition, like `piercing`;
+   * the shared spawn path from the weapon definition, like `maxHitPoints`;
    * never read by flight logic.
    */
   impactFx?: ImpactFxSpec;
@@ -151,13 +151,15 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
   splitSpawned = false;
 
   /**
-   * Remaining pass-through budget: how many **additional** enemies this
-   * bullet may damage before it is consumed (R-Type wave laser,
-   * AH-0MV1BIUSJ0090W92). `0` for an ordinary single-hit bullet. The shared
-   * collision path decrements it once per newly hit enemy and consumes the
-   * bullet when it reaches zero.
+   * Remaining **hit-point budget**: how much damage this beam may still deal
+   * before it is consumed (R-Type wave laser, AH-0MV1BIUSJ0090W92,
+   * AH-0MV97RISJ002WR2S). Each connecting enemy is charged the damage it
+   * actually takes, so a beam blows through the ships it destroys and spends
+   * what is left on the ships behind them. `0` for an ordinary single-hit
+   * bullet; the shared collision path consumes the bullet once the budget is
+   * spent (or the beam hits an enemy it cannot destroy).
    */
-  piercing = 0;
+  maxHitPoints = 0;
 
   /**
    * Remaining **wall-bounce budget**: how many arena-edge reflections this
@@ -184,11 +186,11 @@ export class PlayerBullet extends Phaser.GameObjects.Graphics {
   onWallBounce?: (bullet: PlayerBullet) => void;
 
   /**
-   * Enemies this bullet has already damaged. The shared collision path checks
-   * membership before applying damage so a piercing bullet which overlaps the
-   * same enemy across frames damages it exactly once.
+   * Enemies this bullet has already spent damage on. The shared collision
+   * path checks membership before applying damage so a budget beam which
+   * overlaps the same enemy across frames damages it exactly once.
    */
-  readonly piercedEnemies = new Set<object>();
+  readonly damagedEnemies = new Set<object>();
 
   /**
    * Creates a new bullet Graphics object. Visuals are a filled circle

@@ -3061,9 +3061,9 @@ describe('CombatScene — shared AOE dispatch/effect is defined once (F6 AC1)', 
   });
 });
 
-// ── R-Type wave-laser piercing parity (AH-0MV1BIUSJ0090W92) ──────────
+// ── R-Type wave-laser damage-budget parity (AH-0MV97RISJ002WR2S) ───────
 
-describe('CombatScene — wave-laser piercing parity (AH-0MV1BIUSJ0090W92)', () => {
+describe('CombatScene — wave-laser damage-budget parity (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S)', () => {
   const games: BootedGame[] = [];
 
   afterEach(() => {
@@ -3083,12 +3083,12 @@ describe('CombatScene — wave-laser piercing parity (AH-0MV1BIUSJ0090W92)', () 
     });
   }
 
-  it('a piercing beam passes through a line of enemies identically in the game and a gym', async () => {
+  it('a damage-budget beam passes through a line of enemies identically in the game and a gym', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
-      'piercing-play-host',
+      'damage-budget-play-host',
     );
-    const gym = await bootScene([EquivGymScene], 'piercing-gym-host');
+    const gym = await bootScene([EquivGymScene], 'damage-budget-gym-host');
     games.push(play, gym);
     const playScene = play.scene as PlayScene;
     const gymScene = gym.scene as EquivGymScene;
@@ -3097,7 +3097,7 @@ describe('CombatScene — wave-laser piercing parity (AH-0MV1BIUSJ0090W92)', () 
     (playScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
     (gymScene as unknown as { playerBullets: unknown[] }).playerBullets.length = 0;
 
-    // Game: two stationary enemies overlapping the injection point.
+    // Game: two stationary 1-HP enemies overlapping the injection point.
     const gameEnemies = [
       makeGameEnemy(playScene, 'scout', 700, 400),
       makeGameEnemy(playScene, 'scout', 706, 400),
@@ -3116,6 +3116,9 @@ describe('CombatScene — wave-laser piercing parity (AH-0MV1BIUSJ0090W92)', () 
     playScene.getPlayer()!.setPosition(50, 50);
     gymScene.getPlayer()!.setPosition(50, 50);
 
+    // Budget 2 (the level-0 wave laser): destroys the first enemy, passes
+    // through with 1 budget, destroys the second and is consumed — exactly one
+    // damage point per 1-HP ship, in both scenes.
     const spawnBeam = (owner: PlayScene | EquivGymScene) =>
       owner.spawnPlayerBullet(
         703,
@@ -3125,7 +3128,7 @@ describe('CombatScene — wave-laser piercing parity (AH-0MV1BIUSJ0090W92)', () 
         0x3366ff,
         2,
         3,
-        WEAPON_CATALOGUE.wave_laser.piercing,
+        WEAPON_CATALOGUE.wave_laser.maxHitPoints!,
       );
     const gameBeam = spawnBeam(playScene);
     const gymBeam = spawnBeam(gymScene);
@@ -3134,17 +3137,17 @@ describe('CombatScene — wave-laser piercing parity (AH-0MV1BIUSJ0090W92)', () 
     (playScene as unknown as { _handleCollisions(): void })._handleCollisions();
     (gymScene as unknown as { _handleCollisions(): void })._handleCollisions();
 
-    // The same shared code leaves the same outcome in both scenes.
+    // The same shared code leaves the same outcome in both scenes: both
+    // ships destroyed and the beam consumed once its budget is spent.
     expect(gameEnemies.every((enemy) => !enemy.alive)).toBe(true);
     expect(gymEnemies.every((enemy) => !enemy.alive)).toBe(true);
-    // Base pierce 3 survived both overlapping enemies (budget 3 → 1) in each.
-    expect(gameBeam.piercing).toBe(1);
-    expect(gymBeam.piercing).toBe(1);
-    expect(playScene.getPlayerBullets()).toContain(gameBeam);
-    expect(gymScene.getPlayerBullets()).toContain(gymBeam);
+    expect(gameBeam.maxHitPoints).toBe(0);
+    expect(gymBeam.maxHitPoints).toBe(0);
+    expect(playScene.getPlayerBullets()).not.toContain(gameBeam);
+    expect(gymScene.getPlayerBullets()).not.toContain(gymBeam);
   });
 
-  it('the game and GymWeapons both resolve piercing through the shared CombatScene hook', () => {
+  it('the game and GymWeapons both resolve the damage budget through the shared CombatScene hook', () => {
     for (const [name, prototype] of [
       ['PlayScene', PlayScene.prototype],
       ['GymWeapons', GymWeapons.prototype],

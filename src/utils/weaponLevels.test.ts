@@ -71,7 +71,7 @@ describe('upgrade variable catalogue (AC2)', () => {
       'bulletSpeed',
       'bulletLifetime',
       'damage',
-      'piercing',
+      'maxHitPoints',
       'bounce',
       'homing',
       'aoeRadius',
@@ -743,56 +743,74 @@ describe('formatDelta (AH-0MUU1GOAU007RFVR AC1/AC3)', () => {
   });
 });
 
-// ── R-Type wave-laser pierce budget (AH-0MV1BIUSJ0090W92) ───────────
+// ── R-Type wave-laser damage budget (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S) ─
 
-describe('wave-laser piercing budget (AH-0MV1BIUSJ0090W92)', () => {
-  test('the base definition supplies a pierce budget of 3', () => {
-    expect(WEAPON_CATALOGUE.wave_laser.piercing).toBe(3);
-    expect(resolveWeaponDefinition('wave_laser', 0).piercing).toBe(3);
+describe('wave-laser damage budget — maxHitPoints (AH-0MV97RISJ002WR2S)', () => {
+  test('the base definition supplies a level-0 damage budget of 2', () => {
+    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
+    expect(resolveWeaponDefinition('wave_laser', 0).maxHitPoints).toBe(2);
   });
 
-  test('the level-resolved piercing variable grows monotonically within its spec cap', () => {
-    const cap = WEAPON_UPGRADE_SPECS.piercing.cap;
-    let previous = resolveWeaponAtLevel('wave_laser', 0).piercing;
+  test('the level-resolved maxHitPoints curve grows monotonically within its spec cap', () => {
+    const cap = WEAPON_UPGRADE_SPECS.maxHitPoints.cap;
+    let previous = resolveWeaponAtLevel('wave_laser', 0).maxHitPoints;
     expect(previous).toBe(0);
     for (let level = 1; level <= 100; level++) {
-      const value = resolveWeaponAtLevel('wave_laser', level).piercing;
+      const value = resolveWeaponAtLevel('wave_laser', level).maxHitPoints;
       expect(value).toBeGreaterThanOrEqual(previous);
       expect(value).toBeLessThanOrEqual(cap);
       previous = value;
     }
-    // The first level is responsive: it grants a pierce immediately.
-    expect(resolveWeaponAtLevel('wave_laser', 1).piercing).toBeGreaterThan(0);
+    // The first level is responsive: it grants an extra hit point immediately.
+    expect(resolveWeaponAtLevel('wave_laser', 1).maxHitPoints).toBeGreaterThan(0);
   });
 
-  test('the resolved pierce budget grows monotonically and never exceeds the spec cap', () => {
-    const cap = WEAPON_UPGRADE_SPECS.piercing.cap;
-    let previous = resolveWeaponDefinition('wave_laser', 0).piercing!;
-    expect(previous).toBe(3);
+  test('the effective budget is base + curve bonus with no weapon-level clamp', () => {
+    const bonusCap = WEAPON_UPGRADE_SPECS.maxHitPoints.cap;
+    const base = WEAPON_CATALOGUE.wave_laser.maxHitPoints!;
+    // The old `Math.min(cap, base + stats)` clamp flattened the effective
+    // budget at the spec cap (5). The budget is now the unclamped sum, so it
+    // saturates only at the shared curve's asymptote (base + bonus cap).
+    expect(resolveWeaponDefinition('wave_laser', 10).maxHitPoints).toBeGreaterThan(
+      bonusCap,
+    );
+    let previous = resolveWeaponDefinition('wave_laser', 0).maxHitPoints!;
+    expect(previous).toBe(2);
     for (let level = 1; level <= 100; level++) {
-      const value = resolveWeaponDefinition('wave_laser', level).piercing!;
+      const value = resolveWeaponDefinition('wave_laser', level).maxHitPoints!;
       expect(value).toBeGreaterThanOrEqual(previous);
-      expect(value).toBeLessThanOrEqual(cap);
+      expect(value).toBeLessThanOrEqual(base + bonusCap);
       previous = value;
     }
-    // The budget saturates at the finite spec cap.
-    expect(resolveWeaponDefinition('wave_laser', 100).piercing).toBe(cap);
+    // Saturates at base + the curve asymptote (~7), never at a hard 5.
+    expect(resolveWeaponDefinition('wave_laser', 100).maxHitPoints).toBe(
+      base + bonusCap,
+    );
+    expect(resolveWeaponDefinition('wave_laser', 100).maxHitPoints).toBe(7);
   });
 
-  test('weapons without a base piercing budget never gain one', () => {
-    // The Railgun (AH-0MVCRC52P001YIPW) is the second weapon with a base
-    // pass-through budget; every other weapon has none.
-    const withBasePiercing = new Set<WeaponId>(['wave_laser', 'railgun']);
-    for (const id of WEAPON_IDS) {
-      if (withBasePiercing.has(id)) continue;
-      expect(resolveWeaponDefinition(id, 50).piercing).toBeUndefined();
+  test('the curve bonus itself is discrete so the budget stays whole-numbered', () => {
+    for (let level = 0; level <= 20; level++) {
+      expect(Number.isInteger(resolveWeaponDefinition('wave_laser', level).maxHitPoints)).toBe(
+        true,
+      );
     }
   });
 
-  test('the Railgun carries a deeper base pierce budget than the wave laser', () => {
-    expect(resolveWeaponDefinition('railgun', 0).piercing).toBe(5);
-    expect(resolveWeaponDefinition('railgun', 0).piercing!).toBeGreaterThan(
-      resolveWeaponDefinition('wave_laser', 0).piercing!,
+  test('weapons without a base damage budget never gain one', () => {
+    // The Railgun (AH-0MVCRC52P001YIPW) is the second weapon with a base
+    // damage budget; every other weapon has none.
+    const withBaseBudget = new Set<WeaponId>(['wave_laser', 'railgun']);
+    for (const id of WEAPON_IDS) {
+      if (withBaseBudget.has(id)) continue;
+      expect(resolveWeaponDefinition(id, 50).maxHitPoints).toBeUndefined();
+    }
+  });
+
+  test('the Railgun carries a deeper base damage budget than the wave laser', () => {
+    expect(resolveWeaponDefinition('railgun', 0).maxHitPoints).toBe(5);
+    expect(resolveWeaponDefinition('railgun', 0).maxHitPoints!).toBeGreaterThan(
+      resolveWeaponDefinition('wave_laser', 0).maxHitPoints!,
     );
   });
 });
