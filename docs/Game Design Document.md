@@ -222,6 +222,22 @@ arcade attract loop, capture/marketing clips, and as a regression harness.
   [docs/BOT_FRAMEWORK.md](BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym))
   and live in the shared `src/ai/` code, so the game and the gym fly
   identically (gym↔game parity).
+- **Predictive hazard avoidance (AH-0MVI4QDN90037DIN):** the bot avoids where
+  a **moving** hazard will be, not just where it is. Aim lead (above) covers
+  leading a target; this is the avoidance half. Because the snapshot exposes
+  no per-archetype velocity for formation enemies, the bot derives one
+  **itself**, bot-side, from each live enemy/asteroid/boss's position delta
+  across decision ticks (keyed by a stable bot-side entity id, clamped so a
+  wrap/respawn cannot imply an absurd speed). When `hazardPredictionEnabled`
+  is on (default) a steering bearing is also unsafe when the ship and a
+  moving hazard are predicted to come within `threatRadius` inside
+  `hazardPredictionHorizon` (default **0.6 s**) — the same closest-approach
+  solve used for incoming fire — and the engage behaviour's kiting gate uses
+  the same test for an imminent collision. A hazard with no/zero estimate, or
+  prediction turned off, reproduces the previous positional keep-away
+  behaviour exactly. Both knobs are live sliders/toggles in the bot-tuning
+  gym and live in the shared `src/ai/` code
+  ([docs/BOT_FRAMEWORK.md](BOT_FRAMEWORK.md#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
 - **Hold-full auto-select (AH-0MUXXQ1MN002RXGB):** when the mineral hold fills,
   the modal hold-full choice overlay auto-selects its first option after
   `BOT_MINERAL_CHOICE_DELAY_MS` (**900 ms**) and resumes play, so a demo run

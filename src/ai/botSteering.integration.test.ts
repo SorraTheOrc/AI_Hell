@@ -19,6 +19,8 @@ import { BotInputGovernor } from './botHumanLike';
 import { AsteroidsModel } from '../utils/movementModel';
 import type { AsteroidsInput } from '../utils/movementModel';
 import type { BotEnemy, BotMineral, BotSnapshot } from './botSnapshot';
+import { createCompetentBotBrain } from './framework/competent';
+import { COMPETENT_BOT_TUNABLES } from './framework/competent/tunables';
 
 const DT = 1 / 60;
 const WIDTH = 960;
@@ -269,5 +271,101 @@ describe('closed-loop steering (rejection AH-0MUXYOV4C008MV0L)', () => {
     expect(second.final.x).toBe(first.final.x);
     expect(second.final.y).toBe(first.final.y);
     expect(second.final.facing).toBe(first.final.facing);
+  });
+});
+
+// ── Predictive hazard avoidance (AH-0MVI4QDN90037DIN AC4b) ──────────
+
+describe('predictive hazard avoidance in the competent brain (AH-0MVI4QDN90037DIN)', () => {
+  /**
+   * The ship's speed in the kinematic loop. The steering safety model predicts
+   * the ship travelling at `playerSpeed` along a candidate bearing, so the
+   * loop advances it at exactly that speed — an ideal actuator that removes
+   * ship inertia and isolates the prediction itself. (The inertia-limited,
+   * physics-level behaviour is covered by the rotation/competent integration
+   * suites; this suite is the AC4 arbiter for predicted hazard avoidance.)
+   */
+  const SPEED = COMPETENT_BOT_TUNABLES.playerSpeed;
+  const ENEMY_X = 480;
+  const ENEMY_VY = 150;
+
+  interface CrossingResult {
+    /** Least ship-to-enemy centre distance seen during the run. */
+    minDistance: number;
+    final: { x: number; y: number };
+  }
+
+  /**
+   * The ship flies east toward a mineral at (800, 270) while a scout crosses
+   * its path vertically at x=480. The enemy is a plain `BotEnemy` with a
+   * stable bot-side id and **no** exposed velocity, so any lead the bot has on
+   * it comes from its own position-delta estimator.
+   */
+  function runCrossing(hazardPredictionEnabled: boolean): CrossingResult {
+    const brain = createCompetentBotBrain({
+      tunables: { hazardPredictionEnabled },
+    });
+    // Enemy starts above the top edge so it reaches the ship's line
+    // (y = 270) exactly when the ship reaches x = 480.
+    const enemyStartY =
+      270 - ENEMY_VY * ((ENEMY_X - 200) / SPEED);
+    let state = { x: 200, y: 270, vx: SPEED, vy: 0 };
+    let minDistance = Number.POSITIVE_INFINITY;
+
+    for (let i = 0; i < 220; i += 1) {
+      const enemyY = enemyStartY + ENEMY_VY * i * DT;
+      const snapshot: BotSnapshot = {
+        player: { x: state.x, y: state.y, vx: state.vx, vy: state.vy },
+        // The enemy never exposes a velocity: the bot must estimate it.
+        enemies: [
+          { id: 1, x: ENEMY_X, y: enemyY, alive: true, archetype: 'scout' },
+        ],
+        enemyBullets: [],
+        playerBullets: [],
+        drops: [],
+        minerals: [{ x: 800, y: 270, type: 'mineral' }],
+        boss: null,
+        aliveCount: 1,
+        wave: null,
+        runSeed: 1,
+        lives: 3,
+        livesCap: 5,
+      };
+      const intent = brain.decide(snapshot, DT);
+      // Kinematic actuator: travel along the chosen bearing at the modelled
+      // speed (an idle intent holds station).
+      const vx = intent.dirX * SPEED;
+      const vy = intent.dirY * SPEED;
+      state = { x: state.x + vx * DT, y: state.y + vy * DT, vx, vy };
+      minDistance = Math.min(
+        minDistance,
+        Math.hypot(state.x - ENEMY_X, state.y - enemyY),
+      );
+    }
+
+    return { minDistance, final: { x: state.x, y: state.y } };
+  }
+
+  it('evades a straight crossing enemy that it collides with when prediction is off', () => {
+    const off = runCrossing(false);
+    const on = runCrossing(true);
+
+    // Baseline: without prediction the ship keeps its line and the enemy
+    // sweeps through it.
+    expect(off.minDistance).toBeLessThan(COMPETENT_BOT_TUNABLES.threatRadius);
+    // With prediction the ship predicts the crossing and stays clear of it.
+    expect(on.minDistance).toBeGreaterThanOrEqual(
+      COMPETENT_BOT_TUNABLES.threatRadius - 1,
+    );
+    // It still made progress toward its objective rather than freezing.
+    expect(on.final.x).toBeGreaterThan(300);
+  });
+
+  it('is deterministic: two identical prediction-on runs agree exactly', () => {
+    const first = runCrossing(true);
+    const second = runCrossing(true);
+    expect(second.minDistance).toBe(first.minDistance);
+    expect(second.final.x).toBe(first.final.x);
+    expect(second.final.y).toBe(first.final.y);
   });
 });

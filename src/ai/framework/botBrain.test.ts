@@ -22,6 +22,7 @@ import {
   type BotGoal,
   type BotGoalView,
 } from './registry';
+import { createBotMemory } from './memory';
 import { bullet, makeSnapshot } from './testFixtures';
 import { buildBotWorld } from './worldModel';
 
@@ -311,16 +312,7 @@ describe('resolveGoalCandidates', () => {
     const view = {
       snapshot: makeSnapshot(),
       world: buildBotWorld(makeSnapshot()),
-      memory: {
-        commitment: {
-          goalId: null,
-          heldSeconds: 0,
-          challengerId: null,
-          challengerSeconds: 0,
-        },
-        ticks: 0,
-        scratch: {},
-      },
+      memory: createBotMemory(),
       dt: 0.1,
     };
     const candidates = resolveGoalCandidates(

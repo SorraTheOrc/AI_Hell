@@ -19,6 +19,7 @@
  */
 
 import { BotBrain, type BotBrainOptions } from '../botBrain';
+import { trackHazardVelocities } from '../hazardVelocity';
 import { buildBotWorld } from '../worldModel';
 import { createLegacyBotPolicy } from '../legacyPolicy';
 import type { BotContent } from '../content';
@@ -56,12 +57,14 @@ export {
   buildIntent,
   chooseSteeringDirection,
   evaluateDirection,
+  hazardThreatensPlayer,
   idleIntent,
   interceptPoint,
   mayThrust,
   normalise,
   planSteering,
   type DirectionSafety,
+  type HazardExemption,
   type SteerPlanOptions,
 } from './steering';
 
@@ -99,9 +102,21 @@ export function createCompetentBotBrain(
     behaviours: createCompetentBehaviours(tunables, content),
     commitment: tunables.commitment,
     // The content registry is authoritative for the asteroid partition, so
-    // the world model is built with both the tunables and the content.
-    worldModel: (snapshot) =>
-      buildBotWorld(snapshot, tunables.world, content),
+    // the world model is built with both the tunables and the content. The
+    // memory/dt pair advances the deterministic bot-side hazard-velocity
+    // tracker first, so every hazard carries where it is heading
+    // (AH-0MVI4QDN90037DIN · AC1/AC2).
+    worldModel: (snapshot, memory, dt) => {
+      const hazardVelocities = memory
+        ? trackHazardVelocities(memory, snapshot, dt ?? 0)
+        : undefined;
+      return buildBotWorld(
+        snapshot,
+        tunables.world,
+        content,
+        hazardVelocities,
+      );
+    },
     fallback:
       options.fallback === undefined
         ? createLegacyBotPolicy()
