@@ -21,9 +21,15 @@ import { loadBalanceConfig } from './balanceConfig';
 import { stableStringify } from './report';
 import {
   EVAL_TELEMETRY_SCHEMA_VERSION,
+  type ArenaConfig,
   type ArenaRunResult,
   type TelemetryTickRecord,
 } from './types';
+import { getLevelDefinition } from '../../waves/Formations';
+import { GHOST_ENEMY_KEYS } from '../../waves/GhostSpawner';
+import { GRUNT_ENEMY_KEY } from '../../waves/HordeSpawner';
+import { CENTIPEDE_ENEMY_KEY } from '../../waves/CentipedeSpawner';
+import { LANE_TRAFFIC_ENEMY_KEY } from '../../waves/LaneTrafficSpawner';
 
 const SMALL_SPAWNS = { minerals: 2, powerUps: 1, enemies: 1, asteroids: 1 };
 
@@ -242,5 +248,200 @@ describe('config-driven arena (AH-0MV81YPBG0028WNM, AC1/AC2/AC4)', () => {
     expect(stableStringify(second.records)).toBe(stableStringify(first.records));
     expect(second.ticksSimulated).toBe(first.ticksSimulated);
     expect(second.won).toBe(first.won);
+  });
+});
+
+/**
+ * Per-level campaign mode for the deterministic harness
+ * (AH-0MVLJF9HC007AOI6, **TEST-FIRST**).
+ *
+ * These tests pin the **additive** per-level campaign mode of
+ * `src/ai/eval/arena.ts` / `src/ai/eval/engine.ts` — the item
+ * "Extend balance harness for per-level campaign runs"
+ * (AH-0MVLJFB1I0099X4Z) is blocked by this item and must flip every
+ * `it.fails` back to `it` (the repo's red-before/green-after convention,
+ * documented in `src/core/levelScaling.test.ts`). The pinned fields do
+ * **not** exist in the public types yet, so the suite compiles through the
+ * test-local {@link PerLevelArenaConfig} intersection and the per-level
+ * assertions fail on pre-change HEAD (the arena ignores `level` and runs
+ * the single-level seeded spawn reservoir) while the suite stays green.
+ *
+ * ## Pinned contract (the harness-extension item must match exactly)
+ *
+ * `ArenaConfig` (types.ts) gains two **additive, optional** fields:
+ *
+ * - `level?: number` — the explicit campaign level (1–10). When present,
+ *   the arena plays the **real campaign waves** for that level (the shared
+ *   `Formations.LEVELS` data through the level-scaling seam) instead of the
+ *   single-level spawn reservoir. Absent → the unchanged seeded skirmish.
+ * - `scaleLevels?: boolean` — default **true** in per-level mode. `false`
+ *   disables the level curves (enemy-count multiplier and per-kill drop
+ *   chance resolve to level 1), so a pre-change **baseline** is captured
+ *   with the same harness code and seeds.
+ *
+ * `BatchConfig` (engine.ts) gains the same two fields, forwarded to every
+ * arena run; a per-level batch must report `powerUpsCollected`,
+ * `enemiesKilledByArchetype`, `avoidableHits`, `survivalSeconds` and
+ * `levelReached` (pinned in `cli.test.ts` / `report.test.ts`).
+ *
+ * The **seeded skirmish** (no `level`) stays byte-compatible: its drops
+ * come from the seeded power-up reservoir, unchanged.
+ *
+ * @module ai/eval/arena.test
+ */
+describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () => {
+  /**
+   * The intended additive per-level config surface. The harness-extension
+   * item moves these optional fields into the public `ArenaConfig`; the
+   * intersection keeps this file compiling on pre-change HEAD.
+   */
+  type PerLevelArenaConfig = ArenaConfig & {
+    readonly level?: number;
+    readonly scaleLevels?: boolean;
+  };
+
+  /** One per-level run: default spawns, explicit level, 600 ticks. */
+  function perLevel(
+    level: number,
+    extra: Partial<PerLevelArenaConfig> = {},
+  ): PerLevelArenaConfig {
+    return { seed: 7, ticks: 600, level, ...extra };
+  }
+
+  /**
+   * The real wave-group roster of a level, including the archetypes the
+   * shared spawners deliver for that level's opt-in flags (ghosts, horde,
+   * centipede, lane traffic) — the same accounting the game uses.
+   */
+  function levelRoster(level: number): ReadonlySet<string> {
+    const definition = getLevelDefinition(level);
+    const roster = new Set<string>();
+    if (!definition) return roster;
+    for (const wave of definition.waves) {
+      for (const group of wave.groups) roster.add(group.enemyKey);
+      if (wave.horde) roster.add(GRUNT_ENEMY_KEY);
+      if (wave.ghosts) for (const key of GHOST_ENEMY_KEYS) roster.add(key);
+      if (wave.centipede) roster.add(CENTIPEDE_ENEMY_KEY);
+      if (wave.laneTraffic) roster.add(LANE_TRAFFIC_ENEMY_KEY);
+    }
+    return roster;
+  }
+
+  /**
+   * The group archetypes a run actually exercises (the seeded asteroid
+   * shadow-hazard is excluded — it is a spawner, not a campaign wave group).
+   */
+  function seenArchetypes(result: ArenaRunResult): Set<string> {
+    const seen = new Set<string>();
+    for (const record of result.records) {
+      if (record.kind === 'tick') {
+        for (const enemy of record.state.enemies) {
+          if (enemy.archetype !== 'asteroid') seen.add(enemy.archetype);
+        }
+      } else if (record.kind === 'event' && record.event === 'enemy_killed') {
+        const key = String(record.payload.archetype);
+        if (key !== 'asteroid') seen.add(key);
+      }
+    }
+    return seen;
+  }
+
+  // RED until AH-0MVLJFB1I0099X4Z (level selection).
+  it.fails('plays the real campaign waves for levels 1, 5 and 10, not the spawn reservoir', () => {
+    for (const level of [1, 5, 10]) {
+      const seen = seenArchetypes(runArena(createLegacyBotPolicy(), perLevel(level)));
+      expect(seen.size).toBeGreaterThan(0);
+      const roster = levelRoster(level);
+      for (const key of seen) expect(roster.has(key)).toBe(true);
+    }
+  });
+
+  // RED until AH-0MVLJFB1I0099X4Z (level selection).
+  it.fails('selects the level: levels differ from each other and from the seeded skirmish', () => {
+    const run = (level: number): string =>
+      stableStringify(runArena(createLegacyBotPolicy(), perLevel(level)).records);
+    expect(run(1)).not.toBe(run(5));
+    expect(run(5)).not.toBe(run(10));
+    expect(run(1)).not.toBe(run(10));
+    // Additive mode: an explicit level replaces the single-level skirmish.
+    const skirmish = stableStringify(
+      runArena(createLegacyBotPolicy(), { seed: 7, ticks: 600 }).records,
+    );
+    expect(run(5)).not.toBe(skirmish);
+  });
+
+  // RED until AH-0MVLJFB1I0099X4Z (kill-time drop rule).
+  it.fails('uses the real kill-time drop rule instead of seeded power-ups', () => {
+    const result = runArena(createLegacyBotPolicy(), perLevel(5, { ticks: 900 }));
+    const ticks = result.records.filter(
+      (record): record is TelemetryTickRecord => record.kind === 'tick',
+    );
+    // No seeded reservoir: the field is empty until a kill drops something.
+    expect(ticks[0].tick).toBe(0);
+    expect(ticks[0].state.drops.length).toBe(0);
+
+    let firstKillTick = Number.POSITIVE_INFINITY;
+    let kills = 0;
+    for (const record of result.records) {
+      if (
+        record.kind === 'event' &&
+        (record.event === 'enemy_killed' || record.event === 'asteroid_destroyed')
+      ) {
+        firstKillTick = Math.min(firstKillTick, record.tick);
+        kills += 1;
+      }
+    }
+    let pickups = 0;
+    for (const record of result.records) {
+      if (record.kind !== 'event' || record.event !== 'pickup') continue;
+      pickups += 1;
+      expect(record.tick).toBeGreaterThanOrEqual(firstKillTick);
+    }
+    // At most one generic drop plus one Extra Life per kill (the shared
+    // per-kill and asteroid extra-life rolls) — never a seeded supply.
+    expect(pickups).toBeLessThanOrEqual(2 * kills);
+  });
+
+  it('keeps same-seed per-level runs byte-identical (determinism)', () => {
+    const first = runArena(createLegacyBotPolicy(), perLevel(5));
+    const second = runArena(createLegacyBotPolicy(), perLevel(5));
+    expect(stableStringify(second.records)).toBe(stableStringify(first.records));
+    expect(second.ticksSimulated).toBe(first.ticksSimulated);
+  });
+
+  it('is the identity transform at level 1 (scaling on/off run identically)', () => {
+    const scaled = runArena(createLegacyBotPolicy(), perLevel(1));
+    const baseline = runArena(
+      createLegacyBotPolicy(),
+      perLevel(1, { scaleLevels: false }),
+    );
+    expect(stableStringify(baseline.records)).toBe(stableStringify(scaled.records));
+  });
+
+  // RED until AH-0MVLJFB1I0099X4Z (baseline toggle).
+  it.fails('can disable the level curves to capture a pre-change baseline', () => {
+    const scaled = runArena(createLegacyBotPolicy(), perLevel(10, { ticks: 900 }));
+    const baseline = runArena(
+      createLegacyBotPolicy(),
+      perLevel(10, { ticks: 900, scaleLevels: false }),
+    );
+    expect(stableStringify(baseline.records)).not.toBe(stableStringify(scaled.records));
+  });
+
+  it('keeps the seeded power-up reservoir as the skirmish drop source (unchanged mode)', () => {
+    const result = runArena(createLegacyBotPolicy(), {
+      seed: 7,
+      ticks: 180,
+      spawns: { minerals: 1, powerUps: 2, enemies: 1, asteroids: 0 },
+    });
+    const firstTick = result.records.find(
+      (record): record is TelemetryTickRecord => record.kind === 'tick',
+    );
+    expect(firstTick).toBeDefined();
+    if (!firstTick) throw new Error('unreachable');
+    expect(firstTick.tick).toBe(0);
+    // Seeded drops sit on the field from the very first tick, before any
+    // kill — the property the per-level kill-drop rule must not have.
+    expect(firstTick.state.drops.length).toBe(2);
   });
 });

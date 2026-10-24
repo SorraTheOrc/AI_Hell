@@ -295,3 +295,46 @@ describe('buildTuneComparisonArtifacts (AH-0MVBNITA0005VQGN)', () => {
     expect(artifacts.summaryText).toContain('boss.health 1 → 8');
   });
 });
+
+/**
+ * Per-level campaign batch (AH-0MVLJF9HC007AOI6, **TEST-FIRST**).
+ *
+ * Pins the additive per-level surface of the pure CLI core: `CliOptions`
+ * gains an optional `level` the shell/`executeEvaluation` forwards to
+ * `runBatch` → `runArena`, and the resulting balance batch must report the
+ * per-level fields (`powerUpsCollected`, `enemiesKilledByArchetype`,
+ * `avoidableHits`, `survivalSeconds`, `levelReached`). Pre-change HEAD has
+ * no such option: `executeEvaluation` ignores the extra field, every run is
+ * a seeded skirmish and `levelReached` stays 0, so this test stays red
+ * (Vitest `it.fails`, the repo red-before/green-after convention) while the
+ * suite stays green. The harness-extension item (AH-0MVLJFB1I0099X4Z)
+ * threads `level` through and flips it back to `it`.
+ */
+describe('per-level campaign batch (AH-0MVLJF9HC007AOI6, pinned test-first)', () => {
+  // RED until AH-0MVLJFB1I0099X4Z (CliOptions.level → runBatch → arena).
+  it.fails('runs the real campaign at an explicit level and reports the per-level fields', () => {
+    const result = executeEvaluation({
+      ...options({ batch: true, seeds: [1, 2], ticks: 300 }),
+      level: 5,
+    } as CliOptions);
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(
+      result.artifacts.find((artifact) => artifact.name === 'balance-report.json')
+        ?.content ?? '{}',
+    );
+    // The per-level evidence the emitter surfaces for a level-selecting batch.
+    for (const field of [
+      'powerUpsCollected',
+      'enemiesKilledByArchetype',
+      'avoidableHits',
+      'survivalSeconds',
+      'levelReached',
+    ]) {
+      expect(report.aggregate).toHaveProperty(field);
+    }
+    expect(report.runs).toHaveLength(2);
+    for (const run of report.runs) {
+      expect(run.stats.levelReached).toBe(5);
+    }
+  });
+});

@@ -23,6 +23,7 @@ import {
 // to prove the version is shared, not duplicated) and serialise byte-stably.
 import { BALANCE_STATISTICS_SCHEMA_VERSION as SHARED_SCHEMA_VERSION } from './index';
 import { runBatch } from './engine';
+import type { BatchConfig } from './engine';
 import { resolvePolicyFactory } from './policies';
 import { aggregateBalanceStats } from './metrics';
 import { compareBalanceAggregates } from './tune';
@@ -236,5 +237,38 @@ describe('formatTuneSummary (AH-0MVBNLM2V008XC8T: per-key moves are surfaced)', 
     );
     expect(shape).toContain('enemiesKilledByArchetype.scout');
     expect(shape).toContain('stdDev 0.00 → 1.00 (Δ 1.00)');
+  });
+});
+
+/**
+ * Per-level batch schema compatibility (AH-0MVLJF9HC007AOI6,
+ * TEST-FIRST).
+ *
+ * The per-level campaign mode is **additive**: `BatchConfig` gains an
+ * optional `level` (forwarded to every arena run) but the balance-batch
+ * artifact keeps its versioned shape — same `kind`, same schema and dataset
+ * versions, and the per-level evidence rides the existing aggregate fields
+ * (`powerUpsCollected`, `enemiesKilledByArchetype`, `avoidableHits`,
+ * `survivalSeconds`, `levelReached`). On pre-change HEAD the extra field is
+ * ignored and this contract trivially holds (the hard gate for the mode's
+ * existence lives in `arena.test.ts` / `cli.test.ts` as `it.fails`).
+ */
+describe('per-level batch schema compatibility (AH-0MVLJF9HC007AOI6)', () => {
+  it('keeps the versioned balance-batch schema for a per-level run (additive)', () => {
+    const config: BatchConfig & { readonly level?: number } = {
+      seeds: [1],
+      ticks: 120,
+      level: 5,
+    };
+    const output = runBatch(config);
+    expect(output.report.kind).toBe('balance');
+    expect(output.report.schemaVersion).toBe(SHARED_SCHEMA_VERSION);
+    expect(output.report.datasetVersion).toBe(EVAL_DATASET_VERSION);
+    // The per-level evidence fields ride the existing aggregate shape.
+    expect(output.aggregate).toHaveProperty('powerUpsCollected');
+    expect(output.aggregate).toHaveProperty('enemiesKilledByArchetype');
+    expect(output.aggregate).toHaveProperty('avoidableHits');
+    expect(output.aggregate).toHaveProperty('survivalSeconds');
+    expect(output.aggregate).toHaveProperty('levelReached');
   });
 });
