@@ -682,6 +682,23 @@ added by AH-0MUWTNPYJ0031FQE):
   without it files default to
   `capture-output/<scenario>-<timestamp>.webm` and an existing file is never
   silently overwritten (a `-<n>` suffix is used).
+- **Multi-scene capture (`capture:scenes`):** `npm run capture:scenes --
+  --config scenes.json` records several **dev gym scenes in config order** and
+  compiles them into **one WebM**, with a page-side **fade to black and back
+  (0.25 s each way)** between consecutive scenes (AH-0MUX2NLFZ00128WC). One
+  Vite server, one browser, one page and **one continuously running
+  `MediaRecorder`** span every scene, so no relaunch or navigation breaks the
+  recording; the CLI validates the JSON scene list **before** anything boots
+  (`target` + `playMs` + `captureMs`, optional `label`) and the in-page
+  director (`window.__aiHellCaptureDirector`) switches scenes behind the fade.
+  Output is a single `capture-output/scenes-<timestamp>.webm` (or `--output
+  <path>`), and `--json` reports per-scene `{ target, playMs, captureMs,
+  startMs, endMs }`, the total duration, the output path and whether the fades
+  were verified in the recording. The director is dev-only
+  (`import.meta.env.DEV`) and rejects unknown/parameterised gym scenes, so the
+  shipped bundle and `npm run check-bundle` are unaffected. Config schema,
+  watchable scene list and fade/timing details: see
+  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#multi-scene-capture-capturescenes).
 - **How it works:** `scripts/capture-gameplay.mjs` starts the Vite dev server
   programmatically, installs a page-side Web Audio tap (wrapping
   `AudioNode.prototype.connect` so the game's shared master gain is mirrored

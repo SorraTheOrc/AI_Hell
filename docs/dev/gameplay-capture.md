@@ -49,6 +49,9 @@ npm run capture -- --count 3 --output clips/demo.webm   # clips/demo-1..3.webm
 npm run capture -- --all-scenarios
 npm run capture -- --all-scenarios --output clips          # clips/<scenario>.webm
 
+# record several gym scenes into ONE video, fading between them (0.25 s each way)
+npm run capture:scenes -- --config scenes.json             # capture-output/scenes-<timestamp>.webm
+
 # compile the captured pool into a promo + showreel + highlight clips
 # (needs a full ffmpeg — see Compiling a promo package below)
 npm run compile:promo
@@ -735,6 +738,187 @@ parsing paths.
   if any scenario failed or hit the `--max-duration` cap; a single-scenario
   failure does not abort the remaining scenarios (AC6).
 
+## Multi-scene capture (`capture:scenes`)
+
+`npm run capture:scenes` records **several gym scenes in config order** and
+compiles them into **one** WebM, with a **fade to black and back (0.25 s each
+way)** between consecutive scenes (feature AH-0MUX2NLFZ00128WC, driver
+AH-0MVFC70GT000B96J). One Vite dev server, one browser, **one page and one
+continuously running `MediaRecorder`** span every scene; the transitions are
+drawn page-side, so the recorder captures them and no relaunch is needed.
+
+```bash
+# one-time (if not already done)
+npm install
+npm run capture:install
+
+# compile the scenes listed in scenes.json into one WebM
+npm run capture:scenes -- --config scenes.json
+npm run capture:scenes -- --config scenes.json --output clips/showcase.webm
+
+# equivalent through the main capture command (`--scenes` is the older alias)
+npm run capture -- --config scenes.json
+```
+
+### Config schema
+
+A scene list is a JSON object with a non-empty `scenes` array; entries keep
+the file order and the list may be any length (at least one scene):
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `target` | string | yes | a **watchable gym scene key** (see below) |
+| `playMs` | positive integer | yes | warm-up play window for this scene |
+| `captureMs` | positive integer | yes | recorded capture window for this scene |
+| `label` | string | no | one-line note for your own reference (not written into the video) |
+
+```json
+{
+  "scenes": [
+    { "target": "GymPlayer", "playMs": 2000, "captureMs": 3000, "label": "player control" },
+    { "target": "GymWeapons", "playMs": 1500, "captureMs": 2500, "label": "weapons" },
+    { "target": "GymBoss", "playMs": 3000, "captureMs": 4000 }
+  ]
+}
+```
+
+#### Watchable gym scenes
+
+`target` must be one of the dev gym scenes discovered under `src/scenes/gym/`
+(`Gym<Name>`), minus the two **parameterised** scenes that cannot start
+without a caller-supplied parameter:
+
+`GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymMinerals`,
+`GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`, `GymPowerUpsCombat`,
+`GymPowerUpsUtility`, `GymWeaponLeveling`, `GymWeapons`.
+
+`GymFodderEnemies` (needs `enemyKey`) and `GymLevel` (needs a `LevelDefinition`)
+are **rejected** with `unsupported-target`. The registry
+(`WATCHABLE_GYM_SCENE_KEYS` in `scripts/capture-scenes.mjs`) is the **single
+source of truth** shared by the CLI's pre-boot validation and the page-side
+director's `start(key)` guard, and is pinned against the gym files on disk by
+`scripts/capture-scenes.test.ts` — adding or removing a gym scene without
+updating it fails the suite instead of silently drifting.
+
+### Validation (before anything boots)
+
+The config is read and validated **before any Vite server or browser starts**.
+A bad config fails fast, prints `Scene config error: <actionable message>` to
+stderr and exits **1** — it never records a partial or blank video:
+
+| Error code | Cause |
+|---|---|
+| `missing-file` / `unreadable-file` | the path does not exist / cannot be read |
+| `malformed-json` | the file is not valid JSON |
+| `invalid-config` | the JSON is not an object with a `scenes` list |
+| `empty-scenes` | `scenes` is empty |
+| `invalid-target` | `target` is missing or not a non-empty string |
+| `unknown-target` | `target` is not a discovered gym scene key |
+| `unsupported-target` | `target` is one of the parameterised gym scenes |
+| `invalid-duration` | `playMs`/`captureMs` is not a positive integer (mirrors `--count`) |
+
+### Fades and timing
+
+Between consecutive scenes the page-side overlay **fades to black over
+`SCENE_FADE_MS` (250 ms)**, the next scene is started **behind the black**, and
+the overlay **fades from black over another 250 ms** — a 500 ms transition.
+The recorded timeline is therefore:
+
+```text
+scene i window :  [startMs, endMs]  = playMs + captureMs
+next startMs   :  endMs + 2 * 250 ms
+totalMs        :  last endMs
+```
+
+`startMs`/`endMs` are the **planned** offsets in the output timeline, i.e.
+exactly what a `--json` consumer (or an editor) needs to locate each scene.
+The fade probe does not trust them alone: the driver records each scene's
+actual wall-clock start and probes the measured transition windows, so a short
+pre-roll or page round-trip jitter cannot desynchronise the verification.
+After recording it probes a frame at each scene midpoint and several frames
+across every transition window; a transition that never darkens the picture,
+or a fade with no measurable contrast, **fails the capture** rather than
+reporting a fade-less clip as OK (thresholds `SCENE_FADE_DARK_LUMA` /
+`SCENE_FADE_CONTRAST_LUMA` in `scripts/capture-scenes.mjs`).
+
+### Output
+
+A multi-scene capture writes exactly **one** WebM:
+
+| Invocation | Output file |
+|---|---|
+| `npm run capture:scenes -- --config scenes.json` | `capture-output/scenes-<ISO-timestamp>.webm` (git-ignored) |
+| `… --config scenes.json --output clips/showcase.webm` | `clips/showcase.webm` (a relative path resolves against the cwd — the package root under `npm run`; missing parent directories are created) |
+
+The video is **960×540** with the game's own SFX, preferring
+`video/webm;codecs=vp9,opus` and falling back per the shared
+`resolveCaptureMimeType` order (VP8+Opus, then plain WebM). The scene list is
+one output file recorded on one page, so `--count`/`--all-scenarios` do not
+apply to it.
+
+### `--json` shape
+
+`--json` prints the scene payload (the required fields) plus the shared probe
+fields (e.g. `output`, `bytes`, `nonTrivial`, `fadeVerified`, `fadeReasons`,
+`outputDurationMs`, `pageErrors`):
+
+```json
+{
+  "outputPath": "capture-output/scenes-2026-10-24T20-00-00-000Z.webm",
+  "sceneCount": 3,
+  "fadeMs": 250,
+  "totalMs": 17000,
+  "scenes": [
+    { "target": "GymPlayer", "playMs": 2000, "captureMs": 3000, "startMs": 0, "endMs": 5000 },
+    { "target": "GymWeapons", "playMs": 1500, "captureMs": 2500, "startMs": 5500, "endMs": 9500 },
+    { "target": "GymBoss", "playMs": 3000, "captureMs": 4000, "startMs": 10000, "endMs": 17000 }
+  ],
+  "output": "…/capture-output/scenes-2026-10-24T20-00-00-000Z.webm",
+  "nonTrivial": true,
+  "durationMs": 17000,
+  "outputDurationMs": 17020,
+  "fadeVerified": true,
+  "fadeReasons": []
+}
+```
+
+`durationMs` is the planned timeline; `outputDurationMs` is the decoded length
+of the written WebM (they differ by a few tens of milliseconds of encoder
+padding). `nonTrivial` is true only when **both** the shared video+audio
+verdict **and** the fade verification pass. The process exits `0` on success
+and `1` for an invalid config or a failed video/audio/fade verdict.
+
+### How it works
+
+The dedicated path reuses the existing capture session machinery rather than
+duplicating it:
+
+1. Read and validate the scene list (above), then boot one Vite dev server and
+   one headless Chromium browser.
+2. Load the game, press **Enter** (a trusted gesture that resumes the shared
+   `AudioContext`), and wait out `--warmup`.
+3. Install the audio tap, resolve the mime, and install the page-side
+   **composite overlay** canvas that mirrors the game canvas (plus a black fade
+   layer).
+4. Start **one** `MediaRecorder` on the composite canvas, then drive the scene
+   sequence: for each scene call the director's `start(key)`, wait `playMs`
+   then `captureMs`; between scenes fade to black, start the next scene behind
+   the black, and fade from black.
+5. Stop the recorder once, probe the decoded WebM (video, audio and the fade
+   windows), write the single output file and print the report / `--json`
+   payload.
+
+The page-side director is registered **at boot in dev builds only**
+(`import.meta.env.DEV`, mirroring `window.__aiHellScenario`); Vite folds the
+flag to `false` in a production build, so the registration body is
+dead-code-eliminated and `npm run check-bundle` stays green. `start(key)`
+switches scenes **in-page** through the Phaser scene manager — no navigation
+or reload, so the single recorder survives — and throws a typed
+`SceneConfigError` for an unknown, blank or parameterised key rather than
+recording a blank scene. Targets are **dev gym scenes**, not generated
+shipped-game levels; that deferred option is tracked by
+AH-0MVE01EY0008QEVX.
+
 ## Progress output & dependency preflight
 
 A capture spends ~20 s producing no output (Vite + browser startup, warm-up,
@@ -1034,6 +1218,11 @@ full`) or `npm run build`.
 | `scripts/capture-progress.d.mts` | Types for the progress module |
 | `scripts/capture-run-lifecycle.mjs` | Pure run-lifecycle contracts: signal encode/decode, tail/cap arithmetic, the `waitForRunEnd` loop, run summary and demo dwell |
 | `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
+| `scripts/capture-scenes.mjs` | Pure multi-scene core: scene-list config parsing/validation, shared watchable-gym registry, scene/fade timeline and `--json` payload (browser-free) |
+| `scripts/capture-scenes.d.mts` | Types for the multi-scene core |
+| `scripts/capture-scenes.test.ts` | Hermetic tests for config validation, the scene/fade plan, the payload, fade-sample verification and the watchable-scene registry |
+| `src/core/captureDirector.ts` | Dev-gated `window.__aiHellCaptureDirector` in-page scene director (key validation shared with the CLI, no navigation); inert in production |
+| `src/core/captureDirector.test.ts` | Unit tests for the director's key validation, discovery and dev gate |
 | `scripts/capture-series.mjs` | Pure §7.2 series serialiser + §7.5 join-anchor builder + telemetry extraction (shared with the action-intensity export) |
 | `scripts/capture-series.d.mts` | Types for the series/anchor module |
 | `scripts/compile-promo.mjs` | Promo compiler + ffmpeg driver: edit plan from the recorded series, cut cadence, deliverable sizing, manifests, output validation and pace verification |
@@ -1045,5 +1234,5 @@ full`) or `npm run build`.
 | `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |
 | `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap and progress helpers |
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
-| `package.json` | `capture` / `capture:install` / `list:pool` / `compile:promo` scripts; `playwright` devDependency |
+| `package.json` | `capture` / `capture:scenes` / `capture:install` / `list:pool` / `compile:promo` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |
