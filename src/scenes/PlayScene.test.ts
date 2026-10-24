@@ -7326,8 +7326,9 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
  * Vitest's `it.fails(...)` — the repo's red-before/green-after convention
  * (see `src/core/levelScaling.test.ts` and AH-0MVLJCYGW001TRB3) — so the
  * suite stays green while the flat roll is still live. **F2
- * (AH-0MVLJF5P0005KF8X) flips every `it.fails` back to `it`**, turning the
- * per-level behaviour into ordinary green tests.
+ * (AH-0MVLJF5P0005KF8X) works in this file**: the scene now resolves the
+ * per-level chance, and the red tests are flipped back to `it` (these
+ * three flipped tests are the green evidence the implementation landed).
  *
  * Every roll is driven with a **constant injected RNG**, so the number of
  * drops over the N kill rolls is exact and deterministic — no statistical
@@ -7549,7 +7550,7 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
     spawn.mockRestore();
   });
 
-  it.fails(
+  it(
     'level 10 — the per-kill chance falls to 0.05 (30 % of the level-1 supply)',
     async () => {
       const scene = await bootDropScene(dropCampaign(10));
@@ -7571,7 +7572,7 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
 
   // ── Mid-run level advance (RED until F2 re-resolves per kill) ────
 
-  it.fails(
+  it(
     'mid-run — advancing a level re-resolves the drop chance for the next kills',
     async () => {
       const scene = await bootDropScene(dropCampaign(1, 2)); // levels 1 → 2
@@ -7648,7 +7649,7 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
     ).toHaveLength(4);
   });
 
-  it.fails(
+  it(
     'Extra Life — level 10 scales the roll by the same ratio as the per-kill chance',
     async () => {
       const scene = await bootDropScene(dropCampaign(10));

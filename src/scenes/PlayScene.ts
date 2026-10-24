@@ -44,10 +44,14 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState, MAX_LEVEL, MAX_LIVES } from '../core/GameState';
-import { applyEnemyCountScaling, POWER_UP_DROP_CHANCE } from '../core/levelScaling';
+import {
+  applyEnemyCountScaling,
+  extraLifeDropChance,
+  POWER_UP_DROP_CHANCE,
+  powerUpDropChance,
+} from '../core/levelScaling';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import {
-  DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
   DEFAULT_RULES,
   loadRules,
   type GameRules,
@@ -757,13 +761,16 @@ export class PlayScene extends CombatScene<
   private rng: () => number = Math.random;
 
   /**
-   * Persisted chance that a destroyed small asteroid additionally drops an
-   * Extra Life (AH-0MV6M2M9P0078N4S). Loaded from the game rules at run
-   * start; the shared `rollAsteroidExtraLife` rule reads it in
-   * `_onEnemyKilled`.
+   * The run's loaded game rules (AH-0MVLJF5P0005KF8X). Resolved once at
+   * create-time from persisted config; the level-scaling helpers consume
+   * these to turn the live campaign level into the per-kill power-up drop
+   * chance and the small-asteroid Extra Life chance (see
+   * `src/core/levelScaling.ts` — nothing here hard-codes per-level
+   * numbers). The legacy flat `asteroidExtraLifeDropChance` read was the
+   * level-1 base; the per-level chance derives from this same rules object
+   * (level 1 is exactly that base).
    */
-  private asteroidExtraLifeDropChance =
-    DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE;
+  private rules: GameRules = DEFAULT_RULES;
 
   /**
    * The resolved per-run seed (AH-0MUY08V6W001SJJN). Assigned once per run
@@ -1020,7 +1027,7 @@ export class PlayScene extends CombatScene<
 
     // Power-up drop pool.
     const rules = loadRules();
-    this.asteroidExtraLifeDropChance = rules.asteroidExtraLifeDropChance;
+    this.rules = rules;
     this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
       rules.weaponWeights,
@@ -3507,12 +3514,15 @@ export class PlayScene extends CombatScene<
     // asteroid additionally rolls the configurable Extra Life drop. The
     // shared rule tier-gates first, so large/medium rocks (which split) and
     // non-asteroid enemies never consume an RNG draw here. Additive to the
-    // generic pool above — asteroids stay in the weighted drop pool.
+    // generic pool above — asteroids stay in the weighted drop pool. The
+    // chance scales by the same ratio as the per-kill power-up chance, so
+    // the supply falls with the campaign level (AH-0MVLJF5P0005KF8X).
+    const level = this._resolveDropLevel();
     if (
       rollAsteroidExtraLife(
         s.entity as unknown as AsteroidKillDropEntity,
         this.rng,
-        this.asteroidExtraLifeDropChance,
+        extraLifeDropChance(level, this.rules),
       )
     ) {
       this.spawnPowerUpDrop('extra_life', s.entity.x, s.entity.y);
@@ -3674,11 +3684,32 @@ export class PlayScene extends CombatScene<
 
   // ── Power-up drops ──────────────────────────────────────────────
 
-  /** Rolls (and possibly spawns) a power-up drop at a kill position. */
+  /**
+   * Rolls (and possibly spawns) a power-up drop at a kill position.
+   *
+   * The roll uses the **level-resolved** per-kill drop chance
+   * (`powerUpDropChance`, AH-0MVLJF5P0005KF8X): the level is read from the
+   * live campaign at kill time, so the supply per enemy falls as the
+   * campaign progresses. Level 1 keeps today's flat `POWER_UP_DROP_CHANCE`
+   * (0.18) exactly; all per-level values come from the shared module.
+   */
   private _maybeDropPowerUp(x: number, y: number): void {
     if (!this.dropSpawner) return;
-    if (this.rng() > POWER_UP_DROP_CHANCE) return;
+    if (this.rng() > powerUpDropChance(this._resolveDropLevel(), this.rules)) {
+      return;
+    }
     this.spawnPowerUpDrop(this.dropSpawner.next(), x, y);
+  }
+
+  /**
+   * The live campaign level for kill-time drop rolls.
+   *
+   * Resolved from `WaveManager.currentLevel()?.level` so every drop roll
+   * tracks the current campaign level; falls back to level 1 when no level
+   * is live (e.g. between transitions), preserving today's level-1 rate.
+   */
+  private _resolveDropLevel(): number {
+    return this.waveManager.currentLevel()?.level ?? 1;
   }
 
   /**
