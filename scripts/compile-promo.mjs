@@ -854,6 +854,13 @@ Options:
                         ${CAPTURE_OUTPUT_DIR}/; only with --compile)
   --compile             compile + validate the deliverables with ffmpeg
   --help, -h            show this help and exit
+
+Progress:
+  --compile writes one \`compile:\` line to stderr per stage (plan ready,
+  each deliverable's cuts and sources, then each deliverable's ok/FAIL)
+  before printing the final summary on stdout. A full package takes a few
+  minutes to encode, so long silence is expected — watch stderr for
+  progress rather than assuming the command has hung.
 `;
 
 /**
@@ -1030,8 +1037,11 @@ export function loadCompileSources({ runs, durationMs = null, fs }) {
  *           existsSync?: Function, readdirSync?: Function }} [fsImpl] -
  *   Injectable fs (defaults to node:fs).
  * @param {{ resolveTools?: () => ({ ffmpeg: string, ffprobe: string })|null,
- *           run?: Function, probe?: Function, brightness?: Function }} [deps] -
- *   Injectable subprocess implementations (defaults to real ffmpeg/ffprobe).
+ *           run?: Function, probe?: Function, brightness?: Function,
+ *           progress?: (message: string) => void }} [deps] -
+ *   Injectable subprocess implementations (defaults to real ffmpeg/ffprobe);
+ *   `progress` defaults to a stderr line so a minutes-long encode is visibly
+ *   in progress instead of looking hung.
  * @returns {{ code: number, stdout: string, plan: EditPlan|null,
  *             compileResult?: CompileResult }}
  */
@@ -1081,6 +1091,16 @@ export function compilePromoMain(
     return { code: 0, stdout: json, plan };
   }
 
+  // Progress goes to stderr so stdout stays the machine-readable summary
+  // (AC5/AC6). Default: one `compile:` line per stage — a 2-4 minute encode
+  // that printed nothing until the end read as a hang during manual review.
+  const progress = deps.progress ?? ((message) => process.stderr.write(`compile: ${message}\n`));
+  progress(
+    `plan ready: ${plan.promo?.length ?? 0} promo cuts, ` +
+      `${plan.showreel?.length ?? 0} showreel cuts, ` +
+      `${plan.highlights?.length ?? 0} highlight clips → ${parsed.out}`,
+  );
+
   // ── Compile mode (AC1–AC6): ffmpeg cut/join/mux + output validation ──
   const resolveTools = deps.resolveTools ?? resolveFfmpegTools;
   const tools = resolveTools();
@@ -1107,6 +1127,7 @@ export function compilePromoMain(
     run: deps.run,
     probe: deps.probe,
     brightness: deps.brightness,
+    progress,
   });
   const reportPath = `${parsed.outDir}/compile-promo-report.json`;
   try {
@@ -1851,7 +1872,11 @@ function meanIntensity(segments) {
  * @param {{
  *   ffmpeg?: string, ffprobe?: string, outDir?: string,
  *   run?: Function, probe?: Function, brightness?: Function,
- * }} [deps]
+ *   progress?: (message: string) => void,
+ * }} [deps] - `progress` receives one human-readable line as each stage
+ *   starts/finishes; the encode is minutes long, so the CLI forwards it to
+ *   stderr to prove the command is working rather than hung. Pure default:
+ *   no-op (tests and programmatic callers stay silent).
  * @returns {{ ok: boolean, deliverables: CompiledDeliverable[],
  *             errors: string[], report: object }}
  */
@@ -1864,6 +1889,7 @@ export function compileDeliverables(plan, deps = {}) {
     probe = probeMediaSync,
     brightness = sampleBrightnessSync,
     targets = DELIVERABLE_TARGETS,
+    progress = () => {},
   } = deps;
   // Calibrated "the screen is rendering" floor (docs §7.6): the generic 24
   // floor asks "is there bright content?" and would flag ordinary gameplay in
@@ -1887,8 +1913,18 @@ export function compileDeliverables(plan, deps = {}) {
   const built = buildDeliverableCommands(plan, { probeByPath, outDir });
   errors.push(...built.errors);
 
+  const total = built.commands.length;
+  progress(
+    `compiling ${total} deliverable${total === 1 ? '' : 's'} with ${ffmpeg} ` +
+      `(${sourcePaths.length} source${sourcePaths.length === 1 ? '' : 's'})`,
+  );
+
   const deliverables = [];
-  for (const command of built.commands) {
+  for (const [index, command] of built.commands.entries()) {
+    const label = `[${index + 1}/${total}] ${command.name}`;
+    progress(
+      `${label}: ${command.segments.length} cut${command.segments.length === 1 ? '' : 's'} → ${command.output}`,
+    );
     const argv = [ffmpeg, ...command.argv.slice(1)];
     const runResult = run(argv, {});
     if (!runResult.ok) {
@@ -1903,6 +1939,7 @@ export function compileDeliverables(plan, deps = {}) {
         segments: command.segments,
       });
       errors.push(`${command.output}: ffmpeg failed: ${detail}`);
+      progress(`${label}: FAIL — ${detail}`);
       continue;
     }
     const probed = probe(command.output, { ffprobe });
@@ -1930,9 +1967,15 @@ export function compileDeliverables(plan, deps = {}) {
       measuredMeanIntensity: meanIntensity(command.segments),
     });
     if (!verdict.ok) errors.push(`${command.output}: ${verdict.issues.join('; ')}`);
+    progress(
+      verdict.ok
+        ? `${label}: ok — ${summarizeProbe(probed).durationSec?.toFixed(1) ?? '?'}s`
+        : `${label}: FAIL — ${verdict.issues.join('; ')}`,
+    );
   }
 
   // ── Pace verification (parent AC3/AC4) — the promo only ──
+  progress('verifying promo pace and deliverable sizing');
   // The hook is the first `openingWindowMs` of the delivered promo, measured
   // from the real output (not the plan), so 'opens with action' is evidence
   // rather than intent. The recorded mean intensity comes from the segments

@@ -2128,6 +2128,96 @@ describe('ffmpeg driver — compile orchestration with injected subprocesses (AC
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// Compile progress reporting (manual-review regression): a 2-4 minute encode
+// that printed nothing until the end read as a hung command, so compile-
+// Deliverables' `progress` hook emits a line per stage and the CLI forwards it
+// to stderr.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('compile progress — a long encode reports each stage (AC5 usability)', () => {
+  const outDir = `${CAPTURE_OUTPUT_DIR}/compile-progress`;
+
+  it('reports the compile start, every deliverable and the verification step', () => {
+    const messages: string[] = [];
+    const result = compileDeliverables(fullPlan(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      probe: targetProbeOf,
+      brightness: brightFixture,
+      run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+      progress: (message: string) => messages.push(message),
+    });
+
+    expect(result.ok).toBe(true);
+    // A start line names the binary and the deliverable count, so an operator
+    // can see the command is working before any encode finishes.
+    expect(messages[0]).toContain('compiling 7 deliverables with /fake/ffmpeg');
+    // Every deliverable announces its cuts before encoding and its verdict after.
+    for (const name of ['promo', 'showreel', 'highlight-01', 'highlight-05']) {
+      expect(messages.some((m) => m.includes(name) && /\bcut/.test(m))).toBe(true);
+      expect(messages.some((m) => m.includes(name) && m.includes('ok'))).toBe(true);
+    }
+    expect(messages.some((m) => m.includes('verifying promo pace'))).toBe(true);
+    // Ordering is progress-ordered, not a single end-of-run dump.
+    expect(messages.findIndex((m) => m.includes('[1/7] promo'))).toBeLessThan(
+      messages.findIndex((m) => m.includes('[2/7] showreel')),
+    );
+  });
+
+  it('reports a failed deliverable as FAIL with the actionable detail', () => {
+    const messages: string[] = [];
+    compileDeliverables(planOf(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      probe: targetProbeOf,
+      brightness: brightFixture,
+      run: () => ({ ok: false, code: 1, stdout: '', stderr: 'Assertion failed' }),
+      progress: (message: string) => messages.push(message),
+    });
+    expect(messages.some((m) => m.includes('FAIL') && m.includes('Assertion failed'))).toBe(true);
+  });
+
+  it('defaults to silent progress so programmatic callers are unchanged', () => {
+    // No `progress` supplied — must not throw and must not write anywhere.
+    const result = compileDeliverables(fullPlan(), {
+      ffmpeg: '/fake/ffmpeg',
+      ffprobe: '/fake/ffprobe',
+      outDir,
+      probe: targetProbeOf,
+      brightness: brightFixture,
+      run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('forwards progress from the CLI into the compile stage on stderr', () => {
+    const messages: string[] = [];
+    const fs = memoryFs({
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.action.jsonl`]: demoSeriesFivePeaks,
+      [`${CAPTURE_OUTPUT_DIR}/gameplay-demo.webm`]: '',
+      [CAPTURE_OUTPUT_DIR]: '',
+    });
+    const result = compilePromoMain(
+      ['--runs', 'gameplay-demo', '--compile', '--out', 'plan.json', '--out-dir', CAPTURE_OUTPUT_DIR],
+      fs,
+      {
+        resolveTools: () => ({ ffmpeg: '/fake/ffmpeg', ffprobe: '/fake/ffprobe' }),
+        run: () => ({ ok: true, code: 0, stdout: '', stderr: '' }),
+        probe: targetProbeOf,
+        brightness: brightFixture,
+        progress: (message: string) => messages.push(message),
+      },
+    );
+    expect(result.code).toBe(0);
+    // The plan summary comes first, then the compile stages.
+    expect(messages[0]).toContain('plan ready');
+    expect(messages.some((m) => m.includes('compiling'))).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // CLI --compile mode (AC5): npm entry point contract with injected tools
 // ────────────────────────────────────────────────────────────────────────────
 

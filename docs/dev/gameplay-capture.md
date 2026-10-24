@@ -243,6 +243,31 @@ install hints above plus `npm run compile:promo`. The output directory must
 already exist — a missing `--out-dir` is reported as such (with a `mkdir -p`
 suggestion) before any encoding starts.
 
+### Progress and output streams
+
+A full package is a few minutes of VP9 encoding, so `--compile` reports its
+progress on **stderr** — one `compile:` line for the plan summary, one per
+deliverable with its cut count and source, and one per deliverable when its
+encode finishes (`ok` or `FAIL` with the reason) — and only then prints the
+final validation summary on **stdout**:
+
+```text
+compile: plan ready: 13 promo cuts, 34 showreel cuts, 5 highlight clips → capture-output/compile-promo.plan.json
+compile: compiling 7 deliverables with /home/you/.local/bin/ffmpeg (26 sources)
+compile: [1/7] promo: 13 cuts → capture-output/promo.webm
+compile: [1/7] promo: ok — 57.9s
+compile: [2/7] showreel: 34 cuts → capture-output/showreel.webm
+...
+compile: verifying promo pace and deliverable sizing
+Compiled deliverables — all validated OK:
+...
+```
+
+Long silence between those lines is expected while `ffmpeg` encodes (a
+57 s promo is ~13 re-encoded cuts at 960×540/60 fps); watch stderr to
+confirm the run is progressing. stdout stays the machine-readable summary,
+so piping the command still yields only the report of record.
+
 ### Inputs
 
 Per retained run under `capture-output/` (see

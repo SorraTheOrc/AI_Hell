@@ -436,6 +436,12 @@ export interface CompileDeps {
   readonly run?: (argv: readonly string[], opts?: object) => RunResult;
   readonly probe?: (file: string, opts?: object) => ProbeSyncResult;
   readonly brightness?: (file: string, opts?: object) => BrightnessSyncResult;
+  /**
+   * Receives one human-readable line as each compile stage starts/finishes.
+   * The CLI defaults this to a `compile:` line on stderr so a minutes-long
+   * encode visibly progresses instead of looking hung.
+   */
+  readonly progress?: (message: string) => void;
 }
 
 /** A sync subprocess run result. */
