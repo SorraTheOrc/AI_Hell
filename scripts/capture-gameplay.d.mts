@@ -32,6 +32,14 @@ export interface CaptureOptions {
   botTuningState?: BotTuningStoreState;
   /** True when `--all-scenarios` was passed: one clip per registered scenario. */
   allScenarios: boolean;
+  /**
+   * `--config`/`--scenes` file path for multi-scene capture, or null
+   * (AH-0MVFC70GT000B96J). Validated pre-boot; the parsed scenes land in
+   * `scenes`.
+   */
+  scenesConfig: string | null;
+  /** Parsed scene list (filled in by the CLI/pre-flight validation). */
+  scenes?: SceneSpec[];
   help?: boolean;
 }
 
@@ -58,6 +66,79 @@ export const RUN_ENDED_STORE_KEY: string;
 
 /** Store key the bot-tuning gym persists under (AH-0MV6MFDYG001E6PL). */
 export const BOT_TUNING_STORAGE_KEY: string;
+
+/** The `id` of the page-side multi-scene capture overlay canvas. */
+export const COMPOSITE_CANVAS_ID: string;
+
+/** One validated multi-scene scene spec (from the pure scene module). */
+export interface SceneSpec {
+  target: string;
+  playMs: number;
+  captureMs: number;
+  label: string | null;
+}
+
+/**
+ * Resolves the single output path a multi-scene capture writes: an explicit
+ * `--output` is honoured, otherwise `capture-output/scenes-<ts>.webm`.
+ */
+export function resolveScenesOutputPath(
+  requested: string | null | undefined,
+  timestamp?: string,
+): string;
+
+/**
+ * Parses + validates the multi-scene config pre-boot (`null` without a
+ * config). `readFile` is injected for hermetic tests; every failure is a
+ * typed `SceneConfigError`.
+ */
+export function loadScenesForCapture(
+  options?: { scenesConfig?: string | null },
+  readFile?: (path: string) => string | Uint8Array,
+): SceneSpec[] | null;
+
+/**
+ * Drives one recorder across every planned scene (AC3): starts each scene via
+ * `startScene`, waits its play then capture window through `wait`, and fades
+ * to black / from black (`fade(1, …)` / `fade(0, …)`) between consecutive
+ * scenes without ever reloading the page or recorder.
+ */
+export function driveSceneSequence(params: {
+  plan: readonly {
+    target: string;
+    playMs: number;
+    captureMs: number;
+    startMs: number;
+    endMs: number;
+  }[];
+  startScene: (key: string) => Promise<unknown>;
+  fade: (alpha: number, durationMs: number) => Promise<unknown>;
+  wait: (ms: number) => Promise<unknown>;
+  fadeMs?: number;
+  onScene?: (info: {
+    index: number;
+    total: number;
+    scene: {
+      target: string;
+      playMs: number;
+      captureMs: number;
+      startMs: number;
+      endMs: number;
+    };
+  }) => void;
+}): Promise<void>;
+
+/**
+ * Installs the page-side composite + fade overlay the multi-scene recorder
+ * captures (`null` when the game canvas is not ready). Self-contained for
+ * Playwright serialisation; the resulting `scope.__aiHellFade.fadeTo(alpha,
+ * ms)` drives the 0.25 s fades.
+ */
+export function installCaptureComposite(scope?: object): {
+  id: string;
+  width: number;
+  height: number;
+} | null;
 
 /** Exported bot-tuning store state injected into the recording page. */
 export interface BotTuningStoreState {

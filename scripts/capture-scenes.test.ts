@@ -41,11 +41,17 @@ import { cliSpawnEnv } from './cliChildEnv';
 import {
   PARAMETERISED_GYM_SCENE_KEYS,
   SCENE_CONFIG_ERROR_CODES,
+  SCENE_FADE_CONTRAST_LUMA,
+  SCENE_FADE_DARK_LUMA,
   SCENE_FADE_MS,
+  SCENE_FADE_PROBE_POINTS,
   SceneConfigError,
   WATCHABLE_GYM_SCENE_KEYS,
   buildScenePlan,
+  buildSceneSampleTimes,
   buildScenesPayload,
+  buildTransitionProbeTimes,
+  evaluateSceneFadeSamples,
   isWatchableGymSceneKey,
   loadSceneConfig,
   parseSceneConfig,
@@ -552,5 +558,189 @@ describe('buildScenesPayload', () => {
 
     expect(plan).toEqual(snapshot);
     expect(built.scenes).toEqual(snapshot);
+  });
+});
+
+describe('buildSceneSampleTimes (AH-0MUX2NLFZ00128WC AC3)', () => {
+  const scenes = [
+    { target: 'GymPlayer', playMs: 3000, captureMs: 2000, startMs: 0, endMs: 5000 },
+    { target: 'GymWeapons', playMs: 3000, captureMs: 2000, startMs: 5500, endMs: 10500 },
+    { target: 'GymMinerals', playMs: 3000, captureMs: 2000, startMs: 11000, endMs: 16000 },
+  ];
+
+  it('samples each scene window midpoint and the transition windows', () => {
+    expect(buildSceneSampleTimes(scenes)).toEqual({
+      sceneSampleTimes: [2500, 8000, 13500],
+      transitionWindows: [
+        { startMs: 5000, endMs: 5500 },
+        { startMs: 10500, endMs: 11000 },
+      ],
+      transitionSampleTimes: [5000, 5125, 5250, 5375, 5500, 10500, 10625, 10750, 10875, 11000],
+    });
+  });
+
+  it('honours a custom fade duration and an empty plan', () => {
+    const custom = buildSceneSampleTimes(scenes, 100);
+    expect(custom.sceneSampleTimes).toEqual([2500, 8000, 13500]);
+    expect(custom.transitionWindows).toEqual([
+      { startMs: 5000, endMs: 5200 },
+      { startMs: 10500, endMs: 10700 },
+    ]);
+    expect(buildSceneSampleTimes([])).toEqual({
+      sceneSampleTimes: [],
+      transitionSampleTimes: [],
+      transitionWindows: [],
+    });
+  });
+
+  it('derives no transition times for a single-scene plan', () => {
+    const single = scenes.slice(0, 1);
+    expect(buildSceneSampleTimes(single).transitionSampleTimes).toEqual([]);
+    expect(buildSceneSampleTimes(single).transitionWindows).toEqual([]);
+    expect(buildSceneSampleTimes(single).sceneSampleTimes).toEqual([2500]);
+  });
+
+  it('spreads transition probe points evenly, inclusive of both ends', () => {
+    expect(buildTransitionProbeTimes({ startMs: 5000, endMs: 5500 })).toEqual([
+      5000, 5125, 5250, 5375, 5500,
+    ]);
+    expect(buildTransitionProbeTimes({ startMs: 100, endMs: 100 }, 4)).toEqual([
+      100, 100, 100, 100,
+    ]);
+    expect(buildTransitionProbeTimes({ startMs: 0, endMs: 1000 }, 2)).toEqual([
+      0, 1000,
+    ]);
+    // Fractions are rounded to whole milliseconds (stable --json integers).
+    expect(buildTransitionProbeTimes({ startMs: 0, endMs: 10 }, 3)).toEqual([
+      0, 5, 10,
+    ]);
+  });
+});
+
+describe('evaluateSceneFadeSamples (AH-0MUX2NLFZ00128WC AC3)', () => {
+  const scenes = [
+    { target: 'GymPlayer', playMs: 3000, captureMs: 2000, startMs: 0, endMs: 5000 },
+    { target: 'GymWeapons', playMs: 3000, captureMs: 2000, startMs: 5500, endMs: 10500 },
+    { target: 'GymMinerals', playMs: 3000, captureMs: 2000, startMs: 11000, endMs: 16000 },
+  ];
+  const planTimes = buildSceneSampleTimes(scenes);
+
+  /** Samples with a visible scene at every midpoint and near-black fades. */
+  const lumaSamples = (
+    overrides: {
+      sceneLuma?: number[];
+      fadeLuma?: number[];
+    } = {},
+  ) => [
+    ...planTimes.sceneSampleTimes.map((timeMs, i) => ({
+      timeMs,
+      meanLuma: overrides.sceneLuma?.[i] ?? 0.5,
+    })),
+    ...planTimes.transitionSampleTimes.map((timeMs, i) => ({
+      timeMs,
+      meanLuma: overrides.fadeLuma?.[i] ?? 0.02,
+    })),
+  ];
+
+  it('verifies dark transitions between visible scenes', () => {
+    const verdict = evaluateSceneFadeSamples({ scenes, samples: lumaSamples() });
+
+    expect(verdict.fadeVerified).toBe(true);
+    expect(verdict.reasons).toEqual([]);
+  });
+
+  it('pins the documented dark/contrast luma thresholds', () => {
+    // A fully faded frame is dark; the contrast bound is the smallest
+    // measurable difference that still proves the fade dimmed the picture.
+    expect(SCENE_FADE_DARK_LUMA).toBeLessThanOrEqual(0.5);
+    expect(SCENE_FADE_CONTRAST_LUMA).toBeGreaterThan(0);
+    expect(SCENE_FADE_CONTRAST_LUMA).toBeLessThan(SCENE_FADE_DARK_LUMA);
+    expect(SCENE_FADE_PROBE_POINTS).toBeGreaterThanOrEqual(2);
+  });
+
+  it('accepts a genuinely dark game (the recording is dim, the fade is black)', () => {
+    // The real space backdrop measures ~0.02 mean luma; an absolute contrast
+    // floor would reject it, the darkest-frame-in-window comparison must not.
+    const samples = [
+      ...planTimes.sceneSampleTimes.map((timeMs, i) => ({
+        timeMs,
+        meanLuma: [0.019, 0.027, 0.042][i],
+      })),
+      ...planTimes.transitionSampleTimes.map((timeMs) => ({
+        timeMs,
+        meanLuma: 0.0001,
+      })),
+    ];
+    const verdict = evaluateSceneFadeSamples({ scenes, samples });
+
+    expect(verdict.fadeVerified).toBe(true);
+  });
+
+  it('names the exact transition when the fade never darkens the frame', () => {
+    const samples = lumaSamples();
+    // Make every probe point of transition 1 a bright scene frame.
+    for (const sample of samples) {
+      if (sample.timeMs >= 5000 && sample.timeMs <= 5500) {
+        sample.meanLuma = 0.4;
+      }
+    }
+    const verdict = evaluateSceneFadeSamples({ scenes, samples });
+
+    expect(verdict.fadeVerified).toBe(false);
+    expect(verdict.reasons).toEqual([
+      'transition 1 (GymPlayer → GymWeapons): expected a dark fade frame, darkest mean luma 0.400',
+    ]);
+  });
+
+  it('rejects a fade with no measurable contrast (uniformly dark capture)', () => {
+    const samples = lumaSamples().map((sample) => ({ ...sample, meanLuma: 0.02 }));
+    const verdict = evaluateSceneFadeSamples({ scenes, samples });
+
+    expect(verdict.fadeVerified).toBe(false);
+    expect(verdict.reasons[0]).toMatch(/GymPlayer → GymWeapons/);
+    expect(verdict.reasons[0]).toContain('did not measurably darken');
+    expect(verdict.reasons).toHaveLength(2);
+  });
+
+  it('reports a missing probe window sample rather than silently passing', () => {
+    const samples = planTimes.sceneSampleTimes.map((timeMs) => ({
+      timeMs,
+      meanLuma: 0.5,
+    }));
+    const verdict = evaluateSceneFadeSamples({ scenes, samples });
+
+    expect(verdict.fadeVerified).toBe(false);
+    expect(verdict.reasons[0]).toContain('missing fade probe samples');
+  });
+
+  it('accepts measured wall-clock windows from the driver', () => {
+    const measured = {
+      sceneSampleTimes: [2600, 8200, 13600],
+      transitionWindows: [
+        { startMs: 5100, endMs: 5600 },
+        { startMs: 10600, endMs: 11100 },
+      ],
+    };
+    const samples = [
+      ...measured.sceneSampleTimes.map((timeMs) => ({ timeMs, meanLuma: 0.5 })),
+      // Probe points spread across each measured window, all near black.
+      ...[5100, 5225, 5350, 5475, 5600].map((timeMs) => ({
+        timeMs,
+        meanLuma: 0.001,
+      })),
+      ...[10600, 10725, 10850, 10975, 11100].map((timeMs) => ({
+        timeMs,
+        meanLuma: 0.001,
+      })),
+    ];
+
+    expect(
+      evaluateSceneFadeSamples({ scenes, samples, ...measured }).fadeVerified,
+    ).toBe(true);
+  });
+
+  it('needs no transitions for a single scene (fadeVerified trivially true)', () => {
+    expect(evaluateSceneFadeSamples({ scenes: scenes.slice(0, 1) }).fadeVerified).toBe(true);
+    expect(evaluateSceneFadeSamples({}).fadeVerified).toBe(true);
   });
 });

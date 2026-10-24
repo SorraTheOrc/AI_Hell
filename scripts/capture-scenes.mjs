@@ -410,6 +410,184 @@ export function buildScenePlan(scenes) {
  * @param {{ outputPath: string }} options
  * @returns {{ outputPath: string, sceneCount: number, fadeMs: number, totalMs: number, scenes: Array<object> }}
  */
+/**
+ * Maximum mean frame luma (0–1) of a fully faded frame for the fade to count
+ * as present in the recorded video. A normal gameplay frame sits well above
+ * this; a frame drawn while the page-side overlay is (nearly) opaque sits
+ * well below it.
+ */
+export const SCENE_FADE_DARK_LUMA = 0.3;
+
+/**
+ * Minimum mean-luma difference between a scene frame and the darkest frame
+ * found inside its adjacent fade window. A page-side fade drives the overlay
+ * to full black, so the measured difference is normally far larger; 0.01 of
+ * full luma is a deliberately low "faint but unambiguous dimming" floor so a
+ * genuinely dark gym (this game's space backdrop is dark) still passes.
+ */
+export const SCENE_FADE_CONTRAST_LUMA = 0.01;
+
+/**
+ * Probe points sampled across one fade window (fade-to + fade-from). Several
+ * points make the check robust to video-seek granularity: a real fade always
+ * puts at least one of them at (or very near) full black.
+ */
+export const SCENE_FADE_PROBE_POINTS = 5;
+
+/**
+ * Spreads `points` evenly (inclusive of both ends) over a transition window
+ * and rounds each to a whole millisecond, so the probe times are stable and
+ * match the `--json` integers. Pure; at least two points are always returned.
+ *
+ * @param {{ startMs: number, endMs: number }} window
+ * @param {number} [points]
+ * @returns {number[]}
+ */
+export function buildTransitionProbeTimes(window, points = SCENE_FADE_PROBE_POINTS) {
+  const startMs = Math.round(Number(window?.startMs) || 0);
+  const endMs = Math.round(Number(window?.endMs) || 0);
+  const count = Number.isFinite(points)
+    ? Math.max(2, Math.round(points))
+    : SCENE_FADE_PROBE_POINTS;
+  const times = [];
+  for (let index = 0; index < count; index += 1) {
+    times.push(
+      Math.round(startMs + (index * (endMs - startMs)) / (count - 1)),
+    );
+  }
+  return times;
+}
+
+/**
+ * Derives the probe timestamps a post-recording fade check needs from a scene
+ * plan: one **scene** sample inside each scene's play+capture window (its
+ * midpoint) and the **transition** windows between consecutive pairs —
+ * `[endMs, endMs + 2 * fadeMs]`, the fade-to-black then fade-from-black
+ * span. `transitionSampleTimes` flattens {@link SCENE_FADE_PROBE_POINTS}
+ * probe points across every window (see {@link buildTransitionProbeTimes}).
+ *
+ * Pure and deterministic; `buildScenesPayload` reports the same `startMs` /
+ * `endMs` offsets, so the probe times line up with the `--json` timeline. The
+ * capture driver derives the equivalent windows from its measured wall clock
+ * (waits and page round-trips add a little drift) and passes those to
+ * {@link evaluateSceneFadeSamples} explicitly.
+ *
+ * @param {ReadonlyArray<{ target: string, playMs: number, captureMs: number, startMs: number, endMs: number }>} scenes
+ * @param {number} [fadeMs]
+ * @returns {{ sceneSampleTimes: number[], transitionSampleTimes: number[], transitionWindows: Array<{ startMs: number, endMs: number }> }}
+ */
+export function buildSceneSampleTimes(scenes, fadeMs = SCENE_FADE_MS) {
+  const list = Array.isArray(scenes) ? scenes : [];
+  const fade =
+    Number.isFinite(fadeMs) && fadeMs >= 0 ? fadeMs : SCENE_FADE_MS;
+  const transitionWindows = list.slice(0, -1).map((scene) => ({
+    startMs: scene.endMs,
+    endMs: scene.endMs + 2 * fade,
+  }));
+  return {
+    sceneSampleTimes: list.map(
+      (scene) =>
+        scene.startMs + Math.round((scene.playMs + scene.captureMs) / 2),
+    ),
+    transitionSampleTimes: transitionWindows.flatMap((window) =>
+      buildTransitionProbeTimes(window),
+    ),
+    transitionWindows,
+  };
+}
+
+/**
+ * Verifies that the 0.25 s page-side fades are **present in the recorded
+ * video** from the post-recording probe samples.
+ *
+ * Each transition **window** must contain at least one dark probe frame
+ * (`meanLuma <=
+ * SCENE_FADE_DARK_LUMA`) — sampling several points across the window makes
+ * this robust to video-seek granularity — and the adjacent scene sample must
+ * be measurably lighter than that darkest frame (`scene.meanLuma >
+ * darkest + SCENE_FADE_CONTRAST_LUMA`). That pair of checks catches both
+ * failure shapes: a fade that never darkened the picture (the darkest frame
+ * in the window is an ordinary scene frame) and a fade with no visible
+ * contrast (a uniformly dark capture).
+ *
+ * Window and scene sample times default to the plan-derived ones
+ * ({@link buildSceneSampleTimes}) but can be overridden with the driver's
+ * measured wall-clock offsets, which are what the real probe used. Missing
+ * samples are reported as a reason rather than silently passing.
+ *
+ * @param {{
+ *   scenes?: ReadonlyArray<{ target: string, playMs: number, captureMs: number, startMs: number, endMs: number }>,
+ *   fadeMs?: number,
+ *   samples?: ReadonlyArray<{ timeMs: number, meanLuma: number }>,
+ *   sceneSampleTimes?: ReadonlyArray<number>,
+ *   transitionWindows?: ReadonlyArray<{ startMs: number, endMs: number }>,
+ * }} [options]
+ * @returns {{ fadeVerified: boolean, reasons: string[] }}
+ */
+export function evaluateSceneFadeSamples(options = {}) {
+  const scenes = Array.isArray(options.scenes) ? options.scenes : [];
+  const fadeMs =
+    Number.isFinite(options.fadeMs) && options.fadeMs >= 0
+      ? options.fadeMs
+      : SCENE_FADE_MS;
+  const samples = Array.isArray(options.samples) ? options.samples : [];
+  const planTimes = buildSceneSampleTimes(scenes, fadeMs);
+  const sceneTimes = Array.isArray(options.sceneSampleTimes)
+    ? options.sceneSampleTimes
+    : planTimes.sceneSampleTimes;
+  const windows = Array.isArray(options.transitionWindows)
+    ? options.transitionWindows
+    : planTimes.transitionWindows;
+
+  const byTime = new Map(samples.map((sample) => [sample.timeMs, sample]));
+  const reasons = [];
+  const transitionCount = Math.min(
+    windows.length,
+    Math.max(0, scenes.length - 1),
+  );
+
+  for (let index = 0; index < transitionCount; index += 1) {
+    const from = scenes[index];
+    const to = scenes[index + 1];
+    const label = `transition ${index + 1} (${from.target} → ${to.target})`;
+    const window = windows[index];
+
+    const windowSamples = samples.filter(
+      (sample) =>
+        typeof sample.meanLuma === 'number' &&
+        sample.timeMs >= window.startMs &&
+        sample.timeMs <= window.endMs,
+    );
+    if (windowSamples.length === 0) {
+      reasons.push(`${label}: missing fade probe samples`);
+      continue;
+    }
+    const darkest = Math.min(...windowSamples.map((sample) => sample.meanLuma));
+    if (darkest > SCENE_FADE_DARK_LUMA) {
+      reasons.push(
+        `${label}: expected a dark fade frame, darkest mean luma ${darkest.toFixed(3)}`,
+      );
+      continue;
+    }
+
+    const sceneSample = byTime.get(
+      sceneTimes[Math.min(index, sceneTimes.length - 1)],
+    );
+    if (!sceneSample || typeof sceneSample.meanLuma !== 'number') {
+      reasons.push(`${label}: missing scene probe sample`);
+      continue;
+    }
+    if (sceneSample.meanLuma <= darkest + SCENE_FADE_CONTRAST_LUMA) {
+      reasons.push(
+        `${label}: the fade did not measurably darken the frame `
+          + `(scene ${sceneSample.meanLuma.toFixed(3)} vs fade ${darkest.toFixed(3)})`,
+      );
+    }
+  }
+
+  return { fadeVerified: reasons.length === 0, reasons };
+}
+
 export function buildScenesPayload(plan, options = {}) {
   const outputPath = options.outputPath;
   if (typeof outputPath !== 'string' || outputPath.trim() === '') {

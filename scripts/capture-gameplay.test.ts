@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { cliSpawnEnv } from './cliChildEnv';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -46,6 +46,7 @@ import {
   RUN_ENDED_EVENT,
   RUN_ENDED_STATE_KEY,
   RUN_ENDED_STORE_KEY,
+  COMPOSITE_CANVAS_ID,
   buildIterationRecord,
   buildRunEndedListenerPlan,
   buildScenarioCapturePlan,
@@ -65,6 +66,10 @@ import {
   readDevTelemetryBuffer,
   resolveCaptureMode,
   resolveOutputPaths,
+  resolveScenesOutputPath,
+  loadScenesForCapture,
+  driveSceneSequence,
+  installCaptureComposite,
   runCaptureIterations,
   runCaptureSession,
   summariseCaptureBatch,
@@ -90,6 +95,7 @@ import {
   serialiseActionIntensitySeries as serialiseActionIntensitySeriesTs,
 } from '../src/scenes/core/actionIntensitySerialiser';
 import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
+import { SCENE_FADE_MS, buildScenePlan } from './capture-scenes.mjs';
 import {
   CAPTURE_STARTED_EVENT,
   DEFAULT_CAPTURE_TAIL_MS,
@@ -2676,5 +2682,334 @@ describe('writeCaptureSeriesArtifacts (AC1/AC2/AC4)', () => {
     });
     expect(dirname(exportData.seriesOutput!)).toBe('capture-output');
     expect(basename(exportData.seriesOutput!)).toBe('run.action.jsonl');
+  });
+});
+
+// ── Multi-scene capture driver (AH-0MVFC70GT000B96J) ─────────────────
+
+describe('multi-scene capture arguments and config (AH-0MVFC70GT000B96J)', () => {
+  it('parseCaptureArgs recognises --config and the --scenes alias', () => {
+    expect(parseCaptureArgs([]).scenesConfig).toBeNull();
+    expect(parseCaptureArgs(['--config', 'scenes.json']).scenesConfig).toBe(
+      'scenes.json',
+    );
+    expect(parseCaptureArgs(['--scenes', 'alt.json']).scenesConfig).toBe(
+      'alt.json',
+    );
+    expect(
+      parseCaptureArgs(['--scenes', 'a.json', '--json']).json,
+    ).toBe(true);
+  });
+
+  it('fails fast when --config/--scenes has no value', () => {
+    expect(() => parseCaptureArgs(['--config'])).toThrow(/Missing value/);
+    expect(() => parseCaptureArgs(['--scenes'])).toThrow(/Missing value/);
+  });
+
+  it('resolveScenesOutputPath defaults under capture-output and honours --output', () => {
+    expect(basename(resolveScenesOutputPath(null, 'STAMP'))).toBe(
+      'scenes-STAMP.webm',
+    );
+    expect(dirname(resolveScenesOutputPath(null, 'STAMP'))).toContain(
+      'capture-output',
+    );
+    expect(resolveScenesOutputPath('clips/x.webm', 'STAMP')).toBe(
+      resolve(process.cwd(), 'clips/x.webm'),
+    );
+  });
+
+  it('loadScenesForCapture returns null without a config and validates one before any boot', () => {
+    expect(loadScenesForCapture({})).toBeNull();
+
+    const readFile = () =>
+      JSON.stringify({
+        scenes: [{ target: 'GymPlayer', playMs: 2000, captureMs: 2000 }],
+      });
+    const scenes = loadScenesForCapture(
+      { scenesConfig: 'scenes.json' },
+      readFile,
+    );
+
+    expect(scenes).not.toBeNull();
+    expect(scenes!).toHaveLength(1);
+    expect(scenes![0].target).toBe('GymPlayer');
+  });
+
+  it('maps a malformed or missing config to a typed SceneConfigError (pre-boot fail-fast)', () => {
+    const badJson = () => '{ nope';
+    let error: unknown = null;
+    try {
+      loadScenesForCapture({ scenesConfig: 'bad.json' }, badJson);
+    } catch (caught) {
+      error = caught;
+    }
+    expect((error as { message?: string }).message).toMatch(/not valid JSON/);
+
+    const missingFile = () => {
+      const err = new Error('ENOENT: no such file') as Error & {
+        code?: string;
+      };
+      err.code = 'ENOENT';
+      throw err;
+    };
+    let missingError: unknown = null;
+    try {
+      loadScenesForCapture({ scenesConfig: 'missing.json' }, missingFile);
+    } catch (caught) {
+      missingError = caught;
+    }
+    expect((missingError as { code?: string }).code).toBe('missing-file');
+  });
+
+  it('the spawned CLI fails fast and non-zero on a bad config without booting anything', () => {
+    // A missing config must exit 1 with an actionable message and must never
+    // reach the Vite/Chromium boot stage (that would exceed the bound).
+    const script = resolve(process.cwd(), 'scripts/capture-gameplay.mjs');
+    const result = spawnSync(
+      process.execPath,
+      [script, '--config', '/definitely/not/here.json'],
+      { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/scene config error/i);
+    expect(result.stderr).toContain('/definitely/not/here.json');
+    expect(result.stdout).not.toContain('Starting Vite');
+  });
+});
+
+describe('driveSceneSequence (AH-0MVFC70GT000B96J AC3)', () => {
+  const plan = buildScenePlan([
+    { target: 'GymPlayer', playMs: 3000, captureMs: 2000, label: null },
+    { target: 'GymWeapons', playMs: 3000, captureMs: 2000, label: null },
+    { target: 'GymMinerals', playMs: 3000, captureMs: 2000, label: null },
+  ]);
+
+  it('starts each scene once and fades 0.25 s between windows, in order', async () => {
+    const calls: string[] = [];
+    const waits: number[] = [];
+    const fades: Array<[number, number]> = [];
+
+    await driveSceneSequence({
+      plan,
+      startScene: async (key) => {
+        calls.push(`start:${key}`);
+      },
+      fade: async (alpha, ms) => {
+        fades.push([alpha, ms]);
+      },
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+      onScene: ({ index, total, scene }) => {
+        calls.push(`scene:${index}/${total}`);
+        expect(total).toBe(3);
+        expect(scene.target).toBeTruthy();
+      },
+    });
+
+    // One recorder spans every scene: each scene starts exactly once, in
+    // config order, with its play window then its capture window. The next
+    // scene starts behind the black during the transition, so `onScene` for
+    // its play window is reported after the fade-from-black completes.
+    expect(calls).toEqual([
+      'scene:1/3',
+      'start:GymPlayer',
+      'start:GymWeapons',
+      'scene:2/3',
+      'start:GymMinerals',
+      'scene:3/3',
+    ]);
+    expect(waits).toEqual([3000, 2000, 3000, 2000, 3000, 2000]);
+    // Between consecutive scenes exactly two fades: to black (1) then from
+    // black (0), each SCENE_FADE_MS (0.25 s) long.
+    expect(fades).toEqual([
+      [1, SCENE_FADE_MS],
+      [0, SCENE_FADE_MS],
+      [1, SCENE_FADE_MS],
+      [0, SCENE_FADE_MS],
+    ]);
+    expect(SCENE_FADE_MS).toBe(250);
+  });
+
+  it('is a no-op for an empty or non-array plan', async () => {
+    const effects: string[] = [];
+    await driveSceneSequence({
+      plan: [],
+      startScene: async () => effects.push('start'),
+      fade: async () => effects.push('fade'),
+      wait: async () => effects.push('wait'),
+    });
+    expect(effects).toEqual([]);
+  });
+
+  it('rejects a plan driven without the required callbacks', async () => {
+    await expect(
+      driveSceneSequence({
+        plan,
+        startScene: async () => {},
+        fade: undefined as unknown as () => Promise<void>,
+        wait: async () => {},
+      }),
+    ).rejects.toThrow(/startScene, fade and wait callbacks/);
+  });
+
+  it('records the wall-clock start of every scene window', async () => {
+    const starts: number[] = [];
+    const before = Date.now();
+    await driveSceneSequence({
+      plan,
+      startScene: async () => {},
+      fade: async () => {},
+      wait: async () => {},
+      onScene: ({ index }) => {
+        starts[index - 1] = Date.now();
+      },
+    });
+
+    expect(starts).toHaveLength(3);
+    expect(starts[0]).toBeGreaterThanOrEqual(before);
+    expect(starts[1]).toBeGreaterThanOrEqual(starts[0]);
+    expect(starts[2]).toBeGreaterThanOrEqual(starts[1]);
+  });
+});
+
+describe('installCaptureComposite (AH-0MVFC70GT000B96J AC3)', () => {
+  /** Fake DOM around a 960×540 game canvas with a pumpable rAF queue. */
+  function makeCompositeScope() {
+    const fills: string[] = [];
+    const draws: unknown[][] = [];
+    const rafQueue: Array<(ts: number) => void> = [];
+
+    const ctx = {
+      clearRect: () => {},
+      drawImage: (...args: unknown[]) => draws.push(args),
+      fillRect: () => fills.push(ctx.fillStyle as string),
+      fillStyle: '',
+    };
+    const composite: Record<string, unknown> = {
+      id: '',
+      width: 0,
+      height: 0,
+      style: {},
+      getContext: () => ctx,
+    };
+    const gameCanvas = {
+      width: 960,
+      height: 540,
+      getBoundingClientRect: () => ({ left: 4, top: 8, width: 960, height: 540 }),
+    };
+    const appended: unknown[] = [];
+
+    const scope: Record<string, unknown> = {
+      document: {
+        querySelector: (selector: string) =>
+          selector === '#game-container canvas' ? gameCanvas : null,
+        createElement: (tag: string) => (tag === 'canvas' ? composite : {}),
+        body: { appendChild: (el: unknown) => appended.push(el) },
+      },
+      requestAnimationFrame: (cb: (ts: number) => void) => {
+        rafQueue.push(cb);
+      },
+    };
+
+    const pump = (ts: number) => {
+      const pending = rafQueue.splice(0);
+      for (const cb of pending) cb(ts);
+    };
+
+    return { scope, composite, gameCanvas, appended, fills, draws, pump };
+  }
+
+  it('installs an overlay canvas over the game canvas and mirrors frames', () => {
+    const { scope, composite, gameCanvas, appended, draws, pump } =
+      makeCompositeScope();
+
+    const result = installCaptureComposite(scope);
+
+    expect(result).toEqual({
+      id: COMPOSITE_CANVAS_ID,
+      width: 960,
+      height: 540,
+    });
+    expect(composite.id).toBe(COMPOSITE_CANVAS_ID);
+    expect(composite.width).toBe(960);
+    expect(composite.height).toBe(540);
+    expect(appended).toContain(composite);
+
+    // One pumped frame must mirror the game canvas into the overlay — the
+    // overlay is what the recorder captures.
+    pump(0);
+    expect(draws.length).toBeGreaterThan(0);
+    expect(draws[0][0]).toBe(gameCanvas);
+  });
+
+  it('fades to black over the requested duration and snaps back', async () => {
+    const { scope, fills, pump } = makeCompositeScope();
+    installCaptureComposite(scope);
+    const fade = scope.__aiHellFade as {
+      fadeTo: (alpha: number, ms: number) => Promise<number>;
+      alpha: () => number;
+    };
+
+    expect(fade.alpha()).toBe(0);
+    let resolved = false;
+    const fading = fade.fadeTo(1, 250).then(() => {
+      resolved = true;
+    });
+    for (let ts = 0; ts <= 256 && !resolved; ts += 16) pump(ts);
+    await fading;
+
+    expect(fade.alpha()).toBe(1);
+    // The final frame the recorder streamed was fully black.
+    expect(fills[fills.length - 1]).toBe('rgba(0, 0, 0, 1.0000)');
+
+    resolved = false;
+    const clearing = fade.fadeTo(0, 250).then(() => {
+      resolved = true;
+    });
+    for (let ts = 0; ts <= 256 && !resolved; ts += 16) pump(ts);
+    await clearing;
+    expect(fade.alpha()).toBe(0);
+  });
+
+  it('clamps the target alpha, snaps instantly and ignores invalid input', async () => {
+    const { scope, pump } = makeCompositeScope();
+    installCaptureComposite(scope);
+    const fade = scope.__aiHellFade as {
+      fadeTo: (alpha: unknown, ms: unknown) => Promise<number>;
+      alpha: () => number;
+    };
+
+    // Same-target and zero-duration fades resolve immediately.
+    await expect(fade.fadeTo(0, 0)).resolves.toBe(0);
+    expect(fade.alpha()).toBe(0);
+
+    // A target above 1 clamps to 1.
+    let done = false;
+    const clamped = fade.fadeTo(2, 100).then(() => {
+      done = true;
+    });
+    for (let ts = 0; ts <= 128 && !done; ts += 16) pump(ts);
+    await clamped;
+    expect(fade.alpha()).toBe(1);
+
+    // A non-numeric target leaves the current alpha untouched.
+    await expect(fade.fadeTo('x', 100)).resolves.toBe(1);
+    expect(fade.alpha()).toBe(1);
+  });
+
+  it('returns null when the game canvas is not available', () => {
+    expect(
+      installCaptureComposite({ document: { querySelector: () => null } }),
+    ).toBeNull();
+    expect(
+      installCaptureComposite({
+        document: {
+          querySelector: () => ({ width: 0, height: 0, getBoundingClientRect: () => ({}) }),
+        },
+      }),
+    ).toBeNull();
+    expect(installCaptureComposite({})).toBeNull();
   });
 });

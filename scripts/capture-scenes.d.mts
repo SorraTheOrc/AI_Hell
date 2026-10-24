@@ -15,6 +15,16 @@
 /** Per-scene fade duration in milliseconds (fade-to-black and fade-from-black). */
 export const SCENE_FADE_MS: number;
 
+/** Maximum mean frame luma (0–1) of a fully faded frame. */
+export const SCENE_FADE_DARK_LUMA: number;
+
+/** Minimum mean-luma difference between a scene frame and its darkest
+ * frame inside the adjacent fade window. */
+export const SCENE_FADE_CONTRAST_LUMA: number;
+
+/** Probe points sampled across one fade window. */
+export const SCENE_FADE_PROBE_POINTS: number;
+
 /**
  * Gym scene keys that are **not** capturable standalone and are therefore
  * rejected by the config parser and the director: each needs a parameter
@@ -168,3 +178,39 @@ export function buildScenesPayload(
   plan: readonly ScenePlanEntry[],
   options: { outputPath: string },
 ): ScenesPayload;
+
+/**
+ * Derives the probe timestamps a post-recording fade check needs: one scene
+ * sample per scene window midpoint, the transition windows between
+ * consecutive scenes (`[endMs, endMs + 2 * fadeMs]`) and the flattened probe
+ * points across each window. Pure and deterministic.
+ */
+export function buildSceneSampleTimes(
+  scenes: readonly ScenePlanEntry[],
+  fadeMs?: number,
+): {
+  sceneSampleTimes: number[];
+  transitionSampleTimes: number[];
+  transitionWindows: Array<{ startMs: number; endMs: number }>;
+};
+
+/** Spreads `points` evenly (inclusive) over a transition window. */
+export function buildTransitionProbeTimes(
+  window: { startMs: number; endMs: number },
+  points?: number,
+): number[];
+
+/**
+ * Verifies the page-side fades are present in the recorded video from the
+ * post-recording probe samples: each transition window must contain a dark
+ * frame and the adjacent scene sample must be measurably lighter. Window and
+ * scene sample times default to the plan-derived ones but can be overridden
+ * with the driver's measured wall-clock offsets.
+ */
+export function evaluateSceneFadeSamples(options?: {
+  scenes?: readonly ScenePlanEntry[];
+  fadeMs?: number;
+  samples?: ReadonlyArray<{ timeMs: number; meanLuma: number }>;
+  sceneSampleTimes?: readonly number[];
+  transitionWindows?: ReadonlyArray<{ startMs: number; endMs: number }>;
+}): { fadeVerified: boolean; reasons: string[] };

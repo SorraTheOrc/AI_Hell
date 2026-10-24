@@ -13,6 +13,7 @@
     "build": "npm run build-audio && tsc --noEmit && vite build && npm run check-bundle",
     "preview": "vite preview --port 4173",
     "capture": "node scripts/capture-gameplay.mjs",
+    "capture:scenes": "node scripts/capture-gameplay.mjs --config",
     "list:pool": "node scripts/list-capture-pool.mjs",
     "compile:promo": "node scripts/compile-promo.mjs --compile",
     "evaluate": "node scripts/evaluate.mjs",

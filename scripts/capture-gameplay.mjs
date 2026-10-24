@@ -82,6 +82,15 @@ import {
   setupHint,
 } from './capture-progress.mjs';
 import { listCaptureScenarios } from './capture-scenarios.mjs';
+import {
+  SCENE_FADE_MS,
+  SceneConfigError,
+  buildScenePlan,
+  buildScenesPayload,
+  buildTransitionProbeTimes,
+  evaluateSceneFadeSamples,
+  loadSceneConfig,
+} from './capture-scenes.mjs';
 import { parseTelemetryJsonl } from './inspect-telemetry.mjs';
 import {
   CAPTURE_ANCHOR_EXTENSION,
@@ -157,6 +166,17 @@ const AUDIO_TAP_WAIT_MS = 3_000;
 const VIDEO_ONLY_MIME_CANDIDATES = Object.freeze(
   CAPTURE_MIME_CANDIDATES.map((type) => type.replace(',opus', '')),
 );
+
+/**
+ * The `id` the page-side multi-scene capture overlay canvas gets
+ * (AH-0MVFC70GT000B96J). The recorder captures **this** canvas — a frame-by-
+ * frame mirror of the game canvas plus the fade-to-black / fade-from-black
+ * overlay — so the 0.25 s transitions are present in the single WebM.
+ */
+export const COMPOSITE_CANVAS_ID = '__aiHellCaptureComposite';
+
+/** Heartbeat step (ms) while waiting out a scene's play/capture window. */
+const SCENE_WAIT_HEARTBEAT_MS = 250;
 
 /**
  * Raised when an opt-in capture dependency is missing, so `main()` can print
@@ -290,6 +310,9 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     listScenarios: false,
     botConfig: null,
     allScenarios: false,
+    // `--config <file>` (alias `--scenes`): multi-scene capture, validated
+    // before any server or browser boots (AH-0MVFC70GT000B96J).
+    scenesConfig: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -362,6 +385,14 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         // (AH-0MV6JGQFK007MXGX). Takes no value; the default no-scenario demo
         // run is deliberately not included (producer decision Q1).
         options.allScenarios = true;
+        break;
+      case '--config':
+      case '--scenes':
+        // Multi-scene capture (AH-0MVFC70GT000B96J): a scene-list JSON file
+        // (`--config <file>`, the documented `capture:scenes` entry point;
+        // `--scenes` is the older alias). The file is parsed and validated
+        // before any server or browser boots.
+        options.scenesConfig = next();
         break;
       case '--help':
         options.help = true;
@@ -786,6 +817,246 @@ export function uniquifyOutputPath(candidate, exists = () => false) {
   let suffix = 2;
   while (exists(`${stem}-${suffix}${extension}`)) suffix += 1;
   return `${stem}-${suffix}${extension}`;
+}
+
+/**
+ * Resolves the single output path a multi-scene capture writes to
+ * (AH-0MVFC70GT000B96J, AC4): an explicit `--output` is honoured (absolute
+ * as-is, otherwise resolved against the cwd), otherwise the default is
+ * `capture-output/scenes-<timestamp>.webm` under the gitignored capture
+ * tree. `timestamp` is injected so tests can pin the deterministic default
+ * name.
+ *
+ * @param {string | null | undefined} requested — the `--output` value.
+ * @param {string} [timestamp]
+ * @returns {string} — the absolute output path.
+ */
+export function resolveScenesOutputPath(
+  requested,
+  timestamp = new Date().toISOString().replace(/[:.]/g, '-'),
+) {
+  if (!requested) {
+    return resolve(REPO_ROOT, 'capture-output', `scenes-${timestamp}.webm`);
+  }
+  return isAbsolute(requested) ? requested : resolve(process.cwd(), requested);
+}
+
+/**
+ * Parses + validates the multi-scene config **before any server or browser
+ * boots** (AH-0MVFC70GT000B96J, AC1). `readFile` is injected (defaults to
+ * `readFileSync`) so the validation path is hermetically testable; the pure
+ * {@link loadSceneConfig} does the actual parsing and maps every failure to
+ * a typed {@link SceneConfigError} (missing/unreadable file, malformed JSON,
+ * unknown/parameterised target, bad durations). Returns `null` when no
+ * `--config`/`--scenes` flag was supplied.
+ *
+ * @param {object} [options] — parsed capture options.
+ * @param {(path: string) => string | Uint8Array} [readFile]
+ * @returns {Array<{ target: string, playMs: number, captureMs: number, label: string | null }> | null}
+ */
+export function loadScenesForCapture(options = {}, readFile = readFileSync) {
+  if (!options.scenesConfig) return null;
+  return loadSceneConfig(options.scenesConfig, readFile);
+}
+
+/**
+ * Drives one continuously-running recorder across every planned scene
+ * (AH-0MVFC70GT000B96J, AC3): starts each scene in page via `startScene`
+ * (the dev-gated director), waits out its play window then its capture
+ * window through `wait`, and between consecutive scenes asks `fade` for a
+ * fade-to-black (`alpha` `1`) then, after `startScene(next)` switches the
+ * scene behind the black, a fade-from-black (`alpha` `0`) — each over
+ * `fadeMs` (default {@link SCENE_FADE_MS}, 250 ms). The page and the
+ * recorder are never reloaded or restarted across the batch.
+ *
+ * Pure orchestration with injected effects, so the exact call sequence is
+ * hermetically testable without a browser. `onScene` reports each scene as
+ * its window begins.
+ *
+ * @param {{
+ *   plan: ReadonlyArray<{ target: string, playMs: number, captureMs: number, startMs: number, endMs: number }>,
+ *   startScene: (key: string) => Promise<unknown>,
+ *   fade: (alpha: number, durationMs: number) => Promise<unknown>,
+ *   wait: (ms: number) => Promise<unknown>,
+ *   fadeMs?: number,
+ *   onScene?: (info: { index: number, total: number, scene: object }) => void,
+ * }} params
+ * @returns {Promise<void>}
+ */
+export async function driveSceneSequence({
+  plan,
+  startScene,
+  fade,
+  wait,
+  fadeMs = SCENE_FADE_MS,
+  onScene = null,
+}) {
+  if (!Array.isArray(plan) || plan.length === 0) return;
+  if (
+    typeof startScene !== 'function' ||
+    typeof fade !== 'function' ||
+    typeof wait !== 'function'
+  ) {
+    throw new Error(
+      'driveSceneSequence requires startScene, fade and wait callbacks',
+    );
+  }
+
+  if (typeof onScene === 'function') {
+    onScene({ index: 1, total: plan.length, scene: plan[0] });
+  }
+  await startScene(plan[0].target);
+
+  for (let i = 0; i < plan.length; i += 1) {
+    const scene = plan[i];
+    await wait(scene.playMs);
+    await wait(scene.captureMs);
+    if (i === plan.length - 1) break;
+
+    // Between consecutive scenes: fade to black over fadeMs, switch the
+    // scene behind the black, fade from black over fadeMs.
+    await fade(1, fadeMs);
+    const next = plan[i + 1];
+    await startScene(next.target);
+    await fade(0, fadeMs);
+    if (typeof onScene === 'function') {
+      onScene({ index: i + 2, total: plan.length, scene: next });
+    }
+  }
+}
+
+/**
+ * Installs the page-side composite + fade overlay the multi-scene capture
+ * records (AH-0MVFC70GT000B96J, AC3).
+ *
+ * A `MediaRecorder` can only capture one canvas, and a DOM overlay above the
+ * game canvas would never appear in `canvas.captureStream` — so the tool
+ * creates a **composite** canvas that mirrors the game canvas frame by frame
+ * and, while a fade is active, paints a black overlay on top of it. The
+ * recorder captures the composite canvas, which is therefore byte-identical
+ * to the game output except for the fades — the transitions are guaranteed
+ * to be present in the single WebM without any game-side change.
+ *
+ * Self-contained (no module bindings) so Playwright can serialise it into
+ * `page.evaluate`; also exercised by hermetic unit tests with a fake DOM.
+ * Returns `null` when the game canvas is not ready or a 2D context cannot be
+ * created, so the driver fails loudly instead of recording a blank overlay.
+ *
+ * @param {object} [scope] — the page global (defaults to `globalThis`).
+ * @returns {{ id: string, width: number, height: number } | null}
+ */
+export function installCaptureComposite(scope = globalThis) {
+  const doc = scope && scope.document;
+  if (!doc || typeof doc.querySelector !== 'function') return null;
+  const gameCanvas = doc.querySelector('#game-container canvas');
+  if (!gameCanvas) return null;
+
+  const width = Number(gameCanvas.width);
+  const height = Number(gameCanvas.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const composite = doc.createElement('canvas');
+  // Must match COMPOSITE_CANVAS_ID — this function is serialised into the
+  // page by Playwright, so it cannot reference module bindings.
+  composite.id = '__aiHellCaptureComposite';
+  composite.width = width;
+  composite.height = height;
+
+  // Pin the overlay exactly over the (possibly Scale.FIT-centred) game canvas
+  // so headed captures look identical; the recorded pixels come from the
+  // composite's internal 2D buffer at the game's own resolution.
+  const rect =
+    typeof gameCanvas.getBoundingClientRect === 'function'
+      ? gameCanvas.getBoundingClientRect()
+      : { left: 0, top: 0, width, height };
+  const style = (composite.style = composite.style || {});
+  style.position = 'fixed';
+  style.left = `${rect.left}px`;
+  style.top = `${rect.top}px`;
+  style.width = `${rect.width}px`;
+  style.height = `${rect.height}px`;
+  style.zIndex = '2147483647';
+  style.pointerEvents = 'none';
+
+  const host = (doc.body && typeof doc.body.appendChild === 'function' ? doc.body : doc.documentElement);
+  if (host && typeof host.appendChild === 'function') host.appendChild(composite);
+
+  const ctx = composite.getContext('2d');
+  if (!ctx) return null;
+
+  let fadeAlpha = 0;
+  const raf =
+    typeof scope.requestAnimationFrame === 'function'
+      ? scope.requestAnimationFrame.bind(scope)
+      : null;
+
+  const draw = () => {
+    ctx.clearRect(0, 0, width, height);
+    try {
+      ctx.drawImage(gameCanvas, 0, 0, width, height);
+    } catch {
+      /* a draw that fails must not kill the mirror loop */
+    }
+    if (fadeAlpha > 0) {
+      ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(1, Math.max(0, fadeAlpha)).toFixed(4)})`;
+      ctx.fillRect(0, 0, width, height);
+    }
+  };
+
+  const loop = () => {
+    draw();
+    if (raf) raf(loop);
+  };
+  if (raf) raf(loop);
+  else draw();
+
+  /**
+   * Animates the overlay alpha from its current value to `target` over
+   * `durationMs`, resolving when the fade completes. A `durationMs` of 0
+   * snaps instantly. Bound to [0, 1] and never throws, so the driver can
+   * await a fade deterministically.
+   */
+  const fadeTo = (target, durationMs) => {
+    const numeric = Number(target);
+    const to = Number.isFinite(numeric)
+      ? Math.min(1, Math.max(0, numeric))
+      : fadeAlpha;
+    const duration =
+      Number.isFinite(Number(durationMs)) && Number(durationMs) > 0
+        ? Number(durationMs)
+        : 0;
+    const from = fadeAlpha;
+    if (duration <= 0 || from === to) {
+      fadeAlpha = to;
+      draw();
+      return Promise.resolve(to);
+    }
+    return new Promise((resolve) => {
+      let startTs = null;
+      const step = (ts) => {
+        if (startTs === null) startTs = ts;
+        const progress = Math.min(1, Math.max(0, (ts - startTs) / duration));
+        fadeAlpha = from + (to - from) * progress;
+        draw();
+        if (progress >= 1) {
+          resolve(to);
+          return;
+        }
+        if (raf) raf(step);
+        else setTimeout(() => step(ts + 16), 16);
+      };
+      if (raf) raf(step);
+      else setTimeout(() => step(0), 16);
+    });
+  };
+
+  scope.__aiHellFade = {
+    fadeTo,
+    alpha: () => fadeAlpha,
+  };
+  return { id: composite.id, width, height };
 }
 
 /**
@@ -1554,6 +1825,248 @@ export async function runCaptureSession({
 }
 
 /**
+ * Runs a multi-scene capture (AH-0MVFC70GT000B96J, AC3/AC4): one Vite
+ * server, one browser, one page and **one** `MediaRecorder` spanning every
+ * configured scene, writing a single stitched WebM plus the `--json`
+ * payload. Reuses the shared session boot ({@link runCaptureSession}) and the
+ * clip machinery (audio tap, mime selection, recorder, probe, progress)
+ * rather than duplicating them.
+ *
+ * The item list is deliberately a single item: a scene batch is ONE output
+ * file recorded on ONE page, so the per-iteration page rotation of
+ * `--count`/`--all-scenarios` does not apply.
+ *
+ * @param {object} options — parsed capture options (with `scenes` set).
+ * @param {object} [reporter]
+ * @returns {Promise<object>} the single clip result (per-scene timings +
+ *   total duration + output path in the `--json` shape).
+ */
+async function runScenesCapture(options, reporter = createReporter()) {
+  const plan = buildScenePlan(options.scenes);
+  const outputPath = resolveScenesOutputPath(options.output);
+  const payload = buildScenesPayload(plan, { outputPath });
+
+  const { clips } = await runCaptureSession({
+    items: [{ index: 1, outputPath, scenesCapture: true }],
+    options,
+    reporter,
+    captureOne: ({ page, outputPath: itemOutput, session }) =>
+      captureScenes({
+        page,
+        url: session.baseUrl,
+        outputPath: itemOutput,
+        options,
+        reporter,
+        plan,
+        payload,
+      }),
+  });
+
+  return clips[0];
+}
+
+/**
+ * Multi-scene capture on one page with one continuously running recorder
+ * (AH-0MVFC70GT000B96J, AC3/AC4).
+ *
+ * The dev-gated in-page director (`window.__aiHellCaptureDirector`) switches
+ * gym scenes **inside the already-running page** — no navigation, so the
+ * `MediaRecorder` started here spans every scene and is stopped once at the
+ * end. Between scenes the page-side composite overlay ({@link
+ * installCaptureComposite}) fades to black over 0.25 s, the next scene starts
+ * behind the black, and the overlay fades from black over 0.25 s; because the
+ * recorder captures the composite canvas, those fades land in the single
+ * WebM. After recording, the existing non-trivial video+audio probe runs, plus
+ * a targeted probe of the fade boundaries so a capture whose transitions are
+ * missing fails loudly instead of shipping silently.
+ */
+async function captureScenes({
+  page,
+  url,
+  outputPath,
+  options,
+  reporter,
+  plan,
+  payload,
+}) {
+  const totalMs = payload.totalMs;
+  const sceneCount = plan.length;
+  try {
+    // Tap the game's shared AudioContext before any game script runs, so the
+    // one recorder muxes the game's own SFX across every scene.
+    await page.addInitScript(installGameAudioTap);
+
+    const chunks = [];
+    await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
+      chunks.push(Buffer.from(base64, 'base64'));
+    });
+
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+
+    reporter.step(`Loading ${url}…`);
+    await page.goto(url, { waitUntil: 'load', timeout: 30_000 });
+    await page.waitForSelector('#game-container canvas', { timeout: 20_000 });
+    await page.waitForFunction(
+      () => {
+        const canvas = document.querySelector('#game-container canvas');
+        return !!canvas && canvas.width === 960 && canvas.height === 540;
+      },
+      { timeout: 20_000 },
+    );
+
+    // A trusted Enter gesture resumes the shared AudioContext (autoplay
+    // policy) before recording, so the tap captures the game's SFX. It
+    // starts Play Game under the menu — the director switches to the first
+    // gym scene in-page before recording begins.
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(options.warmupMs || 2_000);
+
+    // The director is dev-gated; a production build (or a page where the
+    // dev handle failed to register) fails loudly here instead of recording
+    // blank scenes.
+    await page.waitForFunction(
+      () => typeof window.__aiHellCaptureDirector?.start === 'function',
+      { timeout: 15_000 },
+    );
+
+    const audioTrackCount = await waitForGameAudio(page, AUDIO_TAP_WAIT_MS);
+    const hasAudio = audioTrackCount > 0;
+    reporter.step(
+      hasAudio
+        ? `Game audio tap ready (${audioTrackCount} track(s)).`
+        : 'No game audio detected; recording video only.',
+    );
+    const mimeType = await resolvePageCaptureMimeType(page, hasAudio);
+    if (!mimeType) throw new Error('no supported WebM MediaRecorder codec');
+
+    // The page-side fade overlay the recorder captures (AC3).
+    const composite = await page.evaluate(installCaptureComposite);
+    if (!composite) {
+      throw new Error(
+        'could not install the page-side capture overlay canvas (game canvas not ready)',
+      );
+    }
+    reporter.step('Capture overlay installed (canvas mirror + 0.25 s fades).');
+
+    await startRecording(page, mimeType, `#${COMPOSITE_CANVAS_ID}`);
+    reporter.step(
+      `Recording ${sceneCount} scene(s) (${formatDuration(totalMs)}) with one MediaRecorder…`,
+    );
+
+    const startedEpoch = Date.now();
+    const sceneEpochs = [];
+    let elapsedMs = 0;
+    const reportProgress = () =>
+      reporter.progress(formatProgress(elapsedMs, totalMs));
+
+    await driveSceneSequence({
+      plan,
+      startScene: (key) =>
+        page.evaluate(
+          (sceneKey) => window.__aiHellCaptureDirector.start(sceneKey),
+          key,
+        ),
+      fade: (alpha, durationMs) =>
+        page.evaluate(
+          ([targetAlpha, fadeMs]) =>
+            window.__aiHellFade.fadeTo(targetAlpha, fadeMs),
+          [alpha, durationMs],
+        ),
+      wait: async (ms) => {
+        let remaining = ms;
+        while (remaining > 0) {
+          const step = Math.min(SCENE_WAIT_HEARTBEAT_MS, remaining);
+          await page.waitForTimeout(step);
+          remaining -= step;
+          elapsedMs += step;
+          reportProgress();
+        }
+      },
+      onScene: ({ index, scene }) => {
+        // Wall-clock start of each scene's play window, used to probe the
+        // fades at their *actual* recorded offsets (page round-trips add a
+        // little drift to the plan-derived times).
+        sceneEpochs[index - 1] = Date.now();
+        reporter.step(
+          `Scene ${index}/${sceneCount}: ${scene.target} `
+            + `(play ${formatDuration(scene.playMs)}, capture ${formatDuration(scene.captureMs)})`,
+        );
+      },
+    });
+    reportProgress();
+
+    reporter.step('Encoding and probing the clip…');
+    // Probe a midpoint of every scene window (a visible frame) and several
+    // points across every transition window (fade-to + fade-from; the
+    // darkest one must be black). Both are checked after decoding the real
+    // output. The windows come from the measured wall clock, not the plan, so
+    // page round-trip jitter cannot desynchronise the probe.
+    const sceneSampleTimes = plan.map((scene, index) =>
+      Math.round(
+        sceneEpochs[index]
+          - startedEpoch
+          + (scene.playMs + scene.captureMs) / 2,
+      ),
+    );
+    const transitionWindows = plan.slice(0, -1).map((scene, index) => {
+      const endMs = Math.round(sceneEpochs[index + 1] - startedEpoch);
+      return { startMs: endMs - 2 * SCENE_FADE_MS, endMs };
+    });
+    const transitionSampleTimes = transitionWindows.flatMap((window) =>
+      buildTransitionProbeTimes(window),
+    );
+    const probe = await stopRecordingAndProbe(page, totalMs + 500, [
+      ...sceneSampleTimes,
+      ...transitionSampleTimes,
+    ]);
+
+    const video = Buffer.concat(chunks);
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, video);
+
+    const videoVerdict = isNonTrivialClip({ ...probe, bytes: video.length });
+    const audioVerdict = evaluateAudioTrack({
+      trackCount: probe.audioTrackCount,
+      peak: probe.audioPeak,
+      rms: probe.audioRms,
+      decodeError: probe.audioDecodeError,
+    });
+    const verdict = combineClipVerdict(videoVerdict, audioVerdict);
+    const fadeVerdict = evaluateSceneFadeSamples({
+      scenes: plan,
+      fadeMs: SCENE_FADE_MS,
+      samples: probe.sampleProbes ?? [],
+      sceneSampleTimes,
+      transitionWindows,
+    });
+    const reasons = [...verdict.reasons, ...fadeVerdict.reasons];
+
+    return {
+      ...payload,
+      ...probe,
+      audioVerdict,
+      output: outputPath,
+      bytes: video.length,
+      // `totalMs`/`scenes[]` are the planned timeline the config describes;
+      // `durationMs` mirrors the single-clip contract (recorded length) and
+      // `outputDurationMs` is the decoded length of the written WebM.
+      durationMs: totalMs,
+      outputDurationMs: Math.round(probe.durationSeconds * 1000),
+      // AC3: a missing/undetectable fade in the recording fails the capture,
+      // exactly like a trivial video or a silent audio track.
+      nonTrivial: verdict.nonTrivial && fadeVerdict.fadeVerified,
+      reasons,
+      fadeVerified: fadeVerdict.fadeVerified,
+      fadeReasons: fadeVerdict.reasons,
+      pageErrors,
+    };
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+/**
  * Resolves and runs the whole capture. The item list comes from
  * {@link planCaptureRun} (`--all-scenarios` expands the registry, otherwise
  * the single-clip / `--count` path is unchanged); one Vite server and one
@@ -1561,6 +2074,8 @@ export async function runCaptureSession({
  *
  * A **single** item returns the raw clip result object exactly as before so
  * the `--json` shape cannot regress; a batch returns the aggregate summary.
+ * A multi-scene config (`--config`/`--scenes`) takes the dedicated
+ * one-page/one-recorder path ({@link runScenesCapture}).
  */
 export async function runCapture(
   options = parseCaptureArgs(),
@@ -1579,6 +2094,16 @@ export async function runCapture(
   // or a browser (AH-0MV6MFDYG001E6PL).
   if (options.botConfig !== null && options.botConfig !== undefined) {
     options.botTuningState = loadBotTuningConfigFile(options.botConfig);
+  }
+
+  // Multi-scene capture (AH-0MVFC70GT000B96J): parse/validate the scene
+  // config if a caller passed only the path (main() validates before calling
+  // here, which is what makes the CLI fail before any boot).
+  if (!Array.isArray(options.scenes) && options.scenesConfig) {
+    options.scenes = loadScenesForCapture(options);
+  }
+  if (Array.isArray(options.scenes)) {
+    return runScenesCapture(options, reporter);
   }
 
   const plan = planCaptureRun(options);
@@ -1620,64 +2145,80 @@ export async function runCapture(
  *
  * @param {import('playwright').Page} page
  * @param {string} mimeType
+ * @param {string} [targetSelector] — canvas the recorder captures; defaults
+ *   to the game canvas. The multi-scene driver passes the composite overlay
+ *   canvas so the page-side fades are recorded (AH-0MVFC70GT000B96J).
  */
-async function startRecording(page, mimeType) {
-  return page.evaluate((resolvedMimeType) => {
-    // eslint-disable-next-line no-undef -- injected by Playwright exposeFunction
-    const captureChunk = window.__aiHellCaptureChunk;
-    const canvas = document.querySelector('#game-container canvas');
-    if (!canvas) throw new Error('game canvas not found');
+async function startRecording(
+  page,
+  mimeType,
+  targetSelector = '#game-container canvas',
+) {
+  return page.evaluate(
+    ({ resolvedMimeType, selector }) => {
+      // eslint-disable-next-line no-undef -- injected by Playwright exposeFunction
+      const captureChunk = window.__aiHellCaptureChunk;
+      const canvas = document.querySelector(selector);
+      if (!canvas) throw new Error('game canvas not found');
 
-    const tap = window.__aiHellAudioTap;
-    const audioTracks =
-      tap && typeof tap.getAudioTracks === 'function'
-        ? tap.getAudioTracks()
-        : [];
+      const tap = window.__aiHellAudioTap;
+      const audioTracks =
+        tap && typeof tap.getAudioTracks === 'function'
+          ? tap.getAudioTracks()
+          : [];
 
-    const canvasStream = canvas.captureStream(60);
-    const stream = new MediaStream([
-      ...canvasStream.getVideoTracks(),
-      ...audioTracks,
-    ]);
-    const recorder = new MediaRecorder(stream, {
-      mimeType: resolvedMimeType,
-      videoBitsPerSecond: 8_000_000,
-    });
+      const canvasStream = canvas.captureStream(60);
+      const stream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...audioTracks,
+      ]);
+      const recorder = new MediaRecorder(stream, {
+        mimeType: resolvedMimeType,
+        videoBitsPerSecond: 8_000_000,
+      });
 
-    const chunks = [];
-    recorder.ondataavailable = async (event) => {
-      if (!event.data || event.data.size === 0) return;
-      chunks.push(event.data);
-      const bytes = new Uint8Array(await event.data.arrayBuffer());
-      let binary = '';
-      for (let i = 0; i < bytes.length; i += 0x8000) {
-        binary += String.fromCharCode.apply(
-          null,
-          bytes.subarray(i, i + 0x8000),
-        );
-      }
-      await captureChunk(btoa(binary));
-    };
+      const chunks = [];
+      recorder.ondataavailable = async (event) => {
+        if (!event.data || event.data.size === 0) return;
+        chunks.push(event.data);
+        const bytes = new Uint8Array(await event.data.arrayBuffer());
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          binary += String.fromCharCode.apply(
+            null,
+            bytes.subarray(i, i + 0x8000),
+          );
+        }
+        await captureChunk(btoa(binary));
+      };
 
-    const captureStartedAtEpochMs = Date.now();
-    window.__aiHellCapture = {
-      recorder,
-      chunks,
-      mimeType: resolvedMimeType,
-      audioTrackCount: audioTracks.length,
-      captureStartedAtEpochMs,
-    };
-    recorder.start(1000);
-    return captureStartedAtEpochMs;
-  }, mimeType);
+      const captureStartedAtEpochMs = Date.now();
+      window.__aiHellCapture = {
+        recorder,
+        chunks,
+        mimeType: resolvedMimeType,
+        audioTrackCount: audioTracks.length,
+        captureStartedAtEpochMs,
+      };
+      recorder.start(1000);
+      return captureStartedAtEpochMs;
+    },
+    { resolvedMimeType: mimeType, selector: targetSelector },
+  );
 }
 
 /**
  * Stops the recorder, then decodes the produced WebM back through a
  * `<video>` element and samples several frames for verifiable stats.
+ *
+ * `sampleTimesMs` (optional) additionally probes explicit video offsets
+ * (seconds) and returns per-sample `{ timeMs, nonBlackFraction, meanLuma }`
+ * — the multi-scene driver uses those frames to verify the 0.25 s page-side
+ * fades are present in the recording (AH-0MVFC70GT000B96J, AC3).
  */
-async function stopRecordingAndProbe(page, fallbackDurationMs) {
-  return page.evaluate(async (fallbackMs) => {
+async function stopRecordingAndProbe(page, fallbackDurationMs, sampleTimesMs = null) {
+  return page.evaluate(
+    async ({ fallbackMs, sampleTimes }) => {
     const capture = window.__aiHellCapture;
     if (!capture) throw new Error('capture pipeline was never started');
 
@@ -1876,6 +2417,52 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
       motion = difference / (lumaFrames.length - 1);
     }
 
+    // Explicit time-offset probes (AH-0MVFC70GT000B96J, AC3): seek to each
+    // requested video offset and measure its darkness so the driver can
+    // verify the page-side fades landed in the recording.
+    const sampleProbes = [];
+    if (Array.isArray(sampleTimes) && sampleTimes.length > 0) {
+      for (const timeMs of sampleTimes) {
+        const timeSeconds = timeMs / 1000;
+        if (timeSeconds <= 0 || timeSeconds >= durationSeconds - 0.03) continue;
+        const seeked = new Promise((resolve) => {
+          const done = () => resolve();
+          video.addEventListener('seeked', done, { once: true });
+          setTimeout(done, 2_000);
+        });
+        try {
+          video.currentTime = timeSeconds;
+        } catch {
+          /* ignore seek failures and sample the current frame */
+        }
+        await seeked;
+
+        fullCtx.drawImage(video, 0, 0, full.width, full.height);
+        const pixels = fullCtx.getImageData(
+          0,
+          0,
+          full.width,
+          full.height,
+        ).data;
+        let nonBlack = 0;
+        let lumaSum = 0;
+        const pixelCount = full.width * full.height;
+        for (let i = 0; i < pixels.length; i += 4) {
+          const r = pixels[i];
+          const g = pixels[i + 1];
+          const b = pixels[i + 2];
+          const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          if (luma > 16) nonBlack += 1;
+          lumaSum += luma;
+        }
+        sampleProbes.push({
+          timeMs,
+          nonBlackFraction: nonBlack / pixelCount,
+          meanLuma: lumaSum / pixelCount / 255,
+        });
+      }
+    }
+
     URL.revokeObjectURL(url);
     delete window.__aiHellCapture;
 
@@ -1892,13 +2479,14 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
       audioPeak,
       audioRms,
       audioDecodeError,
+      sampleProbes,
       renderer: (() => {
         const canvas = document.querySelector('#game-container canvas');
         const gl = canvas && (canvas.getContext('webgl2') || canvas.getContext('webgl'));
         return gl ? gl.getParameter(gl.RENDERER) : 'unknown';
       })(),
     };
-  }, fallbackDurationMs);
+  }, { fallbackMs: fallbackDurationMs, sampleTimes: sampleTimesMs });
 }
 
 /**
@@ -1972,6 +2560,15 @@ function formatReport(result) {
     `Resolution: ${result.width}x${result.height} @ ${Math.round(result.durationSeconds * 1000)} ms`,
   ];
 
+  // Multi-scene capture report block (AH-0MVFC70GT000B96J, AC3/AC4): the
+  // scene count and whether the 0.25 s fades were verified in the recording.
+  if (result.sceneCount) {
+    lines.push(
+      `Scenes:     ${result.sceneCount} in one WebM, ${formatDuration(result.fadeMs ?? 0)} fades each direction`,
+      `Fades:      ${result.fadeVerified ? 'verified in the recording' : `MISSING — ${(result.fadeReasons ?? []).join('; ')}`}`,
+    );
+  }
+
   // Action-intensity series + join anchor sidecars (AH-0MVDV4DMY001Z7CU,
   // AC1/AC2/AC5): reported when a clip exported them.
   if (result.seriesOutput) {
@@ -2010,7 +2607,7 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--all-scenarios] [--list-scenarios] [--bot-config file]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--all-scenarios] [--list-scenarios] [--bot-config file] [--config scenes.json]',
     );
     console.log(
       'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',
@@ -2036,6 +2633,9 @@ async function main() {
     console.log(
       'Series: every clip also exports <run-id>.action.jsonl (the per-run action-intensity series, documented docs/dev/action-intensity.md §7.2–§7.3) and <run-id>.capture.json (the §7.5 video-join anchor: the capture_started marker plus the telemetry run-header startedAt), written next to the WebM with a matching basename. The capture re-enables page telemetry; a partial or telemetry-less run still writes a header-only series.',
     );
+    console.log(
+      'Multi-scene: `npm run capture:scenes -- --config <file>` (alias --scenes) records every gym scene listed in the JSON config with ONE MediaRecorder on ONE page, fading to black and back (0.25 s each way) between scenes, and writes a single WebM plus a --json payload with per-scene { target, playMs, captureMs, startMs, endMs }, the total duration and the output path. The config schema is { "scenes": [{ "target": "GymPlayer", "playMs": 2000, "captureMs": 2000, "label": "optional" }] }; it is validated before any server or browser boots.',
+    );
     return;
   }
 
@@ -2044,6 +2644,22 @@ async function main() {
     // is even constructed, so neither Vite nor Chromium is ever booted.
     console.log(renderScenarioListing(options));
     return;
+  }
+
+  if (options.scenesConfig) {
+    // Parse + validate the multi-scene config BEFORE any server or browser
+    // boots (AH-0MVFC70GT000B96J, AC1): a bad config fails fast with an
+    // actionable message and a non-zero exit, never after Chromium launches.
+    try {
+      options.scenes = loadScenesForCapture(options);
+    } catch (error) {
+      if (error instanceof SceneConfigError) {
+        console.error(`Scene config error: ${error.message}`);
+        process.exitCode = 1;
+        return;
+      }
+      throw error;
+    }
   }
 
   const result = await runCapture(options);
