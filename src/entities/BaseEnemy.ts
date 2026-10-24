@@ -60,6 +60,16 @@ export interface BaseEnemyConfig {
    * Defaults to `1` so every single-hit archetype is unchanged.
    */
   health?: number;
+  /**
+   * Remaining enemy force-field hits at spawn (epic AH-0MVJ8W4GE007OMNT AC2;
+   * AH-0MVM8GUZG008AWSU). The count is resolved once by the pure
+   * `enemyForceFieldHits(level, config)` helper and threaded through the
+   * spawn path — the entity never evaluates the level curve itself.
+   *
+   * Defaults to `0` (unshielded), so an entity constructed without a field is
+   * byte-for-byte today's behaviour: `health` is the only thing a hit touches.
+   */
+  forceFieldHits?: number;
   /** Random-number generator (defaults to `Math.random`). */
   rng?: () => number;
 }
@@ -128,6 +138,29 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    */
   protected _health: number;
 
+  /**
+   * Remaining force-field hits (epic AH-0MVJ8W4GE007OMNT AC2). Absorbed
+   * before the hull: {@link takeDamage} decrements this while it is above
+   * zero and only then touches {@link _health}. Initialised from
+   * `config.forceFieldHits` (default `0` = unshielded) so no entity gains a
+   * field by accident.
+   */
+  protected _forceFieldHits: number;
+
+  /**
+   * Latches `true` on the hit that spends the last field hit and never flips
+   * back — the single, exactly-once "field broke" signal shared by every
+   * consumer (feedback, audio, scenes).
+   */
+  protected _forceFieldBroken = false;
+
+  /**
+   * Whether the most recent {@link takeDamage} hit was absorbed by the force
+   * field rather than the hull. `false` for unshielded enemies and after the
+   * field has broken.
+   */
+  protected _lastHitAbsorbed = false;
+
   /** Random-number generator. */
   protected readonly _rng: () => number;
 
@@ -168,6 +201,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._fireInterval = config.fireInterval ?? 1000;
     this._shotProbability = config.shotProbability ?? 1.0;
     this._health = config.health ?? 1;
+    this._forceFieldHits = sanitiseForceFieldHits(config.forceFieldHits);
     this._rng = config.rng ?? Math.random;
 
     // Shared graphics — created here but NOT added to the container.
@@ -248,15 +282,36 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Apply one hit of damage. Decrements the remaining health and calls
-   * {@link destroySelf} only when the last hit point is spent, so the shared
-   * player-bullet collision path can finalise the kill exactly once on the
-   * lethal blow. A hit against an already-destroyed enemy is a no-op.
+   * Apply one hit of damage. The **force field absorbs hits before the hull**
+   * (epic AH-0MVJ8W4GE007OMNT AC2): while the field carries hits, this
+   * decrements the field, leaves `health` untouched, reports the hit as
+   * absorbed and keeps the enemy alive — yet still returns the remaining
+   * **hull** health so every existing caller keeps working unchanged. The hit
+   * that spends the last field hit is the last absorbed hit and latches
+   * {@link forceFieldBroken} exactly once.
+   *
+   * Only once the field is down does the hull take damage as before:
+   * {@link _health} is decremented and {@link destroySelf} runs on the last
+   * hit point, so the shared player-bullet collision path finalises the kill
+   * exactly once on the lethal blow. A hit against an already-destroyed enemy
+   * is a no-op.
+   *
+   * Every player damage source (bullet, piercing, AOE, Smart Bomb, Orbital
+   * Strike, Frenzy bonus hits) already routes through this single seam, so the
+   * field depletes identically for all of them — there is no parallel damage
+   * path.
    *
    * @returns the remaining hit points after this hit (`0` when destroyed).
    */
   takeDamage(): number {
     if (!this._alive) return 0;
+    if (this._forceFieldHits > 0) {
+      this._forceFieldHits -= 1;
+      this._lastHitAbsorbed = true;
+      if (this._forceFieldHits === 0) this._forceFieldBroken = true;
+      return this._health;
+    }
+    this._lastHitAbsorbed = false;
     this._health -= 1;
     if (this._health <= 0) {
       this._health = 0;
@@ -268,6 +323,32 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Remaining hit points before destruction. */
   get health(): number {
     return this._health;
+  }
+
+  /**
+   * Remaining force-field hits (read-only; `0` when unshielded or broken).
+   * The field absorbs hits before the hull — see {@link takeDamage}.
+   */
+  get forceFieldHits(): number {
+    return this._forceFieldHits;
+  }
+
+  /** Whether this enemy still carries a force field (`forceFieldHits > 0`). */
+  get hasForceField(): boolean {
+    return this._forceFieldHits > 0;
+  }
+
+  /** Whether the most recent hit was absorbed by the force field. */
+  get lastHitAbsorbed(): boolean {
+    return this._lastHitAbsorbed;
+  }
+
+  /**
+   * Whether the force field has been broken. Latches `true` on the hit that
+   * spends the last field hit and never flips back.
+   */
+  get forceFieldBroken(): boolean {
+    return this._forceFieldBroken;
   }
 
   /** Hit radius for collision detection. */
@@ -435,4 +516,16 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   get offset(): FormationOffset {
     return { ...this.formationOffset };
   }
+}
+
+/**
+ * Resolves an authored force-field hit count to a usable non-negative
+ * integer. Non-finite/negative values resolve to `0` (unshielded) — a
+ * defensive guard so a corrupt config can never fabricate a shield.
+ */
+function sanitiseForceFieldHits(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  return Math.floor(value);
 }

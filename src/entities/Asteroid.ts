@@ -144,6 +144,13 @@ export interface AsteroidConfig {
    * Hit points before the enemy is destroyed (data-driven;
    * AH-0MUI820PM0038HS2). Defaults to `1` (single-hit).
    */
+  /**
+   * Remaining enemy force-field hits at spawn (epic AH-0MVJ8W4GE007OMNT
+   * AC2; resolved once by `enemyForceFieldHits`). Defaults to `0`
+   * (unshielded), so an entity built without a field behaves exactly as
+   * today.
+   */
+  forceFieldHits?: number;
   health?: number;
   rng?: () => number;
   /** Size tier — overrides the default for this entity. */
@@ -216,6 +223,7 @@ export class Asteroid extends BaseEnemy {
       fireInterval: config.fireInterval,
       shotProbability: config.shotProbability,
       health: config.health,
+      forceFieldHits: config.forceFieldHits,
       rng: config.rng,
     };
 

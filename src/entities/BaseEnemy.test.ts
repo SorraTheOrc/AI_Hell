@@ -2,14 +2,12 @@
  * BaseEnemy force-field contract tests (AH-0MVM8GTG7002IRTL, epic
  * AH-0MVJ8W4GE007OMNT AC2).
  *
- * **TEST-FIRST.** This suite pins the enemy force-field surface **before**
- * it is implemented by the entity force-field layer
- * (AH-0MVM8GUZG008AWSU). Every contract assertion is wrapped in Vitest's
- * `it.fails` (the repo's red-before/green-after convention — see
- * `src/core/levelScaling.test.ts` and AH-0MVM8GQKI006B50M), so the suite
- * stays green on pre-change HEAD where the field does not exist yet. **The
- * implementation item must flip every `it.fails` back to `it`** once the
- * surface lands; a leftover `it.fails` here fails the suite.
+ * **TEST-FIRST → IMPLEMENTED.** This suite pinned the enemy force-field
+ * surface **before** it was implemented by the entity force-field layer
+ * (AH-0MVM8GUZG008AWSU) via Vitest's `it.fails` (the repo's
+ * red-before/green-after convention). The implementation item has flipped
+ * every `it.fails` back to `it`, so the suite now runs against the real
+ * surface.
  *
  * The `forceFieldHits` config field and the `forceFieldHits` /
  * `hasForceField` / `lastHitAbsorbed` / `forceFieldBroken` accessors are
@@ -131,9 +129,9 @@ describe('BaseEnemy force-field contract (test-first, AH-0MVM8GTG7002IRTL)', () 
     return booted.scene;
   }
 
-  // ── Field surface (red until AH-0MVM8GUZG008AWSU lands) ───────────
+  // ── Field surface (implemented by AH-0MVM8GUZG008AWSU) ───────────
 
-  it.fails(
+  it(
     'exposes the remaining field hits an enemy was built with',
     async () => {
       const scene = await boot();
@@ -147,7 +145,7 @@ describe('BaseEnemy force-field contract (test-first, AH-0MVM8GTG7002IRTL)', () 
     },
   );
 
-  it.fails(
+  it(
     'absorbs a hit while the field is up: field decrements, health is untouched, the hit reports as absorbed',
     async () => {
       const scene = await boot();
@@ -166,7 +164,7 @@ describe('BaseEnemy force-field contract (test-first, AH-0MVM8GTG7002IRTL)', () 
     },
   );
 
-  it.fails(
+  it(
     'signals the break exactly once: the last field hit is absorbed, the latch flips once and never again',
     async () => {
       const scene = await boot();
@@ -201,7 +199,7 @@ describe('BaseEnemy force-field contract (test-first, AH-0MVM8GTG7002IRTL)', () 
     },
   );
 
-  it.fails(
+  it(
     'absorbs exactly the number of field hits a shield carries — never more',
     async () => {
       const scene = await boot();
@@ -222,7 +220,7 @@ describe('BaseEnemy force-field contract (test-first, AH-0MVM8GTG7002IRTL)', () 
 
   // ── Backwards-compatible default (guard, red today → stays green after) ──
 
-  it.fails(
+  it(
     'an enemy constructed without a field behaves exactly as before',
     async () => {
     const scene = await boot();

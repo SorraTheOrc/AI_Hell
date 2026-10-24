@@ -2196,13 +2196,13 @@ describe('auto-fire threads the weapon visual identity onto spawned bullets', ()
  * Contract tests for the shared ram rule once shields exist
  * (epic AH-0MVJ8W4GE007OMNT AC2, answer Q6 = **B**).
  *
- * **TEST-FIRST.** The ram-absorb branches are wrapped in Vitest's `it.fails`
- * (the repo's red-before/green-after convention — see
- * `src/core/levelScaling.test.ts`), so this block stays green on pre-change
- * HEAD where `CombatScene._handleCollisions` step 4 knows nothing about
- * shields. **The implementation item must flip every `it.fails` back to
- * `it`.** The two green-guard tests (unshielded ram, Thorn-Field precedence)
- * pin behaviour that already holds today and must keep holding.
+ * **TEST-FIRST → IMPLEMENTED.** The ram-absorb branches were wrapped in
+ * Vitest's `it.fails` (the repo's red-before/green-after convention) while
+ * `CombatScene._handleCollisions` step 4 knew nothing about shields; the
+ * implementation item (AH-0MVM8GUZG008AWSU) has now landed the branch and
+ * flipped them back to `it`. The two green-guard tests (unshielded ram,
+ * Thorn-Field precedence) pin behaviour that already held before and must
+ * keep holding.
  *
  * `FieldStubEnemy` mirrors the pinned BaseEnemy force-field surface (see
  * `src/entities/BaseEnemy.test.ts`): `forceFieldHits` / `hasForceField` /
@@ -2282,7 +2282,7 @@ describe('CombatScene — force-field ram absorption (AH-0MVM8GTG7002IRTL)', () 
     return booted.scene as StubCombatScene;
   }
 
-  it.fails(
+  it(
     'AC2/Q6-B — ramming a shielded enemy consumes exactly one field hit, destroys neither side and never hits the player',
     async () => {
       const scene = await boot();
@@ -2305,7 +2305,7 @@ describe('CombatScene — force-field ram absorption (AH-0MVM8GTG7002IRTL)', () 
     },
   );
 
-  it.fails(
+  it(
     'AC2 — a sustained overlap never drains the field frame by frame (documented re-arm)',
     async () => {
       const scene = await boot();
@@ -2324,7 +2324,7 @@ describe('CombatScene — force-field ram absorption (AH-0MVM8GTG7002IRTL)', () 
     },
   );
 
-  it.fails(
+  it(
     'AC2 — once the shared re-arm expires, a later ram consumes the next field hit',
     async () => {
       const scene = await boot();
@@ -2335,9 +2335,12 @@ describe('CombatScene — force-field ram absorption (AH-0MVM8GTG7002IRTL)', () 
       scene.runCollisions();
       expect(enemy.forceFieldHits).toBe(1);
 
-      // 600 ms is well past the documented ~0.5 s re-arm: the contact may
-      // consume the next field hit.
-      await advanceGame(booted!.game, 600);
+      // Advance comfortably past the documented ~0.5 s re-arm. `advanceGame`
+      // anchors its fixed steps to a fresh wall-clock reading rather than to
+      // the scene clock's last value, and the deterministic boot already
+      // settles ~150 ms of simulated time, so 600 ms of steps is not
+      // guaranteed to land 600 ms past the re-arm; 1000 ms always is.
+      await advanceGame(booted!.game, 1000);
       scene.runCollisions();
 
       expect(enemy.forceFieldHits).toBe(0);
@@ -2347,7 +2350,7 @@ describe('CombatScene — force-field ram absorption (AH-0MVM8GTG7002IRTL)', () 
     },
   );
 
-  it.fails(
+  it(
     'AC2 — once the field is down, the ram falls through to today\'s both-destroyed rule',
     async () => {
       const scene = await boot();

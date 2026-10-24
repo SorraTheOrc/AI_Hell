@@ -251,6 +251,25 @@ export const PHASE_REARM_COOLDOWN = 0.5;
 /** Safe radius around a teleport candidate: no enemy/bullet within this disc (px). ~3× ship size. */
 export const TELEPORT_SAFE_RADIUS = SHIP_SIZE * 3;
 
+/**
+ * Shared re-arm window (ms) after a shielded enemy's force field absorbs a
+ * player ram (epic AH-0MVJ8W4GE007OMNT AC2, operator Q6 = B;
+ * AH-0MVM8GUZG008AWSU).
+ *
+ * Without a re-arm, a player holding the ram position would drain the whole
+ * field frame-by-frame — one field hit per overlapping frame, so even a
+ * 5-hit field would evaporate in a fraction of a second. With it, the ram
+ * consumes **exactly one field hit per contact**: while the window is open
+ * a fresh overlap consumes nothing (both sides survive), and once the field
+ * is down the pre-existing contact rule (both destroyed,
+ * AH-0MTV7JOLU006W8PT) applies unchanged.
+ *
+ * Deliberately distinct from the post-hit player invulnerability window
+ * (which would also grant blink immunity); the field re-arm only gates ram
+ * absorption, and only for enemies that still carry a field.
+ */
+export const ENEMY_FIELD_RAM_REARM_MS = 500;
+
 /** Hit-response invulnerability after a flash/reset with no lives (seconds). */
 export const COMBAT_HIT_INVULNERABLE_DURATION = 0.8;
 

@@ -27,6 +27,7 @@
 import Phaser from 'phaser';
 
 import {
+  ENEMY_FIELD_RAM_REARM_MS,
   FORCE_FIELD_COLOR,
   FORCE_FIELD_REFLECT_LIFETIME,
   GAME_HEIGHT,
@@ -147,6 +148,16 @@ export abstract class CombatScene<
   protected blinkPhase = 0;
   /** Cumulative player-hit counter (exposed by both scenes). */
   protected playerHitCount = 0;
+
+  /**
+   * Scene-clock timestamp (`this.time.now`, ms) until which an enemy force
+   * field will not absorb another ram (epic AH-0MVJ8W4GE007OMNT AC2, Q6 = B).
+   * One configured contact consumes exactly one field hit; a sustained
+   * overlap inside this window consumes nothing, so a player holding the ram
+   * position cannot drain the field frame-by-frame. Only gates enemies that
+   * still carry a field — an unshielded contact keeps the both-destroyed rule.
+   */
+  protected enemyFieldRamReArmUntil = 0;
 
   // ── Shared opt-in wave-timeout + wipe→respawn lifecycle ──────────
   // (AH-0MUNR5LM1004B223) The wave-timeout and the wipe→3 s countdown→
@@ -1292,13 +1303,28 @@ export abstract class CombatScene<
             enemy.getHitRadius(),
           )
         ) {
-          this.onPlayerRamsEnemy(enemy);
-          // Thorn Field (AH-0MVH80ZJ7009W18Z): an active field absorbs the
-          // ram — the enemy still dies, but the player takes no hit and the
-          // distinct absorb burst/cue fires (AH-0MVJ8YKR70096C6T).
+          // Ram resolution order matters: both the Thorn Field and a shielded
+          // enemy's force field absorb the ram, and only the branches that
+          // really destroy the enemy may run `onPlayerRamsEnemy` (the shared
+          // hook destroys the entity and runs the kill accounting in the game
+          // and the generic gym).
+          //
+          // Thorn Field (AH-0MVH80ZJ7009W18Z) keeps precedence: an active
+          // field absorbs the ram — the enemy still dies, but the player takes
+          // no hit and the distinct absorb burst/cue fires
+          // (AH-0MVJ8YKR70096C6T). A shielded enemy's shield never "steals" the
+          // ram the Thorn Field already claimed (pinned by contract test
+          // AH-0MVM8GTG7002IRTL).
           if (this.getEffectsRegistry().tryConsumeThornsRam()) {
+            this.onPlayerRamsEnemy(enemy);
             this._onThornsAbsorb(player.x, player.y);
+          } else if (this._tryEnemyFieldAbsorbRam(enemy)) {
+            // Enemy force field (epic AH-0MVJ8W4GE007OMNT AC2, Q6 = B): the
+            // field absorbs the ram — one field hit consumed, both sides
+            // survive, no player hit and no kill accounting (the enemy was
+            // not destroyed, so `onPlayerRamsEnemy` must not run).
           } else {
+            this.onPlayerRamsEnemy(enemy);
             this._hitPlayer();
           }
           break;
@@ -1323,6 +1349,42 @@ export abstract class CombatScene<
    */
   protected _onThornsAbsorb(x: number, y: number): void {
     resolveThornsAbsorb(this, x, y, { registry: this.thornsAbsorbEffects });
+  }
+
+  /**
+   * Enemy force-field ram absorption (epic AH-0MVJ8W4GE007OMNT AC2, operator
+   * Q6 = B; AH-0MVM8GUZG008AWSU). Defined once in the shared core, mirroring
+   * the Thorn Field `tryConsumeThornsRam` precedent, so the game and every
+   * gym inherit one implementation and cannot diverge.
+   *
+   * While the rammed enemy still carries a field, the field absorbs the ram
+   * through the entity's own `takeDamage()` seam — the field decrements and
+   * the hull is untouched, so both sides survive and the player is not hit.
+   * A shared re-arm ({@link ENEMY_FIELD_RAM_REARM_MS}) makes that exactly
+   * **one field hit per contact**: a fresh overlap inside the window consumes
+   * nothing (and does not hurt the player either). Once the field is down the
+   * enemy's normal, pre-existing contact rule applies unchanged — this method
+   * returns `false` and the caller runs `_hitPlayer()` (both destroyed,
+   * AH-0MTV7JOLU006W8PT).
+   *
+   * @returns whether the ram was absorbed by the enemy's force field.
+   */
+  protected _tryEnemyFieldAbsorbRam(enemy: TEnemy): boolean {
+    const field = enemy as unknown as {
+      hasForceField?: boolean;
+      takeDamage?: () => unknown;
+    };
+    // No field left (never shielded, or already broken): today's rule wins.
+    if (field.hasForceField !== true || typeof field.takeDamage !== 'function') {
+      return false;
+    }
+    // Inside the re-arm window the contact is already paid for: absorb it
+    // silently rather than draining the field (or the player) frame by frame.
+    if (this.time.now < this.enemyFieldRamReArmUntil) return true;
+    // One field hit per contact, through the entity's single damage seam.
+    field.takeDamage();
+    this.enemyFieldRamReArmUntil = this.time.now + ENEMY_FIELD_RAM_REARM_MS;
+    return true;
   }
 
   /**
@@ -1737,6 +1799,7 @@ export abstract class CombatScene<
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
+    this.enemyFieldRamReArmUntil = 0;
     this.waveTimeoutTimer = 0;
     this.waveTimeoutActive = false;
     this.waveTimeoutDuration = 0;

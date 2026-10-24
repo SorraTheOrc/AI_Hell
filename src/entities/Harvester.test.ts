@@ -287,11 +287,10 @@ describe('Harvester entity', () => {
  * Force-field contract for the 5-HP Harvester (epic AH-0MVJ8W4GE007OMNT
  * AC2).
  *
- * **TEST-FIRST.** Wrapped in Vitest's `it.fails` (the repo's
- * red-before/green-after convention — see `src/core/levelScaling.test.ts`),
- * so the block stays green on pre-change HEAD where the Harvester has no
- * field. **The implementation item (AH-0MVM8GUZG008AWSU) must flip it back
- * to `it`.**
+ * **TEST-FIRST → IMPLEMENTED.** The block was wrapped in Vitest's
+ * `it.fails` (the repo's red-before/green-after convention) until the
+ * implementation item (AH-0MVM8GUZG008AWSU) landed; it is now a plain `it`
+ * exercising the real entity surface.
  *
  * The point of this case: the field is an **additive** layer on top of the
  * existing hull durability. Absorbing the field must not reduce, skip or
@@ -299,7 +298,7 @@ describe('Harvester entity', () => {
  * break it still takes exactly five player hits to destroy, just as
  * `is destroyed after exactly five player-bullet hits` pins today.
  */
-/** The BaseEnemy field surface this block reads (declared test-first). */
+/** The BaseEnemy field surface this block reads. */
 interface HarvesterFieldSurface {
   readonly forceFieldHits: number;
   readonly hasForceField: boolean;
@@ -315,7 +314,7 @@ describe('Harvester — force field before the five-hit hull (AH-0MVM8GTG7002IRT
     booted = null;
   });
 
-  it.fails(
+  it(
     'absorbs its field first, then still needs all five hull hits',
     async () => {
       booted = await bootScene([HarnessScene]);

@@ -3992,8 +3992,15 @@ export class PlayScene extends CombatScene<
             s.entity.getHitRadius(),
           )
         ) {
-          this.onPlayerRamsEnemy(s.entity);
-          this._hitPlayer();
+          // A carried-over survivor that still carries a force field absorbs
+          // the ram through the same shared branch the main collision pass
+          // uses — one field hit, both sides survive (epic
+          // AH-0MVJ8W4GE007OMNT AC2, Q6 = B). Once the field is down the
+          // existing both-destroyed rule applies unchanged.
+          if (!this._tryEnemyFieldAbsorbRam(s.entity)) {
+            this.onPlayerRamsEnemy(s.entity);
+            this._hitPlayer();
+          }
           break;
         }
       }

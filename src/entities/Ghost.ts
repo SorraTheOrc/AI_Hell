@@ -89,6 +89,13 @@ export interface GhostConfig {
   bulletSpeed?: number;
   bulletLifetime?: number;
   fireInterval?: number;
+  /**
+   * Remaining enemy force-field hits at spawn (epic AH-0MVJ8W4GE007OMNT
+   * AC2; resolved once by `enemyForceFieldHits`). Defaults to `0`
+   * (unshielded), so an entity built without a field behaves exactly as
+   * today.
+   */
+  forceFieldHits?: number;
   health?: number;
   /** Pursuit speed in px/s (defaults to {@link GHOST_PURSUIT_SPEED}). */
   speed?: number;
@@ -148,6 +155,7 @@ export class Ghost extends BaseEnemy {
       bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval,
       health: config.health,
+      forceFieldHits: config.forceFieldHits,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

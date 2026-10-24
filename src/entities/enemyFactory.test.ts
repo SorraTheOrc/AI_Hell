@@ -320,11 +320,9 @@ describe('Config-aware entity seam', () => {
  * the spawn path into the constructed entity (AH-0MVM8GUZG008AWSU
  * implements the seam; AH-0MVM8GXEF009883O resolves it at spawn).
  *
- * **TEST-FIRST.** Every test is wrapped in Vitest's `it.fails` (the repo's
- * red-before/green-after convention — see `src/core/levelScaling.test.ts`),
- * so this block stays green on pre-change HEAD where the factory still
- * ignores the count. **The implementation item must flip every `it.fails`
- * back to `it`.**
+ * **TEST-FIRST → IMPLEMENTED.** The block was wrapped in Vitest's `it.fails`
+ * (the repo's red-before/green-after convention) until the entity layer
+ * (AH-0MVM8GUZG008AWSU) threaded the count; it now runs as plain `it`.
  *
  * Pinned seam: `createEnemyFromConfig(scene, config, x, y, offset, rng?,
  * forceFieldHits?)` — the resolved hit count is an **appended** optional
@@ -375,7 +373,7 @@ describe('Force-field threading (AH-0MVM8GTG7002IRTL)', () => {
     return entity as unknown as FieldSurface;
   }
 
-  it.fails('threads the resolved hit count into the constructed entity', async () => {
+  it('threads the resolved hit count into the constructed entity', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;
     const create = createWithField();
@@ -391,7 +389,7 @@ describe('Force-field threading (AH-0MVM8GTG7002IRTL)', () => {
     e.destroy(true);
   });
 
-  it.fails('threads a zero resolved count as unshielded, exactly like an omitted count', async () => {
+  it('threads a zero resolved count as unshielded, exactly like an omitted count', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;
     const create = createWithField();
@@ -410,7 +408,7 @@ describe('Force-field threading (AH-0MVM8GTG7002IRTL)', () => {
     omitted.destroy(true);
   });
 
-  it.fails('never derives a shield from the raw config curve columns', async () => {
+  it('never derives a shield from the raw config curve columns', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;
     const create = createWithField();
@@ -427,7 +425,7 @@ describe('Force-field threading (AH-0MVM8GTG7002IRTL)', () => {
     e.destroy(true);
   });
 
-  it.fails('spawns an entity whose field matches the resolver for a campaign level', async () => {
+  it('spawns an entity whose field matches the resolver for a campaign level', async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;
     const create = createWithField();
