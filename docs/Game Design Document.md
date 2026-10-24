@@ -998,6 +998,19 @@ Coverage: `src/powerups/unlocks.test.ts`
 (the ~50 % locked-pool invariant, option builders, single consumption) and the
 `PlayScene — mini-boss encounter` reward tests.
 
+**Demo/attract auto-select (AH-0MVJ8U79V0056I2F).** In demo mode the reward is
+not left waiting for a human: the launcher passes the same overlay
+`autoSelectMs`/`autoSelectIndex` contract the hold-full choice uses
+(§4.4.1), so the reward overlay auto-selects after `BOT_MINERAL_CHOICE_DELAY_MS`
+(`src/ai/botHumanLike.ts`), runs the shared 3-2-1 countdown, applies the choice
+through `selectMiniBossReward` and resumes play — the demo never stalls on the
+reward screen. The pick is **random** among the offered upgrade-or-unlock
+options, drawn from the run-seeded RNG (no `Math.random()`), so a given seed
+reproduces the same reward. Normal play is unchanged: outside demo mode the
+overlay waits for a real pointer/keyboard selection. There is no
+mini-boss-specific overlay or resume path — the single tunable stays
+`BOT_MINERAL_CHOICE_DELAY_MS`.
+
 ### 4.5 Scoring System
 
 | Action | Points |

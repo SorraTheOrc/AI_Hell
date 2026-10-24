@@ -3017,6 +3017,18 @@ export class PlayScene extends CombatScene<
       this.scene.launch('MineralChoiceScene', {
         origin: 'PlayScene-miniBoss',
         options: [...this.miniBossRewardOptions],
+        // Demo mode auto-selects a random offered option after the same
+        // human-like delay as the hold-full choice, so the attract bot never
+        // stalls on the reward screen (AH-0MVJ8U79V0056I2F · AC1/AC2). The
+        // pick is drawn from the run-seeded RNG, so a seed replays the same
+        // reward; normal play leaves both params unset and waits for a real
+        // selection (AC3).
+        ...(this.demoMode
+          ? {
+              autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS,
+              autoSelectIndex: this._randomDemoRewardIndex(),
+            }
+          : {}),
         // Single overlay contract: the launcher supplies one selection
         // callback; `selectMineralChoice` routes it to the reward resolver
         // while the reward is open.
@@ -3024,6 +3036,20 @@ export class PlayScene extends CombatScene<
       });
     }
     return [...this.miniBossRewardOptions];
+  }
+
+  /**
+   * The demo bot's random mini-boss reward pick: a uniform index into the
+   * currently offered reward options, drawn from the run-seeded RNG so a given
+   * seed reproduces the same reward (AH-0MVJ8U79V0056I2F · AC2). The result is
+   * clamped to `0 .. n-1` (returning 0 for an empty offer) so the overlay's
+   * auto-select can never be handed an out-of-range index. Only the demo
+   * auto-select consults it, so normal play is unaffected.
+   */
+  private _randomDemoRewardIndex(): number {
+    const count = this.miniBossRewardOptions.length;
+    if (count <= 0) return 0;
+    return Math.min(count - 1, Math.max(0, Math.floor(this.rng() * count)));
   }
 
   /**

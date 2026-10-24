@@ -274,6 +274,122 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
   });
 
+  // ── Mini-boss reward auto-select (AH-0MVJ8U79V0056I2F) ──────────
+
+  /** Opens the mini-boss reward overlay exactly as a defeat would. */
+  function openReward(play: PlayScene) {
+    return play.openMiniBossReward({
+      level: 1,
+      waveNumber: 5,
+      miniBossName: 'Test Mini-Boss',
+      isFinalLevel: false,
+    });
+  }
+
+  it('AC1/AC2 — the demo bot auto-selects a seeded random mini-boss reward instead of stalling', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(booted!.game, 150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(true);
+    play.getPlayer()!.equipWeapon('spread', true);
+
+    // A high draw from the run-seeded stream must pick the last offered
+    // option — proving the pick comes from `PlayScene`'s RNG, not
+    // `Math.random()`.
+    play.setRng(() => 0.999999);
+
+    const selected = vi.spyOn(play, 'selectMineralChoice');
+    const offered = openReward(play);
+    expect(offered.length).toBeGreaterThan(1);
+    expect(play.isMiniBossRewardOpen()).toBe(true);
+
+    await wait(booted!.game, 80);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(true);
+
+    await wait(
+      booted!.game,
+      BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400,
+    );
+
+    const last = offered[offered.length - 1];
+    expect(selected).toHaveBeenCalledWith(offered.length - 1);
+    // The reward was applied through the shared reward resolver: the last
+    // option is a locked-weapon unlock, now recorded for the run.
+    expect(last.kind).toBe('weapon');
+    expect(play.getUnlockedWeapons()).toEqual([last.id]);
+    // …and the run carries on: overlay closed, play resumed.
+    expect(play.isMiniBossRewardOpen()).toBe(false);
+    expect(play.isMineralChoiceOpen()).toBe(false);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(false);
+    expect(play.isPaused()).toBe(false);
+  });
+
+  it('AC2 — a zero draw takes the first offered reward (lower bound)', async () => {
+    const menu = await bootMenu();
+    menu.startDemo();
+    await wait(booted!.game, 150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    const player = play.getPlayer()!;
+    player.equipWeapon('spread', true);
+    const levelBefore = player
+      .getWeaponLevels()
+      .find((entry) => entry.id === 'spread')!.level;
+
+    play.setRng(() => 0);
+
+    const selected = vi.spyOn(play, 'selectMineralChoice');
+    const offered = openReward(play);
+    expect(offered[0]).toMatchObject({ id: 'spread', kind: 'weapon-level' });
+
+    await wait(
+      booted!.game,
+      BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400,
+    );
+
+    expect(selected).toHaveBeenCalledWith(0);
+    const levelAfter = player
+      .getWeaponLevels()
+      .find((entry) => entry.id === 'spread')!.level;
+    expect(levelAfter).toBe(levelBefore + 1);
+    expect(play.isMiniBossRewardOpen()).toBe(false);
+  });
+
+  it('AC3 — outside demo mode the reward overlay waits for a real selection', async () => {
+    const menu = await bootMenu();
+    // Enter activates the focused Play Game control (normal run).
+    menu.input.keyboard!.emit('keydown', {
+      key: 'Enter',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+    await wait(booted!.game, 150);
+
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isDemoMode()).toBe(false);
+    play.getPlayer()!.equipWeapon('spread', true);
+
+    const selected = vi.spyOn(play, 'selectMineralChoice');
+    openReward(play);
+    await wait(booted!.game, 80);
+    expect(booted!.game.scene.isActive('MineralChoiceScene')).toBe(true);
+
+    // Well past the demo delay + countdown: no auto-select ever fires.
+    await wait(
+      booted!.game,
+      BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400,
+    );
+    expect(selected).not.toHaveBeenCalled();
+    expect(play.isMiniBossRewardOpen()).toBe(true);
+    expect(play.isMineralChoiceOpen()).toBe(true);
+
+    // A real selection still resolves the reward.
+    play.selectMiniBossReward(0);
+    expect(play.isMiniBossRewardOpen()).toBe(false);
+  });
+
   it('AC6 — the demo auto-select routes through the 3-2-1 countdown and resumes on the beat', async () => {
     const menu = await bootMenu();
     menu.startDemo();
