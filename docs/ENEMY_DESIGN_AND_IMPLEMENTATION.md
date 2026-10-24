@@ -1362,6 +1362,21 @@ gym exposes the targets through the shared `getEnemyEntities()` participant
 contract and inherits every AOE hook from the shared core, so the game and the
 gym resolve the same effect from one implementation (parent
 AH-0MQUYHY0000MZ2F, F6 AC3/AC5).
+
+**Documented divergence — formation gyms keep a flat supply cadence.**
+The campaign now scales two axes with the level (`src/core/levelScaling.ts`):
+wave group counts multiply by `enemyCountMultiplier(level)` (1.00→2.00 over
+levels 1–10) at the shared campaign-build seam, and each kill rolls
+`powerUpDropChance(level)` (0.18→0.05). `GymLevel` and `GymBotTuning` apply
+both: they scale launched counts through the same `applyEnemyCountScaling`
+seam and lengthen their seeded supply interval by the inverse drop-chance
+ratio, so a launched level matches the game. `GymFormationScene` and its
+scenes (`GymBoss`, `GymCentipede`, `GymFodderEnemies`, …) have **no
+campaign-level input at all**, so they keep their scene-specific flat
+`rules.powerUpSpawnInterval` supply source unchanged. The divergence is
+intentional and recorded in the `GymLevel` scene header, in the parent work
+item AH-0MVHT1M6O003PU7P and in
+[`docs/BALANCING.md`](./BALANCING.md) (AH-0MVLJF886009584F).
 ---
 
 ## 6. Testing strategy

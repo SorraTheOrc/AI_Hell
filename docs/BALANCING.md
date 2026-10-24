@@ -104,6 +104,135 @@ and the asteroid shadow-hazard stay live (so the small-asteroid Extra Life
 roll is exercised). The **seeded skirmish** (no `--level`) is unchanged — its
 drops still come from the seeded power-up reservoir.
 
+## Level-scaling curves and evidence (AH-0MVHT1M6O003PU7P)
+
+The campaign scales difficulty on two independent axes as the level rises: the
+waves hold **more enemies**, and each kill has a **lower power-up drop
+chance**. Both curves live in one pure module,
+[`src/core/levelScaling.ts`](../src/core/levelScaling.ts), and are tuning data
+in `GameRules` (`src/core/rules.ts`) — the game, the level gyms and this
+harness resolve them through the same functions, never a copy.
+
+### Scaling table (levels 1–10)
+
+Both curves are linear across the campaign range and clamp outside it. Level 1
+is exactly the pre-change behaviour (`1.00×` counts, `0.18` per-kill drop
+chance, `0.05` asteroid Extra Life chance), so onboarding and older baselines
+stay valid.
+
+| Level | Enemy-count multiplier | Per-kill power-up drop chance | Relative supply vs L1 | Asteroid Extra Life chance |
+|---|---|---|---|---|
+| 1 | 1.000× | 0.1800 | 1.000 | 0.0500 |
+| 2 | 1.111× | 0.1656 | 0.920 | 0.0460 |
+| 3 | 1.222× | 0.1511 | 0.840 | 0.0420 |
+| 4 | 1.333× | 0.1367 | 0.759 | 0.0380 |
+| 5 | 1.444× | 0.1222 | 0.679 | 0.0340 |
+| 6 | 1.556× | 0.1078 | 0.599 | 0.0299 |
+| 7 | 1.667× | 0.0933 | 0.519 | 0.0259 |
+| 8 | 1.778× | 0.0789 | 0.438 | 0.0219 |
+| 9 | 1.889× | 0.0644 | 0.358 | 0.0179 |
+| 10 | 2.000× | 0.0500 | 0.278 | 0.0139 |
+
+- **Enemy counts.** Each non-`single` wave group's `count` is multiplied by
+the level's factor, rounded half up (`Math.round`), floored at 1 and capped at
+`enemyCountCap` (200); `single`-formation groups stay at exactly 1. The same
+helper (`applyEnemyCountScaling`) is used by `PlayScene`'s campaign-build seam
+and by `GymLevel` / `GymBotTuning`, so a launched level spawns the game's
+counts (see
+[`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`](./ENEMY_DESIGN_AND_IMPLEMENTATION.md)
+§9.6 and §5.1).
+- **Supply.** Every kill-time drop roll in `PlayScene` uses
+`powerUpDropChance(level)` instead of the flat level-1 rate, and the asteroid
+Extra Life roll scales by the same ratio (`extraLifeDropChance`). Drop types,
+weights and timed effects are unchanged; the level gyms lengthen their supply
+cadence by the inverse ratio so their run is not over-supplied.
+- **Rationale.** The player's permanent weapon/power-up levels compound through
+the run, so both axes compensate for that growth: each level adds enemy work
+while handing out proportionally less supply. The endpoints (1→2× counts,
+0.18→0.05 drop chance) are the tuning contract from the parent work item; the
+values are data, so a future tuning change edits `GameRules` and re-runs this
+evidence.
+- **Documented divergence — formation gyms.** `GymFormationScene` and its
+scenes (`GymBoss`, `GymCentipede`, `GymFodderEnemies`, …) have **no
+campaign-level input**, so they keep their scene-specific flat
+`powerUpSpawnInterval` supply source. Only the level-based gyms (`GymLevel`,
+`GymBotTuning`) adopt the curves; the reason is recorded in the `GymLevel`
+scene header and in the parent work item.
+
+### Evidence: same-seed baseline vs post-change batches
+
+Both batches use the **same seed set (1–100)**, the **competent** policy, 1800
+ticks (`dt` 1/60), and the identical harness code at commit **`ec0ccc7b`**.
+The baseline is per-level mode with the curves disabled (`--scale-levels off`,
+which resolves **both** axes to level 1 — the pre-change behaviour); the
+post-change batch resolves them at the selected level (`--scale-levels on`,
+the default). Each level is its own pair of runs because per-level mode plays
+that level's real campaign waves and real per-kill drop rule.
+
+```bash
+# baseline (curves resolved to level 1) and post-change, for a level n
+node scripts/evaluate.mjs --batch --level 5 --scale-levels off --games 100 --out /tmp/evidence/l5-off
+node scripts/evaluate.mjs --batch --level 5 --scale-levels on  --games 100 --out /tmp/evidence/l5-on
+
+# level 10 only: --sample-every 10 keeps the unsampled 100-game runs.jsonl
+# under Node's single-string write limit; events (and so every metric below)
+# are still recorded on every tick, survival is quantised to ~0.17 s.
+node scripts/evaluate.mjs --batch --level 10 --scale-levels off --games 100 --sample-every 10 --out /tmp/evidence/l10-off
+node scripts/evaluate.mjs --batch --level 10 --scale-levels on  --games 100 --sample-every 10 --out /tmp/evidence/l10-on
+```
+
+Aggregate means per 100-game batch (`n = 100`; power-ups per kill is the
+per-run "collected ÷ enemies killed" mean):
+
+| Level | Batch | Power-ups collected | Enemy kills/run | Power-ups per kill | Avoidable hits | Survival (s) | Wave reached | Level reached |
+|---|---|---|---|---|---|---|---|
+| 1 | baseline | 0.41 | 6.42 | 0.0694 | 1.38 | 28.37 | 1.40 | 1.00 |
+| 1 | post-change | 0.41 | 6.42 | 0.0694 | 1.38 | 28.37 | 1.40 | 1.00 |
+| 5 | baseline | 0.31 | 4.04 | 0.0679 | 1.75 | 25.49 | 1.44 | 5.00 |
+| 5 | post-change | 0.21 | 5.10 | **0.0432** (−36.4 %) | 1.91 | 25.34 | 1.24 | 5.00 |
+| 10 | baseline | 0.50 | 15.84 | 0.0282 | 2.88 | 15.78 | 1.00 | 10.00 |
+| 10 | post-change | 0.12 | 21.78 | **0.0055** (−80.5 %) | 2.98 | 13.14 | 1.00 | 10.00 |
+
+Per-archetype kills (aggregate means, the field the work item requires):
+
+| Level | Batch | Kills by archetype |
+|---|---|---|
+| 5 | baseline | `phaser` 4.04 |
+| 5 | post-change | `phaser` 5.10 |
+| 10 | baseline | `capturer` 0.32, `diver` 4.31, `ghost-ambush` 0.43, `ghost-chase` 0.50, `ghost-flank` 0.39, `ghost-wander` 0.42, `grunt` 0.38, `raider` 0.16, `swarm` 4.31, `tank` 4.62 |
+| 10 | post-change | `capturer` 0.19, `diver` 6.72, `ghost-ambush` 0.26, `ghost-chase` 0.41, `ghost-flank` 0.29, `ghost-wander` 0.35, `grunt` 0.20, `raider` 0.15, `swarm` 6.32, `tank` 6.89 |
+
+**Reading the evidence.**
+
+1. **L1 is byte-identical.** The two level-1 reports diff clean —
+   `--scale-levels off` and `on` produce the same `balance-report.json`, which
+   confirms the level-1 identity of both curves.
+2. **Mid/late supply per kill falls.** At level 5 it drops from 0.0679 to
+   0.0432 (−36.4 %); at level 10 from 0.0282 to 0.0055 (−80.5 %). Level 5's
+   collected supply (−32.3 %) closely tracks its drop-chance ratio (0.679),
+   and level 10's much larger fall is the same curve compounded by shorter
+   post-change runs (fewer collection opportunities).
+3. **The campaign stays playable.** All 600 runs completed without a crash and
+   produced a report. The reached-level metric is unchanged at both levels
+   (`levelReached` 5.00 and 10.00), and the completion metric is unchanged
+   (`won` / `level_cleared` = 0 in both batches — the competent bot dies before
+   clearing a 10-wave level at L5/L10, before and after). The bot also kills
+   **more** enemies in the same game (L5 +26 %, L10 +37 %) and survival is flat
+   at L5 (−0.6 %); at L10 survival is 17 % shorter because twice as many
+   enemies now occupy the same arena. At L5 the secondary `waveReached`
+   progress signal moves from 1.44 to 1.24 — a wave with 44 % more enemies
+   takes longer to wipe — which is the intended density escalation, not a
+   starvation or crash signal (kills/run and survival do not fall).
+4. **No tuning was changed after the evidence run.** The endpoints arrived at
+   from the design (`1→2×`, `0.18→0.05`) already move both measured axes in
+   the intended direction, so the documented values are the shipped ones. A
+   future tuning change edits `GameRules`, records the reason, and re-runs the
+   four commands above on the same seeds.
+
+Artifacts (`balance-report.json`, `balance-report.txt`, `runs.jsonl`) are
+written under the git-ignored output directories; the commands, seed set,
+commit and aggregates above are the durable record.
+
 ## Statistics schema
 
 The report uses one **versioned, shared** schema so bot runs, human-play

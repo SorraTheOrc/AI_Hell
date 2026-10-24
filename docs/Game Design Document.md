@@ -401,7 +401,7 @@ The following rules govern how enemy entities interact with each other and with 
 | **Weapon types** | 16 | 11 conventional/AOE weapons + **5 unlock-pool weapons** (see §4.4) |
 | **Checkpoint save** | 1 slot | Auto-saved at every mini-boss to `ai_hell_checkpoint`; Continue on the main menu (see §6.6) |
 | **Leaderboard** | Local storage | localStorage-based, single-machine |
-| **Difficulty scaling** | **Out of scope** | Not implemented in MVP |
+| **Difficulty scaling** | **Data-driven level curves** | As levels progress, wave groups hold more enemies (1.00× → 2.00×) and the per-kill power-up drop chance falls (0.18 → 0.05), resolved from one pure module (`src/core/levelScaling.ts`, tuning data in `GameRules`) — see §3.2 and §4.4 |
 | **Multiplayer** | **Out of scope** | Single-player only in MVP |
 
 ### 3.2 Level Progression Overview
@@ -421,6 +421,19 @@ The following rules govern how enemy entities interact with each other and with 
 | Boss | AI Throne | N/A | Yes (complex) | Final boss encounter with multi-phase attack patterns |
 
 > **Note**: "Moderate," "Large," and "Smaller" are relative. The exact enemy counts per level are design decisions that can be tuned during implementation, but the progression from no-bullets to bullets to fewer-but-patterned enemies must be preserved.
+
+> **Level density scaling (AH-0MVHT1M6O003PU7P).** Every campaign wave's group
+> counts are multiplied by a level factor that ramps linearly from **1.00× at
+> level 1** to **2.00× at level 10** — rounded half up, floored at 1, capped at
+> 200, and never applied to `single`-formation groups (one entity). The same
+> shared seam (`applyEnemyCountScaling` in `src/core/levelScaling.ts`) scales
+> the static `LEVELS` campaign and the sequenced campaign, and the level-based
+> gyms (`GymLevel` / `GymBotTuning`) spawn the same counts, so tuning transfers
+> to the game. Level 1 is the identity transform, so onboarding is untouched;
+> the tuning values live in `GameRules` (`enemyCountMultiplierAtMaxLevel`,
+> `levelScalingMaxLevel`, `enemyCountCap`), not in the seam. The full scaling
+> table and the before/after bot-batch evidence are in
+> [`docs/BALANCING.md`](./BALANCING.md).
 
 > **Default sequenced campaigns (AH-0MUH6LEYY0054E63; per-wave modes
 > AH-0MUJSUQD8003FSUT; default-on AH-0MUJSUTLA006Q8E1; 10-wave expansion
@@ -763,6 +776,21 @@ on entry (AH-0MUJM746P000QAEO).
 
 The player collects power-ups dropped by destroyed enemies through the shared weighted-random drop pool (§6.4). There are **10+ distinct types** — including the three **area-of-effect weapons** (Nova, Mortar, Arc) documented in the table below; the shipped defaults encode rarity as **relative weights** — standard power-ups (Shield–Teleport, Magnet, Mineral Scoop, Force Field) at **4**, **Extra Life** and the **Mystery UFO** at **3**, the **Smart Bomb** at **2**, and each weapon drop at **2** (the `~15–20 %` / `~5 %` per-enemy figures below are conceptual guidance, not a directly coded per-enemy chance). Extra Life therefore takes ≈ **7.5 % of power-up draws** (weight 3 of the 40 total power-up weight) — still rarer than standard drops, but roughly 1.9× its former share (its weight was 1 of 27):
 
+> **Per-kill drop chance scales with the campaign level (AH-0MVHT1M6O003PU7P).**
+> A destroyed enemy's chance to drop from the shared weighted pool is no longer
+> a flat level-1 rate: `PlayScene` resolves it per level through the shared
+> `powerUpDropChance(level)` curve (`src/core/levelScaling.ts`), which falls
+> **linearly from 0.18 at level 1 to 0.05 at level 10** (level 1 is exactly the
+> old flat rate). The small-asteroid **Extra Life** roll scales by the same
+> ratio (`extraLifeDropChance`, 0.05 → 0.0139). The pool's relative weights,
+> the collection rules and every timed/permanent effect are unchanged — only
+> the per-kill roll is level-resolved. The level-based gyms (`GymLevel`,
+> `GymBotTuning`) adopt the same curve by lengthening their supply cadence by
+> the inverse ratio; formation gyms have no campaign-level input and keep their
+> flat cadence (documented divergence in `GymLevel` and
+> [`docs/BALANCING.md`](./BALANCING.md), which also carries the scaling table
+> and the before/after bot-batch evidence).
+
 > **Planned classic-arcade arsenal (AH-0MV14SO0G0095IJ4):** A researched expansion of this catalogue is recorded in `docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md` — eight selected concepts (four weapons: R-Type wave laser, Centipede ricochet shot, Missile Command cluster/MIRV missile, Gradius Options orbiting satellites; four power-ups: Defender smart bomb, Gradius force field, Space Invaders mystery UFO, and the Pac-Man power pellet — since **removed**, see the research doc §5) plus the candidates considered but not selected. Each selected concept's entry specifies its catalogue seam, level-curve variables and the gym scene that will exercise it; the document is the design brief for the epic's per-concept child work items and is validated by `src/classicPowerUpWeaponResearchDocs.test.ts`.
 
 | ID | Name | Effect | Icon Suggestion |
@@ -998,6 +1026,16 @@ Coverage: `src/powerups/unlocks.test.ts`
   wave, and `PlayScene` gates on the spawned encounter entity). The mini-boss
   wave has no time limit. Clearing Level 10's mini-boss triggers the
   multi-phase final boss.
+- **Difficulty rises on two axes.** Each level's waves hold more enemies —
+  group counts × `enemyCountMultiplier(level)`, linear **1.00× at L1 → 2.00×
+  at L10** (rounded half up, floor 1, cap 200, `single` groups stay at 1) —
+  and each kill's power-up drop chance falls — `powerUpDropChance(level)`,
+  linear **0.18 at L1 → 0.05 at L10** — with the asteroid Extra Life roll
+  scaled by the same ratio. Both curves are pure, shared and data-driven
+  (`src/core/levelScaling.ts`, values in `GameRules`); level 1 is the identity,
+  so the opening calibration is unchanged. The scaling table, the documented
+  formation-gym divergence and the same-seed before/after bot-batch evidence
+  live in [`docs/BALANCING.md`](./BALANCING.md) (AH-0MVHT1M6O003PU7P).
 - If the player runs out of lives (3 starting; up to 5 with Extra Life power-up), the game ends and the **final score** is submitted to the local leaderboard.
 - There is **no continue** mechanic. Game over is final.
 - Players may restart from Level 1 at any time after a game over.

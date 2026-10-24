@@ -165,3 +165,53 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     expect(evaluation).toContain('--tune');
   });
 });
+
+describe('Level-scaling curves and evidence are documented (AH-0MVHT1M6O003PU7P)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('documents the scaling curve section with the level 1–10 table', () => {
+    expect(doc).toContain('## Level-scaling curves and evidence (AH-0MVHT1M6O003PU7P)');
+    expect(doc).toContain('### Scaling table (levels 1–10)');
+    // The table's endpoints are the tuning contract: 1.00× → 2.00× counts,
+    // 0.18 → 0.05 per-kill drop chance, level 1 = the identity.
+    expect(doc).toContain('| 1 | 1.000× | 0.1800 |');
+    expect(doc).toContain('| 5 | 1.444× | 0.1222 |');
+    expect(doc).toContain('| 10 | 2.000× | 0.0500 |');
+    expect(doc).toContain('src/core/levelScaling.ts');
+    expect(doc).toContain('applyEnemyCountScaling');
+    expect(doc).toContain('powerUpDropChance');
+  });
+
+  it('documents the baseline vs post-change evidence with commands and seed set', () => {
+    expect(doc).toContain('### Evidence: same-seed baseline vs post-change batches');
+    expect(doc).toContain('--scale-levels off');
+    expect(doc).toContain('--scale-levels on');
+    expect(doc).toContain('--games 100');
+    expect(doc).toMatch(/seed set \(1–100\)/);
+    expect(doc).toMatch(/competent/);
+    expect(doc).toMatch(/ec0ccc7b/);
+  });
+
+  it('records the per-level metrics the parent AC requires', () => {
+    for (const metric of [
+      'powerUpsCollected',
+      'enemiesKilledByArchetype',
+      'avoidableHits',
+      'survivalSeconds',
+      'levelReached',
+      'Power-ups per kill',
+    ]) {
+      expect(doc).toContain(metric);
+    }
+    // The supply-per-kill result is quoted for level 5 and level 10.
+    expect(doc).toContain('0.0432');
+    expect(doc).toContain('0.0055');
+  });
+
+  it('concludes with falls in supply and no regression in playability checks', () => {
+    expect(doc).toMatch(/per kill falls|supply per kill falls|supply per kill/i);
+    expect(doc).toMatch(/no crash|did not crash|without a crash/);
+    expect(doc).toMatch(/levelReached/);
+    expect(doc).toMatch(/formation gyms/i);
+  });
+});

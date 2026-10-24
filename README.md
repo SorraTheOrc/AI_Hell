@@ -748,7 +748,13 @@ human-readable report. Run it with `npm run evaluate -- --batch`; see
 schema and how to interpret the distributions (epic AH-0MV1DLUZ8009OCJW),
 plus the **tuning loop** (`--tune` baselines one declarative CSV edit against
 an identical re-run and writes a versioned before/after comparison —
-AH-0MV8Q5EYE001R715).
+AH-0MV8Q5EYE001R715) and the **level-scaling curves & evidence**
+(AH-0MVHT1M6O003PU7P): the campaign's per-level enemy-count multiplier
+(1.00× → 2.00×) and per-kill power-up drop chance (0.18 → 0.05) live in
+`src/core/levelScaling.ts`, are applied by `PlayScene` and the level gyms,
+and are measured by same-seed baseline (curves off) vs post-change per-level
+batches, with the scaling table, rationale and reproduction commands recorded
+in `docs/BALANCING.md`.
 
 #### Style matching from telemetry
 
