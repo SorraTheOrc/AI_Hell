@@ -183,3 +183,77 @@ describe('difficulty-curves.csv seed data', () => {
     expect(parseDifficultyCurves(csv).length).toBe(parseCsvRows(csv).length);
   });
 });
+
+/**
+ * Force-field data contract for the committed enemy-config CSV
+ * (AH-0MVM8GQKI006B50M).
+ *
+ * **TEST-FIRST.** Wrapped in Vitest's `it.fails` (the repo's
+ * red-before/green-after convention) so the suite stays green until the
+ * implementation item (AH-0MVM8GRQ8006HGPK) adds the columns; it must flip
+ * every `it.fails` back to `it`.
+ *
+ * The CSV is the runtime source of truth, so every shipped row must carry the
+ * three columns explicitly: the codec's absent-column default (`0`/`1`/`1`,
+ * unshielded) is the backwards-compatibility path, not the shipped data.
+ */
+describe('enemy-configs.csv force-field data (AH-0MVM8GQKI006B50M, test-first)', () => {
+  interface ForceFieldColumns {
+    forceFieldStartLevel: number;
+    forceFieldStartHits: number;
+    forceFieldMaxHits: number;
+  }
+
+  /** Read the three force-field fields off a coerced config. */
+  function forceFieldOf(config: unknown): ForceFieldColumns {
+    const c = config as Record<string, unknown>;
+    return {
+      forceFieldStartLevel: c.forceFieldStartLevel as number,
+      forceFieldStartHits: c.forceFieldStartHits as number,
+      forceFieldMaxHits: c.forceFieldMaxHits as number,
+    };
+  }
+
+  it.fails('documents the force-field columns in the header comment', () => {
+    const csv = readCsvFile('enemy-configs.csv');
+    expect(csv).toContain('forceFieldStartLevel');
+    expect(csv).toContain('forceFieldStartHits');
+    expect(csv).toContain('forceFieldMaxHits');
+  });
+
+  it.fails('every shipped row carries integer force-field values', () => {
+    const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
+    for (const row of rows) {
+      for (const column of [
+        'forceFieldStartLevel',
+        'forceFieldStartHits',
+        'forceFieldMaxHits',
+      ]) {
+        const cell = row[column];
+        expect(cell, `${row.key}.${column} present`).toBeDefined();
+        expect(cell?.trim(), `${row.key}.${column} not blank`).not.toBe('');
+        expect(Number.isInteger(Number(cell)), `${row.key}.${column} integer`)
+          .toBe(true);
+      }
+    }
+  });
+
+  it.fails('carries the same force-field values as the seed defaults', async () => {
+    const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
+    const m = await import('../core/csv');
+    for (const row of rows) {
+      const seed = DEFAULT_ENEMY_CONFIGS[row.key];
+      expect(seed, row.key).toBeDefined();
+      const coerced = forceFieldOf(m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS));
+      const defaults = forceFieldOf(seed);
+      // Assert the shape first: two undefined sets would otherwise compare
+      // equal and hide the missing columns.
+      for (const [column, value] of Object.entries(coerced)) {
+        expect(Number.isInteger(value), `${row.key}.${column} parsed`).toBe(true);
+        expect(Number.isInteger(defaults[column as keyof ForceFieldColumns]),
+          `${row.key}.${column} seeded`).toBe(true);
+      }
+      expect(coerced, row.key).toEqual(defaults);
+    }
+  });
+});

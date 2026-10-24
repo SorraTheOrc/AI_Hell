@@ -222,3 +222,68 @@ describe('Data-driven enemy health (F1)', () => {
     }
   });
 });
+
+/**
+ * Contract tests for the force-field seed defaults (AH-0MVM8GQKI006B50M).
+ *
+ * **TEST-FIRST.** Written before the fields exist on `EnemyConfig`, wrapped in
+ * Vitest's `it.fails` (the repo's red-before/green-after convention), so the
+ * suite stays green on pre-change HEAD. **The implementation item
+ * (AH-0MVM8GRQ8006HGPK) must flip every `it.fails` back to `it`.**
+ *
+ * The fields read by `src/core/enemyForceField.ts`:
+ * `forceFieldStartLevel` (`0` = never shielded), `forceFieldStartHits` and
+ * `forceFieldMaxHits`.
+ */
+describe('Force-field seed defaults (AH-0MVM8GQKI006B50M, test-first)', () => {
+  interface ForceFieldColumns {
+    forceFieldStartLevel: number;
+    forceFieldStartHits: number;
+    forceFieldMaxHits: number;
+  }
+
+  /** Read the three force-field fields off a seed without a type dependency. */
+  function forceFieldOf(config: unknown): ForceFieldColumns {
+    const c = config as Record<string, unknown>;
+    return {
+      forceFieldStartLevel: c.forceFieldStartLevel as number,
+      forceFieldStartHits: c.forceFieldStartHits as number,
+      forceFieldMaxHits: c.forceFieldMaxHits as number,
+    };
+  }
+
+  it.fails('every seed archetype declares integer force-field fields', () => {
+    for (const [key, seed] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
+      const fields = forceFieldOf(seed);
+      for (const [column, value] of Object.entries(fields)) {
+        expect(Number.isInteger(value), `${key}.${column}`).toBe(true);
+      }
+    }
+  });
+
+  it.fails('no seed archetype is shielded at level 1', () => {
+    for (const [key, seed] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
+      const { forceFieldStartLevel } = forceFieldOf(seed);
+      // `0` = never shielded; any other value must start at level 2 or later.
+      expect(
+        forceFieldStartLevel === 0 || forceFieldStartLevel >= 2,
+        `${key} start level ${forceFieldStartLevel}`,
+      ).toBe(true);
+    }
+  });
+
+  it.fails('shielded seeds carry at least one hit and never weaken with level', () => {
+    for (const [key, seed] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
+      const { forceFieldStartLevel, forceFieldStartHits, forceFieldMaxHits } =
+        forceFieldOf(seed);
+      if (forceFieldStartLevel === 0) {
+        // Never shielded: the hit values are inert, only their shape matters.
+        expect(forceFieldStartHits, key).toBeGreaterThanOrEqual(0);
+        expect(forceFieldMaxHits, key).toBeGreaterThanOrEqual(0);
+        continue;
+      }
+      expect(forceFieldStartHits, key).toBeGreaterThanOrEqual(1);
+      expect(forceFieldMaxHits, key).toBeGreaterThanOrEqual(forceFieldStartHits);
+    }
+  });
+});
