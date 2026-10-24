@@ -127,6 +127,29 @@ describe('buildBalanceReport (AH-0MV81YY2T0069W19: versioned, deterministic)', (
     expect(output.report.schemaVersion).toBe(SHARED_SCHEMA_VERSION);
     expect(output.json).toBe(serialiseReport(output.report));
   });
+
+  it('echoes the resolved batch mode so a report is self-describing (AC4/AC5)', () => {
+    // The batch default: full campaign, and an explicit skirmish opt-out.
+    const campaign = runBatch({ seeds: [1], ticks: 90 });
+    expect(campaign.report.config.campaign).toBe(true);
+
+    const skirmish = runBatch({ seeds: [1], ticks: 90, campaign: false });
+    expect(skirmish.report.config.campaign).toBe(false);
+
+    // A human report (recorded real game) keeps its existing shape: no
+    // harness-mode surface.
+    const human = buildBalanceReport({
+      policies: ['human'],
+      seeds: [1],
+      ticks: 120,
+      dt: 1 / 60,
+      sampleEveryTicks: 1,
+      runs: [],
+      aggregate: aggregateBalanceStats([]),
+    });
+    expect(stableStringify(human.config)).not.toContain('campaign');
+    expect(JSON.parse(serialiseReport(human)).config.campaign).toBeUndefined();
+  });
 });
 
 describe('formatBalanceReport (AH-0MV81YY2T0069W19: human-readable summary)', () => {

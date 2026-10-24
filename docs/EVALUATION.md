@@ -73,7 +73,9 @@ Artifacts are written under `--out` (default `eval-output/`, git-ignored):
 | `--candidate <name>` | A/B candidate policy. | — |
 | `--seed <n>` | A seed; repeatable. | — |
 | `--seeds <count>` | Use seeds `1..count`. | `3` |
-| `--ticks <n>` | Maximum ticks per run. | `1800` |
+| `--batch` | Batch mode: sweep seeds × policies and emit the versioned balance report (see `docs/BALANCING.md`). A batch plays the **full shipped campaign** by default. | off |
+| `--skirmish` | Batch mode only: opt back into the legacy single-level skirmish (the batch default is the full campaign, AH-0MVD1RK2V009J5D2). Single-run evaluation, A/B and `--human` are **always** skirmish-scoped (AC5). | off |
+| `--ticks <n>` | Maximum ticks per run (finite; a run ends early on death or at the campaign boss/`gameComplete`). | `1800` single-run; `18000` batch |
 | `--dt <seconds>` | Fixed simulation step. | `1/60` |
 | `--sample-every <n>` | Record every Nth tick (smaller artifacts). | `1` |
 | `--out <dir>` | Artifact output directory. | `eval-output` |

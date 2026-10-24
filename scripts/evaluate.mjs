@@ -35,7 +35,10 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     baseline: null,
     candidate: null,
     seeds: null,
-    ticks: 1800,
+    // `null` → mode default: 1800 for a single-run evaluation, 18 000 for a
+    // full-campaign batch (AC3). `main` passes it through; the pure TS core
+    // resolves it so the shell never duplicates the constants.
+    ticks: null,
     dt: 1 / 60,
     sampleEveryTicks: 1,
     outputDir: 'eval-output',
@@ -53,6 +56,9 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     keepEdit: false,
     level: null,
     scaleLevels: true,
+    // Full-campaign batch mode is the default (AC1); `--skirmish` opts back
+    // into the legacy single-level skirmish (AC2).
+    campaign: true,
     help: false,
   };
   const explicitSeeds = [];
@@ -92,6 +98,9 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
         break;
       case '--ticks':
         options.ticks = Number(next());
+        break;
+      case '--skirmish':
+        options.campaign = false;
         break;
       case '--dt':
         options.dt = Number(next());
@@ -165,12 +174,17 @@ Options:
   --seed <n>           A seed (repeatable)
   --seeds <count>      Use seeds 1..count (default 3)
   --batch              Batch mode: sweep seeds x policies, emit the balance report
+  --skirmish           Batch mode: play the legacy single-level skirmish instead of the
+                       full shipped campaign (the batch default, AC1/AC2)
   --tune               Tune loop: baseline batch → one CSV edit → identical re-run → compare
   --set <file> <a>     The declarative edit for --tune, e.g. --set enemy-configs.csv boss.health=6
   --threshold <pct>    Relative significance threshold for --tune (default 10 = ±10%%)
-  --keep-edit          Keep the --set CSV edit after the tune run (default: restore)  --games <count>      Games (seeds 1..count) in batch mode (default 100)
+  --keep-edit          Keep the --set CSV edit after the tune run (default: restore)
+  --games <count>      Games (seeds 1..count) in batch mode (default 100)
   --policies <a,b>     Comma-separated policies to sweep in batch mode
-  --ticks <n>          Max ticks per run (default 1800)
+  --ticks <n>          Max ticks per run (default 18000 for a full-campaign batch,
+                       1800 for a single-run evaluation; a run ends early on death
+                       or at the boss trigger/game-complete)
   --dt <seconds>       Fixed simulation step (default 1/60)
   --sample-every <n>   Record every Nth tick (default 1)
   --out <dir>          Artifact output directory (default eval-output)

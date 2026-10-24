@@ -760,8 +760,10 @@ deterministic bot games against the real balance data files
 aggregated into full balance statistics (minerals, upgrades per choice id,
 kills per archetype, asteroids, power-ups, avoidable hits, survival, wave and
 level reached) with distribution summaries, written as versioned JSON plus a
-human-readable report. Run it with `npm run evaluate -- --batch`; see
-**[docs/BALANCING.md](./docs/BALANCING.md)** for the flags, the statistics
+human-readable report. Run it with `npm run evaluate -- --batch`; every batch
+game now plays the **full shipped campaign** by default (bounded by an
+`18000`-tick budget), and `--skirmish` opts back into the legacy single-level
+skirmish. See **[docs/BALANCING.md](./docs/BALANCING.md)** for the flags, the statistics
 schema and how to interpret the distributions (epic AH-0MV1DLUZ8009OCJW),
 plus the **tuning loop** (`--tune` baselines one declarative CSV edit against
 an identical re-run and writes a versioned before/after comparison —

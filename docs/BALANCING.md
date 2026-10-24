@@ -45,11 +45,12 @@ batch-relevant flags are:
 | Flag | Meaning | Default |
 |---|---|---|
 | `--batch` | Enable batch mode (sweep seeds × policies, emit the balance report). | off |
+| `--skirmish` | Play the legacy single-level skirmish instead of the **full shipped campaign** (the batch default). | off (batch plays the campaign) |
 | `--games <count>` | Number of games — expands to seeds `1..count`. | `100` in batch mode (`3` otherwise) |
 | `--policies <a,b>` | Comma-separated policies to sweep; every policy plays every seed. | the `--policy` value (`competent`) |
 | `--policy <name>` | Single policy when `--policies` is omitted. | `competent` |
 | `--seed <n>` | An explicit seed (repeatable); overrides `--games`. | — |
-| `--ticks <n>` | Maximum ticks per game (a game may end early on death). | `1800` |
+| `--ticks <n>` | Maximum ticks per game — a **finite** budget (a run ends early on death or at the campaign boss / `gameComplete`). | `18000` in batch mode (`1800` for a single-run evaluation) |
 | `--dt <seconds>` | Fixed simulation step. | `1/60` |
 | `--sample-every <n>` | Record one state tick every Nth tick (smaller artifacts). | `1` |
 | `--out <dir>` | Artifact output directory. | `eval-output` |
@@ -61,6 +62,47 @@ The number of games in a batch is `policies × seeds`. For example,
 `--policies competent,legacy --games 100` runs **200** games (two policies
 over seeds 1..100) — comfortably above the epic's "~100 deterministic games"
 requirement even for a single policy.
+
+### Full-campaign runs (the batch default)
+
+```bash
+# the default batch: every game plays the whole shipped campaign
+npm run evaluate -- --batch --games 100 --out campaign-out
+
+# the legacy single-level skirmish, for a skirmish-era baseline
+npm run evaluate -- --batch --skirmish --games 100 --out skirmish-out
+```
+
+A batch plays the **full shipped campaign** by default (AH-0MVD1RK2V009J5D2,
+parent decision Q3=b): each game drives the shared `buildSequencedLevels`
+campaign through the shared `WaveManager` (all levels and waves, honouring
+`fixed`/`curve`/`dynamic` generation) and the shared hold-full upgrade-choice
+flow, so `waveReached`, `levelReached` and `upgradesSelected` carry real
+non-zero distributions instead of the old constant zero. `--skirmish` opts
+back into the previous single-level skirmish for backward compatibility;
+the seeded skirmish path itself is unchanged.
+
+**Bounded tick budget.** A campaign is far longer than one skirmish, so a
+batch defaults to a **finite** `18000`-tick budget (five simulated minutes at
+60 Hz) instead of the single-run `1800`. Every run still ends early on death
+or when the shared campaign manager reports the boss trigger /
+`gameComplete`; a run that stalls (e.g. a stationary hostile the bot cannot
+reach) stops at the budget. A 100-game campaign batch at this budget takes
+≈47 s on a dev machine (≈10 s at the old 1800-tick skirmish window).
+
+**Comparability note.** Only **batch** mode defaults to the campaign.
+Single-run evaluation (`npm run evaluate` without `--batch`), A/B and the
+`--human` comparison keep the **skirmish** semantics deliberately (AC5), so
+their long-standing metrics stay comparable with earlier evidence and with
+recorded human runs. A balance report records its resolved mode in
+`config.campaign` (and `config.level` for a per-level run); the tune loop's
+same-sweep guard refuses to diff a campaign batch against a skirmish batch,
+so mixed-mode before/after comparisons cannot be mistaken for a tuning edit.
+
+**Determinism.** Unchanged: same policy + config + seeds ⇒ byte-identical
+records and report (`recordsHash` stable). Every campaign draw is
+seed-derived, and the pure eval core still reads no wall clock and does no
+I/O.
 
 ### Per-level campaign runs
 
@@ -101,8 +143,10 @@ behaviour are not modelled, and spawner-delivered archetypes (`ghosts`,
 `horde`, `centipede`, `laneTraffic`) appear as ordinary config-driven hostiles
 so the roster matches the game's wave accounting. The seeded mineral harvest
 and the asteroid shadow-hazard stay live (so the small-asteroid Extra Life
-roll is exercised). The **seeded skirmish** (no `--level`) is unchanged — its
-drops still come from the seeded power-up reservoir.
+roll is exercised). The **seeded skirmish** (`--skirmish`; without `--level`
+the default is the full campaign) is unchanged — its drops still come from
+the seeded power-up reservoir. `--level` takes precedence over the batch's
+full-campaign default, so a per-level run needs no extra flag.
 
 ## Level-scaling curves and evidence (AH-0MVHT1M6O003PU7P)
 
@@ -301,7 +345,9 @@ The JSON artifact is a versioned `BalanceReport`:
 - `datasetVersion` — the evaluation *interpretation* version
   (`EVAL_DATASET_VERSION`, bumped on a report shape change);
 - `kind: 'balance'`;
-- `config` — the swept `policies`, `seeds`, `ticks`, `dt` and `sampleEveryTicks`;
+- `config` — the swept `policies`, `seeds`, `ticks`, `dt` and `sampleEveryTicks`,
+  plus the resolved run mode: `campaign` (the batch default) and, for a
+  per-level run, `level`;
 - `runs` — every run's summary (`policy`, `seed`, `stats`, `recordsHash`, `recordCount`) in sweep order;
 - `aggregate` — the `BalanceAggregate`.
 
@@ -325,7 +371,8 @@ converted into the **same** `BalanceReport` shape by the shared pure helper
 Both artifacts are versioned `BalanceReport`s (`kind: 'balance'`,
 `config.policies: ['human']`, `schemaVersion:
 BALANCE_STATISTICS_SCHEMA_VERSION`) that are directly comparable to a bot
-batch report on the same fields. The helper splits the recording's flat
+batch report on the same fields. A human report omits `config.campaign` — a
+recorded session is the real game, not a harness mode. The helper splits the recording's flat
 `run_header` / `tick` / `event` stream into one `BalanceRunStats` per run and a
 single `BalanceAggregate`, **reusing** the bot path's
 `extractBalanceStats` / `aggregateBalanceStats` — the schema and the
@@ -461,13 +508,16 @@ manual steps.
 The batch runs the same **closed-loop headless arena** as the single-run
 harness, not the shipped Phaser game. It models the quantities the bot
 reasons about (player physics, collectables, hazards, auto-fire, enemy fire
-and collisions) rather than the full wave/VFX/enemy-behaviour stack (enemy
-formations, burst patterns and bullet lifetimes are intentionally not
-modelled). Balance conclusions drawn from a batch are therefore a
-**directional signal**, to be confirmed against the human-play statistics and
-periodic human-experience validation before a tuning change ships. For
-pixel-accurate, full-stack verification use the browser capture path
-(`npm run capture`); both paths feed the same telemetry schema.
+and collisions) plus, in the default campaign mode, the **shared** wave/level
+progression and hold-full upgrade-choice flow. It does not model the rest of
+the VFX/enemy-behaviour stack (formation movement, burst patterns and bullet
+lifetimes are intentionally not modelled), and clearing the final wave is the
+run boundary — the boss encounter itself is not simulated. Balance
+conclusions drawn from a batch are therefore a **directional signal**, to be
+confirmed against the human-play statistics and periodic human-experience
+validation before a tuning change ships. For pixel-accurate, full-stack
+verification use the browser capture path (`npm run capture`); both paths
+feed the same telemetry schema.
 
 ## Testing
 
@@ -519,6 +569,29 @@ AC1/AC2/AC5, verifier AC1–AC5). The batch was run at commit
 
 Artifacts from this run are git-ignored (see `/.gitignore` `eval-output/`);
 the commands and aggregate evidence above are the durable record.
+
+## Campaign-by-default batch evidence (AH-0MVD1RK2V009J5D2)
+
+After the batch switched to the full campaign by default (parent decision
+Q3=b), a 100-game competent-policy batch on seeds 1–100 at the new
+**18000-tick** budget was measured on a dev machine (commit at implementation
+time, real balance CSVs via `loadBalanceConfig()`):
+
+```bash
+npm run evaluate -- --batch --games 100 --out campaign-out
+```
+
+- `waveReached`: mean 6.46 (min 2, max 10); `levelReached`: mean 1.15
+  (min 1, max 2) — a real distribution instead of the old constant zero.
+- `upgradesSelected` populated per choice id (the shared hold-full flow).
+- Runtime ≈47 s (vs ≈10 s for the old 1800-tick skirmish batch), i.e. a
+  practical, bounded 100-game campaign batch.
+- A run that stalls on a wave stops at the 18000-tick budget; a run that
+  clears the final level or dies ends early, so no simulation is unbounded.
+
+The previous 2026-10-14 acceptance run above was recorded against the old
+1800-tick **skirmish** default; re-run the command above to regenerate
+campaign-default evidence.
 
 ## Related work
 

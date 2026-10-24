@@ -26,10 +26,14 @@ import {
 import { stableStringify } from './report';
 import {
   BALANCE_STATISTICS_SCHEMA_VERSION,
+  DEFAULT_BATCH_CAMPAIGN,
+  DEFAULT_BATCH_TICKS,
   EVAL_TELEMETRY_SCHEMA_VERSION,
   type ArenaState,
+  type TelemetryEventRecord,
   type TelemetryRecord,
 } from './types';
+import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 
 const CONFIG = { seeds: [1, 2], ticks: 180, sampleEveryTicks: 2 } as const;
 
@@ -263,13 +267,147 @@ describe('runBatch (AH-0MV81YTOT007V1HF: deterministic batch runner)', () => {
   });
 });
 
+// ── Campaign-by-default batch + bounded tick budget (AH-0MVD1RK2V009J5D2) ──
+
+/** A no-fire wave with one scout directly in front of the player. */
+function batchSingleScoutWave(): WaveDefinition {
+  return {
+    groups: [
+      {
+        enemyKey: 'scout',
+        formation: 'single',
+        count: 1,
+        spacingX: 0,
+        spacingY: 0,
+        startX: 520,
+        startY: 270,
+      },
+    ],
+    shootEnabled: false,
+  };
+}
+
+/**
+ * A tiny injectable campaign (the shared `campaignLevels` seam) that always
+ * reaches the boss boundary quickly, so the early-exit and default-mode
+ * assertions stay fast.
+ */
+const tinyBatchCampaign: readonly LevelDefinition[] = [
+  { level: 1, name: 'Entry', waves: [batchSingleScoutWave()] },
+  { level: 2, name: 'Descent', waves: [batchSingleScoutWave(), batchSingleScoutWave()] },
+];
+
+describe('campaign-by-default batch with a bounded tick budget (AH-0MVD1RK2V009J5D2)', () => {
+  it('plays the full campaign by default and reports non-zero wave/level/upgrade statistics (AC1)', () => {
+    const output = runBatch({
+      seeds: [21, 22],
+      ticks: 1_800,
+      sampleEveryTicks: 120,
+      spawns: { asteroids: 0 },
+    });
+    // No `campaign` flag was supplied: the batch default resolved it.
+    expect(DEFAULT_BATCH_CAMPAIGN).toBe(true);
+    expect(output.report.config.campaign).toBe(true);
+    for (const run of output.runs) {
+      expect(run.stats.waveReached).toBeGreaterThan(0);
+      expect(run.stats.levelReached).toBeGreaterThan(0);
+    }
+    // The shared hold-full choice flow populates the upgrade distributions.
+    expect(Object.keys(output.aggregate.upgradesSelected).length).toBeGreaterThan(0);
+  });
+
+  it('drives the shared manager for the default campaign and ends early at the boss (AC1/AC3)', () => {
+    const sinks: BatchRunSink[] = [];
+    const output = runBatch({
+      seeds: [5],
+      sampleEveryTicks: 30,
+      campaignLevels: tinyBatchCampaign,
+      spawns: { asteroids: 0 },
+      onRun: (run) => sinks.push(run),
+    });
+    // The batch default budget is finite and higher than the skirmish window.
+    expect(output.report.config.ticks).toBe(DEFAULT_BATCH_TICKS);
+    expect(DEFAULT_BATCH_TICKS).toBeGreaterThan(1_800);
+    // The tiny campaign cleared both levels and triggered the boss; the run
+    // ended well before the budget (no unbounded simulation).
+    for (const run of output.runs) {
+      expect(run.stats.levelReached).toBe(2);
+      expect(run.stats.waveReached).toBeGreaterThan(0);
+    }
+    const events = sinks[0].records.filter(
+      (record): record is TelemetryEventRecord => record.kind === 'event',
+    );
+    expect(events.some((record) => record.event === 'boss_triggered')).toBe(true);
+    const lastTick = Math.max(
+      0,
+      ...sinks[0].records
+        .filter((record) => record.kind !== 'run_header')
+        .map((record) => record.tick),
+    );
+    expect(lastTick).toBeLessThan(DEFAULT_BATCH_TICKS / 10);
+  });
+
+  it('restores the legacy skirmish with campaign: false (AC2)', () => {
+    const output = runBatch({ seeds: [1, 2], ticks: 600, campaign: false });
+    expect(output.report.config.campaign).toBe(false);
+    for (const run of output.runs) {
+      expect(run.stats.waveReached).toBe(0);
+      expect(run.stats.levelReached).toBe(0);
+    }
+  });
+
+  it('keeps campaign-default batches byte-identical for the same seeds + config (AC4)', () => {
+    const config: BatchConfig = {
+      seeds: [1, 2],
+      ticks: 900,
+      sampleEveryTicks: 120,
+      campaignLevels: tinyBatchCampaign,
+      spawns: { asteroids: 0 },
+    };
+    const first = runBatch(config);
+    const second = runBatch(config);
+    expect(second.json).toBe(first.json);
+    expect(second.runs.map((run) => run.recordsHash)).toEqual(
+      first.runs.map((run) => run.recordsHash),
+    );
+  });
+
+  it('keeps single-run evaluation on the legacy skirmish window/mode (AC5)', () => {
+    const output = runEvaluation(resolvePolicyFactory('legacy'), {
+      seeds: [1],
+      ticks: 120,
+      sampleEveryTicks: 10,
+    });
+    const events = output.runs[0].records
+      .filter((record): record is TelemetryEventRecord => record.kind === 'event')
+      .map((record) => record.event);
+    expect(events).not.toContain('wave_start');
+    // The explicit campaign toggle remains available at the arena layer.
+    const campaign = runEvaluation(resolvePolicyFactory('legacy'), {
+      seeds: [1],
+      ticks: 120,
+      sampleEveryTicks: 10,
+      campaign: true,
+    });
+    expect(
+      campaign.runs[0].records.some(
+        (record) => record.kind === 'event' && record.event === 'wave_start',
+      ),
+    ).toBe(true);
+  });
+});
+
 describe('runBatch consumes the shared config store (AC2)', () => {
   beforeEach(() => resetConfigStore());
   afterEach(() => resetConfigStore());
 
-  /** Builds a single-archetype enemy CSV whose `boss` health differs. */
+  /**
+   * Builds a single-archetype enemy CSV whose `scout` health differs. The
+   * scout is a campaign-wave archetype, so the config edit is visible through
+   * the campaign-by-default batch (AH-0MVD1RK2V009J5D2).
+   */
   function enemiesCsv(health: number): string {
-    const cfg = { ...DEFAULT_ENEMY_CONFIGS.boss, health, shotProbability: 0 };
+    const cfg = { ...DEFAULT_ENEMY_CONFIGS.scout, health, shotProbability: 0 };
     const header = [
       'key', 'displayName', 'formationKind', 'count', 'spacingX', 'spacingY',
       'driftSpeed', 'startX', 'startY', 'size', 'color', 'bulletColor',
@@ -299,14 +437,15 @@ describe('runBatch consumes the shared config store (AC2)', () => {
       );
       return runBatch({
         seeds: [1, 2],
-        ticks: 240,
-        // Small focused skirmish: only hostiles (no asteroids/power-ups).
+        ticks: 900,
+        // Small focused campaign: only the seeded minerals and no asteroids
+        // (the campaign waves come from the shared manager).
         spawns: { minerals: 2, powerUps: 0, enemies: 4, asteroids: 0 },
         policies: [resolvePolicyFactory('legacy')],
       });
     };
 
-    // Fragile bosses fall quickly; the near-indestructible variant survives
+    // Fragile scouts fall quickly; the near-indestructible variant survives
     // the whole window, so the aggregated kill statistics diverge.
     const fragile = runAgainst(2);
     const invulnerable = runAgainst(100_000);
@@ -314,8 +453,8 @@ describe('runBatch consumes the shared config store (AC2)', () => {
     expect(stableStringify(fragile.aggregate)).not.toBe(
       stableStringify(invulnerable.aggregate),
     );
-    const fragileKills = fragile.aggregate.enemiesKilledByArchetype.boss?.mean ?? 0;
-    const toughKills = invulnerable.aggregate.enemiesKilledByArchetype.boss?.mean ?? 0;
+    const fragileKills = fragile.aggregate.enemiesKilledByArchetype.scout?.mean ?? 0;
+    const toughKills = invulnerable.aggregate.enemiesKilledByArchetype.scout?.mean ?? 0;
     expect(fragileKills).toBeGreaterThan(0);
     expect(fragileKills).toBeGreaterThan(toughKills);
   });

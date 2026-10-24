@@ -23,8 +23,15 @@ import type { LevelDefinition } from '../../waves/Formations';
 /** Telemetry schema version the arena emits (matches `src/telemetry/schema`). */
 export const EVAL_TELEMETRY_SCHEMA_VERSION = 1;
 
-/** Version of the evaluation *interpretation* (bump on a report shape change). */
-export const EVAL_DATASET_VERSION = 1;
+/**
+ * Version of the evaluation *interpretation* (bump on a report shape change).
+ *
+ * **v2** (AH-0MVD1RK2V009J5D2): the balance-batch report's `config` echoes the
+ * resolved run mode (`campaign` and, when set, `level`) so a report is
+ * self-describing and a comparison can refuse to mix campaign and skirmish
+ * batches.
+ */
+export const EVAL_DATASET_VERSION = 2;
 
 /** Build metadata carried in the run header. */
 export interface EvalBuild {
@@ -225,6 +232,12 @@ export interface ArenaConfig {
    * **Fidelity boundary** (parent AC4): clearing the final level triggers the
    * boss encounter, which is treated as the **end of the run** — no
    * boss/mini-boss simulation this round.
+   *
+   * **Default resolution.** This field is opt-in at the arena layer: omitted
+   * or `false` keeps the seeded skirmish. The **batch** runner resolves the
+   * shipped default for a batch ({@link DEFAULT_BATCH_CAMPAIGN}: campaign
+   * unless explicitly disabled — AC1/AC2), while single-run evaluation, A/B
+   * and the human comparison deliberately keep the skirmish (AC5).
    */
   readonly campaign?: boolean;
   /**
@@ -266,6 +279,42 @@ export const DEFAULT_ARENA_SPAWNS: ArenaSpawns = Object.freeze({
   enemies: 4,
   asteroids: 4,
 });
+
+/**
+ * Default tick budget for a **single-run** evaluation: the historic 1800 ticks
+ * (30 simulated seconds at 60 Hz).
+ *
+ * Single-run evaluation ({@link import('./engine').runEvaluation}), A/B and
+ * the human comparison keep the **skirmish** semantics (AC5,
+ * AH-0MVD1RK2V009J5D2), so this window is deliberately unchanged: existing
+ * reports and recordings remain comparable.
+ */
+export const DEFAULT_EVALUATION_TICKS = 1_800;
+
+/**
+ * Default per-game tick budget for a **batch** run (AC3): 18 000 ticks (five
+ * simulated minutes at 60 Hz), ten times the single-run window.
+ *
+ * A full-campaign run is a much longer sequence than one skirmish, so the
+ * batch budget must be higher than {@link DEFAULT_EVALUATION_TICKS} — while
+ * staying **finite**: every run still ends early on death or when the shared
+ * campaign manager reports the boss trigger / `gameComplete`, and a run that
+ * stalls stops at this budget. Measured on a dev machine, a 100-game campaign
+ * batch at this budget completes in ~47 s (vs ~10 s at 1800 ticks).
+ */
+export const DEFAULT_BATCH_TICKS = 18_000;
+
+/**
+ * Default full-campaign mode for a **batch** run (AC1/AC2): batch mode plays
+ * the whole shipped campaign unless the caller opts back into the old
+ * single-level skirmish (`campaign: false`, CLI `--skirmish`).
+ *
+ * Single-run evaluation keeps the skirmish default (AC5), so
+ * {@link ArenaConfig.campaign} itself stays opt-in; the batch layer
+ * (`BatchConfig`) resolves this default and forwards the concrete value to
+ * the arena.
+ */
+export const DEFAULT_BATCH_CAMPAIGN = true;
 
 /**
  * Version of the shared **balance-statistics** schema

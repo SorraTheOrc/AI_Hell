@@ -166,6 +166,29 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
   });
 });
 
+describe('Campaign-by-default batch is documented (AH-0MVD1RK2V009J5D2)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('documents the campaign batch default with a --skirmish opt-out (AC1/AC2)', () => {
+    expect(doc).toContain('AH-0MVD1RK2V009J5D2');
+    expect(doc).toContain('--skirmish');
+    expect(doc).toMatch(/full shipped campaign|whole shipped campaign/);
+    expect(doc).toMatch(/Q3=b/);
+  });
+
+  it('documents the finite, higher batch tick budget and the early exits (AC3)', () => {
+    expect(doc).toContain('18000');
+    expect(doc).toMatch(/gameComplete/);
+    expect(doc).toMatch(/finite/);
+  });
+
+  it('documents the comparability note: skirmish-scoped single-run evaluation (AC5)', () => {
+    expect(doc).toMatch(/Comparability note/);
+    expect(doc).toMatch(/skirmish/);
+    expect(doc).toMatch(/config\.campaign/);
+  });
+});
+
 describe('Level-scaling curves and evidence are documented (AH-0MVHT1M6O003PU7P)', () => {
   const doc = fs.readFileSync(DOC_PATH, 'utf8');
 

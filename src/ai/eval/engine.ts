@@ -54,7 +54,10 @@ import {
   type EvaluationReport,
   type RunReport,
 } from './report';
+import type { LevelDefinition } from '../../waves/Formations';
 import {
+  DEFAULT_BATCH_CAMPAIGN,
+  DEFAULT_BATCH_TICKS,
   type ArenaBalanceConfig,
   type ArenaHoldOptions,
   type ArenaSpawns,
@@ -88,6 +91,11 @@ export interface EvaluationRunConfig {
    * Full-campaign mode: every run plays the **whole shipped campaign**
    * through the shared WaveManager (AH-0MVD1RGKM005GW0C). An explicit
    * `level` always takes precedence (per-level mode).
+   *
+   * Opt-in **at this layer**: single-run evaluation, A/B and the human
+   * comparison keep the historic skirmish semantics (AC5,
+   * AH-0MVD1RK2V009J5D2) so their existing reports stay comparable. Campaign
+   * is only the default for the batch runner ({@link BatchConfig}).
    */
   readonly campaign?: boolean;
 }
@@ -217,8 +225,15 @@ export interface BatchRunSink {
 export interface BatchConfig {
   /** Every seed to play (each policy plays every seed). */
   readonly seeds: readonly number[];
-  /** Maximum ticks per game (a run may end early on death). */
-  readonly ticks: number;
+  /**
+   * Maximum ticks per game. A run may end early on death or when the shared
+   * campaign manager reports the boss trigger / `gameComplete`.
+   *
+   * Batch default: {@link DEFAULT_BATCH_TICKS} (18 000 ticks), ten times the
+   * single-run window — a full campaign is much longer than one skirmish. The
+   * budget is always finite (AC3).
+   */
+  readonly ticks?: number;
   /** Fixed simulation step, seconds. Defaults to 1/60. */
   readonly dt?: number;
   /** Record one tick every N ticks. Defaults to 1. */
@@ -249,8 +264,22 @@ export interface BatchConfig {
    * through the shared WaveManager (AH-0MVD1RGKM005GW0C), so balance reports
    * carry real `waveReached`/`levelReached` distributions. An explicit
    * `level` always takes precedence (per-level mode).
+   *
+   * **This is the batch default** ({@link DEFAULT_BATCH_CAMPAIGN},
+   * AH-0MVD1RK2V009J5D2): batch sweeps play the full campaign unless the
+   * caller sets `campaign: false` (the CLI's `--skirmish` opt-out, AC2).
    */
   readonly campaign?: boolean;
+  /**
+   * Injectable campaign for **full-campaign mode** (test seam mirroring
+   * {@link ArenaConfig.campaignLevels}; forwarded to every arena run). When
+   * supplied, arena runs play these levels through the shared WaveManager
+   * instead of rebuilding the shipped campaign. Absent →
+   * `buildSequencedLevels` builds the real campaign from
+   * `balance.difficultyCurves` seeded with each run's seed. Ignored unless
+   * `campaign` is `true` (`level` per-level mode never uses it).
+   */
+  readonly campaignLevels?: readonly LevelDefinition[];
   /**
    * Resolved balance config. Omitted → the batch consumes the **shared
    * config store** through `loadBalanceConfig()` (so a CSV edit changes batch
@@ -292,6 +321,10 @@ export interface BatchOutput {
  */
 export function runBatch(config: BatchConfig): BatchOutput {
   const dt = config.dt ?? 1 / 60;
+  const ticks = config.ticks ?? DEFAULT_BATCH_TICKS;
+  // Campaign is the batch default (AC1/AC2); `--skirmish` opts back into the
+  // legacy single-level skirmish with `campaign: false`.
+  const campaign = config.campaign ?? DEFAULT_BATCH_CAMPAIGN;
   const sampleEveryTicks = config.sampleEveryTicks ?? 1;
   const policies =
     config.policies !== undefined && config.policies.length > 0
@@ -307,7 +340,7 @@ export function runBatch(config: BatchConfig): BatchOutput {
     for (const seed of config.seeds) {
       const arena = runArena(policy.create(), {
         seed,
-        ticks: config.ticks,
+        ticks,
         dt,
         sampleEveryTicks,
         build: config.build,
@@ -315,7 +348,8 @@ export function runBatch(config: BatchConfig): BatchOutput {
         balance: config.balance,
         level: config.level,
         scaleLevels: config.scaleLevels,
-        campaign: config.campaign,
+        campaign,
+        campaignLevels: config.campaignLevels,
         hold: config.hold,
       });
       const stats = extractBalanceStats(arena.records, { dtSeconds: dt });
@@ -335,9 +369,13 @@ export function runBatch(config: BatchConfig): BatchOutput {
   const report = buildBalanceReport({
     policies: policies.map((policy) => policy.name),
     seeds: config.seeds,
-    ticks: config.ticks,
+    ticks,
     dt,
     sampleEveryTicks,
+    // Echo the resolved mode so a report is self-describing (AC4/AC5): an
+    // explicit `level` selects the per-level mode (campaign stays `false`).
+    campaign: config.level === undefined ? campaign : false,
+    level: config.level,
     runs,
     aggregate,
   });

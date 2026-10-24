@@ -10,7 +10,8 @@ export interface ParsedEvaluateArgs {
   baseline: string | null;
   candidate: string | null;
   seeds: number | number[] | null;
-  ticks: number;
+  /** `null` → mode default (1800 single-run, 18000 batch). */
+  ticks: number | null;
   dt: number;
   sampleEveryTicks: number;
   outputDir: string;
@@ -31,6 +32,8 @@ export interface ParsedEvaluateArgs {
   level: number | null;
   /** Level-scaling curves for per-level mode (true = curves at the level, false = level-1 baseline). */
   scaleLevels: boolean;
+  /** Full-campaign batch mode (true = default); false is the `--skirmish` opt-out. */
+  campaign: boolean;
 }
 
 export const EVALUATE_USAGE: string;

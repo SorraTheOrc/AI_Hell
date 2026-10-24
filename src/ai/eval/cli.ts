@@ -38,7 +38,13 @@ import { resolvePolicyFactory } from './policies';
 import { extractMetricPoint, type MetricPoint } from './metrics';
 import { extractHumanBalanceStats } from './humanStats';
 import { buildSideBySideCapturePlan } from './video';
-import type { TelemetryRecord, TuneComparison, TuneEditRecord } from './types';
+import {
+  DEFAULT_BATCH_TICKS,
+  DEFAULT_EVALUATION_TICKS,
+  type TelemetryRecord,
+  type TuneComparison,
+  type TuneEditRecord,
+} from './types';
 
 export { hydrateBalanceConfig } from './balanceConfig';
 // Dev tools load the TS core via Vite SSR and need the shared human helper + 
@@ -61,7 +67,13 @@ export interface CliOptions {
   readonly baseline: string | null;
   readonly candidate: string | null;
   readonly seeds: readonly number[];
-  readonly ticks: number;
+  /**
+   * Maximum ticks per run, or `null` for the **mode default**:
+   * {@link DEFAULT_EVALUATION_TICKS} for a single-run evaluation and
+   * {@link DEFAULT_BATCH_TICKS} for a batch (AC3). The shell passes `null`
+   * when `--ticks` was omitted.
+   */
+  readonly ticks: number | null;
   readonly dt: number;
   readonly sampleEveryTicks: number;
   readonly outputDir: string;
@@ -87,6 +99,14 @@ export interface CliOptions {
    * with the same harness code and seeds.
    */
   readonly scaleLevels: boolean;
+  /**
+   * Full-campaign mode for **batch** runs (AC1/AC2): `true` (the default)
+   * sweeps the whole shipped campaign; `false` is the CLI's `--skirmish`
+   * opt-out into the legacy single-level skirmish. Ignored outside batch
+   * mode: single-run evaluation, A/B and the human comparison keep the
+   * skirmish semantics (AC5).
+   */
+  readonly campaign: boolean;
 }
 
 /** A file the shell should write under the output directory. */
@@ -113,11 +133,13 @@ function seedRange(count: number): number[] {
 function runConfig(options: CliOptions) {
   return {
     seeds: options.seeds,
-    ticks: options.ticks,
+    // Single-run evaluation keeps the historic skirmish window (AC5).
+    ticks: options.ticks ?? DEFAULT_EVALUATION_TICKS,
     dt: options.dt,
     sampleEveryTicks: options.sampleEveryTicks,
     // Per-level campaign mode (AH-0MVLJFB1I0099X4Z): forwarded to every
     // arena run; `null`/undefined keeps the unchanged seeded skirmish.
+    // Single-run evaluation never enables the full-campaign mode (AC5).
     level: options.level ?? undefined,
     scaleLevels: options.scaleLevels,
   };
@@ -138,6 +160,10 @@ export function executeEvaluation(options: CliOptions): CliResult {
     const records: TelemetryRecord[] = [];
     const batch = runBatch({
       ...runConfig(options),
+      // Batch runs use the higher, finite campaign budget (AC3) and the
+      // full-campaign mode by default (AC1); `--skirmish` clears `campaign`.
+      ticks: options.ticks ?? DEFAULT_BATCH_TICKS,
+      campaign: options.campaign,
       policies: policyFactories,
       onRun: (run) => {
         records.push(...run.records);
@@ -275,7 +301,8 @@ export function defaultOptions(): CliOptions {
     baseline: null,
     candidate: null,
     seeds: seedRange(3),
-    ticks: 1800,
+    // `null` → the mode default (1800 single-run, 18000 batch); see AC3.
+    ticks: null,
     dt: 1 / 60,
     sampleEveryTicks: 1,
     outputDir: 'eval-output',
@@ -287,6 +314,7 @@ export function defaultOptions(): CliOptions {
     humanSeed: null,
     level: null,
     scaleLevels: true,
+    campaign: true,
   };
 }
 
@@ -302,12 +330,14 @@ export function runBalanceBatch(options: CliOptions): BatchOutput {
   ).map((name) => resolvePolicyFactory(name));
   return runBatch({
     seeds: options.seeds,
-    ticks: options.ticks,
+    // The tune loop compares two batches, so it uses the batch budget/mode.
+    ticks: options.ticks ?? DEFAULT_BATCH_TICKS,
     dt: options.dt,
     sampleEveryTicks: options.sampleEveryTicks,
     policies: policyFactories,
     level: options.level ?? undefined,
     scaleLevels: options.scaleLevels,
+    campaign: options.campaign,
   });
 }
 
