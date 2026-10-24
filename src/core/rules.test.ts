@@ -140,6 +140,13 @@ describe('game rules configuration module', () => {
         mineralRedropBonusMax: 1.5,
         asteroidExtraLifeDropChance: 0.25,
         sequencedWavesEnabled: true,
+        // Level-scaling tunables (AH-0MVLJEE7O008RX9X) — tuned, non-default
+        // values so the round-trip proves storage carried them.
+        enemyCountMultiplierAtMaxLevel: 2.5,
+        powerUpDropChanceAtLevel1: 0.2,
+        powerUpDropChanceAtMaxLevel: 0.06,
+        levelScalingMaxLevel: 12,
+        enemyCountCap: 120,
       };
       saveRules(custom);
 
@@ -156,6 +163,11 @@ describe('game rules configuration module', () => {
       expect(loaded.mineralHoldCapacity).toBe(30);
       expect(loaded.mineralHoldGrowthMultiplier).toBe(3);
       expect(loaded.asteroidExtraLifeDropChance).toBe(0.25);
+      expect(loaded.enemyCountMultiplierAtMaxLevel).toBe(2.5);
+      expect(loaded.powerUpDropChanceAtLevel1).toBe(0.2);
+      expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.06);
+      expect(loaded.levelScalingMaxLevel).toBe(12);
+      expect(loaded.enemyCountCap).toBe(120);
     });
 
     it('merges a partial weapon weight table over the weapon defaults', () => {
@@ -789,8 +801,10 @@ describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
 // TEST-FIRST CONTRACT for the tunable level-scaling data that F1
 // (AH-0MVLJEE7O008RX9X) adds to `GameRules`. The fields are accessed through
 // a locally-declared shape so this file type-checks on pre-change HEAD;
-// every test is wrapped in `it.fails` (repo red-before/green-after
-// convention) and **F1 must flip each `it.fails` back to `it`**.
+// every test was originally wrapped in `it.fails` (repo
+// red-before/green-after convention); **F1 (AH-0MVLJEE7O008RX9X) has
+// flipped each `it.fails` back to `it`**, so this block now runs as normal
+// green tests.
 //
 // Defaults pinned here; the curves themselves are pinned in
 // `levelScaling.test.ts`:
@@ -835,7 +849,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     window.localStorage.clear();
   });
 
-  it.fails('exposes the documented scaling defaults on DEFAULT_RULES and loadRules', () => {
+  it('exposes the documented scaling defaults on DEFAULT_RULES and loadRules', () => {
     const defaults = scalingRules(DEFAULT_RULES);
     expect(defaults.enemyCountMultiplierAtMaxLevel).toBe(2);
     expect(defaults.powerUpDropChanceAtLevel1).toBe(0.18);
@@ -851,7 +865,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     expect(loaded.enemyCountCap).toBe(200);
   });
 
-  it.fails('merges the scaling defaults into a legacy blob that predates the fields', () => {
+  it('merges the scaling defaults into a legacy blob that predates the fields', () => {
     window.localStorage.setItem(
       RULES_STORAGE_KEY,
       JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpSpawnInterval: 3 }),
@@ -867,7 +881,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     expect(loadRules().powerUpSpawnInterval).toBe(3);
   });
 
-  it.fails('clamps the max-level enemy-count multiplier into [1, 10]', () => {
+  it('clamps the max-level enemy-count multiplier into [1, 10]', () => {
     const cases: Array<[unknown, number]> = [
       [0.5, 1],
       [-4, 1],
@@ -898,7 +912,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     expect(scalingRules(loadRules()).enemyCountMultiplierAtMaxLevel).toBe(2);
   });
 
-  it.fails('clamps both drop-chance tunables into [0, 1] and never lets the curve rise', () => {
+  it('clamps both drop-chance tunables into [0, 1] and never lets the curve rise', () => {
     for (const [stored, expected] of [
       [1.7, 1],
       [-0.2, 0],
@@ -953,7 +967,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     expect(scalingRules(loadRules()).powerUpDropChanceAtMaxLevel).toBe(0.05);
   });
 
-  it.fails('clamps the campaign level span to [2, 100] and the count cap to [1, 1000]', () => {
+  it('clamps the campaign level span to [2, 100] and the count cap to [1, 1000]', () => {
     const spanCases: Array<[unknown, number]> = [
       [1, 2],
       [1000, 100],
@@ -987,7 +1001,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     }
   });
 
-  it.fails('round-trips tuned scaling fields through saveRules', () => {
+  it('round-trips tuned scaling fields through saveRules', () => {
     saveRules(
       rulesWithScaling({
         enemyCountMultiplierAtMaxLevel: 2.5,
@@ -1006,7 +1020,7 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     expect(loaded.enemyCountCap).toBe(120);
   });
 
-  it.fails('returns fresh scaling fields so a mutation cannot pollute the defaults', () => {
+  it('returns fresh scaling fields so a mutation cannot pollute the defaults', () => {
     const loaded = scalingRules(loadRules());
     loaded.enemyCountCap = 1;
     expect(scalingRules(DEFAULT_RULES).enemyCountCap).toBe(200);

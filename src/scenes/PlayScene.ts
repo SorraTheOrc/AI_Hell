@@ -44,6 +44,7 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState, MAX_LEVEL, MAX_LIVES } from '../core/GameState';
+import { POWER_UP_DROP_CHANCE } from '../core/levelScaling';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import {
   DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
@@ -369,8 +370,16 @@ const FORMATION_DRIFT_SPEED = 28;
 /** Formation drift bounds (px offset from each group's start). */
 const FORMATION_DRIFT_RANGE = GAME_WIDTH * 0.5;
 
-/** Chance a destroyed enemy drops a power-up (GDD §4.4, ~15–20 %). */
-export const POWER_UP_DROP_CHANCE = 0.18;
+/**
+ * Chance a destroyed enemy drops a power-up (GDD §4.4, ~15–20 %).
+ *
+ * Re-exported from `src/core/levelScaling.ts` (AH-0MVLJEE7O008RX9X): this
+ * is the documented **level-1** per-kill drop chance, kept as the exported
+ * constant so existing imports keep their meaning. Higher levels derive
+ * from it through the level-scaling curves; the level-1 base lives in one
+ * place.
+ */
+export { POWER_UP_DROP_CHANCE };
 
 /**
  * In-run hold (ms) after the victory celebration is triggered and before the

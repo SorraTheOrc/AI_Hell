@@ -1,14 +1,13 @@
 /**
  * Contract tests for the level-scaling curves (AH-0MVLJCYGW001TRB3).
  *
- * **TEST-FIRST.** These tests pin the `src/core/levelScaling.ts` API before F1
- * (AH-0MVLJEE7O008RX9X) implements it. They are wrapped in Vitest's
- * `it.fails` — the repo's red-before/green-after convention (see
- * `src/powerups/powerUpIdNaming.test.ts` and AH-0MV98DVM90015DNF) — so the
- * suite stays green on pre-change HEAD while the module is still absent.
- * **F1 must flip every `it.fails` in this file back to `it`**: once the module
- * exists the wrapped bodies pass, and a leftover `it.fails` then fails, which
- * is exactly the signal that the contract is satisfied.
+ * **TEST-FIRST.** These tests pin the `src/core/levelScaling.ts` API. They
+ * were introduced wrapped in Vitest's `it.fails` (the repo's
+ * red-before/green-after convention — see
+ * `src/powerups/powerUpIdNaming.test.ts` and AH-0MV98DVM90015DNF) so the
+ * suite stayed green on pre-change HEAD while the module was still absent.
+ * **F1 (AH-0MVLJEE7O008RX9X) has since flipped every `it.fails` back to
+ * `it`**: the contract is now enforced as a normal green test.
  *
  * The module is loaded through a non-literal dynamic import on purpose: a
  * static `import './levelScaling'` would fail `tsc --noEmit` (and therefore
@@ -116,7 +115,7 @@ function vGroup(count: number): ScalingGroup {
 describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () => {
   // ── Level-1 identity and documented endpoints ─────────────────────
 
-  it.fails('exposes 0.18 as the level-1 per-kill drop chance', async () => {
+  it('exposes 0.18 as the level-1 per-kill drop chance', async () => {
     const scaling = await levelScaling();
     expect(scaling.POWER_UP_DROP_CHANCE).toBe(0.18);
     expect(scaling.powerUpDropChance(1)).toBe(
@@ -124,31 +123,31 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     );
   });
 
-  it.fails('spans campaign levels 1 to 10', async () => {
+  it('spans campaign levels 1 to 10', async () => {
     const scaling = await levelScaling();
     expect(scaling.LEVEL_SCALING_MAX_LEVEL).toBe(10);
     expect(scaling.clampLevel(1)).toBe(1);
     expect(scaling.clampLevel(10)).toBe(10);
   });
 
-  it.fails('is the identity transform for the enemy-count multiplier at level 1', async () => {
+  it('is the identity transform for the enemy-count multiplier at level 1', async () => {
     const scaling = await levelScaling();
     expect(scaling.enemyCountMultiplier(1)).toBe(1);
   });
 
-  it.fails('reaches a 2.0 enemy-count multiplier at level 10', async () => {
+  it('reaches a 2.0 enemy-count multiplier at level 10', async () => {
     const scaling = await levelScaling();
     expect(scaling.enemyCountMultiplier(10)).toBe(2);
   });
 
-  it.fails('reaches a 0.05 per-kill drop chance at level 10', async () => {
+  it('reaches a 0.05 per-kill drop chance at level 10', async () => {
     const scaling = await levelScaling();
     expect(scaling.powerUpDropChance(10)).toBeCloseTo(0.05, 10);
   });
 
   // ── Linearity and monotonicity ────────────────────────────────────
 
-  it.fails('ramps the enemy-count multiplier linearly between 1 and 2', async () => {
+  it('ramps the enemy-count multiplier linearly between 1 and 2', async () => {
     const scaling = await levelScaling();
     // 1 + (level - 1) * (2 - 1) / (10 - 1)
     expect(scaling.enemyCountMultiplier(5)).toBeCloseTo(1 + (4 * 1) / 9, 10);
@@ -156,7 +155,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     expect(scaling.enemyCountMultiplier(9)).toBeCloseTo(1 + 8 / 9, 10);
   });
 
-  it.fails('never decreases the enemy-count multiplier across levels 1–10', async () => {
+  it('never decreases the enemy-count multiplier across levels 1–10', async () => {
     const scaling = await levelScaling();
     for (let level = 1; level < 10; level += 1) {
       expect(scaling.enemyCountMultiplier(level + 1)).toBeGreaterThanOrEqual(
@@ -165,7 +164,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     }
   });
 
-  it.fails('ramps the per-kill drop chance linearly from 0.18 to 0.05', async () => {
+  it('ramps the per-kill drop chance linearly from 0.18 to 0.05', async () => {
     const scaling = await levelScaling();
     // 0.18 + (0.05 - 0.18) * (level - 1) / 9
     expect(scaling.powerUpDropChance(5)).toBeCloseTo(
@@ -175,7 +174,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     expect(scaling.powerUpDropChance(2)).toBeCloseTo(0.18 - (0.13 * 1) / 9, 10);
   });
 
-  it.fails('never increases the per-kill drop chance across levels 1–10', async () => {
+  it('never increases the per-kill drop chance across levels 1–10', async () => {
     const scaling = await levelScaling();
     for (let level = 1; level < 10; level += 1) {
       expect(
@@ -184,7 +183,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     }
   });
 
-  it.fails('cuts the level-10 per-kill drop chance to at most 30 % of level 1', async () => {
+  it('cuts the level-10 per-kill drop chance to at most 30 % of level 1', async () => {
     const scaling = await levelScaling();
     expect(scaling.powerUpDropChance(10)).toBeLessThanOrEqual(
       0.3 * scaling.powerUpDropChance(1),
@@ -193,7 +192,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
 
   // ── Input clamping ────────────────────────────────────────────────
 
-  it.fails('clamps levels below 1 and above the campaign maximum', async () => {
+  it('clamps levels below 1 and above the campaign maximum', async () => {
     const scaling = await levelScaling();
     for (const below of [0, -5, -Infinity]) {
       expect(scaling.enemyCountMultiplier(below)).toBe(1);
@@ -211,7 +210,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     }
   });
 
-  it.fails('resolves non-finite and non-integer levels to a clamped integer', async () => {
+  it('resolves non-finite and non-integer levels to a clamped integer', async () => {
     const scaling = await levelScaling();
     expect(scaling.clampLevel(Number.NaN)).toBe(1);
     expect(scaling.enemyCountMultiplier(Number.NaN)).toBe(
@@ -234,7 +233,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
 
   // ── Data-driven tunables ──────────────────────────────────────────
 
-  it.fails('derives both curves from the rules tunables', async () => {
+  it('derives both curves from the rules tunables', async () => {
     const scaling = await levelScaling();
     const rules = rulesWith({
       enemyCountMultiplierAtMaxLevel: 3,
@@ -254,7 +253,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
 
   // ── Extra Life proportionality ────────────────────────────────────
 
-  it.fails('leaves the Extra Life chance exactly unchanged at level 1', async () => {
+  it('leaves the Extra Life chance exactly unchanged at level 1', async () => {
     const scaling = await levelScaling();
     expect(scaling.dropChanceRatio(1)).toBe(1);
     expect(scaling.extraLifeDropChance(1)).toBe(
@@ -262,7 +261,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     );
   });
 
-  it.fails('scales the Extra Life chance by the per-kill drop-chance ratio', async () => {
+  it('scales the Extra Life chance by the per-kill drop-chance ratio', async () => {
     const scaling = await levelScaling();
     const ratio = scaling.powerUpDropChance(10) / scaling.powerUpDropChance(1);
     expect(scaling.dropChanceRatio(10)).toBeCloseTo(ratio, 10);
@@ -280,7 +279,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     }
   });
 
-  it.fails('honours a tuned Extra Life base chance and never returns NaN', async () => {
+  it('honours a tuned Extra Life base chance and never returns NaN', async () => {
     const scaling = await levelScaling();
     // The Extra Life base is already a shipable GameRules field (0.05 default).
     const tuned: GameRules = {
@@ -306,7 +305,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
 
   // ── Count application helper ──────────────────────────────────────
 
-  it.fails('is the identity transform for valid wave data at level 1', async () => {
+  it('is the identity transform for valid wave data at level 1', async () => {
     const scaling = await levelScaling();
     const groups: ScalingGroup[] = [vGroup(3), vGroup(7)];
     const snapshot = JSON.parse(JSON.stringify(groups)) as ScalingGroup[];
@@ -316,13 +315,13 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     expect(scaled[0]).not.toBe(groups[0]);
   });
 
-  it.fails('multiplies non-single group counts by the level multiplier', async () => {
+  it('multiplies non-single group counts by the level multiplier', async () => {
     const scaling = await levelScaling();
     const scaled = scaling.applyEnemyCountScaling(10, [vGroup(3), vGroup(10)]);
     expect(scaled.map((group) => group.count)).toEqual([6, 20]);
   });
 
-  it.fails('rounds half up (Math.round), not half even or down', async () => {
+  it('rounds half up (Math.round), not half even or down', async () => {
     const scaling = await levelScaling();
     const half = rulesWith({
       levelScalingMaxLevel: 2,
@@ -347,13 +346,13 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     ).toEqual([5, 2]);
   });
 
-  it.fails('floors a scaled count at 1', async () => {
+  it('floors a scaled count at 1', async () => {
     const scaling = await levelScaling();
     const scaled = scaling.applyEnemyCountScaling(10, [vGroup(0), vGroup(-3)]);
     expect(scaled.map((group) => group.count)).toEqual([1, 1]);
   });
 
-  it.fails('caps a scaled group at the 200 default safety limit', async () => {
+  it('caps a scaled group at the 200 default safety limit', async () => {
     const scaling = await levelScaling();
     expect(
       scaling
@@ -362,7 +361,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     ).toEqual([200, 198, 200]);
   });
 
-  it.fails('honours a tuned per-group safety cap', async () => {
+  it('honours a tuned per-group safety cap', async () => {
     const scaling = await levelScaling();
     const rules = rulesWith({ enemyCountCap: 50 });
     expect(
@@ -372,7 +371,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     ).toEqual([50]);
   });
 
-  it.fails('leaves single-formation groups at exactly 1', async () => {
+  it('leaves single-formation groups at exactly 1', async () => {
     const scaling = await levelScaling();
     const single: ScalingGroup = {
       formation: 'single',
@@ -393,7 +392,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     ).toEqual([1]);
   });
 
-  it.fails('preserves every other group field', async () => {
+  it('preserves every other group field', async () => {
     const scaling = await levelScaling();
     const group = {
       ...vGroup(2),
@@ -406,7 +405,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     expect(scaled).toEqual({ ...group, count: 4 });
   });
 
-  it.fails('clamps the level input before scaling counts', async () => {
+  it('clamps the level input before scaling counts', async () => {
     const scaling = await levelScaling();
     const groups = [vGroup(3)];
     expect(scaling.applyEnemyCountScaling(0, groups)).toEqual(
@@ -420,7 +419,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     );
   });
 
-  it.fails('is deterministic and never returns the input objects', async () => {
+  it('is deterministic and never returns the input objects', async () => {
     const scaling = await levelScaling();
     const groups = [vGroup(3), vGroup(8)];
     const first = scaling.applyEnemyCountScaling(4, groups);
@@ -430,7 +429,7 @@ describe('level-scaling curves (test-first contract, AH-0MVLJCYGW001TRB3)', () =
     expect(second[1]).not.toBe(first[1]);
   });
 
-  it.fails('maps an empty group list to an empty list', async () => {
+  it('maps an empty group list to an empty list', async () => {
     const scaling = await levelScaling();
     expect(scaling.applyEnemyCountScaling(10, [])).toEqual([]);
   });
