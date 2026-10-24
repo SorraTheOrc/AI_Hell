@@ -11,7 +11,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
+import {
+  GAME_HEIGHT,
+  GAME_WIDTH,
+  MINERAL_COLOR,
+  MINERAL_REDROP_SCATTER_RADIUS,
+  MINERAL_SALVAGE_COLOR,
+  POWER_UP_DROP_MIN_SEPARATION,
+} from '../core/constants';
 import {
   WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS,
   anchorSpawnsToPortal,
@@ -7228,6 +7235,47 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
 
     expect(salvagedDrops).toBeGreaterThan(controlDrops);
     expect(salvagedDrops).toBeGreaterThanOrEqual(bonus);
+  });
+
+  it('AH-0MVJ72I8O0009T09 — Salvage bonus minerals render orange while ordinary drops stay gold', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    scene.finishSpawnAnimations();
+    const enemies = scene.getEnemies().filter((e) => e.alive);
+
+    // Control: a kill with no Salvage window leaves no orange mineral behind.
+    const beforeControl = scene.getMinerals().length;
+    scene.spawnPlayerBullet(enemies[0].x, enemies[0].y, 0, 0);
+    scene.tick(0);
+    const controlDrops = scene.getMinerals().slice(beforeControl);
+    expect(controlDrops.some((m) => m.color === MINERAL_SALVAGE_COLOR)).toBe(
+      false,
+    );
+    expect(controlDrops.every((m) => m.color === MINERAL_COLOR)).toBe(true);
+
+    // Level Salvage up so the bounty is unambiguous, then kill another enemy.
+    for (let i = 0; i < 8; i += 1) registry.applyCollect('salvage', true);
+    const bonus = registry.salvageBonusMinerals();
+    expect(bonus).toBeGreaterThanOrEqual(3);
+
+    const beforeSalvage = scene.getMinerals().length;
+    scene.spawnPlayerBullet(enemies[1].x, enemies[1].y, 0, 0);
+    scene.tick(0);
+    const salvaged = scene.getMinerals().slice(beforeSalvage);
+
+    // Exactly the bounty is orange; any base re-drop in the same kill stays gold.
+    const orange = salvaged.filter((m) => m.color === MINERAL_SALVAGE_COLOR);
+    expect(orange).toHaveLength(bonus);
+    expect(
+      salvaged.filter((m) => m.color !== MINERAL_SALVAGE_COLOR),
+    ).toEqual(salvaged.filter((m) => m.color === MINERAL_COLOR));
+    // The extra dots land at the wreck, scattered like any other drop.
+    const wreck = enemies[1];
+    for (const drop of orange) {
+      expect(Math.hypot(drop.x - wreck.x, drop.y - wreck.y)).toBeLessThanOrEqual(
+        MINERAL_REDROP_SCATTER_RADIUS,
+      );
+    }
   });
 
   it('AH-0MVH80ZJ7009W18Z — Orbital Strike damages the nearest enemy on pickup', async () => {

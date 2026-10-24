@@ -130,7 +130,7 @@ import {
 } from '../../core/bulletLifecycle';
 import {
   resolveMineralKillDrops,
-  scatterMineralDrops,
+  scatterSalvageMineralDrops,
   type MineralKillDropEntity,
 } from '../../core/mineralKillDrops';
 import {
@@ -1888,10 +1888,12 @@ export class GymFormationScene<
     if (drops.length > 0) this.minerals.push(...drops);
     // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
     // the wreck of a destroyed enemy ship (asteroids are not bounty targets).
+    // The shared seam renders them orange so the payout is visible against
+    // ordinary gold drops (AH-0MVJ72I8O0009T09) — identical to the game.
     const salvageBonus = this.getEffectsRegistry().salvageBonusMinerals();
     if (salvageBonus > 0 && typeof (entity as unknown as { getSizeTier?: unknown }).getSizeTier !== 'function') {
       this.minerals.push(
-        ...scatterMineralDrops(
+        ...scatterSalvageMineralDrops(
           this,
           entity.x,
           entity.y,

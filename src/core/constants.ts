@@ -298,6 +298,24 @@ export const MINERAL_SIZE = 5;
 export const MINERAL_COLOR = 0xffdd44;
 
 /**
+ * Salvage bonus mineral body colour — orange (hex, AH-0MVJ72I8O0009T09).
+ *
+ * While the Salvage bounty window is active (AH-0MVH80ZJ7009W18Z) the shared
+ * kill seam scatters extra minerals at a destroyed ship's wreck; those bonus
+ * drops render this orange so the player can see the bounty paying out, while
+ * every ordinary mineral stays gold (`MINERAL_COLOR`). Still worth exactly one
+ * mineral — this is a purely cosmetic fill colour at spawn.
+ *
+ * Picked outside the existing palettes that could read as hostile or pickup:
+ * enemy bullets are red `0xff4444` / orange `0xffaa00` / deep-orange
+ * `0xff6600`, the thrust flame is `0xff8c00`, the Frenzy power-up bubble is
+ * neon-orange `0xff8800` and the boss phase bar uses `0xffcc00`/`0xff8800`.
+ * At hue ≈ 22° (gold is ≈ 48°), with a soft blue component for legibility, it
+ * reads as a distinct "carrot" orange on the black starfield.
+ */
+export const MINERAL_SALVAGE_COLOR = 0xff7a2e;
+
+/**
  * Render depth for mineral collectables — above regular gameplay
  * objects (body/graphics depth 1) but below UI elements.
  */

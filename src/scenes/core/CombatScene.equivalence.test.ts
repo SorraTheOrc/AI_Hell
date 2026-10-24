@@ -532,6 +532,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
 describe('CombatScene — shared mineral kill-drop rule is defined once', () => {
   const KILL_DROP_HELPER = 'resolveMineralKillDrops';
   const SCATTER_HELPER = 'scatterMineralDrops';
+  const SALVAGE_HELPER = 'scatterSalvageMineralDrops';
   const KILL_DROP_HELPER_FILE = 'src/scenes/core/mineralKillDrops.ts';
   const SCATTER_HELPER_FILE = 'src/entities/Mineral.ts';
 
@@ -570,6 +571,32 @@ describe('CombatScene — shared mineral kill-drop rule is defined once', () => 
       const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
       expect(source, `${file} must call the shared rule`).toContain(
         `${KILL_DROP_HELPER}(`,
+      );
+    }
+  });
+
+  // Salvage bonus drops (AH-0MVJ72I8O0009T09): the orange bounty minerals are
+  // scattered by one shared helper so the colour and scatter maths cannot
+  // drift between the game and the gyms (gym↔game parity).
+  it('defines the salvage-drop seam exactly once, in the shared helper', () => {
+    const definers = productionSourceFiles()
+      .filter((file) =>
+        definesFunction(fs.readFileSync(file, 'utf8'), SALVAGE_HELPER),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+
+    expect(definers).toEqual([KILL_DROP_HELPER_FILE]);
+  });
+
+  it('both the game and the gym consume the shared salvage-drop seam', () => {
+    for (const file of [
+      'src/scenes/PlayScene.ts',
+      'src/scenes/gym/core/GymFormationScene.ts',
+    ]) {
+      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+      expect(source, `${file} must call the shared salvage seam`).toContain(
+        `${SALVAGE_HELPER}(`,
       );
     }
   });

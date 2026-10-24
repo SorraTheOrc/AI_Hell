@@ -8,7 +8,9 @@ import { advanceGame, BootedGame, createReusableBoot } from '../../../test/gameH
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  MINERAL_COLOR,
   MINERAL_REDROP_SCATTER_RADIUS,
+  MINERAL_SALVAGE_COLOR,
   POWER_UP_DROP_SIZE,
   SHIP_COLOR,
 } from '../../../core/constants';
@@ -2773,6 +2775,52 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     // With the default Math.random the outcome varies.
     const minerals = scene.getMinerals();
     expect(minerals.length).toBeLessThanOrEqual(1);
+  });
+
+  it('Salvage bonus drops render orange while ordinary drops stay gold (AH-0MVJ72I8O0009T09)', async () => {
+    const scene = await bootMineralGym();
+    const enemy = scene.formationEntities[0];
+    clearField(scene);
+    // Pin the base re-drop out of the way so the colour split is unambiguous.
+    (
+      enemy as unknown as { _mineralCount: number }
+    )._mineralCount = 0;
+
+    // Level Salvage up (permanent, so the window never expires mid-test).
+    const registry = scene.getEffectsRegistry();
+    for (let i = 0; i < 8; i += 1) registry.applyCollect('salvage', true);
+    const bonus = registry.salvageBonusMinerals();
+    expect(bonus).toBeGreaterThanOrEqual(3);
+
+    const ex = enemy.x;
+    const ey = enemy.y;
+    scene.explodeRandom();
+
+    const minerals = scene.getMinerals();
+    const orange = minerals.filter((m) => m.color === MINERAL_SALVAGE_COLOR);
+    // The gym pays out exactly the same bounty as the game, in the same colour.
+    expect(orange).toHaveLength(bonus);
+    // Everything else on the field is still the ordinary gold.
+    expect(minerals.filter((m) => m.color !== MINERAL_SALVAGE_COLOR)).toEqual(
+      minerals.filter((m) => m.color === MINERAL_COLOR),
+    );
+    for (const drop of orange) {
+      expect(
+        Math.hypot(drop.x - ex, drop.y - ey),
+      ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
+    }
+  });
+
+  it('no Salvage window means no orange mineral on a gym kill (AH-0MVJ72I8O0009T09)', async () => {
+    const scene = await bootMineralGym();
+    clearField(scene);
+
+    expect(scene.getEffectsRegistry().salvageBonusMinerals()).toBe(0);
+    scene.explodeRandom();
+
+    expect(
+      scene.getMinerals().some((m) => m.color === MINERAL_SALVAGE_COLOR),
+    ).toBe(false);
   });
 });
 

@@ -248,7 +248,10 @@ import {
   advancePlayerBullets,
   advanceWrappingBullets,
 } from './core/bulletLifecycle';
-import { resolveMineralKillDrops, scatterMineralDrops } from './core/mineralKillDrops';
+import {
+  resolveMineralKillDrops,
+  scatterSalvageMineralDrops,
+} from './core/mineralKillDrops';
 import {
   rollAsteroidExtraLife,
   type AsteroidKillDropEntity,
@@ -3536,11 +3539,18 @@ export class PlayScene extends CombatScene<
     );
     // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
     // the wreck of a destroyed enemy ship (hazards excluded — they are not
-    // bounty targets).
+    // bounty targets). The shared seam renders them orange so the payout is
+    // visible against ordinary gold drops (AH-0MVJ72I8O0009T09).
     const salvageBonus = this.effectsRegistry.salvageBonusMinerals();
     if (salvageBonus > 0 && !isNonBlockingHazard(s.enemyKey)) {
       this.minerals.push(
-        ...scatterMineralDrops(this, s.entity.x, s.entity.y, salvageBonus, this.rng),
+        ...scatterSalvageMineralDrops(
+          this,
+          s.entity.x,
+          s.entity.y,
+          salvageBonus,
+          this.rng,
+        ),
       );
     }
     // Non-blocking hazards (asteroids, lane traffic) are not wave-accounted
