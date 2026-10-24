@@ -9,7 +9,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../test/gameHarness';
-import { DEFAULT_ENEMY_CONFIGS } from '../core/enemyConfig';
+import { DEFAULT_ENEMY_CONFIGS, type EnemyConfig } from '../core/enemyConfig';
+import { enemyForceFieldHits } from '../core/enemyForceField';
+import type { FormationOffset } from '../utils/formations';
 import { Asteroid, ASTEROID_LARGE_ROTATION_SPEED, ASTEROID_LARGE_SPEED } from './Asteroid';
 import { BaseEnemy } from './BaseEnemy';
 import { Diver } from './Diver';
@@ -17,7 +19,7 @@ import { PhaserEntity } from './Phaser';
 import { Scout } from './Scout';
 import { Swarm } from './Swarm';
 import { Tank } from './Tank';
-import { createEnemyFromConfig } from './enemyFactory';
+import { createEnemyFromConfig, type EnemyEntity } from './enemyFactory';
 import { Capturer } from './Capturer';
 import { Harvester } from './Harvester';
 import { OrbitalStrike } from './OrbitalStrike';
@@ -308,5 +310,136 @@ describe('Config-aware entity seam', () => {
     fire.shootEnabled = true;
     expect(fire.tryFireBurstBullet(1_000_000)).not.toBeNull();
     fire.destroy(true);
+  });
+});
+
+// ── Force-field threading (AH-0MVM8GTG7002IRTL, test-first) ─────────
+
+/**
+ * Contract tests for threading the **resolved** force-field hit count from
+ * the spawn path into the constructed entity (AH-0MVM8GUZG008AWSU
+ * implements the seam; AH-0MVM8GXEF009883O resolves it at spawn).
+ *
+ * **TEST-FIRST.** Every test is wrapped in Vitest's `it.fails` (the repo's
+ * red-before/green-after convention — see `src/core/levelScaling.test.ts`),
+ * so this block stays green on pre-change HEAD where the factory still
+ * ignores the count. **The implementation item must flip every `it.fails`
+ * back to `it`.**
+ *
+ * Pinned seam: `createEnemyFromConfig(scene, config, x, y, offset, rng?,
+ * forceFieldHits?)` — the resolved hit count is an **appended** optional
+ * parameter (after the existing `rng` trailer), matching the shared spawn
+ * path (game: `enemyForceFieldHits(waveManager.level, cfg)`; gym editor:
+ * a direct slider value). The entity exposes the pinned BaseEnemy surface
+ * (`forceFieldHits` / `hasForceField` — see `BaseEnemy.test.ts`).
+ *
+ * The curve columns on `EnemyConfig` (`forceFieldStartLevel` /
+ * `forceFieldStartHits` / `forceFieldMaxHits`) are **not** read by the
+ * factory: the pure resolver owns the curve, so passing a config whose
+ * columns are non-zero must still construct an unshielded entity when the
+ * caller passes no resolved count.
+ */
+interface FactoryWithForceField {
+  (
+    scene: Phaser.Scene,
+    config: EnemyConfig,
+    x: number,
+    y: number,
+    offset: FormationOffset,
+    rng?: () => number,
+    forceFieldHits?: number,
+  ): EnemyEntity;
+}
+
+/** The BaseEnemy field surface this block reads (declared locally). */
+interface FieldSurface {
+  readonly forceFieldHits: number;
+  readonly hasForceField: boolean;
+}
+
+describe('Force-field threading (AH-0MVM8GTG7002IRTL)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    vi.clearAllMocks();
+  });
+
+  /** The real factory, widened to the pinned force-field signature. */
+  function createWithField(): FactoryWithForceField {
+    return createEnemyFromConfig as unknown as FactoryWithForceField;
+  }
+
+  function fieldOf(entity: EnemyEntity): FieldSurface {
+    return entity as unknown as FieldSurface;
+  }
+
+  it.fails('threads the resolved hit count into the constructed entity', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const create = createWithField();
+
+    const e = create(scene, DEFAULT_ENEMY_CONFIGS.tank, 10, 10, { row: 0, col: 0 }, undefined, 3);
+    const field = fieldOf(e);
+
+    // The field arrives with exactly the resolved count...
+    expect(field.forceFieldHits).toBe(3);
+    expect(field.hasForceField).toBe(true);
+    // ...while the hull durability is untouched by the shield.
+    expect(e.health).toBe(DEFAULT_ENEMY_CONFIGS.tank.health);
+    e.destroy(true);
+  });
+
+  it.fails('threads a zero resolved count as unshielded, exactly like an omitted count', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const create = createWithField();
+
+    const explicitZero = create(scene, DEFAULT_ENEMY_CONFIGS.scout, 10, 10, { row: 0, col: 0 }, undefined, 0);
+    expect(fieldOf(explicitZero).forceFieldHits).toBe(0);
+    expect(fieldOf(explicitZero).hasForceField).toBe(false);
+    // The 1-HP unshielded scout still dies on the first hit.
+    expect(explicitZero.takeDamage()).toBe(0);
+    expect(explicitZero.alive).toBe(false);
+    explicitZero.destroy(true);
+
+    const omitted = create(scene, DEFAULT_ENEMY_CONFIGS.scout, 10, 10, { row: 0, col: 0 });
+    expect(fieldOf(omitted).forceFieldHits).toBe(0);
+    expect(fieldOf(omitted).hasForceField).toBe(false);
+    omitted.destroy(true);
+  });
+
+  it.fails('never derives a shield from the raw config curve columns', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const create = createWithField();
+
+    // Harvester carries a non-zero curve in the seeds (start level 2, 3→5
+    // hits), but the factory must not evaluate it: only the caller-resolved
+    // count may reach the entity.
+    const cfg = DEFAULT_ENEMY_CONFIGS.harvester;
+    expect(enemyForceFieldHits(5, cfg)).toBeGreaterThan(0); // the resolver owns the curve
+    const e = create(scene, cfg, 10, 10, { row: 0, col: 0 }, undefined, 0);
+    expect(fieldOf(e).forceFieldHits).toBe(0);
+    expect(fieldOf(e).hasForceField).toBe(false);
+    expect(e.health).toBe(5);
+    e.destroy(true);
+  });
+
+  it.fails('spawns an entity whose field matches the resolver for a campaign level', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    const create = createWithField();
+
+    // End-to-end wiring: resolve the count exactly as the game spawn path
+    // does, then hand it to the factory — the constructed entity must carry
+    // it.
+    const cfg = DEFAULT_ENEMY_CONFIGS.tank;
+    const level = 5;
+    const resolved = enemyForceFieldHits(level, cfg);
+    const e = create(scene, cfg, 10, 10, { row: 0, col: 0 }, undefined, resolved);
+    expect(fieldOf(e).forceFieldHits).toBe(resolved);
+    e.destroy(true);
   });
 });

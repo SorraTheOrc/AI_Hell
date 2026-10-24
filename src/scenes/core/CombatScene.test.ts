@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import { PLAYER_BULLET_SPEED, PLAYER_RESPAWN_INVULNERABLE } from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { PlayerBullet, advanceAndCull } from '../../entities/PlayerBullet';
@@ -2187,5 +2187,223 @@ describe('auto-fire threads the weapon visual identity onto spawned bullets', ()
       // A warhead is a fragment of the (larger) parent shell.
       expect(warhead.radius).toBeLessThan(parent!.radius);
     }
+  });
+});
+
+// ── Force-field ram absorption (AH-0MVM8GTG7002IRTL, test-first) ────
+
+/**
+ * Contract tests for the shared ram rule once shields exist
+ * (epic AH-0MVJ8W4GE007OMNT AC2, answer Q6 = **B**).
+ *
+ * **TEST-FIRST.** The ram-absorb branches are wrapped in Vitest's `it.fails`
+ * (the repo's red-before/green-after convention — see
+ * `src/core/levelScaling.test.ts`), so this block stays green on pre-change
+ * HEAD where `CombatScene._handleCollisions` step 4 knows nothing about
+ * shields. **The implementation item must flip every `it.fails` back to
+ * `it`.** The two green-guard tests (unshielded ram, Thorn-Field precedence)
+ * pin behaviour that already holds today and must keep holding.
+ *
+ * `FieldStubEnemy` mirrors the pinned BaseEnemy force-field surface (see
+ * `src/entities/BaseEnemy.test.ts`): `forceFieldHits` / `hasForceField` /
+ * `lastHitAbsorbed` / `forceFieldBroken`, with `takeDamage()` depleting the
+ * field before the hull. With that entity in place, this suite isolates the
+ * **shared core** ram branch: the scene must ask the entity, consume exactly
+ * one field hit **per ram contact** (never per overlapping frame — guarded
+ * by the documented shared re-arm), destroy neither side, and never call
+ * `onPlayerHit` / `_hitPlayer` while the field is up.
+ *
+ * Shipped values: a ram inside the re-arm window consumes nothing; once the
+ * re-arm expires a later ram consumes the next field hit; once the field is
+ * down, today's both-destroyed rule applies unchanged; an active Thorn Field
+ * keeps precedence over the enemy shield and fires its own absorb cue.
+ */
+class FieldStubEnemy extends StubEnemy {
+  private _fieldHits: number;
+  private _hull: number;
+  lastHitAbsorbed = false;
+  forceFieldBroken = false;
+
+  constructor(
+    scene: Phaser.Scene,
+    x: number,
+    y: number,
+    fieldHits: number,
+    hull = 1,
+    hitRadius = 10,
+  ) {
+    super(scene, x, y, hitRadius);
+    this._fieldHits = fieldHits;
+    this._hull = hull;
+  }
+
+  get forceFieldHits(): number {
+    return this._fieldHits;
+  }
+
+  get hasForceField(): boolean {
+    return this._fieldHits > 0;
+  }
+
+  get health(): number {
+    return this._hull;
+  }
+
+  /** absorbs one hit while the field is up; hull damage once it is down. */
+  takeDamage(): number {
+    if (!this.alive) return 0;
+    if (this._fieldHits > 0) {
+      this._fieldHits -= 1;
+      this.lastHitAbsorbed = true;
+      if (this._fieldHits === 0) this.forceFieldBroken = true;
+      return this._hull;
+    }
+    this.lastHitAbsorbed = false;
+    this._hull -= 1;
+    if (this._hull <= 0) {
+      this._hull = 0;
+      this.destroySelf();
+    }
+    return this._hull;
+  }
+}
+
+describe('CombatScene — force-field ram absorption (AH-0MVM8GTG7002IRTL)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  it.fails(
+    'AC2/Q6-B — ramming a shielded enemy consumes exactly one field hit, destroys neither side and never hits the player',
+    async () => {
+      const scene = await boot();
+      const player = scene.addPlayer({ x: 80, y: 80 });
+      const enemy = new FieldStubEnemy(scene, player.x, player.y, 2, 3);
+      scene.entities.push(enemy);
+
+      scene.runCollisions();
+
+      // The field ate the ram: one field hit gone, hull untouched.
+      expect(enemy.forceFieldHits).toBe(1);
+      expect(enemy.health).toBe(3);
+      expect(enemy.alive).toBe(true);
+      expect(enemy.destroyed).toBe(false);
+      // No kill finalisation — score/drops/wave accounting must not fire.
+      expect(scene.hooks.some((h) => h.startsWith('onEnemyDestroyed'))).toBe(false);
+      // The player survives the collision unhit.
+      expect(scene.getPlayerHitCount()).toBe(0);
+      expect(scene.hooks).not.toContain('onPlayerHit');
+    },
+  );
+
+  it.fails(
+    'AC2 — a sustained overlap never drains the field frame by frame (documented re-arm)',
+    async () => {
+      const scene = await boot();
+      const player = scene.addPlayer({ x: 80, y: 80 });
+      const enemy = new FieldStubEnemy(scene, player.x, player.y, 2);
+      scene.entities.push(enemy);
+
+      // Two collision passes back-to-back, same instant: the second ram
+      // happens inside the shared re-arm window and must consume nothing.
+      scene.runCollisions();
+      scene.runCollisions();
+
+      expect(enemy.forceFieldHits).toBe(1);
+      expect(enemy.alive).toBe(true);
+      expect(scene.getPlayerHitCount()).toBe(0);
+    },
+  );
+
+  it.fails(
+    'AC2 — once the shared re-arm expires, a later ram consumes the next field hit',
+    async () => {
+      const scene = await boot();
+      const player = scene.addPlayer({ x: 80, y: 80 });
+      const enemy = new FieldStubEnemy(scene, player.x, player.y, 2);
+      scene.entities.push(enemy);
+
+      scene.runCollisions();
+      expect(enemy.forceFieldHits).toBe(1);
+
+      // 600 ms is well past the documented ~0.5 s re-arm: the contact may
+      // consume the next field hit.
+      await advanceGame(booted!.game, 600);
+      scene.runCollisions();
+
+      expect(enemy.forceFieldHits).toBe(0);
+      expect(enemy.alive).toBe(true);
+      expect(scene.getPlayerHitCount()).toBe(0);
+      expect(scene.hooks).not.toContain('onPlayerHit');
+    },
+  );
+
+  it.fails(
+    'AC2 — once the field is down, the ram falls through to today\'s both-destroyed rule',
+    async () => {
+      const scene = await boot();
+      const player = scene.addPlayer({ x: 80, y: 80 });
+      const enemy = new FieldStubEnemy(scene, player.x, player.y, 1);
+      scene.entities.push(enemy);
+
+      scene.runCollisions();
+      expect(enemy.forceFieldHits).toBe(0);
+      expect(enemy.alive).toBe(true);
+      expect(scene.getPlayerHitCount()).toBe(0);
+
+      await advanceGame(booted!.game, 600);
+      scene.runCollisions();
+
+      // Field down → the existing contact rule applies unchanged: both die.
+      expect(enemy.destroyed).toBe(true);
+      expect(scene.getPlayerHitCount()).toBe(1);
+      expect(scene.hooks).toContain('onPlayerHit');
+    },
+  );
+
+  it('AC2 — ramming an unshielded enemy keeps today\'s both-destroyed behaviour', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 80, y: 80 });
+    // A field-capable enemy carrying zero hits is byte-for-byte today's ram.
+    const enemy = new FieldStubEnemy(scene, player.x, player.y, 0);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    expect(enemy.destroyed).toBe(true);
+    expect(scene.getPlayerHitCount()).toBe(1);
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(scene.hooks).toContain('onPlayerRamsEnemy');
+  });
+
+  it('AC2 — an active Thorn Field keeps precedence and its own cue over the enemy shield', async () => {
+    const scene = await boot();
+    scene.effects.applyCollect('thorns', true);
+    const player = scene.addPlayer({ x: 80, y: 80 });
+    const enemy = new FieldStubEnemy(scene, player.x, player.y, 2);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    // The ram resolves through the Thorn Field exactly as today: the enemy
+    // still dies, the player takes no hit, and the distinct thorn absorb
+    // burst/cue fires (its own registry).
+    expect(enemy.destroyed).toBe(true);
+    expect(scene.getPlayerHitCount()).toBe(0);
+    expect(scene.hooks).not.toContain('onPlayerHit');
+    expect(scene.getThornsAbsorbEffects().length).toBeGreaterThan(0);
+    // Precedence: one thorn ram budget spent, and the enemy shield is
+    // untouched by the same contact.
+    expect(scene.effects.thornsRemaining()).toBe(1);
+    expect(enemy.forceFieldHits).toBe(2);
   });
 });
