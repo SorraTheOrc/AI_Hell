@@ -42,6 +42,9 @@ function makeConfig(overrides: Partial<EnemyConfig>): EnemyConfig {
     burstCount: 1,
     shotProbability: 1.0,
     health: 1,
+    forceFieldStartLevel: 0,
+    forceFieldStartHits: 1,
+    forceFieldMaxHits: 1,
     ...overrides,
   };
 }
@@ -306,6 +309,9 @@ describe('enemyDifficulty — Asteroid split chain', () => {
       burstCount: 1,
       shotProbability: 1,
       health: 1,
+      forceFieldStartLevel: 0,
+      forceFieldStartHits: 1,
+      forceFieldMaxHits: 1,
     };
     const result = enemyDifficulty(cfg);
     // The asteroidSplit factor should be normalised to 100 (max).
@@ -343,6 +349,9 @@ describe('enemyDifficulty — Asteroid split chain', () => {
       burstCount: 1,
       shotProbability: 1,
       health: 1,
+      forceFieldStartLevel: 0,
+      forceFieldStartHits: 1,
+      forceFieldMaxHits: 1,
     };
     const result = enemyDifficulty(cfg);
     // Even though firing is suppressed, the asteroidSplit factor gives it

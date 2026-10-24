@@ -189,9 +189,9 @@ describe('difficulty-curves.csv seed data', () => {
  * (AH-0MVM8GQKI006B50M).
  *
  * **TEST-FIRST.** Wrapped in Vitest's `it.fails` (the repo's
- * red-before/green-after convention) so the suite stays green until the
- * implementation item (AH-0MVM8GRQ8006HGPK) adds the columns; it must flip
- * every `it.fails` back to `it`.
+ * red-before/green-after convention) so the suite stayed green until the
+ * implementation item (AH-0MVM8GRQ8006HGPK) added the columns; it flipped
+ * every `it.fails` back to `it`. A leftover `it.fails` here fails the suite.
  *
  * The CSV is the runtime source of truth, so every shipped row must carry the
  * three columns explicitly: the codec's absent-column default (`0`/`1`/`1`,
@@ -214,14 +214,14 @@ describe('enemy-configs.csv force-field data (AH-0MVM8GQKI006B50M, test-first)',
     };
   }
 
-  it.fails('documents the force-field columns in the header comment', () => {
+  it('documents the force-field columns in the header comment', () => {
     const csv = readCsvFile('enemy-configs.csv');
     expect(csv).toContain('forceFieldStartLevel');
     expect(csv).toContain('forceFieldStartHits');
     expect(csv).toContain('forceFieldMaxHits');
   });
 
-  it.fails('every shipped row carries integer force-field values', () => {
+  it('every shipped row carries integer force-field values', () => {
     const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
     for (const row of rows) {
       for (const column of [
@@ -238,7 +238,7 @@ describe('enemy-configs.csv force-field data (AH-0MVM8GQKI006B50M, test-first)',
     }
   });
 
-  it.fails('carries the same force-field values as the seed defaults', async () => {
+  it('carries the same force-field values as the seed defaults', async () => {
     const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
     const m = await import('../core/csv');
     for (const row of rows) {

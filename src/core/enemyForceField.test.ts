@@ -1,17 +1,16 @@
 /**
  * Contract tests for the enemy force-field resolver (AH-0MVM8GQKI006B50M).
  *
- * **TEST-FIRST.** This suite pins `src/core/enemyForceField.ts` *before* the
- * module exists. Every test is wrapped in Vitest's `it.fails` (the repo's
- * red-before/green-after convention — see `src/core/levelScaling.test.ts` and
- * AH-0MVLJCYGW001TRB3) so the suite stays green on pre-change HEAD while the
- * module is still absent. **The implementation item (AH-0MVM8GRQ8006HGPK) must
- * flip every `it.fails` back to `it`**: once the module exists the wrapped
- * bodies pass, and a leftover `it.fails` then fails the suite.
+ * **TEST-FIRST.** This suite was authored before `src/core/enemyForceField.ts`
+ * existed, wrapped in Vitest's `it.fails` (the repo's red-before/green-after
+ * convention — see `src/core/levelScaling.test.ts` and AH-0MVLJCYGW001TRB3) to
+ * stay green on pre-change HEAD, and **flipped back to `it` by the
+ * implementation item (AH-0MVM8GRQ8006HGPK)** once the module landed.
+ * A leftover `it.fails` here fails the suite.
  *
  * The module is loaded through a non-literal dynamic import on purpose: a
  * static `import './enemyForceField'` would fail `tsc --noEmit` (and therefore
- * the build) on pre-change HEAD, when the module does not exist yet.
+ * the build) if the module is ever removed again.
  *
  * ## Pinned contract (AH-0MVM8GRQ8006HGPK must match exactly)
  *
@@ -84,7 +83,7 @@ const FORCE_FIELD_HIT_CAP = 5;
 describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)', () => {
   // ── Level 1 is untouched (AC1) ────────────────────────────────────
 
-  it.fails('leaves every shipped archetype unshielded at level 1', async () => {
+  it('leaves every shipped archetype unshielded at level 1', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     for (const [key, seed] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
       // The seed spreads to the resolver's three-field view; the archetype's
@@ -94,7 +93,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
     }
   });
 
-  it.fails('returns zero for every level below the archetype start level', async () => {
+  it('returns zero for every level below the archetype start level', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     for (const startLevel of [2, 3, 5]) {
       const config = curve(startLevel, 2, 5);
@@ -107,7 +106,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
     }
   });
 
-  it.fails('treats forceFieldStartLevel 0 as never shielded at any level', async () => {
+  it('treats forceFieldStartLevel 0 as never shielded at any level', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     const config = curve(0, 3, 5);
     for (let level = 1; level <= CAMPAIGN_MAX_LEVEL; level += 1) {
@@ -118,7 +117,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
 
   // ── The two curve anchors ─────────────────────────────────────────
 
-  it.fails('equals forceFieldStartHits exactly at the start level', async () => {
+  it('equals forceFieldStartHits exactly at the start level', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     expect(enemyForceFieldHits(3, curve(3, 2, 5))).toBe(2);
     expect(enemyForceFieldHits(2, curve(2, 1, 4))).toBe(1);
@@ -126,7 +125,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
     expect(enemyForceFieldHits(CAMPAIGN_MAX_LEVEL, curve(10, 3, 3))).toBe(3);
   });
 
-  it.fails('reaches forceFieldMaxHits at the campaign maximum level', async () => {
+  it('reaches forceFieldMaxHits at the campaign maximum level', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     expect(enemyForceFieldHits(CAMPAIGN_MAX_LEVEL, curve(2, 1, 4))).toBe(4);
     expect(enemyForceFieldHits(CAMPAIGN_MAX_LEVEL, curve(4, 2, 5))).toBe(5);
@@ -135,7 +134,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
 
   // ── Ramp shape and rounding ───────────────────────────────────────
 
-  it.fails('never decreases field strength between the start level and the maximum', async () => {
+  it('never decreases field strength between the start level and the maximum', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     const curves = [curve(2, 1, 5), curve(3, 2, 4), curve(2, 1, 1), curve(5, 1, 2)];
     for (const config of curves) {
@@ -150,7 +149,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
     }
   });
 
-  it.fails('rounds the interpolated hit count half-up', async () => {
+  it('rounds the interpolated hit count half-up', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     // 1 hit @ L2 → 2 hits @ L10: L6 interpolates to exactly 1.5 → 2,
     // L5 to 1.375 → 1 and L9 to 1.875 → 2.
@@ -162,7 +161,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
 
   // ── Clamping ──────────────────────────────────────────────────────
 
-  it.fails('clamps field strength to the documented zero-to-five range', async () => {
+  it('clamps field strength to the documented zero-to-five range', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     // An over-authored maximum is capped, never exceeded.
     const overCap = curve(2, 1, 9);
@@ -186,7 +185,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
 
   // ── Purity and input resolution ───────────────────────────────────
 
-  it.fails('is deterministic and never mutates the supplied config', async () => {
+  it('is deterministic and never mutates the supplied config', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     const config = Object.freeze(curve(3, 2, 5));
     const first = enemyForceFieldHits(7, config);
@@ -196,7 +195,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
     expect({ ...config }).toEqual(curve(3, 2, 5));
   });
 
-  it.fails('resolves non-finite and non-numeric levels to a campaign end', async () => {
+  it('resolves non-finite and non-numeric levels to a campaign end', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     const config = curve(3, 2, 5);
     const levelOne = enemyForceFieldHits(1, config);
@@ -209,7 +208,7 @@ describe('enemy force-field resolver (test-first contract, AH-0MVM8GQKI006B50M)'
     expect(Number.isFinite(levelMax)).toBe(true);
   });
 
-  it.fails('rounds a fractional level before evaluating the curve', async () => {
+  it('rounds a fractional level before evaluating the curve', async () => {
     const { enemyForceFieldHits } = await enemyForceField();
     const config = curve(3, 1, 5);
     expect(enemyForceFieldHits(5.4, config)).toBe(enemyForceFieldHits(5, config));

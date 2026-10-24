@@ -228,8 +228,9 @@ describe('Data-driven enemy health (F1)', () => {
  *
  * **TEST-FIRST.** Written before the fields exist on `EnemyConfig`, wrapped in
  * Vitest's `it.fails` (the repo's red-before/green-after convention), so the
- * suite stays green on pre-change HEAD. **The implementation item
- * (AH-0MVM8GRQ8006HGPK) must flip every `it.fails` back to `it`.**
+ * suite stayed green on pre-change HEAD. **The implementation item
+ * (AH-0MVM8GRQ8006HGPK) flipped every `it.fails` back to `it`** once the
+ * seeds landed; a leftover `it.fails` here fails the suite.
  *
  * The fields read by `src/core/enemyForceField.ts`:
  * `forceFieldStartLevel` (`0` = never shielded), `forceFieldStartHits` and
@@ -252,7 +253,7 @@ describe('Force-field seed defaults (AH-0MVM8GQKI006B50M, test-first)', () => {
     };
   }
 
-  it.fails('every seed archetype declares integer force-field fields', () => {
+  it('every seed archetype declares integer force-field fields', () => {
     for (const [key, seed] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
       const fields = forceFieldOf(seed);
       for (const [column, value] of Object.entries(fields)) {
@@ -261,7 +262,7 @@ describe('Force-field seed defaults (AH-0MVM8GQKI006B50M, test-first)', () => {
     }
   });
 
-  it.fails('no seed archetype is shielded at level 1', () => {
+  it('no seed archetype is shielded at level 1', () => {
     for (const [key, seed] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
       const { forceFieldStartLevel } = forceFieldOf(seed);
       // `0` = never shielded; any other value must start at level 2 or later.
@@ -272,7 +273,7 @@ describe('Force-field seed defaults (AH-0MVM8GQKI006B50M, test-first)', () => {
     }
   });
 
-  it.fails('shielded seeds carry at least one hit and never weaken with level', () => {
+  it('shielded seeds carry at least one hit and never weaken with level', () => {
     for (const [key, seed] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
       const { forceFieldStartLevel, forceFieldStartHits, forceFieldMaxHits } =
         forceFieldOf(seed);

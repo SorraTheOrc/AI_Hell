@@ -80,6 +80,10 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   'startYMax', 'size', 'color', 'bulletColor',
   'bulletSize', 'shotPattern', 'fireInterval', 'bulletSpeed',
   'bulletLifetime', 'burstCount', 'shotProbability', 'health',
+  // Enemy force-field tuning (AH-0MVM8GRQ8006HGPK): the campaign level at
+  // which the archetype first gains a field (`0` = never), the field hits
+  // when it appears, and the field hits at the campaign maximum level.
+  'forceFieldStartLevel', 'forceFieldStartHits', 'forceFieldMaxHits',
   'marchStep', 'marchDrop', 'beamDuration', 'pullStrength',
   // Robotron homing-horde tuning (AH-0MV01EKTL001NRE6): group size and
   // spawn cadence; neutral for other archetypes.
@@ -98,6 +102,25 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
 export const DEFAULT_ENEMY_HEALTH = 1;
+
+/**
+ * Documented neutral default for the force-field start-level column
+ * (AH-0MVM8GRQ8006HGPK): `0` = never shielded, so a legacy row/blob cannot
+ * silently gain a shield.
+ */
+export const DEFAULT_FORCE_FIELD_START_LEVEL = 0;
+
+/**
+ * Documented neutral default for the force-field start-hits column
+ * (AH-0MVM8GRQ8006HGPK): inert while `forceFieldStartLevel` is `0`.
+ */
+export const DEFAULT_FORCE_FIELD_START_HITS = 1;
+
+/**
+ * Documented neutral default for the force-field max-hits column
+ * (AH-0MVM8GRQ8006HGPK): inert while `forceFieldStartLevel` is `0`.
+ */
+export const DEFAULT_FORCE_FIELD_MAX_HITS = 1;
 
 /**
  * Documented default `movementClass` when the column is absent/invalid
@@ -402,6 +425,20 @@ export function validateEnemyConfig(
     );
   }
 
+  // Validate the force-field columns (AH-0MVM8GRQ8006HGPK): optional, but a
+  // present value must be a non-negative integer; anything else is a
+  // malformed row (coercion later falls back to the documented defaults).
+  for (const field of [
+    'forceFieldStartLevel', 'forceFieldStartHits', 'forceFieldMaxHits',
+  ]) {
+    const val = row[field];
+    if (val != null && val.trim() !== '' && !isNonNegativeInteger(val)) {
+      errors.push(
+        `Invalid ${field}: "${val}" — must be a non-negative integer`,
+      );
+    }
+  }
+
   // Validate hex colours.
   for (const field of ['color', 'bulletColor']) {
     const val = row[field];
@@ -554,6 +591,22 @@ export function coerceEnemyConfig(
   merged.burstCount = coerceNumber(row.burstCount, merged.burstCount);
   merged.shotProbability = coerceNumber(row.shotProbability, merged.shotProbability);
   merged.health = coerceHealth(row.health, merged.health ?? DEFAULT_ENEMY_HEALTH);
+  // Enemy force-field tuning (AH-0MVM8GRQ8006HGPK). Absent or malformed
+  // cells fall back to the documented **constant** defaults (`0`/`1`/`1`, not
+  // a seed-inherited value): a legacy CSV row or persisted blob can never
+  // silently gain a shield, regardless of the archetype's seed.
+  merged.forceFieldStartLevel = coerceNonNegativeInteger(
+    row.forceFieldStartLevel,
+    DEFAULT_FORCE_FIELD_START_LEVEL,
+  );
+  merged.forceFieldStartHits = coerceNonNegativeInteger(
+    row.forceFieldStartHits,
+    DEFAULT_FORCE_FIELD_START_HITS,
+  );
+  merged.forceFieldMaxHits = coerceNonNegativeInteger(
+    row.forceFieldMaxHits,
+    DEFAULT_FORCE_FIELD_MAX_HITS,
+  );
   // March-formation tuning (Space Invaders archetype, AH-0MV01EDZS0005R20).
   // Optional and neutral for other formations: only override when the CSV row
   // actually carries a value, so non-march rows keep their seed/default shape.
@@ -750,6 +803,26 @@ function normaliseDifficultyGeneration(
 function isPositiveInteger(value: string): boolean {
   if (!/^\d+$/.test(value.trim())) return false;
   return Number(value) >= 1;
+}
+
+/** True when `value` is a string holding a non-negative integer (`0`, `1`, …). */
+function isNonNegativeInteger(value: string): boolean {
+  return /^\d+$/.test(value.trim());
+}
+
+/**
+ * Coerce a force-field column value. A missing/blank value falls back to the
+ * documented neutral default; any other malformed value (non-numeric,
+ * negative, fractional) also falls back to the default rather than to `NaN`
+ * (AH-0MVM8GRQ8006HGPK). Zero is a valid cell for every column;
+ * `forceFieldStartLevel = 0` means "never shielded".
+ */
+function coerceNonNegativeInteger(
+  value: string | undefined,
+  fallback: number,
+): number {
+  if (value == null || value.trim() === '') return fallback;
+  return isNonNegativeInteger(value) ? Number(value) : fallback;
 }
 
 /**

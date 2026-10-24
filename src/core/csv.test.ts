@@ -1598,10 +1598,12 @@ describe('Enemy behavioural classification (AH-0MV29NWI1007NKN7)', () => {
  * (AH-0MVM8GRQ8006HGPK adds them to `EnemyConfig`, the CSV codec and the seed
  * defaults).
  *
- * **TEST-FIRST.** Every test is wrapped in Vitest's `it.fails` (the repo's
- * red-before/green-after convention — see
- * `src/core/levelScaling.test.ts`), so this block stays green on pre-change
- * HEAD. **The implementation item must flip every `it.fails` back to `it`.**
+ * **TEST-FIRST.** Authored before the fields existed, wrapped in Vitest's
+ * `it.fails` (the repo's red-before/green-after convention — see
+ * `src/core/levelScaling.test.ts`), so this block stayed green on pre-change
+ * HEAD. **The implementation item (AH-0MVM8GRQ8006HGPK) flipped every
+ * `it.fails` back to `it`** once `EnemyConfig`, the codec and the seeds
+ * landed; a leftover `it.fails` here fails the suite.
  *
  * `ForceFieldColumns` is declared locally so the file type-checks while the
  * fields are still absent from `EnemyConfig`.
@@ -1645,7 +1647,7 @@ function legacyEnemyRow(key: string): Record<string, string> {
 }
 
 describe('Enemy force-field columns (AH-0MVM8GQKI006B50M, test-first)', () => {
-  it.fails('parses the three force-field columns from a CSV row', async () => {
+  it('parses the three force-field columns from a CSV row', async () => {
     const m = await loadCsvModule();
     const row = {
       ...legacyEnemyRow('tank'),
@@ -1659,7 +1661,7 @@ describe('Enemy force-field columns (AH-0MVM8GQKI006B50M, test-first)', () => {
     expect(fields.forceFieldMaxHits).toBe(4);
   });
 
-  it.fails('defaults absent force-field columns to 0 / 1 / 1 (legacy CSV stays unshielded)', async () => {
+  it('defaults absent force-field columns to 0 / 1 / 1 (legacy CSV stays unshielded)', async () => {
     const m = await loadCsvModule();
     // `tank` is a heavy archetype that ships *with* a field, so this pins the
     // documented codec default rather than a seed-inherited value: a legacy
@@ -1675,7 +1677,7 @@ describe('Enemy force-field columns (AH-0MVM8GQKI006B50M, test-first)', () => {
     }
   });
 
-  it.fails('round-trips the three force-field values through export → import', async () => {
+  it('round-trips the three force-field values through export → import', async () => {
     const m = await loadCsvModule();
     const authored = {
       ...DEFAULT_ENEMY_CONFIGS.scout,
@@ -1694,7 +1696,7 @@ describe('Enemy force-field columns (AH-0MVM8GQKI006B50M, test-first)', () => {
     });
   });
 
-  it.fails('loads a persisted legacy config blob without the fields with the defaults', async () => {
+  it('loads a persisted legacy config blob without the fields with the defaults', async () => {
     const m = await loadCsvModule();
     // A config persisted before the feature existed carries none of the three
     // fields; serialising it leaves the cells empty and reloading it must not
@@ -1712,7 +1714,7 @@ describe('Enemy force-field columns (AH-0MVM8GQKI006B50M, test-first)', () => {
       .toEqual(FORCE_FIELD_DEFAULTS);
   });
 
-  it.fails('falls back to the documented defaults for malformed force-field values', async () => {
+  it('falls back to the documented defaults for malformed force-field values', async () => {
     const m = await loadCsvModule();
     // Blank, non-numeric, negative and non-integer cells are all malformed:
     // they must resolve to the documented defaults, never to `NaN`.
