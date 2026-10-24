@@ -661,8 +661,8 @@ function productionSources(): Array<{ rel: string; source: string }> {
   }));
 }
 
-/** The modules that own the campaign build seam (game + shared builder). */
-const CAMPAIGN_SEAM_MODULES = ['scenes/PlayScene.ts', 'waves/sequencedLevels.ts'];
+/** The modules that consume the shared campaign-scaling seam. */
+const CAMPAIGN_SCALING_CONSUMERS = ['scenes/PlayScene.ts', 'ai/eval/arena.ts'];
 
 describe('scaling parity seam (AH-0MVLJF1PO000PB21)', () => {
   it('defines the enemy-count scaling maths in exactly one module', () => {
@@ -696,20 +696,35 @@ describe('scaling parity seam (AH-0MVLJF1PO000PB21)', () => {
   });
 
   it(
-    'has the campaign build seam consume the shared scaling helper',
+    'has the campaign build seam consume the shared campaign-scaling helper',
     () => {
-      // The seam applies the helper; it must not re-derive the multiplier
-      // inline. Until F2 lands the seam consumes nothing, so this is the
-      // red-before/green-after pin for the seam itself.
-      const consumers = productionSources()
-        .filter(
-          ({ rel, source }) =>
-            CAMPAIGN_SEAM_MODULES.includes(rel) &&
-            /\bapplyEnemyCountScaling\s*\(/.test(source) &&
-            /from\s+['"][^'"]*levelScaling['"]/.test(source),
-        )
-        .map(({ rel }) => rel);
-      expect(consumers.length).toBeGreaterThan(0);
+      // The scaling is applied once, by `scaleCampaignLevelCounts` in the
+      // shared `core/levelScaling` module; the game's campaign resolution and
+      // the headless eval arena both consume that helper (never a local copy
+      // or an inline multiplier). The old pin required the seam itself to
+      // call `applyEnemyCountScaling` directly, which forced a second copy
+      // of the campaign mapping — this pins the stronger single-owner shape
+      // (AH-0MVD1RGKM005GW0C).
+      const sources = productionSources();
+      const owner = sources.find(({ rel }) => rel === 'core/levelScaling.ts');
+      expect(owner).toBeDefined();
+      expect(definesFunction(owner?.source ?? '', 'scaleCampaignLevelCounts')).toBe(
+        true,
+      );
+      expect(/\bapplyEnemyCountScaling\s*\(/.test(owner?.source ?? '')).toBe(true);
+
+      for (const seam of CAMPAIGN_SCALING_CONSUMERS) {
+        const consumer = sources.find(({ rel }) => rel === seam);
+        expect(consumer, seam).toBeDefined();
+        expect(
+          /\bscaleCampaignLevelCounts\s*\(/.test(consumer?.source ?? ''),
+          seam,
+        ).toBe(true);
+        expect(
+          /from\s+['"][^'"]*levelScaling['"]/.test(consumer?.source ?? ''),
+          seam,
+        ).toBe(true);
+      }
     },
   );
 });

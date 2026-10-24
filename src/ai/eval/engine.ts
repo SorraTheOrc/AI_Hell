@@ -83,6 +83,12 @@ export interface EvaluationRunConfig {
   readonly level?: number;
   /** Level-scaling curves for per-level mode; `false` → level-1 baseline. */
   readonly scaleLevels?: boolean;
+  /**
+   * Full-campaign mode: every run plays the **whole shipped campaign**
+   * through the shared WaveManager (AH-0MVD1RGKM005GW0C). An explicit
+   * `level` always takes precedence (per-level mode).
+   */
+  readonly campaign?: boolean;
 }
 
 /** One seed's raw records alongside its derived run and report entry. */
@@ -238,6 +244,13 @@ export interface BatchConfig {
    */
   readonly scaleLevels?: boolean;
   /**
+   * Full-campaign mode: every run plays the **whole shipped campaign**
+   * through the shared WaveManager (AH-0MVD1RGKM005GW0C), so balance reports
+   * carry real `waveReached`/`levelReached` distributions. An explicit
+   * `level` always takes precedence (per-level mode).
+   */
+  readonly campaign?: boolean;
+  /**
    * Resolved balance config. Omitted → the batch consumes the **shared
    * config store** through `loadBalanceConfig()` (so a CSV edit changes batch
    * results, epic AC1/AC2).
@@ -299,6 +312,7 @@ export function runBatch(config: BatchConfig): BatchOutput {
         balance: config.balance,
         level: config.level,
         scaleLevels: config.scaleLevels,
+        campaign: config.campaign,
       });
       const stats = extractBalanceStats(arena.records, { dtSeconds: dt });
       runs.push({
@@ -362,6 +376,7 @@ function runSeed(
     spawns: config.spawns,
     level: config.level,
     scaleLevels: config.scaleLevels,
+    campaign: config.campaign,
   });
   const run = recordingRunFromRecords(arena.records, 0);
   const analysis = analyseRecording(run);

@@ -18,14 +18,22 @@ import type { EnemyConfig } from '../../core/configTypes';
 import { createLegacyBotPolicy } from '../framework/legacyPolicy';
 import { runArena } from './arena';
 import { loadBalanceConfig } from './balanceConfig';
+import { runBatch } from './engine';
+import { extractBalanceStats } from './metrics';
 import { stableStringify } from './report';
+import { buildSequencedLevels } from '../../waves/sequencedLevels';
+import { defaultCandidatePool } from '../../core/difficultySequencer';
+import {
+  getLevelDefinition,
+  type LevelDefinition,
+  type WaveDefinition,
+} from '../../waves/Formations';
 import {
   EVAL_TELEMETRY_SCHEMA_VERSION,
   type ArenaConfig,
   type ArenaRunResult,
   type TelemetryTickRecord,
 } from './types';
-import { getLevelDefinition } from '../../waves/Formations';
 import { GHOST_ENEMY_KEYS } from '../../waves/GhostSpawner';
 import { GRUNT_ENEMY_KEY } from '../../waves/HordeSpawner';
 import { CENTIPEDE_ENEMY_KEY } from '../../waves/CentipedeSpawner';
@@ -443,5 +451,191 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     // Seeded drops sit on the field from the very first tick, before any
     // kill — the property the per-level kill-drop rule must not have.
     expect(firstTick.state.drops.length).toBe(2);
+  });
+});
+
+describe('full-campaign mode (AH-0MVD1RGKM005GW0C)', () => {
+  /** The progression events the canonical telemetry records define. */
+  function progressionEvents(
+    result: ArenaRunResult,
+  ): Array<{ event: string; payload: Readonly<Record<string, unknown>> }> {
+    const names = new Set([
+      'wave_start',
+      'wave_cleared',
+      'level_cleared',
+      'boss_triggered',
+    ]);
+    return result.records.flatMap((record) =>
+      record.kind === 'event' && names.has(record.event)
+        ? [{ event: record.event, payload: record.payload }]
+        : [],
+    );
+  }
+
+  /** A no-fire wave with one scout directly in front of the player. */
+  function singleScoutWave(): WaveDefinition {
+    return {
+      groups: [
+        {
+          enemyKey: 'scout',
+          formation: 'single',
+          count: 1,
+          spacingX: 0,
+          spacingY: 0,
+          startX: 520,
+          startY: 270,
+        },
+      ],
+      shootEnabled: false,
+    };
+  }
+
+  /**
+   * A tiny injectable campaign (documented test seam) with no enemy fire, so
+   * the run always reaches the boss boundary: Level 1 has one wave, Level 2
+   * has two. The shared WaveManager still drives every transition.
+   */
+  const tinyCampaign: LevelDefinition[] = [
+    { level: 1, name: 'Test Entry', waves: [singleScoutWave()] },
+    { level: 2, name: 'Test Descent', waves: [singleScoutWave(), singleScoutWave()] },
+  ];
+
+  it('drives the shared WaveManager through every level and wave, then ends at the boss trigger (AC1/AC4)', () => {
+    const result = runArena(createLegacyBotPolicy(), {
+      seed: 5,
+      ticks: 4_000,
+      sampleEveryTicks: 500,
+      campaign: true,
+      campaignLevels: tinyCampaign,
+      spawns: { asteroids: 0 },
+    });
+
+    expect(
+      progressionEvents(result).map(({ event, payload }) => [
+        event,
+        payload.level,
+        payload.waveNumber,
+        payload.waveCount,
+      ]),
+    ).toEqual([
+      // Level 1 Wave 1 starts at tick 0.
+      ['wave_start', 1, 1, 1],
+      // Its only wave is the level's last: level 1 is cleared, Level 2 is
+      // now current (canonical `level_cleared` reads the next level).
+      ['level_cleared', 2, undefined, undefined],
+      ['wave_start', 2, 1, 2],
+      // Wave 1 of level 2 cleared → Wave 2 is now current.
+      ['wave_cleared', 2, 2, undefined],
+      ['wave_start', 2, 2, 2],
+      // Final wave cleared: the boss encounter is due, ending the run.
+      ['boss_triggered', undefined, undefined, undefined],
+    ]);
+
+    // One kill per wave member through the shared destruction seam.
+    const kills = result.records.filter(
+      (record) => record.kind === 'event' && record.event === 'enemy_killed',
+    );
+    expect(kills).toHaveLength(3);
+    // The run ends at the boss boundary without simulating the encounter.
+    expect(result.won).toBe(true);
+    expect(result.ticksSimulated).toBeLessThan(4_000);
+    const names = result.records.flatMap((record) =>
+      record.kind === 'event' ? [record.event] : [],
+    );
+    expect(names).not.toContain('boss_spawn');
+    expect(names).not.toContain('boss_defeated');
+    expect(names.at(-1)).toBe('run_end');
+  });
+
+  it('builds and plays the shipped sequenced campaign with canonical payloads (AC1/AC2/AC3)', () => {
+    const seed = 99;
+    const balance = loadBalanceConfig();
+    const campaign = buildSequencedLevels(
+      [...balance.difficultyCurves],
+      defaultCandidatePool(),
+      { seed },
+    );
+    const result = runArena(createLegacyBotPolicy(), {
+      seed,
+      ticks: 4_000,
+      sampleEveryTicks: 1_000,
+      campaign: true,
+      spawns: { asteroids: 0 },
+    });
+
+    const starts = progressionEvents(result).filter(
+      ({ event }) => event === 'wave_start',
+    );
+    expect(starts.length).toBeGreaterThan(0);
+    // The opening wave is the shipped campaign's Level 1 Wave 1.
+    const level1 = campaign.find((level) => level.level === 1);
+    expect(level1).toBeDefined();
+    expect(starts[0].payload).toMatchObject({
+      level: 1,
+      waveNumber: 1,
+      waveCount: level1?.waves.length,
+    });
+    // Every emitted wave payload belongs to the campaign the shared builder
+    // produced for this seed (its waveCount is that level's wave count).
+    for (const { payload } of starts) {
+      const level = campaign.find((candidate) => candidate.level === payload.level);
+      expect(level).toBeDefined();
+      expect(payload.waveCount).toBe(level?.waves.length);
+      expect(Number(payload.waveNumber)).toBeGreaterThanOrEqual(1);
+      expect(Number(payload.waveNumber)).toBeLessThanOrEqual(level?.waves.length ?? 0);
+    }
+
+    // AC1: the real wave/level events make the balance metrics meaningful.
+    const stats = extractBalanceStats(result.records, { dtSeconds: 1 / 60 });
+    expect(stats.waveReached).toBeGreaterThan(0);
+    expect(stats.levelReached).toBeGreaterThan(0);
+  });
+
+  it('keeps same-seed campaign runs byte-identical and derives the campaign from the seed (AC3/AC5)', () => {
+    const config = (seed: number): ArenaConfig => ({
+      seed,
+      ticks: 1_500,
+      sampleEveryTicks: 120,
+      campaign: true,
+      spawns: { asteroids: 0 },
+    });
+
+    const first = runArena(createLegacyBotPolicy(), config(21));
+    const second = runArena(createLegacyBotPolicy(), config(21));
+    expect(stableStringify(second.records)).toBe(stableStringify(first.records));
+
+    // The arena's campaign is the shared builder's output for the run seed:
+    // identical for the same seed, and seed-sensitive (dynamic waves) for at
+    // least one alternative seed — exactly the game's derivation.
+    const rows = [...loadBalanceConfig().difficultyCurves];
+    const build = (seed: number): string =>
+      stableStringify(buildSequencedLevels(rows, defaultCandidatePool(), { seed }));
+    expect(build(21)).toBe(build(21));
+    expect([22, 23, 24, 25].some((seed) => build(seed) !== build(21))).toBe(true);
+
+    // A different run seed is a different campaign/run, never a replay.
+    const other = runArena(createLegacyBotPolicy(), config(22));
+    expect(stableStringify(other.records)).not.toBe(stableStringify(first.records));
+  });
+
+  it('populates non-zero waveReached/levelReached distributions in a campaign batch (AC1)', () => {
+    const batch = runBatch({
+      seeds: [101, 102],
+      ticks: 12_000,
+      sampleEveryTicks: 600,
+      campaign: true,
+      spawns: { asteroids: 0 },
+      policies: [{ name: 'legacy', create: () => createLegacyBotPolicy() }],
+    });
+
+    expect(batch.aggregate.waveReached.count).toBe(2);
+    // Level 1 has no enemy fire, so both bots clear at least its opening
+    // waves: the distributions are real, not the old constant zero.
+    expect(batch.aggregate.waveReached.max).toBeGreaterThanOrEqual(2);
+    expect(batch.aggregate.levelReached.min).toBeGreaterThan(0);
+    for (const run of batch.runs) {
+      expect(run.stats.waveReached).toBeGreaterThan(0);
+      expect(run.stats.levelReached).toBeGreaterThan(0);
+    }
   });
 });

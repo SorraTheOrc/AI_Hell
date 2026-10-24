@@ -18,6 +18,7 @@
 
 import type { BotHumanInputTunables } from '../botHumanLike';
 import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
+import type { LevelDefinition } from '../../waves/Formations';
 
 /** Telemetry schema version the arena emits (matches `src/telemetry/schema`). */
 export const EVAL_TELEMETRY_SCHEMA_VERSION = 1;
@@ -188,6 +189,34 @@ export interface ArenaConfig {
    * absent (the seeded skirmish never scales).
    */
   readonly scaleLevels?: boolean;
+  /**
+   * **Full-campaign mode** (AH-0MVD1RGKM005GW0C): plays the **whole shipped
+   * campaign** — every level and wave of `buildSequencedLevels` (honouring
+   * `fixed`/`curve`/`dynamic` generation modes), drive by the shared
+   * {@link WaveManager} — instead of the single-level spawn reservoir.
+   * Wave/level progression, spawn planning and the canonical
+   * `wave_start`/`wave_cleared`/`level_cleared` events all come from the
+   * shared campaign core (no divergent copy in `src/ai/eval/`). An explicit
+   * {@link ArenaConfig.level} takes precedence (per-level mode); with neither
+   * set the unchanged seeded skirmish runs. Power-up supply comes from the
+   * real per-kill drop rule at the current campaign level, exactly like the
+   * per-level mode.
+   *
+   * **Fidelity boundary** (parent AC4): clearing the final level triggers the
+   * boss encounter, which is treated as the **end of the run** — no
+   * boss/mini-boss simulation this round.
+   */
+  readonly campaign?: boolean;
+  /**
+   * Injectable campaign for **full-campaign mode** (test/experiment seam,
+   * mirroring `WaveManager`'s injectable levels and the per-level
+   * `balance` injection). When supplied, the arena plays these levels
+   * through the shared `WaveManager` instead of rebuilding the shipped
+   * campaign. Absent → `buildSequencedLevels` builds the real campaign from
+   * `balance.difficultyCurves` seeded with {@link ArenaConfig.seed}. Ignored
+   * unless `campaign` is `true` (`level` per-level mode never uses it).
+   */
+  readonly campaignLevels?: readonly LevelDefinition[];
   /**
    * Resolved balance configuration (enemy archetypes, ship, difficulty
    * curves) built through the shared config loaders. When omitted,

@@ -57,6 +57,7 @@ import {
   DEFAULT_RULES,
   type GameRules,
 } from './rules';
+import type { LevelDefinition } from '../waves/Formations';
 
 /**
  * Documented **level-1** per-kill power-up drop chance (0.18) — today's flat
@@ -243,6 +244,43 @@ export function applyEnemyCountScaling<T extends ScalableWaveGroup>(
     }
     return { ...group, count };
   });
+}
+
+/**
+ * Applies the level enemy-count scaling to a whole campaign.
+ *
+ * This is the **single** campaign-build seam (AH-0MVLJF30O000E3J3): every
+ * group of every wave is scaled with {@link applyEnemyCountScaling} for its
+ * level, so both the static `LEVELS` campaign and a sequenced campaign
+ * receive the documented multiplier (level 1 is the identity). The input
+ * campaign is never mutated — a new `LevelDefinition[]` with new waves and
+ * groups is returned — which keeps repeated builds idempotent (no
+ * cumulative/double scaling) and leaves the authored `LEVELS` data as the
+ * pristine source every build scales from.
+ *
+ * Used by `PlayScene.resolveCampaignLevels` and by the headless evaluation
+ * arena's full-campaign mode, so the game and the harness tune from the
+ * identical scaled campaign (gym↔game parity, AH-0MUGZDTFX004RBD1).
+ *
+ * @param campaign - Unscaled campaign (must be the authored/sequenced data,
+ *   as returned by `LEVELS` / `buildSequencedLevels`; never a previously
+ *   scaled campaign).
+ * @param rules - Live rules supplying the scaling tunables; defaults to
+ *   {@link DEFAULT_RULES}.
+ * @returns A new campaign whose group counts carry the level scaling.
+ */
+export function scaleCampaignLevelCounts(
+  campaign: readonly LevelDefinition[],
+  rules: Partial<GameRules> = {},
+): LevelDefinition[] {
+  const tuning: GameRules = { ...DEFAULT_RULES, ...rules };
+  return campaign.map((level) => ({
+    ...level,
+    waves: level.waves.map((wave) => ({
+      ...wave,
+      groups: applyEnemyCountScaling(level.level, wave.groups, tuning),
+    })),
+  }));
 }
 
 // ── Internals ───────────────────────────────────────────────────────

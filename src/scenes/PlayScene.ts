@@ -45,10 +45,10 @@ import {
 } from '../core/constants';
 import { GameState, MAX_LEVEL, MAX_LIVES } from '../core/GameState';
 import {
-  applyEnemyCountScaling,
   extraLifeDropChance,
   POWER_UP_DROP_CHANCE,
   powerUpDropChance,
+  scaleCampaignLevelCounts,
 } from '../core/levelScaling';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import {
@@ -434,38 +434,6 @@ const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
  */
 type CampaignResolutionRules = Pick<GameRules, 'sequencedWavesEnabled'> &
   Partial<GameRules>;
-
-/**
- * Apply the level enemy-count scaling to a whole campaign
- * (AH-0MVLJF30O000E3J3).
- *
- * This is the **single** campaign-build seam: every group of every wave is
- * scaled with {@link applyEnemyCountScaling} for its level, so both the
- * static `LEVELS` campaign and the sequenced campaign receive the documented
- * multiplier (level 1 is the identity). The input campaign is never mutated —
- * a new `LevelDefinition[]` with new waves/groups is returned — which keeps
- * repeated builds idempotent (no cumulative/double scaling) and leaves the
- * authored `LEVELS` data as the pristine source every build scales from.
- *
- * @param campaign - Unscaled campaign (must be the authored/sequenced data, as
- *   returned by `LEVELS` / `buildSequencedLevels`; never a previously scaled
- *   campaign).
- * @param rules - Live rules supplying the scaling tunables.
- * @returns A new campaign whose group counts carry the level scaling.
- */
-function scaleCampaignLevelCounts(
-  campaign: LevelDefinition[],
-  rules: CampaignResolutionRules,
-): LevelDefinition[] {
-  const tuning: GameRules = { ...DEFAULT_RULES, ...rules };
-  return campaign.map((level) => ({
-    ...level,
-    waves: level.waves.map((wave) => ({
-      ...wave,
-      groups: applyEnemyCountScaling(level.level, wave.groups, tuning),
-    })),
-  }));
-}
 
 /**
  * Resolve the campaign the run should play (AH-0MUITS1SM008GPR9).
