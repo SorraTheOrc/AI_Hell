@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import {
+  extraLifeDropChance,
+  powerUpDropChance,
+  POWER_UP_DROP_CHANCE,
+} from './levelScaling';
+
 import { POWER_UP_SPAWN_INTERVAL } from './constants';
 import {
   DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
@@ -1025,5 +1031,24 @@ describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
     loaded.enemyCountCap = 1;
     expect(scalingRules(DEFAULT_RULES).enemyCountCap).toBe(200);
     expect(scalingRules(loadRules()).enemyCountCap).toBe(200);
+  });
+
+  it('feeds the documented per-level curve from the loaded runtime rules (AH-0MVLJF4DI000BKMQ)', () => {
+    // The runtime rules (defaults merged by loadRules) drive the shared
+    // scaling module exactly as documented: level 1 reproduces today's flat
+    // 0.18 rate, the level-10 chance is ≤ 30 % of it, and the Extra Life
+    // roll follows the same ratio while staying unchanged at level 1.
+    const loaded = loadRules();
+    expect(powerUpDropChance(1, loaded)).toBeCloseTo(POWER_UP_DROP_CHANCE, 10);
+    expect(powerUpDropChance(10, loaded)).toBeLessThanOrEqual(
+      0.3 * powerUpDropChance(1, loaded),
+    );
+    expect(extraLifeDropChance(1, loaded)).toBeCloseTo(
+      loaded.asteroidExtraLifeDropChance,
+      10,
+    );
+    expect(extraLifeDropChance(10, loaded)).toBeLessThan(
+      extraLifeDropChance(1, loaded),
+    );
   });
 });

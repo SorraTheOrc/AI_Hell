@@ -80,7 +80,16 @@ import {
 } from '../waves/GhostSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
-import { RULES_STORAGE_KEY } from '../core/rules';
+import {
+  DEFAULT_RULES,
+  POWER_UP_WEIGHT_IDS,
+  RULES_STORAGE_KEY,
+  WEAPON_WEIGHT_IDS,
+} from '../core/rules';
+import {
+  extraLifeDropChance,
+  powerUpDropChance,
+} from '../core/levelScaling';
 import { miniBossDesignForLevel } from '../waves/miniBossDesigns';
 import { scaledEncounterHp } from '../core/difficultyScaling';
 import {
@@ -7247,5 +7256,404 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(boss).not.toBeNull();
     expect(boss).not.toBeInstanceOf(MiniBoss);
     expect(boss!.alive).toBe(true);
+  });
+});
+
+/**
+ * Per-level kill-drop chance tests (AH-0MVLJF4DI000BKMQ).
+ *
+ * **TEST-FIRST.** These tests pin the parent AC "Power-up supply per enemy
+ * falls with level" (AH-0MVHT1M6O003PU7P): every kill-time drop roll in
+ * `PlayScene` must resolve the per-level chance from the live campaign
+ * (`WaveManager.currentLevel()?.level`), keep level 1 exactly at today's
+ * flat `POWER_UP_DROP_CHANCE` (0.18) rate, fall to the level-10 endpoint
+ * (0.05, ≤ 30 % of level 1), scale the small-asteroid Extra Life roll by
+ * the same ratio, and leave drop types/weights, the mineral kill-drop rule
+ * and timed power-up effects untouched.
+ *
+ * The level-scaled assertions (level-10 endpoint, mid-run level advance and
+ * the level-10 Extra Life roll) **fail on the pre-change HEAD**, where
+ * `_maybeDropPowerUp` still rolls a flat 0.18 for every level and the Extra
+ * Life roll is the flat `asteroidExtraLifeDropChance`. They are wrapped in
+ * Vitest's `it.fails(...)` — the repo's red-before/green-after convention
+ * (see `src/core/levelScaling.test.ts` and AH-0MVLJCYGW001TRB3) — so the
+ * suite stays green while the flat roll is still live. **F2
+ * (AH-0MVLJF5P0005KF8X) flips every `it.fails` back to `it`**, turning the
+ * per-level behaviour into ordinary green tests.
+ *
+ * Every roll is driven with a **constant injected RNG**, so the number of
+ * drops over the N kill rolls is exact and deterministic — no statistical
+ * or threshold sampling. The constants are derived from the documented
+ * curve (`powerUpDropChance(1) = 0.18`, `powerUpDropChance(10) = 0.05`,
+ * `extraLifeDropChance(10) ≈ 0.0139`), so a tuner who adjusts the curve in
+ * `GameRules` updates these tests through the same module the scene
+ * consumes.
+ *
+ * @module scenes/PlayScene.dropChance (within PlayScene.test.ts)
+ */
+
+describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () => {
+  let bootedGame: BootedGame | null = null;
+
+  /** The documented level-1 per-kill chance (0.18). */
+  const CHANCE_L1 = powerUpDropChance(1);
+  /** The documented level-2 per-kill chance (≈ 0.1656). */
+  const CHANCE_L2 = powerUpDropChance(2);
+  /** The documented level-10 per-kill chance (0.05). */
+  const CHANCE_L10 = powerUpDropChance(10);
+  /** Below the level-1 chance ⇒ the level-1 roll always drops (0.17). */
+  const ROLL_BELOW_L1 = CHANCE_L1 - 0.01;
+  /** Above the level-1 chance ⇒ the level-1 roll never drops (0.19). */
+  const ROLL_ABOVE_L1 = CHANCE_L1 + 0.01;
+  /** Between the level-1 and level-2 chances ⇒ drops at 1, never at 2. */
+  const ROLL_BETWEEN_L1_L2 = (CHANCE_L1 + CHANCE_L2) / 2;
+  /** Between the level-1 and level-10 chances ⇒ drops at 1, never at 10. */
+  const ROLL_BETWEEN_L1_L10 = (CHANCE_L1 + CHANCE_L10) / 2;
+  /** Below the level-10 chance ⇒ the level-10 roll still drops (0.049). */
+  const ROLL_BELOW_L10 = CHANCE_L10 - 0.001;
+  /** Extra Life chance at level 1 (unchanged default 0.05). */
+  const EXTRA_LIFE_L1 = DEFAULT_RULES.asteroidExtraLifeDropChance;
+  /** Extra Life chance at level 10 (same ratio as the per-kill chance). */
+  const EXTRA_LIFE_L10 = extraLifeDropChance(10);
+  /** Between the level-1 and level-10 Extra Life chances (≈ 0.0319). */
+  const ROLL_EXTRA_LIFE_MID = (EXTRA_LIFE_L1 + EXTRA_LIFE_L10) / 2;
+  /** Every DropId the shared weighted spawner can hand out. */
+  const DROP_POOL = new Set([...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS]);
+
+  /**
+   * The private kill-roll seam F2 changes, exposed for the unknown-level
+   * fallback test (the method reads the live campaign level at roll time).
+   */
+  type DropRollSeam = {
+    _maybeDropPowerUp(x: number, y: number): void;
+  };
+
+  /** A campaign whose levels are single, non-firing scout waves. */
+  function dropCampaign(
+    firstLevelNumber: number,
+    levels: number = 1,
+  ): LevelDefinition[] {
+    return Array.from({ length: levels }, (_, i) => ({
+      level: firstLevelNumber + i,
+      name: `Drop Test Level ${firstLevelNumber + i}`,
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 16,
+              spacingX: 60,
+              spacingY: 44,
+              startX: GAME_WIDTH * 0.15,
+              startY: GAME_HEIGHT * 0.3,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    }));
+  }
+
+  /** Boots the PlayScene on the given campaign with the asteroid spawner off. */
+  async function bootDropScene(levels: LevelDefinition[]): Promise<PlayScene> {
+    // Opt out of the sequenced campaign so the injected fixture is honoured.
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = bootedGame.scene as PlayScene;
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.getWaveManager().setLevels(levels);
+    scene.scene.restart();
+    await advanceGame(scene.game, 200);
+    return scene;
+  }
+
+  afterEach(() => {
+    bootedGame?.game.destroy(true);
+    bootedGame = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Kills exactly `howMany` live non-asteroid enemies through the real
+   * bullet path, isolating each kill (auto-fire off, only the target
+   * hittable) so collateral kills cannot add drop rolls.
+   */
+  function killExactlyNTargets(scene: PlayScene, howMany: number): void {
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.autoFireEnabled = () => false;
+    let killed = 0;
+    try {
+      for (let guard = 0; guard < 2000 && killed < howMany; guard++) {
+        const target = scene
+          .getEnemies()
+          .find((e) => e.alive && !(e instanceof Asteroid));
+        if (!target) break;
+        isolated.getEnemyEntities = () => [target];
+        scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+        scene.tick(0.016);
+        if (!target.alive) killed += 1;
+      }
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    expect(killed).toBe(howMany);
+  }
+
+  /**
+   * Spawns a **small** asteroid at (x, y) and destroys it via player
+   * bullets, isolated so only the rock can take the hit. Small asteroids do
+   * not split and are not wave-accounted, so a kill only runs the drop
+   * rolls (`_maybeDropPowerUp` plus the Extra Life roll).
+   */
+  function spawnAndDestroySmallAsteroid(
+    scene: PlayScene,
+    x: number,
+    y: number,
+  ): void {
+    const rock = scene.spawnAsteroidAt(x, y, 'small');
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.autoFireEnabled = () => false;
+    isolated.getEnemyEntities = () => [rock];
+    try {
+      for (let guard = 0; guard < 200 && rock.alive; guard++) {
+        scene.spawnPlayerBullet(rock.x, rock.y, 0, 0);
+        scene.tick(0.016);
+      }
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    expect(rock.alive).toBe(false);
+  }
+
+  /** The well-separated small-asteroid kill sites shared by the suites. */
+  const ASTEROID_SITES: ReadonlyArray<readonly [number, number]> = [
+    [GAME_WIDTH * 0.2, GAME_HEIGHT * 0.3],
+    [GAME_WIDTH * 0.4, GAME_HEIGHT * 0.35],
+    [GAME_WIDTH * 0.6, GAME_HEIGHT * 0.28],
+    [GAME_WIDTH * 0.8, GAME_HEIGHT * 0.33],
+  ];
+
+  // ── Level-1 identity (GREEN on pre-change HEAD) ─────────────────
+
+  it('level 1 — kill-time pool drops keep the documented 0.18 per-kill rate', async () => {
+    const scene = await bootDropScene(dropCampaign(1));
+    // 0.17 ≤ 0.18 ⇒ the level-1 roll passes every kill, exactly N drops.
+    scene.setRng(() => ROLL_BELOW_L1);
+    finishSpawnSequence(scene);
+    expect(scene.getWaveManager().level).toBe(1);
+
+    const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+    killExactlyNTargets(scene, 4);
+
+    // One drop per kill — nothing statistical, the counts are exact.
+    expect(spawn).toHaveBeenCalledTimes(4);
+    expect(scene.getDrops()).toHaveLength(4);
+    // The drops still come from the shared weighted pool: the level scaling
+    // touches only the chance, never the drop types/weights.
+    expect(scene.getDrops().every((d) => DROP_POOL.has(d.dropId))).toBe(true);
+    spawn.mockRestore();
+  });
+
+  it('level 1 — a roll above the 0.18 rate never drops', async () => {
+    const scene = await bootDropScene(dropCampaign(1));
+    // 0.19 > 0.18 ⇒ with the exact level-1 chance no kill drops. This
+    // brackets the scene's use of the level-1 value from above.
+    scene.setRng(() => ROLL_ABOVE_L1);
+    finishSpawnSequence(scene);
+
+    const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+    killExactlyNTargets(scene, 4);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(scene.getDrops()).toHaveLength(0);
+    spawn.mockRestore();
+  });
+
+  // ── Level-10 endpoint (RED until F2 resolves the level) ─────────
+
+  it('level 10 — a roll below the 0.05 endpoint still drops (supply never zeroes)', async () => {
+    const scene = await bootDropScene(dropCampaign(10));
+    // 0.049 ≤ 0.05 ⇒ every level-10 roll passes: the endpoint is 0.05, not 0.
+    scene.setRng(() => ROLL_BELOW_L10);
+    finishSpawnSequence(scene);
+    // The per-kill chance resolves the campaign's *design* level
+    // (WaveManager.currentLevel()?.level), not the wave-manager index.
+    expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
+
+    const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+    killExactlyNTargets(scene, 4);
+    expect(spawn).toHaveBeenCalledTimes(4);
+    spawn.mockRestore();
+  });
+
+  it.fails(
+    'level 10 — the per-kill chance falls to 0.05 (30 % of the level-1 supply)',
+    async () => {
+      const scene = await bootDropScene(dropCampaign(10));
+      // 0.115 sits between the level-1 (0.18) and level-10 (0.05) chances:
+      // the roll drops at level 1 and never at level 10. On the pre-change
+      // flat roll (0.18 at every level) every one of these kills drops —
+      // RED until F2 resolves the campaign level at roll time.
+      scene.setRng(() => ROLL_BETWEEN_L1_L10);
+      finishSpawnSequence(scene);
+      expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
+
+      const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+      killExactlyNTargets(scene, 4);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(scene.getDrops()).toHaveLength(0);
+      spawn.mockRestore();
+    },
+  );
+
+  // ── Mid-run level advance (RED until F2 re-resolves per kill) ────
+
+  it.fails(
+    'mid-run — advancing a level re-resolves the drop chance for the next kills',
+    async () => {
+      const scene = await bootDropScene(dropCampaign(1, 2)); // levels 1 → 2
+      // 0.1728 sits between the level-1 (0.18) and level-2 (≈ 0.1656)
+      // chances: level-1 kills drop, level-2 kills never do.
+      scene.setRng(() => ROLL_BETWEEN_L1_L2);
+      finishSpawnSequence(scene);
+      const wm = scene.getWaveManager();
+      expect(wm.currentLevel()?.level).toBe(1);
+
+      const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+
+      // Level 1: every kill drops (GREEN half — the level-1 rate holds).
+      killExactlyNTargets(scene, 4);
+      expect(spawn).toHaveBeenCalledTimes(4);
+
+      // Clear the level through the real gameplay path → the campaign
+      // advances to level 2 on its own.
+      killAllEnemies(scene);
+      finishTransition(scene);
+      expect(wm.currentLevel()?.level).toBe(2);
+      const callsAtLevel2 = spawn.mock.calls.length;
+
+      // Level 2: the same roll value must now fail (chance(2) < 0.1728), so
+      // no new drops spawn. On the flat-roll HEAD it still drops 4 — RED
+      // until F2 reads the live level at kill time.
+      killExactlyNTargets(scene, 4);
+      expect(spawn.mock.calls.length).toBe(callsAtLevel2);
+      spawn.mockRestore();
+    },
+  );
+
+  // ── Unknown-level fallback (GREEN; proves the level-1 fallback) ──
+
+  it('unknown level — the roll falls back to the level-1 rate when no level is live', async () => {
+    const scene = await bootDropScene(dropCampaign(1));
+    // Force the "unknown level" state: the campaign has no active level.
+    scene.getWaveManager().reset();
+    expect(scene.getWaveManager().currentLevel()).toBeNull();
+    const roll = scene as unknown as DropRollSeam;
+
+    // A roll just below 0.18 must still drop — the level-1 fallback rate.
+    scene.setRng(() => ROLL_BELOW_L1);
+    const before = scene.getDrops().length;
+    roll._maybeDropPowerUp(GAME_WIDTH / 2, 120);
+    expect(scene.getDrops().length).toBe(before + 1);
+
+    // A roll just above 0.18 must not drop — proving the fallback is the
+    // level-1 chance and not some higher rate.
+    scene.setRng(() => ROLL_ABOVE_L1);
+    const beforeHigh = scene.getDrops().length;
+    roll._maybeDropPowerUp(GAME_WIDTH / 2 - 80, 120);
+    expect(scene.getDrops().length).toBe(beforeHigh);
+
+    // The drop the fallback allowed still comes from the shared pool.
+    expect(scene.getDrops().every((d) => DROP_POOL.has(d.dropId))).toBe(true);
+  });
+
+  // ── Extra Life proportionality ──────────────────────────────────
+
+  it('Extra Life — the small-asteroid roll keeps the 0.05 chance unchanged at level 1', async () => {
+    const scene = await bootDropScene(dropCampaign(1));
+    // 0.0319 sits between the level-1 (0.05) and level-10 (≈ 0.0139) Extra
+    // Life chances: at level 1 every small-asteroid kill leaves an extra
+    // life, at level 10 none would.
+    scene.setRng(() => ROLL_EXTRA_LIFE_MID);
+    finishSpawnSequence(scene);
+    expect(scene.getWaveManager().currentLevel()?.level).toBe(1);
+
+    for (const [x, y] of ASTEROID_SITES) spawnAndDestroySmallAsteroid(scene, x, y);
+
+    expect(
+      scene.getDrops().filter((d) => d.dropId === 'extra_life'),
+    ).toHaveLength(4);
+  });
+
+  it.fails(
+    'Extra Life — level 10 scales the roll by the same ratio as the per-kill chance',
+    async () => {
+      const scene = await bootDropScene(dropCampaign(10));
+      scene.setRng(() => ROLL_EXTRA_LIFE_MID);
+      finishSpawnSequence(scene);
+      expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
+
+      for (const [x, y] of ASTEROID_SITES)
+        spawnAndDestroySmallAsteroid(scene, x, y);
+
+      // 0.0319 > extraLifeDropChance(10) ≈ 0.0139 ⇒ no extra life at level
+      // 10. RED on pre-change HEAD: the roll is a flat 0.05 at every level,
+      // so each kill leaves an extra life.
+      expect(
+        scene.getDrops().filter((d) => d.dropId === 'extra_life'),
+      ).toHaveLength(0);
+    },
+  );
+
+  // ── Unaffected paths (GREEN both on HEAD and after F2) ──────────
+
+  it('the mineral kill-drop rule is level-independent: a level-10 small-asteroid kill still leaves exactly one mineral', async () => {
+    const scene = await bootDropScene(dropCampaign(10));
+    // 0.5 > 0.18 (flat HEAD chance) and > 0.05 (level-10 chance): the power-up
+    // pool is suppressed at every level, isolating the mineral rule from the
+    // drop roll.
+    scene.setRng(() => 0.5);
+    finishSpawnSequence(scene);
+
+    const dropsBefore = scene.getDrops().length;
+    const mineralsBefore = scene.getMinerals().length;
+    // Kill away from the player (and the scout formation) so the mineral
+    // stays on the field for the count.
+    spawnAndDestroySmallAsteroid(scene, GAME_WIDTH * 0.15, GAME_HEIGHT * 0.62);
+    // No power-up drop …
+    expect(scene.getDrops().length).toBe(dropsBefore);
+    // … but the mineral kill-drop rule is untouched: exactly one mineral.
+    expect(scene.getMinerals().length).toBe(mineralsBefore + 1);
+  });
+
+  it('timed power-up effects still apply at an elevated level', async () => {
+    const scene = await bootDropScene(dropCampaign(10));
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+    expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
+
+    // The level scaling changes the drop ROLL, not the effect pipeline — a
+    // timed power-up collected at level 10 must still apply.
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isActive('speed_boost')).toBe(true);
+    expect(registry.speedMultiplier()).toBe(1.5);
   });
 });
