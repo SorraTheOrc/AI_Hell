@@ -14,9 +14,15 @@ import { POWER_UP_DROP_SIZE } from '../../core/constants';
 import { DEFAULT_RULES } from '../../core/rules';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { WeightedRandomSpawner } from '../../powerups/spawner';
-import type { DropId } from '../../powerups/types';
-import { WEAPON_DROP_IDS } from '../../powerups/types';
+import { resolveSlotState, type PowerUpSlotState } from '../../powerups/slots';
+import {
+  POWER_UP_CATALOGUE,
+  WEAPON_DROP_IDS,
+  type DropId,
+  type PowerUpId,
+} from '../../powerups/types';
 import { dropCollectRadius } from '../../powerups/icons';
+import * as dropLayerModule from './dropLayer';
 import {
   advanceDropLifecycles,
   applyDropMagnet,
@@ -260,5 +266,215 @@ describe('dropLayer — playDropPickupCue (AC4)', () => {
     playDropPickupCue({ dropId: 'bomb' });
     expect(generic).toHaveBeenCalledTimes(2);
     expect(pop).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Six-slot drop gating (AH-0MVNT2XHB000YR2Z) ─────────────────────
+//
+// Test-first status (read before editing). The gated draw seam
+// (`drawNextDrop` in this module) and the spawner eligibility filter land in
+// AH-0MVNT2YGD003N8NR. This slice pins their contract **before they exist**,
+// so every gating assertion is registered with Vitest's `it.fails(...)` — the
+// repo's red-before/green-after convention (see `src/powerups/slots.test.ts`)
+// — which keeps the developer test gate and the dev-push full-suite gate green
+// while the assertions are genuinely red against the absent seam.
+//
+// When AH-0MVNT2YGD003N8NR lands, flip each `.fails` to a plain `it(...)`.
+// Activation is the only permitted edit: the assertions themselves must not
+// change (that is what makes this a contract rather than a wish list).
+//
+// The seam is loaded through the module namespace plus a cast rather than a
+// named import, so this file still compiles and collects before the seam
+// exists (a static named import of a missing export fails `tsc --noEmit`).
+
+/** The gated draw seam's pinned surface (added by AH-0MVNT2YGD003N8NR). */
+interface GatedDropLayer {
+  /**
+   * Draws the next drop id through the shared six-slot gate: below the cap the
+   * draw is byte-for-byte the unfiltered weighted draw, at/above the cap only
+   * owned kinds plus `availableWhenSlotsFull` entries may be returned.
+   */
+  drawNextDrop(spawner: WeightedRandomSpawner<DropId>, state: PowerUpSlotState): DropId;
+}
+
+const gatedDropLayer = dropLayerModule as unknown as GatedDropLayer;
+
+/** Deterministic LCG (Numerical Recipes constants) returning values in [0, 1). */
+function makeSeededRng(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+/**
+ * The default weighted drop spawner, typed as the concrete spawner the gated
+ * draw seam filters (`buildDefaultDropSpawner` only advertises the
+ * `PowerUpSpawner` interface).
+ */
+function buildDefaultWeightedSpawner(seed: number): WeightedRandomSpawner<DropId> {
+  return buildDefaultDropSpawner(
+    DEFAULT_RULES.powerUpWeights,
+    DEFAULT_RULES.weaponWeights,
+    makeSeededRng(seed),
+  ) as WeightedRandomSpawner<DropId>;
+}
+
+/**
+ * The pre-change draw sequence captured from the **unfiltered** spawner
+ * (`buildDefaultDropSpawner`, seed 12345): the regression baseline the gated
+ * path must reproduce exactly while fewer than six slots are filled. Captured
+ * before the gating change so a later retune of the gate cannot quietly shift
+ * the below-cap distribution.
+ */
+const PRE_CHANGE_DRAW_SEQUENCE: DropId[] = [
+  'shield',
+  'shield',
+  'thorns',
+  'strike',
+  'rear_guard',
+  'speed_boost',
+  'chrono',
+  'thorns',
+  'salvage',
+  'options',
+  'shield',
+  'ricochet',
+  'shard_swarm',
+  'bomb',
+  'rapid',
+  'frenzy',
+  'force_field',
+  'shard_swarm',
+  'force_field',
+  'railgun',
+  'heavy_slug',
+  'spread',
+  'mystery_ufo',
+  'chrono',
+];
+
+/** Every catalogue entry flagged available-when-full (Extra Life, Mystery UFO). */
+const EXEMPT_WHEN_FULL: readonly PowerUpId[] = (
+  Object.keys(POWER_UP_CATALOGUE) as PowerUpId[]
+).filter((id) => POWER_UP_CATALOGUE[id].availableWhenSlotsFull === true);
+
+/**
+ * Six filled slots: four permanent power-up grants and two permanent weapon
+ * grants, so the shared pool is exactly at `POWER_UP_SLOT_CAP`.
+ */
+function fullSlotState(): PowerUpSlotState {
+  return resolveSlotState(
+    [
+      { id: 'shield', level: 1 },
+      { id: 'bomb', level: 1 },
+      { id: 'speed_boost', level: 1 },
+      { id: 'phase_shift', level: 1 },
+    ],
+    [
+      { id: 'spread', level: 1 },
+      { id: 'dual', level: 1 },
+    ],
+  );
+}
+
+describe('dropLayer — drawNextDrop below the cap (AC3, no behaviour change)', () => {
+  it('captures the pre-change draw sequence from the unfiltered spawner', () => {
+    // Guards the snapshot itself: it is what the pre-change code produces.
+    const spawner = buildDefaultDropSpawner(
+      DEFAULT_RULES.powerUpWeights,
+      DEFAULT_RULES.weaponWeights,
+      makeSeededRng(12345),
+    );
+    const draws = Array.from({ length: PRE_CHANGE_DRAW_SEQUENCE.length }, () => spawner.next());
+    expect(draws).toEqual(PRE_CHANGE_DRAW_SEQUENCE);
+  });
+
+  it.fails('reproduces the identical sequence for power-ups and weapons while slots are free', () => {
+    const state = resolveSlotState([], []);
+    expect(state.isFull).toBe(false);
+
+    const spawner = buildDefaultWeightedSpawner(12345);
+    const draws = Array.from({ length: PRE_CHANGE_DRAW_SEQUENCE.length }, () =>
+      gatedDropLayer.drawNextDrop(spawner, state),
+    );
+
+    expect(draws).toEqual(PRE_CHANGE_DRAW_SEQUENCE);
+    // The baseline covers both drop families, power-ups and weapons alike.
+    const isWeapon = (id: DropId) => (WEAPON_DROP_IDS as readonly DropId[]).includes(id);
+    expect(draws.some(isWeapon)).toBe(true);
+    expect(draws.some((id) => !isWeapon(id))).toBe(true);
+  });
+});
+
+describe('dropLayer — drawNextDrop at six filled slots (AC2, spawn gating)', () => {
+  it.fails('draws only owned kinds and available-when-full entries over a large seeded sample', () => {
+    const state = fullSlotState();
+    expect(state.isFull).toBe(true);
+
+    const eligible = new Set<DropId>([...state.ownedIds, ...EXEMPT_WHEN_FULL]);
+    const spawner = buildDefaultWeightedSpawner(2026);
+
+    const draws = Array.from({ length: 5000 }, () => gatedDropLayer.drawNextDrop(spawner, state));
+
+    // Every non-owned, non-exempt power-up *and* weapon id is gated out.
+    expect(draws.filter((id) => !eligible.has(id))).toEqual([]);
+
+    // Gating must not starve an eligible id: each owned kind and each exempt
+    // entry still appears in a large sample.
+    for (const id of eligible) expect(draws).toContain(id);
+  });
+
+  it.fails('never zeroes or retunes weights — exclusion is an eligibility filter', () => {
+    const state = fullSlotState();
+    const spawner = buildDefaultWeightedSpawner(7);
+    const before = spawner.getWeights();
+
+    for (let i = 0; i < 200; i++) gatedDropLayer.drawNextDrop(spawner, state);
+
+    // The shipped weight table is untouched for power-ups and weapons alike.
+    expect(spawner.getWeights()).toEqual(before);
+    expect(spawner.getWeights()).toMatchObject({
+      ...DEFAULT_RULES.powerUpWeights,
+      ...DEFAULT_RULES.weaponWeights,
+    });
+  });
+
+  it.fails('still yields an eligible id when every weight is zeroed (not the exclusion mechanism)', () => {
+    const state = fullSlotState();
+    const eligible = new Set<DropId>([...state.ownedIds, ...EXEMPT_WHEN_FULL]);
+
+    const build = () => {
+      const spawner = buildDefaultWeightedSpawner(11);
+      for (const id of Object.keys(spawner.getWeights()) as DropId[]) spawner.setWeight(id, 0);
+      return spawner;
+    };
+
+    const spawnerA = build();
+    const spawnerB = build();
+    const drawsA = Array.from({ length: 10 }, () => gatedDropLayer.drawNextDrop(spawnerA, state));
+    const drawsB = Array.from({ length: 10 }, () => gatedDropLayer.drawNextDrop(spawnerB, state));
+
+    // Deterministic (all-zero weights fall back to the first *eligible* id) …
+    expect(drawsA).toEqual(drawsB);
+    // … and never an ineligible id.
+    expect(drawsA.filter((id) => !eligible.has(id))).toEqual([]);
+  });
+
+  it.fails('degrades an empty eligible set to a deterministic exempt id, not the first pool entry', () => {
+    const state = fullSlotState();
+    // A pool containing neither an owned kind nor an exempt entry: every id in
+    // it is gated out, so the eligible set is empty.
+    const build = () => new WeightedRandomSpawner<DropId>(['shield', 'bomb'], makeSeededRng(5));
+
+    const first = gatedDropLayer.drawNextDrop(build(), state);
+    const second = gatedDropLayer.drawNextDrop(build(), state);
+
+    // Deterministic, crash-free, and an available-when-full entry.
+    expect(first).toBe(second);
+    expect(EXEMPT_WHEN_FULL as readonly DropId[]).toContain(first);
+    // The all-zero-weight first-entry fallback would have returned 'shield'.
+    expect(first).not.toBe('shield');
   });
 });
