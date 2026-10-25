@@ -787,6 +787,87 @@ export function readDevTelemetryBuffer(scope = globalThis) {
 }
 
 /**
+ * Characters per page→node telemetry read (AH-0MVNVGP55002G0KH).
+ *
+ * Reading the whole run in **one** `page.evaluate` puts the entire telemetry
+ * buffer into a single CDP message, exactly like the run-end upload did: the
+ * message grows with the run and JSON-escaping inflates it (measured 2.4× on a
+ * 420 s capture). The capture/record tooling therefore reads the buffer in
+ * slices of at most this many characters, so no single message is
+ * run-length-proportional. 2 Mi chars (~2 MiB of NDJSON, ~5 MiB escaped) sits
+ * comfortably inside the 8 MiB upload cap and orders of magnitude below V8's
+ * 512 MiB string limit. It is also the **ceiling**: a larger `chunkChars`
+ * request is clamped down to it.
+ */
+export const TELEMETRY_READ_CHUNK_CHARS = 2 * 1024 * 1024;
+
+/**
+ * In-page slice reader for {@link readDevTelemetryBufferInChunks}.
+ *
+ * Serialised into the page by `page.evaluate`, so it must stay
+ * self-contained: the defaults are inline literals and it touches only
+ * `scope.__aiHellTelemetry`. Reports the buffer's total length alongside the
+ * slice so the caller can detect a buffer reset between reads.
+ *
+ * @param {{ offset: number, chunkChars: number }} [args]
+ * @param {object} [scope]
+ * @returns {{ total: number, chunk: string }}
+ */
+export function readDevTelemetryChunk(
+  args = { offset: 0, chunkChars: 2 * 1024 * 1024 },
+  scope = globalThis,
+) {
+  const accessor = scope ? scope.__aiHellTelemetry : undefined;
+  if (!accessor || typeof accessor.read !== 'function') return { total: 0, chunk: '' };
+  try {
+    const content = accessor.read();
+    if (typeof content !== 'string') return { total: 0, chunk: '' };
+    const offset = Number(args && args.offset) || 0;
+    const chunkChars = Number(args && args.chunkChars) || 2 * 1024 * 1024;
+    return { total: content.length, chunk: content.slice(offset, offset + chunkChars) };
+  } catch {
+    // A page-side read failure degrades to "no telemetry", never an error.
+    return { total: 0, chunk: '' };
+  }
+}
+
+/**
+ * Reads the run's telemetry buffer in bounded slices
+ * (AH-0MVNVGP55002G0KH).
+ *
+ * Equivalent to {@link readDevTelemetryBuffer} — the caller gets exactly the
+ * same JSONL string — but no single page→node message carries more than
+ * {@link TELEMETRY_READ_CHUNK_CHARS} characters. If the buffer's length
+ * changes between slices (the game started a new run and reset it) the partial
+ * read is discarded and `''` returned, so the caller degrades to a
+ * header-only series instead of mixing two runs.
+ *
+ * `evaluate` is injected (`(fn, arg) => page.evaluate(fn, arg)`) so the
+ * assembly logic is unit-testable without a browser.
+ *
+ * @param {(fn: Function, arg: object) => Promise<{ total: number, chunk: string }>} evaluate
+ * @param {{ chunkChars?: number }} [options]
+ * @returns {Promise<string>} The buffer's JSONL content, or `''`.
+ */
+export async function readDevTelemetryBufferInChunks(evaluate, options = {}) {
+  const requested = Number(options.chunkChars);
+  const chunkChars =
+    Number.isInteger(requested) && requested > 0
+      ? Math.min(requested, TELEMETRY_READ_CHUNK_CHARS)
+      : TELEMETRY_READ_CHUNK_CHARS;
+  const parts = [];
+  let expectedTotal = null;
+  for (let offset = 0; ; offset += chunkChars) {
+    const { total, chunk } = await evaluate(readDevTelemetryChunk, { offset, chunkChars });
+    if (!total || typeof chunk !== 'string') return parts.length ? parts.join('') : '';
+    if (expectedTotal === null) expectedTotal = total;
+    else if (total !== expectedTotal) return '';
+    parts.push(chunk);
+    if (offset + chunkChars >= expectedTotal) return parts.join('');
+  }
+}
+
+/**
  * Self-contained pre-boot init script that seeds the page's `localStorage`
  * with an exported bot-tuning store state (AH-0MV6MFDYG001E6PL, AC4).
  *
@@ -1811,7 +1892,9 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     // a missing/partial buffer produces a header-only series (AC3).
     let seriesExport = null;
     try {
-      const jsonl = await page.evaluate(readDevTelemetryBuffer);
+      const jsonl = await readDevTelemetryBufferInChunks((fn, arg) =>
+        page.evaluate(fn, arg),
+      );
       seriesExport = writeCaptureSeriesArtifacts({
         jsonl,
         outputPath,

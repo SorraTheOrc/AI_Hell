@@ -78,6 +78,8 @@ import {
   installCaptureComposite,
   runCaptureIterations,
   runCaptureSession,
+  readDevTelemetryBufferInChunks,
+  TELEMETRY_READ_CHUNK_CHARS,
   summariseCaptureBatch,
   uniquifyOutputPath,
   START_KEY_GAP_MS,
@@ -1188,6 +1190,97 @@ describe('dev telemetry buffer reader (AH-0MVIRYGD1000JVY3)', () => {
     };
 
     expect(readDevTelemetryBuffer(scope)).toBe('');
+  });
+});
+
+describe('chunked telemetry read (AH-0MVNVGP55002G0KH)', () => {
+  type SliceRequest = { offset: number; chunkChars: number };
+  type SliceResult = { total: number; chunk: string };
+
+  /** A fake `page.evaluate` that runs the serialised reader against `scope`. */
+  function fakeEvaluate(
+    scope: object,
+    seen: SliceRequest[] = [],
+  ): (fn: (args: SliceRequest, s?: object) => SliceResult, arg: SliceRequest) => Promise<SliceResult> {
+    return async (fn, arg) => {
+      seen.push(arg);
+      return fn(arg, scope);
+    };
+  }
+
+  it('assembles the buffer from bounded slices, byte-for-byte', async () => {
+    const content = '{"kind":"tick","tick":1}\n'.repeat(5);
+    const scope = { __aiHellTelemetry: { read: () => content } };
+    const seen: SliceRequest[] = [];
+
+    await expect(
+      readDevTelemetryBufferInChunks(fakeEvaluate(scope, seen), { chunkChars: 16 }),
+    ).resolves.toBe(content);
+
+    // Every request is a slice of at most `chunkChars` chars — this is what
+    // keeps the resulting CDP message independent of the run's length.
+    expect(seen.length).toBe(Math.ceil(content.length / 16));
+    expect(seen.map((call) => call.offset)).toEqual(
+      seen.map((_, index) => index * 16),
+    );
+    expect(seen.every((call) => call.chunkChars === 16)).toBe(true);
+  });
+
+  it('reads a whole small buffer in one slice without an extra call', async () => {
+    const content = '{"kind":"run_header"}\n';
+    const scope = { __aiHellTelemetry: { read: () => content } };
+    const seen: SliceRequest[] = [];
+
+    await expect(
+      readDevTelemetryBufferInChunks(fakeEvaluate(scope, seen)),
+    ).resolves.toBe(content);
+    expect(seen.length).toBe(1);
+  });
+
+  it('returns an empty string for a page without the accessor or an empty buffer', async () => {
+    const seen: SliceRequest[] = [];
+    await expect(
+      readDevTelemetryBufferInChunks(fakeEvaluate({}, seen)),
+    ).resolves.toBe('');
+    expect(seen.length).toBe(1);
+
+    const empty = { __aiHellTelemetry: { read: () => '' } };
+    await expect(readDevTelemetryBufferInChunks(fakeEvaluate(empty))).resolves.toBe('');
+  });
+
+  it('degrades rather than mixing two runs when the buffer resets mid-read', async () => {
+    // The first slice sees the ended run; the game then starts a new one and
+    // the buffer is shorter. Mixing them would corrupt the series.
+    const lengths = [64, 16];
+    let call = 0;
+    const scope = {
+      __aiHellTelemetry: {
+        read: () => 'x'.repeat(lengths[Math.min(call++, lengths.length - 1)]),
+      },
+    };
+
+    await expect(
+      readDevTelemetryBufferInChunks(fakeEvaluate(scope), { chunkChars: 32 }),
+    ).resolves.toBe('');
+  });
+
+  it('keeps the default slice well inside the 8 MiB upload cap', async () => {
+    // The slice carries the buffer text; the surrounding CDP message inflates
+    // it by escaping (measured ~2.4×), so the default must leave headroom.
+    expect(TELEMETRY_READ_CHUNK_CHARS).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(TELEMETRY_READ_CHUNK_CHARS * 2.5).toBeLessThan(8 * 1024 * 1024);
+  });
+
+  it('clamps an oversized slice request to the default ceiling', async () => {
+    const content = 'x'.repeat(8);
+    const scope = { __aiHellTelemetry: { read: () => content } };
+    const seen: SliceRequest[] = [];
+
+    await readDevTelemetryBufferInChunks(fakeEvaluate(scope, seen), {
+      chunkChars: 64 * 1024 * 1024,
+    });
+
+    expect(seen[0].chunkChars).toBe(TELEMETRY_READ_CHUNK_CHARS);
   });
 });
 

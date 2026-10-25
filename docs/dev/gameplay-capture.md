@@ -620,6 +620,44 @@ pipe budget, writing to a temp file (so the bound is tested without a
 `peakPendingBytes` stays at one chunk, nothing is retained, and repeated runs
 in fresh directories are byte-identical.
 
+### Run-end telemetry upload cap
+
+A capture leaves the page's dev telemetry upload **on** (the action-intensity
+series and join anchor are read from the same in-memory buffer), so at run end
+the page POSTs the whole run's telemetry to `POST /api/telemetry/upload`. That
+body is reported by Playwright as `request.postData` inside a **single**
+`Network.requestWillBeSent` CDP message, so its size is the size of one
+page→node message and grows with the run — which is what killed long captures
+with `ERR_STRING_TOO_LONG` (diagnosed in AH-0MVNT25JI004OVKQ, fixed in
+AH-0MVNVGP55002G0KH).
+
+The uploader therefore applies a **client-side cap** before `fetch`:
+`DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES` = **8 MiB**
+(`src/telemetry/devUpload.ts`). A run whose upload message would exceed the cap
+is **not uploaded** — it is skipped with one actionable line in the page
+console — while the capture artefacts are unaffected: `.action.jsonl` /
+`.capture.json` are read from the page's in-memory buffer, not from the upload.
+`VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES` configures the cap (positive integer
+bytes, clamped to the server's 16 MiB bound), e.g.
+`VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES=4194304 npm run capture`.
+
+The cap is metered on the **message**, not the raw telemetry: the body reaches
+Playwright as an escaped JSON string inside the CDP message, so real NDJSON
+inflates by ~2.4× (a 4.0 MiB body produced a **9.7 MiB** message). An 8 MiB cap
+therefore allows roughly 3 MiB of telemetry per upload — a normal demo run
+(0.67 MiB) still uploads, while a 420 s capture's 4.0 MiB run is skipped rather
+than shipped as one oversized message.
+
+To confirm the bound on a real long run, add `--diagnostics` and check
+`transport.maxMessageBytes` in `<stem>.diagnostics.json`. The same
+run-length-proportional message class existed when the capture reads the buffer
+back for the series export, so that read is **chunked** too
+(`readDevTelemetryBufferInChunks`, ≤ `TELEMETRY_READ_CHUNK_CHARS` = 2 Mi chars
+per slice) — no single page→node message on the capture path grows with the
+run. Measured on a 420 s `--diagnostics` soak: `transport.maxMessageBytes` went
+from **37.9 MiB** (the run-end upload, pre-fix) to **5.0 MiB** (one chunked
+telemetry slice), with no upload message and no `recordings/` entry.
+
 ### Diagnostics (`--diagnostics`)
 
 `--diagnostics` is an **off-by-default** investigation mode for the long-run

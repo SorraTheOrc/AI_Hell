@@ -24,8 +24,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES,
   DEV_TELEMETRY_UPLOAD_CONTENT_TYPE,
   DEV_TELEMETRY_UPLOAD_ENDPOINT,
+  DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES,
+  MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING,
+  devUploadMessageBytes,
+  resolveDevUploadMaxMessageBytes,
   uploadDevTelemetry,
   type DevUploadFetch,
   type DevUploadFetchResponse,
@@ -234,5 +239,189 @@ describe('uploadDevTelemetry — injected seams', () => {
       uploadDevTelemetry({ env: DEV, setting: ON, readSink: () => SINK_CONTENT }),
     ).resolves.toBe(true);
     expect(globalFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Run-end upload size cap (AH-0MVNVGP55002G0KH).
+ *
+ * Playwright reports an upload's body as `request.postData` inside a single
+ * `Network.requestWillBeSent` CDP message, so a long run's telemetry POST can
+ * overflow the page→node pipe (V8's 512 MiB string cap) and kill the capture.
+ * The uploader therefore refuses to POST a body above a documented, injectable
+ * cap before the request exists — the only place where the bound can be
+ * applied (the server's 16 MiB `413` arrives far too late).
+ */
+describe('uploadDevTelemetry — run-end upload size cap (AH-0MVNVGP55002G0KH)', () => {
+  /**
+   * The message an upload of `body` produces. Playwright embeds the body as the
+   * escaped `postData` JSON string, so the cap is metered on the escaped size
+   * (~2.4× on real NDJSON), never on the raw telemetry length.
+   */
+  const messageBytes = (body: string): number => devUploadMessageBytes(body);
+
+  it('skips an over-cap payload instead of POSTing it', async () => {
+    const fetchImpl = fetchSpy();
+    const onSkip = vi.fn();
+    const body = 'x'.repeat(64);
+
+    await expect(
+      uploadDevTelemetry({
+        ...uploading(fetchImpl),
+        readSink: () => body,
+        maxMessageBytes: 32,
+        onSkip,
+      }),
+    ).resolves.toBe(false);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    // The raw body alone already exceeds the budget, so it is never escaped.
+    expect(onSkip).toHaveBeenCalledWith({ bytes: 64, messageBytes: 64, maxMessageBytes: 32 });
+  });
+
+  it('meters the escaped message, so a body under the cap can still be skipped', async () => {
+    const fetchImpl = fetchSpy();
+    const onSkip = vi.fn();
+    // 40 raw bytes, but the escaped message (quotes, escaping, envelope) is
+    // what the CDP pipe carries, so a 64-byte budget cannot carry it.
+    const body = '"quoted"'.repeat(5);
+
+    await uploadDevTelemetry({
+      ...uploading(fetchImpl),
+      readSink: () => body,
+      maxMessageBytes: 64,
+      onSkip,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(messageBytes(body)).toBeGreaterThan(64);
+    expect(onSkip).toHaveBeenCalledWith({
+      bytes: 40,
+      messageBytes: messageBytes(body),
+      maxMessageBytes: 64,
+    });
+  });
+
+  it('reports one actionable line by default when a payload is skipped', async () => {
+    const fetchImpl = fetchSpy();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await uploadDevTelemetry({
+      ...uploading(fetchImpl),
+      readSink: () => 'x'.repeat(64),
+      maxMessageBytes: 32,
+    });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = String(warn.mock.calls[0]?.[0]);
+    // Names the size it refused, the cap, and the knob that raises it.
+    expect(line).toContain('64');
+    expect(line).toContain('32');
+    expect(line).toContain('VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES');
+  });
+
+  it('uploads a payload whose message size equals the cap (inclusive bound)', async () => {
+    const fetchImpl = fetchSpy();
+    // `'x'` needs no escaping: JSON.stringify adds exactly the two quotes.
+    // The metered message always carries the CDP envelope reserve, so the
+    // budget must clear it for the boundary to be reachable at all.
+    const budget = DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES + 512;
+    const body = 'x'.repeat(
+      budget - DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES - 2,
+    );
+    expect(messageBytes(body)).toBe(budget);
+
+    await expect(
+      uploadDevTelemetry({ ...uploading(fetchImpl), readSink: () => body, maxMessageBytes: budget }),
+    ).resolves.toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies the documented 8 MiB default cap with no override supplied', async () => {
+    const fetchImpl = fetchSpy();
+    const onSkip = vi.fn();
+    // One byte over the default: exactly the boundary a long run crosses.
+    const body = 'x'.repeat(DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES + 1);
+
+    await expect(
+      uploadDevTelemetry({ ...uploading(fetchImpl), readSink: () => body, onSkip }),
+    ).resolves.toBe(false);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(onSkip).toHaveBeenCalledWith({
+      bytes: DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES + 1,
+      messageBytes: DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES + 1,
+      maxMessageBytes: DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES,
+    });
+  });
+
+  it('honours an injected environment cap for the call (maxMessageBytes still wins)', async () => {
+    const fetchImpl = fetchSpy();
+    const onSkip = vi.fn();
+    const capped = { ...DEV, VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES: '1024' };
+
+    await uploadDevTelemetry({
+      env: capped,
+      setting: ON,
+      readSink: () => 'x'.repeat(2048),
+      fetchImpl,
+      onSkip,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(onSkip).toHaveBeenCalledWith({
+      bytes: 2048,
+      messageBytes: 2048,
+      maxMessageBytes: 1024,
+    });
+
+    // An explicit option is authoritative over the environment. It must also
+    // clear the CDP envelope reserve that is always added to the metered size.
+    await uploadDevTelemetry({
+      env: capped,
+      setting: ON,
+      readSink: () => 'x'.repeat(2048),
+      fetchImpl,
+      maxMessageBytes: DEV_UPLOAD_CDP_ENVELOPE_RESERVE_BYTES + 4096,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves the cap from the environment, falling back and clamping', () => {
+    expect(DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES).toBe(8 * 1024 * 1024);
+    // The client cap must never exceed the server's documented 16 MiB bound.
+    expect(MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING).toBe(16 * 1024 * 1024);
+    expect(DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES).toBeLessThanOrEqual(
+      MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING,
+    );
+
+    expect(resolveDevUploadMaxMessageBytes(undefined)).toBe(DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES);
+    expect(resolveDevUploadMaxMessageBytes('1048576')).toBe(1_048_576);
+    // Absent/invalid/non-positive values fall back to the documented default.
+    for (const invalid of ['', '   ', 'lots', '0', '-5', '1.5', 'NaN']) {
+      expect(resolveDevUploadMaxMessageBytes(invalid)).toBe(
+        DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES,
+      );
+    }
+    // A cap raised past the server bound is clamped, never honoured.
+    expect(resolveDevUploadMaxMessageBytes(String(64 * 1024 * 1024))).toBe(
+      MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING,
+    );
+  });
+
+  it('counts UTF-8 bytes of the escaped body, so multibyte content cannot slip past', async () => {
+    const fetchImpl = fetchSpy();
+    const onSkip = vi.fn();
+    // 10 chars, 30 UTF-8 bytes: over a 20-byte budget only when measured in bytes.
+    const body = '\u2603'.repeat(10);
+
+    await uploadDevTelemetry({
+      ...uploading(fetchImpl),
+      readSink: () => body,
+      maxMessageBytes: 20,
+      onSkip,
+    });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(onSkip).toHaveBeenCalledWith({ bytes: 30, messageBytes: 30, maxMessageBytes: 20 });
   });
 });

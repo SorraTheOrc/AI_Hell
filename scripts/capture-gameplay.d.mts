@@ -262,6 +262,34 @@ export function readRunEndedSignal(
  * `window.__aiHellTelemetry`); `''` when the accessor or buffer is absent.
  */
 export function readDevTelemetryBuffer(scope?: object): string;
+
+/** Characters per bounded page→node telemetry read (2 MiB; also the ceiling). */
+export const TELEMETRY_READ_CHUNK_CHARS: number;
+
+/** One in-page slice read; reports the buffer's total length alongside the slice. */
+export function readDevTelemetryChunk(
+  args?: { offset: number; chunkChars: number },
+  scope?: object,
+): { total: number; chunk: string };
+
+/**
+ * Reads the run's in-memory telemetry buffer in bounded slices
+ * (AH-0MVNVGP55002G0KH): byte-for-byte the same content as
+ * {@link readDevTelemetryBuffer}, but no single page→node message carries more
+ * than {@link TELEMETRY_READ_CHUNK_CHARS} characters. `evaluate` mirrors
+ * `(fn, arg) => page.evaluate(fn, arg)`; `''` when the buffer is absent, empty
+ * or reset between slices.
+ */
+export function readDevTelemetryBufferInChunks(
+  evaluate: (
+    fn: (
+      args?: { offset: number; chunkChars: number },
+      scope?: object,
+    ) => { total: number; chunk: string },
+    arg: { offset: number; chunkChars: number },
+  ) => Promise<{ total: number; chunk: string }>,
+  options?: { chunkChars?: number },
+): Promise<string>;
 /** Writes exported bot-tuning state into the page's localStorage pre-boot. */
 export function installBotTuningConfig(
   state: BotTuningStoreState,

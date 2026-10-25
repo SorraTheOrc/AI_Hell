@@ -38,7 +38,7 @@ import {
   installBotTuningConfig,
   installRunEndedListener,
   loadBotTuningConfigFile,
-  readDevTelemetryBuffer,
+  readDevTelemetryBufferInChunks,
   readRunEndedSignal,
 } from './capture-gameplay.mjs';
 import { decodeRunEndedDetail } from './capture-run-lifecycle.mjs';
@@ -295,7 +295,9 @@ async function main(argv) {
     }
     stop.dispose();
 
-    const jsonl = await page.evaluate(readDevTelemetryBuffer);
+    const jsonl = await readDevTelemetryBufferInChunks((fn, arg) =>
+      page.evaluate(fn, arg),
+    );
     const output = resolveRecordingOutputPath(options.output, options);
     mkdirSync(dirname(output), { recursive: true });
     writeFileSync(output, jsonl);

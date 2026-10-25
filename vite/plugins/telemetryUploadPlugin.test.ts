@@ -29,6 +29,11 @@ import { createServer, request, type Server } from 'node:http';
 import type { ViteDevServer } from 'vite';
 
 import {
+  DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES,
+  MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING,
+} from '../../src/telemetry/devUpload';
+
+import {
   DEFAULT_MAX_UPLOAD_BYTES,
   EVALUATION_LOG_FILE,
   EVALUATION_OUTPUT_DIR,
@@ -559,6 +564,13 @@ describe('oversized bodies (AC5)', () => {
     expect(status).toBe(413);
     expect(body).toContain('too large');
     expect(storedRecordings()).toEqual([]);
+  });
+
+  it('keeps the game-side upload cap inside the accepted server bound (AH-0MVNVGP55002G0KH)', () => {
+    // The client cap must never promise more than this middleware accepts,
+    // otherwise a client-side pass would only become a server-side 413.
+    expect(DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES).toBeLessThanOrEqual(DEFAULT_MAX_UPLOAD_BYTES);
+    expect(MAX_DEV_UPLOAD_MESSAGE_BYTES_CEILING).toBeLessThanOrEqual(DEFAULT_MAX_UPLOAD_BYTES);
   });
 });
 
