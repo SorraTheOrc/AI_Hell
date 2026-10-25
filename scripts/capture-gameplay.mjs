@@ -80,6 +80,13 @@ import {
   writeDiagnosticsArtifact,
 } from './capture-diagnostics.mjs';
 import { createChunkSink } from './capture-chunk-sink.mjs';
+import {
+  CAPTURE_PROBE_STREAM_THRESHOLD_BYTES,
+  buildProbeFileUrl,
+  chooseProbeSource,
+  probeRecordingInPage,
+  resolveAudioProbeRange,
+} from './capture-probe.mjs';
 import { installRecorderChunkRetention } from './capture-recorder-page.mjs';
 import {
   CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
@@ -1624,10 +1631,10 @@ export function writeCaptureSeriesArtifacts({
  * creates one page per item and this function closes it in `finally`, so no
  * game state (audio tap, run-end listener) leaks between iterations.
  *
- * @param {{ page: import('playwright').Page, url: string, outputPath: string, options: object, reporter: object }} params
+ * @param {{ page: import('playwright').Page, url: string, baseUrl: string, outputPath: string, options: object, reporter: object }} params
  * @returns {Promise<object>}
  */
-async function captureClip({ page, url, outputPath, options, reporter }) {
+async function captureClip({ page, url, baseUrl, outputPath, options, reporter }) {
   const mode = resolveCaptureMode(options);
   // Diagnostics are opt-in (AC4): a disabled tracker records nothing, so the
   // rest of this function behaves exactly as before with zero extra output.
@@ -1876,10 +1883,26 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     }
 
     reporter.step('Encoding and probing the clip…');
-    const { probe, retention } = await stopRecordingAndProbe(
+    // Probe source selection (AH-0MVNT28SJ008ZHDB): every chunk is on disk by
+    // the time the probe runs, so the clip's streamed size decides whether the
+    // retained in-page prefix covers it (byte-identical Blob probe) or the
+    // probe should read the written file back over the capture dev server.
+    const { probe, retention, probeSource } = await stopRecordingAndProbe(
       page,
       recordingMs + 500,
+      null,
+      {
+        bytesAvailable: () => sink.stats().bytesWritten,
+        baseUrl,
+        outputPath,
+        partialPath: sink.partialPath,
+      },
     );
+    // Say which source the probe used and why: on a long-run soak this is the
+    // line that proves the streamed-file path ran (AH-0MVNT28SJ008ZHDB AC1).
+    if (probeSource) {
+      reporter.step(`Probe source: ${probeSource.source} — ${probeSource.reason}`);
+    }
 
     // Finalise the streamed recording (AH-0MVNT26AQ005LDNS): every chunk is
     // already on disk at the `.partial` path, so a successful clip is just the
@@ -1960,6 +1983,12 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       scenario: options.scenario ?? null,
       durationMs: recordingMs,
       captureStarted,
+      // Additive report of which probe source produced this clip's verdicts
+      // (AH-0MVNT28SJ008ZHDB): 'stream' reads the written file over HTTP,
+      // 'in-page' kept the byte-identical retained-prefix Blob probe.
+      probeSource: probeSource ? probeSource.source : 'in-page',
+      probeSourceReason:
+        probeSource && probeSource.reason ? probeSource.reason : null,
       ...seriesExport,
       ...runSummary,
       renderer: probe.renderer,
@@ -2188,6 +2217,7 @@ async function runScenesCapture(options, reporter = createReporter()) {
       captureScenes({
         page,
         url: session.baseUrl,
+        baseUrl: session.baseUrl,
         outputPath: itemOutput,
         options,
         reporter,
@@ -2217,6 +2247,7 @@ async function runScenesCapture(options, reporter = createReporter()) {
 async function captureScenes({
   page,
   url,
+  baseUrl,
   outputPath,
   options,
   reporter,
@@ -2380,10 +2411,20 @@ async function captureScenes({
     const transitionSampleTimes = transitionWindows.flatMap((window) =>
       buildTransitionProbeTimes(window),
     );
-    const { probe, retention } = await stopRecordingAndProbe(page, totalMs + 500, [
-      ...sceneSampleTimes,
-      ...transitionSampleTimes,
-    ]);
+    const { probe, retention, probeSource } = await stopRecordingAndProbe(
+      page,
+      totalMs + 500,
+      [...sceneSampleTimes, ...transitionSampleTimes],
+      {
+        bytesAvailable: () => sink.stats().bytesWritten,
+        baseUrl,
+        outputPath,
+        partialPath: sink.partialPath,
+      },
+    );
+    if (probeSource) {
+      reporter.step(`Probe source: ${probeSource.source} — ${probeSource.reason}`);
+    }
 
     // Every scene's chunk is already on disk; success is the rename into the
     // clip path (AH-0MVNT26AQ005LDNS). A failure leaves the partial file for
@@ -2432,6 +2473,12 @@ async function captureScenes({
       ...payload,
       ...probe,
       audioVerdict,
+      // Additive report of which probe source produced this clip's verdicts
+      // (AH-0MVNT28SJ008ZHDB): 'stream' reads the written file over HTTP,
+      // 'in-page' kept the byte-identical retained-prefix Blob probe.
+      probeSource: probeSource ? probeSource.source : 'in-page',
+      probeSourceReason:
+        probeSource && probeSource.reason ? probeSource.reason : null,
       output: outputPath,
       bytes: videoBytes,
       // `totalMs`/`scenes[]` are the planned timeline the config describes;
@@ -2513,6 +2560,7 @@ export async function runCapture(
       return captureClip({
         page,
         url,
+        baseUrl: session.baseUrl,
         outputPath,
         options: itemOptions,
         reporter,
@@ -2646,34 +2694,33 @@ async function startRecording(
 }
 
 /**
- * Stops the recorder, then decodes the produced WebM back through a
- * `<video>` element and samples several frames for verifiable stats.
+ * Stops the recorder and waits for every chunk to reach the disk sink.
  *
- * `sampleTimesMs` (optional) additionally probes explicit video offsets
- * (seconds) and returns per-sample `{ timeMs, nonBlackFraction, meanLuma }`
- * — the multi-scene driver uses those frames to verify the 0.25 s page-side
- * fades are present in the recording (AH-0MVFC70GT000B96J, AC3).
+ * Split out of the probe (AH-0MVNT28SJ008ZHDB): the probe source now depends
+ * on the **final** on-disk size, so every chunk must have been streamed
+ * before the caller can choose between the in-page Blob probe and the
+ * streamed-file probe. Returns the page-side retention controller's live
+ * statistics (AH-0MVNT274M009XRJ1 AC4) so diagnostics can report the retained
+ * prefix without changing the `--json` result shape.
  *
- * Returns `{ probe, retention }`: the probe object is byte-identical to the
- * pre-retention contract (AC5), and `retention` carries the page-side
- * controller's live statistics (AH-0MVNT274M009XRJ1 AC4) so the diagnostics
- * item can report retained bytes without changing the `--json` result shape.
+ * @param {import('playwright').Page} page
+ * @returns {Promise<object|null>} retention statistics (or `null`).
  */
-async function stopRecordingAndProbe(page, fallbackDurationMs, sampleTimesMs = null) {
-  return page.evaluate(
-    async ({ fallbackMs, sampleTimes }) => {
+async function stopRecording(page) {
+  return page.evaluate(async () => {
     const capture = window.__aiHellCapture;
     if (!capture) throw new Error('capture pipeline was never started');
 
-    const { recorder, chunks, mimeType, audioTrackCount, retention } = capture;
+    const { recorder, retention } = capture;
     const stopped = new Promise((resolve) => {
       recorder.addEventListener('stop', resolve, { once: true });
     });
     recorder.stop();
     await stopped;
     // The final `dataavailable` fires before the `stop` event, but its async
-    // handler may still be in flight; flush so the retention statistics below
-    // include the last chunk (AH-0MVNT274M009XRJ1 AC4).
+    // handler may still be in flight; flush so the sink holds every byte
+    // before the probe source is chosen and the retention statistics include
+    // the last chunk (AH-0MVNT274M009XRJ1 AC4).
     if (retention && typeof retention.flush === 'function') {
       await retention.flush();
     }
@@ -2691,275 +2738,140 @@ async function stopRecordingAndProbe(page, fallbackDurationMs, sampleTimesMs = n
       throw error;
     }
 
-    const blob = new Blob(chunks, { type: mimeType });
-    const url = URL.createObjectURL(blob);
+    return retention && typeof retention.stats === 'function'
+      ? retention.stats()
+      : null;
+  });
+}
 
-    // Decode the recorded blob's Opus track and measure its peak/RMS so the
-    // clip's audio is verifiable without auditioning it
-    // (AH-0MUWYQRAS0054VO5, AC1/AC2). The recording destination renders
-    // without any system audio device, but decoding can still fail (an
-    // unsupported codec, a truncated recording); that fallback is reported
-    // explicitly rather than silently passing (AC4).
-    let audioPeak = 0;
-    let audioRms = 0;
-    let audioDecodeError = '';
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (audioTrackCount > 0 && !AudioContextCtor) {
-      audioDecodeError = 'AudioContext is unavailable for decoding';
-    } else if (audioTrackCount > 0) {
-      const sharedTap = window.__aiHellAudioTap;
-      const sharedContexts =
-        sharedTap && typeof sharedTap.contexts === 'function'
-          ? sharedTap.contexts()
-          : [];
-      let decodeContext = sharedContexts[0] || null;
-      const ownsDecodeContext = !decodeContext;
-      try {
-        if (!decodeContext) decodeContext = new AudioContextCtor();
-        const decoded = await decodeContext.decodeAudioData(
-          await blob.arrayBuffer(),
-        );
-        let sumSquares = 0;
-        let sampleCount = 0;
-        for (
-          let channel = 0;
-          channel < decoded.numberOfChannels;
-          channel += 1
-        ) {
-          const samples = decoded.getChannelData(channel);
-          for (let i = 0; i < samples.length; i += 1) {
-            const magnitude = Math.abs(samples[i]);
-            if (magnitude > audioPeak) audioPeak = magnitude;
-            sumSquares += samples[i] * samples[i];
-            sampleCount += 1;
-          }
-        }
-        audioRms =
-          sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
-      } catch (error) {
-        audioDecodeError =
-          error && error.message ? error.message : String(error);
-      } finally {
-        if (
-          ownsDecodeContext &&
-          decodeContext &&
-          typeof decodeContext.close === 'function'
-        ) {
-          try {
-            await decodeContext.close();
-          } catch {
-            /* noop: closing a scratch decode context must not fail the capture */
-          }
-        }
-      }
+/**
+ * Probes the finished recording and samples several frames for verifiable
+ * stats (AH-0MVNT28SJ008ZHDB, parent AC3/AC6).
+ *
+ * The probe source is chosen from the clip's **final streamed size**
+ * (`chooseProbeSource`): at or below the documented in-page threshold the clip
+ * fits entirely in the page's retained prefix and keeps the byte-identical
+ * in-page Blob probe; above it the probe reads the written file back over the
+ * capture dev server's HTTP URL (range-streamed `<video>`) with a bounded
+ * audio prefix, so the renderer never materialises the whole recording.
+ *
+ * `sampleTimesMs` (optional) additionally probes explicit video offsets
+ * (seconds) and returns per-sample `{ timeMs, nonBlackFraction, meanLuma }`
+ * — the multi-scene driver uses those frames to verify the 0.25 s page-side
+ * fades are present in the recording (AH-0MVFC70GT000B96J, AC3). The same
+ * code path runs on either source, so the fade verdicts cannot diverge.
+ *
+ * Returns `{ probe, retention, probeSource }`: the probe object keeps the
+ * pre-retention contract values (AC5) plus the additive
+ * `audioProbeBytes`/`audioProbeCapped` report (parent AC4), `retention`
+ * carries the page-side controller's statistics, and `probeSource` records
+ * which source was used and why.
+ *
+ * @param {import('playwright').Page} page
+ * @param {number} fallbackDurationMs — fallback when the duration is unknown.
+ * @param {number[]|null} [sampleTimesMs] — explicit offsets to probe.
+ * @param {{
+ *   bytesAvailable?: () => number,
+ *   baseUrl?: string,
+ *   outputPath?: string,
+ *   partialPath?: string,
+ * }} [probeContext] — the clip's size/serving context.
+ */
+async function stopRecordingAndProbe(
+  page,
+  fallbackDurationMs,
+  sampleTimesMs = null,
+  probeContext = {},
+) {
+  const retention = await stopRecording(page);
+
+  const bytes =
+    typeof probeContext.bytesAvailable === 'function'
+      ? probeContext.bytesAvailable()
+      : 0;
+  const choice = chooseProbeSource({
+    bytes,
+    threshold: CAPTURE_PROBE_STREAM_THRESHOLD_BYTES,
+  });
+
+  // The clip is written to the documented `.partial` path and only renamed
+  // after a successful probe, so that is the file to serve while probing.
+  const servable =
+    choice.source === 'stream'
+      ? buildProbeFileUrl({
+          baseUrl: probeContext.baseUrl,
+          repoRoot: REPO_ROOT,
+          filePath: probeContext.partialPath || probeContext.outputPath,
+          cacheBust: bytes,
+        })
+      : null;
+  const streamed = choice.source === 'stream' && servable !== null && servable.ok;
+  const source = streamed ? 'stream' : 'in-page';
+
+  const probePlan = (planSource, audioRange) => ({
+    source: planSource,
+    videoUrl: planSource === 'stream' ? servable.url : '',
+    sourceBytes: bytes,
+    // Only the streamed path measures audio from a bounded prefix; the in-page
+    // path decodes the whole retained Blob exactly as before (AC2).
+    audioRange: planSource === 'stream' ? audioRange : null,
+    fallbackMs: fallbackDurationMs,
+    sampleTimes: sampleTimesMs,
+  });
+  const audioRange = resolveAudioProbeRange({ bytes });
+
+  let reason = choice.reason;
+  let resolvedSource = source;
+  let probe;
+  if (streamed) {
+    reason = `${choice.reason}; ${servable.reason}`;
+    try {
+      ({ probe } = await page.evaluate(
+        probeRecordingInPage,
+        probePlan('stream', audioRange),
+      ));
+    } catch (error) {
+      // The streamed source is the reliable path here (the file is served by
+      // the very dev server the page loaded from), but if it cannot be loaded
+      // the documented fallback is the in-page prefix probe rather than
+      // failing a clip that has already been recorded (parent "Probe rework
+      // risk"). Report why so the residual gap is visible, never silent.
+      const message = error && error.message ? error.message : String(error);
+      reason =
+        `${choice.reason}; the streamed probe failed (${message}) — fell ` +
+        'back to the in-page Blob prefix probe';
+      resolvedSource = 'in-page';
+      ({ probe } = await page.evaluate(
+        probeRecordingInPage,
+        probePlan('in-page', audioRange),
+      ));
     }
-    const video = document.createElement('video');
-    video.src = url;
-    video.muted = true;
-    video.playsInline = true;
-
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error('timed out loading recorded video')),
-        15_000,
-      );
-      video.addEventListener(
-        'loadeddata',
-        () => {
-          clearTimeout(timeout);
-          resolve();
-        },
-        { once: true },
-      );
-      video.addEventListener(
-        'error',
-        () => {
-          clearTimeout(timeout);
-          reject(new Error('recorded video failed to load'));
-        },
-        { once: true },
-      );
-    });
-
-    const width = video.videoWidth || 0;
-    const height = video.videoHeight || 0;
-
-    // MediaRecorder WebM has no duration metadata until the browser seeks
-    // to the end and computes it from the last frame.
-    if (!Number.isFinite(video.duration)) {
-      await new Promise((resolve) => {
-        const done = () => resolve();
-        video.addEventListener('durationchange', () => {
-          if (Number.isFinite(video.duration)) done();
-        });
-        try {
-          video.currentTime = 1e101;
-        } catch {
-          done();
-        }
-        setTimeout(done, 3_000);
-      });
+  } else {
+    if (choice.source === 'stream') {
+      // The clip is larger than the page can retain, but the file cannot be
+      // served: keep the documented in-page prefix fallback (it decodes a
+      // truncated prefix, so `durationSeconds` reflects the prefix) and report
+      // why instead of failing the clip (parent "Probe rework risk").
+      reason =
+        `${choice.reason}; falling back to the in-page Blob probe ` +
+        `(${servable ? servable.reason : 'no clip path was available'})`;
     }
-    const durationSeconds = Number.isFinite(video.duration)
-      ? video.duration
-      : fallbackMs / 1000;
+    ({ probe } = await page.evaluate(
+      probeRecordingInPage,
+      probePlan('in-page', audioRange),
+    ));
+  }
 
-    const full = document.createElement('canvas');
-    full.width = width || 960;
-    full.height = height || 540;
-    const fullCtx = full.getContext('2d', { willReadFrequently: true });
-
-    const thumb = document.createElement('canvas');
-    thumb.width = 48;
-    thumb.height = 27;
-    const thumbCtx = thumb.getContext('2d', { willReadFrequently: true });
-
-    const fractions = [0.1, 0.3, 0.5, 0.7, 0.9];
-    let nonBlackTotal = 0;
-    const colours = new Set();
-    const lumaFrames = [];
-
-    for (const fraction of fractions) {
-      const seeked = new Promise((resolve) => {
-        const done = () => resolve();
-        video.addEventListener('seeked', done, { once: true });
-        setTimeout(done, 2_000);
-      });
-      try {
-        video.currentTime = Math.max(0, durationSeconds * fraction);
-      } catch {
-        /* ignore seek failures and sample the current frame */
-      }
-      await seeked;
-
-      fullCtx.drawImage(video, 0, 0, full.width, full.height);
-      const pixels = fullCtx.getImageData(0, 0, full.width, full.height).data;
-      let nonBlack = 0;
-      for (let i = 0; i < pixels.length; i += 4) {
-        const r = pixels[i];
-        const g = pixels[i + 1];
-        const b = pixels[i + 2];
-        const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        if (luma > 16) nonBlack += 1;
-        colours.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
-      }
-      nonBlackTotal += nonBlack / (full.width * full.height);
-
-      thumbCtx.drawImage(video, 0, 0, thumb.width, thumb.height);
-      const thumbPixels = thumbCtx.getImageData(
-        0,
-        0,
-        thumb.width,
-        thumb.height,
-      ).data;
-      const frame = [];
-      for (let i = 0; i < thumbPixels.length; i += 4) {
-        frame.push(
-          (0.2126 * thumbPixels[i] +
-            0.7152 * thumbPixels[i + 1] +
-            0.0722 * thumbPixels[i + 2]) /
-            255,
-        );
-      }
-      lumaFrames.push(frame);
-    }
-
-    let motion = 0;
-    if (lumaFrames.length > 1) {
-      let difference = 0;
-      for (let f = 1; f < lumaFrames.length; f += 1) {
-        const previous = lumaFrames[f - 1];
-        const current = lumaFrames[f];
-        let sum = 0;
-        for (let p = 0; p < current.length; p += 1) {
-          sum += Math.abs(current[p] - previous[p]);
-        }
-        difference += sum / current.length;
-      }
-      motion = difference / (lumaFrames.length - 1);
-    }
-
-    // Explicit time-offset probes (AH-0MVFC70GT000B96J, AC3): seek to each
-    // requested video offset and measure its darkness so the driver can
-    // verify the page-side fades landed in the recording.
-    const sampleProbes = [];
-    if (Array.isArray(sampleTimes) && sampleTimes.length > 0) {
-      for (const timeMs of sampleTimes) {
-        const timeSeconds = timeMs / 1000;
-        if (timeSeconds <= 0 || timeSeconds >= durationSeconds - 0.03) continue;
-        const seeked = new Promise((resolve) => {
-          const done = () => resolve();
-          video.addEventListener('seeked', done, { once: true });
-          setTimeout(done, 2_000);
-        });
-        try {
-          video.currentTime = timeSeconds;
-        } catch {
-          /* ignore seek failures and sample the current frame */
-        }
-        await seeked;
-
-        fullCtx.drawImage(video, 0, 0, full.width, full.height);
-        const pixels = fullCtx.getImageData(
-          0,
-          0,
-          full.width,
-          full.height,
-        ).data;
-        let nonBlack = 0;
-        let lumaSum = 0;
-        const pixelCount = full.width * full.height;
-        for (let i = 0; i < pixels.length; i += 4) {
-          const r = pixels[i];
-          const g = pixels[i + 1];
-          const b = pixels[i + 2];
-          const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-          if (luma > 16) nonBlack += 1;
-          lumaSum += luma;
-        }
-        sampleProbes.push({
-          timeMs,
-          nonBlackFraction: nonBlack / pixelCount,
-          meanLuma: lumaSum / pixelCount / 255,
-        });
-      }
-    }
-
-    URL.revokeObjectURL(url);
-    delete window.__aiHellCapture;
-
-    const probe = {
-      width,
-      height,
-      durationSeconds,
-      nonBlackFraction: nonBlackTotal / fractions.length,
-      uniqueColours: colours.size,
-      motion,
-      // The retained prefix's size. The caller reports the clip's on-disk size
-      // from the chunk sink (`bytesWritten`) rather than this prefix size
-      // (AH-0MVNT274M009XRJ1).
-      bytes: blob.size,
-      mimeType,
-      audioTrackCount,
-      audioPeak,
-      audioRms,
-      audioDecodeError,
-      sampleProbes,
-      renderer: (() => {
-        const canvas = document.querySelector('#game-container canvas');
-        const gl = canvas && (canvas.getContext('webgl2') || canvas.getContext('webgl'));
-        return gl ? gl.getParameter(gl.RENDERER) : 'unknown';
-      })(),
-    };
-
-    return {
-      probe,
-      retention:
-        retention && typeof retention.stats === 'function'
-          ? retention.stats()
-          : null,
-    };
-  }, { fallbackMs: fallbackDurationMs, sampleTimes: sampleTimesMs });
+  return {
+    probe,
+    retention,
+    probeSource: {
+      source: resolvedSource,
+      bytes,
+      threshold: choice.threshold,
+      reason,
+    },
+  };
 }
 
 /**

@@ -637,6 +637,42 @@ pipe budget, writing to a temp file (so the bound is tested without a
 `peakPendingBytes` stays at one chunk, nothing is retained, and repeated runs
 in fresh directories are byte-identical.
 
+### Probing long clips from the streamed file
+
+The end-of-clip probe used to hand the recording to the page as one
+`new Blob(chunks)`: for a 30-minute clip that materialises the recording in
+the renderer again. The probe therefore picks its source by the clip's
+**final streamed size** (`scripts/capture-probe.mjs`, AH-0MVNT28SJ008ZHDB):
+
+- **At or below the in-page threshold** (≤ `CAPTURE_PROBE_STREAM_THRESHOLD_BYTES`
+  = `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` = **32 MiB**) the clip fits entirely
+  in the page's retained prefix and keeps the **byte-identical in-page Blob
+  probe** — same verdict fields, same `durationSeconds`/fraction/colour/motion
+  values, whole-recording audio decode.
+- **Above the threshold** the page could only hold a truncated prefix, so the
+  probe reads the **written file back over the capture dev server's HTTP URL**
+  (the Vite server serves the repo root; `capture-output/` lives under it, and
+  the server answers byte-range requests for the `<video>` element). The
+  clip is probed at its `.partial` path **before** the success rename.
+  Audio peak/RMS are measured from a **bounded prefix** of the file
+  (`CAPTURE_PROBE_AUDIO_PREFIX_BYTES`, also 32 MiB — the same budget the
+  page retention keeps), so the renderer never holds the whole recording.
+
+The probe contract is unchanged on both paths (`durationSeconds`,
+`videoWidth`/`videoHeight`, `nonBlackFraction`, colour variety, `motion`,
+`audioPeak`, `audioRms`, `audioDecodeError`, `audioTrackCount`, the
+`sampleProbes` the multi-scene fade verification runs on). The streamed path
+additionally reports its measurement bounds additively:
+`audioProbeBytes` (bytes the peak/RMS came from) and `audioProbeCapped`
+(`true` when the decode was capped to the prefix). A capped or failed decode
+is reported through those fields and/or `audioDecodeError` — never silently
+passed. Each clip result also carries an additive `probeSource`
+(`'stream' | 'in-page'`) and `probeSourceReason`, so a soak run can confirm
+which source produced the verdicts. A clip too large for the page but whose
+file cannot be served (e.g. `--output` outside the repo) falls back to the
+in-page prefix probe and reports why, instead of failing or widening into a
+new dependency.
+
 ### Run-end telemetry upload cap
 
 A capture leaves the page's dev telemetry upload **on** (the action-intensity
@@ -1354,6 +1390,9 @@ full`) or `npm run build`.
 | `scripts/capture-chunk-sink.mjs` | Bounded streaming chunk sink: append-decode-write each recorder chunk to `<stem>.partial.webm`, report `bytesWritten`/`chunkCount`/`peakPendingBytes`, finalise by rename |
 | `scripts/capture-chunk-sink.d.mts` | Types for the chunk sink |
 | `scripts/capture-chunk-sink.test.ts` | Hermetic tests for the sink's write path, memory bound beyond the 512 MiB CDP pipe budget, cap rejection and finalise/partial seam |
+| `scripts/capture-probe.mjs` | Probe-source selection + streamed probe: pure `chooseProbeSource`/`resolveAudioProbeRange`/`buildProbeFileUrl` helpers and the self-contained page-side `probeRecordingInPage` (long clips probe the streamed file over HTTP, short clips keep the in-page Blob) |
+| `scripts/capture-probe.d.mts` | Types for the probe-source selection + streamed probe |
+| `scripts/capture-probe.test.ts` | Hermetic tests for source selection, the bounded audio prefix, the served-URL builder and the page-side probe (capped-audio reporting, contract fields, fade `sampleProbes`) |
 | `scripts/capture-scenes.mjs` | Pure multi-scene core: scene-list config parsing/validation, shared watchable-gym registry, scene/fade timeline and `--json` payload (browser-free) |
 | `scripts/capture-scenes.d.mts` | Types for the multi-scene core |
 | `scripts/capture-scenes.test.ts` | Hermetic tests for config validation, the scene/fade plan, the payload, fade-sample verification and the watchable-scene registry |
