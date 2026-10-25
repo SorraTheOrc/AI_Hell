@@ -5,16 +5,31 @@
  * `GymFormationScene`, so the three scenes cannot drift visually.
  */
 
-import { describe, expect, it } from 'vitest';
-import type Phaser from 'phaser';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import Phaser from 'phaser';
 
 import { SHIP_SIZE } from '../../core/constants';
 import { EffectsRegistry } from '../../powerups/effects';
+import { bootScene, type BootedGame } from '../../test/gameHarness';
 import {
   applyPhaseGhost,
+  drawEnemyForceFieldBreakFlash,
+  drawEnemyForceFieldBubble,
   drawForceFieldBubble,
   drawShieldBubble,
   drawThornsAura,
+  ENEMY_FORCE_FIELD_BREAK_DEPTH,
+  ENEMY_FORCE_FIELD_BREAK_DURATION,
+  ENEMY_FORCE_FIELD_BREAK_END_SCALE,
+  ENEMY_FORCE_FIELD_BREAK_RADIUS_FACTOR,
+  ENEMY_FORCE_FIELD_COLOR,
+  ENEMY_FORCE_FIELD_FILL_ALPHA,
+  ENEMY_FORCE_FIELD_LINE_WIDTH,
+  ENEMY_FORCE_FIELD_MIN_STROKE_ALPHA,
+  ENEMY_FORCE_FIELD_RADIUS_FACTOR,
+  ENEMY_FORCE_FIELD_SEGMENTS,
+  ENEMY_FORCE_FIELD_STROKE_ALPHA,
+  spawnEnemyForceFieldBreakFlash,
   FORCE_FIELD_FILL_ALPHA,
   FORCE_FIELD_LINE_WIDTH,
   FORCE_FIELD_STROKE_ALPHA,
@@ -480,5 +495,146 @@ describe('CombatEffectVisuals — Thorn Field aura (AH-0MVJ8YKR70096C6T)', () =>
     const g = new FakeGraphics();
     expect(drawThornsAura(graphics(g), null, registry)).toBe(false);
     expect(g.cleared).toBe(1);
+  });
+});
+
+// ── Enemy force-field bubble + break flash (AH-0MVM8GW7W004SI0E) ─────
+
+/** Minimal bootable scene for the break-flash spawn helper. */
+class EnemyFieldVfxStubScene extends Phaser.Scene {
+  constructor() {
+    super({ key: 'EnemyFieldVfxStubScene' });
+  }
+}
+
+describe('CombatEffectVisuals — enemy force-field bubble (AH-0MVM8GW7W004SI0E)', () => {
+  it('pins the shared enemy-field tuning and a colour distinct from both player bubbles', () => {
+    expect(ENEMY_FORCE_FIELD_COLOR).not.toBe(SHIELD_BUBBLE_COLOR);
+    expect(ENEMY_FORCE_FIELD_COLOR).not.toBe(0x33ffcc); // FORCE_FIELD_COLOR
+    expect(ENEMY_FORCE_FIELD_LINE_WIDTH).toBe(2);
+    expect(ENEMY_FORCE_FIELD_RADIUS_FACTOR).toBeGreaterThan(1);
+    expect(ENEMY_FORCE_FIELD_FILL_ALPHA).toBeGreaterThan(0);
+    expect(ENEMY_FORCE_FIELD_FILL_ALPHA).toBeLessThan(1);
+    expect(ENEMY_FORCE_FIELD_STROKE_ALPHA).toBeGreaterThan(0);
+    expect(ENEMY_FORCE_FIELD_STROKE_ALPHA).toBeLessThanOrEqual(1);
+    expect(ENEMY_FORCE_FIELD_MIN_STROKE_ALPHA).toBeGreaterThan(0);
+    expect(ENEMY_FORCE_FIELD_MIN_STROKE_ALPHA).toBeLessThan(
+      ENEMY_FORCE_FIELD_STROKE_ALPHA,
+    );
+    expect(ENEMY_FORCE_FIELD_SEGMENTS).toBeGreaterThan(1);
+  });
+
+  it('draws a segmented ring + faint fill at the shared radius around the enemy', () => {
+    const g = new FakeGraphics();
+    const drawn = drawEnemyForceFieldBubble(graphics(g), { x: 100, y: 50 }, 32, 3, 3);
+
+    expect(drawn).toBe(true);
+    expect(g.cleared).toBe(1);
+    const radius = (32 / 2) * ENEMY_FORCE_FIELD_RADIUS_FACTOR;
+    // Ring: the shared colour/width, drawn once then segmented into panels.
+    expect(g.lineStyleCalls).toHaveLength(1);
+    expect(g.lineStyleCalls[0][0]).toBe(ENEMY_FORCE_FIELD_LINE_WIDTH);
+    expect(g.lineStyleCalls[0][1]).toBe(ENEMY_FORCE_FIELD_COLOR);
+    // A segmented barrier, not a plain circle: the ring is built from arcs.
+    expect(g.strokeCircleCalls).toEqual([]);
+    expect(g.pathCommands).toBeGreaterThan(ENEMY_FORCE_FIELD_SEGMENTS * 2);
+    // Faint fill marks the inside of the barrier.
+    expect(g.fillStyleCalls[0][0]).toBe(ENEMY_FORCE_FIELD_COLOR);
+    expect(g.fillStyleCalls[0][1]).toBeGreaterThan(0);
+    expect(g.fillStyleCalls[0][1]).toBeLessThan(ENEMY_FORCE_FIELD_FILL_ALPHA + 1e-9);
+    expect(g.fillCircleCalls).toEqual([[100, 50, radius]]);
+  });
+
+  it('brightens the ring with the remaining field hits (readable strength)', () => {
+    const strokeAlphaAt = (hits: number): number => {
+      const g = new FakeGraphics();
+      drawEnemyForceFieldBubble(graphics(g), { x: 0, y: 0 }, 32, hits, 5);
+      return g.lineStyleCalls[0][2];
+    };
+
+    const weak = strokeAlphaAt(1);
+    const strong = strokeAlphaAt(5);
+
+    expect(weak).toBeGreaterThanOrEqual(ENEMY_FORCE_FIELD_MIN_STROKE_ALPHA);
+    expect(strong).toBeLessThanOrEqual(ENEMY_FORCE_FIELD_STROKE_ALPHA);
+    expect(strong).toBeGreaterThan(weak);
+  });
+
+  it('clears and draws nothing when the field is down (0 hits) or there is no target', () => {
+    const spent = new FakeGraphics();
+    expect(drawEnemyForceFieldBubble(graphics(spent), { x: 1, y: 2 }, 16, 0, 3)).toBe(false);
+    expect(spent.cleared).toBe(1);
+    expect(spent.lineStyleCalls).toEqual([]);
+    expect(spent.fillCircleCalls).toEqual([]);
+
+    const noTarget = new FakeGraphics();
+    expect(drawEnemyForceFieldBubble(graphics(noTarget), null, 16, 2, 2)).toBe(false);
+    expect(noTarget.cleared).toBe(1);
+    expect(noTarget.lineStyleCalls).toEqual([]);
+  });
+
+  it('is safe with no graphics', () => {
+    expect(drawEnemyForceFieldBubble(null, { x: 1, y: 2 }, 16, 2, 2)).toBe(false);
+  });
+});
+
+describe('CombatEffectVisuals — enemy force-field break flash (AH-0MVM8GW7W004SI0E)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([EnemyFieldVfxStubScene]);
+    return booted.scene;
+  }
+
+  it('pins the shared break-flash tuning (distinct cue, outward of the bubble)', () => {
+    expect(ENEMY_FORCE_FIELD_BREAK_RADIUS_FACTOR).toBeGreaterThan(1);
+    expect(ENEMY_FORCE_FIELD_BREAK_DURATION).toBeGreaterThan(0);
+    expect(ENEMY_FORCE_FIELD_BREAK_END_SCALE).toBeGreaterThan(1);
+    expect(ENEMY_FORCE_FIELD_BREAK_DEPTH).toBeGreaterThan(50);
+  });
+
+  it('draws an expanding double ring of shards in the barrier colour at the origin', () => {
+    const g = new FakeGraphics();
+    drawEnemyForceFieldBreakFlash(graphics(g), 40);
+
+    expect(g.cleared).toBe(1);
+    // Two rings read as the barrier shattering outward.
+    expect(g.strokeCircleCalls).toHaveLength(2);
+    expect(g.strokeCircleCalls[0][0]).toBe(0);
+    expect(g.strokeCircleCalls[0][1]).toBe(0);
+    expect(g.lineStyleCalls[0][1]).toBe(ENEMY_FORCE_FIELD_COLOR);
+    // Shards radiate outward between the rings.
+    expect(g.pathCommands).toBeGreaterThan(ENEMY_FORCE_FIELD_SEGMENTS);
+  });
+
+  it('spawns the flash at the break point, tracks it, and destroys it when the tween completes', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.Graphics[] = [];
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const flash = spawnEnemyForceFieldBreakFlash(scene, 300, 200, {
+      registry,
+      radius: 24,
+    });
+
+    expect(flash.x).toBe(300);
+    expect(flash.y).toBe(200);
+    expect(flash.depth).toBe(ENEMY_FORCE_FIELD_BREAK_DEPTH);
+    expect(registry).toContain(flash);
+    expect(scene.children.list).toContain(flash);
+    expect(tweenSpy).toHaveBeenCalledTimes(1);
+    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    expect(config.duration).toBe(ENEMY_FORCE_FIELD_BREAK_DURATION * 1000);
+    expect(config.alpha).toBe(0);
+    expect(config.scale).toBe(ENEMY_FORCE_FIELD_BREAK_END_SCALE);
+
+    (config.onComplete as () => void)();
+    expect(registry).not.toContain(flash);
+    expect(flash.active).toBe(false);
   });
 });

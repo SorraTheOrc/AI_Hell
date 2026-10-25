@@ -52,9 +52,10 @@
  * @module entities/BaseEnemy.test
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
+import * as effectsModule from '../audio/effects';
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
 import type { FormationOffset } from '../utils/formations';
@@ -74,6 +75,15 @@ class TestEnemy extends BaseEnemy {
   protected _drawBody(): void {
     // No body needed for the field contract.
   }
+
+  /**
+   * Real subclasses attach the shared graphics layers after drawing their
+   * body; the harness enemy does the same so the force-field bubble layer is
+   * exercised exactly as in the game and the gyms.
+   */
+  attachSharedGraphics(): void {
+    this.addSharedGraphics();
+  }
 }
 
 /**
@@ -85,6 +95,8 @@ interface ForceFieldEnemyContract {
   readonly hasForceField: boolean;
   readonly lastHitAbsorbed: boolean;
   readonly forceFieldBroken: boolean;
+  /** Whether the shared force-field bubble is currently drawn (AC3). */
+  readonly forceFieldBubbleVisible: boolean;
 }
 
 /** The BaseEnemyConfig extension the entity layer must implement. */
@@ -249,4 +261,105 @@ describe('BaseEnemy force-field contract (test-first, AH-0MVM8GTG7002IRTL)', () 
     expect(tough.alive).toBe(false);
   },
   );
+});
+
+
+// ── Force-field bubble lifecycle (AH-0MVM8GW7W004SI0E AC3) ─────────
+
+describe('BaseEnemy force-field bubble lifecycle (AH-0MVM8GW7W004SI0E)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([HarnessScene]);
+    return booted.scene;
+  }
+
+  /** Builds an enemy with the shared graphics layers attached, as shipped. */
+  function makeAttachedEnemy(
+    scene: Phaser.Scene,
+    health: number,
+    forceFieldHits?: number,
+  ): TestEnemy & ForceFieldEnemyContract {
+    const enemy = fieldApi(makeEnemy(scene, health, forceFieldHits));
+    enemy.attachSharedGraphics();
+    return enemy;
+  }
+
+  it('draws the shared bubble while the field is up and none for an unshielded enemy', async () => {
+    const scene = await boot();
+
+    const shielded = makeAttachedEnemy(scene, 1, 3);
+    const unshielded = makeAttachedEnemy(scene, 1);
+
+    expect(shielded.hasForceField).toBe(true);
+    expect(shielded.forceFieldBubbleVisible).toBe(true);
+    expect(unshielded.hasForceField).toBe(false);
+    expect(unshielded.forceFieldBubbleVisible).toBe(false);
+  });
+
+  it('keeps the bubble while hits are absorbed and removes it on the breaking hit', async () => {
+    const scene = await boot();
+    const enemy = makeAttachedEnemy(scene, 1, 2);
+
+    // Hit 1 — absorbed, field still up: the bubble stays.
+    enemy.takeDamage();
+    expect(enemy.forceFieldHits).toBe(1);
+    expect(enemy.forceFieldBubbleVisible).toBe(true);
+
+    // Hit 2 — the breaking hit: the bubble is cleared with the field.
+    enemy.takeDamage();
+    expect(enemy.forceFieldHits).toBe(0);
+    expect(enemy.forceFieldBroken).toBe(true);
+    expect(enemy.forceFieldBubbleVisible).toBe(false);
+    // The hull is still intact — only the barrier broke.
+    expect(enemy.alive).toBe(true);
+    expect(enemy.health).toBe(1);
+  });
+
+  it('plays the distinct break cue and spawns the break flash exactly once, on the break', async () => {
+    const scene = await boot();
+    // 5-HP hull so the post-break hit below is non-lethal and cannot spawn a
+    // destruction explosion (whose particles would add their own tween).
+    const enemy = makeAttachedEnemy(scene, 5, 2);
+    // Spy only after construction: the entity's own layers are created in the
+    // constructor, so any cue/tween after this point is break feedback.
+    const cueSpy = vi.spyOn(effectsModule, 'playEnemyForceFieldBreakSound');
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const displayObjectsBefore = scene.children.list.length;
+
+    // An absorbed (non-breaking) hit is silent on the break cue and spawns
+    // no new display object (only the entity's own bubble layer redraws).
+    enemy.takeDamage();
+    expect(cueSpy).not.toHaveBeenCalled();
+    expect(tweenSpy).not.toHaveBeenCalled();
+    expect(scene.children.list.length).toBe(displayObjectsBefore);
+
+    // The breaking hit fires the break feedback once: the shared flash is
+    // spawned as a new display object and fades out via one tween.
+    enemy.takeDamage();
+    expect(cueSpy).toHaveBeenCalledTimes(1);
+    expect(tweenSpy).toHaveBeenCalledTimes(1);
+    expect(scene.children.list.length).toBe(displayObjectsBefore + 1);
+
+    // Later hull hits never repeat the break feedback.
+    enemy.takeDamage();
+    expect(cueSpy).toHaveBeenCalledTimes(1);
+    expect(tweenSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the bubble when the enemy is destroyed while still shielded', async () => {
+    const scene = await boot();
+    const enemy = makeAttachedEnemy(scene, 5, 2);
+
+    expect(enemy.forceFieldBubbleVisible).toBe(true);
+    enemy.destroySelf();
+    expect(enemy.alive).toBe(false);
+    expect(enemy.forceFieldBubbleVisible).toBe(false);
+  });
 });
