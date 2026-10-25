@@ -81,6 +81,11 @@ import {
 } from './capture-diagnostics.mjs';
 import { createChunkSink } from './capture-chunk-sink.mjs';
 import {
+  CaptureSalvageError,
+  failureSalvageLine,
+  salvageFailedCapture,
+} from './capture-salvage.mjs';
+import {
   CAPTURE_PROBE_STREAM_THRESHOLD_BYTES,
   buildProbeFileUrl,
   chooseProbeSource,
@@ -2001,6 +2006,13 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       pageErrors,
       ...(diagnosticsSummary ? { diagnostics: diagnosticsSummary } : {}),
     };
+  } catch (error) {
+    // Graceful failure (AH-0MVNT29MC008BQPY): finalise whatever the sink
+    // already streamed at the documented `<stem>.partial.webm` path and wrap
+    // the underlying transport/browser/recorder failure in a single
+    // actionable error, printed first by `main()`. The batch loop turns this
+    // into an attributed failure record (additive fields only).
+    throw salvageFailedCapture({ sink, outputPath, error });
   } finally {
     removeOverflowHandler();
     // Release the stream handle on every path. A failed clip keeps the bytes
@@ -2051,9 +2063,23 @@ export async function runCaptureIterations({
       record = buildIterationRecord(iteration, clip);
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
+      // Graceful failure (AH-0MVNT29MC008BQPY): a salvaged capture carries
+      // an additive report on the failure record, so the batch/`--json`
+      // output names the kept bytes and the `.partial.webm` path without
+      // changing the success shape. `error` stays the condensed reason; the
+      // single actionable line lives in `salvageMessage` (present even when
+      // the failure preceded the first chunk and nothing was salvaged).
+      const reason =
+        error && error.reason
+          ? String(error.reason)
+          : message.split(/\r?\n/)[0].trim();
+      const salvage =
+        error && error.salvage && typeof error.salvage.message === 'string'
+          ? error.salvage
+          : null;
       if (reporter && typeof reporter.step === 'function') {
         reporter.step(
-          `Clip ${iteration}/${outputPaths.length} failed: ${message}`,
+          `Clip ${iteration}/${outputPaths.length} failed: ${reason}`,
         );
       }
       record = {
@@ -2061,7 +2087,14 @@ export async function runCaptureIterations({
         output: outputPaths[index],
         scenario: (item && item.scenario) ?? null,
         ok: false,
-        error: message,
+        error: reason,
+        ...(salvage
+          ? {
+              salvagedBytes: salvage.bytesSalvaged,
+              partialPath: salvage.partialPath,
+              salvageMessage: salvage.message,
+            }
+          : {}),
       };
     }
     iterations.push(record);
@@ -2209,7 +2242,7 @@ async function runScenesCapture(options, reporter = createReporter()) {
   const outputPath = resolveScenesOutputPath(options.output);
   const payload = buildScenesPayload(plan, { outputPath });
 
-  const { clips } = await runCaptureSession({
+  const { batch, clips } = await runCaptureSession({
     items: [{ index: 1, outputPath, scenesCapture: true }],
     options,
     reporter,
@@ -2226,7 +2259,9 @@ async function runScenesCapture(options, reporter = createReporter()) {
       }),
   });
 
-  return clips[0];
+  // A failed multi-scene capture (AH-0MVNT29MC008BQPY) still reports its
+  // salvage attribution: surface the failure record rather than `undefined`.
+  return clips[0] ?? batch.iterations[0];
 }
 
 /**
@@ -2495,6 +2530,11 @@ async function captureScenes({
       pageErrors,
       ...(diagnosticsSummary ? { diagnostics: diagnosticsSummary } : {}),
     };
+  } catch (error) {
+    // Graceful failure (AH-0MVNT29MC008BQPY): the same salvage seam as the
+    // single/batch path — keep the multi-scene run's streamed bytes at the
+    // documented `.partial` path and surface one actionable error.
+    throw salvageFailedCapture({ sink, outputPath, error });
   } finally {
     removeOverflowHandler();
     // Release the stream handle on every path (see the single-clip path): a
@@ -2569,8 +2609,10 @@ export async function runCapture(
   });
 
   // `--count 1` / the single-clip default returns the exact single-clip result
-  // object so the existing `--json` shape cannot regress (AC3).
-  return plan.batch ? batch : clips[0];
+  // object so the existing `--json` shape cannot regress (AC3). A failed
+  // single clip (AH-0MVNT29MC008BQPY) surfaces its failure record instead of
+  // `undefined`, so `main()` can report the salvage and exit non-zero.
+  return plan.batch ? batch : (clips[0] ?? batch.iterations[0]);
 }
 
 /**
@@ -2887,6 +2929,9 @@ async function stopRecordingAndProbe(
  * @returns {number}
  */
 export function captureExitCode(result = {}) {
+  // A single-clip failure record (a salvaged capture, AH-0MVNT29MC008BQPY)
+  // must fail the CLI even though it has no batch `iterations` array.
+  if (result && result.ok === false) return 1;
   // Batch aggregate: fail when any iteration failed (AH-0MUYTK941005E2M4, AC7).
   if (Array.isArray(result.iterations)) {
     return result.iterations.some((it) => !it || it.ok !== true) ? 1 : 0;
@@ -2933,9 +2978,29 @@ function formatBatchReport(batch) {
   return lines.join('\n');
 }
 
+/** Renders the human-readable summary for a failed single clip. */
+function formatFailureReport(result) {
+  const lines = [
+    'AI_Hell automated gameplay capture',
+    '=================================',
+    `Output:     ${result.output}`,
+    `Status:     FAILED — ${result.error ?? 'capture failed'}`,
+  ];
+  if (result.salvagedBytes > 0 && result.partialPath) {
+    lines.push(
+      `Salvaged:   ${result.salvagedBytes} B at ${result.partialPath}`,
+    );
+  }
+  return lines.join('\n');
+}
+
 function formatReport(result) {
   // A multi-clip batch reports a per-iteration summary instead of one clip.
   if (Array.isArray(result.iterations)) return formatBatchReport(result);
+  // A failed single clip (AH-0MVNT29MC008BQPY) reports its status instead of
+  // dereferencing the success fields; the actionable salvage line is printed
+  // first by `main()`.
+  if (result.ok === false) return formatFailureReport(result);
 
   const lines = [
     'AI_Hell automated gameplay capture',
@@ -3061,6 +3126,21 @@ async function main() {
 
   const result = await runCapture(options);
   const isBatch = Array.isArray(result.iterations);
+
+  // AC2 (AH-0MVNT29MC008BQPY): exactly one actionable message per failure,
+  // printed first — before the report, the JSON payload or any raw stack. The
+  // salvage line names what failed, the bytes kept, the `.partial.webm` path
+  // and the next action.
+  const failedRecords = isBatch
+    ? result.iterations.filter((it) => !it.ok)
+    : result.ok === false
+      ? [result]
+      : [];
+  for (const record of failedRecords) {
+    const line = failureSalvageLine(record);
+    if (line) console.error(line);
+  }
+
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {
@@ -3077,7 +3157,7 @@ async function main() {
           );
         }
       }
-    } else if (result.pageErrors.length > 0) {
+    } else if (result.ok !== false && (result.pageErrors ?? []).length > 0) {
       console.warn(`Page errors (${result.pageErrors.length}):`);
       for (const error of result.pageErrors) console.warn(`  - ${error}`);
     }
@@ -3090,7 +3170,7 @@ async function main() {
         `${result.failed} of ${result.count} capture iteration(s) failed; exiting non-zero.`,
       );
     }
-  } else {
+  } else if (result.ok !== false) {
     if (result.fullRun && result.capHit) {
       console.error(
         'Capture hit the --max-duration safety cap without a run-end signal; ' +
@@ -3111,7 +3191,16 @@ const invokedDirectly =
   process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   main().catch((error) => {
-    if (error instanceof CaptureSetupError) {
+    if (error instanceof CaptureSalvageError) {
+      // One actionable line first, then the underlying stack as secondary
+      // diagnostics (AH-0MVNT29MC008BQPY AC2). Normal salvaged captures are
+      // handled per-iteration; this is the safety net for a failure that
+      // escapes before the batch loop exists (e.g. a browser launch crash).
+      console.error(`\n${error.message}`);
+      const cause = error.cause;
+      if (cause && cause.stack) console.error(cause.stack);
+      else if (error.stack) console.error(error.stack);
+    } else if (error instanceof CaptureSetupError) {
       console.error(`\n${error.message}`);
     } else {
       console.error(error);

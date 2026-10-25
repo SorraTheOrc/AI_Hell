@@ -119,6 +119,11 @@ import {
   writeDiagnosticsArtifact,
 } from './capture-diagnostics.mjs';
 import { installRecorderChunkRetention } from './capture-recorder-page.mjs';
+import { createChunkSink } from './capture-chunk-sink.mjs';
+import {
+  failureSalvageLine,
+  salvageFailedCapture,
+} from './capture-salvage.mjs';
 import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
 import { SCENE_FADE_MS, buildScenePlan } from './capture-scenes.mjs';
 import {
@@ -3928,5 +3933,64 @@ describe('payload slicing and oversized-chunk guard (AH-0MVNT27XR0080I3C)', () =
     await explicit.handle(makeRetentionChunk(2, 6), forward, makeRecorderState());
     expect(seen).toHaveLength(1);
     expect(explicit.stats().sliceCount).toBe(1);
+  });
+});
+
+describe('graceful failure with salvage of streamed bytes (AH-0MVNT29MC008BQPY)', () => {
+  it('keeps the partial bytes, emits one actionable message and exits non-zero (AC1-AC4)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aihell-capture-failure-'));
+    try {
+      const outputPath = join(dir, 'gameplay-5.webm');
+      const sink = createChunkSink({ outputPath });
+      const streamed = Buffer.from(
+        'video recorded before the browser-side failure',
+        'utf8',
+      );
+      // Chunks already streamed to the sink before the failure.
+      sink.appendBase64(streamed.toString('base64'));
+
+      const batch = await runCaptureIterations({
+        outputPaths: [outputPath],
+        // Hermetic injection of a browser-side failure mid-recording: the
+        // recorder's CDP binding rejected, which `captureClip`'s catch turns
+        // into a salvage error. No real browser is needed.
+        captureOne: async () => {
+          throw salvageFailedCapture({
+            sink,
+            outputPath,
+            error: new Error(
+              'browser has been closed (CDP pipe transport overflow)',
+            ),
+          });
+        },
+      });
+
+      const [record] = batch.iterations;
+      expect(record.ok).toBe(false);
+      // AC1: the streamed bytes survive at the documented `.partial.webm`
+      // path and the finished-clip path is absent.
+      expect(record.partialPath).toBe(join(dir, 'gameplay-5.partial.webm'));
+      expect(record.salvagedBytes).toBe(streamed.length);
+      expect(existsSync(outputPath)).toBe(false);
+      expect(readFileSync(record.partialPath as string)).toEqual(streamed);
+
+      // AC2: exactly one actionable message, naming the failure, the bytes,
+      // the path and the next action.
+      const lines = batch.iterations
+        .map((iteration) => failureSalvageLine(iteration))
+        .filter((line): line is string => line !== null);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('browser has been closed');
+      expect(lines[0]).toContain(`${streamed.length} B`);
+      expect(lines[0]).toContain('gameplay-5.partial.webm');
+      expect(lines[0]).toContain('re-run the capture');
+
+      // AC3: the failure is attributed in the batch result (additive fields),
+      // the success shape is unchanged, and the exit code is non-zero.
+      expect(batch).toMatchObject({ count: 1, succeeded: 0, failed: 1 });
+      expect(captureExitCode(batch)).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

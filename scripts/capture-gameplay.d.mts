@@ -315,6 +315,12 @@ export interface CaptureIterationRecord {
   reasons?: string[];
   pageErrors?: string[];
   error?: string;
+  /** Bytes kept at the `.partial.webm` path when a capture was salvaged. */
+  salvagedBytes?: number;
+  /** The documented `.partial.webm` salvage path, when a capture failed. */
+  partialPath?: string | null;
+  /** The single actionable salvage line printed first (AC2, AH-0MVNT29MC008BQPY). */
+  salvageMessage?: string;
   /** `<stem>.action.jsonl` path, or null when the export failed. */
   seriesOutput?: string | null;
   /** `<stem>.capture.json` path, or null when the export failed. */
@@ -332,6 +338,7 @@ export interface CaptureBatchSummary {
 }
 
 export function captureExitCode(result?: {
+  ok?: boolean;
   fullRun?: boolean;
   capHit?: boolean;
   nonTrivial?: boolean;
