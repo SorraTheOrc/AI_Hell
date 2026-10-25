@@ -151,6 +151,7 @@ import { PowerUpLevelStore } from '../../powerups/powerUpLevels';
 import { EffectsRegistry } from '../../powerups/effects';
 import {
   chooseOptions,
+  createRandomChoiceStrategy,
   randomChoiceStrategy,
   type ChoiceContext,
 } from '../../powerups/choice';
@@ -755,6 +756,16 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       config.hold?.growthMultiplier ?? DEFAULT_RULES.mineralHoldGrowthMultiplier,
   });
   const choiceRng = createSeededRng(config.seed);
+  // Hold-full option supply comes from the shared choice flow. The shipped
+  // `CHOICE_POOL` + `randomChoiceStrategy` are the default; `config.choicePool`
+  // (AH-0MVD1RLGZ002LT7B AC3) is a test/experiment seam, like `campaignLevels`
+  // and `balance`, that lets a caller play the campaign against an edited
+  // upgrade-definition set while every draw still comes from the shared
+  // weighted strategy and the run's seeded stream. Omitting it keeps the exact
+  // shipped singleton, so default runs stay byte-identical.
+  const choiceStrategy = config.choicePool
+    ? createRandomChoiceStrategy([...config.choicePool])
+    : randomChoiceStrategy;
   // The headless equivalents of the scene's player + effect registry: the
   // reward is applied through the **shared** `applyMineralChoiceReward` path,
   // so a hold-full grant advances the same run-scoped level stores the game
@@ -839,7 +850,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
   const resolveHoldFull = (tick: number): void => {
     const options = chooseOptions(
       3,
-      randomChoiceStrategy,
+      choiceStrategy,
       choiceRng,
       holdChoice.context(),
     );

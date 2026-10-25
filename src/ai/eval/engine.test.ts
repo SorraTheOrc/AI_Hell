@@ -8,7 +8,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseRecording } from '../../../scripts/recording.mjs';
 import { coerceEnemyConfig, parseCsvRows } from '../../core/csv';
 import { DEFAULT_CONFIG, DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
-import { resetConfigStore, seedConfigStore } from '../../core/configStore';
+import {
+  loadDifficultyCurves,
+  resetConfigStore,
+  seedConfigStore,
+  seedDifficultyCurves,
+} from '../../core/configStore';
+import { CHOICE_POOL } from '../../powerups/choice';
+import type { DropId } from '../../powerups/types';
 import {
   compareRecordings,
   runAbEvaluation,
@@ -457,5 +464,205 @@ describe('runBatch consumes the shared config store (AC2)', () => {
     const toughKills = invulnerable.aggregate.enemiesKilledByArchetype.scout?.mean ?? 0;
     expect(fragileKills).toBeGreaterThan(0);
     expect(fragileKills).toBeGreaterThan(toughKills);
+  });
+});
+
+// ── Campaign-path determinism, config sensitivity, upgrade sensitivity ───────
+// (AH-0MVD1RLGZ002LT7B: AC1/AC2/AC3, parent AC4/AC5 traceability.)
+
+/**
+ * AC1 — the shipped campaign report is a pure function of (seed, config,
+ * policy). Every batch-default run plays the shipped campaign, so replaying the
+ * same sweep must reproduce the same raw telemetry byte-for-byte and the same
+ * per-run `recordsHash`. This complements the arena-level determinism tests:
+ * here the *whole batch* (report + raw records + hashes) is replayed.
+ */
+describe('campaign-path replay determinism (AH-0MVD1RLGZ002LT7B AC1)', () => {
+  it('replays the shipped campaign byte-identically and keeps recordsHash stable', { timeout: 20_000 }, () => {
+    const config: BatchConfig = {
+      seeds: [31, 32],
+      ticks: 3_000,
+      sampleEveryTicks: 150,
+      spawns: { asteroids: 0 },
+    };
+
+    const replay = () => {
+      const records: string[] = [];
+      const output = runBatch({
+        ...config,
+        onRun: (run) => records.push(stableStringify(run.records)),
+      });
+      return { output, records };
+    };
+
+    const first = replay();
+    const second = replay();
+
+    // Same seed + config + policy ⇒ byte-identical raw telemetry ...
+    expect(second.records).toEqual(first.records);
+    // ... a stable per-run recordsHash (the report's drift fingerprint) ...
+    expect(second.output.runs.map((run) => run.recordsHash)).toEqual(
+      first.output.runs.map((run) => run.recordsHash),
+    );
+    for (const run of first.output.runs) {
+      expect(run.recordsHash).toMatch(/^[0-9a-f]{8}$/);
+    }
+    // ... and a byte-identical batch report.
+    expect(second.output.json).toBe(first.output.json);
+  });
+});
+
+/**
+ * AC2 — a difficulty-curve edit measurably shifts the campaign report for the
+ * same seeds (parent AC5). The edit is applied through the shared config store
+ * (the same rows the game's campaign builder consumes), so the test exercises
+ * the real campaign path rather than a mock.
+ */
+describe('difficulty-curve edit shifts the campaign report (AH-0MVD1RLGZ002LT7B AC2)', () => {
+  const SEEDS = [41, 42, 43, 44] as const;
+
+  /** One campaign-default batch over the fixed seeds (a few thousand ticks). */
+  const runCampaign = () =>
+    runBatch({
+      seeds: SEEDS,
+      ticks: 4_000,
+      sampleEveryTicks: 300,
+      spawns: { asteroids: 0 },
+    });
+
+  beforeEach(() => resetConfigStore());
+  afterEach(() => resetConfigStore());
+
+  it('raising a wave targetDifficulty measurably lowers waveReached/levelReached', { timeout: 20_000 }, () => {
+    const shipped = loadDifficultyCurves();
+    const baseline = runCampaign();
+
+    // A real difficulty-curve edit: raise Level 1 Wave 1 (a `dynamic` opening
+    // wave, so the sequencer rebuilds it around the new target) from its
+    // shipped target to a much harder one.
+    const edited = shipped.map((row) =>
+      row.level === 1 && row.wave === 1
+        ? { ...row, targetDifficulty: 80 }
+        : row,
+    );
+    seedDifficultyCurves(edited);
+    const raised = runCampaign();
+
+    // Same seeds + config; only the curve differs, so the campaign differs.
+    expect(raised.json).not.toBe(baseline.json);
+    expect(raised.runs.map((run) => run.recordsHash)).not.toEqual(
+      baseline.runs.map((run) => run.recordsHash),
+    );
+    // Measurably different distributions: the much harder opening wave stops
+    // the same seeds earlier, so wave/level reached move down.
+    expect(raised.aggregate.waveReached.mean).toBeLessThan(
+      baseline.aggregate.waveReached.mean,
+    );
+    expect(raised.aggregate.levelReached.mean).toBeLessThanOrEqual(
+      baseline.aggregate.levelReached.mean,
+    );
+  });
+
+  it('lowering the onboarding targets lets the same seeds reach further', { timeout: 20_000 }, () => {
+    const shipped = loadDifficultyCurves();
+    const baseline = runCampaign();
+
+    // The mirror edit: make the no-fire opening (levels 1–3) trivial so the
+    // bots get through it faster and reach later waves.
+    const edited = shipped.map((row) =>
+      row.level <= 3 ? { ...row, targetDifficulty: 1 } : row,
+    );
+    seedDifficultyCurves(edited);
+    const easier = runCampaign();
+
+    expect(easier.json).not.toBe(baseline.json);
+    expect(easier.aggregate.waveReached.mean).toBeGreaterThan(
+      baseline.aggregate.waveReached.mean,
+    );
+  });
+});
+
+/**
+ * AC3 — editing the offered upgrade-definition set measurably shifts the
+ * per-choice-id `upgradesSelected` distribution for the same seeds (parent
+ * AC5). The arena's hold-full flow consumes the shared weighted random
+ * strategy over a set of upgrade definitions; `choicePool` is the documented
+ * test/experiment seam (default: the shipped `CHOICE_POOL`).
+ */
+describe('upgrade-definition edit shifts upgradesSelected (AH-0MVD1RLGZ002LT7B AC3)', () => {
+  const SEEDS = [51, 52, 53] as const;
+
+  /** A mineral-rich campaign run where the hold fills and choices are made. */
+  const runChoices = (choicePool?: readonly DropId[]) =>
+    runBatch({
+      seeds: SEEDS,
+      ticks: 4_500,
+      sampleEveryTicks: 300,
+      hold: { capacity: 1 },
+      spawns: { minerals: 12, powerUps: 0, enemies: 0, asteroids: 0 },
+      ...(choicePool ? { choicePool } : {}),
+    });
+
+  /** Total selections across every id in an aggregate. */
+  const totalSelections = (output: ReturnType<typeof runBatch>): number =>
+    Object.values(output.aggregate.upgradesSelected).reduce(
+      (sum, distribution) => sum + distribution.count,
+      0,
+    );
+
+  it('restricting the upgrade-definition set changes the per-id distribution', { timeout: 20_000 }, () => {
+    const baseline = runChoices();
+    // A real upgrade-definition edit: the hold-full flow now offers only a
+    // reduced definition set.
+    const restricted: readonly DropId[] = ['extra_life', 'shield'];
+    const edited = runChoices(restricted);
+
+    // Both runs exercised the shared choice flow.
+    expect(totalSelections(baseline)).toBeGreaterThan(0);
+    expect(totalSelections(edited)).toBeGreaterThan(0);
+
+    // The edited run can only ever select a definition it still offers.
+    const editedIds = Object.keys(edited.aggregate.upgradesSelected);
+    expect(editedIds.length).toBeGreaterThan(0);
+    for (const id of editedIds) expect(restricted).toContain(id as DropId);
+
+    // The same seeds therefore produce a measurably different distribution:
+    // the baseline selects definitions the edited set no longer offers, and
+    // those ids disappear from the edited report.
+    const droppedIds = Object.keys(baseline.aggregate.upgradesSelected).filter(
+      (id) => !restricted.includes(id as DropId),
+    );
+    expect(droppedIds.length).toBeGreaterThan(0);
+    for (const id of droppedIds) {
+      expect(baseline.aggregate.upgradesSelected[id].count).toBeGreaterThan(0);
+      expect(edited.aggregate.upgradesSelected[id]).toBeUndefined();
+    }
+    expect(stableStringify(baseline.aggregate.upgradesSelected)).not.toBe(
+      stableStringify(edited.aggregate.upgradesSelected),
+    );
+  });
+
+  it('defaults to the shipped upgrade-definition set (byte-identical replay)', () => {
+    // Omitting `choicePool` and passing the shipped pool explicitly must be
+    // exactly the same run: the default is the shared CHOICE_POOL, not a copy.
+    const implicit = runBatch({
+      seeds: [61],
+      ticks: 1_800,
+      sampleEveryTicks: 300,
+      hold: { capacity: 1 },
+      spawns: { minerals: 12, powerUps: 0, enemies: 0, asteroids: 0 },
+    });
+    const explicit = runBatch({
+      seeds: [61],
+      ticks: 1_800,
+      sampleEveryTicks: 300,
+      hold: { capacity: 1 },
+      spawns: { minerals: 12, powerUps: 0, enemies: 0, asteroids: 0 },
+      choicePool: CHOICE_POOL,
+    });
+    expect(explicit.json).toBe(implicit.json);
+    expect(explicit.runs.map((run) => run.recordsHash)).toEqual(
+      implicit.runs.map((run) => run.recordsHash),
+    );
   });
 });

@@ -18,6 +18,7 @@
 
 import type { BotHumanInputTunables } from '../botHumanLike';
 import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
+import type { DropId } from '../../powerups/types';
 import type { LevelDefinition } from '../../waves/Formations';
 
 /** Telemetry schema version the arena emits (matches `src/telemetry/schema`). */
@@ -259,6 +260,24 @@ export interface ArenaConfig {
   readonly balance?: ArenaBalanceConfig;
   /** Hold tunables forwarded to each arena run (see {@link ArenaHoldOptions}). */
   readonly hold?: ArenaHoldOptions;
+  /**
+   * The **upgrade-definition set** the hold-full choice offers
+   * (AH-0MVD1RLGZ002LT7B AC3, parent AC5).
+   *
+   * Test/experiment seam mirroring {@link ArenaConfig.balance},
+   * {@link ArenaConfig.campaignLevels} and {@link ArenaConfig.hold}: when
+   * supplied, the arena draws its hold-full options from this set through the
+   * shared weighted `randomChoiceStrategy`; omitted → the shipped shared
+   * `CHOICE_POOL` (byte-identical default behaviour).
+   *
+   * Making the offered set injectable is what makes the campaign report
+   * **provably sensitive to an upgrade-definition edit**: the same seed +
+   * config + policy with a different definition set produces a measurably
+   * different `upgradesSelected` distribution. The pool is the surface the
+   * shared choice flow (`src/powerups/choice.ts`) actually consumes, so no
+   * divergent option model is introduced in `src/ai/eval/`.
+   */
+  readonly choicePool?: readonly DropId[];
 }
 
 /** The shaped result of one headless arena run. */

@@ -10,6 +10,11 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+import { importSpecifiers } from '../../../vitest.projects';
+
 import { parseRecording } from '../../../scripts/recording.mjs';
 import { coerceEnemyConfig, parseCsvRows } from '../../core/csv';
 import { DEFAULT_CONFIG, DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
@@ -804,5 +809,163 @@ describe('hold-full upgrade choices through the shared choice flow (AH-0MVD1RIH2
       expect(Object.values(run.stats.upgradesSelected).reduce((sum, n) => sum + n, 0))
         .toBeGreaterThan(0);
     }
+  });
+});
+
+// ── Pure eval core guard (AH-0MVD1RLGZ002LT7B AC4) ──────────────────────────
+
+/**
+ * Structural complement to the behavioural determinism tests (AC1): the
+ * campaign path must never import a wall-clock or I/O module. AC1 proves the
+ * *observable* property (same seed ⇒ byte-identical campaign); this guard
+ * catches a latent coupling (a stray `node:fs` import, a `Date.now()` call)
+ * before it can leak into a report.
+ *
+ * It walks the real relative-import graph reachable from the three eval-core
+ * modules named in AC4 (`arena`, `metrics`, `engine`) through the shared
+ * import scanner, then asserts two invariants over every module on that graph:
+ *
+ * 1. no I/O or wall-clock **module** is imported, and
+ * 2. no wall-clock **API** is called.
+ *
+ * This mirrors the repo's existing structural guards (`deterministicBootGuard`,
+ * `projectMembership`, the duplicate-body guard): the invariant is not
+ * observable at runtime, so it is asserted over the actual module graph rather
+ * than a naive source grep.
+ */
+describe('pure eval core guard (AH-0MVD1RLGZ002LT7B AC4)', () => {
+  const ROOT = process.cwd();
+
+  /** Campaign-path entry modules named in AC4. */
+  const ENTRY_MODULES = [
+    'src/ai/eval/arena.ts',
+    'src/ai/eval/metrics.ts',
+    'src/ai/eval/engine.ts',
+  ] as const;
+
+  /** Module specifiers that would put I/O on the campaign path. */
+  const IO_MODULES = new Set([
+    'fs',
+    'node:fs',
+    'fs/promises',
+    'node:fs/promises',
+    'path',
+    'node:path',
+    'os',
+    'node:os',
+    'child_process',
+    'node:child_process',
+    'http',
+    'node:http',
+    'https',
+    'node:https',
+    'net',
+    'node:net',
+    'tls',
+    'node:tls',
+    'dns',
+    'node:dns',
+    'readline',
+    'node:readline',
+    'zlib',
+    'node:zlib',
+    'timers',
+    'node:timers',
+    'timers/promises',
+    'node:timers/promises',
+  ]);
+
+  /** Wall-clock APIs that would make a report non-reproducible. */
+  const WALL_CLOCK = /\b(?:Date\.now|performance\.now|process\.hrtime|new Date\()/;
+
+  /** Strips `import type ...;` edges (erased at transform time, no runtime I/O). */
+  function stripTypeImports(source: string): string {
+    return source.replace(/\bimport\s+type\s[^;]*?from\s+['"][^'"]+['"]\s*;?/g, '');
+  }
+
+  /** Strips comments and string literals so prose mentions are not counted. */
+  function codeOnly(source: string): string {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '')
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+      .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+  }
+
+  /** Resolves a relative specifier to an existing source file (repo-relative). */
+  function resolveModule(fromFile: string, specifier: string): string | null {
+    if (!specifier.startsWith('.')) return null;
+    const base = path.resolve(ROOT, path.dirname(fromFile), specifier);
+    const candidates = [
+      base,
+      `${base}.ts`,
+      `${base}.tsx`,
+      `${base}.mjs`,
+      `${base}.js`,
+      path.join(base, 'index.ts'),
+      path.join(base, 'index.mjs'),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return path.relative(ROOT, candidate);
+      }
+    }
+    return null;
+  }
+
+  /** The transitive relative-import graph rooted at `entries` (bounded). */
+  function campaignGraph(entries: readonly string[]): string[] {
+    const seen = new Set<string>();
+    const queue = entries.map((entry) => path.relative(ROOT, path.resolve(ROOT, entry)));
+    while (queue.length > 0 && seen.size < 512) {
+      const file = queue.shift() as string;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+      for (const specifier of importSpecifiers(stripTypeImports(source))) {
+        const resolved = resolveModule(file, specifier);
+        if (resolved !== null && !seen.has(resolved)) queue.push(resolved);
+      }
+    }
+    return [...seen].sort();
+  }
+
+  const graph = campaignGraph(ENTRY_MODULES);
+
+  it('reaches the shared campaign core (the guard is not vacuous)', () => {
+    // If import resolution broke, an empty graph would silently pass the
+    // purity checks. Pin the shared modules the campaign path must traverse.
+    for (const required of [
+      'src/ai/eval/arena.ts',
+      'src/ai/eval/metrics.ts',
+      'src/ai/eval/engine.ts',
+      'src/core/difficultySequencer.ts',
+      'src/core/configStore.ts',
+      'src/waves/sequencedLevels.ts',
+      'src/waves/WaveManager.ts',
+      'src/powerups/choice.ts',
+      'src/powerups/choiceReward.ts',
+    ]) {
+      expect(graph).toContain(required);
+    }
+  });
+
+  it('imports no I/O or wall-clock module on the campaign path', () => {
+    const offenders: string[] = [];
+    for (const file of graph) {
+      const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+      for (const specifier of importSpecifiers(stripTypeImports(source))) {
+        if (IO_MODULES.has(specifier)) offenders.push(`${file} -> ${specifier}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('makes no wall-clock call on the campaign path', () => {
+    const offenders = graph.filter((file) =>
+      WALL_CLOCK.test(codeOnly(fs.readFileSync(path.join(ROOT, file), 'utf8'))),
+    );
+    expect(offenders).toEqual([]);
   });
 });

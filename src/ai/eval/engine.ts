@@ -55,6 +55,7 @@ import {
   type RunReport,
 } from './report';
 import type { LevelDefinition } from '../../waves/Formations';
+import type { DropId } from '../../powerups/types';
 import {
   DEFAULT_BATCH_CAMPAIGN,
   DEFAULT_BATCH_TICKS,
@@ -289,6 +290,12 @@ export interface BatchConfig {
   /** Hold tunables forwarded to every arena run (see {@link ArenaHoldOptions}). */
   readonly hold?: ArenaHoldOptions;
   /**
+   * The **upgrade-definition set** the hold-full choice offers, forwarded to
+   * every arena run (see {@link ArenaConfig.choicePool}; AH-0MVD1RLGZ002LT7B
+   * AC3). Omitted → the shipped shared `CHOICE_POOL`.
+   */
+  readonly choicePool?: readonly DropId[];
+  /**
    * Streaming sink invoked per run with its raw telemetry, in sweep order.
    * The records are handed over and not retained by `runBatch`.
    */
@@ -351,6 +358,7 @@ export function runBatch(config: BatchConfig): BatchOutput {
         campaign,
         campaignLevels: config.campaignLevels,
         hold: config.hold,
+        choicePool: config.choicePool,
       });
       const stats = extractBalanceStats(arena.records, { dtSeconds: dt });
       runs.push({
