@@ -25,18 +25,23 @@
  * a fixed fire cadence and a fixed ship config. Each hostile derives its
  * radius, hit points, fire cadence, bullet speed and shot probability from
  * its archetype's `EnemyConfig`; the ship physics come from `ShipConfig`;
- * and the difficulty curve's opening level sets how many hostile waves the
- * spawn reservoir holds. A CSV edit therefore measurably changes simulated
- * outcomes for the same seed.
+ * and the difficulty curves set the campaign itself (see
+ * {@link ArenaConfig.campaign}) or, in the seeded skirmish, how many hostile
+ * waves the spawn reservoir holds. A CSV edit therefore measurably changes
+ * simulated outcomes for the same seed.
  *
  * ## Fidelity boundary
  *
  * This is a *closed-loop headless arena*, not Phaser. It models the parts the
  * bot reasons about — player Newtonian physics, collectable/hazard positions,
- * auto-fire, enemy fire and collisions — rather than the full wave/VFX stack,
- * so it runs under Node/vitest in milliseconds. It is the evaluation harness's
- * counterpart to the browser capture path; both feed the same telemetry
- * schema.
+ * auto-fire, enemy fire and collisions — so it runs under Node/vitest in
+ * milliseconds. The **full-campaign** and **per-level** modes additionally
+ * drive the shared wave/level sequencer and upgrade-choice flow (below), so
+ * `waveReached`/`levelReached`/`upgradesSelected` are populated from real
+ * runs. What stays simplified: boss/mini-boss encounters (the boss trigger
+ * ends the run), formation movement, VFX and all rendering. It is the
+ * evaluation harness's counterpart to the browser capture path; both feed the
+ * same telemetry schema.
  *
  * ## Per-level campaign mode (AH-0MVLJFB1I0099X4Z)
  *

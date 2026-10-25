@@ -763,7 +763,14 @@ level reached) with distribution summaries, written as versioned JSON plus a
 human-readable report. Run it with `npm run evaluate -- --batch`; every batch
 game now plays the **full shipped campaign** by default (bounded by an
 `18000`-tick budget), and `--skirmish` opts back into the legacy single-level
-skirmish. See **[docs/BALANCING.md](./docs/BALANCING.md)** for the flags, the statistics
+skirmish. The default campaign batch models real wave/level progression
+(through the shared sequencer, including `fixed`/`curve`/`dynamic` waves) and
+the shared hold-full upgrade-choice flow, so `waveReached`, `levelReached` and
+`upgradesSelected` carry real distributions; it does **not** model boss /
+mini-boss encounters, VFX, formations or rendering, so treat a report as a
+directional signal — see the **fidelity boundary** in
+**[docs/BALANCING.md](./docs/BALANCING.md)** for the exact scope. That
+document also covers the flags, the statistics
 schema and how to interpret the distributions (epic AH-0MV1DLUZ8009OCJW),
 plus the **tuning loop** (`--tune` baselines one declarative CSV edit against
 an identical re-run and writes a versioned before/after comparison —

@@ -106,7 +106,9 @@ seed ──► arena scenario ──► BotPolicy ──► AsteroidsModel + gov
 - **Arena** (`src/ai/eval/arena.ts`) — a deterministic, seed-derived headless
   scenario. It models player Newtonian physics (the shipped `AsteroidsModel`),
   collectables, hostiles, auto-fire, enemy fire and collisions, and emits
-  telemetry-shaped records.
+  telemetry-shaped records. The **batch** arena additionally drives the full
+  campaign wave/level sequencer and the hold-full upgrade-choice flow (see
+  [`docs/BALANCING.md`](./BALANCING.md#fidelity-boundary-and-limitations)).
 - **Metrics** (`src/ai/eval/metrics.ts`) — pure aggregation over those records
   using the **existing** `scripts/recording-analysis.mjs`. A headless bot run
   and a recorded human game are therefore measured by exactly the same code.
@@ -130,7 +132,9 @@ AH-0MV81YPBG0028WNM, epic AC1):
   `AsteroidsModel` physics (thrust, max speed, friction, rotation).
 - **Difficulty curves** (`src/data/difficulty-curves.csv` via
   `loadDifficultyCurves`) set how many hostile *waves* the reservoir holds
-  (the opening level's row count), so a curve edit changes a run too.
+  (the opening level's row count) in the seeded skirmish, and drive the whole
+  campaign in batch mode (`buildSequencedLevels` honours `fixed`/`curve`/
+  `dynamic` generations), so a curve edit changes a run either way.
 
 A resolved balance config (`ArenaBalanceConfig`) is built by
 `loadBalanceConfig()` in `src/ai/eval/balanceConfig.ts`; `runArena` accepts it
@@ -251,12 +255,26 @@ The arena is a **closed-loop headless model**, not Phaser: it models the
 quantities the bot reasons about (player physics, collectables, hazards,
 auto-fire, collisions) rather than the full wave/VFX/enemy-behaviour stack
 (enemy formations, burst patterns and bullet lifetimes are intentionally not
-modelled). Each hostile's radius, health, fire cadence, bullet speed and fire
-chance do come from the shared `EnemyConfig`, so balance tuning is reflected
-in the simulation. That keeps evaluation fast and deterministic under
-Node/vitest. For pixel-accurate, full-stack verification use the browser
-capture path (`npm run capture`); both paths feed the same telemetry schema,
-so a recorded capture can be analysed with `npm run analyse`.
+modelled), and it never boots a renderer or reads the wall clock. Each
+hostile's radius, health, fire cadence, bullet speed and fire chance do come
+from the shared `EnemyConfig`, so balance tuning is reflected in the
+simulation. That keeps evaluation fast and deterministic under Node/vitest.
+For pixel-accurate, full-stack verification use the browser capture path
+(`npm run capture`); both paths feed the same telemetry schema, so a recorded
+capture can be analysed with `npm run analyse`.
+
+**Batch mode widens the boundary.** A `--batch` run plays the **whole shipped
+campaign** by default — the shared wave/level sequencer (`fixed`/`curve`/
+`dynamic` waves) and the hold-full upgrade-choice flow are driven, so the
+balance report's `waveReached`, `levelReached` and `upgradesSelected` carry
+real values. What stays **simplified** exactly, what the bounded tick budget
+covers, and how to read the per-wave / per-level distributions is documented
+in [`docs/BALANCING.md`](./BALANCING.md#fidelity-boundary-and-limitations)
+(which owns the batch semantics); the short version is that boss/mini-boss
+encounters, formation movement, VFX and rendering remain unmodelled, so a balance
+report is a directional signal rather than a full-stack simulation. See
+[`docs/BALANCING.md`](./BALANCING.md#full-campaign-runs-the-batch-default)
+and `--skirmish` above for the opt-out.
 
 ## Testing
 

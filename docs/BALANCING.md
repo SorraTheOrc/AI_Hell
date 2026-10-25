@@ -76,9 +76,9 @@ npm run evaluate -- --batch --skirmish --games 100 --out skirmish-out
 A batch plays the **full shipped campaign** by default (AH-0MVD1RK2V009J5D2,
 parent decision Q3=b): each game drives the shared `buildSequencedLevels`
 campaign through the shared `WaveManager` (all levels and waves, honouring
-`fixed`/`curve`/`dynamic` generation) and the shared hold-full upgrade-choice
-flow, so `waveReached`, `levelReached` and `upgradesSelected` carry real
-non-zero distributions instead of the old constant zero. `--skirmish` opts
+`fixed`/`curve`/`dynamic` generation) and the shared hold-full upgrade-choice flow,
+so `waveReached`, `levelReached` and `upgradesSelected` carry real non-zero
+distributions instead of the old constant zero. `--skirmish` opts
 back into the previous single-level skirmish for backward compatibility;
 the seeded skirmish path itself is unchanged.
 
@@ -103,6 +103,26 @@ so mixed-mode before/after comparisons cannot be mistaken for a tuning edit.
 records and report (`recordsHash` stable). Every campaign draw is
 seed-derived, and the pure eval core still reads no wall clock and does no
 I/O.
+
+### Reading the campaign distributions
+
+A campaign batch reports three progression fields that the seeded skirmish
+could not populate (they were constant `0` / empty before
+AH-0MVD1RGKM005GW0C and AH-0MVD1RIH2008YCNV):
+
+| Field | What it measures | How to read it |
+|---|---|---|
+| `waveReached` | The highest **within-level** wave number reached. `WaveManager.waveNumber` is 1-based *within the active level* and resets to 1 when the next level starts, so this is wave progress inside a level, **not** a cumulative campaign wave count. | Pair it with `levelReached`: `levelReached` 1 with a high `waveReached` means runs get deep into level 1; a low `waveReached` with `levelReached` 3 means runs reach level 3 but die early in it. It is also a density signal — a wave with more enemies takes longer to wipe, which shows up as a lower `waveReached` at a fixed tick budget even when kills/run and survival are flat. |
+| `levelReached` | The highest campaign level entered (1–10). | The headline progression metric. `mean` 1.15 with `min` 1 / `max` 2 says most runs stay in level 1; a rising mean means the campaign is getting easier (or the bot better). |
+| `upgradesSelected` | Per-choice-id counts of the upgrade the bot took through the shared hold-full flow. | Each key (a weapon/power-up/level id) has its own `DistributionStats`. A key whose `mean` collapses after a tuning edit while `stdDev` stays low made that choice consistently unappealing; a key that is never offered is a supply problem, not a balance one. |
+
+The per-wave aggregation is the **distribution over runs** of those per-run
+fields, not a per-wave table inside a single run: use `min`/`max`/`stdDev` to
+see how much run-to-run variance the campaign has, and `median` in preference
+to `mean` when one degenerate run (e.g. a stalled wave that exhausts the tick
+budget) skews the average. Every run is bounded by the `18000`-tick budget, so
+a run that stalls contributes its last reached wave rather than an unbounded
+sample.
 
 ### Per-level campaign runs
 
@@ -399,7 +419,11 @@ loaders — there is no divergent copy of enemy, ship or wave stats:
 - **Ship stats** (`src/data/ship-config.csv` via `loadShipConfig`) map onto the
   `AsteroidsModel` physics.
 - **Difficulty curves** (`src/data/difficulty-curves.csv` via
-  `loadDifficultyCurves`) set how many hostile waves the spawn reservoir holds.
+  `loadDifficultyCurves`) drive the campaign: in the default full-campaign
+  batch they set every level's wave count and each wave's
+  `targetDifficulty`, which the shared `buildSequencedLevels` turns into
+  `fixed`/`curve`/`dynamic` wave groups. In the seeded skirmish they only set
+  how many hostile waves the spawn reservoir holds.
 
 `loadBalanceConfig()` in [`src/ai/eval/balanceConfig.ts`](../src/ai/eval/balanceConfig.ts)
 builds the resolved config; the Node shell awaits `hydrateBalanceConfig()`
@@ -506,18 +530,54 @@ manual steps.
 ## Fidelity boundary and limitations
 
 The batch runs the same **closed-loop headless arena** as the single-run
-harness, not the shipped Phaser game. It models the quantities the bot
-reasons about (player physics, collectables, hazards, auto-fire, enemy fire
-and collisions) plus, in the default campaign mode, the **shared** wave/level
-progression and hold-full upgrade-choice flow. It does not model the rest of
-the VFX/enemy-behaviour stack (formation movement, burst patterns and bullet
-lifetimes are intentionally not modelled), and clearing the final wave is the
-run boundary — the boss encounter itself is not simulated. Balance
-conclusions drawn from a batch are therefore a **directional signal**, to be
-confirmed against the human-play statistics and periodic human-experience
-validation before a tuning change ships. For pixel-accurate, full-stack
-verification use the browser capture path (`npm run capture`); both paths
-feed the same telemetry schema.
+harness, not the shipped Phaser game. Because the default batch now plays the
+campaign, this boundary is stated explicitly so a consumer never over-reads a
+balance report.
+
+**Modelled (the default campaign batch).**
+
+- **Wave/level progression** — every level and wave comes from the shared
+  sequencer (`buildSequencedLevels` + `WaveManager` + the level enemy-count
+  scaling seam, the same build `PlayScene` uses), honouring all three
+  generation modes: `fixed` (hand-authored composition), `curve`
+  (`targetDifficulty`-driven) and `dynamic` (curve rebuilt from the run seed).
+  The canonical `wave_start` / `wave_cleared` / `level_cleared` /
+  `boss_triggered` events are emitted by the shared manager, so `waveReached`
+  and `levelReached` are real per-run values.
+- **Upgrade choices** — when the shared `MineralHold` fills, the arena runs
+  the shared hold-full **upgrade-choice flow** (`chooseOptions` +
+  `applyMineralChoiceReward`): the bot picks from three offered options on the
+  seeded stream and the arena emits `choice_selected`, so `upgradesSelected`
+  carries a real per-choice-id distribution.
+- **Combat quantities the bot reasons about** — player Newtonian physics (the
+  shipped `AsteroidsModel`), collectables, minerals, hazards, auto-fire, enemy
+  fire and collisions, all driven by the real per-kill drop rule at the
+  current campaign level.
+
+**Simplified (not modelled; treat the report as a directional signal).**
+
+- **Boss and mini-boss encounters** — clearing the final level triggers
+  `boss_triggered`, which **ends the run**. No boss or mini-boss entity is
+  simulated; a mini-boss wave is only its authored group composition. A boss
+  balance question cannot be answered from a batch report alone.
+- **VFX** — explosions, particles, shake and audio cues are absent.
+- **Formations** — formation movement, burst patterns, bullet lifetimes and
+  the Phaser spawner's behaviour are not modelled; wave members are stationary
+  hostiles whose stats come from their archetype's `EnemyConfig`. Opt-in
+  spawner archetypes appear as ordinary config-driven hostiles so the roster
+  matches the game's wave accounting.
+- **Rendering** — there is no renderer, camera, resize or frame-rate coupling;
+  a run never boots Phaser.
+- **Chosen-upgrade effects** — a selection updates the ownership context used
+  by later offers, but the chosen weapon's fire pattern, shield/effect timing
+  and Extra Life lifegain are not simulated (the arena's auto-fire is fixed).
+
+Clearing the final level is therefore the run boundary, and a stall stops at
+the finite tick budget. Balance conclusions drawn from a batch are a
+**directional signal**, to be confirmed against the human-play statistics and
+periodic human-experience validation before a tuning change ships. For
+pixel-accurate, full-stack verification use the browser capture path
+(`npm run capture`); both paths feed the same telemetry schema.
 
 ## Testing
 

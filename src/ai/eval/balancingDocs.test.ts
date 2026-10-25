@@ -238,3 +238,35 @@ describe('Level-scaling curves and evidence are documented (AH-0MVHT1M6O003PU7P)
     expect(doc).toMatch(/formation gyms/i);
   });
 });
+
+describe('Campaign fidelity boundary is documented (AH-0MVD1RO7D000AC4X)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('names what a campaign batch now models: the shared sequencer, all three generation modes and the shared hold-full choice flow (AC1)', () => {
+    // Modelled: the shared wave/level sequencer drives every campaign wave
+    // (fixed / curve / dynamic), and the shared choice flow makes the
+    // upgrade picks — so the three fields carry real values.
+    expect(doc).toMatch(/shared sequencer|shared campaign sequencer|buildSequencedLevels/);
+    expect(doc).toContain('`fixed`');
+    expect(doc).toContain('`curve`');
+    expect(doc).toContain('`dynamic`');
+    expect(doc).toMatch(/hold-full upgrade-choice flow/);
+    for (const field of ['waveReached', 'levelReached', 'upgradesSelected']) {
+      expect(doc).toContain(field);
+    }
+    expect(doc).toMatch(/non-zero/);
+  });
+
+  it('names what remains simplified, so consumers do not over-read the report (AC1)', () => {
+    expect(doc).toMatch(/no boss|boss\/mini-boss|boss encounter/i);
+    expect(doc).toMatch(/mini-boss/i);
+    expect(doc).toMatch(/VFX/i);
+    expect(doc).toMatch(/formation movement/i);
+    expect(doc).toMatch(/rendering/i);
+  });
+
+  it('explains how to read the per-wave / per-level campaign distributions (AC2)', () => {
+    expect(doc).toMatch(/within-level|within the level|within its level/);
+    expect(doc).toMatch(/reading the campaign distributions|per-wave|waveReached/);
+  });
+});
