@@ -231,18 +231,11 @@ describe('WeightedRandomSpawner generic over DropId (AH-0MU3VOQKH005YOBH)', () =
 
 // ── Eligibility filter (AH-0MVNT2XHB000YR2Z) ───────────────────────
 //
-// Test-first status (read before editing). The spawner's eligibility filter
-// (`setEligibleIds`) lands in AH-0MVNT2YGD003N8NR, the follow-on item that
-// gates the shared drop draw on the six-slot pool. This slice pins the
-// filter's contract **before it exists**, so every assertion below is
-// registered with Vitest's `it.fails(...)` — the repo's red-before/green-after
-// convention (see `src/powerups/slots.test.ts`) — which keeps the developer
-// test gate and the dev-push full-suite gate green while the assertions are
-// genuinely red against the absent filter.
-//
-// When AH-0MVNT2YGD003N8NR lands, flip each `.fails` to a plain `it(...)`.
-// Activation is the only permitted edit: the assertions themselves must not
-// change (that is what makes this a contract rather than a wish list).
+// Activated in AH-0MVNT2YGD003N8NR. This slice pinned the spawner's
+// eligibility filter (`setEligibleIds`) **before** it existed (each assertion
+// was registered with `it.fails(...)` — the repo's red-before/green-after
+// convention). The implementation landed and every `.fails` below was flipped
+// to a plain `it(...)` — the assertions themselves were not changed.
 //
 // Contract summary:
 // - `setEligibleIds(ids | null)` restricts sampling to `ids` (null clears it).
@@ -268,7 +261,7 @@ function withFilter<T extends string>(
 describe('WeightedRandomSpawner: eligibility filter (six-slot drop gating)', () => {
   const POOL: DropId[] = ['shield', 'bomb', 'speed_boost', 'extra_life'];
 
-  it.fails('never returns an id outside the eligible set', () => {
+  it('never returns an id outside the eligible set', () => {
     const s = withFilter(new WeightedRandomSpawner<DropId>(POOL, makeSeededRng(1)));
     s.setEligibleIds(['bomb', 'extra_life']);
 
@@ -276,7 +269,7 @@ describe('WeightedRandomSpawner: eligibility filter (six-slot drop gating)', () 
     expect(draws.filter((id) => id !== 'bomb' && id !== 'extra_life')).toEqual([]);
   });
 
-  it.fails('leaves every weight untouched (exclusion is not weight zeroing)', () => {
+  it('leaves every weight untouched (exclusion is not weight zeroing)', () => {
     const s = withFilter(new WeightedRandomSpawner<DropId>(POOL, makeSeededRng(2)));
     const before = s.getWeights();
 
@@ -287,7 +280,7 @@ describe('WeightedRandomSpawner: eligibility filter (six-slot drop gating)', () 
     expect(s.getWeights()).toEqual({ shield: 1, bomb: 1, speed_boost: 1, extra_life: 1 });
   });
 
-  it.fails('falls back to the first eligible id when every eligible weight is zero', () => {
+  it('falls back to the first eligible id when every eligible weight is zero', () => {
     const s = withFilter(new WeightedRandomSpawner<DropId>(POOL, makeSeededRng(3)));
     for (const id of POOL) s.setWeight(id, 0);
     s.setEligibleIds(['bomb', 'extra_life']);
@@ -297,7 +290,7 @@ describe('WeightedRandomSpawner: eligibility filter (six-slot drop gating)', () 
     expect(s.next()).toBe('bomb'); // deterministic
   });
 
-  it.fails('is deterministic and crash-free when the eligible set is empty', () => {
+  it('is deterministic and crash-free when the eligible set is empty', () => {
     const s = withFilter(new WeightedRandomSpawner<DropId>(POOL, makeSeededRng(4)));
     s.setEligibleIds([]);
 
@@ -308,7 +301,7 @@ describe('WeightedRandomSpawner: eligibility filter (six-slot drop gating)', () 
     expect(second).toBe(first);
   });
 
-  it.fails('clearing the filter restores the full catalogue', () => {
+  it('clearing the filter restores the full catalogue', () => {
     const s = withFilter(new WeightedRandomSpawner<DropId>(POOL, makeSeededRng(5)));
     s.setEligibleIds(['bomb']);
     expect(Array.from({ length: 20 }, () => s.next())).toEqual(Array(20).fill('bomb'));

@@ -939,7 +939,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   /** Chooses and places the next supply drop on the cadence. */
   private _spawnSupplyDrop(): void {
     if (!this.dropSpawner || !this.dropPlacement) return;
-    const id = this.dropSpawner.next();
+    const id = this._drawNextDrop(
+      this.dropSpawner,
+      this._resolveDropSlotState(),
+    );
     const { x, y } = this.dropPlacement.place(this._supplyPlacementContext());
     this.spawnSupplyDrop(id, x, y);
   }

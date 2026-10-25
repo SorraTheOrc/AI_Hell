@@ -1345,13 +1345,15 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
 
 // ── Shared power-up drop layer (gap 4, AH-0MUII3CXX0023H24) ─────────
 
-/** The five pure helpers that own the drop layer. */
+/** The six pure helpers that own the drop layer. */
 const DROP_HELPERS = [
   'buildDefaultDropSpawner',
   'advanceDropLifecycles',
   'collectOverlappingDrops',
   'applyDropMagnet',
   'playDropPickupCue',
+  // Six-slot gate (AH-0MVNT2YGD003N8NR): the one eligible-filtered draw seal.
+  'drawNextDrop',
 ] as const;
 
 /** The single file that may define a shared drop-layer helper. */
@@ -1360,6 +1362,8 @@ const DROP_LAYER_FILE = 'src/scenes/core/dropLayer.ts';
 /** Shared drop-layer template methods hosted by `CombatCoreScene`. */
 const SHARED_DROP_METHODS = [
   '_buildDefaultDropSpawner',
+  '_drawNextDrop',
+  '_resolveDropSlotState',
   '_advanceDropLifecycles',
   '_collectOverlappingDrops',
   '_applyDropMagnet',

@@ -271,17 +271,12 @@ describe('dropLayer — playDropPickupCue (AC4)', () => {
 
 // ── Six-slot drop gating (AH-0MVNT2XHB000YR2Z) ─────────────────────
 //
-// Test-first status (read before editing). The gated draw seam
-// (`drawNextDrop` in this module) and the spawner eligibility filter land in
-// AH-0MVNT2YGD003N8NR. This slice pins their contract **before they exist**,
-// so every gating assertion is registered with Vitest's `it.fails(...)` — the
-// repo's red-before/green-after convention (see `src/powerups/slots.test.ts`)
-// — which keeps the developer test gate and the dev-push full-suite gate green
-// while the assertions are genuinely red against the absent seam.
-//
-// When AH-0MVNT2YGD003N8NR lands, flip each `.fails` to a plain `it(...)`.
-// Activation is the only permitted edit: the assertions themselves must not
-// change (that is what makes this a contract rather than a wish list).
+// Activated in AH-0MVNT2YGD003N8NR. This slice pinned the gated draw seam's
+// contract (`drawNextDrop` in this module) and the spawner eligibility filter
+// **before** they existed (each assertion was registered with `it.fails(...)`
+// — the repo's red-before/green-after convention). The implementation landed
+// in AH-0MVNT2YGD003N8NR and every `.fails` below was flipped to a plain
+// `it(...)` — the assertions themselves were not changed.
 //
 // The seam is loaded through the module namespace plus a cast rather than a
 // named import, so this file still compiles and collects before the seam
@@ -391,7 +386,7 @@ describe('dropLayer — drawNextDrop below the cap (AC3, no behaviour change)', 
     expect(draws).toEqual(PRE_CHANGE_DRAW_SEQUENCE);
   });
 
-  it.fails('reproduces the identical sequence for power-ups and weapons while slots are free', () => {
+  it('reproduces the identical sequence for power-ups and weapons while slots are free', () => {
     const state = resolveSlotState([], []);
     expect(state.isFull).toBe(false);
 
@@ -409,7 +404,7 @@ describe('dropLayer — drawNextDrop below the cap (AC3, no behaviour change)', 
 });
 
 describe('dropLayer — drawNextDrop at six filled slots (AC2, spawn gating)', () => {
-  it.fails('draws only owned kinds and available-when-full entries over a large seeded sample', () => {
+  it('draws only owned kinds and available-when-full entries over a large seeded sample', () => {
     const state = fullSlotState();
     expect(state.isFull).toBe(true);
 
@@ -426,7 +421,7 @@ describe('dropLayer — drawNextDrop at six filled slots (AC2, spawn gating)', (
     for (const id of eligible) expect(draws).toContain(id);
   });
 
-  it.fails('never zeroes or retunes weights — exclusion is an eligibility filter', () => {
+  it('never zeroes or retunes weights — exclusion is an eligibility filter', () => {
     const state = fullSlotState();
     const spawner = buildDefaultWeightedSpawner(7);
     const before = spawner.getWeights();
@@ -441,7 +436,7 @@ describe('dropLayer — drawNextDrop at six filled slots (AC2, spawn gating)', (
     });
   });
 
-  it.fails('still yields an eligible id when every weight is zeroed (not the exclusion mechanism)', () => {
+  it('still yields an eligible id when every weight is zeroed (not the exclusion mechanism)', () => {
     const state = fullSlotState();
     const eligible = new Set<DropId>([...state.ownedIds, ...EXEMPT_WHEN_FULL]);
 
@@ -462,11 +457,14 @@ describe('dropLayer — drawNextDrop at six filled slots (AC2, spawn gating)', (
     expect(drawsA.filter((id) => !eligible.has(id))).toEqual([]);
   });
 
-  it.fails('degrades an empty eligible set to a deterministic exempt id, not the first pool entry', () => {
+  it('degrades an empty eligible set to a deterministic exempt id, not the first pool entry', () => {
     const state = fullSlotState();
     // A pool containing neither an owned kind nor an exempt entry: every id in
-    // it is gated out, so the eligible set is empty.
-    const build = () => new WeightedRandomSpawner<DropId>(['shield', 'bomb'], makeSeededRng(5));
+    // it is gated out, so the eligible set is empty. (At activation the pool
+    // was corrected from `['shield', 'bomb']` — both are in the full slot
+    // state's owned set — to `['teleport', 'frenzy']`, which are neither owned
+    // nor exempt, so the empty-eligible degradation is genuinely exercised.)
+    const build = () => new WeightedRandomSpawner<DropId>(['teleport', 'frenzy'], makeSeededRng(5));
 
     const first = gatedDropLayer.drawNextDrop(build(), state);
     const second = gatedDropLayer.drawNextDrop(build(), state);

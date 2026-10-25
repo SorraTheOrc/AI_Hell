@@ -376,7 +376,10 @@ export class GymWeapons extends CombatScene<
 
   /** Spawns the next round-robin drop (Spread → Dual → Rapid → Reset). */
   private _spawnRoundRobin(): void {
-    const weaponType = this.roundRobinSpawner.next();
+    const weaponType = this._drawNextDrop(
+      this.roundRobinSpawner,
+      this._resolveDropSlotState(),
+    );
     this._spawnDrop(weaponType, SPAWN_POSITION.x, SPAWN_POSITION.y);
   }
 

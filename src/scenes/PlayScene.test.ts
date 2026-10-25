@@ -107,6 +107,12 @@ import {
   lockedWeaponIds,
 } from '../powerups/unlocks';
 import { CHECKPOINT_STORAGE_KEY, loadCheckpoint } from '../core/checkpointStore';
+import {
+  POWER_UP_CATALOGUE,
+  type DropId,
+  type PowerUpId,
+} from '../powerups/types';
+import { resolvePlayerSlotState } from '../powerups/slots';
 
 // These integration tests boot full Phaser games and walk the run to the
 // boss; under the full-suite parallel load the Vitest default 5 s timeout
@@ -8006,5 +8012,118 @@ describe('PlayScene — force-field spawn resolution (AH-0MVM8GXEF009883O)', () 
         enemyForceFieldHits(5, DEFAULT_ENEMY_CONFIGS.harvester),
       );
     }
+  });
+});
+
+// ── Six-slot drop gating (AH-0MVNT2YGD003N8NR, AC1) ────────────────
+//
+// The shared draw seam (`drawNextDrop` in src/scenes/core/dropLayer.ts) and
+// its scene wiring: once all six permanent slots are filled, the run's drop
+// path draws only owned kinds plus catalogue entries flagged
+// `availableWhenSlotsFull`; below the cap the full weighted pool is untouched.
+
+describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
+  let bootedGame: BootedGame | null = null;
+
+  /** Every catalogue entry flagged available-when-full (Extra Life, Mystery UFO). */
+  const EXEMPT_WHEN_FULL: readonly PowerUpId[] = (
+    Object.keys(POWER_UP_CATALOGUE) as PowerUpId[]
+  ).filter((id) => POWER_UP_CATALOGUE[id].availableWhenSlotsFull === true);
+
+  /** Boots a plain run with the asteroid spawner off. */
+  async function bootGatedScene(): Promise<PlayScene> {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = bootedGame.scene as PlayScene;
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.scene.restart();
+    await advanceGame(scene.game, 200);
+    return scene;
+  }
+
+  afterEach(() => {
+    bootedGame?.game.destroy(true);
+    bootedGame = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Fills exactly six permanent slots (four power-ups + two weapon drops)
+   * through the real permanent-grant stores, then drives `_maybeDropPowerUp`
+   * with a deterministic sweep RNG. Returns every id the draw path handed to
+   * the spawn seam (the drops themselves are stubbed — we assert the gate,
+   * not the drop lifecycle).
+   */
+  async function collectGatedDraws(
+    slotsFull: boolean,
+  ): Promise<{ drawn: DropId[]; scene: PlayScene }> {
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    if (slotsFull) {
+      player.getPowerUpLevelStore().collect('shield', true);
+      player.getPowerUpLevelStore().collect('bomb', true);
+      player.getPowerUpLevelStore().collect('speed_boost', true);
+      player.getPowerUpLevelStore().collect('phase_shift', true);
+      player.equipWeapon('spread', true);
+      player.equipWeapon('dual', true);
+    }
+    expect(resolvePlayerSlotState(player).isFull).toBe(slotsFull);
+
+    // Seeded LCG (Numerical Recipes constants): decorrelated consecutive draws,
+    // so the per-kill chance roll and the weighted draw it precedes both see a
+    // full spread of [0, 1) — every eligible band is sampled.
+    let seed = 20261025 >>> 0;
+    scene.setRng(() => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    });
+    const roll = scene as unknown as {
+      _maybeDropPowerUp(x: number, y: number): void;
+    };
+    const spawn = vi
+      .spyOn(scene, 'spawnPowerUpDrop')
+      .mockImplementation(() => null);
+
+    for (let i = 0; i < 3000; i++) roll._maybeDropPowerUp(100, 120);
+
+    const drawn = spawn.mock.calls.map(([id]) => id as DropId);
+    spawn.mockRestore();
+    return { drawn, scene };
+  }
+
+  it('at six filled slots draws only owned kinds plus available-when-full entries (AC1)', async () => {
+    const { drawn } = await collectGatedDraws(true);
+
+    // A meaningful sample (the 0.18-ish per-kill chance passes ~18 % of calls).
+    expect(drawn.length).toBeGreaterThan(200);
+    const allowed = new Set<DropId>([
+      'shield',
+      'bomb',
+      'speed_boost',
+      'phase_shift',
+      'spread',
+      'dual',
+      ...EXEMPT_WHEN_FULL,
+    ]);
+    // Every other power-up and weapon id is never drawn.
+    expect(drawn.filter((id) => !allowed.has(id))).toEqual([]);
+    // No eligible id is starved: owned kinds and exempt entries all appear.
+    for (const id of allowed) expect(drawn).toContain(id);
+  });
+
+  it('below the cap the full weighted pool is still drawable (AC3)', async () => {
+    const { drawn } = await collectGatedDraws(false);
+
+    const pool = new Set<DropId>([...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS]);
+    const isWeapon = (id: DropId) =>
+      (WEAPON_WEIGHT_IDS as readonly string[]).includes(id);
+    expect(drawn.length).toBeGreaterThan(200);
+    expect(drawn.every((id) => pool.has(id))).toBe(true);
+    // Both drop families are covered by the draw path.
+    expect(drawn.some(isWeapon)).toBe(true);
+    expect(drawn.some((id) => !isWeapon(id))).toBe(true);
   });
 });

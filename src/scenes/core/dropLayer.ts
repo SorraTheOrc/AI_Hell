@@ -51,7 +51,36 @@ import {
   WeightedRandomSpawner,
   type PowerUpSpawner,
 } from '../../powerups/spawner';
+import {
+  SLOTS_FULL_EXEMPT_IDS,
+  eligibleDropIds,
+  firstExemptDropId,
+  isWithinSlotPool,
+  type PowerUpSlotState,
+} from '../../powerups/slots';
 import type { DropId } from '../../powerups/types';
+
+/**
+ * A drop source the shared six-slot gate can consult.
+ *
+ * Weighted spawners expose an eligibility filter (`setEligibleIds`) so the
+ * gate filters **during sampling**; round-robin sources expose their cycle
+ * (`getOrder`) so an ineligible candidate is skipped without ever looping
+ * forever. A source may expose neither; the draw then bounds its skips.
+ */
+export interface SlotGatedDropSpawner<T extends string> extends PowerUpSpawner<T> {
+  /** Weighted sources: restricts sampling to `ids` without touching weights. */
+  setEligibleIds?(ids: Iterable<T> | null): void;
+  /** Cycle sources: the ids one full pass visits (for bounded skipping). */
+  getOrder?(): T[];
+}
+
+/**
+ * Skips used when a generic source exposes neither a filter nor its cycle.
+ * A round-robin cycle is at most the catalogue size, so 64 bounds any real
+ * source well above one full pass while staying trivially cheap.
+ */
+const SLOT_GATE_DRAW_ATTEMPTS = 64;
 
 /**
  * Structural contract the shared lifecycle/collection/magnet helpers read.
@@ -98,6 +127,66 @@ export function buildDefaultDropSpawner(
   for (const id of POWER_UP_WEIGHT_IDS) spawner.setWeight(id, powerUpWeights[id]);
   for (const id of WEAPON_WEIGHT_IDS) spawner.setWeight(id, weaponWeights[id]);
   return spawner;
+}
+
+/**
+ * Draws the next drop id through the shared six-slot gate (parent
+ * AH-0MVLIJT3M005HPHF): the one eligible-filtered draw path `PlayScene` and
+ * every gym consume, so a full pool stops spawning new kinds everywhere at
+ * once (gym↔game parity, AH-0MUGZDTFX004RBD1).
+ *
+ * - **Below the cap** every id is eligible, so the source's draw is returned
+ *   untouched — the pre-cap sequence is byte-for-byte identical.
+ * - **At/above the cap** only owned kinds plus catalogue entries flagged
+ *   `availableWhenSlotsFull` may be returned. Weighted spawners are filtered
+ *   during sampling (weights never zeroed or retuned); cycle sources skip
+ *   ineligible candidates for at most one full pass.
+ * - **Degradation:** a source that offers no eligible id (every candidate
+ *   gated out) falls back to the first available-when-full catalogue entry
+ *   deterministically — never a crash and never the all-zero-weight
+ *   first-entry fallback.
+ */
+export function drawNextDrop<T extends string>(
+  spawner: SlotGatedDropSpawner<T>,
+  state: PowerUpSlotState,
+): T {
+  if (!state.isFull) {
+    // Below the cap: clear any filter left by an earlier full-pool draw and
+    // return the source's own next draw unchanged (identical distribution).
+    spawner.setEligibleIds?.(null);
+    return spawner.next();
+  }
+
+  if (spawner.setEligibleIds) {
+    // Weighted source: restrict sampling to the eligible set. The drawn id is
+    // eligible whenever the source overlaps the pool; an empty overlap falls
+    // back to an exempt entry (the intersection check keeps a weighted
+    // source's zero-weight fallback honest).
+    //
+    // The eligible set is built from the concrete `DropId` union regardless of
+    // the spawner's generic `T` — callers only ever parameterise the seam with
+    // drop ids (power-up/weapon), so the cast is a type-level widening only.
+    spawner.setEligibleIds(eligibleDropIds(state) as unknown as Iterable<T>);
+    const id = spawner.next();
+    return isWithinSlotPool(id as DropId, state) ? id : (firstExemptDropId() as T);
+  }
+
+  // Cycle source (round-robin / injected): skip ineligible candidates for at
+  // most one full pass, then degrade deterministically to an exempt entry the
+  // source itself carries, or its leading id when it carries none (a
+  // weapon-only gym has no exempt member, so it degrades to its own first
+  // drop — always renderable, never a cross-family id).
+  const cycle = spawner.getOrder?.() ?? [];
+  const attempts = cycle.length > 0 ? cycle.length : SLOT_GATE_DRAW_ATTEMPTS;
+  let exhaustedExempt: T | null = null;
+  for (let i = 0; i < attempts; i++) {
+    const id = spawner.next();
+    if (isWithinSlotPool(id as DropId, state)) return id;
+    if (exhaustedExempt === null && (SLOTS_FULL_EXEMPT_IDS as readonly string[]).includes(id)) {
+      exhaustedExempt = id;
+    }
+  }
+  return exhaustedExempt ?? cycle[0] ?? (firstExemptDropId() as T);
 }
 
 /**

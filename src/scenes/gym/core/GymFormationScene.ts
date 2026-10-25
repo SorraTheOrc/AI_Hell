@@ -976,7 +976,10 @@ export class GymFormationScene<
       return;
     }
 
-    const id = this.powerUpSpawner.next();
+    const id = this._drawNextDrop(
+      this.powerUpSpawner,
+      this._resolveDropSlotState(),
+    );
     const { x, y } = this.powerUpPlacement.place(
       this._powerUpPlacementContext(),
     );

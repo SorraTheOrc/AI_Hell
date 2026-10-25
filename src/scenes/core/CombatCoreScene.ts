@@ -120,8 +120,14 @@ import {
   applyDropMagnet,
   buildDefaultDropSpawner,
   collectOverlappingDrops,
+  drawNextDrop,
   playDropPickupCue,
+  type SlotGatedDropSpawner,
 } from './dropLayer';
+import {
+  resolvePlayerSlotState,
+  type PowerUpSlotState,
+} from '../../powerups/slots';
 import {
   computeCapturePull,
   isCaptureComplete,
@@ -1314,6 +1320,29 @@ export class CombatCoreScene<
     rng: () => number,
   ): PowerUpSpawner<DropId> {
     return buildDefaultDropSpawner(powerUpWeights, weaponWeights, rng);
+  }
+
+  /**
+   * Draws the next drop through the shared six-slot gate (parent
+   * AH-0MVLIJT3M005HPHF): the one eligible-filtered draw path `PlayScene` and
+   * every gym consume, so the cap is observable everywhere (gym↔game parity,
+   * AH-0MUGZDTFX004RBD1). Works for the weighted default spawner and the
+   * deterministic round-robin gym sources alike.
+   */
+  protected _drawNextDrop<T extends string>(
+    spawner: SlotGatedDropSpawner<T>,
+    state: PowerUpSlotState,
+  ): T {
+    return drawNextDrop(spawner, state);
+  }
+
+  /**
+   * Resolves the live run's slot occupancy from the shared permanent-grant
+   * stores (`PowerUpLevelStore.getLevels()` + `Player.getWeaponLevels()`),
+   * via the shared pure module. Null player (pre-spawn) ⇒ empty run.
+   */
+  protected _resolveDropSlotState(): PowerUpSlotState {
+    return resolvePlayerSlotState(this.getPlayer());
   }
 
   /**

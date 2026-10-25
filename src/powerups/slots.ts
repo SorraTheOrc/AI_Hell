@@ -90,6 +90,60 @@ function isExemptWhenSlotsFull(dropId: DropId): boolean {
 }
 
 /**
+ * The catalogue entries exempt from the cap, in catalogue order.
+ *
+ * Derived from the {@link PowerUpEntry.availableWhenSlotsFull} flag only — there
+ * are no `id === '…'` special cases, so a future exempt entry needs no code
+ * change and a newly added entry is non-exempt by default. Catalogue order is
+ * deterministic, which makes it usable as a degradation fallback.
+ */
+export const SLOTS_FULL_EXEMPT_IDS: readonly PowerUpId[] = (
+  Object.keys(POWER_UP_CATALOGUE) as PowerUpId[]
+).filter((id) => isExemptWhenSlotsFull(id));
+
+/**
+ * The ids a full pool still allows: every owned kind plus every
+ * available-when-full catalogue entry.
+ *
+ * The shared drop draw uses this as the spawner's eligibility filter, so no
+ * scene ever re-derives the set.
+ */
+export function eligibleDropIds(state: PowerUpSlotState): Set<DropId> {
+  return new Set<DropId>([...state.ownedIds, ...SLOTS_FULL_EXEMPT_IDS]);
+}
+
+/**
+ * The deterministic id a gated draw degrades to when its source offers nothing
+ * eligible: the first available-when-full catalogue entry, else the first
+ * catalogue id (so a catalogue change can never crash a draw).
+ */
+export function firstExemptDropId(): DropId {
+  return SLOTS_FULL_EXEMPT_IDS[0] ?? (Object.keys(POWER_UP_CATALOGUE)[0] as PowerUpId);
+}
+
+/** Structural player view needed to derive the slot state. */
+export interface SlotPlayerView {
+  getPowerUpLevels(): PowerUpSlotLevels;
+  getWeaponLevels(): WeaponSlotLevels;
+}
+
+/**
+ * Resolves the live run's slot state from a player (null when no player exists,
+ * e.g. a scene before the ship spawns).
+ *
+ * A single structural seam so `PlayScene` and every gym derive occupancy the
+ * same way (gym↔game parity, AH-0MUGZDTFX004RBD1).
+ */
+export function resolvePlayerSlotState(
+  player: SlotPlayerView | null,
+): PowerUpSlotState {
+  return resolveSlotState(
+    player?.getPowerUpLevels() ?? [],
+    player?.getWeaponLevels() ?? [],
+  );
+}
+
+/**
  * Resolves the run's slot occupancy from the two permanent-only snapshots.
  *
  * - Power-up ids with a permanent level ≥ 1 occupy one slot each.

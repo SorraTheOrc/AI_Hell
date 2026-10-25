@@ -3743,7 +3743,14 @@ export class PlayScene extends CombatScene<
     if (this.rng() > powerUpDropChance(this._resolveDropLevel(), this.rules)) {
       return;
     }
-    this.spawnPowerUpDrop(this.dropSpawner.next(), x, y);
+    // One shared, eligibility-filtered draw through the six-slot gate (parent
+    // AH-0MVLIJT3M005HPHF): below the cap it is byte-for-byte the weighted
+    // draw; at/above it only owned kinds plus available-when-full entries.
+    this.spawnPowerUpDrop(
+      this._drawNextDrop(this.dropSpawner, this._resolveDropSlotState()),
+      x,
+      y,
+    );
   }
 
   /**
