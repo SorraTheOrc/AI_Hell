@@ -699,6 +699,14 @@ added by AH-0MUWTNPYJ0031FQE):
   shipped bundle and `npm run check-bundle` are unaffected. Config schema,
   watchable scene list and fade/timing details: see
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#multi-scene-capture-capturescenes).
+- **Diagnostics (`--diagnostics`, off by default):** adds per-chunk CDP payload
+  sizing (count/max/p50/p95), node RSS at each heartbeat, the page heap at clip
+  end, and a CDP pipe transport tap that classifies an overflow (method +
+  binding name + pending bytes) instead of guessing. It writes
+  `<stem>.diagnostics.json` next to each clip — additive, so a failed write
+  never fails the clip — and a normal capture stays byte-for-byte unchanged.
+  See
+  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#diagnostics---diagnostics).
 - **How it works:** `scripts/capture-gameplay.mjs` starts the Vite dev server
   programmatically, installs a page-side Web Audio tap (wrapping
   `AudioNode.prototype.connect` so the game's shared master gain is mirrored

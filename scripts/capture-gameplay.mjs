@@ -69,6 +69,17 @@ import {
   resolveCaptureMimeType,
 } from './capture-bot.mjs';
 import {
+  addTransportOverflowHandler,
+  createDiagnosticsTracker,
+  createTransportTap,
+  diagnosticsPathFor,
+  formatDiagnosticsProgress,
+  formatDiagnosticsSummary,
+  loadPlaywrightPipeTransport,
+  readTransportTapSnapshot,
+  writeDiagnosticsArtifact,
+} from './capture-diagnostics.mjs';
+import {
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
   buildCaptureStartedMarker,
@@ -258,6 +269,121 @@ function asSetupError(error) {
 }
 
 /**
+ * Reads the page-side heap at clip end for `--diagnostics` (AC2).
+ *
+ * Prefers the DevTools `Runtime.getHeapUsage` metric (the CDP equivalent of
+ * Puppeteer's `page.metrics()`, available for every Chromium page) and falls
+ * back to `performance.memory` when a CDP session cannot be created. Returns
+ * `{ source: 'unavailable' }` rather than throwing, so a diagnostics read can
+ * never fail the clip.
+ *
+ * @param {import('playwright').Page} page
+ * @returns {Promise<object>}
+ */
+async function readPageHeapMetrics(page) {
+  try {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const usage = await session.send('Runtime.getHeapUsage');
+      return {
+        source: 'Runtime.getHeapUsage',
+        heapUsedBytes: usage.usedSize,
+        totalHeapBytes: usage.totalSize,
+        embedderHeapUsedBytes: usage.embedderHeapUsedSize,
+        backingStorageBytes: usage.backingStorageSize,
+      };
+    } finally {
+      await session.detach().catch(() => {});
+    }
+  } catch {
+    // Fall through to the in-page fallback.
+  }
+
+  try {
+    const memory = await page.evaluate(() => {
+      const metrics = performance.memory;
+      return metrics
+        ? {
+            usedJSHeapSize: metrics.usedJSHeapSize,
+            totalJSHeapSize: metrics.totalJSHeapSize,
+            jsHeapSizeLimit: metrics.jsHeapSizeLimit,
+          }
+        : null;
+    });
+    if (memory) {
+      return {
+        source: 'performance.memory',
+        heapUsedBytes: memory.usedJSHeapSize,
+        totalHeapBytes: memory.totalJSHeapSize,
+        heapLimitBytes: memory.jsHeapSizeLimit,
+      };
+    }
+  } catch {
+    // Fall through to unavailable.
+  }
+
+  return { source: 'unavailable' };
+}
+
+/**
+ * Writes the `--diagnostics` summary next to the clip (AC6).
+ *
+ * Additive by contract: a failed write is reported as a warning and the clip
+ * result is unaffected.
+ *
+ * @param {{ tracker: object, outputPath: string, clip: object, reporter: object }} params
+ * @returns {object | null} the summary (also embedded in the `--json` result).
+ */
+function finaliseClipDiagnostics({ tracker, outputPath, clip, reporter }) {
+  if (!tracker.enabled) return null;
+  const summary = tracker.buildSummary({ clip });
+  if (!summary) return null;
+  summary.artifactPath = diagnosticsPathFor(outputPath);
+  summary.transport = readTransportTapSnapshot();
+  const { error } = writeDiagnosticsArtifact({ outputPath, summary });
+  if (error) {
+    reporter.step(
+      `Diagnostics: could not write ${summary.artifactPath} (${error}); ` +
+        'the clip is unaffected.',
+    );
+  } else {
+    reporter.step(`Diagnostics: wrote ${summary.artifactPath}.`);
+  }
+  return summary;
+}
+
+/**
+ * Registers the crash-time diagnostics artefact writer (AC3/AC6).
+ *
+ * A CDP pipe overflow kills the process from inside a stream callback, so the
+ * normal end-of-clip write never runs. The transport tap invokes this handler
+ * synchronously *before* rethrowing, leaving `<stem>.diagnostics.json` behind
+ * with the overflow's buffer count, bytes, message class and prefix.
+ *
+ * @param {{ tracker: object, outputPath: string, getClip: () => object, reporter: object }} params
+ * @returns {() => void} disposer
+ */
+function registerDiagnosticsCrashArtefact({
+  tracker,
+  outputPath,
+  getClip,
+  reporter,
+}) {
+  if (!tracker.enabled) return () => {};
+  return addTransportOverflowHandler(() => {
+    const summary = tracker.buildSummary({ clip: getClip() });
+    if (!summary) return;
+    summary.artifactPath = diagnosticsPathFor(outputPath);
+    summary.transport = readTransportTapSnapshot();
+    summary.crashed = true;
+    const { error } = writeDiagnosticsArtifact({ outputPath, summary });
+    if (error) {
+      reporter.step(`Diagnostics: could not write the crash artefact (${error}).`);
+    }
+  });
+}
+
+/**
  * Number of clips a single capture invocation records when `--count` is not
  * supplied. `1` preserves the historical single-clip behaviour exactly
  * (AH-0MUYTK941005E2M4).
@@ -310,6 +436,11 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     listScenarios: false,
     botConfig: null,
     allScenarios: false,
+    // `--diagnostics` (off by default): record per-chunk CDP payload sizes,
+    // node RSS at each heartbeat, the page heap at clip end, and tap the CDP
+    // pipe transport so an overflow can be classified instead of guessed
+    // (AH-0MVNT25JI004OVKQ). Disabled runs are byte-for-byte unchanged.
+    diagnostics: false,
     // `--config <file>` (alias `--scenes`): multi-scene capture, validated
     // before any server or browser boots (AH-0MVFC70GT000B96J).
     scenesConfig: null,
@@ -385,6 +516,13 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         // (AH-0MV6JGQFK007MXGX). Takes no value; the default no-scenario demo
         // run is deliberately not included (producer decision Q1).
         options.allScenarios = true;
+        break;
+      case '--diagnostics':
+        // Opt-in diagnostics (AH-0MVNT25JI004OVKQ): per-chunk CDP payload
+        // sizes, node/page heap and a CDP pipe transport tap. Writes
+        // `<stem>.diagnostics.json` next to the clip; off by default so a
+        // normal capture is unchanged (AC4).
+        options.diagnostics = true;
         break;
       case '--config':
       case '--scenes':
@@ -1406,6 +1544,12 @@ export function writeCaptureSeriesArtifacts({
  */
 async function captureClip({ page, url, outputPath, options, reporter }) {
   const mode = resolveCaptureMode(options);
+  // Diagnostics are opt-in (AC4): a disabled tracker records nothing, so the
+  // rest of this function behaves exactly as before with zero extra output.
+  const diagnostics = createDiagnosticsTracker({
+    enabled: options.diagnostics === true,
+  });
+  let removeOverflowHandler = () => {};
   // The default demo path records a **complete run**: it waits for the game's
   // run-end signal and stops one `--tail` later (bounded by
   // `--max-duration`). `--duration` and `--scripted` keep the legacy
@@ -1420,6 +1564,13 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     mode === 'scripted'
       ? planDurationMs(plan) + plan.length * INTER_STEP_MS
       : options.durationMs;
+
+  // Emit the diagnostics suffix only when enabled, so a normal capture's
+  // heartbeat lines are unchanged (AC4).
+  const diagnosticsSuffix = () =>
+    options.diagnostics === true
+      ? `  ${formatDiagnosticsProgress(diagnostics.snapshot())}`
+      : '';
 
   try {
     // Install the page-side Web Audio tap *before* any game script runs, so
@@ -1455,6 +1606,8 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     // base64 return value over the CDP bridge).
     const chunks = [];
     await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
+      // Diagnostics record the payload size handed to the CDP binding (AC1).
+      diagnostics.recordChunk(base64);
       chunks.push(Buffer.from(base64, 'base64'));
     });
 
@@ -1543,8 +1696,24 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       if (elapsedMs - lastProgressAt < PROGRESS_INTERVAL_MS) return;
       lastProgressAt = elapsedMs;
       lastReportedMs = elapsedMs;
-      reporter.progress(formatProgress(elapsedMs, totalMs));
+      // Sample node RSS at the heartbeat cadence (AC2), so peak RSS is
+      // comparable with the elapsed time the heartbeat reports.
+      diagnostics.sampleRss();
+      reporter.progress(
+        `${formatProgress(elapsedMs, totalMs)}${diagnosticsSuffix()}`,
+      );
     };
+
+    // A transport overflow kills the process from inside a stream callback, so
+    // the usual end-of-clip artefact never runs; register the crash writer
+    // now that `recordingMs` is initialised (AC3).
+    removeOverflowHandler = registerDiagnosticsCrashArtefact({
+      tracker: diagnostics,
+      outputPath,
+      getClip: () => ({ output: outputPath, durationMs: recordingMs }),
+      reporter,
+    });
+    diagnostics.sampleRss();
 
     let runWait = null;
     if (fullRun) {
@@ -1565,7 +1734,10 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       });
       recordingMs = runWait.elapsedMs;
       // Always show the final elapsed against the cap.
-      reporter.progress(formatProgress(recordingMs, options.maxDurationMs));
+      diagnostics.sampleRss();
+      reporter.progress(
+        `${formatProgress(recordingMs, options.maxDurationMs)}${diagnosticsSuffix()}`,
+      );
       lastReportedMs = recordingMs;
     } else {
       const startedAt = Date.now();
@@ -1588,7 +1760,10 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       }
       // Guarantee a final heartbeat when the loop did not already reach it.
       if (lastReportedMs < recordingMs) {
-        reporter.progress(formatProgress(recordingMs, recordingMs));
+        diagnostics.sampleRss();
+        reporter.progress(
+          `${formatProgress(recordingMs, recordingMs)}${diagnosticsSuffix()}`,
+        );
       }
     }
 
@@ -1598,6 +1773,24 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     const video = Buffer.concat(chunks);
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, video);
+
+    // Diagnostics: page heap at clip end, then the additive artefact next to
+    // the clip (AC2/AC6). Read before the page closes in `finally`.
+    let diagnosticsSummary = null;
+    if (options.diagnostics === true) {
+      diagnostics.recordPageMetrics(await readPageHeapMetrics(page));
+      diagnosticsSummary = finaliseClipDiagnostics({
+        tracker: diagnostics,
+        outputPath,
+        clip: {
+          output: outputPath,
+          bytes: video.length,
+          durationMs: recordingMs,
+          mimeType: probe.mimeType,
+        },
+        reporter,
+      });
+    }
 
     // Action-intensity series + §7.5 join anchor export (AH-0MVDV4DMY001Z7CU,
     // AC1/AC2): read the run back from the page's in-memory telemetry buffer
@@ -1656,8 +1849,10 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       audioVerdict,
       ...verdict,
       pageErrors,
+      ...(diagnosticsSummary ? { diagnostics: diagnosticsSummary } : {}),
     };
   } finally {
+    removeOverflowHandler();
     await page.close().catch(() => {});
   }
 }
@@ -1778,6 +1973,20 @@ export async function runCaptureSession({
     const baseUrl = `http://127.0.0.1:${port}/`;
 
     reporter.step('Launching headless Chromium…');
+    // The diagnostics transport tap must be in place *before* the browser is
+    // launched, because that is when Playwright constructs its CDP pipe
+    // transport (AC3). Off by default; a failure degrades to a reported reason.
+    if (options.diagnostics === true) {
+      const tap = await createTransportTap({
+        loadPipeTransport: loadPlaywrightPipeTransport,
+        logger: (message) => reporter.step(message),
+      });
+      reporter.step(
+        tap.installed
+          ? 'Diagnostics: CDP pipe transport tap installed.'
+          : `Diagnostics: CDP pipe transport tap unavailable (${tap.reason}).`,
+      );
+    }
     browser = await launchBrowser({
       headless: !options.headed,
       args: [
@@ -1891,6 +2100,15 @@ async function captureScenes({
 }) {
   const totalMs = payload.totalMs;
   const sceneCount = plan.length;
+  // Diagnostics are opt-in and shared with the single/batch path (AC4/AC7).
+  const diagnostics = createDiagnosticsTracker({
+    enabled: options.diagnostics === true,
+  });
+  const diagnosticsSuffix = () =>
+    options.diagnostics === true
+      ? `  ${formatDiagnosticsProgress(diagnostics.snapshot())}`
+      : '';
+  let removeOverflowHandler = () => {};
   try {
     // Tap the game's shared AudioContext before any game script runs, so the
     // one recorder muxes the game's own SFX across every scene.
@@ -1898,6 +2116,7 @@ async function captureScenes({
 
     const chunks = [];
     await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
+      diagnostics.recordChunk(base64);
       chunks.push(Buffer.from(base64, 'base64'));
     });
 
@@ -1957,8 +2176,20 @@ async function captureScenes({
     const startedEpoch = Date.now();
     const sceneEpochs = [];
     let elapsedMs = 0;
-    const reportProgress = () =>
-      reporter.progress(formatProgress(elapsedMs, totalMs));
+    const reportProgress = () => {
+      diagnostics.sampleRss();
+      reporter.progress(
+        `${formatProgress(elapsedMs, totalMs)}${diagnosticsSuffix()}`,
+      );
+    };
+
+    // Register the crash artefact writer before recording starts (AC3).
+    removeOverflowHandler = registerDiagnosticsCrashArtefact({
+      tracker: diagnostics,
+      outputPath,
+      getClip: () => ({ output: outputPath, durationMs: totalMs }),
+      reporter,
+    });
 
     await driveSceneSequence({
       plan,
@@ -2025,6 +2256,23 @@ async function captureScenes({
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, video);
 
+    // Diagnostics: page heap at clip end, then the additive artefact (AC2/AC6).
+    let diagnosticsSummary = null;
+    if (options.diagnostics === true) {
+      diagnostics.recordPageMetrics(await readPageHeapMetrics(page));
+      diagnosticsSummary = finaliseClipDiagnostics({
+        tracker: diagnostics,
+        outputPath,
+        clip: {
+          output: outputPath,
+          bytes: video.length,
+          durationMs: totalMs,
+          mimeType: probe.mimeType,
+        },
+        reporter,
+      });
+    }
+
     const videoVerdict = isNonTrivialClip({ ...probe, bytes: video.length });
     const audioVerdict = evaluateAudioTrack({
       trackCount: probe.audioTrackCount,
@@ -2060,8 +2308,10 @@ async function captureScenes({
       fadeVerified: fadeVerdict.fadeVerified,
       fadeReasons: fadeVerdict.reasons,
       pageErrors,
+      ...(diagnosticsSummary ? { diagnostics: diagnosticsSummary } : {}),
     };
   } finally {
+    removeOverflowHandler();
     await page.close().catch(() => {});
   }
 }
@@ -2597,6 +2847,15 @@ function formatReport(result) {
     `Colours:    ${result.uniqueColours} distinct (16-level buckets)`,
     `Motion:     ${result.motion.toFixed(4)} mean frame delta`,
     `Audio:      ${formatAudioSummary(result)}`,
+  );
+
+  // Opt-in diagnostics block (AH-0MVNT25JI004OVKQ): only present when
+  // `--diagnostics` was passed, so a normal report is unchanged (AC4).
+  if (result.diagnostics) {
+    lines.push(...formatDiagnosticsSummary(result.diagnostics).split('\n'));
+  }
+
+  lines.push(
     `Non-trivial:${result.nonTrivial ? ' yes' : ` no (${result.reasons.join('; ')})`}`,
   );
 
@@ -2607,7 +2866,10 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--all-scenarios] [--list-scenarios] [--bot-config file] [--config scenes.json]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--all-scenarios] [--list-scenarios] [--bot-config file] [--config scenes.json] [--diagnostics]',
+    );
+    console.log(
+      'Diagnostics: --diagnostics (off by default) records the base64 payload size of every recorder chunk handed to the CDP binding (count/max/p50/p95 plus a size-only timeline), samples node RSS at each progress heartbeat, reads the page heap at clip end, and taps the Playwright CDP pipe transport so an overflow can be classified (method + binding name + prefix) instead of guessed. It writes <stem>.diagnostics.json next to each clip; a failed write is reported and never fails the clip. A normal capture is unchanged.',
     );
     console.log(
       'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',

@@ -15,7 +15,13 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cliSpawnEnv } from './cliChildEnv';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -94,6 +100,22 @@ import {
   parseActionIntensitySeries,
   serialiseActionIntensitySeries as serialiseActionIntensitySeriesTs,
 } from '../src/scenes/core/actionIntensitySerialiser';
+import {
+  CDP_PIPE_STRING_LIMIT_CHARS,
+  addTransportOverflowHandler,
+  createDiagnosticsTracker,
+  createTransportTap,
+  describePendingBuffers,
+  diagnosticsPathFor,
+  formatByteSize,
+  formatDiagnosticsProgress,
+  formatDiagnosticsSummary,
+  percentile,
+  readPendingBuffers,
+  readTransportTapSnapshot,
+  summariseChunkSizes,
+  writeDiagnosticsArtifact,
+} from './capture-diagnostics.mjs';
 import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
 import { SCENE_FADE_MS, buildScenePlan } from './capture-scenes.mjs';
 import {
@@ -3011,5 +3033,391 @@ describe('installCaptureComposite (AH-0MVFC70GT000B96J AC3)', () => {
       }),
     ).toBeNull();
     expect(installCaptureComposite({})).toBeNull();
+  });
+});
+
+describe('capture diagnostics (AH-0MVNT25JI004OVKQ)', () => {
+  it('is off by default and only enabled by --diagnostics (AC4)', () => {
+    expect(parseCaptureArgs([]).diagnostics).toBe(false);
+    expect(parseCaptureArgs(['--diagnostics']).diagnostics).toBe(true);
+    // The flag takes no value: everything after it still parses normally.
+    const parsed = parseCaptureArgs(['--diagnostics', '--count', '2']);
+    expect(parsed.diagnostics).toBe(true);
+    expect(parsed.count).toBe(2);
+  });
+
+  it('summarises chunk sizes with count/max/mean/p50/p95 (AC1)', () => {
+    expect(summariseChunkSizes([])).toEqual({
+      count: 0,
+      totalBytes: 0,
+      maxBytes: 0,
+      meanBytes: 0,
+      p50Bytes: 0,
+      p95Bytes: 0,
+    });
+
+    expect(summariseChunkSizes([10, 40])).toEqual({
+      count: 2,
+      totalBytes: 50,
+      maxBytes: 40,
+      meanBytes: 25,
+      p50Bytes: 25,
+      p95Bytes: 38.5,
+    });
+
+    // A steady one-chunk-per-second capture: every sample is the same size.
+    const steady = summariseChunkSizes(Array.from({ length: 407 }, () => 1_354_000));
+    expect(steady.count).toBe(407);
+    expect(steady.maxBytes).toBe(1_354_000);
+    expect(steady.p50Bytes).toBe(1_354_000);
+    expect(steady.p95Bytes).toBe(1_354_000);
+    expect(steady.totalBytes).toBe(407 * 1_354_000);
+  });
+
+  it('computes interpolated percentiles with clamped inputs', () => {
+    expect(percentile([], 50)).toBe(0);
+    expect(percentile([7], 95)).toBe(7);
+    expect(percentile([1, 2, 3, 4, 5], 50)).toBe(3);
+    expect(percentile([1, 2, 3, 4, 5], 0)).toBe(1);
+    expect(percentile([1, 2, 3, 4, 5], 100)).toBe(5);
+    expect(percentile([1, 2, 3, 4, 5], -10)).toBe(1);
+    expect(percentile([1, 2, 3, 4, 5], 150)).toBe(5);
+    expect(percentile([1, Number.NaN, 3], 50)).toBe(2);
+  });
+
+  it('formats byte sizes with binary units', () => {
+    expect(formatByteSize(0)).toBe('0 B');
+    expect(formatByteSize(-1)).toBe('0 B');
+    expect(formatByteSize(Number.NaN)).toBe('0 B');
+    expect(formatByteSize(999)).toBe('999 B');
+    expect(formatByteSize(1536)).toBe('1.50 KiB');
+    expect(formatByteSize(CDP_PIPE_STRING_LIMIT_CHARS)).toBe('512.00 MiB');
+  });
+
+  it('resolves the diagnostics artefact next to the clip (AC6)', () => {
+    expect(diagnosticsPathFor('capture-output/clip.webm')).toBe(
+      'capture-output/clip.diagnostics.json',
+    );
+    expect(diagnosticsPathFor('/tmp/a.b/clip.webm')).toBe('/tmp/a.b/clip.diagnostics.json');
+    // A path without an extension still gets the documented suffix.
+    expect(diagnosticsPathFor('/tmp/clip')).toBe('/tmp/clip.diagnostics.json');
+  });
+
+  it('records nothing and builds no summary when disabled (AC4)', () => {
+    const tracker = createDiagnosticsTracker();
+    expect(tracker.enabled).toBe(false);
+    expect(tracker.recordChunk('AAAA')).toBe(0);
+    expect(tracker.sampleRss()).toBe(0);
+    expect(tracker.chunkCount).toBe(0);
+    expect(tracker.snapshot()).toBeNull();
+    expect(tracker.buildSummary({ clip: { output: '/tmp/clip.webm' } })).toBeNull();
+    expect(tracker.elapsedMs()).toBe(0);
+  });
+
+  it('records chunk sizes, heartbeat RSS and page heap for the run (AC1/AC2)', () => {
+    let clock = 1_000;
+    const rss = [100, 300, 200];
+    const tracker = createDiagnosticsTracker({
+      enabled: true,
+      now: () => {
+        clock += 10;
+        return clock;
+      },
+      readRss: () => rss.shift() ?? 0,
+    });
+
+    tracker.recordChunk('A'.repeat(40));
+    tracker.recordChunk('B'.repeat(10));
+    tracker.sampleRss();
+    tracker.sampleRss();
+    tracker.sampleRss();
+    tracker.recordPageMetrics({ source: 'Runtime.getHeapUsage', heapUsedBytes: 5_000 });
+    tracker.recordTransport({ installed: true, maxPendingBytes: 64 });
+    tracker.note('tapped');
+
+    const snapshot = tracker.snapshot();
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.chunkCount).toBe(2);
+    expect(snapshot?.totalBase64Bytes).toBe(50);
+    expect(snapshot?.maxBase64Bytes).toBe(40);
+    expect(snapshot?.peakRssBytes).toBe(300);
+
+    const summary = tracker.buildSummary({
+      clip: { output: '/tmp/clip.webm', bytes: 12_345, durationMs: 407_500 },
+    });
+    expect(summary).not.toBeNull();
+    if (!summary) throw new Error('expected a summary');
+    expect(summary.chunks.count).toBe(2);
+    expect(summary.chunks.totalBytes).toBe(50);
+    expect(summary.chunks.maxBytes).toBe(40);
+    expect(summary.chunks.p50Bytes).toBe(25);
+    expect(summary.chunks.p95Bytes).toBe(38.5);
+    expect(summary.chunks.maxChunk).toEqual({ atMs: 10, base64Bytes: 40 });
+    expect(summary.chunks.timeline).toHaveLength(2);
+    expect(summary.chunks.cdpPipeStringLimitChars).toBe(CDP_PIPE_STRING_LIMIT_CHARS);
+    expect(summary.chunks.cumulativeFractionOfCdpStringLimit).toBeCloseTo(
+      50 / CDP_PIPE_STRING_LIMIT_CHARS,
+      12,
+    );
+    expect(summary.node.peakRssBytes).toBe(300);
+    expect(summary.node.sampleCount).toBe(3);
+    expect(summary.node.samples).toHaveLength(3);
+    expect(summary.page).toEqual({
+      source: 'Runtime.getHeapUsage',
+      heapUsedBytes: 5_000,
+    });
+    expect(summary.transport).toEqual({ installed: true, maxPendingBytes: 64 });
+    // Bytes on disk and the chunk count are recorded with the clip (AC2).
+    expect(summary.clip.bytes).toBe(12_345);
+    expect(summary.clip.chunkCount).toBe(2);
+    expect(summary.notes).toEqual(['tapped']);
+  });
+
+  it('renders the heartbeat suffix and report block from the recorded numbers', () => {
+    const tracker = createDiagnosticsTracker({
+      enabled: true,
+      now: () => 0,
+      readRss: () => 812 * 1024 * 1024,
+    });
+    tracker.recordChunk('A'.repeat(4 * 1024 * 1024));
+    tracker.recordChunk('B'.repeat(10));
+    tracker.sampleRss();
+    tracker.recordPageMetrics({ source: 'performance.memory', heapUsedBytes: 4_096 });
+
+    const progress = formatDiagnosticsProgress(tracker.snapshot());
+    expect(progress).toContain('diag chunks=2');
+    expect(progress).toContain('max=4.00 MiB');
+    expect(progress).toContain('of CDP limit');
+    expect(progress).toContain('rss=812.00 MiB');
+
+    const summary = tracker.buildSummary({
+      clip: { output: '/tmp/clip.webm', bytes: 1, durationMs: 1 },
+    });
+    const block = formatDiagnosticsSummary(summary);
+    expect(block).toContain('p50');
+    expect(block).toContain('p95');
+    expect(block).toContain('peak');
+    expect(block).toContain('performance.memory');
+    expect(block).toContain('512.00 MiB string limit');
+    expect(formatDiagnosticsProgress(null)).toBe('');
+    expect(formatDiagnosticsSummary(null)).toBe('');
+  });
+
+  it('writes the artefact next to the clip and never fails the clip (AC6)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'capture-diagnostics-'));
+    try {
+      const outputPath = join(dir, 'clip.webm');
+      const tracker = createDiagnosticsTracker({ enabled: true, now: () => 0 });
+      tracker.recordChunk('AAAA');
+      const summary = tracker.buildSummary({
+        clip: { output: outputPath, bytes: 3, durationMs: 1_000 },
+      });
+      if (!summary) throw new Error('expected a summary');
+      summary.artifactPath = diagnosticsPathFor(outputPath);
+
+      const written = writeDiagnosticsArtifact({ outputPath, summary });
+      expect(written.error).toBeNull();
+      expect(written.path).toBe(join(dir, 'clip.diagnostics.json'));
+      const stored = JSON.parse(readFileSync(written.path, 'utf8'));
+      expect(stored.clip.output).toBe(outputPath);
+      expect(stored.chunks.count).toBe(1);
+      expect(stored.artifactPath).toBe(written.path);
+
+      // A failing write is reported, not thrown.
+      const failed = writeDiagnosticsArtifact({
+        outputPath,
+        summary,
+        writeFile: () => {
+          throw new Error('read-only file system');
+        },
+      });
+      expect(failed.path).toBe(written.path);
+      expect(failed.error).toContain('read-only file system');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('describes pending transport buffers and classifies the message (AC3)', () => {
+    const buffer = Buffer.from(
+      JSON.stringify({
+        id: 7,
+        method: 'Runtime.bindingCalled',
+        params: { name: '__aiHellCaptureChunk', payload: 'AAAA' },
+      }),
+    );
+    const described = describePendingBuffers({ buffers: [buffer, Buffer.from('BBBB')] });
+    expect(described.count).toBe(2);
+    expect(described.bytes).toBe(buffer.length + 4);
+    expect(described.method).toBe('Runtime.bindingCalled');
+    expect(described.bindingName).toBe('__aiHellCaptureChunk');
+    expect(described.innerBindingName).toBeNull();
+    expect(described.messageClass).toBe(
+      'Runtime.bindingCalled (__aiHellCaptureChunk)',
+    );
+    expect(described.prefix.startsWith('{"id":7,"method":"Runtime.bindingCalled"')).toBe(true);
+
+    // Playwright's real envelope nests the exposed function name in the
+    // escaped payload: the class names both the CDP binding and the page
+    // function the payload carries.
+    const nested = describePendingBuffers([
+      Buffer.from(
+        '{"method":"Runtime.bindingCalled","params":{"name":"__playwright__binding__","payload":"{\\"name\\":\\"__aiHellCaptureChunk\\",\\"seq\\":4,\\"serializedArgs\\":[\\"AAAA\\"]}"}',
+      ),
+    ]);
+    expect(nested.bindingName).toBe('__playwright__binding__');
+    expect(nested.innerBindingName).toBe('__aiHellCaptureChunk');
+    expect(nested.messageClass).toBe(
+      'Runtime.bindingCalled (__playwright__binding__ → __aiHellCaptureChunk)',
+    );
+
+    // Control bytes (the \0 delimiter included) never leak into the prefix.
+    const withNul = describePendingBuffers([Buffer.from('{"a":1}\0\u0001tail')]);
+    expect(withNul.prefix).not.toContain('\0');
+    expect(withNul.prefix).toContain('·');
+    expect(withNul.messageClass).toBe('unrecognised (no JSON method in prefix)');
+
+    expect(describePendingBuffers([])).toEqual({
+      count: 0,
+      bytes: 0,
+      prefix: '',
+      method: null,
+      bindingName: null,
+      innerBindingName: null,
+      messageClass: 'empty',
+    });
+  });
+
+  it('reads both Playwright pipe transport buffer shapes', () => {
+    const buffers = [Buffer.from('ab')];
+    expect(readPendingBuffers({ _pendingBuffers: buffers }).buffers).toHaveLength(1);
+    expect(readPendingBuffers({ _pendingBuffers: buffers }).data).toBeNull();
+    expect(readPendingBuffers({ _data: Buffer.from('cd') }).data?.length).toBe(2);
+    expect(readPendingBuffers(null)).toEqual({ buffers: [], data: null });
+    expect(readPendingBuffers({})).toEqual({ buffers: [], data: null });
+  });
+
+  it('taps the transport and captures the overflowing message class (AC3)', async () => {
+    const events: string[] = [];
+    const messages: Array<string | null> = [];
+
+    class FakePipeTransport {
+      // Mirrors the real Chromium CDP transport's pending-buffer property.
+      _pendingBuffers: Buffer[] = [];
+      readonly limit: number;
+      constructor(limit: number) {
+        this.limit = limit;
+      }
+      _dispatch(buffer: Buffer): void {
+        this._pendingBuffers.push(buffer);
+        const total = this._pendingBuffers.reduce(
+          (sum, part) => sum + part.length,
+          0,
+        );
+        if (total > this.limit) throw new RangeError('Cannot create a string longer');
+        // Delivered: the pending buffer is drained.
+        this._pendingBuffers = [];
+      }
+    }
+
+    const tap = await createTransportTap({
+      loadPipeTransport: async () => ({ PipeTransport: FakePipeTransport }),
+      logger: (message) => events.push(message),
+    });
+    expect(tap.installed).toBe(true);
+    expect(readTransportTapSnapshot().installed).toBe(true);
+
+    const removeHandler = addTransportOverflowHandler((overflow) => {
+      messages.push(overflow?.messageClass ?? null);
+    });
+
+    const payload = Buffer.from(
+      JSON.stringify({
+        id: 1,
+        method: 'Runtime.bindingCalled',
+        params: { name: '__aiHellCaptureChunk', payload: 'A'.repeat(120) },
+      }),
+    );
+
+    // Under the limit: the tap observes the pending bytes but does not throw.
+    const small = new FakePipeTransport(payload.length + 10);
+    small._dispatch(payload);
+    expect(readTransportTapSnapshot().lastPendingBytes).toBe(0);
+    expect(readTransportTapSnapshot().overflow).toBeNull();
+
+    // A delimited message records its true CDP message size and class.
+    const delimitedMessage = '{"method":"Runtime.consoleAPICalled"}';
+    const delimited = new FakePipeTransport(1_024);
+    delimited._dispatch(
+      Buffer.concat([Buffer.from(delimitedMessage), Buffer.from([0])]),
+    );
+    expect(readTransportTapSnapshot().maxMessageBytes).toBe(delimitedMessage.length);
+    expect(readTransportTapSnapshot().maxMessageSample?.messageClass).toBe(
+      'Runtime.consoleAPICalled',
+    );
+
+    // Over the limit: the original error propagates and the class is recorded.
+    const small2 = new FakePipeTransport(10);
+    expect(() => small2._dispatch(payload)).toThrow(/Cannot create a string longer/);
+    const snapshot = readTransportTapSnapshot();
+    expect(snapshot.overflow?.bytes).toBe(payload.length);
+    expect(snapshot.overflow?.count).toBe(1);
+    expect(snapshot.overflow?.messageClass).toBe(
+      'Runtime.bindingCalled (__aiHellCaptureChunk)',
+    );
+    expect(snapshot.maxPendingBytes).toBe(payload.length);
+    expect(messages).toEqual(['Runtime.bindingCalled (__aiHellCaptureChunk)']);
+    expect(events.join('\n')).toContain('CDP pipe dispatch overflow');
+    expect(events.join('\n')).toContain('Runtime.bindingCalled (__aiHellCaptureChunk)');
+
+    removeHandler();
+  });
+
+  it('exposes undelimited accumulation across dispatches (framing loss) (AC3)', async () => {
+    class DesyncPipeTransport {
+      // Mirrors the real Chromium CDP transport's pending-buffer property.
+      _pendingBuffers: Buffer[] = [];
+      _dispatch(buffer: Buffer): void {
+        // A lost `\0` terminator: every message accumulates and is never
+        // dispatched, exactly the state that precedes the pipe overflow.
+        this._pendingBuffers.push(buffer);
+      }
+    }
+
+    await createTransportTap({
+      loadPipeTransport: async () => ({ PipeTransport: DesyncPipeTransport }),
+    });
+    const transport = new DesyncPipeTransport();
+    const message = Buffer.from(
+      '{"method":"Runtime.bindingCalled","params":{"name":"__playwright__binding__","payload":"{\\"name\\":\\"__aiHellCaptureChunk\\"}"}',
+    );
+    for (let i = 0; i < 3; i += 1) transport._dispatch(message);
+
+    const snapshot = readTransportTapSnapshot();
+    expect(snapshot.lastPendingBytes).toBe(message.length * 3);
+    expect(snapshot.lastPendingBuffers).toBe(3);
+    expect(snapshot.maxPendingBytes).toBe(message.length * 3);
+    expect(snapshot.overflow).toBeNull();
+    expect(snapshot.maxPendingSample?.messageClass).toContain('__aiHellCaptureChunk');
+  });
+
+  it('degrades to an explicit reason when the transport cannot be tapped', async () => {
+    const noLoader = await createTransportTap();
+    expect(noLoader.installed).toBe(false);
+    expect(noLoader.reason).toContain('loader');
+
+    const unloadable = await createTransportTap({
+      loadPipeTransport: async () => {
+        throw new Error('ERR_PACKAGE_PATH_NOT_EXPORTED');
+      },
+    });
+    expect(unloadable.installed).toBe(false);
+    expect(unloadable.reason).toContain('not loadable');
+
+    const unrecognised = await createTransportTap({
+      loadPipeTransport: async () => ({ notATransport: true }),
+    });
+    expect(unrecognised.installed).toBe(false);
+    expect(unrecognised.reason).toContain('unrecognised');
   });
 });

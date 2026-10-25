@@ -583,6 +583,45 @@ not yet fully deterministic). A **defeat** run is typically much shorter. The
 no frame-exact reproducibility yet (see
 [Determinism gaps](#determinism-gaps)).
 
+### Diagnostics (`--diagnostics`)
+
+`--diagnostics` is an **off-by-default** investigation mode for the long-run
+crash where Playwright's CDP pipe transport (`pipeTransport._dispatch`) throws
+`ERR_STRING_TOO_LONG` (AH-0MVNT25JI004OVKQ). It exists so a fix targets the
+*observed* overflowing message instead of a speculative buffer increase.
+
+```bash
+# a diagnostic soak: fixed 7-minute clip, diagnostics artefacts next to it
+npm run capture -- --diagnostics --duration 420000 --output /tmp/soak.webm
+```
+
+While enabled it records:
+
+- the **base64 payload size handed to the CDP binding** for every recorder
+  chunk, with a size-only timeline, and summarises count / max / p50 / p95; the
+  cumulative total is reported as a fraction of V8's 512 MiB string limit (the
+  ceiling the transport's `Buffer#toString` hits when it accumulates
+  undelimited JSON);
+- node **peak `process.memoryUsage().rss`**, sampled at the existing progress
+  heartbeat cadence;
+- the **page-side heap** at clip end (CDP `Runtime.getHeapUsage`, falling back
+  to `performance.memory`) plus the bytes written to disk and the chunk count;
+- a tap on the **CDP pipe transport itself**: the pending (undelimited) byte
+  count per data event and, on overflow, the accumulated buffer count, bytes,
+  a sanitised prefix and the JSON `method` / binding `name` — i.e. the class of
+  the overflowing message.
+
+The results are written next to the clip as **`<stem>.diagnostics.json`** (so
+`gameplay-<timestamp>-5.webm` gets `gameplay-<timestamp>-5.diagnostics.json`).
+The write is additive: a read-only output directory is reported as a warning
+and never fails the clip. On an actual transport overflow the process is about
+to die, so the same summary is written synchronously from the tap's overflow
+hook before the error propagates. The heartbeat also gains a `diag …` suffix
+(chunks, max, cumulative bytes, RSS, pending bytes) while enabled.
+
+A run **without** `--diagnostics` prints the same output, writes the same
+artefacts and returns the same `--json` shape as before.
+
 ## Batch capture (`--count` / `-n`)
 
 `--count <n>` (alias `-n`) records **`n` clips in a single process**

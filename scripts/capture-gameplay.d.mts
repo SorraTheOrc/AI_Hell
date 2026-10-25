@@ -33,6 +33,13 @@ export interface CaptureOptions {
   /** True when `--all-scenarios` was passed: one clip per registered scenario. */
   allScenarios: boolean;
   /**
+   * True when `--diagnostics` was passed: record per-chunk CDP payload sizes,
+   * node/page heap and tap the CDP pipe transport, writing
+   * `<stem>.diagnostics.json` next to the clip (AH-0MVNT25JI004OVKQ). Off by
+   * default so a normal capture is unchanged.
+   */
+  diagnostics: boolean;
+  /**
    * `--config`/`--scenes` file path for multi-scene capture, or null
    * (AH-0MVFC70GT000B96J). Validated pre-boot; the parsed scenes land in
    * `scenes`.
