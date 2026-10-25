@@ -24,7 +24,7 @@
  *   node scripts/evaluate.mjs --help
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
 import { basename as pathBasename, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -218,6 +218,37 @@ export function resolveArtifactPath(dir, name) {
   return dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`;
 }
 
+/**
+ * Opens the streaming `runs.jsonl` sink for a batch
+ * (AH-0MVD1RPPP001XJKN AC2/AC3). The batch core hands each run's telemetry
+ * to the sink and never retains it (see `executeEvaluation`'s
+ * `telemetrySink`), so peak memory is bounded by one run's records instead
+ * of the whole sweep. The shell owns the file.
+ *
+ * Writes are **synchronous** on purpose: `executeEvaluation` is synchronous,
+ * so a `fs.WriteStream` would silently buffer whenever the disk lags and the
+ * buffer would grow to the entire batch's telemetry (measured: a 100-game
+ * campaign batch buffered ≈2 GB). A synchronous write hands each run's chunk
+ * straight to the page cache and keeps process memory bounded.
+ *
+ * @param {string} filePath
+ * @returns {{write(chunk: string): void, close(): void}}
+ */
+export function openTelemetrySink(filePath) {
+  const fd = openSync(filePath, 'w');
+  let closed = false;
+  return {
+    write(chunk) {
+      writeSync(fd, chunk);
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      closeSync(fd);
+    },
+  };
+}
+
 /** Loads the TS evaluation core through Vite's SSR module loader. */
 export async function loadCore() {
   const { createServer } = await import('vite');
@@ -395,20 +426,33 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
     // real balance data (config-driven arena, AH-0MV81YPBG0028WNM AC5); a
     // missing/unreadable CSV falls back to the built-in defaults.
     await core.hydrateBalanceConfig();
-    const result = core.executeEvaluation({
-      ...options,
-      seeds: resolveSeeds(options),
-      policies: options.policies ?? [],
-      humanRecordingText,
-      humanSeed: options.humanSeed,
-    });
     mkdirSync(options.outputDir, { recursive: true });
+    // Stream batch telemetry to disk so the sweep never accumulates in memory
+    // (AH-0MVD1RPPP001XJKN AC2/AC3); the core hands each run over and the
+    // shell persists it, keeping peak RSS bounded by one run.
+    const telemetry = options.batch
+      ? openTelemetrySink(resolveArtifactPath(options.outputDir, 'runs.jsonl'))
+      : null;
+    let result;
+    try {
+      result = core.executeEvaluation({
+        ...options,
+        seeds: resolveSeeds(options),
+        policies: options.policies ?? [],
+        humanRecordingText,
+        humanSeed: options.humanSeed,
+        telemetrySink: telemetry ? (chunk) => telemetry.write(chunk) : null,
+      });
+    } finally {
+      if (telemetry) telemetry.close();
+    }
     for (const artifact of result.artifacts) {
       writeFileSync(resolveArtifactPath(options.outputDir, artifact.name), artifact.content);
     }
     if (result.stdout) io.out.write(result.stdout);
     if (result.stderr) io.err.write(`${result.stderr}\n`);
-    io.out.write(`Wrote ${result.artifacts.length} artifact(s) to ${options.outputDir}\n`);
+    const sinkArtifacts = telemetry ? 1 : 0;
+    io.out.write(`Wrote ${result.artifacts.length + sinkArtifacts} artifact(s) to ${options.outputDir}\n`);
     return result.exitCode;
   } finally {
     await server.close();

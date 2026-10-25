@@ -58,7 +58,7 @@ Artifacts are written under `--out` (default `eval-output/`, git-ignored):
 | Artifact | Contents |
 |---|---|
 | `report.json` | The deterministic evaluation or A/B report (stable JSON). |
-| `runs.jsonl` | The raw telemetry for every run, in the shipped record schema. |
+| `runs.jsonl` | The raw telemetry for every run, in the shipped record schema. In a batch it is streamed to disk run by run (bounded memory), never accumulated. |
 | `comparison.json` | Same-seed metric deltas (only with `--human`). |
 | `ghost.svg` | The existing human-vs-bot trajectory overlay (only with `--human`). |
 | `human-balance-report.json` | The shared versioned human `BalanceReport` (`kind: 'balance'`, `policy: 'human'` — only with `--human`). |
@@ -242,6 +242,10 @@ harness itself never invokes a browser or an encoder.
   seed, so `report.json` and `runs.jsonl` are byte-stable for the same
   seeds/config/policy. Each run entry carries an FNV-1a hash of its raw records
   so drift is detectable.
+- A batch streams each run's telemetry to `runs.jsonl` as the run finishes
+  (`executeEvaluation`'s `telemetrySink`), so memory is bounded by one run and
+  does not grow with `--games`; the streamed bytes are identical to the
+  accumulated JSONL (asserted in `src/ai/eval/cli.test.ts`).
 - Verify with:
   ```bash
   npm run evaluate -- --seeds 3 --out /tmp/a

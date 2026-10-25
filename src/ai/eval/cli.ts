@@ -107,6 +107,17 @@ export interface CliOptions {
    * skirmish semantics (AC5).
    */
   readonly campaign: boolean;
+  /**
+   * Optional streaming sink for the batch's raw telemetry
+   * (AH-0MVD1RPPP001XJKN AC2/AC3). When supplied, every run's telemetry is
+   * serialised and handed over **as soon as the run finishes**, so the CLI
+   * core never accumulates the sweep's raw records: peak memory is bounded by
+   * one run's telemetry instead of the whole batch. The sink owns the
+   * `runs.jsonl` artifact, so {@link executeEvaluation} omits it from its
+   * returned artifacts. `null`/omitted keeps the in-memory behaviour (the
+   * shell writes `runs.jsonl` from the returned artifact).
+   */
+  readonly telemetrySink: ((jsonlChunk: string) => void) | null;
 }
 
 /** A file the shell should write under the output directory. */
@@ -158,6 +169,7 @@ export function executeEvaluation(options: CliOptions): CliResult {
       options.policies.length > 0 ? options.policies : [options.policy]
     ).map((name) => resolvePolicyFactory(name));
     const records: TelemetryRecord[] = [];
+    const telemetrySink = options.telemetrySink ?? null;
     const batch = runBatch({
       ...runConfig(options),
       // Batch runs use the higher, finite campaign budget (AC3) and the
@@ -166,13 +178,24 @@ export function executeEvaluation(options: CliOptions): CliResult {
       campaign: options.campaign,
       policies: policyFactories,
       onRun: (run) => {
-        records.push(...run.records);
+        // Stream the run's telemetry out immediately when the shell supplies
+        // a sink (AH-0MVD1RPPP001XJKN AC2/AC3): a campaign batch emits far
+        // more telemetry than fits comfortably in memory, so only the
+        // per-run summaries are retained here.
+        if (telemetrySink !== null) {
+          telemetrySink(serialiseRecordsJsonl(run.records));
+        } else {
+          records.push(...run.records);
+        }
       },
     });
     const summary = formatBalanceReport(batch.report);
     artifacts.push({ name: 'balance-report.json', content: batch.json });
     artifacts.push({ name: 'balance-report.txt', content: summary });
-    artifacts.push({ name: 'runs.jsonl', content: serialiseRecordsJsonl(records) });
+    // The sink owns `runs.jsonl`; only the in-memory path returns it.
+    if (telemetrySink === null) {
+      artifacts.push({ name: 'runs.jsonl', content: serialiseRecordsJsonl(records) });
+    }
     stdout.push(options.json ? batch.json : summary);
     return {
       exitCode: 0,
@@ -315,6 +338,7 @@ export function defaultOptions(): CliOptions {
     level: null,
     scaleLevels: true,
     campaign: true,
+    telemetrySink: null,
   };
 }
 

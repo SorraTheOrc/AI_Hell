@@ -32,7 +32,7 @@ git-ignored):
 |---|---|
 | `balance-report.json` | The versioned balance report (stable JSON): config, per-run summaries and the aggregate distributions. |
 | `balance-report.txt` | The same report rendered as a human-readable distribution summary. |
-| `runs.jsonl` | The **raw telemetry** for every game, in the shipped record schema (one record per line). |
+| `runs.jsonl` | The **raw telemetry** for every game, in the shipped record schema (one record per line). Written incrementally per run, so the sweep is never held in memory. |
 
 The text summary is printed to stdout unless `--json` is supplied, in which
 case the JSON report is printed instead. Both artifacts are always written.
@@ -88,7 +88,19 @@ batch defaults to a **finite** `18000`-tick budget (five simulated minutes at
 or when the shared campaign manager reports the boss trigger /
 `gameComplete`; a run that stalls (e.g. a stationary hostile the bot cannot
 reach) stops at the budget. A 100-game campaign batch at this budget takes
-≈47 s on a dev machine (≈10 s at the old 1800-tick skirmish window).
+≈5 min on a dev machine (≈10 s at the old 1800-tick skirmish window); the
+current measured time and peak-memory numbers are recorded in
+[Campaign batch acceptance evidence](#campaign-batch-acceptance-evidence-ah-0mvd1rppp001xjkn)
+below (an earlier ≈47 s figure predates the campaign/upgrade-path work and is
+superseded).
+
+**Bounded memory.** Raw telemetry is **streamed to disk per run**, never
+accumulated across the sweep: `executeEvaluation` hands each run's serialised
+records to an optional `telemetrySink`, and the Node shell writes them
+synchronously to `runs.jsonl` (see
+[Campaign batch acceptance evidence](#campaign-batch-acceptance-evidence-ah-0mvd1rppp001xjkn)).
+Peak memory is therefore bounded by a single run's telemetry and does not grow
+with `--games`.
 
 **Comparability note.** Only **batch** mode defaults to the campaign.
 Single-run evaluation (`npm run evaluate` without `--batch`), A/B and the
@@ -652,6 +664,44 @@ npm run evaluate -- --batch --games 100 --out campaign-out
 The previous 2026-10-14 acceptance run above was recorded against the old
 1800-tick **skirmish** default; re-run the command above to regenerate
 campaign-default evidence.
+
+## Campaign batch acceptance evidence (AH-0MVD1RPPP001XJKN)
+
+Final acceptance pass for the campaign batch (parent AC8/AC10), measured on a
+dev machine (16 logical cores, 30 GB RAM, Node 22, `/tmp` = tmpfs) against the
+real balance CSVs, competent policy, seeds 1–100:
+
+```bash
+npm run evaluate -- --batch --games 100 --out campaign-out
+```
+
+- **Runtime ≈ 5 min 23 s** (323 s wall; 351 s user CPU) — a practical
+  full-campaign 100-game batch. Most runs stall at the finite `18000`-tick
+  budget, so the cost is the simulation itself, not unbounded looping.
+- **Peak resident memory ≈ 1.0 GB** (`/usr/bin/time -v` `Maximum resident set
+  size` = 1,011,344 KB), and **flat in the game count**: 20 games → 958 MB,
+  50 games → 997 MB, 100 games → 1.01 GB. The plateau is one run's telemetry
+  (the arena's records are per run, then folded into the summary and streamed
+  out), not the sweep — memory does not grow with `--games`.
+- **Artifacts:** `balance-report.json` (40 KB), `balance-report.txt` (4.6 KB)
+  and `runs.jsonl` (1,812,966 records, 2.2 GB) — all three written, with the
+  JSONL streamed to disk run by run rather than buffered.
+- **Progression distributions** (unchanged by this pass, recorded for
+  completeness): `waveReached` mean 6.46 (min 2, max 10, sd 2.48);
+  `levelReached` mean 1.15 (min 1, max 2, sd 0.36); per-choice-id
+  `upgradesSelected` populated through the shared hold-full flow.
+- **Full suite** (`run_tests.py --scope full`): 307 test files / 6,855 tests,
+  0 failures at the commit implementing the streaming sink.
+
+When this pass was first attempted, the CLI shell accumulated **every** run's
+raw telemetry in one array before writing `runs.jsonl`, so a 100-game campaign
+batch died with `JavaScript heap out of memory` after ≈9 min at 4.7 GB RSS
+(5 games alone peaked at 1.4 GB). The shell now streams each run to disk via
+the core's `telemetrySink`; the batch core (`runBatch`) still retains only
+per-run summaries, and `executeEvaluation` no longer holds raw telemetry at
+all on the streaming path. Both are covered by tests in
+`src/ai/eval/cli.test.ts` (one sink chunk per run, in sweep order; streamed
+chunks byte-identical to the in-memory `runs.jsonl` artifact).
 
 ## Related work
 

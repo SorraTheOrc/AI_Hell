@@ -224,6 +224,60 @@ describe('executeEvaluation batch mode (AH-0MV81YY2T0069W19: CLI batch flags)', 
   });
 });
 
+describe('executeEvaluation streaming telemetry (AH-0MVD1RPPP001XJKN AC2/AC3)', () => {
+  it('hands each run to the sink and retains no raw telemetry in memory', () => {
+    const chunks: string[] = [];
+    const result = executeEvaluation(
+      options({
+        batch: true,
+        seeds: [1, 2],
+        ticks: 60,
+        telemetrySink: (chunk) => chunks.push(chunk),
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    // One chunk per run, in sweep order — the sweep is never accumulated.
+    expect(chunks).toHaveLength(2);
+    for (const chunk of chunks) {
+      const records = chunk.trim().split('\n').map((line) => JSON.parse(line));
+      expect(records.length).toBeGreaterThan(1);
+      expect(records[0].kind).toBe('run_header');
+      expect(records[records.length - 1]).toMatchObject({ kind: 'event', event: 'run_end' });
+    }
+
+    // The shell owns `runs.jsonl`; the in-memory artifacts carry only the
+    // summaries (no per-tick/per-event raw telemetry).
+    expect(result.artifacts.map((artifact) => artifact.name)).toEqual([
+      'balance-report.json',
+      'balance-report.txt',
+    ]);
+    for (const artifact of result.artifacts) {
+      expect(artifact.content).not.toContain('"kind":"tick"');
+      expect(artifact.content).not.toContain('"kind":"event"');
+    }
+    // The report itself still aggregates every run of the sweep.
+    expect(JSON.parse(result.artifacts[0].content).runs).toHaveLength(2);
+  });
+
+  it('streamed chunks are byte-identical to the accumulated runs.jsonl artifact', () => {
+    const batch = (): CliOptions =>
+      options({ batch: true, seeds: [1, 2], ticks: 60 });
+    const accumulated = executeEvaluation(batch()).artifacts.find(
+      (artifact) => artifact.name === 'runs.jsonl',
+    )?.content;
+    expect(accumulated).toBeTruthy();
+
+    const chunks: string[] = [];
+    executeEvaluation({
+      ...batch(),
+      telemetrySink: (chunk) => chunks.push(chunk),
+    });
+    // Streaming loses nothing: the concatenated chunks are the same JSONL.
+    expect(chunks.join('')).toBe(accumulated);
+  });
+});
+
 describe('runBalanceBatch (AH-0MVBNITA0005VQGN)', () => {
   beforeEach(() => resetConfigStore());
 
