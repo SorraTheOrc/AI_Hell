@@ -1185,7 +1185,6 @@ export class GymFormationScene<
       this.thornsAura,
       this.player,
       this.effectsRegistry,
-      this.time.now / 1000,
     );
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
   }

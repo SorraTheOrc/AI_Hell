@@ -92,14 +92,16 @@ export const THORNS_AURA_LINE_WIDTH = 2;
 export const THORNS_AURA_RADIUS_FACTOR = 2.3;
 /** Inner (valley) radius of the spiked halo as a fraction of the outer radius. */
 export const THORNS_AURA_INNER_FACTOR = 0.62;
-/** Spike count at a single remaining ram (the weakest armed field). */
-export const THORNS_AURA_MIN_SPIKES = 8;
+/**
+ * Spike count at a single remaining ram (the weakest armed field). Dense
+ * enough to read as a thorn halo rather than a star (operator audit
+ * feedback, AH-0MVJ8YKR70096C6T: "spikier — more spikes, not larger").
+ */
+export const THORNS_AURA_MIN_SPIKES = 14;
 /** Extra spikes per additional remaining ram, so the charge count is readable. */
-export const THORNS_AURA_SPIKES_PER_CHARGE = 2;
-/** Hard spike-count ceiling (the 6-ram cap yields 18). */
-export const THORNS_AURA_MAX_SPIKES = 18;
-/** Spike-star rotation rate (radians per second of caller clock). */
-export const THORNS_AURA_ROTATION_RATE = 1.6;
+export const THORNS_AURA_SPIKES_PER_CHARGE = 3;
+/** Hard spike-count ceiling (the 6-ram cap yields 29). */
+export const THORNS_AURA_MAX_SPIKES = 32;
 /** Faint aura fill alpha (inside the hull, under the ship). */
 export const THORNS_AURA_FILL_ALPHA = 0.08;
 /** Dimmest stroke alpha — used at one remaining ram (still clearly visible). */
@@ -111,13 +113,15 @@ export const THORNS_AURA_STROKE_ALPHA = 0.95;
  * Clears *graphics* and draws the shared Thorn Field aura around *player*
  * while the field is armed (active with at least one ram remaining).
  *
- * The aura is a rotating star of lime spikes echoing the Thorn Field drop
- * icon (`drawThorns` in `powerups/icons.ts`): the spike count and the stroke
- * alpha both scale with the remaining ram budget (a spent field is never
- * haloed), and the rim brightens as the next automatic recharge approaches.
- * Every input is registry state plus the caller's frame clock, so the game,
- * every gym and unit tests agree frame for frame — and no scene can hand-roll
- * a divergent halo (gym↔game parity, AH-0MUGZDTFX004RBD1).
+ * The aura is a fixed-orientation star of lime spikes echoing the Thorn
+ * Field drop icon (`drawThorns` in `powerups/icons.ts`): the spike count and
+ * the stroke alpha both scale with the remaining ram budget (a spent field is
+ * never haloed), and the rim brightens as the next automatic recharge
+ * approaches. It deliberately does **not** rotate (operator audit feedback,
+ * AH-0MVJ8YKR70096C6T), so the halo reads as a spiky field rather than a
+ * spinning blade. Every input is registry state, so the game, every gym and
+ * unit tests agree frame for frame — and no scene can hand-roll a divergent
+ * halo (gym↔game parity, AH-0MUGZDTFX004RBD1).
  *
  * Cleared (never drawn) when there is no graphics, no player, the field is
  * inactive, or its budget is spent — so an exhausted or expired field always
@@ -126,15 +130,12 @@ export const THORNS_AURA_STROKE_ALPHA = 0.95;
  * @param graphics — the scene-owned thorns-aura graphics (may be null).
  * @param player — the ship position (may be null).
  * @param registry — the shared active-effect registry.
- * @param elapsedSeconds — optional frame clock (seconds) driving the slow
- *   rotation; deterministic for a given value (defaults to 0 = no rotation).
  * @returns true when an aura was drawn.
  */
 export function drawThornsAura(
   graphics: Phaser.GameObjects.Graphics | null,
   player: EffectVisualTarget | null,
   registry: EffectsRegistry,
-  elapsedSeconds = 0,
 ): boolean {
   if (!graphics) return false;
   graphics.clear();
@@ -151,7 +152,6 @@ export function drawThornsAura(
   );
   const outerRadius = SHIP_SIZE * THORNS_AURA_RADIUS_FACTOR;
   const innerRadius = outerRadius * THORNS_AURA_INNER_FACTOR;
-  const rotation = elapsedSeconds * THORNS_AURA_ROTATION_RATE;
 
   // Brightness tracks the remaining budget: a nearly-spent field is dimmer
   // and only regains its full glow as rams return.
@@ -176,7 +176,7 @@ export function drawThornsAura(
   const step = (Math.PI * 2) / (spikeCount * 2);
   for (let i = 0; i < spikeCount * 2; i++) {
     const radius = i % 2 === 0 ? outerRadius : innerRadius;
-    const angle = rotation + step * i - Math.PI / 2;
+    const angle = step * i - Math.PI / 2;
     const px = player.x + Math.cos(angle) * radius;
     const py = player.y + Math.sin(angle) * radius;
     if (i === 0) graphics.moveTo(px, py);

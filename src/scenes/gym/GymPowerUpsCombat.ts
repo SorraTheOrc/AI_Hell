@@ -472,13 +472,13 @@ export class GymPowerUpsCombat extends CombatScene<
       );
     }
     // Thorn Field aura: a lime spiked halo while the field is armed (shared
-    // helper — identical to PlayScene and GymFormationScene).
+    // helper — identical to PlayScene and GymFormationScene). Fixed
+    // orientation — deliberately no rotation (audit feedback).
     if (this.thornsAura) {
       this.thornsAuraDrawn = drawThornsAura(
         this.thornsAura,
         this.player,
         this.effectsRegistry,
-        this.time.now / 1000,
       );
     }
     // Phase ghost: semi-transparent ship while Phase Shift is active (keeps the

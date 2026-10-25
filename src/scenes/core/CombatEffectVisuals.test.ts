@@ -62,6 +62,8 @@ class FakeGraphics {
   fillCircleCalls: Array<[number, number, number]> = [];
   /** Count of path-drawing calls (beginPath/moveTo/lineTo/closePath/strokePath). */
   pathCommands = 0;
+  /** Recorded vertices of moveTo/lineTo calls, in draw order. */
+  pathPoints: Array<[number, number]> = [];
 
   clear(): this {
     this.cleared += 1;
@@ -73,13 +75,15 @@ class FakeGraphics {
     return this;
   }
 
-  moveTo(): this {
+  moveTo(x: number, y: number): this {
     this.pathCommands += 1;
+    this.pathPoints.push([x, y]);
     return this;
   }
 
-  lineTo(): this {
+  lineTo(x: number, y: number): this {
     this.pathCommands += 1;
+    this.pathPoints.push([x, y]);
     return this;
   }
 
@@ -424,9 +428,11 @@ describe('CombatEffectVisuals — Thorn Field aura (AH-0MVJ8YKR70096C6T)', () =>
     expect(THORNS_AURA_LINE_WIDTH).toBe(2);
     // Wider than the Shield bubble (1.6×) so the halo reads as its own effect.
     expect(THORNS_AURA_RADIUS_FACTOR).toBeGreaterThan(1.6);
-    expect(THORNS_AURA_MIN_SPIKES).toBeGreaterThan(0);
-    expect(THORNS_AURA_SPIKES_PER_CHARGE).toBeGreaterThan(0);
-    expect(THORNS_AURA_MAX_SPIKES).toBeGreaterThanOrEqual(THORNS_AURA_MIN_SPIKES);
+    // Spikier (audit feedback: "more spikes, not larger") — the aura carries
+    // a dense halo, not a sparse star, at every budget.
+    expect(THORNS_AURA_MIN_SPIKES).toBeGreaterThanOrEqual(12);
+    expect(THORNS_AURA_SPIKES_PER_CHARGE).toBeGreaterThanOrEqual(3);
+    expect(THORNS_AURA_MAX_SPIKES).toBeGreaterThanOrEqual(30);
   });
 
   it('draws a lime spiked halo around the ship while the field is armed', () => {
@@ -460,16 +466,33 @@ describe('CombatEffectVisuals — Thorn Field aura (AH-0MVJ8YKR70096C6T)', () =>
     expect(gSpent.lineStyleCalls[0][2]).toBeLessThan(gFull.lineStyleCalls[0][2]);
   });
 
-  it('is deterministic for the same registry state and frame clock', () => {
+  it('is deterministic for the same registry state', () => {
     const registry = new EffectsRegistry();
     registry.applyCollect('thorns', true);
     const a = new FakeGraphics();
     const b = new FakeGraphics();
-    drawThornsAura(graphics(a), { x: 10, y: 20 }, registry, 2.5);
-    drawThornsAura(graphics(b), { x: 10, y: 20 }, registry, 2.5);
+    drawThornsAura(graphics(a), { x: 10, y: 20 }, registry);
+    drawThornsAura(graphics(b), { x: 10, y: 20 }, registry);
     expect(b.lineStyleCalls).toEqual(a.lineStyleCalls);
     expect(b.fillCircleCalls).toEqual(a.fillCircleCalls);
     expect(b.pathCommands).toBe(a.pathCommands);
+  });
+
+  it('does not rotate — the spike geometry is fixed as time advances', () => {
+    // Regression for the audit rejection (AH-0MVJ8YKR70096C6T: "Do not
+    // rotate the graphic for field of thorns"): advancing the shared clock
+    // must not change a single spike vertex.
+    const registry = new EffectsRegistry();
+    registry.applyCollect('thorns', true);
+    const before = new FakeGraphics();
+    drawThornsAura(graphics(before), { x: 10, y: 20 }, registry);
+
+    registry.tick(0.75);
+    registry.tick(0.75);
+    const after = new FakeGraphics();
+    drawThornsAura(graphics(after), { x: 10, y: 20 }, registry);
+
+    expect(after.pathPoints).toEqual(before.pathPoints);
   });
 
   it('clears and draws nothing when the field is inactive or its budget is spent', () => {
