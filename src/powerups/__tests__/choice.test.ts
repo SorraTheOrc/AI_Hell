@@ -19,7 +19,9 @@ import {
   createRandomChoiceStrategy,
   isWeaponOption,
   randomChoiceStrategy,
+  type ChoiceContext,
 } from '../choice';
+import { SLOTS_FULL_EXEMPT_IDS } from '../slots';
 import { summariseWeaponLevelChange } from '../../utils/weaponLevels';
 import { summarisePowerUpLevelChange } from '../powerUpLevels';
 import { buildUpgradeOptions } from '../unlocks';
@@ -685,6 +687,175 @@ describe('power-up choice strategy', () => {
         (o) => o.kind === 'weapon-level' || o.kind === 'power-up-level',
       );
       expect(buildUpgradeOptions(context)).toEqual(holdFull);
+    });
+  });
+
+  describe('six-slot choice gating (AH-0MVNT2Z89005OPKJ, parent AC4)', () => {
+    // Test-first status (read before editing). The gate on
+    // `buildChoiceCandidates` lands in AH-0MVNT2ZXK009Z5VU; this slice pins
+    // parent AC4 **before** the gate exists, so every gating assertion below
+    // is registered with Vitest's `it.fails(...)` — the repo's
+    // red-before/green-after convention (see
+    // `src/scenes/core/dropLayer.test.ts`) — which keeps the developer test
+    // gate and the dev-push full-suite gate green while the assertions are
+    // genuinely red against the ungated builder.
+    //
+    // When AH-0MVNT2ZXK009Z5VU lands, flip each `.fails` to a plain
+    // `it(...)`. Activation is the only permitted edit: the assertions
+    // themselves must not change (that is what makes this a contract rather
+    // than a wish list).
+    //
+    // The contexts are hand-built `ChoiceContext`s (no store, no scene, no
+    // `Math.random()`): six distinct permanently-owned kinds fill the shared
+    // pool exactly, as the AC demands.
+
+    /**
+     * Six distinct permanently-owned kinds — three power-ups and three
+     * weapons — filling the shared six-slot pool exactly. The mixed build
+     * covers **both** demand sides of AC4.
+     */
+    const FULL_SLOT_CONTEXT: ChoiceContext = {
+      weaponLevels: [
+        { id: 'spread', level: 1 },
+        { id: 'dual', level: 1 },
+        { id: 'rapid', level: 1 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 1 },
+        { id: 'bomb', level: 1 },
+        { id: 'speed_boost', level: 1 },
+      ],
+    };
+
+    /**
+     * Six permanently-owned weapon kinds only: the weapon-heavy extreme of
+     * the shared pool (weapons consume power-up slots too — producer Q1
+     * answer (c)). Only the two available-when-full power-ups may still be
+     * offered as new picks.
+     */
+    const FULL_WEAPON_CONTEXT: ChoiceContext = {
+      weaponLevels: [
+        { id: 'spread', level: 1 },
+        { id: 'dual', level: 1 },
+        { id: 'rapid', level: 1 },
+        { id: 'wave_laser', level: 1 },
+        { id: 'ricochet', level: 1 },
+        { id: 'cluster', level: 1 },
+      ],
+      powerUpLevels: [],
+    };
+
+    /** The distinct permanently-owned kinds a hand-built context carries. */
+    function ownedIdsOf(context: ChoiceContext): Set<DropId> {
+      const owned = new Set<DropId>();
+      for (const { id } of context.weaponLevels ?? []) owned.add(id as DropId);
+      for (const { id } of context.powerUpLevels ?? []) owned.add(id as DropId);
+      return owned;
+    }
+
+    /**
+     * The ids the gated pool may still offer once full: the owned kinds plus
+     * the catalogue entries flagged `availableWhenSlotsFull`.
+     */
+    function allowedAtFull(context: ChoiceContext): Set<DropId> {
+      return new Set<DropId>([
+        ...ownedIdsOf(context),
+        ...SLOTS_FULL_EXEMPT_IDS,
+      ]);
+    }
+
+    /** Deterministic LCG (Numerical Recipes constants) — no Math.random. */
+    function makeSeededRng(seed: number): () => number {
+      let state = seed >>> 0;
+      return () => {
+        state = (state * 1664525 + 1013904223) >>> 0;
+        return state / 0x100000000;
+      };
+    }
+
+    it.fails('at six filled slots never offers a base pick outside the owned kinds and the exempt entries', () => {
+      // AC4 core: once the pool is full, a brand-new non-exempt kind must
+      // never be offered — this is what would create a seventh permanent kind.
+      for (const context of [FULL_SLOT_CONTEXT, FULL_WEAPON_CONTEXT]) {
+        const allowed = allowedAtFull(context);
+        const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+        for (const option of candidates) {
+          if (option.kind === 'powerup' || option.kind === 'weapon') {
+            expect(allowed.has(option.id), `${option.id} is neither owned nor available-when-full`).toBe(true);
+          }
+        }
+      }
+    });
+
+    it.fails('at six filled slots the only base offers are the available-when-full entries', () => {
+      // Owned kinds are suppressed as base entries and offered as level-ups
+      // (pre-existing ownership semantics), so everything that survives as a
+      // base pick must be one of the flagged entries. Exact set, both a mixed
+      // and a weapon-only full build.
+      for (const context of [FULL_SLOT_CONTEXT, FULL_WEAPON_CONTEXT]) {
+        const baseIds = buildChoiceCandidates(CHOICE_POOL, context)
+          .filter((o) => o.kind === 'powerup' || o.kind === 'weapon')
+          .map((o) => o.id)
+          .sort();
+        expect(baseIds).toEqual([...SLOTS_FULL_EXEMPT_IDS].sort());
+      }
+    });
+
+    it.fails('a strategy draw at six filled slots never returns a non-exempt, non-owned id', () => {
+      // End to end through the shipped strategy seam: 500 seeded weighted
+      // draws of three options must stay inside the gated pool.
+      const context = FULL_SLOT_CONTEXT;
+      const allowed = allowedAtFull(context);
+      const rng = makeSeededRng(20261025);
+      for (let i = 0; i < 500; i++) {
+        const options = randomChoiceStrategy.choose(3, rng, context);
+        expect(options).toHaveLength(3);
+        for (const option of options) {
+          expect(allowed.has(option.id)).toBe(true);
+        }
+      }
+    });
+
+    it('keeps a level-up offer for every owned kind once the six slots are full', () => {
+      // AC4's graceful degradation: the pool never degrades to nothing — the
+      // level-up offers of the six owned kinds survive the gate intact (both
+      // weapon-level and power-up-level offers).
+      const context = FULL_SLOT_CONTEXT;
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const levelUpIds = candidates
+        .filter((o) => o.kind === 'weapon-level' || o.kind === 'power-up-level')
+        .map((o) => o.id)
+        .sort();
+      expect(levelUpIds).toEqual([...ownedIdsOf(context)].sort());
+      // Six owned offers plus the exempt entries: never an empty result.
+      expect(candidates.length).toBeGreaterThanOrEqual(6);
+    });
+
+    it('leaves the candidate pool unchanged below the cap (five filled slots)', () => {
+      // AC3-style no-behaviour-change guard for the choice side: with fewer
+      // than six slots the gate is inert, so the full catalogue stays on
+      // offer (minus the owned base entries, which are suppressed as level-up
+      // offers — pre-existing semantics).
+      const context: ChoiceContext = {
+        weaponLevels: [
+          { id: 'spread', level: 1 },
+          { id: 'dual', level: 1 },
+        ],
+        powerUpLevels: [
+          { id: 'shield', level: 1 },
+          { id: 'bomb', level: 1 },
+          { id: 'speed_boost', level: 1 },
+        ],
+      };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const baseIds = candidates
+        .filter((o) => o.kind === 'powerup' || o.kind === 'weapon')
+        .map((o) => o.id);
+      expect(baseIds).toHaveLength(CHOICE_POOL.length - 5);
+      const offeredIds = candidates.map((o) => o.id);
+      for (const id of CHOICE_POOL) {
+        expect(offeredIds).toContain(id);
+      }
     });
   });
 });

@@ -20,6 +20,8 @@ import {
 import { WEAPON_CATALOGUE, type WeaponId } from '../utils/weapons';
 import { summariseWeaponLevelChange } from '../utils/weaponLevels';
 import { summarisePowerUpLevelChange } from './powerUpLevels';
+import type { ChoiceContext } from './choice';
+import type { PowerUpId } from './types';
 
 const ALL_WEAPONS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
 
@@ -148,5 +150,44 @@ describe('mini-boss reward unlock pool (AH-0MVCRBNO6003E1CH)', () => {
       powerUpLevels: [],
     });
     expect(options).toHaveLength(0);
+  });
+
+  it('AC4 — upgrade options at six filled slots never introduce a seventh permanent kind', () => {
+    // The mini-boss reward inherits the six-slot gate through the single
+    // shared option builder (`buildOwnedLevelUpOptions`, which the hold-full
+    // choice and this reward both consume — AH-0MVL9P2SF009QFON). Once the
+    // shared pool is full (six distinct permanently-owned kinds below), the
+    // offered upgrades must stay inside those six kinds: one level-up offer
+    // per owned kind and nothing that would create a seventh permanent kind.
+    //
+    // This is a contract pin (parent AC4) and is green against today's shared
+    // builder; the gating implementation AH-0MVNT2ZXK009Z5VU must keep it
+    // green. Unlocking a *new* weapon from `lockedWeaponIds` when the pool is
+    // full is intentionally out of scope (parent risk note — capping the
+    // mini-boss weapon unlock pool is a separate item).
+    const context: ChoiceContext = {
+      weaponLevels: [
+        { id: 'spread', level: 1 },
+        { id: 'dual', level: 1 },
+        { id: 'rapid', level: 1 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 1 },
+        { id: 'bomb', level: 1 },
+        { id: 'speed_boost', level: 1 },
+      ],
+    };
+    const owned = new Set<WeaponId | PowerUpId>([
+      ...(context.weaponLevels ?? []).map((w) => w.id),
+      ...(context.powerUpLevels ?? []).map((p) => p.id),
+    ]);
+
+    const options = buildUpgradeOptions(context);
+
+    expect(options).toHaveLength(6);
+    for (const option of options) {
+      expect(option.kind === 'weapon-level' || option.kind === 'power-up-level').toBe(true);
+      expect(owned.has(option.id as WeaponId | PowerUpId)).toBe(true);
+    }
   });
 });
