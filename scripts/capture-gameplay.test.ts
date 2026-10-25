@@ -121,12 +121,17 @@ import {
 import { installRecorderChunkRetention } from './capture-recorder-page.mjs';
 import { createChunkSink } from './capture-chunk-sink.mjs';
 import {
+  RECORDING_CHUNK_BINDING,
+  createRecordingPipeline,
+} from './capture-recording-pipeline.mjs';
+import {
   failureSalvageLine,
   salvageFailedCapture,
 } from './capture-salvage.mjs';
 import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
 import { SCENE_FADE_MS, buildScenePlan } from './capture-scenes.mjs';
 import {
+  CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
   CAPTURE_STARTED_EVENT,
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
@@ -3992,5 +3997,236 @@ describe('graceful failure with salvage of streamed bytes (AH-0MVNT29MC008BQPY)'
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * Shared recording pipeline (AH-0MVNT2AFI00639N3, parent AC7): both the
+ * single/batch clip path and the `--scenes` path obtain their chunk sink,
+ * payload guard and probe source from one helper, so the fix cannot drift into
+ * two divergent copies. The behaviour tests drive the pipeline with a fake
+ * page and an injected sink filesystem (no browser); the duplication guard is
+ * a static-source assertion over `capture-gameplay.mjs` (parent AC2).
+ */
+describe('shared recording pipeline (AH-0MVNT2AFI00639N3)', () => {
+  function fakePipePage() {
+    const initScripts: Array<{ script: unknown; arg: unknown }> = [];
+    const boundNames: string[] = [];
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    return {
+      page: {
+        async addInitScript(script: unknown, arg?: unknown) {
+          initScripts.push({ script, arg });
+        },
+        async exposeFunction(name: string, callback: (...args: never[]) => unknown) {
+          boundNames.push(name);
+          handlers.set(name, callback as (...args: unknown[]) => unknown);
+        },
+      },
+      initScripts,
+      boundNames,
+      handlerFor(name: string): ((...args: unknown[]) => unknown) | undefined {
+        return handlers.get(name);
+      },
+    };
+  }
+
+  function fakeSinkFs() {
+    const written: Buffer[] = [];
+    return {
+      written,
+      seams: {
+        mkdir: () => undefined,
+        open: () => 1,
+        write: (_fd: number, buffer: Buffer) => {
+          written.push(Buffer.from(buffer));
+          return buffer.length;
+        },
+        close: () => undefined,
+        rename: () => undefined,
+        remove: () => undefined,
+      },
+    };
+  }
+
+  it('binds the guard and the chunk sink in one install, exactly like both capture paths use it (AC1)', async () => {
+    const pipe = fakePipePage();
+    const fsSeams = fakeSinkFs();
+    const outputPath = '/out/clip.webm';
+    const recordedPayloads: string[] = [];
+    const diagnostics = { recordChunk: (base64: string) => recordedPayloads.push(base64) };
+
+    const recording = createRecordingPipeline({
+      page: pipe.page as never,
+      outputPath,
+      diagnostics,
+      sinkOptions: fsSeams.seams as never,
+    });
+
+    expect(recording.isInstalled()).toBe(false);
+    await recording.install();
+    expect(recording.isInstalled()).toBe(true);
+
+    // Exactly one page-side retention guard, installed with the single-sourced
+    // constants (payload guard, AC1/AC4): budget bytes and the per-message cap
+    // the page never slices at a size the sink would reject.
+    expect(pipe.initScripts).toHaveLength(1);
+    expect(pipe.initScripts[0].script).toBe(installRecorderChunkRetention);
+    expect(pipe.initScripts[0].arg).toEqual({
+      budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
+      maxPayloadBytes: MAX_CAPTURE_CHUNK_BYTES,
+    });
+
+    // Exactly one chunk binding call site, under the shared binding name.
+    expect(pipe.boundNames).toEqual([RECORDING_CHUNK_BINDING]);
+
+    // A second install is a no-op: no double binding and no second guard.
+    await recording.install();
+    expect(pipe.initScripts).toHaveLength(1);
+    expect(pipe.boundNames).toEqual([RECORDING_CHUNK_BINDING]);
+
+    // The bound handler records the payload for diagnostics and appends it to
+    // the sink — the single decode/append path, byte-identical.
+    const chunk = Buffer.from('recorded video bytes from the page');
+    const base64 = chunk.toString('base64');
+    const handler = pipe.handlerFor(RECORDING_CHUNK_BINDING)!;
+    handler(base64);
+
+    expect(recordedPayloads).toEqual([base64]);
+    expect(recording.stats().bytesWritten).toBe(chunk.length);
+    expect(Buffer.concat(fsSeams.written)).toEqual(chunk);
+
+    recording.close();
+  });
+
+  it('provides the probe source (size/paths) and delegates finalise to the sink (AC1)', async () => {
+    const pipe = fakePipePage();
+    const fsSeams = fakeSinkFs();
+    const outputPath = '/out/clip.webm';
+    const recording = createRecordingPipeline({
+      page: pipe.page as never,
+      outputPath,
+      sinkOptions: fsSeams.seams as never,
+    });
+    await recording.install();
+    const chunk = Buffer.from('probe sees the streamed size');
+    const handler = pipe.handlerFor(RECORDING_CHUNK_BINDING)!;
+    handler(chunk.toString('base64'));
+
+    const source = recording.probeSource({ baseUrl: 'http://localhost:4173' });
+    expect(source.bytesAvailable()).toBe(chunk.length);
+    expect(source.outputPath).toBe(outputPath);
+    expect(source.partialPath).toBe('/out/clip.partial.webm');
+    // The streamed-file probe needs the dev-server base URL the file is
+    // served from; both capture paths pass it through here.
+    expect(source.baseUrl).toBe('http://localhost:4173');
+
+    // finalise delegates to the shared sink (rename policy stays in the sink).
+    const outcome = recording.finalise({ success: true });
+    expect(outcome.finalised).toBe(true);
+    expect(outcome.bytesWritten).toBe(chunk.length);
+
+    // Without a base URL the probe source is still complete for the in-page
+    // probe source selection (no baseUrl key at all).
+    const noBase = recording.probeSource();
+    expect(noBase.bytesAvailable()).toBe(chunk.length);
+    expect('baseUrl' in noBase).toBe(false);
+
+    recording.close();
+  });
+
+  it('rejects pages without the Playwright contract it depends on', () => {
+    const fsSeams = fakeSinkFs();
+    expect(() =>
+      createRecordingPipeline({
+        page: { addInitScript: async () => undefined } as never,
+        outputPath: '/out/clip.webm',
+        sinkOptions: fsSeams.seams as never,
+      }),
+    ).toThrow(/exposeFunction/);
+  });
+
+  /**
+   * The shapes that must not reappear outside the shared pipeline. Each one is
+   * a piece of the duplicated plumbing this item removed, so a match means a
+   * second copy of the recording path has crept back (parent AC2).
+   */
+  const DUPLICATION_PATTERNS: Array<{ what: string; pattern: RegExp }> = [
+    {
+      what: 'a second __aiHellCaptureChunk binding call site',
+      pattern: /exposeFunction\(\s*['"]__aiHellCaptureChunk['"]/g,
+    },
+    { what: 'an in-memory concat of recorder chunks', pattern: /Buffer\.concat\(/g },
+    { what: 'a second bounded chunk sink', pattern: /createChunkSink\(/g },
+    { what: 'a second decode/append call', pattern: /\.appendBase64\(/g },
+    {
+      what: 'a direct page-side retention install',
+      // Both call styles (`addInitScript(installRecorderChunkRetention, …)` and
+      // a direct call) reference the installer followed by `,` or `)`; a prose
+      // mention inside a comment does not.
+      pattern: /installRecorderChunkRetention\s*[,)]/g,
+    },
+  ];
+
+  it('keeps the chunk binding and decode/append write path out of capture-gameplay.mjs (AC2 guard)', () => {
+    const gameplay = readFileSync(
+      new URL('./capture-gameplay.mjs', import.meta.url),
+      'utf8',
+    );
+    const pipeline = readFileSync(
+      new URL('./capture-recording-pipeline.mjs', import.meta.url),
+      'utf8',
+    );
+
+    // The duplicated plumbing is gone: no `exposeFunction` binding, no second
+    // sink construction, no second decode/append call, no in-memory
+    // `Buffer.concat` of recorder chunks, no direct retention install.
+    for (const { what, pattern } of DUPLICATION_PATTERNS) {
+      expect(gameplay.match(pattern) ?? [], `capture-gameplay.mjs must not hold ${what}`).toHaveLength(0);
+    }
+
+    // The one binding call site and the one decode/append path live in the
+    // shared pipeline module (single-source rule).
+    expect(pipeline.match(/exposeFunction\(\s*RECORDING_CHUNK_BINDING/g) ?? []).toHaveLength(1);
+    expect(pipeline.match(/sink\.appendBase64\(/g) ?? []).toHaveLength(1);
+  });
+
+  it('the duplication guard bites on the shape this item removed (AC2 self-check)', () => {
+    // Representative of the plumbing that existed twice before the shared
+    // pipeline (a binding call site, a sink, an in-memory concatenation and a
+    // guard reinstall). A guard that cannot fail is worse than no guard, so
+    // each pattern must still match the removed shape.
+    const removedShape = [
+      "await page.exposeFunction('__aiHellCaptureChunk', (base64) => {",
+      '  sink.appendBase64(base64);',
+      '});',
+      'const duplicateSink = createChunkSink({ outputPath });',
+      'await page.addInitScript(installRecorderChunkRetention, {',
+      '  budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,',
+      '});',
+      'const joined = Buffer.concat(chunks);',
+    ].join('\n');
+
+    for (const { what, pattern } of DUPLICATION_PATTERNS) {
+      expect(removedShape.match(pattern) ?? [], `the guard must still detect ${what}`).not.toHaveLength(0);
+    }
+  });
+
+  it('has exactly one pipeline construction per capture path (AC1/AC2)', () => {
+    const source = readFileSync(
+      new URL('./capture-gameplay.mjs', import.meta.url),
+      'utf8',
+    );
+    const clipSlice = source.slice(
+      source.indexOf('function captureClip('),
+      source.indexOf('async function captureScenes('),
+    );
+    const scenesSlice = source.slice(source.indexOf('async function captureScenes('));
+
+    // Each path constructs the shared pipeline exactly once — a third copy is
+    // a regression the guard must fail.
+    expect(clipSlice.match(/createRecordingPipeline\(/g) ?? []).toHaveLength(1);
+    expect(scenesSlice.match(/createRecordingPipeline\(/g) ?? []).toHaveLength(1);
+    expect(source.match(/createRecordingPipeline\(/g) ?? []).toHaveLength(2);
   });
 });

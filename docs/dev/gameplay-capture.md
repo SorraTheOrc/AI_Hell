@@ -629,6 +629,14 @@ never has to fit in the heap, and the whole-run `Buffer.concat` is gone.
   - `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (**32 MiB**) — the bounded prefix the
     page-side retention and the streamed probe measure from (≈32 s of 8 Mbps
     footage).
+- **One recording pipeline for both paths.** The chunk sink, the page-side
+  guard install and the probe source are obtained from a single shared helper,
+  `scripts/capture-recording-pipeline.mjs` (AH-0MVNT2AFI00639N3). Both the
+  single/batch clip path and `capture:scenes` construct it once per clip, so a
+  change to the recording plumbing cannot drift into two divergent copies; the
+  `capture-gameplay.test.ts` duplication guard fails the suite if a second
+  `__aiHellCaptureChunk` binding, a second decode/append call or an in-memory
+  `Buffer.concat` of recorder chunks reappears.
 
 `scripts/capture-chunk-sink.test.ts` proves the bound hermetically: it drives
 the sink with simulated chunks whose cumulative total exceeds the 512 MiB CDP

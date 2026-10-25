@@ -79,7 +79,7 @@ import {
   readTransportTapSnapshot,
   writeDiagnosticsArtifact,
 } from './capture-diagnostics.mjs';
-import { createChunkSink } from './capture-chunk-sink.mjs';
+import { createRecordingPipeline } from './capture-recording-pipeline.mjs';
 import {
   CaptureSalvageError,
   failureSalvageLine,
@@ -92,12 +92,9 @@ import {
   probeRecordingInPage,
   resolveAudioProbeRange,
 } from './capture-probe.mjs';
-import { installRecorderChunkRetention } from './capture-recorder-page.mjs';
 import {
-  CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
-  MAX_CAPTURE_CHUNK_BYTES,
   buildCaptureStartedMarker,
   summariseCaptureRun,
   waitForRunEnd,
@@ -1653,7 +1650,12 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
   // heap before a single byte is written. The sink opens its file lazily on
   // the first chunk and is finalised (renamed into place) after a successful
   // probe below.
-  const sink = createChunkSink({ outputPath });
+  //
+  // The shared recording pipeline (AH-0MVNT2AFI00639N3, parent AC7): both
+  // the single/batch path and the `--scenes` path obtain their chunk sink,
+  // payload guard and probe source from this one helper — never a second
+  // copy (single-source rule, mirrored in `captureScenes`' sibling call).
+  const recording = createRecordingPipeline({ page, outputPath, diagnostics });
   let removeOverflowHandler = () => {};
   // The default demo path records a **complete run**: it waits for the game's
   // run-end signal and stops one `--tail` later (bounded by
@@ -1683,20 +1685,14 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
     // the shared context.destination (AH-0MUWYQQYU001G6OG).
     await page.addInitScript(installGameAudioTap);
 
-    // Bound the page's Blob retention *before* the recorder runs
-    // (AH-0MVNT274M009XRJ1): startRecording forwards every chunk to the sink
-    // below exactly once and retains only a bounded prefix via the installed
-    // controller, so page heap no longer grows with run length.
-    await page.addInitScript(installRecorderChunkRetention, {
-      budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
-      // Slice oversized recorder flushes into at-or-below-cap CDP messages
-      // (AH-0MVNT27XR0080I3C): a single `dataavailable` Blob must never reach
-      // the binding as one oversized base64 payload, or it can overflow
-      // Playwright's pipe transport with ERR_STRING_TOO_LONG. The cap is the
-      // single-sourced constant the sink enforces, so the page never slices at
-      // a size the sink would reject (AC1/AC4).
-      maxPayloadBytes: MAX_CAPTURE_CHUNK_BYTES,
-    });
+    // Install the page-side Blob-retention guard and bind the chunk sink
+    // *before* the game boots (AH-0MVNT274M009XRJ1, AH-0MVNT27XR0080I3C):
+    // `startRecording` forwards every chunk to the sink below exactly once
+    // and retains only a bounded prefix, with oversized flushes sliced at or
+    // below the single-sourced cap before they can overflow the CDP pipe
+    // (ERR_STRING_TOO_LONG). Both live in the shared pipeline so the two
+    // capture paths cannot drift (AH-0MVNT2AFI00639N3, parent AC7).
+    await recording.install();
 
     // Install the run-end listener *before* the game boots so a short run
     // cannot end before the capture is listening (AH-0MUXZ4CNS009RV40, AC1).
@@ -1721,15 +1717,6 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
     // so a new page can never read a previous item's records. The old
     // pre-boot `localStorage.removeItem` is therefore gone: there is no
     // persistent sink to clear.
-
-    // Stream encoded chunks to Node as they are produced (avoids one huge
-    // base64 return value over the CDP bridge); the sink writes each one to
-    // disk and drops it immediately.
-    await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
-      // Diagnostics record the payload size handed to the CDP binding (AC1).
-      diagnostics.recordChunk(base64);
-      sink.appendBase64(base64);
-    });
 
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -1896,12 +1883,9 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       page,
       recordingMs + 500,
       null,
-      {
-        bytesAvailable: () => sink.stats().bytesWritten,
-        baseUrl,
-        outputPath,
-        partialPath: sink.partialPath,
-      },
+      // Probe source from the shared pipeline: the clip's streamed size, the
+      // final path and the `.partial` salvage path (AH-0MVNT2AFI00639N3).
+      recording.probeSource({ baseUrl }),
     );
     // Say which source the probe used and why: on a long-run soak this is the
     // line that proves the streamed-file path ran (AH-0MVNT28SJ008ZHDB AC1).
@@ -1913,7 +1897,7 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
     // already on disk at the `.partial` path, so a successful clip is just the
     // rename into place. A failure path leaves the partial file untouched for
     // the salvage item (AH-0MVNT29MC008BQPY).
-    const written = sink.finalise({ success: true });
+    const written = recording.finalise({ success: true });
     const videoBytes = written.bytesWritten;
 
     // Diagnostics: page heap at clip end, the page-side retention state
@@ -2012,13 +1996,13 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
     // the underlying transport/browser/recorder failure in a single
     // actionable error, printed first by `main()`. The batch loop turns this
     // into an attributed failure record (additive fields only).
-    throw salvageFailedCapture({ sink, outputPath, error });
+    throw salvageFailedCapture({ sink: recording.sink, outputPath, error });
   } finally {
     removeOverflowHandler();
     // Release the stream handle on every path. A failed clip keeps the bytes
     // it already streamed at the documented `.partial` path for the salvage
     // item (AH-0MVNT29MC008BQPY); `close` never renames.
-    sink.close();
+    recording.close();
     await page.close().catch(() => {});
   }
 }
@@ -2301,23 +2285,20 @@ async function captureScenes({
       : '';
   // The same bounded sink as the single/batch path (AH-0MVNT26AQ005LDNS):
   // chunks stream to `<stem>.partial.webm` as they arrive, so the multi-scene
-  // recording never accumulates in the heap either.
-  const sink = createChunkSink({ outputPath });
+  // recording never accumulates in the heap either. The same shared pipeline
+  // as the single/batch path (AH-0MVNT2AFI00639N3, parent AC7): the
+  // multi-scene recorder's chunks stream through the same sink/guard/probe
+  // source, so a fix cannot drift into two divergent copies.
+  const recording = createRecordingPipeline({ page, outputPath, diagnostics });
   let removeOverflowHandler = () => {};
   try {
     // Tap the game's shared AudioContext before any game script runs, so the
-    // one recorder muxes the game's own SFX across every scene. Also bound the
-    // page's Blob retention before the recorder runs (AH-0MVNT274M009XRJ1).
+    // one recorder muxes the game's own SFX across every scene. Then install
+    // the page-side Blob-retention guard and bind the chunk sink through the
+    // shared pipeline (AH-0MVNT274M009XRJ1, AH-0MVNT27XR0080I3C,
+    // AH-0MVNT2AFI00639N3).
     await page.addInitScript(installGameAudioTap);
-    await page.addInitScript(installRecorderChunkRetention, {
-      budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
-      maxPayloadBytes: MAX_CAPTURE_CHUNK_BYTES,
-    });
-
-    await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
-      diagnostics.recordChunk(base64);
-      sink.appendBase64(base64);
-    });
+    await recording.install();
 
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -2450,12 +2431,10 @@ async function captureScenes({
       page,
       totalMs + 500,
       [...sceneSampleTimes, ...transitionSampleTimes],
-      {
-        bytesAvailable: () => sink.stats().bytesWritten,
-        baseUrl,
-        outputPath,
-        partialPath: sink.partialPath,
-      },
+      // Probe source from the shared pipeline (AH-0MVNT2AFI00639N3): streamed
+      // size, final path and the `.partial` salvage path — same shape as the
+      // single/batch clip path.
+      recording.probeSource({ baseUrl }),
     );
     if (probeSource) {
       reporter.step(`Probe source: ${probeSource.source} — ${probeSource.reason}`);
@@ -2464,7 +2443,7 @@ async function captureScenes({
     // Every scene's chunk is already on disk; success is the rename into the
     // clip path (AH-0MVNT26AQ005LDNS). A failure leaves the partial file for
     // the salvage item (AH-0MVNT29MC008BQPY).
-    const written = sink.finalise({ success: true });
+    const written = recording.finalise({ success: true });
     const videoBytes = written.bytesWritten;
 
     // Diagnostics: page heap at clip end, the page-side retention state
@@ -2534,12 +2513,12 @@ async function captureScenes({
     // Graceful failure (AH-0MVNT29MC008BQPY): the same salvage seam as the
     // single/batch path — keep the multi-scene run's streamed bytes at the
     // documented `.partial` path and surface one actionable error.
-    throw salvageFailedCapture({ sink, outputPath, error });
+    throw salvageFailedCapture({ sink: recording.sink, outputPath, error });
   } finally {
     removeOverflowHandler();
     // Release the stream handle on every path (see the single-clip path): a
     // failed multi-scene run keeps its streamed bytes at the `.partial` path.
-    sink.close();
+    recording.close();
     await page.close().catch(() => {});
   }
 }
