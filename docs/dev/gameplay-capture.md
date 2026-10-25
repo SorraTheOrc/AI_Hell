@@ -654,9 +654,11 @@ run-length-proportional message class existed when the capture reads the buffer
 back for the series export, so that read is **chunked** too
 (`readDevTelemetryBufferInChunks`, ≤ `TELEMETRY_READ_CHUNK_CHARS` = 2 Mi chars
 per slice) — no single page→node message on the capture path grows with the
-run. Measured on a 420 s `--diagnostics` soak: `transport.maxMessageBytes` went
-from **37.9 MiB** (the run-end upload, pre-fix) to **5.0 MiB** (one chunked
-telemetry slice), with no upload message and no `recordings/` entry.
+run. Measured on a 420 s `--diagnostics` soak (AH-0MVNVGP55002G0KH):
+`transport.maxMessageBytes` fell from **37.9 MiB** pre-fix (the run-end
+upload delivered as one message) to **4.63 MiB** post-fix — the largest
+message left on the path is a single chunked telemetry read, comfortably under
+the 8 MiB cap — with `transport.overflow` empty and no transport error.
 
 ### Diagnostics (`--diagnostics`)
 
