@@ -85,6 +85,7 @@ import {
   CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
+  MAX_CAPTURE_CHUNK_BYTES,
   buildCaptureStartedMarker,
   summariseCaptureRun,
   waitForRunEnd,
@@ -1676,6 +1677,13 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     // controller, so page heap no longer grows with run length.
     await page.addInitScript(installRecorderChunkRetention, {
       budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
+      // Slice oversized recorder flushes into at-or-below-cap CDP messages
+      // (AH-0MVNT27XR0080I3C): a single `dataavailable` Blob must never reach
+      // the binding as one oversized base64 payload, or it can overflow
+      // Playwright's pipe transport with ERR_STRING_TOO_LONG. The cap is the
+      // single-sourced constant the sink enforces, so the page never slices at
+      // a size the sink would reject (AC1/AC4).
+      maxPayloadBytes: MAX_CAPTURE_CHUNK_BYTES,
     });
 
     // Install the run-end listener *before* the game boots so a short run
@@ -2237,6 +2245,7 @@ async function captureScenes({
     await page.addInitScript(installGameAudioTap);
     await page.addInitScript(installRecorderChunkRetention, {
       budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
+      maxPayloadBytes: MAX_CAPTURE_CHUNK_BYTES,
     });
 
     await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
@@ -2568,27 +2577,59 @@ async function startRecording(
         mimeType: resolvedMimeType,
         videoBitsPerSecond: 8_000_000,
       });
+      const captureStartedAtEpochMs = Date.now();
+
+      // The recorder state named by an unsplittable-payload error
+      // (AH-0MVNT27XR0080I3C AC2): track count, mime and the recording start
+      // anchor, so the actionable message says *what* was recording and for
+      // how long when the oversized flush arrived.
+      const recorderState = {
+        trackCount: audioTracks.length,
+        mimeType: resolvedMimeType,
+        startedAtEpochMs: captureStartedAtEpochMs,
+      };
 
       recorder.ondataavailable = (event) => {
         if (!event.data || event.data.size === 0) return;
         // The controller forwards each chunk exactly once (serialised behind
         // its own chain) and applies the retention decision; the sink writes
         // every payload to disk immediately, so dropping it from page
-        // retention cannot lose bytes.
-        void retention.handle(event.data, async (blob) => {
-          const bytes = new Uint8Array(await blob.arrayBuffer());
-          let binary = '';
-          for (let i = 0; i < bytes.length; i += 0x8000) {
-            binary += String.fromCharCode.apply(
-              null,
-              bytes.subarray(i, i + 0x8000),
-            );
-          }
-          await captureChunk(btoa(binary));
-        });
+        // retention cannot lose bytes. An oversized flush is sliced into
+        // at-or-below-cap binding calls here (AH-0MVNT27XR0080I3C AC1).
+        void retention
+          .handle(
+            event.data,
+            async (blob) => {
+              const bytes = new Uint8Array(await blob.arrayBuffer());
+              let binary = '';
+              for (let i = 0; i < bytes.length; i += 0x8000) {
+                binary += String.fromCharCode.apply(
+                  null,
+                  bytes.subarray(i, i + 0x8000),
+                );
+              }
+              await captureChunk(btoa(binary));
+            },
+            recorderState,
+          )
+          .catch((error) => {
+            // Keep the single actionable message (size, cap, recorder state)
+            // and surface it once at clip end — never an unhandled rejection
+            // with a raw stack, and never a second copy per later chunk.
+            if (!window.__aiHellCaptureChunkError) {
+              window.__aiHellCaptureChunkError = {
+                message:
+                  error && error.message ? error.message : String(error),
+                code:
+                  error && error.code
+                    ? error.code
+                    : 'CAPTURE_CHUNK_FORWARD_FAILED',
+                atEpochMs: Date.now(),
+              };
+            }
+          });
       };
 
-      const captureStartedAtEpochMs = Date.now();
       window.__aiHellCapture = {
         recorder,
         chunks: retention.retainedChunks(),
@@ -2635,6 +2676,19 @@ async function stopRecordingAndProbe(page, fallbackDurationMs, sampleTimesMs = n
     // include the last chunk (AH-0MVNT274M009XRJ1 AC4).
     if (retention && typeof retention.flush === 'function') {
       await retention.flush();
+    }
+
+    // Surface a rejected recorder chunk as one actionable error
+    // (AH-0MVNT27XR0080I3C AC2). The guard records the first failure with the
+    // payload size, the cap and the recorder state; rethrowing it here makes
+    // the clip fail with that message instead of an unhandled-rejection stack
+    // (and instead of the sink silently missing bytes).
+    const chunkError = window.__aiHellCaptureChunkError;
+    if (chunkError && chunkError.message) {
+      const error = new Error(chunkError.message);
+      error.name = 'CaptureChunkRejectedError';
+      error.code = chunkError.code || 'CAPTURE_CHUNK_REJECTED';
+      throw error;
     }
 
     const blob = new Blob(chunks, { type: mimeType });

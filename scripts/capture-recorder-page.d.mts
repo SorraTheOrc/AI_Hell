@@ -19,10 +19,30 @@ export interface RecorderChunkRetentionSettings {
    * `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (32 MiB) when omitted/negative.
    */
   budgetBytes?: number;
+  /**
+   * Per-message payload cap for the CDP binding, in bytes. An oversized Blob
+   * is sliced into at-or-below-cap pieces (one binding call per slice;
+   * AH-0MVNT27XR0080I3C). Defaults to `MAX_CAPTURE_CHUNK_BYTES` (16 MiB).
+   * When the capture tool runs it always passes the single-sourced constant
+   * explicitly; the default only backs direct page installs.
+   */
+  maxPayloadBytes?: number;
+}
+
+/** Recorder state named by the unsplittable-payload error (AC2). */
+export interface RecorderChunkRecorderState {
+  /** Number of audio tracks the recorder muxes (0 for video-only). */
+  trackCount?: number;
+  /** The resolved `MediaRecorder` mime type, e.g. `video/webm;codecs=vp9`. */
+  mimeType?: string;
+  /** Epoch-ms timestamp of `MediaRecorder.start` for elapsed-time reporting. */
+  startedAtEpochMs?: number;
 }
 
 export interface RecorderChunkRetentionStats {
   budgetBytes: number;
+  /** The per-message payload cap in force (slices at or below this). */
+  maxPayloadBytes: number;
   retainedBytes: number;
   retainedChunkCount: number;
   totalChunks: number;
@@ -31,6 +51,8 @@ export interface RecorderChunkRetentionStats {
   droppedBytes: number;
   /** True once any chunk was dropped because the budget was reached. */
   truncated: boolean;
+  /** Binding calls made to the sink (one per payload piece forwarded). */
+  sliceCount: number;
   failedForwards: number;
   /** Message of the first forward failure, or `null` when none occurred. */
   firstForwardError: string | null;
@@ -38,13 +60,16 @@ export interface RecorderChunkRetentionStats {
 
 export interface RecorderChunkRetentionController {
   /**
-   * Forwards one chunk to the node sink exactly once and retains it only
-   * while the bounded prefix budget allows. Resolves when the chunk's
-   * forward settles.
+   * Forwards one chunk to the node sink exactly once per payload piece
+   * (sliced at or below `maxPayloadBytes` when oversized) and retains it only
+   * while the bounded prefix budget allows. Resolves when the chunk's pieces
+   * settle; rejects with an actionable `CapturePayloadCannotSplitError` when
+   * the chunk is oversized but cannot be split (AC2).
    */
   handle(
     chunk: RecorderChunk | null | undefined,
     forward?: (chunk: RecorderChunk) => unknown,
+    recorderState?: RecorderChunkRecorderState,
   ): Promise<unknown>;
 
   /** Waits for every queued chunk's forward/retention to settle. */

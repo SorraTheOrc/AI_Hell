@@ -34,10 +34,23 @@
  * output file directly (AH-0MVNT28SJ008ZHDB) and the in-page prefix is only a
  * fallback for short clips.
  *
- * @param {{ budgetBytes?: number }} [settings]
+ * **Oversized-payload slicing** (`maxPayloadBytes`, AH-0MVNT27XR0080I3C,
+ * parent AC4): a stalled or retried recorder can emit one `dataavailable`
+ * Blob far above the normal ~1 MiB cadence. Handed to the CDP binding as one
+ * base64 string, that single payload is exactly what can push
+ * `PipeTransport._dispatch` past Node's maximum string length
+ * (`ERR_STRING_TOO_LONG`). When `maxPayloadBytes` is configured, `handle`
+ * slices such a Blob into pieces at or below the cap and calls `forward` once
+ * per slice, so the concatenation order and total bytes are unchanged while
+ * no single message ever exceeds the cap. A payload that **cannot** be split
+ * (the Blob has no `slice` method, or a produced slice is itself above the
+ * cap) is rejected with a single actionable error naming the payload size,
+ * the cap and the recorder state — before any byte reaches the pipe.
+ *
+ * @param {{ budgetBytes?: number, maxPayloadBytes?: number }} [settings]
  * @param {object} [scope] — global to install onto (defaults to `globalThis`).
  * @returns {{
- *   handle: (chunk: object, forward?: (chunk: object) => unknown) => Promise<unknown>,
+ *   handle: (chunk: object, forward?: (chunk: object) => unknown, recorderState?: object) => Promise<unknown>,
  *   flush: () => Promise<void>,
  *   retainedChunks: () => Array<object>,
  *   stats: () => object,
@@ -63,6 +76,109 @@ export function installRecorderChunkRetention(
       ? requested
       : 32 * 1024 * 1024;
 
+  const requestedCap = Number(cfg.maxPayloadBytes);
+  // Inline literal on purpose (mirrors `MAX_CAPTURE_CHUNK_BYTES` in
+  // `capture-run-lifecycle.mjs` = 16 MiB): serialised into the page, the
+  // function cannot read the shared constant from module scope. The capture
+  // tool passes the single-sourced constant explicitly at install time, and
+  // the unit tests pin this fallback to the constant (AC4 — no duplicated
+  // literal drifting out of sync).
+  const maxPayloadBytes =
+    Number.isFinite(requestedCap) && requestedCap > 0
+      ? requestedCap
+      : 16 * 1024 * 1024;
+
+  /**
+   * Human-readable byte size for the actionable unsplittable-payload error.
+   * Inline (not imported from `capture-diagnostics.mjs`) on purpose: this
+   * function is serialised into the page, so it cannot read module bindings.
+   */
+  const formatByteSize = (bytes) => {
+    if (!Number.isFinite(bytes) || bytes < 0) return `${bytes} B`;
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  };
+
+  /**
+   * Describes the recorder for the unsplittable-payload error: audio track
+   * count, mime type and elapsed recording time (parent AC4 / this item AC2).
+   */
+  const formatRecorderState = (recorderState, now = Date.now()) => {
+    const state =
+      recorderState && typeof recorderState === 'object' ? recorderState : null;
+    if (!state) return 'unavailable';
+    const trackCount =
+      typeof state.trackCount === 'number' ? state.trackCount : 'unknown';
+    const mimeType =
+      typeof state.mimeType === 'string' && state.mimeType
+        ? state.mimeType
+        : 'unknown';
+    const started = Number(state.startedAtEpochMs);
+    const elapsedMs =
+      Number.isFinite(started) && started > 0
+        ? Math.max(0, now - started)
+        : null;
+    return `${trackCount} audio tracks, mime ${mimeType}, elapsed ${
+      elapsedMs === null ? 'unknown' : `${elapsedMs} ms`
+    }`;
+  };
+
+  /**
+   * Why the recorder state cannot be trusted to describe an oversized chunk,
+   * or `null` when it is complete. An oversized payload is only sliced when
+   * the recorder state is usable, so any resulting error is actionable
+   * (AC2 lists "the recorder state is unusable" as an unsplittable case).
+   */
+  const recorderStateProblem = (recorderState) => {
+    const state =
+      recorderState && typeof recorderState === 'object' ? recorderState : null;
+    if (!state) return 'the recorder state is unavailable';
+    const missing = [];
+    if (typeof state.trackCount !== 'number' || state.trackCount < 0) {
+      missing.push('audio track count');
+    }
+    if (typeof state.mimeType !== 'string' || !state.mimeType) {
+      missing.push('mime type');
+    }
+    const started = Number(state.startedAtEpochMs);
+    if (!Number.isFinite(started) || started <= 0) {
+      missing.push('recording start time');
+    }
+    return missing.length > 0
+      ? `the recorder state is unusable (missing ${missing.join(', ')})`
+      : null;
+  };
+
+  /**
+   * Rejection thrown when an oversized payload cannot be sliced into
+   * at-or-below-cap pieces. Defined inside the installed function so it exists
+   * in the serialised page context; carries the size, cap and recorder state.
+   */
+  function CapturePayloadCannotSplitError(
+    sizeBytes,
+    capBytes,
+    recorderState,
+    reason,
+  ) {
+    const state = formatRecorderState(recorderState);
+    const error = new Error(
+      `capture recorder payload of ${sizeBytes} B (${formatByteSize(
+        sizeBytes,
+      )}) exceeds the configured chunk cap of ${capBytes} B (${formatByteSize(
+        capBytes,
+      )}) and cannot be split into at-or-below-cap pieces (${reason}); `
+        + `recorder state: ${state} — aborting: handing this blob to the CDP `
+        + 'pipe as one message can overflow the transport (ERR_STRING_TOO_LONG)',
+    );
+    error.name = 'CapturePayloadCannotSplitError';
+    error.code = 'CAPTURE_CHUNK_UNSPLITTABLE';
+    error.sizeBytes = sizeBytes;
+    error.capBytes = capBytes;
+    error.recorderState = state;
+    return error;
+  }
+
   /** Live, bounded retention array — the prefix handed to `new Blob(chunks)`. */
   const blobs = [];
   let retainedBytes = 0;
@@ -72,6 +188,10 @@ export function installRecorderChunkRetention(
   let droppedBytes = 0;
   let truncated = false;
   let failedForwards = 0;
+  // Binding calls made to the node sink (one per payload piece forwarded): a
+  // chunk at or below `maxPayloadBytes` counts as one; an oversized sliceable
+  // chunk counts as ceil(size / cap). Exposed for diagnostics (AC1/AC3).
+  let sliceCount = 0;
   // Serialises chunk handling so `flush()` can await every queued chunk even
   // though the recorder never awaits the `ondataavailable` handler: the final
   // chunk arrives before the `stop` event, but its async work may still be in
@@ -84,6 +204,7 @@ export function installRecorderChunkRetention(
 
   const stats = () => ({
     budgetBytes,
+    maxPayloadBytes,
     retainedBytes,
     retainedChunkCount: blobs.length,
     totalChunks,
@@ -91,6 +212,7 @@ export function installRecorderChunkRetention(
     droppedChunks,
     droppedBytes,
     truncated,
+    sliceCount,
     failedForwards,
     firstForwardError: firstError && firstError.message
       ? String(firstError.message)
@@ -100,18 +222,29 @@ export function installRecorderChunkRetention(
   const controller = {
     /**
      * Accepts one recorder chunk: forwards it to the node sink exactly once
-     * and retains it only while the bounded prefix budget allows.
+     * (per slice when it exceeds `maxPayloadBytes`) and retains it only
+     * while the bounded prefix budget allows.
      *
      * A chunk with no usable size (or an empty one) is ignored exactly like
      * the legacy handler — never forwarded, never retained.
      *
+     * An oversized chunk is sliced into pieces at or below `maxPayloadBytes`
+     * and `forward` is called once per slice, in order, so the sink sees the
+     * same bytes with the same concatenation order and no single CDP message
+     * ever exceeds the cap (AH-0MVNT27XR0080I3C AC1). A chunk that **cannot**
+     * be split (no `slice` method, or a slice produced above the cap) rejects
+     * **before** any binding call with one actionable error naming the size,
+     * the cap and the recorder state (AC2).
+     *
      * @param {object} chunk — the `dataavailable` `Blob` (or an object with a
      *   `size` for the unit tests).
-     * @param {(chunk: object) => unknown} [forward] — called once per accepted
-     *   chunk; the page wiring converts the Blob to base64 here.
-     * @returns {Promise<unknown>} resolves when this chunk's forward settles.
+     * @param {(chunk: object) => unknown} [forward] — called once per piece;
+     *   the page wiring converts the piece to base64 here.
+     * @param {{ trackCount?: number, mimeType?: string, startedAtEpochMs?: number }} [recorderState]
+     *   — recorder state named by the unsplittable-payload error.
+     * @returns {Promise<unknown>} resolves when this chunk's pieces settle.
      */
-    handle(chunk, forward) {
+    handle(chunk, forward, recorderState) {
       if (!chunk || typeof chunk.size !== 'number' || chunk.size <= 0) {
         return Promise.resolve();
       }
@@ -132,8 +265,58 @@ export function installRecorderChunkRetention(
           blobs.push(chunk);
           retainedBytes += size;
         }
-        if (typeof forward === 'function') {
+        if (typeof forward !== 'function') return;
+
+        if (size <= maxPayloadBytes) {
+          // At or below the cap: one binding call, unchanged from legacy.
+          sliceCount += 1;
           await forward(chunk);
+          return;
+        }
+
+        // Oversized: only slice when the recorder state is usable, so any
+        // rejection names what was recording (AC2).
+        const stateProblem = recorderStateProblem(recorderState);
+        if (stateProblem) {
+          throw CapturePayloadCannotSplitError(
+            size,
+            maxPayloadBytes,
+            recorderState,
+            stateProblem,
+          );
+        }
+        // Slice the Blob into at-or-below-cap pieces and send one binding call
+        // per slice, in order, so the concatenation order and total bytes are
+        // unchanged (AC1).
+        if (typeof chunk.slice !== 'function') {
+          throw CapturePayloadCannotSplitError(
+            size,
+            maxPayloadBytes,
+            recorderState,
+            'the Blob has no slice() method',
+          );
+        }
+        const pieceCount = Math.ceil(size / maxPayloadBytes);
+        for (let piece = 0; piece < pieceCount; piece += 1) {
+          const start = piece * maxPayloadBytes;
+          const end = Math.min(start + maxPayloadBytes, size);
+          const slice = chunk.slice(start, end);
+          if (
+            !slice ||
+            typeof slice.size !== 'number' ||
+            slice.size > maxPayloadBytes
+          ) {
+            // A slice above the cap means the payload cannot actually be
+            // split into safe pieces: reject before it reaches the pipe.
+            throw CapturePayloadCannotSplitError(
+              size,
+              maxPayloadBytes,
+              recorderState,
+              `a produced slice (${slice && slice.size} B) is itself above the cap`,
+            );
+          }
+          sliceCount += 1;
+          await forward(slice);
         }
       });
       chain = run.catch((error) => {

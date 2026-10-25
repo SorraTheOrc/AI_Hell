@@ -126,6 +126,7 @@ import {
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
   DEMO_GAME_OVER_DWELL_MS,
+  MAX_CAPTURE_CHUNK_BYTES,
   buildCaptureStartedMarker,
   buildRunEndedDetail,
   capWasReachedWithoutSignal,
@@ -3560,6 +3561,20 @@ function makePageForward(seen: string[]) {
   };
 }
 
+/**
+ * A complete recorder state for the oversized-payload guard
+ * (AH-0MVNT27XR0080I3C): an oversized chunk is only sliced when the recorder
+ * can be described in the error, so the page always passes this.
+ */
+function makeRecorderState(overrides: Record<string, unknown> = {}) {
+  return {
+    trackCount: 1,
+    mimeType: 'video/webm;codecs=vp9,opus',
+    startedAtEpochMs: Date.now() - 1_000,
+    ...overrides,
+  };
+}
+
 describe('installRecorderChunkRetention (AH-0MVNT274M009XRJ1)', () => {
   it('returns null on a scope that cannot hold the controller', () => {
     expect(installRecorderChunkRetention({}, null as never)).toBeNull();
@@ -3734,5 +3749,184 @@ describe('installRecorderChunkRetention (AH-0MVNT274M009XRJ1)', () => {
     expect(stats.firstForwardError).toContain('sink refused chunk');
     expect(stats.retainedBytes).toBe(6);
     expect(stats.retainedChunkCount).toBe(2);
+  });
+});
+
+/**
+ * Payload slicing + oversized-chunk guard for the CDP pipe
+ * (`installRecorderChunkRetention` with `maxPayloadBytes`, AH-0MVNT27XR0080I3C,
+ * parent AC4). A stalled or retried recorder can emit one `dataavailable`
+ * Blob far above the normal ~1 MiB cadence; before this guard the whole Blob
+ * became a single base64 string handed to the `__aiHellCaptureChunk` CDP
+ * binding, the exact class of message that overflows
+ * `PipeTransport._dispatch` with `ERR_STRING_TOO_LONG`. The controller now
+ * slices oversized Blobs at or below the cap (one binding call per slice) and
+ * rejects unsplittable payloads before any byte reaches the pipe, with an
+ * actionable error naming the size, the cap and the recorder state.
+ */
+describe('payload slicing and oversized-chunk guard (AH-0MVNT27XR0080I3C)', () => {
+  it('slices an oversized Blob into ceil(size/cap) binding calls whose concatenation equals the input (AC1/AC3a)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 1024, maxPayloadBytes: 8 },
+      scope,
+    )!;
+    const forwarded: string[] = [];
+    const payload = new Uint8Array(20);
+    for (let i = 0; i < payload.length; i += 1) payload[i] = i;
+    const chunk = new Blob([payload]);
+
+    await retention.handle(chunk as never, makePageForward(forwarded), makeRecorderState());
+
+    // ceil(20 / 8) = 3 binding calls, sliced at or below the cap. Decoded and
+    // concatenated in order, they are byte-identical to the single whole Blob.
+    expect(forwarded).toHaveLength(Math.ceil(20 / 8));
+    const rebuilt: number[] = [];
+    for (const base64 of forwarded) {
+      const sliceBytes = Buffer.from(base64, 'base64');
+      expect(sliceBytes.length).toBeGreaterThan(0);
+      expect(sliceBytes.length).toBeLessThanOrEqual(8);
+      for (const byte of sliceBytes) rebuilt.push(byte);
+    }
+    expect(rebuilt).toEqual(Array.from(payload));
+
+    const stats = retention.stats();
+    expect(stats.sliceCount).toBe(3);
+    expect(stats.failedForwards).toBe(0);
+    // Retention is unchanged by slicing: the whole chunk is retained, not its
+    // slices, so the probe's `new Blob(chunks)` still sees the recording head.
+    expect(stats.retainedChunkCount).toBe(1);
+    expect(stats.retainedBytes).toBe(20);
+  });
+
+  it('forwards a chunk at or below the cap as a single binding call', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 10, maxPayloadBytes: 4 },
+      scope,
+    )!;
+    const seen: string[] = [];
+
+    await retention.handle(makeRetentionChunk(4, 7), makePageForward(seen));
+
+    expect(seen).toHaveLength(1);
+    expect(retention.stats().sliceCount).toBe(1);
+    expect(retention.stats().retainedBytes).toBe(4);
+  });
+
+  it('rejects an oversized unsplittable payload before the pipe, naming size, cap and recorder state (AC2/AC3b)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 1024, maxPayloadBytes: 4 },
+      scope,
+    )!;
+    const forwarded: string[] = [];
+    const recorderState = {
+      trackCount: 2,
+      mimeType: 'video/webm;codecs=vp9,opus',
+      // Five seconds before the failure instant: the controller reports the
+      // elapsed recording time in the error.
+      startedAtEpochMs: Date.now() - 5_000,
+    };
+    // A chunk with size > cap but no `slice` method cannot be split.
+    const chunk = { size: 9, arrayBuffer: async () => new Uint8Array(9).buffer };
+
+    const error = (await retention
+      .handle(chunk as never, makePageForward(forwarded), recorderState)
+      .catch((caught: unknown) => caught)) as Error & {
+      sizeBytes?: number;
+      capBytes?: number;
+    };
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('9 B'); // payload size
+    expect(error.message).toContain('4 B'); // configured cap
+    expect(error.message).toContain('2 audio tracks'); // recorder state
+    expect(error.message).toContain('video/webm'); // recorder mime
+    expect(error.message).toMatch(/elapsed \d+ ms/); // recorder elapsed
+    expect(error.sizeBytes).toBe(9);
+    expect(error.capBytes).toBe(4);
+    // Nothing reached the pipe: no binding call was made for this chunk.
+    expect(forwarded).toHaveLength(0);
+  });
+
+  it('treats a slice that is itself above the cap as unsplittable (AC2)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 1024, maxPayloadBytes: 4 },
+      scope,
+    )!;
+    const seen: string[] = [];
+    // Pathological `slice` that returns a piece larger than the cap: the
+    // guard must not hand that slice to the pipe.
+    const chunk = {
+      size: 10,
+      slice: () => ({ size: 9, arrayBuffer: async () => new Uint8Array(9).buffer }),
+    };
+
+    const error = (await retention
+      .handle(
+        chunk as never,
+        makePageForward(seen),
+        makeRecorderState({ trackCount: 1 }),
+      )
+      .catch((caught: unknown) => caught)) as Error;
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('a produced slice');
+    expect(error.message).toContain('cannot be split');
+    expect(seen).toHaveLength(0);
+  });
+
+  it('rejects an oversized payload whose recorder state is unusable, naming size, cap and state (AC2)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 1024, maxPayloadBytes: 4 },
+      scope,
+    )!;
+    const seen: string[] = [];
+    // A perfectly sliceable Blob, but the recorder cannot be described (no
+    // mime / start time), so the error could not be actionable.
+    const chunk = new Blob([new Uint8Array(9)]);
+
+    const error = (await retention
+      .handle(chunk as never, makePageForward(seen), { trackCount: 0 })
+      .catch((caught: unknown) => caught)) as Error;
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('9 B');
+    expect(error.message).toContain('4 B');
+    expect(error.message).toContain('the recorder state is unusable');
+    expect(error.message).toContain('mime type');
+    expect(error.message).toContain('recording start time');
+    expect(seen).toHaveLength(0);
+  });
+
+  it('defaults the slice cap to the single-sourced MAX_CAPTURE_CHUNK_BYTES and keeps the queue alive after a rejection (AC4)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 1 }, scope)!;
+
+    // The fallback used when the capture tool does not pass the cap explicitly
+    // must equal the shared constant, so the page never slices at a size the
+    // sink would reject (AC4: no duplicated literal drifting out of sync).
+    expect(retention.stats().maxPayloadBytes).toBe(MAX_CAPTURE_CHUNK_BYTES);
+
+    const secondScope: Record<string, unknown> = {};
+    const explicit = installRecorderChunkRetention(
+      { maxPayloadBytes: 3 },
+      secondScope,
+    )!;
+    expect(explicit.stats().maxPayloadBytes).toBe(3);
+
+    // An unsplittable rejection must not poison later chunks (parity with the
+    // forward-failure path): the next in-cap chunk is still forwarded.
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+    await explicit
+      .handle(makeRetentionChunk(9, 5), forward, makeRecorderState())
+      .catch(() => undefined);
+    await explicit.handle(makeRetentionChunk(2, 6), forward, makeRecorderState());
+    expect(seen).toHaveLength(1);
+    expect(explicit.stats().sliceCount).toBe(1);
   });
 });

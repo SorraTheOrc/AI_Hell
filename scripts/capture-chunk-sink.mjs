@@ -23,10 +23,10 @@
  * documented `partialPath`.
  *
  * A chunk larger than the configured cap is rejected **before** it is decoded
- * or written, with an actionable error naming the size and the cap: the page
- * side is expected to slice oversized payloads (AH-0MVNT27XR0080I3C), and the
- * sink is the last-resort backstop that guarantees no single retained buffer
- * ever exceeds the cap (AC2).
+ * or written, with an actionable error naming the size and the cap. The page
+ * side slices oversized payloads into at-or-below-cap binding calls
+ * (AH-0MVNT27XR0080I3C), so the sink is the last-resort backstop that
+ * guarantees no single retained buffer ever exceeds the cap (AC2).
  *
  * This module is plain ESM JavaScript with node built-ins only (plus the
  * shared run-lifecycle constants) so the capture tool runs without a

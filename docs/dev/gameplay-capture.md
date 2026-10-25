@@ -601,14 +601,31 @@ never has to fit in the heap, and the whole-run `Buffer.concat` is gone.
   `peakPendingBytes`; `peakPendingBytes` never exceeds a single chunk and
   nothing is retained between writes. A chunk larger than the cap is refused
   with an actionable error (`CAPTURE_CHUNK_TOO_LARGE`) **before** it is
-  decoded — the page side is expected to slice payloads first
-  (AH-0MVNT27XR0080I3C).
+  decoded; the page-side guard below slices payloads first
+  (AH-0MVNT27XR0080I3C), so in normal operation the sink never sees an
+  oversized chunk.
+- **Oversized payload guard (page side).** A stalled or retried recorder can
+  emit one `dataavailable` Blob far above the normal ~1 MiB cadence. The
+  page-side retention controller (`scripts/capture-recorder-page.mjs`) is
+  installed with the same cap and, when a chunk exceeds it, slices the Blob
+  into pieces at or below `MAX_CAPTURE_CHUNK_BYTES` and makes **one
+  `__aiHellCaptureChunk` binding call per slice** — the concatenation order
+  and total bytes are unchanged, but no single CDP message ever carries an
+  oversized base64 payload (the message class that overflows
+  `PipeTransport._dispatch`). A payload that cannot be split (no `slice()`,
+  a produced slice itself above the cap, or an unusable recorder state) is
+  rejected **before** it reaches the pipe with one actionable error naming the
+  payload size, the cap and the recorder state (audio track count, mime type,
+  elapsed recording ms); the clip then fails with that message instead of an
+  `ERR_STRING_TOO_LONG` stack, and the bytes already streamed stay at
+  `<stem>.partial.webm`.
 - **Shared limits.** Both capture limits are declared once, next to
   `DEFAULT_MAX_CAPTURE_DURATION_MS` in `scripts/capture-run-lifecycle.mjs`,
   and imported rather than re-declared:
   - `MAX_CAPTURE_CHUNK_BYTES` (**16 MiB**) — the single-chunk cap, ~16x a
     normal 1 MiB/s chunk and far below the ≈512 MiB CDP pipe ceiling that
-    overflows with `ERR_STRING_TOO_LONG`.
+    overflows with `ERR_STRING_TOO_LONG`. It is the per-slice cap for the
+    page-side guard and the backstop the sink enforces.
   - `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (**32 MiB**) — the bounded prefix the
     page-side retention and the streamed probe measure from (≈32 s of 8 Mbps
     footage).
