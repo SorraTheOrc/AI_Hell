@@ -151,6 +151,7 @@ import {
 } from '../ai/tuningFields';
 import { getCurrentBotTuningConfig } from '../core/botTuningStore';
 import { loadEnemyConfig } from '../core/enemyConfig';
+import { enemyForceFieldHits } from '../core/enemyForceField';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
 import {
   createTelemetryRecorder,
@@ -1623,6 +1624,12 @@ export class PlayScene extends CombatScene<
       origin?.y ?? spawn.y,
       spawn.offset,
       this.rng,
+      // Force-field strength is resolved ONCE at spawn from the live run
+      // level through the shared pure curve (epic AH-0MVJ8W4GE007OMNT AC4,
+      // AH-0MVM8GXEF009883O) — never a hard-coded value and never the raw
+      // config column. The level gym resolves the same curve at its launched
+      // level (see `src/scenes/gym/GymLevel.ts`).
+      enemyForceFieldHits(this.waveManager.level, cfg),
     );
     entity.shootEnabled = spawn.shootEnabled;
 
@@ -1951,6 +1958,10 @@ export class PlayScene extends CombatScene<
       event.y,
       { row: 0, col: 0 },
       this.rng,
+      // Same shared curve as `_spawnEnemy`: a heavy archetype scheduled
+      // mid-wave is shielded exactly like a formation-spawned one at the
+      // same run level (AH-0MVM8GXEF009883O).
+      enemyForceFieldHits(this.waveManager.level, cfg),
     );
     this.add.existing(entity);
     this.spawned.push({
@@ -2034,6 +2045,7 @@ export class PlayScene extends CombatScene<
       event.y,
       { row: 0, col: 0 },
       this.rng,
+      enemyForceFieldHits(this.waveManager.level, cfg),
     );
     this.add.existing(entity);
     this.spawned.push({
@@ -2217,6 +2229,7 @@ export class PlayScene extends CombatScene<
       event.y,
       { row: 0, col: 0 },
       this.rng,
+      enemyForceFieldHits(this.waveManager.level, cfg),
     );
     this.add.existing(entity);
     this.spawned.push({
@@ -2314,6 +2327,10 @@ export class PlayScene extends CombatScene<
       color: cfg.color,
       health: cfg.health,
       rng: this.rng,
+      // Lane traffic never shields in the authored campaign (start level 0);
+      // the same shared curve still resolves the run level here so every
+      // game spawn seam is uniform (AH-0MVM8GXEF009883O).
+      forceFieldHits: enemyForceFieldHits(this.waveManager.level, cfg),
     });
     this.add.existing(entity);
     this.spawned.push({

@@ -93,6 +93,7 @@ import {
   type FormationOffset,
 } from '../../utils/formations';
 import { loadEnemyConfig } from '../../core/enemyConfig';
+import { enemyForceFieldHits } from '../../core/enemyForceField';
 import {
   GAME_WIDTH,
   GAME_HEIGHT,
@@ -249,6 +250,14 @@ export interface GymLevelWaveSpawnOptions {
   origin?: PortalPoint;
   /** Live formation drift (px) for this frame, read by the transit target. */
   getDriftX?: () => number;
+  /**
+   * Campaign level the wave is launched at, used to resolve enemy force
+   * fields through the shared pure curve (`enemyForceFieldHits`). The level
+   * gym passes its launched `levelNumber`; a single-wave launch sends `0`,
+   * which resolves to level 1 (the identity, unshielded for the shipped
+   * defaults). Omitting it is also treated as level 1.
+   */
+  level?: number;
 }
 
 // ── Wave spawning ──────────────────────────────────────────────────
@@ -273,11 +282,18 @@ export function spawnWave(
 ): GymLevelBullet[] {
   const bullets: GymLevelBullet[] = [];
   const origin = options.origin;
+  // Campaign level for force-field resolution (AH-0MVM8GXEF009883O).
+  const level = options.level ?? 1;
 
   for (const group of wave.groups) {
     const baseConfig = loadEnemyConfig(group.enemyKey);
     const key = baseConfig.key || group.enemyKey;
     const buildOffsets = getFormationBuilder(group.formation);
+    // Resolve the force field ONCE per group through the same shared curve the
+    // game uses at its run level, and thread it down the common factory path
+    // (game↔gym parity, epic AH-0MVJ8W4GE007OMNT AC4). A formation gym without
+    // campaign context sets the hits directly instead (see GymFodderEnemies).
+    const forceFieldHits = enemyForceFieldHits(level, baseConfig);
 
     // Per-group formation spacing/position overrides (WaveGroup, not the
     // archetype config) so a generated wave is spawned exactly as authored.
@@ -295,6 +311,8 @@ export function spawnWave(
         origin?.x ?? x,
         origin?.y ?? y,
         offset,
+        undefined,
+        forceFieldHits,
       );
       scene.add.existing(enemy);
       spawned.push({
@@ -635,6 +653,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       ...spawnWave(this, wave, this.spawned, {
         origin: portal ?? undefined,
         getDriftX: () => this.driftX,
+        // The launched campaign level drives the shared force-field curve.
+        level: this.levelNumber,
       }),
     );
     // Timed wave parity (AH-0MV9AWR7A0084XJ0): the game's regular waves run a

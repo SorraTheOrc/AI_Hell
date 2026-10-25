@@ -23,6 +23,7 @@ import {
   type GymLevelData,
 } from './GymLevel';
 import { Diver } from '../../entities/Diver';
+import { Tank } from '../../entities/Tank';
 import { Harvester } from '../../entities/Harvester';
 import { Asteroid } from '../../entities/Asteroid';
 import type { EnemyEntity } from '../../entities/enemyFactory';
@@ -34,6 +35,8 @@ import {
 import { getFormationBuilder } from '../../utils/formations';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { createSeededRng } from '../../core/rng';
+import { enemyForceFieldHits } from '../../core/enemyForceField';
+import { DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
 import { computeSpawns } from '../../waves/AsteroidSpawner';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 
@@ -852,5 +855,97 @@ describe('GymLevel — scheduled asteroid hazard + timed waves (AH-0MV9AWR7A0084
 
     expect(scene.getPendingAsteroidSpawns()).toEqual([]);
     expect(scene.getAsteroids()).toHaveLength(0);
+  });
+});
+// ── Force-field spawn parity at launch (AH-0MVM8GXEF009883O, AC4) ───
+
+/**
+ * `GymLevel` launches *real campaign waves* through the same factory path as
+ * `PlayScene._spawnEnemy`, so it must resolve enemy force fields through the
+ * same shared curve at the **launched level** (`level.level`). A formation
+ * gym without campaign context gets direct slider hits instead (see
+ * `GymFodderEnemies`); the level gym is the campaign-parity gym and must
+ * never bypass the curve. The game↔gym equality is cross-asserted in
+ * `src/scenes/core/CombatScene.equivalence.test.ts`.
+ */
+describe('GymLevel — force-field spawn resolution (AH-0MVM8GXEF009883O)', () => {
+  let booted: BootedGame | null = null;
+
+  const tick = () => advanceGame(booted!.game, 200);
+
+  /** A single non-firing Tank wave wrapped in a level definition. */
+  function tankLevel(level: number): LevelDefinition {
+    return {
+      level,
+      name: `FF Level ${level}`,
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'tank',
+              formation: 'rect',
+              count: 2,
+              spacingX: 44,
+              spacingY: 36,
+              startX: GAME_WIDTH * 0.3,
+              startY: GAME_HEIGHT * 0.25,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    };
+  }
+
+  async function bootLevel(level: number): Promise<GymLevel> {
+    booted = await bootScene([GymLevel]);
+    const manager = booted.game.scene;
+    manager.start('GymLevel', { level: tankLevel(level) });
+    await tick();
+    const scene = manager.getScene('GymLevel') as GymLevel;
+    scene.finishSpawnAnimations();
+    return scene;
+  }
+
+  /** The launched wave's live Tanks (formation enemies only). */
+  function liveTanks(scene: GymLevel): Tank[] {
+    return scene
+      .getEnemies()
+      .filter((enemy): enemy is Tank => enemy instanceof Tank && enemy.alive);
+  }
+
+  it('resolves the launched level through the shared curve at spawn', async () => {
+    const scene = await bootLevel(5);
+
+    const expected = enemyForceFieldHits(5, DEFAULT_ENEMY_CONFIGS.tank);
+    expect(expected).toBeGreaterThan(0);
+    const tanks = liveTanks(scene);
+    expect(tanks.length).toBeGreaterThan(0);
+    for (const tank of tanks) {
+      expect(tank.forceFieldHits).toBe(expected);
+      expect(tank.hasForceField).toBe(true);
+    }
+  });
+
+  it('leaves level 1 untouched — launched tanks are unshielded', async () => {
+    const scene = await bootLevel(1);
+    expect(await enemyForceFieldHits(1, DEFAULT_ENEMY_CONFIGS.tank)).toBe(0);
+    const tanks = liveTanks(scene);
+    expect(tanks.length).toBeGreaterThan(0);
+    for (const tank of tanks) {
+      expect(tank.forceFieldHits).toBe(0);
+      expect(tank.hasForceField).toBe(false);
+    }
+  });
+
+  it('treats a single-wave launch (level 0) as the level-1 identity', async () => {
+    const scene = await bootLevel(0);
+    // `clampLevel` resolves 0 → 1: the identity launch, never a fabricated field.
+    const tanks = liveTanks(scene);
+    expect(tanks.length).toBeGreaterThan(0);
+    for (const tank of tanks) {
+      expect(tank.forceFieldHits).toBe(0);
+      expect(tank.hasForceField).toBe(false);
+    }
   });
 });

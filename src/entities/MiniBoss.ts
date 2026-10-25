@@ -38,6 +38,7 @@ import { Boss, type BossBullet } from './Boss';
 import { createEnemyFromConfig, type EnemyEntity } from './enemyFactory';
 import { fireForEnemy } from './enemyFire';
 import { loadEnemyConfig } from '../core/enemyConfig';
+import { enemyForceFieldHits } from '../core/enemyForceField';
 import type { FormationOffset } from '../utils/formations';
 import { planGroupSpawns, type EnemySpawn } from '../waves/WaveManager';
 import type { WaveGroup } from '../waves/Formations';
@@ -398,6 +399,11 @@ export class MiniBoss extends Boss {
         spawn.y,
         spawn.offset,
         rng,
+        // Minion force fields resolve the mini-boss's campaign level through
+        // the same shared curve as every other game spawn (the game builds
+        // the config with the run level; a gym passes its own level or
+        // defaults to 1 = unshielded) — AH-0MVM8GXEF009883O.
+        enemyForceFieldHits(this.resolvedConfig.level ?? 1, cfg),
       );
       entity.shootEnabled = spawn.shootEnabled;
       (this.scene as Phaser.Scene).add.existing(entity);

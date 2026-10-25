@@ -43,6 +43,7 @@ import { LaneTraffic } from '../entities/LaneTraffic';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
+import { Tank } from '../entities/Tank';
 import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
 import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss } from '../entities/MiniBoss';
 import { minionCountForPhase } from '../waves/BossMinions';
@@ -86,6 +87,7 @@ import {
   type GhostSpawnEvent,
 } from '../waves/GhostSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
+import { enemyForceFieldHits } from '../core/enemyForceField';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
 import {
   DEFAULT_RULES,
@@ -3117,10 +3119,16 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
     const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
 
-    // Kill the Diver with a player bullet (fully spawned, so damage applies).
+    // Kill the Diver with player bullets (fully spawned, so damage applies).
+    // A level-2 Diver carries its resolved force field (start level 2,
+    // AH-0MVM8GXEF009883O), so drain the field before the hull takes damage.
     finishSpawnSequence(scene);
-    scene.spawnPlayerBullet(seam!.x, seam!.y, 0, 0);
-    scene.tick(0.016);
+    const fieldHits = (seam as unknown as { forceFieldHits?: number })
+      .forceFieldHits ?? 0;
+    for (let i = 0; i <= fieldHits; i++) {
+      scene.spawnPlayerBullet(seam!.x, seam!.y, 0, 0);
+      scene.tick(0.016);
+    }
 
     expect(diverSound).toHaveBeenCalledTimes(1);
     // The generic sound is NOT used when the entity exposes the seam.
@@ -3158,9 +3166,17 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
 
     // Let auto-fire fire its opening volley, then park the ship on the Diver
-    // so the body-collision path triggers (mirrors the scout ram test).
+    // so the body-collision path triggers (mirrors the scout ram test). A
+    // shielded Diver's force field absorbs the ram (AC2, Q6 = B), so drain
+    // the field first — the both-destroyed rule then applies exactly once.
     finishSpawnSequence(scene);
     scene.tick(0.016);
+    const fieldHits = (seam as unknown as { forceFieldHits?: number })
+      .forceFieldHits ?? 0;
+    for (let i = 0; i < fieldHits; i++) {
+      scene.spawnPlayerBullet(seam!.x, seam!.y, 0, 0);
+      scene.tick(0.016);
+    }
     player.setPosition(seam!.x, seam!.y);
     const state = player.getMovementState();
     (player as unknown as { _movementState: { x: number; y: number } })._movementState =
@@ -7852,5 +7868,143 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
     scene.tick(0.016);
     expect(registry.isActive('speed_boost')).toBe(true);
     expect(registry.speedMultiplier()).toBe(1.5);
+  });
+});
+
+// ── Force-field spawn resolution (AH-0MVM8GXEF009883O, AC4) ──────────
+
+/**
+ * The game resolves an enemy's force-field strength **once, at spawn**, from
+ * the live run level (`WaveManager.level`) through the shared pure resolver
+ * (`enemyForceFieldHits`) — never a hard-coded level and never a raw config
+ * column. The resolved count is threaded through the same factory parameter
+ * the entity layer (AH-0MVM8GUZG008AWSU) introduced. The gym counterpart of
+ * this seam is pinned by the parity block in
+ * `src/scenes/core/CombatScene.equivalence.test.ts`.
+ */
+describe('PlayScene — force-field spawn resolution (AH-0MVM8GXEF009883O)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** One injected level: a single non-firing Tank wave (a heavy archetype). */
+  function tankLevel(level: number, count = 3): LevelDefinition {
+    return {
+      level,
+      name: `Force Field Level ${level}`,
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'tank',
+              formation: 'rect',
+              count,
+              spacingX: 44,
+              spacingY: 36,
+              startX: GAME_WIDTH * 0.3,
+              startY: GAME_HEIGHT * 0.25,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    };
+  }
+
+  /**
+   * A `target`-level campaign (…one Tank wave per level). `WaveManager.level`
+   * is the 1-based level **index**, so the run must actually reach the target
+   * level for the spawn seam to resolve it — the injected level definitions'
+   * `level` field alone does not move the manager.
+   */
+  function tankCampaign(target: number): LevelDefinition[] {
+    return Array.from({ length: target }, (_, i) => tankLevel(i + 1));
+  }
+
+  /** Clears the active wave (bullets drain any force fields) and transitions. */
+  function advanceToLevel(scene: PlayScene, target: number): void {
+    for (let guard = 0; guard < 12 && scene.getWaveManager().level < target; guard++) {
+      killAllEnemies(scene);
+      finishTransition(scene);
+    }
+    expect(scene.getWaveManager().level).toBe(target);
+  }
+
+  /** Boots the injected campaign and returns the wave's live Tanks. */
+  async function bootCampaign(targetLevel: number): Promise<{ scene: PlayScene; tanks: Tank[] }> {
+    booted = (await bootSceneWithLevels(tankCampaign(targetLevel))).booted;
+    const scene = booted.scene as PlayScene;
+    advanceToLevel(scene, targetLevel);
+    const tanks = scene
+      .getEnemies()
+      .filter((enemy): enemy is Tank => enemy instanceof Tank && enemy.alive);
+    return { scene, tanks };
+  }
+
+  it('resolves the run level through the shared curve at spawn', async () => {
+    const { scene, tanks } = await bootCampaign(5);
+    expect(scene.getWaveManager().level).toBe(5);
+    expect(tanks).toHaveLength(3);
+
+    const expected = enemyForceFieldHits(5, DEFAULT_ENEMY_CONFIGS.tank);
+    // Sanity: a level-5 Tank is genuinely shielded (2 → 4 curve, start level 2).
+    expect(expected).toBeGreaterThan(0);
+    for (const tank of tanks) {
+      expect(tank.forceFieldHits).toBe(expected);
+      expect(tank.hasForceField).toBe(true);
+    }
+  });
+
+  it('leaves level 1 untouched — every spawned tank is unshielded', async () => {
+    const { scene, tanks } = await bootCampaign(1);
+    expect(scene.getWaveManager().level).toBe(1);
+    expect(tanks).toHaveLength(3);
+    for (const tank of tanks) {
+      expect(tank.forceFieldHits).toBe(0);
+      expect(tank.hasForceField).toBe(false);
+    }
+  });
+
+  it('is deterministic for a fixed level: two runs yield identical shields', async () => {
+    const first = await bootCampaign(7);
+    const firstFields = first.tanks.map((tank) => tank.forceFieldHits);
+    booted?.game.destroy(true);
+    booted = null;
+
+    const second = await bootCampaign(7);
+    expect(second.tanks.map((tank) => tank.forceFieldHits)).toEqual(firstFields);
+    expect(firstFields[0]).toBe(
+      enemyForceFieldHits(7, DEFAULT_ENEMY_CONFIGS.tank),
+    );
+  });
+
+  it('resolves the same curve for scheduled secondary spawns (Harvester)', async () => {
+    // Scheduled Harvester spawns share the scene's spawn seam; a heavy
+    // archetype scheduled mid-wave must be shielded exactly like a
+    // formation-spawned one at the same run level.
+    const { scene } = await bootCampaign(5);
+    const spawn = (scene as unknown as {
+      _spawnScheduledHarvester(event: {
+        x: number;
+        y: number;
+        timeFraction: number;
+        timeSeconds: number;
+      }): void;
+    })._spawnScheduledHarvester.bind(scene);
+    spawn({ x: GAME_WIDTH * 0.5, y: GAME_HEIGHT * 0.5, timeFraction: 0.5, timeSeconds: 1 });
+
+    const harvesters = scene
+      .getEnemies()
+      .filter((enemy): enemy is Harvester => enemy instanceof Harvester && enemy.alive);
+    expect(harvesters.length).toBeGreaterThan(0);
+    for (const harvester of harvesters) {
+      expect(harvester.forceFieldHits).toBe(
+        enemyForceFieldHits(5, DEFAULT_ENEMY_CONFIGS.harvester),
+      );
+    }
   });
 });

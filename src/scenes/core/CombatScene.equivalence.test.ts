@@ -44,9 +44,11 @@ import { minionCountForPhase } from '../../waves/BossMinions';
 import { ENEMY_FIRE_METHODS, fireForEnemy } from '../../entities/enemyFire';
 import { createEnemyFromConfig } from '../../entities/enemyFactory';
 import { loadEnemyConfig } from '../../core/enemyConfig';
+import { enemyForceFieldHits } from '../../core/enemyForceField';
 import { GymBoss } from '../gym/GymBoss';
 import { GymLevel } from '../gym/GymLevel';
 import { Harvester } from '../../entities/Harvester';
+import { Tank } from '../../entities/Tank';
 import { Mineral } from '../../entities/Mineral';
 import {
   DIVER_HOLD_FORMATION_SECONDS,
@@ -2209,6 +2211,11 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   // and the temporary PENDING red-first wrapper has been removed.
   ['pushAimTargets', 'src/scenes/core/enemyTargeting.ts'],
   ['pushSeekTargets', 'src/scenes/core/enemyTargeting.ts'],
+  // Enemy force-field resolver (epic AH-0MVJ8W4GE007OMNT AC4,
+  // AH-0MVM8GXEF009883O): the curve is evaluated once in this pure module and
+  // consumed by PlayScene's spawn seam and GymLevel's launch seam, so a scene
+  // that re-introduces a divergent copy fails the guard.
+  ['enemyForceFieldHits', 'src/core/enemyForceField.ts'],
 ];
 
 /**
@@ -3760,5 +3767,199 @@ describe('hold-full overlay metronome + countdown — gym↔game parity (AC5)', 
         `${file} defers to selectMineralChoice`,
       ).toBe(true);
     }
+  });
+});
+
+// ── Enemy force-field spawn parity (AH-0MVM8GXEF009883O) ─────────────
+
+/**
+ * Game↔gym parity for the enemy force-field curve (epic AH-0MVJ8W4GE007OMNT
+ * AC4). The resolver (`enemyForceFieldHits`) is pure shared code: the game
+ * resolves it in `PlayScene._spawnEnemy` from `WaveManager.level`, the level
+ * gym resolves it in `GymLevel.spawnWave` from the launched `level.level`, and
+ * both hand the count to the same `createEnemyFromConfig` factory parameter.
+ * The ram-absorb branch is shared core (`CombatScene._handleCollisions` step
+ * 4), so the same (level, config) pair must yield both the same shields and
+ * the same ram outcome in the two scenes.
+ */
+describe('enemy force-field spawn parity — game and level gym (AH-0MVM8GXEF009883O)', () => {
+  const games: BootedGame[] = [];
+  const FF_LEVEL = 5;
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+    localStorage.clear();
+  });
+
+  /** One non-firing Tank wave at `level` — a heavy archetype, shielded at L2+. */
+  function tankLevel(level: number, count = 1): LevelDefinition {
+    return {
+      level,
+      name: `Force Field Parity ${level}`,
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'tank',
+              formation: 'rect',
+              count,
+              spacingX: 44,
+              spacingY: 36,
+              startX: 300,
+              startY: 180,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    };
+  }
+
+  /** A `target`-level Tank campaign (one wave per level). */
+  function tankCampaign(target: number): LevelDefinition[] {
+    return Array.from({ length: target }, (_, i) => tankLevel(i + 1));
+  }
+
+  /**
+   * Clears the active wave. Bullets drain any force field first, so this also
+   * works for shielded Tank waves at deeper levels.
+   */
+  function clearLiveEnemies(play: PlayScene): void {
+    play.finishSpawnAnimations();
+    for (let guard = 0; guard < 500; guard++) {
+      if (play.isMineralChoiceOpen()) {
+        play.selectMineralChoice(0);
+        continue;
+      }
+      const enemy = play.getEnemies().find((entity) => entity.alive);
+      if (!enemy) break;
+      play.spawnPlayerBullet(enemy.x, enemy.y, 0, 0);
+      play.tick(0.016);
+    }
+  }
+
+  /**
+   * Boots `PlayScene` on an injected `targetLevel`-level Tank campaign and
+   * walks it to that level (`WaveManager.level` is the 1-based level index,
+   * so spawning at level N requires the run to reach it).
+   */
+  async function bootGameCampaign(targetLevel: number): Promise<PlayScene> {
+    // Opt out of the sequenced campaign so the injected fixture is honoured.
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    const booted = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'ff-play-host',
+    );
+    games.push(booted);
+    const scene = booted.scene as PlayScene;
+    // Batch walking must not end the run on a stray ram.
+    scene.getGameState().lives = 99;
+    scene.getWaveManager().setLevels(tankCampaign(targetLevel));
+    scene.scene.restart();
+    await advanceGame(booted.game, 200);
+    for (
+      let guard = 0;
+      guard < 12 && scene.getWaveManager().level < targetLevel;
+      guard++
+    ) {
+      clearLiveEnemies(scene);
+      if (scene.isTransitioning()) scene.tick(3.0);
+    }
+    scene.finishSpawnAnimations();
+    return scene;
+  }
+
+  /** Boots the real Level Gym with the same launched level (gym spawn path). */
+  async function bootLevelGym(level: LevelDefinition): Promise<GymLevel> {
+    const booted = await bootScene([GymLevel], 'ff-gym-host');
+    games.push(booted);
+    const manager = booted.game.scene;
+    manager.start('GymLevel', { level });
+    await advanceGame(booted.game, 200);
+    const scene = manager.getScene('GymLevel') as GymLevel;
+    scene.finishSpawnAnimations();
+    return scene;
+  }
+
+  function tanksOf(entities: readonly unknown[]): Tank[] {
+    return entities.filter(
+      (entity): entity is Tank => entity instanceof Tank && entity.alive,
+    );
+  }
+
+  /** Suspends auto-fire so only the ram touches the enemy in the collision pass. */
+  function suspendAutoFire(scene: PlayScene | GymLevel): void {
+    (scene as unknown as { autoFireEnabled(): boolean }).autoFireEnabled =
+      () => false;
+  }
+
+  /** Pins a player at (x, y) without the next physics tick snapping it back. */
+  function placePlayer(player: Player, x: number, y: number): void {
+    player.setPosition(x, y);
+    const state = player.getMovementState();
+    (
+      player as unknown as {
+        _movementState: ReturnType<Player['getMovementState']>;
+      }
+    )._movementState = { ...state, x, y, vx: 0, vy: 0 };
+  }
+
+  it('resolves identical field hits for the same (level, config) pair in both spawn paths', async () => {
+    const game = await bootGameCampaign(FF_LEVEL);
+    const gym = await bootLevelGym(tankLevel(FF_LEVEL));
+
+    const expected = enemyForceFieldHits(
+      FF_LEVEL,
+      loadEnemyConfig('tank'),
+    );
+    // A level-5 Tank is genuinely shielded — the parity assertion is not vacuous.
+    expect(expected).toBeGreaterThan(0);
+
+    const gameFields = tanksOf(game.getEnemies()).map((t) => t.forceFieldHits);
+    const gymFields = tanksOf(gym.getEnemies()).map((t) => t.forceFieldHits);
+    expect(gameFields.length).toBeGreaterThan(0);
+    expect(gameFields.every((hits) => hits === expected)).toBe(true);
+    expect(gymFields).toEqual(gameFields);
+
+    // Both still resolve level 1 to the unshielded baseline (L1 untouched).
+    const gameL1 = await bootGameCampaign(1);
+    const gymL1 = await bootLevelGym(tankLevel(1));
+    expect(tanksOf(gameL1.getEnemies()).every((t) => t.forceFieldHits === 0)).toBe(true);
+    expect(tanksOf(gymL1.getEnemies()).every((t) => t.forceFieldHits === 0)).toBe(true);
+  });
+
+  it('absorbs a player ram identically in the game and the gym (one field hit, both survive)', async () => {
+    const game = await bootGameCampaign(FF_LEVEL);
+    const gym = await bootLevelGym(tankLevel(FF_LEVEL));
+    const expected = enemyForceFieldHits(FF_LEVEL, loadEnemyConfig('tank'));
+
+    const gameTank = tanksOf(game.getEnemies())[0];
+    const gymTank = tanksOf(gym.getEnemies())[0];
+    expect(gameTank).toBeDefined();
+    expect(gymTank).toBeDefined();
+    expect(gameTank.forceFieldHits).toBe(expected);
+    expect(gymTank.forceFieldHits).toBe(expected);
+
+    // Park the ship on the shielded enemy: the shared core must consume
+    // exactly one field hit and destroy neither side.
+    suspendAutoFire(game);
+    suspendAutoFire(gym);
+    placePlayer(game.getPlayer()!, gameTank.x, gameTank.y);
+    placePlayer(gym.getShip()!, gymTank.x, gymTank.y);
+
+    game.tick(1 / 60);
+    gym.tick(1 / 60);
+
+    expect(gameTank.alive).toBe(true);
+    expect(gymTank.alive).toBe(true);
+    expect(gameTank.forceFieldHits).toBe(expected - 1);
+    expect(gymTank.forceFieldHits).toBe(expected - 1);
+    expect(game.getPlayer()!.active).toBe(true);
+    expect(gym.getShip()!.active).toBe(true);
+    // The shared outcome is identical, not merely individually plausible.
+    expect(gymTank.forceFieldHits).toBe(gameTank.forceFieldHits);
   });
 });
