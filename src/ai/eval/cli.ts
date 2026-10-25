@@ -100,6 +100,13 @@ export interface CliOptions {
    */
   readonly scaleLevels: boolean;
   /**
+   * Enemy force-field toggle (default `true`, epic
+   * AH-0MVJ8W4GE007OMNT AC5). `false` resolves every hostile's force field
+   * at level 1 — 0 hits for every shipped archetype — so the pre-change
+   * (hull-only) baseline is captured with the same harness code and seeds.
+   */
+  readonly forceFields: boolean;
+  /**
    * Full-campaign mode for **batch** runs (AC1/AC2): `true` (the default)
    * sweeps the whole shipped campaign; `false` is the CLI's `--skirmish`
    * opt-out into the legacy single-level skirmish. Ignored outside batch
@@ -153,6 +160,7 @@ function runConfig(options: CliOptions) {
     // Single-run evaluation never enables the full-campaign mode (AC5).
     level: options.level ?? undefined,
     scaleLevels: options.scaleLevels,
+    forceFields: options.forceFields,
   };
 }
 
@@ -337,6 +345,7 @@ export function defaultOptions(): CliOptions {
     humanSeed: null,
     level: null,
     scaleLevels: true,
+    forceFields: true,
     campaign: true,
     telemetrySink: null,
   };
@@ -361,6 +370,7 @@ export function runBalanceBatch(options: CliOptions): BatchOutput {
     policies: policyFactories,
     level: options.level ?? undefined,
     scaleLevels: options.scaleLevels,
+    forceFields: options.forceFields,
     campaign: options.campaign,
   });
 }

@@ -140,6 +140,7 @@ import {
   powerUpDropChance,
   scaleCampaignLevelCounts,
 } from '../../core/levelScaling';
+import { enemyForceFieldHits } from '../../core/enemyForceField';
 import { DEFAULT_RULES } from '../../core/rules';
 import { defaultCandidatePool } from '../../core/difficultySequencer';
 import { isNonBlockingHazard } from '../../scenes/core/waveTimeout';
@@ -244,6 +245,15 @@ interface Hostile {
   radius: number;
   /** Remaining hit points (config `health`); reaches 0 → destroyed. */
   health: number;
+  /**
+   * Remaining **force-field** hits (epic AH-0MVJ8W4GE007OMNT), resolved at
+   * spawn from the shared `enemyForceFieldHits(level, config)` curve — the
+   * same resolver the game and the level gym use. Barrier hits are spent
+   * **before** the hull: a player bullet that hits a shielded hostile
+   * decrements `fieldHits` and leaves `health` untouched, mirroring
+   * `BaseEnemy.takeDamage` (barrier first, hull second). `0` = unshielded.
+   */
+  fieldHits: number;
   /** Ticks between fire volleys, derived from config `fireInterval` (ms). */
   fireTicks: number;
   /** Ticks until this hostile next fires; never fires when `isAsteroid`. */
@@ -908,6 +918,24 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     // 1–3 do not fire), exactly as the shared manager tells the game.
     const enemy = enemyByKey.get(spec.archetype);
     const health = Math.max(1, Math.trunc(positiveOr(enemy?.health, 1)));
+    // Force-field hits for evidence mode (epic AH-0MVJ8W4GE007OMNT, AC5):
+    // resolved from the SAME shared curve as the game and the level gym, so
+    // a before/after bot batch reflects the barrier's durability cost. The
+    // resolution level mirrors the run's level context — per-level mode uses
+    // the resolved campaign level (`resolvedLevel`; `1` under `--scale-levels
+    // off`, matching the level-curve baseline), the full-campaign mode uses
+    // the current wave's level, and the seeded skirmish stays unshielded
+    // (level 1, all neutral defaults are `0`). `config.forceFields === false`
+    // resolves at level 1 — 0 hits for every shipped archetype — so a
+    // pre-change (hull-only) baseline is captured with identical harness
+    // code and seeds. `fieldHits` is `0` for unshielded hostiles, so the
+    // hull-only model is unchanged wherever no enemy carries a field.
+    const fieldHits = enemy && (config.forceFields ?? true)
+      ? enemyForceFieldHits(
+          campaignEnabled && campaignManager ? campaignManager.level : resolvedLevel,
+          enemy,
+        )
+      : 0;
     world.hostiles.push({
       id: index,
       x: spec.x,
@@ -918,6 +946,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
       wave,
       radius: positiveOr(enemy?.size, FALLBACK_HOSTILE_RADIUS),
       health,
+      fieldHits,
       fireTicks: fireIntervalTicks(
         enemy ? enemy.fireInterval : FALLBACK_FIRE_INTERVAL_MS,
         dt,
@@ -1178,6 +1207,13 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
         if (!hostile.alive) continue;
         if (distance(bullet, hostile) > hostile.radius) continue;
         bullet.x = Number.NaN; // retired below (one bullet never passes through)
+        if (hostile.fieldHits > 0) {
+          // Barrier first (epic AH-0MVJ8W4GE007OMNT AC2): the force field
+          // absorbs the hit, the hull is untouched, and the bullet is still
+          // consumed — one hit per bullet, mirroring the entity seam.
+          hostile.fieldHits -= 1;
+          break;
+        }
         hostile.health -= 1;
         if (hostile.health > 0) break; // wounded, but alive
         hostile.alive = false;

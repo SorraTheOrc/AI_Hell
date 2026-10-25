@@ -56,6 +56,7 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     keepEdit: false,
     level: null,
     scaleLevels: true,
+    forceFields: true,
     // Full-campaign batch mode is the default (AC1); `--skirmish` opts back
     // into the legacy single-level skirmish (AC2).
     campaign: true,
@@ -147,6 +148,14 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
         options.scaleLevels = raw === 'on';
         break;
       }
+      case '--force-fields': {
+        const raw = next();
+        if (raw !== 'on' && raw !== 'off') {
+          throw new Error(`--force-fields expects 'on' or 'off' (got '${raw}')`);
+        }
+        options.forceFields = raw === 'on';
+        break;
+      }
       case '--video':
         options.video = true;
         break;
@@ -195,6 +204,9 @@ Options:
   --scale-levels <on|off>  Level curves in per-level mode: on (default) resolves counts and
                        drop chance at the selected level; off resolves both to level 1 so a
                        pre-change baseline is captured with identical harness code and seeds
+  --force-fields <on|off>  Enemy force fields: on (default) resolves the barrier at the run
+                       level; off resolves it at level 1 so a pre-change hull-only baseline is
+                       captured with identical harness code and seeds
   --video              Also emit the side-by-side capture plan (AC4)
   --json               Print the machine-readable report instead of text
   --help               Show this help

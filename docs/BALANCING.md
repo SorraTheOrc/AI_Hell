@@ -57,6 +57,7 @@ batch-relevant flags are:
 | `--json` | Print the machine-readable report instead of the text summary. | text |
 | `--level <n>` | Play the **real campaign waves** of level `n` (1–10) with the real per-kill drop rule (per-level campaign mode) instead of the seeded skirmish. | off |
 | `--scale-levels <on\|off>` | Level-scaling curves in per-level mode: `on` resolves the enemy-count multiplier and per-kill drop chance at the selected level; `off` resolves **both to level 1** so a pre-change baseline is captured with identical harness code and seeds. | `on` |
+| `--force-fields <on\|off>` | Enemy force fields (AH-0MVJ8W4GE007OMNT): `on` (default) resolves each hostile's field at the run level from the shared `enemyForceFieldHits` curve; `off` resolves every field at level 1 — 0 hits for every shipped archetype — so a pre-change (hull-only) baseline is captured with identical harness code and seeds. | `on` |
 
 The number of games in a batch is `policies × seeds`. For example,
 `--policies competent,legacy --games 100` runs **200** games (two policies
@@ -308,6 +309,59 @@ Per-archetype kills (aggregate means, the field the work item requires):
 Artifacts (`balance-report.json`, `balance-report.txt`, `runs.jsonl`) are
 written under the git-ignored output directories; the commands, seed set,
 commit and aggregates above are the durable record.
+
+## Enemy force-field evidence (AH-0MVJ8W4GE007OMNT)
+
+Enemy force fields (GDD §2.6/§4.1, enemy guide §1.6) are a **new additive
+durability layer**: from a per-archetype start level a shielded hostile absorbs
+field hits **before** its hull (`health`), resolved by the same pure
+`enemyForceFieldHits(level, config)` curve the game and level gyms use. The
+headless arena models that layer identically (barrier first, hull second), so
+balance evidence can quantify its cost.
+
+`--force-fields off` resolves every field at level 1 — **0 hits for every
+shipped archetype** — so the **pre-change hull-only baseline** is captured
+with the identical harness code and seed set. Level 1 is byte-identical
+on/off by construction (no shipped archetype shields at L1).
+
+```bash
+# baseline (hull-only: fields resolved at level 1) and post-change, for level n
+node scripts/evaluate.mjs --batch --level 1  --force-fields off --games 15 --out /tmp/evidence/l1-off
+node scripts/evaluate.mjs --batch --level 1  --force-fields on  --games 15 --out /tmp/evidence/l1-on
+node scripts/evaluate.mjs --batch --level 5  --force-fields off --games 15 --out /tmp/evidence/l5-off
+node scripts/evaluate.mjs --batch --level 5  --force-fields on  --games 15 --out /tmp/evidence/l5-on
+node scripts/evaluate.mjs --batch --level 10 --force-fields off --games 15 --out /tmp/evidence/l10-off
+node scripts/evaluate.mjs --batch --level 10 --force-fields on  --games 15 --out /tmp/evidence/l10-on
+```
+
+Aggregate means per 15-game batch (competent policy, seeds 1–15):
+
+| Level | Batch | Survival (s) | Level reached | Avoidable hits | Kills by archetype |
+|---|---|---|---|---|---|
+| 1 | baseline | 67.76 | 1.00 | 3.00 | `scout` 15.13 |
+| 1 | post-change | **67.76** | 1.00 | 3.00 | `scout` 15.13 |
+| 5 | baseline | 48.11 | 5.00 | 3.00 | `phaser` 9.33 |
+| 5 | post-change | 33.00 | 5.00 | 3.00 | `phaser` **2.40** |
+| 10 | baseline | 11.55 | 10.00 | 3.00 | `tank` 7.27, `diver` 5.80, `swarm` 5.47, `raider` 0.13 |
+| 10 | post-change | 12.50 | 10.00 | 3.00 | `tank` **1.33**, `diver` **1.13**, `swarm` **1.47**, `raider` **0.07** |
+
+**Reading the evidence.**
+
+1. **L1 is byte-identical.** The level-1 `runs.jsonl` on/off batches hash
+   identically (no archetype resolves a field at L1), so onboarding and the
+   pre-change baseline are untouched.
+2. **The barrier measurably hardens shielded archetypes.** At L5 phaser kills
+   drop 9.33 → 2.40 (−74 %); at L10 tank/diver/swarm kills drop by 66–82 %
+   under the same seeds, exactly the durability the field is meant to add.
+3. **The campaign stays playable.** Reached level is unchanged at every level
+   (1.00 / 5.00 / 10.00) and survival at L10 is comparable (12.50 s vs 11.55 s);
+   L5's shorter survival (33.00 s vs 48.11 s) is the intended extra durability
+   of mid-level shielded fodder, not a stall or crash — every run produced a
+   report. Evidence is **advisory**; the 5-hit cap and per-archetype CSV
+   values are the tuning levers.
+
+The headless model is pinned by `src/ai/eval/arena.test.ts` (L1 on/off
+byte-identity, L5/L10 divergence, barrier-before-hull ordering).
 
 ## Statistics schema
 

@@ -88,6 +88,8 @@ export interface EvaluationRunConfig {
   readonly level?: number;
   /** Level-scaling curves for per-level mode; `false` → level-1 baseline. */
   readonly scaleLevels?: boolean;
+  /** Enemy force-field toggle; `false` → hull-only baseline. */
+  readonly forceFields?: boolean;
   /**
    * Full-campaign mode: every run plays the **whole shipped campaign**
    * through the shared WaveManager (AH-0MVD1RGKM005GW0C). An explicit
@@ -261,6 +263,14 @@ export interface BatchConfig {
    */
   readonly scaleLevels?: boolean;
   /**
+   * Enemy force-field toggle (default `true`, epic
+   * AH-0MVJ8W4GE007OMNT AC5). `false` resolves every hostile's force field
+   * at level 1 — the shipped curve then yields 0 hits for every archetype —
+   * so a pre-change baseline without the enemy barrier is captured with
+   * identical harness code and seeds.
+   */
+  readonly forceFields?: boolean;
+  /**
    * Full-campaign mode: every run plays the **whole shipped campaign**
    * through the shared WaveManager (AH-0MVD1RGKM005GW0C), so balance reports
    * carry real `waveReached`/`levelReached` distributions. An explicit
@@ -355,6 +365,7 @@ export function runBatch(config: BatchConfig): BatchOutput {
         balance: config.balance,
         level: config.level,
         scaleLevels: config.scaleLevels,
+        forceFields: config.forceFields,
         campaign,
         campaignLevels: config.campaignLevels,
         hold: config.hold,
@@ -426,6 +437,7 @@ function runSeed(
     spawns: config.spawns,
     level: config.level,
     scaleLevels: config.scaleLevels,
+    forceFields: config.forceFields,
     campaign: config.campaign,
   });
   const run = recordingRunFromRecords(arena.records, 0);

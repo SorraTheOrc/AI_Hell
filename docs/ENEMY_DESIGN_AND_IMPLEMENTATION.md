@@ -521,6 +521,111 @@ sequencer's default tolerance. The measured vector is pinned in
   classification fixture resolves through `classifyArchetype` (with the
   documented defaults for unknown keys).
 
+### 1.6 Enemy force fields (AH-0MVJ8W4GE007OMNT)
+
+Deeper campaign levels spawn shielded enemies behind a **force field** — a
+visible bubble that absorbs a number of player hits **before** the hull
+(`EnemyConfig.health`) is exposed. Barrier first, hull second: every absorbed
+hit still consumes the bullet and plays the normal impact feedback, but the
+enemy's hull is undamaged until the field breaks; only then does normal health
+apply (a 1-HP enemy dies on the next hit, the 5-HP Harvester still needs five).
+All player damage sources (normal bullet, piercing, AOE, Smart Bomb, Orbital
+Strike, Frenzy bonus hits) deplete the field through the existing shared
+`takeDamage()` seam — there is no parallel damage path.
+
+#### 1.6.1 Resolver (`src/core/enemyForceField.ts`)
+
+The pure, Phaser-free resolver `enemyForceFieldHits(level, config)` is the
+**single source of truth** for an archetype's field strength at a campaign
+level — the game (`PlayScene` spawn path, run level from `WaveManager`), the
+level gym (`GymLevel`) and the headless balance harness all consume the same
+values, so parity holds by construction:
+
+```
+fieldHits(level) = clamp(round(lerp(forceFieldStartHits @ forceFieldStartLevel
+                                     → forceFieldMaxHits @ 10)), 0, 5)
+```
+
+- `forceFieldStartLevel` — first level at which the archetype is shielded;
+  `0` = **never shielded** (every level resolves to 0).
+- `forceFieldStartHits` — field hits when the field first appears.
+- `forceFieldMaxHits` — field hits at the campaign maximum level (10).
+- `Math.round` (half-up) rounding between the two anchors ⇒ monotonically
+  non-decreasing; output clamped to `[0, 5]` (`FORCE_FIELD_HIT_CAP`).
+- Level resolution mirrors `clampLevel` (`src/core/levelScaling.ts`):
+  fractional levels round first, `NaN`/non-numeric → 1, `±Infinity` → campaign
+  ends; output is never `NaN`, config is never mutated.
+- **Level 1 is untouched**: every shipped archetype's neutral defaults
+  (`0` / `1` / `1`) resolve to 0 at level 1, so onboarding, existing tests and
+  the balance baseline are unchanged. Deterministic: same level + config ⇒
+  identical shields, preserving the campaign determinism contract.
+
+#### 1.6.2 Entity layer (`src/entities/BaseEnemy.ts`)
+
+`BaseEnemy` carries the field state (`forceFieldHits`, `forceFieldBroken`,
+`lastHitAbsorbed`), draws the shared bubble and routes `takeDamage()` through
+the field before `health`. The effective field hits are threaded in at spawn
+from the config via `enemyFactory` (game and level gym through the same shared
+path). The gym enemy editor (`GymFodderEnemies`) gains force-field sliders that
+set the three config fields directly (**documented divergence**: a formation
+gym has no campaign context, so the slider sets hits directly instead of the
+level curve; it must never leak a field value into the campaign CSV by hand).
+
+#### 1.6.3 Ram rule (Q6 = B)
+
+A player **contact/ram** on a shielded enemy is absorbed by the field: exactly
+**one** field hit is consumed, the enemy survives and the player survives the
+collision. A shared **re-arm** (≈ 0.5 s, `ENEMY_FIELD_RAM_REARM_MS`) prevents a
+sustained overlap from draining the whole field frame-by-frame — one hit per
+ram contact, not per overlapping frame — mirroring the Thorn Field ram
+absorption in `CombatScene._handleCollisions` (`tryConsumeThornsRam`, step 4).
+Once the field is down the original contact rule (both destroyed,
+AH-0MTV7JOLU006W8PT) applies unchanged. The change lives once in the shared
+core `_handleCollisions`, so the game and every gym inherit it.
+
+#### 1.6.4 Feedback surface (AC3)
+
+- Shared bubble drawn by `CombatEffectVisuals` — visually distinct from the
+  player's Shield and Force Field bubbles.
+- Each absorbed hit reuses the existing shared impact feedback.
+- The breaking hit runs a distinct break flash and audio cue (reusing the
+  audio registry; `src/audio/effects.ts`).
+
+#### 1.6.5 Shipped tuning table
+
+Authored in `src/data/enemy-configs.csv` (header comments document the three
+columns and neutral defaults `0` / `1` / `1`):
+
+| Archetype | Config key | Start level | Start hits | Max hits (L10) |
+|-----------|------------|:-----------:|:----------:|:--------------:|
+| Scout | `scout` | 3 | 1 | 2 |
+| Diver | `diver` | 2 | 1 | 2 |
+| Tank | `tank` | 2 | 2 | 4 |
+| Phaser | `phaser` | 3 | 1 | 3 |
+| Swarm | `swarm` | 4 | 1 | 2 |
+| Boss | `boss` | 2 | 3 | 5 |
+| Harvester | `harvester` | 3 | 3 | 5 |
+| March (Space Invaders) | `march` | 4 | 1 | 2 |
+| Capturer (Galaga) | `capturer` | 3 | 2 | 3 |
+| Grunt (Robotron) | `grunt` | 5 | 1 | 2 |
+| Raider (Defender) | `raider` | 3 | 1 | 3 |
+| Orbital strike (Missile Command) | `orbital-strike` | 4 | 2 | 4 |
+| Asteroid (E6) | `asteroid` | 0 (never) | 1 | 1 |
+| Ghosts, lane traffic (non-firing hazards) | `ghost-*`, `lane-traffic` | 0 (never) | 1 | 1 |
+
+Heavier archetypes (Tank, Boss, Harvester, Orbital strike) carry the higher
+values; light fodder starts later and caps lower. All values are tunable in the
+CSV or the gym editor with no scene-code change.
+
+#### 1.6.6 Balance evidence (bot batch, L1/L5/L10)
+
+See the AH-0MVM8GYPM002Z3PR work-item comment for the before/after batch —
+`node scripts/evaluate.mjs --batch --level N --force-fields off|on --games 15`
+(`off` = hull-only pre-change baseline via level-1 resolution; `on` = shipped
+curve). L1 is byte-identical on/off (no shipped archetype shields at L1); at
+L5/L10 the field measurably reduces kills of shielded archetypes while the
+campaign stays playable (bot still reaches the level; survival comparable).
+
 ---
 
 ## 2. Core library architecture

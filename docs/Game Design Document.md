@@ -381,7 +381,11 @@ The following rules govern how enemy entities interact with each other and with 
 
 - **Enemy pass-through**: Enemies **do not collide with or block** other enemies at any time. All enemy types pass freely through one another regardless of formation, wave, or level. This applies to all enemy types (E1–E7) and all wave configurations (Line, V-Formation, Circle, Wall, Dive Bomb, Orbital). There is no special "shielding" or "blocking" behavior between enemy types.
 
-- **Bullet–enemy interaction**: A player bullet is **consumed** (destroyed) when it hits an enemy. The first enemy hit by a bullet takes the hit; the bullet does not pass through. There is no multi-hit bullet, no shield layer, and no piercing behaviour. A 1-HP enemy is destroyed by the bullet; a multi-hit enemy (E7 Harvester) loses one hit point per bullet and the **fifth** hit destroys it (see also §4.1 for enemy health).
+- **Bullet–enemy interaction**: A player bullet is **consumed** (destroyed) when it hits an enemy. The first enemy hit by a bullet takes the hit; the bullet does not pass through. There is no multi-hit bullet and no piercing behaviour. A 1-HP enemy is destroyed by the bullet; a multi-hit enemy (E7 Harvester) loses one hit point per bullet and the **fifth** hit destroys it (see also §4.1 for enemy health).
+
+- **Enemy force fields (deeper levels only)**: From campaign level 2 onwards, some enemy archetypes spawn behind a **force field** — a visible bubble that sits **in front of the hull** (barrier first, hull second). The field absorbs a data-driven number of player hits **before** `health` is touched; every absorbed hit still consumes the bullet and plays the normal impact feedback, but the enemy's hull is undamaged until the field breaks. Only after the field is down does the enemy's normal `health` apply (a 1-HP enemy dies on the next hit; the 5-HP Harvester still needs five). Field strength per archetype per level, the formula, and the tuning table are in §4.1; level 1 never spawns a shielded enemy. Every player damage source (normal bullet, piercing, AOE weapons, Smart Bomb, Orbital Strike, Frenzy bonus hits) depletes the field through the shared `takeDamage()` seam — there is no parallel damage path.
+
+- **Ram/contact vs. a shielded enemy**: when the player **crashes into** a shielded enemy, the field absorbs the ram — exactly **one** field hit is consumed, the enemy survives and the player survives the collision (a short shared re-arm prevents the field draining frame-by-frame during sustained overlap). Once the field is down the original contact rule applies unchanged: contact destroys **both** the player and the enemy.
 
 - **The Wall wave (density challenge)**: Level 3's Wall wave is a **density challenge, not a blocking mechanic**. The Wall consists of a dense horizontal line of enemies that advances slowly. Enemies in the Wall pass through each other freely. To create a gap through which the player can advance or through which bullets can reach enemies behind the Wall, the player must destroy each Wall enemy individually — one bullet per enemy. There is no special "Wall shielding" that blocks bullets from reaching enemies behind the line; bullets simply pass through gaps created by destroyed enemies.
 
@@ -717,6 +721,66 @@ The classification is consumed by the wave balance rules R1–R3, which the
 runtime wave generator enforces for generated waves and the campaign audit
 validates. See the enemy guide §1.4 for the archetype mapping and codec
 defaults, and §1.5 for the rules, tunable constants and enforcement design.
+
+#### Enemy force fields (AH-0MVJ8W4GE007OMNT, §2.6)
+
+From campaign level 2 onwards some archetypes spawn behind a **force field**
+that absorbs player hits before the hull is exposed (GDD §2.6). The layer is
+data-driven per archetype and grows with campaign depth:
+
+```
+fieldHits(level) = clamp(round(lerp(forceFieldStartHits @ forceFieldStartLevel
+                                     → forceFieldMaxHits @ 10)), 0, 5)
+```
+
+- `forceFieldStartLevel` — campaign level at which the archetype first gains a
+  field; `0` = **never shielded** (every level resolves to 0 hits).
+- `forceFieldStartHits` — field hits when the field first appears.
+- `forceFieldMaxHits` — field hits at the campaign maximum level (10).
+- The result is always clamped to **`[0, 5]`**; below the start level the field
+  is 0, and **level 1 is never shielded for any archetype** (onboarding,
+  balance baseline and existing tests are unchanged).
+
+The resolver is the pure, Phaser-free `enemyForceFieldHits(level, config)` in
+`src/core/enemyForceField.ts`; the game (`PlayScene` spawn path, run level from
+`WaveManager`), the level gym (`GymLevel`) and the headless balance harness all
+consume the same values, so a shielded enemy behaves identically everywhere.
+Resolution is deterministic (same level + same config ⇒ identical shields),
+preserving the campaign determinism contract.
+
+Shipped tuning (CSV `src/data/enemy-configs.csv`):
+
+| Archetype | Config key | Start level | Start hits | Max hits (L10) | Field at L2 | L3 | L5 | L10 |
+|-----------|------------|:-----------:|:----------:|:--------------:|:-----------:|:--:|:--:|:---:|
+| Scout | `scout` | 3 | 1 | 2 | – | 1 | 1 | 2 |
+| Diver | `diver` | 2 | 1 | 2 | 1 | 1 | 1 | 2 |
+| Tank | `tank` | 2 | 2 | 4 | 2 | 2 | 3 | 4 |
+| Phaser | `phaser` | 3 | 1 | 3 | – | 1 | 2 | 3 |
+| Swarm | `swarm` | 4 | 1 | 2 | – | – | 1 | 2 |
+| Boss | `boss` | 2 | 3 | 5 | 3 | 3 | 4 | 5 |
+| Harvester | `harvester` | 3 | 3 | 5 | – | 3 | 4 | 5 |
+| March (Space Invaders) | `march` | 4 | 1 | 2 | – | – | 1 | 2 |
+| Capturer (Galaga) | `capturer` | 3 | 2 | 3 | – | 2 | 2 | 3 |
+| Grunt (Robotron) | `grunt` | 5 | 1 | 2 | – | – | 1 | 2 |
+| Raider (Defender) | `raider` | 3 | 1 | 3 | – | 1 | 2 | 3 |
+| Orbital strike (Missile Command) | `orbital-strike` | 4 | 2 | 4 | – | – | 2 | 4 |
+| Asteroid (E6) | `asteroid` | 0 (never) | 1 | 1 | – | – | – | – |
+| Ghosts, lane traffic (non-firing hazards) | `ghost-*`, `lane-traffic` | 0 (never) | 1 | 1 | – | – | – | – |
+
+Heavier archetypes (Tank, Boss, Harvester, Orbital strike) carry the higher
+values; light fodder starts later and caps lower. Every value is tunable in the
+CSV (or the gym enemy editor) with no scene-code change; the neutral defaults
+are `0` / `1` / `1`, i.e. unshielded.
+
+**Feedback.** Shielded enemies render a shared bubble drawn by the
+`CombatEffectVisuals` helper family — visually distinct from the player's
+Shield and Force Field bubbles. Each absorbed hit triggers the existing shared
+impact feedback; the breaking hit runs a distinct break flash and audio cue.
+
+**Ram rule.** A player contact/ram is absorbed by an intact field: exactly one
+field hit is consumed, the enemy and the player both survive, and a shared
+re-arm prevents a sustained overlap from draining the field frame-by-frame.
+Once the field is down, contact destroys both (AH-0MTV7JOLU006W8PT).
 
 ### 4.2 Wave / Formation Structures
 

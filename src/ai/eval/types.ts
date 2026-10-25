@@ -218,6 +218,15 @@ export interface ArenaConfig {
    */
   readonly scaleLevels?: boolean;
   /**
+   * Enemy force-field toggle (epic AH-0MVJ8W4GE007OMNT AC5, default
+   * `true`). `false` resolves every hostile's force field at level 1 — for
+   * the shipped curve that is **0 hits for every archetype** (neutral
+   * defaults are `0` start level), so a pre-change **baseline** without the
+   * enemy barrier is captured with identical harness code and seeds. L1 is
+   * byte-identical on/off by construction (level 1 never resolves a field).
+   */
+  readonly forceFields?: boolean;
+  /**
    * **Full-campaign mode** (AH-0MVD1RGKM005GW0C): plays the **whole shipped
    * campaign** — every level and wave of `buildSequencedLevels` (honouring
    * `fixed`/`curve`/`dynamic` generation modes), drive by the shared

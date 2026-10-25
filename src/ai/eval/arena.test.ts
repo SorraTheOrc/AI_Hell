@@ -18,7 +18,7 @@ import { importSpecifiers } from '../../../vitest.projects';
 import { parseRecording } from '../../../scripts/recording.mjs';
 import { coerceEnemyConfig, parseCsvRows } from '../../core/csv';
 import { DEFAULT_CONFIG, DEFAULT_ENEMY_CONFIGS } from '../../core/configDefaults';
-import { resetConfigStore, seedConfigStore } from '../../core/configStore';
+import { loadAllEnemyConfigs, resetConfigStore, seedConfigStore } from '../../core/configStore';
 import { createSeededRng } from '../../core/rng';
 import type { EnemyConfig } from '../../core/configTypes';
 import { createLegacyBotPolicy } from '../framework/legacyPolicy';
@@ -466,6 +466,96 @@ describe('per-level campaign mode (AH-0MVLJF9HC007AOI6, pinned test-first)', () 
     // Seeded drops sit on the field from the very first tick, before any
     // kill — the property the per-level kill-drop rule must not have.
     expect(firstTick.state.drops.length).toBe(2);
+  });
+});
+
+/**
+ * Enemy force-field layer in the headless arena
+ * (AH-0MVM8GYPM002Z3PR, epic AH-0MVJ8W4GE007OMNT AC5 evidence mode).
+ *
+ * The deterministic balance harness resolves each hostile's force field from
+ * the **same shared curve** (`enemyForceFieldHits`) as the game and the
+ * level gym, and spends barrier hits **before** the hull (barrier first,
+ * hull second), mirroring `BaseEnemy.takeDamage`. `forceFields: false`
+ * resolves every field at level 1 — the shipped curve yields 0 hits for
+ * every archetype (all start levels are ≥ 2 or never-shielded `0`) — so a
+ * pre-change (hull-only) baseline is captured with identical harness code
+ * and seeds, exactly like `scaleLevels: false`. Level 1 is therefore
+ * byte-identical on/off by construction: this is the evidence gate the
+ * documentation AC requires.
+ */
+describe('enemy force-field layer in the headless arena (AH-0MVM8GYPM002Z3PR)', () => {
+  beforeEach(() => {
+    resetConfigStore();
+  });
+
+  /** One per-level run with an explicit force-field toggle. */
+  function withForceFields(level: number, forceFields: boolean, ticks = 600): ArenaRunResult {
+    return runArena(createLegacyBotPolicy(), {
+      seed: 7,
+      ticks,
+      level,
+      forceFields,
+    });
+  }
+
+  it('is byte-identical at level 1 on/off (no shipped archetype shields at L1)', () => {
+    const on = withForceFields(1, true);
+    const off = withForceFields(1, false);
+    // The evidence gate: L1 must not change when the barrier is enabled.
+    expect(stableStringify(off.records)).toBe(stableStringify(on.records));
+    expect(off.ticksSimulated).toBe(on.ticksSimulated);
+  });
+
+  it('resolves the shared curve at higher levels: on/off diverge at L5 and L10', () => {
+    // Phaser (startLevel 3) carries a field at L5 (2 hits, 1→3 ramp) and
+    // L10 (3 hits); the seeded skirmish stays unshielded. The toggle must
+    // therefore change the simulated outcome exactly where the curve does.
+    const recordsOf = (level: number, forceFields: boolean): string =>
+      stableStringify(withForceFields(level, forceFields).records);
+    expect(recordsOf(5, true)).not.toBe(recordsOf(5, false));
+    expect(recordsOf(10, true)).not.toBe(recordsOf(10, false));
+  });
+
+  it('spends barrier hits before the hull (barrier first, hull second)', () => {
+    // A single-hit hostile carrying a 4-hit field at level 1 (the skirmish
+    // resolves at level 1). The barrier absorbs the first four player bullets
+    // and the hull only the fifth, so the `enemy_killed` event fires strictly
+    // later than for the hull-only twin (same seed, policy and spawn plan —
+    // only durability differs). Every resolved archetype is seeded with the
+    // same override because the skirmish reservoir order is the resolved key
+    // order, not a single hardcoded archetype.
+    const runWith = (fieldHits: number): ArenaRunResult => {
+      const seeded = loadAllEnemyConfigs().map((config) => ({
+        ...config,
+        health: 1,
+        shotProbability: 0,
+        forceFieldStartLevel: fieldHits > 0 ? 1 : 0,
+        forceFieldStartHits: fieldHits,
+        forceFieldMaxHits: fieldHits,
+      }));
+      seedConfigStore(seeded, DEFAULT_CONFIG);
+      return runArena(createLegacyBotPolicy(), {
+        seed: 0x55,
+        ticks: 900,
+        spawns: { minerals: 1, powerUps: 0, enemies: 1, asteroids: 0 },
+        balance: loadBalanceConfig(),
+      });
+    };
+    const firstKillTick = (result: ArenaRunResult): number => {
+      const killed = result.records.find(
+        (record): record is TelemetryEventRecord =>
+          record.kind === 'event' && record.event === 'enemy_killed',
+      );
+      return killed ? killed.tick : Number.POSITIVE_INFINITY;
+    };
+
+    const hullOnly = runWith(0);
+    const shielded = runWith(4);
+    expect(firstKillTick(shielded)).toBeLessThan(900);
+    // Four absorbed bullets cost four auto-fire intervals (9 ticks each) —
+    // the hull only falls once the barrier is gone.
+    expect(firstKillTick(shielded)).toBeGreaterThan(firstKillTick(hullOnly));
   });
 });
 
