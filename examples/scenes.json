@@ -1,0 +1,28 @@
+{
+  "scenes": [
+    {
+      "target": "GymPlayer",
+      "playMs": 2000,
+      "captureMs": 3000,
+      "label": "player control"
+    },
+    {
+      "target": "GymWeapons",
+      "playMs": 1500,
+      "captureMs": 2500,
+      "label": "weapons"
+    },
+    {
+      "target": "GymPowerUpsCombat",
+      "playMs": 2000,
+      "captureMs": 3000,
+      "label": "combat power-ups"
+    },
+    {
+      "target": "GymBoss",
+      "playMs": 3000,
+      "captureMs": 4000,
+      "label": "boss"
+    }
+  ]
+}
