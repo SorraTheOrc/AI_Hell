@@ -6,7 +6,7 @@
  *
  * `PowerUpEntry.availableWhenSlotsFull` is added by the follow-on item
  * AH-0MVNT2TEK001BNQ4. The exemption assertions are therefore registered with
- * Vitest's `it.fails(...)` (the repo's documented test-first convention — see
+ * Vitest's `it(...)` (the repo's documented test-first convention — see
  * `powerUpIdNaming.test.ts`) so the suite stays green while they are red
  * against the missing flag. Flip `.fails` to a plain `it(...)` when the flag
  * lands; the assertions themselves must not change.
@@ -48,7 +48,7 @@ function isExemptWhenFull(entry: PowerUpEntry): boolean {
 
 describe('POWER_UP_CATALOGUE.availableWhenSlotsFull (AC5 — data-driven exemption)', () => {
   // Test-first: expected failure until the catalogue flag lands.
-  it.fails('marks Extra Life and Mystery UFO as available when the slots are full', () => {
+  it('marks Extra Life and Mystery UFO as available when the slots are full', () => {
     expect(isExemptWhenFull(POWER_UP_CATALOGUE.extra_life)).toBe(true);
     expect(isExemptWhenFull(POWER_UP_CATALOGUE.mystery_ufo)).toBe(true);
   });

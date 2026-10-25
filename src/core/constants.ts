@@ -67,6 +67,20 @@ export const POWER_UP_COLLECTION_THRESHOLD = 3;
  */
 export const POWER_UP_SPAWN_INTERVAL = DEFAULT_RULES.powerUpSpawnInterval;
 
+/**
+ * Number of **permanent** loadout slots shared by power-up and weapon kinds
+ * (parent AH-0MVLIJT3M005HPHF). The first six distinct kinds taken as
+ * permanent rewards define the run's build; once all six are occupied, only
+ * owned kinds plus catalogue entries flagged `availableWhenSlotsFull` may be
+ * drawn or offered. Field pickups never consume a slot, and the permanent
+ * cannon / the `reset` utility are never counted because they cannot be
+ * permanently granted.
+ *
+ * A named constant rather than a `GameRules` field on purpose (assumption A4):
+ * it is a structural rule, not a tunable.
+ */
+export const POWER_UP_SLOT_CAP = 6;
+
 /** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. 16 px = half of the doubled 32 px size (AH-0MTG5MGPZ00986B4). */
 export const POWER_UP_DROP_SIZE = 16;
 

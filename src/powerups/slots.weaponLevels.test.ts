@@ -15,7 +15,7 @@
  *
  * `src/powerups/slots.ts` is added by the follow-on item
  * AH-0MVNT2TEK001BNQ4, so the assertion is registered with Vitest's
- * `it.fails(...)` — the repo's documented test-first convention (see
+ * `it(...)` — the repo's documented test-first convention (see
  * `powerUpIdNaming.test.ts`) — which keeps the suite
  * green while the assertion is red against the absent helper. Flip `.fails`
  * to a plain `it(...)` when the helper lands; the assertions must not change.
@@ -80,7 +80,7 @@ describe('six-slot accounting for the weapon family (AC1)', () => {
   }
 
   // Test-first: expected failure until the shared helper lands.
-  it.fails('counts permanent weapon grants but not temporary field stacks', async () => {
+  it('counts permanent weapon grants but not temporary field stacks', async () => {
     const slots = await loadSlots();
     const player = await freshPlayer();
 
