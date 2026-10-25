@@ -23,12 +23,28 @@
  *    `aihell:run-ended` page signal and stops one `--tail` later, bounded by
  *    `--max-duration`; `--scripted` / `--duration` replay the fixed bot plan
  *    instead (`scripts/capture-bot.mjs`).
- * 6. Stop the recorder, decode the produced WebM back through a `<video>`
- *    element and probe it (resolution, duration, non-black fraction,
- *    colour variety, frame-to-frame motion) so the clip's non-triviality
- *    is verifiable, not assumed.
- * 7. Stream the encoded chunks to Node via `exposeFunction` and write them
- *    to the output file.
+ * 6. Stream every encoded chunk to Node via `exposeFunction` into the bounded
+ *    chunk sink (`scripts/capture-chunk-sink.mjs`): decode, append to
+ *    `<stem>.partial.webm`, drop — node memory is O(one chunk), not
+ *    O(run length), and the whole-run `Buffer.concat` is gone. A hard
+ *    single-chunk cap (`MAX_CAPTURE_CHUNK_BYTES` = 16 MiB) is enforced before
+ *    decode, and the page-side guard slices oversized payloads into
+ *    at-or-below-cap binding calls first, so no single CDP message can approach
+ *    the ~512 MiB pipe ceiling that crashed long runs. The partial file is
+ *    renamed to the final output path only on success; on any
+ *    pipe/browser/recorder failure the streamed bytes stay at
+ *    `<stem>.partial.webm`, one actionable salvage line is printed
+ *    (`scripts/capture-salvage.mjs`, `CaptureSalvageError`) and the CLI exits
+ *    non-zero. `--diagnostics` (off by default) adds per-chunk base64 sizing,
+ *    node RSS samples, page heap at clip end and a CDP pipe transport tap,
+ *    written additively to `<stem>.diagnostics.json`.
+ * 7. Stop the recorder. Every chunk is already on disk (step 6), so the probe
+ *    source is picked by the clip's final streamed size: a clip that fits in
+ *    the page's bounded 32 MiB retention prefix is decoded in-page
+ *    (byte-identical verdicts with the old whole-Blob path); a larger clip is
+ *    probed by reading the written file back over the capture dev server.
+ *    Either way the verdict fields (resolution, duration, non-black fraction,
+ *    colour variety, frame-to-frame motion, audio peak/RMS) are unchanged.
  * 8. Enable page telemetry before the game boots, then after each clip read
  *    the recorded run back from the page's JSONL sink and write the
  *    action-intensity series (`<run-id>.action.jsonl`) and the §7.5

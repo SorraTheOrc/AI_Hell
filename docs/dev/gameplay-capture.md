@@ -52,6 +52,9 @@ npm run capture -- --all-scenarios --output clips          # clips/<scenario>.we
 # record several gym scenes into ONE video, fading between them (0.25 s each way)
 npm run capture:scenes -- --config scenes.json             # capture-output/scenes-<timestamp>.webm
 
+# investigate a long-run crash (off by default; writes <stem>.diagnostics.json)
+npm run capture -- --diagnostics --duration 420000 --output /tmp/soak.webm
+
 # compile the captured pool into a promo + showreel + highlight clips
 # (needs a full ffmpeg — see Compiling a promo package below)
 npm run compile:promo
@@ -63,6 +66,12 @@ This was proven end to end on 2026-10-06: a 12 s clip recorded at
 motion**, with **zero page errors**. The clip also carries the **game's own
 SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
 [Audio capture](#audio-capture).
+
+A clip is **streamed to disk while it records** (`<stem>.partial.webm`,
+renamed to `<stem>.webm` on success), so a long run's memory does not grow
+with its length and a failed run keeps its bytes at the `.partial` path with
+one actionable message (see
+[Long-run memory budget and failure salvage](#long-run-memory-budget-and-failure-salvage)).
 
 ## Exact tooling & versions
 
@@ -109,12 +118,18 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
    `--scripted` the deterministic bot plan (below) is replayed as **real
    Playwright `keyboard.down`/`keyboard.up` events** (trusted input, not
    synthesised DOM events); `--duration` keeps the legacy fixed-length clip.
-8. Stops the recorder, decodes the produced WebM back through a `<video>`
-   element and probes several sampled frames for **resolution, duration,
+8. Stops the recorder and probes the clip through a `<video>` element — the
+   **written file** when the clip is larger than the page's retained prefix,
+   otherwise the retained in-page Blob — for **resolution, duration,
    non-black fraction, colour variety and frame-to-frame motion**, then
-   decodes the audio with `decodeAudioData` for **peak and RMS**.
-9. Streams the encoded chunks to Node over an `exposeFunction` binding and
-   writes them to the output file.
+   decodes the audio with `decodeAudioData` for **peak and RMS** (see
+   [Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
+9. Streams every encoded chunk to Node over an `exposeFunction` binding and
+   writes it **straight to disk as it arrives** into `<stem>.partial.webm`
+   (see [Streaming the recording to disk](#streaming-the-recording-to-disk-bounded-chunk-sink)).
+   A successful clip renames it to `<stem>.webm`; any pipe/browser/recorder
+   failure leaves the partial in place and prints one actionable salvage
+   message (see [Failure and salvage](#failure-and-salvage-of-streamed-bytes)).
 10. Before the game boots, opts the page **into telemetry**
     (`VITE_TELEMETRY_ENABLED=true`, `VITE_TELEMETRY_SINK=jsonl` — the same
     flags `scripts/record-session.mjs` uses) so the run's per-tick
@@ -583,6 +598,32 @@ not yet fully deterministic). A **defeat** run is typically much shorter. The
 no frame-exact reproducibility yet (see
 [Determinism gaps](#determinism-gaps)).
 
+**Wall clock and disk are the only costs that grow with the run — memory is
+not.** The recording streams to disk as it is produced (one chunk at a time)
+and the page retains only a bounded prefix, so node and page memory are
+**capped per component, not per duration** (see
+[Streaming the recording to disk](#streaming-the-recording-to-disk-bounded-chunk-sink)
+and the budget table in
+[Long-run memory budget](#long-run-memory-budget-and-failure-salvage)). The
+measured budget on a 420 s `--diagnostics` soak (run-end telemetry capped;
+provenance in the table) was:
+
+- **Node process:** peak RSS **~411 MiB** on a 420 s clip — under the
+  documented < 512 MiB target — with the recorder buffer contributing at most
+  one chunk (max observed **253 KiB**) because each chunk is decoded, written
+  and dropped in the same call.
+- **Page side:** the page retains at most **32 MiB** of recorded Blob data
+  (the probe's prefix budget), so the renderer's share of the recording never
+  grows with `--max-duration`; heap used at clip end was **~95 MiB** (of ~148
+  MiB total) on the same soak.
+- **Disk:** a 420 s clip is **~37.8 MB** of WebM (VP9 + Opus, ≈8 Mbps). A
+  **failed** clip keeps whatever had streamed at `<stem>.partial.webm` — see
+  [Failure and salvage of streamed bytes](#failure-and-salvage-of-streamed-bytes).
+
+To measure your own host, add `--diagnostics` (see
+[Diagnostics](#diagnostics---diagnostics)); the same soak parameters as the
+budget table are in that section.
+
 ### Streaming the recording to disk (bounded chunk sink)
 
 Both capture paths (`--count`, `--all-scenarios` and `capture:scenes`) stream
@@ -680,6 +721,79 @@ which source produced the verdicts. A clip too large for the page but whose
 file cannot be served (e.g. `--output` outside the repo) falls back to the
 in-page prefix probe and reports why, instead of failing or widening into a
 new dependency.
+
+### Long-run memory budget and failure salvage
+
+These are the documented budgets for a long capture, and where each number
+came from. They are **overflow defences**, not tuning knobs: every cap exists
+because crossing it risks a corrupted clip or a dead process, so the fix for a
+threshold being hit is to find out why the recorder or the telemetry upload
+grew — not to raise the number.
+
+| Component | Documented bound | Measured on a 420 s `--diagnostics` soak |
+|---|---|---|
+| Node process memory | peak RSS **< 512 MiB** (the reported failure crossed 512 MiB) | **411 MiB** peak (`process.memoryUsage().rss`), 346 MiB at clip end |
+| Node recorder buffer | **O(one chunk)** — decoded, written and dropped per chunk | 401 chunks, **max 253 KiB** (base64 payload total 48.1 MiB) |
+| Page-side retained Blobs | `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` = **32 MiB** prefix | heap used **95 MiB** / total **148 MiB** at clip end, backing 73 MiB |
+| Single recorder chunk | `MAX_CAPTURE_CHUNK_BYTES` = **16 MiB** (page slices above it) | max 253 KiB — ~0.05 % of V8's 512 MiB string limit |
+| Single CDP message | run-end telemetry upload capped at **8 MiB** | **4.63 MiB** largest message, `transport.overflow` empty |
+| Clip on disk | one WebM per clip, ≈8 Mbps | **37.8 MB** for 420 s |
+
+Provenance: the soak was a fixed-length 420 s clip (`--duration 420000`)
+recorded with `--diagnostics` on the committed fix; the raw artefact is the
+run's `<stem>.diagnostics.json` (per-chunk size timeline, RSS samples, page
+heap, transport tap). The pre-fix comparison comes from the diagnosis runs
+recorded in AH-0MVNT25JI004OVKQ — a 226 s full run peaked at **531 MiB RSS**
+with a single **59.5 MiB** CDP message (the run-end telemetry upload) and a
+420 s clip at **416 MiB RSS** with a **14.7 MB** message — i.e. node RSS and
+page heap both tracked run length and telemetry density, which is exactly what
+the streaming sink, the 32 MiB prefix budget and the upload cap remove. The
+long-run (30-minute) confirmation is a separate manual soak, not a CI test
+(see [Estimated CI cost](#estimated-ci-cost)).
+
+To reproduce: `npm run capture -- --diagnostics --duration 420000 --output
+/tmp/soak.webm`, then read `transport.maxMessageBytes`, `node.peakRssBytes`,
+`page.heapUsedBytes` and `chunks.maxBytes` from `/tmp/soak.diagnostics.json`.
+
+### Failure and salvage of streamed bytes
+
+Because the recording is on disk from the first chunk, a capture that dies
+mid-run (the reported `ERR_STRING_TOO_LONG` CDP transport crash, a closed
+page, a dead recorder) no longer loses the whole run:
+
+1. **The bytes already streamed stay.** Everything written so far is already
+   at the documented partial path `<stem>.partial.webm` (e.g.
+   `capture-output/gameplay-<timestamp>.partial.webm`) and the sink only
+   **renames** a partial into `<stem>.webm` after a successful clip. A failure
+   never renames, never deletes and never truncates, so the partial is left in
+   place for you to inspect or salvage with any WebM-capable player or tool.
+   A previous good clip with the same stem is never clobbered by a failure.
+2. **Exactly one actionable message is printed first,** before the report, the
+   `--json` payload or any raw stack. It names what failed, how many bytes
+   were salvaged, the `.partial.webm` path and the next action:
+
+   ```text
+   Capture failed (Target page, context or browser has been closed): salvaged
+   18734210 B (17.9 MiB) of streamed video at
+   capture-output/gameplay-2026-10-25T12-00-00-000Z.partial.webm. Next: re-run
+   the capture to record a fresh clip; the partial file keeps the streamed
+   bytes and is not a finished clip.
+   ```
+
+   When the failure precedes the first chunk there is nothing to salvage: the
+   message says so and **no** empty partial file is created.
+3. **The CLI exits non-zero** and the failure is attributed in the machine
+   output. A failed batch iteration / `--json` record gains **additive**
+   `salvagedBytes`, `partialPath` and `salvageMessage` fields — the success
+   shape, the probe verdicts and the exit codes are unchanged, and the
+   `.action.jsonl` / `.capture.json` sidecars belong to successful clips only
+   (a failed clip writes none).
+
+A salvaged partial is **not** a finished clip: it was never probed, has no
+sidecars, and its last GOP may be incomplete, so it can lose a fraction of a
+second at the tail. Treat it as recoverable footage, not as a capture result.
+The salvage seam lives in `scripts/capture-salvage.mjs`
+(AH-0MVNT29MC008BQPY).
 
 ### Run-end telemetry upload cap
 
@@ -1351,6 +1465,41 @@ Playwright bundle does not provide. The shipped path requires **no full
 `ffmpeg`**; retain this only as a documented fallback if the in-page Web
 Audio tap ever proves impossible.
 
+### Long-run memory and partial-output limits
+
+A long capture is bounded on every side, and the bounds have consequences worth
+knowing before a soak:
+
+- **Memory is capped per component, not per duration.** Node keeps at most one
+  recorder chunk in flight (`MAX_CAPTURE_CHUNK_BYTES` = 16 MiB, ~16x a normal
+  ~1 MiB/s chunk) and the page retains at most a 32 MiB prefix
+  (`CAPTURE_PROBE_PREFIX_BUDGET_BYTES`) of the clip, so a 30-minute clip does
+  **not** need 30 minutes' worth of RAM (see
+  [Long-run memory budget and failure salvage](#long-run-memory-budget-and-failure-salvage)).
+  The price is that the page can only reconstruct the **head** of a long clip;
+  that is why a clip above the threshold is probed by reading the written file
+  back over HTTP ([Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
+- **Caps are overflow defences, not tuning knobs.** `MAX_CAPTURE_CHUNK_BYTES`
+  (16 MiB), the 32 MiB prefix budget and the 8 MiB telemetry-upload cap all sit
+  far below V8's 512 MiB string limit so no single CDP message can approach it.
+  Hitting one means a recorder flush or a telemetry upload grew pathologically —
+  diagnose with `--diagnostics`, do not raise the cap.
+- **A failure keeps a partial file, not a clip.** `<stem>.partial.webm` holds
+  the streamed bytes of a failed run (never renamed, never deleted); it was not
+  probed, has no `.action.jsonl` / `.capture.json` sidecars and can lose a
+  fraction of a second at the tail, so it is recovered footage rather than a
+  capture result (see
+  [Failure and salvage of streamed bytes](#failure-and-salvage-of-streamed-bytes)).
+- **The probe is bounded too.** Audio peak/RMS for a streamed clip is measured
+  from a 32 MiB prefix and reported as such (`audioProbeBytes` /
+  `audioProbeCapped`), so a long clip's audio verdict describes its opening, not
+  its whole length; a manipulated or silent tail would not be caught.
+- **`--diagnostics` adds artefact writes, not memory unboundedness.** It keeps a
+  size-only per-chunk timeline and RSS samples for the clip's length (tens of
+  KiB to a few hundred KiB of JSON), and writes `<stem>.diagnostics.json`
+  additively — a read-only output directory degrades to a warning and never
+  fails the clip.
+
 ### Estimated CI cost
 
 Measured on the reference host (2026-10-06):
@@ -1398,9 +1547,18 @@ full`) or `npm run build`.
 | `scripts/capture-chunk-sink.mjs` | Bounded streaming chunk sink: append-decode-write each recorder chunk to `<stem>.partial.webm`, report `bytesWritten`/`chunkCount`/`peakPendingBytes`, finalise by rename |
 | `scripts/capture-chunk-sink.d.mts` | Types for the chunk sink |
 | `scripts/capture-chunk-sink.test.ts` | Hermetic tests for the sink's write path, memory bound beyond the 512 MiB CDP pipe budget, cap rejection and finalise/partial seam |
+| `scripts/capture-recorder-page.mjs` | Page-side bounded Blob retention + oversized-payload slicing: installs a controller that forwards every chunk to the sink exactly once and retains at most `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (uninstallable; self-contained for `addInitScript`) |
+| `scripts/capture-recorder-page.d.mts` | Types for the retention/payload-guard controller |
+| `scripts/capture-recording-pipeline.mjs` | Shared recording pipeline: one sink + guard install + `__aiHellCaptureChunk` binding + probe source per capture path (single-source rule, both paths) |
+| `scripts/capture-recording-pipeline.d.mts` | Types for the shared pipeline |
+| `scripts/capture-diagnostics.mjs` | Additive `--diagnostics` investigation mode: per-chunk base64 sizing, node RSS samples, page heap at clip end, CDP pipe transport tap + overflow classification, `<stem>.diagnostics.json` writer |
+| `scripts/capture-diagnostics.d.mts` | Types for the diagnostics tracker/tap |
 | `scripts/capture-probe.mjs` | Probe-source selection + streamed probe: pure `chooseProbeSource`/`resolveAudioProbeRange`/`buildProbeFileUrl` helpers and the self-contained page-side `probeRecordingInPage` (long clips probe the streamed file over HTTP, short clips keep the in-page Blob) |
 | `scripts/capture-probe.d.mts` | Types for the probe-source selection + streamed probe |
 | `scripts/capture-probe.test.ts` | Hermetic tests for source selection, the bounded audio prefix, the served-URL builder and the page-side probe (capped-audio reporting, contract fields, fade `sampleProbes`) |
+| `scripts/capture-salvage.mjs` | Salvage seam: keeps a failed clip's streamed bytes at `<stem>.partial.webm`, formats the one actionable message, attributes `salvagedBytes`/`partialPath`/`salvageMessage` |
+| `scripts/capture-salvage.d.mts` | Types for the salvage seam |
+| `scripts/capture-salvage.test.ts` | Hermetic tests for the injected mid-recording failure: partial kept, one actionable line, non-zero exit, additive `--json` fields |
 | `scripts/capture-scenes.mjs` | Pure multi-scene core: scene-list config parsing/validation, shared watchable-gym registry, scene/fade timeline and `--json` payload (browser-free) |
 | `scripts/capture-scenes.d.mts` | Types for the multi-scene core |
 | `scripts/capture-scenes.test.ts` | Hermetic tests for config validation, the scene/fade plan, the payload, fade-sample verification and the watchable-scene registry |
@@ -1415,7 +1573,7 @@ full`) or `npm run build`.
 | `scripts/list-capture-pool.mjs` | Capture-pool inventory: retains WebM + series + anchor triples, reports excluded runs and per-run feature evidence |
 | `scripts/list-capture-pool.d.mts` | Types for the pool inventory lister |
 | `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |
-| `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap and progress helpers |
+| `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap, progress helpers, the shared pipeline and the duplication guard |
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
 | `package.json` | `capture` / `capture:scenes` / `capture:install` / `list:pool` / `compile:promo` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |

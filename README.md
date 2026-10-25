@@ -653,7 +653,13 @@ added by AH-0MUWTNPYJ0031FQE):
   (resolution, duration, non-black fraction, colour variety, frame motion) and
   decodes the recorded **Opus audio** (track count, peak, RMS), then **exits
   non-zero** if the clip is black/static **or** has no non-silent audio track,
-  so it can gate a future job.
+  so it can gate a future job. The recording is **streamed to disk while it
+  records** (`<stem>.partial.webm`, renamed to `<stem>.webm` on success), so a
+  long run's memory stays bounded instead of growing with its length, and a
+  **failed** run keeps the bytes already recorded: the CLI prints one
+  actionable salvage line (what failed, bytes kept, the `.partial.webm` path,
+  the next action) and exits **non-zero** instead of losing the run. See
+  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#long-run-memory-budget-and-failure-salvage).
 - **Discover dev scenarios (`--list-scenarios`):**
   `npm run capture -- --list-scenarios` prints every implemented
   `--scenario` value plus its one-line effect, straight from the shared
