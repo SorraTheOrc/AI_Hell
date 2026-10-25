@@ -79,6 +79,7 @@ import {
   readTransportTapSnapshot,
   writeDiagnosticsArtifact,
 } from './capture-diagnostics.mjs';
+import { createChunkSink } from './capture-chunk-sink.mjs';
 import {
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
@@ -1549,6 +1550,14 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
   const diagnostics = createDiagnosticsTracker({
     enabled: options.diagnostics === true,
   });
+  // Stream encoded chunks straight to disk through the bounded sink
+  // (AH-0MVNT26AQ005LDNS): each chunk is decoded, appended to
+  // `<stem>.partial.webm` and dropped, so node memory stays O(one chunk)
+  // instead of O(run duration) — a 30-minute clip no longer has to fit in the
+  // heap before a single byte is written. The sink opens its file lazily on
+  // the first chunk and is finalised (renamed into place) after a successful
+  // probe below.
+  const sink = createChunkSink({ outputPath });
   let removeOverflowHandler = () => {};
   // The default demo path records a **complete run**: it waits for the game's
   // run-end signal and stops one `--tail` later (bounded by
@@ -1603,12 +1612,12 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     // persistent sink to clear.
 
     // Stream encoded chunks to Node as they are produced (avoids one huge
-    // base64 return value over the CDP bridge).
-    const chunks = [];
+    // base64 return value over the CDP bridge); the sink writes each one to
+    // disk and drops it immediately.
     await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
       // Diagnostics record the payload size handed to the CDP binding (AC1).
       diagnostics.recordChunk(base64);
-      chunks.push(Buffer.from(base64, 'base64'));
+      sink.appendBase64(base64);
     });
 
     const pageErrors = [];
@@ -1770,9 +1779,12 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     reporter.step('Encoding and probing the clip…');
     const probe = await stopRecordingAndProbe(page, recordingMs + 500);
 
-    const video = Buffer.concat(chunks);
-    mkdirSync(dirname(outputPath), { recursive: true });
-    writeFileSync(outputPath, video);
+    // Finalise the streamed recording (AH-0MVNT26AQ005LDNS): every chunk is
+    // already on disk at the `.partial` path, so a successful clip is just the
+    // rename into place. A failure path leaves the partial file untouched for
+    // the salvage item (AH-0MVNT29MC008BQPY).
+    const written = sink.finalise({ success: true });
+    const videoBytes = written.bytesWritten;
 
     // Diagnostics: page heap at clip end, then the additive artefact next to
     // the clip (AC2/AC6). Read before the page closes in `finally`.
@@ -1784,7 +1796,7 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
         outputPath,
         clip: {
           output: outputPath,
-          bytes: video.length,
+          bytes: videoBytes,
           durationMs: recordingMs,
           mimeType: probe.mimeType,
         },
@@ -1820,7 +1832,7 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       };
     }
 
-    const videoVerdict = isNonTrivialClip({ ...probe, bytes: video.length });
+    const videoVerdict = isNonTrivialClip({ ...probe, bytes: videoBytes });
     const audioVerdict = evaluateAudioTrack({
       trackCount: probe.audioTrackCount,
       peak: probe.audioPeak,
@@ -1839,7 +1851,7 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     return {
       output: outputPath,
       scenario: options.scenario ?? null,
-      bytes: video.length,
+      bytes: videoBytes,
       durationMs: recordingMs,
       captureStarted,
       ...seriesExport,
@@ -1853,6 +1865,10 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     };
   } finally {
     removeOverflowHandler();
+    // Release the stream handle on every path. A failed clip keeps the bytes
+    // it already streamed at the documented `.partial` path for the salvage
+    // item (AH-0MVNT29MC008BQPY); `close` never renames.
+    sink.close();
     await page.close().catch(() => {});
   }
 }
@@ -2108,16 +2124,19 @@ async function captureScenes({
     options.diagnostics === true
       ? `  ${formatDiagnosticsProgress(diagnostics.snapshot())}`
       : '';
+  // The same bounded sink as the single/batch path (AH-0MVNT26AQ005LDNS):
+  // chunks stream to `<stem>.partial.webm` as they arrive, so the multi-scene
+  // recording never accumulates in the heap either.
+  const sink = createChunkSink({ outputPath });
   let removeOverflowHandler = () => {};
   try {
     // Tap the game's shared AudioContext before any game script runs, so the
     // one recorder muxes the game's own SFX across every scene.
     await page.addInitScript(installGameAudioTap);
 
-    const chunks = [];
     await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
       diagnostics.recordChunk(base64);
-      chunks.push(Buffer.from(base64, 'base64'));
+      sink.appendBase64(base64);
     });
 
     const pageErrors = [];
@@ -2252,9 +2271,11 @@ async function captureScenes({
       ...transitionSampleTimes,
     ]);
 
-    const video = Buffer.concat(chunks);
-    mkdirSync(dirname(outputPath), { recursive: true });
-    writeFileSync(outputPath, video);
+    // Every scene's chunk is already on disk; success is the rename into the
+    // clip path (AH-0MVNT26AQ005LDNS). A failure leaves the partial file for
+    // the salvage item (AH-0MVNT29MC008BQPY).
+    const written = sink.finalise({ success: true });
+    const videoBytes = written.bytesWritten;
 
     // Diagnostics: page heap at clip end, then the additive artefact (AC2/AC6).
     let diagnosticsSummary = null;
@@ -2265,7 +2286,7 @@ async function captureScenes({
         outputPath,
         clip: {
           output: outputPath,
-          bytes: video.length,
+          bytes: videoBytes,
           durationMs: totalMs,
           mimeType: probe.mimeType,
         },
@@ -2273,7 +2294,7 @@ async function captureScenes({
       });
     }
 
-    const videoVerdict = isNonTrivialClip({ ...probe, bytes: video.length });
+    const videoVerdict = isNonTrivialClip({ ...probe, bytes: videoBytes });
     const audioVerdict = evaluateAudioTrack({
       trackCount: probe.audioTrackCount,
       peak: probe.audioPeak,
@@ -2295,7 +2316,7 @@ async function captureScenes({
       ...probe,
       audioVerdict,
       output: outputPath,
-      bytes: video.length,
+      bytes: videoBytes,
       // `totalMs`/`scenes[]` are the planned timeline the config describes;
       // `durationMs` mirrors the single-clip contract (recorded length) and
       // `outputDurationMs` is the decoded length of the written WebM.
@@ -2312,6 +2333,9 @@ async function captureScenes({
     };
   } finally {
     removeOverflowHandler();
+    // Release the stream handle on every path (see the single-clip path): a
+    // failed multi-scene run keeps its streamed bytes at the `.partial` path.
+    sink.close();
     await page.close().catch(() => {});
   }
 }

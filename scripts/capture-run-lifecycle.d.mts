@@ -101,6 +101,16 @@ export const DEFAULT_CAPTURE_TAIL_MS: number;
 export const DEFAULT_MAX_CAPTURE_DURATION_MS: number;
 /** Default demo game-over dwell; at least `DEFAULT_CAPTURE_TAIL_MS`. */
 export const DEMO_GAME_OVER_DWELL_MS: number;
+/**
+ * Hard cap on a single recorder chunk in bytes; imported by the chunk sink and
+ * the page-side slice guard so both sides agree on one limit.
+ */
+export const MAX_CAPTURE_CHUNK_BYTES: number;
+/**
+ * Bounded prefix budget (bytes) for page-side retention and the streamed
+ * probe's audio decode.
+ */
+export const CAPTURE_PROBE_PREFIX_BUDGET_BYTES: number;
 
 export function buildRunEndedDetail(won: unknown, score: unknown): RunEndedDetail;
 export function decodeRunEndedDetail(detail: unknown): RunEndedDetail | null;

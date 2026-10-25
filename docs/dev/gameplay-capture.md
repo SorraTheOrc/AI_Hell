@@ -583,6 +583,43 @@ not yet fully deterministic). A **defeat** run is typically much shorter. The
 no frame-exact reproducibility yet (see
 [Determinism gaps](#determinism-gaps)).
 
+### Streaming the recording to disk (bounded chunk sink)
+
+Both capture paths (`--count`, `--all-scenarios` and `capture:scenes`) stream
+every recorder chunk **straight to disk** through
+`scripts/capture-chunk-sink.mjs` (AH-0MVNT26AQ005LDNS). Each base64 chunk is
+decoded, appended and dropped in the same call, so node peak memory is O(one
+chunk) rather than O(run duration): a 30-minute clip (≈1.8 GB at 8 Mbps)
+never has to fit in the heap, and the whole-run `Buffer.concat` is gone.
+
+- **Write target.** The bytes are appended to the documented partial path
+  `<stem>.partial.webm` (e.g. `gameplay-<timestamp>.webm` is written to
+  `gameplay-<timestamp>.partial.webm`). Only a **successful** clip renames it
+  to `<stem>.webm`; a failed clip leaves the partial file in place, which is
+  the seam the salvage work (AH-0MVNT29MC008BQPY) builds on.
+- **Memory bound.** The sink reports `bytesWritten`, `chunkCount` and
+  `peakPendingBytes`; `peakPendingBytes` never exceeds a single chunk and
+  nothing is retained between writes. A chunk larger than the cap is refused
+  with an actionable error (`CAPTURE_CHUNK_TOO_LARGE`) **before** it is
+  decoded — the page side is expected to slice payloads first
+  (AH-0MVNT27XR0080I3C).
+- **Shared limits.** Both capture limits are declared once, next to
+  `DEFAULT_MAX_CAPTURE_DURATION_MS` in `scripts/capture-run-lifecycle.mjs`,
+  and imported rather than re-declared:
+  - `MAX_CAPTURE_CHUNK_BYTES` (**16 MiB**) — the single-chunk cap, ~16x a
+    normal 1 MiB/s chunk and far below the ≈512 MiB CDP pipe ceiling that
+    overflows with `ERR_STRING_TOO_LONG`.
+  - `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (**32 MiB**) — the bounded prefix the
+    page-side retention and the streamed probe measure from (≈32 s of 8 Mbps
+    footage).
+
+`scripts/capture-chunk-sink.test.ts` proves the bound hermetically: it drives
+the sink with simulated chunks whose cumulative total exceeds the 512 MiB CDP
+pipe budget, writing to a temp file (so the bound is tested without a
+30-minute soak), and asserts on-disk bytes equal the sum of the chunk sizes,
+`peakPendingBytes` stays at one chunk, nothing is retained, and repeated runs
+in fresh directories are byte-identical.
+
 ### Diagnostics (`--diagnostics`)
 
 `--diagnostics` is an **off-by-default** investigation mode for the long-run
@@ -1255,8 +1292,11 @@ full`) or `npm run build`.
 | `scripts/capture-gameplay.d.mts` | Types for the capture orchestrator's pure arg/mode helpers |
 | `scripts/capture-progress.mjs` | Pure duration / ETA / progress-bar + audio-summary formatting + setup hint |
 | `scripts/capture-progress.d.mts` | Types for the progress module |
-| `scripts/capture-run-lifecycle.mjs` | Pure run-lifecycle contracts: signal encode/decode, tail/cap arithmetic, the `waitForRunEnd` loop, run summary and demo dwell |
+| `scripts/capture-run-lifecycle.mjs` | Pure run-lifecycle contracts: signal encode/decode, tail/cap arithmetic, the `waitForRunEnd` loop, run summary, demo dwell and the shared capture limits (`MAX_CAPTURE_CHUNK_BYTES`, `CAPTURE_PROBE_PREFIX_BUDGET_BYTES`) |
 | `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
+| `scripts/capture-chunk-sink.mjs` | Bounded streaming chunk sink: append-decode-write each recorder chunk to `<stem>.partial.webm`, report `bytesWritten`/`chunkCount`/`peakPendingBytes`, finalise by rename |
+| `scripts/capture-chunk-sink.d.mts` | Types for the chunk sink |
+| `scripts/capture-chunk-sink.test.ts` | Hermetic tests for the sink's write path, memory bound beyond the 512 MiB CDP pipe budget, cap rejection and finalise/partial seam |
 | `scripts/capture-scenes.mjs` | Pure multi-scene core: scene-list config parsing/validation, shared watchable-gym registry, scene/fade timeline and `--json` payload (browser-free) |
 | `scripts/capture-scenes.d.mts` | Types for the multi-scene core |
 | `scripts/capture-scenes.test.ts` | Hermetic tests for config validation, the scene/fade plan, the payload, fade-sample verification and the watchable-scene registry |
