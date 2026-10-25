@@ -150,6 +150,34 @@ describe('buildBalanceReport (AH-0MV81YY2T0069W19: versioned, deterministic)', (
     expect(stableStringify(human.config)).not.toContain('campaign');
     expect(JSON.parse(serialiseReport(human)).config.campaign).toBeUndefined();
   });
+
+  it('reports populated campaign and empty skirmish distributions (AC2)', () => {
+    // The two batch modes have deliberately distinct report shapes: the
+    // campaign default carries real progression evidence, while the explicit
+    // skirmish opt-out keeps the historic zero wave/level distributions.
+    const campaign = runBatch({
+      seeds: [1],
+      ticks: 1_800,
+      sampleEveryTicks: 120,
+      spawns: { asteroids: 0 },
+    });
+    expect(campaign.report.config.campaign).toBe(true);
+    expect(campaign.aggregate.waveReached.max).toBeGreaterThan(0);
+    expect(campaign.aggregate.levelReached.max).toBeGreaterThan(0);
+    expect(Object.keys(campaign.aggregate.upgradesSelected).length).toBeGreaterThan(0);
+
+    const skirmish = runBatch({ seeds: [1], ticks: 600, campaign: false });
+    expect(skirmish.report.config.campaign).toBe(false);
+    expect(skirmish.aggregate.waveReached).toEqual({
+      count: 1,
+      mean: 0,
+      median: 0,
+      min: 0,
+      max: 0,
+      stdDev: 0,
+    });
+    expect(skirmish.aggregate.levelReached.max).toBe(0);
+  });
 });
 
 describe('formatBalanceReport (AH-0MV81YY2T0069W19: human-readable summary)', () => {

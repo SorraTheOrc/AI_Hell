@@ -9,6 +9,12 @@
  * entries + one aggregate), empty stream, seed attribution, deterministic
  * byte-stable output — and the cross-path equivalence with the bot batch
  * path's shared schema (no divergent copy).
+ *
+ * **Bot-vs-human comparability (AH-0MVD1RMV1002L0K9 AC4).** A recorded human
+ * campaign and a bot campaign batch now carry the same schema *and* the same
+ * populated progression fields (`waveReached`, `levelReached`,
+ * `upgradesSelected`), so the two are directly comparable per run and in
+ * aggregate.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -20,6 +26,8 @@ import {
   HUMAN_BALANCE_POLICY,
   HUMAN_BALANCE_DT_SECONDS,
 } from './humanStats';
+import { runArena } from './arena';
+import { createCompetentBotBrain } from '../framework/competent';
 import {
   aggregateBalanceStats,
   extractBalanceStats,
@@ -78,7 +86,12 @@ function syntheticRecording(runs: number): readonly TelemetryRecord[] {
       event(baseTick + 15, 'enemy_killed', { archetype: run % 2 === 0 ? 'scout' : 'tank', x: 1, y: 1 }),
     );
     records.push(event(baseTick + 20, 'player_hit', { lives: 2 }));
-    records.push(event(baseTick + 30, 'wave_start', { level: 1, waveNumber: 1 }));
+    records.push(event(baseTick + 30, 'wave_start', { level: 1, waveNumber: 1, waveCount: 2 }));
+    // Campaign progression and the hold-full choice: a human campaign carries
+    // the same events a bot campaign does (AC4 comparability).
+    records.push(event(baseTick + 31, 'wave_cleared', { level: 1, waveNumber: 1 }));
+    records.push(event(baseTick + 32, 'level_cleared', { level: 2 }));
+    records.push(event(baseTick + 33, 'choice_selected', { index: 0, id: 'spread' }));
   }
   return records as readonly TelemetryRecord[];
 }
@@ -218,6 +231,30 @@ describe('cross-path equivalence with the bot batch path (no divergent copy)', (
     const botPathStats = sep.map((run) => extractBalanceStats(run));
     expect(human.stats).toEqual(botPathStats);
     expect(human.aggregate).toEqual(aggregateBalanceStats(botPathStats));
+  });
+
+  it('makes bot and human campaign runs directly comparable (AC4)', () => {
+    // The bot batch's campaign path (the batch default) plays the shipped
+    // campaign through the shared sequencer…
+    const bot = runArena(createCompetentBotBrain(), {
+      seed: 21,
+      ticks: 1_800,
+      campaign: true,
+      spawns: { asteroids: 0 },
+    });
+    const botStats = extractBalanceStats(bot.records);
+    // …and a recorded human campaign now carries the same progression fields.
+    const humanStats = extractHumanBalanceStats(syntheticRecording(1)).stats[0];
+
+    for (const stats of [botStats, humanStats]) {
+      expect(stats.schemaVersion).toBe(BALANCE_STATISTICS_SCHEMA_VERSION);
+      expect(stats.waveReached).toBeGreaterThan(0);
+      expect(stats.levelReached).toBeGreaterThan(0);
+      expect(Object.keys(stats.upgradesSelected).length).toBeGreaterThan(0);
+    }
+    // Identical schema shape: the balance loop can diff the two paths
+    // field-by-field (bot batch vs recorded human game).
+    expect(Object.keys(botStats).sort()).toEqual(Object.keys(humanStats).sort());
   });
 });
 

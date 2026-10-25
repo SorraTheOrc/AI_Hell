@@ -13,6 +13,7 @@ import {
   aggregateMetricPoints,
   aggregateStats,
   compareSameSeed,
+  extractBalanceStats,
   extractMetricPoint,
   objectiveScore,
   recordingRunFromRecords,
@@ -188,6 +189,36 @@ describe('recordingRunFromRecords', () => {
     );
     const metric = extractMetricPoint(run);
     expect(metric.seed).toBe(4);
+    expect(Number.isFinite(metric.score)).toBe(true);
+    expect(metric.survivalSeconds).toBeGreaterThan(0);
+    expect(stableStringify(metric)).toBe(stableStringify(extractMetricPoint(run)));
+  });
+});
+
+/**
+ * Campaign-stream extraction (AH-0MVD1RMV1002L0K9 AC2).
+ *
+ * The campaign-by-default batch feeds the campaign's record stream through the
+ * same extractors as the skirmish path, so a recorded campaign run must yield
+ * a comparable metric point and expose the shared sequencer's progression
+ * events (no campaign-only extraction code path).
+ */
+describe('campaign streams', () => {
+  it('extracts a comparable metric point from a campaign record stream (AC2)', () => {
+    const result = runArena(createCompetentBotBrain(), {
+      seed: 21,
+      ticks: 1_800,
+      campaign: true,
+      spawns: { asteroids: 0 },
+    });
+    const run = recordingRunFromRecords(result.records);
+    // The shared sequencer's canonical progression event is present…
+    expect(run.events.map((event) => event.event)).toContain('wave_start');
+    // …and the unchanged extractors produce real, byte-stable evidence.
+    const stats = extractBalanceStats(result.records);
+    expect(stats.waveReached).toBeGreaterThan(0);
+    expect(stats.levelReached).toBeGreaterThan(0);
+    const metric = extractMetricPoint(run);
     expect(Number.isFinite(metric.score)).toBe(true);
     expect(metric.survivalSeconds).toBeGreaterThan(0);
     expect(stableStringify(metric)).toBe(stableStringify(extractMetricPoint(run)));
