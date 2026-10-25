@@ -691,19 +691,14 @@ describe('power-up choice strategy', () => {
   });
 
   describe('six-slot choice gating (AH-0MVNT2Z89005OPKJ, parent AC4)', () => {
-    // Test-first status (read before editing). The gate on
-    // `buildChoiceCandidates` lands in AH-0MVNT2ZXK009Z5VU; this slice pins
-    // parent AC4 **before** the gate exists, so every gating assertion below
-    // is registered with Vitest's `it.fails(...)` — the repo's
-    // red-before/green-after convention (see
-    // `src/scenes/core/dropLayer.test.ts`) — which keeps the developer test
-    // gate and the dev-push full-suite gate green while the assertions are
-    // genuinely red against the ungated builder.
-    //
-    // When AH-0MVNT2ZXK009Z5VU lands, flip each `.fails` to a plain
-    // `it(...)`. Activation is the only permitted edit: the assertions
-    // themselves must not change (that is what makes this a contract rather
-    // than a wish list).
+    // Contract pinned test-first by AH-0MVNT2Z89005OPKJ and activated by the
+    // gating implementation AH-0MVNT2ZXK009Z5VU: the assertions below were
+    // registered with Vitest's `it.fails(...)` (the repo's
+    // red-before/green-after convention, see
+    // `src/scenes/core/dropLayer.test.ts`) while they were genuinely red
+    // against the ungated builder. The gate has landed, so they now run as
+    // plain `it(...)` — activation was the only edit; the assertions are
+    // unchanged (that is what makes this a contract rather than a wish list).
     //
     // The contexts are hand-built `ChoiceContext`s (no store, no scene, no
     // `Math.random()`): six distinct permanently-owned kinds fill the shared
@@ -773,7 +768,7 @@ describe('power-up choice strategy', () => {
       };
     }
 
-    it.fails('at six filled slots never offers a base pick outside the owned kinds and the exempt entries', () => {
+    it('at six filled slots never offers a base pick outside the owned kinds and the exempt entries', () => {
       // AC4 core: once the pool is full, a brand-new non-exempt kind must
       // never be offered — this is what would create a seventh permanent kind.
       for (const context of [FULL_SLOT_CONTEXT, FULL_WEAPON_CONTEXT]) {
@@ -787,7 +782,7 @@ describe('power-up choice strategy', () => {
       }
     });
 
-    it.fails('at six filled slots the only base offers are the available-when-full entries', () => {
+    it('at six filled slots the only base offers are the available-when-full entries', () => {
       // Owned kinds are suppressed as base entries and offered as level-ups
       // (pre-existing ownership semantics), so everything that survives as a
       // base pick must be one of the flagged entries. Exact set, both a mixed
@@ -801,7 +796,7 @@ describe('power-up choice strategy', () => {
       }
     });
 
-    it.fails('a strategy draw at six filled slots never returns a non-exempt, non-owned id', () => {
+    it('a strategy draw at six filled slots never returns a non-exempt, non-owned id', () => {
       // End to end through the shipped strategy seam: 500 seeded weighted
       // draws of three options must stay inside the gated pool.
       const context = FULL_SLOT_CONTEXT;

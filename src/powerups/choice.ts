@@ -33,6 +33,7 @@ import type { WeaponId } from '../utils/weapons';
 import { summariseWeaponLevelChange } from '../utils/weaponLevels';
 import { summarisePowerUpLevelChange } from './powerUpLevels';
 import { getDropDescription } from './dropDescriptions';
+import { isWithinSlotPool, resolveSlotState } from './slots';
 
 // ── Pool ────────────────────────────────────────────────────────────
 
@@ -379,6 +380,20 @@ export interface ChoiceStrategy {
  * offer a base entry alongside its level-up counterpart for the same id
  * (AH-0MUVRACE9001WVT2 AC3).
  *
+ * ## Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4)
+ *
+ * Once the run's shared permanent pool is full
+ * ({@link resolveSlotState} over the same context), base entries that would
+ * create a seventh permanent kind — neither owned nor flagged
+ * `availableWhenSlotsFull` — are gated out via {@link isWithinSlotPool}. Owned
+ * kinds are already suppressed above and return as level-up offers, and the
+ * flagged entries (Extra Life, Mystery UFO) stay on offer, so the candidate
+ * list degrades gracefully instead of emptying. The gate lives **only** here:
+ * the mini-boss reward inherits it through `buildOwnedLevelUpOptions`, and no
+ * scene or `unlocks.ts` re-derives it. Below the cap `isWithinSlotPool` is
+ * unconditionally true, so the candidate list (eligible set and weights) is
+ * unchanged.
+ *
  * Populates optional display metadata (AH-0MUU1GOAU007RFVR):
  * - `changeSummary` for owned/levelled items, derived from the shared
  *   level maths.
@@ -406,6 +421,13 @@ export function buildChoiceCandidates(
   // must not badge a power-up as New (backward compatible).
   const powerUpOwnershipKnown = context?.powerUpLevels !== undefined;
 
+  // Shared-pool occupancy, derived from the same context through the single
+  // slot helper (no second counter, no scene-local re-derivation).
+  const slotState = resolveSlotState(
+    context?.powerUpLevels ?? [],
+    context?.weaponLevels ?? [],
+  );
+
   const candidates: ChoiceOption[] = [];
   for (const dropId of new Set(pool)) {
     const option = toChoiceOption(dropId);
@@ -419,6 +441,14 @@ export function buildChoiceCandidates(
       powerUpOwnershipKnown &&
       ownedPowerUps.has(dropId as PowerUpId)
     ) {
+      continue;
+    }
+    // Six-slot gate (parent AC4): once the shared pool is full, a base entry
+    // that is neither owned nor `availableWhenSlotsFull` would create a
+    // seventh permanent kind, so it is not offered. Owned kinds already
+    // dropped out above and return as level-up offers below; the flagged
+    // entries survive here. Below the cap this predicate is inert.
+    if (slotState.isFull && !isWithinSlotPool(dropId, slotState)) {
       continue;
     }
     // Every surviving base entry is unowned, so it carries the New badge
