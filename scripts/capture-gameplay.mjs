@@ -80,7 +80,9 @@ import {
   writeDiagnosticsArtifact,
 } from './capture-diagnostics.mjs';
 import { createChunkSink } from './capture-chunk-sink.mjs';
+import { installRecorderChunkRetention } from './capture-recorder-page.mjs';
 import {
+  CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
   buildCaptureStartedMarker,
@@ -1668,6 +1670,14 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     // the shared context.destination (AH-0MUWYQQYU001G6OG).
     await page.addInitScript(installGameAudioTap);
 
+    // Bound the page's Blob retention *before* the recorder runs
+    // (AH-0MVNT274M009XRJ1): startRecording forwards every chunk to the sink
+    // below exactly once and retains only a bounded prefix via the installed
+    // controller, so page heap no longer grows with run length.
+    await page.addInitScript(installRecorderChunkRetention, {
+      budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
+    });
+
     // Install the run-end listener *before* the game boots so a short run
     // cannot end before the capture is listening (AH-0MUXZ4CNS009RV40, AC1).
     // The game also mirrors the outcome onto `window.__aiHellRunState`, which
@@ -1858,7 +1868,10 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     }
 
     reporter.step('Encoding and probing the clip…');
-    const probe = await stopRecordingAndProbe(page, recordingMs + 500);
+    const { probe, retention } = await stopRecordingAndProbe(
+      page,
+      recordingMs + 500,
+    );
 
     // Finalise the streamed recording (AH-0MVNT26AQ005LDNS): every chunk is
     // already on disk at the `.partial` path, so a successful clip is just the
@@ -1867,11 +1880,14 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     const written = sink.finalise({ success: true });
     const videoBytes = written.bytesWritten;
 
-    // Diagnostics: page heap at clip end, then the additive artefact next to
-    // the clip (AC2/AC6). Read before the page closes in `finally`.
+    // Diagnostics: page heap at clip end, the page-side retention state
+    // (AH-0MVNT274M009XRJ1 AC4), then the additive artefact next to the clip
+    // (AC2/AC6). Read before the page closes in `finally`.
     let diagnosticsSummary = null;
     if (options.diagnostics === true) {
-      diagnostics.recordPageMetrics(await readPageHeapMetrics(page));
+      const pageMetrics = await readPageHeapMetrics(page);
+      if (retention) pageMetrics.retention = retention;
+      diagnostics.recordPageMetrics(pageMetrics);
       diagnosticsSummary = finaliseClipDiagnostics({
         tracker: diagnostics,
         outputPath,
@@ -1934,13 +1950,15 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     return {
       output: outputPath,
       scenario: options.scenario ?? null,
-      bytes: videoBytes,
       durationMs: recordingMs,
       captureStarted,
       ...seriesExport,
       ...runSummary,
       renderer: probe.renderer,
       ...probe,
+      // The clip's size is what the sink wrote to disk, not the bounded page
+      // retention prefix the probe saw (AH-0MVNT274M009XRJ1).
+      bytes: videoBytes,
       audioVerdict,
       ...verdict,
       pageErrors,
@@ -2214,8 +2232,12 @@ async function captureScenes({
   let removeOverflowHandler = () => {};
   try {
     // Tap the game's shared AudioContext before any game script runs, so the
-    // one recorder muxes the game's own SFX across every scene.
+    // one recorder muxes the game's own SFX across every scene. Also bound the
+    // page's Blob retention before the recorder runs (AH-0MVNT274M009XRJ1).
     await page.addInitScript(installGameAudioTap);
+    await page.addInitScript(installRecorderChunkRetention, {
+      budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
+    });
 
     await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
       diagnostics.recordChunk(base64);
@@ -2349,7 +2371,7 @@ async function captureScenes({
     const transitionSampleTimes = transitionWindows.flatMap((window) =>
       buildTransitionProbeTimes(window),
     );
-    const probe = await stopRecordingAndProbe(page, totalMs + 500, [
+    const { probe, retention } = await stopRecordingAndProbe(page, totalMs + 500, [
       ...sceneSampleTimes,
       ...transitionSampleTimes,
     ]);
@@ -2360,10 +2382,13 @@ async function captureScenes({
     const written = sink.finalise({ success: true });
     const videoBytes = written.bytesWritten;
 
-    // Diagnostics: page heap at clip end, then the additive artefact (AC2/AC6).
+    // Diagnostics: page heap at clip end, the page-side retention state
+    // (AH-0MVNT274M009XRJ1 AC4), then the additive artefact (AC2/AC6).
     let diagnosticsSummary = null;
     if (options.diagnostics === true) {
-      diagnostics.recordPageMetrics(await readPageHeapMetrics(page));
+      const pageMetrics = await readPageHeapMetrics(page);
+      if (retention) pageMetrics.retention = retention;
+      diagnostics.recordPageMetrics(pageMetrics);
       diagnosticsSummary = finaliseClipDiagnostics({
         tracker: diagnostics,
         outputPath,
@@ -2518,6 +2543,16 @@ async function startRecording(
       const canvas = document.querySelector(selector);
       if (!canvas) throw new Error('game canvas not found');
 
+      // The bounded retention controller installed by
+      // `installRecorderChunkRetention` before the game booted
+      // (AH-0MVNT274M009XRJ1): every chunk is still forwarded to the node
+      // sink exactly once, but the page retains only a bounded prefix, so
+      // page heap stops growing with run length.
+      const retention = window.__aiHellRecorderChunkRetention;
+      if (!retention || typeof retention.handle !== 'function') {
+        throw new Error('page retention controller missing');
+      }
+
       const tap = window.__aiHellAudioTap;
       const audioTracks =
         tap && typeof tap.getAudioTracks === 'function'
@@ -2534,25 +2569,30 @@ async function startRecording(
         videoBitsPerSecond: 8_000_000,
       });
 
-      const chunks = [];
-      recorder.ondataavailable = async (event) => {
+      recorder.ondataavailable = (event) => {
         if (!event.data || event.data.size === 0) return;
-        chunks.push(event.data);
-        const bytes = new Uint8Array(await event.data.arrayBuffer());
-        let binary = '';
-        for (let i = 0; i < bytes.length; i += 0x8000) {
-          binary += String.fromCharCode.apply(
-            null,
-            bytes.subarray(i, i + 0x8000),
-          );
-        }
-        await captureChunk(btoa(binary));
+        // The controller forwards each chunk exactly once (serialised behind
+        // its own chain) and applies the retention decision; the sink writes
+        // every payload to disk immediately, so dropping it from page
+        // retention cannot lose bytes.
+        void retention.handle(event.data, async (blob) => {
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          let binary = '';
+          for (let i = 0; i < bytes.length; i += 0x8000) {
+            binary += String.fromCharCode.apply(
+              null,
+              bytes.subarray(i, i + 0x8000),
+            );
+          }
+          await captureChunk(btoa(binary));
+        });
       };
 
       const captureStartedAtEpochMs = Date.now();
       window.__aiHellCapture = {
         recorder,
-        chunks,
+        chunks: retention.retainedChunks(),
+        retention,
         mimeType: resolvedMimeType,
         audioTrackCount: audioTracks.length,
         captureStartedAtEpochMs,
@@ -2572,6 +2612,11 @@ async function startRecording(
  * (seconds) and returns per-sample `{ timeMs, nonBlackFraction, meanLuma }`
  * — the multi-scene driver uses those frames to verify the 0.25 s page-side
  * fades are present in the recording (AH-0MVFC70GT000B96J, AC3).
+ *
+ * Returns `{ probe, retention }`: the probe object is byte-identical to the
+ * pre-retention contract (AC5), and `retention` carries the page-side
+ * controller's live statistics (AH-0MVNT274M009XRJ1 AC4) so the diagnostics
+ * item can report retained bytes without changing the `--json` result shape.
  */
 async function stopRecordingAndProbe(page, fallbackDurationMs, sampleTimesMs = null) {
   return page.evaluate(
@@ -2579,12 +2624,18 @@ async function stopRecordingAndProbe(page, fallbackDurationMs, sampleTimesMs = n
     const capture = window.__aiHellCapture;
     if (!capture) throw new Error('capture pipeline was never started');
 
-    const { recorder, chunks, mimeType, audioTrackCount } = capture;
+    const { recorder, chunks, mimeType, audioTrackCount, retention } = capture;
     const stopped = new Promise((resolve) => {
       recorder.addEventListener('stop', resolve, { once: true });
     });
     recorder.stop();
     await stopped;
+    // The final `dataavailable` fires before the `stop` event, but its async
+    // handler may still be in flight; flush so the retention statistics below
+    // include the last chunk (AH-0MVNT274M009XRJ1 AC4).
+    if (retention && typeof retention.flush === 'function') {
+      await retention.flush();
+    }
 
     const blob = new Blob(chunks, { type: mimeType });
     const url = URL.createObjectURL(blob);
@@ -2823,13 +2874,16 @@ async function stopRecordingAndProbe(page, fallbackDurationMs, sampleTimesMs = n
     URL.revokeObjectURL(url);
     delete window.__aiHellCapture;
 
-    return {
+    const probe = {
       width,
       height,
       durationSeconds,
       nonBlackFraction: nonBlackTotal / fractions.length,
       uniqueColours: colours.size,
       motion,
+      // The retained prefix's size. The caller reports the clip's on-disk size
+      // from the chunk sink (`bytesWritten`) rather than this prefix size
+      // (AH-0MVNT274M009XRJ1).
       bytes: blob.size,
       mimeType,
       audioTrackCount,
@@ -2842,6 +2896,14 @@ async function stopRecordingAndProbe(page, fallbackDurationMs, sampleTimesMs = n
         const gl = canvas && (canvas.getContext('webgl2') || canvas.getContext('webgl'));
         return gl ? gl.getParameter(gl.RENDERER) : 'unknown';
       })(),
+    };
+
+    return {
+      probe,
+      retention:
+        retention && typeof retention.stats === 'function'
+          ? retention.stats()
+          : null,
     };
   }, { fallbackMs: fallbackDurationMs, sampleTimes: sampleTimesMs });
 }

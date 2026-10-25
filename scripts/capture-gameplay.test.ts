@@ -118,6 +118,7 @@ import {
   summariseChunkSizes,
   writeDiagnosticsArtifact,
 } from './capture-diagnostics.mjs';
+import { installRecorderChunkRetention } from './capture-recorder-page.mjs';
 import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
 import { SCENE_FADE_MS, buildScenePlan } from './capture-scenes.mjs';
 import {
@@ -3512,5 +3513,226 @@ describe('capture diagnostics (AH-0MVNT25JI004OVKQ)', () => {
     });
     expect(unrecognised.installed).toBe(false);
     expect(unrecognised.reason).toContain('unrecognised');
+  });
+});
+
+/**
+ * Fake page scope + recorder wiring for the bounded Blob retention controller
+ * (`installRecorderChunkRetention`, AH-0MVNT274M009XRJ1).
+ *
+ * The controller is installed with `page.addInitScript` before the game boots
+ * (like `installGameAudioTap`), so it must be self-contained and read its
+ * environment from the scope argument. These tests drive that single function
+ * with a fake scope and a fake recorder whose `ondataavailable` fires the same
+ * handler `startRecording` wires into the page — no browser (AC2/AC3).
+ */
+interface RetentionTestChunk {
+  size: number;
+  payload?: Uint8Array;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+  [key: string]: unknown;
+}
+
+function makeRetentionChunk(size: number, fill = 0, second = -1): RetentionTestChunk {
+  const payload = new Uint8Array(Math.max(0, size));
+  payload.fill(fill);
+  if (second >= 0 && payload.length >= 2) payload[1] = second;
+  return {
+    size,
+    payload,
+    arrayBuffer: async () => payload.buffer,
+  };
+}
+
+/** The base64 forward path `startRecording` installs in the page. */
+function makePageForward(seen: string[]) {
+  return async (_chunk: unknown) => {
+    const chunk = _chunk as RetentionTestChunk;
+    const bytes = new Uint8Array(await chunk.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(
+        null,
+        Array.from(bytes.subarray(i, i + 0x8000)),
+      );
+    }
+    seen.push(btoa(binary));
+  };
+}
+
+describe('installRecorderChunkRetention (AH-0MVNT274M009XRJ1)', () => {
+  it('returns null on a scope that cannot hold the controller', () => {
+    expect(installRecorderChunkRetention({}, null as never)).toBeNull();
+    expect(installRecorderChunkRetention({}, 42 as never)).toBeNull();
+  });
+
+  it('is idempotent — installing twice keeps the original controller', () => {
+    const scope: Record<string, unknown> = {};
+    const first = installRecorderChunkRetention({ budgetBytes: 5 }, scope);
+    const second = installRecorderChunkRetention({ budgetBytes: 99 }, scope);
+
+    expect(second).toBe(first);
+    expect((first as NonNullable<typeof first>).stats().budgetBytes).toBe(5);
+  });
+
+  it('forwards every chunk to the sink exactly once and never retains beyond the budget (AC3)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 10 }, scope)!;
+    const forwardedBase64: string[] = [];
+    const forward = makePageForward(forwardedBase64);
+
+    // A long synthetic chunk stream whose cumulative total (600 bytes over
+    // 300 chunks) dwarfs the 10-byte budget — page heap must stay bounded
+    // while the node sink still sees every chunk, in order, exactly once.
+    for (let i = 0; i < 300; i += 1) {
+      // Two payload bytes carry the full index (300 > one byte's 256 values).
+      await retention.handle(makeRetentionChunk(2, i >> 8, i & 0xff), forward);
+      expect(retention.stats().retainedBytes).toBeLessThanOrEqual(10);
+    }
+
+    const stats = retention.stats();
+    expect(stats.retainedBytes).toBe(10);
+    expect(stats.retainedChunkCount).toBe(5);
+    expect(stats.droppedChunks).toBe(295);
+    expect(stats.truncated).toBe(true);
+    // Fully forwarded once: all 300 payloads, in order, each distinct.
+    expect(forwardedBase64).toHaveLength(300);
+    expect(forwardedBase64[0]).toBe(btoa(String.fromCharCode(0, 0)));
+    expect(forwardedBase64[299]).toBe(
+      btoa(String.fromCharCode(299 >> 8, 299 & 0xff)),
+    );
+    expect(new Set(forwardedBase64).size).toBe(300);
+    // The retained set is the run's prefix (the oldest chunks), so the probe's
+    // `new Blob(chunks)` is the file's header + first segment.
+    const retained = retention.retainedChunks();
+    expect(retained).toHaveLength(5);
+    for (let i = 0; i < retained.length; i += 1) {
+      expect(retained[i].size).toBe(2);
+    }
+  });
+
+  it('applies the budget at byte granularity, not chunk count', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 6 }, scope)!;
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+
+    for (const size of [1, 2, 3, 4, 5]) {
+      await retention.handle(makeRetentionChunk(size, size), forward);
+    }
+
+    const stats = retention.stats();
+    expect(stats.retainedBytes).toBe(6); // 1 + 2 + 3 fit; 4 would exceed
+    expect(stats.retainedChunkCount).toBe(3);
+    expect(stats.droppedChunks).toBe(2);
+    expect(stats.droppedBytes).toBe(9); // 4 + 5
+    // Forwarding is independent of retention — every chunk still reached the
+    // sink even after the budget was exhausted.
+    expect(seen).toHaveLength(5);
+  });
+
+  it('never drops a whole recording from retention silently: truncated stays false until the cap is hit', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 100 }, scope)!;
+
+    await retention.handle(makeRetentionChunk(40));
+    expect(retention.stats().truncated).toBe(false);
+    await retention.handle(makeRetentionChunk(60));
+    expect(retention.stats().retainedBytes).toBe(100);
+    expect(retention.stats().truncated).toBe(false);
+    await retention.handle(makeRetentionChunk(1));
+    expect(retention.stats().truncated).toBe(true);
+    expect(retention.stats().droppedChunks).toBe(1);
+    expect(retention.stats().retainedBytes).toBe(100);
+  });
+
+  it('supports budget 0 as the drained mode: forward everything, retain nothing', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 0 }, scope)!;
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+
+    for (let i = 0; i < 50; i += 1) {
+      await retention.handle(makeRetentionChunk(3, i), forward);
+    }
+
+    const stats = retention.stats();
+    expect(stats.retainedBytes).toBe(0);
+    expect(stats.retainedChunkCount).toBe(0);
+    expect(stats.droppedChunks).toBe(50);
+    expect(seen).toHaveLength(50); // the node sink still got everything
+  });
+
+  it('ignores empty or missing chunks without forwarding or retaining', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 10 }, scope)!;
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+
+    await retention.handle(makeRetentionChunk(0), forward);
+    await retention.handle({ size: 0, arrayBuffer: async () => new Uint8Array(0).buffer }, forward);
+    await retention.handle(null as never, forward);
+    await retention.handle(undefined as never, forward);
+
+    const stats = retention.stats();
+    expect(stats.totalChunks).toBe(0);
+    expect(stats.retainedBytes).toBe(0);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('flushes queued non-awaited chunks so the probe sees final stats (AC4)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 3 }, scope)!;
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+
+    // The recorder never awaits `ondataavailable`; fire all of them without
+    // awaiting (as the page does), then `flush()` before reading stats.
+    for (let i = 0; i < 10; i += 1) {
+      void retention.handle(makeRetentionChunk(1, i), forward);
+    }
+    expect(seen).toHaveLength(0); // nothing settled yet
+
+    await retention.flush();
+    expect(seen).toHaveLength(10);
+    const stats = retention.stats();
+    expect(stats.retainedBytes).toBe(3);
+    expect(stats.retainedChunkCount).toBe(3);
+    expect(stats.droppedChunks).toBe(7);
+  });
+
+  it('defaults to the documented prefix budget when none is supplied', () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({}, scope)!;
+
+    expect(retention.stats().budgetBytes).toBe(32 * 1024 * 1024);
+    expect(retention.stats().retainedBytes).toBe(0);
+    expect(retention.stats().retainedChunkCount).toBe(0);
+  });
+
+  it('keeps the chain alive when a forward fails and reports it in stats', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 10 }, scope)!;
+
+    await expect(
+      retention.handle(makeRetentionChunk(4), async () => {
+        throw new Error('sink refused chunk');
+      }),
+    ).rejects.toThrow('sink refused chunk');
+
+    // The failing forward did not poison the queue: the next chunk is still
+    // forwarded and retained normally. The failed chunk's 4 bytes stay in the
+    // retained prefix (retention precedes forwarding in the chain), so the
+    // prefix holds 4 + 2 bytes.
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+    await retention.handle(makeRetentionChunk(2), forward);
+
+    expect(seen).toHaveLength(1);
+    const stats = retention.stats();
+    expect(stats.failedForwards).toBe(1);
+    expect(stats.firstForwardError).toContain('sink refused chunk');
+    expect(stats.retainedBytes).toBe(6);
+    expect(stats.retainedChunkCount).toBe(2);
   });
 });
