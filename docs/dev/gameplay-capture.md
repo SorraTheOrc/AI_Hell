@@ -1207,8 +1207,30 @@ switches scenes **in-page** through the Phaser scene manager — no navigation
 or reload, so the single recorder survives — and throws a typed
 `SceneConfigError` for an unknown, blank or parameterised key rather than
 recording a blank scene. Targets are **dev gym scenes**, not generated
-shipped-game levels; that deferred option is tracked by
-AH-0MVE01EY0008QEVX.
+shipped-game levels.
+
+#### Exactly one scene runs and it is the visible one
+
+`start(key)` guarantees that after any switch **exactly one scene is running
+and it is the requested scene**, independent of Phaser's registration order
+and of whatever was running before (AH-0MVNWJ5FH006QD8V). It stops **every
+active scene other than the target** and then brings the target to the top.
+This matters because Phaser's `SceneManager.start(key)` only shuts down and
+restarts the **target** scene, while its renderer draws every running scene
+in **registration** order:
+
+- the **very first** switch already has a scene running — the capture pipeline
+  presses Enter to satisfy the autoplay policy, which starts `PlayScene` — so
+  without the stop it would be recorded underneath the first gym scene;
+- a boot-registered `PlayScene` renders **above** a lazily-added gym scene, so
+  later gym → level switches would record the wrong scene;
+- every previous capture scene would keep updating (CPU, timers, spawners and
+  in-flight SFX on the shared `AudioContext`) for the rest of the recording.
+
+Scenes are stopped, not slept, so re-requesting a scene records a **fresh**
+run rather than resuming a half-finished one. This is a capture-only
+behaviour: gameplay, scene registration order and the shipped bundle are
+unchanged.
 
 ## Progress output & dependency preflight
 

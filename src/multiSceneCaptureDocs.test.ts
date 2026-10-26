@@ -97,4 +97,12 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     );
     expect(readme).toContain('0.25 s');
   });
+
+  it('documents the one-scene-at-a-time guarantee (AH-0MVNWJ5FH006QD8V)', () => {
+    // The scene-stacking fix must stay documented so a future capture-scene
+    // author knows that stopping every other scene is intentional.
+    expect(captureDoc).toMatch(/exactly one scene is running/i);
+    expect(captureDoc).toMatch(/registration order/);
+    expect(captureDoc).toMatch(/Scenes are stopped, not slept/);
+  });
 });

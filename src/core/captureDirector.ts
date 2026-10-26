@@ -20,6 +20,17 @@
  * class with the running game's scene manager before starting it, mirroring
  * `GymIndex.create()`.
  *
+ * **Exactly one scene runs (AH-0MVNWJ5FH006QD8V).** Before the requested
+ * scene starts, every other *active* scene is stopped and the target is
+ * brought to the top. Phaser's `SceneManager.start(key)` only shuts down and
+ * restarts the **target** scene (`node_modules/phaser/src/scene/SceneManager.js`)
+ * while `render()` draws every running scene in **registration** order, so
+ * without this a chained capture would keep every previous scene alive
+ * underneath the newest one — and a boot-registered `PlayScene` would render
+ * *over* a lazily added gym. Stopping by observation (`getScenes(true)`) also
+ * covers the very first switch, where the warm-up `PlayScene` is already
+ * running before the director is ever called.
+ *
  * Key validation is shared with the capture CLI: `resolveWatchableSceneKey`
  * from the pure, browser-free `scripts/capture-scenes.mjs` module is the
  * single source of truth for which gym scenes may be recorded (parameterised
@@ -126,6 +137,43 @@ export interface SceneManagerLike {
   add(key: string, sceneClass: unknown, autoStart?: boolean): unknown;
   /** Starts the registered scene `key` (in-page; no navigation or reload). */
   start(key: string, ...args: unknown[]): unknown;
+  /**
+   * Stops the scene `key` (Phaser `SceneManager.stop`): it becomes inactive
+   * and invisible and emits `SHUTDOWN`, so a later `start` runs a fresh
+   * `init`/`create` rather than resuming a slept instance.
+   */
+  stop(key: string): unknown;
+  /**
+   * Returns the managed scenes, filtered by active state (Phaser
+   * `SceneManager.getScenes`). The director reads each scene's key to decide
+   * which other scenes to stop.
+   */
+  getScenes(isActive?: boolean): unknown[];
+  /** Reorders the render list so `key` is drawn last / on top (Phaser
+   * `SceneManager.bringToTop`). */
+  bringToTop(key: string): unknown;
+}
+
+/**
+ * Extracts a scene key from whatever {@link SceneManagerLike.getScenes} returns.
+ *
+ * Real Phaser `Scene` instances expose their key at `scene.scene.key` (the
+ * `ScenePlugin`) and at `scene.sys.settings.key`; hermetic fakes may use the
+ * same `{ scene: { key } }` shape or a bare string. Returns `undefined` for an
+ * unrecognised shape so an unexpected entry is ignored rather than crashing a
+ * capture.
+ */
+function sceneKeyOf(scene: unknown): string | undefined {
+  if (typeof scene === 'string') return scene;
+  if (scene && typeof scene === 'object') {
+    const candidate = scene as {
+      scene?: { key?: unknown };
+      sys?: { settings?: { key?: unknown } };
+    };
+    const key = candidate.scene?.key ?? candidate.sys?.settings?.key;
+    if (typeof key === 'string') return key;
+  }
+  return undefined;
 }
 
 /** Minimal game surface the director needs: a Phaser game with a scene manager. */
@@ -139,13 +187,22 @@ export interface GameLike {
  * Validates the key (shared registry + page discovery), registers the
  * requested gym scene's class with the game's scene manager if it is not
  * already registered (gym scenes are not in the shipped `gameConfig` scene
- * list — `GymIndex` registers them the same way), then calls
- * `scene.start(key)`. No navigation and no reload, so a continuously running
- * `MediaRecorder` on the page is unaffected.
+ * list — `GymIndex` registers them the same way), stops every *other* active
+ * scene, starts the target, and brings it to the top. No navigation and no
+ * reload, so a continuously running `MediaRecorder` on the page is unaffected.
+ *
+ * The stop-everything-else step enforces the capture invariant **exactly one
+ * scene runs and it is the visible one** (AH-0MVNWJ5FH006QD8V): it stops the
+ * warm-up `PlayScene` on the very first switch and any previous capture scene
+ * on later ones, independent of registration order. Phaser queues scene-manager
+ * ops issued while it is processing (`queueOp`), so `bringToTop` is requested
+ * explicitly rather than relying on the array order the stops leave behind.
  *
  * Throws a typed {@link SceneConfigError} for any key the shared resolver or
  * the page-discovery check rejects; a discovered key whose module exposes no
- * scene class is likewise a hard error rather than a silent blank start.
+ * scene class is likewise a hard error rather than a silent blank start. Every
+ * rejection happens **before** any stop/start/bring-to-top call, so an invalid
+ * key leaves the running scenes untouched.
  *
  * @param game — the running game whose scene manager drives the switch.
  * @param key — the requested gym scene key (see {@link resolveSceneKey}).
@@ -170,7 +227,20 @@ export function startScene(game: GameLike, key: unknown): void {
     }
     manager.add(resolved, sceneClass);
   }
+
+  // Enforce "exactly one capture scene runs": stop every active scene other
+  // than the target (the warm-up PlayScene on the first switch, the previous
+  // capture scene on later ones), then start the target and bring it to the
+  // top so it is the visible one regardless of registration order.
+  for (const scene of manager.getScenes(true)) {
+    const activeKey = sceneKeyOf(scene);
+    if (activeKey !== undefined && activeKey !== resolved) {
+      manager.stop(activeKey);
+    }
+  }
+
   manager.start(resolved);
+  manager.bringToTop(resolved);
 }
 
 /**

@@ -697,7 +697,10 @@ added by AH-0MUWTNPYJ0031FQE):
   recording; the CLI validates the JSON scene list **before** anything boots
   (`target` + `playMs` + `captureMs`, optional `label`) and the in-page
   director (`window.__aiHellCaptureDirector`) switches scenes behind the fade.
-  Output is a single `capture-output/scenes-<timestamp>.webm` (or `--output
+  Each switch stops every other running scene and brings the requested one to
+  the top, so exactly one scene is recorded at a time regardless of Phaser's
+  registration order (AH-0MVNWJ5FH006QD8V). Output is a single
+  `capture-output/scenes-<timestamp>.webm` (or `--output
   <path>`), and `--json` reports per-scene `{ target, playMs, captureMs,
   startMs, endMs }`, the total duration, the output path and whether the fades
   were verified in the recording. The director is dev-only

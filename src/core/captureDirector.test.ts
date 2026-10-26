@@ -57,26 +57,68 @@ function expectSceneError(run: () => unknown, code: string): SceneConfigError {
   throw new Error(`expected a SceneConfigError (${code}) to be thrown`);
 }
 
-/** A fake scene manager recording every registration and start call. */
-function fakeSceneManager(): {
+/**
+ * A fake scene manager recording every registration, start, stop and
+ * bring-to-top call in one ordered `events` log (so tests can assert that a
+ * stop happens *before* the matching start), plus its own notion of which
+ * scenes are currently active (seeded via `initialActive`, e.g. the
+ * boot-registered warm-up `PlayScene`). Backs the AC1–AC6 stacking tests with
+ * no browser and no real Phaser.
+ */
+function fakeSceneManager(initialActive: string[] = []): {
   manager: SceneManagerLike;
   added: Array<{ key: string; sceneClass: unknown }>;
   started: string[];
+  stopped: string[];
+  broughtToTop: string[];
+  events: string[];
+  active: string[];
 } {
   const added: Array<{ key: string; sceneClass: unknown }> = [];
   const started: string[] = [];
+  const stopped: string[] = [];
+  const broughtToTop: string[] = [];
+  const events: string[] = [];
+  const active: string[] = [...initialActive];
+  // Registered scenes persist after they are stopped (Phaser keeps the scene
+  // in its manager), so model registration separately from active state.
+  const registered = new Set<string>(initialActive);
   const manager: SceneManagerLike = {
-    getScene: () => undefined,
+    getScene: (key: string) =>
+      registered.has(key) ? { scene: { key } } : undefined,
     add: (key: string, sceneClass: unknown) => {
       added.push({ key, sceneClass });
+      registered.add(key);
+      events.push(`add:${key}`);
       return undefined;
     },
     start: (key: string) => {
       started.push(key);
+      registered.add(key);
+      events.push(`start:${key}`);
+      if (!active.includes(key)) active.push(key);
+      return undefined;
+    },
+    stop: (key: string) => {
+      stopped.push(key);
+      events.push(`stop:${key}`);
+      const index = active.indexOf(key);
+      if (index >= 0) active.splice(index, 1);
+      return undefined;
+    },
+    getScenes: (isActive = true) => {
+      const keys = isActive
+        ? [...active]
+        : [...new Set([...active, ...started, ...added.map((entry) => entry.key)])];
+      return keys.map((key) => ({ scene: { key } }));
+    },
+    bringToTop: (key: string) => {
+      broughtToTop.push(key);
+      events.push(`bringToTop:${key}`);
       return undefined;
     },
   };
-  return { manager, added, started };
+  return { manager, added, started, stopped, broughtToTop, events, active };
 }
 
 /** A fake game wrapping a fake scene manager. */
@@ -194,28 +236,17 @@ describe('startScene — in-page switching without navigation (AC: no navigation
   });
 
   it('starts an already-registered scene without re-registering it', () => {
-    const added: Array<{ key: string; sceneClass: unknown }> = [];
-    const started: string[] = [];
-    const manager: SceneManagerLike = {
-      getScene: () => ({ key: 'GymBoss' }),
-      add: (key: string, sceneClass: unknown) => {
-        added.push({ key, sceneClass });
-        return undefined;
-      },
-      start: (key: string) => {
-        started.push(key);
-        return undefined;
-      },
-    };
+    const { manager, added, started } = fakeSceneManager();
+    manager.add('GymBoss', () => undefined);
 
     startScene(fakeGame(manager), 'GymBoss');
 
-    expect(added).toEqual([]);
+    expect(added.map((entry) => entry.key)).toEqual(['GymBoss']);
     expect(started).toEqual(['GymBoss']);
   });
 
   it('rejects a parameterised gym scene without touching the scene manager', () => {
-    const { manager, added, started } = fakeSceneManager();
+    const { manager, added, started, stopped, broughtToTop } = fakeSceneManager();
 
     expectSceneError(
       () => startScene(fakeGame(manager), 'GymFodderEnemies'),
@@ -227,10 +258,12 @@ describe('startScene — in-page switching without navigation (AC: no navigation
     );
     expect(added).toEqual([]);
     expect(started).toEqual([]);
+    expect(stopped).toEqual([]);
+    expect(broughtToTop).toEqual([]);
   });
 
   it('rejects an unknown key without touching the scene manager', () => {
-    const { manager, added, started } = fakeSceneManager();
+    const { manager, added, started, stopped, broughtToTop } = fakeSceneManager();
 
     expectSceneError(
       () => startScene(fakeGame(manager), 'GymNope'),
@@ -239,6 +272,8 @@ describe('startScene — in-page switching without navigation (AC: no navigation
 
     expect(added).toEqual([]);
     expect(started).toEqual([]);
+    expect(stopped).toEqual([]);
+    expect(broughtToTop).toEqual([]);
   });
 });
 
@@ -256,7 +291,7 @@ describe('window.__aiHellCaptureDirector.start — the handle under test (AC: pa
   });
 
   it('propagates a clear error for an unsupported key instead of doing nothing', () => {
-    const { manager, added, started } = fakeSceneManager();
+    const { manager, added, started, stopped, broughtToTop } = fakeSceneManager();
     const handle = registerCaptureDirector(fakeGame(manager)) as CaptureDirectorHandle;
 
     const error = expectSceneError(
@@ -266,5 +301,106 @@ describe('window.__aiHellCaptureDirector.start — the handle under test (AC: pa
     expect(error.message).toContain('GymFodderEnemies');
     expect(added).toEqual([]);
     expect(started).toEqual([]);
+    expect(stopped).toEqual([]);
+    expect(broughtToTop).toEqual([]);
+  });
+});
+
+describe('startScene — exactly one running scene (AH-0MVNWJ5FH006QD8V, scene stacking)', () => {
+  it('AC1: stops the previously running scene before starting the next, leaving exactly one active', () => {
+    const { manager, events, active } = fakeSceneManager(['GymPlayer']);
+
+    startScene(fakeGame(manager), 'GymBoss');
+
+    // stop(A) precedes start(B), and the target is the only scene left running.
+    expect(events).toEqual([
+      'add:GymBoss',
+      'stop:GymPlayer',
+      'start:GymBoss',
+      'bringToTop:GymBoss',
+    ]);
+    expect(active).toEqual(['GymBoss']);
+  });
+
+  it('AC2: stops a boot-registered running scene on the very first switch', () => {
+    // PlayScene is registered at boot (gameConfig.scene); the capture
+    // pipeline's Enter press starts it, so the director's *first* call sees it
+    // already running.
+    const { manager, events, active } = fakeSceneManager(['PlayScene']);
+
+    startScene(fakeGame(manager), 'GymPlayer');
+
+    expect(events).toEqual([
+      'add:GymPlayer',
+      'stop:PlayScene',
+      'start:GymPlayer',
+      'bringToTop:GymPlayer',
+    ]);
+    expect(active).toEqual(['GymPlayer']);
+  });
+
+  it('AC3: brings the started scene to the top regardless of registration order', () => {
+    // A boot-registered PlayScene is running; the lazily-added gym target must
+    // be brought to the top so it renders above the boot scene.
+    const { manager, broughtToTop, active } = fakeSceneManager(['PlayScene']);
+
+    startScene(fakeGame(manager), 'GymPlayer');
+
+    expect(broughtToTop).toEqual(['GymPlayer']);
+    expect(active).toEqual(['GymPlayer']);
+  });
+
+  it('AC3b: gym → gym also brings the next target to the top and stops the previous', () => {
+    const { manager, events, active } = fakeSceneManager(['GymWeapons']);
+
+    startScene(fakeGame(manager), 'GymBoss');
+
+    expect(events).toEqual([
+      'add:GymBoss',
+      'stop:GymWeapons',
+      'start:GymBoss',
+      'bringToTop:GymBoss',
+    ]);
+    expect(active).toEqual(['GymBoss']);
+  });
+
+  it('AC5: re-starting a previously stopped scene starts it afresh (stop → start order)', () => {
+    // GymPlayer runs, we switch to GymBoss (stopping GymPlayer), then back.
+    // The second GymPlayer appearance must be a fresh start, not a resume.
+    const { manager, events, active } = fakeSceneManager(['GymPlayer']);
+
+    startScene(fakeGame(manager), 'GymBoss');
+    startScene(fakeGame(manager), 'GymPlayer');
+
+    expect(events).toEqual([
+      'add:GymBoss',
+      'stop:GymPlayer',
+      'start:GymBoss',
+      'bringToTop:GymBoss',
+      'stop:GymBoss',
+      'start:GymPlayer',
+      'bringToTop:GymPlayer',
+    ]);
+    expect(active).toEqual(['GymPlayer']);
+  });
+
+  it('AC6: a rejected key stops nothing and brings nothing to the top', () => {
+    const { manager, added, started, stopped, broughtToTop } = fakeSceneManager([
+      'GymPlayer',
+    ]);
+
+    expectSceneError(
+      () => startScene(fakeGame(manager), 'GymNope'),
+      ERROR.unknownTarget,
+    );
+    expectSceneError(
+      () => startScene(fakeGame(manager), 'GymFodderEnemies'),
+      ERROR.unsupportedTarget,
+    );
+
+    expect(added).toEqual([]);
+    expect(started).toEqual([]);
+    expect(stopped).toEqual([]);
+    expect(broughtToTop).toEqual([]);
   });
 });
