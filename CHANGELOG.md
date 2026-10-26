@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.1.15 (2026-10-26)
+> **Release focus:** This release focuses on making the automated showcase video system more flexible and reliable, with configurable enemy, weapon, and power-up selection, multi-scene transitions, real generated levels, and more dependable captures. It also tightens campaign difficulty with tougher later levels and shielded enemies, improves upgrade clarity and visual effects, and fixes bot behavior and settings persistence.
+### Features
+- You can now set up exactly which enemies, weapons and power-ups appear in captured gameplay videos. (AH-0MVNW7U5G003SNO6)
+- The demo bot now dodges moving enemies instead of ramming them. (AH-0MVI4QDN90037DIN)
+- Tests now run faster and more reliably, so fixes and updates reach you sooner. (AH-0MVF3BESP005ZDAV)
+- Later levels now throw more enemies at you while dropping fewer power-ups, keeping the campaign tense. (AH-0MVHT1M6O003PU7P)
+- All power-ups and weapons can now appear when your hold fills. (AH-0MVI4KTD8000FBJ7)
+- Later levels now feature shielded enemies that absorb hits before going down. (AH-0MVJ8W4GE007OMNT)
+- Salvage bonus minerals now drop orange, so you can see the bounty paying out. (AH-0MVJ72I8O0009T09)
+- Thorn Field now shows a glowing spiked aura, bursts when it blocks a hit, and recharges over time. (AH-0MVJ8YKR70096C6T)
+- Upgrade choices now show exactly what each weapon or power-up gains at the next level. (AH-0MVL9P2SF009QFON)
+- Enemies now emerge from the wormhole and glide into formation instead of popping into place. (AH-0MV8BSMXC0097KLW)
+- Automatically compiles exciting gameplay highlights into shareable promo videos. (AH-0MV9DB68T002IROX)
+- Wave Laser now deals a limited total damage that grows with upgrades, piercing only what it destroys. (AH-0MV97RISJ002WR2S)
+- Bot tuning now matches real gameplay, so demo and practice bots behave consistently. (AH-0MV9AWR7A0084XJ0)
+- Phase Shift now shimmers and glitches clearly, and wormhole enemies flicker as they materialise. (AH-0MV8BUKFK003Z23S)
+- Showcase videos can now combine multiple gameplay scenes with smooth fade transitions. (AH-0MUX2NLFZ00128WC)
+- Balance testing now plays the full campaign, so difficulty and upgrades can be tuned from real data. (AH-0MV8QT7CB0060A7A)
+- Showcase videos can now feature real generated levels, not just dev test scenes. (AH-0MVE01EY0008QEVX)
+### Bug Fixes
+- Long playthrough captures now finish reliably and keep partial footage if interrupted. (AH-0MVN06MS9007LRKE)
+- Capture recordings now show only the intended scene, with no leftover scenes running behind it. (AH-0MVNWJ5FH006QD8V)
+- Your control scheme and other settings now save reliably, even during long play sessions. (AH-0MVIRYGD1000JVY3)
+- The demo bot now picks a mini-boss reward and keeps playing instead of freezing. (AH-0MVJ8U79V0056I2F)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.14 (2026-10-22)
 > **Release focus:** This release restructures every level into ten waves capped by a unique mini-boss, adding new enemies, weapons, power-ups, and save checkpoints while making bosses scale with permanent upgrades. It also improves upgrade choices so owned items appear more often, turns the Mystery UFO into a visible mineral-collecting saucer drone, and adds a remembered ship control scheme. Numerous fixes polish combat clarity, including coordinated ghost packs, safer wormholes, smoother phaser orbits, balanced audio, and working power-ups like Frenzy and Orbital Strike.
 ### Features
