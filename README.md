@@ -699,7 +699,13 @@ added by AH-0MUWTNPYJ0031FQE):
   director (`window.__aiHellCaptureDirector`) switches scenes behind the fade.
   Each switch stops every other running scene and brings the requested one to
   the top, so exactly one scene is recorded at a time regardless of Phaser's
-  registration order (AH-0MVNWJ5FH006QD8V). Output is a single
+  registration order (AH-0MVNWJ5FH006QD8V). An entry may also carry an
+  optional `setup` object that configures the scene's content — a
+  `LevelDefinition`-shaped level and starting wave, the formation `enemy`, the
+  player loadout (`player.weapons` / `player.timedWeapons`), `powerUps` levels
+  and a determinism `seed` — which makes the previously parameterised
+  `GymLevel` / `GymFodderEnemies` capturable and reproduces the same content
+  for the same seed (AH-0MVNW7U5G003SNO6). Output is a single
   `capture-output/scenes-<timestamp>.webm` (or `--output
   <path>`), and `--json` reports per-scene `{ target, playMs, captureMs,
   startMs, endMs }`, the total duration, the output path and whether the fades

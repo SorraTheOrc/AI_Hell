@@ -1019,3 +1019,27 @@ describe('resolveWatchableSceneEntry — shared CLI/director resolution (AH-0MVN
     expect(payload.scenes[1].setup).toEqual(parsed[1].setup);
   });
 });
+
+describe('examples/scenes.json setup-bearing example (AH-0MVNW91PH000HV2J)', () => {
+  const examplePath = resolve(process.cwd(), 'examples/scenes.json');
+
+  it('parses, normalises and stays idempotent under the documented schema', () => {
+    const parsed = parseSceneConfig(readFileSync(examplePath, 'utf8'));
+    const configured = parsed.filter((scene) => scene.setup !== undefined);
+    expect(configured.length).toBeGreaterThanOrEqual(1);
+
+    for (const scene of configured) {
+      // Defaults are filled by parseSceneConfig…
+      expect(scene.setup?.seed).toBeTypeOf('number');
+      expect(scene.setup?.player?.weapons).toBeInstanceOf(Array);
+      // …and re-normalising the result is a no-op (the example is canonical).
+      const once = normaliseSceneSetup(scene.setup, scene.target);
+      expect(normaliseSceneSetup(once, scene.target)).toEqual(once);
+      // The documented example's parameterised targets are now capturable.
+      expect(() => resolveWatchableSceneEntry({
+        target: scene.target,
+        setup: scene.setup,
+      })).not.toThrow();
+    }
+  });
+});

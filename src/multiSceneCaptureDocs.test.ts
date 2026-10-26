@@ -19,8 +19,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   PARAMETERISED_GYM_SCENE_KEYS,
+  SCENE_CONFIG_ERROR_CODES,
   SCENE_FADE_MS,
+  SCENE_SETUP_COMMON_FIELDS,
+  SCENE_SETUP_TARGET_EXTRA_FIELDS,
   WATCHABLE_GYM_SCENE_KEYS,
+  parseSceneConfig,
 } from '../scripts/capture-scenes.mjs';
 
 const DOC_PATH = path.resolve(process.cwd(), 'docs/dev/gameplay-capture.md');
@@ -89,8 +93,7 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     }
   });
 
-  it('is cross-linked from the README (AC6)', () => {
-    expect(readme).toContain('capture:scenes');
+  it('is cross-linked from the README (AC6)', () => {    expect(readme).toContain('capture:scenes');
     expect(readme).toContain('--config');
     expect(readme).toContain(
       'docs/dev/gameplay-capture.md#multi-scene-capture-capturescenes',
@@ -104,5 +107,61 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(captureDoc).toMatch(/exactly one scene is running/i);
     expect(captureDoc).toMatch(/registration order/);
     expect(captureDoc).toMatch(/Scenes are stopped, not slept/);
+  });
+
+  it('documents every setup field the parser accepts (two-way parity)', () => {
+    const fields = new Set<string>([
+      ...SCENE_SETUP_COMMON_FIELDS,
+      ...Object.values(SCENE_SETUP_TARGET_EXTRA_FIELDS).flat(),
+    ]);
+    for (const field of fields) {
+      expect(captureDoc).toContain(`\`${field}\``);
+    }
+    // The nested player fields are documented too.
+    expect(captureDoc).toContain('`player.weapons`');
+    expect(captureDoc).toContain('`player.timedWeapons`');
+  });
+
+  it('documents every setup error code the parser can raise', () => {
+    for (const code of [
+      'unknown-setup-field',
+      'invalid-setup-type',
+      'unknown-enemy-key',
+      'unknown-formation-kind',
+      'unknown-weapon-id',
+      'unknown-power-up-id',
+      'invalid-level-index',
+      'invalid-wave-index',
+      'missing-setup-parameter',
+      'setup-not-supported',
+      'invalid-seed',
+    ]) {
+      expect(Object.values(SCENE_CONFIG_ERROR_CODES)).toContain(code);
+      expect(captureDoc).toContain(`\`${code}\``);
+    }
+  });
+
+  it('ships a documented setup example that the parser accepts', () => {
+    // Extract the setup-bearing JSON block from the docs and validate it, so
+    // the worked example cannot drift away from the schema.
+    const blocks = [...captureDoc.matchAll(/```json\n([\s\S]*?)```/g)].map(
+      (match) => match[1],
+    );
+    const setupBlock = blocks.find((block) => block.includes('"setup"'));
+    expect(setupBlock).toBeDefined();
+    const parsed = parseSceneConfig(JSON.parse(setupBlock as string));
+    expect(parsed.length).toBeGreaterThan(0);
+    const level = parsed.find((scene) => scene.target === 'GymLevel');
+    expect(level?.setup?.level?.level).toBe(4);
+    expect(level?.setup?.seed).toBe(42);
+  });
+
+  it('keeps examples/scenes.json valid and setup-bearing', () => {
+    const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
+    const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
+    const withSetup = parsed.filter((scene) => scene.setup !== undefined);
+    expect(withSetup.length).toBeGreaterThanOrEqual(1);
+    expect(withSetup.some((scene) => scene.target === 'GymLevel')).toBe(true);
+    expect(withSetup.some((scene) => scene.target === 'GymFodderEnemies')).toBe(true);
   });
 });

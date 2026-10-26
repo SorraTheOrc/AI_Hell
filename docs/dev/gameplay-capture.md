@@ -1073,6 +1073,85 @@ the file order and the list may be any length (at least one scene):
 }
 ```
 
+#### Scene setups (`setup`)
+
+An entry may carry an optional `setup` object that configures the scene's
+**content** — the level and starting wave, the formation enemy, the player
+loadout, power-up levels and a determinism seed. Absent `setup`, the scene
+starts exactly as it does interactively (unchanged behaviour). Present, the
+setup is validated before boot and forwarded to the scene as its launch data.
+
+| Field | Type | Applies to | Default | Meaning |
+|---|---|---|---|---|
+| `level` | object | `GymLevel`, `GymBotTuning` | — | a `LevelDefinition`-shaped level (see below) |
+| `startWave` | positive integer | `GymLevel`, `GymBotTuning` | `1` | 1-based wave to start at (clamped to the level) |
+| `enemy` | enemy key | `GymFodderEnemies` | — | the formation enemy key (required for that target) |
+| `player` | object | all setup-capable gyms | see below | the player loadout (`player.weapons` / `player.timedWeapons`) |
+| `player.weapons` | weapon id array | all setup-capable gyms | `["spread", "dual"]` | permanent weapons for the run |
+| `player.timedWeapons` | weapon id array | all setup-capable gyms | `[]` | weapons granted with the timed countdown |
+| `powerUps` | `{ id: level }` | all setup-capable gyms | `{}` | power-up id → permanent level |
+| `seed` | uint32 | all setup-capable gyms | `0` | determinism seed for content RNGs |
+
+`level` is a `LevelDefinition`-shaped object: `{ level, name, waves[] }` where
+`level` is `1`–`LEVEL_COUNT`, `name` is a non-empty string, and each wave is
+`{ groups[], shootEnabled, ghosts?, centipede?, horde?, laneTraffic?, miniBoss? }`
+with groups of `{ enemyKey, formation, count, spacingX, spacingY, startX,
+startY, startXMin?, startXMax?, startYMin?, startYMax? }`. **Group counts are
+base counts**: the shared `applyEnemyCountScaling` grows them for the level, so
+the spawned count can exceed the configured `count` (the authored config is
+never mutated).
+
+`GymLevel`/`GymBotTuning` and `GymFodderEnemies` were previously rejected as
+parameterised; supplying the required parameter (`level` / `enemy`) makes them
+capturable. `GymCurveSequencer` is an editor and cannot consume a `setup` at
+all. Formation gyms accept the loadout/power-up/seed fields; their enemy roster
+stays fixed by the scene config (only `GymFodderEnemies` selects its roster
+from a setup).
+
+**Determinism.** A `seed` seeds the scene's content RNGs (mineral field, drop
+cadence and random picks), so the same `scenes.json` reproduces the same
+content. It is content-level, not frame-level: frame timing, audio and bot
+micro-jitter are not byte-identical, so clips are re-recordable but not
+byte-reproducible. The resolved seed is reported per scene in the `--json`
+payload.
+
+```json
+{
+  "scenes": [
+    {
+      "target": "GymLevel",
+      "playMs": 2000,
+      "captureMs": 5000,
+      "label": "level 4, wave 2, rapid + shield 2",
+      "setup": {
+        "level": {
+          "level": 4,
+          "name": "The Core",
+          "waves": [
+            {
+              "groups": [
+                { "enemyKey": "scout", "formation": "v", "count": 6, "spacingX": 26, "spacingY": 22, "startX": 240, "startY": 270 }
+              ],
+              "shootEnabled": true
+            }
+          ]
+        },
+        "startWave": 1,
+        "player": { "weapons": ["rapid"], "timedWeapons": [] },
+        "powerUps": { "shield": 2 },
+        "seed": 42
+      }
+    },
+    {
+      "target": "GymFodderEnemies",
+      "playMs": 1500,
+      "captureMs": 2500,
+      "setup": { "enemy": "grunt", "player": { "weapons": ["spread"] }, "seed": 7 }
+    }
+  ]
+}
+```
+
 #### Watchable gym scenes
 
 `target` must be one of the dev gym scenes discovered under `src/scenes/gym/`
@@ -1083,8 +1162,9 @@ without a caller-supplied parameter:
 `GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`, `GymPowerUpsCombat`,
 `GymPowerUpsUtility`, `GymWeaponLeveling`, `GymWeapons`.
 
-`GymFodderEnemies` (needs `enemyKey`) and `GymLevel` (needs a `LevelDefinition`)
-are **rejected** with `unsupported-target`. The registry
+`GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
+setup) are **rejected** with `unsupported-target` when no setup is supplied;
+give them a valid `setup` and they become capturable. The registry
 (`WATCHABLE_GYM_SCENE_KEYS` in `scripts/capture-scenes.mjs`) is the **single
 source of truth** shared by the CLI's pre-boot validation and the page-side
 director's `start(key)` guard, and is pinned against the gym files on disk by
@@ -1107,6 +1187,17 @@ stderr and exits **1** — it never records a partial or blank video:
 | `unknown-target` | `target` is not a discovered gym scene key |
 | `unsupported-target` | `target` is one of the parameterised gym scenes |
 | `invalid-duration` | `playMs`/`captureMs` is not a positive integer (mirrors `--count`) |
+| `unknown-setup-field` | a `setup` field that does not exist |
+| `invalid-setup-type` | a `setup` field has the wrong type or shape |
+| `unknown-enemy-key` | an unknown `enemy` / group `enemyKey` |
+| `unknown-formation-kind` | an unknown group `formation` |
+| `unknown-weapon-id` | an unknown weapon id in `player` |
+| `unknown-power-up-id` | an unknown `powerUps` key |
+| `invalid-level-index` | `level.level` is not an integer `1`–`LEVEL_COUNT` |
+| `invalid-wave-index` | `startWave` is not a valid 1-based wave index |
+| `missing-setup-parameter` | a parameterised target's setup omits `level`/`enemy` |
+| `setup-not-supported` | a `setup` (or a field it cannot consume) on a target that cannot accept it |
+| `invalid-seed` | `seed` is not a 32-bit unsigned integer |
 
 ### Fades and timing
 
