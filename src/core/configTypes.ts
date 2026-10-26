@@ -188,6 +188,28 @@ export interface EnemyConfig {
    */
   health: number;
 
+  // Force-field layer (AH-0MVM8GRQ8006HGPK)
+  /**
+   * Campaign level at which this archetype first gains a force field;
+   * `0` means **never shielded**. The neutral default is `0`, so every
+   * existing enemy is unshielded (and the shipped campaign is behaviourally
+   * unchanged at level 1). Resolved by `enemyForceFieldHits()` in
+   * `src/core/enemyForceField.ts`.
+   */
+  forceFieldStartLevel: number;
+  /**
+   * Force-field hits when the field first appears (at
+   * `forceFieldStartLevel`). The neutral default is `1`; inert while
+   * `forceFieldStartLevel` is `0`.
+   */
+  forceFieldStartHits: number;
+  /**
+   * Force-field hits at the campaign maximum level (level 10). The neutral
+   * default is `1`; inert while `forceFieldStartLevel` is `0`. The resolved
+   * value is always clamped to `[0, 5]`.
+   */
+  forceFieldMaxHits: number;
+
   // Entity visuals / motion
   /** Body radius / half-size in px. */
   size: number;

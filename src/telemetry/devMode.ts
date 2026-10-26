@@ -91,10 +91,67 @@ export async function loadDevTelemetryUploader(): Promise<DevTelemetryUploader |
   return uploadDevTelemetry;
 }
 
+/**
+ * Reads the current run's telemetry buffer through the dev-gated page
+ * accessor `window.__aiHellTelemetry`.
+ *
+ * The dev CLI tooling (`npm run record`, `npm run capture`,
+ * `npm run verify-dev-telemetry`) runs in Node and needs the run the page just
+ * recorded. Before AH-0MVIRYGD1000JVY3 it read the local JSONL sink out of
+ * `localStorage`; telemetry no longer uses storage at all, so the same content
+ * is exposed from the page's in-memory buffer instead.
+ */
+export interface DevTelemetryBuffer {
+  /** The current run's NDJSON content; `null`/empty when nothing is buffered. */
+  read(): string | null;
+}
+
+declare global {
+  interface Window {
+    /**
+     * Dev-gated read access to the in-memory run telemetry buffer. Installed
+     * by `PlayScene` through {@link installDevTelemetryBuffer}, never written
+     * in a production bundle (the install path is statically eliminated).
+     */
+    __aiHellTelemetry?: DevTelemetryBuffer;
+  }
+}
+
+/**
+ * Installs `window.__aiHellTelemetry` in a dev build only, so Node-side dev
+ * tooling can read the run's in-memory buffer.
+ *
+ * Uses the same static-elimination pattern as
+ * {@link loadDevTelemetryUploader}: Vite replaces `import.meta.env.DEV` in the
+ * literal position below, so in a production build the branch is constant and
+ * Rollup removes the global write entirely — the shipped bundle contains no
+ * `__aiHellTelemetry` marker (enforced by `scripts/check-bundle-hygiene.mjs`).
+ * The runtime {@link isDevTelemetryBuild} check keeps the contradictory-env
+ * fail-closed rule.
+ *
+ * @param read - Reads the current run's NDJSON content from the recorder.
+ */
+export function installDevTelemetryBuffer(read: () => string | null): void {
+  // Statically replaced by Vite: `false` in a production build, `true` in dev.
+  if (!import.meta.env.DEV) return;
+  if (!isDevTelemetryBuild() || typeof window === 'undefined') return;
+  window.__aiHellTelemetry = { read };
+}
+
+/** Removes the dev telemetry buffer accessor, if present (dev builds only). */
+export function clearDevTelemetryBuffer(): void {
+  // Statically replaced by Vite: `false` in a production build, `true` in dev.
+  if (!import.meta.env.DEV) return;
+  if (typeof window === 'undefined') return;
+  delete window.__aiHellTelemetry;
+}
+
 /** The uploader call signature `PlayScene` needs (devMode keeps no devUpload refs). */
 export type DevTelemetryUploader = (options: {
   /** Persisted settings slice carrying the share-telemetry flag. */
   readonly setting?: DevTelemetrySetting;
+  /** Reads the current run's in-memory NDJSON buffer. */
+  readonly readSink: () => string | null;
   /** Failure reporter; never thrown to the caller. */
   readonly onError?: (error: unknown) => void;
 }) => Promise<boolean>;

@@ -62,6 +62,13 @@ export interface HarvesterConfig {
   bulletLifetime?: number;
   fireInterval?: number;
   /** Hit points before destruction (data-driven; defaults to 1). */
+  /**
+   * Remaining enemy force-field hits at spawn (epic AH-0MVJ8W4GE007OMNT
+   * AC2; resolved once by `enemyForceFieldHits`). Defaults to `0`
+   * (unshielded), so an entity built without a field behaves exactly as
+   * today.
+   */
+  forceFieldHits?: number;
   health?: number;
   rng?: () => number;
 }
@@ -104,6 +111,7 @@ export class Harvester extends BaseEnemy {
       bulletLifetime: config.bulletLifetime,
       fireInterval: config.fireInterval,
       health: config.health ?? HARVESTER_HEALTH,
+      forceFieldHits: config.forceFieldHits,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

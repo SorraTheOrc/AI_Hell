@@ -1590,3 +1590,147 @@ describe('Enemy behavioural classification (AH-0MV29NWI1007NKN7)', () => {
     expect(m.coerceEnemyConfig(rows[1], DEFAULT_ENEMY_CONFIGS).attackClass).toBe('area');
   });
 });
+
+// ── Enemy force-field columns (AH-0MVM8GQKI006B50M, test-first) ──────
+
+/**
+ * Contract tests for the three per-archetype force-field columns
+ * (AH-0MVM8GRQ8006HGPK adds them to `EnemyConfig`, the CSV codec and the seed
+ * defaults).
+ *
+ * **TEST-FIRST.** Authored before the fields existed, wrapped in Vitest's
+ * `it.fails` (the repo's red-before/green-after convention — see
+ * `src/core/levelScaling.test.ts`), so this block stayed green on pre-change
+ * HEAD. **The implementation item (AH-0MVM8GRQ8006HGPK) flipped every
+ * `it.fails` back to `it`** once `EnemyConfig`, the codec and the seeds
+ * landed; a leftover `it.fails` here fails the suite.
+ *
+ * `ForceFieldColumns` is declared locally so the file type-checks while the
+ * fields are still absent from `EnemyConfig`.
+ */
+interface ForceFieldColumns {
+  forceFieldStartLevel: number;
+  forceFieldStartHits: number;
+  forceFieldMaxHits: number;
+}
+
+/** The documented neutral defaults: unshielded, backwards-compatible. */
+const FORCE_FIELD_DEFAULTS: ForceFieldColumns = {
+  forceFieldStartLevel: 0,
+  forceFieldStartHits: 1,
+  forceFieldMaxHits: 1,
+};
+
+/**
+ * Read exactly the three force-field columns off a coerced config, so
+ * assertions compare only the fields this block pins.
+ */
+function forceFieldOf(config: unknown): ForceFieldColumns {
+  const c = config as Record<string, unknown>;
+  return {
+    forceFieldStartLevel: c.forceFieldStartLevel as number,
+    forceFieldStartHits: c.forceFieldStartHits as number,
+    forceFieldMaxHits: c.forceFieldMaxHits as number,
+  };
+}
+
+/** A complete legacy enemy row (no force-field columns) for `key`'s archetype. */
+function legacyEnemyRow(key: string): Record<string, string> {
+  return {
+    key, displayName: key,
+    formationKind: 'v', count: '4', spacingX: '26', spacingY: '22',
+    driftSpeed: '40', startX: '100', startY: '200', size: '16',
+    color: '0x00ff00', bulletColor: '0xff4444', bulletSize: '3',
+    shotPattern: 'aimed', fireInterval: '1200', bulletSpeed: '100',
+    bulletLifetime: '1.5', burstCount: '1', shotProbability: '1.0',
+  };
+}
+
+describe('Enemy force-field columns (AH-0MVM8GQKI006B50M, test-first)', () => {
+  it('parses the three force-field columns from a CSV row', async () => {
+    const m = await loadCsvModule();
+    const row = {
+      ...legacyEnemyRow('tank'),
+      forceFieldStartLevel: '3',
+      forceFieldStartHits: '2',
+      forceFieldMaxHits: '4',
+    };
+    const fields = forceFieldOf(m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS));
+    expect(fields.forceFieldStartLevel).toBe(3);
+    expect(fields.forceFieldStartHits).toBe(2);
+    expect(fields.forceFieldMaxHits).toBe(4);
+  });
+
+  it('defaults absent force-field columns to 0 / 1 / 1 (legacy CSV stays unshielded)', async () => {
+    const m = await loadCsvModule();
+    // `tank` is a heavy archetype that ships *with* a field, so this pins the
+    // documented codec default rather than a seed-inherited value: a legacy
+    // CSV row must never silently gain a force field.
+    for (const key of ['tank', 'scout']) {
+      const fields = forceFieldOf(
+        m.coerceEnemyConfig(legacyEnemyRow(key), DEFAULT_ENEMY_CONFIGS),
+      );
+      expect(fields, key).toEqual(FORCE_FIELD_DEFAULTS);
+      for (const [column, value] of Object.entries(fields)) {
+        expect(Number.isFinite(value), `${key}.${column} is finite`).toBe(true);
+      }
+    }
+  });
+
+  it('round-trips the three force-field values through export → import', async () => {
+    const m = await loadCsvModule();
+    const authored = {
+      ...DEFAULT_ENEMY_CONFIGS.scout,
+      forceFieldStartLevel: 4,
+      forceFieldStartHits: 3,
+      forceFieldMaxHits: 5,
+    } as (typeof DEFAULT_ENEMY_CONFIGS)['scout'] & ForceFieldColumns;
+    const rows = m.parseCsvRows(m.serializeEnemyConfigs([authored]));
+    expect(rows.length).toBe(1);
+    expect(
+      forceFieldOf(m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS)),
+    ).toEqual({
+      forceFieldStartLevel: 4,
+      forceFieldStartHits: 3,
+      forceFieldMaxHits: 5,
+    });
+  });
+
+  it('loads a persisted legacy config blob without the fields with the defaults', async () => {
+    const m = await loadCsvModule();
+    // A config persisted before the feature existed carries none of the three
+    // fields; serialising it leaves the cells empty and reloading it must not
+    // produce `NaN` or an accidental shield.
+    const blob: Record<string, unknown> = { ...DEFAULT_ENEMY_CONFIGS.harvester };
+    delete blob.forceFieldStartLevel;
+    delete blob.forceFieldStartHits;
+    delete blob.forceFieldMaxHits;
+    const rows = m.parseCsvRows(
+      m.serializeEnemyConfigs([
+        blob as unknown as (typeof DEFAULT_ENEMY_CONFIGS)['harvester'],
+      ]),
+    );
+    expect(forceFieldOf(m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS)))
+      .toEqual(FORCE_FIELD_DEFAULTS);
+  });
+
+  it('falls back to the documented defaults for malformed force-field values', async () => {
+    const m = await loadCsvModule();
+    // Blank, non-numeric, negative and non-integer cells are all malformed:
+    // they must resolve to the documented defaults, never to `NaN`.
+    for (const value of ['', 'abc', '-2', '2.5']) {
+      const row = {
+        ...legacyEnemyRow('tank'),
+        forceFieldStartLevel: value,
+        forceFieldStartHits: value,
+        forceFieldMaxHits: value,
+      };
+      const fields = forceFieldOf(m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS));
+      expect(fields, `value "${value}"`).toEqual(FORCE_FIELD_DEFAULTS);
+      for (const [column, field] of Object.entries(fields)) {
+        expect(Number.isInteger(field), `${column} for "${value}" is an integer`)
+          .toBe(true);
+      }
+    }
+  });
+});

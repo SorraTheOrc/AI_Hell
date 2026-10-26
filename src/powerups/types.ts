@@ -140,6 +140,20 @@ export interface PowerUpEntry {
   livesStart?: number;
   /** Maximum life count. */
   livesMax?: number;
+  /**
+   * Whether this entry remains drawable/offerable once all
+   * `POWER_UP_SLOT_CAP` permanent slots are occupied (parent
+   * AH-0MVLIJT3M005HPHF, AC5).
+   *
+   * **Defaults to `false`** — an absent flag means the entry is gated out at
+   * the cap, so a newly added catalogue entry is non-exempt unless it opts
+   * in. The exemption is read from this data flag; there are no
+   * `id === '…'` special cases anywhere.
+   *
+   * Extra Life and Mystery UFO are exempt today: neither creates a new
+   * permanent effect kind that would need a seventh slot.
+   */
+  availableWhenSlotsFull?: boolean;
 }
 
 // ── Power-up catalogue ──────────────────────────────────────────────
@@ -190,6 +204,9 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     description: '+1 life immediately (starts at 3, capped at 5).',
     livesStart: 3,
     livesMax: 5,
+    // Exempt: an extra life never opens a seventh permanent effect kind, so
+    // it stays available once the six slots are full (Q3 answer (a)).
+    availableWhenSlotsFull: true,
   },
   magnet: {
     id: 'magnet',
@@ -233,6 +250,9 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // drone respawning on the level-resolved interval (AH-0MV9G113S009B37I).
     // The collector-drone level axes (lifetime/capacity/radius/spawn
     // interval) resolve from the shared curve (AH-0MVBMPZ2C0008VAE).
+    // Exempt: the producer explicitly included Mystery UFO in the
+    // available-when-full set (Q3 answer (a)).
+    availableWhenSlotsFull: true,
   },
   frenzy: {
     id: 'frenzy',

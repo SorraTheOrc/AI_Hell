@@ -8,16 +8,18 @@
  *
  * - **positions / velocities** — the live enemy, asteroid, mineral, drop,
  *   bullet and boss sets, partitioned and filtered for dead entries;
+ *   hazards also carry an optional **bot-side velocity estimate**
+ *   (AH-0MVI4QDN90037DIN) supplied by the hazard-velocity tracker;
  * - **incoming-fire prediction** — for every in-flight enemy bullet (and
  *   every enemy inside a fire *tell*, whose shot is not spawned yet) the
  *   predicted closest approach to the player: time-to-closest, closest
  *   distance, whether it is closing, and whether it will pass within the
  *   threat radius.
  *
- * It is a **pure function** of the snapshot and tunables — no memory, no wall
- * clock — so a prediction is exactly reproducible from its inputs. Goals and
- * behaviours consume the resulting {@link BotWorld}; they never re-derive
- * geometry themselves.
+ * It is a **pure function** of the snapshot, tunables and the supplied hazard
+ * velocity lookup — no memory, no wall clock — so a prediction is exactly
+ * reproducible from its inputs. Goals and behaviours consume the resulting
+ * {@link BotWorld}; they never re-derive geometry themselves.
  *
  * @module src/ai/framework/worldModel
  */
@@ -31,11 +33,28 @@ import type {
   BotSnapshot,
 } from '../botSnapshot';
 import type { BotContent } from './content';
+import { BOSS_HAZARD_KEY, enemyHazardKey } from './hazardVelocity';
 
 /** A plain 2-D point used by the derived world view. */
 export interface BotWorldPoint {
   readonly x: number;
   readonly y: number;
+}
+
+/**
+ * A hazard point with the identity and bot-side velocity estimate the
+ * predictive hazard-collision test needs (AH-0MVI4QDN90037DIN · AC2).
+ *
+ * `vx`/`vy` are absent when no estimate exists (the hazard is then treated as
+ * stationary, reproducing today's positional behaviour); `id` is present on
+ * enemy/asteroid hazards and absent on the boss.
+ */
+export interface BotHazardPoint extends BotWorldPoint {
+  /** Stable bot-side enemy id (absent on the boss). */
+  readonly id?: number;
+  /** Estimated velocity (px/s) from the bot-side tracker, when available. */
+  readonly vx?: number;
+  readonly vy?: number;
 }
 
 /** Tunables for the world model / predictor. */
@@ -96,8 +115,8 @@ export interface BotWorld {
   readonly drops: readonly BotDrop[];
   /** The live boss, or `null`. */
   readonly boss: BotBoss | null;
-  /** Every alive hazard (live enemies + boss) as points. */
-  readonly hazards: readonly BotWorldPoint[];
+  /** Every alive hazard (live enemies + boss) as points, with velocity estimates. */
+  readonly hazards: readonly BotHazardPoint[];
   /** Predicted incoming shots (bullets plus fire-tell shots). */
   readonly incomingFire: readonly IncomingFireThreat[];
   /** Distance (px) to the nearest live non-asteroid enemy, or `Infinity`. */
@@ -145,11 +164,17 @@ export class BotWorldModel {
  *   decides the asteroid partition (AC1). When omitted, the legacy
  *   `archetype === 'asteroid'` convention is preserved so direct callers are
  *   unaffected.
+ * @param hazardVelocities — optional bot-side velocity lookup (keyed by
+ *   {@link enemyHazardKey} / {@link BOSS_HAZARD_KEY}, as produced by
+ *   `trackHazardVelocities`) carried onto each hazard point
+ *   (AH-0MVI4QDN90037DIN). Omitting it leaves every hazard stationary, so
+ *   positional behaviour is unchanged.
  */
 export function buildBotWorld(
   snapshot: BotSnapshot,
   tunableOverrides?: Partial<BotWorldTunables>,
   content?: BotContent,
+  hazardVelocities?: ReadonlyMap<string, BotWorldPoint>,
 ): BotWorld {
   const tunables: BotWorldTunables = {
     ...BOT_WORLD_TUNABLES,
@@ -161,7 +186,23 @@ export function buildBotWorld(
 
   const liveEnemies: BotEnemy[] = [];
   const liveAsteroids: BotEnemy[] = [];
-  const hazards: BotWorldPoint[] = [];
+  const hazards: BotHazardPoint[] = [];
+  const hazardPoint = (
+    x: number,
+    y: number,
+    key: string | null,
+    id?: number,
+  ): BotHazardPoint => {
+    const velocity = key === null ? undefined : hazardVelocities?.get(key);
+    return {
+      x,
+      y,
+      ...(id !== undefined ? { id } : {}),
+      ...(velocity && (velocity.x !== 0 || velocity.y !== 0)
+        ? { vx: velocity.x, vy: velocity.y }
+        : {}),
+    };
+  };
   for (const enemy of snapshot.enemies) {
     if (!enemy.alive) continue;
     if (isAsteroidLike(enemy.archetype)) {
@@ -169,11 +210,18 @@ export function buildBotWorld(
     } else {
       liveEnemies.push(enemy);
     }
-    hazards.push({ x: enemy.x, y: enemy.y });
+    hazards.push(
+      hazardPoint(
+        enemy.x,
+        enemy.y,
+        enemy.id !== undefined ? enemyHazardKey(enemy.id) : null,
+        enemy.id,
+      ),
+    );
   }
   const boss =
     snapshot.boss && snapshot.boss.alive ? snapshot.boss : null;
-  if (boss) hazards.push({ x: boss.x, y: boss.y });
+  if (boss) hazards.push(hazardPoint(boss.x, boss.y, BOSS_HAZARD_KEY));
 
   return {
     player,

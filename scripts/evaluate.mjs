@@ -24,7 +24,7 @@
  *   node scripts/evaluate.mjs --help
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
 import { basename as pathBasename, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,7 +35,10 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     baseline: null,
     candidate: null,
     seeds: null,
-    ticks: 1800,
+    // `null` → mode default: 1800 for a single-run evaluation, 18 000 for a
+    // full-campaign batch (AC3). `main` passes it through; the pure TS core
+    // resolves it so the shell never duplicates the constants.
+    ticks: null,
     dt: 1 / 60,
     sampleEveryTicks: 1,
     outputDir: 'eval-output',
@@ -51,6 +54,12 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     tuneAssignment: null,
     threshold: 10,
     keepEdit: false,
+    level: null,
+    scaleLevels: true,
+    forceFields: true,
+    // Full-campaign batch mode is the default (AC1); `--skirmish` opts back
+    // into the legacy single-level skirmish (AC2).
+    campaign: true,
     help: false,
   };
   const explicitSeeds = [];
@@ -91,6 +100,9 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
       case '--ticks':
         options.ticks = Number(next());
         break;
+      case '--skirmish':
+        options.campaign = false;
+        break;
       case '--dt':
         options.dt = Number(next());
         break;
@@ -125,6 +137,25 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
       case '--keep-edit':
         options.keepEdit = true;
         break;
+      case '--level':
+        options.level = Number(next());
+        break;
+      case '--scale-levels': {
+        const raw = next();
+        if (raw !== 'on' && raw !== 'off') {
+          throw new Error(`--scale-levels expects 'on' or 'off' (got '${raw}')`);
+        }
+        options.scaleLevels = raw === 'on';
+        break;
+      }
+      case '--force-fields': {
+        const raw = next();
+        if (raw !== 'on' && raw !== 'off') {
+          throw new Error(`--force-fields expects 'on' or 'off' (got '${raw}')`);
+        }
+        options.forceFields = raw === 'on';
+        break;
+      }
       case '--video':
         options.video = true;
         break;
@@ -152,17 +183,30 @@ Options:
   --seed <n>           A seed (repeatable)
   --seeds <count>      Use seeds 1..count (default 3)
   --batch              Batch mode: sweep seeds x policies, emit the balance report
+  --skirmish           Batch mode: play the legacy single-level skirmish instead of the
+                       full shipped campaign (the batch default, AC1/AC2)
   --tune               Tune loop: baseline batch → one CSV edit → identical re-run → compare
   --set <file> <a>     The declarative edit for --tune, e.g. --set enemy-configs.csv boss.health=6
   --threshold <pct>    Relative significance threshold for --tune (default 10 = ±10%%)
-  --keep-edit          Keep the --set CSV edit after the tune run (default: restore)  --games <count>      Games (seeds 1..count) in batch mode (default 100)
+  --keep-edit          Keep the --set CSV edit after the tune run (default: restore)
+  --games <count>      Games (seeds 1..count) in batch mode (default 100)
   --policies <a,b>     Comma-separated policies to sweep in batch mode
-  --ticks <n>          Max ticks per run (default 1800)
+  --ticks <n>          Max ticks per run (default 18000 for a full-campaign batch,
+                       1800 for a single-run evaluation; a run ends early on death
+                       or at the boss trigger/game-complete)
   --dt <seconds>       Fixed simulation step (default 1/60)
   --sample-every <n>   Record every Nth tick (default 1)
   --out <dir>          Artifact output directory (default eval-output)
   --human <file.jsonl> Compare the bot against a recorded human run (same seed)
   --human-seed <n>     Which human run seed to compare (default: last run)
+  --level <n>          Play the real campaign waves of level n (1-10) instead of the seeded
+                       skirmish (per-level campaign mode, real per-kill drop rule)
+  --scale-levels <on|off>  Level curves in per-level mode: on (default) resolves counts and
+                       drop chance at the selected level; off resolves both to level 1 so a
+                       pre-change baseline is captured with identical harness code and seeds
+  --force-fields <on|off>  Enemy force fields: on (default) resolves the barrier at the run
+                       level; off resolves it at level 1 so a pre-change hull-only baseline is
+                       captured with identical harness code and seeds
   --video              Also emit the side-by-side capture plan (AC4)
   --json               Print the machine-readable report instead of text
   --help               Show this help
@@ -184,6 +228,37 @@ Options:
 /** Joins an output directory and an artifact name. */
 export function resolveArtifactPath(dir, name) {
   return dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`;
+}
+
+/**
+ * Opens the streaming `runs.jsonl` sink for a batch
+ * (AH-0MVD1RPPP001XJKN AC2/AC3). The batch core hands each run's telemetry
+ * to the sink and never retains it (see `executeEvaluation`'s
+ * `telemetrySink`), so peak memory is bounded by one run's records instead
+ * of the whole sweep. The shell owns the file.
+ *
+ * Writes are **synchronous** on purpose: `executeEvaluation` is synchronous,
+ * so a `fs.WriteStream` would silently buffer whenever the disk lags and the
+ * buffer would grow to the entire batch's telemetry (measured: a 100-game
+ * campaign batch buffered ≈2 GB). A synchronous write hands each run's chunk
+ * straight to the page cache and keeps process memory bounded.
+ *
+ * @param {string} filePath
+ * @returns {{write(chunk: string): void, close(): void}}
+ */
+export function openTelemetrySink(filePath) {
+  const fd = openSync(filePath, 'w');
+  let closed = false;
+  return {
+    write(chunk) {
+      writeSync(fd, chunk);
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      closeSync(fd);
+    },
+  };
 }
 
 /** Loads the TS evaluation core through Vite's SSR module loader. */
@@ -363,20 +438,33 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
     // real balance data (config-driven arena, AH-0MV81YPBG0028WNM AC5); a
     // missing/unreadable CSV falls back to the built-in defaults.
     await core.hydrateBalanceConfig();
-    const result = core.executeEvaluation({
-      ...options,
-      seeds: resolveSeeds(options),
-      policies: options.policies ?? [],
-      humanRecordingText,
-      humanSeed: options.humanSeed,
-    });
     mkdirSync(options.outputDir, { recursive: true });
+    // Stream batch telemetry to disk so the sweep never accumulates in memory
+    // (AH-0MVD1RPPP001XJKN AC2/AC3); the core hands each run over and the
+    // shell persists it, keeping peak RSS bounded by one run.
+    const telemetry = options.batch
+      ? openTelemetrySink(resolveArtifactPath(options.outputDir, 'runs.jsonl'))
+      : null;
+    let result;
+    try {
+      result = core.executeEvaluation({
+        ...options,
+        seeds: resolveSeeds(options),
+        policies: options.policies ?? [],
+        humanRecordingText,
+        humanSeed: options.humanSeed,
+        telemetrySink: telemetry ? (chunk) => telemetry.write(chunk) : null,
+      });
+    } finally {
+      if (telemetry) telemetry.close();
+    }
     for (const artifact of result.artifacts) {
       writeFileSync(resolveArtifactPath(options.outputDir, artifact.name), artifact.content);
     }
     if (result.stdout) io.out.write(result.stdout);
     if (result.stderr) io.err.write(`${result.stderr}\n`);
-    io.out.write(`Wrote ${result.artifacts.length} artifact(s) to ${options.outputDir}\n`);
+    const sinkArtifacts = telemetry ? 1 : 0;
+    io.out.write(`Wrote ${result.artifacts.length + sinkArtifacts} artifact(s) to ${options.outputDir}\n`);
     return result.exitCode;
   } finally {
     await server.close();

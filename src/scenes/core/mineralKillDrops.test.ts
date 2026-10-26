@@ -7,6 +7,10 @@
  * and a non-asteroid enemy re-drops its collected minerals plus a random
  * additive bonus (default 0.25–1.25), rounded to the nearest integer and
  * scattered near the death site.
+ *
+ * Also pins the Salvage bounty seam (`scatterSalvageMineralDrops`,
+ * AH-0MVJ72I8O0009T09): the same scatter maths and RNG draw order, but the
+ * drops render orange so the bounty is visible on the field.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -17,9 +21,16 @@ import { createSeededRng } from '../../test/powerUpTestFixtures';
 import { Asteroid } from '../../entities/Asteroid';
 import { BaseEnemy, type BaseEnemyConfig } from '../../entities/BaseEnemy';
 import { Mineral } from '../../entities/Mineral';
-import { MINERAL_REDROP_SCATTER_RADIUS } from '../../core/constants';
+import {
+  MINERAL_COLOR,
+  MINERAL_REDROP_SCATTER_RADIUS,
+  MINERAL_SALVAGE_COLOR,
+} from '../../core/constants';
 import type { FormationOffset } from '../../utils/formations';
-import { resolveMineralKillDrops } from './mineralKillDrops';
+import {
+  resolveMineralKillDrops,
+  scatterSalvageMineralDrops,
+} from './mineralKillDrops';
 
 class HarnessScene extends Phaser.Scene {
   constructor() {
@@ -167,6 +178,104 @@ describe('resolveMineralKillDrops — non-asteroid re-drop rule', () => {
     const plain = scene.add.container(10, 10);
 
     expect(resolveMineralKillDrops(scene, plain, () => 0.5)).toEqual([]);
+  });
+});
+
+describe('scatterSalvageMineralDrops — orange Salvage bounty seam (AH-0MVJ72I8O0009T09)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  it('spawns the requested number of orange minerals at the wreck', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+
+    const drops = scatterSalvageMineralDrops(scene, 400, 300, 4, () => 0);
+
+    expect(drops).toHaveLength(4);
+    expect(drops.every((d) => d instanceof Mineral)).toBe(true);
+    // rng() = 0 → zero scatter radius, so every drop lands on the wreck.
+    for (const drop of drops) {
+      expect(drop.color).toBe(MINERAL_SALVAGE_COLOR);
+      expect(drop.x).toBe(400);
+      expect(drop.y).toBe(300);
+    }
+  });
+
+  it('scatters within the shared re-drop radius, like an ordinary drop', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+
+    const drops = scatterSalvageMineralDrops(
+      scene,
+      300,
+      300,
+      12,
+      createSeededRng(11),
+    );
+
+    expect(drops).toHaveLength(12);
+    for (const drop of drops) {
+      expect(
+        Math.hypot(drop.x - 300, drop.y - 300),
+      ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
+    }
+  });
+
+  it('returns no drops for a zero or negative bounty', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+
+    expect(scatterSalvageMineralDrops(scene, 100, 100, 0)).toEqual([]);
+    expect(scatterSalvageMineralDrops(scene, 100, 100, -2)).toEqual([]);
+  });
+
+  it('consumes the same RNG draws in the same order as a gold scatter', async () => {
+    // Parity guarantee (AC4): adding the colour must not reorder or add
+    // draws, so a seeded run yields the same positions as an equivalent
+    // gold scatter loop over the same seed.
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+
+    const orange = scatterSalvageMineralDrops(
+      scene,
+      250,
+      180,
+      6,
+      createSeededRng(99),
+    );
+    const goldRng = createSeededRng(99);
+    const gold = Array.from({ length: 6 }, () => {
+      const angle = goldRng() * Math.PI * 2;
+      const radius = goldRng() * MINERAL_REDROP_SCATTER_RADIUS;
+      return [250 + Math.cos(angle) * radius, 180 + Math.sin(angle) * radius];
+    });
+
+    expect(orange.map((m) => [m.x, m.y])).toEqual(gold);
+    // …while the salvage drops themselves are orange, not gold.
+    expect(orange.every((m) => m.color === MINERAL_SALVAGE_COLOR)).toBe(true);
+  });
+
+  it('leaves the ordinary kill-drop rule gold (baseline economy readable)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scene = booted.scene;
+
+    const asteroidDrops = resolveMineralKillDrops(
+      scene,
+      makeAsteroid(scene, 120, 90, 'small'),
+      () => 0.5,
+    );
+    expect(asteroidDrops).toHaveLength(1);
+    expect(asteroidDrops[0].color).toBe(MINERAL_COLOR);
+
+    const enemy = makeEnemy(scene, 500, 250);
+    for (let i = 0; i < 20; i += 1) enemy.collectMineral();
+    const redrops = resolveMineralKillDrops(scene, enemy, createSeededRng(3));
+    expect(redrops.length).toBeGreaterThan(0);
+    expect(redrops.every((m) => m.color === MINERAL_COLOR)).toBe(true);
   });
 });
 

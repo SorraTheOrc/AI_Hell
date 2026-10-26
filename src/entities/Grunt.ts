@@ -51,6 +51,13 @@ export interface GruntConfig {
   size?: number;
   color?: number;
   bulletColor?: number;
+  /**
+   * Remaining enemy force-field hits at spawn (epic AH-0MVJ8W4GE007OMNT
+   * AC2; resolved once by `enemyForceFieldHits`). Defaults to `0`
+   * (unshielded), so an entity built without a field behaves exactly as
+   * today.
+   */
+  forceFieldHits?: number;
   health?: number;
   /** Homing speed in px/s (defaults to {@link GRUNT_HOMING_SPEED}). */
   speed?: number;
@@ -86,6 +93,7 @@ export class Grunt extends BaseEnemy {
       color: config.color ?? GRUNT_COLOR,
       bulletColor: config.bulletColor,
       health: config.health,
+      forceFieldHits: config.forceFieldHits,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

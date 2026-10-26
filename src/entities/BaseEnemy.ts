@@ -19,6 +19,13 @@ import Phaser from 'phaser';
 
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
 import { loadRules } from '../core/rules';
+import { playEnemyForceFieldBreakSound } from '../audio/effects';
+import {
+  drawEnemyForceFieldBubble,
+  ENEMY_FORCE_FIELD_BREAK_RADIUS_FACTOR,
+  ENEMY_FORCE_FIELD_RADIUS_FACTOR,
+  spawnEnemyForceFieldBreakFlash,
+} from '../scenes/core/CombatEffectVisuals';
 import {
   FormationOffset,
   FormationPosition,
@@ -60,6 +67,16 @@ export interface BaseEnemyConfig {
    * Defaults to `1` so every single-hit archetype is unchanged.
    */
   health?: number;
+  /**
+   * Remaining enemy force-field hits at spawn (epic AH-0MVJ8W4GE007OMNT AC2;
+   * AH-0MVM8GUZG008AWSU). The count is resolved once by the pure
+   * `enemyForceFieldHits(level, config)` helper and threaded through the
+   * spawn path — the entity never evaluates the level curve itself.
+   *
+   * Defaults to `0` (unshielded), so an entity constructed without a field is
+   * byte-for-byte today's behaviour: `health` is the only thing a hit touches.
+   */
+  forceFieldHits?: number;
   /** Random-number generator (defaults to `Math.random`). */
   rng?: () => number;
 }
@@ -92,6 +109,14 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
 
   /** Separate explosion particle layer. */
   protected readonly explosionGraphics: Phaser.GameObjects.Graphics;
+
+  /**
+   * Shared enemy force-field bubble layer (epic AH-0MVJ8W4GE007OMNT AC3,
+   * AH-0MVM8GW7W004SI0E). Drawn by the shared
+   * `drawEnemyForceFieldBubble` helper so the game and every gym render the
+   * barrier identically; cleared once the field breaks.
+   */
+  protected readonly forceFieldGraphics: Phaser.GameObjects.Graphics;
 
   /** Live particle-explosion handles (SHUTDOWN-safe teardown in destroy()). */
   protected readonly explosionHandles: ExplosionHandle[] = [];
@@ -127,6 +152,43 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    * `config.health` and decremented by {@link takeDamage}; defaults to `1`.
    */
   protected _health: number;
+
+  /**
+   * Remaining force-field hits (epic AH-0MVJ8W4GE007OMNT AC2). Absorbed
+   * before the hull: {@link takeDamage} decrements this while it is above
+   * zero and only then touches {@link _health}. Initialised from
+   * `config.forceFieldHits` (default `0` = unshielded) so no entity gains a
+   * field by accident.
+   */
+  protected _forceFieldHits: number;
+
+  /**
+   * Field hits at full strength (the value the entity spawned with), used to
+   * brighten the shared bubble ring with the remaining hits. `0` for an
+   * unshielded enemy.
+   */
+  protected _forceFieldMaxHits: number;
+
+  /**
+   * Whether the shared force-field bubble is currently drawn. Mirrors the
+   * helper's return value so tests/consumers can read the bubble state
+   * without pixel assertions.
+   */
+  protected _forceFieldBubbleDrawn = false;
+
+  /**
+   * Latches `true` on the hit that spends the last field hit and never flips
+   * back — the single, exactly-once "field broke" signal shared by every
+   * consumer (feedback, audio, scenes).
+   */
+  protected _forceFieldBroken = false;
+
+  /**
+   * Whether the most recent {@link takeDamage} hit was absorbed by the force
+   * field rather than the hull. `false` for unshielded enemies and after the
+   * field has broken.
+   */
+  protected _lastHitAbsorbed = false;
 
   /** Random-number generator. */
   protected readonly _rng: () => number;
@@ -168,6 +230,8 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._fireInterval = config.fireInterval ?? 1000;
     this._shotProbability = config.shotProbability ?? 1.0;
     this._health = config.health ?? 1;
+    this._forceFieldHits = sanitiseForceFieldHits(config.forceFieldHits);
+    this._forceFieldMaxHits = this._forceFieldHits;
     this._rng = config.rng ?? Math.random;
 
     // Shared graphics — created here but NOT added to the container.
@@ -176,6 +240,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this.bodyGraphics = scene.add.graphics();
     this.explosionGraphics = scene.add.graphics();
     this.explosionGraphics.setDepth(2);
+    this.forceFieldGraphics = scene.add.graphics();
   }
 
   /**
@@ -186,7 +251,58 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   protected addSharedGraphics(): void {
     this.bodyGraphics.setDepth(1);
     this.add(this.bodyGraphics);
+    // The force-field bubble sits over the hull (depth between body and
+    // explosion) so a shielded enemy always reads "barrier around ship".
+    this.forceFieldGraphics.setDepth(1.5);
+    this.add(this.forceFieldGraphics);
     this.add(this.explosionGraphics);
+    this._drawForceFieldBubble();
+  }
+
+  // ── Force-field bubble (AC3, AH-0MVM8GW7W004SI0E) ──────────────────
+
+  /**
+   * Re-draws the shared enemy force-field bubble layer from the current field
+   * state, delegating the drawing to `drawEnemyForceFieldBubble`. Called when
+   * the shared layers are attached and after every absorbed hit, so the ring
+   * dims as the field is spent.
+   */
+  protected _drawForceFieldBubble(): void {
+    this._forceFieldBubbleDrawn = drawEnemyForceFieldBubble(
+      this.forceFieldGraphics,
+      { x: 0, y: 0 },
+      this._size,
+      this._forceFieldHits,
+      this._forceFieldMaxHits,
+    );
+  }
+
+  /**
+   * Removes the bubble layer without destroying it (field broken or enemy
+   * destroyed). The graphics object is reused if the enemy is re-drawn.
+   */
+  protected _clearForceFieldBubble(): void {
+    this._forceFieldBubbleDrawn = false;
+    this.forceFieldGraphics.clear();
+  }
+
+  /**
+   * Runs the once-per-field **break** feedback (AC3): clears the bubble and
+   * plays the distinct break flash + registered audio cue. Called from
+   * {@link takeDamage} on the hit that spends the last field hit, so the
+   * game and every gym (all routed through the same `takeDamage()` seam) get
+   * identical feedback.
+   */
+  protected _breakForceField(): void {
+    this._clearForceFieldBubble();
+    const scene = this.scene as Phaser.Scene | undefined;
+    if (!scene) return;
+    const bubbleRadius =
+      (this._size / 2) * ENEMY_FORCE_FIELD_RADIUS_FACTOR;
+    spawnEnemyForceFieldBreakFlash(scene, this.x, this.y, {
+      radius: bubbleRadius * ENEMY_FORCE_FIELD_BREAK_RADIUS_FACTOR,
+    });
+    playEnemyForceFieldBreakSound();
   }
 
   // ── Subclass hook: draw unique body shape ──────────────────────────
@@ -210,6 +326,10 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     if (!this._alive) return;
     this._alive = false;
     this.hideBody();
+    // A destroyed enemy never leaves its barrier hovering in the arena —
+    // cleared here so every subclass (including those overriding hideBody) is
+    // covered.
+    this._clearForceFieldBubble();
     this.playExplosion(scale);
   }
 
@@ -248,15 +368,42 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Apply one hit of damage. Decrements the remaining health and calls
-   * {@link destroySelf} only when the last hit point is spent, so the shared
-   * player-bullet collision path can finalise the kill exactly once on the
-   * lethal blow. A hit against an already-destroyed enemy is a no-op.
+   * Apply one hit of damage. The **force field absorbs hits before the hull**
+   * (epic AH-0MVJ8W4GE007OMNT AC2): while the field carries hits, this
+   * decrements the field, leaves `health` untouched, reports the hit as
+   * absorbed and keeps the enemy alive — yet still returns the remaining
+   * **hull** health so every existing caller keeps working unchanged. The hit
+   * that spends the last field hit is the last absorbed hit and latches
+   * {@link forceFieldBroken} exactly once.
+   *
+   * Only once the field is down does the hull take damage as before:
+   * {@link _health} is decremented and {@link destroySelf} runs on the last
+   * hit point, so the shared player-bullet collision path finalises the kill
+   * exactly once on the lethal blow. A hit against an already-destroyed enemy
+   * is a no-op.
+   *
+   * Every player damage source (bullet, damage-budget beam, AOE, Smart Bomb, Orbital
+   * Strike, Frenzy bonus hits) already routes through this single seam, so the
+   * field depletes identically for all of them — there is no parallel damage
+   * path.
    *
    * @returns the remaining hit points after this hit (`0` when destroyed).
    */
   takeDamage(): number {
     if (!this._alive) return 0;
+    if (this._forceFieldHits > 0) {
+      this._forceFieldHits -= 1;
+      this._lastHitAbsorbed = true;
+      if (this._forceFieldHits === 0) {
+        this._forceFieldBroken = true;
+        this._breakForceField();
+      } else {
+        // The barrier survived: redraw so its brightness tracks the spent hit.
+        this._drawForceFieldBubble();
+      }
+      return this._health;
+    }
+    this._lastHitAbsorbed = false;
     this._health -= 1;
     if (this._health <= 0) {
       this._health = 0;
@@ -268,6 +415,41 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Remaining hit points before destruction. */
   get health(): number {
     return this._health;
+  }
+
+  /**
+   * Remaining force-field hits (read-only; `0` when unshielded or broken).
+   * The field absorbs hits before the hull — see {@link takeDamage}.
+   */
+  get forceFieldHits(): number {
+    return this._forceFieldHits;
+  }
+
+  /** Whether this enemy still carries a force field (`forceFieldHits > 0`). */
+  get hasForceField(): boolean {
+    return this._forceFieldHits > 0;
+  }
+
+  /**
+   * Whether the shared enemy force-field bubble is currently drawn (AC3).
+   * True while the field is up, false once it breaks or the enemy is
+   * destroyed.
+   */
+  get forceFieldBubbleVisible(): boolean {
+    return this._forceFieldBubbleDrawn;
+  }
+
+  /** Whether the most recent hit was absorbed by the force field. */
+  get lastHitAbsorbed(): boolean {
+    return this._lastHitAbsorbed;
+  }
+
+  /**
+   * Whether the force field has been broken. Latches `true` on the hit that
+   * spends the last field hit and never flips back.
+   */
+  get forceFieldBroken(): boolean {
+    return this._forceFieldBroken;
   }
 
   /** Hit radius for collision detection. */
@@ -399,6 +581,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   destroy(fromScene?: boolean): void {
     this.destroyGraphics();
     this.explosionGraphics.destroy();
+    this.forceFieldGraphics.destroy();
     for (const handle of this.explosionHandles) handle.destroy();
     this.explosionHandles.length = 0;
     super.destroy(fromScene);
@@ -435,4 +618,16 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   get offset(): FormationOffset {
     return { ...this.formationOffset };
   }
+}
+
+/**
+ * Resolves an authored force-field hit count to a usable non-negative
+ * integer. Non-finite/negative values resolve to `0` (unshielded) — a
+ * defensive guard so a corrupt config can never fabricate a shield.
+ */
+function sanitiseForceFieldHits(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  return Math.floor(value);
 }

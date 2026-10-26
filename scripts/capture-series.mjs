@@ -3,9 +3,9 @@
  * (AH-0MVDV4DMY001Z7CU).
  *
  * The gameplay capture (`scripts/capture-gameplay.mjs`) records the run with
- * telemetry enabled (local dev JSONL sink), so the page-side
- * `state.actionIntensity` samples land in `localStorage` under
- * `ai_hell_telemetry_jsonl` (doc `docs/dev/action-intensity.md` §7.1/§8.2).
+ * telemetry enabled (the dev JSONL sink), so the page-side
+ * `state.actionIntensity` samples land in the run's in-memory telemetry
+ * buffer (doc `docs/dev/action-intensity.md` §7.1/§8.2).
  * This module turns that recorded stream into the two artefacts the promo
  * compile pipeline consumes, next to each captured WebM (§7.3/§7.5):
  *
@@ -70,14 +70,6 @@ export const ACTION_INTENSITY_SERIES_CATEGORIES = Object.freeze([
   'playerExplosions',
   'bosses',
 ]);
-
-/**
- * `localStorage` key the page's dev JSONL telemetry sink appends to
- * (mirrors `TELEMETRY_JSONL_STORAGE_KEY` in `src/telemetry/sinks.ts`). The
- * capture re-enables telemetry so the recorded run leaves its
- * `state.actionIntensity` samples here; the series exporter reads them back.
- */
-export const CAPTURE_TELEMETRY_JSONL_KEY = 'ai_hell_telemetry_jsonl';
 
 /**
  * The kind discriminator of the join-anchor sidecar record (AC2). Versioned

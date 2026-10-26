@@ -37,7 +37,9 @@ export const DEFAULT_DIST_DIR = join(REPO_ROOT, 'dist');
  * toolchain and Node built-ins, not generic library names. The dev-only
  * telemetry entry (AH-0MVBMR0BG0005BBI) targets the dev-server upload endpoint
  * only: the local JSONL sink key itself is a production-reachable marker (the
- * `jsonl` sink ships with the telemetry framework) and must stay legal.
+ * `jsonl` sink ships with the telemetry framework) and must stay legal. The
+ * dev-only page accessor (`__aiHellTelemetry`, AH-0MVIRYGD1000JVY3) is a
+ * second dev-only marker: a production bundle must not contain its global.
  */
 export const FORBIDDEN_MARKERS = [
   { marker: 'node-web-audio-api', label: 'Node-only audio backend' },
@@ -53,6 +55,10 @@ export const FORBIDDEN_MARKERS = [
   {
     marker: '/api/telemetry/upload',
     label: 'Dev-only telemetry upload endpoint',
+  },
+  {
+    marker: '__aiHellTelemetry',
+    label: 'Dev-only telemetry page accessor',
   },
 ];
 

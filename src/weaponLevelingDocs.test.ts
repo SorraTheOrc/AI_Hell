@@ -83,4 +83,16 @@ describe('weapon leveling is documented (AH-0MUQOT1I60038CO7 AC4/AC5)', () => {
     expect(readme).toContain('GymWeaponLeveling');
     expect(readme).toMatch(/leveling gym/i);
   });
+
+  it('the GDD and README document the level-accurate change summary (AH-0MVL9P2SF009QFON)', () => {
+    // Every level-up offer — hold-full or mini-boss reward — must state the
+    // real per-level delta, and only for variables that change that item's
+    // behaviour (no AoE gain on a non-AoE weapon).
+    expect(gdd).toMatch(/Level-change summary/);
+    expect(gdd).toContain('changeSummary');
+    expect(gdd).toMatch(/aoe` descriptor/);
+    expect(gdd).toMatch(/buildOwnedLevelUpOptions/);
+    expect(readme).toContain('buildOwnedLevelUpOptions');
+    expect(readme).toMatch(/changeSummary/);
+  });
 });

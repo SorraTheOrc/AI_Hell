@@ -1124,3 +1124,49 @@ describe('per-charge recharge engine and cap-3 (AH-0MV82I7HF009ZHPD — test-fir
     expect(store.phaseCharges()).toBe(1);
   });
 });
+
+// ── Thorn recharge axis (AH-0MVJ8YKR70096C6T) ─────────────────────────
+
+describe('Thorn Field recharge axis (AH-0MVJ8YKR70096C6T)', () => {
+  const spec = POWER_UP_LEVEL_SPECS.thorns.find(
+    (s) => s.variable === 'thornsRecharge',
+  )!;
+
+  it('is a descending linear-clamped interval (12 s → 5 s, −1 s/level)', () => {
+    expect(spec).toBeDefined();
+    expect(spec.curve).toBe('linear-clamped');
+    expect(spec.base).toBe(12);
+    expect(spec.cap).toBe(5);
+    expect(spec.k).toBe(-1);
+    expect(spec.discrete).toBe(true);
+
+    const intervalAt = (level: number) =>
+      resolvePowerUpAtLevel('thorns', level).thornsRecharge!;
+    expect(intervalAt(0)).toBe(12);
+    expect(intervalAt(1)).toBe(11);
+    expect(intervalAt(5)).toBe(7);
+    expect(intervalAt(50)).toBe(5);
+  });
+
+  it('derives a rams-per-second rate that never decreases across levels', () => {
+    let previousRate = 0;
+    for (let level = 0; level <= 20; level += 1) {
+      const stats = resolvePowerUpAtLevel('thorns', level);
+      expect(stats.thornsRechargeRate).toBeCloseTo(1 / stats.thornsRecharge!, 12);
+      expect(stats.thornsRechargeRate!).toBeGreaterThanOrEqual(previousRate);
+      previousRate = stats.thornsRechargeRate!;
+    }
+  });
+
+  it('keeps the existing thorns axes unchanged alongside the new one', () => {
+    const stats = resolvePowerUpAtLevel('thorns', 0);
+    expect(stats.thornsAbsorbs).toBe(2);
+    expect(stats.thornsDuration).toBe(8);
+  });
+
+  it('surfaces the recharge delta in the hold-full change summary', () => {
+    expect(summarisePowerUpLevelChange('thorns', 0, 1)).toContain(
+      'Thorn recharge',
+    );
+  });
+});

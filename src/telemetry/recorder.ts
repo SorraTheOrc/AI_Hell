@@ -47,7 +47,8 @@ export const DEFAULT_TELEMETRY_BUILD: TelemetryBuildInfo = {
 export interface TelemetryRecorderStats {
   /** Records accepted into the buffer (including any later dropped). */
   readonly recorded: number;
-  /** Records overwritten by the ring buffer before they were flushed. */
+  /** Records overwritten by the ring buffer, or discarded when a new run
+   * started, before they were flushed. */
   readonly dropped: number;
   /** Ticks skipped by sampling. */
   readonly skipped: number;
@@ -85,6 +86,11 @@ export interface TelemetryRecorder {
   recordEvent(event: string, payload?: unknown): void;
   /** Drains the buffer and awaits all in-flight sink writes. */
   flush(): Promise<void>;
+  /**
+   * The current run's buffered NDJSON content (the dev JSONL sink's
+   * in-memory buffer), or `null` when this recorder buffers nothing.
+   */
+  readBuffer(): string | null;
   /** Flushes and closes the sink; further records are ignored. */
   close(): Promise<void>;
   /** A snapshot of the recorder's counters. */
@@ -119,6 +125,10 @@ export class NoopTelemetryRecorder implements TelemetryRecorder {
 
   async flush(): Promise<void> {
     // Nothing buffered.
+  }
+
+  readBuffer(): string | null {
+    return null;
   }
 
   async close(): Promise<void> {
@@ -186,6 +196,11 @@ export class BufferedTelemetryRecorder implements TelemetryRecorder {
   startRun(header: TelemetryRunHeaderInput): void {
     this.tick = 0;
     if (this.closed) return;
+    // A run's recording is run-scoped (AH-0MVIRYGD1000JVY3, AC2): drop
+    // anything still buffered for the previous run and clear the sink's
+    // buffer, so the next upload contains this run's records only.
+    this.buffer.clear();
+    this.sink.reset?.();
     this.enqueue({
       kind: 'run_header',
       schemaVersion: TELEMETRY_SCHEMA_VERSION,
@@ -262,6 +277,15 @@ export class BufferedTelemetryRecorder implements TelemetryRecorder {
       ...this.counters,
       dropped: this.buffer.dropped,
     });
+  }
+
+  /**
+   * The current run's buffered NDJSON content, read straight out of the dev
+   * sink's in-memory buffer (AH-0MVIRYGD1000JVY3, AC1). `null` when the
+   * sink buffers nothing (e.g. the remote transport sink).
+   */
+  readBuffer(): string | null {
+    return this.sink.read?.() ?? null;
   }
 
   /** Adds a record to the ring buffer, auto-flushing at the batch size. */
@@ -376,5 +400,16 @@ class RingBuffer<T> {
     this.head = 0;
     this.count = 0;
     return out;
+  }
+
+  /**
+   * Discards every buffered entry (a new run starts clean), counting them as
+   * dropped so the loss is visible in {@link TelemetryRecorderStats}.
+   */
+  clear(): void {
+    this.dropped += this.count;
+    this.storage.fill(undefined);
+    this.head = 0;
+    this.count = 0;
   }
 }

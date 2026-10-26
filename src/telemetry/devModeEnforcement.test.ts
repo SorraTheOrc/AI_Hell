@@ -337,8 +337,11 @@ describe('dev-only telemetry gate — server plugin registration (AC3c)', () => 
 });
 
 describe('dev-only telemetry gate — bundle reachability (AC4)', () => {
-  it('forbids the dev upload endpoint in the production bundle', () => {
+  it('forbids the dev upload endpoint and the dev page accessor in the bundle', () => {
     expect(FORBIDDEN_MARKERS.map((entry) => entry.marker)).toContain(DEV_UPLOAD_ENDPOINT);
+    // The dev-gated `window.__aiHellTelemetry` accessor must be statically
+    // eliminated from a production bundle (AH-0MVIRYGD1000JVY3, AC7).
+    expect(FORBIDDEN_MARKERS.map((entry) => entry.marker)).toContain('__aiHellTelemetry');
   });
 
   it('leaves production-reachable telemetry markers untouched', () => {

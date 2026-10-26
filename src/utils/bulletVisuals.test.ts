@@ -599,7 +599,7 @@ describe('resolvePlayerBulletVisual', () => {
     const laser = resolvePlayerBulletVisual(WEAPON_CATALOGUE.wave_laser);
     // The elongated neon beam identity: a long line/beam (never a dot), a
     // thick stroke, and a faint fading wake behind the trailing edge — all
-    // visual metadata; flight (speed, lifetime, piercing) is unchanged.
+    // visual metadata; flight (speed, lifetime, maxHitPoints) is unchanged.
     expect(canonicalShape(laser.shape)).toBe('line');
     expect(laser.length).toBeGreaterThan(3); // long beam, distinctly not the dual
     expect(laser.thickness).toBeGreaterThan(1);

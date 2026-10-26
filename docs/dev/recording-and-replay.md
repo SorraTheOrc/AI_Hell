@@ -20,8 +20,10 @@ recording path. A recording is the framework's `run_header` + per-tick
 
 `scripts/record-session.mjs` starts the Vite dev server with
 `VITE_TELEMETRY_ENABLED=true VITE_TELEMETRY_SINK=jsonl`, opens the game in a
-real (by default **headed**) browser so a human can play, then reads the local
-dev sink's `localStorage` JSONL and writes it to `recordings/`.
+real (by default **headed**) browser so a human can play, then reads the run's
+in-memory telemetry buffer through the dev-gated
+`window.__aiHellTelemetry.read()` accessor and writes it to `recordings/`.
+Telemetry never uses `localStorage` (AH-0MVIRYGD1000JVY3).
 
 ```bash
 # Human plays; press Ctrl+C in the terminal to finish and save.

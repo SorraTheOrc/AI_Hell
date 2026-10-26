@@ -15,7 +15,13 @@ import type { EnemyConfig } from '../../core/configTypes';
 import { resolvePolicyFactory } from './policies';
 import { executeEvaluation, defaultOptions, seedRange, runBalanceBatch, buildTuneComparisonArtifacts } from './cli';
 import { SameSweepGuardError } from './tune';
-import { BALANCE_STATISTICS_SCHEMA_VERSION, TUNE_COMPARISON_SCHEMA_VERSION } from './types';
+import {
+  BALANCE_STATISTICS_SCHEMA_VERSION,
+  DEFAULT_BATCH_CAMPAIGN,
+  DEFAULT_BATCH_TICKS,
+  DEFAULT_EVALUATION_TICKS,
+  TUNE_COMPARISON_SCHEMA_VERSION,
+} from './types';
 import type { CliOptions } from './cli';
 
 /** Builds a full option object for the pure CLI core. */
@@ -44,6 +50,16 @@ describe('defaultOptions / seedRange', () => {
     expect(defaults.seeds).toEqual([1, 2, 3]);
     expect(seedRange(0)).toHaveLength(3);
     expect(seedRange(5)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('defaults batch runs to the full campaign with the mode-default tick budget (AC1/AC3)', () => {
+    const defaults = defaultOptions();
+    expect(DEFAULT_BATCH_CAMPAIGN).toBe(true);
+    expect(defaults.campaign).toBe(true);
+    // `null` means “mode default”: the batch resolves the higher campaign
+    // budget, a single-run evaluation the historic skirmish window (AC5).
+    expect(defaults.ticks).toBeNull();
+    expect(DEFAULT_BATCH_TICKS).toBeGreaterThan(DEFAULT_EVALUATION_TICKS);
   });
 });
 
@@ -208,6 +224,60 @@ describe('executeEvaluation batch mode (AH-0MV81YY2T0069W19: CLI batch flags)', 
   });
 });
 
+describe('executeEvaluation streaming telemetry (AH-0MVD1RPPP001XJKN AC2/AC3)', () => {
+  it('hands each run to the sink and retains no raw telemetry in memory', () => {
+    const chunks: string[] = [];
+    const result = executeEvaluation(
+      options({
+        batch: true,
+        seeds: [1, 2],
+        ticks: 60,
+        telemetrySink: (chunk) => chunks.push(chunk),
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    // One chunk per run, in sweep order — the sweep is never accumulated.
+    expect(chunks).toHaveLength(2);
+    for (const chunk of chunks) {
+      const records = chunk.trim().split('\n').map((line) => JSON.parse(line));
+      expect(records.length).toBeGreaterThan(1);
+      expect(records[0].kind).toBe('run_header');
+      expect(records[records.length - 1]).toMatchObject({ kind: 'event', event: 'run_end' });
+    }
+
+    // The shell owns `runs.jsonl`; the in-memory artifacts carry only the
+    // summaries (no per-tick/per-event raw telemetry).
+    expect(result.artifacts.map((artifact) => artifact.name)).toEqual([
+      'balance-report.json',
+      'balance-report.txt',
+    ]);
+    for (const artifact of result.artifacts) {
+      expect(artifact.content).not.toContain('"kind":"tick"');
+      expect(artifact.content).not.toContain('"kind":"event"');
+    }
+    // The report itself still aggregates every run of the sweep.
+    expect(JSON.parse(result.artifacts[0].content).runs).toHaveLength(2);
+  });
+
+  it('streamed chunks are byte-identical to the accumulated runs.jsonl artifact', () => {
+    const batch = (): CliOptions =>
+      options({ batch: true, seeds: [1, 2], ticks: 60 });
+    const accumulated = executeEvaluation(batch()).artifacts.find(
+      (artifact) => artifact.name === 'runs.jsonl',
+    )?.content;
+    expect(accumulated).toBeTruthy();
+
+    const chunks: string[] = [];
+    executeEvaluation({
+      ...batch(),
+      telemetrySink: (chunk) => chunks.push(chunk),
+    });
+    // Streaming loses nothing: the concatenated chunks are the same JSONL.
+    expect(chunks.join('')).toBe(accumulated);
+  });
+});
+
 describe('runBalanceBatch (AH-0MVBNITA0005VQGN)', () => {
   beforeEach(() => resetConfigStore());
 
@@ -293,5 +363,115 @@ describe('buildTuneComparisonArtifacts (AH-0MVBNITA0005VQGN)', () => {
     expect(summary.edit.newValue).toBe('8');
     expect(artifacts.summaryText).toContain('Tune comparison');
     expect(artifacts.summaryText).toContain('boss.health 1 → 8');
+  });
+});
+
+/**
+ * Per-level campaign batch (AH-0MVLJF9HC007AOI6, **TEST-FIRST**).
+ *
+ * Pins the additive per-level surface of the pure CLI core: `CliOptions`
+ * gains an optional `level` the shell/`executeEvaluation` forwards to
+ * `runBatch` → `runArena`, and the resulting balance batch must report the
+ * per-level fields (`powerUpsCollected`, `enemiesKilledByArchetype`,
+ * `avoidableHits`, `survivalSeconds`, `levelReached`). Pre-change HEAD has
+ * no such option: `executeEvaluation` ignores the extra field, every run is
+ * a seeded skirmish and `levelReached` stays 0, so this test stays red
+ * (Vitest `it.fails`, the repo red-before/green-after convention) while the
+ * suite stays green. The harness-extension item (AH-0MVLJFB1I0099X4Z)
+ * threads `level` through and flips it back to `it`.
+ */
+describe('per-level campaign batch (AH-0MVLJF9HC007AOI6, pinned test-first)', () => {
+  // GREEN since AH-0MVLJFB1I0099X4Z (CliOptions.level → runBatch → arena).
+  it('runs the real campaign at an explicit level and reports the per-level fields', () => {
+    const result = executeEvaluation({
+      ...options({ batch: true, seeds: [1, 2], ticks: 300 }),
+      level: 5,
+    } as CliOptions);
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(
+      result.artifacts.find((artifact) => artifact.name === 'balance-report.json')
+        ?.content ?? '{}',
+    );
+    // The per-level evidence the emitter surfaces for a level-selecting batch.
+    for (const field of [
+      'powerUpsCollected',
+      'enemiesKilledByArchetype',
+      'avoidableHits',
+      'survivalSeconds',
+      'levelReached',
+    ]) {
+      expect(report.aggregate).toHaveProperty(field);
+    }
+    expect(report.runs).toHaveLength(2);
+    for (const run of report.runs) {
+      expect(run.stats.levelReached).toBe(5);
+    }
+  });
+});
+
+/**
+ * Campaign-by-default batch CLI (AH-0MVD1RK2V009J5D2).
+ *
+ * `CliOptions.campaign` (default true) selects the full-campaign batch; the
+ * CLI's `--skirmish` opt-out maps to `campaign: false`. `--ticks` omission
+ * resolves to the batch budget (18 000), never the skirmish window.
+ */
+describe('campaign-by-default batch CLI (AH-0MVD1RK2V009J5D2)', () => {
+  it('runs a full-campaign batch by default and reports the resolved mode (AC1)', () => {
+    const result = executeEvaluation(
+      options({ batch: true, seeds: [1], ticks: 900, sampleEveryTicks: 60 }),
+    );
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(result.artifacts[0].content);
+    expect(report.config.campaign).toBe(true);
+    // Campaign waves make waveReached real instead of the old constant zero.
+    expect(report.aggregate.waveReached.max).toBeGreaterThan(0);
+    for (const run of report.runs) {
+      expect(run.stats.waveReached).toBeGreaterThan(0);
+      expect(run.stats.levelReached).toBeGreaterThan(0);
+    }
+  });
+
+  it('--skirmish (campaign: false) restores the legacy skirmish batch (AC2)', () => {
+    const result = executeEvaluation(
+      options({ batch: true, seeds: [1, 2], ticks: 120, sampleEveryTicks: 10, campaign: false }),
+    );
+    const report = JSON.parse(result.artifacts[0].content);
+    expect(report.config.campaign).toBe(false);
+    expect(report.config.ticks).toBe(120);
+    expect(report.aggregate.waveReached.max).toBe(0);
+    expect(report.aggregate.levelReached.max).toBe(0);
+  });
+
+  it('resolves the higher batch tick budget only when --ticks is omitted (AC3)', () => {
+    const batch = executeEvaluation(
+      options({ batch: true, seeds: [1], ticks: null }),
+    );
+    expect(JSON.parse(batch.artifacts[0].content).config.ticks).toBe(
+      DEFAULT_BATCH_TICKS,
+    );
+
+    const single = executeEvaluation(options({ seeds: [1], ticks: null }));
+    expect(JSON.parse(single.artifacts[0].content).config.ticks).toBe(
+      DEFAULT_EVALUATION_TICKS,
+    );
+  });
+
+  it('keeps single-run evaluation and the human comparison skirmish-scoped (AC5)', () => {
+    // A single-run evaluation never enables the campaign (no wave events).
+    const single = executeEvaluation(options({ seeds: [1], ticks: 120, sampleEveryTicks: 10 }));
+    expect(single.artifacts[1].content).not.toContain('wave_start');
+
+    // The human comparison re-runs the bot through the same skirmish path.
+    const human = runEvaluation(resolvePolicyFactory('legacy'), {
+      seeds: [1],
+      ticks: 120,
+      sampleEveryTicks: 2,
+    });
+    const result = executeEvaluation(
+      options({ seeds: [1], ticks: 120, humanRecordingText: human.jsonl, humanSeed: 1 }),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.artifacts.some((artifact) => artifact.name === 'human-balance-report.json')).toBe(true);
   });
 });

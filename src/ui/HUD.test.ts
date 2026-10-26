@@ -638,6 +638,56 @@ describe('HUD label builder (AH-0MUX802450085VZZ)', () => {
     expect(buildHUDLabel('Shield', 2, undefined)).toBe('Shield Lvl 2');
     expect(buildHUDLabel('Shield', 2, 0)).toBe('Shield Lvl 2');
   });
+
+  it('appends a recharge countdown when one is in progress (AH-0MVJ8YKR70096C6T)', () => {
+    expect(buildHUDLabel('Thorn Field', 1, 1, 7.2)).toBe(
+      'Thorn Field Lvl 1 ×1 (next in 8s)',
+    );
+    // A permanent field sitting at zero charges still shows its countdown.
+    expect(buildHUDLabel('Thorn Field', 1, undefined, 4)).toBe(
+      'Thorn Field Lvl 1 (next in 4s)',
+    );
+    expect(buildHUDLabel('Thorn Field', 1, 1, 0)).toBe('Thorn Field Lvl 1 ×1');
+  });
+});
+
+describe('HUD Thorn Field recharge countdown (AH-0MVJ8YKR70096C6T)', () => {
+  it('shows the remaining rams plus the next-recharge countdown while recharging', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('thorns', true);
+    reg.tryConsumeThornsRam();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'thorns')!;
+    expect(row).toBeDefined();
+    expect(row.stacks).toBe(reg.thornsMaxAbsorbs() - 1);
+    expect(row.recharge).toBeGreaterThan(0);
+    expect(row.label).toContain('Thorn Field');
+    expect(row.label).toContain(`×${reg.thornsMaxAbsorbs() - 1}`);
+    expect(row.label).toContain('next in');
+
+    // Once the ram is back, the countdown clears (the row is a full budget).
+    reg.tick(reg.thornsRechargeTime() + 0.01);
+    hud.refresh();
+    const refilled = hud.getRows().find((r) => r.id === 'thorns')!;
+    expect(refilled.recharge).toBeUndefined();
+    expect(refilled.label).not.toContain('next in');
+    destroy(game);
+  });
+
+  it('keeps a permanent field at zero charges labelled with its countdown', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('thorns', true);
+    while (reg.thornsRemaining() > 0) reg.tryConsumeThornsRam();
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'thorns')!;
+    expect(row.stacks).toBeUndefined();
+    expect(row.label).toContain('(next in');
+    destroy(game);
+  });
 });
 
 describe('HUD AC3: lives counter (P8)', () => {

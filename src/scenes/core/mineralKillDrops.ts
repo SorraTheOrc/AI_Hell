@@ -17,11 +17,18 @@
  *   draws the bonus and may occasionally drop a single mineral);
  * - anything else → none.
  *
+ * The **Salvage** bounty (AH-0MVH80ZJ7009W18Z) layers on top through
+ * {@link scatterSalvageMineralDrops}: while its timed window is active a
+ * destroyed enemy ship also scatters its level-resolved bonus minerals,
+ * rendered orange so the payout is visible on the field
+ * (AH-0MVJ72I8O0009T09).
+ *
  * @module scenes/core/mineralKillDrops
  */
 
 import Phaser from 'phaser';
 
+import { MINERAL_SALVAGE_COLOR } from '../../core/constants';
 import { Mineral, scatterMineralDrops } from '../../entities/Mineral';
 
 export { scatterMineralDrops };
@@ -78,4 +85,39 @@ export function resolveMineralKillDrops(
   }
 
   return [];
+}
+
+/**
+ * Scatters the **Salvage** bounty (AH-0MVH80ZJ7009W18Z) at a destroyed
+ * enemy's wreck as orange minerals (AH-0MVJ72I8O0009T09).
+ *
+ * This is the one shared salvage-drop seam: `PlayScene` and
+ * `GymFormationScene` both call it, so the bounty's colour and scatter maths
+ * cannot drift between the game and the gyms. The count still comes from
+ * `EffectsRegistry.salvageBonusMinerals()` (level-resolved), the scatter draws
+ * are the same two per drop in the same order, and each dot is still worth
+ * exactly one mineral — only the fill colour differs from an ordinary drop.
+ *
+ * @param scene — scene that owns the new mineral display objects
+ * @param x — wreck x position
+ * @param y — wreck y position
+ * @param count — bonus minerals to spawn (returns none when ≤ 0)
+ * @param rng — random-number generator (defaults to `Math.random`); injected
+ *   by tests for deterministic positions
+ */
+export function scatterSalvageMineralDrops(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  count: number,
+  rng: () => number = Math.random,
+): Mineral[] {
+  return scatterMineralDrops(
+    scene,
+    x,
+    y,
+    count,
+    rng,
+    MINERAL_SALVAGE_COLOR,
+  );
 }

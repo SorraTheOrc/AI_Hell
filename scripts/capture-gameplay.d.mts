@@ -5,6 +5,8 @@
  * type-check the pure argument/mode helpers without booting a browser.
  */
 
+import type { SceneSetup } from './capture-scenes.mjs';
+
 export interface CaptureOptions {
   durationMs: number;
   /** True when `--duration` was passed (legacy fixed-length capture). */
@@ -32,6 +34,21 @@ export interface CaptureOptions {
   botTuningState?: BotTuningStoreState;
   /** True when `--all-scenarios` was passed: one clip per registered scenario. */
   allScenarios: boolean;
+  /**
+   * True when `--diagnostics` was passed: record per-chunk CDP payload sizes,
+   * node/page heap and tap the CDP pipe transport, writing
+   * `<stem>.diagnostics.json` next to the clip (AH-0MVNT25JI004OVKQ). Off by
+   * default so a normal capture is unchanged.
+   */
+  diagnostics: boolean;
+  /**
+   * `--config`/`--scenes` file path for multi-scene capture, or null
+   * (AH-0MVFC70GT000B96J). Validated pre-boot; the parsed scenes land in
+   * `scenes`.
+   */
+  scenesConfig: string | null;
+  /** Parsed scene list (filled in by the CLI/pre-flight validation). */
+  scenes?: SceneSpec[];
   help?: boolean;
 }
 
@@ -58,6 +75,81 @@ export const RUN_ENDED_STORE_KEY: string;
 
 /** Store key the bot-tuning gym persists under (AH-0MV6MFDYG001E6PL). */
 export const BOT_TUNING_STORAGE_KEY: string;
+
+/** The `id` of the page-side multi-scene capture overlay canvas. */
+export const COMPOSITE_CANVAS_ID: string;
+
+/** One validated multi-scene scene spec (from the pure scene module). */
+export interface SceneSpec {
+  target: string;
+  playMs: number;
+  captureMs: number;
+  label: string | null;
+}
+
+/**
+ * Resolves the single output path a multi-scene capture writes: an explicit
+ * `--output` is honoured, otherwise `capture-output/scenes-<ts>.webm`.
+ */
+export function resolveScenesOutputPath(
+  requested: string | null | undefined,
+  timestamp?: string,
+): string;
+
+/**
+ * Parses + validates the multi-scene config pre-boot (`null` without a
+ * config). `readFile` is injected for hermetic tests; every failure is a
+ * typed `SceneConfigError`.
+ */
+export function loadScenesForCapture(
+  options?: { scenesConfig?: string | null },
+  readFile?: (path: string) => string | Uint8Array,
+): SceneSpec[] | null;
+
+/**
+ * Drives one recorder across every planned scene (AC3): starts each scene via
+ * `startScene`, waits its play then capture window through `wait`, and fades
+ * to black / from black (`fade(1, …)` / `fade(0, …)`) between consecutive
+ * scenes without ever reloading the page or recorder.
+ */
+export function driveSceneSequence(params: {
+  plan: readonly {
+    target: string;
+    playMs: number;
+    captureMs: number;
+    startMs: number;
+    endMs: number;
+    setup?: SceneSetup;
+  }[];
+  startScene: (key: string, setup?: SceneSetup) => Promise<unknown>;
+  fade: (alpha: number, durationMs: number) => Promise<unknown>;
+  wait: (ms: number) => Promise<unknown>;
+  fadeMs?: number;
+  onScene?: (info: {
+    index: number;
+    total: number;
+    scene: {
+      target: string;
+      playMs: number;
+      captureMs: number;
+      startMs: number;
+      endMs: number;
+      setup?: SceneSetup;
+    };
+  }) => void;
+}): Promise<void>;
+
+/**
+ * Installs the page-side composite + fade overlay the multi-scene recorder
+ * captures (`null` when the game canvas is not ready). Self-contained for
+ * Playwright serialisation; the resulting `scope.__aiHellFade.fadeTo(alpha,
+ * ms)` drives the 0.25 s fades.
+ */
+export function installCaptureComposite(scope?: object): {
+  id: string;
+  width: number;
+  height: number;
+} | null;
 
 /** Exported bot-tuning store state injected into the recording page. */
 export interface BotTuningStoreState {
@@ -169,6 +261,39 @@ export function readRunEndedSignal(
   plan?: RunEndedListenerPlan,
   scope?: object,
 ): unknown;
+/**
+ * Reads the run's in-memory telemetry buffer from the page (dev-gated
+ * `window.__aiHellTelemetry`); `''` when the accessor or buffer is absent.
+ */
+export function readDevTelemetryBuffer(scope?: object): string;
+
+/** Characters per bounded page→node telemetry read (2 MiB; also the ceiling). */
+export const TELEMETRY_READ_CHUNK_CHARS: number;
+
+/** One in-page slice read; reports the buffer's total length alongside the slice. */
+export function readDevTelemetryChunk(
+  args?: { offset: number; chunkChars: number },
+  scope?: object,
+): { total: number; chunk: string };
+
+/**
+ * Reads the run's in-memory telemetry buffer in bounded slices
+ * (AH-0MVNVGP55002G0KH): byte-for-byte the same content as
+ * {@link readDevTelemetryBuffer}, but no single page→node message carries more
+ * than {@link TELEMETRY_READ_CHUNK_CHARS} characters. `evaluate` mirrors
+ * `(fn, arg) => page.evaluate(fn, arg)`; `''` when the buffer is absent, empty
+ * or reset between slices.
+ */
+export function readDevTelemetryBufferInChunks(
+  evaluate: (
+    fn: (
+      args?: { offset: number; chunkChars: number },
+      scope?: object,
+    ) => { total: number; chunk: string },
+    arg: { offset: number; chunkChars: number },
+  ) => Promise<{ total: number; chunk: string }>,
+  options?: { chunkChars?: number },
+): Promise<string>;
 /** Writes exported bot-tuning state into the page's localStorage pre-boot. */
 export function installBotTuningConfig(
   state: BotTuningStoreState,
@@ -194,6 +319,12 @@ export interface CaptureIterationRecord {
   reasons?: string[];
   pageErrors?: string[];
   error?: string;
+  /** Bytes kept at the `.partial.webm` path when a capture was salvaged. */
+  salvagedBytes?: number;
+  /** The documented `.partial.webm` salvage path, when a capture failed. */
+  partialPath?: string | null;
+  /** The single actionable salvage line printed first (AC2, AH-0MVNT29MC008BQPY). */
+  salvageMessage?: string;
   /** `<stem>.action.jsonl` path, or null when the export failed. */
   seriesOutput?: string | null;
   /** `<stem>.capture.json` path, or null when the export failed. */
@@ -211,6 +342,7 @@ export interface CaptureBatchSummary {
 }
 
 export function captureExitCode(result?: {
+  ok?: boolean;
   fullRun?: boolean;
   capHit?: boolean;
   nonTrivial?: boolean;

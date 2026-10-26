@@ -100,6 +100,13 @@ export interface CapturerConfig {
    * Hit points before destruction (data-driven). Defaults to `1`, but the
    * seeded archetype uses `2` so the beam is a meaningful threat.
    */
+  /**
+   * Remaining enemy force-field hits at spawn (epic AH-0MVJ8W4GE007OMNT
+   * AC2; resolved once by `enemyForceFieldHits`). Defaults to `0`
+   * (unshielded), so an entity built without a field behaves exactly as
+   * today.
+   */
+  forceFieldHits?: number;
   health?: number;
   /** Injectable random source (defaults to `Math.random`). */
   rng?: () => number;
@@ -142,6 +149,7 @@ export class Capturer extends BaseEnemy {
       fireInterval: 1000,
       shotProbability: 0,
       health: config.health,
+      forceFieldHits: config.forceFieldHits,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

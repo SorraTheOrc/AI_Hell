@@ -81,6 +81,12 @@ export type EnemyEntity = (Scout | Diver | Tank | PhaserEntity | Swarm | Asteroi
  *   headings) is reproducible; callers that omit it keep the entity's
  *   `Math.random` default (interactive gyms, tests that do not assert
  *   determinism).
+ * @param forceFieldHits — optional resolved enemy force-field hits
+ *   (epic AH-0MVJ8W4GE007OMNT AC2; AH-0MVM8GUZG008AWSU). The spawn path
+ *   resolves the count once — game: `enemyForceFieldHits(waveManager.level,
+ *   cfg)`; gym editor: a direct slider value — and threads it here; the
+ *   factory never evaluates the level curve itself (`undefined`/`0` =
+ *   unshielded, byte-for-byte today's behaviour).
  */
 export function createEnemyFromConfig(
   scene: Phaser.Scene,
@@ -89,6 +95,7 @@ export function createEnemyFromConfig(
   y: number,
   offset: FormationOffset,
   rng?: () => number,
+  forceFieldHits?: number,
 ): EnemyEntity {
   const opts = {
     size: config.size,
@@ -102,6 +109,7 @@ export function createEnemyFromConfig(
     shotProbability: config.shotProbability,
     health: config.health,
     rng,
+    forceFieldHits,
   };
   // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D).
   const beamOpts = {

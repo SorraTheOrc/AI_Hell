@@ -8,7 +8,9 @@
  * the single implementations both scenes now call:
  *
  * - {@link collectMinerals} — player pickup + non-asteroid enemy absorption;
- * - {@link applyMineralChoiceReward} — permanent weapon/power-up application;
+ * - {@link applyMineralChoiceReward} — permanent weapon/power-up application
+ *   (defined in the Phaser-free `powerups/choiceReward` and re-exported here
+ *   so the headless arena shares one reward path);
  * - {@link MineralHold} — re-exported from `core/mineralHold` so the whole
  *   mineral seam (collection + hold) is available from one place.
  *
@@ -22,16 +24,14 @@
 import { MINERAL_SIZE, SHIP_SIZE } from '../../core/constants';
 import { MineralHold } from '../../core/mineralHold';
 import type { Mineral } from '../../entities/Mineral';
-import type { EffectsRegistry } from '../../powerups/effects';
-import type { ChoiceOption } from '../../powerups/choice';
-import {
-  isWeaponDrop,
-  type PowerUpId,
-} from '../../powerups/types';
-import type { WeaponId } from '../../utils/weapons';
 
 export { MineralHold };
 export type { MineralHoldOptions } from '../../core/mineralHold';
+// The hold-full reward application lives in the Phaser-free
+// `powerups/choiceReward` module (shared with the headless eval arena) and
+// is re-exported here so every scene import stays unchanged
+// (AH-0MVD1RIH2008YCNV).
+export { applyMineralChoiceReward } from '../../powerups/choiceReward';
 
 /**
  * Minimal structural contract an enemy must satisfy to absorb minerals.
@@ -168,54 +168,6 @@ export function collectMinerals<TEnemy extends MineralAbsorbingEnemy>(
     if (!kept.includes(mineral)) mineral.destroy();
   }
   return kept;
-}
-
-/**
- * Applies a hold-full choice option permanently for the current run, so
- * the gym and the game grant the same effect for the same choice:
- * a weapon option permanently equips the weapon; a `weapon-level` option
- * permanently **levels up** an owned weapon (the same `equipWeapon` path
- * increments the run-scoped level, AC3); a power-up option permanently
- * applies the collect effect (GDD §4.5).
- *
- * @param option — the chosen option (exactly the option offered).
- * @param effectsRegistry — the scene's effect registry.
- * @param player — the ship to equip, or null when no player exists.
- */
-/**
- * Minimal player contract: weapon equip for weapon/weapon-level offers.
- * Structurally satisfied by {@link Player} in both the game and every gym.
- *
- * Power-up options no longer call into the player directly: the registry's
- * `applyCollect` advances the **single** run-scoped store the scene injected
- * from the player (AH-0MUV5CLW6005VF7K, Q1=A), so the level rises exactly
- * once with no double-count.
- */
-interface MineralChoicePlayer {
-  equipWeapon(weaponId: WeaponId, permanent?: boolean): void;
-}
-
-export function applyMineralChoiceReward(
-  option: ChoiceOption,
-  effectsRegistry: EffectsRegistry,
-  player: MineralChoicePlayer | null,
-): void {
-  if (option.kind === 'weapon-level' || isWeaponDrop(option.id)) {
-    const weaponId = option.id as WeaponId;
-    // Permanent equip both grants the weapon and raises its run-scoped level
-    // by one (`Player.equipWeapon` increments on every collection), so a
-    // level-up offer permanently strengthens an already-owned weapon.
-    effectsRegistry.applyWeapon(weaponId, true);
-    player?.equipWeapon(weaponId, true);
-  } else {
-    // Power-up options (both `powerup` and `power-up-level`): the registry
-    // applies the hold-full effect **and** advances the single run-scoped
-    // store (it was injected from the player), so future choices can offer
-    // level-ups with no double-count (parent AH-0MUV5CLVO002ZHS9;
-    // AH-0MUV5CLW6005VF7K AC1/AC3).
-    const powerUpId = option.id as PowerUpId;
-    effectsRegistry.applyCollect(powerUpId, true);
-  }
 }
 
 /** Convenience type guard: whether an arbitrary entity can absorb minerals. */

@@ -54,8 +54,19 @@ import {
 } from './worldModel';
 import { createLegacyBotPolicy } from './legacyPolicy';
 
-/** Builds the derived world view for a snapshot (injectable for tests). */
-export type WorldModelFn = (snapshot: BotSnapshot) => BotWorld;
+/**
+ * Builds the derived world view for a snapshot (injectable for tests).
+ *
+ * The run's memory and the injected `dt` are supplied so a world model can
+ * advance deterministic cross-tick state — the competent bot uses them for
+ * the hazard-velocity tracker (AH-0MVI4QDN90037DIN · AC1). A world model that
+ * needs neither can simply ignore them.
+ */
+export type WorldModelFn = (
+  snapshot: BotSnapshot,
+  memory?: BotMemory,
+  dt?: number,
+) => BotWorld;
 
 /**
  * The framework's policy seam: map a read-only snapshot to a steering intent.
@@ -172,7 +183,7 @@ export class BotBrain implements BotPolicy {
    * @returns the steering intent for this tick.
    */
   decide(snapshot: BotSnapshot, dt: number): BotSteeringIntent {
-    const world = this.worldModel(snapshot);
+    const world = this.worldModel(snapshot, this.memory, dt);
     const view: BotGoalView = { snapshot, world, memory: this.memory, dt };
 
     const decision = selectCommittedGoal(

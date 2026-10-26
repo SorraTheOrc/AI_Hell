@@ -8,7 +8,9 @@ import { advanceGame, BootedGame, createReusableBoot } from '../../../test/gameH
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  MINERAL_COLOR,
   MINERAL_REDROP_SCATTER_RADIUS,
+  MINERAL_SALVAGE_COLOR,
   POWER_UP_DROP_SIZE,
   SHIP_COLOR,
 } from '../../../core/constants';
@@ -2059,6 +2061,24 @@ describe('GymFormationScene — power-up collection, effects and HUD (AH-0MU44M9
     expect(scene.getEffectsRegistry().magnetEffectStacks()).toBe(1);
   });
 
+  it('AH-0MVJ8YKR70096C6T — the shared lime thorns aura is drawn while the field is armed', async () => {
+    const scene = await boot(layer('thorns', CLEAR));
+    const player = scene.getPlayer()!;
+    expect(scene.isThornsAuraVisible()).toBe(false);
+
+    scene.spawnPowerUpDrop('thorns', player.x, player.y);
+    scene.tick(0.1);
+    expect(scene.getEffectsRegistry().thornsRemaining()).toBeGreaterThan(0);
+    expect(scene.isThornsAuraVisible()).toBe(true);
+
+    // Spend the budget: the aura clears through the same shared helper.
+    while (scene.getEffectsRegistry().thornsRemaining() > 0) {
+      scene.getEffectsRegistry().tryConsumeThornsRam();
+    }
+    scene.tick(0.1);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+  });
+
   it('AC4 — P5 applies movement AND fire-rate multipliers (gym parity)', async () => {
     const scene = await boot(layer('speed_boost', CLEAR));
     const player = scene.getPlayer()!;
@@ -2773,6 +2793,52 @@ describe('GymFormationScene — shared mineral kill-drop wiring (AC1/AC2)', () =
     // With the default Math.random the outcome varies.
     const minerals = scene.getMinerals();
     expect(minerals.length).toBeLessThanOrEqual(1);
+  });
+
+  it('Salvage bonus drops render orange while ordinary drops stay gold (AH-0MVJ72I8O0009T09)', async () => {
+    const scene = await bootMineralGym();
+    const enemy = scene.formationEntities[0];
+    clearField(scene);
+    // Pin the base re-drop out of the way so the colour split is unambiguous.
+    (
+      enemy as unknown as { _mineralCount: number }
+    )._mineralCount = 0;
+
+    // Level Salvage up (permanent, so the window never expires mid-test).
+    const registry = scene.getEffectsRegistry();
+    for (let i = 0; i < 8; i += 1) registry.applyCollect('salvage', true);
+    const bonus = registry.salvageBonusMinerals();
+    expect(bonus).toBeGreaterThanOrEqual(3);
+
+    const ex = enemy.x;
+    const ey = enemy.y;
+    scene.explodeRandom();
+
+    const minerals = scene.getMinerals();
+    const orange = minerals.filter((m) => m.color === MINERAL_SALVAGE_COLOR);
+    // The gym pays out exactly the same bounty as the game, in the same colour.
+    expect(orange).toHaveLength(bonus);
+    // Everything else on the field is still the ordinary gold.
+    expect(minerals.filter((m) => m.color !== MINERAL_SALVAGE_COLOR)).toEqual(
+      minerals.filter((m) => m.color === MINERAL_COLOR),
+    );
+    for (const drop of orange) {
+      expect(
+        Math.hypot(drop.x - ex, drop.y - ey),
+      ).toBeLessThanOrEqual(MINERAL_REDROP_SCATTER_RADIUS);
+    }
+  });
+
+  it('no Salvage window means no orange mineral on a gym kill (AH-0MVJ72I8O0009T09)', async () => {
+    const scene = await bootMineralGym();
+    clearField(scene);
+
+    expect(scene.getEffectsRegistry().salvageBonusMinerals()).toBe(0);
+    scene.explodeRandom();
+
+    expect(
+      scene.getMinerals().some((m) => m.color === MINERAL_SALVAGE_COLOR),
+    ).toBe(false);
   });
 });
 

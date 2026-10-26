@@ -85,6 +85,12 @@ export interface EnemySpawn {
 export class WaveManager {
   private levels: LevelDefinition[];
 
+  /**
+   * True when a caller supplied the campaign through {@link setLevels} rather
+   * than the scene resolving it. See {@link hasInjectedLevels}.
+   */
+  private levelsInjected = false;
+
   private _levelIndex = 0;
   private _waveIndex = 0;
   private _enemiesAlive = 0;
@@ -108,10 +114,30 @@ export class WaveManager {
    * Replaces the level definitions at runtime. Resets internal state so
    * the next `beginGame()` starts from the new levels. Injectable for
    * tests that need custom wave configurations.
+   *
+   * @param levels — the campaign to play.
+   * @param options — `injected` (default `true`) records that the caller owns
+   *   the campaign, so a scene's campaign resolution leaves it untouched on
+   *   the next `create()` (scene restart). `PlayScene` passes `injected:
+   *   false` for the campaign it resolved itself, so a restart re-resolves it
+   *   from the live rules (AH-0MVLJF30O000E3J3).
    */
-  setLevels(levels: LevelDefinition[]): void {
+  setLevels(
+    levels: LevelDefinition[],
+    options: { injected?: boolean } = {},
+  ): void {
     this.levels = levels;
+    this.levelsInjected = options.injected ?? true;
     this.reset();
+  }
+
+  /**
+   * Whether a caller injected the campaign via {@link setLevels} (as opposed
+   * to the default campaign or one the scene resolved itself). `PlayScene`
+   * uses this to preserve injected campaigns across `create()`.
+   */
+  get hasInjectedLevels(): boolean {
+    return this.levelsInjected;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────

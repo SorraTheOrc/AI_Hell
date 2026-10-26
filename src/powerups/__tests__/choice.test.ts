@@ -19,42 +19,146 @@ import {
   createRandomChoiceStrategy,
   isWeaponOption,
   randomChoiceStrategy,
+  type ChoiceContext,
 } from '../choice';
+import { SLOTS_FULL_EXEMPT_IDS } from '../slots';
 import { summariseWeaponLevelChange } from '../../utils/weaponLevels';
 import { summarisePowerUpLevelChange } from '../powerUpLevels';
+import { buildUpgradeOptions } from '../unlocks';
 import { getHelpDescription } from '../../utils/gymHelp';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
-import { POWER_UP_CATALOGUE } from '../types';
+import {
+  POWER_UP_CATALOGUE,
+  WEAPON_DROP_IDS,
+  type DropId,
+} from '../types';
 
 describe('power-up choice strategy', () => {
-  it('offers the full drop pool: P3–P10 plus the collectable weapon drops', () => {
-    expect([...CHOICE_POOL].sort()).toEqual(
-      [
-        'shield',
-        'bomb',
-        'speed_boost',
-        'phase_shift',
-        'teleport',
-        'extra_life',
-        'magnet',
-        'mineral_scoop',
-        'smart_bomb',
-        'force_field',
-        'mystery_ufo',
-        'dual',
-        'rapid',
-        'spread',
-        'wave_laser',
-        'ricochet',
-        'cluster',
-        'options',
-        'nova',
-        'mortar',
-        'arc',
-      ].sort(),
-    );
-    // The reset utility drop is not a power-up choice.
+  it('offers every drop in the catalogue except the Reset utility (AH-0MVI4KTD8000FBJ7 AC1)', () => {
+    // Derived from the catalogues, not a hand-maintained list: a newly shipped
+    // power-up or weapon drop can never silently go missing from the
+    // hold-full choice again (the stale 21-entry list did exactly that).
+    const catalogue = new Set<DropId>([
+      ...(Object.keys(POWER_UP_CATALOGUE) as DropId[]),
+      ...WEAPON_DROP_IDS,
+    ]);
+    catalogue.delete('reset');
+
+    expect([...CHOICE_POOL].sort()).toEqual([...catalogue].sort());
+    // No duplicate ids: a repeat would double that item's draw weight.
+    expect(new Set(CHOICE_POOL).size).toBe(CHOICE_POOL.length);
+    // 16 power-ups + 15 weapon drops (every weapon except Reset).
+    expect(CHOICE_POOL).toHaveLength(31);
+    // The reset utility drop removes weapons rather than granting one.
     expect(CHOICE_POOL).not.toContain('reset');
+  });
+
+  describe('newly pooled drops (AH-0MVI4KTD8000FBJ7)', () => {
+    /** Power-ups shipped after the original pool was written. */
+    const NEW_POWER_UP_IDS = [
+      'frenzy',
+      'chrono',
+      'thorns',
+      'salvage',
+      'strike',
+    ] as const;
+    /** Mini-boss-pool weapons shipped after the original pool was written. */
+    const NEW_WEAPON_IDS = [
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
+    ] as const;
+
+    it('AC2 — each newly pooled power-up is offered as a New base option with catalogue copy', () => {
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+        powerUpLevels: [],
+      });
+      for (const id of NEW_POWER_UP_IDS) {
+        const option = candidates.find((o) => o.id === id);
+        expect(option, id).toBeDefined();
+        expect(option!.kind, id).toBe('powerup');
+        expect(option!.name, id).toBe(POWER_UP_CATALOGUE[id].name);
+        expect(option!.description, id).toBe(getHelpDescription(id));
+        // Unowned (empty permanent context) → ★ New badge.
+        expect(option!.isNew, id).toBe(true);
+      }
+    });
+
+    it('AC2 — each newly pooled weapon is offered as a New base option with catalogue copy', () => {
+      const expectedNames: Record<(typeof NEW_WEAPON_IDS)[number], string> = {
+        rear_guard: 'Rear Guard',
+        broadside: 'Broadside',
+        railgun: 'Railgun',
+        shard_swarm: 'Shard Swarm',
+        heavy_slug: 'Heavy Slug',
+      };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+        powerUpLevels: [],
+      });
+      for (const id of NEW_WEAPON_IDS) {
+        const option = candidates.find((o) => o.id === id);
+        expect(option, id).toBeDefined();
+        expect(option!.kind, id).toBe('weapon');
+        expect(option!.name, id).toBe(expectedNames[id]);
+        expect(option!.description, id).toBe(getHelpDescription(id));
+        expect(option!.isNew, id).toBe(true);
+      }
+    });
+
+    it('AC3 — an owned new weapon is offered once, as its level-up with a change summary', () => {
+      for (const id of NEW_WEAPON_IDS) {
+        const candidates = buildChoiceCandidates(CHOICE_POOL, {
+          weaponLevels: [{ id, level: 1 }],
+        });
+        const offers = candidates.filter((o) => o.id === id);
+        expect(offers, id).toHaveLength(1);
+        expect(offers[0].kind, id).toBe('weapon-level');
+        expect(offers[0].level, id).toBe(2);
+        expect(offers[0].changeSummary, id).toBe(
+          summariseWeaponLevelChange(id, 1, 2),
+        );
+        expect(offers[0].changeSummary!.length, id).toBeGreaterThan(0);
+      }
+    });
+
+    it('AC3 — an owned new power-up is offered once, as its level-up with a change summary', () => {
+      for (const id of NEW_POWER_UP_IDS) {
+        const candidates = buildChoiceCandidates(CHOICE_POOL, {
+          powerUpLevels: [{ id, level: 1 }],
+        });
+        const offers = candidates.filter((o) => o.id === id);
+        expect(offers, id).toHaveLength(1);
+        expect(offers[0].kind, id).toBe('power-up-level');
+        expect(offers[0].level, id).toBe(2);
+        expect(offers[0].changeSummary, id).toBe(
+          summarisePowerUpLevelChange(id, 1, 2),
+        );
+        expect(offers[0].changeSummary!.length, id).toBeGreaterThan(0);
+      }
+    });
+
+    it('AC1 — the default strategy can draw every newly pooled id', () => {
+      // Draw one option at a time with a deterministic sweep over the whole
+      // candidate list, proving eligibility rather than rarity.
+      const strategy = createRandomChoiceStrategy();
+      const seen = new Set<string>();
+      const candidates = buildChoiceCandidates(CHOICE_POOL, {
+        weaponLevels: [],
+        powerUpLevels: [],
+      });
+      for (let i = 0; i < candidates.length; i++) {
+        // rng returning i/(n) with count 1 lands on the i-th candidate.
+        const pick = strategy.choose(1, () => i / candidates.length)[0];
+        seen.add(pick.id);
+      }
+      for (const id of [...NEW_POWER_UP_IDS, ...NEW_WEAPON_IDS]) {
+        expect(seen, id).toContain(id);
+      }
+    });
   });
 
   it('includes P10 Mineral Scoop in the hold-full choice pool (AH-0MUPMR9TX00756BQ AC1)', () => {
@@ -564,6 +668,188 @@ describe('power-up choice strategy', () => {
       ];
       for (const entry of entries) {
         expect(entry.description, entry.id).not.toMatch(temporaryDuration);
+      }
+    });
+  });
+
+  describe('shared level-up option model (AH-0MVL9P2SF009QFON AC3)', () => {
+    it('the mini-boss reward reuses the hold-full level-up options verbatim', () => {
+      // Both surfaces must build their level-up offers through one code path,
+      // so the text (level, summary, description) cannot drift.
+      const context = {
+        weaponLevels: [
+          { id: 'rapid' as const, level: 2 },
+          { id: 'nova' as const, level: 1 },
+        ],
+        powerUpLevels: [{ id: 'shield' as const, level: 1 }],
+      };
+      const holdFull = buildChoiceCandidates(CHOICE_POOL, context).filter(
+        (o) => o.kind === 'weapon-level' || o.kind === 'power-up-level',
+      );
+      expect(buildUpgradeOptions(context)).toEqual(holdFull);
+    });
+  });
+
+  describe('six-slot choice gating (AH-0MVNT2Z89005OPKJ, parent AC4)', () => {
+    // Contract pinned test-first by AH-0MVNT2Z89005OPKJ and activated by the
+    // gating implementation AH-0MVNT2ZXK009Z5VU: the assertions below were
+    // registered with Vitest's `it.fails(...)` (the repo's
+    // red-before/green-after convention, see
+    // `src/scenes/core/dropLayer.test.ts`) while they were genuinely red
+    // against the ungated builder. The gate has landed, so they now run as
+    // plain `it(...)` — activation was the only edit; the assertions are
+    // unchanged (that is what makes this a contract rather than a wish list).
+    //
+    // The contexts are hand-built `ChoiceContext`s (no store, no scene, no
+    // `Math.random()`): six distinct permanently-owned kinds fill the shared
+    // pool exactly, as the AC demands.
+
+    /**
+     * Six distinct permanently-owned kinds — three power-ups and three
+     * weapons — filling the shared six-slot pool exactly. The mixed build
+     * covers **both** demand sides of AC4.
+     */
+    const FULL_SLOT_CONTEXT: ChoiceContext = {
+      weaponLevels: [
+        { id: 'spread', level: 1 },
+        { id: 'dual', level: 1 },
+        { id: 'rapid', level: 1 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 1 },
+        { id: 'bomb', level: 1 },
+        { id: 'speed_boost', level: 1 },
+      ],
+    };
+
+    /**
+     * Six permanently-owned weapon kinds only: the weapon-heavy extreme of
+     * the shared pool (weapons consume power-up slots too — producer Q1
+     * answer (c)). Only the two available-when-full power-ups may still be
+     * offered as new picks.
+     */
+    const FULL_WEAPON_CONTEXT: ChoiceContext = {
+      weaponLevels: [
+        { id: 'spread', level: 1 },
+        { id: 'dual', level: 1 },
+        { id: 'rapid', level: 1 },
+        { id: 'wave_laser', level: 1 },
+        { id: 'ricochet', level: 1 },
+        { id: 'cluster', level: 1 },
+      ],
+      powerUpLevels: [],
+    };
+
+    /** The distinct permanently-owned kinds a hand-built context carries. */
+    function ownedIdsOf(context: ChoiceContext): Set<DropId> {
+      const owned = new Set<DropId>();
+      for (const { id } of context.weaponLevels ?? []) owned.add(id as DropId);
+      for (const { id } of context.powerUpLevels ?? []) owned.add(id as DropId);
+      return owned;
+    }
+
+    /**
+     * The ids the gated pool may still offer once full: the owned kinds plus
+     * the catalogue entries flagged `availableWhenSlotsFull`.
+     */
+    function allowedAtFull(context: ChoiceContext): Set<DropId> {
+      return new Set<DropId>([
+        ...ownedIdsOf(context),
+        ...SLOTS_FULL_EXEMPT_IDS,
+      ]);
+    }
+
+    /** Deterministic LCG (Numerical Recipes constants) — no Math.random. */
+    function makeSeededRng(seed: number): () => number {
+      let state = seed >>> 0;
+      return () => {
+        state = (state * 1664525 + 1013904223) >>> 0;
+        return state / 0x100000000;
+      };
+    }
+
+    it('at six filled slots never offers a base pick outside the owned kinds and the exempt entries', () => {
+      // AC4 core: once the pool is full, a brand-new non-exempt kind must
+      // never be offered — this is what would create a seventh permanent kind.
+      for (const context of [FULL_SLOT_CONTEXT, FULL_WEAPON_CONTEXT]) {
+        const allowed = allowedAtFull(context);
+        const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+        for (const option of candidates) {
+          if (option.kind === 'powerup' || option.kind === 'weapon') {
+            expect(allowed.has(option.id), `${option.id} is neither owned nor available-when-full`).toBe(true);
+          }
+        }
+      }
+    });
+
+    it('at six filled slots the only base offers are the available-when-full entries', () => {
+      // Owned kinds are suppressed as base entries and offered as level-ups
+      // (pre-existing ownership semantics), so everything that survives as a
+      // base pick must be one of the flagged entries. Exact set, both a mixed
+      // and a weapon-only full build.
+      for (const context of [FULL_SLOT_CONTEXT, FULL_WEAPON_CONTEXT]) {
+        const baseIds = buildChoiceCandidates(CHOICE_POOL, context)
+          .filter((o) => o.kind === 'powerup' || o.kind === 'weapon')
+          .map((o) => o.id)
+          .sort();
+        expect(baseIds).toEqual([...SLOTS_FULL_EXEMPT_IDS].sort());
+      }
+    });
+
+    it('a strategy draw at six filled slots never returns a non-exempt, non-owned id', () => {
+      // End to end through the shipped strategy seam: 500 seeded weighted
+      // draws of three options must stay inside the gated pool.
+      const context = FULL_SLOT_CONTEXT;
+      const allowed = allowedAtFull(context);
+      const rng = makeSeededRng(20261025);
+      for (let i = 0; i < 500; i++) {
+        const options = randomChoiceStrategy.choose(3, rng, context);
+        expect(options).toHaveLength(3);
+        for (const option of options) {
+          expect(allowed.has(option.id)).toBe(true);
+        }
+      }
+    });
+
+    it('keeps a level-up offer for every owned kind once the six slots are full', () => {
+      // AC4's graceful degradation: the pool never degrades to nothing — the
+      // level-up offers of the six owned kinds survive the gate intact (both
+      // weapon-level and power-up-level offers).
+      const context = FULL_SLOT_CONTEXT;
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const levelUpIds = candidates
+        .filter((o) => o.kind === 'weapon-level' || o.kind === 'power-up-level')
+        .map((o) => o.id)
+        .sort();
+      expect(levelUpIds).toEqual([...ownedIdsOf(context)].sort());
+      // Six owned offers plus the exempt entries: never an empty result.
+      expect(candidates.length).toBeGreaterThanOrEqual(6);
+    });
+
+    it('leaves the candidate pool unchanged below the cap (five filled slots)', () => {
+      // AC3-style no-behaviour-change guard for the choice side: with fewer
+      // than six slots the gate is inert, so the full catalogue stays on
+      // offer (minus the owned base entries, which are suppressed as level-up
+      // offers — pre-existing semantics).
+      const context: ChoiceContext = {
+        weaponLevels: [
+          { id: 'spread', level: 1 },
+          { id: 'dual', level: 1 },
+        ],
+        powerUpLevels: [
+          { id: 'shield', level: 1 },
+          { id: 'bomb', level: 1 },
+          { id: 'speed_boost', level: 1 },
+        ],
+      };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const baseIds = candidates
+        .filter((o) => o.kind === 'powerup' || o.kind === 'weapon')
+        .map((o) => o.id);
+      expect(baseIds).toHaveLength(CHOICE_POOL.length - 5);
+      const offeredIds = candidates.map((o) => o.id);
+      for (const id of CHOICE_POOL) {
+        expect(offeredIds).toContain(id);
       }
     });
   });

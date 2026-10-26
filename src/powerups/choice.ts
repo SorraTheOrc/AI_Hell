@@ -8,9 +8,9 @@
  * choice scene or the PlayScene wiring.
  *
  * The default strategy draws `count` **distinct** entries at weighted random
- * from the candidate list — the base drop pool (Shield–Mineral Scoop plus the collectable
- * weapon drops spread/dual/rapid/nova/mortar/arc) with each owned item's
- * base entry replaced by its level-up offer (see
+ * from the candidate list — the base drop pool (every power-up and every
+ * collectable weapon drop, i.e. the full catalogue minus the `reset` utility)
+ * with each owned item's base entry replaced by its level-up offer (see
  * {@link buildChoiceCandidates}) — degrading gracefully (returning fewer
  * options) when the list cannot supply the requested count. Owned level-up
  * offers (`weapon-level`/`power-up-level`) carry a 1.35× weight
@@ -32,16 +32,27 @@ import {
 import type { WeaponId } from '../utils/weapons';
 import { summariseWeaponLevelChange } from '../utils/weaponLevels';
 import { summarisePowerUpLevelChange } from './powerUpLevels';
-import { getHelpDescription } from '../utils/gymHelp';
+import { getDropDescription } from './dropDescriptions';
+import { isWithinSlotPool, resolveSlotState } from './slots';
 
 // ── Pool ────────────────────────────────────────────────────────────
 
 /**
- * Every drop the hold-full choice can offer: the power-ups Shield–Mineral Scoop plus the
- * collectable weapon drops (spread, dual, rapid). The `reset` utility drop is
- * intentionally excluded — it removes weapons rather than granting one.
+ * Every drop the hold-full choice can offer: the **whole** drop catalogue —
+ * all sixteen power-ups plus every collectable weapon drop — minus only the
+ * `reset` utility drop, which is intentionally excluded because it removes
+ * weapons rather than granting one.
+ *
+ * Kept catalogue-derived by the regression test in
+ * `__tests__/choice.test.ts` (pool === catalogue − `reset`), so a newly
+ * shipped power-up or weapon can never silently go missing from the choice
+ * again (AH-0MVI4KTD8000FBJ7). There is deliberately **no** unlock-state
+ * gating: every drop is a candidate in the game and in every gym, because
+ * both consume this one pool (gym↔game parity, AH-0MUGZDTFX004RBD1).
  */
 export const CHOICE_POOL: readonly DropId[] = [
+  // Power-ups (Shield–Mineral Scoop, the classic trio, and the net-new
+  // frenzy/chrono/thorns/salvage/strike).
   'shield',
   'bomb',
   'speed_boost',
@@ -53,6 +64,12 @@ export const CHOICE_POOL: readonly DropId[] = [
   'smart_bomb',
   'force_field',
   'mystery_ufo',
+  'frenzy',
+  'chrono',
+  'thorns',
+  'salvage',
+  'strike',
+  // Collectable weapon drops (every weapon except the Reset utility).
   'spread',
   'dual',
   'rapid',
@@ -63,13 +80,18 @@ export const CHOICE_POOL: readonly DropId[] = [
   'nova',
   'mortar',
   'arc',
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
 ];
 
 // ── Option model ────────────────────────────────────────────────────
 
 /**
  * The kind of option offered:
- * - `'powerup'` — a Shield–Mineral Scoop power-up grant,
+ * - `'powerup'` — a power-up grant (any catalogue power-up),
  * - `'weapon'` — a collectable weapon drop (grant \*or\* re-activate),
  * - `'weapon-level'` — a permanent level-up of a weapon the player already
  *   owns (parent AH-0MUPMPCB2009J54J),
@@ -104,7 +126,7 @@ export interface ChoiceOption {
   /**
    * Optional one-line player-facing description of what the item does
    * (e.g. `"Adds a 3-bullet fan (−30°/0°/+30°)."`). Populated for **every**
-   * option kind from the shared catalogue via {@link getHelpDescription}, so
+   * option kind from the shared catalogue via {@link getDropDescription}, so
    * an unfamiliar offer is self-explanatory and the overlay copy can never
    * drift from the gym help (AH-0MV2N2591007UGPD · AC1/AC4).
    */
@@ -199,7 +221,7 @@ export function isWeaponOption(option: ChoiceOption): boolean {
 export function toChoiceOption(id: DropId): ChoiceOption {
   // Item copy is resolved from the shared catalogues so the overlay and the
   // gym help can never diverge (AC4).
-  const description = getHelpDescription(id);
+  const description = getDropDescription(id);
   if (isWeaponDrop(id)) {
     return { id, name: WEAPON_NAMES[id], kind: 'weapon', description };
   }
@@ -209,6 +231,90 @@ export function toChoiceOption(id: DropId): ChoiceOption {
     kind: 'powerup',
     description,
   };
+}
+
+// ── Level-up option builder ─────────────────────────────────────────
+
+/**
+ * Builds the single level-up option for an owned item, offering
+ * `level + 1`.
+ *
+ * This is the **one** code path that turns an owned permanent level into a
+ * player-facing offer: the hold-full choice ({@link buildChoiceCandidates})
+ * and the mini-boss reward (`buildUpgradeOptions` in `./unlocks`) both use
+ * it, so the offered level, item description and change summary can never
+ * drift between the two surfaces (gym↔game parity — AH-0MVL9P2SF009QFON AC3).
+ *
+ * Returns `undefined` when the id cannot be levelled as a drop: the
+ * permanent cannon, the Reset utility, unknown power-ups, or a level below 1.
+ *
+ * @param id - The weapon drop or power-up id being upgraded.
+ * @param level - The item's current permanent level (≥ 1).
+ * @returns The `weapon-level`/`power-up-level` option, or `undefined`.
+ */
+export function buildLevelUpOption(
+  id: DropId,
+  level: number,
+): ChoiceOption | undefined {
+  if (!Number.isFinite(level) || level < 1) return undefined;
+
+  if (isWeaponDrop(id)) {
+    if (!LEVELABLE_WEAPON_IDS.includes(id)) return undefined;
+    return {
+      id,
+      name: `${WEAPON_NAMES[id]} Lv.${level + 1}`,
+      kind: 'weapon-level',
+      level: level + 1,
+      description: getDropDescription(id),
+      changeSummary: summariseWeaponLevelChange(
+        id as WeaponId,
+        level,
+        level + 1,
+      ),
+    };
+  }
+
+  if (!POWER_UP_CATALOGUE[id as PowerUpId]) return undefined;
+  const powerUpId = id as PowerUpId;
+  return {
+    id: powerUpId,
+    name: `${POWER_UP_CATALOGUE[powerUpId].name} Lv.${level + 1}`,
+    kind: 'power-up-level',
+    level: level + 1,
+    description: getDropDescription(powerUpId),
+    changeSummary: summarisePowerUpLevelChange(powerUpId, level, level + 1),
+  };
+}
+
+/**
+ * Builds the level-up offers for every owned permanent weapon and power-up
+ * in `context` — weapons first, then power-ups, matching the order both
+ * callers present.
+ *
+ * Shared by the hold-full choice and the mini-boss reward so both surfaces
+ * offer exactly the same options (AH-0MVL9P2SF009QFON AC1/AC3).
+ *
+ * @param context - The run's owned weapon/power-up levels.
+ * @returns One option per levellable owned item.
+ */
+export function buildOwnedLevelUpOptions(
+  context?: ChoiceContext,
+): ChoiceOption[] {
+  const options: ChoiceOption[] = [];
+
+  for (const { id, level } of context?.weaponLevels ?? []) {
+    const option = buildLevelUpOption(id as DropId, level);
+    // A weapon-level store must never produce a power-up option (or vice
+    // versa) — keeps the two stores' entries independent.
+    if (option?.kind === 'weapon-level') options.push(option);
+  }
+
+  for (const { id, level } of context?.powerUpLevels ?? []) {
+    const option = buildLevelUpOption(id, level);
+    if (option?.kind === 'power-up-level') options.push(option);
+  }
+
+  return options;
 }
 
 // ── Weighting ───────────────────────────────────────────────────────
@@ -274,6 +380,20 @@ export interface ChoiceStrategy {
  * offer a base entry alongside its level-up counterpart for the same id
  * (AH-0MUVRACE9001WVT2 AC3).
  *
+ * ## Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4)
+ *
+ * Once the run's shared permanent pool is full
+ * ({@link resolveSlotState} over the same context), base entries that would
+ * create a seventh permanent kind — neither owned nor flagged
+ * `availableWhenSlotsFull` — are gated out via {@link isWithinSlotPool}. Owned
+ * kinds are already suppressed above and return as level-up offers, and the
+ * flagged entries (Extra Life, Mystery UFO) stay on offer, so the candidate
+ * list degrades gracefully instead of emptying. The gate lives **only** here:
+ * the mini-boss reward inherits it through `buildOwnedLevelUpOptions`, and no
+ * scene or `unlocks.ts` re-derives it. Below the cap `isWithinSlotPool` is
+ * unconditionally true, so the candidate list (eligible set and weights) is
+ * unchanged.
+ *
  * Populates optional display metadata (AH-0MUU1GOAU007RFVR):
  * - `changeSummary` for owned/levelled items, derived from the shared
  *   level maths.
@@ -301,6 +421,13 @@ export function buildChoiceCandidates(
   // must not badge a power-up as New (backward compatible).
   const powerUpOwnershipKnown = context?.powerUpLevels !== undefined;
 
+  // Shared-pool occupancy, derived from the same context through the single
+  // slot helper (no second counter, no scene-local re-derivation).
+  const slotState = resolveSlotState(
+    context?.powerUpLevels ?? [],
+    context?.weaponLevels ?? [],
+  );
+
   const candidates: ChoiceOption[] = [];
   for (const dropId of new Set(pool)) {
     const option = toChoiceOption(dropId);
@@ -316,6 +443,14 @@ export function buildChoiceCandidates(
     ) {
       continue;
     }
+    // Six-slot gate (parent AC4): once the shared pool is full, a base entry
+    // that is neither owned nor `availableWhenSlotsFull` would create a
+    // seventh permanent kind, so it is not offered. Owned kinds already
+    // dropped out above and return as level-up offers below; the flagged
+    // entries survive here. Below the cap this predicate is inert.
+    if (slotState.isFull && !isWithinSlotPool(dropId, slotState)) {
+      continue;
+    }
     // Every surviving base entry is unowned, so it carries the New badge
     // whenever ownership is known (weapons always; power-ups only when the
     // context supplies `powerUpLevels`).
@@ -324,44 +459,10 @@ export function buildChoiceCandidates(
     candidates.push(option);
   }
 
-  for (const { id, level } of context?.weaponLevels ?? []) {
-    if (!LEVELABLE_WEAPON_IDS.includes(id as WeaponDropId) || level < 1) {
-      continue;
-    }
-    const weaponId = id as WeaponDropId;
-    candidates.push({
-      id: weaponId,
-      name: `${WEAPON_NAMES[weaponId]} Lv.${level + 1}`,
-      kind: 'weapon-level',
-      level: level + 1,
-      // AC1: item description from the shared catalogue (AC4).
-      description: getHelpDescription(weaponId),
-      // AC1: change summary derived from the shared level maths.
-      changeSummary: summariseWeaponLevelChange(
-        weaponId as WeaponId,
-        level,
-        level + 1,
-      ),
-    });
-  }
-
-  // Power-up level-up offers (parent AH-0MUU2QJE2007JNR6, AC6). Mirrors the
-  // weapon-level path: one offer per owned power-up, carrying the level it
-  // grants and a change summary derived from the shared power-up resolver.
-  for (const { id, level } of context?.powerUpLevels ?? []) {
-    if (level < 1 || !POWER_UP_CATALOGUE[id]) {
-      continue;
-    }
-    candidates.push({
-      id,
-      name: `${POWER_UP_CATALOGUE[id].name} Lv.${level + 1}`,
-      kind: 'power-up-level',
-      level: level + 1,
-      // Item description from the shared catalogue (AC1/AC4).
-      description: getHelpDescription(id),
-      changeSummary: summarisePowerUpLevelChange(id, level, level + 1),
-    });
-  }
+  // Owned permanent levels become level-up offers through the single shared
+  // builder, so the hold-full choice and the mini-boss reward cannot drift
+  // (AH-0MVL9P2SF009QFON AC3).
+  candidates.push(...buildOwnedLevelUpOptions(context));
   return candidates;
 }
 

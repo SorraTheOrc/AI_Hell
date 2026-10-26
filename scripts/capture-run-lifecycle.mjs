@@ -52,6 +52,51 @@ export const DEFAULT_MAX_CAPTURE_DURATION_MS = 30 * 60 * 1_000;
 export const DEMO_GAME_OVER_DWELL_MS = DEFAULT_CAPTURE_TAIL_MS;
 
 /**
+ * Hard cap on a single recorder chunk, in bytes, on its way from the page to
+ * node (16 MiB).
+ *
+ * A healthy `MediaRecorder.start(1000)` emits roughly 1 MiB of raw video per
+ * second at the 8 Mbps capture bitrate, so this is ~16x a normal chunk: it
+ * only trips on a pathological flush (a stalled or retried recorder), which
+ * is exactly the payload that can push the CDP pipe towards its ~512 MiB
+ * undelimited-buffer ceiling (`ERR_STRING_TOO_LONG`).
+ *
+ * Declared once here and imported by every consumer — the bounded chunk sink
+ * (`capture-chunk-sink.mjs`, AH-0MVNT26AQ005LDNS) and the page-side slice
+ * guard (`capture-recorder-page.mjs`, AH-0MVNT27XR0080I3C) — so a policy
+ * change cannot leave one side slicing at a size the other rejects.
+ *
+ * The cap is **overflow defence, not a tuning knob**: it exists to keep a
+ * pathological recorder flush from ever approaching the ~512 MiB CDP pipe
+ * ceiling (`ERR_STRING_TOO_LONG`). If a capture trips it, diagnose the flush
+ * with `--diagnostics` rather than raising it — a normal chunk is ~1 MiB, so
+ * anything near this cap is a stalled or retried recorder (the page slices it
+ * first; this is the last-resort backstop it must never normally see).
+ */
+export const MAX_CAPTURE_CHUNK_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Bounded prefix budget for page-side recording retention and the streamed
+ * probe, in bytes (32 MiB ≈ 32 s of 8 Mbps footage).
+ *
+ * Two consumers measure audio and frames from a **prefix** of the recording
+ * rather than the whole clip: the page-side retention helper
+ * (`capture-recorder-page.mjs`, AH-0MVNT274M009XRJ1) keeps at most this much
+ * of recorded `Blob` data in the renderer, and the streamed probe
+ * (`capture-probe.mjs`, AH-0MVNT28SJ008ZHDB) decodes at most this much for
+ * `audioPeak`/`audioRms`. Single-sourced so the retention budget always
+ * covers what the probe needs.
+ *
+ * Also a **defence bound, not a quality knob**: it is the most page heap the
+ * recording may claim per clip regardless of run length, and the probe's
+ * audio verdict is therefore measured from this same prefix. Raising it to
+ * get a longer audio sample re-opens the run-length-proportional page memory
+ * the retention work (AH-0MVNT274M009XRJ1) removed — record one more clip
+ * instead.
+ */
+export const CAPTURE_PROBE_PREFIX_BUDGET_BYTES = 32 * 1024 * 1024;
+
+/**
  * Page-side event name for the recording-start anchor, consumed by the
  * action-intensity video join (AH-0MUZQG13S006KL8K, epic AH-0MUZMTTYH008KVS2).
  */

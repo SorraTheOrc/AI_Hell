@@ -23,6 +23,7 @@ import {
 // to prove the version is shared, not duplicated) and serialise byte-stably.
 import { BALANCE_STATISTICS_SCHEMA_VERSION as SHARED_SCHEMA_VERSION } from './index';
 import { runBatch } from './engine';
+import type { BatchConfig } from './engine';
 import { resolvePolicyFactory } from './policies';
 import { aggregateBalanceStats } from './metrics';
 import { compareBalanceAggregates } from './tune';
@@ -125,6 +126,57 @@ describe('buildBalanceReport (AH-0MV81YY2T0069W19: versioned, deterministic)', (
     expect(output.report.kind).toBe('balance');
     expect(output.report.schemaVersion).toBe(SHARED_SCHEMA_VERSION);
     expect(output.json).toBe(serialiseReport(output.report));
+  });
+
+  it('echoes the resolved batch mode so a report is self-describing (AC4/AC5)', () => {
+    // The batch default: full campaign, and an explicit skirmish opt-out.
+    const campaign = runBatch({ seeds: [1], ticks: 90 });
+    expect(campaign.report.config.campaign).toBe(true);
+
+    const skirmish = runBatch({ seeds: [1], ticks: 90, campaign: false });
+    expect(skirmish.report.config.campaign).toBe(false);
+
+    // A human report (recorded real game) keeps its existing shape: no
+    // harness-mode surface.
+    const human = buildBalanceReport({
+      policies: ['human'],
+      seeds: [1],
+      ticks: 120,
+      dt: 1 / 60,
+      sampleEveryTicks: 1,
+      runs: [],
+      aggregate: aggregateBalanceStats([]),
+    });
+    expect(stableStringify(human.config)).not.toContain('campaign');
+    expect(JSON.parse(serialiseReport(human)).config.campaign).toBeUndefined();
+  });
+
+  it('reports populated campaign and empty skirmish distributions (AC2)', () => {
+    // The two batch modes have deliberately distinct report shapes: the
+    // campaign default carries real progression evidence, while the explicit
+    // skirmish opt-out keeps the historic zero wave/level distributions.
+    const campaign = runBatch({
+      seeds: [1],
+      ticks: 1_800,
+      sampleEveryTicks: 120,
+      spawns: { asteroids: 0 },
+    });
+    expect(campaign.report.config.campaign).toBe(true);
+    expect(campaign.aggregate.waveReached.max).toBeGreaterThan(0);
+    expect(campaign.aggregate.levelReached.max).toBeGreaterThan(0);
+    expect(Object.keys(campaign.aggregate.upgradesSelected).length).toBeGreaterThan(0);
+
+    const skirmish = runBatch({ seeds: [1], ticks: 600, campaign: false });
+    expect(skirmish.report.config.campaign).toBe(false);
+    expect(skirmish.aggregate.waveReached).toEqual({
+      count: 1,
+      mean: 0,
+      median: 0,
+      min: 0,
+      max: 0,
+      stdDev: 0,
+    });
+    expect(skirmish.aggregate.levelReached.max).toBe(0);
   });
 });
 
@@ -236,5 +288,38 @@ describe('formatTuneSummary (AH-0MVBNLM2V008XC8T: per-key moves are surfaced)', 
     );
     expect(shape).toContain('enemiesKilledByArchetype.scout');
     expect(shape).toContain('stdDev 0.00 → 1.00 (Δ 1.00)');
+  });
+});
+
+/**
+ * Per-level batch schema compatibility (AH-0MVLJF9HC007AOI6,
+ * TEST-FIRST).
+ *
+ * The per-level campaign mode is **additive**: `BatchConfig` gains an
+ * optional `level` (forwarded to every arena run) but the balance-batch
+ * artifact keeps its versioned shape — same `kind`, same schema and dataset
+ * versions, and the per-level evidence rides the existing aggregate fields
+ * (`powerUpsCollected`, `enemiesKilledByArchetype`, `avoidableHits`,
+ * `survivalSeconds`, `levelReached`). On pre-change HEAD the extra field is
+ * ignored and this contract trivially holds (the hard gate for the mode's
+ * existence lives in `arena.test.ts` / `cli.test.ts` as `it.fails`).
+ */
+describe('per-level batch schema compatibility (AH-0MVLJF9HC007AOI6)', () => {
+  it('keeps the versioned balance-batch schema for a per-level run (additive)', () => {
+    const config: BatchConfig & { readonly level?: number } = {
+      seeds: [1],
+      ticks: 120,
+      level: 5,
+    };
+    const output = runBatch(config);
+    expect(output.report.kind).toBe('balance');
+    expect(output.report.schemaVersion).toBe(SHARED_SCHEMA_VERSION);
+    expect(output.report.datasetVersion).toBe(EVAL_DATASET_VERSION);
+    // The per-level evidence fields ride the existing aggregate shape.
+    expect(output.aggregate).toHaveProperty('powerUpsCollected');
+    expect(output.aggregate).toHaveProperty('enemiesKilledByArchetype');
+    expect(output.aggregate).toHaveProperty('avoidableHits');
+    expect(output.aggregate).toHaveProperty('survivalSeconds');
+    expect(output.aggregate).toHaveProperty('levelReached');
   });
 });

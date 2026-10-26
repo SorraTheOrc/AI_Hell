@@ -83,17 +83,22 @@ horizontal beam that punches straight through enemies instead of stopping on
 the first hit, with a charge meter that grows the beam.
 
 **AI_Hell adaptation:** A single, wide, slow neon beam projectile fired ahead
-of the ship that **passes through every enemy it overlaps**, damaging each one
-once, rather than being destroyed on the first contact. Range is long
-(`bulletLifetime`-driven) and the fire cadence is deliberately slow so the beam
-reads as a committed, aimed shot. It does not clear enemy bullets (that stays
-Nova/Arc/Bomb territory) so it does not eclipse the AOE family.
+of the ship with a **total damage budget** (`maxHitPoints`): it blows through
+the enemies it destroys — one budget point per hit point of damage — and
+spends its remaining damage on the ships behind them, rather than being
+destroyed on the first contact or passing through anything for free. An
+unupgraded beam (budget 2) destroys two 1-HP ships (or one 2-HP ship) and then
+stops. Range is long (`bulletLifetime`-driven) and the fire cadence is
+deliberately slow so the beam reads as a committed, aimed shot. It does not
+clear enemy bullets (that stays Nova/Arc/Bomb territory) so it does not eclipse
+the AOE family.
 
 **Divergence from original:** No charge meter — AI_Hell's weapons are
 cumulative pickups on the beat grid rather than chargeable, so the beam is a
 fixed cadence. It is a travelling beam rather than an instant screen-spanning
-beam, so the "pierce everything it reaches" behaviour stays positional and
-readable in free 2D.
+beam, so the bounded pass-through behaviour stays positional and readable in
+free 2D; the R-Type's unbounded charge cannon becomes a *finite* R-Type-style
+beam (AH-0MV97RISJ002WR2S).
 
 **Type:** weapon.
 
@@ -104,14 +109,16 @@ readable in free 2D.
 - Fire subdivision: **1 shot per beat** (`1` in `DEFAULT_WEAPON_SUBDIVISIONS` →
   750 ms at 80 BPM), on the shared grid.
 - Seam: **new shared combat-core dispatch seam.** The catalogue currently only
-  expresses area effects through `AoEDescriptor`; pass-through hitting needs a
-  new optional per-bullet `piercing` field read by the shared player-bullet
-  collision path in `CombatCoreScene`, which tracks already-hit enemies so each
-  is damaged once. No `AoEDescriptor` is used. Shared core = gym↔game parity by
-  construction.
-- `weaponLevels.ts` variables: **Piercing** (`piercing`, 0 → 5, k=0.25 — the
-  planned variable this weapon exists to exercise), **Fire rate** (`fireRate`,
-  MVP), **Bullet size** (`bulletSize`, MVP) and **Damage** (`damage`).
+  expresses area effects through `AoEDescriptor`; bounded pass-through needs a
+  new optional per-bullet `maxHitPoints` **damage budget** read by the shared
+  player-bullet collision path in `CombatScene`, which spends one point per hit
+  point of damage and tracks already-damaged enemies so each is charged once.
+  No `AoEDescriptor` is used. Shared core = gym↔game parity by construction.
+- `weaponLevels.ts` variables: **Max Hit Points** (`maxHitPoints`, base 0, cap
+  5, k=0.25 — the planned variable this weapon exists to exercise; the
+  weapon-level clamp was removed so the effective budget saturates at ~7 via
+  the shared exponential-saturation curve), **Fire rate** (`fireRate`, MVP),
+  **Bullet size** (`bulletSize`, MVP) and **Damage** (`damage`).
 
 **Balance / coverage:** The first weapon that rewards line-ups through a
 crowd rather than area coverage; it cannot clear bullets and cannot hit around
@@ -119,8 +126,9 @@ corners, and its slow cadence keeps it from dominating Rapid or the AOE family.
 Intended rarity: standard weapon weight.
 
 **Gym scene:** `GymWeapons` (weapon drops plus the inert practice targets) —
-the beam visibly passes through all three targets, demonstrating piercing and
-weapon-level growth in the same shared core the game runs.
+the level-0 beam visibly destroys the two aligned practice targets and is then
+consumed, demonstrating the bounded damage budget and weapon-level growth in
+the same shared core the game runs.
 
 ---
 
@@ -544,7 +552,7 @@ one-line deferral reason so the pool can be revisited.
 
 | Concept | Type | Catalogue seam | Beat subdivision | New dispatch seam? | Level variables (`weaponLevels` / `powerUpLevels`) | Gym scene(s) |
 |---------|------|----------------|------------------|--------------------|----------------------------------------------------|--------------|
-| R-Type wave laser | weapon | `WeaponId: 'wave_laser'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared piercing-collision seam | `piercing`, `fireRate`, `bulletSize`, `damage` | `GymWeapons` |
+| R-Type wave laser | weapon | `WeaponId: 'wave_laser'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared damage-budget collision seam | `maxHitPoints`, `fireRate`, `bulletSize`, `damage` | `GymWeapons` |
 | Centipede ricochet shot | weapon | `WeaponId: 'ricochet'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared bullet-bounce seam | `bounce`, `fireRate`, `bulletSize`, `damage` | `GymWeapons` |
 | Missile Command cluster/MIRV missile | weapon | `WeaponId: 'cluster'` / `WEAPON_CATALOGUE` | 1 shot / 2 beats (1500 ms) | New shared split seam (`WeaponDefinition.splits`, not AoE) | `splitCount`, `fireRate`, `damage` | `GymWeapons` |
 | Gradius Options orbiting satellites | weapon | `WeaponId: 'options'` / `WEAPON_CATALOGUE` | 1/beat (750 ms) | New shared orbit-emitter seam | `projectileCount`, `fireRate`, `bulletSize`, `homing` | `GymWeapons` |
@@ -558,7 +566,7 @@ one-line deferral reason so the pool can be revisited.
 path), the `EffectsRegistry`, the shared `curve.ts` exponential-saturation
 curve, the `WeightedRandomSpawner` drop pipeline and `src/powerups/icons.ts`.
 
-**New seams to be created (per child work item):** shared piercing-collision,
+**New seams to be created (per child work item):** shared damage-budget collision,
 shared bullet-bounce, shared missile-split, shared orbit-emitter, shared
 ship-centred `screenPulse` and shared bullet-reflection — all in `src/scenes/core/` (or
 shared pure policies alongside it) so the game and every gym run the same code.

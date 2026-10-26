@@ -255,11 +255,26 @@ export function loadSettings(): SettingsRecord {
 /**
  * Persists the supplied settings to `localStorage` under the key
  * `ai_hell_settings`. No-op when storage is unavailable.
+ *
+ * Never throws (AH-0MVIRYGD1000JVY3, AC6): `localStorage.setItem` can throw
+ * `QuotaExceededError` (a full origin quota) or `SecurityError` (storage
+ * disabled). This is called from Phaser input handlers, so a throw would
+ * escape into the game loop and abort the handler — the reported
+ * "control scheme silently reverts" symptom. A failure is logged once and
+ * swallowed; the in-memory value the caller used remains in effect.
  */
 export function saveSettings(values: SettingsRecord): void {
   const store = storage();
   if (!store) return;
-  store.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(values));
+  try {
+    store.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(values));
+  } catch (error) {
+    console.warn(
+      '[settings] Could not persist settings (storage full or unavailable); ' +
+        'the change applies to this session only.',
+      error,
+    );
+  }
 }
 
 /**

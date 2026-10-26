@@ -439,6 +439,22 @@ export function playBossHitSound(): void {
   playCue('playBossHitSound');
 }
 
+/**
+ * Crisp energy shatter — an **enemy force field** breaks (epic
+ * AH-0MVJ8W4GE007OMNT AC3, AH-0MVM8GW7W004SI0E).
+ *
+ * Decision (recorded here so the audio knowledge stays in the audio layer):
+ * this reuses the existing baked bullet-destruction tick instead of shipping a
+ * new ToneForge recipe. It already reads as a short, bright shatter, it is
+ * distinct from the hull-destruction boom (`playDestructionSound`) so "barrier
+ * down" never sounds like "enemy killed", and it is distinct from the
+ * per-weapon impact cues that absorbed hits keep using — so absorb and break
+ * never sound the same. No unrendered audio asset is introduced.
+ */
+export function playEnemyForceFieldBreakSound(): void {
+  playCue('playBulletDestructionSound');
+}
+
 // ── Player weapon fire cues ─────────────────────────────────────────
 
 /** Solid medium blip — Cannon fire. */

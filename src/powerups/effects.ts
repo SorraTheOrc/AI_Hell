@@ -395,6 +395,14 @@ export class EffectsRegistry {
    * expiry clear it; zero means the field no longer counters rams.
    */
   private _thornsRemaining = 0;
+  /**
+   * Seconds until the active Thorn Field regains one spent ram
+   * (AH-0MVJ8YKR70096C6T). Starts when a ram is absorbed and is advanced
+   * only on the shared {@link tick} path — so the game and every gym refill
+   * identically — one ram per level-resolved `thornsRecharge` interval.
+   * Zero while the budget is full or the field is inactive.
+   */
+  private _thornsRechargeTimer = 0;
 
   // ── Orbital Strike bolt state (AH-0MVCRC1Q0007JAV1) ───────────────
   /**
@@ -614,6 +622,14 @@ export class EffectsRegistry {
           permanent,
         );
         this._thornsRemaining = Math.max(0, Math.round(stats.thornsAbsorbs ?? 2));
+        // A freshly resolved budget is full, so nothing is owed: clear the
+        // recharge clock (it restarts when a ram is spent). Kept conditional
+        // so a future refresh that lands below the maximum starts counting
+        // immediately instead of stalling (AH-0MVJ8YKR70096C6T).
+        this._thornsRechargeTimer =
+          this._thornsRemaining < this.thornsMaxAbsorbs()
+            ? this.thornsRechargeTime()
+            : 0;
         break;
       case 'salvage':
         // salvage: a timed mineral bounty. The shared kill-drop seam adds the
@@ -700,6 +716,10 @@ export class EffectsRegistry {
     // identically (AH-0MV82I8IL0012RXY AC1/AC5). The store ignores
     // non-positive/non-finite `dt`.
     this._levelStore.tickRecharge(dt);
+    // Advance the Thorn Field recharge clock on the same shared tick path so
+    // a permanent (hold-full) field keeps re-arming for the whole run and a
+    // field-pickup window re-arms while it is open (AH-0MVJ8YKR70096C6T).
+    this._advanceThornsRecharge(dt);
     // Expire timed power-up effects (permanent effects are skipped unless a
     // temporary window is active on top of them).
     for (const [id, effect] of [...this._timed]) {
@@ -755,6 +775,8 @@ export class EffectsRegistry {
     // The Thorn Field's ram budget ends with its window (AH-0MVCRC1Q0007JAV1).
     if (id === 'thorns') {
       this._thornsRemaining = 0;
+      // A closed window recharges nothing (AH-0MVJ8YKR70096C6T).
+      this._thornsRechargeTimer = 0;
     }
   }
 
@@ -1086,7 +1108,81 @@ export class EffectsRegistry {
     if (!this._timed.has('thorns')) return false;
     if (this._thornsRemaining <= 0) return false;
     this._thornsRemaining -= 1;
+    // A spent ram starts the recharge clock (unless one is already counting,
+    // in which case the running countdown is kept — the field never banks
+    // time). The shared tick path then returns one ram per level-resolved
+    // interval, capped at the level-resolved budget
+    // (AH-0MVJ8YKR70096C6T).
+    if (this._thornsRechargeTimer <= 0) {
+      this._thornsRechargeTimer = this.thornsRechargeTime();
+    }
     return true;
+  }
+
+  /**
+   * The level-resolved maximum ram budget of the Thorn Field (base 2 → cap
+   * 6). Bounds the recharge so a refill can never exceed what a fresh
+   * collection grants; clamped to at least 1 so the field always has a
+   * usable budget.
+   */
+  thornsMaxAbsorbs(): number {
+    return Math.max(
+      1,
+      Math.round(this._levelStore.stats('thorns').thornsAbsorbs ?? 2),
+    );
+  }
+
+  /**
+   * Seconds between automatic ram recharges at the current Thorn Field
+   * level — the level-derived `thornsRecharge` interval (12 s base → 5 s
+   * floor). Returns 0 when no interval is configured, which disables the
+   * recharge.
+   */
+  thornsRechargeTime(): number {
+    const interval = this._levelStore.stats('thorns').thornsRecharge;
+    return Number.isFinite(interval) && (interval ?? 0) > 0
+      ? (interval as number)
+      : 0;
+  }
+
+  /**
+   * Seconds until the active Thorn Field regains one spent ram, or 0 when
+   * it is not recharging (no active field, or the budget is already full).
+   * Surfaced for the HUD's `next ram in Ns` countdown and read by the shared
+   * aura helper, so both stay pure functions of registry state.
+   */
+  thornsRechargeRemaining(): number {
+    if (!this._timed.has('thorns')) return 0;
+    if (this._thornsRemaining >= this.thornsMaxAbsorbs()) return 0;
+    return Math.max(0, this._thornsRechargeTimer);
+  }
+
+  /**
+   * Advances the Thorn Field recharge clock by `dt` seconds: one spent ram
+   * returns per elapsed level-resolved interval (remainder carried, so a long
+   * frame recharges exactly as many rams as the elapsed time warrants). The
+   * clock is cleared whenever the field is inactive or its budget is full.
+   * Never advanced per scene — {@link tick} is the single call site.
+   */
+  private _advanceThornsRecharge(dt: number): void {
+    if (!this._timed.has('thorns')) {
+      this._thornsRechargeTimer = 0;
+      return;
+    }
+    const max = this.thornsMaxAbsorbs();
+    if (this._thornsRemaining >= max) {
+      this._thornsRechargeTimer = 0;
+      return;
+    }
+    const interval = this.thornsRechargeTime();
+    if (interval <= 0 || !Number.isFinite(dt) || dt <= 0) return;
+    if (this._thornsRechargeTimer <= 0) this._thornsRechargeTimer = interval;
+    this._thornsRechargeTimer -= dt;
+    while (this._thornsRechargeTimer <= 0 && this._thornsRemaining < max) {
+      this._thornsRemaining += 1;
+      this._thornsRechargeTimer += interval;
+    }
+    if (this._thornsRemaining >= max) this._thornsRechargeTimer = 0;
   }
 
   // ── Salvage mineral bounty (AH-0MVCRC1Q0007JAV1) ────────────────────
@@ -1605,6 +1701,7 @@ export class EffectsRegistry {
     this._forceFieldRemaining = 0;
     this._mysteryUfoPendingSpawns = 0;
     this._thornsRemaining = 0;
+    this._thornsRechargeTimer = 0;
     this._strikePermanent = false;
     this._strikePulseTimer = 0;
     this._strikePulsePending = false;

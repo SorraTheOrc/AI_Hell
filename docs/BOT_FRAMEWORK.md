@@ -47,9 +47,9 @@ behaviour.run()  ──►  BotSteeringIntent
 
 ## 2. World model
 
-`buildBotWorld(snapshot, tunables?)` derives a `BotWorld` from a read-only
-`BotSnapshot`. It partitions the live entities, computes proximity and
-timed-wave pressure, and predicts incoming fire:
+`buildBotWorld(snapshot, tunables?, content?, hazardVelocities?)` derives a
+`BotWorld` from a read-only `BotSnapshot`. It partitions the live entities,
+computes proximity and timed-wave pressure, and predicts incoming fire:
 
 ```ts
 const world = buildBotWorld(snapshot);
@@ -60,6 +60,13 @@ world.incomingFire;         // predicted shots and their threat to the player
 world.nearestEnemyDistance; // or Infinity
 world.wavePressure;         // 0..1, 0 when no timed wave is running
 ```
+
+Hazards are `BotHazardPoint`s: each carries the entity's stable bot-side `id`
+and, when the caller supplies a velocity lookup, an estimated `vx`/`vy`
+(the bot-side hazard-velocity tracker of
+[section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
+With no lookup — the default for direct callers — hazards stay stationary
+`{ x, y }` points, exactly as before.
 
 `predictIncomingFire` classifies every in-flight enemy bullet and every enemy
 inside a fire **tell** (whose shot does not exist yet, so it is estimated as a
@@ -311,7 +318,10 @@ via the read-only snapshot — the bot introduces no cap constant of its own.
   Inside `reverseRetreatRange` it retreats under reverse thrust while
   keeping its nose on the target (kiting) **only when a genuine threat is
   present** — an incoming threatening shot or an imminent hazard collision —
-  never merely because the target is close (AH-0MV2WJSY70070HK2 · AC3).
+  never merely because the target is close (AH-0MV2WJSY70070HK2 · AC3). The
+  imminent-collision half uses the predictive hazard test when the bot has a
+  velocity estimate for the hazard, and the positional `dangerMargin` rule
+  otherwise ([section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
 - **`evade`**: head away from the weighted centroid of the shots that
   threaten the ship (predictive path-around, AC2), not merely direction
   rejection.
@@ -322,8 +332,13 @@ via the read-only snapshot — the bot introduces no cap constant of its own.
 Every behaviour routes its intent through the pure `planSteering` helper,
 which samples a **fan of bearings around the objective**, evaluates each one
 for predicted clearance against walls, hazards and incoming fire, and picks
-the safe bearing that best trades objective progress for clearance. When no
-bearing is safe it takes the greatest-clearance bearing — the least-bad
+the safe bearing that best trades objective progress for clearance. Hazards
+are evaluated at their **predicted** positions when the bot has a velocity
+estimate for them (and `hazardPredictionEnabled` is on): a bearing is also
+unsafe when the ship and a moving hazard are predicted to come within
+`threatRadius` inside `hazardPredictionHorizon`
+([section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)). When
+no bearing is safe it takes the greatest-clearance bearing — the least-bad
 escape — so the ship always moves rather than freezing. The never-suicide
 property therefore holds regardless of which goal is committed.
 
@@ -338,7 +353,10 @@ cadence itself is the governor's `reactionTimeMs`
 `minCommitSeconds` so a goal cannot be re-picked faster than a human can
 change input. The rotation-skill knobs — `skill`, `maxAimErrorRad`,
 `aimLeadEnabled`, `aimLeadAlignSeconds`, `aimLeadIterations` — live in the
-same two sources ([section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)).
+same two sources ([section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)),
+as do the predictive-hazard-avoidance knobs `hazardPredictionEnabled` /
+`hazardPredictionHorizon`
+([section 9.10](#910-predictive-hazard-avoidance-ah-0mvi4qdn90037din)).
 Reverse-thrust gating and timing live in the same two sources — see
 [section 9.7](#97-reverse-thrust-ah-0mv2wjsy70070hk2).  The reverse forward
 model consumes live reverse physics from the snapshot
@@ -364,7 +382,8 @@ defaults behaves bit-for-bit as before (default-equivalence).
 | Module | Responsibility |
 |---|---|
 | `competent/tunables.ts` | Single source of tuning + `resolveCompetentTunables`. |
-| `competent/steering.ts` | Pure bearing fan, safety evaluation, forward model, intercept solve. |
+| `hazardVelocity.ts` | Bot-side hazard-velocity tracker (position deltas → clamped velocity). |
+| `competent/steering.ts` | Pure bearing fan, safety evaluation, predictive hazard avoidance, forward model, intercept solve. |
 | `competent/goals.ts` | The six registered goals and their utility bands. |
 | `competent/behaviours.ts` | collect / engage / evade / reposition. |
 | `competent/index.ts` | `createCompetentBotBrain()` factory. |
@@ -543,6 +562,52 @@ compiled default) wins over the live config — through the same
 (`GymBotTuning`), so the gym and the shipped demo can never resolve the
 tunables differently.
 
+### 9.10 Predictive hazard avoidance (AH-0MVI4QDN90037DIN)
+
+The demo bot avoids **where a moving hazard will be**, not just where it is
+now. Aim lead ([section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)) covers
+leading a target; this section covers the avoidance half.
+
+- **Bot-side velocity estimation (AC1).** The snapshot seam exposes no
+  per-archetype entity velocity for formation enemies, so `buildBotSnapshot`
+  assigns every enemy a **stable bot-side `id`** (a module-local `WeakMap`
+  keyed by the source object; a source that already exposes a numeric `id`
+  keeps it) and `trackHazardVelocities(memory, snapshot, dt)`
+  (`src/ai/framework/hazardVelocity.ts`) derives each live hazard's velocity
+  from its position delta across consecutive decision ticks, divided by the
+  injected `dt`. The estimate lives in `BotMemory.hazardVelocities` (keyed
+  `enemy:<id>` / `boss`), so it is deterministic for an identical
+  snapshot+`dt` sequence and is cleared by `resetBotMemory`. Spurious jumps
+  (wrap-around, respawn, teleport) are clamped to
+  `HAZARD_MAX_ESTIMATED_SPEED` (900 px/s); a hazard with no history, no
+  estimate, or no stable id is treated as **stationary** (today's
+  behaviour); an unseen hazard keeps its last estimate for
+  `HAZARD_VELOCITY_STALE_TICKS` (30) ticks before it is pruned.
+- **Predictive steering (AC2).** `evaluateDirection` keeps the positional
+  `dangerMargin` rule and, when `hazardPredictionEnabled` is on and the
+  hazard's estimate is non-zero, additionally solves the closest approach of
+  the ship (at the candidate bearing's speed) and the hazard over
+  `hazardPredictionHorizon`, rejecting the bearing when they come within
+  `threatRadius` — the same relative-motion primitive the incoming-fire
+  prediction uses. The `engage` behaviour's kiting gate calls the shared
+  `hazardThreatensPlayer` predicate, so "imminent hazard collision" means the
+  same thing in both places. With prediction off — or a stationary/untracked
+  hazard — both paths reduce bit-for-bit to the positional rule.
+- **Live tuning (AC3).** `hazardPredictionEnabled` (toggle, default **on**)
+  and `hazardPredictionHorizon` (slider, default **0.6 s**) live in
+  `COMPETENT_BOT_TUNABLES`, are registered in `src/ai/tuningFields.ts` with
+  documented bounds/descriptions, and are applied live by `GymBotTuning`
+  exactly like the aim-lead knobs ([section 12](#12-tuning-the-bot-live-the-bot-tuning-gym)).
+- **Validation (AC4).** `hazardVelocity.test.ts` covers the estimator
+  (stable velocity, stationary zero, clamp, stale retention/pruning, reset,
+  determinism); `steering.test.ts` and `behaviours.test.ts` cover the
+  predicted rejection and the kiting gate against the disabled/stationary
+  baselines; and `src/ai/botSteering.integration.test.ts` runs the shared
+  competent brain in a deterministic 60 Hz kinematic loop (the steering
+  model's own assumption, isolating the prediction from ship inertia) where a
+  straight crossing enemy collides with prediction off and is evaded (minimum
+  ship–hazard distance ≥ `threatRadius` minus tolerance) with it on.
+
 ## 10. Testing
 
 The framework's unit tests live beside it:
@@ -558,7 +623,9 @@ The framework's unit tests live beside it:
 
 The competent content is tested in `src/ai/framework/competent/`:
 
-- `steering.test.ts` — safe/unsafe bearings, path-around, aim, forward model.
+- `steering.test.ts` — safe/unsafe bearings, path-around, aim, forward model,
+  predictive hazard avoidance.
+- `hazardVelocity.test.ts` — the bot-side hazard-velocity estimator.
 - `goals.test.ts` — utility bands and priority order.
 - `behaviours.test.ts` — collect/engage/evade/reposition intents.
 - `content.test.ts` — synthetic enemy/asteroid/drop content, the shipped

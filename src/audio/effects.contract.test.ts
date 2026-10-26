@@ -78,6 +78,12 @@ KNOWN_CUE_SET.add('playWeaponFireSound');
 // cues (AH-0MV8228YW0050IXS): it routes an `impactFx.cue` name to the baked
 // cue in the manifest, and is likewise known (not a baked cue itself).
 KNOWN_CUE_SET.add('playWeaponImpactCue');
+// `playEnemyForceFieldBreakSound` is a semantic **alias** of an existing
+// baked cue (`playBulletDestructionSound`), added for enemy force-field break
+// feedback (AH-0MVM8GW7W004SI0E). It deliberately ships no new ToneForge
+// recipe, so it is known to the coverage check without a manifest entry of its
+// own — the underlying cue it plays is mapped and verified like every other.
+KNOWN_CUE_SET.add('playEnemyForceFieldBreakSound');
 
 function resolveCue(name: string): CueFn | undefined {
   const fromEffects = (effects as unknown as Record<string, unknown>)[name];

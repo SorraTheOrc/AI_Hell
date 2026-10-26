@@ -28,6 +28,16 @@
  * the threat radius of an in-flight shot (or a fire-tell shot) inside the
  * prediction horizon.
  *
+ * ## Predictive hazard avoidance (AH-0MVI4QDN90037DIN · AC2)
+ *
+ * Hazards are no longer treated as stationary points when the bot has a
+ * velocity estimate for them: with `hazardPredictionEnabled` on, a bearing is
+ * also unsafe when the ship and the moving hazard are predicted to come
+ * within `threatRadius` inside `hazardPredictionHorizon` (the same
+ * closest-approach primitive the incoming-fire prediction uses). A hazard with
+ * no (or zero) estimate keeps exactly the positional `dangerMargin` rule, so
+ * disabled/zero-velocity behaviour is bit-for-bit unchanged.
+ *
  * ## Aim / fire reasoning (AC3)
  *
  * {@link planSteering} keeps the **direct** bearing (offset `0`) as the
@@ -41,7 +51,7 @@
 
 import type { BotSteeringIntent } from '../../botDecision';
 import type { BotSnapshot } from '../../botSnapshot';
-import type { BotWorld, BotWorldPoint } from '../worldModel';
+import type { BotWorld, BotHazardPoint, BotWorldPoint } from '../worldModel';
 import type { CompetentBotTunables } from './tunables';
 import {
   resolveFrictionDeceleration,
@@ -175,18 +185,90 @@ function closestApproach(
 }
 
 /**
+ * Whether a hazard threatens the player right now (AH-0MVI4QDN90037DIN ·
+ * AC2).
+ *
+ * With prediction enabled and a non-zero velocity estimate, the hazard is a
+ * threat when the player (moving at `vx`/`vy`) and the hazard are predicted to
+ * come within `threatRadius` inside `hazardPredictionHorizon` — the same
+ * closest-approach solve bullets use. Otherwise (prediction off, or the hazard
+ * is stationary/untracked) it is a threat when it is inside `dangerMargin`,
+ * exactly today's positional rule.
+ *
+ * Shared by {@link evaluateDirection} and the `engage` behaviour's kiting
+ * gate so both apply one definition of an imminent hazard collision.
+ */
+export function hazardThreatensPlayer(
+  player: { readonly x: number; readonly y: number; readonly vx: number; readonly vy: number },
+  hazard: BotHazardPoint,
+  t: CompetentBotTunables,
+): boolean {
+  const hx = hazard.x;
+  const hy = hazard.y;
+  const hvx = hazard.vx ?? 0;
+  const hvy = hazard.vy ?? 0;
+  const moving = hvx !== 0 || hvy !== 0;
+  if (!t.hazardPredictionEnabled || !moving) {
+    return Math.hypot(hx - player.x, hy - player.y) < t.dangerMargin;
+  }
+  const approach = closestApproach(
+    player.x,
+    player.y,
+    player.vx,
+    player.vy,
+    hx,
+    hy,
+    hvx,
+    hvy,
+    t.hazardPredictionHorizon,
+  );
+  return approach.distance < t.threatRadius;
+}
+
+/**
+ * A hazard exempt from the **predictive** collision test
+ * (AH-0MVI4QDN90037DIN · AC2).
+ *
+ * The `engage` behaviour deliberately flies toward its target, so predicting a
+ * collision with it would reject the aim bearing and break engagement. Such a
+ * hazard keeps the positional `dangerMargin` rule (today's behaviour) but is
+ * not avoided at its future position.
+ */
+export interface HazardExemption {
+  readonly x: number;
+  readonly y: number;
+  readonly id?: number;
+}
+
+/** Whether `hazard` is one of the callers' deliberately-targeted hazards. */
+function isHazardExempt(
+  hazard: BotHazardPoint,
+  exemptions?: readonly HazardExemption[],
+): boolean {
+  if (!exemptions || exemptions.length === 0) return false;
+  return exemptions.some((exempt) =>
+    hazard.id !== undefined && exempt.id !== undefined
+      ? hazard.id === exempt.id
+      : exempt.x === hazard.x && exempt.y === hazard.y,
+  );
+}
+
+/**
  * Evaluates one candidate bearing for safety and clearance.
  *
  * @param dirX — unit x component of the candidate bearing.
  * @param dirY — unit y component of the candidate bearing.
  * @param world — the derived world (player, hazards, incoming fire).
  * @param t — the competent tunables.
+ * @param exemptHazards — hazards exempt from the predictive test (the
+ *   engagement target); they keep only the positional rule.
  */
 export function evaluateDirection(
   dirX: number,
   dirY: number,
   world: BotWorld,
   t: CompetentBotTunables,
+  exemptHazards?: readonly HazardExemption[],
 ): DirectionSafety {
   const player = world.player;
   if (!player) return { safe: false, clearance: 0 };
@@ -210,8 +292,10 @@ export function evaluateDirection(
   if (wall < clearance) clearance = wall;
   if (wall < t.wallMargin) safe = false;
 
-  // Hazards (enemies, asteroids, boss): reactive keep-away. The snapshot
-  // exposes no hazard velocity, so this is positional.
+  // Hazards (enemies, asteroids, boss): reactive keep-away plus, when the bot
+  // has a velocity estimate and prediction is on, a closest-approach solve
+  // against where the hazard will be (AH-0MVI4QDN90037DIN · AC2). Stationary
+  // or untracked hazards keep exactly the positional rule.
   for (const hazard of world.hazards) {
     const d = Math.hypot(hazard.x - px, hazard.y - py);
     if (d < clearance) clearance = d;
@@ -220,6 +304,27 @@ export function evaluateDirection(
       (hazard.x - px) * dirX + (hazard.y - py) * dirY > 0
     ) {
       safe = false;
+    }
+    const hvx = hazard.vx ?? 0;
+    const hvy = hazard.vy ?? 0;
+    if (
+      t.hazardPredictionEnabled &&
+      (hvx !== 0 || hvy !== 0) &&
+      !isHazardExempt(hazard, exemptHazards)
+    ) {
+      const ca = closestApproach(
+        px,
+        py,
+        pvx,
+        pvy,
+        hazard.x,
+        hazard.y,
+        hvx,
+        hvy,
+        t.hazardPredictionHorizon,
+      );
+      if (ca.distance < clearance) clearance = ca.distance;
+      if (ca.t > EPS && ca.distance < t.threatRadius) safe = false;
     }
   }
 
@@ -263,11 +368,13 @@ export function evaluateDirection(
  *
  * @param objective — the desired bearing (a direction, not a point), or
  *   `null` for a pure clearance search.
+ * @param exemptHazards — hazards exempt from the predictive test.
  */
 export function chooseSteeringDirection(
   objective: BotWorldPoint | null,
   world: BotWorld,
   t: CompetentBotTunables,
+  exemptHazards?: readonly HazardExemption[],
 ): BotWorldPoint {
   const player = world.player;
   if (!player) return { x: 0, y: 0 };
@@ -284,7 +391,7 @@ export function chooseSteeringDirection(
   for (const offsetDeg of t.fanDegrees) {
     const angle = baseAngle + (offsetDeg * Math.PI) / 180;
     const dir = { x: Math.cos(angle), y: Math.sin(angle) };
-    const evaluation = evaluateDirection(dir.x, dir.y, world, t);
+    const evaluation = evaluateDirection(dir.x, dir.y, world, t, exemptHazards);
     const progress = objectiveUnit
       ? dir.x * objectiveUnit.x + dir.y * objectiveUnit.y
       : 0;
@@ -415,6 +522,11 @@ export interface SteerPlanOptions {
   /** Whether the objective is a long-travel leg. */
   readonly longTravel: boolean;
   /**
+   * Hazards exempt from the predictive collision test (the engagement
+   * target; AH-0MVI4QDN90037DIN · AC2). They keep only the positional rule.
+   */
+  readonly exemptHazards?: readonly HazardExemption[];
+  /**
    * Whether to travel the objective with **reverse** thrust (kiting / brake
    * assist; AH-0MV1J0OHP0072XA5). Defaults to `false`.
    */
@@ -445,7 +557,12 @@ export function planSteering(
   const objectiveUnit = normalise(objective.x, objective.y);
   if (objectiveUnit.x === 0 && objectiveUnit.y === 0) return idleIntent();
 
-  const chosen = chooseSteeringDirection(objectiveUnit, world, t);
+  const chosen = chooseSteeringDirection(
+    objectiveUnit,
+    world,
+    t,
+    options.exemptHazards,
+  );
   const aligned =
     chosen.x * objectiveUnit.x + chosen.y * objectiveUnit.y >= 0.98;
   return buildIntent(

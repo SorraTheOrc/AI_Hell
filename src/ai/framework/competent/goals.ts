@@ -81,6 +81,13 @@ export interface ContentTarget extends BotWorldPoint {
   /** The archetype (enemy) or drop type looked up in the content registry. */
   readonly contentId: string;
   /**
+   * The source enemy's stable bot-side id, when it has one. The `engage`
+   * behaviour uses it to exempt its deliberately-targeted hazard from
+   * **predictive** avoidance while keeping the positional keep-away rule
+   * (AH-0MVI4QDN90037DIN · AC2).
+   */
+  readonly id?: number;
+  /**
    * Target velocity (px/s) when the source exposes it, used for aim-lead
    * prediction (AH-0MV1DUSM2005HL98 · AC2). Absent for stationary sources
    * (minerals, drops, formation-positioned enemies without a physics body).
@@ -175,6 +182,7 @@ export function enemyTargets(world: BotWorld): ContentTarget[] {
     x: enemy.x,
     y: enemy.y,
     contentId: enemy.archetype,
+    ...(enemy.id !== undefined ? { id: enemy.id } : {}),
     // Carry velocity only when the snapshot source exposes it, so targets from
     // sources without a physics body stay shape-compatible and lead falls back
     // to the current position (AC2).
@@ -194,6 +202,7 @@ export function asteroidTargets(world: BotWorld): ContentTarget[] {
     x: enemy.x,
     y: enemy.y,
     contentId: enemy.archetype,
+    ...(enemy.id !== undefined ? { id: enemy.id } : {}),
   }));
 }
 

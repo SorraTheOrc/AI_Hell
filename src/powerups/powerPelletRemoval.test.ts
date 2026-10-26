@@ -37,6 +37,13 @@ const REMAINING_POWER_UP_IDS = [
   'smart_bomb',
   'force_field',
   'mystery_ufo',
+  // The five net-new power-ups (AH-0MVCRC1Q0007JAV1) must not be swept away
+  // by a future removal either (AH-0MVI4KTD8000FBJ7 AC5).
+  'frenzy',
+  'chrono',
+  'thorns',
+  'salvage',
+  'strike',
 ] as const;
 
 describe('Power Pellet removal — cannot be spawned or offered (AH-0MV5CB6KO0079N08)', () => {
@@ -69,6 +76,11 @@ describe('Power Pellet removal — cannot be spawned or offered (AH-0MV5CB6KO007
   });
 
   it('does not over-remove: every other shipped power-up remains', () => {
+    // Every power-up in the catalogue, so a future addition is covered
+    // automatically instead of silently escaping the guard.
+    expect([...REMAINING_POWER_UP_IDS].sort()).toEqual(
+      Object.keys(POWER_UP_CATALOGUE).sort(),
+    );
     for (const id of REMAINING_POWER_UP_IDS) {
       expect(POWER_UP_CATALOGUE).toHaveProperty(id);
       expect(POWER_UP_WEIGHT_IDS).toContain(id);

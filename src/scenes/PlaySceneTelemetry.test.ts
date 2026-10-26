@@ -14,12 +14,13 @@ import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
 import { RULES_STORAGE_KEY } from '../core/rules';
-import { DEFAULT_SETTINGS, saveSettings } from '../core/settingsStore';
+import { DEFAULT_SETTINGS, loadSettings, saveSettings } from '../core/settingsStore';
 import { buildBotSnapshot } from '../ai/botSnapshot';
 import {
   BufferedTelemetryRecorder,
-  TELEMETRY_JSONL_STORAGE_KEY,
+  JsonlTelemetrySink,
   TELEMETRY_SCHEMA_VERSION,
+  createMemoryLineWriter,
   type TelemetryRecord,
   type TelemetrySink,
 } from '../telemetry';
@@ -52,6 +53,19 @@ class CaptureSink implements TelemetrySink {
   write(batch: readonly TelemetryRecord[]): void {
     this.records.push(...batch);
   }
+}
+
+/**
+ * Every `localStorage` key whose name mentions telemetry. Telemetry must never
+ * write to storage (AH-0MVIRYGD1000JVY3, AC1), so this is always empty.
+ */
+function telemetryStorageKeys(): string[] {
+  const keys: string[] = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (key !== null && key.toLowerCase().includes('telemetry')) keys.push(key);
+  }
+  return keys;
 }
 
 describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
@@ -296,7 +310,6 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
     // Dev collection is on by default (AH-0MVBMRIB800201KK), so the opt-out
     // is what makes this a stock "off" run.
     saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
-    localStorage.removeItem(TELEMETRY_JSONL_STORAGE_KEY);
     simTime = 0;
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
@@ -304,13 +317,15 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
 
     expect(play.isTelemetryEnabled()).toBe(false);
     step(booted.game, 30);
-    expect(localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY)).toBeNull();
+    // The buffer accessor exists (dev-gated) but never holds a record, and no
+    // telemetry is written to storage (AC1).
+    expect(window.__aiHellTelemetry?.read()).toBeNull();
+    expect(telemetryStorageKeys()).toEqual([]);
   });
 
-  it('dev collection is on by default: a stock dev run writes the JSONL sink', async () => {
+  it('dev collection is on by default: a stock dev run fills the in-memory buffer', async () => {
     vi.stubEnv('DEV', true);
     saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: true });
-    localStorage.removeItem(TELEMETRY_JSONL_STORAGE_KEY);
     simTime = 0;
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
@@ -321,14 +336,15 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
     expect(play.isTelemetryEnabled()).toBe(true);
 
     // Stepping past the recorder's batch size forces a flush of the buffered
-    // records into the local JSONL sink.
+    // records into the dev sink's in-memory buffer, which the dev-gated page
+    // accessor exposes to the Node tooling (AH-0MVIRYGD1000JVY3, AC1/AC5).
     step(booted.game, 120);
 
     await vi.waitFor(
       () => {
-        const stored = localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY);
-        expect(stored).toBeTruthy();
-        const records = stored!
+        const buffered = window.__aiHellTelemetry?.read();
+        expect(buffered).toBeTruthy();
+        const records = buffered!
           .trimEnd()
           .split('\n')
           .map((line) => JSON.parse(line) as TelemetryRecord);
@@ -337,6 +353,36 @@ describe('PlayScene telemetry instrumentation (AH-0MUY08VVQ007HSSH)', () => {
       },
       { timeout: 5000 },
     );
+    // Telemetry never touches storage, so a full quota can no longer break
+    // settings saves (AC1).
+    expect(telemetryStorageKeys()).toEqual([]);
+  });
+
+  it('AC1/AC3 — a dev run leaves settings writable: the scheme persists and reloads', async () => {
+    vi.stubEnv('DEV', true);
+    saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: true, controlScheme: 'asteroids' });
+    simTime = 0;
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    booted.game.loop.stop();
+    const play = restartAndSettle(booted.game, { seed: SEED });
+    expect(play.isTelemetryEnabled()).toBe(true);
+
+    // Several seconds of telemetry: far past the old ~1.4-minute quota path
+    // per second, but the point stands — the buffer grows, storage does not.
+    // The recorder flushes into the sink asynchronously, so wait for it.
+    step(booted.game, 240);
+    await vi.waitFor(
+      () => expect(window.__aiHellTelemetry?.read()).toBeTruthy(),
+      { timeout: 5000 },
+    );
+
+    // The reported symptom was `setItem` throwing; with telemetry off
+    // storage the settings record still saves and reloads.
+    saveSettings({ ...loadSettings(), controlScheme: 'fourDirectional' });
+    expect(loadSettings().controlScheme).toBe('fourDirectional');
+    expect(telemetryStorageKeys()).toEqual([]);
+    // And the in-memory buffer is untouched by the settings write.
+    expect(window.__aiHellTelemetry?.read()).toBeTruthy();
   });
 
   it('AC5 — enabling recording does not change the run (regression)', async () => {
@@ -414,9 +460,6 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
     vi.unstubAllEnvs();
   });
 
-  /** A marker line the local sink would hold at run end. */
-  const SINK_LINE = '{"kind":"run_header","runSeed":7}\n';
-
   /** A `fetch` spy typed like the uploader's seam. */
   function uploadFetchSpy(): ReturnType<typeof vi.fn<DevUploadFetch>> {
     return vi.fn<DevUploadFetch>(async () => ({ ok: true, status: 200 }));
@@ -451,30 +494,28 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
   }
 
   /**
-   * Boots a settled PlayScene, then seeds the local JSONL sink and applies the
-   * run-end share setting.
+   * Boots a settled PlayScene with an injected recorder whose dev sink is a
+   * real in-memory JSONL buffer, then applies the run-end share setting.
    *
-   * Dev collection is off while the scene boots, so the stock dev recorder can
-   * never append to `localStorage`; the injected capturing recorder and the
-   * post-restart seed then make the upload payload exactly {@link SINK_LINE}.
-   * The uploader reads the setting at run end, so applying it afterwards is the
-   * state the run-end hook sees.
+   * The injected recorder keeps the run's records in that buffer, so the
+   * upload body is exactly the buffer content the dev-gated accessor exposes
+   * (AH-0MVIRYGD1000JVY3). The uploader reads the setting at run end, so
+   * applying it afterwards is the state the run-end hook sees.
    */
-  async function bootWithSeededSink(shareTelemetryDev: boolean): Promise<PlayScene> {
+  async function bootWithMemoryBuffer(shareTelemetryDev: boolean): Promise<PlayScene> {
     saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev: false });
     simTime = 0;
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     booted.game.loop.stop();
     const play = booted.game.scene.getScene('PlayScene') as PlayScene;
     play.setTelemetryRecorder(
-      new BufferedTelemetryRecorder(new CaptureSink(), {
+      new BufferedTelemetryRecorder(new JsonlTelemetrySink(createMemoryLineWriter()), {
         capacity: 8192,
         batchSize: 8192,
         sampleRate: 1,
       }),
     );
     restartAndSettle(booted.game, { seed: SEED });
-    localStorage.setItem(TELEMETRY_JSONL_STORAGE_KEY, SINK_LINE);
     saveSettings({ ...DEFAULT_SETTINGS, shareTelemetryDev });
     return play;
   }
@@ -496,8 +537,8 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
     booted!.game.step(simTime, STEP_MS);
   }
 
-  it('dev+on — posts the sink content at run end and still reaches GameOverScene', async () => {
-    const play = await bootWithSeededSink(true);
+  it('dev+on — posts the run buffer at run end and still reaches GameOverScene', async () => {
+    const play = await bootWithMemoryBuffer(true);
     const uploadFetch = uploadFetchSpy();
     vi.stubGlobal('fetch', uploadFetch);
 
@@ -514,17 +555,30 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
     expect(init).toMatchObject({
       method: 'POST',
       headers: { 'content-type': 'application/x-ndjson' },
-      body: SINK_LINE,
     });
+    // The body is this run's records, read straight out of the in-memory
+    // buffer: exactly one run_header, ticks, and the run_end event.
+    const records = init.body
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as TelemetryRecord);
+    expect(records.filter((record) => record.kind === 'run_header')).toHaveLength(1);
+    expect(records[0]).toMatchObject({ kind: 'run_header', runSeed: SEED });
+    expect(records.some((record) => record.kind === 'tick')).toBe(true);
+    expect(
+      records.some((record) => record.kind === 'event' && record.event === 'run_end'),
+    ).toBe(true);
+    // The dev-gated accessor exposes the same buffer, and no telemetry reached
+    // storage (AC1/AC5).
+    expect(window.__aiHellTelemetry?.read()).toBe(init.body);
+    expect(telemetryStorageKeys()).toEqual([]);
     // The scene transition still happened alongside the upload.
     expect(booted!.game.scene.isActive('GameOverScene')).toBe(true);
     expect(booted!.game.scene.isActive('PlayScene')).toBe(false);
-    // Parent constraint: the sink content is left intact after upload.
-    expect(localStorage.getItem(TELEMETRY_JSONL_STORAGE_KEY)).toBe(SINK_LINE);
   });
 
   it('dev+off — no fetch, run end still transitions', async () => {
-    const play = await bootWithSeededSink(false);
+    const play = await bootWithMemoryBuffer(false);
     const uploadFetch = uploadFetchSpy();
     vi.stubGlobal('fetch', uploadFetch);
 
@@ -538,7 +592,7 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
   it('prod build — no fetch, run end still transitions', async () => {
     vi.stubEnv('DEV', false);
     vi.stubEnv('PROD', true);
-    const play = await bootWithSeededSink(true);
+    const play = await bootWithMemoryBuffer(true);
     const uploadFetch = uploadFetchSpy();
     vi.stubGlobal('fetch', uploadFetch);
 
@@ -549,7 +603,7 @@ describe('PlayScene dev upload at run end (AH-0MVBMRK6X0069QDI)', () => {
   });
 
   it('failed upload — swallowed, run end still transitions', async () => {
-    const play = await bootWithSeededSink(true);
+    const play = await bootWithMemoryBuffer(true);
     vi.stubGlobal(
       'fetch',
       vi.fn<DevUploadFetch>(async () => {

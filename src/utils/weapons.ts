@@ -24,8 +24,10 @@
  * - **spread** — 3-bullet fan at -30° / 0° / +30° relative to heading (timed)
  * - **dual**   — 2 bullets offset perpendicular (±90°) to heading (timed)
  * - **rapid**  — single bullets at a much higher fire rate (timed)
- * - **wave_laser** — a single slow, wide beam that passes through a budget of
- *   enemies (R-Type homage, timed; see {@link WeaponDefinition.piercing})
+ * - **wave_laser** — a single slow, wide beam with a total damage budget: it
+ *   blows through the enemies it destroys and spends the rest on the ones
+ *   behind them (R-Type homage, timed; see
+ *   {@link WeaponDefinition.maxHitPoints})
  * - **ricochet** — a single shot that reflects off the arena edges up to a
  *   budget of bounces (Centipede homage, timed; see
  *   {@link WeaponDefinition.bounce})
@@ -742,16 +744,19 @@ export interface WeaponDefinition {
    */
   bulletLifetime: number;
   /**
-   * Base **extra** enemies a fired bullet passes through before it is
-   * consumed — the R-Type wave-laser pass-through seam (AH-0MV1BIUSJ0090W92).
-   * `0`/absent means an ordinary single-hit bullet.
+   * Base **hit-point budget** a fired bullet may deal before it is consumed —
+   * the R-Type wave-laser damage seam (AH-0MV1BIUSJ0090W92,
+   * AH-0MV97RISJ002WR2S). The beam spends one budget point per hit point of
+   * damage: it passes through the ships it destroys and spends its remaining
+   * budget on the ships behind them. `0`/absent means an ordinary single-hit
+   * bullet.
    *
    * A bullet's effective budget is this base value plus the weapon's
-   * level-resolved `piercing` upgrade (from `weaponLevels.ts`), clamped to
-   * that variable's spec cap; the shared combat core tracks already-hit
-   * enemies so each is damaged once (see `resolveWeaponDefinition`).
+   * level-resolved `maxHitPoints` upgrade (from `weaponLevels.ts`); the shared
+   * combat core tracks already-damaged enemies so each is charged once (see
+   * `resolveWeaponDefinition`).
    */
-  piercing?: number;
+  maxHitPoints?: number;
   /**
    * Base **wall-bounce budget** — how many times a fired bullet reflects off
    * the arena edges before it expires instead of wrapping (Centipede ricochet
@@ -1020,7 +1025,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     id: 'wave_laser',
     name: 'Wave Laser',
     description:
-      'Adds a slow, long-range piercing beam that passes through several enemies.',
+      'Adds a slow, long-range beam that deals a limited amount of damage in a line.',
     // A single aimed beam along the ship's heading.
     offsets: [0],
     fireRateMs: WEAPON_WAVE_LASER_FIRE_RATE,
@@ -1034,10 +1039,10 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletThickness: 3,
     bulletSize: 1.2,
     bulletLifetime: WEAPON_BULLET_LIFETIME.wave_laser,
-    // Base pass-through budget: the beam survives the first three enemies
-    // (and damages them all) before it is consumed. The `piercing` level
-    // variable grows it toward the spec cap (5).
-    piercing: 3,
+    // Base damage budget: the beam deals up to two hit points in total — it
+    // destroys two 1-HP ships (or one 2-HP ship) and then stops. The
+    // `maxHitPoints` level variable grows it (~7 at very high levels).
+    maxHitPoints: 2,
     // Wide neon muzzle flash / launch cue at the ship when the wave laser
     // fires — a substantial burst befitting the long beam it launches
     // (AH-0MV822ACO007CEZF). The flash is wider than the cannon's to match
@@ -1276,8 +1281,8 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
   // They are the campaign's unlock-pool rewards (mini-boss reward feature)
   // rather than members of the starting drop rotation, so `WEAPON_DROP_ORDER`
   // deliberately still cycles spread → dual → rapid. Every one uses an
-  // existing shared firing seam (pattern offsets / piercing), so the game and
-  // every gym fire them through identical core code.
+  // existing shared firing seam (pattern offsets / damage budget), so the game
+  // and every gym fire them through identical core code.
   rear_guard: {
     id: 'rear_guard',
     name: 'Rear Guard',
@@ -1317,7 +1322,7 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     description:
       'Adds a slow, long-range tracer that pierces a line of enemies.',
     // A single aimed shot along the heading, like the wave laser, but with a
-    // larger pass-through budget and a much slower, heavier cadence.
+    // larger damage budget and a much slower, heavier cadence.
     offsets: [0],
     fireRateMs: WEAPON_RAILGUN_FIRE_RATE,
     bulletColor: BULLET_COLORS.railgun,
@@ -1329,9 +1334,9 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 4.5,
     bulletSize: 1.15,
     bulletLifetime: WEAPON_BULLET_LIFETIME.railgun,
-    // Base extra pass-through greater than the wave laser's (3) — the rail's
-    // identity is the line-piercing shot.
-    piercing: 5,
+    // Base damage budget greater than the wave laser's (2) — the rail's
+    // identity is the deeper line-piercing shot.
+    maxHitPoints: 5,
   },
   shard_swarm: {
     id: 'shard_swarm',

@@ -18,11 +18,13 @@ import * as path from 'node:path';
  *
  * Definition lines only: `this._method(` call sites do not match because
  * the matcher requires the name to start the line (after optional
- * visibility/`override` modifiers) and be followed by `(`.
+ * visibility/`override` modifiers) and be followed by `(`. An optional
+ * type-parameter clause (`<T extends Foo>`) is accepted so generic template
+ * methods are matchable (AH-0MVNT2YGD003N8NR).
  */
 export function definesMethod(source: string, method: string): boolean {
   const re = new RegExp(
-    `^[ \\t]*(?:(?:private|protected|public)\\s+)?(?:override\\s+)?${method}\\s*\\(`,
+    `^[ \\t]*(?:(?:private|protected|public)\\s+)?(?:override\\s+)?${method}(?:\\s*<[^>{}()]*>)?\\s*\\(`,
     'm',
   );
   return re.test(source);

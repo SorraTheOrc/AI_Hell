@@ -44,9 +44,14 @@ import {
   SHIP_SIZE,
 } from '../core/constants';
 import { GameState, MAX_LEVEL, MAX_LIVES } from '../core/GameState';
+import {
+  extraLifeDropChance,
+  POWER_UP_DROP_CHANCE,
+  powerUpDropChance,
+  scaleCampaignLevelCounts,
+} from '../core/levelScaling';
 import { createSeededRng, normaliseSeed, randomSeed } from '../core/rng';
 import {
-  DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
   DEFAULT_RULES,
   loadRules,
   type GameRules,
@@ -89,6 +94,7 @@ import {
   formationExtents,
   placeWavePortal,
   startSpawnAnimation,
+  updateEnemyShimmer,
   updateSpawnAnimation,
   type PortalPoint,
   type SpawnAnimatable,
@@ -145,9 +151,12 @@ import {
 } from '../ai/tuningFields';
 import { getCurrentBotTuningConfig } from '../core/botTuningStore';
 import { loadEnemyConfig } from '../core/enemyConfig';
+import { enemyForceFieldHits } from '../core/enemyForceField';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
+import { isRunProgressEnabled, publishRunProgress } from '../core/runProgress';
 import {
   createTelemetryRecorder,
+  installDevTelemetryBuffer,
   loadDevTelemetryUploader,
   resolveBuildInfo,
   resolveEffectiveTelemetryConfig,
@@ -182,7 +191,11 @@ import { resolveKeyCode } from '../utils/keys';
 import { WaveManager, type EnemySpawn, type WaveEvent } from '../waves/WaveManager';
 import { LEVELS, type LevelDefinition } from '../waves/Formations';
 import { buildSequencedLevels } from '../waves/sequencedLevels';
-import { computeSpawns, type SpawnEvent } from '../waves/AsteroidSpawner';
+import type { SpawnEvent } from '../waves/AsteroidSpawner';
+import {
+  AsteroidHazardLayer,
+  createAsteroidFromEvent,
+} from './core/asteroidHazard';
 import {
   computeSpawns as computeStrikeSpawns,
   type SpawnEvent as StrikeSpawnEvent,
@@ -237,7 +250,10 @@ import {
   advancePlayerBullets,
   advanceWrappingBullets,
 } from './core/bulletLifecycle';
-import { resolveMineralKillDrops, scatterMineralDrops } from './core/mineralKillDrops';
+import {
+  resolveMineralKillDrops,
+  scatterSalvageMineralDrops,
+} from './core/mineralKillDrops';
 import {
   rollAsteroidExtraLife,
   type AsteroidKillDropEntity,
@@ -251,8 +267,10 @@ import {
   applyPhaseGhost,
   drawForceFieldBubble,
   drawShieldBubble,
+  drawThornsAura,
 } from './core/CombatEffectVisuals';
 import {
+  isNonBlockingHazard,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMER_BAR_HEIGHT,
   WAVE_TIMER_BAR_WIDTH,
@@ -325,16 +343,6 @@ export const SCORE_VALUES: Record<string, number> = {
 /** Default score for an unknown archetype (falls back to the Scout value). */
 export const DEFAULT_SCORE_VALUE = 100;
 
-/**
- * True for non-blocking world hazards — archetypes that are never registered
- * with the `WaveManager`, never gate wave completion, and are never adopted as
- * survivors between waves (Asteroid accounting, AH-0MUJM746P000QAEO). The
- * Frogger lane traffic is the second such hazard (AH-0MV01EPM40008N8T).
- */
-function isNonBlockingHazard(enemyKey: string): boolean {
-  return enemyKey === 'asteroid' || enemyKey === 'lane-traffic';
-}
-
 /** Points awarded per destroyed boss phase (GDD §4.5). */
 export const BOSS_PHASE_SCORES: Record<number, number> = {
   1: 1000,
@@ -372,8 +380,16 @@ const FORMATION_DRIFT_SPEED = 28;
 /** Formation drift bounds (px offset from each group's start). */
 const FORMATION_DRIFT_RANGE = GAME_WIDTH * 0.5;
 
-/** Chance a destroyed enemy drops a power-up (GDD §4.4, ~15–20 %). */
-export const POWER_UP_DROP_CHANCE = 0.18;
+/**
+ * Chance a destroyed enemy drops a power-up (GDD §4.4, ~15–20 %).
+ *
+ * Re-exported from `src/core/levelScaling.ts` (AH-0MVLJEE7O008RX9X): this
+ * is the documented **level-1** per-kill drop chance, kept as the exported
+ * constant so existing imports keep their meaning. Higher levels derive
+ * from it through the level-scaling curves; the level-1 base lives in one
+ * place.
+ */
+export { POWER_UP_DROP_CHANCE };
 
 /**
  * In-run hold (ms) after the victory celebration is triggered and before the
@@ -414,31 +430,52 @@ const BANNER_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
 };
 
 /**
+ * Rules the campaign resolution needs: the sequencing toggle plus whichever
+ * scaling tunables the caller supplies. Anything omitted falls back to
+ * {@link DEFAULT_RULES}, so unit tests can pass just the toggle.
+ */
+type CampaignResolutionRules = Pick<GameRules, 'sequencedWavesEnabled'> &
+  Partial<GameRules>;
+
+/**
  * Resolve the campaign the run should play (AH-0MUITS1SM008GPR9).
  *
- * With the opt-in `sequencedWavesEnabled` toggle off (the default) the static
- * `LEVELS` campaign is returned unchanged. With it on, the campaign is
- * generated from the difficulty-curve config; if generation throws or yields
- * nothing the static campaign is used instead, so the game always boots into
- * a playable campaign.
+ * With the opt-in `sequencedWavesEnabled` toggle off the static `LEVELS`
+ * campaign is used. With it on, the campaign is generated from the
+ * difficulty-curve config; if generation throws or yields nothing the static
+ * campaign is used instead, so the game always boots into a playable
+ * campaign.
+ *
+ * Either way the resolved campaign then passes through the shared
+ * level-scaling seam exactly once (AH-0MVLJF30O000E3J3): each level's group
+ * counts are multiplied by `enemyCountMultiplier(level)` with the documented
+ * rounding, floor, per-group cap and `single`-group rule (see
+ * `src/core/levelScaling.ts`). Level 1 is the identity, so onboarding data is
+ * unchanged. The scaling reads the pristine source on every call, so it is
+ * idempotent — a rebuilt campaign is never scaled twice.
  *
  * Pass a `build` that closes over the run seed (AH-0MUJSUQD8003FSUT) so
  * `dynamic` waves are regenerated per run while staying reproducible for a
  * given seed; the default build is seed-free.
  *
- * Exported so the toggle/fallback decision can be unit-tested without
+ * Exported so the toggle/fallback/scaling decision can be unit-tested without
  * booting a Phaser scene; `PlayScene.create()` calls it with the live rules.
  */
 export function resolveCampaignLevels(
-  rules: Pick<GameRules, 'sequencedWavesEnabled'> = loadRules(),
+  rules: CampaignResolutionRules = loadRules(),
   build: () => LevelDefinition[] = () => buildSequencedLevels(),
 ): LevelDefinition[] {
-  if (!rules.sequencedWavesEnabled) return LEVELS;
+  if (!rules.sequencedWavesEnabled) {
+    return scaleCampaignLevelCounts(LEVELS, rules);
+  }
   try {
     const generated = build();
-    return generated.length > 0 ? generated : LEVELS;
+    return scaleCampaignLevelCounts(
+      generated.length > 0 ? generated : LEVELS,
+      rules,
+    );
   } catch {
-    return LEVELS;
+    return scaleCampaignLevelCounts(LEVELS, rules);
   }
 }
 
@@ -506,6 +543,13 @@ export class PlayScene extends CombatScene<
    * single-source production default; tests inject a short/zero value.
    */
   private demoDwellMs?: number;
+
+  /**
+   * Dev-gated campaign level this fresh run starts at (AH-0MVE01EY0008QEVX).
+   * Resolved from `init({ startLevel })` only when the dev seam is enabled;
+   * always `1` in a production build.
+   */
+  private devStartLevel = 1;
 
   /**
    * Demo take-over handler active only while the demo runs
@@ -625,6 +669,10 @@ export class PlayScene extends CombatScene<
   private shieldBubbleDrawn = false;
   /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
   private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
+  /** Thorn Field lime spike aura (AH-0MVJ8YKR70096C6T). */
+  private thornsAura: Phaser.GameObjects.Graphics | null = null;
+  /** Whether the aura was actually drawn in the last visual update. */
+  private thornsAuraDrawn = false;
 
   private driftX = 0;
   private driftDir = 1;
@@ -698,13 +746,16 @@ export class PlayScene extends CombatScene<
   private rng: () => number = Math.random;
 
   /**
-   * Persisted chance that a destroyed small asteroid additionally drops an
-   * Extra Life (AH-0MV6M2M9P0078N4S). Loaded from the game rules at run
-   * start; the shared `rollAsteroidExtraLife` rule reads it in
-   * `_onEnemyKilled`.
+   * The run's loaded game rules (AH-0MVLJF5P0005KF8X). Resolved once at
+   * create-time from persisted config; the level-scaling helpers consume
+   * these to turn the live campaign level into the per-kill power-up drop
+   * chance and the small-asteroid Extra Life chance (see
+   * `src/core/levelScaling.ts` — nothing here hard-codes per-level
+   * numbers). The legacy flat `asteroidExtraLifeDropChance` read was the
+   * level-1 base; the per-level chance derives from this same rules object
+   * (level 1 is exactly that base).
    */
-  private asteroidExtraLifeDropChance =
-    DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE;
+  private rules: GameRules = DEFAULT_RULES;
 
   /**
    * The resolved per-run seed (AH-0MUY08V6W001SJJN). Assigned once per run
@@ -747,11 +798,12 @@ export class PlayScene extends CombatScene<
   private runTelemetry: RunTelemetry = RunTelemetry.noop();
 
   /**
-   * Asteroid spawn events planned for the active wave (empty outside a
-   * regular wave). Computed once per wave by `planAsteroidSpawns()` so the
-   * scene rng stream is only advanced at wave boundaries.
+   * Scheduled asteroid hazard for the active wave (shared with the level
+   * gyms, AH-0MV9AWR7A0084XJ0). Planned once per wave by
+   * `planAsteroidSpawns()` so the scene rng stream is only advanced at wave
+   * boundaries.
    */
-  private pendingAsteroidSpawns: SpawnEvent[] = [];
+  private readonly asteroidHazard = new AsteroidHazardLayer();
 
   /**
    * Planned Harvester spawns for the active regular wave (Levels 4–10 only),
@@ -797,9 +849,6 @@ export class PlayScene extends CombatScene<
   private pendingHordeSpawns: HordeSpawnEvent[] = [];
   /** Number of planned horde spawns already released this wave. */
   private hordeSpawnedThisWave = 0;
-
-  /** How many of the planned asteroid spawns have been released this wave. */
-  private asteroidsSpawnedThisWave = 0;
 
   /**
    * Whether telegraphed orbital-strike spawning is active (Missile Command
@@ -851,6 +900,11 @@ export class PlayScene extends CombatScene<
     seed?: number;
     demoDwellMs?: number;
     resume?: boolean;
+    /**
+     * Dev-gated campaign level to start a fresh run at (AH-0MVE01EY0008QEVX).
+     * Ignored in production builds; mirrors the checkpoint-resume seam.
+     */
+    startLevel?: number;
   }): void {
     this.demoMode = data?.demo === true;
     // Continue from the last checkpoint (AH-0MVCRBTNF000DK51). It is loaded
@@ -868,6 +922,16 @@ export class PlayScene extends CombatScene<
     // (AH-0MV6MFDYG001E6PL).
     if (!this.demoMode) this.appliedBotTuningName = null;
     this.demoDwellMs = data?.demoDwellMs;
+    // Dev-gated start level (AH-0MVE01EY0008QEVX AC3): a generated-level
+    // capture starts a fresh run at a campaign level the same way checkpoint
+    // resume does. The gate folds to `false` in a production build, so a
+    // shipped run always starts at level 1 regardless of the payload.
+    const requestedLevel = data?.startLevel;
+    this.devStartLevel = isRunProgressEnabled()
+      && typeof requestedLevel === 'number'
+      && Number.isInteger(requestedLevel)
+      ? Math.min(Math.max(requestedLevel, 1), LEVELS.length)
+      : 1;
     if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
   }
 
@@ -934,6 +998,10 @@ export class PlayScene extends CombatScene<
     // Force Field reflect bubble — above the shield bubble (below the HUD).
     this.forceFieldBubble = this.add.graphics();
     this.forceFieldBubble.setDepth(51);
+    // Thorn Field aura — outside the Force Field bubble so the spiked halo
+    // never reads as one of the round bubbles (AH-0MVJ8YKR70096C6T).
+    this.thornsAura = this.add.graphics();
+    this.thornsAura.setDepth(52);
 
     // HUD (lives counter + active effects).
     this.hud = new HUD(this, this.effectsRegistry, {
@@ -963,7 +1031,7 @@ export class PlayScene extends CombatScene<
 
     // Power-up drop pool.
     const rules = loadRules();
-    this.asteroidExtraLifeDropChance = rules.asteroidExtraLifeDropChance;
+    this.rules = rules;
     this.dropSpawner = this._buildDefaultDropSpawner(
       rules.powerUpWeights,
       rules.weaponWeights,
@@ -980,18 +1048,20 @@ export class PlayScene extends CombatScene<
     this.gameState.mineralHoldGrowthMultiplier =
       rules.mineralHoldGrowthMultiplier;
     this._syncMineralHud();
-    // Campaign source: static `LEVELS` by default, generated when the
-    // opt-in toggle is enabled (AH-0MUH6LEYY0054E63). Only override the
-    // manager's levels when enabled so an injected campaign (tests, future
-    // callers) is left untouched — preserving shipped behaviour. Never
-    // throws: `resolveCampaignLevels` falls back to `LEVELS`. The run seed
-    // (AH-0MUJSUQD8003FSUT) is threaded in so `dynamic` waves regenerate per
-    // run while staying reproducible for a given seed.
-    if (rules.sequencedWavesEnabled) {
+    // Campaign source (AH-0MVLJF30O000E3J3): always resolve through
+    // `resolveCampaignLevels`, which applies the level enemy-count scaling
+    // exactly once to the static `LEVELS` campaign and to the sequenced one.
+    // A campaign injected with `setLevels()` (tests, future callers) is left
+    // untouched so the caller keeps control of the campaign. Never throws:
+    // `resolveCampaignLevels` falls back to the (scaled) static campaign. The
+    // run seed (AH-0MUJSUQD8003FSUT) is threaded in so `dynamic` waves
+    // regenerate per run while staying reproducible for a given seed.
+    if (!this.waveManager.hasInjectedLevels) {
       this.waveManager.setLevels(
         resolveCampaignLevels(rules, () =>
           buildSequencedLevels(undefined, undefined, { seed: this.runSeed }),
         ),
+        { injected: false },
       );
     }
     // Checkpoint resume (AH-0MVCRBTNF000DK51): start at the saved level and
@@ -999,7 +1069,10 @@ export class PlayScene extends CombatScene<
     const resume = this.pendingResumeCheckpoint;
     this.pendingResumeCheckpoint = null;
     this.resumeFromCheckpoint = false;
-    this.waveManager.beginGame(resume?.level ?? 1);
+    this.waveManager.beginGame(resume?.level ?? this.devStartLevel);
+    // Publish the live run position for a generated-level capture driver
+    // (AH-0MVE01EY0008QEVX AC3); dev builds only.
+    this._publishRunProgress(false);
     if (resume) this._restoreCheckpoint(resume);
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();
@@ -1112,8 +1185,7 @@ export class PlayScene extends CombatScene<
     this.bannerTimer = 0;
     this.waveTimer = 0;
     this.waveTimerActive = false;
-    this.pendingAsteroidSpawns = [];
-    this.asteroidsSpawnedThisWave = 0;
+    this.asteroidHazard.reset();
     this.pendingLaneTrafficSpawns = [];
     this.laneTrafficSpawnedThisWave = 0;
     this.pendingHarvesterSpawns = [];
@@ -1127,6 +1199,7 @@ export class PlayScene extends CombatScene<
     this.pendingStrikeSpawns = [];
     this.strikesSpawnedThisWave = 0;
     this.shieldBubbleDrawn = false;
+    this.thornsAuraDrawn = false;
     this._wormhole.close(this.wormholeEffects);
     this.paused = false;
   }
@@ -1176,6 +1249,9 @@ export class PlayScene extends CombatScene<
     this.shieldBubble = null;
     this.forceFieldBubble?.destroy();
     this.forceFieldBubble = null;
+    this.thornsAura?.destroy();
+    this.thornsAura = null;
+    this.thornsAuraDrawn = false;
     this.hud?.destroy();
     this.hud = null;
     this.player?.destroy();
@@ -1339,6 +1415,11 @@ export class PlayScene extends CombatScene<
     for (const s of this.spawned) {
       if (!s.entity.isSpawning) continue;
       const stillGrowing = updateSpawnAnimation(s.entity, dt);
+      // Per-entity emergence shimmer (AH-0MVD2N333004VDA9) rides the same
+      // shared spawn path, immediately after the growth write so its scale
+      // pulse layers on the growth scale instead of fighting it
+      // (AH-0MVD2N9MM0007NGZ wiring).
+      updateEnemyShimmer(s.entity as unknown as SpawnAnimatable, dt);
       if (stillGrowing) {
         anySpawning = true;
       } else {
@@ -1371,6 +1452,9 @@ export class PlayScene extends CombatScene<
    * tests and the (future) boss integration can drive it deterministically.
    */
   spawnWave(): void {
+    // Publish the live wave position for a generated-level capture driver
+    // (AH-0MVE01EY0008QEVX AC3); dev builds only.
+    this._publishRunProgress(false);
     // Plan the random offscreen asteroid spawns for this wave. Empty during
     // the boss encounter (see `planAsteroidSpawns`).
     this.planAsteroidSpawns();
@@ -1569,6 +1653,12 @@ export class PlayScene extends CombatScene<
       origin?.y ?? spawn.y,
       spawn.offset,
       this.rng,
+      // Force-field strength is resolved ONCE at spawn from the live run
+      // level through the shared pure curve (epic AH-0MVJ8W4GE007OMNT AC4,
+      // AH-0MVM8GXEF009883O) — never a hard-coded value and never the raw
+      // config column. The level gym resolves the same curve at its launched
+      // level (see `src/scenes/gym/GymLevel.ts`).
+      enemyForceFieldHits(this.waveManager.level, cfg),
     );
     entity.shootEnabled = spawn.shootEnabled;
 
@@ -1688,18 +1778,16 @@ export class PlayScene extends CombatScene<
       wm.bossActive ||
       wm.bossDefeated
     ) {
-      this.pendingAsteroidSpawns = [];
-      this.asteroidsSpawnedThisWave = 0;
+      this.asteroidHazard.reset();
       return;
     }
-    this.pendingAsteroidSpawns = computeSpawns(
+    this.asteroidHazard.plan(
       wm.globalWaveIndex,
       GAME_WIDTH,
       GAME_HEIGHT,
       WAVE_TIME_LIMIT_SECONDS,
       this.rng,
     );
-    this.asteroidsSpawnedThisWave = 0;
   }
 
   /**
@@ -1720,12 +1808,9 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.asteroidsSpawnedThisWave < this.pendingAsteroidSpawns.length) {
-      const event = this.pendingAsteroidSpawns[this.asteroidsSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledAsteroid(event);
-      this.asteroidsSpawnedThisWave += 1;
-    }
+    this.asteroidHazard.releaseDue(elapsed, (event) =>
+      this._spawnScheduledAsteroid(event),
+    );
   }
 
   /**
@@ -1735,17 +1820,7 @@ export class PlayScene extends CombatScene<
    * in the field across wave and level transitions.
    */
   private _spawnScheduledAsteroid(event: SpawnEvent): void {
-    const entity = new Asteroid(this, {
-      x: event.x,
-      y: event.y,
-      formationOffset: { row: 0, col: 0 },
-      sizeTier: event.sizeTier,
-      vx: event.vx,
-      vy: event.vy,
-      enterFromOffscreen: true,
-      rng: this.rng,
-    });
-    this.add.existing(entity);
+    const entity = createAsteroidFromEvent(this, event, this.rng);
     this.spawned.push({
       entity,
       enemyKey: 'asteroid',
@@ -1912,6 +1987,10 @@ export class PlayScene extends CombatScene<
       event.y,
       { row: 0, col: 0 },
       this.rng,
+      // Same shared curve as `_spawnEnemy`: a heavy archetype scheduled
+      // mid-wave is shielded exactly like a formation-spawned one at the
+      // same run level (AH-0MVM8GXEF009883O).
+      enemyForceFieldHits(this.waveManager.level, cfg),
     );
     this.add.existing(entity);
     this.spawned.push({
@@ -1995,6 +2074,7 @@ export class PlayScene extends CombatScene<
       event.y,
       { row: 0, col: 0 },
       this.rng,
+      enemyForceFieldHits(this.waveManager.level, cfg),
     );
     this.add.existing(entity);
     this.spawned.push({
@@ -2178,6 +2258,7 @@ export class PlayScene extends CombatScene<
       event.y,
       { row: 0, col: 0 },
       this.rng,
+      enemyForceFieldHits(this.waveManager.level, cfg),
     );
     this.add.existing(entity);
     this.spawned.push({
@@ -2275,6 +2356,10 @@ export class PlayScene extends CombatScene<
       color: cfg.color,
       health: cfg.health,
       rng: this.rng,
+      // Lane traffic never shields in the authored campaign (start level 0);
+      // the same shared curve still resolves the run level here so every
+      // game spawn seam is uniform (AH-0MVM8GXEF009883O).
+      forceFieldHits: enemyForceFieldHits(this.waveManager.level, cfg),
     });
     this.add.existing(entity);
     this.spawned.push({
@@ -2552,8 +2637,7 @@ export class PlayScene extends CombatScene<
   protected onBossTriggered(): void {
     // No random asteroids in the boss encounter: drop the last wave's plan
     // so no spawn can leak in after the transition (AH-0MUGCNZNE002D7QJ).
-    this.pendingAsteroidSpawns = [];
-    this.asteroidsSpawnedThisWave = 0;
+    this.asteroidHazard.reset();
     this.pendingGhostSpawns = [];
     this.ghostsSpawnedThisWave = 0;
     this.pendingCentipedeSpawn = null;
@@ -2745,9 +2829,8 @@ export class PlayScene extends CombatScene<
     this.miniBoss = null;
     for (const bullet of this.enemyBullets) bullet.graphics.destroy();
     this.enemyBullets = [];
-    this.pendingAsteroidSpawns = [];
+    this.asteroidHazard.reset();
     this.pendingHarvesterSpawns = [];
-    this.asteroidsSpawnedThisWave = 0;
     this.harvestersSpawnedThisWave = 0;
     this.pendingGhostSpawns = [];
     this.ghostsSpawnedThisWave = 0;
@@ -2948,6 +3031,18 @@ export class PlayScene extends CombatScene<
       this.scene.launch('MineralChoiceScene', {
         origin: 'PlayScene-miniBoss',
         options: [...this.miniBossRewardOptions],
+        // Demo mode auto-selects a random offered option after the same
+        // human-like delay as the hold-full choice, so the attract bot never
+        // stalls on the reward screen (AH-0MVJ8U79V0056I2F · AC1/AC2). The
+        // pick is drawn from the run-seeded RNG, so a seed replays the same
+        // reward; normal play leaves both params unset and waits for a real
+        // selection (AC3).
+        ...(this.demoMode
+          ? {
+              autoSelectMs: BOT_MINERAL_CHOICE_DELAY_MS,
+              autoSelectIndex: this._randomDemoRewardIndex(),
+            }
+          : {}),
         // Single overlay contract: the launcher supplies one selection
         // callback; `selectMineralChoice` routes it to the reward resolver
         // while the reward is open.
@@ -2955,6 +3050,20 @@ export class PlayScene extends CombatScene<
       });
     }
     return [...this.miniBossRewardOptions];
+  }
+
+  /**
+   * The demo bot's random mini-boss reward pick: a uniform index into the
+   * currently offered reward options, drawn from the run-seeded RNG so a given
+   * seed reproduces the same reward (AH-0MVJ8U79V0056I2F · AC2). The result is
+   * clamped to `0 .. n-1` (returning 0 for an empty offer) so the overlay's
+   * auto-select can never be handed an out-of-range index. Only the demo
+   * auto-select consults it, so normal play is unaffected.
+   */
+  private _randomDemoRewardIndex(): number {
+    const count = this.miniBossRewardOptions.length;
+    if (count <= 0) return 0;
+    return Math.min(count - 1, Math.max(0, Math.floor(this.rng() * count)));
   }
 
   /**
@@ -3461,12 +3570,15 @@ export class PlayScene extends CombatScene<
     // asteroid additionally rolls the configurable Extra Life drop. The
     // shared rule tier-gates first, so large/medium rocks (which split) and
     // non-asteroid enemies never consume an RNG draw here. Additive to the
-    // generic pool above — asteroids stay in the weighted drop pool.
+    // generic pool above — asteroids stay in the weighted drop pool. The
+    // chance scales by the same ratio as the per-kill power-up chance, so
+    // the supply falls with the campaign level (AH-0MVLJF5P0005KF8X).
+    const level = this._resolveDropLevel();
     if (
       rollAsteroidExtraLife(
         s.entity as unknown as AsteroidKillDropEntity,
         this.rng,
-        this.asteroidExtraLifeDropChance,
+        extraLifeDropChance(level, this.rules),
       )
     ) {
       this.spawnPowerUpDrop('extra_life', s.entity.x, s.entity.y);
@@ -3480,11 +3592,18 @@ export class PlayScene extends CombatScene<
     );
     // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
     // the wreck of a destroyed enemy ship (hazards excluded — they are not
-    // bounty targets).
+    // bounty targets). The shared seam renders them orange so the payout is
+    // visible against ordinary gold drops (AH-0MVJ72I8O0009T09).
     const salvageBonus = this.effectsRegistry.salvageBonusMinerals();
     if (salvageBonus > 0 && !isNonBlockingHazard(s.enemyKey)) {
       this.minerals.push(
-        ...scatterMineralDrops(this, s.entity.x, s.entity.y, salvageBonus, this.rng),
+        ...scatterSalvageMineralDrops(
+          this,
+          s.entity.x,
+          s.entity.y,
+          salvageBonus,
+          this.rng,
+        ),
       );
     }
     // Non-blocking hazards (asteroids, lane traffic) are not wave-accounted
@@ -3620,6 +3739,17 @@ export class PlayScene extends CombatScene<
         this.effectsRegistry,
       );
     }
+    // Thorn Field aura: a lime spiked halo while the field is armed, scaling
+    // with the remaining ram budget and brightening as the next automatic
+    // recharge approaches (shared helper — game/gym parity). Fixed
+    // orientation — deliberately no rotation (audit feedback).
+    if (this.thornsAura) {
+      this.thornsAuraDrawn = drawThornsAura(
+        this.thornsAura,
+        this.player,
+        this.effectsRegistry,
+      );
+    }
     // Phase ghost: semi-transparent ship while Phase Shift is active (keeps the
     // blink alpha when invulnerable — see AC of AH-0MU8QVC9Y008R8I5).
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
@@ -3628,11 +3758,39 @@ export class PlayScene extends CombatScene<
 
   // ── Power-up drops ──────────────────────────────────────────────
 
-  /** Rolls (and possibly spawns) a power-up drop at a kill position. */
+  /**
+   * Rolls (and possibly spawns) a power-up drop at a kill position.
+   *
+   * The roll uses the **level-resolved** per-kill drop chance
+   * (`powerUpDropChance`, AH-0MVLJF5P0005KF8X): the level is read from the
+   * live campaign at kill time, so the supply per enemy falls as the
+   * campaign progresses. Level 1 keeps today's flat `POWER_UP_DROP_CHANCE`
+   * (0.18) exactly; all per-level values come from the shared module.
+   */
   private _maybeDropPowerUp(x: number, y: number): void {
     if (!this.dropSpawner) return;
-    if (this.rng() > POWER_UP_DROP_CHANCE) return;
-    this.spawnPowerUpDrop(this.dropSpawner.next(), x, y);
+    if (this.rng() > powerUpDropChance(this._resolveDropLevel(), this.rules)) {
+      return;
+    }
+    // One shared, eligibility-filtered draw through the six-slot gate (parent
+    // AH-0MVLIJT3M005HPHF): below the cap it is byte-for-byte the weighted
+    // draw; at/above it only owned kinds plus available-when-full entries.
+    this.spawnPowerUpDrop(
+      this._drawNextDrop(this.dropSpawner, this._resolveDropSlotState()),
+      x,
+      y,
+    );
+  }
+
+  /**
+   * The live campaign level for kill-time drop rolls.
+   *
+   * Resolved from `WaveManager.currentLevel()?.level` so every drop roll
+   * tracks the current campaign level; falls back to level 1 when no level
+   * is live (e.g. between transitions), preserving today's level-1 rate.
+   */
+  private _resolveDropLevel(): number {
+    return this.waveManager.currentLevel()?.level ?? 1;
   }
 
   /**
@@ -3887,8 +4045,15 @@ export class PlayScene extends CombatScene<
             s.entity.getHitRadius(),
           )
         ) {
-          this.onPlayerRamsEnemy(s.entity);
-          this._hitPlayer();
+          // A carried-over survivor that still carries a force field absorbs
+          // the ram through the same shared branch the main collision pass
+          // uses — one field hit, both sides survive (epic
+          // AH-0MVJ8W4GE007OMNT AC2, Q6 = B). Once the field is down the
+          // existing both-destroyed rule applies unchanged.
+          if (!this._tryEnemyFieldAbsorbRam(s.entity)) {
+            this.onPlayerRamsEnemy(s.entity);
+            this._hitPlayer();
+          }
           break;
         }
       }
@@ -3925,6 +4090,20 @@ export class PlayScene extends CombatScene<
   }
 
   /** Transitions to GameOverScene with the final score. */
+  /**
+   * Publishes the live run position to the dev-gated page handle
+   * (AH-0MVE01EY0008QEVX AC3). No-op in a production build; a thin wrapper so
+   * `create`, `spawnWave` and `_finishRun` all report the same shape.
+   */
+  private _publishRunProgress(ended: boolean): void {
+    publishRunProgress(
+      this.waveManager.level,
+      this.waveManager.waveNumber,
+      this.waveManager.waveCount,
+      ended,
+    );
+  }
+
   private _finishRun(won: boolean): void {
     // Run end (win/lose) is a discrete telemetry event (AH-0MUY08VVQ007HSSH).
     this.runTelemetry.runEnd(won, this.gameState.score);
@@ -3933,6 +4112,9 @@ export class PlayScene extends CombatScene<
     // `window` receives the `aihell:run-ended` CustomEvent and the
     // `window.__aiHellRunState` fallback; `npm run capture` consumes both.
     emitRunEndedSignal(won, this.gameState.score);
+    // Publish the ended position so a capture driver can truncate the segment
+    // early and report `endedEarly` (AH-0MVE01EY0008QEVX AC3/AC4).
+    this._publishRunProgress(true);
     // Dev-gated auto-upload of the accumulated local sink (AH-0MVBMRK6X0069QDI).
     // Fire-and-forget: the flush + POST must never block or crash run end, so
     // the scene transitions below happen regardless of its outcome.
@@ -3958,8 +4140,9 @@ export class PlayScene extends CombatScene<
   }
 
   /**
-   * Flushes the recorder's buffered records into the local JSONL sink, then
-   * delivers the accumulated sink to the dev server (AH-0MVBMRK6X0069QDI).
+   * Flushes the recorder's buffered records into the dev JSONL sink, then
+   * delivers the run's in-memory buffer to the dev server
+   * (AH-0MVBMRK6X0069QDI, AH-0MVIRYGD1000JVY3).
    *
    * Fire-and-forget by contract: the caller uses `void`, every failure is
    * caught here (a dev-server outage must never block or crash run end), and
@@ -3983,6 +4166,9 @@ export class PlayScene extends CombatScene<
       if (!upload) return;
       await upload({
         setting: loadSettings(),
+        // The body is read straight out of the in-memory buffer; telemetry
+        // never touches localStorage (AC1).
+        readSink: () => this.runTelemetry.readBuffer(),
         onError: reportDevTelemetryFailure,
       });
     } catch (error) {
@@ -4045,6 +4231,11 @@ export class PlayScene extends CombatScene<
   /** Whether the Shield shield bubble was drawn in the last visual update (for tests). */
   isShieldBubbleVisible(): boolean {
     return this.shieldBubbleDrawn;
+  }
+
+  /** Whether the Thorn Field aura was drawn in the last visual update (for tests). */
+  isThornsAuraVisible(): boolean {
+    return this.thornsAuraDrawn;
   }
 
   /** Whether the Phase Shift phase ghost is currently active (for tests). */
@@ -4662,6 +4853,12 @@ export class PlayScene extends CombatScene<
         { build: resolveBuildInfo() },
       );
     this.runTelemetry = new RunTelemetry(recorder);
+    // Dev-only page accessor over the run's in-memory buffer: the dev CLI
+    // tooling (`npm run record` / `capture` / `verify-dev-telemetry`) reads
+    // the run from here instead of the retired localStorage sink
+    // (AH-0MVIRYGD1000JVY3, AC5). The installer is dev-gated, so a production
+    // bundle never writes the global.
+    installDevTelemetryBuffer(() => this.runTelemetry.readBuffer());
     this.runTelemetry.startRun(this.getRunSeed());
   }
 
@@ -4739,10 +4936,7 @@ export class PlayScene extends CombatScene<
    */
   setAsteroidSpawnerEnabled(enabled: boolean): void {
     this.asteroidSpawnerEnabled = enabled;
-    if (!enabled) {
-      this.pendingAsteroidSpawns = [];
-      this.asteroidsSpawnedThisWave = 0;
-    }
+    if (!enabled) this.asteroidHazard.reset();
   }
 
   /**

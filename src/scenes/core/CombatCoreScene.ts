@@ -120,8 +120,14 @@ import {
   applyDropMagnet,
   buildDefaultDropSpawner,
   collectOverlappingDrops,
+  drawNextDrop,
   playDropPickupCue,
+  type SlotGatedDropSpawner,
 } from './dropLayer';
+import {
+  resolvePlayerSlotState,
+  type PowerUpSlotState,
+} from '../../powerups/slots';
 import {
   computeCapturePull,
   isCaptureComplete,
@@ -943,9 +949,10 @@ export class CombatCoreScene<
           // Weapon leveling grows the bullet: `levelBulletSize` is 1/absent on
           // a base definition, so the base radius is unchanged (AC8).
           PLAYER_BULLET_RADIUS * (def.levelBulletSize ?? 1),
-          // Pass-through budget (0 for ordinary bullets) — the shared
-          // collision path consumes it one enemy at a time (AH-0MV1BIUSJ0090W92).
-          def.piercing ?? 0,
+          // Damage budget (0 for ordinary bullets) — the shared collision
+          // path spends it one hit point at a time on the enemies the beam
+          // damages (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S).
+          def.maxHitPoints ?? 0,
           // Wall-bounce budget (`undefined` for ordinary wrapping bullets) —
           // the shared player-bullet step reflects it at the edges
           // (AH-0MV1BIV5L005NJAI).
@@ -1001,9 +1008,10 @@ export class CombatCoreScene<
    * {@link PLAYER_BULLET_RADIUS}. The shared auto-fire path passes a
    * level-scaled radius when a weapon has bullet-size upgrades.
    *
-   * `piercing` is the bullet's pass-through budget (extra enemies it survives
-   * before being consumed; 0 for an ordinary bullet). The shared collision
-   * path reads it (AH-0MV1BIUSJ0090W92).
+   * `maxHitPoints` is the bullet's remaining damage budget (total hit points
+   * it may still deal; 0 for an ordinary bullet). The shared collision path
+   * spends it and consumes the bullet when it is exhausted
+   * (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S).
    *
    * `bounces` is the bullet's wall-bounce budget (edge reflections before it
    * expires; `undefined` for an ordinary wrapping bullet). The shared
@@ -1028,7 +1036,7 @@ export class CombatCoreScene<
     color = 0x00ffff,
     lifetime = 0.75,
     radius = PLAYER_BULLET_RADIUS,
-    piercing = 0,
+    maxHitPoints = 0,
     bounces?: number,
     shape: BulletShape = 'circle',
     shapeLength?: number,
@@ -1053,7 +1061,7 @@ export class CombatCoreScene<
       tail,
       flame,
     );
-    bullet.piercing = piercing;
+    bullet.maxHitPoints = maxHitPoints;
     bullet.bounces = bounces;
     this.playerBullets.push(bullet);
     return bullet;
@@ -1312,6 +1320,29 @@ export class CombatCoreScene<
     rng: () => number,
   ): PowerUpSpawner<DropId> {
     return buildDefaultDropSpawner(powerUpWeights, weaponWeights, rng);
+  }
+
+  /**
+   * Draws the next drop through the shared six-slot gate (parent
+   * AH-0MVLIJT3M005HPHF): the one eligible-filtered draw path `PlayScene` and
+   * every gym consume, so the cap is observable everywhere (gym↔game parity,
+   * AH-0MUGZDTFX004RBD1). Works for the weighted default spawner and the
+   * deterministic round-robin gym sources alike.
+   */
+  protected _drawNextDrop<T extends string>(
+    spawner: SlotGatedDropSpawner<T>,
+    state: PowerUpSlotState,
+  ): T {
+    return drawNextDrop(spawner, state);
+  }
+
+  /**
+   * Resolves the live run's slot occupancy from the shared permanent-grant
+   * stores (`PowerUpLevelStore.getLevels()` + `Player.getWeaponLevels()`),
+   * via the shared pure module. Null player (pre-spawn) ⇒ empty run.
+   */
+  protected _resolveDropSlotState(): PowerUpSlotState {
+    return resolvePlayerSlotState(this.getPlayer());
   }
 
   /**

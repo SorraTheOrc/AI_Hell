@@ -112,6 +112,45 @@ export interface GameRules {
    * config via the auto-sequencer; when `false` (the default) the static
    * `LEVELS` campaign ships exactly as before. No settings UI is provided. */
   sequencedWavesEnabled: boolean;
+  /**
+   * Enemy-count multiplier at the **campaign maximum** level (default 2.00,
+   * AH-0MVLJEE7O008RX9X). Level 1 always resolves to 1.00; the curve is
+   * linear between the two endpoints (see `src/core/levelScaling.ts`), so
+   * this is the one knob for campaign enemy density. Clamped to `[1, 10]` by
+   * {@link loadRules}; a non-finite/non-numeric value falls back to the
+   * default. This is tuning data, not a player-facing setting.
+   */
+  enemyCountMultiplierAtMaxLevel: number;
+  /**
+   * Per-kill power-up drop chance at level 1 (default 0.18,
+   * AH-0MVLJEE7O008RX9X) — today's flat rate, preserved so level 1 behaves
+   * exactly as before. Clamped to `[0, 1]` by {@link loadRules};
+   * non-numeric values fall back to the default.
+   */
+  powerUpDropChanceAtLevel1: number;
+  /**
+   * Per-kill power-up drop chance at the campaign maximum (default 0.05,
+   * AH-0MVLJEE7O008RX9X). Clamped to `[0, powerUpDropChanceAtLevel1]` by
+   * {@link loadRules} so a stored blob can never make the curve rise with
+   * level; non-numeric values fall back to the default. The small-asteroid
+   * Extra Life chance scales by the same ratio.
+   */
+  powerUpDropChanceAtMaxLevel: number;
+  /**
+   * Campaign level span used by the scaling curves (default 10,
+   * AH-0MVLJEE7O008RX9X): level 1 is the start and this value is the far
+   * endpoint where both curves reach their max-level values. Integer clamped
+   * to `[2, 100]` by {@link loadRules}; non-integer/non-numeric falls back to
+   * the default.
+   */
+  levelScalingMaxLevel: number;
+  /**
+   * Per-group safety cap for scaled enemy counts (default 200,
+   * AH-0MVLJEE7O008RX9X — the existing formation cap). Integer clamped to
+   * `[1, 1000]` by {@link loadRules}; non-integer/non-numeric falls back to
+   * the default. Guards doubled large formations from overflowing the arena.
+   */
+  enemyCountCap: number;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────
@@ -277,6 +316,40 @@ export const DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE = 0.05;
 export const DEFAULT_SEQUENCED_WAVES_ENABLED = true;
 
 /**
+ * Default enemy-count multiplier at the campaign maximum (2.00,
+ * AH-0MVLJEE7O008RX9X). Level 1 is always 1.00, so the campaign ramps from
+ * today's density to twice the enemies by the final level.
+ */
+export const DEFAULT_ENEMY_COUNT_MULTIPLIER_AT_MAX_LEVEL = 2;
+
+/**
+ * Default per-kill power-up drop chance at level 1 (0.18,
+ * AH-0MVLJEE7O008RX9X) — the game's long-standing flat rate, kept as the
+ * level-1 identity so onboarding is unchanged.
+ */
+export const DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1 = 0.18;
+
+/**
+ * Default per-kill power-up drop chance at the campaign maximum (0.05,
+ * AH-0MVLJEE7O008RX9X). Tuned down from the 0.18 level-1 rate because the
+ * player's permanent upgrades have accumulated by the late campaign and the
+ * old flat supply left runs over-supplied.
+ */
+export const DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL = 0.05;
+
+/**
+ * Default campaign level span for the scaling curves (10,
+ * AH-0MVLJEE7O008RX9X): levels 1–10, matching the shipped campaign.
+ */
+export const DEFAULT_LEVEL_SCALING_MAX_LEVEL = 10;
+
+/**
+ * Default per-group safety cap for scaled enemy counts (200,
+ * AH-0MVLJEE7O008RX9X) — the existing formation cap (AH-0MTV8Q1LV001KOA5).
+ */
+export const DEFAULT_ENEMY_COUNT_CAP = 200;
+
+/**
  * Builds a fresh default weight table: every standard ID carries
  * {@link DEFAULT_STANDARD_POWER_UP_WEIGHT}, Extra Life the rarer
  * {@link DEFAULT_EXTRA_LIFE_WEIGHT}.
@@ -327,6 +400,11 @@ export const DEFAULT_RULES: GameRules = {
   mineralRedropBonusMax: DEFAULT_MINERAL_REDROP_BONUS_MAX,
   asteroidExtraLifeDropChance: DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
   sequencedWavesEnabled: DEFAULT_SEQUENCED_WAVES_ENABLED,
+  enemyCountMultiplierAtMaxLevel: DEFAULT_ENEMY_COUNT_MULTIPLIER_AT_MAX_LEVEL,
+  powerUpDropChanceAtLevel1: DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1,
+  powerUpDropChanceAtMaxLevel: DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
+  levelScalingMaxLevel: DEFAULT_LEVEL_SCALING_MAX_LEVEL,
+  enemyCountCap: DEFAULT_ENEMY_COUNT_CAP,
 };
 
 /** localStorage key under which the game-rules JSON is persisted. */
@@ -388,6 +466,12 @@ function cloneDefaultRules(): GameRules {
     mineralRedropBonusMax: DEFAULT_RULES.mineralRedropBonusMax,
     asteroidExtraLifeDropChance: DEFAULT_RULES.asteroidExtraLifeDropChance,
     sequencedWavesEnabled: DEFAULT_RULES.sequencedWavesEnabled,
+    enemyCountMultiplierAtMaxLevel:
+      DEFAULT_RULES.enemyCountMultiplierAtMaxLevel,
+    powerUpDropChanceAtLevel1: DEFAULT_RULES.powerUpDropChanceAtLevel1,
+    powerUpDropChanceAtMaxLevel: DEFAULT_RULES.powerUpDropChanceAtMaxLevel,
+    levelScalingMaxLevel: DEFAULT_RULES.levelScalingMaxLevel,
+    enemyCountCap: DEFAULT_RULES.enemyCountCap,
   };
 }
 
@@ -431,6 +515,57 @@ function coerceBoolean(value: unknown, fallback: boolean): boolean {
 function coerceChance(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * Coerces a stored value to a finite number clamped into `[min, max]`,
+ * falling back to `fallback` when the value is not a finite number. Used by
+ * the level-scaling tunables, whose out-of-range values are clamped rather
+ * than rejected (AH-0MVLJEE7O008RX9X).
+ */
+function coerceNumberInRange(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Coerces a stored value to an **integer** clamped into `[min, max]`,
+ * falling back to `fallback` for non-integers and non-numbers. Used by the
+ * level-span and enemy-count-cap tunables so a corrupt fractional value can
+ * never change the curve's shape (AH-0MVLJEE7O008RX9X).
+ */
+function coerceIntegerInRange(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Coerces a stored scaling chance into `[0, ceiling]`, falling back to
+ * `fallback` when the value is not a finite number. The fallback is clamped
+ * too, so a tuned level-1 chance below the default endpoint still keeps the
+ * drop curve monotonically non-increasing (AH-0MVLJEE7O008RX9X).
+ */
+function coerceChanceAtMost(
+  value: unknown,
+  fallback: number,
+  ceiling: number,
+): number {
+  const safeCeiling = Math.min(1, Math.max(0, ceiling));
+  const candidate =
+    typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  return Math.min(safeCeiling, Math.max(0, candidate));
 }
 
 /**
@@ -565,6 +700,18 @@ export function loadRules(): GameRules {
       parsed.version,
       RULES_SCHEMA_VERSION,
     );
+    // Level-scaling tunables (AH-0MVLJEE7O008RX9X). Resolve the level-1
+    // chance first: the max-level chance is clamped against it so a stored
+    // blob can never make the per-kill drop curve rise with level.
+    const powerUpDropChanceAtLevel1 = coerceChance(
+      parsed.powerUpDropChanceAtLevel1,
+      DEFAULT_POWER_UP_DROP_CHANCE_AT_LEVEL_1,
+    );
+    const powerUpDropChanceAtMaxLevel = coerceChanceAtMost(
+      parsed.powerUpDropChanceAtMaxLevel,
+      DEFAULT_POWER_UP_DROP_CHANCE_AT_MAX_LEVEL,
+      powerUpDropChanceAtLevel1,
+    );
     return {
       powerUpSpawnInterval: coerceInterval(parsed.powerUpSpawnInterval),
       beatBpm: coercePositiveNumber(parsed.beatBpm, DEFAULT_BEAT_BPM),
@@ -612,6 +759,26 @@ export function loadRules(): GameRules {
       sequencedWavesEnabled: coerceBoolean(
         parsed.sequencedWavesEnabled,
         DEFAULT_SEQUENCED_WAVES_ENABLED,
+      ),
+      enemyCountMultiplierAtMaxLevel: coerceNumberInRange(
+        parsed.enemyCountMultiplierAtMaxLevel,
+        DEFAULT_ENEMY_COUNT_MULTIPLIER_AT_MAX_LEVEL,
+        1,
+        10,
+      ),
+      powerUpDropChanceAtLevel1,
+      powerUpDropChanceAtMaxLevel,
+      levelScalingMaxLevel: coerceIntegerInRange(
+        parsed.levelScalingMaxLevel,
+        DEFAULT_LEVEL_SCALING_MAX_LEVEL,
+        2,
+        100,
+      ),
+      enemyCountCap: coerceIntegerInRange(
+        parsed.enemyCountCap,
+        DEFAULT_ENEMY_COUNT_CAP,
+        1,
+        1000,
       ),
     };
   } catch {

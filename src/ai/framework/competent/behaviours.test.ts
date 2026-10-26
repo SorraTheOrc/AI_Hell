@@ -12,11 +12,12 @@ import { describe, expect, it } from 'vitest';
 import { createBotMemory } from '../memory';
 import type { BotBehaviourContext } from '../registry';
 import { buildBotWorld } from '../worldModel';
+import { enemyHazardKey } from '../hazardVelocity';
 import { bullet, drop, enemy, makeSnapshot, mineral } from '../testFixtures';
 import { createCompetentBehaviours } from './behaviours';
 import { COMPETENT_GOAL_IDS, createCompetentGoals } from './goals';
 import { evaluateDirection } from './steering';
-import { COMPETENT_BOT_TUNABLES } from './tunables';
+import { COMPETENT_BOT_TUNABLES, resolveCompetentTunables } from './tunables';
 
 const T = COMPETENT_BOT_TUNABLES;
 const PLAYER = { x: 480, y: 270, vx: 0, vy: 0 };
@@ -389,5 +390,60 @@ describe('engage behaviour — lead prediction (AH-0MV1DUSM2005HL98 AC2)', () =>
       context(snapshot, COMPETENT_GOAL_IDS.engageEnemy),
     );
     expect(intent!.dirY).toBeCloseTo(0, 6);
+  });
+});
+
+// ── Predictive kiting gate (AH-0MVI4QDN90037DIN AC2) ────────────────
+
+describe('engage kiting uses the predicted-collision test (AH-0MVI4QDN90037DIN AC2)', () => {
+  /** Builds an engage context whose world carries bot-side hazard velocities. */
+  function worldWithHazardVelocity(
+    snapshot: ReturnType<typeof makeSnapshot>,
+    velocities: Map<string, { x: number; y: number }>,
+    tunables = T,
+  ): BotBehaviourContext {
+    const goal = createCompetentGoals(tunables).require(
+      COMPETENT_GOAL_IDS.engageEnemy,
+    );
+    return {
+      snapshot,
+      world: buildBotWorld(snapshot, undefined, undefined, velocities),
+      memory: createBotMemory(),
+      dt: 0.1,
+      goal,
+    };
+  }
+
+  const snapshot = makeSnapshot({
+    player: PLAYER,
+    enemies: [
+      { ...enemy(560, 270, 'scout'), id: 1 },
+      // 125 px above the ship (outside dangerMargin) but crossing its path.
+      { ...enemy(480, 145, 'scout'), id: 2 },
+    ],
+    reverseEnabled: true,
+  });
+
+  it('kites when a moving hazard is predicted to collide off the aim line', () => {
+    const engage = createCompetentBehaviours(T).require('engage');
+    const intent = engage.run(
+      worldWithHazardVelocity(snapshot, new Map([[enemyHazardKey(2), { x: 0, y: 200 }]])),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.reverse).toBe(true);
+  });
+
+  it('does not kite on the same hazard when prediction is disabled', () => {
+    const positional = resolveCompetentTunables({ hazardPredictionEnabled: false });
+    const engage = createCompetentBehaviours(positional).require('engage');
+    const intent = engage.run(
+      worldWithHazardVelocity(
+        snapshot,
+        new Map([[enemyHazardKey(2), { x: 0, y: 200 }]]),
+        positional,
+      ),
+    );
+    expect(intent).not.toBeNull();
+    expect(intent!.reverse).toBe(false);
   });
 });

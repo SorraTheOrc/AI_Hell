@@ -14,6 +14,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  clearDevTelemetryBuffer,
+  installDevTelemetryBuffer,
   isDevTelemetryBuild,
   isDevTelemetryCollectionEnabled,
   isDevTelemetryUploadEnabled,
@@ -157,5 +159,40 @@ describe('loadDevTelemetryUploader — build-folded dev-only loader', () => {
     vi.stubEnv('PROD', true);
 
     await expect(loadDevTelemetryUploader()).resolves.toBeUndefined();
+  });
+});
+
+describe('window.__aiHellTelemetry — dev-gated buffer accessor (AC5/AC7)', () => {
+  afterEach(() => {
+    clearDevTelemetryBuffer();
+    vi.unstubAllEnvs();
+  });
+
+  it('installs a read-only accessor in a dev build', () => {
+    let content: string | null = '{"kind":"run_header"}\n';
+
+    installDevTelemetryBuffer(() => content);
+
+    expect(window.__aiHellTelemetry?.read()).toBe('{"kind":"run_header"}\n');
+    content = null;
+    expect(window.__aiHellTelemetry?.read()).toBeNull();
+  });
+
+  it('never installs the accessor in a production build', () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('PROD', true);
+
+    installDevTelemetryBuffer(() => '{"kind":"run_header"}\n');
+
+    expect(window.__aiHellTelemetry).toBeUndefined();
+  });
+
+  it('removes the accessor on clear', () => {
+    installDevTelemetryBuffer(() => 'x\n');
+    expect(window.__aiHellTelemetry).toBeDefined();
+
+    clearDevTelemetryBuffer();
+
+    expect(window.__aiHellTelemetry).toBeUndefined();
   });
 });

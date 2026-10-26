@@ -1,0 +1,91 @@
+{
+  "scenes": [
+    {
+      "target": "GymPlayer",
+      "playMs": 2000,
+      "captureMs": 3000,
+      "label": "player control"
+    },
+    {
+      "target": "GymWeapons",
+      "playMs": 1500,
+      "captureMs": 2500,
+      "label": "weapons"
+    },
+    {
+      "target": "GymPowerUpsCombat",
+      "playMs": 2000,
+      "captureMs": 3000,
+      "label": "combat power-ups"
+    },
+    {
+      "target": "PlayScene",
+      "playMs": 2000,
+      "captureMs": 8000,
+      "level": 4,
+      "seed": 42,
+      "minWaves": 3,
+      "label": "generated level 4, three waves"
+    },
+    {
+      "target": "GymLevel",
+      "playMs": 2000,
+      "captureMs": 5000,
+      "label": "generated level 4 wave 2, rapid + shield 2",
+      "setup": {
+        "level": {
+          "level": 4,
+          "name": "The Core",
+          "waves": [
+            {
+              "groups": [
+                {
+                  "enemyKey": "scout",
+                  "formation": "v",
+                  "count": 6,
+                  "spacingX": 26,
+                  "spacingY": 22,
+                  "startX": 240,
+                  "startY": 270
+                }
+              ],
+              "shootEnabled": true
+            }
+          ]
+        },
+        "startWave": 1,
+        "player": {
+          "weapons": [
+            "rapid"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {
+          "shield": 2
+        },
+        "seed": 42
+      }
+    },
+    {
+      "target": "GymFodderEnemies",
+      "playMs": 1500,
+      "captureMs": 2500,
+      "label": "grunt fodder, spread loadout",
+      "setup": {
+        "enemy": "grunt",
+        "player": {
+          "weapons": [
+            "spread"
+          ]
+        },
+        "seed": 7
+      }
+    },
+    {
+      "target": "GymBoss",
+      "playMs": 3000,
+      "captureMs": 4000,
+      "label": "boss"
+    }
+  ]
+}

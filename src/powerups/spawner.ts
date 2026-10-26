@@ -112,7 +112,11 @@ export class RoundRobinSpawner<T extends string = PowerUpId> implements PowerUpS
  *
  * Higher weight ⇒ more likely to be selected.  Weights are normalised
  * internally (sum-based selection).  All-zero weights fall back to the
- * first entry deterministically.
+ * first **eligible** entry deterministically.
+ *
+ * An optional eligibility filter (`setEligibleIds`) restricts sampling to a
+ * caller-supplied id set without touching any weight — the seam the shared
+ * six-slot drop gate uses (parent AH-0MVLIJT3M005HPHF).
  *
  * Usage:
  * ```ts
@@ -127,6 +131,16 @@ export class WeightedRandomSpawner<T extends string = PowerUpId> implements Powe
   private _rng: () => number;
   /** Stored first ID for deterministic fallback when all weights are zero. */
   private readonly _firstId: T;
+  /**
+   * Optional eligibility filter (the six-slot drop gate).
+   *
+   * `null` means "no filter" — every tracked id is eligible (the pre-cap
+   * behaviour). When set, ineligible ids contribute no weight and are never
+   * returned, but their stored weights are **never** modified: exclusion is a
+   * sampling filter, not weight zeroing, so the all-zero-weight fallback and
+   * every weight table stay intact (parent AH-0MVLIJT3M005HPHF).
+   */
+  private _eligibleIds: Set<T> | null = null;
 
   /**
    * @param ids       - All IDs this spawner may yield.
@@ -140,6 +154,27 @@ export class WeightedRandomSpawner<T extends string = PowerUpId> implements Powe
     }
     this._firstId = ids[0]!;
     this._rng = rng ?? Math.random;
+  }
+
+  /**
+   * Restricts sampling to `ids` (the six-slot eligibility gate).
+   *
+   * Passing `null` clears the filter and restores the full catalogue. An
+   * empty iterable leaves nothing eligible: {@link next} then degrades
+   * deterministically (never throws).
+   */
+  setEligibleIds(ids: Iterable<T> | null): void {
+    this._eligibleIds = ids === null ? null : new Set(ids);
+  }
+
+  /** The active eligibility filter, or `null` when every id is eligible. */
+  getEligibleIds(): readonly T[] | null {
+    return this._eligibleIds === null ? null : [...this._eligibleIds];
+  }
+
+  /** True when `id` is not filtered out (a `null` filter means everything). */
+  private _isEligible(id: T): boolean {
+    return this._eligibleIds === null || this._eligibleIds.has(id);
   }
 
   /** Returns a copy of all current weights (subset keyed by tracked IDs). */
@@ -173,29 +208,34 @@ export class WeightedRandomSpawner<T extends string = PowerUpId> implements Powe
   }
 
   next(): T {
-    // Compute total weight; fall back to first entry if all zero.
+    // Compute the total weight of the **eligible** entries only, remembering
+    // the first eligible id for the deterministic fallbacks below.
     let total = 0;
-    let firstId: T | null = null;
+    let firstEligible: T | null = null;
     for (const [id, w] of this._weights) {
+      if (!this._isEligible(id)) continue;
       total += w;
-      if (firstId === null) firstId = id;
+      if (firstEligible === null) firstEligible = id;
     }
 
-    if (total <= 0 || firstId === null) {
-      // Deterministic fallback: return the first tracked entry (preserves pre-existing tests
-      // that construct the spawner with ['speed_boost','extra_life','magnet'] — fallback must be Speed Boost, not Shield).
-      if (firstId !== null) return firstId;
-      return this._firstId;
+    if (total <= 0 || firstEligible === null) {
+      // Deterministic fallback: the first *eligible* tracked entry, so a zero
+      // weight table can never starve an eligible id. When the filter leaves
+      // nothing eligible (empty set) this returns the first tracked entry —
+      // deterministic and crash-free either way.
+      return firstEligible ?? this._firstId;
     }
 
-    // Weighted random selection: pick a threshold in [0, total).
+    // Weighted random selection among the eligible entries: pick a threshold
+    // in [0, total). Stored weights are read only — never mutated.
     let r = this._rng() * total;
     for (const [id, w] of this._weights) {
+      if (!this._isEligible(id)) continue;
       r -= w;
       if (r <= 0) return id;
     }
 
     // Fallback (should not reach here if total > 0, but be safe).
-    return this._firstId;
+    return firstEligible;
   }
 }

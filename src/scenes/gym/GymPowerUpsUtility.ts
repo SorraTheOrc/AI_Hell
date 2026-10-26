@@ -283,7 +283,10 @@ export class GymPowerUpsUtility extends CombatCoreScene<
 
   /** Spawns the next round-robin drop (Speed Boost → Extra Life → Magnet) at the next position. */
   private _spawnRoundRobin(): void {
-    const id = this.roundRobinSpawner.next();
+    const id = this._drawNextDrop(
+      this.roundRobinSpawner,
+      this._resolveDropSlotState(),
+    );
     const pos = SPAWN_POSITIONS[this.spawnIndex % SPAWN_POSITIONS.length];
     this.spawnIndex += 1;
     this._spawnDrop(id, pos.x, pos.y);

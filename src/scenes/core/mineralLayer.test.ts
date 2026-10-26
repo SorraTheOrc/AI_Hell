@@ -261,4 +261,70 @@ describe('applyMineralChoiceReward', () => {
 
     expect(applyCollect).toHaveBeenCalledWith('shield', true);
   });
+
+  describe('newly pooled drops (AH-0MVI4KTD8000FBJ7 AC2)', () => {
+    /** Power-ups that were missing from the hold-full pool. */
+    const NEW_POWER_UP_IDS = [
+      'frenzy',
+      'chrono',
+      'thorns',
+      'salvage',
+      'strike',
+    ] as const;
+    /** Weapons that were missing from the hold-full pool. */
+    const NEW_WEAPON_IDS = [
+      'rear_guard',
+      'broadside',
+      'railgun',
+      'shard_swarm',
+      'heavy_slug',
+    ] as const;
+
+    it('applies each newly pooled power-up permanently through the single registry path', () => {
+      // One observable per id, read from the shared effects path (no parallel
+      // per-scene implementation exists to drift).
+      const observable = {
+        frenzy: (r: EffectsRegistry) => r.frenzyBonusHits() > 0,
+        chrono: (r: EffectsRegistry) => r.enemyBulletTimeScale() < 1,
+        thorns: (r: EffectsRegistry) => r.hasThornsRam(),
+        salvage: (r: EffectsRegistry) => r.salvageBonusMinerals() > 0,
+        strike: (r: EffectsRegistry) => r.isStrikePermanent(),
+      } as const;
+
+      for (const id of NEW_POWER_UP_IDS) {
+        const store = new PowerUpLevelStore();
+        const registry = new EffectsRegistry(store);
+        const player = { equipWeapon: vi.fn() };
+
+        applyMineralChoiceReward(
+          { id, name: id, kind: 'powerup' },
+          registry,
+          player,
+        );
+
+        // The run-scoped level advanced exactly once …
+        expect(store.getLevel(id), id).toBe(1);
+        // … and the permanent effect is live in the shared registry.
+        expect(observable[id](registry), id).toBe(true);
+        // Power-ups never touch the weapon path.
+        expect(player.equipWeapon, id).not.toHaveBeenCalled();
+      }
+    });
+
+    it('applies each newly pooled weapon permanently through the shared equip path', () => {
+      for (const id of NEW_WEAPON_IDS) {
+        const registry = new EffectsRegistry(new PowerUpLevelStore());
+        const player = { equipWeapon: vi.fn() };
+
+        applyMineralChoiceReward(
+          { id, name: id, kind: 'weapon' },
+          registry,
+          player,
+        );
+
+        expect(registry.hasWeapon(id), id).toBe(true);
+        expect(player.equipWeapon, id).toHaveBeenCalledWith(id, true);
+      }
+    });
+  });
 });

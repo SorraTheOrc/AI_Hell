@@ -30,6 +30,7 @@
           "repositionRadius": 90,
           "playerSpeed": 175,
           "firePredictionHorizon": 0.9,
+          "hazardPredictionHorizon": 0.6,
           "assumedBulletSpeed": 200,
           "frictionDeceleration": 25,
           "survivalUrgencyHorizon": 0.5,
@@ -47,7 +48,8 @@
           "world.threatRadius": 55,
           "world.assumedBulletSpeed": 200,
           "reverseBrakeEnabled": true,
-          "aimLeadEnabled": true
+          "aimLeadEnabled": true,
+          "hazardPredictionEnabled": true
         },
         "human": {
           "reactionTimeMs": 250,

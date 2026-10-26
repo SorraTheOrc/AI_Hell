@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildBotWorld } from '../worldModel';
+import { enemyHazardKey } from '../hazardVelocity';
 import {
   bullet,
   DEFAULT_THRUSTER_CONFIG,
@@ -21,6 +22,7 @@ import {
   buildIntent,
   chooseSteeringDirection,
   evaluateDirection,
+  hazardThreatensPlayer,
   interceptPoint,
   mayReverse,
   mayThrust,
@@ -584,5 +586,84 @@ describe('interceptPoint (AH-0MV1DUSM2005HL98 AC2)', () => {
       4,
     ] as const;
     expect(interceptPoint(...args)).toEqual(interceptPoint(...args));
+  });
+});
+
+// ── Predictive hazard avoidance (AH-0MVI4QDN90037DIN) ──────────────
+
+describe('evaluateDirection — predictive hazard avoidance (AH-0MVI4QDN90037DIN AC2)', () => {
+  /** A snapshot whose single enemy carries the given bot-side velocity estimate. */
+  function movingHazardWorld(
+    hazard: { x: number; y: number },
+    velocity: { x: number; y: number },
+    id = 1,
+  ) {
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      enemies: [{ ...enemy(hazard.x, hazard.y, 'scout'), id }],
+    });
+    return buildBotWorld(
+      snapshot,
+      undefined,
+      undefined,
+      new Map([[enemyHazardKey(id), velocity]]),
+    );
+  }
+
+  // A hazard ahead-right of the ship, outside dangerMargin (180 px away),
+  // crossing down-left. A rightward-thrusting ship and the hazard are predicted
+  // to come within threatRadius (55) inside the 0.6 s horizon.
+  const HAZARD = { x: 580, y: 120 };
+  const CROSSING = { x: -50, y: 200 };
+
+  it('rejects a bearing predicted to cross a moving hazard inside the horizon', () => {
+    const world = movingHazardWorld(HAZARD, CROSSING);
+    expect(evaluateDirection(1, 0, world, T).safe).toBe(false);
+  });
+
+  it('accepts the same bearing when the hazard is stationary', () => {
+    const world = movingHazardWorld(HAZARD, { x: 0, y: 0 });
+    expect(evaluateDirection(1, 0, world, T).safe).toBe(true);
+  });
+
+  it('accepts the same bearing when prediction is disabled', () => {
+    const world = movingHazardWorld(HAZARD, CROSSING);
+    const positional = resolveCompetentTunables({
+      hazardPredictionEnabled: false,
+    });
+    expect(evaluateDirection(1, 0, world, positional).safe).toBe(true);
+  });
+
+  it('exempts a deliberately-targeted hazard from the predictive test', () => {
+    const world = movingHazardWorld(HAZARD, CROSSING);
+    // The engage target keeps only the positional rule, so aiming at it is not
+    // rejected by its own predicted motion.
+    expect(
+      evaluateDirection(1, 0, world, T, [{ ...HAZARD, id: 1 }]).safe,
+    ).toBe(true);
+  });
+
+  it('keeps the positional danger-margin rule for stationary hazards', () => {
+    const world = movingHazardWorld({ x: 520, y: 270 }, { x: 0, y: 0 });
+    expect(evaluateDirection(1, 0, world, T).safe).toBe(false);
+    expect(evaluateDirection(-1, 0, world, T).safe).toBe(true);
+  });
+});
+
+describe('hazardThreatensPlayer (AH-0MVI4QDN90037DIN AC2)', () => {
+  it('reports a predicted crossing for a moving hazard and proximity for a stationary one', () => {
+    const player = { x: 480, y: 270, vx: 175, vy: 0 };
+    // Predicted to cross the ship's rightward path inside threatRadius.
+    expect(
+      hazardThreatensPlayer(player, { x: 580, y: 120, vx: -50, vy: 200 }, T),
+    ).toBe(true);
+    // The same stationary hazard is 180 px away — outside dangerMargin.
+    expect(
+      hazardThreatensPlayer(player, { x: 580, y: 120, vx: 0, vy: 0 }, T),
+    ).toBe(false);
+    // A stationary hazard inside dangerMargin is still a threat.
+    expect(
+      hazardThreatensPlayer(player, { x: 520, y: 270, vx: 0, vy: 0 }, T),
+    ).toBe(true);
   });
 });

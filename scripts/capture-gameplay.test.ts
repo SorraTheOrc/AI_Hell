@@ -13,9 +13,15 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { cliSpawnEnv } from './cliChildEnv';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -46,6 +52,7 @@ import {
   RUN_ENDED_EVENT,
   RUN_ENDED_STATE_KEY,
   RUN_ENDED_STORE_KEY,
+  COMPOSITE_CANVAS_ID,
   buildIterationRecord,
   buildRunEndedListenerPlan,
   buildScenarioCapturePlan,
@@ -62,10 +69,17 @@ import {
   planCaptureRun,
   readRunEndedSignal,
   renderScenarioListing,
+  readDevTelemetryBuffer,
   resolveCaptureMode,
   resolveOutputPaths,
+  resolveScenesOutputPath,
+  loadScenesForCapture,
+  driveSceneSequence,
+  installCaptureComposite,
   runCaptureIterations,
   runCaptureSession,
+  readDevTelemetryBufferInChunks,
+  TELEMETRY_READ_CHUNK_CHARS,
   summariseCaptureBatch,
   uniquifyOutputPath,
   START_KEY_GAP_MS,
@@ -88,12 +102,41 @@ import {
   parseActionIntensitySeries,
   serialiseActionIntensitySeries as serialiseActionIntensitySeriesTs,
 } from '../src/scenes/core/actionIntensitySerialiser';
-import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
 import {
+  CDP_PIPE_STRING_LIMIT_CHARS,
+  addTransportOverflowHandler,
+  createDiagnosticsTracker,
+  createTransportTap,
+  describePendingBuffers,
+  diagnosticsPathFor,
+  formatByteSize,
+  formatDiagnosticsProgress,
+  formatDiagnosticsSummary,
+  percentile,
+  readPendingBuffers,
+  readTransportTapSnapshot,
+  summariseChunkSizes,
+  writeDiagnosticsArtifact,
+} from './capture-diagnostics.mjs';
+import { installRecorderChunkRetention } from './capture-recorder-page.mjs';
+import { createChunkSink } from './capture-chunk-sink.mjs';
+import {
+  RECORDING_CHUNK_BINDING,
+  createRecordingPipeline,
+} from './capture-recording-pipeline.mjs';
+import {
+  failureSalvageLine,
+  salvageFailedCapture,
+} from './capture-salvage.mjs';
+import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
+import { SCENE_FADE_MS, buildScenePlan } from './capture-scenes.mjs';
+import {
+  CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
   CAPTURE_STARTED_EVENT,
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
   DEMO_GAME_OVER_DWELL_MS,
+  MAX_CAPTURE_CHUNK_BYTES,
   buildCaptureStartedMarker,
   buildRunEndedDetail,
   capWasReachedWithoutSignal,
@@ -1131,6 +1174,125 @@ describe('run-end listener (AH-0MUXZ4CNS009RV40)', () => {
 
   it('is inert on a scope that cannot listen', () => {
     expect(installRunEndedListener(undefined, {})).toBeNull();
+  });
+});
+
+describe('dev telemetry buffer reader (AH-0MVIRYGD1000JVY3)', () => {
+  it('reads the run out of the dev-gated page accessor', () => {
+    const scope = {
+      __aiHellTelemetry: { read: () => '{"kind":"run_header"}\n' },
+    };
+
+    expect(readDevTelemetryBuffer(scope)).toBe('{"kind":"run_header"}\n');
+  });
+
+  it('returns an empty string when the accessor is absent or empty', () => {
+    expect(readDevTelemetryBuffer({})).toBe('');
+    expect(readDevTelemetryBuffer({ __aiHellTelemetry: { read: () => null } })).toBe('');
+    expect(readDevTelemetryBuffer({ __aiHellTelemetry: {} })).toBe('');
+  });
+
+  it('never throws on a page-side read failure', () => {
+    const scope = {
+      __aiHellTelemetry: {
+        read: () => {
+          throw new Error('boom');
+        },
+      },
+    };
+
+    expect(readDevTelemetryBuffer(scope)).toBe('');
+  });
+});
+
+describe('chunked telemetry read (AH-0MVNVGP55002G0KH)', () => {
+  type SliceRequest = { offset: number; chunkChars: number };
+  type SliceResult = { total: number; chunk: string };
+
+  /** A fake `page.evaluate` that runs the serialised reader against `scope`. */
+  function fakeEvaluate(
+    scope: object,
+    seen: SliceRequest[] = [],
+  ): (fn: (args: SliceRequest, s?: object) => SliceResult, arg: SliceRequest) => Promise<SliceResult> {
+    return async (fn, arg) => {
+      seen.push(arg);
+      return fn(arg, scope);
+    };
+  }
+
+  it('assembles the buffer from bounded slices, byte-for-byte', async () => {
+    const content = '{"kind":"tick","tick":1}\n'.repeat(5);
+    const scope = { __aiHellTelemetry: { read: () => content } };
+    const seen: SliceRequest[] = [];
+
+    await expect(
+      readDevTelemetryBufferInChunks(fakeEvaluate(scope, seen), { chunkChars: 16 }),
+    ).resolves.toBe(content);
+
+    // Every request is a slice of at most `chunkChars` chars — this is what
+    // keeps the resulting CDP message independent of the run's length.
+    expect(seen.length).toBe(Math.ceil(content.length / 16));
+    expect(seen.map((call) => call.offset)).toEqual(
+      seen.map((_, index) => index * 16),
+    );
+    expect(seen.every((call) => call.chunkChars === 16)).toBe(true);
+  });
+
+  it('reads a whole small buffer in one slice without an extra call', async () => {
+    const content = '{"kind":"run_header"}\n';
+    const scope = { __aiHellTelemetry: { read: () => content } };
+    const seen: SliceRequest[] = [];
+
+    await expect(
+      readDevTelemetryBufferInChunks(fakeEvaluate(scope, seen)),
+    ).resolves.toBe(content);
+    expect(seen.length).toBe(1);
+  });
+
+  it('returns an empty string for a page without the accessor or an empty buffer', async () => {
+    const seen: SliceRequest[] = [];
+    await expect(
+      readDevTelemetryBufferInChunks(fakeEvaluate({}, seen)),
+    ).resolves.toBe('');
+    expect(seen.length).toBe(1);
+
+    const empty = { __aiHellTelemetry: { read: () => '' } };
+    await expect(readDevTelemetryBufferInChunks(fakeEvaluate(empty))).resolves.toBe('');
+  });
+
+  it('degrades rather than mixing two runs when the buffer resets mid-read', async () => {
+    // The first slice sees the ended run; the game then starts a new one and
+    // the buffer is shorter. Mixing them would corrupt the series.
+    const lengths = [64, 16];
+    let call = 0;
+    const scope = {
+      __aiHellTelemetry: {
+        read: () => 'x'.repeat(lengths[Math.min(call++, lengths.length - 1)]),
+      },
+    };
+
+    await expect(
+      readDevTelemetryBufferInChunks(fakeEvaluate(scope), { chunkChars: 32 }),
+    ).resolves.toBe('');
+  });
+
+  it('keeps the default slice well inside the 8 MiB upload cap', async () => {
+    // The slice carries the buffer text; the surrounding CDP message inflates
+    // it by escaping (measured ~2.4×), so the default must leave headroom.
+    expect(TELEMETRY_READ_CHUNK_CHARS).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(TELEMETRY_READ_CHUNK_CHARS * 2.5).toBeLessThan(8 * 1024 * 1024);
+  });
+
+  it('clamps an oversized slice request to the default ceiling', async () => {
+    const content = 'x'.repeat(8);
+    const scope = { __aiHellTelemetry: { read: () => content } };
+    const seen: SliceRequest[] = [];
+
+    await readDevTelemetryBufferInChunks(fakeEvaluate(scope, seen), {
+      chunkChars: 64 * 1024 * 1024,
+    });
+
+    expect(seen[0].chunkChars).toBe(TELEMETRY_READ_CHUNK_CHARS);
   });
 });
 
@@ -2647,5 +2809,1455 @@ describe('writeCaptureSeriesArtifacts (AC1/AC2/AC4)', () => {
     });
     expect(dirname(exportData.seriesOutput!)).toBe('capture-output');
     expect(basename(exportData.seriesOutput!)).toBe('run.action.jsonl');
+  });
+});
+
+// ── Multi-scene capture driver (AH-0MVFC70GT000B96J) ─────────────────
+
+describe('multi-scene capture arguments and config (AH-0MVFC70GT000B96J)', () => {
+  it('parseCaptureArgs recognises --config and the --scenes alias', () => {
+    expect(parseCaptureArgs([]).scenesConfig).toBeNull();
+    expect(parseCaptureArgs(['--config', 'scenes.json']).scenesConfig).toBe(
+      'scenes.json',
+    );
+    expect(parseCaptureArgs(['--scenes', 'alt.json']).scenesConfig).toBe(
+      'alt.json',
+    );
+    expect(
+      parseCaptureArgs(['--scenes', 'a.json', '--json']).json,
+    ).toBe(true);
+  });
+
+  it('fails fast when --config/--scenes has no value', () => {
+    expect(() => parseCaptureArgs(['--config'])).toThrow(/Missing value/);
+    expect(() => parseCaptureArgs(['--scenes'])).toThrow(/Missing value/);
+  });
+
+  it('resolveScenesOutputPath defaults under capture-output and honours --output', () => {
+    expect(basename(resolveScenesOutputPath(null, 'STAMP'))).toBe(
+      'scenes-STAMP.webm',
+    );
+    expect(dirname(resolveScenesOutputPath(null, 'STAMP'))).toContain(
+      'capture-output',
+    );
+    expect(resolveScenesOutputPath('clips/x.webm', 'STAMP')).toBe(
+      resolve(process.cwd(), 'clips/x.webm'),
+    );
+  });
+
+  it('loadScenesForCapture returns null without a config and validates one before any boot', () => {
+    expect(loadScenesForCapture({})).toBeNull();
+
+    const readFile = () =>
+      JSON.stringify({
+        scenes: [{ target: 'GymPlayer', playMs: 2000, captureMs: 2000 }],
+      });
+    const scenes = loadScenesForCapture(
+      { scenesConfig: 'scenes.json' },
+      readFile,
+    );
+
+    expect(scenes).not.toBeNull();
+    expect(scenes!).toHaveLength(1);
+    expect(scenes![0].target).toBe('GymPlayer');
+  });
+
+  it('maps a malformed or missing config to a typed SceneConfigError (pre-boot fail-fast)', () => {
+    const badJson = () => '{ nope';
+    let error: unknown = null;
+    try {
+      loadScenesForCapture({ scenesConfig: 'bad.json' }, badJson);
+    } catch (caught) {
+      error = caught;
+    }
+    expect((error as { message?: string }).message).toMatch(/not valid JSON/);
+
+    const missingFile = () => {
+      const err = new Error('ENOENT: no such file') as Error & {
+        code?: string;
+      };
+      err.code = 'ENOENT';
+      throw err;
+    };
+    let missingError: unknown = null;
+    try {
+      loadScenesForCapture({ scenesConfig: 'missing.json' }, missingFile);
+    } catch (caught) {
+      missingError = caught;
+    }
+    expect((missingError as { code?: string }).code).toBe('missing-file');
+  });
+
+  it('the spawned CLI fails fast and non-zero on a bad config without booting anything', () => {
+    // A missing config must exit 1 with an actionable message and must never
+    // reach the Vite/Chromium boot stage (that would exceed the bound).
+    const script = resolve(process.cwd(), 'scripts/capture-gameplay.mjs');
+    const result = spawnSync(
+      process.execPath,
+      [script, '--config', '/definitely/not/here.json'],
+      { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/scene config error/i);
+    expect(result.stderr).toContain('/definitely/not/here.json');
+    expect(result.stdout).not.toContain('Starting Vite');
+  });
+});
+
+describe('driveSceneSequence (AH-0MVFC70GT000B96J AC3)', () => {
+  const plan = buildScenePlan([
+    { target: 'GymPlayer', playMs: 3000, captureMs: 2000, label: null },
+    { target: 'GymWeapons', playMs: 3000, captureMs: 2000, label: null },
+    { target: 'GymMinerals', playMs: 3000, captureMs: 2000, label: null },
+  ]);
+
+  it('starts each scene once and fades 0.25 s between windows, in order', async () => {
+    const calls: string[] = [];
+    const waits: number[] = [];
+    const fades: Array<[number, number]> = [];
+
+    await driveSceneSequence({
+      plan,
+      startScene: async (key) => {
+        calls.push(`start:${key}`);
+      },
+      fade: async (alpha, ms) => {
+        fades.push([alpha, ms]);
+      },
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+      onScene: ({ index, total, scene }) => {
+        calls.push(`scene:${index}/${total}`);
+        expect(total).toBe(3);
+        expect(scene.target).toBeTruthy();
+      },
+    });
+
+    // One recorder spans every scene: each scene starts exactly once, in
+    // config order, with its play window then its capture window. The next
+    // scene starts behind the black during the transition, so `onScene` for
+    // its play window is reported after the fade-from-black completes.
+    expect(calls).toEqual([
+      'scene:1/3',
+      'start:GymPlayer',
+      'start:GymWeapons',
+      'scene:2/3',
+      'start:GymMinerals',
+      'scene:3/3',
+    ]);
+    expect(waits).toEqual([3000, 2000, 3000, 2000, 3000, 2000]);
+    // Between consecutive scenes exactly two fades: to black (1) then from
+    // black (0), each SCENE_FADE_MS (0.25 s) long.
+    expect(fades).toEqual([
+      [1, SCENE_FADE_MS],
+      [0, SCENE_FADE_MS],
+      [1, SCENE_FADE_MS],
+      [0, SCENE_FADE_MS],
+    ]);
+    expect(SCENE_FADE_MS).toBe(250);
+  });
+
+  it('is a no-op for an empty or non-array plan', async () => {
+    const effects: string[] = [];
+    await driveSceneSequence({
+      plan: [],
+      startScene: async () => effects.push('start'),
+      fade: async () => effects.push('fade'),
+      wait: async () => effects.push('wait'),
+    });
+    expect(effects).toEqual([]);
+  });
+
+  it('rejects a plan driven without the required callbacks', async () => {
+    await expect(
+      driveSceneSequence({
+        plan,
+        startScene: async () => {},
+        fade: undefined as unknown as () => Promise<void>,
+        wait: async () => {},
+      }),
+    ).rejects.toThrow(/startScene, fade and wait callbacks/);
+  });
+
+  it('records the wall-clock start of every scene window', async () => {
+    const starts: number[] = [];
+    const before = Date.now();
+    await driveSceneSequence({
+      plan,
+      startScene: async () => {},
+      fade: async () => {},
+      wait: async () => {},
+      onScene: ({ index }) => {
+        starts[index - 1] = Date.now();
+      },
+    });
+
+    expect(starts).toHaveLength(3);
+    expect(starts[0]).toBeGreaterThanOrEqual(before);
+    expect(starts[1]).toBeGreaterThanOrEqual(starts[0]);
+    expect(starts[2]).toBeGreaterThanOrEqual(starts[1]);
+  });
+});
+
+describe('installCaptureComposite (AH-0MVFC70GT000B96J AC3)', () => {
+  /** Fake DOM around a 960×540 game canvas with a pumpable rAF queue. */
+  function makeCompositeScope() {
+    const fills: string[] = [];
+    const draws: unknown[][] = [];
+    const rafQueue: Array<(ts: number) => void> = [];
+
+    const ctx = {
+      clearRect: () => {},
+      drawImage: (...args: unknown[]) => draws.push(args),
+      fillRect: () => fills.push(ctx.fillStyle as string),
+      fillStyle: '',
+    };
+    const composite: Record<string, unknown> = {
+      id: '',
+      width: 0,
+      height: 0,
+      style: {},
+      getContext: () => ctx,
+    };
+    const gameCanvas = {
+      width: 960,
+      height: 540,
+      getBoundingClientRect: () => ({ left: 4, top: 8, width: 960, height: 540 }),
+    };
+    const appended: unknown[] = [];
+
+    const scope: Record<string, unknown> = {
+      document: {
+        querySelector: (selector: string) =>
+          selector === '#game-container canvas' ? gameCanvas : null,
+        createElement: (tag: string) => (tag === 'canvas' ? composite : {}),
+        body: { appendChild: (el: unknown) => appended.push(el) },
+      },
+      requestAnimationFrame: (cb: (ts: number) => void) => {
+        rafQueue.push(cb);
+      },
+    };
+
+    const pump = (ts: number) => {
+      const pending = rafQueue.splice(0);
+      for (const cb of pending) cb(ts);
+    };
+
+    return { scope, composite, gameCanvas, appended, fills, draws, pump };
+  }
+
+  it('installs an overlay canvas over the game canvas and mirrors frames', () => {
+    const { scope, composite, gameCanvas, appended, draws, pump } =
+      makeCompositeScope();
+
+    const result = installCaptureComposite(scope);
+
+    expect(result).toEqual({
+      id: COMPOSITE_CANVAS_ID,
+      width: 960,
+      height: 540,
+    });
+    expect(composite.id).toBe(COMPOSITE_CANVAS_ID);
+    expect(composite.width).toBe(960);
+    expect(composite.height).toBe(540);
+    expect(appended).toContain(composite);
+
+    // One pumped frame must mirror the game canvas into the overlay — the
+    // overlay is what the recorder captures.
+    pump(0);
+    expect(draws.length).toBeGreaterThan(0);
+    expect(draws[0][0]).toBe(gameCanvas);
+  });
+
+  it('fades to black over the requested duration and snaps back', async () => {
+    const { scope, fills, pump } = makeCompositeScope();
+    installCaptureComposite(scope);
+    const fade = scope.__aiHellFade as {
+      fadeTo: (alpha: number, ms: number) => Promise<number>;
+      alpha: () => number;
+    };
+
+    expect(fade.alpha()).toBe(0);
+    let resolved = false;
+    const fading = fade.fadeTo(1, 250).then(() => {
+      resolved = true;
+    });
+    for (let ts = 0; ts <= 256 && !resolved; ts += 16) pump(ts);
+    await fading;
+
+    expect(fade.alpha()).toBe(1);
+    // The final frame the recorder streamed was fully black.
+    expect(fills[fills.length - 1]).toBe('rgba(0, 0, 0, 1.0000)');
+
+    resolved = false;
+    const clearing = fade.fadeTo(0, 250).then(() => {
+      resolved = true;
+    });
+    for (let ts = 0; ts <= 256 && !resolved; ts += 16) pump(ts);
+    await clearing;
+    expect(fade.alpha()).toBe(0);
+  });
+
+  it('clamps the target alpha, snaps instantly and ignores invalid input', async () => {
+    const { scope, pump } = makeCompositeScope();
+    installCaptureComposite(scope);
+    const fade = scope.__aiHellFade as {
+      fadeTo: (alpha: unknown, ms: unknown) => Promise<number>;
+      alpha: () => number;
+    };
+
+    // Same-target and zero-duration fades resolve immediately.
+    await expect(fade.fadeTo(0, 0)).resolves.toBe(0);
+    expect(fade.alpha()).toBe(0);
+
+    // A target above 1 clamps to 1.
+    let done = false;
+    const clamped = fade.fadeTo(2, 100).then(() => {
+      done = true;
+    });
+    for (let ts = 0; ts <= 128 && !done; ts += 16) pump(ts);
+    await clamped;
+    expect(fade.alpha()).toBe(1);
+
+    // A non-numeric target leaves the current alpha untouched.
+    await expect(fade.fadeTo('x', 100)).resolves.toBe(1);
+    expect(fade.alpha()).toBe(1);
+  });
+
+  it('returns null when the game canvas is not available', () => {
+    expect(
+      installCaptureComposite({ document: { querySelector: () => null } }),
+    ).toBeNull();
+    expect(
+      installCaptureComposite({
+        document: {
+          querySelector: () => ({ width: 0, height: 0, getBoundingClientRect: () => ({}) }),
+        },
+      }),
+    ).toBeNull();
+    expect(installCaptureComposite({})).toBeNull();
+  });
+});
+
+describe('capture diagnostics (AH-0MVNT25JI004OVKQ)', () => {
+  it('is off by default and only enabled by --diagnostics (AC4)', () => {
+    expect(parseCaptureArgs([]).diagnostics).toBe(false);
+    expect(parseCaptureArgs(['--diagnostics']).diagnostics).toBe(true);
+    // The flag takes no value: everything after it still parses normally.
+    const parsed = parseCaptureArgs(['--diagnostics', '--count', '2']);
+    expect(parsed.diagnostics).toBe(true);
+    expect(parsed.count).toBe(2);
+  });
+
+  it('summarises chunk sizes with count/max/mean/p50/p95 (AC1)', () => {
+    expect(summariseChunkSizes([])).toEqual({
+      count: 0,
+      totalBytes: 0,
+      maxBytes: 0,
+      meanBytes: 0,
+      p50Bytes: 0,
+      p95Bytes: 0,
+    });
+
+    expect(summariseChunkSizes([10, 40])).toEqual({
+      count: 2,
+      totalBytes: 50,
+      maxBytes: 40,
+      meanBytes: 25,
+      p50Bytes: 25,
+      p95Bytes: 38.5,
+    });
+
+    // A steady one-chunk-per-second capture: every sample is the same size.
+    const steady = summariseChunkSizes(Array.from({ length: 407 }, () => 1_354_000));
+    expect(steady.count).toBe(407);
+    expect(steady.maxBytes).toBe(1_354_000);
+    expect(steady.p50Bytes).toBe(1_354_000);
+    expect(steady.p95Bytes).toBe(1_354_000);
+    expect(steady.totalBytes).toBe(407 * 1_354_000);
+  });
+
+  it('computes interpolated percentiles with clamped inputs', () => {
+    expect(percentile([], 50)).toBe(0);
+    expect(percentile([7], 95)).toBe(7);
+    expect(percentile([1, 2, 3, 4, 5], 50)).toBe(3);
+    expect(percentile([1, 2, 3, 4, 5], 0)).toBe(1);
+    expect(percentile([1, 2, 3, 4, 5], 100)).toBe(5);
+    expect(percentile([1, 2, 3, 4, 5], -10)).toBe(1);
+    expect(percentile([1, 2, 3, 4, 5], 150)).toBe(5);
+    expect(percentile([1, Number.NaN, 3], 50)).toBe(2);
+  });
+
+  it('formats byte sizes with binary units', () => {
+    expect(formatByteSize(0)).toBe('0 B');
+    expect(formatByteSize(-1)).toBe('0 B');
+    expect(formatByteSize(Number.NaN)).toBe('0 B');
+    expect(formatByteSize(999)).toBe('999 B');
+    expect(formatByteSize(1536)).toBe('1.50 KiB');
+    expect(formatByteSize(CDP_PIPE_STRING_LIMIT_CHARS)).toBe('512.00 MiB');
+  });
+
+  it('resolves the diagnostics artefact next to the clip (AC6)', () => {
+    expect(diagnosticsPathFor('capture-output/clip.webm')).toBe(
+      'capture-output/clip.diagnostics.json',
+    );
+    expect(diagnosticsPathFor('/tmp/a.b/clip.webm')).toBe('/tmp/a.b/clip.diagnostics.json');
+    // A path without an extension still gets the documented suffix.
+    expect(diagnosticsPathFor('/tmp/clip')).toBe('/tmp/clip.diagnostics.json');
+  });
+
+  it('records nothing and builds no summary when disabled (AC4)', () => {
+    const tracker = createDiagnosticsTracker();
+    expect(tracker.enabled).toBe(false);
+    expect(tracker.recordChunk('AAAA')).toBe(0);
+    expect(tracker.sampleRss()).toBe(0);
+    expect(tracker.chunkCount).toBe(0);
+    expect(tracker.snapshot()).toBeNull();
+    expect(tracker.buildSummary({ clip: { output: '/tmp/clip.webm' } })).toBeNull();
+    expect(tracker.elapsedMs()).toBe(0);
+  });
+
+  it('records chunk sizes, heartbeat RSS and page heap for the run (AC1/AC2)', () => {
+    let clock = 1_000;
+    const rss = [100, 300, 200];
+    const tracker = createDiagnosticsTracker({
+      enabled: true,
+      now: () => {
+        clock += 10;
+        return clock;
+      },
+      readRss: () => rss.shift() ?? 0,
+    });
+
+    tracker.recordChunk('A'.repeat(40));
+    tracker.recordChunk('B'.repeat(10));
+    tracker.sampleRss();
+    tracker.sampleRss();
+    tracker.sampleRss();
+    tracker.recordPageMetrics({ source: 'Runtime.getHeapUsage', heapUsedBytes: 5_000 });
+    tracker.recordTransport({ installed: true, maxPendingBytes: 64 });
+    tracker.note('tapped');
+
+    const snapshot = tracker.snapshot();
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.chunkCount).toBe(2);
+    expect(snapshot?.totalBase64Bytes).toBe(50);
+    expect(snapshot?.maxBase64Bytes).toBe(40);
+    expect(snapshot?.peakRssBytes).toBe(300);
+
+    const summary = tracker.buildSummary({
+      clip: { output: '/tmp/clip.webm', bytes: 12_345, durationMs: 407_500 },
+    });
+    expect(summary).not.toBeNull();
+    if (!summary) throw new Error('expected a summary');
+    expect(summary.chunks.count).toBe(2);
+    expect(summary.chunks.totalBytes).toBe(50);
+    expect(summary.chunks.maxBytes).toBe(40);
+    expect(summary.chunks.p50Bytes).toBe(25);
+    expect(summary.chunks.p95Bytes).toBe(38.5);
+    expect(summary.chunks.maxChunk).toEqual({ atMs: 10, base64Bytes: 40 });
+    expect(summary.chunks.timeline).toHaveLength(2);
+    expect(summary.chunks.cdpPipeStringLimitChars).toBe(CDP_PIPE_STRING_LIMIT_CHARS);
+    expect(summary.chunks.cumulativeFractionOfCdpStringLimit).toBeCloseTo(
+      50 / CDP_PIPE_STRING_LIMIT_CHARS,
+      12,
+    );
+    expect(summary.node.peakRssBytes).toBe(300);
+    expect(summary.node.sampleCount).toBe(3);
+    expect(summary.node.samples).toHaveLength(3);
+    expect(summary.page).toEqual({
+      source: 'Runtime.getHeapUsage',
+      heapUsedBytes: 5_000,
+    });
+    expect(summary.transport).toEqual({ installed: true, maxPendingBytes: 64 });
+    // Bytes on disk and the chunk count are recorded with the clip (AC2).
+    expect(summary.clip.bytes).toBe(12_345);
+    expect(summary.clip.chunkCount).toBe(2);
+    expect(summary.notes).toEqual(['tapped']);
+  });
+
+  it('renders the heartbeat suffix and report block from the recorded numbers', () => {
+    const tracker = createDiagnosticsTracker({
+      enabled: true,
+      now: () => 0,
+      readRss: () => 812 * 1024 * 1024,
+    });
+    tracker.recordChunk('A'.repeat(4 * 1024 * 1024));
+    tracker.recordChunk('B'.repeat(10));
+    tracker.sampleRss();
+    tracker.recordPageMetrics({ source: 'performance.memory', heapUsedBytes: 4_096 });
+
+    const progress = formatDiagnosticsProgress(tracker.snapshot());
+    expect(progress).toContain('diag chunks=2');
+    expect(progress).toContain('max=4.00 MiB');
+    expect(progress).toContain('of CDP limit');
+    expect(progress).toContain('rss=812.00 MiB');
+
+    const summary = tracker.buildSummary({
+      clip: { output: '/tmp/clip.webm', bytes: 1, durationMs: 1 },
+    });
+    const block = formatDiagnosticsSummary(summary);
+    expect(block).toContain('p50');
+    expect(block).toContain('p95');
+    expect(block).toContain('peak');
+    expect(block).toContain('performance.memory');
+    expect(block).toContain('512.00 MiB string limit');
+    expect(formatDiagnosticsProgress(null)).toBe('');
+    expect(formatDiagnosticsSummary(null)).toBe('');
+  });
+
+  it('writes the artefact next to the clip and never fails the clip (AC6)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'capture-diagnostics-'));
+    try {
+      const outputPath = join(dir, 'clip.webm');
+      const tracker = createDiagnosticsTracker({ enabled: true, now: () => 0 });
+      tracker.recordChunk('AAAA');
+      const summary = tracker.buildSummary({
+        clip: { output: outputPath, bytes: 3, durationMs: 1_000 },
+      });
+      if (!summary) throw new Error('expected a summary');
+      summary.artifactPath = diagnosticsPathFor(outputPath);
+
+      const written = writeDiagnosticsArtifact({ outputPath, summary });
+      expect(written.error).toBeNull();
+      expect(written.path).toBe(join(dir, 'clip.diagnostics.json'));
+      const stored = JSON.parse(readFileSync(written.path, 'utf8'));
+      expect(stored.clip.output).toBe(outputPath);
+      expect(stored.chunks.count).toBe(1);
+      expect(stored.artifactPath).toBe(written.path);
+
+      // A failing write is reported, not thrown.
+      const failed = writeDiagnosticsArtifact({
+        outputPath,
+        summary,
+        writeFile: () => {
+          throw new Error('read-only file system');
+        },
+      });
+      expect(failed.path).toBe(written.path);
+      expect(failed.error).toContain('read-only file system');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('describes pending transport buffers and classifies the message (AC3)', () => {
+    const buffer = Buffer.from(
+      JSON.stringify({
+        id: 7,
+        method: 'Runtime.bindingCalled',
+        params: { name: '__aiHellCaptureChunk', payload: 'AAAA' },
+      }),
+    );
+    const described = describePendingBuffers({ buffers: [buffer, Buffer.from('BBBB')] });
+    expect(described.count).toBe(2);
+    expect(described.bytes).toBe(buffer.length + 4);
+    expect(described.method).toBe('Runtime.bindingCalled');
+    expect(described.bindingName).toBe('__aiHellCaptureChunk');
+    expect(described.innerBindingName).toBeNull();
+    expect(described.messageClass).toBe(
+      'Runtime.bindingCalled (__aiHellCaptureChunk)',
+    );
+    expect(described.prefix.startsWith('{"id":7,"method":"Runtime.bindingCalled"')).toBe(true);
+
+    // Playwright's real envelope nests the exposed function name in the
+    // escaped payload: the class names both the CDP binding and the page
+    // function the payload carries.
+    const nested = describePendingBuffers([
+      Buffer.from(
+        '{"method":"Runtime.bindingCalled","params":{"name":"__playwright__binding__","payload":"{\\"name\\":\\"__aiHellCaptureChunk\\",\\"seq\\":4,\\"serializedArgs\\":[\\"AAAA\\"]}"}',
+      ),
+    ]);
+    expect(nested.bindingName).toBe('__playwright__binding__');
+    expect(nested.innerBindingName).toBe('__aiHellCaptureChunk');
+    expect(nested.messageClass).toBe(
+      'Runtime.bindingCalled (__playwright__binding__ → __aiHellCaptureChunk)',
+    );
+
+    // Control bytes (the \0 delimiter included) never leak into the prefix.
+    const withNul = describePendingBuffers([Buffer.from('{"a":1}\0\u0001tail')]);
+    expect(withNul.prefix).not.toContain('\0');
+    expect(withNul.prefix).toContain('·');
+    expect(withNul.messageClass).toBe('unrecognised (no JSON method in prefix)');
+
+    expect(describePendingBuffers([])).toEqual({
+      count: 0,
+      bytes: 0,
+      prefix: '',
+      method: null,
+      bindingName: null,
+      innerBindingName: null,
+      messageClass: 'empty',
+    });
+  });
+
+  it('reads both Playwright pipe transport buffer shapes', () => {
+    const buffers = [Buffer.from('ab')];
+    expect(readPendingBuffers({ _pendingBuffers: buffers }).buffers).toHaveLength(1);
+    expect(readPendingBuffers({ _pendingBuffers: buffers }).data).toBeNull();
+    expect(readPendingBuffers({ _data: Buffer.from('cd') }).data?.length).toBe(2);
+    expect(readPendingBuffers(null)).toEqual({ buffers: [], data: null });
+    expect(readPendingBuffers({})).toEqual({ buffers: [], data: null });
+  });
+
+  it('taps the transport and captures the overflowing message class (AC3)', async () => {
+    const events: string[] = [];
+    const messages: Array<string | null> = [];
+
+    class FakePipeTransport {
+      // Mirrors the real Chromium CDP transport's pending-buffer property.
+      _pendingBuffers: Buffer[] = [];
+      readonly limit: number;
+      constructor(limit: number) {
+        this.limit = limit;
+      }
+      _dispatch(buffer: Buffer): void {
+        this._pendingBuffers.push(buffer);
+        const total = this._pendingBuffers.reduce(
+          (sum, part) => sum + part.length,
+          0,
+        );
+        if (total > this.limit) throw new RangeError('Cannot create a string longer');
+        // Delivered: the pending buffer is drained.
+        this._pendingBuffers = [];
+      }
+    }
+
+    const tap = await createTransportTap({
+      loadPipeTransport: async () => ({ PipeTransport: FakePipeTransport }),
+      logger: (message) => events.push(message),
+    });
+    expect(tap.installed).toBe(true);
+    expect(readTransportTapSnapshot().installed).toBe(true);
+
+    const removeHandler = addTransportOverflowHandler((overflow) => {
+      messages.push(overflow?.messageClass ?? null);
+    });
+
+    const payload = Buffer.from(
+      JSON.stringify({
+        id: 1,
+        method: 'Runtime.bindingCalled',
+        params: { name: '__aiHellCaptureChunk', payload: 'A'.repeat(120) },
+      }),
+    );
+
+    // Under the limit: the tap observes the pending bytes but does not throw.
+    const small = new FakePipeTransport(payload.length + 10);
+    small._dispatch(payload);
+    expect(readTransportTapSnapshot().lastPendingBytes).toBe(0);
+    expect(readTransportTapSnapshot().overflow).toBeNull();
+
+    // A delimited message records its true CDP message size and class.
+    const delimitedMessage = '{"method":"Runtime.consoleAPICalled"}';
+    const delimited = new FakePipeTransport(1_024);
+    delimited._dispatch(
+      Buffer.concat([Buffer.from(delimitedMessage), Buffer.from([0])]),
+    );
+    expect(readTransportTapSnapshot().maxMessageBytes).toBe(delimitedMessage.length);
+    expect(readTransportTapSnapshot().maxMessageSample?.messageClass).toBe(
+      'Runtime.consoleAPICalled',
+    );
+
+    // Over the limit: the original error propagates and the class is recorded.
+    const small2 = new FakePipeTransport(10);
+    expect(() => small2._dispatch(payload)).toThrow(/Cannot create a string longer/);
+    const snapshot = readTransportTapSnapshot();
+    expect(snapshot.overflow?.bytes).toBe(payload.length);
+    expect(snapshot.overflow?.count).toBe(1);
+    expect(snapshot.overflow?.messageClass).toBe(
+      'Runtime.bindingCalled (__aiHellCaptureChunk)',
+    );
+    expect(snapshot.maxPendingBytes).toBe(payload.length);
+    expect(messages).toEqual(['Runtime.bindingCalled (__aiHellCaptureChunk)']);
+    expect(events.join('\n')).toContain('CDP pipe dispatch overflow');
+    expect(events.join('\n')).toContain('Runtime.bindingCalled (__aiHellCaptureChunk)');
+
+    removeHandler();
+  });
+
+  it('exposes undelimited accumulation across dispatches (framing loss) (AC3)', async () => {
+    class DesyncPipeTransport {
+      // Mirrors the real Chromium CDP transport's pending-buffer property.
+      _pendingBuffers: Buffer[] = [];
+      _dispatch(buffer: Buffer): void {
+        // A lost `\0` terminator: every message accumulates and is never
+        // dispatched, exactly the state that precedes the pipe overflow.
+        this._pendingBuffers.push(buffer);
+      }
+    }
+
+    await createTransportTap({
+      loadPipeTransport: async () => ({ PipeTransport: DesyncPipeTransport }),
+    });
+    const transport = new DesyncPipeTransport();
+    const message = Buffer.from(
+      '{"method":"Runtime.bindingCalled","params":{"name":"__playwright__binding__","payload":"{\\"name\\":\\"__aiHellCaptureChunk\\"}"}',
+    );
+    for (let i = 0; i < 3; i += 1) transport._dispatch(message);
+
+    const snapshot = readTransportTapSnapshot();
+    expect(snapshot.lastPendingBytes).toBe(message.length * 3);
+    expect(snapshot.lastPendingBuffers).toBe(3);
+    expect(snapshot.maxPendingBytes).toBe(message.length * 3);
+    expect(snapshot.overflow).toBeNull();
+    expect(snapshot.maxPendingSample?.messageClass).toContain('__aiHellCaptureChunk');
+  });
+
+  it('degrades to an explicit reason when the transport cannot be tapped', async () => {
+    const noLoader = await createTransportTap();
+    expect(noLoader.installed).toBe(false);
+    expect(noLoader.reason).toContain('loader');
+
+    const unloadable = await createTransportTap({
+      loadPipeTransport: async () => {
+        throw new Error('ERR_PACKAGE_PATH_NOT_EXPORTED');
+      },
+    });
+    expect(unloadable.installed).toBe(false);
+    expect(unloadable.reason).toContain('not loadable');
+
+    const unrecognised = await createTransportTap({
+      loadPipeTransport: async () => ({ notATransport: true }),
+    });
+    expect(unrecognised.installed).toBe(false);
+    expect(unrecognised.reason).toContain('unrecognised');
+  });
+});
+
+/**
+ * Fake page scope + recorder wiring for the bounded Blob retention controller
+ * (`installRecorderChunkRetention`, AH-0MVNT274M009XRJ1).
+ *
+ * The controller is installed with `page.addInitScript` before the game boots
+ * (like `installGameAudioTap`), so it must be self-contained and read its
+ * environment from the scope argument. These tests drive that single function
+ * with a fake scope and a fake recorder whose `ondataavailable` fires the same
+ * handler `startRecording` wires into the page — no browser (AC2/AC3).
+ */
+interface RetentionTestChunk {
+  size: number;
+  payload?: Uint8Array;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+  [key: string]: unknown;
+}
+
+function makeRetentionChunk(size: number, fill = 0, second = -1): RetentionTestChunk {
+  const payload = new Uint8Array(Math.max(0, size));
+  payload.fill(fill);
+  if (second >= 0 && payload.length >= 2) payload[1] = second;
+  return {
+    size,
+    payload,
+    arrayBuffer: async () => payload.buffer,
+  };
+}
+
+/** The base64 forward path `startRecording` installs in the page. */
+function makePageForward(seen: string[]) {
+  return async (_chunk: unknown) => {
+    const chunk = _chunk as RetentionTestChunk;
+    const bytes = new Uint8Array(await chunk.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(
+        null,
+        Array.from(bytes.subarray(i, i + 0x8000)),
+      );
+    }
+    seen.push(btoa(binary));
+  };
+}
+
+/**
+ * A complete recorder state for the oversized-payload guard
+ * (AH-0MVNT27XR0080I3C): an oversized chunk is only sliced when the recorder
+ * can be described in the error, so the page always passes this.
+ */
+function makeRecorderState(overrides: Record<string, unknown> = {}) {
+  return {
+    trackCount: 1,
+    mimeType: 'video/webm;codecs=vp9,opus',
+    startedAtEpochMs: Date.now() - 1_000,
+    ...overrides,
+  };
+}
+
+describe('installRecorderChunkRetention (AH-0MVNT274M009XRJ1)', () => {
+  it('returns null on a scope that cannot hold the controller', () => {
+    expect(installRecorderChunkRetention({}, null as never)).toBeNull();
+    expect(installRecorderChunkRetention({}, 42 as never)).toBeNull();
+  });
+
+  it('is idempotent — installing twice keeps the original controller', () => {
+    const scope: Record<string, unknown> = {};
+    const first = installRecorderChunkRetention({ budgetBytes: 5 }, scope);
+    const second = installRecorderChunkRetention({ budgetBytes: 99 }, scope);
+
+    expect(second).toBe(first);
+    expect((first as NonNullable<typeof first>).stats().budgetBytes).toBe(5);
+  });
+
+  it('forwards every chunk to the sink exactly once and never retains beyond the budget (AC3)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 10 }, scope)!;
+    const forwardedBase64: string[] = [];
+    const forward = makePageForward(forwardedBase64);
+
+    // A long synthetic chunk stream whose cumulative total (600 bytes over
+    // 300 chunks) dwarfs the 10-byte budget — page heap must stay bounded
+    // while the node sink still sees every chunk, in order, exactly once.
+    for (let i = 0; i < 300; i += 1) {
+      // Two payload bytes carry the full index (300 > one byte's 256 values).
+      await retention.handle(makeRetentionChunk(2, i >> 8, i & 0xff), forward);
+      expect(retention.stats().retainedBytes).toBeLessThanOrEqual(10);
+    }
+
+    const stats = retention.stats();
+    expect(stats.retainedBytes).toBe(10);
+    expect(stats.retainedChunkCount).toBe(5);
+    expect(stats.droppedChunks).toBe(295);
+    expect(stats.truncated).toBe(true);
+    // Fully forwarded once: all 300 payloads, in order, each distinct.
+    expect(forwardedBase64).toHaveLength(300);
+    expect(forwardedBase64[0]).toBe(btoa(String.fromCharCode(0, 0)));
+    expect(forwardedBase64[299]).toBe(
+      btoa(String.fromCharCode(299 >> 8, 299 & 0xff)),
+    );
+    expect(new Set(forwardedBase64).size).toBe(300);
+    // The retained set is the run's prefix (the oldest chunks), so the probe's
+    // `new Blob(chunks)` is the file's header + first segment.
+    const retained = retention.retainedChunks();
+    expect(retained).toHaveLength(5);
+    for (let i = 0; i < retained.length; i += 1) {
+      expect(retained[i].size).toBe(2);
+    }
+  });
+
+  it('applies the budget at byte granularity, not chunk count', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 6 }, scope)!;
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+
+    for (const size of [1, 2, 3, 4, 5]) {
+      await retention.handle(makeRetentionChunk(size, size), forward);
+    }
+
+    const stats = retention.stats();
+    expect(stats.retainedBytes).toBe(6); // 1 + 2 + 3 fit; 4 would exceed
+    expect(stats.retainedChunkCount).toBe(3);
+    expect(stats.droppedChunks).toBe(2);
+    expect(stats.droppedBytes).toBe(9); // 4 + 5
+    // Forwarding is independent of retention — every chunk still reached the
+    // sink even after the budget was exhausted.
+    expect(seen).toHaveLength(5);
+  });
+
+  it('never drops a whole recording from retention silently: truncated stays false until the cap is hit', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 100 }, scope)!;
+
+    await retention.handle(makeRetentionChunk(40));
+    expect(retention.stats().truncated).toBe(false);
+    await retention.handle(makeRetentionChunk(60));
+    expect(retention.stats().retainedBytes).toBe(100);
+    expect(retention.stats().truncated).toBe(false);
+    await retention.handle(makeRetentionChunk(1));
+    expect(retention.stats().truncated).toBe(true);
+    expect(retention.stats().droppedChunks).toBe(1);
+    expect(retention.stats().retainedBytes).toBe(100);
+  });
+
+  it('supports budget 0 as the drained mode: forward everything, retain nothing', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 0 }, scope)!;
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+
+    for (let i = 0; i < 50; i += 1) {
+      await retention.handle(makeRetentionChunk(3, i), forward);
+    }
+
+    const stats = retention.stats();
+    expect(stats.retainedBytes).toBe(0);
+    expect(stats.retainedChunkCount).toBe(0);
+    expect(stats.droppedChunks).toBe(50);
+    expect(seen).toHaveLength(50); // the node sink still got everything
+  });
+
+  it('ignores empty or missing chunks without forwarding or retaining', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 10 }, scope)!;
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+
+    await retention.handle(makeRetentionChunk(0), forward);
+    await retention.handle({ size: 0, arrayBuffer: async () => new Uint8Array(0).buffer }, forward);
+    await retention.handle(null as never, forward);
+    await retention.handle(undefined as never, forward);
+
+    const stats = retention.stats();
+    expect(stats.totalChunks).toBe(0);
+    expect(stats.retainedBytes).toBe(0);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('flushes queued non-awaited chunks so the probe sees final stats (AC4)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 3 }, scope)!;
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+
+    // The recorder never awaits `ondataavailable`; fire all of them without
+    // awaiting (as the page does), then `flush()` before reading stats.
+    for (let i = 0; i < 10; i += 1) {
+      void retention.handle(makeRetentionChunk(1, i), forward);
+    }
+    expect(seen).toHaveLength(0); // nothing settled yet
+
+    await retention.flush();
+    expect(seen).toHaveLength(10);
+    const stats = retention.stats();
+    expect(stats.retainedBytes).toBe(3);
+    expect(stats.retainedChunkCount).toBe(3);
+    expect(stats.droppedChunks).toBe(7);
+  });
+
+  it('defaults to the documented prefix budget when none is supplied', () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({}, scope)!;
+
+    expect(retention.stats().budgetBytes).toBe(32 * 1024 * 1024);
+    expect(retention.stats().retainedBytes).toBe(0);
+    expect(retention.stats().retainedChunkCount).toBe(0);
+  });
+
+  it('keeps the chain alive when a forward fails and reports it in stats', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 10 }, scope)!;
+
+    await expect(
+      retention.handle(makeRetentionChunk(4), async () => {
+        throw new Error('sink refused chunk');
+      }),
+    ).rejects.toThrow('sink refused chunk');
+
+    // The failing forward did not poison the queue: the next chunk is still
+    // forwarded and retained normally. The failed chunk's 4 bytes stay in the
+    // retained prefix (retention precedes forwarding in the chain), so the
+    // prefix holds 4 + 2 bytes.
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+    await retention.handle(makeRetentionChunk(2), forward);
+
+    expect(seen).toHaveLength(1);
+    const stats = retention.stats();
+    expect(stats.failedForwards).toBe(1);
+    expect(stats.firstForwardError).toContain('sink refused chunk');
+    expect(stats.retainedBytes).toBe(6);
+    expect(stats.retainedChunkCount).toBe(2);
+  });
+});
+
+/**
+ * Payload slicing + oversized-chunk guard for the CDP pipe
+ * (`installRecorderChunkRetention` with `maxPayloadBytes`, AH-0MVNT27XR0080I3C,
+ * parent AC4). A stalled or retried recorder can emit one `dataavailable`
+ * Blob far above the normal ~1 MiB cadence; before this guard the whole Blob
+ * became a single base64 string handed to the `__aiHellCaptureChunk` CDP
+ * binding, the exact class of message that overflows
+ * `PipeTransport._dispatch` with `ERR_STRING_TOO_LONG`. The controller now
+ * slices oversized Blobs at or below the cap (one binding call per slice) and
+ * rejects unsplittable payloads before any byte reaches the pipe, with an
+ * actionable error naming the size, the cap and the recorder state.
+ */
+describe('payload slicing and oversized-chunk guard (AH-0MVNT27XR0080I3C)', () => {
+  it('slices an oversized Blob into ceil(size/cap) binding calls whose concatenation equals the input (AC1/AC3a)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 1024, maxPayloadBytes: 8 },
+      scope,
+    )!;
+    const forwarded: string[] = [];
+    const payload = new Uint8Array(20);
+    for (let i = 0; i < payload.length; i += 1) payload[i] = i;
+    const chunk = new Blob([payload]);
+
+    await retention.handle(chunk as never, makePageForward(forwarded), makeRecorderState());
+
+    // ceil(20 / 8) = 3 binding calls, sliced at or below the cap. Decoded and
+    // concatenated in order, they are byte-identical to the single whole Blob.
+    expect(forwarded).toHaveLength(Math.ceil(20 / 8));
+    const rebuilt: number[] = [];
+    for (const base64 of forwarded) {
+      const sliceBytes = Buffer.from(base64, 'base64');
+      expect(sliceBytes.length).toBeGreaterThan(0);
+      expect(sliceBytes.length).toBeLessThanOrEqual(8);
+      for (const byte of sliceBytes) rebuilt.push(byte);
+    }
+    expect(rebuilt).toEqual(Array.from(payload));
+
+    const stats = retention.stats();
+    expect(stats.sliceCount).toBe(3);
+    expect(stats.failedForwards).toBe(0);
+    // Retention is unchanged by slicing: the whole chunk is retained, not its
+    // slices, so the probe's `new Blob(chunks)` still sees the recording head.
+    expect(stats.retainedChunkCount).toBe(1);
+    expect(stats.retainedBytes).toBe(20);
+  });
+
+  it('forwards a chunk at or below the cap as a single binding call', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 10, maxPayloadBytes: 4 },
+      scope,
+    )!;
+    const seen: string[] = [];
+
+    await retention.handle(makeRetentionChunk(4, 7), makePageForward(seen));
+
+    expect(seen).toHaveLength(1);
+    expect(retention.stats().sliceCount).toBe(1);
+    expect(retention.stats().retainedBytes).toBe(4);
+  });
+
+  it('rejects an oversized unsplittable payload before the pipe, naming size, cap and recorder state (AC2/AC3b)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 1024, maxPayloadBytes: 4 },
+      scope,
+    )!;
+    const forwarded: string[] = [];
+    const recorderState = {
+      trackCount: 2,
+      mimeType: 'video/webm;codecs=vp9,opus',
+      // Five seconds before the failure instant: the controller reports the
+      // elapsed recording time in the error.
+      startedAtEpochMs: Date.now() - 5_000,
+    };
+    // A chunk with size > cap but no `slice` method cannot be split.
+    const chunk = { size: 9, arrayBuffer: async () => new Uint8Array(9).buffer };
+
+    const error = (await retention
+      .handle(chunk as never, makePageForward(forwarded), recorderState)
+      .catch((caught: unknown) => caught)) as Error & {
+      sizeBytes?: number;
+      capBytes?: number;
+    };
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('9 B'); // payload size
+    expect(error.message).toContain('4 B'); // configured cap
+    expect(error.message).toContain('2 audio tracks'); // recorder state
+    expect(error.message).toContain('video/webm'); // recorder mime
+    expect(error.message).toMatch(/elapsed \d+ ms/); // recorder elapsed
+    expect(error.sizeBytes).toBe(9);
+    expect(error.capBytes).toBe(4);
+    // Nothing reached the pipe: no binding call was made for this chunk.
+    expect(forwarded).toHaveLength(0);
+  });
+
+  it('treats a slice that is itself above the cap as unsplittable (AC2)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 1024, maxPayloadBytes: 4 },
+      scope,
+    )!;
+    const seen: string[] = [];
+    // Pathological `slice` that returns a piece larger than the cap: the
+    // guard must not hand that slice to the pipe.
+    const chunk = {
+      size: 10,
+      slice: () => ({ size: 9, arrayBuffer: async () => new Uint8Array(9).buffer }),
+    };
+
+    const error = (await retention
+      .handle(
+        chunk as never,
+        makePageForward(seen),
+        makeRecorderState({ trackCount: 1 }),
+      )
+      .catch((caught: unknown) => caught)) as Error;
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('a produced slice');
+    expect(error.message).toContain('cannot be split');
+    expect(seen).toHaveLength(0);
+  });
+
+  it('rejects an oversized payload whose recorder state is unusable, naming size, cap and state (AC2)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention(
+      { budgetBytes: 1024, maxPayloadBytes: 4 },
+      scope,
+    )!;
+    const seen: string[] = [];
+    // A perfectly sliceable Blob, but the recorder cannot be described (no
+    // mime / start time), so the error could not be actionable.
+    const chunk = new Blob([new Uint8Array(9)]);
+
+    const error = (await retention
+      .handle(chunk as never, makePageForward(seen), { trackCount: 0 })
+      .catch((caught: unknown) => caught)) as Error;
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('9 B');
+    expect(error.message).toContain('4 B');
+    expect(error.message).toContain('the recorder state is unusable');
+    expect(error.message).toContain('mime type');
+    expect(error.message).toContain('recording start time');
+    expect(seen).toHaveLength(0);
+  });
+
+  it('defaults the slice cap to the single-sourced MAX_CAPTURE_CHUNK_BYTES and keeps the queue alive after a rejection (AC4)', async () => {
+    const scope: Record<string, unknown> = {};
+    const retention = installRecorderChunkRetention({ budgetBytes: 1 }, scope)!;
+
+    // The fallback used when the capture tool does not pass the cap explicitly
+    // must equal the shared constant, so the page never slices at a size the
+    // sink would reject (AC4: no duplicated literal drifting out of sync).
+    expect(retention.stats().maxPayloadBytes).toBe(MAX_CAPTURE_CHUNK_BYTES);
+
+    const secondScope: Record<string, unknown> = {};
+    const explicit = installRecorderChunkRetention(
+      { maxPayloadBytes: 3 },
+      secondScope,
+    )!;
+    expect(explicit.stats().maxPayloadBytes).toBe(3);
+
+    // An unsplittable rejection must not poison later chunks (parity with the
+    // forward-failure path): the next in-cap chunk is still forwarded.
+    const seen: string[] = [];
+    const forward = makePageForward(seen);
+    await explicit
+      .handle(makeRetentionChunk(9, 5), forward, makeRecorderState())
+      .catch(() => undefined);
+    await explicit.handle(makeRetentionChunk(2, 6), forward, makeRecorderState());
+    expect(seen).toHaveLength(1);
+    expect(explicit.stats().sliceCount).toBe(1);
+  });
+});
+
+describe('graceful failure with salvage of streamed bytes (AH-0MVNT29MC008BQPY)', () => {
+  it('keeps the partial bytes, emits one actionable message and exits non-zero (AC1-AC4)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aihell-capture-failure-'));
+    try {
+      const outputPath = join(dir, 'gameplay-5.webm');
+      const sink = createChunkSink({ outputPath });
+      const streamed = Buffer.from(
+        'video recorded before the browser-side failure',
+        'utf8',
+      );
+      // Chunks already streamed to the sink before the failure.
+      sink.appendBase64(streamed.toString('base64'));
+
+      const batch = await runCaptureIterations({
+        outputPaths: [outputPath],
+        // Hermetic injection of a browser-side failure mid-recording: the
+        // recorder's CDP binding rejected, which `captureClip`'s catch turns
+        // into a salvage error. No real browser is needed.
+        captureOne: async () => {
+          throw salvageFailedCapture({
+            sink,
+            outputPath,
+            error: new Error(
+              'browser has been closed (CDP pipe transport overflow)',
+            ),
+          });
+        },
+      });
+
+      const [record] = batch.iterations;
+      expect(record.ok).toBe(false);
+      // AC1: the streamed bytes survive at the documented `.partial.webm`
+      // path and the finished-clip path is absent.
+      expect(record.partialPath).toBe(join(dir, 'gameplay-5.partial.webm'));
+      expect(record.salvagedBytes).toBe(streamed.length);
+      expect(existsSync(outputPath)).toBe(false);
+      expect(readFileSync(record.partialPath as string)).toEqual(streamed);
+
+      // AC2: exactly one actionable message, naming the failure, the bytes,
+      // the path and the next action.
+      const lines = batch.iterations
+        .map((iteration) => failureSalvageLine(iteration))
+        .filter((line): line is string => line !== null);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('browser has been closed');
+      expect(lines[0]).toContain(`${streamed.length} B`);
+      expect(lines[0]).toContain('gameplay-5.partial.webm');
+      expect(lines[0]).toContain('re-run the capture');
+
+      // AC3: the failure is attributed in the batch result (additive fields),
+      // the success shape is unchanged, and the exit code is non-zero.
+      expect(batch).toMatchObject({ count: 1, succeeded: 0, failed: 1 });
+      expect(captureExitCode(batch)).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * Shared recording pipeline (AH-0MVNT2AFI00639N3, parent AC7): both the
+ * single/batch clip path and the `--scenes` path obtain their chunk sink,
+ * payload guard and probe source from one helper, so the fix cannot drift into
+ * two divergent copies. The behaviour tests drive the pipeline with a fake
+ * page and an injected sink filesystem (no browser); the duplication guard is
+ * a static-source assertion over `capture-gameplay.mjs` (parent AC2).
+ */
+describe('shared recording pipeline (AH-0MVNT2AFI00639N3)', () => {
+  function fakePipePage() {
+    const initScripts: Array<{ script: unknown; arg: unknown }> = [];
+    const boundNames: string[] = [];
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    return {
+      page: {
+        async addInitScript(script: unknown, arg?: unknown) {
+          initScripts.push({ script, arg });
+        },
+        async exposeFunction(name: string, callback: (...args: never[]) => unknown) {
+          boundNames.push(name);
+          handlers.set(name, callback as (...args: unknown[]) => unknown);
+        },
+      },
+      initScripts,
+      boundNames,
+      handlerFor(name: string): ((...args: unknown[]) => unknown) | undefined {
+        return handlers.get(name);
+      },
+    };
+  }
+
+  function fakeSinkFs() {
+    const written: Buffer[] = [];
+    return {
+      written,
+      seams: {
+        mkdir: () => undefined,
+        open: () => 1,
+        write: (_fd: number, buffer: Buffer) => {
+          written.push(Buffer.from(buffer));
+          return buffer.length;
+        },
+        close: () => undefined,
+        rename: () => undefined,
+        remove: () => undefined,
+      },
+    };
+  }
+
+  it('binds the guard and the chunk sink in one install, exactly like both capture paths use it (AC1)', async () => {
+    const pipe = fakePipePage();
+    const fsSeams = fakeSinkFs();
+    const outputPath = '/out/clip.webm';
+    const recordedPayloads: string[] = [];
+    const diagnostics = { recordChunk: (base64: string) => recordedPayloads.push(base64) };
+
+    const recording = createRecordingPipeline({
+      page: pipe.page as never,
+      outputPath,
+      diagnostics,
+      sinkOptions: fsSeams.seams as never,
+    });
+
+    expect(recording.isInstalled()).toBe(false);
+    await recording.install();
+    expect(recording.isInstalled()).toBe(true);
+
+    // Exactly one page-side retention guard, installed with the single-sourced
+    // constants (payload guard, AC1/AC4): budget bytes and the per-message cap
+    // the page never slices at a size the sink would reject.
+    expect(pipe.initScripts).toHaveLength(1);
+    expect(pipe.initScripts[0].script).toBe(installRecorderChunkRetention);
+    expect(pipe.initScripts[0].arg).toEqual({
+      budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
+      maxPayloadBytes: MAX_CAPTURE_CHUNK_BYTES,
+    });
+
+    // Exactly one chunk binding call site, under the shared binding name.
+    expect(pipe.boundNames).toEqual([RECORDING_CHUNK_BINDING]);
+
+    // A second install is a no-op: no double binding and no second guard.
+    await recording.install();
+    expect(pipe.initScripts).toHaveLength(1);
+    expect(pipe.boundNames).toEqual([RECORDING_CHUNK_BINDING]);
+
+    // The bound handler records the payload for diagnostics and appends it to
+    // the sink — the single decode/append path, byte-identical.
+    const chunk = Buffer.from('recorded video bytes from the page');
+    const base64 = chunk.toString('base64');
+    const handler = pipe.handlerFor(RECORDING_CHUNK_BINDING)!;
+    handler(base64);
+
+    expect(recordedPayloads).toEqual([base64]);
+    expect(recording.stats().bytesWritten).toBe(chunk.length);
+    expect(Buffer.concat(fsSeams.written)).toEqual(chunk);
+
+    recording.close();
+  });
+
+  it('provides the probe source (size/paths) and delegates finalise to the sink (AC1)', async () => {
+    const pipe = fakePipePage();
+    const fsSeams = fakeSinkFs();
+    const outputPath = '/out/clip.webm';
+    const recording = createRecordingPipeline({
+      page: pipe.page as never,
+      outputPath,
+      sinkOptions: fsSeams.seams as never,
+    });
+    await recording.install();
+    const chunk = Buffer.from('probe sees the streamed size');
+    const handler = pipe.handlerFor(RECORDING_CHUNK_BINDING)!;
+    handler(chunk.toString('base64'));
+
+    const source = recording.probeSource({ baseUrl: 'http://localhost:4173' });
+    expect(source.bytesAvailable()).toBe(chunk.length);
+    expect(source.outputPath).toBe(outputPath);
+    expect(source.partialPath).toBe('/out/clip.partial.webm');
+    // The streamed-file probe needs the dev-server base URL the file is
+    // served from; both capture paths pass it through here.
+    expect(source.baseUrl).toBe('http://localhost:4173');
+
+    // finalise delegates to the shared sink (rename policy stays in the sink).
+    const outcome = recording.finalise({ success: true });
+    expect(outcome.finalised).toBe(true);
+    expect(outcome.bytesWritten).toBe(chunk.length);
+
+    // Without a base URL the probe source is still complete for the in-page
+    // probe source selection (no baseUrl key at all).
+    const noBase = recording.probeSource();
+    expect(noBase.bytesAvailable()).toBe(chunk.length);
+    expect('baseUrl' in noBase).toBe(false);
+
+    recording.close();
+  });
+
+  it('rejects pages without the Playwright contract it depends on', () => {
+    const fsSeams = fakeSinkFs();
+    expect(() =>
+      createRecordingPipeline({
+        page: { addInitScript: async () => undefined } as never,
+        outputPath: '/out/clip.webm',
+        sinkOptions: fsSeams.seams as never,
+      }),
+    ).toThrow(/exposeFunction/);
+  });
+
+  /**
+   * The shapes that must not reappear outside the shared pipeline. Each one is
+   * a piece of the duplicated plumbing this item removed, so a match means a
+   * second copy of the recording path has crept back (parent AC2).
+   */
+  const DUPLICATION_PATTERNS: Array<{ what: string; pattern: RegExp }> = [
+    {
+      what: 'a second __aiHellCaptureChunk binding call site',
+      pattern: /exposeFunction\(\s*['"]__aiHellCaptureChunk['"]/g,
+    },
+    { what: 'an in-memory concat of recorder chunks', pattern: /Buffer\.concat\(/g },
+    { what: 'a second bounded chunk sink', pattern: /createChunkSink\(/g },
+    { what: 'a second decode/append call', pattern: /\.appendBase64\(/g },
+    {
+      what: 'a direct page-side retention install',
+      // Both call styles (`addInitScript(installRecorderChunkRetention, …)` and
+      // a direct call) reference the installer followed by `,` or `)`; a prose
+      // mention inside a comment does not.
+      pattern: /installRecorderChunkRetention\s*[,)]/g,
+    },
+  ];
+
+  it('keeps the chunk binding and decode/append write path out of capture-gameplay.mjs (AC2 guard)', () => {
+    const gameplay = readFileSync(
+      new URL('./capture-gameplay.mjs', import.meta.url),
+      'utf8',
+    );
+    const pipeline = readFileSync(
+      new URL('./capture-recording-pipeline.mjs', import.meta.url),
+      'utf8',
+    );
+
+    // The duplicated plumbing is gone: no `exposeFunction` binding, no second
+    // sink construction, no second decode/append call, no in-memory
+    // `Buffer.concat` of recorder chunks, no direct retention install.
+    for (const { what, pattern } of DUPLICATION_PATTERNS) {
+      expect(gameplay.match(pattern) ?? [], `capture-gameplay.mjs must not hold ${what}`).toHaveLength(0);
+    }
+
+    // The one binding call site and the one decode/append path live in the
+    // shared pipeline module (single-source rule).
+    expect(pipeline.match(/exposeFunction\(\s*RECORDING_CHUNK_BINDING/g) ?? []).toHaveLength(1);
+    expect(pipeline.match(/sink\.appendBase64\(/g) ?? []).toHaveLength(1);
+  });
+
+  it('the duplication guard bites on the shape this item removed (AC2 self-check)', () => {
+    // Representative of the plumbing that existed twice before the shared
+    // pipeline (a binding call site, a sink, an in-memory concatenation and a
+    // guard reinstall). A guard that cannot fail is worse than no guard, so
+    // each pattern must still match the removed shape.
+    const removedShape = [
+      "await page.exposeFunction('__aiHellCaptureChunk', (base64) => {",
+      '  sink.appendBase64(base64);',
+      '});',
+      'const duplicateSink = createChunkSink({ outputPath });',
+      'await page.addInitScript(installRecorderChunkRetention, {',
+      '  budgetBytes: CAPTURE_PROBE_PREFIX_BUDGET_BYTES,',
+      '});',
+      'const joined = Buffer.concat(chunks);',
+    ].join('\n');
+
+    for (const { what, pattern } of DUPLICATION_PATTERNS) {
+      expect(removedShape.match(pattern) ?? [], `the guard must still detect ${what}`).not.toHaveLength(0);
+    }
+  });
+
+  it('has exactly one pipeline construction per capture path (AC1/AC2)', () => {
+    const source = readFileSync(
+      new URL('./capture-gameplay.mjs', import.meta.url),
+      'utf8',
+    );
+    const clipSlice = source.slice(
+      source.indexOf('function captureClip('),
+      source.indexOf('async function captureScenes('),
+    );
+    const scenesSlice = source.slice(source.indexOf('async function captureScenes('));
+
+    // Each path constructs the shared pipeline exactly once — a third copy is
+    // a regression the guard must fail.
+    expect(clipSlice.match(/createRecordingPipeline\(/g) ?? []).toHaveLength(1);
+    expect(scenesSlice.match(/createRecordingPipeline\(/g) ?? []).toHaveLength(1);
+    expect(source.match(/createRecordingPipeline\(/g) ?? []).toHaveLength(2);
+  });
+});
+
+describe('driveSceneSequence forwards scene setups (AH-0MVNW8UCZ004CY0R)', () => {
+  const setup = {
+    startWave: 1,
+    player: { weapons: ['spread'], timedWeapons: [] },
+    powerUps: {},
+    seed: 7,
+  };
+  const plan = buildScenePlan([
+    { target: 'GymPlayer', playMs: 10, captureMs: 10, label: null },
+    { target: 'GymPlayer', playMs: 10, captureMs: 10, label: null, setup },
+  ]);
+
+  it('passes each entry\'s setup to startScene alongside its key', async () => {
+    const calls: Array<{ key: string; setup: unknown }> = [];
+
+    await driveSceneSequence({
+      plan,
+      startScene: async (key, sceneSetup) => {
+        calls.push({ key, setup: sceneSetup });
+      },
+      fade: async () => {},
+      wait: async () => {},
+    });
+
+    expect(calls).toEqual([
+      { key: 'GymPlayer', setup: undefined },
+      { key: 'GymPlayer', setup },
+    ]);
   });
 });

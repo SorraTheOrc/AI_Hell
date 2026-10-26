@@ -1277,7 +1277,7 @@ describe('GymWeapons — AOE weapon demonstration (F6 AC1/AC3)', () => {
   });
 });
 
-describe('GymWeapons — wave-laser piercing demonstration (AH-0MV1BIUSJ0090W92)', () => {
+describe('GymWeapons — wave-laser damage-budget demonstration (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -1290,7 +1290,7 @@ describe('GymWeapons — wave-laser piercing demonstration (AH-0MV1BIUSJ0090W92)
     return booted!.scene as GymWeapons;
   }
 
-  it('a wave-laser beam passes through two aligned practice targets', async () => {
+  it('a budget-2 wave-laser beam destroys two aligned 1-HP practice targets and is consumed', async () => {
     const scene = await bootAoe();
     const player = scene.getPlayer()!;
     // Park the ship away from the target line so its auto-fire is inert.
@@ -1308,18 +1308,21 @@ describe('GymWeapons — wave-laser piercing demonstration (AH-0MV1BIUSJ0090W92)
       WEAPON_CATALOGUE.wave_laser.bulletColor,
       3,
       3,
-      WEAPON_CATALOGUE.wave_laser.piercing,
+      WEAPON_CATALOGUE.wave_laser.maxHitPoints!,
     );
 
     for (let i = 0; i < 8; i++) scene.tick(0.1);
 
-    // The beam damaged both aligned targets and survived each of them.
+    // Each practice target is a single-hit entity (1 HP), so the level-0
+    // budget of 2 destroys both and is spent exactly on the second.
+    expect(WEAPON_CATALOGUE.wave_laser.maxHitPoints).toBe(2);
     expect(targets[1].alive).toBe(false);
     expect(targets[2].alive).toBe(false);
-    expect(bullet.piercing).toBeGreaterThan(0);
+    expect(bullet.maxHitPoints).toBe(0);
+    expect(scene.getBullets()).not.toContain(bullet);
   });
 
-  it('an ordinary (non-piercing) bullet stops at the first target', async () => {
+  it('an ordinary (non-budget) bullet stops at the first target', async () => {
     const scene = await bootAoe();
     const player = scene.getPlayer()!;
     player.setPosition(50, 50);
@@ -1337,6 +1340,7 @@ describe('GymWeapons — wave-laser piercing demonstration (AH-0MV1BIUSJ0090W92)
     expect(scene.getBullets()).not.toContain(bullet);
   });
 });
+
 
 describe('GymWeapons — ricochet edge-bounce demonstration (AH-0MV1BIV5L005NJAI)', () => {
   let booted: BootedGame | null = null;
