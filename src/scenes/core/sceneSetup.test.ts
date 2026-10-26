@@ -22,6 +22,7 @@ import {
 import {
   DEFAULT_GYM_LEVEL_WEAPONS,
   applySceneSetup,
+  resolveSetupSeed,
   type SceneSetupPlayer,
 } from './sceneSetup';
 
@@ -125,5 +126,25 @@ describe('applySceneSetup (AH-0MVNW8VNN004FFK1)', () => {
     expect([...DEFAULT_GYM_LEVEL_WEAPONS]).toEqual([
       ...DEFAULT_SCENE_SETUP_PLAYER_WEAPONS,
     ]);
+  });
+});
+
+describe('resolveSetupSeed (AH-0MVNW90FB003H3KM)', () => {
+  it('returns a valid 32-bit seed unchanged', () => {
+    expect(resolveSetupSeed({ seed: 0 })).toBe(0);
+    expect(resolveSetupSeed({ seed: 123456 })).toBe(123456);
+    expect(resolveSetupSeed({ seed: 0xffffffff })).toBe(0xffffffff);
+  });
+
+  it('returns null when no seed is supplied (unchanged behaviour)', () => {
+    expect(resolveSetupSeed(null)).toBeNull();
+    expect(resolveSetupSeed(undefined)).toBeNull();
+    expect(resolveSetupSeed({})).toBeNull();
+  });
+
+  it('rejects invalid seeds rather than re-seeding to a surprising value', () => {
+    expect(resolveSetupSeed({ seed: -1 })).toBeNull();
+    expect(resolveSetupSeed({ seed: 1.5 })).toBeNull();
+    expect(resolveSetupSeed({ seed: 0x1_0000_0000 })).toBeNull();
   });
 });

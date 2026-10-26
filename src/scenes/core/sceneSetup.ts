@@ -58,6 +58,39 @@ export interface SceneSetupState {
     timedWeapons?: readonly string[];
   };
   powerUps?: Readonly<Record<string, number>>;
+  /**
+   * 32-bit determinism seed (AH-0MVNW90FB003H3KM). When present, the scene
+   * seeds its content RNGs from it so the same config reproduces the same
+   * enemy placement, minerals and drop cadence.
+   */
+  seed?: number;
+}
+
+/**
+ * Returns the deterministic seed a setup supplies, or `null` when it supplies
+ * none (or an invalid one).
+ *
+ * Pure and total so a scene can decide in one place whether to re-seed its
+ * content RNGs. A `null` result means "leave the scene's historical
+ * `Math.random` default in place", which is what keeps a setup-less run
+ * byte-for-byte behaviour-compatible.
+ *
+ * @param setup — a normalised (or raw) setup.
+ * @returns a 32-bit unsigned integer seed, or `null`.
+ */
+export function resolveSetupSeed(
+  setup: SceneSetupState | null | undefined,
+): number | null {
+  const seed = setup?.seed;
+  if (
+    typeof seed !== 'number'
+    || !Number.isInteger(seed)
+    || seed < 0
+    || seed > 0xffffffff
+  ) {
+    return null;
+  }
+  return seed >>> 0;
 }
 
 /**

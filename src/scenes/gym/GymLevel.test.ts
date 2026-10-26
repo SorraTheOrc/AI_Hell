@@ -1013,3 +1013,55 @@ describe('GymLevel — capture setup application (AH-0MVNW8VNN004FFK1)', () => {
     expect(scene.getPlayer()!.getActiveWeapons()).toContain('rapid');
   });
 });
+
+describe('GymLevel — seeded setup determinism (AH-0MVNW90FB003H3KM)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function bootWith(data: GymLevelData): Promise<GymLevel> {
+    booted = await bootScene([GymLevel]);
+    const manager = booted.game.scene;
+    manager.start('GymLevel', data);
+    await advanceGame(booted.game, 200);
+    return manager.getScene('GymLevel') as GymLevel;
+  }
+
+  /** Rounded mineral positions — the content axis a seed must reproduce. */
+  function mineralPositions(scene: GymLevel): Array<[number, number]> {
+    return scene
+      .getMinerals()
+      .map((m) => [Math.round(m.x), Math.round(m.y)] as [number, number]);
+  }
+
+  const level = () => makeLevel('Seeded', [scoutWave(1)]);
+
+  it('produces identical mineral content for the same seed', async () => {
+    const first = mineralPositions(await bootWith({ level: level(), seed: 123456 }));
+    booted?.game.destroy(true);
+    booted = null;
+    const second = mineralPositions(await bootWith({ level: level(), seed: 123456 }));
+
+    expect(first.length).toBeGreaterThan(0);
+    expect(second).toEqual(first);
+  });
+
+  it('produces different content for different seeds (at least one axis)', async () => {
+    const a = mineralPositions(await bootWith({ level: level(), seed: 1 }));
+    booted?.game.destroy(true);
+    booted = null;
+    const b = mineralPositions(await bootWith({ level: level(), seed: 2 }));
+
+    expect(a).not.toEqual(b);
+  });
+});

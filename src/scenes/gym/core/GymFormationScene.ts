@@ -151,7 +151,8 @@ import {
   type ChoiceStrategy,
 } from '../../../powerups/choice';
 import { type WeaponId } from '../../../utils/weapons';
-import { applySceneSetup, type SceneSetupState } from '../../core/sceneSetup';
+import { applySceneSetup, resolveSetupSeed, type SceneSetupState } from '../../core/sceneSetup';
+import { createSeededRng } from '../../../core/rng';
 import {
   WORMHOLE_OPEN_DURATION,
   WormholeController,
@@ -670,6 +671,11 @@ export class GymFormationScene<
    */
   init(data?: SceneSetupState | null): void {
     this.pendingSetup = data ?? null;
+    // Deterministic content (AH-0MVNW90FB003H3KM): a setup seed makes the
+    // mineral field, drop cadence and random picks reproducible. A setup-less
+    // start leaves the historical `Math.random` default untouched.
+    const seed = resolveSetupSeed(data ?? null);
+    if (seed !== null) this._sceneRng = createSeededRng(seed);
   }
 
   create(): void {
@@ -1256,8 +1262,10 @@ export class GymFormationScene<
   seedMinerals(count: number): Mineral[] {
     const seeded: Mineral[] = [];
     for (let i = 0; i < count; i++) {
-      const x = 20 + Math.random() * (GAME_WIDTH - 40);
-      const y = 20 + Math.random() * (GAME_HEIGHT - 120);
+      // Drawn from the scene RNG so a setup seed reproduces the field exactly
+      // (AH-0MVNW90FB003H3KM). Defaults to `Math.random` when unseeded.
+      const x = 20 + this._sceneRng() * (GAME_WIDTH - 40);
+      const y = 20 + this._sceneRng() * (GAME_HEIGHT - 120);
       const mineral = new Mineral(this, { x, y });
       this.minerals.push(mineral);
       seeded.push(mineral);

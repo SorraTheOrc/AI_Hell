@@ -156,8 +156,10 @@ import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 import {
   applySceneSetup,
   DEFAULT_GYM_LEVEL_WEAPONS,
+  resolveSetupSeed,
   type SceneSetupState,
 } from '../core/sceneSetup';
+import { createSeededRng } from '../../core/rng';
 import {
   WORMHOLE_OPEN_DURATION,
   WormholeController,
@@ -192,6 +194,12 @@ export interface GymLevelData {
   player?: SceneSetupState['player'];
   /** Optional power-up id → permanent level (capture setups). */
   powerUps?: SceneSetupState['powerUps'];
+  /**
+   * Optional 32-bit determinism seed (capture setups, AH-0MVNW90FB003H3KM).
+   * When present, the supply and asteroid RNGs are seeded from it so a config
+   * reproduces the same minerals/drops/asteroid plan.
+   */
+  seed?: number;
 }
 
 /** Scene key of the level gym (registered by the gym index glob). */
@@ -544,6 +552,15 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.pendingSetup = data && (data.player || data.powerUps)
       ? { player: data.player, powerUps: data.powerUps }
       : null;
+    // Deterministic content (AH-0MVNW90FB003H3KM): a setup seed seeds the
+    // shared supply + hazard streams (offset so each is its own stream),
+    // matching GymBotTuning's existing seeded-start shape. A setup-less start
+    // keeps the historical `Math.random` default.
+    const seed = resolveSetupSeed(data ?? null);
+    if (seed !== null) {
+      this.supplyRng = createSeededRng(seed);
+      this.hazardRng = createSeededRng(seed + 1);
+    }
 
     const level = data?.level;
     if (!level || !Array.isArray(level.waves) || level.waves.length === 0) {
