@@ -206,6 +206,18 @@ export function normaliseSceneSetup(rawSetup?: unknown, target?: string): SceneS
 /** Validates and normalises a raw setup for `target`. */
 export function parseSceneSetup(rawSetup: unknown, target: string, at?: string): SceneSetup;
 
+/**
+ * Resolves a scene entry (or bare key) to a capturable key plus its normalised
+ * setup. Absent setup keeps today's watchable-only behaviour; present setup
+ * makes a parameterised target capturable when its required parameter is
+ * supplied and is rejected on a target that cannot consume it. Shared by the
+ * CLI's pre-boot validation and the in-page director.
+ */
+export function resolveWatchableSceneEntry(
+  entry: unknown,
+  at?: string,
+): { key: string; setup: SceneSetup | null };
+
 /** The parsed scene-list config object. */
 export interface SceneConfig {
   readonly scenes: SceneSpec[];
@@ -220,6 +232,8 @@ export interface ScenePlanEntry {
   startMs: number;
   /** Offset in the output timeline where this scene's capture window ends. */
   endMs: number;
+  /** Normalised setup, present only when the scene supplied one. */
+  setup?: SceneSetup;
 }
 
 /** The `--json` payload shape for a multi-scene capture. */

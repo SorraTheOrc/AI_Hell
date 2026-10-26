@@ -27,6 +27,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  DEFAULT_SCENE_SETUP_SEED,
+  DEFAULT_SCENE_SETUP_START_WAVE,
   PARAMETERISED_GYM_SCENE_KEYS,
   SCENE_CONFIG_ERROR_CODES,
   SceneConfigError,
@@ -34,6 +36,7 @@ import {
 } from '../../scripts/capture-scenes.mjs';
 import {
   registerCaptureDirector,
+  resolveSceneEntry,
   resolveSceneKey,
   startScene,
   type CaptureDirectorHandle,
@@ -69,6 +72,7 @@ function fakeSceneManager(initialActive: string[] = []): {
   manager: SceneManagerLike;
   added: Array<{ key: string; sceneClass: unknown }>;
   started: string[];
+  startedCalls: Array<{ key: string; args: unknown[] }>;
   stopped: string[];
   broughtToTop: string[];
   events: string[];
@@ -76,6 +80,7 @@ function fakeSceneManager(initialActive: string[] = []): {
 } {
   const added: Array<{ key: string; sceneClass: unknown }> = [];
   const started: string[] = [];
+  const startedCalls: Array<{ key: string; args: unknown[] }> = [];
   const stopped: string[] = [];
   const broughtToTop: string[] = [];
   const events: string[] = [];
@@ -92,8 +97,9 @@ function fakeSceneManager(initialActive: string[] = []): {
       events.push(`add:${key}`);
       return undefined;
     },
-    start: (key: string) => {
+    start: (key: string, ...args: unknown[]) => {
       started.push(key);
+      startedCalls.push({ key, args });
       registered.add(key);
       events.push(`start:${key}`);
       if (!active.includes(key)) active.push(key);
@@ -118,7 +124,7 @@ function fakeSceneManager(initialActive: string[] = []): {
       return undefined;
     },
   };
-  return { manager, added, started, stopped, broughtToTop, events, active };
+  return { manager, added, started, startedCalls, stopped, broughtToTop, events, active };
 }
 
 /** A fake game wrapping a fake scene manager. */
@@ -402,5 +408,99 @@ describe('startScene — exactly one running scene (AH-0MVNWJ5FH006QD8V, scene s
     expect(started).toEqual([]);
     expect(stopped).toEqual([]);
     expect(broughtToTop).toEqual([]);
+  });
+});
+
+describe('startScene — setup pass-through (AH-0MVNW8UCZ004CY0R)', () => {
+  const levelSetup = {
+    level: {
+      level: 5,
+      name: 'Predictable Death',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'diver',
+              formation: 'diver',
+              count: 3,
+              spacingX: 26,
+              spacingY: 22,
+              startX: 240,
+              startY: 270,
+            },
+          ],
+          shootEnabled: true,
+        },
+      ],
+    },
+  };
+
+  it('forwards the normalised setup as scene.start(key, setup), in-page', () => {
+    const { manager, startedCalls } = fakeSceneManager(['PlayScene']);
+
+    startScene(fakeGame(manager), 'GymLevel', levelSetup);
+
+    expect(startedCalls).toHaveLength(1);
+    expect(startedCalls[0].key).toBe('GymLevel');
+    const forwarded = startedCalls[0].args[0] as Record<string, unknown>;
+    // The setup is normalised before it reaches Phaser: defaults are filled.
+    expect((forwarded.level as { level: number }).level).toBe(5);
+    expect(forwarded.startWave).toBe(DEFAULT_SCENE_SETUP_START_WAVE);
+    expect(forwarded.seed).toBe(DEFAULT_SCENE_SETUP_SEED);
+    // No navigation/reload: the previous scene is stopped, not navigated away.
+    expect(manager).toBeDefined();
+  });
+
+  it('starts a watchable scene with no setup argument (today\'s behaviour preserved)', () => {
+    const { manager, startedCalls } = fakeSceneManager();
+    startScene(fakeGame(manager), 'GymPlayer');
+    expect(startedCalls[0]).toEqual({ key: 'GymPlayer', args: [] });
+  });
+
+  it('rejects GymLevel without a setup, before touching the manager', () => {
+    const { manager, added, started, stopped, broughtToTop } = fakeSceneManager();
+    expectSceneError(
+      () => startScene(fakeGame(manager), 'GymLevel'),
+      ERROR.unsupportedTarget,
+    );
+    expect(added).toEqual([]);
+    expect(started).toEqual([]);
+    expect(stopped).toEqual([]);
+    expect(broughtToTop).toEqual([]);
+  });
+
+  it('accepts GymFodderEnemies with an enemy setup and rejects it without one', () => {
+    const { manager, started, startedCalls, stopped, broughtToTop } = fakeSceneManager();
+    expectSceneError(
+      () => startScene(fakeGame(manager), 'GymFodderEnemies', {}),
+      ERROR.missingSetupParameter,
+    );
+    expect(started).toEqual([]);
+    expect(stopped).toEqual([]);
+    expect(broughtToTop).toEqual([]);
+
+    startScene(fakeGame(manager), 'GymFodderEnemies', { enemy: 'grunt' });
+    expect(startedCalls[0].key).toBe('GymFodderEnemies');
+    expect((startedCalls[0].args[0] as { enemy: string }).enemy).toBe('grunt');
+  });
+
+  it('rejects a setup on a target that cannot consume it, before touching the manager', () => {
+    const { manager, started, stopped } = fakeSceneManager();
+    expectSceneError(
+      () => startScene(fakeGame(manager), 'GymCurveSequencer', { player: {} }),
+      ERROR.setupNotSupported,
+    );
+    expect(started).toEqual([]);
+    expect(stopped).toEqual([]);
+  });
+
+  it('resolveSceneEntry returns the resolved key plus normalised setup', () => {
+    const entry = resolveSceneEntry(
+      'GymLevel',
+      ['GymLevel'],
+      levelSetup,
+    );
+    expect(entry.key).toBe('GymLevel');
+    expect(entry.setup?.startWave).toBe(DEFAULT_SCENE_SETUP_START_WAVE);
   });
 });

@@ -769,6 +769,38 @@ export function parseSceneSetup(rawSetup, target, at = 'setup') {
 }
 
 /**
+ * Resolves a scene entry (or bare key) to a capturable key plus its normalised
+ * setup — the **single source of truth** both the CLI's pre-boot validation and
+ * the in-page director use, so the two can never disagree.
+ *
+ * - Absent setup ⇒ today's behaviour: the key must be watchable (the
+ *   parameterised gyms are rejected with `unsupported-target`).
+ * - Present setup ⇒ the key must be a known scene key that can consume it; the
+ *   setup is validated and normalised (defaults filled). A parameterised target
+ *   becomes capturable **only** with the setup that carries its required
+ *   parameter; a setup on a target that cannot consume it is rejected.
+ *
+ * @param {unknown} entry — `{ target, setup? }` or a bare target key.
+ * @param {string} [at] — dotted path used in error messages.
+ * @returns {{ key: string, setup: object | null }}
+ */
+export function resolveWatchableSceneEntry(entry, at = 'setup') {
+  const isEntry = isPlainObject(entry);
+  const target = isEntry ? entry.target : entry;
+  const rawSetup = isEntry ? entry.setup : undefined;
+  if (rawSetup === undefined || rawSetup === null) {
+    return { key: resolveWatchableSceneKey(target), setup: null };
+  }
+  if (typeof target !== 'string' || !isKnownSceneKey(target)) {
+    throw new SceneConfigError(
+      CODE.unknownTarget,
+      `Unknown scene target ${JSON.stringify(target)}: not a scene key`,
+    );
+  }
+  return { key: target, setup: parseSceneSetup(rawSetup, target, at) };
+}
+
+/**
  * Parses one JSON text string, mapping a syntax error onto a typed
  * `malformed-json` error.
  *
@@ -841,20 +873,15 @@ function normaliseScene(entry, index) {
   }
 
   const hasSetup = 'setup' in entry && entry.setup !== undefined;
-  let setup;
-  if (hasSetup) {
-    if (!isKnownSceneKey(entry.target)) {
-      throw new SceneConfigError(
-        CODE.unknownTarget,
-        `Unknown scene target ${JSON.stringify(entry.target)}: not a scene key`,
-      );
-    }
-    setup = parseSceneSetup(entry.setup, entry.target, `${at}.setup`);
-  } else {
-    // No setup: today's behaviour, including rejecting the parameterised gyms.
-    resolveWatchableSceneKey(entry.target);
-  }
-  const target = entry.target;
+  // One shared resolver keeps the parser and the director in lock-step: a
+  // parameterised target is capturable only with a valid setup, and a setup on
+  // a target that cannot consume it is rejected rather than ignored.
+  const { key: target, setup } = resolveWatchableSceneEntry(
+    hasSetup
+      ? { target: entry.target, setup: entry.setup }
+      : { target: entry.target },
+    `${at}.setup`,
+  );
 
   const playMs = requireDurationMs(entry.playMs, `${at}.playMs`);
   const captureMs = requireDurationMs(entry.captureMs, `${at}.captureMs`);
@@ -871,7 +898,7 @@ function normaliseScene(entry, index) {
   }
 
   const normalised = { target, playMs, captureMs, label };
-  if (hasSetup) normalised.setup = setup;
+  if (setup !== null) normalised.setup = setup;
   return normalised;
 }
 
@@ -1009,6 +1036,7 @@ export function buildScenePlan(scenes) {
       captureMs: scene.captureMs,
       startMs,
       endMs,
+      ...(scene.setup === undefined ? {} : { setup: scene.setup }),
     });
     cursorMs = endMs + 2 * SCENE_FADE_MS;
   }
@@ -1221,6 +1249,7 @@ export function buildScenesPayload(plan, options = {}) {
     captureMs: entry.captureMs,
     startMs: entry.startMs,
     endMs: entry.endMs,
+    ...(entry.setup === undefined ? {} : { setup: entry.setup }),
   }));
 
   return {

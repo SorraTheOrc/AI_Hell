@@ -1122,8 +1122,8 @@ export function loadScenesForCapture(options = {}, readFile = readFileSync) {
  * its window begins.
  *
  * @param {{
- *   plan: ReadonlyArray<{ target: string, playMs: number, captureMs: number, startMs: number, endMs: number }>,
- *   startScene: (key: string) => Promise<unknown>,
+ *   plan: ReadonlyArray<{ target: string, playMs: number, captureMs: number, startMs: number, endMs: number, setup?: object }>,
+ *   startScene: (key: string, setup?: object) => Promise<unknown>,
  *   fade: (alpha: number, durationMs: number) => Promise<unknown>,
  *   wait: (ms: number) => Promise<unknown>,
  *   fadeMs?: number,
@@ -1153,7 +1153,7 @@ export async function driveSceneSequence({
   if (typeof onScene === 'function') {
     onScene({ index: 1, total: plan.length, scene: plan[0] });
   }
-  await startScene(plan[0].target);
+  await startScene(plan[0].target, plan[0].setup);
 
   for (let i = 0; i < plan.length; i += 1) {
     const scene = plan[i];
@@ -1165,7 +1165,7 @@ export async function driveSceneSequence({
     // scene behind the black, fade from black over fadeMs.
     await fade(1, fadeMs);
     const next = plan[i + 1];
-    await startScene(next.target);
+    await startScene(next.target, next.setup);
     await fade(0, fadeMs);
     if (typeof onScene === 'function') {
       onScene({ index: i + 2, total: plan.length, scene: next });
@@ -2389,10 +2389,11 @@ async function captureScenes({
 
     await driveSceneSequence({
       plan,
-      startScene: (key) =>
+      startScene: (key, setup) =>
         page.evaluate(
-          (sceneKey) => window.__aiHellCaptureDirector.start(sceneKey),
-          key,
+          ([sceneKey, sceneSetup]) =>
+            window.__aiHellCaptureDirector.start(sceneKey, sceneSetup),
+          [key, setup],
         ),
       fade: (alpha, durationMs) =>
         page.evaluate(

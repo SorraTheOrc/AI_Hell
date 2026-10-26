@@ -74,6 +74,7 @@ import {
   parseSceneConfig,
   parseSceneSetup,
   requiredSceneSetupFieldsFor,
+  resolveWatchableSceneEntry,
   resolveWatchableSceneKey,
   sceneSetupFieldsFor,
   validateSceneSetup,
@@ -927,5 +928,94 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
     expect(parseSceneSetup(raw, 'GymLevel')).toEqual(
       normaliseSceneSetup(raw, 'GymLevel'),
     );
+  });
+});
+
+describe('resolveWatchableSceneEntry — shared CLI/director resolution (AH-0MVNW8UCZ004CY0R)', () => {
+  const levelSetup = {
+    level: {
+      level: 3,
+      name: 'The Core',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 4,
+              spacingX: 26,
+              spacingY: 22,
+              startX: 240,
+              startY: 270,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    },
+  };
+
+  it('resolves a watchable key without a setup exactly as before', () => {
+    expect(resolveWatchableSceneEntry({ target: 'GymPlayer' })).toEqual({
+      key: 'GymPlayer',
+      setup: null,
+    });
+    expect(resolveWatchableSceneEntry('GymWeapons')).toEqual({
+      key: 'GymWeapons',
+      setup: null,
+    });
+  });
+
+  it('rejects a parameterised target without a setup (CLI + director agree)', () => {
+    for (const target of PARAMETERISED_GYM_SCENE_KEYS) {
+      expectConfigError(
+        () => resolveWatchableSceneEntry({ target }),
+        ERROR.unsupportedTarget,
+      );
+    }
+  });
+
+  it('accepts GymLevel with a valid setup, returning the normalised setup', () => {
+    const { key, setup } = resolveWatchableSceneEntry({
+      target: 'GymLevel',
+      setup: levelSetup,
+    });
+    expect(key).toBe('GymLevel');
+    expect(setup?.level?.level).toBe(3);
+    expect(setup?.startWave).toBe(DEFAULT_SCENE_SETUP_START_WAVE);
+    expect(setup?.seed).toBe(DEFAULT_SCENE_SETUP_SEED);
+  });
+
+  it('accepts GymFodderEnemies only with its enemy key', () => {
+    expectConfigError(
+      () => resolveWatchableSceneEntry({ target: 'GymFodderEnemies', setup: {} }),
+      ERROR.missingSetupParameter,
+    );
+    expect(
+      resolveWatchableSceneEntry({ target: 'GymFodderEnemies', setup: { enemy: 'grunt' } }).setup,
+    ).toMatchObject({ enemy: 'grunt' });
+  });
+
+  it('rejects a setup a target cannot consume', () => {
+    expectConfigError(
+      () => resolveWatchableSceneEntry({ target: 'GymCurveSequencer', setup: { player: {} } }),
+      ERROR.setupNotSupported,
+    );
+  });
+
+  it('threads the normalised setup through the plan and the --json payload', () => {
+    const parsed = parseSceneConfig({
+      scenes: [
+        { target: 'GymPlayer', playMs: 1000, captureMs: 2000 },
+        { target: 'GymLevel', playMs: 1000, captureMs: 2000, setup: levelSetup },
+      ],
+    });
+    const plan = buildScenePlan(parsed);
+    expect(plan[0]).not.toHaveProperty('setup');
+    expect(plan[1].setup?.level?.level).toBe(3);
+
+    const payload = buildScenesPayload(plan, { outputPath: 'out.webm' });
+    expect(payload.scenes[0]).not.toHaveProperty('setup');
+    expect(payload.scenes[1].setup).toEqual(parsed[1].setup);
   });
 });

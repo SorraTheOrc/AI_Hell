@@ -4230,3 +4230,34 @@ describe('shared recording pipeline (AH-0MVNT2AFI00639N3)', () => {
     expect(source.match(/createRecordingPipeline\(/g) ?? []).toHaveLength(2);
   });
 });
+
+describe('driveSceneSequence forwards scene setups (AH-0MVNW8UCZ004CY0R)', () => {
+  const setup = {
+    startWave: 1,
+    player: { weapons: ['spread'], timedWeapons: [] },
+    powerUps: {},
+    seed: 7,
+  };
+  const plan = buildScenePlan([
+    { target: 'GymPlayer', playMs: 10, captureMs: 10, label: null },
+    { target: 'GymPlayer', playMs: 10, captureMs: 10, label: null, setup },
+  ]);
+
+  it('passes each entry\'s setup to startScene alongside its key', async () => {
+    const calls: Array<{ key: string; setup: unknown }> = [];
+
+    await driveSceneSequence({
+      plan,
+      startScene: async (key, sceneSetup) => {
+        calls.push({ key, setup: sceneSetup });
+      },
+      fade: async () => {},
+      wait: async () => {},
+    });
+
+    expect(calls).toEqual([
+      { key: 'GymPlayer', setup: undefined },
+      { key: 'GymPlayer', setup },
+    ]);
+  });
+});

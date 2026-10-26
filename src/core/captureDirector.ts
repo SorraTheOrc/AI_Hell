@@ -44,8 +44,9 @@
 import {
   SCENE_CONFIG_ERROR_CODES,
   SceneConfigError,
-  resolveWatchableSceneKey,
+  resolveWatchableSceneEntry,
 } from '../../scripts/capture-scenes.mjs';
+import type { SceneSetup } from '../../scripts/capture-scenes.mjs';
 import {
   GymSceneEntry,
   discoverGymScenes,
@@ -61,16 +62,18 @@ export function isCaptureDirectorEnabled(): boolean {
 /** The page-side handle a running dev build exposes to the capture tool. */
 export interface CaptureDirectorHandle {
   /**
-   * Starts the watchable gym scene `key` inside the already-running page via
-   * the Phaser scene manager. No navigation, no reload — one continuously
-   * running `MediaRecorder` spans every scene.
+   * Starts the scene `key` inside the already-running page via the Phaser
+   * scene manager, forwarding `setup` as the scene's launch data. No
+   * navigation, no reload — one continuously running `MediaRecorder` spans
+   * every scene.
    *
-   * Throws a typed {@link SceneConfigError} for a non-string, unknown, blank
-   * or parameterised key (e.g. `GymFodderEnemies`, `GymLevel`) rather than
-   * silently doing nothing, so a capture script sees a hard failure instead
-   * of a blank recording.
+   * `setup` makes the parameterised gyms (`GymLevel`, `GymFodderEnemies`)
+   * capturable when it supplies their required parameter. Throws a typed
+   * {@link SceneConfigError} for a non-string, unknown, blank or
+   * parameterised-without-setup key, and for a setup a target cannot consume,
+   * rather than silently doing nothing.
    */
-  start(key: string): void;
+  start(key: string, setup?: unknown): void;
 }
 
 declare global {
@@ -86,33 +89,57 @@ declare global {
 }
 
 /**
- * Resolves a director `start(key)` request to a watchable gym scene key.
+ * Resolves a director `start(key, setup)` request to a capturable scene key
+ * plus its normalised setup.
  *
- * Pure and total: validates `key` against the shared watchable registry (the
- * single source of truth shared with the capture CLI — rejecting non-strings,
- * unknown keys and the parameterised `GymFodderEnemies`/`GymLevel` with the
- * typed error codes) **and** requires the key to be among the gym scenes
- * actually discovered on this page. A key that is in the registry but not
- * present at runtime is rejected as unknown rather than started blank.
+ * Pure and total: validates `key` against the shared resolver (the single
+ * source of truth shared with the capture CLI — rejecting non-strings,
+ * unknown keys and the parameterised `GymFodderEnemies`/`GymLevel` without a
+ * valid setup) **and** requires the key to be among the gym scenes actually
+ * discovered on this page. A key that is in the registry but not present at
+ * runtime is rejected as unknown rather than started blank.
  *
  * @param key — the requested scene key (any value; non-strings are rejected).
  * @param discoveredKeys — the gym scene keys discovered on this page (runtime
  *   truth, e.g. from {@link discoverPageGymScenes}).
- * @returns the resolved key, unchanged.
+ * @param setup — optional launch data for the target (normalised; makes a
+ *   parameterised target capturable).
+ * @returns the resolved key and its normalised setup (`null` when absent).
  */
-export function resolveSceneKey(
+export function resolveSceneEntry(
   key: unknown,
   discoveredKeys: readonly string[],
-): string {
-  const resolved = resolveWatchableSceneKey(key);
-  if (!discoveredKeys.includes(resolved)) {
+  setup?: unknown,
+): { key: string; setup: SceneSetup | null } {
+  const resolved = resolveWatchableSceneEntry(
+    setup === undefined ? { target: key } : { target: key, setup },
+  );
+  if (!discoveredKeys.includes(resolved.key)) {
     throw new SceneConfigError(
       SCENE_CONFIG_ERROR_CODES.unknownTarget,
-      `Scene key "${resolved}" is in the watchable registry but was not `
+      `Scene key "${resolved.key}" is in the watchable registry but was not `
         + 'discovered on this page; refusing to start a scene that is not loaded.',
     );
   }
   return resolved;
+}
+
+/**
+ * Resolves a director `start(key, setup)` request to a capturable scene key,
+ * discarding the normalised setup (use {@link resolveSceneEntry} when the setup
+ * is needed).
+ *
+ * @param key — the requested scene key.
+ * @param discoveredKeys — the gym scene keys discovered on this page.
+ * @param setup — optional launch data (see {@link resolveSceneEntry}).
+ * @returns the resolved key.
+ */
+export function resolveSceneKey(
+  key: unknown,
+  discoveredKeys: readonly string[],
+  setup?: unknown,
+): string {
+  return resolveSceneEntry(key, discoveredKeys, setup).key;
 }
 
 /**
@@ -182,14 +209,17 @@ export interface GameLike {
 }
 
 /**
- * Starts a watchable gym scene by key inside the already-running game.
+ * Starts a scene by key inside the already-running game, forwarding `setup` as
+ * the scene's launch data.
  *
- * Validates the key (shared registry + page discovery), registers the
- * requested gym scene's class with the game's scene manager if it is not
- * already registered (gym scenes are not in the shipped `gameConfig` scene
- * list — `GymIndex` registers them the same way), stops every *other* active
- * scene, starts the target, and brings it to the top. No navigation and no
- * reload, so a continuously running `MediaRecorder` on the page is unaffected.
+ * Resolves the request through the shared resolver (watchable key, or a
+ * parameterised key with a valid setup — the same source of truth the CLI's
+ * pre-boot validation uses), registers the requested gym scene's class with the
+ * game's scene manager if it is not already registered (gym scenes are not in
+ * the shipped `gameConfig` scene list — `GymIndex` registers them the same
+ * way), stops every *other* active scene, starts the target with the normalised
+ * setup, and brings it to the top. No navigation and no reload, so a
+ * continuously running `MediaRecorder` on the page is unaffected.
  *
  * The stop-everything-else step enforces the capture invariant **exactly one
  * scene runs and it is the visible one** (AH-0MVNWJ5FH006QD8V): it stops the
@@ -199,18 +229,24 @@ export interface GameLike {
  * explicitly rather than relying on the array order the stops leave behind.
  *
  * Throws a typed {@link SceneConfigError} for any key the shared resolver or
- * the page-discovery check rejects; a discovered key whose module exposes no
- * scene class is likewise a hard error rather than a silent blank start. Every
- * rejection happens **before** any stop/start/bring-to-top call, so an invalid
- * key leaves the running scenes untouched.
+ * the page-discovery check rejects, and for a setup the target cannot consume;
+ * a discovered key whose module exposes no scene class is likewise a hard error
+ * rather than a silent blank start. Every rejection happens **before** any
+ * stop/start/bring-to-top call, so an invalid request leaves the running scenes
+ * untouched.
  *
  * @param game — the running game whose scene manager drives the switch.
- * @param key — the requested gym scene key (see {@link resolveSceneKey}).
+ * @param key — the requested scene key (see {@link resolveSceneKey}).
+ * @param setup — optional launch data (see {@link resolveSceneKey}).
  */
-export function startScene(game: GameLike, key: unknown): void {
+export function startScene(game: GameLike, key: unknown, setup?: unknown): void {
   const discovered = discoverPageGymScenes();
   const discoveredKeys = discovered.map((entry) => entry.key);
-  const resolved = resolveSceneKey(key, discoveredKeys);
+  const { key: resolved, setup: normalisedSetup } = resolveSceneEntry(
+    key,
+    discoveredKeys,
+    setup,
+  );
 
   const manager = game.phaser.scene;
   if (!manager.getScene(resolved)) {
@@ -239,7 +275,11 @@ export function startScene(game: GameLike, key: unknown): void {
     }
   }
 
-  manager.start(resolved);
+  if (normalisedSetup === null) {
+    manager.start(resolved);
+  } else {
+    manager.start(resolved, normalisedSetup);
+  }
   manager.bringToTop(resolved);
 }
 
@@ -264,7 +304,7 @@ export function registerCaptureDirector(
   if (!isCaptureDirectorEnabled() || typeof window === 'undefined') return null;
 
   const handle: CaptureDirectorHandle = {
-    start: (key: string) => startScene(game, key),
+    start: (key: string, setup?: unknown) => startScene(game, key, setup),
   };
   window.__aiHellCaptureDirector = handle;
   return handle;

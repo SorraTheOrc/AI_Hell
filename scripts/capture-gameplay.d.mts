@@ -5,6 +5,8 @@
  * type-check the pure argument/mode helpers without booting a browser.
  */
 
+import type { SceneSetup } from './capture-scenes.mjs';
+
 export interface CaptureOptions {
   durationMs: number;
   /** True when `--duration` was passed (legacy fixed-length capture). */
@@ -117,8 +119,9 @@ export function driveSceneSequence(params: {
     captureMs: number;
     startMs: number;
     endMs: number;
+    setup?: SceneSetup;
   }[];
-  startScene: (key: string) => Promise<unknown>;
+  startScene: (key: string, setup?: SceneSetup) => Promise<unknown>;
   fade: (alpha: number, durationMs: number) => Promise<unknown>;
   wait: (ms: number) => Promise<unknown>;
   fadeMs?: number;
@@ -131,6 +134,7 @@ export function driveSceneSequence(params: {
       captureMs: number;
       startMs: number;
       endMs: number;
+      setup?: SceneSetup;
     };
   }) => void;
 }): Promise<void>;
