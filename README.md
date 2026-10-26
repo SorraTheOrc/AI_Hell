@@ -706,6 +706,10 @@ added by AH-0MUWTNPYJ0031FQE):
   and a determinism `seed` — which makes the previously parameterised
   `GymLevel` / `GymFodderEnemies` capturable and reproduces the same content
   for the same seed (AH-0MVNW7U5G003SNO6). Output is a single
+  Entries may also target the shipped game (`target: "PlayScene"`) with a
+  `seed`/`level` and a multi-wave-aware window (`minWaves`, `maxCaptureMs`), so
+  a promo shows real generated campaign gameplay mixed with gym demos
+  (AH-0MVE01EY0008QEVX). Output is a single
   `capture-output/scenes-<timestamp>.webm` (or `--output
   <path>`), and `--json` reports per-scene `{ target, playMs, captureMs,
   startMs, endMs }`, the total duration, the output path and whether the fades

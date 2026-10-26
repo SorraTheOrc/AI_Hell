@@ -153,6 +153,7 @@ import { getCurrentBotTuningConfig } from '../core/botTuningStore';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { enemyForceFieldHits } from '../core/enemyForceField';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
+import { isRunProgressEnabled, publishRunProgress } from '../core/runProgress';
 import {
   createTelemetryRecorder,
   installDevTelemetryBuffer,
@@ -544,6 +545,13 @@ export class PlayScene extends CombatScene<
   private demoDwellMs?: number;
 
   /**
+   * Dev-gated campaign level this fresh run starts at (AH-0MVE01EY0008QEVX).
+   * Resolved from `init({ startLevel })` only when the dev seam is enabled;
+   * always `1` in a production build.
+   */
+  private devStartLevel = 1;
+
+  /**
    * Demo take-over handler active only while the demo runs
    * (AH-0MUX4966Z0009P9Q AC3). Null outside demo mode, so normal play
    * carries no extra input listener. A movement key takes over in place;
@@ -892,6 +900,11 @@ export class PlayScene extends CombatScene<
     seed?: number;
     demoDwellMs?: number;
     resume?: boolean;
+    /**
+     * Dev-gated campaign level to start a fresh run at (AH-0MVE01EY0008QEVX).
+     * Ignored in production builds; mirrors the checkpoint-resume seam.
+     */
+    startLevel?: number;
   }): void {
     this.demoMode = data?.demo === true;
     // Continue from the last checkpoint (AH-0MVCRBTNF000DK51). It is loaded
@@ -909,6 +922,16 @@ export class PlayScene extends CombatScene<
     // (AH-0MV6MFDYG001E6PL).
     if (!this.demoMode) this.appliedBotTuningName = null;
     this.demoDwellMs = data?.demoDwellMs;
+    // Dev-gated start level (AH-0MVE01EY0008QEVX AC3): a generated-level
+    // capture starts a fresh run at a campaign level the same way checkpoint
+    // resume does. The gate folds to `false` in a production build, so a
+    // shipped run always starts at level 1 regardless of the payload.
+    const requestedLevel = data?.startLevel;
+    this.devStartLevel = isRunProgressEnabled()
+      && typeof requestedLevel === 'number'
+      && Number.isInteger(requestedLevel)
+      ? Math.min(Math.max(requestedLevel, 1), LEVELS.length)
+      : 1;
     if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
   }
 
@@ -1046,7 +1069,10 @@ export class PlayScene extends CombatScene<
     const resume = this.pendingResumeCheckpoint;
     this.pendingResumeCheckpoint = null;
     this.resumeFromCheckpoint = false;
-    this.waveManager.beginGame(resume?.level ?? 1);
+    this.waveManager.beginGame(resume?.level ?? this.devStartLevel);
+    // Publish the live run position for a generated-level capture driver
+    // (AH-0MVE01EY0008QEVX AC3); dev builds only.
+    this._publishRunProgress(false);
     if (resume) this._restoreCheckpoint(resume);
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();
@@ -1426,6 +1452,9 @@ export class PlayScene extends CombatScene<
    * tests and the (future) boss integration can drive it deterministically.
    */
   spawnWave(): void {
+    // Publish the live wave position for a generated-level capture driver
+    // (AH-0MVE01EY0008QEVX AC3); dev builds only.
+    this._publishRunProgress(false);
     // Plan the random offscreen asteroid spawns for this wave. Empty during
     // the boss encounter (see `planAsteroidSpawns`).
     this.planAsteroidSpawns();
@@ -4061,6 +4090,20 @@ export class PlayScene extends CombatScene<
   }
 
   /** Transitions to GameOverScene with the final score. */
+  /**
+   * Publishes the live run position to the dev-gated page handle
+   * (AH-0MVE01EY0008QEVX AC3). No-op in a production build; a thin wrapper so
+   * `create`, `spawnWave` and `_finishRun` all report the same shape.
+   */
+  private _publishRunProgress(ended: boolean): void {
+    publishRunProgress(
+      this.waveManager.level,
+      this.waveManager.waveNumber,
+      this.waveManager.waveCount,
+      ended,
+    );
+  }
+
   private _finishRun(won: boolean): void {
     // Run end (win/lose) is a discrete telemetry event (AH-0MUY08VVQ007HSSH).
     this.runTelemetry.runEnd(won, this.gameState.score);
@@ -4069,6 +4112,9 @@ export class PlayScene extends CombatScene<
     // `window` receives the `aihell:run-ended` CustomEvent and the
     // `window.__aiHellRunState` fallback; `npm run capture` consumes both.
     emitRunEndedSignal(won, this.gameState.score);
+    // Publish the ended position so a capture driver can truncate the segment
+    // early and report `endedEarly` (AH-0MVE01EY0008QEVX AC3/AC4).
+    this._publishRunProgress(true);
     // Dev-gated auto-upload of the accumulated local sink (AH-0MVBMRK6X0069QDI).
     // Fire-and-forget: the flush + POST must never block or crash run end, so
     // the scene transitions below happen regardless of its outcome.

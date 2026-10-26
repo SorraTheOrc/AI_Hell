@@ -19,6 +19,15 @@
       "label": "combat power-ups"
     },
     {
+      "target": "PlayScene",
+      "playMs": 2000,
+      "captureMs": 8000,
+      "level": 4,
+      "seed": 42,
+      "minWaves": 3,
+      "label": "generated level 4, three waves"
+    },
+    {
       "target": "GymLevel",
       "playMs": 2000,
       "captureMs": 5000,
@@ -45,8 +54,15 @@
           ]
         },
         "startWave": 1,
-        "player": { "weapons": ["rapid"], "timedWeapons": [] },
-        "powerUps": { "shield": 2 },
+        "player": {
+          "weapons": [
+            "rapid"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {
+          "shield": 2
+        },
         "seed": 42
       }
     },
@@ -57,7 +73,11 @@
       "label": "grunt fodder, spread loadout",
       "setup": {
         "enemy": "grunt",
-        "player": { "weapons": ["spread"] },
+        "player": {
+          "weapons": [
+            "spread"
+          ]
+        },
         "seed": 7
       }
     },

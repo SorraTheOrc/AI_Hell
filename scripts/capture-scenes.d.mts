@@ -83,6 +83,12 @@ export const SCENE_CONFIG_ERROR_CODES: Readonly<{
   setupNotSupported: 'setup-not-supported';
   /** A `setup.seed` is not a 32-bit unsigned integer. */
   invalidSeed: 'invalid-seed';
+  /** A generated-level entry's `level` is not an integer in range. */
+  invalidSceneLevel: 'invalid-scene-level';
+  /** A generated-level entry's `minWaves`/`maxCaptureMs` is invalid. */
+  invalidSceneField: 'invalid-scene-field';
+  /** A generated-level-only field is supplied on a gym target. */
+  unsupportedSceneField: 'unsupported-scene-field';
 }>;
 
 /** Stable machine-readable error code, as in {@link SCENE_CONFIG_ERROR_CODES}. */
@@ -165,6 +171,14 @@ export interface SceneSpec {
   label: string | null;
   /** Normalised setup, present only when the config supplied one. */
   setup?: SceneSetup;
+  /** Generated-level determinism seed (present only for `PlayScene`). */
+  seed?: number;
+  /** Generated-level campaign level (present only for `PlayScene`). */
+  level?: number;
+  /** Generated-level minimum waves before the window may end. */
+  minWaves?: number;
+  /** Generated-level hard capture cap. */
+  maxCaptureMs?: number;
 }
 
 /** Enemy keys a setup may name — mirror of `DEFAULT_ENEMY_KEYS`. */
@@ -177,6 +191,14 @@ export const SCENE_SETUP_WEAPON_IDS: readonly string[];
 export const SCENE_SETUP_POWER_UP_IDS: readonly string[];
 /** Campaign level count — mirror of `LEVEL_COUNT`. */
 export const SCENE_SETUP_LEVEL_COUNT: number;
+/** The shipped-game scene key a generated-level entry targets (`PlayScene`). */
+export const GENERATED_LEVEL_SCENE_KEY: string;
+/** Default number of waves a generated-level window waits for. */
+export const DEFAULT_MIN_WAVES: number;
+/** `maxCaptureMs` defaults to this × `captureMs`. */
+export const MAX_CAPTURE_MULTIPLIER: number;
+/** Fields only a generated-level (`PlayScene`) entry may carry. */
+export const GENERATED_LEVEL_ONLY_FIELDS: readonly string[];
 /** Default determinism seed (0). */
 export const DEFAULT_SCENE_SETUP_SEED: number;
 /** Default 1-based starting wave (1). */
@@ -234,6 +256,17 @@ export interface ScenePlanEntry {
   endMs: number;
   /** Normalised setup, present only when the scene supplied one. */
   setup?: SceneSetup;
+  /** Generated-level determinism seed (present only for `PlayScene`). */
+  seed?: number;
+  /** Generated-level campaign level (present only for `PlayScene`). */
+  level?: number;
+  /** Generated-level window fields. */
+  minWaves?: number;
+  maxCaptureMs?: number;
+  /** Waves actually captured (generated-level scenes, after the run). */
+  wavesCaptured?: number;
+  /** True when the run ended before the window was satisfied. */
+  endedEarly?: boolean;
 }
 
 /** The `--json` payload shape for a multi-scene capture. */
@@ -355,3 +388,21 @@ export function evaluateSceneFadeSamples(options?: {
   sceneSampleTimes?: readonly number[];
   transitionWindows?: ReadonlyArray<{ startMs: number; endMs: number }>;
 }): { fadeVerified: boolean; reasons: string[] };
+
+
+/**
+ * Computes the wave-aware capture window for a generated-level scene from
+ * observed progress samples: at least `captureMs`, extended until `minWaves`
+ * waves have started, hard-capped by `maxCaptureMs`, truncated early (with
+ * `endedEarly: true`) if the run ends first.
+ */
+export function resolveCaptureWindow(options?: {
+  captureMs: number;
+  minWaves?: number;
+  maxCaptureMs?: number;
+  samples?: ReadonlyArray<{
+    elapsedMs: number;
+    wavesStarted?: number;
+    ended?: boolean;
+  }>;
+}): { durationMs: number; wavesCaptured: number; endedEarly: boolean };

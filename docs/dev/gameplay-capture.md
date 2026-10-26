@@ -1152,6 +1152,58 @@ payload.
 }
 ```
 
+#### Generated-level scenes (`PlayScene`)
+
+An entry may target the **shipped game** (`target: "PlayScene"`) instead of a
+dev gym, so a clip shows real, procedurally generated campaign gameplay. A
+`PlayScene` run is started **in-place** in the same page (no navigation, so the
+single `MediaRecorder` keeps rolling) as a fresh **demo (bot-driven)** run
+flying the persisted bot-tuning configuration, seeded from the entry's `seed`.
+
+| Field | Type | Required | Default | Meaning |
+|---|---|---|---|---|
+| `target` | `"PlayScene"` | yes | — | the shipped gameplay scene |
+| `playMs` | positive integer | yes | — | warm-up play window |
+| `captureMs` | positive integer | yes | — | nominal recorded capture window |
+| `seed` | uint32 | no | a fresh random seed | determinism seed for the run |
+| `level` | integer `1`–`LEVEL_COUNT` | no | `1` | campaign level to start at |
+| `minWaves` | positive integer | no | `2` | waves that must start before the window may end |
+| `maxCaptureMs` | positive integer | no | `3 × captureMs` | hard cap so a stalled run cannot hang |
+
+Levels are **not** fixed-length, so the capture window is multi-wave-aware:
+it runs for at least `captureMs`, extends until `minWaves` regular waves have
+started, is hard-capped by `maxCaptureMs`, and ends early (reporting
+`endedEarly: true`) if the run ends first. A truncated segment is **not** a
+capture failure. Generated-level and gym scenes may be mixed in one config.
+
+`level` and `seed` are also dev-gated at the game seam: `PlayScene` honours a
+`startLevel` start value only in dev builds (a production build always starts
+at level 1), and the live run position is published to the dev-only
+`window.__aiHellRunProgress` handle the driver polls. These `seed` / `level` /
+`minWaves` / `maxCaptureMs` fields are **siblings** of `playMs`/`captureMs`
+(they are generated-level-only; supplying them on a gym target is rejected
+with `unsupported-scene-field`, and gym configuration belongs in `setup`).
+
+```json
+{
+  "scenes": [
+    {
+      "target": "PlayScene",
+      "playMs": 2000,
+      "captureMs": 8000,
+      "level": 4,
+      "seed": 42,
+      "minWaves": 3,
+      "label": "generated level 4, three waves"
+    },
+    { "target": "GymBoss", "playMs": 3000, "captureMs": 4000, "label": "boss" }
+  ]
+}
+```
+
+Each generated-level scene in the `--json` payload additionally reports
+`seed`, `level`, `wavesCaptured` and `endedEarly` alongside its timings.
+
 #### Watchable gym scenes
 
 `target` must be one of the dev gym scenes discovered under `src/scenes/gym/`
@@ -1198,6 +1250,9 @@ stderr and exits **1** — it never records a partial or blank video:
 | `missing-setup-parameter` | a parameterised target's setup omits `level`/`enemy` |
 | `setup-not-supported` | a `setup` (or a field it cannot consume) on a target that cannot accept it |
 | `invalid-seed` | `seed` is not a 32-bit unsigned integer |
+| `invalid-scene-level` | a generated-level `level` is not an integer `1`–`LEVEL_COUNT` |
+| `invalid-scene-field` | a generated-level `minWaves`/`maxCaptureMs` is not a positive integer |
+| `unsupported-scene-field` | a generated-level-only field (`seed`/`level`/`minWaves`/`maxCaptureMs`) is supplied on a gym target |
 
 ### Fades and timing
 

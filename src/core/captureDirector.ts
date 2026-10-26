@@ -42,6 +42,7 @@
  */
 
 import {
+  GENERATED_LEVEL_SCENE_KEY,
   SCENE_CONFIG_ERROR_CODES,
   SceneConfigError,
   resolveWatchableSceneEntry,
@@ -111,6 +112,20 @@ export function resolveSceneEntry(
   discoveredKeys: readonly string[],
   setup?: unknown,
 ): { key: string; setup: SceneSetup | null } {
+  // A generated-level capture targets the boot-registered shipped `PlayScene`.
+  // Its launch data (`{ demo, seed, startLevel }`) is built and validated by the
+  // capture driver from the entry's validated `seed`/`level` siblings, so the
+  // director forwards it verbatim rather than running the gym setup schema.
+  if (key === GENERATED_LEVEL_SCENE_KEY) {
+    if (typeof setup !== 'object' || setup === null || Array.isArray(setup)) {
+      throw new SceneConfigError(
+        SCENE_CONFIG_ERROR_CODES.invalidSetupType,
+        `Scene "${GENERATED_LEVEL_SCENE_KEY}" requires launch data ` +
+          '({ demo, seed, startLevel })',
+      );
+    }
+    return { key: GENERATED_LEVEL_SCENE_KEY, setup: setup as SceneSetup };
+  }
   const resolved = resolveWatchableSceneEntry(
     setup === undefined ? { target: key } : { target: key, setup },
   );

@@ -20,6 +20,7 @@ import * as path from 'node:path';
 import {
   PARAMETERISED_GYM_SCENE_KEYS,
   SCENE_CONFIG_ERROR_CODES,
+  GENERATED_LEVEL_ONLY_FIELDS,
   SCENE_FADE_MS,
   SCENE_SETUP_COMMON_FIELDS,
   SCENE_SETUP_TARGET_EXTRA_FIELDS,
@@ -163,5 +164,44 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(withSetup.length).toBeGreaterThanOrEqual(1);
     expect(withSetup.some((scene) => scene.target === 'GymLevel')).toBe(true);
     expect(withSetup.some((scene) => scene.target === 'GymFodderEnemies')).toBe(true);
+  });
+
+  it('documents the generated-level PlayScene target and its fields', () => {
+    expect(captureDoc).toContain('PlayScene');
+    for (const field of GENERATED_LEVEL_ONLY_FIELDS) {
+      expect(captureDoc).toContain(`\`${field}\``);
+    }
+    for (const field of ['wavesCaptured', 'endedEarly']) {
+      expect(captureDoc).toContain(`\`${field}\``);
+    }
+    for (const code of [
+      'invalid-scene-level',
+      'invalid-scene-field',
+      'unsupported-scene-field',
+    ]) {
+      expect(captureDoc).toContain(`\`${code}\``);
+    }
+  });
+
+  it('ships a documented generated-level example the parser accepts', () => {
+    const blocks = [...captureDoc.matchAll(/```json\n([\s\S]*?)```/g)].map(
+      (match) => match[1],
+    );
+    const levelBlock = blocks.find((block) => block.includes('"PlayScene"'));
+    expect(levelBlock).toBeDefined();
+    const parsed = parseSceneConfig(JSON.parse(levelBlock as string));
+    const level = parsed.find((scene) => scene.target === 'PlayScene');
+    expect(level?.seed).toBe(42);
+    expect(level?.level).toBe(4);
+    expect(level?.minWaves).toBe(3);
+  });
+
+  it('keeps examples/scenes.json generated-level example valid', () => {
+    const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
+    const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
+    const level = parsed.find((scene) => scene.target === 'PlayScene');
+    expect(level).toBeDefined();
+    expect(level?.seed).toBe(42);
+    expect(level?.level).toBe(4);
   });
 });

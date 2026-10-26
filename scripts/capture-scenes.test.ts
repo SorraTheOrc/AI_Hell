@@ -49,7 +49,10 @@ import {
   DEFAULT_SCENE_SETUP_PLAYER_WEAPONS,
   DEFAULT_SCENE_SETUP_SEED,
   DEFAULT_SCENE_SETUP_START_WAVE,
+  DEFAULT_MIN_WAVES,
   DEFAULT_SCENE_SETUP_TIMED_WEAPONS,
+  GENERATED_LEVEL_SCENE_KEY,
+  MAX_CAPTURE_MULTIPLIER,
   PARAMETERISED_GYM_SCENE_KEYS,
   SCENE_CONFIG_ERROR_CODES,
   SCENE_FADE_CONTRAST_LUMA,
@@ -74,6 +77,7 @@ import {
   parseSceneConfig,
   parseSceneSetup,
   requiredSceneSetupFieldsFor,
+  resolveCaptureWindow,
   resolveWatchableSceneEntry,
   resolveWatchableSceneKey,
   sceneSetupFieldsFor,
@@ -1041,5 +1045,130 @@ describe('examples/scenes.json setup-bearing example (AH-0MVNW91PH000HV2J)', () 
         setup: scene.setup,
       })).not.toThrow();
     }
+  });
+});
+
+describe('generated-level (PlayScene) entries (AH-0MVE01EY0008QEVX)', () => {
+  it('defaults level to 1, a fresh uint32 seed, minWaves 2 and 3x capture cap', () => {
+    const [scene] = parseSceneConfig({
+      scenes: [{ target: GENERATED_LEVEL_SCENE_KEY, playMs: 500, captureMs: 2000 }],
+    });
+    expect(scene.target).toBe('PlayScene');
+    expect(scene.level).toBe(1);
+    expect(scene.minWaves).toBe(DEFAULT_MIN_WAVES);
+    expect(scene.maxCaptureMs).toBe(2000 * MAX_CAPTURE_MULTIPLIER);
+    expect(Number.isInteger(scene.seed)).toBe(true);
+    expect(scene.seed).toBeGreaterThanOrEqual(0);
+    expect(scene.seed).toBeLessThanOrEqual(0xffffffff);
+  });
+
+  it('preserves explicit seed/level/minWaves/maxCaptureMs siblings', () => {
+    const [scene] = parseSceneConfig({
+      scenes: [
+        {
+          target: GENERATED_LEVEL_SCENE_KEY,
+          playMs: 500,
+          captureMs: 2000,
+          seed: 42,
+          level: 4,
+          minWaves: 3,
+          maxCaptureMs: 9000,
+        },
+      ],
+    });
+    expect(scene).toMatchObject({ seed: 42, level: 4, minWaves: 3, maxCaptureMs: 9000 });
+  });
+
+  it.each([
+    ['a non-integer level', { level: 1.5 }, 'invalid-scene-level'],
+    ['an out-of-range level', { level: 99 }, 'invalid-scene-level'],
+    ['a non-finite seed', { seed: Number.NaN }, 'invalid-seed'],
+    ['an out-of-range seed', { seed: 0x1_0000_0000 }, 'invalid-seed'],
+    ['an invalid minWaves', { minWaves: 0 }, 'invalid-scene-field'],
+    ['an invalid maxCaptureMs', { maxCaptureMs: -5 }, 'invalid-scene-field'],
+  ])('rejects %s', (_label, extra, code) => {
+    expectConfigError(
+      () =>
+        parseSceneConfig({
+          scenes: [
+            { target: GENERATED_LEVEL_SCENE_KEY, playMs: 1, captureMs: 1, ...extra },
+          ],
+        }),
+      code,
+    );
+  });
+
+  it('rejects generated-level-only sibling fields on a gym target', () => {
+    for (const extra of [
+      { seed: 1 },
+      { level: 2 },
+      { minWaves: 2 },
+      { maxCaptureMs: 1000 },
+    ]) {
+      expectConfigError(
+        () => parseSceneConfig({ scenes: [{ target: 'GymPlayer', playMs: 1, captureMs: 1, ...extra }] }),
+        'unsupported-scene-field',
+      );
+    }
+  });
+
+  it('leaves gym entries unchanged (no generated fields materialised)', () => {
+    const [scene] = parseSceneConfig({ scenes: [{ target: 'GymPlayer', playMs: 1, captureMs: 2 }] });
+    expect(scene).toEqual({ target: 'GymPlayer', playMs: 1, captureMs: 2, label: null });
+  });
+
+  it('resolveCaptureWindow: ends at captureMs once minWaves have started', () => {
+    expect(
+      resolveCaptureWindow({
+        captureMs: 2000,
+        samples: [
+          { elapsedMs: 1000, wavesStarted: 1 },
+          { elapsedMs: 2000, wavesStarted: 2 },
+        ],
+      }),
+    ).toEqual({ durationMs: 2000, wavesCaptured: 2, endedEarly: false });
+  });
+
+  it('resolveCaptureWindow: hard-caps a stalled run at maxCaptureMs', () => {
+    expect(
+      resolveCaptureWindow({
+        captureMs: 2000,
+        maxCaptureMs: 6000,
+        samples: [
+          { elapsedMs: 2000, wavesStarted: 1 },
+          { elapsedMs: 6000, wavesStarted: 1 },
+        ],
+      }),
+    ).toEqual({ durationMs: 6000, wavesCaptured: 1, endedEarly: false });
+  });
+
+  it('resolveCaptureWindow: truncates early and flags endedEarly when the run ends', () => {
+    expect(
+      resolveCaptureWindow({
+        captureMs: 2000,
+        samples: [
+          { elapsedMs: 1000, wavesStarted: 1 },
+          { elapsedMs: 1500, wavesStarted: 1, ended: true },
+        ],
+      }),
+    ).toEqual({ durationMs: 1500, wavesCaptured: 1, endedEarly: true });
+  });
+
+  it('payload reports seed/level and waves captured per generated scene', () => {
+    const plan = buildScenePlan(
+      parseSceneConfig({
+        scenes: [{ target: GENERATED_LEVEL_SCENE_KEY, playMs: 500, captureMs: 2000, seed: 42, level: 4 }],
+      }),
+    );
+    plan[0].wavesCaptured = 3;
+    plan[0].endedEarly = false;
+    const payload = buildScenesPayload(plan, { outputPath: 'out.webm' });
+    expect(payload.scenes[0]).toMatchObject({
+      target: 'PlayScene',
+      seed: 42,
+      level: 4,
+      wavesCaptured: 3,
+      endedEarly: false,
+    });
   });
 });

@@ -8127,3 +8127,42 @@ describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
     expect(drawn.some((id) => !isWeapon(id))).toBe(true);
   });
 });
+
+describe('PlayScene — dev-gated startLevel seam (AH-0MVE01EY0008QEVX AC3)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+    delete window.__aiHellRunProgress;
+  });
+
+  it('starts a fresh demo run at the supplied campaign level in a dev build', async () => {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const manager = booted.game.scene;
+    manager.start('PlayScene', { demo: true, startLevel: 4 });
+    await advanceGame(booted.game, 200);
+    const scene = manager.getScene('PlayScene') as PlayScene;
+
+    expect(scene.getWaveManager().level).toBe(4);
+    // The dev-gated progress handle reports the live position.
+    expect(window.__aiHellRunProgress).toMatchObject({ level: 4, ended: false });
+  });
+
+  it('clamps an out-of-range startLevel to the campaign', async () => {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const manager = booted.game.scene;
+    manager.start('PlayScene', { demo: true, startLevel: 999 });
+    await advanceGame(booted.game, 200);
+    const scene = manager.getScene('PlayScene') as PlayScene;
+
+    expect(scene.getWaveManager().level).toBe(scene.getWaveManager().levelCount);
+  });
+});

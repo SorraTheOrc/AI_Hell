@@ -113,6 +113,12 @@ export const SCENE_CONFIG_ERROR_CODES = Object.freeze({
   setupNotSupported: 'setup-not-supported',
   /** A `setup.seed` is not a 32-bit unsigned integer. */
   invalidSeed: 'invalid-seed',
+  /** A generated-level entry's `level` is not an integer in range. */
+  invalidSceneLevel: 'invalid-scene-level',
+  /** A generated-level entry's `minWaves`/`maxCaptureMs` is invalid. */
+  invalidSceneField: 'invalid-scene-field',
+  /** A generated-level-only field is supplied on a gym target. */
+  unsupportedSceneField: 'unsupported-scene-field',
 });
 
 const CODE = SCENE_CONFIG_ERROR_CODES;
@@ -238,6 +244,28 @@ export const SCENE_SETUP_POWER_UP_IDS = Object.freeze([
  * of `LEVEL_COUNT` (`src/waves/Formations.ts`). Pinned by a parity test.
  */
 export const SCENE_SETUP_LEVEL_COUNT = 10;
+
+/**
+ * The shipped-game scene key a generated-level capture entry targets
+ * (AH-0MVE01EY0008QEVX). Unlike a gym key, its fields are **siblings** of
+ * `playMs`/`captureMs` (`seed`, `level`, and the window fields `minWaves` /
+ * `maxCaptureMs`) rather than inside a `setup` object.
+ */
+export const GENERATED_LEVEL_SCENE_KEY = 'PlayScene';
+
+/** Default number of waves a generated-level capture window waits for. */
+export const DEFAULT_MIN_WAVES = 2;
+
+/** Hard cap multiplier: `maxCaptureMs` defaults to this × `captureMs`. */
+export const MAX_CAPTURE_MULTIPLIER = 3;
+
+/** Fields that only a generated-level (`PlayScene`) entry may carry. */
+export const GENERATED_LEVEL_ONLY_FIELDS = Object.freeze([
+  'seed',
+  'level',
+  'minWaves',
+  'maxCaptureMs',
+]);
 
 /** Default `setup.seed` when the config omits one (deterministic by default). */
 export const DEFAULT_SCENE_SETUP_SEED = 0;
@@ -843,18 +871,151 @@ function requireDurationMs(value, field) {
   return value;
 }
 
+/** A fresh, non-deterministic 32-bit seed for a generated-level entry. */
+function defaultGeneratedSeed() {
+  return Math.floor(Math.random() * 0x100000000) >>> 0;
+}
+
+/**
+ * Validates a generated-level entry's `level`: an integer `1`–`LEVEL_COUNT`.
+ *
+ * @param {unknown} value
+ * @param {string} field
+ * @returns {number}
+ */
+function requireGeneratedLevel(value, field) {
+  if (
+    typeof value !== 'number'
+    || !Number.isInteger(value)
+    || value < 1
+    || value > SCENE_SETUP_LEVEL_COUNT
+  ) {
+    throw new SceneConfigError(
+      CODE.invalidSceneLevel,
+      `${field} must be an integer 1-${SCENE_SETUP_LEVEL_COUNT} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Validates a generated-level entry's `seed`: a 32-bit unsigned integer.
+ *
+ * @param {unknown} value
+ * @param {string} field
+ * @returns {number}
+ */
+function requireGeneratedSeed(value, field) {
+  if (
+    typeof value !== 'number'
+    || !Number.isInteger(value)
+    || value < 0
+    || value > 0xffffffff
+  ) {
+    throw new SceneConfigError(
+      CODE.invalidSeed,
+      `${field} must be a 32-bit unsigned integer (0-4294967295), got ${JSON.stringify(value)}`,
+    );
+  }
+  return value >>> 0;
+}
+
+/**
+ * Validates a generated-level window field (`minWaves` / `maxCaptureMs`): a
+ * positive integer.
+ *
+ * @param {unknown} value
+ * @param {string} field
+ * @returns {number}
+ */
+function requireGeneratedWindowField(value, field) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new SceneConfigError(
+      CODE.invalidSceneField,
+      `${field} must be a positive integer (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Computes the **capture window** for a generated-level scene from observed
+ * progress samples (AH-0MVE01EY0008QEVX AC4).
+ *
+ * A level is not a fixed-length showcase, so the window: runs for at least
+ * `captureMs`; extends until `minWaves` regular waves have **started**; is hard
+ * capped at `maxCaptureMs` so a stalled run cannot hang the capture; and ends
+ * **early** (reporting `endedEarly: true`) if the run ends first. A truncated
+ * segment is not a failure.
+ *
+ * Samples are `{ elapsedMs, wavesStarted, ended }` observations, ordered by
+ * `elapsedMs`. The function is pure and total: it never mutates `samples` and
+ * handles an empty list (returns the hard cap).
+ *
+ * @param {{
+ *   captureMs: number,
+ *   minWaves?: number,
+ *   maxCaptureMs?: number,
+ *   samples?: ReadonlyArray<{ elapsedMs: number, wavesStarted?: number, ended?: boolean }>,
+ * }} options
+ * @returns {{ durationMs: number, wavesCaptured: number, endedEarly: boolean }}
+ */
+export function resolveCaptureWindow(options = {}) {
+  const captureMs = Number.isFinite(options.captureMs) && options.captureMs > 0
+    ? Math.round(options.captureMs)
+    : 0;
+  const minWaves = Number.isInteger(options.minWaves) && options.minWaves > 0
+    ? options.minWaves
+    : DEFAULT_MIN_WAVES;
+  const maxCaptureMs = Number.isInteger(options.maxCaptureMs) && options.maxCaptureMs > 0
+    ? options.maxCaptureMs
+    : Math.max(captureMs * MAX_CAPTURE_MULTIPLIER, captureMs);
+  const samples = (Array.isArray(options.samples) ? options.samples : [])
+    .filter(
+      (sample) =>
+        isPlainObject(sample)
+        && typeof sample.elapsedMs === 'number'
+        && Number.isFinite(sample.elapsedMs),
+    )
+    .slice()
+    .sort((a, b) => a.elapsedMs - b.elapsedMs);
+
+  let lastWaves = 0;
+  for (const sample of samples) {
+    const waves = Math.max(0, Math.floor(Number(sample.wavesStarted) || 0));
+    lastWaves = waves;
+    if (sample.ended === true) {
+      // A run that ends before the window is satisfied truncates the segment.
+      return { durationMs: sample.elapsedMs, wavesCaptured: waves, endedEarly: true };
+    }
+    if (sample.elapsedMs >= maxCaptureMs) {
+      return { durationMs: maxCaptureMs, wavesCaptured: waves, endedEarly: false };
+    }
+    if (sample.elapsedMs >= captureMs && waves >= minWaves) {
+      return { durationMs: sample.elapsedMs, wavesCaptured: waves, endedEarly: false };
+    }
+  }
+
+  // No sample satisfied the window (stalled run or insufficient samples):
+  // fall back to the hard cap so the capture is bounded.
+  return { durationMs: maxCaptureMs, wavesCaptured: lastWaves, endedEarly: false };
+}
+
 /**
  * Validates and normalises one scene entry.
  *
- * A `setup` is optional. Absent, the entry is exactly today's
- * `{ target, playMs, captureMs, label }` (parameterised gyms stay rejected).
- * Present, the entry gains a validated, normalised `setup` and a parameterised
- * target becomes capturable **only** when its required parameter is supplied;
- * a setup on a target that cannot consume it is rejected rather than ignored.
+ * Three shapes are supported:
+ *
+ * - a **watchable gym** key (today's behaviour);
+ * - a **parameterised gym** (`GymLevel`/`GymFodderEnemies`) with a valid
+ *   `setup` supplying its required parameter;
+ * - a **generated-level** entry: `target: "PlayScene"` with `seed`, `level`,
+ *   `minWaves` and `maxCaptureMs` as **siblings** of `playMs`/`captureMs`
+ *   (AH-0MVE01EY0008QEVX).
  *
  * @param {unknown} entry
  * @param {number} index — zero-based position, used in error messages.
- * @returns {{ target: string, playMs: number, captureMs: number, label: string | null, setup?: object }}
+ * @returns {{ target: string, playMs: number, captureMs: number, label: string | null, setup?: object, seed?: number, level?: number, minWaves?: number, maxCaptureMs?: number }}
  */
 function normaliseScene(entry, index) {
   const at = `scenes[${index}]`;
@@ -872,17 +1033,6 @@ function normaliseScene(entry, index) {
     );
   }
 
-  const hasSetup = 'setup' in entry && entry.setup !== undefined;
-  // One shared resolver keeps the parser and the director in lock-step: a
-  // parameterised target is capturable only with a valid setup, and a setup on
-  // a target that cannot consume it is rejected rather than ignored.
-  const { key: target, setup } = resolveWatchableSceneEntry(
-    hasSetup
-      ? { target: entry.target, setup: entry.setup }
-      : { target: entry.target },
-    `${at}.setup`,
-  );
-
   const playMs = requireDurationMs(entry.playMs, `${at}.playMs`);
   const captureMs = requireDurationMs(entry.captureMs, `${at}.captureMs`);
 
@@ -896,6 +1046,61 @@ function normaliseScene(entry, index) {
     }
     label = entry.label;
   }
+
+  // ── Generated-level (`PlayScene`) entry ──────────────────────────
+  if (entry.target === GENERATED_LEVEL_SCENE_KEY) {
+    if ('setup' in entry && entry.setup !== undefined) {
+      throw new SceneConfigError(
+        CODE.setupNotSupported,
+        `${at}.setup is not supported on "${GENERATED_LEVEL_SCENE_KEY}"; use the `
+          + 'sibling seed/level/minWaves/maxCaptureMs fields instead',
+      );
+    }
+    const level = entry.level === undefined
+      ? 1
+      : requireGeneratedLevel(entry.level, `${at}.level`);
+    const seed = entry.seed === undefined
+      ? defaultGeneratedSeed()
+      : requireGeneratedSeed(entry.seed, `${at}.seed`);
+    const minWaves = entry.minWaves === undefined
+      ? DEFAULT_MIN_WAVES
+      : requireGeneratedWindowField(entry.minWaves, `${at}.minWaves`);
+    const maxCaptureMs = entry.maxCaptureMs === undefined
+      ? captureMs * MAX_CAPTURE_MULTIPLIER
+      : requireGeneratedWindowField(entry.maxCaptureMs, `${at}.maxCaptureMs`);
+    return {
+      target: GENERATED_LEVEL_SCENE_KEY,
+      playMs,
+      captureMs,
+      label,
+      seed,
+      level,
+      minWaves,
+      maxCaptureMs,
+    };
+  }
+
+  // ── Gym entry: generated-level-only sibling fields are rejected ──
+  for (const field of GENERATED_LEVEL_ONLY_FIELDS) {
+    if (field in entry && entry[field] !== undefined) {
+      throw new SceneConfigError(
+        CODE.unsupportedSceneField,
+        `${at}.${field} is a generated-level-only field and cannot be supplied to gym target `
+          + `"${entry.target}"; put gym configuration in a "setup" object`,
+      );
+    }
+  }
+
+  const hasSetup = 'setup' in entry && entry.setup !== undefined;
+  // One shared resolver keeps the parser and the director in lock-step: a
+  // parameterised target is capturable only with a valid setup, and a setup on
+  // a target that cannot consume it is rejected rather than ignored.
+  const { key: target, setup } = resolveWatchableSceneEntry(
+    hasSetup
+      ? { target: entry.target, setup: entry.setup }
+      : { target: entry.target },
+    `${at}.setup`,
+  );
 
   const normalised = { target, playMs, captureMs, label };
   if (setup !== null) normalised.setup = setup;
@@ -1037,6 +1242,10 @@ export function buildScenePlan(scenes) {
       startMs,
       endMs,
       ...(scene.setup === undefined ? {} : { setup: scene.setup }),
+      ...(scene.seed === undefined ? {} : { seed: scene.seed }),
+      ...(scene.level === undefined ? {} : { level: scene.level }),
+      ...(scene.minWaves === undefined ? {} : { minWaves: scene.minWaves }),
+      ...(scene.maxCaptureMs === undefined ? {} : { maxCaptureMs: scene.maxCaptureMs }),
     });
     cursorMs = endMs + 2 * SCENE_FADE_MS;
   }
@@ -1250,6 +1459,10 @@ export function buildScenesPayload(plan, options = {}) {
     startMs: entry.startMs,
     endMs: entry.endMs,
     ...(entry.setup === undefined ? {} : { setup: entry.setup }),
+    ...(entry.seed === undefined ? {} : { seed: entry.seed }),
+    ...(entry.level === undefined ? {} : { level: entry.level }),
+    ...(entry.wavesCaptured === undefined ? {} : { wavesCaptured: entry.wavesCaptured }),
+    ...(entry.endedEarly === undefined ? {} : { endedEarly: entry.endedEarly }),
   }));
 
   return {

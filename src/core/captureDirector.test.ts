@@ -504,3 +504,34 @@ describe('startScene — setup pass-through (AH-0MVNW8UCZ004CY0R)', () => {
     expect(entry.setup?.startWave).toBe(DEFAULT_SCENE_SETUP_START_WAVE);
   });
 });
+
+describe('startScene — generated-level PlayScene launch (AH-0MVE01EY0008QEVX)', () => {
+  it('starts the boot-registered PlayScene with the forwarded launch data', () => {
+    const { manager, startedCalls, stopped, broughtToTop } = fakeSceneManager([
+      'PlayScene',
+    ]);
+
+    startScene(fakeGame(manager), 'PlayScene', {
+      demo: true,
+      seed: 42,
+      startLevel: 4,
+    });
+
+    expect(startedCalls).toHaveLength(1);
+    expect(startedCalls[0].key).toBe('PlayScene');
+    expect(startedCalls[0].args[0]).toEqual({ demo: true, seed: 42, startLevel: 4 });
+    // In-page, no navigation; the previous scene is still stopped.
+    expect(stopped).toEqual([]);
+    expect(broughtToTop).toEqual(['PlayScene']);
+  });
+
+  it('rejects a PlayScene start with non-object launch data', () => {
+    const { manager, started, stopped } = fakeSceneManager(['PlayScene']);
+    expectSceneError(
+      () => startScene(fakeGame(manager), 'PlayScene'),
+      ERROR.invalidSetupType,
+    );
+    expect(started).toEqual([]);
+    expect(stopped).toEqual([]);
+  });
+});

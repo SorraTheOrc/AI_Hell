@@ -123,6 +123,7 @@ import {
 } from './capture-progress.mjs';
 import { listCaptureScenarios } from './capture-scenarios.mjs';
 import {
+  GENERATED_LEVEL_SCENE_KEY,
   SCENE_FADE_MS,
   SceneConfigError,
   buildScenePlan,
@@ -130,6 +131,7 @@ import {
   buildTransitionProbeTimes,
   evaluateSceneFadeSamples,
   loadSceneConfig,
+  resolveCaptureWindow,
 } from './capture-scenes.mjs';
 import { parseTelemetryJsonl } from './inspect-telemetry.mjs';
 import {
@@ -1121,12 +1123,22 @@ export function loadScenesForCapture(options = {}, readFile = readFileSync) {
  * hermetically testable without a browser. `onScene` reports each scene as
  * its window begins.
  *
+ * Generated-level (`PlayScene`) entries use the wave-aware window
+ * ({@link resolveCaptureWindow}, AH-0MVE01EY0008QEVX AC4): after the play
+ * window the driver polls `readProgress` and extends/truncates the capture
+ * until `minWaves` waves have started (hard-capped by `maxCaptureMs`) or the
+ * run ends. Each level scene's measured capture duration, waves captured and
+ * `endedEarly` flag are written back onto its plan entry for the `--json`
+ * payload.
+ *
  * @param {{
- *   plan: ReadonlyArray<{ target: string, playMs: number, captureMs: number, startMs: number, endMs: number, setup?: object }>,
+ *   plan: Array<{ target: string, playMs: number, captureMs: number, startMs: number, endMs: number, setup?: object, seed?: number, level?: number, minWaves?: number, maxCaptureMs?: number, wavesCaptured?: number, endedEarly?: boolean }>,
  *   startScene: (key: string, setup?: object) => Promise<unknown>,
  *   fade: (alpha: number, durationMs: number) => Promise<unknown>,
  *   wait: (ms: number) => Promise<unknown>,
  *   fadeMs?: number,
+ *   pollMs?: number,
+ *   readProgress?: () => Promise<{ level: number, wave: number, waveCount: number, ended: boolean } | null>,
  *   onScene?: (info: { index: number, total: number, scene: object }) => void,
  * }} params
  * @returns {Promise<void>}
@@ -1137,6 +1149,8 @@ export async function driveSceneSequence({
   fade,
   wait,
   fadeMs = SCENE_FADE_MS,
+  pollMs = 250,
+  readProgress = null,
   onScene = null,
 }) {
   if (!Array.isArray(plan) || plan.length === 0) return;
@@ -1150,22 +1164,83 @@ export async function driveSceneSequence({
     );
   }
 
+  /** Launch data for a scene: gym setup, or the PlayScene demo payload. */
+  const launchDataFor = (scene) => {
+    if (scene.target === GENERATED_LEVEL_SCENE_KEY) {
+      return {
+        demo: true,
+        seed: scene.seed,
+        startLevel: scene.level,
+      };
+    }
+    return scene.setup;
+  };
+
+  /**
+   * Drives one generated-level capture window, sampling the dev-gated run
+   * progress handle until {@link resolveCaptureWindow} decides the window has
+   * been satisfied, the hard cap is reached, or the run ends.
+   */
+  const driveLevelWindow = async (scene) => {
+    const samples = [];
+    let elapsedMs = 0;
+    const windowFor = () =>
+      resolveCaptureWindow({
+        captureMs: scene.captureMs,
+        minWaves: scene.minWaves,
+        maxCaptureMs: scene.maxCaptureMs,
+        samples,
+      });
+    let progress = null;
+    let resolved = windowFor();
+    const sample = async () => {
+      progress = typeof readProgress === 'function' ? await readProgress() : null;
+      samples.push({
+        elapsedMs,
+        wavesStarted: progress?.wave ?? 0,
+        ended: progress?.ended === true,
+      });
+      resolved = windowFor();
+    };
+
+    await sample();
+    while (true) {
+      if (progress?.ended === true) break;
+      if (resolved.durationMs <= elapsedMs) break;
+      const step = Math.max(1, Math.min(pollMs, resolved.durationMs - elapsedMs));
+      await wait(step);
+      elapsedMs += step;
+      await sample();
+    }
+    return { captureMs: elapsedMs, ...resolved };
+  };
+
   if (typeof onScene === 'function') {
     onScene({ index: 1, total: plan.length, scene: plan[0] });
   }
-  await startScene(plan[0].target, plan[0].setup);
+  await startScene(plan[0].target, launchDataFor(plan[0]));
 
   for (let i = 0; i < plan.length; i += 1) {
     const scene = plan[i];
     await wait(scene.playMs);
-    await wait(scene.captureMs);
+    if (
+      scene.target === GENERATED_LEVEL_SCENE_KEY
+      && typeof readProgress === 'function'
+    ) {
+      const window = await driveLevelWindow(scene);
+      scene.captureMs = window.captureMs;
+      scene.wavesCaptured = window.wavesCaptured;
+      scene.endedEarly = window.endedEarly;
+    } else {
+      await wait(scene.captureMs);
+    }
     if (i === plan.length - 1) break;
 
     // Between consecutive scenes: fade to black over fadeMs, switch the
     // scene behind the black, fade from black over fadeMs.
     await fade(1, fadeMs);
     const next = plan[i + 1];
-    await startScene(next.target, next.setup);
+    await startScene(next.target, launchDataFor(next));
     await fade(0, fadeMs);
     if (typeof onScene === 'function') {
       onScene({ index: i + 2, total: plan.length, scene: next });
@@ -2411,6 +2486,11 @@ async function captureScenes({
           reportProgress();
         }
       },
+      // Generated-level scenes poll the dev-gated run-progress handle so the
+      // window can extend/truncate to the live wave/ended state
+      // (AH-0MVE01EY0008QEVX AC4).
+      readProgress: () =>
+        page.evaluate(() => window.__aiHellRunProgress ?? null),
       onScene: ({ index, scene }) => {
         // Wall-clock start of each scene's play window, used to probe the
         // fades at their *actual* recorded offsets (page round-trips add a
@@ -2421,6 +2501,17 @@ async function captureScenes({
             + `(play ${formatDuration(scene.playMs)}, capture ${formatDuration(scene.captureMs)})`,
         );
       },
+    });
+    // Reflect each generated-level scene's measured window into the payload
+    // (captureMs, wavesCaptured, endedEarly) so `--json` reports what was
+    // actually recorded (AH-0MVE01EY0008QEVX AC5).
+    plan.forEach((scene, index) => {
+      if (scene.target !== GENERATED_LEVEL_SCENE_KEY) return;
+      const out = payload.scenes[index];
+      if (!out) return;
+      out.captureMs = scene.captureMs;
+      out.wavesCaptured = scene.wavesCaptured;
+      out.endedEarly = scene.endedEarly;
     });
     reportProgress();
 
