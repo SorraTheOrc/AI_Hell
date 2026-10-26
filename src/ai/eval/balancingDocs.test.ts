@@ -165,3 +165,108 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     expect(evaluation).toContain('--tune');
   });
 });
+
+describe('Campaign-by-default batch is documented (AH-0MVD1RK2V009J5D2)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('documents the campaign batch default with a --skirmish opt-out (AC1/AC2)', () => {
+    expect(doc).toContain('AH-0MVD1RK2V009J5D2');
+    expect(doc).toContain('--skirmish');
+    expect(doc).toMatch(/full shipped campaign|whole shipped campaign/);
+    expect(doc).toMatch(/Q3=b/);
+  });
+
+  it('documents the finite, higher batch tick budget and the early exits (AC3)', () => {
+    expect(doc).toContain('18000');
+    expect(doc).toMatch(/gameComplete/);
+    expect(doc).toMatch(/finite/);
+  });
+
+  it('documents the comparability note: skirmish-scoped single-run evaluation (AC5)', () => {
+    expect(doc).toMatch(/Comparability note/);
+    expect(doc).toMatch(/skirmish/);
+    expect(doc).toMatch(/config\.campaign/);
+  });
+});
+
+describe('Level-scaling curves and evidence are documented (AH-0MVHT1M6O003PU7P)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('documents the scaling curve section with the level 1–10 table', () => {
+    expect(doc).toContain('## Level-scaling curves and evidence (AH-0MVHT1M6O003PU7P)');
+    expect(doc).toContain('### Scaling table (levels 1–10)');
+    // The table's endpoints are the tuning contract: 1.00× → 2.00× counts,
+    // 0.18 → 0.05 per-kill drop chance, level 1 = the identity.
+    expect(doc).toContain('| 1 | 1.000× | 0.1800 |');
+    expect(doc).toContain('| 5 | 1.444× | 0.1222 |');
+    expect(doc).toContain('| 10 | 2.000× | 0.0500 |');
+    expect(doc).toContain('src/core/levelScaling.ts');
+    expect(doc).toContain('applyEnemyCountScaling');
+    expect(doc).toContain('powerUpDropChance');
+  });
+
+  it('documents the baseline vs post-change evidence with commands and seed set', () => {
+    expect(doc).toContain('### Evidence: same-seed baseline vs post-change batches');
+    expect(doc).toContain('--scale-levels off');
+    expect(doc).toContain('--scale-levels on');
+    expect(doc).toContain('--games 100');
+    expect(doc).toMatch(/seed set \(1–100\)/);
+    expect(doc).toMatch(/competent/);
+    expect(doc).toMatch(/ec0ccc7b/);
+  });
+
+  it('records the per-level metrics the parent AC requires', () => {
+    for (const metric of [
+      'powerUpsCollected',
+      'enemiesKilledByArchetype',
+      'avoidableHits',
+      'survivalSeconds',
+      'levelReached',
+      'Power-ups per kill',
+    ]) {
+      expect(doc).toContain(metric);
+    }
+    // The supply-per-kill result is quoted for level 5 and level 10.
+    expect(doc).toContain('0.0432');
+    expect(doc).toContain('0.0055');
+  });
+
+  it('concludes with falls in supply and no regression in playability checks', () => {
+    expect(doc).toMatch(/per kill falls|supply per kill falls|supply per kill/i);
+    expect(doc).toMatch(/no crash|did not crash|without a crash/);
+    expect(doc).toMatch(/levelReached/);
+    expect(doc).toMatch(/formation gyms/i);
+  });
+});
+
+describe('Campaign fidelity boundary is documented (AH-0MVD1RO7D000AC4X)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('names what a campaign batch now models: the shared sequencer, all three generation modes and the shared hold-full choice flow (AC1)', () => {
+    // Modelled: the shared wave/level sequencer drives every campaign wave
+    // (fixed / curve / dynamic), and the shared choice flow makes the
+    // upgrade picks — so the three fields carry real values.
+    expect(doc).toMatch(/shared sequencer|shared campaign sequencer|buildSequencedLevels/);
+    expect(doc).toContain('`fixed`');
+    expect(doc).toContain('`curve`');
+    expect(doc).toContain('`dynamic`');
+    expect(doc).toMatch(/hold-full upgrade-choice flow/);
+    for (const field of ['waveReached', 'levelReached', 'upgradesSelected']) {
+      expect(doc).toContain(field);
+    }
+    expect(doc).toMatch(/non-zero/);
+  });
+
+  it('names what remains simplified, so consumers do not over-read the report (AC1)', () => {
+    expect(doc).toMatch(/no boss|boss\/mini-boss|boss encounter/i);
+    expect(doc).toMatch(/mini-boss/i);
+    expect(doc).toMatch(/VFX/i);
+    expect(doc).toMatch(/formation movement/i);
+    expect(doc).toMatch(/rendering/i);
+  });
+
+  it('explains how to read the per-wave / per-level campaign distributions (AC2)', () => {
+    expect(doc).toMatch(/within-level|within the level|within its level/);
+    expect(doc).toMatch(/reading the campaign distributions|per-wave|waveReached/);
+  });
+});

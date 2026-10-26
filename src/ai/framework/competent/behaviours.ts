@@ -46,7 +46,7 @@ import {
   nearestTarget,
   type ContentTarget,
 } from './goals';
-import { idleIntent, interceptPoint, mayReverse, mayThrust, planSteering } from './steering';
+import { hazardThreatensPlayer, idleIntent, interceptPoint, mayReverse, mayThrust, planSteering } from './steering';
 import type { CompetentBotTunables } from './tunables';
 
 /** The collect targets for a goal: minerals or power-ups as content targets. */
@@ -178,14 +178,15 @@ function engageBehaviour(
         (shot) => shot.threatens,
       );
       // A genuine imminent collision is a hazard **other than the engagement
-      // target** inside the danger margin.  The target's own proximity is the
-      // kiting condition, not a threat, so calm close combat never triggers
-      // reverse on its own (AC3).
+      // target** that threatens the ship — predicted to cross its path inside
+      // the hazard-prediction horizon when the bot has a velocity estimate for
+      // it (AH-0MVI4QDN90037DIN · AC2), else simply inside `dangerMargin`.  The
+      // target's own proximity is the kiting condition, not a threat, so calm
+      // close combat never triggers reverse on its own (AC3).
       const hasImminentHazard = view.world.hazards.some(
         (hazard) =>
           (hazard.x !== best.point.x || hazard.y !== best.point.y) &&
-          Math.hypot(hazard.x - player.x, hazard.y - player.y) <
-            t.dangerMargin,
+          hazardThreatensPlayer(player, hazard, t),
       );
       const kite =
         holdAim &&
@@ -210,6 +211,11 @@ function engageBehaviour(
         thrust,
         longTravel: distance >= t.longTravelDistance,
         reverse: kite || brake,
+        // The engagement target is exempt from the *predictive* hazard test:
+        // the bot deliberately aims at it, so predicting a collision with it
+        // would reject the aim bearing and break engagement. It still keeps
+        // the positional danger-margin rule (AH-0MVI4QDN90037DIN · AC2).
+        exemptHazards: [best.point],
         // Mark the intent as an aim intent so the governor's `skill` error can
         // perturb it (and only it) when the designer lowers skill (AC3).
         aim: holdAim,

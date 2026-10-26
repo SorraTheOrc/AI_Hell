@@ -6,8 +6,10 @@
  * JSONL file **through the telemetry framework**. It starts the Vite dev
  * server with `VITE_TELEMETRY_ENABLED=true VITE_TELEMETRY_SINK=jsonl`, opens
  * the game in a real (by default **headed**) browser so a human can play,
- * waits for the run to end (or for Ctrl+C), then reads the local dev sink's
- * `localStorage` JSONL and writes it to a file.
+ * waits for the run to end (or for Ctrl+C), then reads the run's in-memory
+ * telemetry buffer through the dev-gated `window.__aiHellTelemetry` accessor
+ * and writes it to a file. Telemetry never touches `localStorage`
+ * (AH-0MVIRYGD1000JVY3).
  *
  * The recording is the framework's `run_header` + per-tick state/input +
  * discrete events, all schema-versioned (`docs/TELEMETRY.md`). No new
@@ -36,6 +38,7 @@ import {
   installBotTuningConfig,
   installRunEndedListener,
   loadBotTuningConfigFile,
+  readDevTelemetryBufferInChunks,
   readRunEndedSignal,
 } from './capture-gameplay.mjs';
 import { decodeRunEndedDetail } from './capture-run-lifecycle.mjs';
@@ -43,9 +46,6 @@ import { formatSummary, parseTelemetryJsonl, summariseTelemetry } from './inspec
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VIEWPORT = { width: 960, height: 540 };
-
-/** The local dev JSONL sink's `localStorage` key (mirrors `TELEMETRY_JSONL_STORAGE_KEY`). */
-export const TELEMETRY_JSONL_STORAGE_KEY = 'ai_hell_telemetry_jsonl';
 
 /** Default safety cap for a recording, in milliseconds (30 minutes). */
 export const DEFAULT_RECORD_MAX_DURATION_MS = 30 * 60 * 1_000;
@@ -295,9 +295,8 @@ async function main(argv) {
     }
     stop.dispose();
 
-    const jsonl = await page.evaluate(
-      (key) => globalThis.localStorage?.getItem(key) ?? '',
-      TELEMETRY_JSONL_STORAGE_KEY,
+    const jsonl = await readDevTelemetryBufferInChunks((fn, arg) =>
+      page.evaluate(fn, arg),
     );
     const output = resolveRecordingOutputPath(options.output, options);
     mkdirSync(dirname(output), { recursive: true });

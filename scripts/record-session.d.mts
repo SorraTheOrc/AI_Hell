@@ -4,7 +4,6 @@
  * exports for the test suite.
  */
 
-export const TELEMETRY_JSONL_STORAGE_KEY: string;
 export const DEFAULT_RECORD_MAX_DURATION_MS: number;
 export const DEFAULT_RECORD_POLL_MS: number;
 

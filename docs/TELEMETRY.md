@@ -58,6 +58,7 @@ VITE_TELEMETRY_ENABLED=true VITE_TELEMETRY_CONSENT=true npm run build
 | `VITE_TELEMETRY_SAMPLE_RATE` | Fraction of ticks to record (`0`–`1`) | `1` |
 | `VITE_TELEMETRY_BUFFER_CAPACITY` | Ring-buffer capacity, in records | `512` |
 | `VITE_TELEMETRY_BATCH_SIZE` | Buffer size that triggers a flush | `64` |
+| `VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES` | Cap on the CDP message the run-end dev **upload** may produce (UTF-8 bytes; positive integer, clamped to 16 MiB) | `8388608` (8 MiB) |
 | `VITE_APP_VERSION` / `VITE_GIT_COMMIT` | Build metadata written to the run header | `0.0.0-dev` / `unknown` |
 
 The consent gate works as follows (see
@@ -111,12 +112,27 @@ const config = resolveEffectiveTelemetryConfig(import.meta.env, consent);
 > the bundle-hygiene gate forbids the endpoint in `dist/`.
 
 A stock `npm run dev` — no `VITE_TELEMETRY_*` variables — **collects** the run's
-telemetry into the local JSONL sink (`ai_hell_telemetry_jsonl`) and, at run end,
-**delivers** it to the dev server that served the page. The server validates and
-stores it as a recording under `recordings/session-<timestamp>.jsonl`, then runs
-the existing human evaluation on it automatically. The local sink is **left
-intact** after upload, so `npm run record`, `npm run telemetry:inspect` and the
-replay/ghost tooling keep working unchanged.
+telemetry into an **in-memory, per-run buffer** and, at run end, **delivers** it
+to the dev server that served the page. The server validates and stores it as a
+recording under `recordings/session-<timestamp>.jsonl`, then runs the existing
+human evaluation on it automatically. The buffer is **left intact** after the
+upload (until the next run starts) and exposed to the Node tooling through the
+dev-gated `window.__aiHellTelemetry` accessor, so `npm run record`,
+`npm run capture` and `npm run verify-dev-telemetry` read exactly the run the
+page just recorded.
+
+**Telemetry never uses `localStorage`** (AH-0MVIRYGD1000JVY3). The buffer lives
+in the page's memory, so a long run can neither exhaust the origin's storage
+quota nor make unrelated writes throw: before this, the per-tick JSONL sink
+(~64 KB/s of play) filled the ~5 MiB quota after ~1.4 minutes, after which every
+`localStorage.setItem` — including saving Settings — threw
+`QuotaExceededError` and the change silently reverted. Two consequences worth
+knowing:
+
+- `startRun()` resets the buffer, so each uploaded recording contains **only
+  that run's** records (no cross-run duplication in `recordings/session-*.jsonl`).
+- A single run of any length is captured in full — there is no quota-based
+truncation, and nothing accumulates across runs.
 
 ### The setting (on by default)
 
@@ -146,6 +162,37 @@ sink content to `POST /api/telemetry/upload` (same-origin,
 The upload is **fire-and-forget**: failures are caught and reported through an
 optional error seam, never thrown — upload can never block or crash run end.
 
+#### Upload message cap (8 MiB, `VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES`)
+
+No upload may produce a CDP message above a cap,
+`DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES` = **8 MiB**
+(`src/telemetry/devUpload.ts`), applied in the page *before* `fetch`. An
+over-cap buffer is skipped with one actionable line (`[telemetry] run-end
+upload skipped: …`) instead of being delivered. The body itself is untouched:
+the run stays in memory and `npm run record` / `npm run capture` still read it
+through `window.__aiHellTelemetry`.
+
+The cap is metered on the **message**, not on the raw telemetry: the CDP
+message embeds the body as the escaped `request.postData` JSON string, so
+escaping inflates it (measured **2.4×** on real runs — a 4.0 MiB telemetry body
+produced a 9.7 MiB message). `devUploadMessageBytes()` computes
+`JSON.stringify(body)` plus a small envelope allowance, so an 8 MiB cap really
+means "no single page→node message above 8 MiB" and the effective body
+allowance is roughly 3 MiB of NDJSON. Raise or lower it with
+`VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES` (any value is clamped to the 16 MiB
+server bound, so a cap that could overflow the pipe is unreachable).
+
+Why client-side, and why bounded at all (AH-0MVNVGP55002G0KH, diagnosed in
+AH-0MVNT25JI004OVKQ): Playwright's pipe transport concatenates its pending
+buffers into one string, and V8 caps a string at 512 MiB
+(`ERR_STRING_TOO_LONG`) — a long enough run ended with the capture process
+dying mid-recording. The server's own bound (`DEFAULT_MAX_UPLOAD_BYTES`,
+16 MiB, `413` — see *Server-side receipt and storage* below) cannot prevent
+this: the overflow happens when the request is sent, before any response
+exists. Turns of practical scale: with this cap a 420 s capture's run-end
+upload is skipped (its 4.0 MiB body would need a 9.7 MiB message) while a
+normal demo run's 0.67 MiB body still uploads (~1.7 MiB message).
+
 ### Server-side receipt and storage
 
 The dev-only Vite plugin
@@ -157,7 +204,9 @@ registers the endpoint with `apply: 'serve'`, mirroring `configCsvPlugin`:
   with a supported `schemaVersion` and known record kind. Malformed bodies are
   rejected with `400` **before** anything is written.
 - **Size** — bodies over 16 MiB are rejected with `413` (declared
-  `Content-Length` or discovered while streaming).
+  `Content-Length` or discovered while streaming). Uploads are additionally
+  capped client-side at an 8 MiB CDP message by default (see *Upload message
+  cap* above), so this bound is the outer limit, not the operative one.
 - **Storage** — a valid body is written verbatim as a collision-safe
   `recordings/session-<timestamp>.jsonl` (never overwriting an existing file).
 
@@ -288,9 +337,12 @@ where records go:
 - **`NoopTelemetrySink`** — used whenever recording is disabled; discards
   everything.
 - **`JsonlTelemetrySink`** — the local dev sink. Writes one JSON object per
-  line through a pluggable `TelemetryLineWriter`; the default writer appends
-  to browser `localStorage` under `ai_hell_telemetry_jsonl`, and an in-memory
-  writer is available for headless runs and tests.
+  line through a pluggable `TelemetryLineWriter`; the default writer is an
+  **in-memory buffer** (`createMemoryLineWriter()`), reset when `startRun()`
+  begins a new run. It never touches browser storage: the run-end upload and
+  the dev CLI tooling read the buffer directly (`recorder.readBuffer()` /
+  `window.__aiHellTelemetry.read()`), and the accessor is only installed in a
+  dev build (AH-0MVIRYGD1000JVY3).
 - **`RemoteTelemetrySink`** — the production sink. It forwards the
   recorder's batches to an HTTP transport. `createTelemetrySink()`
   auto-wires an `HttpTelemetryTransport` when `VITE_TELEMETRY_ENDPOINT` is
@@ -485,13 +537,15 @@ linked from the release notes.
   all further collection immediately. `clearTelemetryConsent()` resets the
   decision so the player is asked again.
 - **Offline / local dev.** Local development and offline play never upload:
-  the dev sink writes to `localStorage`, and the remote transport drops
-  batches when offline or when no endpoint is configured.
+  the dev sink is an in-memory, per-run buffer that is discarded with the run,
+  and the remote transport drops batches when offline or when no endpoint is
+  configured.
 
 ## Inspecting downloaded telemetry (AC5)
 
-`scripts/inspect-telemetry.mjs` reads a JSONL recording (the local dev sink's
-`localStorage` value, or a downloaded/exported production batch) and prints a
+`scripts/inspect-telemetry.mjs` reads a JSONL recording (the file written by
+`npm run record` / `npm run capture`, or a downloaded/exported production
+batch) and prints a
 summary: record counts by kind, schema version, run seeds, build ids, the tick
 range and the event histogram. Unknown/corrupt lines are skipped rather than
 crashing the reader.

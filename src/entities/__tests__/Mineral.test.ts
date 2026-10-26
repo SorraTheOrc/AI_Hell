@@ -13,13 +13,61 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, BootedGame } from '../../test/gameHarness';
-import { MINERAL_COLOR, MINERAL_DEPTH, MINERAL_SIZE } from '../../core/constants';
+import {
+  MINERAL_COLOR,
+  MINERAL_DEPTH,
+  MINERAL_SALVAGE_COLOR,
+  MINERAL_SIZE,
+} from '../../core/constants';
 import { Mineral, MineralConfig } from '../Mineral';
 
 class HarnessScene extends Phaser.Scene {
   constructor() {
     super('HarnessScene');
   }
+}
+
+/** Phaser Graphics `FILL_STYLE` opcode (see `phaser/src/gameobjects/graphics/Commands`). */
+const FILL_STYLE = 7;
+
+/** Widths of the Graphics opcodes this helper walks past (unlisted = 0). */
+const COMMAND_WIDTHS: Record<number, number> = {
+  0: 7, // ARC
+  3: 5, // FILL_RECT
+  4: 3, // MOVE_TO / LINE_TO
+  6: 4, // LINE_STYLE
+  [FILL_STYLE]: 3,
+  10: 7, // FILL_TRIANGLE
+};
+
+/**
+ * Colours the mineral's graphics actually issued as fills, in draw order.
+ * Walks the live command buffer so the assertion covers the rendered shape
+ * rather than a stored field alone.
+ */
+function fillColours(mineral: Mineral): number[] {
+  const buf = (mineral as unknown as { commandBuffer: number[] }).commandBuffer;
+  const colours: number[] = [];
+  let i = 0;
+  while (i < buf.length) {
+    if (buf[i] === FILL_STYLE) colours.push(buf[i + 1]);
+    i += 1 + (COMMAND_WIDTHS[buf[i]] ?? 0);
+  }
+  return colours;
+}
+
+/** Hue of an RGB triple in degrees (0 = red, 60 = yellow). */
+function hueDegrees(r: number, g: number, b: number): number {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  if (delta === 0) return 0;
+  let hue: number;
+  if (max === r) hue = ((g - b) / delta) % 6;
+  else if (max === g) hue = (b - r) / delta + 2;
+  else hue = (r - g) / delta + 4;
+  const degrees = hue * 60;
+  return degrees < 0 ? degrees + 360 : degrees;
 }
 
 describe('Mineral constants', () => {
@@ -31,6 +79,23 @@ describe('Mineral constants', () => {
 
   it('defines MINERAL_COLOR as gold', () => {
     expect(MINERAL_COLOR).toBe(0xffdd44); // gold hex
+  });
+
+  it('defines MINERAL_SALVAGE_COLOR as a distinct orange (AH-0MVJ72I8O0009T09)', () => {
+    // A named constant beside MINERAL_COLOR — the single source of the
+    // Salvage bounty's drop colour.
+    expect(typeof MINERAL_SALVAGE_COLOR).toBe('number');
+    expect(MINERAL_SALVAGE_COLOR).not.toBe(MINERAL_COLOR);
+
+    const r = (MINERAL_SALVAGE_COLOR >> 16) & 0xff;
+    const g = (MINERAL_SALVAGE_COLOR >> 8) & 0xff;
+    const b = MINERAL_SALVAGE_COLOR & 0xff;
+    // Orange: red dominant, a clear green component, little blue — and a
+    // hue well away from gold's (~48°) so the two dots read differently.
+    expect(r).toBeGreaterThan(g);
+    expect(g).toBeGreaterThan(b);
+    const hue = hueDegrees(r, g, b);
+    expect(hue).toBeLessThan(30); // red-orange, not gold/amber
   });
 
   it('defines MINERAL_DEPTH above regular gameplay objects', () => {
@@ -74,6 +139,27 @@ describe('Mineral entity lifecycle', () => {
     const body = mineral as unknown as { bodyGraphics: Phaser.GameObjects.Graphics };
     expect(body.bodyGraphics).toBeDefined();
     expect(body.bodyGraphics.commandBuffer.length).toBeGreaterThan(0);
+    // The fill the graphics actually issued is the gold default.
+    expect(fillColours(mineral)).toEqual([MINERAL_COLOR]);
+  });
+
+  it('accepts an optional colour and draws that fill (salvage orange)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const mineral = new Mineral(booted.scene, {
+      x: 400,
+      y: 200,
+      color: MINERAL_SALVAGE_COLOR,
+    });
+
+    expect(mineral.color).toBe(MINERAL_SALVAGE_COLOR);
+    // The rendered body — not just the stored field — uses the new colour.
+    expect(fillColours(mineral)).toEqual([MINERAL_SALVAGE_COLOR]);
+  });
+
+  it('defaults the colour to gold so every existing caller is unchanged', async () => {
+    booted = await bootScene([HarnessScene]);
+    const mineral = makeMineral(booted.scene, 400, 200);
+    expect(mineral.color).toBe(MINERAL_COLOR);
   });
 
   it('persists until collected (no drift or despawn)', async () => {

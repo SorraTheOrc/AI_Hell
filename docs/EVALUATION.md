@@ -58,7 +58,7 @@ Artifacts are written under `--out` (default `eval-output/`, git-ignored):
 | Artifact | Contents |
 |---|---|
 | `report.json` | The deterministic evaluation or A/B report (stable JSON). |
-| `runs.jsonl` | The raw telemetry for every run, in the shipped record schema. |
+| `runs.jsonl` | The raw telemetry for every run, in the shipped record schema. In a batch it is streamed to disk run by run (bounded memory), never accumulated. |
 | `comparison.json` | Same-seed metric deltas (only with `--human`). |
 | `ghost.svg` | The existing human-vs-bot trajectory overlay (only with `--human`). |
 | `human-balance-report.json` | The shared versioned human `BalanceReport` (`kind: 'balance'`, `policy: 'human'` — only with `--human`). |
@@ -73,7 +73,9 @@ Artifacts are written under `--out` (default `eval-output/`, git-ignored):
 | `--candidate <name>` | A/B candidate policy. | — |
 | `--seed <n>` | A seed; repeatable. | — |
 | `--seeds <count>` | Use seeds `1..count`. | `3` |
-| `--ticks <n>` | Maximum ticks per run. | `1800` |
+| `--batch` | Batch mode: sweep seeds × policies and emit the versioned balance report (see `docs/BALANCING.md`). A batch plays the **full shipped campaign** by default. | off |
+| `--skirmish` | Batch mode only: opt back into the legacy single-level skirmish (the batch default is the full campaign, AH-0MVD1RK2V009J5D2). Single-run evaluation, A/B and `--human` are **always** skirmish-scoped (AC5). | off |
+| `--ticks <n>` | Maximum ticks per run (finite; a run ends early on death or at the campaign boss/`gameComplete`). | `1800` single-run; `18000` batch |
 | `--dt <seconds>` | Fixed simulation step. | `1/60` |
 | `--sample-every <n>` | Record every Nth tick (smaller artifacts). | `1` |
 | `--out <dir>` | Artifact output directory. | `eval-output` |
@@ -104,7 +106,9 @@ seed ──► arena scenario ──► BotPolicy ──► AsteroidsModel + gov
 - **Arena** (`src/ai/eval/arena.ts`) — a deterministic, seed-derived headless
   scenario. It models player Newtonian physics (the shipped `AsteroidsModel`),
   collectables, hostiles, auto-fire, enemy fire and collisions, and emits
-  telemetry-shaped records.
+  telemetry-shaped records. The **batch** arena additionally drives the full
+  campaign wave/level sequencer and the hold-full upgrade-choice flow (see
+  [`docs/BALANCING.md`](./BALANCING.md#fidelity-boundary-and-limitations)).
 - **Metrics** (`src/ai/eval/metrics.ts`) — pure aggregation over those records
   using the **existing** `scripts/recording-analysis.mjs`. A headless bot run
   and a recorded human game are therefore measured by exactly the same code.
@@ -128,7 +132,9 @@ AH-0MV81YPBG0028WNM, epic AC1):
   `AsteroidsModel` physics (thrust, max speed, friction, rotation).
 - **Difficulty curves** (`src/data/difficulty-curves.csv` via
   `loadDifficultyCurves`) set how many hostile *waves* the reservoir holds
-  (the opening level's row count), so a curve edit changes a run too.
+  (the opening level's row count) in the seeded skirmish, and drive the whole
+  campaign in batch mode (`buildSequencedLevels` honours `fixed`/`curve`/
+  `dynamic` generations), so a curve edit changes a run either way.
 
 A resolved balance config (`ArenaBalanceConfig`) is built by
 `loadBalanceConfig()` in `src/ai/eval/balanceConfig.ts`; `runArena` accepts it
@@ -236,6 +242,10 @@ harness itself never invokes a browser or an encoder.
   seed, so `report.json` and `runs.jsonl` are byte-stable for the same
   seeds/config/policy. Each run entry carries an FNV-1a hash of its raw records
   so drift is detectable.
+- A batch streams each run's telemetry to `runs.jsonl` as the run finishes
+  (`executeEvaluation`'s `telemetrySink`), so memory is bounded by one run and
+  does not grow with `--games`; the streamed bytes are identical to the
+  accumulated JSONL (asserted in `src/ai/eval/cli.test.ts`).
 - Verify with:
   ```bash
   npm run evaluate -- --seeds 3 --out /tmp/a
@@ -249,12 +259,26 @@ The arena is a **closed-loop headless model**, not Phaser: it models the
 quantities the bot reasons about (player physics, collectables, hazards,
 auto-fire, collisions) rather than the full wave/VFX/enemy-behaviour stack
 (enemy formations, burst patterns and bullet lifetimes are intentionally not
-modelled). Each hostile's radius, health, fire cadence, bullet speed and fire
-chance do come from the shared `EnemyConfig`, so balance tuning is reflected
-in the simulation. That keeps evaluation fast and deterministic under
-Node/vitest. For pixel-accurate, full-stack verification use the browser
-capture path (`npm run capture`); both paths feed the same telemetry schema,
-so a recorded capture can be analysed with `npm run analyse`.
+modelled), and it never boots a renderer or reads the wall clock. Each
+hostile's radius, health, fire cadence, bullet speed and fire chance do come
+from the shared `EnemyConfig`, so balance tuning is reflected in the
+simulation. That keeps evaluation fast and deterministic under Node/vitest.
+For pixel-accurate, full-stack verification use the browser capture path
+(`npm run capture`); both paths feed the same telemetry schema, so a recorded
+capture can be analysed with `npm run analyse`.
+
+**Batch mode widens the boundary.** A `--batch` run plays the **whole shipped
+campaign** by default — the shared wave/level sequencer (`fixed`/`curve`/
+`dynamic` waves) and the hold-full upgrade-choice flow are driven, so the
+balance report's `waveReached`, `levelReached` and `upgradesSelected` carry
+real values. What stays **simplified** exactly, what the bounded tick budget
+covers, and how to read the per-wave / per-level distributions is documented
+in [`docs/BALANCING.md`](./BALANCING.md#fidelity-boundary-and-limitations)
+(which owns the batch semantics); the short version is that boss/mini-boss
+encounters, formation movement, VFX and rendering remain unmodelled, so a balance
+report is a directional signal rather than a full-stack simulation. See
+[`docs/BALANCING.md`](./BALANCING.md#full-campaign-runs-the-batch-default)
+and `--skirmish` above for the opt-out.
 
 ## Testing
 

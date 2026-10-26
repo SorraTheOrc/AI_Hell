@@ -27,6 +27,7 @@
 import Phaser from 'phaser';
 
 import {
+  ENEMY_FIELD_RAM_REARM_MS,
   FORCE_FIELD_COLOR,
   FORCE_FIELD_REFLECT_LIFETIME,
   GAME_HEIGHT,
@@ -53,6 +54,7 @@ import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } fr
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
 import type { AoEDescriptor, WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
+import { resolveThornsAbsorb } from '../../vfx/thornsAbsorb';
 import { EffectsRegistry } from '../../powerups/effects';
 import { isInDanger } from '../../powerups/dangerDetection';
 import {
@@ -133,11 +135,29 @@ export abstract class CombatScene<
    */
   protected wormholeEffects: Phaser.GameObjects.Container[] = [];
 
+  /**
+   * Live Thorn Field absorb bursts, tracked for observation and teardown on
+   * scene shutdown (AH-0MVJ8YKR70096C6T). Spawned by the shared ram branch
+   * through {@link _onThornsAbsorb}, so the game and every gym fire the same
+   * burst.
+   */
+  protected thornsAbsorbEffects: Phaser.GameObjects.Graphics[] = [];
+
   /** Seconds of post-hit invulnerability remaining (blinks while > 0). */
   protected invulnerable = 0;
   protected blinkPhase = 0;
   /** Cumulative player-hit counter (exposed by both scenes). */
   protected playerHitCount = 0;
+
+  /**
+   * Scene-clock timestamp (`this.time.now`, ms) until which an enemy force
+   * field will not absorb another ram (epic AH-0MVJ8W4GE007OMNT AC2, Q6 = B).
+   * One configured contact consumes exactly one field hit; a sustained
+   * overlap inside this window consumes nothing, so a player holding the ram
+   * position cannot drain the field frame-by-frame. Only gates enemies that
+   * still carry a field — an unshielded contact keeps the both-destroyed rule.
+   */
+  protected enemyFieldRamReArmUntil = 0;
 
   // ── Shared opt-in wave-timeout + wipe→respawn lifecycle ──────────
   // (AH-0MUNR5LM1004B223) The wave-timeout and the wipe→3 s countdown→
@@ -351,11 +371,13 @@ export abstract class CombatScene<
    * same shared path runs in the game and the gyms, so the feedback cannot
    * diverge (parent AH-0MUI820PM0038HS2 — producer review).
    *
-   * A **piercing** bullet (`bullet.piercing > 0`, R-Type wave laser) damages
-   * the enemy but survives, decrementing its budget and remembering the enemy
-   * so it is never damaged twice; returning `false` lets the shared loop keep
-   * scanning. Once the budget is exhausted the next new enemy consumes the
-   * bullet (AH-0MV1BIUSJ0090W92).
+   * A **damage-budget** beam (`bullet.maxHitPoints > 0`, R-Type wave laser)
+   * spends up to its remaining budget on the enemy (one hit point per
+   * `takeDamage()`), remembers the enemy so its budget is never re-charged,
+   * and — if the enemy was destroyed and budget remains — returns `false` so
+   * the shared loop keeps scanning to the ships behind it. If the enemy
+   * survives a partial hit or the budget is spent the bullet is consumed
+   * (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S).
    *
    * @returns whether the bullet was consumed (stops the scan).
    */
@@ -384,45 +406,79 @@ export abstract class CombatScene<
       bullet.destroy();
       return true;
     }
-    // Already passed through this enemy on an earlier frame — never re-damage.
-    if (bullet.piercedEnemies.has(enemy)) {
+    // Already spent damage on this enemy on an earlier frame — never re-charge.
+    if (bullet.damagedEnemies.has(enemy)) {
       return false;
     }
-    // Damage the enemy identically for the piercing and consuming paths.
+    if (bullet.maxHitPoints > 0) {
+      // Damage-budget beam: apply up to the remaining budget, charge the
+      // enemy its actual damage and remember it. The beam passes through only
+      // when it destroyed the enemy and still has budget left; an enemy that
+      // survives a partial hit consumes the beam (it has nothing left to
+      // spend), as does an enemy destroyed exactly at zero budget.
+      bullet.damagedEnemies.add(enemy);
+      const applied = this.damageEnemyWithBullet(
+        enemy,
+        bullet,
+        bullet.maxHitPoints,
+      );
+      bullet.maxHitPoints = Math.max(0, bullet.maxHitPoints - applied);
+      if (!enemy.alive && bullet.maxHitPoints > 0) {
+        return false;
+      }
+      bullet.destroy();
+      return true;
+    }
+    // Ordinary single-hit bullet: one damage instance, then consumed.
     this.damageEnemyWithBullet(enemy, bullet);
-    // A piercing bullet survives the hit while it still has budget; remember
-    // the enemy and continue to the next one. Budget 0 falls through and
-    // consumes the bullet.
-    if (bullet.piercing > 0) {
-      bullet.piercedEnemies.add(enemy);
-      bullet.piercing -= 1;
-      return false;
-    }
     bullet.destroy();
     return true;
   }
 
   /**
-   * Applies one player-bullet damage instance to `enemy` through the shared
-   * kill seam **without** consuming the bullet: a multi-hit entity takes
-   * `takeDamage()` (finalised on the lethal blow, with the shared impact flash
-   * on a non-lethal hit); a single-hit entity is destroyed and finalised.
-   * Shared by the ordinary (consuming) and piercing bullet paths so both
-   * damage identically in the game and every gym (AH-0MV1BIUSJ0090W92).
+   * Applies player-bullet damage to `enemy` through the shared kill seam
+   * **without** consuming the bullet: a multi-hit entity takes one hit point
+   * per `takeDamage()` (finalised on the lethal blow, with the shared impact
+   * flash on a non-lethal hit); a single-hit entity is destroyed and
+   * finalised.
+   *
+   * `damage` is the number of hit points to attempt — 1 for an ordinary
+   * bullet, the beam's remaining `maxHitPoints` budget for the R-Type wave
+   * laser. The loop stops at the enemy's death, so per-enemy damage is capped
+   * at its remaining HP (AH-0MV97RISJ002WR2S).
+   *
+   * @returns the number of damage points actually applied — the budget
+   * caller deducts it from the bullet's `maxHitPoints`.
    */
-  private damageEnemyWithBullet(enemy: TEnemy, bullet: PlayerBullet): void {
+  private damageEnemyWithBullet(
+    enemy: TEnemy,
+    bullet: PlayerBullet,
+    damage = 1,
+  ): number {
     // Per-weapon hit feedback (cannon's distinct flash + hit cue) plays on
     // every connect through the shared impact seam — including the lethal
     // blow, which layers the shot's hit cue under the destruction audio
     // (AH-0MV8228YW0050IXS AC4).
     this.resolveWeaponImpactFx(bullet);
+    const points = Math.max(0, Math.floor(damage));
+    let applied = 0;
     if (enemy.takeDamage) {
-      // Frenzy (AH-0MVH80ZJ7009W18Z): while its window is active each bullet
-      // applies its bonus hits, so multi-hit targets (Harvester/mini-boss/
-      // boss) die faster. Inactive = exactly one hit, unchanged.
+      // Frenzy (AH-0MVH80ZJ7009W18Z): while its window is active a single
+      // ordinary-bullet contact applies its bonus hits, so multi-hit targets
+      // (Harvester/mini-boss/boss) die faster. Inactive = exactly one hit,
+      // unchanged. The damage-budget path applies one hit point per budget
+      // point instead, bounded by the enemy's remaining HP.
       const extraHits = this.getEffectsRegistry().frenzyBonusHits();
-      for (let hit = 0; hit <= extraHits && enemy.alive; hit += 1) {
-        enemy.takeDamage();
+      if (points === 1) {
+        for (let hit = 0; hit <= extraHits && enemy.alive; hit += 1) {
+          enemy.takeDamage();
+          applied += 1;
+        }
+      } else {
+        while (applied < points && enemy.alive) {
+          enemy.takeDamage();
+          applied += 1;
+        }
       }
       // Multi-hit entity: finalise the kill exactly once on the lethal blow
       // (the entity's `takeDamage()` has already run `destroySelf()` and
@@ -439,7 +495,10 @@ export abstract class CombatScene<
     } else {
       enemy.destroySelf();
       this.finaliseEnemyKill(enemy);
+      // A single-hit entity counts as 1 HP regardless of the offered damage.
+      applied = points > 0 ? 1 : 0;
     }
+    return applied;
   }
 
   /**
@@ -1120,12 +1179,12 @@ export abstract class CombatScene<
   /**
    * Resolves the shared player-bullets-vs-enemies pass (plus the boss via the
    * {@link CombatScene.onPlayerBulletHitsBoss} hook). Each live enemy is
-   * scanned until the bullet is consumed; a piercing bullet survives the hit
-   * and continues scanning (see
+   * scanned until the bullet is consumed; a damage-budget beam survives the
+   * hit and continues scanning (see
    * {@link CombatScene.onPlayerBulletHitsEnemy}). The game and every gym run
    * this one implementation, and `GymWeapons` calls it directly so its inert
-   * practice targets demonstrate weapon piercing through the same code
-   * (AH-0MV1BIUSJ0090W92).
+   * practice targets demonstrate the damage budget through the same code
+   * (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S).
    */
   protected _resolvePlayerBulletsVsEnemies(): void {
     const keptBullets: PlayerBullet[] = [];
@@ -1283,21 +1342,96 @@ export abstract class CombatScene<
             enemy.getHitRadius(),
           )
         ) {
-          this.onPlayerRamsEnemy(enemy);
-          // Thorn Field (AH-0MVH80ZJ7009W18Z): an active field absorbs the
-          // ram — the enemy still dies, but the player takes no hit.
-          if (!this.getEffectsRegistry().tryConsumeThornsRam()) {
+          // Ram resolution order matters: both the Thorn Field and a shielded
+          // enemy's force field absorb the ram, and only the branches that
+          // really destroy the enemy may run `onPlayerRamsEnemy` (the shared
+          // hook destroys the entity and runs the kill accounting in the game
+          // and the generic gym).
+          //
+          // Thorn Field (AH-0MVH80ZJ7009W18Z) keeps precedence: an active
+          // field absorbs the ram — the enemy still dies, but the player takes
+          // no hit and the distinct absorb burst/cue fires
+          // (AH-0MVJ8YKR70096C6T). A shielded enemy's shield never "steals" the
+          // ram the Thorn Field already claimed (pinned by contract test
+          // AH-0MVM8GTG7002IRTL).
+          if (this.getEffectsRegistry().tryConsumeThornsRam()) {
+            this.onPlayerRamsEnemy(enemy);
+            this._onThornsAbsorb(player.x, player.y);
+          } else if (this._tryEnemyFieldAbsorbRam(enemy)) {
+            // Enemy force field (epic AH-0MVJ8W4GE007OMNT AC2, Q6 = B): the
+            // field absorbs the ram — one field hit consumed, both sides
+            // survive, no player hit and no kill accounting (the enemy was
+            // not destroyed, so `onPlayerRamsEnemy` must not run).
+          } else {
+            this.onPlayerRamsEnemy(enemy);
             this._hitPlayer();
           }
           break;
         }
       }
       if (this.onPlayerRamsBoss()) {
-        if (!this.getEffectsRegistry().tryConsumeThornsRam()) {
+        if (this.getEffectsRegistry().tryConsumeThornsRam()) {
+          this._onThornsAbsorb(player.x, player.y);
+        } else {
           this._hitPlayer();
         }
       }
     }
+  }
+
+  /**
+   * Shared Thorn Field absorb feedback: plays the distinct lime spike-shatter
+   * burst and cue at the collision (AH-0MVJ8YKR70096C6T). Defined once here
+   * because the ram branch above is shared, so an absorbed ram never reads
+   * like a normal player hit — and no scene can hand-roll a divergent burst
+   * (gym↔game parity, AH-0MUGZDTFX004RBD1).
+   */
+  protected _onThornsAbsorb(x: number, y: number): void {
+    resolveThornsAbsorb(this, x, y, { registry: this.thornsAbsorbEffects });
+  }
+
+  /**
+   * Enemy force-field ram absorption (epic AH-0MVJ8W4GE007OMNT AC2, operator
+   * Q6 = B; AH-0MVM8GUZG008AWSU). Defined once in the shared core, mirroring
+   * the Thorn Field `tryConsumeThornsRam` precedent, so the game and every
+   * gym inherit one implementation and cannot diverge.
+   *
+   * While the rammed enemy still carries a field, the field absorbs the ram
+   * through the entity's own `takeDamage()` seam — the field decrements and
+   * the hull is untouched, so both sides survive and the player is not hit.
+   * A shared re-arm ({@link ENEMY_FIELD_RAM_REARM_MS}) makes that exactly
+   * **one field hit per contact**: a fresh overlap inside the window consumes
+   * nothing (and does not hurt the player either). Once the field is down the
+   * enemy's normal, pre-existing contact rule applies unchanged — this method
+   * returns `false` and the caller runs `_hitPlayer()` (both destroyed,
+   * AH-0MTV7JOLU006W8PT).
+   *
+   * @returns whether the ram was absorbed by the enemy's force field.
+   */
+  protected _tryEnemyFieldAbsorbRam(enemy: TEnemy): boolean {
+    const field = enemy as unknown as {
+      hasForceField?: boolean;
+      takeDamage?: () => unknown;
+    };
+    // No field left (never shielded, or already broken): today's rule wins.
+    if (field.hasForceField !== true || typeof field.takeDamage !== 'function') {
+      return false;
+    }
+    // Inside the re-arm window the contact is already paid for: absorb it
+    // silently rather than draining the field (or the player) frame by frame.
+    if (this.time.now < this.enemyFieldRamReArmUntil) return true;
+    // One field hit per contact, through the entity's single damage seam.
+    field.takeDamage();
+    this.enemyFieldRamReArmUntil = this.time.now + ENEMY_FIELD_RAM_REARM_MS;
+    return true;
+  }
+
+  /**
+   * Live Thorn Field absorb bursts (copy) — surfaced so tests can observe the
+   * feedback without pixel assertions (mirrors the other effect registries).
+   */
+  getThornsAbsorbEffects(): Phaser.GameObjects.Graphics[] {
+    return [...this.thornsAbsorbEffects];
   }
 
   /**
@@ -1523,8 +1657,13 @@ export abstract class CombatScene<
    */
   protected _drawWaveTimeoutBar(): void {
     const duration = this.getWaveTimeoutDuration();
-    // Opt-out scenes never allocate the bar.
-    if (duration <= 0) return;
+    // Opt-out scenes never allocate the bar; an already-drawn bar is hidden so
+    // a scene that becomes ineligible (e.g. level complete) cannot leave a
+    // stale timer on screen.
+    if (duration <= 0) {
+      this.waveTimeoutBar?.setVisible(false);
+      return;
+    }
     if (!this.waveTimeoutBar) {
       this.waveTimeoutBar = this.add.graphics();
       this.waveTimeoutBar.setDepth(400);
@@ -1695,9 +1834,11 @@ export abstract class CombatScene<
     this.bulletImpactEffects = [];
     this.aoeEffects = [];
     this.wormholeEffects = [];
+    this.thornsAbsorbEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;
+    this.enemyFieldRamReArmUntil = 0;
     this.waveTimeoutTimer = 0;
     this.waveTimeoutActive = false;
     this.waveTimeoutDuration = 0;
@@ -1719,6 +1860,8 @@ export abstract class CombatScene<
     this.aoeEffects = [];
     for (const effect of this.wormholeEffects) effect.destroy();
     this.wormholeEffects = [];
+    for (const effect of this.thornsAbsorbEffects) effect.destroy();
+    this.thornsAbsorbEffects = [];
     this.invulnerable = 0;
     this.blinkPhase = 0;
     this.playerHitCount = 0;

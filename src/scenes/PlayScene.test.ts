@@ -11,7 +11,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { GAME_HEIGHT, GAME_WIDTH, POWER_UP_DROP_MIN_SEPARATION } from '../core/constants';
+import {
+  GAME_HEIGHT,
+  GAME_WIDTH,
+  MINERAL_COLOR,
+  MINERAL_REDROP_SCATTER_RADIUS,
+  MINERAL_SALVAGE_COLOR,
+  POWER_UP_DROP_MIN_SEPARATION,
+} from '../core/constants';
 import {
   WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS,
   anchorSpawnsToPortal,
@@ -36,6 +43,7 @@ import { LaneTraffic } from '../entities/LaneTraffic';
 import { Harvester } from '../entities/Harvester';
 import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
+import { Tank } from '../entities/Tank';
 import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
 import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss } from '../entities/MiniBoss';
 import { minionCountForPhase } from '../waves/BossMinions';
@@ -79,8 +87,19 @@ import {
   type GhostSpawnEvent,
 } from '../waves/GhostSpawner';
 import { createSeededRng } from '../test/powerUpTestFixtures';
+import { enemyForceFieldHits } from '../core/enemyForceField';
 import { seedConfigStore, seedDifficultyCurves } from '../core/configStore';
-import { RULES_STORAGE_KEY } from '../core/rules';
+import {
+  DEFAULT_RULES,
+  POWER_UP_WEIGHT_IDS,
+  RULES_STORAGE_KEY,
+  WEAPON_WEIGHT_IDS,
+} from '../core/rules';
+import {
+  applyEnemyCountScaling,
+  extraLifeDropChance,
+  powerUpDropChance,
+} from '../core/levelScaling';
 import { miniBossDesignForLevel } from '../waves/miniBossDesigns';
 import { scaledEncounterHp } from '../core/difficultyScaling';
 import {
@@ -88,6 +107,12 @@ import {
   lockedWeaponIds,
 } from '../powerups/unlocks';
 import { CHECKPOINT_STORAGE_KEY, loadCheckpoint } from '../core/checkpointStore';
+import {
+  POWER_UP_CATALOGUE,
+  type DropId,
+  type PowerUpId,
+} from '../powerups/types';
+import { resolvePlayerSlotState } from '../powerups/slots';
 
 // These integration tests boot full Phaser games and walk the run to the
 // boss; under the full-suite parallel load the Vitest default 5 s timeout
@@ -3100,10 +3125,16 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
     const genericSound = vi.spyOn(effectsModule, 'playDestructionSound');
 
-    // Kill the Diver with a player bullet (fully spawned, so damage applies).
+    // Kill the Diver with player bullets (fully spawned, so damage applies).
+    // A level-2 Diver carries its resolved force field (start level 2,
+    // AH-0MVM8GXEF009883O), so drain the field before the hull takes damage.
     finishSpawnSequence(scene);
-    scene.spawnPlayerBullet(seam!.x, seam!.y, 0, 0);
-    scene.tick(0.016);
+    const fieldHits = (seam as unknown as { forceFieldHits?: number })
+      .forceFieldHits ?? 0;
+    for (let i = 0; i <= fieldHits; i++) {
+      scene.spawnPlayerBullet(seam!.x, seam!.y, 0, 0);
+      scene.tick(0.016);
+    }
 
     expect(diverSound).toHaveBeenCalledTimes(1);
     // The generic sound is NOT used when the entity exposes the seam.
@@ -3141,9 +3172,17 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     const diverSound = vi.spyOn(effectsModule, 'playDiverDestructionSound');
 
     // Let auto-fire fire its opening volley, then park the ship on the Diver
-    // so the body-collision path triggers (mirrors the scout ram test).
+    // so the body-collision path triggers (mirrors the scout ram test). A
+    // shielded Diver's force field absorbs the ram (AC2, Q6 = B), so drain
+    // the field first — the both-destroyed rule then applies exactly once.
     finishSpawnSequence(scene);
     scene.tick(0.016);
+    const fieldHits = (seam as unknown as { forceFieldHits?: number })
+      .forceFieldHits ?? 0;
+    for (let i = 0; i < fieldHits; i++) {
+      scene.spawnPlayerBullet(seam!.x, seam!.y, 0, 0);
+      scene.tick(0.016);
+    }
     player.setPosition(seam!.x, seam!.y);
     const state = player.getMovementState();
     (player as unknown as { _movementState: { x: number; y: number } })._movementState =
@@ -3968,10 +4007,23 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
     },
   ];
 
+  /**
+   * The campaign's level identity (number + name). The resolved campaign is a
+   * fresh, level-scaled copy (AH-0MVLJF30O000E3J3), so identity assertions
+   * compare the campaign *shape* rather than object references; level 1 is
+   * the scaling identity, so its data can still be compared directly.
+   */
+  const shapeOf = (campaign: LevelDefinition[]): string[] =>
+    campaign.map((level) => `${level.level}:${level.name}`);
+
   it('returns the static LEVELS campaign when the toggle is off', () => {
-    expect(
-      resolveCampaignLevels({ sequencedWavesEnabled: false }, () => generated),
-    ).toBe(CAMPAIGN_LEVELS);
+    const resolved = resolveCampaignLevels(
+      { sequencedWavesEnabled: false },
+      () => generated,
+    );
+    expect(shapeOf(resolved)).toEqual(shapeOf(CAMPAIGN_LEVELS));
+    // Level 1 is the scaling identity, so onboarding data is unchanged.
+    expect(resolved[0]).toEqual(CAMPAIGN_LEVELS[0]);
   });
 
   it('returns the generated campaign when the toggle is on', () => {
@@ -3982,16 +4034,20 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
 
   it('falls back to static LEVELS when generation throws', () => {
     expect(
-      resolveCampaignLevels({ sequencedWavesEnabled: true }, () => {
-        throw new Error('sequencer exploded');
-      }),
-    ).toBe(CAMPAIGN_LEVELS);
+      shapeOf(
+        resolveCampaignLevels({ sequencedWavesEnabled: true }, () => {
+          throw new Error('sequencer exploded');
+        }),
+      ),
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
   });
 
   it('falls back to static LEVELS when generation returns nothing', () => {
     expect(
-      resolveCampaignLevels({ sequencedWavesEnabled: true }, () => []),
-    ).toBe(CAMPAIGN_LEVELS);
+      shapeOf(
+        resolveCampaignLevels({ sequencedWavesEnabled: true }, () => []),
+      ),
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
   });
 
   it('guarantees the static fallback under the default-on rule (AH-0MUJSUTLA006Q8E1)', () => {
@@ -3999,11 +4055,15 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
     // No explicit rules: the default (on) applies; a failing/degenerate build
     // must still leave the run playable via the static campaign.
     expect(
-      resolveCampaignLevels(undefined, () => {
-        throw new Error('missing/malformed curve');
-      }),
-    ).toBe(CAMPAIGN_LEVELS);
-    expect(resolveCampaignLevels(undefined, () => [])).toBe(CAMPAIGN_LEVELS);
+      shapeOf(
+        resolveCampaignLevels(undefined, () => {
+          throw new Error('missing/malformed curve');
+        }),
+      ),
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
+    expect(
+      shapeOf(resolveCampaignLevels(undefined, () => [])),
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
   });
 
   it('runs a mixed fixed+curve campaign when the toggle is on, static LEVELS when off', () => {
@@ -4025,17 +4085,20 @@ describe('resolveCampaignLevels (AH-0MUITS1SM008GPR9)', () => {
       { sequencedWavesEnabled: true },
       () => buildSequencedLevels(),
     );
-    // An all-fixed level matching the static wave count is verbatim static;
-    // level 2 comes from the sequencer.
-    expect(mixed.find((l) => l.level === 1)).toBe(CAMPAIGN_LEVELS[0]);
+    // An all-fixed level matching the static wave count is the static level
+    // (level 1 is the scaling identity, so it is unchanged); level 2 comes
+    // from the sequencer.
+    expect(mixed.find((l) => l.level === 1)).toEqual(CAMPAIGN_LEVELS[0]);
     expect(mixed.find((l) => l.level === 2)?.name).toBe('Generated Descent');
     // The toggle off path ignores the mixed config entirely.
     expect(
-      resolveCampaignLevels(
-        { sequencedWavesEnabled: false },
-        () => buildSequencedLevels(),
+      shapeOf(
+        resolveCampaignLevels(
+          { sequencedWavesEnabled: false },
+          () => buildSequencedLevels(),
+        ),
       ),
-    ).toBe(CAMPAIGN_LEVELS);
+    ).toEqual(shapeOf(CAMPAIGN_LEVELS));
   });
 });
 
@@ -4063,6 +4126,29 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
     expect(wm.levelCount).toBe(CAMPAIGN_LEVELS.length);
     expect(wm.currentLevel()?.name).toBe(CAMPAIGN_LEVELS[0].name);
     expect(wm.currentLevel()?.name).toBe('Entry');
+  });
+
+  it('plays the level-scaled static campaign when sequencing is disabled (AH-0MVLJF30O000E3J3)', async () => {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    const scene = await bootToggleScene();
+    const wm = scene.getWaveManager();
+
+    // Jump to level 10, where the campaign multiplier is unmistakable (2.00):
+    // the static campaign the game plays must carry the documented scaling of
+    // the authored data, not the raw authored counts.
+    wm.beginGame(10);
+    const level10 = wm.currentLevel()!;
+    const authored = CAMPAIGN_LEVELS[9];
+    const expected = authored.waves.flatMap((wave) =>
+      applyEnemyCountScaling(10, wave.groups).map((group) => group.count),
+    );
+    const actual = level10.waves.flatMap((wave) =>
+      wave.groups.map((group) => group.count),
+    );
+    expect(actual).toEqual(expected);
   });
 
   it('runs the sequenced campaign by default (AH-0MUJSUTLA006Q8E1)', async () => {
@@ -7146,6 +7232,106 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(scene.getEffectsRegistry().thornsRemaining()).toBe(charges - 1);
   });
 
+  it('AH-0MVJ8YKR70096C6T — an absorbed ram fires the distinct thorns burst and cue', async () => {
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    const cueSpy = vi.spyOn(effectsModule, 'playBulletDestructionSound');
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    scene.finishSpawnAnimations();
+
+    scene.getEffectsRegistry().applyCollect('thorns', true);
+    const charges = scene.getEffectsRegistry().thornsRemaining();
+
+    const target = scene.getEnemies().find((e) => e.alive)!;
+    player.setPosition(target.x, target.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: typeof state })._movementState = {
+      ...state,
+      x: target.x,
+      y: target.y,
+    };
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+    // The shield/phase absorb paths would also suppress a hit — clear both so
+    // the thorn absorb is the only thing that can prevent it.
+    expect(scene.getThornsAbsorbEffects()).toHaveLength(0);
+
+    scene.tick(0.001);
+
+    // The absorb is visible: one burst at the collision, plus its shatter
+    // cue — the shared seam, not a silent life-free ram.
+    expect(scene.getThornsAbsorbEffects()).toHaveLength(1);
+    const burst = scene.getThornsAbsorbEffects()[0];
+    expect(burst.x).toBeCloseTo(player.x, 3);
+    expect(burst.y).toBeCloseTo(player.y, 3);
+    expect(cueSpy).toHaveBeenCalled();
+    expect(scene.getEffectsRegistry().thornsRemaining()).toBe(charges - 1);
+  });
+
+  it('AH-0MVJ8YKR70096C6T — the lime thorns aura is drawn only while armed', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+
+    // Inactive field: no aura.
+    scene.tick(0.001);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+
+    registry.applyCollect('thorns', true);
+    scene.tick(0.001);
+    expect(scene.isThornsAuraVisible()).toBe(true);
+
+    // Spend the whole budget: the aura clears (the field no longer counters).
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    scene.tick(0.001);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+  });
+
+  it('AH-0MVJ8YKR70096C6T — a permanent Thorn Field recharges and re-arms by itself', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('thorns', true);
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    expect(registry.thornsRemaining()).toBe(0);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+
+    // The shared per-frame step advances the recharge clock (never a
+    // scene-local timer), so the held budget returns on its own.
+    scene.tick(registry.thornsRechargeTime() + 0.01);
+    expect(registry.thornsRemaining()).toBeGreaterThan(0);
+    expect(scene.isThornsAuraVisible()).toBe(true);
+  });
+
+  it('AH-0MVJ8YKR70096C6T — an exhausted field no longer absorbs: the ram hurts normally', async () => {
+    const scene = await bootMiniBossCampaign();
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+    const livesBefore = scene.getGameState().lives;
+    (scene as unknown as { autoFireEnabled: () => boolean }).autoFireEnabled =
+      () => false;
+    scene.finishSpawnAnimations();
+
+    registry.applyCollect('thorns', true);
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    expect(registry.thornsRemaining()).toBe(0);
+
+    const target = scene.getEnemies().find((e) => e.alive)!;
+    player.setPosition(target.x, target.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: typeof state })._movementState = {
+      ...state,
+      x: target.x,
+      y: target.y,
+    };
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+
+    scene.tick(0.001);
+
+    // No absorb burst and a real hit: the field stays spent (it recharges on
+    // its own clock, not on contact).
+    expect(scene.getThornsAbsorbEffects()).toHaveLength(0);
+    expect(scene.getGameState().lives).toBe(livesBefore - 1);
+  });
+
   it('AH-0MVH80ZJ7009W18Z — Salvage adds bonus minerals at a destroyed enemy', async () => {
     const scene = await bootMiniBossCampaign();
     const registry = scene.getEffectsRegistry();
@@ -7171,6 +7357,47 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
 
     expect(salvagedDrops).toBeGreaterThan(controlDrops);
     expect(salvagedDrops).toBeGreaterThanOrEqual(bonus);
+  });
+
+  it('AH-0MVJ72I8O0009T09 — Salvage bonus minerals render orange while ordinary drops stay gold', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    scene.finishSpawnAnimations();
+    const enemies = scene.getEnemies().filter((e) => e.alive);
+
+    // Control: a kill with no Salvage window leaves no orange mineral behind.
+    const beforeControl = scene.getMinerals().length;
+    scene.spawnPlayerBullet(enemies[0].x, enemies[0].y, 0, 0);
+    scene.tick(0);
+    const controlDrops = scene.getMinerals().slice(beforeControl);
+    expect(controlDrops.some((m) => m.color === MINERAL_SALVAGE_COLOR)).toBe(
+      false,
+    );
+    expect(controlDrops.every((m) => m.color === MINERAL_COLOR)).toBe(true);
+
+    // Level Salvage up so the bounty is unambiguous, then kill another enemy.
+    for (let i = 0; i < 8; i += 1) registry.applyCollect('salvage', true);
+    const bonus = registry.salvageBonusMinerals();
+    expect(bonus).toBeGreaterThanOrEqual(3);
+
+    const beforeSalvage = scene.getMinerals().length;
+    scene.spawnPlayerBullet(enemies[1].x, enemies[1].y, 0, 0);
+    scene.tick(0);
+    const salvaged = scene.getMinerals().slice(beforeSalvage);
+
+    // Exactly the bounty is orange; any base re-drop in the same kill stays gold.
+    const orange = salvaged.filter((m) => m.color === MINERAL_SALVAGE_COLOR);
+    expect(orange).toHaveLength(bonus);
+    expect(
+      salvaged.filter((m) => m.color !== MINERAL_SALVAGE_COLOR),
+    ).toEqual(salvaged.filter((m) => m.color === MINERAL_COLOR));
+    // The extra dots land at the wreck, scattered like any other drop.
+    const wreck = enemies[1];
+    for (const drop of orange) {
+      expect(Math.hypot(drop.x - wreck.x, drop.y - wreck.y)).toBeLessThanOrEqual(
+        MINERAL_REDROP_SCATTER_RADIUS,
+      );
+    }
   });
 
   it('AH-0MVH80ZJ7009W18Z — Orbital Strike damages the nearest enemy on pickup', async () => {
@@ -7247,5 +7474,695 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(boss).not.toBeNull();
     expect(boss).not.toBeInstanceOf(MiniBoss);
     expect(boss!.alive).toBe(true);
+  });
+});
+
+/**
+ * Per-level kill-drop chance tests (AH-0MVLJF4DI000BKMQ).
+ *
+ * **TEST-FIRST.** These tests pin the parent AC "Power-up supply per enemy
+ * falls with level" (AH-0MVHT1M6O003PU7P): every kill-time drop roll in
+ * `PlayScene` must resolve the per-level chance from the live campaign
+ * (`WaveManager.currentLevel()?.level`), keep level 1 exactly at today's
+ * flat `POWER_UP_DROP_CHANCE` (0.18) rate, fall to the level-10 endpoint
+ * (0.05, ≤ 30 % of level 1), scale the small-asteroid Extra Life roll by
+ * the same ratio, and leave drop types/weights, the mineral kill-drop rule
+ * and timed power-up effects untouched.
+ *
+ * The level-scaled assertions (level-10 endpoint, mid-run level advance and
+ * the level-10 Extra Life roll) **fail on the pre-change HEAD**, where
+ * `_maybeDropPowerUp` still rolls a flat 0.18 for every level and the Extra
+ * Life roll is the flat `asteroidExtraLifeDropChance`. They are wrapped in
+ * Vitest's `it.fails(...)` — the repo's red-before/green-after convention
+ * (see `src/core/levelScaling.test.ts` and AH-0MVLJCYGW001TRB3) — so the
+ * suite stays green while the flat roll is still live. **F2
+ * (AH-0MVLJF5P0005KF8X) works in this file**: the scene now resolves the
+ * per-level chance, and the red tests are flipped back to `it` (these
+ * three flipped tests are the green evidence the implementation landed).
+ *
+ * Every roll is driven with a **constant injected RNG**, so the number of
+ * drops over the N kill rolls is exact and deterministic — no statistical
+ * or threshold sampling. The constants are derived from the documented
+ * curve (`powerUpDropChance(1) = 0.18`, `powerUpDropChance(10) = 0.05`,
+ * `extraLifeDropChance(10) ≈ 0.0139`), so a tuner who adjusts the curve in
+ * `GameRules` updates these tests through the same module the scene
+ * consumes.
+ *
+ * @module scenes/PlayScene.dropChance (within PlayScene.test.ts)
+ */
+
+describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () => {
+  let bootedGame: BootedGame | null = null;
+
+  /** The documented level-1 per-kill chance (0.18). */
+  const CHANCE_L1 = powerUpDropChance(1);
+  /** The documented level-2 per-kill chance (≈ 0.1656). */
+  const CHANCE_L2 = powerUpDropChance(2);
+  /** The documented level-10 per-kill chance (0.05). */
+  const CHANCE_L10 = powerUpDropChance(10);
+  /** Below the level-1 chance ⇒ the level-1 roll always drops (0.17). */
+  const ROLL_BELOW_L1 = CHANCE_L1 - 0.01;
+  /** Above the level-1 chance ⇒ the level-1 roll never drops (0.19). */
+  const ROLL_ABOVE_L1 = CHANCE_L1 + 0.01;
+  /** Between the level-1 and level-2 chances ⇒ drops at 1, never at 2. */
+  const ROLL_BETWEEN_L1_L2 = (CHANCE_L1 + CHANCE_L2) / 2;
+  /** Between the level-1 and level-10 chances ⇒ drops at 1, never at 10. */
+  const ROLL_BETWEEN_L1_L10 = (CHANCE_L1 + CHANCE_L10) / 2;
+  /** Below the level-10 chance ⇒ the level-10 roll still drops (0.049). */
+  const ROLL_BELOW_L10 = CHANCE_L10 - 0.001;
+  /** Extra Life chance at level 1 (unchanged default 0.05). */
+  const EXTRA_LIFE_L1 = DEFAULT_RULES.asteroidExtraLifeDropChance;
+  /** Extra Life chance at level 10 (same ratio as the per-kill chance). */
+  const EXTRA_LIFE_L10 = extraLifeDropChance(10);
+  /** Between the level-1 and level-10 Extra Life chances (≈ 0.0319). */
+  const ROLL_EXTRA_LIFE_MID = (EXTRA_LIFE_L1 + EXTRA_LIFE_L10) / 2;
+  /** Every DropId the shared weighted spawner can hand out. */
+  const DROP_POOL = new Set([...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS]);
+
+  /**
+   * The private kill-roll seam F2 changes, exposed for the unknown-level
+   * fallback test (the method reads the live campaign level at roll time).
+   */
+  type DropRollSeam = {
+    _maybeDropPowerUp(x: number, y: number): void;
+  };
+
+  /** A campaign whose levels are single, non-firing scout waves. */
+  function dropCampaign(
+    firstLevelNumber: number,
+    levels: number = 1,
+  ): LevelDefinition[] {
+    return Array.from({ length: levels }, (_, i) => ({
+      level: firstLevelNumber + i,
+      name: `Drop Test Level ${firstLevelNumber + i}`,
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 16,
+              spacingX: 60,
+              spacingY: 44,
+              startX: GAME_WIDTH * 0.15,
+              startY: GAME_HEIGHT * 0.3,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    }));
+  }
+
+  /** Boots the PlayScene on the given campaign with the asteroid spawner off. */
+  async function bootDropScene(levels: LevelDefinition[]): Promise<PlayScene> {
+    // Opt out of the sequenced campaign so the injected fixture is honoured.
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = bootedGame.scene as PlayScene;
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.getWaveManager().setLevels(levels);
+    scene.scene.restart();
+    await advanceGame(scene.game, 200);
+    return scene;
+  }
+
+  afterEach(() => {
+    bootedGame?.game.destroy(true);
+    bootedGame = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Kills exactly `howMany` live non-asteroid enemies through the real
+   * bullet path, isolating each kill (auto-fire off, only the target
+   * hittable) so collateral kills cannot add drop rolls.
+   */
+  function killExactlyNTargets(scene: PlayScene, howMany: number): void {
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.autoFireEnabled = () => false;
+    let killed = 0;
+    try {
+      for (let guard = 0; guard < 2000 && killed < howMany; guard++) {
+        const target = scene
+          .getEnemies()
+          .find((e) => e.alive && !(e instanceof Asteroid));
+        if (!target) break;
+        isolated.getEnemyEntities = () => [target];
+        scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+        scene.tick(0.016);
+        if (!target.alive) killed += 1;
+      }
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    expect(killed).toBe(howMany);
+  }
+
+  /**
+   * Spawns a **small** asteroid at (x, y) and destroys it via player
+   * bullets, isolated so only the rock can take the hit. Small asteroids do
+   * not split and are not wave-accounted, so a kill only runs the drop
+   * rolls (`_maybeDropPowerUp` plus the Extra Life roll).
+   */
+  function spawnAndDestroySmallAsteroid(
+    scene: PlayScene,
+    x: number,
+    y: number,
+  ): void {
+    const rock = scene.spawnAsteroidAt(x, y, 'small');
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.autoFireEnabled = () => false;
+    isolated.getEnemyEntities = () => [rock];
+    try {
+      for (let guard = 0; guard < 200 && rock.alive; guard++) {
+        scene.spawnPlayerBullet(rock.x, rock.y, 0, 0);
+        scene.tick(0.016);
+      }
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    expect(rock.alive).toBe(false);
+  }
+
+  /** The well-separated small-asteroid kill sites shared by the suites. */
+  const ASTEROID_SITES: ReadonlyArray<readonly [number, number]> = [
+    [GAME_WIDTH * 0.2, GAME_HEIGHT * 0.3],
+    [GAME_WIDTH * 0.4, GAME_HEIGHT * 0.35],
+    [GAME_WIDTH * 0.6, GAME_HEIGHT * 0.28],
+    [GAME_WIDTH * 0.8, GAME_HEIGHT * 0.33],
+  ];
+
+  // ── Level-1 identity (GREEN on pre-change HEAD) ─────────────────
+
+  it('level 1 — kill-time pool drops keep the documented 0.18 per-kill rate', async () => {
+    const scene = await bootDropScene(dropCampaign(1));
+    // 0.17 ≤ 0.18 ⇒ the level-1 roll passes every kill, exactly N drops.
+    scene.setRng(() => ROLL_BELOW_L1);
+    finishSpawnSequence(scene);
+    expect(scene.getWaveManager().level).toBe(1);
+
+    const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+    killExactlyNTargets(scene, 4);
+
+    // One drop per kill — nothing statistical, the counts are exact.
+    expect(spawn).toHaveBeenCalledTimes(4);
+    expect(scene.getDrops()).toHaveLength(4);
+    // The drops still come from the shared weighted pool: the level scaling
+    // touches only the chance, never the drop types/weights.
+    expect(scene.getDrops().every((d) => DROP_POOL.has(d.dropId))).toBe(true);
+    spawn.mockRestore();
+  });
+
+  it('level 1 — a roll above the 0.18 rate never drops', async () => {
+    const scene = await bootDropScene(dropCampaign(1));
+    // 0.19 > 0.18 ⇒ with the exact level-1 chance no kill drops. This
+    // brackets the scene's use of the level-1 value from above.
+    scene.setRng(() => ROLL_ABOVE_L1);
+    finishSpawnSequence(scene);
+
+    const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+    killExactlyNTargets(scene, 4);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(scene.getDrops()).toHaveLength(0);
+    spawn.mockRestore();
+  });
+
+  // ── Level-10 endpoint (RED until F2 resolves the level) ─────────
+
+  it('level 10 — a roll below the 0.05 endpoint still drops (supply never zeroes)', async () => {
+    const scene = await bootDropScene(dropCampaign(10));
+    // 0.049 ≤ 0.05 ⇒ every level-10 roll passes: the endpoint is 0.05, not 0.
+    scene.setRng(() => ROLL_BELOW_L10);
+    finishSpawnSequence(scene);
+    // The per-kill chance resolves the campaign's *design* level
+    // (WaveManager.currentLevel()?.level), not the wave-manager index.
+    expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
+
+    const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+    killExactlyNTargets(scene, 4);
+    expect(spawn).toHaveBeenCalledTimes(4);
+    spawn.mockRestore();
+  });
+
+  it(
+    'level 10 — the per-kill chance falls to 0.05 (30 % of the level-1 supply)',
+    async () => {
+      const scene = await bootDropScene(dropCampaign(10));
+      // 0.115 sits between the level-1 (0.18) and level-10 (0.05) chances:
+      // the roll drops at level 1 and never at level 10. On the pre-change
+      // flat roll (0.18 at every level) every one of these kills drops —
+      // RED until F2 resolves the campaign level at roll time.
+      scene.setRng(() => ROLL_BETWEEN_L1_L10);
+      finishSpawnSequence(scene);
+      expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
+
+      const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+      killExactlyNTargets(scene, 4);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(scene.getDrops()).toHaveLength(0);
+      spawn.mockRestore();
+    },
+  );
+
+  // ── Mid-run level advance (RED until F2 re-resolves per kill) ────
+
+  it(
+    'mid-run — advancing a level re-resolves the drop chance for the next kills',
+    async () => {
+      const scene = await bootDropScene(dropCampaign(1, 2)); // levels 1 → 2
+      // 0.1728 sits between the level-1 (0.18) and level-2 (≈ 0.1656)
+      // chances: level-1 kills drop, level-2 kills never do.
+      scene.setRng(() => ROLL_BETWEEN_L1_L2);
+      finishSpawnSequence(scene);
+      const wm = scene.getWaveManager();
+      expect(wm.currentLevel()?.level).toBe(1);
+
+      const spawn = vi.spyOn(scene, 'spawnPowerUpDrop');
+
+      // Level 1: every kill drops (GREEN half — the level-1 rate holds).
+      killExactlyNTargets(scene, 4);
+      expect(spawn).toHaveBeenCalledTimes(4);
+
+      // Clear the level through the real gameplay path → the campaign
+      // advances to level 2 on its own.
+      killAllEnemies(scene);
+      finishTransition(scene);
+      expect(wm.currentLevel()?.level).toBe(2);
+      const callsAtLevel2 = spawn.mock.calls.length;
+
+      // Level 2: the same roll value must now fail (chance(2) < 0.1728), so
+      // no new drops spawn. On the flat-roll HEAD it still drops 4 — RED
+      // until F2 reads the live level at kill time.
+      killExactlyNTargets(scene, 4);
+      expect(spawn.mock.calls.length).toBe(callsAtLevel2);
+      spawn.mockRestore();
+    },
+  );
+
+  // ── Unknown-level fallback (GREEN; proves the level-1 fallback) ──
+
+  it('unknown level — the roll falls back to the level-1 rate when no level is live', async () => {
+    const scene = await bootDropScene(dropCampaign(1));
+    // Force the "unknown level" state: the campaign has no active level.
+    scene.getWaveManager().reset();
+    expect(scene.getWaveManager().currentLevel()).toBeNull();
+    const roll = scene as unknown as DropRollSeam;
+
+    // A roll just below 0.18 must still drop — the level-1 fallback rate.
+    scene.setRng(() => ROLL_BELOW_L1);
+    const before = scene.getDrops().length;
+    roll._maybeDropPowerUp(GAME_WIDTH / 2, 120);
+    expect(scene.getDrops().length).toBe(before + 1);
+
+    // A roll just above 0.18 must not drop — proving the fallback is the
+    // level-1 chance and not some higher rate.
+    scene.setRng(() => ROLL_ABOVE_L1);
+    const beforeHigh = scene.getDrops().length;
+    roll._maybeDropPowerUp(GAME_WIDTH / 2 - 80, 120);
+    expect(scene.getDrops().length).toBe(beforeHigh);
+
+    // The drop the fallback allowed still comes from the shared pool.
+    expect(scene.getDrops().every((d) => DROP_POOL.has(d.dropId))).toBe(true);
+  });
+
+  // ── Extra Life proportionality ──────────────────────────────────
+
+  it('Extra Life — the small-asteroid roll keeps the 0.05 chance unchanged at level 1', async () => {
+    const scene = await bootDropScene(dropCampaign(1));
+    // 0.0319 sits between the level-1 (0.05) and level-10 (≈ 0.0139) Extra
+    // Life chances: at level 1 every small-asteroid kill leaves an extra
+    // life, at level 10 none would.
+    scene.setRng(() => ROLL_EXTRA_LIFE_MID);
+    finishSpawnSequence(scene);
+    expect(scene.getWaveManager().currentLevel()?.level).toBe(1);
+
+    for (const [x, y] of ASTEROID_SITES) spawnAndDestroySmallAsteroid(scene, x, y);
+
+    expect(
+      scene.getDrops().filter((d) => d.dropId === 'extra_life'),
+    ).toHaveLength(4);
+  });
+
+  it(
+    'Extra Life — level 10 scales the roll by the same ratio as the per-kill chance',
+    async () => {
+      const scene = await bootDropScene(dropCampaign(10));
+      scene.setRng(() => ROLL_EXTRA_LIFE_MID);
+      finishSpawnSequence(scene);
+      expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
+
+      for (const [x, y] of ASTEROID_SITES)
+        spawnAndDestroySmallAsteroid(scene, x, y);
+
+      // 0.0319 > extraLifeDropChance(10) ≈ 0.0139 ⇒ no extra life at level
+      // 10. RED on pre-change HEAD: the roll is a flat 0.05 at every level,
+      // so each kill leaves an extra life.
+      expect(
+        scene.getDrops().filter((d) => d.dropId === 'extra_life'),
+      ).toHaveLength(0);
+    },
+  );
+
+  // ── Unaffected paths (GREEN both on HEAD and after F2) ──────────
+
+  it('the mineral kill-drop rule is level-independent: a level-10 small-asteroid kill still leaves exactly one mineral', async () => {
+    const scene = await bootDropScene(dropCampaign(10));
+    // 0.5 > 0.18 (flat HEAD chance) and > 0.05 (level-10 chance): the power-up
+    // pool is suppressed at every level, isolating the mineral rule from the
+    // drop roll.
+    scene.setRng(() => 0.5);
+    finishSpawnSequence(scene);
+
+    const dropsBefore = scene.getDrops().length;
+    const mineralsBefore = scene.getMinerals().length;
+    // Kill away from the player (and the scout formation) so the mineral
+    // stays on the field for the count.
+    spawnAndDestroySmallAsteroid(scene, GAME_WIDTH * 0.15, GAME_HEIGHT * 0.62);
+    // No power-up drop …
+    expect(scene.getDrops().length).toBe(dropsBefore);
+    // … but the mineral kill-drop rule is untouched: exactly one mineral.
+    expect(scene.getMinerals().length).toBe(mineralsBefore + 1);
+  });
+
+  it('timed power-up effects still apply at an elevated level', async () => {
+    const scene = await bootDropScene(dropCampaign(10));
+    const player = scene.getPlayer()!;
+    const registry = scene.getEffectsRegistry();
+    expect(scene.getWaveManager().currentLevel()?.level).toBe(10);
+
+    // The level scaling changes the drop ROLL, not the effect pipeline — a
+    // timed power-up collected at level 10 must still apply.
+    const drop = scene.spawnPowerUpDrop('speed_boost', player.x, player.y)!;
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05);
+    player.setPosition(drop.x, drop.y);
+    scene.tick(0.016);
+    expect(registry.isActive('speed_boost')).toBe(true);
+    expect(registry.speedMultiplier()).toBe(1.5);
+  });
+});
+
+// ── Force-field spawn resolution (AH-0MVM8GXEF009883O, AC4) ──────────
+
+/**
+ * The game resolves an enemy's force-field strength **once, at spawn**, from
+ * the live run level (`WaveManager.level`) through the shared pure resolver
+ * (`enemyForceFieldHits`) — never a hard-coded level and never a raw config
+ * column. The resolved count is threaded through the same factory parameter
+ * the entity layer (AH-0MVM8GUZG008AWSU) introduced. The gym counterpart of
+ * this seam is pinned by the parity block in
+ * `src/scenes/core/CombatScene.equivalence.test.ts`.
+ */
+describe('PlayScene — force-field spawn resolution (AH-0MVM8GXEF009883O)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** One injected level: a single non-firing Tank wave (a heavy archetype). */
+  function tankLevel(level: number, count = 3): LevelDefinition {
+    return {
+      level,
+      name: `Force Field Level ${level}`,
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'tank',
+              formation: 'rect',
+              count,
+              spacingX: 44,
+              spacingY: 36,
+              startX: GAME_WIDTH * 0.3,
+              startY: GAME_HEIGHT * 0.25,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ],
+    };
+  }
+
+  /**
+   * A `target`-level campaign (…one Tank wave per level). `WaveManager.level`
+   * is the 1-based level **index**, so the run must actually reach the target
+   * level for the spawn seam to resolve it — the injected level definitions'
+   * `level` field alone does not move the manager.
+   */
+  function tankCampaign(target: number): LevelDefinition[] {
+    return Array.from({ length: target }, (_, i) => tankLevel(i + 1));
+  }
+
+  /** Clears the active wave (bullets drain any force fields) and transitions. */
+  function advanceToLevel(scene: PlayScene, target: number): void {
+    for (let guard = 0; guard < 12 && scene.getWaveManager().level < target; guard++) {
+      killAllEnemies(scene);
+      finishTransition(scene);
+    }
+    expect(scene.getWaveManager().level).toBe(target);
+  }
+
+  /** Boots the injected campaign and returns the wave's live Tanks. */
+  async function bootCampaign(targetLevel: number): Promise<{ scene: PlayScene; tanks: Tank[] }> {
+    booted = (await bootSceneWithLevels(tankCampaign(targetLevel))).booted;
+    const scene = booted.scene as PlayScene;
+    advanceToLevel(scene, targetLevel);
+    const tanks = scene
+      .getEnemies()
+      .filter((enemy): enemy is Tank => enemy instanceof Tank && enemy.alive);
+    return { scene, tanks };
+  }
+
+  it('resolves the run level through the shared curve at spawn', async () => {
+    const { scene, tanks } = await bootCampaign(5);
+    expect(scene.getWaveManager().level).toBe(5);
+    expect(tanks).toHaveLength(3);
+
+    const expected = enemyForceFieldHits(5, DEFAULT_ENEMY_CONFIGS.tank);
+    // Sanity: a level-5 Tank is genuinely shielded (2 → 4 curve, start level 2).
+    expect(expected).toBeGreaterThan(0);
+    for (const tank of tanks) {
+      expect(tank.forceFieldHits).toBe(expected);
+      expect(tank.hasForceField).toBe(true);
+    }
+  });
+
+  it('leaves level 1 untouched — every spawned tank is unshielded', async () => {
+    const { scene, tanks } = await bootCampaign(1);
+    expect(scene.getWaveManager().level).toBe(1);
+    expect(tanks).toHaveLength(3);
+    for (const tank of tanks) {
+      expect(tank.forceFieldHits).toBe(0);
+      expect(tank.hasForceField).toBe(false);
+    }
+  });
+
+  it('is deterministic for a fixed level: two runs yield identical shields', async () => {
+    const first = await bootCampaign(7);
+    const firstFields = first.tanks.map((tank) => tank.forceFieldHits);
+    booted?.game.destroy(true);
+    booted = null;
+
+    const second = await bootCampaign(7);
+    expect(second.tanks.map((tank) => tank.forceFieldHits)).toEqual(firstFields);
+    expect(firstFields[0]).toBe(
+      enemyForceFieldHits(7, DEFAULT_ENEMY_CONFIGS.tank),
+    );
+  });
+
+  it('resolves the same curve for scheduled secondary spawns (Harvester)', async () => {
+    // Scheduled Harvester spawns share the scene's spawn seam; a heavy
+    // archetype scheduled mid-wave must be shielded exactly like a
+    // formation-spawned one at the same run level.
+    const { scene } = await bootCampaign(5);
+    const spawn = (scene as unknown as {
+      _spawnScheduledHarvester(event: {
+        x: number;
+        y: number;
+        timeFraction: number;
+        timeSeconds: number;
+      }): void;
+    })._spawnScheduledHarvester.bind(scene);
+    spawn({ x: GAME_WIDTH * 0.5, y: GAME_HEIGHT * 0.5, timeFraction: 0.5, timeSeconds: 1 });
+
+    const harvesters = scene
+      .getEnemies()
+      .filter((enemy): enemy is Harvester => enemy instanceof Harvester && enemy.alive);
+    expect(harvesters.length).toBeGreaterThan(0);
+    for (const harvester of harvesters) {
+      expect(harvester.forceFieldHits).toBe(
+        enemyForceFieldHits(5, DEFAULT_ENEMY_CONFIGS.harvester),
+      );
+    }
+  });
+});
+
+// ── Six-slot drop gating (AH-0MVNT2YGD003N8NR, AC1) ────────────────
+//
+// The shared draw seam (`drawNextDrop` in src/scenes/core/dropLayer.ts) and
+// its scene wiring: once all six permanent slots are filled, the run's drop
+// path draws only owned kinds plus catalogue entries flagged
+// `availableWhenSlotsFull`; below the cap the full weighted pool is untouched.
+
+describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
+  let bootedGame: BootedGame | null = null;
+
+  /** Every catalogue entry flagged available-when-full (Extra Life, Mystery UFO). */
+  const EXEMPT_WHEN_FULL: readonly PowerUpId[] = (
+    Object.keys(POWER_UP_CATALOGUE) as PowerUpId[]
+  ).filter((id) => POWER_UP_CATALOGUE[id].availableWhenSlotsFull === true);
+
+  /** Boots a plain run with the asteroid spawner off. */
+  async function bootGatedScene(): Promise<PlayScene> {
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+    bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = bootedGame.scene as PlayScene;
+    scene.setAsteroidSpawnerEnabled(false);
+    scene.scene.restart();
+    await advanceGame(scene.game, 200);
+    return scene;
+  }
+
+  afterEach(() => {
+    bootedGame?.game.destroy(true);
+    bootedGame = null;
+    localStorage.clear();
+  });
+
+  /**
+   * Fills exactly six permanent slots (four power-ups + two weapon drops)
+   * through the real permanent-grant stores, then drives `_maybeDropPowerUp`
+   * with a deterministic sweep RNG. Returns every id the draw path handed to
+   * the spawn seam (the drops themselves are stubbed — we assert the gate,
+   * not the drop lifecycle).
+   */
+  async function collectGatedDraws(
+    slotsFull: boolean,
+  ): Promise<{ drawn: DropId[]; scene: PlayScene }> {
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    if (slotsFull) {
+      player.getPowerUpLevelStore().collect('shield', true);
+      player.getPowerUpLevelStore().collect('bomb', true);
+      player.getPowerUpLevelStore().collect('speed_boost', true);
+      player.getPowerUpLevelStore().collect('phase_shift', true);
+      player.equipWeapon('spread', true);
+      player.equipWeapon('dual', true);
+    }
+    expect(resolvePlayerSlotState(player).isFull).toBe(slotsFull);
+
+    // Seeded LCG (Numerical Recipes constants): decorrelated consecutive draws,
+    // so the per-kill chance roll and the weighted draw it precedes both see a
+    // full spread of [0, 1) — every eligible band is sampled.
+    let seed = 20261025 >>> 0;
+    scene.setRng(() => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    });
+    const roll = scene as unknown as {
+      _maybeDropPowerUp(x: number, y: number): void;
+    };
+    const spawn = vi
+      .spyOn(scene, 'spawnPowerUpDrop')
+      .mockImplementation(() => null);
+
+    for (let i = 0; i < 3000; i++) roll._maybeDropPowerUp(100, 120);
+
+    const drawn = spawn.mock.calls.map(([id]) => id as DropId);
+    spawn.mockRestore();
+    return { drawn, scene };
+  }
+
+  it('at six filled slots draws only owned kinds plus available-when-full entries (AC1)', async () => {
+    const { drawn } = await collectGatedDraws(true);
+
+    // A meaningful sample (the 0.18-ish per-kill chance passes ~18 % of calls).
+    expect(drawn.length).toBeGreaterThan(200);
+    const allowed = new Set<DropId>([
+      'shield',
+      'bomb',
+      'speed_boost',
+      'phase_shift',
+      'spread',
+      'dual',
+      ...EXEMPT_WHEN_FULL,
+    ]);
+    // Every other power-up and weapon id is never drawn.
+    expect(drawn.filter((id) => !allowed.has(id))).toEqual([]);
+    // No eligible id is starved: owned kinds and exempt entries all appear.
+    for (const id of allowed) expect(drawn).toContain(id);
+  });
+
+  it('below the cap the full weighted pool is still drawable (AC3)', async () => {
+    const { drawn } = await collectGatedDraws(false);
+
+    const pool = new Set<DropId>([...POWER_UP_WEIGHT_IDS, ...WEAPON_WEIGHT_IDS]);
+    const isWeapon = (id: DropId) =>
+      (WEAPON_WEIGHT_IDS as readonly string[]).includes(id);
+    expect(drawn.length).toBeGreaterThan(200);
+    expect(drawn.every((id) => pool.has(id))).toBe(true);
+    // Both drop families are covered by the draw path.
+    expect(drawn.some(isWeapon)).toBe(true);
+    expect(drawn.some((id) => !isWeapon(id))).toBe(true);
+  });
+});
+
+describe('PlayScene — dev-gated startLevel seam (AH-0MVE01EY0008QEVX AC3)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+    delete window.__aiHellRunProgress;
+  });
+
+  it('starts a fresh demo run at the supplied campaign level in a dev build', async () => {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const manager = booted.game.scene;
+    manager.start('PlayScene', { demo: true, startLevel: 4 });
+    await advanceGame(booted.game, 200);
+    const scene = manager.getScene('PlayScene') as PlayScene;
+
+    expect(scene.getWaveManager().level).toBe(4);
+    // The dev-gated progress handle reports the live position.
+    expect(window.__aiHellRunProgress).toMatchObject({ level: 4, ended: false });
+  });
+
+  it('clamps an out-of-range startLevel to the campaign', async () => {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const manager = booted.game.scene;
+    manager.start('PlayScene', { demo: true, startLevel: 999 });
+    await advanceGame(booted.game, 200);
+    const scene = manager.getScene('PlayScene') as PlayScene;
+
+    expect(scene.getWaveManager().level).toBe(scene.getWaveManager().levelCount);
   });
 });

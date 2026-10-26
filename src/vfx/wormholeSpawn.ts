@@ -13,7 +13,7 @@
  * @module vfx/wormholeSpawn
  */
 
-import type Phaser from 'phaser';
+import Phaser from 'phaser';
 
 import { SHIP_SIZE } from '../core/constants';
 
@@ -48,6 +48,51 @@ const SPIRAL_ARM_COUNT = 3;
 const WORMHOLE_RADIUS = 40;
 /** Starting scale for the wormhole (fully closed). */
 const WORMHOLE_START_SCALE = 0.01;
+
+// ── Wormhole glow/pulse ring tunables (AH-0MVD2N6AW0073X5M) ─────────
+//
+// While a wormhole is open for a wave it gets a subtle glow/pulse ring at the
+// wormhole position (epic AH-0MV8BUKFK003Z23S AC4). It is drawn **once per
+// wormhole** as a child of the wormhole container, so it is tracked by the
+// caller's existing `wormholeEffects` registry for free and is destroyed with
+// the container when the close tween completes (no separate teardown path to
+// leak). Pure Graphics — no new assets — and visually distinct from both the
+// phase-shift chromatic split and the player-death palette.
+
+/**
+ * Whether the wormhole glow/pulse ring layer is enabled. Off ⇒ the wormhole
+ * renders exactly as before (no ring child, no extra tween).
+ */
+export const WORMHOLE_RING_ENABLE = true;
+
+/**
+ * Ring colour — a soft violet-white that reads as glow against the dark
+ * playfield. Deliberately distinct from the phase-shift cyan/red split
+ * (`PHASE_SHIFT_SPLIT_COLOR_*`) and the player-death palette.
+ */
+export const WORMHOLE_RING_COLOR = 0xd9b3ff;
+
+/** Ring radius (px) at its neutral pulse position. */
+export const WORMHOLE_RING_RADIUS = 52;
+
+/** Ring stroke width (px). */
+export const WORMHOLE_RING_LINE_WIDTH = 3;
+
+/**
+ * Radius pulse multipliers `[min, max]` — the ring "breathes" around its
+ * neutral radius rather than sitting static. Applied as a scale tween on the
+ * ring graphics (a yoyo repeat), so no per-frame work is needed.
+ */
+export const WORMHOLE_RING_PULSE_RANGE: readonly [number, number] = [0.9, 1.15] as const;
+
+/** Duration (ms) of one pulse direction (min → max); the yoyo makes a full breath twice this. */
+export const WORMHOLE_RING_PULSE_DURATION_MS = 900;
+
+/** Soft glow alpha of the ring, within (0, 1]. */
+export const WORMHOLE_RING_GLOW_ALPHA = 0.45;
+
+/** Data key marking the ring graphics inside the wormhole container. */
+const WORMHOLE_RING_DATA_KEY = 'wormholeRing';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -103,6 +148,61 @@ function drawWormholeInitial(graphics: Phaser.GameObjects.Graphics): void {
 
 // ── Public API — Wormhole VFX ───────────────────────────────────────
 
+/**
+ * Adds the glow/pulse ring to an open wormhole container and starts its
+ * breathing pulse. A no-op when the layer is disabled or the scene exposes no
+ * tween manager (headless stub) — the wormhole itself is unaffected.
+ *
+ * @param scene - The wormhole's scene (owns the tween manager).
+ * @param container - The wormhole container the ring is parented to.
+ */
+function attachWormholeRing(
+  scene: Phaser.Scene,
+  container: Phaser.GameObjects.Container,
+): void {
+  if (!WORMHOLE_RING_ENABLE) return;
+  const add = scene?.add as
+    | { graphics?: () => Phaser.GameObjects.Graphics }
+    | undefined;
+  if (!add || typeof add.graphics !== 'function') return;
+
+  const ring = add.graphics();
+  ring.lineStyle(WORMHOLE_RING_LINE_WIDTH, WORMHOLE_RING_COLOR, WORMHOLE_RING_GLOW_ALPHA);
+  ring.strokeCircle(0, 0, WORMHOLE_RING_RADIUS);
+  // A wider, fainter second pass reads as the soft glow halo without a new
+  // texture or a second game object.
+  ring.lineStyle(WORMHOLE_RING_LINE_WIDTH * 3, WORMHOLE_RING_COLOR, WORMHOLE_RING_GLOW_ALPHA * 0.35);
+  ring.strokeCircle(0, 0, WORMHOLE_RING_RADIUS);
+  ring.setData(WORMHOLE_RING_DATA_KEY, true);
+  container.add(ring);
+
+  const tweens = scene?.tweens as
+    | { add?: (...args: unknown[]) => unknown }
+    | undefined;
+  if (!tweens || typeof tweens.add !== 'function') return;
+  const [pulseMin, pulseMax] = WORMHOLE_RING_PULSE_RANGE;
+  tweens.add({
+    targets: ring,
+    scale: { from: pulseMin, to: pulseMax },
+    duration: WORMHOLE_RING_PULSE_DURATION_MS,
+    ease: 'Sine.easeInOut',
+    yoyo: true,
+    repeat: -1,
+  });
+}
+
+/**
+ * Opens the wormhole VFX at (x, y): a neon swirl that scales up over
+ * {@link WORMHOLE_OPEN_DURATION}, plus the glow/pulse ring
+ * ({@link WORMHOLE_RING_ENABLE}) tracked as a child of the container.
+ *
+ * @param scene - The owning scene (add factory + tween manager).
+ * @param x - World x position of the wormhole.
+ * @param y - World y position of the wormhole.
+ * @param options.registry - Optional caller-owned container registry (the
+ *   scenes' `wormholeEffects`), so scene teardown can destroy any leftovers.
+ * @returns The handle used to close the wormhole and observe completion.
+ */
 export function spawnWormholeOpen(
   scene: Phaser.Scene,
   x: number,
@@ -128,9 +228,22 @@ export function spawnWormholeOpen(
     duration: WORMHOLE_OPEN_DURATION * 1000,
     ease: 'Cubic.easeOut',
   });
+  // The glow/pulse ring is layered on after the open tween so the wormhole's
+  // own open animation remains the first tween registered for the container.
+  attachWormholeRing(scene, container);
   return handle;
 }
 
+/**
+ * Closes the wormhole: scales and fades it out over
+ * {@link WORMHOLE_CLOSE_DURATION}, then — on tween completion — stops the
+ * ring's looping pulse, removes the container from the registry and destroys
+ * it exactly once. Idempotent: a second close on the same handle is a no-op.
+ *
+ * @param scene - The owning scene (tween manager).
+ * @param handle - The handle returned by {@link spawnWormholeOpen}.
+ * @param registry - Optional container registry to remove the wormhole from.
+ */
 export function spawnWormholeClose(
   scene: Phaser.Scene,
   handle: WormholeHandle,
@@ -148,6 +261,20 @@ export function spawnWormholeClose(
       if (registry) {
         const index = registry.indexOf(container);
         if (index >= 0) registry.splice(index, 1);
+      }
+      // Stop the ring's infinite pulse tween before destroying the container:
+      // a looping tween left pointing at a destroyed child would keep ticking
+      // against a dead object (the same hazard `WormholeController.reset`
+      // documents). `killTweensOf` is feature-detected so headless stubs and
+      // scene-less callers stay safe.
+      const tweens = scene?.tweens as
+        | { killTweensOf?: (target: unknown) => unknown }
+        | undefined;
+      const ring = container.list?.find(
+        (child) => child.getData?.(WORMHOLE_RING_DATA_KEY) === true,
+      );
+      if (ring && typeof tweens?.killTweensOf === 'function') {
+        tweens.killTweensOf(ring);
       }
       container.destroy();
     },
@@ -198,6 +325,16 @@ export class WormholeController {
   close(registry?: Phaser.GameObjects.Container[]): void {
     if (!this.handle) return;
     spawnWormholeClose(this.scene, this.handle, registry);
+    this.handle = null;
+  }
+
+  /**
+   * Clears the live-handle slot **without** animating. Use on scene
+   * reset/teardown, where the scene owns the container's destruction anyway:
+   * animating a close against an already-destroyed target would leave a tween
+   * pointing at a dead object on the next scene start.
+   */
+  reset(): void {
     this.handle = null;
   }
 }
@@ -379,6 +516,11 @@ export function updateSpawnAnimation(
       enemy.setPosition(dest.x, dest.y);
     }
     enemy.setData(SPAWN_STATE_KEY, undefined);
+    // The spawn window is the shimmer's lifetime: release it here so every
+    // caller — the live scene tick and the `finishSpawnAnimations()` test
+    // seam alike — leaves a fully-emerged enemy with its own alpha and blend
+    // mode back (no residual tint/bloom).
+    releaseShimmerIfAny(enemy);
     return false;
   }
   return true;
@@ -386,6 +528,261 @@ export function updateSpawnAnimation(
 
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
+}
+
+// ── Enemy emergence shimmer (per-entity, wormhole spawn path) ────────
+//
+// Per producer decision Q1/Q2 the emergence path gets a **per-entity**
+// shimmer/glitch and **no screen-wide overlay** (AH-0MV8BUKFK003Z23S AC3).
+// The treatment is driven entirely from the spawn-state window above, so
+// `PlayScene` and every combat gym get identical behaviour by calling the one
+// shared helper — there is no per-scene copy to drift.
+//
+// Every magnitude below is an exported tunable with a per-layer toggle,
+// mirroring the `phaseShiftJuice` pattern. Magnitudes are deliberately small
+// (sub-second burst, gentle ≈2–4 Hz flicker, a scale pulse well under the
+// growth curve's own motion) so the effect reads as "not solid yet" without
+// becoming a strobe (seizure-safety note in the epic's risk register).
+
+/**
+ * Lifetime (ms) of the ripple burst that fires as an enemy starts to
+ * materialise — the leading edge of the growth window. ~150–250 ms reads as
+ * a glitch hit without dragging on. Toggle: {@link ENEMY_SHIMMER_ENABLE_BURST}.
+ */
+export const ENEMY_SHIMMER_BURST_DURATION_MS = 200;
+
+/**
+ * Extra alpha added at the start of the burst, decaying linearly to zero over
+ * {@link ENEMY_SHIMMER_BURST_DURATION_MS}. Kept small so the clamp to 1 is
+ * rarely reached.
+ */
+export const ENEMY_SHIMMER_BURST_ALPHA_BOOST = 0.15;
+
+/**
+ * Extra scale (fraction of the growth scale) added at the start of the burst,
+ * decaying to zero over {@link ENEMY_SHIMMER_BURST_DURATION_MS} — the "ripple".
+ */
+export const ENEMY_SHIMMER_BURST_SCALE_BOOST = 0.06;
+
+/**
+ * Alpha-flicker rate (Hz) of the sustained shimmer. 2–4 Hz is a gentle pulse,
+ * never a rapid strobe (seizure-safety). Toggle: {@link ENEMY_SHIMMER_ENABLE_SHIMMER}.
+ */
+export const ENEMY_SHIMMER_FLICKER_HZ = 3;
+
+/** Lowest alpha the shimmer flickers to (must stay > 0 so the enemy never vanishes). */
+export const ENEMY_SHIMMER_ALPHA_MIN = 0.55;
+
+/** Highest alpha the shimmer flickers to (must stay <= 1). */
+export const ENEMY_SHIMMER_ALPHA_MAX = 0.85;
+
+/**
+ * Amplitude of the sustained scale pulse, as a fraction of the current growth
+ * scale. Deliberately tiny (< 0.1) so it never fights the growth curve.
+ */
+export const ENEMY_SHIMMER_SCALE_AMOUNT = 0.04;
+
+/**
+ * Soft colour-pulse range `[min, max]` (0..1) driven by the slow shimmer
+ * oscillation. Phaser 4 `Container`/`Graphics` expose no tint API (only
+ * `AlphaSingle`/`BlendMode`), so the pulse is expressed as a soft **additive
+ * bloom**: when the pulse is in its upper half the entity renders with
+ * `BlendModes.ADD` (brighter, colour-washed), in the lower half normally.
+ * The rate is far below the flicker so it reads as a colour breath, not a
+ * strobe. Toggle: {@link ENEMY_SHIMMER_ENABLE_COLOUR_PULSE}.
+ */
+export const ENEMY_SHIMMER_COLOUR_PULSE_RANGE: readonly [number, number] = [0.25, 0.75] as const;
+
+/** Slow colour-pulse period (seconds) — one full breath per cycle. */
+export const ENEMY_SHIMMER_COLOUR_PULSE_PERIOD = 1.6;
+
+/** Whether the leading ripple burst layer is enabled. */
+export const ENEMY_SHIMMER_ENABLE_BURST = true;
+
+/** Whether the sustained shimmer layers (alpha/scale flicker) are enabled. */
+export const ENEMY_SHIMMER_ENABLE_SHIMMER = true;
+
+/** Whether the soft additive colour-pulse layer is enabled. */
+export const ENEMY_SHIMMER_ENABLE_COLOUR_PULSE = true;
+
+/** Data key holding the per-entity shimmer clock (created lazily, reused). */
+const SHIMMER_STATE_KEY = '__shimmerState';
+
+/**
+ * Per-entity shimmer bookkeeping. Created once per enemy (on its first
+ * shimmering frame) and reused for every later frame — no per-frame
+ * allocations.
+ */
+interface ShimmerState {
+  /** Seconds since the shimmer started (its own clock, advanced by `dt`). */
+  elapsed: number;
+  /**
+   * Scale factor this helper applied on the previous frame. Dividing the
+   * current scale by it recovers the un-shimmered growth scale, so repeated
+   * calls never compound and the spawn animation's own scale is preserved.
+   */
+  lastScaleFactor: number;
+  /**
+   * The entity's own alpha before the shimmer took it over, restored when the
+   * spawn window ends so no residual tint survives (teardown-clean).
+   */
+  baseAlpha: number;
+}
+
+/** Returns the shimmer clock for `enemy`, creating it on first use. */
+function ensureShimmerState(enemy: SpawnAnimatable): ShimmerState | null {
+  const existing = getShimmerState(enemy);
+  if (existing) return existing;
+  const setData = (enemy as { setData?: (key: string, value: unknown) => unknown }).setData;
+  if (typeof setData !== 'function') return null;
+  const created: ShimmerState = {
+    elapsed: 0,
+    lastScaleFactor: 1,
+    baseAlpha: enemy.alpha,
+  };
+  setData.call(enemy, SHIMMER_STATE_KEY, created);
+  return created;
+}
+
+/** Returns the existing shimmer clock for `enemy`, or `undefined` if inert. */
+function getShimmerState(enemy: SpawnAnimatable): ShimmerState | undefined {
+  const getData = (enemy as { getData?: (key: string) => unknown }).getData;
+  if (typeof getData !== 'function') return undefined;
+  return getData.call(enemy, SHIMMER_STATE_KEY) as ShimmerState | undefined;
+}
+
+/**
+ * Restores the entity's own alpha and blend mode and drops the shimmer clock
+ * when one is present. A no-op for an entity that never shimmered.
+ */
+function releaseShimmerIfAny(enemy: SpawnAnimatable): void {
+  const state = getShimmerState(enemy);
+  if (state) releaseShimmer(enemy, state);
+}
+
+/**
+ * Restores the entity's own alpha and blend mode and drops the shimmer clock.
+ * Called when the spawn window closes, so the shimmer is teardown-clean and
+ * leaves no residual tint/bloom on a fully-emerged enemy.
+ */
+function releaseShimmer(enemy: SpawnAnimatable, state: ShimmerState): void {
+  enemy.setAlpha(state.baseAlpha);
+  setEnemyBloom(enemy, false);
+  const setData = (enemy as { setData?: (key: string, value: unknown) => unknown }).setData;
+  if (typeof setData === 'function') {
+    setData.call(enemy, SHIMMER_STATE_KEY, undefined);
+  }
+}
+
+/**
+ * Advances the per-entity emergence shimmer by `dt` seconds.
+ *
+ * The treatment is driven from the shared spawn state: it is inert until the
+ * enemy actually starts **growing** (`SpawnState.growing`, set by
+ * {@link updateSpawnAnimation}), sustains while the growth window is open, and
+ * stops the moment the spawn state is cleared. An enemy with no spawn state —
+ * or one still held at the wormhole-open delay — is left completely untouched,
+ * so this is a safe no-op for every non-emerging entity (and for headless test
+ * stubs, which never have spawn state).
+ *
+ * Layers (each with its own toggle):
+ *   - **burst** — a brief ripple (extra scale + alpha) decaying over
+ *     {@link ENEMY_SHIMMER_BURST_DURATION_MS};
+ *   - **shimmer** — gentle alpha flicker (`ENEMY_SHIMMER_FLICKER_HZ`) plus a
+ *     tiny scale pulse;
+ *   - **colour pulse** — soft additive bloom breathing at
+ *     {@link ENEMY_SHIMMER_COLOUR_PULSE_PERIOD}.
+ *
+ * Call it immediately **after** {@link updateSpawnAnimation} for the same
+ * entity each frame: the spawn animation writes the absolute growth scale and
+ * this helper layers its pulse on top without compounding.
+ *
+ * @param enemy - The emerging enemy (any container-like spawn entity).
+ * @param dt - Delta time in seconds (the scene tick step).
+ * @returns `true` while the shimmer is active (i.e. while the enemy is
+ *   growing), `false` when the entity is not emerging.
+ */
+export function updateEnemyShimmer(
+  enemy: SpawnAnimatable,
+  dt: number,
+): boolean {
+  const spawn = getSpawnState(enemy);
+  const prior = getShimmerState(enemy);
+  if (!spawn || !spawn.growing) {
+    // The spawn window never opened, or has just closed: restore the entity's
+    // own rendering state and drop the clock, so the shimmer leaves no
+    // residual alpha tint or additive bloom behind. An entity that was never
+    // shimmering is completely untouched.
+    if (prior) releaseShimmer(enemy, prior);
+    return false;
+  }
+
+  const state = ensureShimmerState(enemy);
+  if (!state) return false;
+  state.elapsed += Math.max(0, dt);
+  const t = state.elapsed;
+
+  // Shimmer layers: alpha flicker + a tiny scale pulse.
+  let alpha = ENEMY_SHIMMER_ALPHA_MAX;
+  let scaleFactor = 1;
+  if (ENEMY_SHIMMER_ENABLE_SHIMMER) {
+    const flickerPhase = Math.PI * 2 * ENEMY_SHIMMER_FLICKER_HZ * t;
+    // u ∈ [0,1]: 0 at the flicker trough, 1 at the crest.
+    const u = 0.5 + 0.5 * Math.sin(flickerPhase);
+    alpha =
+      ENEMY_SHIMMER_ALPHA_MIN +
+      (ENEMY_SHIMMER_ALPHA_MAX - ENEMY_SHIMMER_ALPHA_MIN) * u;
+    scaleFactor = 1 + ENEMY_SHIMMER_SCALE_AMOUNT * (u * 2 - 1);
+  }
+
+  // Burst layer: a decaying ripple on the leading edge of the growth window.
+  if (ENEMY_SHIMMER_ENABLE_BURST) {
+    const burstDuration = ENEMY_SHIMMER_BURST_DURATION_MS / 1000;
+    if (t < burstDuration) {
+      const remaining = 1 - t / burstDuration;
+      alpha += ENEMY_SHIMMER_BURST_ALPHA_BOOST * remaining;
+      scaleFactor += ENEMY_SHIMMER_BURST_SCALE_BOOST * remaining;
+    }
+  }
+  enemy.setAlpha(Math.min(1, Math.max(0.01, alpha)));
+
+  // Scale: recover the un-shimmered growth scale, then re-apply this frame's
+  // factor. Writing the absolute value keeps the result stable no matter how
+  // many times the helper runs per frame.
+  const previousFactor = state.lastScaleFactor || 1;
+  const growthScale = enemy.scaleX / previousFactor;
+  enemy.setScale(growthScale * scaleFactor);
+  state.lastScaleFactor = scaleFactor;
+
+  // Colour pulse: soft additive bloom breathing far below the flicker rate.
+  if (ENEMY_SHIMMER_ENABLE_COLOUR_PULSE) {
+    const [pulseMin, pulseMax] = ENEMY_SHIMMER_COLOUR_PULSE_RANGE;
+    const breath =
+      0.5 +
+      0.5 *
+        Math.sin((Math.PI * 2 * t) / ENEMY_SHIMMER_COLOUR_PULSE_PERIOD);
+    const pulse = pulseMin + (pulseMax - pulseMin) * breath;
+    setEnemyBloom(enemy, pulse > (pulseMin + pulseMax) / 2);
+  }
+
+  return true;
+}
+
+/**
+ * Applies (or clears) the shimmer's additive bloom on `enemy`, when the
+ * entity supports `setBlendMode` (every Phaser 4 Container/Graphics does via
+ * the BlendMode component). Silently skipped otherwise, so a headless stub or
+ * a plain object never throws.
+ */
+function setEnemyBloom(enemy: SpawnAnimatable, bloom: boolean): void {
+  const setBlendMode = (
+    enemy as { setBlendMode?: (mode: unknown) => unknown }
+  ).setBlendMode;
+  if (typeof setBlendMode !== 'function') return;
+  const modes = (Phaser as unknown as { BlendModes?: Record<string, number> })
+    .BlendModes;
+  if (!modes) return;
+  setBlendMode.call(enemy, bloom ? modes.ADD : modes.NORMAL);
 }
 
 // ── Wave portal placement (AH-0MV8BR9Y70079TKC) ─────────────────────

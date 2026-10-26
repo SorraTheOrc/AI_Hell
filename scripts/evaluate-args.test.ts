@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  EVALUATE_USAGE,
   parseEvaluateArgs,
   resolveArtifactPath,
   resolveSeeds,
@@ -20,11 +21,14 @@ describe('parseEvaluateArgs', () => {
       policy: 'competent',
       baseline: null,
       candidate: null,
-      ticks: 1800,
+      // `null` means “mode default”: 1800 single-run, 18000 batch (AC3).
+      ticks: null,
       outputDir: 'eval-output',
       json: false,
       video: false,
       batch: false,
+      // Full-campaign batch mode is the default (AC1).
+      campaign: true,
       games: null,
       policies: null,
       humanFile: null,
@@ -91,6 +95,43 @@ describe('parseEvaluateArgs', () => {
     const options = parseEvaluateArgs(['--batch', '--seed', '4', '--seed', '9']);
     expect(options.batch).toBe(true);
     expect(options.seeds).toEqual([4, 9]);
+  });
+
+  it('defaults a batch to the full campaign and parses --skirmish as the opt-out (AC1/AC2)', () => {
+    const batch = parseEvaluateArgs(['--batch']);
+    expect(batch.campaign).toBe(true);
+
+    const skirmish = parseEvaluateArgs(['--batch', '--skirmish']);
+    expect(skirmish.batch).toBe(true);
+    expect(skirmish.campaign).toBe(false);
+
+    // An explicit --ticks always wins over the mode default.
+    expect(parseEvaluateArgs(['--batch', '--ticks', '500']).ticks).toBe(500);
+  });
+
+  it('advertises --skirmish and both tick defaults in the help text', () => {
+    expect(EVALUATE_USAGE).toContain('--skirmish');
+    expect(EVALUATE_USAGE).toContain('18000');
+    expect(EVALUATE_USAGE).toContain('1800');
+  });
+
+  it('parses the per-level campaign flags (--level, --scale-levels)', () => {
+    const defaults = parseEvaluateArgs(['--batch']);
+    expect(defaults.level).toBeNull();
+    expect(defaults.scaleLevels).toBe(true);
+
+    const scaled = parseEvaluateArgs(['--batch', '--level', '10']);
+    expect(scaled.level).toBe(10);
+    expect(scaled.scaleLevels).toBe(true);
+
+    const baseline = parseEvaluateArgs(['--batch', '--level', '5', '--scale-levels', 'off']);
+    expect(baseline.level).toBe(5);
+    expect(baseline.scaleLevels).toBe(false);
+
+    // An explicit on re-enables the curves after an off.
+    const reenabled = parseEvaluateArgs(['--level', '3', '--scale-levels', 'on']);
+    expect(reenabled.level).toBe(3);
+    expect(reenabled.scaleLevels).toBe(true);
   });
 });
 

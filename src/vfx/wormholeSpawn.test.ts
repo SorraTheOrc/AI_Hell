@@ -18,6 +18,7 @@ import {
   WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS,
   WORMHOLE_CLOSE_DURATION,
   WORMHOLE_OPEN_DURATION,
+  WORMHOLE_RING_ENABLE,
   WormholeController,
   anchorSpawnsToPortal,
   formationCentre,
@@ -64,7 +65,16 @@ describe('wormholeSpawn — wormhole open/close VFX', () => {
     expect(handle.container.y).toBe(120);
     expect(registry).toContain(handle.container);
     expect(scene.children.list).toContain(handle.container);
-    expect(tweenSpy).toHaveBeenCalledTimes(1);
+    // One tween for the wormhole open animation, plus the ring's pulse
+    // tween when the ring layer is enabled (AH-0MVD2N6AW0073X5M).
+    expect(tweenSpy).toHaveBeenCalledTimes(WORMHOLE_RING_ENABLE ? 2 : 1);
+    expect(
+      tweenSpy.mock.calls.filter(
+        (c) =>
+          (c[0] as Phaser.Types.Tweens.TweenBuilderConfig).targets ===
+          handle.container,
+      ),
+    ).toHaveLength(1);
     expect(handle.isComplete()).toBe(false);
   });
 
@@ -72,9 +82,11 @@ describe('wormholeSpawn — wormhole open/close VFX', () => {
     const scene = await boot();
     const tweenSpy = vi.spyOn(scene.tweens, 'add');
 
-    spawnWormholeOpen(scene, 10, 20);
+    const handle = spawnWormholeOpen(scene, 10, 20);
 
-    const config = tweenSpy.mock.calls[0][0] as Phaser.Types.Tweens.TweenBuilderConfig;
+    const config = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets === handle.container)!;
     expect(config.duration).toBe(WORMHOLE_OPEN_DURATION * 1000);
     expect(config.scale).toBe(1);
   });
@@ -575,13 +587,10 @@ describe('wormholeSpawn — wave portal placement (AH-0MV8BR9Y70079TKC)', () => 
 //
 // Test-first companion for the "Per-enemy emergence shimmer" (AH-0MVD2N333004VDA9)
 // and "Wormhole glow/pulse ring" (AH-0MVD2N6AW0073X5M) features of the
-// improved Phase Shift epic (AH-0MV8BUKFK003Z23S). RED against today's
-// module (no shimmer helper, no ring on open), so every new case runs under
-// Vitest's `it.fails(...)` — the repo's expected-failure convention (see
-// `src/vfx/phaseShiftJuice.test.ts` for the sibling juice contract): the
-// assertion genuinely fails now while the suite stays green at the
-// build → test → commit gate. When the shimmer/ring implementation lands,
-// flip each `it.fails` back to a plain `it`.
+// improved Phase Shift epic (AH-0MV8BUKFK003Z23S). Both implementations have
+// now landed, so every case below runs as a plain `it` against the real
+// helpers/tunables (the RED `it.fails` form was flipped when each feature
+// shipped).
 //
 // Predicted API the upgrade must expose (the contract):
 //   constants: ENEMY_SHIMMER_BURST_DURATION_MS (150–250), ENEMY_SHIMMER_FLICKER_HZ
@@ -631,7 +640,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     return enemy;
   }
 
-  it.fails('activates at the growing edge and sustains until the spawn window ends', async () => {
+  it('activates at the growing edge and sustains until the spawn window ends', async () => {
     const scene = await boot();
     const enemy = scene.add.container(50, 50);
     startSpawnAnimation(enemy, 1);
@@ -652,7 +661,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     expect(mod.updateEnemyShimmer(enemy, 0.016)).toBe(false);
   });
 
-  it.fails('applies a subtle alpha flicker between ticks while shimmering (no jump, stays in (0,1])', async () => {
+  it('applies a subtle alpha flicker between ticks while shimmering (no jump, stays in (0,1])', async () => {
     const scene = await boot();
     const enemy = startGrowth(scene);
     enemy.setAlpha(1);
@@ -670,7 +679,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     expect(enemy.alpha).toBeLessThanOrEqual(1);
   });
 
-  it.fails('is a no-op on an enemy that is not spawning (alpha untouched)', async () => {
+  it('is a no-op on an enemy that is not spawning (alpha untouched)', async () => {
     const scene = await boot();
     const enemy = scene.add.container(50, 50);
     enemy.setAlpha(0.7);
@@ -679,7 +688,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     expect(enemy.alpha).toBe(0.7);
   });
 
-  it.fails('exposes the documented tunable ranges and per-layer toggles (default on)', () => {
+  it('exposes the documented tunable ranges and per-layer toggles (default on)', () => {
     // Burst lifetime ≈150–250 ms.
     expect(mod.ENEMY_SHIMMER_BURST_DURATION_MS).toBeGreaterThanOrEqual(150);
     expect(mod.ENEMY_SHIMMER_BURST_DURATION_MS).toBeLessThanOrEqual(250);
@@ -703,7 +712,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
     expect(mod.ENEMY_SHIMMER_ENABLE_SHIMMER).toBe(true);
   });
 
-  it.fails('is a safe no-op headless (a bare container-like object never throws)', () => {
+  it('is a safe no-op headless (a bare container-like object never throws)', () => {
     const bare = {
       alpha: 1,
       scaleX: 1,
@@ -721,7 +730,7 @@ describe('wormholeSpawn — enemy emergence shimmer (AH-0MVD2MTEI002MVIS, RED un
   });
 });
 
-describe('wormholeSpawn — wormhole glow/pulse ring (AH-0MVD2MTEI002MVIS, RED until AH-0MVD2N6AW0073X5M)', () => {
+describe('wormholeSpawn — wormhole glow/pulse ring (ring landed in AH-0MVD2N6AW0073X5M)', () => {
   let booted: BootedGame | null = null;
 
   afterEach(() => {
@@ -742,7 +751,7 @@ describe('wormholeSpawn — wormhole glow/pulse ring (AH-0MVD2MTEI002MVIS, RED u
     WORMHOLE_RING_GLOW_ALPHA: number;
   };
 
-  it.fails('draws one glow/pulse ring as a child of the wormhole container on open', async () => {
+  it('draws one glow/pulse ring as a child of the wormhole container on open', async () => {
     const scene = await boot();
     const registry: Phaser.GameObjects.Container[] = [];
 
@@ -752,7 +761,45 @@ describe('wormholeSpawn — wormhole glow/pulse ring (AH-0MVD2MTEI002MVIS, RED u
       (o) => o instanceof Phaser.GameObjects.Graphics && o.getData('wormholeRing') === true,
     );
     expect(ring).toBeDefined();
+    // Exactly one ring per wormhole (drawn once, not per frame).
+    expect(
+      handle.container.list.filter((o) => o.getData?.('wormholeRing') === true),
+    ).toHaveLength(1);
     expect(registry).toContain(handle.container);
+  });
+
+  it('pulses the ring radius with a yoyo tween on open (breathe, not static)', async () => {
+    const scene = await boot();
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const handle = spawnWormholeOpen(scene, 0, 0, { registry: [] });
+
+    const pulse = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets !== handle.container && c.repeat === -1);
+    expect(pulse).toBeDefined();
+    expect(pulse!.yoyo).toBe(true);
+  });
+
+  it('stops the ring pulse before destroying the wormhole on close (no tween on a dead object)', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.Container[] = [];
+    const handle = spawnWormholeOpen(scene, 5, 5, { registry });
+    const ring = handle.container.list.find(
+      (o) => o.getData?.('wormholeRing') === true,
+    )!;
+    const killSpy = vi.spyOn(scene.tweens, 'killTweensOf');
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    spawnWormholeClose(scene, handle, registry);
+    const close = tweenSpy.mock.calls
+      .map((c) => c[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((c) => c.targets === handle.container && c.alpha === 0);
+    (close!.onComplete as () => void)();
+
+    expect(killSpy).toHaveBeenCalledWith(ring);
+    expect(handle.isComplete()).toBe(true);
+    expect(registry).toHaveLength(0);
   });
 
   it('removes and destroys the wormhole exactly once when the close completes; a second close does not double-remove (teardown-clean lifecycle the ring will share)', async () => {
@@ -780,7 +827,7 @@ describe('wormholeSpawn — wormhole glow/pulse ring (AH-0MVD2MTEI002MVIS, RED u
     expect(destroySpy).toHaveBeenCalledTimes(1);
   });
 
-  it.fails('exposes the ring tunables with documented magnitudes and the enable toggle', () => {
+  it('exposes the ring tunables with documented magnitudes and the enable toggle', () => {
     expect(mod.WORMHOLE_RING_ENABLE).toBe(true);
     // A visible-but-subtle glow colour (neither the phase-shift cyan split
     // nor the player-death palette) and a positive radius.

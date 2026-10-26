@@ -281,6 +281,15 @@ plan outside a regular wave and the release loop is guarded on boss state.
 `PlayScene.setAsteroidSpawnerEnabled(false)` is a tuning/test seam that
 suppresses the spawner entirely.
 
+The **level-based gyms run the same hazard** (AH-0MV9AWR7A0084XJ0): the
+plan → release → spawn lifecycle lives once in the shared layer
+`src/scenes/core/asteroidHazard.ts` (`AsteroidHazardLayer`,
+`createAsteroidFromEvent`) and is consumed by both `PlayScene` and `GymLevel`
+(hence the bot-tuning gym), so a gym and the demo cannot drift on the hazard.
+The gyms additionally opt into the shared timed-wave window
+(`CombatScene.getWaveTimeoutDuration`), so a tuning gym bot sees the same wave
+pressure (`getWaveState()`) the demo bot does.
+
 **Gym support**: the asteroid is selectable in the enemy gym (auto-discovery
 via `DEFAULT_ENEMY_CONFIGS`). `GymFormationScene` gained two small seams —
 optional `updatePosition(dt)` on `FormationSceneEntity` (roamer motion) and
@@ -511,6 +520,111 @@ sequencer's default tolerance. The measured vector is pinned in
 - **No Phaser dependency.** The module runs under Vitest as pure functions; the
   classification fixture resolves through `classifyArchetype` (with the
   documented defaults for unknown keys).
+
+### 1.6 Enemy force fields (AH-0MVJ8W4GE007OMNT)
+
+Deeper campaign levels spawn shielded enemies behind a **force field** — a
+visible bubble that absorbs a number of player hits **before** the hull
+(`EnemyConfig.health`) is exposed. Barrier first, hull second: every absorbed
+hit still consumes the bullet and plays the normal impact feedback, but the
+enemy's hull is undamaged until the field breaks; only then does normal health
+apply (a 1-HP enemy dies on the next hit, the 5-HP Harvester still needs five).
+All player damage sources (normal bullet, piercing, AOE, Smart Bomb, Orbital
+Strike, Frenzy bonus hits) deplete the field through the existing shared
+`takeDamage()` seam — there is no parallel damage path.
+
+#### 1.6.1 Resolver (`src/core/enemyForceField.ts`)
+
+The pure, Phaser-free resolver `enemyForceFieldHits(level, config)` is the
+**single source of truth** for an archetype's field strength at a campaign
+level — the game (`PlayScene` spawn path, run level from `WaveManager`), the
+level gym (`GymLevel`) and the headless balance harness all consume the same
+values, so parity holds by construction:
+
+```
+fieldHits(level) = clamp(round(lerp(forceFieldStartHits @ forceFieldStartLevel
+                                     → forceFieldMaxHits @ 10)), 0, 5)
+```
+
+- `forceFieldStartLevel` — first level at which the archetype is shielded;
+  `0` = **never shielded** (every level resolves to 0).
+- `forceFieldStartHits` — field hits when the field first appears.
+- `forceFieldMaxHits` — field hits at the campaign maximum level (10).
+- `Math.round` (half-up) rounding between the two anchors ⇒ monotonically
+  non-decreasing; output clamped to `[0, 5]` (`FORCE_FIELD_HIT_CAP`).
+- Level resolution mirrors `clampLevel` (`src/core/levelScaling.ts`):
+  fractional levels round first, `NaN`/non-numeric → 1, `±Infinity` → campaign
+  ends; output is never `NaN`, config is never mutated.
+- **Level 1 is untouched**: every shipped archetype's neutral defaults
+  (`0` / `1` / `1`) resolve to 0 at level 1, so onboarding, existing tests and
+  the balance baseline are unchanged. Deterministic: same level + config ⇒
+  identical shields, preserving the campaign determinism contract.
+
+#### 1.6.2 Entity layer (`src/entities/BaseEnemy.ts`)
+
+`BaseEnemy` carries the field state (`forceFieldHits`, `forceFieldBroken`,
+`lastHitAbsorbed`), draws the shared bubble and routes `takeDamage()` through
+the field before `health`. The effective field hits are threaded in at spawn
+from the config via `enemyFactory` (game and level gym through the same shared
+path). The gym enemy editor (`GymFodderEnemies`) gains force-field sliders that
+set the three config fields directly (**documented divergence**: a formation
+gym has no campaign context, so the slider sets hits directly instead of the
+level curve; it must never leak a field value into the campaign CSV by hand).
+
+#### 1.6.3 Ram rule (Q6 = B)
+
+A player **contact/ram** on a shielded enemy is absorbed by the field: exactly
+**one** field hit is consumed, the enemy survives and the player survives the
+collision. A shared **re-arm** (≈ 0.5 s, `ENEMY_FIELD_RAM_REARM_MS`) prevents a
+sustained overlap from draining the whole field frame-by-frame — one hit per
+ram contact, not per overlapping frame — mirroring the Thorn Field ram
+absorption in `CombatScene._handleCollisions` (`tryConsumeThornsRam`, step 4).
+Once the field is down the original contact rule (both destroyed,
+AH-0MTV7JOLU006W8PT) applies unchanged. The change lives once in the shared
+core `_handleCollisions`, so the game and every gym inherit it.
+
+#### 1.6.4 Feedback surface (AC3)
+
+- Shared bubble drawn by `CombatEffectVisuals` — visually distinct from the
+  player's Shield and Force Field bubbles.
+- Each absorbed hit reuses the existing shared impact feedback.
+- The breaking hit runs a distinct break flash and audio cue (reusing the
+  audio registry; `src/audio/effects.ts`).
+
+#### 1.6.5 Shipped tuning table
+
+Authored in `src/data/enemy-configs.csv` (header comments document the three
+columns and neutral defaults `0` / `1` / `1`):
+
+| Archetype | Config key | Start level | Start hits | Max hits (L10) |
+|-----------|------------|:-----------:|:----------:|:--------------:|
+| Scout | `scout` | 3 | 1 | 2 |
+| Diver | `diver` | 2 | 1 | 2 |
+| Tank | `tank` | 2 | 2 | 4 |
+| Phaser | `phaser` | 3 | 1 | 3 |
+| Swarm | `swarm` | 4 | 1 | 2 |
+| Boss | `boss` | 2 | 3 | 5 |
+| Harvester | `harvester` | 3 | 3 | 5 |
+| March (Space Invaders) | `march` | 4 | 1 | 2 |
+| Capturer (Galaga) | `capturer` | 3 | 2 | 3 |
+| Grunt (Robotron) | `grunt` | 5 | 1 | 2 |
+| Raider (Defender) | `raider` | 3 | 1 | 3 |
+| Orbital strike (Missile Command) | `orbital-strike` | 4 | 2 | 4 |
+| Asteroid (E6) | `asteroid` | 0 (never) | 1 | 1 |
+| Ghosts, lane traffic (non-firing hazards) | `ghost-*`, `lane-traffic` | 0 (never) | 1 | 1 |
+
+Heavier archetypes (Tank, Boss, Harvester, Orbital strike) carry the higher
+values; light fodder starts later and caps lower. All values are tunable in the
+CSV or the gym editor with no scene-code change.
+
+#### 1.6.6 Balance evidence (bot batch, L1/L5/L10)
+
+See the AH-0MVM8GYPM002Z3PR work-item comment for the before/after batch —
+`node scripts/evaluate.mjs --batch --level N --force-fields off|on --games 15`
+(`off` = hull-only pre-change baseline via level-1 resolution; `on` = shipped
+curve). L1 is byte-identical on/off (no shipped archetype shields at L1); at
+L5/L10 the field measurably reduces kills of shielded archetypes while the
+campaign stays playable (bot still reaches the level; survival comparable).
 
 ---
 
@@ -964,11 +1078,28 @@ spawn reads as cinematic and diegetic.
   Raider, whose patrol/attack state machine drives its own position) are
   exempt: they emerge at the portal and their own motion carries them out,
   avoiding a position pop when the spawn window ends. Entities without the
-  spawning seams (e.g. test stubs) are created straight on their slot.
+  spawning seam (`setSpawning` — the Boss, test stubs) are created straight
+  on their slot with **no** spawn animation: shrinking them would strand them
+  at 1 px, and the game spawns them fully formed (`PlayScene.spawnBoss`).
 - The Diver's existing movement pipeline (dive phase, re-anchor glide) is
   untouched: transit only writes the container position while the entity is
   spawning, and the formation/dive logic takes over once the spawn state is
   cleared.
+- **Boss phase minions** (`PlayScene._spawnMinions` / `GymBoss._spawnBossMinions`)
+  are not part of a wave's wormhole entry, so they emerge **in place** with
+  the same 1 px → full-size growth and the same spawn protection in both the
+  game and the gym. `GymFormationScene`'s spawn-animation pass walks
+  `getEnemyEntities()` (not just the formation entities), so a summoned
+  minion's animation advances on the shared tick exactly as the Boss's own
+  formation does.
+- **Wave play in the level gyms** (`GymLevel`, and `GymBotTuning` which
+  extends it) enters the same way the game's waves do: `spawnWave()` is given
+  the wave's wormhole origin, creates every enemy there and starts the shared
+  spawn animation with a live slot resolver. The portal opens at the
+  **centre of the wave's formation** (`formationCentre` of the same shared
+  formation builders that lay the wave out) — gyms have no ship, so
+  `placeWavePortal()` returns that anchor unchanged. Enemies therefore travel
+  at most **half the formation's diagonal**, never the full extent.
 
 **Implementation.**
 
@@ -995,6 +1126,12 @@ spawn reads as cinematic and diegetic.
   `GymFodderEnemies` and the other formation gyms are in lock-step with the
   game — a respawned formation enters through a fresh wormhole exactly as the
   game's next wave does.
+- `GymLevel.spawnWave()` does the same for the launched level's waves: the
+  wormhole opens at the wave formation's **centre**
+  (`GymLevel._resolveWavePortal()` → the shared `placeWavePortal()` with no
+  player), every enemy is created there and transits to its live slot (drift
+  tracked per frame), and `GymLevel._updateSpawnAnimations` advances/closes
+  it before the shared collision pass — the same ordering as `PlayScene`.
 - Both scenes expose a `finishSpawnAnimations()` test seam that completes the
   animation without advancing wave timers/asteroid spawns, so collision tests
   can observe fully-spawned enemies deterministically.
@@ -1096,6 +1233,13 @@ resolver (`startSpawnAnimation`'s `destFn`):
   (second `spawnWave()` while a wormhole is live, transition/timeout
   mid-spawn, a gym wipe→respawn re-opening one wormhole, and the portal
   staying ≥ `D_MIN` away from the player and its trajectory).
+  `GymLevel.test.ts` (describe “wormhole emergence parity") covers the level
+  gym side: every wave enemy emerges from a wormhole **centred on the wave's
+  formation** (no enemy travels more than half the formation diagonal),
+  arrives exactly on its slot, transits dt-driven inside the 3 s window, and
+  keeps the spawn-protection gates mid-transit. `GymBoss.test.ts` covers the
+  boss-minion case (in-place growth + protection, matching the game) and
+  asserts the Boss itself is **not** shrunk to the 1 px starting scale.
 
 ### 3.2 Existing scenes (reference implementations)
 
@@ -1276,7 +1420,7 @@ for the governing principle (tracked by AH-0MUGZDTFX004RBD1).
 The classic-arcade power-up and weapon roster
 ([`CLASSIC_POWERUP_WEAPON_RESEARCH.md`](CLASSIC_POWERUP_WEAPON_RESEARCH.md),
 epic AH-0MV14SO0G0095IJ4) follows the same rule: every behaviour it adds runs
-in shared code — the shared piercing-collision, bullet-bounce and
+in shared code — the shared damage-budget collision, bullet-bounce and
 missile-split seams (`src/scenes/core/CombatCoreScene.ts`), the pure
 `src/scenes/core/optionsEscort.ts` orbit geometry, the screen-wide
 `AoEDescriptor` (`screenPulse`) pulse, and the shared `_reflectEnemyBullet`
@@ -1323,6 +1467,21 @@ gym exposes the targets through the shared `getEnemyEntities()` participant
 contract and inherits every AOE hook from the shared core, so the game and the
 gym resolve the same effect from one implementation (parent
 AH-0MQUYHY0000MZ2F, F6 AC3/AC5).
+
+**Documented divergence — formation gyms keep a flat supply cadence.**
+The campaign now scales two axes with the level (`src/core/levelScaling.ts`):
+wave group counts multiply by `enemyCountMultiplier(level)` (1.00→2.00 over
+levels 1–10) at the shared campaign-build seam, and each kill rolls
+`powerUpDropChance(level)` (0.18→0.05). `GymLevel` and `GymBotTuning` apply
+both: they scale launched counts through the same `applyEnemyCountScaling`
+seam and lengthen their seeded supply interval by the inverse drop-chance
+ratio, so a launched level matches the game. `GymFormationScene` and its
+scenes (`GymBoss`, `GymCentipede`, `GymFodderEnemies`, …) have **no
+campaign-level input at all**, so they keep their scene-specific flat
+`rules.powerUpSpawnInterval` supply source unchanged. The divergence is
+intentional and recorded in the `GymLevel` scene header, in the parent work
+item AH-0MVHT1M6O003PU7P and in
+[`docs/BALANCING.md`](./BALANCING.md) (AH-0MVLJF886009584F).
 ---
 
 ## 6. Testing strategy
@@ -2159,10 +2318,28 @@ options?)`), which calls `sequencer()` per `curve`/`dynamic` wave, converts each
   sequencer ramps the rest.
 - **Toggle:** the `GameRules.sequencedWavesEnabled` scalar
   (`src/core/rules.ts`, default **`true`** — AH-0MUJSUTLA006Q8E1) in the
-  `ai-hell-game-rules` localStorage record. `PlayScene.create()` overrides the
-  campaign with the sequenced one when it is `true`; persisting `false` opts
-  back into the static `LEVELS` campaign. A malformed/non-boolean value falls
-  back to the default.
+  `ai-hell-game-rules` localStorage record. `PlayScene.create()` resolves the
+  campaign through `resolveCampaignLevels()` on every run — the sequenced
+  campaign when the toggle is `true`, the static `LEVELS` campaign when it is
+  `false` — and applies the level enemy-count scaling to either (see below).
+  A campaign injected with `WaveManager.setLevels()` (tests, future callers)
+  is left untouched. A malformed/non-boolean toggle value falls back to the
+  default.
+- **Level enemy-count scaling (AH-0MVLJF30O000E3J3):** `resolveCampaignLevels()`
+  (`src/scenes/PlayScene.ts`) is the **single** campaign-build seam that applies
+  the shared `applyEnemyCountScaling()` helper (`src/core/levelScaling.ts`)
+  once per level, to **both** the static `LEVELS` campaign and the sequenced
+  campaign. Each group's `count` is multiplied by
+  `enemyCountMultiplier(level)` — 1.00 at level 1 rising linearly to 2.00 at
+  level 10 — rounded half up, floored at 1 and capped at
+  `GameRules.enemyCountCap` (200); `single`-formation groups stay at exactly 1.
+  Level 1 is the identity, so the onboarding/calibration data is unchanged. The
+  scaling always reads the pristine authored/sequenced source and returns new
+  level/wave/group objects, so repeated builds are idempotent (never
+  double-scaled) and the authored `LEVELS` data is never mutated. Determinism is
+  unaffected: same-seed sequenced builds stay byte-identical. The tuned values
+  live in `GameRules` (`enemyCountMultiplierAtMaxLevel`,
+  `levelScalingMaxLevel`, `enemyCountCap`), not in the seam.
 - **Fire rule:** derived from the 1-based level number for **`curve`/`dynamic`**
   waves — levels 1–3 do not fire, levels 4+ do (GDD §2.4/§2.5) — and passed to
   `sequencer()` as `defaultShootEnabled`; **`fixed`** waves keep their own

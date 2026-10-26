@@ -19,6 +19,7 @@ import {
   HARVESTER_SIZE,
   HARVESTER_SPEED,
   Harvester,
+  type HarvesterConfig,
 } from './Harvester';
 import { Mineral } from './Mineral';
 import { collectMinerals } from '../scenes/core/mineralLayer';
@@ -278,4 +279,80 @@ describe('Harvester entity', () => {
     expect(h.x).toBe(100);
     expect(h.y).toBe(100);
   });
+});
+
+// ── Force-field before the five-hit hull (AH-0MVM8GTG7002IRTL) ───────
+
+/**
+ * Force-field contract for the 5-HP Harvester (epic AH-0MVJ8W4GE007OMNT
+ * AC2).
+ *
+ * **TEST-FIRST → IMPLEMENTED.** The block was wrapped in Vitest's
+ * `it.fails` (the repo's red-before/green-after convention) until the
+ * implementation item (AH-0MVM8GUZG008AWSU) landed; it is now a plain `it`
+ * exercising the real entity surface.
+ *
+ * The point of this case: the field is an **additive** layer on top of the
+ * existing hull durability. Absorbing the field must not reduce, skip or
+ * double-count the five hull hits the Harvester already needs — after the
+ * break it still takes exactly five player hits to destroy, just as
+ * `is destroyed after exactly five player-bullet hits` pins today.
+ */
+/** The BaseEnemy field surface this block reads. */
+interface HarvesterFieldSurface {
+  readonly forceFieldHits: number;
+  readonly hasForceField: boolean;
+  readonly lastHitAbsorbed: boolean;
+  readonly forceFieldBroken: boolean;
+}
+
+describe('Harvester — force field before the five-hit hull (AH-0MVM8GTG7002IRTL)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  it(
+    'absorbs its field first, then still needs all five hull hits',
+    async () => {
+      booted = await bootScene([HarnessScene]);
+      const scene = booted.scene;
+      const config = {
+        x: 100,
+        y: 100,
+        formationOffset: OFFSET,
+        health: HARVESTER_HEALTH,
+        forceFieldHits: 2,
+      };
+      const h = new Harvester(
+        scene,
+        config as unknown as HarvesterConfig,
+      ) as Harvester & HarvesterFieldSurface;
+
+      expect(h.forceFieldHits).toBe(2);
+      expect(h.hasForceField).toBe(true);
+      expect(h.health).toBe(HARVESTER_HEALTH);
+
+      // The two field hits are absorbed without touching the hull.
+      for (let hit = 0; hit < 2; hit += 1) {
+        expect(h.takeDamage()).toBe(HARVESTER_HEALTH);
+        expect(h.lastHitAbsorbed).toBe(true);
+        expect(h.alive).toBe(true);
+      }
+      expect(h.forceFieldHits).toBe(0);
+      expect(h.forceFieldBroken).toBe(true);
+
+      // The break is signalled exactly once: the next hit is a hull hit.
+      expect(h.takeDamage()).toBe(HARVESTER_HEALTH - 1);
+      expect(h.lastHitAbsorbed).toBe(false);
+
+      // And the Harvester still needs all five hull hits to die.
+      for (let hit = 2; hit <= HARVESTER_HEALTH; hit += 1) {
+        expect(h.takeDamage()).toBe(HARVESTER_HEALTH - hit);
+        expect(h.alive).toBe(hit < HARVESTER_HEALTH);
+      }
+    },
+  );
 });

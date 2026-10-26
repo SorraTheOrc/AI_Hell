@@ -67,6 +67,20 @@ export const POWER_UP_COLLECTION_THRESHOLD = 3;
  */
 export const POWER_UP_SPAWN_INTERVAL = DEFAULT_RULES.powerUpSpawnInterval;
 
+/**
+ * Number of **permanent** loadout slots shared by power-up and weapon kinds
+ * (parent AH-0MVLIJT3M005HPHF). The first six distinct kinds taken as
+ * permanent rewards define the run's build; once all six are occupied, only
+ * owned kinds plus catalogue entries flagged `availableWhenSlotsFull` may be
+ * drawn or offered. Field pickups never consume a slot, and the permanent
+ * cannon / the `reset` utility are never counted because they cannot be
+ * permanently granted.
+ *
+ * A named constant rather than a `GameRules` field on purpose (assumption A4):
+ * it is a structural rule, not a tunable.
+ */
+export const POWER_UP_SLOT_CAP = 6;
+
 /** Base radius of a power-up drop on the field (px), scaled by its lifecycle scale. 16 px = half of the doubled 32 px size (AH-0MTG5MGPZ00986B4). */
 export const POWER_UP_DROP_SIZE = 16;
 
@@ -251,6 +265,25 @@ export const PHASE_REARM_COOLDOWN = 0.5;
 /** Safe radius around a teleport candidate: no enemy/bullet within this disc (px). ~3× ship size. */
 export const TELEPORT_SAFE_RADIUS = SHIP_SIZE * 3;
 
+/**
+ * Shared re-arm window (ms) after a shielded enemy's force field absorbs a
+ * player ram (epic AH-0MVJ8W4GE007OMNT AC2, operator Q6 = B;
+ * AH-0MVM8GUZG008AWSU).
+ *
+ * Without a re-arm, a player holding the ram position would drain the whole
+ * field frame-by-frame — one field hit per overlapping frame, so even a
+ * 5-hit field would evaporate in a fraction of a second. With it, the ram
+ * consumes **exactly one field hit per contact**: while the window is open
+ * a fresh overlap consumes nothing (both sides survive), and once the field
+ * is down the pre-existing contact rule (both destroyed,
+ * AH-0MTV7JOLU006W8PT) applies unchanged.
+ *
+ * Deliberately distinct from the post-hit player invulnerability window
+ * (which would also grant blink immunity); the field re-arm only gates ram
+ * absorption, and only for enemies that still carry a field.
+ */
+export const ENEMY_FIELD_RAM_REARM_MS = 500;
+
 /** Hit-response invulnerability after a flash/reset with no lives (seconds). */
 export const COMBAT_HIT_INVULNERABLE_DURATION = 0.8;
 
@@ -296,6 +329,24 @@ export const MINERAL_SIZE = 5;
 
 /** Mineral body colour — gold (hex). */
 export const MINERAL_COLOR = 0xffdd44;
+
+/**
+ * Salvage bonus mineral body colour — orange (hex, AH-0MVJ72I8O0009T09).
+ *
+ * While the Salvage bounty window is active (AH-0MVH80ZJ7009W18Z) the shared
+ * kill seam scatters extra minerals at a destroyed ship's wreck; those bonus
+ * drops render this orange so the player can see the bounty paying out, while
+ * every ordinary mineral stays gold (`MINERAL_COLOR`). Still worth exactly one
+ * mineral — this is a purely cosmetic fill colour at spawn.
+ *
+ * Picked outside the existing palettes that could read as hostile or pickup:
+ * enemy bullets are red `0xff4444` / orange `0xffaa00` / deep-orange
+ * `0xff6600`, the thrust flame is `0xff8c00`, the Frenzy power-up bubble is
+ * neon-orange `0xff8800` and the boss phase bar uses `0xffcc00`/`0xff8800`.
+ * At hue ≈ 22° (gold is ≈ 48°), with a soft blue component for legibility, it
+ * reads as a distinct "carrot" orange on the black starfield.
+ */
+export const MINERAL_SALVAGE_COLOR = 0xff7a2e;
 
 /**
  * Render depth for mineral collectables — above regular gameplay

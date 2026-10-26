@@ -17,8 +17,12 @@ import {
   POWER_UP_BUBBLE_STROKE_WIDTH,
 } from '../core/constants';
 
-/** Icon stroke colours per type. */
-const ICON_COLORS: Record<PowerUpId, number> = {
+/**
+ * Icon stroke colours per type. Exported so shared effect visuals (the Thorn
+ * Field aura, AH-0MVJ8YKR70096C6T) colour themselves from the very same
+ * palette as the HUD icon and can never drift from it.
+ */
+export const ICON_COLORS: Record<PowerUpId, number> = {
   shield: 0x3399ff, // blue — shield
   bomb: 0xff3333, // red — bomb
   speed_boost: 0x00ffff, // cyan — speed

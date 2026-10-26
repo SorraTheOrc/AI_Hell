@@ -1629,3 +1629,122 @@ describe('unified PowerUpId dispatch (F3)', () => {
     }
   });
 });
+
+// ── Thorn Field recharge (AH-0MVJ8YKR70096C6T) ─────────────────────────
+
+describe('Thorn Field: automatic ram recharge (AH-0MVJ8YKR70096C6T)', () => {
+  it('resolves the level-derived recharge interval and maximum budget', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('thorns', true);
+    // Base level: 12 s between recharges, 2 rams to recharge up to.
+    expect(registry.thornsRechargeTime()).toBeCloseTo(12, 6);
+    expect(registry.thornsMaxAbsorbs()).toBe(2);
+  });
+
+  it('refills one spent ram per level-resolved interval while the window is active', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('thorns', true); // timed window (8 s at level 0)
+    expect(registry.thornsRemaining()).toBe(2);
+
+    expect(registry.tryConsumeThornsRam()).toBe(true);
+    expect(registry.thornsRemaining()).toBe(1);
+    // The clock starts the moment a ram is spent.
+    expect(registry.thornsRechargeRemaining()).toBeCloseTo(12, 6);
+
+    registry.tick(11.9);
+    expect(registry.thornsRemaining()).toBe(1);
+    expect(registry.thornsRechargeRemaining()).toBeLessThan(0.2);
+
+    registry.tick(0.2);
+    expect(registry.thornsRemaining()).toBe(2);
+    // A full budget recharges nothing.
+    expect(registry.thornsRechargeRemaining()).toBe(0);
+  });
+
+  it('never recharges past the level-resolved maximum', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('thorns', true);
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    expect(registry.thornsRemaining()).toBe(0);
+    // Four intervals elapse in one long frame: the budget stops at the max.
+    registry.tick(12 * 4);
+    expect(registry.thornsRemaining()).toBe(registry.thornsMaxAbsorbs());
+  });
+
+  it('is frame-rate independent: many small ticks recharge exactly one ram', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('thorns', true);
+    registry.tryConsumeThornsRam();
+
+    const step = 0.1;
+    const interval = registry.thornsRechargeTime();
+    const ticks = Math.round(interval / step) - 1;
+    for (let i = 0; i < ticks; i += 1) registry.tick(step);
+    expect(registry.thornsRemaining()).toBe(1);
+    // The single final tick crosses the interval.
+    registry.tick(step * 2);
+    expect(registry.thornsRemaining()).toBe(2);
+  });
+
+  it('stops recharging when the timed window expires', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('thorns'); // 8 s window
+    registry.tryConsumeThornsRam();
+    expect(registry.thornsRemaining()).toBe(1);
+
+    registry.tick(8.1); // window expires
+    expect(registry.isActive('thorns')).toBe(false);
+    expect(registry.thornsRemaining()).toBe(0);
+    expect(registry.thornsRechargeRemaining()).toBe(0);
+
+    // Further ticking never resurrects the budget without a new collection.
+    registry.tick(60);
+    expect(registry.thornsRemaining()).toBe(0);
+    expect(registry.tryConsumeThornsRam()).toBe(false);
+  });
+
+  it('keeps a hold-full (permanent) field recharging for the whole run', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('thorns', true); // permanent
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    expect(registry.thornsRemaining()).toBe(0);
+
+    registry.tick(12 * 3); // no timed window to expire on a permanent grant
+    expect(registry.isActive('thorns')).toBe(true);
+    expect(registry.thornsRemaining()).toBe(registry.thornsMaxAbsorbs());
+  });
+
+  it('a stronger level recharges faster (shorter interval, same cap)', () => {
+    const { registry, store } = createEffectRegistry();
+    for (let i = 0; i < 6; i += 1) store.collect('thorns', true);
+    registry.applyCollect('thorns', true);
+    expect(registry.thornsRechargeTime()).toBeLessThan(12);
+    expect(registry.thornsMaxAbsorbs()).toBe(6);
+
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    registry.tick(registry.thornsRechargeTime() + 0.01);
+    expect(registry.thornsRemaining()).toBe(1);
+  });
+
+  it('reset() clears the recharge clock', () => {
+    const { registry } = createEffectRegistry();
+    registry.applyCollect('thorns', true);
+    registry.tryConsumeThornsRam();
+    expect(registry.thornsRechargeRemaining()).toBeGreaterThan(0);
+
+    registry.reset();
+    expect(registry.thornsRemaining()).toBe(0);
+    expect(registry.thornsRechargeRemaining()).toBe(0);
+  });
+
+  it('reports the recharge countdown only while a ram is owed', () => {
+    const { registry } = createEffectRegistry();
+    expect(registry.thornsRechargeRemaining()).toBe(0); // inactive
+    registry.applyCollect('thorns', true);
+    expect(registry.thornsRechargeRemaining()).toBe(0); // full budget
+    registry.tryConsumeThornsRam();
+    expect(registry.thornsRechargeRemaining()).toBeGreaterThan(0);
+    registry.tick(registry.thornsRechargeTime() + 0.01);
+    expect(registry.thornsRechargeRemaining()).toBe(0); // refilled
+  });
+});

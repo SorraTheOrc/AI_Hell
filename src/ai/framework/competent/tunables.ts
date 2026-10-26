@@ -109,6 +109,21 @@ export interface CompetentBotTunables {
   /** Time window (seconds) within which a threatening shot is "urgent". */
   survivalUrgencyHorizon: number;
 
+  // ── Predictive hazard avoidance (AH-0MVI4QDN90037DIN) ─────────────
+  /**
+   * Whether steering evaluates hazards (enemies, asteroids, boss) as **moving**
+   * bodies using their bot-side velocity estimate (AC2). When off — or when a
+   * hazard has no/zero estimate — the positional `dangerMargin` rule applies
+   * exactly as before.
+   */
+  hazardPredictionEnabled: boolean;
+  /**
+   * Look-ahead window (seconds) for hazard-collision prediction (AC2): a
+   * bearing is unsafe when the ship and a moving hazard are predicted to come
+   * within `threatRadius` inside this window.
+   */
+  hazardPredictionHorizon: number;
+
   // ── Aim lead prediction (AH-0MV1DUSM2005HL98) ────────────────────
   /**
    * Whether the engage behaviour leads a moving target (AC2). When enabled
@@ -231,6 +246,11 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   assumedBulletSpeed: 200,
   frictionDeceleration: 100,
   survivalUrgencyHorizon: 0.5,
+
+  // Prediction can only make the bot safer, so it ships on with a modest
+  // look-ahead (AC2); a stationary hazard is unaffected either way.
+  hazardPredictionEnabled: true,
+  hazardPredictionHorizon: 0.6,
 
   aimLeadEnabled: true,
   aimLeadAlignSeconds: 0.25,

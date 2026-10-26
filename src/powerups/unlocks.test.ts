@@ -18,6 +18,10 @@ import {
   unlockWeapon,
 } from './unlocks';
 import { WEAPON_CATALOGUE, type WeaponId } from '../utils/weapons';
+import { summariseWeaponLevelChange } from '../utils/weaponLevels';
+import { summarisePowerUpLevelChange } from './powerUpLevels';
+import type { ChoiceContext } from './choice';
+import type { PowerUpId } from './types';
 
 const ALL_WEAPONS = Object.keys(WEAPON_CATALOGUE) as WeaponId[];
 
@@ -96,11 +100,94 @@ describe('mini-boss reward unlock pool (AH-0MVCRBNO6003E1CH)', () => {
     expect(powerUp.level).toBe(2);
   });
 
+  it('AC1 — weapon-level rewards carry a level-accurate change summary', () => {
+    const options = buildUpgradeOptions({
+      weaponLevels: [{ id: 'rapid', level: 2 }],
+      powerUpLevels: [],
+    });
+    const weapon = options.find((option) => option.kind === 'weapon-level')!;
+    // Derived from the shared level maths, exactly like the hold-full choice.
+    expect(weapon.changeSummary).toBe(summariseWeaponLevelChange('rapid', 2, 3));
+    expect(weapon.changeSummary!.length).toBeGreaterThan(0);
+    // The offered level is reflected in the option's own label too.
+    expect(weapon.name).toContain('Lv.3');
+  });
+
+  it('AC1 — power-up-level rewards carry their change summary', () => {
+    const options = buildUpgradeOptions({
+      powerUpLevels: [{ id: 'shield', level: 1 }],
+    });
+    const powerUp = options.find((option) => option.kind === 'power-up-level')!;
+    expect(powerUp.changeSummary).toBe(
+      summarisePowerUpLevelChange('shield', 1, 2),
+    );
+    expect(powerUp.changeSummary!.length).toBeGreaterThan(0);
+    expect(powerUp.name).toContain('Lv.2');
+  });
+
+  it('AC2 — a non-AoE weapon reward never promises an AoE gain', () => {
+    const options = buildUpgradeOptions({
+      weaponLevels: [{ id: 'rapid', level: 2 }],
+    });
+    expect(options[0].changeSummary).not.toMatch(/Area|AoE/i);
+  });
+
+  it('AC4 — the summary differs between levels where the maths differ', () => {
+    const early = buildUpgradeOptions({
+      weaponLevels: [{ id: 'rapid', level: 1 }],
+    })[0];
+    const late = buildUpgradeOptions({
+      weaponLevels: [{ id: 'rapid', level: 2 }],
+    })[0];
+    expect(early.level).toBe(2);
+    expect(late.level).toBe(3);
+    expect(early.changeSummary).not.toBe(late.changeSummary);
+  });
+
   it('the cannon is never offered as a reward upgrade', () => {
     const options = buildUpgradeOptions({
       weaponLevels: [{ id: 'cannon', level: 1 }],
       powerUpLevels: [],
     });
     expect(options).toHaveLength(0);
+  });
+
+  it('AC4 — upgrade options at six filled slots never introduce a seventh permanent kind', () => {
+    // The mini-boss reward inherits the six-slot gate through the single
+    // shared option builder (`buildOwnedLevelUpOptions`, which the hold-full
+    // choice and this reward both consume — AH-0MVL9P2SF009QFON). Once the
+    // shared pool is full (six distinct permanently-owned kinds below), the
+    // offered upgrades must stay inside those six kinds: one level-up offer
+    // per owned kind and nothing that would create a seventh permanent kind.
+    //
+    // This is a contract pin (parent AC4) and is green against today's shared
+    // builder; the gating implementation AH-0MVNT2ZXK009Z5VU must keep it
+    // green. Unlocking a *new* weapon from `lockedWeaponIds` when the pool is
+    // full is intentionally out of scope (parent risk note — capping the
+    // mini-boss weapon unlock pool is a separate item).
+    const context: ChoiceContext = {
+      weaponLevels: [
+        { id: 'spread', level: 1 },
+        { id: 'dual', level: 1 },
+        { id: 'rapid', level: 1 },
+      ],
+      powerUpLevels: [
+        { id: 'shield', level: 1 },
+        { id: 'bomb', level: 1 },
+        { id: 'speed_boost', level: 1 },
+      ],
+    };
+    const owned = new Set<WeaponId | PowerUpId>([
+      ...(context.weaponLevels ?? []).map((w) => w.id),
+      ...(context.powerUpLevels ?? []).map((p) => p.id),
+    ]);
+
+    const options = buildUpgradeOptions(context);
+
+    expect(options).toHaveLength(6);
+    for (const option of options) {
+      expect(option.kind === 'weapon-level' || option.kind === 'power-up-level').toBe(true);
+      expect(owned.has(option.id as WeaponId | PowerUpId)).toBe(true);
+    }
   });
 });

@@ -46,6 +46,7 @@ import {
   type EnemyEntity,
 } from '../../entities/enemyFactory';
 import { planMinionSpawns } from '../../waves/BossMinions';
+import { WORMHOLE_OPEN_DURATION, startSpawnAnimation } from '../../vfx/wormholeSpawn';
 import {
   applyAndPersistSpawnInterval,
   buildSpawnIntervalSlider,
@@ -264,6 +265,14 @@ export class GymBoss extends GymFormationScene<
         spawn.offset,
       );
       entity.shootEnabled = spawn.shootEnabled;
+      // Game parity (AH-0MV8BSMXC0097KLW): `PlayScene._spawnMinions` spawns
+      // each minion through `_spawnEnemy(spawn)`, so a minion grows from 1 px
+      // in place and is spawn-protected while it emerges — it is not part of
+      // the wave's wormhole entry, so no destination is supplied. The shared
+      // spawn-animation pass advances it because `getEnemyEntities()` includes
+      // the minions.
+      startSpawnAnimation(entity, entity.scaleX, WORMHOLE_OPEN_DURATION);
+      entity.setSpawning(true);
       this.add.existing(entity);
       this.minions.push({
         entity,

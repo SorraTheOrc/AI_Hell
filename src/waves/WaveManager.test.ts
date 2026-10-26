@@ -947,3 +947,42 @@ describe('WaveManager — 10-wave mini-boss gating harness (AH-0MVCRAHWO0007US2)
     expect(wm.level).toBe(2);
   });
 });
+
+// ── Campaign injection origin (AH-0MVLJF30O000E3J3) ──────────────
+
+describe('WaveManager — campaign injection origin (AH-0MVLJF30O000E3J3)', () => {
+  it('reports the built-in default campaign as not injected', () => {
+    expect(new WaveManager().hasInjectedLevels).toBe(false);
+  });
+
+  it('records a caller-supplied campaign as injected by default', () => {
+    const wm = new WaveManager();
+    wm.setLevels([level(1, 'Injected', [wave('scout', 'v', 3)])]);
+    expect(wm.hasInjectedLevels).toBe(true);
+  });
+
+  it('records a scene-resolved campaign as not injected (setLevels option)', () => {
+    const wm = new WaveManager();
+    wm.setLevels(
+      [level(1, 'Resolved', [wave('scout', 'v', 3)])],
+      { injected: false },
+    );
+    expect(wm.hasInjectedLevels).toBe(false);
+  });
+
+  it('setLevels still adopts the new campaign and resets the run', () => {
+    const wm = new WaveManager();
+    wm.beginGame();
+    expect(wm.level).toBe(1);
+
+    wm.setLevels([level(7, 'Seventh', [wave('tank', 'rect', 4)])]);
+    // Reset: not started, back at level 1 of the new (single-level) campaign.
+    expect(wm.level).toBe(1);
+    expect(wm.levelCount).toBe(1);
+    expect(wm.started).toBe(false);
+
+    wm.beginGame();
+    expect(wm.levelName).toBe('Seventh');
+    expect(wm.waveCount).toBe(1);
+  });
+});

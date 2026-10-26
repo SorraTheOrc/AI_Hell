@@ -36,7 +36,6 @@ const { chromium } = await import('playwright');
 
 const ROOT = process.cwd();
 const SETTINGS_KEY = 'ai_hell_settings';
-const SINK_KEY = 'ai_hell_telemetry_jsonl';
 const UPLOAD_PATH = '/api/telemetry/upload';
 const DEV_PORT = 5199;
 const PREVIEW_PORT = 5198;
@@ -144,7 +143,12 @@ async function playRun(browser, { shareTelemetryDev }) {
   await page.waitForFunction(() => window.__aiHellRunState?.ended === true, undefined, {
     timeout: 60_000,
   });
-  const sink = await page.evaluate((key) => localStorage.getItem(key), SINK_KEY);
+  const sink = await page.evaluate(() => {
+    const accessor = globalThis.__aiHellTelemetry;
+    if (!accessor || typeof accessor.read !== 'function') return null;
+    const content = accessor.read();
+    return typeof content === 'string' && content.length > 0 ? content : null;
+  });
   const storedSettings = await page.evaluate((key) => localStorage.getItem(key), SETTINGS_KEY);
   return { context, page, uploads, consoleLines, sink, storedSettings };
 }

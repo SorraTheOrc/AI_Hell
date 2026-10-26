@@ -69,6 +69,7 @@ class FakeRecorder implements TelemetryRecorder {
   readonly ticks: Array<{ state: unknown; input: unknown }> = [];
   readonly events: Array<{ event: string; payload: unknown }> = [];
   flushCount = 0;
+  buffer: string | null = null;
 
   constructor(enabled = true) {
     this.enabled = enabled;
@@ -76,6 +77,10 @@ class FakeRecorder implements TelemetryRecorder {
 
   startRun(header: TelemetryRunHeaderInput): void {
     this.header = header;
+  }
+
+  readBuffer(): string | null {
+    return this.buffer;
   }
 
   recordTick(state: unknown, input: unknown): void {

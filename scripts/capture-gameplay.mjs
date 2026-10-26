@@ -23,12 +23,28 @@
  *    `aihell:run-ended` page signal and stops one `--tail` later, bounded by
  *    `--max-duration`; `--scripted` / `--duration` replay the fixed bot plan
  *    instead (`scripts/capture-bot.mjs`).
- * 6. Stop the recorder, decode the produced WebM back through a `<video>`
- *    element and probe it (resolution, duration, non-black fraction,
- *    colour variety, frame-to-frame motion) so the clip's non-triviality
- *    is verifiable, not assumed.
- * 7. Stream the encoded chunks to Node via `exposeFunction` and write them
- *    to the output file.
+ * 6. Stream every encoded chunk to Node via `exposeFunction` into the bounded
+ *    chunk sink (`scripts/capture-chunk-sink.mjs`): decode, append to
+ *    `<stem>.partial.webm`, drop — node memory is O(one chunk), not
+ *    O(run length), and the whole-run `Buffer.concat` is gone. A hard
+ *    single-chunk cap (`MAX_CAPTURE_CHUNK_BYTES` = 16 MiB) is enforced before
+ *    decode, and the page-side guard slices oversized payloads into
+ *    at-or-below-cap binding calls first, so no single CDP message can approach
+ *    the ~512 MiB pipe ceiling that crashed long runs. The partial file is
+ *    renamed to the final output path only on success; on any
+ *    pipe/browser/recorder failure the streamed bytes stay at
+ *    `<stem>.partial.webm`, one actionable salvage line is printed
+ *    (`scripts/capture-salvage.mjs`, `CaptureSalvageError`) and the CLI exits
+ *    non-zero. `--diagnostics` (off by default) adds per-chunk base64 sizing,
+ *    node RSS samples, page heap at clip end and a CDP pipe transport tap,
+ *    written additively to `<stem>.diagnostics.json`.
+ * 7. Stop the recorder. Every chunk is already on disk (step 6), so the probe
+ *    source is picked by the clip's final streamed size: a clip that fits in
+ *    the page's bounded 32 MiB retention prefix is decoded in-page
+ *    (byte-identical verdicts with the old whole-Blob path); a larger clip is
+ *    probed by reading the written file back over the capture dev server.
+ *    Either way the verdict fields (resolution, duration, non-black fraction,
+ *    colour variety, frame-to-frame motion, audio peak/RMS) are unchanged.
  * 8. Enable page telemetry before the game boots, then after each clip read
  *    the recorded run back from the page's JSONL sink and write the
  *    action-intensity series (`<run-id>.action.jsonl`) and the §7.5
@@ -69,6 +85,30 @@ import {
   resolveCaptureMimeType,
 } from './capture-bot.mjs';
 import {
+  addTransportOverflowHandler,
+  createDiagnosticsTracker,
+  createTransportTap,
+  diagnosticsPathFor,
+  formatDiagnosticsProgress,
+  formatDiagnosticsSummary,
+  loadPlaywrightPipeTransport,
+  readTransportTapSnapshot,
+  writeDiagnosticsArtifact,
+} from './capture-diagnostics.mjs';
+import { createRecordingPipeline } from './capture-recording-pipeline.mjs';
+import {
+  CaptureSalvageError,
+  failureSalvageLine,
+  salvageFailedCapture,
+} from './capture-salvage.mjs';
+import {
+  CAPTURE_PROBE_STREAM_THRESHOLD_BYTES,
+  buildProbeFileUrl,
+  chooseProbeSource,
+  probeRecordingInPage,
+  resolveAudioProbeRange,
+} from './capture-probe.mjs';
+import {
   DEFAULT_CAPTURE_TAIL_MS,
   DEFAULT_MAX_CAPTURE_DURATION_MS,
   buildCaptureStartedMarker,
@@ -82,10 +122,20 @@ import {
   setupHint,
 } from './capture-progress.mjs';
 import { listCaptureScenarios } from './capture-scenarios.mjs';
+import {
+  GENERATED_LEVEL_SCENE_KEY,
+  SCENE_FADE_MS,
+  SceneConfigError,
+  buildScenePlan,
+  buildScenesPayload,
+  buildTransitionProbeTimes,
+  evaluateSceneFadeSamples,
+  loadSceneConfig,
+  resolveCaptureWindow,
+} from './capture-scenes.mjs';
 import { parseTelemetryJsonl } from './inspect-telemetry.mjs';
 import {
   CAPTURE_ANCHOR_EXTENSION,
-  CAPTURE_TELEMETRY_JSONL_KEY,
   DEFAULT_ACTION_INTENSITY_SAMPLE_RATE_HZ,
   actionIntensitySeriesFileName,
   buildCaptureJoinAnchor,
@@ -158,6 +208,17 @@ const AUDIO_TAP_WAIT_MS = 3_000;
 const VIDEO_ONLY_MIME_CANDIDATES = Object.freeze(
   CAPTURE_MIME_CANDIDATES.map((type) => type.replace(',opus', '')),
 );
+
+/**
+ * The `id` the page-side multi-scene capture overlay canvas gets
+ * (AH-0MVFC70GT000B96J). The recorder captures **this** canvas — a frame-by-
+ * frame mirror of the game canvas plus the fade-to-black / fade-from-black
+ * overlay — so the 0.25 s transitions are present in the single WebM.
+ */
+export const COMPOSITE_CANVAS_ID = '__aiHellCaptureComposite';
+
+/** Heartbeat step (ms) while waiting out a scene's play/capture window. */
+const SCENE_WAIT_HEARTBEAT_MS = 250;
 
 /**
  * Raised when an opt-in capture dependency is missing, so `main()` can print
@@ -239,6 +300,121 @@ function asSetupError(error) {
 }
 
 /**
+ * Reads the page-side heap at clip end for `--diagnostics` (AC2).
+ *
+ * Prefers the DevTools `Runtime.getHeapUsage` metric (the CDP equivalent of
+ * Puppeteer's `page.metrics()`, available for every Chromium page) and falls
+ * back to `performance.memory` when a CDP session cannot be created. Returns
+ * `{ source: 'unavailable' }` rather than throwing, so a diagnostics read can
+ * never fail the clip.
+ *
+ * @param {import('playwright').Page} page
+ * @returns {Promise<object>}
+ */
+async function readPageHeapMetrics(page) {
+  try {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const usage = await session.send('Runtime.getHeapUsage');
+      return {
+        source: 'Runtime.getHeapUsage',
+        heapUsedBytes: usage.usedSize,
+        totalHeapBytes: usage.totalSize,
+        embedderHeapUsedBytes: usage.embedderHeapUsedSize,
+        backingStorageBytes: usage.backingStorageSize,
+      };
+    } finally {
+      await session.detach().catch(() => {});
+    }
+  } catch {
+    // Fall through to the in-page fallback.
+  }
+
+  try {
+    const memory = await page.evaluate(() => {
+      const metrics = performance.memory;
+      return metrics
+        ? {
+            usedJSHeapSize: metrics.usedJSHeapSize,
+            totalJSHeapSize: metrics.totalJSHeapSize,
+            jsHeapSizeLimit: metrics.jsHeapSizeLimit,
+          }
+        : null;
+    });
+    if (memory) {
+      return {
+        source: 'performance.memory',
+        heapUsedBytes: memory.usedJSHeapSize,
+        totalHeapBytes: memory.totalJSHeapSize,
+        heapLimitBytes: memory.jsHeapSizeLimit,
+      };
+    }
+  } catch {
+    // Fall through to unavailable.
+  }
+
+  return { source: 'unavailable' };
+}
+
+/**
+ * Writes the `--diagnostics` summary next to the clip (AC6).
+ *
+ * Additive by contract: a failed write is reported as a warning and the clip
+ * result is unaffected.
+ *
+ * @param {{ tracker: object, outputPath: string, clip: object, reporter: object }} params
+ * @returns {object | null} the summary (also embedded in the `--json` result).
+ */
+function finaliseClipDiagnostics({ tracker, outputPath, clip, reporter }) {
+  if (!tracker.enabled) return null;
+  const summary = tracker.buildSummary({ clip });
+  if (!summary) return null;
+  summary.artifactPath = diagnosticsPathFor(outputPath);
+  summary.transport = readTransportTapSnapshot();
+  const { error } = writeDiagnosticsArtifact({ outputPath, summary });
+  if (error) {
+    reporter.step(
+      `Diagnostics: could not write ${summary.artifactPath} (${error}); ` +
+        'the clip is unaffected.',
+    );
+  } else {
+    reporter.step(`Diagnostics: wrote ${summary.artifactPath}.`);
+  }
+  return summary;
+}
+
+/**
+ * Registers the crash-time diagnostics artefact writer (AC3/AC6).
+ *
+ * A CDP pipe overflow kills the process from inside a stream callback, so the
+ * normal end-of-clip write never runs. The transport tap invokes this handler
+ * synchronously *before* rethrowing, leaving `<stem>.diagnostics.json` behind
+ * with the overflow's buffer count, bytes, message class and prefix.
+ *
+ * @param {{ tracker: object, outputPath: string, getClip: () => object, reporter: object }} params
+ * @returns {() => void} disposer
+ */
+function registerDiagnosticsCrashArtefact({
+  tracker,
+  outputPath,
+  getClip,
+  reporter,
+}) {
+  if (!tracker.enabled) return () => {};
+  return addTransportOverflowHandler(() => {
+    const summary = tracker.buildSummary({ clip: getClip() });
+    if (!summary) return;
+    summary.artifactPath = diagnosticsPathFor(outputPath);
+    summary.transport = readTransportTapSnapshot();
+    summary.crashed = true;
+    const { error } = writeDiagnosticsArtifact({ outputPath, summary });
+    if (error) {
+      reporter.step(`Diagnostics: could not write the crash artefact (${error}).`);
+    }
+  });
+}
+
+/**
  * Number of clips a single capture invocation records when `--count` is not
  * supplied. `1` preserves the historical single-clip behaviour exactly
  * (AH-0MUYTK941005E2M4).
@@ -291,6 +467,14 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
     listScenarios: false,
     botConfig: null,
     allScenarios: false,
+    // `--diagnostics` (off by default): record per-chunk CDP payload sizes,
+    // node RSS at each heartbeat, the page heap at clip end, and tap the CDP
+    // pipe transport so an overflow can be classified instead of guessed
+    // (AH-0MVNT25JI004OVKQ). Disabled runs are byte-for-byte unchanged.
+    diagnostics: false,
+    // `--config <file>` (alias `--scenes`): multi-scene capture, validated
+    // before any server or browser boots (AH-0MVFC70GT000B96J).
+    scenesConfig: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -363,6 +547,21 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
         // (AH-0MV6JGQFK007MXGX). Takes no value; the default no-scenario demo
         // run is deliberately not included (producer decision Q1).
         options.allScenarios = true;
+        break;
+      case '--diagnostics':
+        // Opt-in diagnostics (AH-0MVNT25JI004OVKQ): per-chunk CDP payload
+        // sizes, node/page heap and a CDP pipe transport tap. Writes
+        // `<stem>.diagnostics.json` next to the clip; off by default so a
+        // normal capture is unchanged (AC4).
+        options.diagnostics = true;
+        break;
+      case '--config':
+      case '--scenes':
+        // Multi-scene capture (AH-0MVFC70GT000B96J): a scene-list JSON file
+        // (`--config <file>`, the documented `capture:scenes` entry point;
+        // `--scenes` is the older alias). The file is parsed and validated
+        // before any server or browser boots.
+        options.scenesConfig = next();
         break;
       case '--help':
         options.help = true;
@@ -592,6 +791,113 @@ export function readRunEndedSignal(
 }
 
 /**
+ * Reads the run's telemetry out of the page's in-memory buffer
+ * (AH-0MVIRYGD1000JVY3, AC5).
+ *
+ * Called through `page.evaluate`, which serialises the function into the page,
+ * so it must stay self-contained. The buffer accessor
+ * (`window.__aiHellTelemetry`) is installed by the dev-gated wiring in
+ * `PlayScene`; a page without it (production build, telemetry disabled, or
+ * before the run starts) reads back as an empty string, matching the old
+ * "missing `localStorage` key" behaviour. Telemetry never touches storage.
+ *
+ * @param {object} [scope]
+ * @returns {string}
+ */
+export function readDevTelemetryBuffer(scope = globalThis) {
+  const accessor = scope ? scope.__aiHellTelemetry : undefined;
+  if (!accessor || typeof accessor.read !== 'function') return '';
+  try {
+    const content = accessor.read();
+    return typeof content === 'string' ? content : '';
+  } catch {
+    // A page-side read failure must not fail the dev tooling.
+    return '';
+  }
+}
+
+/**
+ * Characters per page→node telemetry read (AH-0MVNVGP55002G0KH).
+ *
+ * Reading the whole run in **one** `page.evaluate` puts the entire telemetry
+ * buffer into a single CDP message, exactly like the run-end upload did: the
+ * message grows with the run and JSON-escaping inflates it (measured 2.4× on a
+ * 420 s capture). The capture/record tooling therefore reads the buffer in
+ * slices of at most this many characters, so no single message is
+ * run-length-proportional. 2 Mi chars (~2 MiB of NDJSON, ~5 MiB escaped) sits
+ * comfortably inside the 8 MiB upload cap and orders of magnitude below V8's
+ * 512 MiB string limit. It is also the **ceiling**: a larger `chunkChars`
+ * request is clamped down to it.
+ */
+export const TELEMETRY_READ_CHUNK_CHARS = 2 * 1024 * 1024;
+
+/**
+ * In-page slice reader for {@link readDevTelemetryBufferInChunks}.
+ *
+ * Serialised into the page by `page.evaluate`, so it must stay
+ * self-contained: the defaults are inline literals and it touches only
+ * `scope.__aiHellTelemetry`. Reports the buffer's total length alongside the
+ * slice so the caller can detect a buffer reset between reads.
+ *
+ * @param {{ offset: number, chunkChars: number }} [args]
+ * @param {object} [scope]
+ * @returns {{ total: number, chunk: string }}
+ */
+export function readDevTelemetryChunk(
+  args = { offset: 0, chunkChars: 2 * 1024 * 1024 },
+  scope = globalThis,
+) {
+  const accessor = scope ? scope.__aiHellTelemetry : undefined;
+  if (!accessor || typeof accessor.read !== 'function') return { total: 0, chunk: '' };
+  try {
+    const content = accessor.read();
+    if (typeof content !== 'string') return { total: 0, chunk: '' };
+    const offset = Number(args && args.offset) || 0;
+    const chunkChars = Number(args && args.chunkChars) || 2 * 1024 * 1024;
+    return { total: content.length, chunk: content.slice(offset, offset + chunkChars) };
+  } catch {
+    // A page-side read failure degrades to "no telemetry", never an error.
+    return { total: 0, chunk: '' };
+  }
+}
+
+/**
+ * Reads the run's telemetry buffer in bounded slices
+ * (AH-0MVNVGP55002G0KH).
+ *
+ * Equivalent to {@link readDevTelemetryBuffer} — the caller gets exactly the
+ * same JSONL string — but no single page→node message carries more than
+ * {@link TELEMETRY_READ_CHUNK_CHARS} characters. If the buffer's length
+ * changes between slices (the game started a new run and reset it) the partial
+ * read is discarded and `''` returned, so the caller degrades to a
+ * header-only series instead of mixing two runs.
+ *
+ * `evaluate` is injected (`(fn, arg) => page.evaluate(fn, arg)`) so the
+ * assembly logic is unit-testable without a browser.
+ *
+ * @param {(fn: Function, arg: object) => Promise<{ total: number, chunk: string }>} evaluate
+ * @param {{ chunkChars?: number }} [options]
+ * @returns {Promise<string>} The buffer's JSONL content, or `''`.
+ */
+export async function readDevTelemetryBufferInChunks(evaluate, options = {}) {
+  const requested = Number(options.chunkChars);
+  const chunkChars =
+    Number.isInteger(requested) && requested > 0
+      ? Math.min(requested, TELEMETRY_READ_CHUNK_CHARS)
+      : TELEMETRY_READ_CHUNK_CHARS;
+  const parts = [];
+  let expectedTotal = null;
+  for (let offset = 0; ; offset += chunkChars) {
+    const { total, chunk } = await evaluate(readDevTelemetryChunk, { offset, chunkChars });
+    if (!total || typeof chunk !== 'string') return parts.length ? parts.join('') : '';
+    if (expectedTotal === null) expectedTotal = total;
+    else if (total !== expectedTotal) return '';
+    parts.push(chunk);
+    if (offset + chunkChars >= expectedTotal) return parts.join('');
+  }
+}
+
+/**
  * Self-contained pre-boot init script that seeds the page's `localStorage`
  * with an exported bot-tuning store state (AH-0MV6MFDYG001E6PL, AC4).
  *
@@ -761,6 +1067,319 @@ export function uniquifyOutputPath(candidate, exists = () => false) {
   let suffix = 2;
   while (exists(`${stem}-${suffix}${extension}`)) suffix += 1;
   return `${stem}-${suffix}${extension}`;
+}
+
+/**
+ * Resolves the single output path a multi-scene capture writes to
+ * (AH-0MVFC70GT000B96J, AC4): an explicit `--output` is honoured (absolute
+ * as-is, otherwise resolved against the cwd), otherwise the default is
+ * `capture-output/scenes-<timestamp>.webm` under the gitignored capture
+ * tree. `timestamp` is injected so tests can pin the deterministic default
+ * name.
+ *
+ * @param {string | null | undefined} requested — the `--output` value.
+ * @param {string} [timestamp]
+ * @returns {string} — the absolute output path.
+ */
+export function resolveScenesOutputPath(
+  requested,
+  timestamp = new Date().toISOString().replace(/[:.]/g, '-'),
+) {
+  if (!requested) {
+    return resolve(REPO_ROOT, 'capture-output', `scenes-${timestamp}.webm`);
+  }
+  return isAbsolute(requested) ? requested : resolve(process.cwd(), requested);
+}
+
+/**
+ * Parses + validates the multi-scene config **before any server or browser
+ * boots** (AH-0MVFC70GT000B96J, AC1). `readFile` is injected (defaults to
+ * `readFileSync`) so the validation path is hermetically testable; the pure
+ * {@link loadSceneConfig} does the actual parsing and maps every failure to
+ * a typed {@link SceneConfigError} (missing/unreadable file, malformed JSON,
+ * unknown/parameterised target, bad durations). Returns `null` when no
+ * `--config`/`--scenes` flag was supplied.
+ *
+ * @param {object} [options] — parsed capture options.
+ * @param {(path: string) => string | Uint8Array} [readFile]
+ * @returns {Array<{ target: string, playMs: number, captureMs: number, label: string | null }> | null}
+ */
+export function loadScenesForCapture(options = {}, readFile = readFileSync) {
+  if (!options.scenesConfig) return null;
+  return loadSceneConfig(options.scenesConfig, readFile);
+}
+
+/**
+ * Drives one continuously-running recorder across every planned scene
+ * (AH-0MVFC70GT000B96J, AC3): starts each scene in page via `startScene`
+ * (the dev-gated director), waits out its play window then its capture
+ * window through `wait`, and between consecutive scenes asks `fade` for a
+ * fade-to-black (`alpha` `1`) then, after `startScene(next)` switches the
+ * scene behind the black, a fade-from-black (`alpha` `0`) — each over
+ * `fadeMs` (default {@link SCENE_FADE_MS}, 250 ms). The page and the
+ * recorder are never reloaded or restarted across the batch.
+ *
+ * Pure orchestration with injected effects, so the exact call sequence is
+ * hermetically testable without a browser. `onScene` reports each scene as
+ * its window begins.
+ *
+ * Generated-level (`PlayScene`) entries use the wave-aware window
+ * ({@link resolveCaptureWindow}, AH-0MVE01EY0008QEVX AC4): after the play
+ * window the driver polls `readProgress` and extends/truncates the capture
+ * until `minWaves` waves have started (hard-capped by `maxCaptureMs`) or the
+ * run ends. Each level scene's measured capture duration, waves captured and
+ * `endedEarly` flag are written back onto its plan entry for the `--json`
+ * payload.
+ *
+ * @param {{
+ *   plan: Array<{ target: string, playMs: number, captureMs: number, startMs: number, endMs: number, setup?: object, seed?: number, level?: number, minWaves?: number, maxCaptureMs?: number, wavesCaptured?: number, endedEarly?: boolean }>,
+ *   startScene: (key: string, setup?: object) => Promise<unknown>,
+ *   fade: (alpha: number, durationMs: number) => Promise<unknown>,
+ *   wait: (ms: number) => Promise<unknown>,
+ *   fadeMs?: number,
+ *   pollMs?: number,
+ *   readProgress?: () => Promise<{ level: number, wave: number, waveCount: number, ended: boolean } | null>,
+ *   onScene?: (info: { index: number, total: number, scene: object }) => void,
+ * }} params
+ * @returns {Promise<void>}
+ */
+export async function driveSceneSequence({
+  plan,
+  startScene,
+  fade,
+  wait,
+  fadeMs = SCENE_FADE_MS,
+  pollMs = 250,
+  readProgress = null,
+  onScene = null,
+}) {
+  if (!Array.isArray(plan) || plan.length === 0) return;
+  if (
+    typeof startScene !== 'function' ||
+    typeof fade !== 'function' ||
+    typeof wait !== 'function'
+  ) {
+    throw new Error(
+      'driveSceneSequence requires startScene, fade and wait callbacks',
+    );
+  }
+
+  /** Launch data for a scene: gym setup, or the PlayScene demo payload. */
+  const launchDataFor = (scene) => {
+    if (scene.target === GENERATED_LEVEL_SCENE_KEY) {
+      return {
+        demo: true,
+        seed: scene.seed,
+        startLevel: scene.level,
+      };
+    }
+    return scene.setup;
+  };
+
+  /**
+   * Drives one generated-level capture window, sampling the dev-gated run
+   * progress handle until {@link resolveCaptureWindow} decides the window has
+   * been satisfied, the hard cap is reached, or the run ends.
+   */
+  const driveLevelWindow = async (scene) => {
+    const samples = [];
+    let elapsedMs = 0;
+    const windowFor = () =>
+      resolveCaptureWindow({
+        captureMs: scene.captureMs,
+        minWaves: scene.minWaves,
+        maxCaptureMs: scene.maxCaptureMs,
+        samples,
+      });
+    let progress = null;
+    let resolved = windowFor();
+    const sample = async () => {
+      progress = typeof readProgress === 'function' ? await readProgress() : null;
+      samples.push({
+        elapsedMs,
+        wavesStarted: progress?.wave ?? 0,
+        ended: progress?.ended === true,
+      });
+      resolved = windowFor();
+    };
+
+    await sample();
+    while (true) {
+      if (progress?.ended === true) break;
+      if (resolved.durationMs <= elapsedMs) break;
+      const step = Math.max(1, Math.min(pollMs, resolved.durationMs - elapsedMs));
+      await wait(step);
+      elapsedMs += step;
+      await sample();
+    }
+    return { captureMs: elapsedMs, ...resolved };
+  };
+
+  if (typeof onScene === 'function') {
+    onScene({ index: 1, total: plan.length, scene: plan[0] });
+  }
+  await startScene(plan[0].target, launchDataFor(plan[0]));
+
+  for (let i = 0; i < plan.length; i += 1) {
+    const scene = plan[i];
+    await wait(scene.playMs);
+    if (
+      scene.target === GENERATED_LEVEL_SCENE_KEY
+      && typeof readProgress === 'function'
+    ) {
+      const window = await driveLevelWindow(scene);
+      scene.captureMs = window.captureMs;
+      scene.wavesCaptured = window.wavesCaptured;
+      scene.endedEarly = window.endedEarly;
+    } else {
+      await wait(scene.captureMs);
+    }
+    if (i === plan.length - 1) break;
+
+    // Between consecutive scenes: fade to black over fadeMs, switch the
+    // scene behind the black, fade from black over fadeMs.
+    await fade(1, fadeMs);
+    const next = plan[i + 1];
+    await startScene(next.target, launchDataFor(next));
+    await fade(0, fadeMs);
+    if (typeof onScene === 'function') {
+      onScene({ index: i + 2, total: plan.length, scene: next });
+    }
+  }
+}
+
+/**
+ * Installs the page-side composite + fade overlay the multi-scene capture
+ * records (AH-0MVFC70GT000B96J, AC3).
+ *
+ * A `MediaRecorder` can only capture one canvas, and a DOM overlay above the
+ * game canvas would never appear in `canvas.captureStream` — so the tool
+ * creates a **composite** canvas that mirrors the game canvas frame by frame
+ * and, while a fade is active, paints a black overlay on top of it. The
+ * recorder captures the composite canvas, which is therefore byte-identical
+ * to the game output except for the fades — the transitions are guaranteed
+ * to be present in the single WebM without any game-side change.
+ *
+ * Self-contained (no module bindings) so Playwright can serialise it into
+ * `page.evaluate`; also exercised by hermetic unit tests with a fake DOM.
+ * Returns `null` when the game canvas is not ready or a 2D context cannot be
+ * created, so the driver fails loudly instead of recording a blank overlay.
+ *
+ * @param {object} [scope] — the page global (defaults to `globalThis`).
+ * @returns {{ id: string, width: number, height: number } | null}
+ */
+export function installCaptureComposite(scope = globalThis) {
+  const doc = scope && scope.document;
+  if (!doc || typeof doc.querySelector !== 'function') return null;
+  const gameCanvas = doc.querySelector('#game-container canvas');
+  if (!gameCanvas) return null;
+
+  const width = Number(gameCanvas.width);
+  const height = Number(gameCanvas.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const composite = doc.createElement('canvas');
+  // Must match COMPOSITE_CANVAS_ID — this function is serialised into the
+  // page by Playwright, so it cannot reference module bindings.
+  composite.id = '__aiHellCaptureComposite';
+  composite.width = width;
+  composite.height = height;
+
+  // Pin the overlay exactly over the (possibly Scale.FIT-centred) game canvas
+  // so headed captures look identical; the recorded pixels come from the
+  // composite's internal 2D buffer at the game's own resolution.
+  const rect =
+    typeof gameCanvas.getBoundingClientRect === 'function'
+      ? gameCanvas.getBoundingClientRect()
+      : { left: 0, top: 0, width, height };
+  const style = (composite.style = composite.style || {});
+  style.position = 'fixed';
+  style.left = `${rect.left}px`;
+  style.top = `${rect.top}px`;
+  style.width = `${rect.width}px`;
+  style.height = `${rect.height}px`;
+  style.zIndex = '2147483647';
+  style.pointerEvents = 'none';
+
+  const host = (doc.body && typeof doc.body.appendChild === 'function' ? doc.body : doc.documentElement);
+  if (host && typeof host.appendChild === 'function') host.appendChild(composite);
+
+  const ctx = composite.getContext('2d');
+  if (!ctx) return null;
+
+  let fadeAlpha = 0;
+  const raf =
+    typeof scope.requestAnimationFrame === 'function'
+      ? scope.requestAnimationFrame.bind(scope)
+      : null;
+
+  const draw = () => {
+    ctx.clearRect(0, 0, width, height);
+    try {
+      ctx.drawImage(gameCanvas, 0, 0, width, height);
+    } catch {
+      /* a draw that fails must not kill the mirror loop */
+    }
+    if (fadeAlpha > 0) {
+      ctx.fillStyle = `rgba(0, 0, 0, ${Math.min(1, Math.max(0, fadeAlpha)).toFixed(4)})`;
+      ctx.fillRect(0, 0, width, height);
+    }
+  };
+
+  const loop = () => {
+    draw();
+    if (raf) raf(loop);
+  };
+  if (raf) raf(loop);
+  else draw();
+
+  /**
+   * Animates the overlay alpha from its current value to `target` over
+   * `durationMs`, resolving when the fade completes. A `durationMs` of 0
+   * snaps instantly. Bound to [0, 1] and never throws, so the driver can
+   * await a fade deterministically.
+   */
+  const fadeTo = (target, durationMs) => {
+    const numeric = Number(target);
+    const to = Number.isFinite(numeric)
+      ? Math.min(1, Math.max(0, numeric))
+      : fadeAlpha;
+    const duration =
+      Number.isFinite(Number(durationMs)) && Number(durationMs) > 0
+        ? Number(durationMs)
+        : 0;
+    const from = fadeAlpha;
+    if (duration <= 0 || from === to) {
+      fadeAlpha = to;
+      draw();
+      return Promise.resolve(to);
+    }
+    return new Promise((resolve) => {
+      let startTs = null;
+      const step = (ts) => {
+        if (startTs === null) startTs = ts;
+        const progress = Math.min(1, Math.max(0, (ts - startTs) / duration));
+        fadeAlpha = from + (to - from) * progress;
+        draw();
+        if (progress >= 1) {
+          resolve(to);
+          return;
+        }
+        if (raf) raf(step);
+        else setTimeout(() => step(ts + 16), 16);
+      };
+      if (raf) raf(step);
+      else setTimeout(() => step(0), 16);
+    });
+  };
+
+  scope.__aiHellFade = {
+    fadeTo,
+    alpha: () => fadeAlpha,
+  };
+  return { id: composite.id, width, height };
 }
 
 /**
@@ -1020,8 +1639,8 @@ export function summariseCaptureBatch(iterations = []) {
  * (AH-0MVDV4DMY001Z7CU, AC1/AC2).
  *
  * Pure logic, injected filesystem: parses the page's recorded telemetry
- * JSONL (read out of `localStorage` by the caller), extracts the deduped
- * action-intensity samples, serialises them with the canonical series
+ * JSONL (read out of the page's in-memory buffer by the caller), extracts the
+ * deduped action-intensity samples, serialises them with the canonical series
  * format (`capture-series.mjs` port of `actionIntensitySerialiser.ts`), and
  * builds the join anchor from the recording-start marker and the telemetry
  * run-header `startedAt`. Both artefacts are written next to the WebM with a
@@ -1105,11 +1724,30 @@ export function writeCaptureSeriesArtifacts({
  * creates one page per item and this function closes it in `finally`, so no
  * game state (audio tap, run-end listener) leaks between iterations.
  *
- * @param {{ page: import('playwright').Page, url: string, outputPath: string, options: object, reporter: object }} params
+ * @param {{ page: import('playwright').Page, url: string, baseUrl: string, outputPath: string, options: object, reporter: object }} params
  * @returns {Promise<object>}
  */
-async function captureClip({ page, url, outputPath, options, reporter }) {
+async function captureClip({ page, url, baseUrl, outputPath, options, reporter }) {
   const mode = resolveCaptureMode(options);
+  // Diagnostics are opt-in (AC4): a disabled tracker records nothing, so the
+  // rest of this function behaves exactly as before with zero extra output.
+  const diagnostics = createDiagnosticsTracker({
+    enabled: options.diagnostics === true,
+  });
+  // Stream encoded chunks straight to disk through the bounded sink
+  // (AH-0MVNT26AQ005LDNS): each chunk is decoded, appended to
+  // `<stem>.partial.webm` and dropped, so node memory stays O(one chunk)
+  // instead of O(run duration) — a 30-minute clip no longer has to fit in the
+  // heap before a single byte is written. The sink opens its file lazily on
+  // the first chunk and is finalised (renamed into place) after a successful
+  // probe below.
+  //
+  // The shared recording pipeline (AH-0MVNT2AFI00639N3, parent AC7): both
+  // the single/batch path and the `--scenes` path obtain their chunk sink,
+  // payload guard and probe source from this one helper — never a second
+  // copy (single-source rule, mirrored in `captureScenes`' sibling call).
+  const recording = createRecordingPipeline({ page, outputPath, diagnostics });
+  let removeOverflowHandler = () => {};
   // The default demo path records a **complete run**: it waits for the game's
   // run-end signal and stops one `--tail` later (bounded by
   // `--max-duration`). `--duration` and `--scripted` keep the legacy
@@ -1125,11 +1763,27 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       ? planDurationMs(plan) + plan.length * INTER_STEP_MS
       : options.durationMs;
 
+  // Emit the diagnostics suffix only when enabled, so a normal capture's
+  // heartbeat lines are unchanged (AC4).
+  const diagnosticsSuffix = () =>
+    options.diagnostics === true
+      ? `  ${formatDiagnosticsProgress(diagnostics.snapshot())}`
+      : '';
+
   try {
     // Install the page-side Web Audio tap *before* any game script runs, so
     // the wrapper is in place when the game first connects its master gain to
     // the shared context.destination (AH-0MUWYQQYU001G6OG).
     await page.addInitScript(installGameAudioTap);
+
+    // Install the page-side Blob-retention guard and bind the chunk sink
+    // *before* the game boots (AH-0MVNT274M009XRJ1, AH-0MVNT27XR0080I3C):
+    // `startRecording` forwards every chunk to the sink below exactly once
+    // and retains only a bounded prefix, with oversized flushes sliced at or
+    // below the single-sourced cap before they can overflow the CDP pipe
+    // (ERR_STRING_TOO_LONG). Both live in the shared pipeline so the two
+    // capture paths cannot drift (AH-0MVNT2AFI00639N3, parent AC7).
+    await recording.install();
 
     // Install the run-end listener *before* the game boots so a short run
     // cannot end before the capture is listening (AH-0MUXZ4CNS009RV40, AC1).
@@ -1149,28 +1803,11 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       await page.addInitScript(installBotTuningConfig, options.botTuningState);
     }
 
-    // Clear the page's telemetry JSONL sink before the game boots so a batch
-    // item (which shares the browser context's `localStorage`) can never read
-    // the previous item's records back — each series/anchor export covers
-    // exactly its own run (AH-0MVDV4DMY001Z7CU, AC1). Runs before any game
-    // script, so an empty sink is guaranteed for the run about to start.
-    await page.addInitScript(
-      (key) => {
-        try {
-          globalThis.localStorage?.removeItem(key);
-        } catch {
-          /* no-op: storage unavailable — the export will read an empty sink */
-        }
-      },
-      CAPTURE_TELEMETRY_JSONL_KEY,
-    );
-
-    // Stream encoded chunks to Node as they are produced (avoids one huge
-    // base64 return value over the CDP bridge).
-    const chunks = [];
-    await page.exposeFunction('__aiHellCaptureChunk', (base64) => {
-      chunks.push(Buffer.from(base64, 'base64'));
-    });
+    // Telemetry now lives in a per-run in-memory buffer that `startRun`
+    // resets (AH-0MVIRYGD1000JVY3), and every batch item gets a fresh page,
+    // so a new page can never read a previous item's records. The old
+    // pre-boot `localStorage.removeItem` is therefore gone: there is no
+    // persistent sink to clear.
 
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -1257,8 +1894,24 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       if (elapsedMs - lastProgressAt < PROGRESS_INTERVAL_MS) return;
       lastProgressAt = elapsedMs;
       lastReportedMs = elapsedMs;
-      reporter.progress(formatProgress(elapsedMs, totalMs));
+      // Sample node RSS at the heartbeat cadence (AC2), so peak RSS is
+      // comparable with the elapsed time the heartbeat reports.
+      diagnostics.sampleRss();
+      reporter.progress(
+        `${formatProgress(elapsedMs, totalMs)}${diagnosticsSuffix()}`,
+      );
     };
+
+    // A transport overflow kills the process from inside a stream callback, so
+    // the usual end-of-clip artefact never runs; register the crash writer
+    // now that `recordingMs` is initialised (AC3).
+    removeOverflowHandler = registerDiagnosticsCrashArtefact({
+      tracker: diagnostics,
+      outputPath,
+      getClip: () => ({ output: outputPath, durationMs: recordingMs }),
+      reporter,
+    });
+    diagnostics.sampleRss();
 
     let runWait = null;
     if (fullRun) {
@@ -1279,7 +1932,10 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       });
       recordingMs = runWait.elapsedMs;
       // Always show the final elapsed against the cap.
-      reporter.progress(formatProgress(recordingMs, options.maxDurationMs));
+      diagnostics.sampleRss();
+      reporter.progress(
+        `${formatProgress(recordingMs, options.maxDurationMs)}${diagnosticsSuffix()}`,
+      );
       lastReportedMs = recordingMs;
     } else {
       const startedAt = Date.now();
@@ -1302,27 +1958,69 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       }
       // Guarantee a final heartbeat when the loop did not already reach it.
       if (lastReportedMs < recordingMs) {
-        reporter.progress(formatProgress(recordingMs, recordingMs));
+        diagnostics.sampleRss();
+        reporter.progress(
+          `${formatProgress(recordingMs, recordingMs)}${diagnosticsSuffix()}`,
+        );
       }
     }
 
     reporter.step('Encoding and probing the clip…');
-    const probe = await stopRecordingAndProbe(page, recordingMs + 500);
+    // Probe source selection (AH-0MVNT28SJ008ZHDB): every chunk is on disk by
+    // the time the probe runs, so the clip's streamed size decides whether the
+    // retained in-page prefix covers it (byte-identical Blob probe) or the
+    // probe should read the written file back over the capture dev server.
+    const { probe, retention, probeSource } = await stopRecordingAndProbe(
+      page,
+      recordingMs + 500,
+      null,
+      // Probe source from the shared pipeline: the clip's streamed size, the
+      // final path and the `.partial` salvage path (AH-0MVNT2AFI00639N3).
+      recording.probeSource({ baseUrl }),
+    );
+    // Say which source the probe used and why: on a long-run soak this is the
+    // line that proves the streamed-file path ran (AH-0MVNT28SJ008ZHDB AC1).
+    if (probeSource) {
+      reporter.step(`Probe source: ${probeSource.source} — ${probeSource.reason}`);
+    }
 
-    const video = Buffer.concat(chunks);
-    mkdirSync(dirname(outputPath), { recursive: true });
-    writeFileSync(outputPath, video);
+    // Finalise the streamed recording (AH-0MVNT26AQ005LDNS): every chunk is
+    // already on disk at the `.partial` path, so a successful clip is just the
+    // rename into place. A failure path leaves the partial file untouched for
+    // the salvage item (AH-0MVNT29MC008BQPY).
+    const written = recording.finalise({ success: true });
+    const videoBytes = written.bytesWritten;
+
+    // Diagnostics: page heap at clip end, the page-side retention state
+    // (AH-0MVNT274M009XRJ1 AC4), then the additive artefact next to the clip
+    // (AC2/AC6). Read before the page closes in `finally`.
+    let diagnosticsSummary = null;
+    if (options.diagnostics === true) {
+      const pageMetrics = await readPageHeapMetrics(page);
+      if (retention) pageMetrics.retention = retention;
+      diagnostics.recordPageMetrics(pageMetrics);
+      diagnosticsSummary = finaliseClipDiagnostics({
+        tracker: diagnostics,
+        outputPath,
+        clip: {
+          output: outputPath,
+          bytes: videoBytes,
+          durationMs: recordingMs,
+          mimeType: probe.mimeType,
+        },
+        reporter,
+      });
+    }
 
     // Action-intensity series + §7.5 join anchor export (AH-0MVDV4DMY001Z7CU,
-    // AC1/AC2): read the run back from the page's telemetry JSONL sink and
-    // write `<stem>.action.jsonl` / `<stem>.capture.json` next to the WebM.
-    // Additive and tolerant — the game flushed its recorder at run end; a
-    // missing/partial sink produces a header-only series (AC3).
+    // AC1/AC2): read the run back from the page's in-memory telemetry buffer
+    // and write `<stem>.action.jsonl` / `<stem>.capture.json` next to the
+    // WebM. Additive and tolerant — the game flushed its recorder at run end;
+    // a missing/partial buffer produces a header-only series (AC3).
     let seriesExport = null;
     try {
-      const jsonl = await page.evaluate(
-        (key) => globalThis.localStorage?.getItem(key) ?? '',
-        CAPTURE_TELEMETRY_JSONL_KEY,
+      const jsonl = await readDevTelemetryBufferInChunks((fn, arg) =>
+        page.evaluate(fn, arg),
       );
       seriesExport = writeCaptureSeriesArtifacts({
         jsonl,
@@ -1344,7 +2042,7 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
       };
     }
 
-    const videoVerdict = isNonTrivialClip({ ...probe, bytes: video.length });
+    const videoVerdict = isNonTrivialClip({ ...probe, bytes: videoBytes });
     const audioVerdict = evaluateAudioTrack({
       trackCount: probe.audioTrackCount,
       peak: probe.audioPeak,
@@ -1363,18 +2061,39 @@ async function captureClip({ page, url, outputPath, options, reporter }) {
     return {
       output: outputPath,
       scenario: options.scenario ?? null,
-      bytes: video.length,
       durationMs: recordingMs,
       captureStarted,
+      // Additive report of which probe source produced this clip's verdicts
+      // (AH-0MVNT28SJ008ZHDB): 'stream' reads the written file over HTTP,
+      // 'in-page' kept the byte-identical retained-prefix Blob probe.
+      probeSource: probeSource ? probeSource.source : 'in-page',
+      probeSourceReason:
+        probeSource && probeSource.reason ? probeSource.reason : null,
       ...seriesExport,
       ...runSummary,
       renderer: probe.renderer,
       ...probe,
+      // The clip's size is what the sink wrote to disk, not the bounded page
+      // retention prefix the probe saw (AH-0MVNT274M009XRJ1).
+      bytes: videoBytes,
       audioVerdict,
       ...verdict,
       pageErrors,
+      ...(diagnosticsSummary ? { diagnostics: diagnosticsSummary } : {}),
     };
+  } catch (error) {
+    // Graceful failure (AH-0MVNT29MC008BQPY): finalise whatever the sink
+    // already streamed at the documented `<stem>.partial.webm` path and wrap
+    // the underlying transport/browser/recorder failure in a single
+    // actionable error, printed first by `main()`. The batch loop turns this
+    // into an attributed failure record (additive fields only).
+    throw salvageFailedCapture({ sink: recording.sink, outputPath, error });
   } finally {
+    removeOverflowHandler();
+    // Release the stream handle on every path. A failed clip keeps the bytes
+    // it already streamed at the documented `.partial` path for the salvage
+    // item (AH-0MVNT29MC008BQPY); `close` never renames.
+    recording.close();
     await page.close().catch(() => {});
   }
 }
@@ -1419,9 +2138,23 @@ export async function runCaptureIterations({
       record = buildIterationRecord(iteration, clip);
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
+      // Graceful failure (AH-0MVNT29MC008BQPY): a salvaged capture carries
+      // an additive report on the failure record, so the batch/`--json`
+      // output names the kept bytes and the `.partial.webm` path without
+      // changing the success shape. `error` stays the condensed reason; the
+      // single actionable line lives in `salvageMessage` (present even when
+      // the failure preceded the first chunk and nothing was salvaged).
+      const reason =
+        error && error.reason
+          ? String(error.reason)
+          : message.split(/\r?\n/)[0].trim();
+      const salvage =
+        error && error.salvage && typeof error.salvage.message === 'string'
+          ? error.salvage
+          : null;
       if (reporter && typeof reporter.step === 'function') {
         reporter.step(
-          `Clip ${iteration}/${outputPaths.length} failed: ${message}`,
+          `Clip ${iteration}/${outputPaths.length} failed: ${reason}`,
         );
       }
       record = {
@@ -1429,7 +2162,14 @@ export async function runCaptureIterations({
         output: outputPaths[index],
         scenario: (item && item.scenario) ?? null,
         ok: false,
-        error: message,
+        error: reason,
+        ...(salvage
+          ? {
+              salvagedBytes: salvage.bytesSalvaged,
+              partialPath: salvage.partialPath,
+              salvageMessage: salvage.message,
+            }
+          : {}),
       };
     }
     iterations.push(record);
@@ -1495,6 +2235,20 @@ export async function runCaptureSession({
     const baseUrl = `http://127.0.0.1:${port}/`;
 
     reporter.step('Launching headless Chromium…');
+    // The diagnostics transport tap must be in place *before* the browser is
+    // launched, because that is when Playwright constructs its CDP pipe
+    // transport (AC3). Off by default; a failure degrades to a reported reason.
+    if (options.diagnostics === true) {
+      const tap = await createTransportTap({
+        loadPipeTransport: loadPlaywrightPipeTransport,
+        logger: (message) => reporter.step(message),
+      });
+      reporter.step(
+        tap.installed
+          ? 'Diagnostics: CDP pipe transport tap installed.'
+          : `Diagnostics: CDP pipe transport tap unavailable (${tap.reason}).`,
+      );
+    }
     browser = await launchBrowser({
       headless: !options.headed,
       args: [
@@ -1542,6 +2296,342 @@ export async function runCaptureSession({
 }
 
 /**
+ * Runs a multi-scene capture (AH-0MVFC70GT000B96J, AC3/AC4): one Vite
+ * server, one browser, one page and **one** `MediaRecorder` spanning every
+ * configured scene, writing a single stitched WebM plus the `--json`
+ * payload. Reuses the shared session boot ({@link runCaptureSession}) and the
+ * clip machinery (audio tap, mime selection, recorder, probe, progress)
+ * rather than duplicating them.
+ *
+ * The item list is deliberately a single item: a scene batch is ONE output
+ * file recorded on ONE page, so the per-iteration page rotation of
+ * `--count`/`--all-scenarios` does not apply.
+ *
+ * @param {object} options — parsed capture options (with `scenes` set).
+ * @param {object} [reporter]
+ * @returns {Promise<object>} the single clip result (per-scene timings +
+ *   total duration + output path in the `--json` shape).
+ */
+async function runScenesCapture(options, reporter = createReporter()) {
+  const plan = buildScenePlan(options.scenes);
+  const outputPath = resolveScenesOutputPath(options.output);
+  const payload = buildScenesPayload(plan, { outputPath });
+
+  const { batch, clips } = await runCaptureSession({
+    items: [{ index: 1, outputPath, scenesCapture: true }],
+    options,
+    reporter,
+    captureOne: ({ page, outputPath: itemOutput, session }) =>
+      captureScenes({
+        page,
+        url: session.baseUrl,
+        baseUrl: session.baseUrl,
+        outputPath: itemOutput,
+        options,
+        reporter,
+        plan,
+        payload,
+      }),
+  });
+
+  // A failed multi-scene capture (AH-0MVNT29MC008BQPY) still reports its
+  // salvage attribution: surface the failure record rather than `undefined`.
+  return clips[0] ?? batch.iterations[0];
+}
+
+/**
+ * Multi-scene capture on one page with one continuously running recorder
+ * (AH-0MVFC70GT000B96J, AC3/AC4).
+ *
+ * The dev-gated in-page director (`window.__aiHellCaptureDirector`) switches
+ * gym scenes **inside the already-running page** — no navigation, so the
+ * `MediaRecorder` started here spans every scene and is stopped once at the
+ * end. Between scenes the page-side composite overlay ({@link
+ * installCaptureComposite}) fades to black over 0.25 s, the next scene starts
+ * behind the black, and the overlay fades from black over 0.25 s; because the
+ * recorder captures the composite canvas, those fades land in the single
+ * WebM. After recording, the existing non-trivial video+audio probe runs, plus
+ * a targeted probe of the fade boundaries so a capture whose transitions are
+ * missing fails loudly instead of shipping silently.
+ */
+async function captureScenes({
+  page,
+  url,
+  baseUrl,
+  outputPath,
+  options,
+  reporter,
+  plan,
+  payload,
+}) {
+  const totalMs = payload.totalMs;
+  const sceneCount = plan.length;
+  // Diagnostics are opt-in and shared with the single/batch path (AC4/AC7).
+  const diagnostics = createDiagnosticsTracker({
+    enabled: options.diagnostics === true,
+  });
+  const diagnosticsSuffix = () =>
+    options.diagnostics === true
+      ? `  ${formatDiagnosticsProgress(diagnostics.snapshot())}`
+      : '';
+  // The same bounded sink as the single/batch path (AH-0MVNT26AQ005LDNS):
+  // chunks stream to `<stem>.partial.webm` as they arrive, so the multi-scene
+  // recording never accumulates in the heap either. The same shared pipeline
+  // as the single/batch path (AH-0MVNT2AFI00639N3, parent AC7): the
+  // multi-scene recorder's chunks stream through the same sink/guard/probe
+  // source, so a fix cannot drift into two divergent copies.
+  const recording = createRecordingPipeline({ page, outputPath, diagnostics });
+  let removeOverflowHandler = () => {};
+  try {
+    // Tap the game's shared AudioContext before any game script runs, so the
+    // one recorder muxes the game's own SFX across every scene. Then install
+    // the page-side Blob-retention guard and bind the chunk sink through the
+    // shared pipeline (AH-0MVNT274M009XRJ1, AH-0MVNT27XR0080I3C,
+    // AH-0MVNT2AFI00639N3).
+    await page.addInitScript(installGameAudioTap);
+    await recording.install();
+
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+
+    reporter.step(`Loading ${url}…`);
+    await page.goto(url, { waitUntil: 'load', timeout: 30_000 });
+    await page.waitForSelector('#game-container canvas', { timeout: 20_000 });
+    await page.waitForFunction(
+      () => {
+        const canvas = document.querySelector('#game-container canvas');
+        return !!canvas && canvas.width === 960 && canvas.height === 540;
+      },
+      { timeout: 20_000 },
+    );
+
+    // A trusted Enter gesture resumes the shared AudioContext (autoplay
+    // policy) before recording, so the tap captures the game's SFX. It
+    // starts Play Game under the menu — the director switches to the first
+    // gym scene in-page before recording begins.
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(options.warmupMs || 2_000);
+
+    // The director is dev-gated; a production build (or a page where the
+    // dev handle failed to register) fails loudly here instead of recording
+    // blank scenes.
+    await page.waitForFunction(
+      () => typeof window.__aiHellCaptureDirector?.start === 'function',
+      { timeout: 15_000 },
+    );
+
+    const audioTrackCount = await waitForGameAudio(page, AUDIO_TAP_WAIT_MS);
+    const hasAudio = audioTrackCount > 0;
+    reporter.step(
+      hasAudio
+        ? `Game audio tap ready (${audioTrackCount} track(s)).`
+        : 'No game audio detected; recording video only.',
+    );
+    const mimeType = await resolvePageCaptureMimeType(page, hasAudio);
+    if (!mimeType) throw new Error('no supported WebM MediaRecorder codec');
+
+    // The page-side fade overlay the recorder captures (AC3).
+    const composite = await page.evaluate(installCaptureComposite);
+    if (!composite) {
+      throw new Error(
+        'could not install the page-side capture overlay canvas (game canvas not ready)',
+      );
+    }
+    reporter.step('Capture overlay installed (canvas mirror + 0.25 s fades).');
+
+    await startRecording(page, mimeType, `#${COMPOSITE_CANVAS_ID}`);
+    reporter.step(
+      `Recording ${sceneCount} scene(s) (${formatDuration(totalMs)}) with one MediaRecorder…`,
+    );
+
+    const startedEpoch = Date.now();
+    const sceneEpochs = [];
+    let elapsedMs = 0;
+    const reportProgress = () => {
+      diagnostics.sampleRss();
+      reporter.progress(
+        `${formatProgress(elapsedMs, totalMs)}${diagnosticsSuffix()}`,
+      );
+    };
+
+    // Register the crash artefact writer before recording starts (AC3).
+    removeOverflowHandler = registerDiagnosticsCrashArtefact({
+      tracker: diagnostics,
+      outputPath,
+      getClip: () => ({ output: outputPath, durationMs: totalMs }),
+      reporter,
+    });
+
+    await driveSceneSequence({
+      plan,
+      startScene: (key, setup) =>
+        page.evaluate(
+          ([sceneKey, sceneSetup]) =>
+            window.__aiHellCaptureDirector.start(sceneKey, sceneSetup),
+          [key, setup],
+        ),
+      fade: (alpha, durationMs) =>
+        page.evaluate(
+          ([targetAlpha, fadeMs]) =>
+            window.__aiHellFade.fadeTo(targetAlpha, fadeMs),
+          [alpha, durationMs],
+        ),
+      wait: async (ms) => {
+        let remaining = ms;
+        while (remaining > 0) {
+          const step = Math.min(SCENE_WAIT_HEARTBEAT_MS, remaining);
+          await page.waitForTimeout(step);
+          remaining -= step;
+          elapsedMs += step;
+          reportProgress();
+        }
+      },
+      // Generated-level scenes poll the dev-gated run-progress handle so the
+      // window can extend/truncate to the live wave/ended state
+      // (AH-0MVE01EY0008QEVX AC4).
+      readProgress: () =>
+        page.evaluate(() => window.__aiHellRunProgress ?? null),
+      onScene: ({ index, scene }) => {
+        // Wall-clock start of each scene's play window, used to probe the
+        // fades at their *actual* recorded offsets (page round-trips add a
+        // little drift to the plan-derived times).
+        sceneEpochs[index - 1] = Date.now();
+        reporter.step(
+          `Scene ${index}/${sceneCount}: ${scene.target} `
+            + `(play ${formatDuration(scene.playMs)}, capture ${formatDuration(scene.captureMs)})`,
+        );
+      },
+    });
+    // Reflect each generated-level scene's measured window into the payload
+    // (captureMs, wavesCaptured, endedEarly) so `--json` reports what was
+    // actually recorded (AH-0MVE01EY0008QEVX AC5).
+    plan.forEach((scene, index) => {
+      if (scene.target !== GENERATED_LEVEL_SCENE_KEY) return;
+      const out = payload.scenes[index];
+      if (!out) return;
+      out.captureMs = scene.captureMs;
+      out.wavesCaptured = scene.wavesCaptured;
+      out.endedEarly = scene.endedEarly;
+    });
+    reportProgress();
+
+    reporter.step('Encoding and probing the clip…');
+    // Probe a midpoint of every scene window (a visible frame) and several
+    // points across every transition window (fade-to + fade-from; the
+    // darkest one must be black). Both are checked after decoding the real
+    // output. The windows come from the measured wall clock, not the plan, so
+    // page round-trip jitter cannot desynchronise the probe.
+    const sceneSampleTimes = plan.map((scene, index) =>
+      Math.round(
+        sceneEpochs[index]
+          - startedEpoch
+          + (scene.playMs + scene.captureMs) / 2,
+      ),
+    );
+    const transitionWindows = plan.slice(0, -1).map((scene, index) => {
+      const endMs = Math.round(sceneEpochs[index + 1] - startedEpoch);
+      return { startMs: endMs - 2 * SCENE_FADE_MS, endMs };
+    });
+    const transitionSampleTimes = transitionWindows.flatMap((window) =>
+      buildTransitionProbeTimes(window),
+    );
+    const { probe, retention, probeSource } = await stopRecordingAndProbe(
+      page,
+      totalMs + 500,
+      [...sceneSampleTimes, ...transitionSampleTimes],
+      // Probe source from the shared pipeline (AH-0MVNT2AFI00639N3): streamed
+      // size, final path and the `.partial` salvage path — same shape as the
+      // single/batch clip path.
+      recording.probeSource({ baseUrl }),
+    );
+    if (probeSource) {
+      reporter.step(`Probe source: ${probeSource.source} — ${probeSource.reason}`);
+    }
+
+    // Every scene's chunk is already on disk; success is the rename into the
+    // clip path (AH-0MVNT26AQ005LDNS). A failure leaves the partial file for
+    // the salvage item (AH-0MVNT29MC008BQPY).
+    const written = recording.finalise({ success: true });
+    const videoBytes = written.bytesWritten;
+
+    // Diagnostics: page heap at clip end, the page-side retention state
+    // (AH-0MVNT274M009XRJ1 AC4), then the additive artefact (AC2/AC6).
+    let diagnosticsSummary = null;
+    if (options.diagnostics === true) {
+      const pageMetrics = await readPageHeapMetrics(page);
+      if (retention) pageMetrics.retention = retention;
+      diagnostics.recordPageMetrics(pageMetrics);
+      diagnosticsSummary = finaliseClipDiagnostics({
+        tracker: diagnostics,
+        outputPath,
+        clip: {
+          output: outputPath,
+          bytes: videoBytes,
+          durationMs: totalMs,
+          mimeType: probe.mimeType,
+        },
+        reporter,
+      });
+    }
+
+    const videoVerdict = isNonTrivialClip({ ...probe, bytes: videoBytes });
+    const audioVerdict = evaluateAudioTrack({
+      trackCount: probe.audioTrackCount,
+      peak: probe.audioPeak,
+      rms: probe.audioRms,
+      decodeError: probe.audioDecodeError,
+    });
+    const verdict = combineClipVerdict(videoVerdict, audioVerdict);
+    const fadeVerdict = evaluateSceneFadeSamples({
+      scenes: plan,
+      fadeMs: SCENE_FADE_MS,
+      samples: probe.sampleProbes ?? [],
+      sceneSampleTimes,
+      transitionWindows,
+    });
+    const reasons = [...verdict.reasons, ...fadeVerdict.reasons];
+
+    return {
+      ...payload,
+      ...probe,
+      audioVerdict,
+      // Additive report of which probe source produced this clip's verdicts
+      // (AH-0MVNT28SJ008ZHDB): 'stream' reads the written file over HTTP,
+      // 'in-page' kept the byte-identical retained-prefix Blob probe.
+      probeSource: probeSource ? probeSource.source : 'in-page',
+      probeSourceReason:
+        probeSource && probeSource.reason ? probeSource.reason : null,
+      output: outputPath,
+      bytes: videoBytes,
+      // `totalMs`/`scenes[]` are the planned timeline the config describes;
+      // `durationMs` mirrors the single-clip contract (recorded length) and
+      // `outputDurationMs` is the decoded length of the written WebM.
+      durationMs: totalMs,
+      outputDurationMs: Math.round(probe.durationSeconds * 1000),
+      // AC3: a missing/undetectable fade in the recording fails the capture,
+      // exactly like a trivial video or a silent audio track.
+      nonTrivial: verdict.nonTrivial && fadeVerdict.fadeVerified,
+      reasons,
+      fadeVerified: fadeVerdict.fadeVerified,
+      fadeReasons: fadeVerdict.reasons,
+      pageErrors,
+      ...(diagnosticsSummary ? { diagnostics: diagnosticsSummary } : {}),
+    };
+  } catch (error) {
+    // Graceful failure (AH-0MVNT29MC008BQPY): the same salvage seam as the
+    // single/batch path — keep the multi-scene run's streamed bytes at the
+    // documented `.partial` path and surface one actionable error.
+    throw salvageFailedCapture({ sink: recording.sink, outputPath, error });
+  } finally {
+    removeOverflowHandler();
+    // Release the stream handle on every path (see the single-clip path): a
+    // failed multi-scene run keeps its streamed bytes at the `.partial` path.
+    recording.close();
+    await page.close().catch(() => {});
+  }
+}
+
+/**
  * Resolves and runs the whole capture. The item list comes from
  * {@link planCaptureRun} (`--all-scenarios` expands the registry, otherwise
  * the single-clip / `--count` path is unchanged); one Vite server and one
@@ -1549,14 +2639,16 @@ export async function runCaptureSession({
  *
  * A **single** item returns the raw clip result object exactly as before so
  * the `--json` shape cannot regress; a batch returns the aggregate summary.
+ * A multi-scene config (`--config`/`--scenes`) takes the dedicated
+ * one-page/one-recorder path ({@link runScenesCapture}).
  */
 export async function runCapture(
   options = parseCaptureArgs(),
   reporter = createReporter(),
 ) {
   // Enable page telemetry (AH-0MVDV4DMY001Z7CU, AC1): the action-intensity
-  // series is exported from the run the game records into its dev JSONL
-  // sink (`localStorage` key `ai_hell_telemetry_jsonl`). Mirrors
+  // series is exported from the run the game records into its per-run,
+  // in-memory dev JSONL buffer (AH-0MVIRYGD1000JVY3). Mirrors
   // `scripts/record-session.mjs` — the metric is a strict no-op without the
   // flag, so the capture opts the page in before the Vite server reads the
   // `VITE_*` env (dev builds need no consent).
@@ -1567,6 +2659,16 @@ export async function runCapture(
   // or a browser (AH-0MV6MFDYG001E6PL).
   if (options.botConfig !== null && options.botConfig !== undefined) {
     options.botTuningState = loadBotTuningConfigFile(options.botConfig);
+  }
+
+  // Multi-scene capture (AH-0MVFC70GT000B96J): parse/validate the scene
+  // config if a caller passed only the path (main() validates before calling
+  // here, which is what makes the CLI fail before any boot).
+  if (!Array.isArray(options.scenes) && options.scenesConfig) {
+    options.scenes = loadScenesForCapture(options);
+  }
+  if (Array.isArray(options.scenes)) {
+    return runScenesCapture(options, reporter);
   }
 
   const plan = planCaptureRun(options);
@@ -1585,6 +2687,7 @@ export async function runCapture(
       return captureClip({
         page,
         url,
+        baseUrl: session.baseUrl,
         outputPath,
         options: itemOptions,
         reporter,
@@ -1593,8 +2696,10 @@ export async function runCapture(
   });
 
   // `--count 1` / the single-clip default returns the exact single-clip result
-  // object so the existing `--json` shape cannot regress (AC3).
-  return plan.batch ? batch : clips[0];
+  // object so the existing `--json` shape cannot regress (AC3). A failed
+  // single clip (AH-0MVNT29MC008BQPY) surfaces its failure record instead of
+  // `undefined`, so `main()` can report the salvage and exit non-zero.
+  return plan.batch ? batch : (clips[0] ?? batch.iterations[0]);
 }
 
 /**
@@ -1608,285 +2713,294 @@ export async function runCapture(
  *
  * @param {import('playwright').Page} page
  * @param {string} mimeType
+ * @param {string} [targetSelector] — canvas the recorder captures; defaults
+ *   to the game canvas. The multi-scene driver passes the composite overlay
+ *   canvas so the page-side fades are recorded (AH-0MVFC70GT000B96J).
  */
-async function startRecording(page, mimeType) {
-  return page.evaluate((resolvedMimeType) => {
-    // eslint-disable-next-line no-undef -- injected by Playwright exposeFunction
-    const captureChunk = window.__aiHellCaptureChunk;
-    const canvas = document.querySelector('#game-container canvas');
-    if (!canvas) throw new Error('game canvas not found');
+async function startRecording(
+  page,
+  mimeType,
+  targetSelector = '#game-container canvas',
+) {
+  return page.evaluate(
+    ({ resolvedMimeType, selector }) => {
+      // eslint-disable-next-line no-undef -- injected by Playwright exposeFunction
+      const captureChunk = window.__aiHellCaptureChunk;
+      const canvas = document.querySelector(selector);
+      if (!canvas) throw new Error('game canvas not found');
 
-    const tap = window.__aiHellAudioTap;
-    const audioTracks =
-      tap && typeof tap.getAudioTracks === 'function'
-        ? tap.getAudioTracks()
-        : [];
-
-    const canvasStream = canvas.captureStream(60);
-    const stream = new MediaStream([
-      ...canvasStream.getVideoTracks(),
-      ...audioTracks,
-    ]);
-    const recorder = new MediaRecorder(stream, {
-      mimeType: resolvedMimeType,
-      videoBitsPerSecond: 8_000_000,
-    });
-
-    const chunks = [];
-    recorder.ondataavailable = async (event) => {
-      if (!event.data || event.data.size === 0) return;
-      chunks.push(event.data);
-      const bytes = new Uint8Array(await event.data.arrayBuffer());
-      let binary = '';
-      for (let i = 0; i < bytes.length; i += 0x8000) {
-        binary += String.fromCharCode.apply(
-          null,
-          bytes.subarray(i, i + 0x8000),
-        );
+      // The bounded retention controller installed by
+      // `installRecorderChunkRetention` before the game booted
+      // (AH-0MVNT274M009XRJ1): every chunk is still forwarded to the node
+      // sink exactly once, but the page retains only a bounded prefix, so
+      // page heap stops growing with run length.
+      const retention = window.__aiHellRecorderChunkRetention;
+      if (!retention || typeof retention.handle !== 'function') {
+        throw new Error('page retention controller missing');
       }
-      await captureChunk(btoa(binary));
-    };
 
-    const captureStartedAtEpochMs = Date.now();
-    window.__aiHellCapture = {
-      recorder,
-      chunks,
-      mimeType: resolvedMimeType,
-      audioTrackCount: audioTracks.length,
-      captureStartedAtEpochMs,
-    };
-    recorder.start(1000);
-    return captureStartedAtEpochMs;
-  }, mimeType);
+      const tap = window.__aiHellAudioTap;
+      const audioTracks =
+        tap && typeof tap.getAudioTracks === 'function'
+          ? tap.getAudioTracks()
+          : [];
+
+      const canvasStream = canvas.captureStream(60);
+      const stream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...audioTracks,
+      ]);
+      const recorder = new MediaRecorder(stream, {
+        mimeType: resolvedMimeType,
+        videoBitsPerSecond: 8_000_000,
+      });
+      const captureStartedAtEpochMs = Date.now();
+
+      // The recorder state named by an unsplittable-payload error
+      // (AH-0MVNT27XR0080I3C AC2): track count, mime and the recording start
+      // anchor, so the actionable message says *what* was recording and for
+      // how long when the oversized flush arrived.
+      const recorderState = {
+        trackCount: audioTracks.length,
+        mimeType: resolvedMimeType,
+        startedAtEpochMs: captureStartedAtEpochMs,
+      };
+
+      recorder.ondataavailable = (event) => {
+        if (!event.data || event.data.size === 0) return;
+        // The controller forwards each chunk exactly once (serialised behind
+        // its own chain) and applies the retention decision; the sink writes
+        // every payload to disk immediately, so dropping it from page
+        // retention cannot lose bytes. An oversized flush is sliced into
+        // at-or-below-cap binding calls here (AH-0MVNT27XR0080I3C AC1).
+        void retention
+          .handle(
+            event.data,
+            async (blob) => {
+              const bytes = new Uint8Array(await blob.arrayBuffer());
+              let binary = '';
+              for (let i = 0; i < bytes.length; i += 0x8000) {
+                binary += String.fromCharCode.apply(
+                  null,
+                  bytes.subarray(i, i + 0x8000),
+                );
+              }
+              await captureChunk(btoa(binary));
+            },
+            recorderState,
+          )
+          .catch((error) => {
+            // Keep the single actionable message (size, cap, recorder state)
+            // and surface it once at clip end — never an unhandled rejection
+            // with a raw stack, and never a second copy per later chunk.
+            if (!window.__aiHellCaptureChunkError) {
+              window.__aiHellCaptureChunkError = {
+                message:
+                  error && error.message ? error.message : String(error),
+                code:
+                  error && error.code
+                    ? error.code
+                    : 'CAPTURE_CHUNK_FORWARD_FAILED',
+                atEpochMs: Date.now(),
+              };
+            }
+          });
+      };
+
+      window.__aiHellCapture = {
+        recorder,
+        chunks: retention.retainedChunks(),
+        retention,
+        mimeType: resolvedMimeType,
+        audioTrackCount: audioTracks.length,
+        captureStartedAtEpochMs,
+      };
+      recorder.start(1000);
+      return captureStartedAtEpochMs;
+    },
+    { resolvedMimeType: mimeType, selector: targetSelector },
+  );
 }
 
 /**
- * Stops the recorder, then decodes the produced WebM back through a
- * `<video>` element and samples several frames for verifiable stats.
+ * Stops the recorder and waits for every chunk to reach the disk sink.
+ *
+ * Split out of the probe (AH-0MVNT28SJ008ZHDB): the probe source now depends
+ * on the **final** on-disk size, so every chunk must have been streamed
+ * before the caller can choose between the in-page Blob probe and the
+ * streamed-file probe. Returns the page-side retention controller's live
+ * statistics (AH-0MVNT274M009XRJ1 AC4) so diagnostics can report the retained
+ * prefix without changing the `--json` result shape.
+ *
+ * @param {import('playwright').Page} page
+ * @returns {Promise<object|null>} retention statistics (or `null`).
  */
-async function stopRecordingAndProbe(page, fallbackDurationMs) {
-  return page.evaluate(async (fallbackMs) => {
+async function stopRecording(page) {
+  return page.evaluate(async () => {
     const capture = window.__aiHellCapture;
     if (!capture) throw new Error('capture pipeline was never started');
 
-    const { recorder, chunks, mimeType, audioTrackCount } = capture;
+    const { recorder, retention } = capture;
     const stopped = new Promise((resolve) => {
       recorder.addEventListener('stop', resolve, { once: true });
     });
     recorder.stop();
     await stopped;
-
-    const blob = new Blob(chunks, { type: mimeType });
-    const url = URL.createObjectURL(blob);
-
-    // Decode the recorded blob's Opus track and measure its peak/RMS so the
-    // clip's audio is verifiable without auditioning it
-    // (AH-0MUWYQRAS0054VO5, AC1/AC2). The recording destination renders
-    // without any system audio device, but decoding can still fail (an
-    // unsupported codec, a truncated recording); that fallback is reported
-    // explicitly rather than silently passing (AC4).
-    let audioPeak = 0;
-    let audioRms = 0;
-    let audioDecodeError = '';
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (audioTrackCount > 0 && !AudioContextCtor) {
-      audioDecodeError = 'AudioContext is unavailable for decoding';
-    } else if (audioTrackCount > 0) {
-      const sharedTap = window.__aiHellAudioTap;
-      const sharedContexts =
-        sharedTap && typeof sharedTap.contexts === 'function'
-          ? sharedTap.contexts()
-          : [];
-      let decodeContext = sharedContexts[0] || null;
-      const ownsDecodeContext = !decodeContext;
-      try {
-        if (!decodeContext) decodeContext = new AudioContextCtor();
-        const decoded = await decodeContext.decodeAudioData(
-          await blob.arrayBuffer(),
-        );
-        let sumSquares = 0;
-        let sampleCount = 0;
-        for (
-          let channel = 0;
-          channel < decoded.numberOfChannels;
-          channel += 1
-        ) {
-          const samples = decoded.getChannelData(channel);
-          for (let i = 0; i < samples.length; i += 1) {
-            const magnitude = Math.abs(samples[i]);
-            if (magnitude > audioPeak) audioPeak = magnitude;
-            sumSquares += samples[i] * samples[i];
-            sampleCount += 1;
-          }
-        }
-        audioRms =
-          sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
-      } catch (error) {
-        audioDecodeError =
-          error && error.message ? error.message : String(error);
-      } finally {
-        if (
-          ownsDecodeContext &&
-          decodeContext &&
-          typeof decodeContext.close === 'function'
-        ) {
-          try {
-            await decodeContext.close();
-          } catch {
-            /* noop: closing a scratch decode context must not fail the capture */
-          }
-        }
-      }
-    }
-    const video = document.createElement('video');
-    video.src = url;
-    video.muted = true;
-    video.playsInline = true;
-
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error('timed out loading recorded video')),
-        15_000,
-      );
-      video.addEventListener(
-        'loadeddata',
-        () => {
-          clearTimeout(timeout);
-          resolve();
-        },
-        { once: true },
-      );
-      video.addEventListener(
-        'error',
-        () => {
-          clearTimeout(timeout);
-          reject(new Error('recorded video failed to load'));
-        },
-        { once: true },
-      );
-    });
-
-    const width = video.videoWidth || 0;
-    const height = video.videoHeight || 0;
-
-    // MediaRecorder WebM has no duration metadata until the browser seeks
-    // to the end and computes it from the last frame.
-    if (!Number.isFinite(video.duration)) {
-      await new Promise((resolve) => {
-        const done = () => resolve();
-        video.addEventListener('durationchange', () => {
-          if (Number.isFinite(video.duration)) done();
-        });
-        try {
-          video.currentTime = 1e101;
-        } catch {
-          done();
-        }
-        setTimeout(done, 3_000);
-      });
-    }
-    const durationSeconds = Number.isFinite(video.duration)
-      ? video.duration
-      : fallbackMs / 1000;
-
-    const full = document.createElement('canvas');
-    full.width = width || 960;
-    full.height = height || 540;
-    const fullCtx = full.getContext('2d', { willReadFrequently: true });
-
-    const thumb = document.createElement('canvas');
-    thumb.width = 48;
-    thumb.height = 27;
-    const thumbCtx = thumb.getContext('2d', { willReadFrequently: true });
-
-    const fractions = [0.1, 0.3, 0.5, 0.7, 0.9];
-    let nonBlackTotal = 0;
-    const colours = new Set();
-    const lumaFrames = [];
-
-    for (const fraction of fractions) {
-      const seeked = new Promise((resolve) => {
-        const done = () => resolve();
-        video.addEventListener('seeked', done, { once: true });
-        setTimeout(done, 2_000);
-      });
-      try {
-        video.currentTime = Math.max(0, durationSeconds * fraction);
-      } catch {
-        /* ignore seek failures and sample the current frame */
-      }
-      await seeked;
-
-      fullCtx.drawImage(video, 0, 0, full.width, full.height);
-      const pixels = fullCtx.getImageData(0, 0, full.width, full.height).data;
-      let nonBlack = 0;
-      for (let i = 0; i < pixels.length; i += 4) {
-        const r = pixels[i];
-        const g = pixels[i + 1];
-        const b = pixels[i + 2];
-        const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        if (luma > 16) nonBlack += 1;
-        colours.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
-      }
-      nonBlackTotal += nonBlack / (full.width * full.height);
-
-      thumbCtx.drawImage(video, 0, 0, thumb.width, thumb.height);
-      const thumbPixels = thumbCtx.getImageData(
-        0,
-        0,
-        thumb.width,
-        thumb.height,
-      ).data;
-      const frame = [];
-      for (let i = 0; i < thumbPixels.length; i += 4) {
-        frame.push(
-          (0.2126 * thumbPixels[i] +
-            0.7152 * thumbPixels[i + 1] +
-            0.0722 * thumbPixels[i + 2]) /
-            255,
-        );
-      }
-      lumaFrames.push(frame);
+    // The final `dataavailable` fires before the `stop` event, but its async
+    // handler may still be in flight; flush so the sink holds every byte
+    // before the probe source is chosen and the retention statistics include
+    // the last chunk (AH-0MVNT274M009XRJ1 AC4).
+    if (retention && typeof retention.flush === 'function') {
+      await retention.flush();
     }
 
-    let motion = 0;
-    if (lumaFrames.length > 1) {
-      let difference = 0;
-      for (let f = 1; f < lumaFrames.length; f += 1) {
-        const previous = lumaFrames[f - 1];
-        const current = lumaFrames[f];
-        let sum = 0;
-        for (let p = 0; p < current.length; p += 1) {
-          sum += Math.abs(current[p] - previous[p]);
-        }
-        difference += sum / current.length;
-      }
-      motion = difference / (lumaFrames.length - 1);
+    // Surface a rejected recorder chunk as one actionable error
+    // (AH-0MVNT27XR0080I3C AC2). The guard records the first failure with the
+    // payload size, the cap and the recorder state; rethrowing it here makes
+    // the clip fail with that message instead of an unhandled-rejection stack
+    // (and instead of the sink silently missing bytes).
+    const chunkError = window.__aiHellCaptureChunkError;
+    if (chunkError && chunkError.message) {
+      const error = new Error(chunkError.message);
+      error.name = 'CaptureChunkRejectedError';
+      error.code = chunkError.code || 'CAPTURE_CHUNK_REJECTED';
+      throw error;
     }
 
-    URL.revokeObjectURL(url);
-    delete window.__aiHellCapture;
+    return retention && typeof retention.stats === 'function'
+      ? retention.stats()
+      : null;
+  });
+}
 
-    return {
-      width,
-      height,
-      durationSeconds,
-      nonBlackFraction: nonBlackTotal / fractions.length,
-      uniqueColours: colours.size,
-      motion,
-      bytes: blob.size,
-      mimeType,
-      audioTrackCount,
-      audioPeak,
-      audioRms,
-      audioDecodeError,
-      renderer: (() => {
-        const canvas = document.querySelector('#game-container canvas');
-        const gl = canvas && (canvas.getContext('webgl2') || canvas.getContext('webgl'));
-        return gl ? gl.getParameter(gl.RENDERER) : 'unknown';
-      })(),
-    };
-  }, fallbackDurationMs);
+/**
+ * Probes the finished recording and samples several frames for verifiable
+ * stats (AH-0MVNT28SJ008ZHDB, parent AC3/AC6).
+ *
+ * The probe source is chosen from the clip's **final streamed size**
+ * (`chooseProbeSource`): at or below the documented in-page threshold the clip
+ * fits entirely in the page's retained prefix and keeps the byte-identical
+ * in-page Blob probe; above it the probe reads the written file back over the
+ * capture dev server's HTTP URL (range-streamed `<video>`) with a bounded
+ * audio prefix, so the renderer never materialises the whole recording.
+ *
+ * `sampleTimesMs` (optional) additionally probes explicit video offsets
+ * (seconds) and returns per-sample `{ timeMs, nonBlackFraction, meanLuma }`
+ * — the multi-scene driver uses those frames to verify the 0.25 s page-side
+ * fades are present in the recording (AH-0MVFC70GT000B96J, AC3). The same
+ * code path runs on either source, so the fade verdicts cannot diverge.
+ *
+ * Returns `{ probe, retention, probeSource }`: the probe object keeps the
+ * pre-retention contract values (AC5) plus the additive
+ * `audioProbeBytes`/`audioProbeCapped` report (parent AC4), `retention`
+ * carries the page-side controller's statistics, and `probeSource` records
+ * which source was used and why.
+ *
+ * @param {import('playwright').Page} page
+ * @param {number} fallbackDurationMs — fallback when the duration is unknown.
+ * @param {number[]|null} [sampleTimesMs] — explicit offsets to probe.
+ * @param {{
+ *   bytesAvailable?: () => number,
+ *   baseUrl?: string,
+ *   outputPath?: string,
+ *   partialPath?: string,
+ * }} [probeContext] — the clip's size/serving context.
+ */
+async function stopRecordingAndProbe(
+  page,
+  fallbackDurationMs,
+  sampleTimesMs = null,
+  probeContext = {},
+) {
+  const retention = await stopRecording(page);
+
+  const bytes =
+    typeof probeContext.bytesAvailable === 'function'
+      ? probeContext.bytesAvailable()
+      : 0;
+  const choice = chooseProbeSource({
+    bytes,
+    threshold: CAPTURE_PROBE_STREAM_THRESHOLD_BYTES,
+  });
+
+  // The clip is written to the documented `.partial` path and only renamed
+  // after a successful probe, so that is the file to serve while probing.
+  const servable =
+    choice.source === 'stream'
+      ? buildProbeFileUrl({
+          baseUrl: probeContext.baseUrl,
+          repoRoot: REPO_ROOT,
+          filePath: probeContext.partialPath || probeContext.outputPath,
+          cacheBust: bytes,
+        })
+      : null;
+  const streamed = choice.source === 'stream' && servable !== null && servable.ok;
+  const source = streamed ? 'stream' : 'in-page';
+
+  const probePlan = (planSource, audioRange) => ({
+    source: planSource,
+    videoUrl: planSource === 'stream' ? servable.url : '',
+    sourceBytes: bytes,
+    // Only the streamed path measures audio from a bounded prefix; the in-page
+    // path decodes the whole retained Blob exactly as before (AC2).
+    audioRange: planSource === 'stream' ? audioRange : null,
+    fallbackMs: fallbackDurationMs,
+    sampleTimes: sampleTimesMs,
+  });
+  const audioRange = resolveAudioProbeRange({ bytes });
+
+  let reason = choice.reason;
+  let resolvedSource = source;
+  let probe;
+  if (streamed) {
+    reason = `${choice.reason}; ${servable.reason}`;
+    try {
+      ({ probe } = await page.evaluate(
+        probeRecordingInPage,
+        probePlan('stream', audioRange),
+      ));
+    } catch (error) {
+      // The streamed source is the reliable path here (the file is served by
+      // the very dev server the page loaded from), but if it cannot be loaded
+      // the documented fallback is the in-page prefix probe rather than
+      // failing a clip that has already been recorded (parent "Probe rework
+      // risk"). Report why so the residual gap is visible, never silent.
+      const message = error && error.message ? error.message : String(error);
+      reason =
+        `${choice.reason}; the streamed probe failed (${message}) — fell ` +
+        'back to the in-page Blob prefix probe';
+      resolvedSource = 'in-page';
+      ({ probe } = await page.evaluate(
+        probeRecordingInPage,
+        probePlan('in-page', audioRange),
+      ));
+    }
+  } else {
+    if (choice.source === 'stream') {
+      // The clip is larger than the page can retain, but the file cannot be
+      // served: keep the documented in-page prefix fallback (it decodes a
+      // truncated prefix, so `durationSeconds` reflects the prefix) and report
+      // why instead of failing the clip (parent "Probe rework risk").
+      reason =
+        `${choice.reason}; falling back to the in-page Blob probe ` +
+        `(${servable ? servable.reason : 'no clip path was available'})`;
+    }
+    ({ probe } = await page.evaluate(
+      probeRecordingInPage,
+      probePlan('in-page', audioRange),
+    ));
+  }
+
+  return {
+    probe,
+    retention,
+    probeSource: {
+      source: resolvedSource,
+      bytes,
+      threshold: choice.threshold,
+      reason,
+    },
+  };
 }
 
 /**
@@ -1902,6 +3016,9 @@ async function stopRecordingAndProbe(page, fallbackDurationMs) {
  * @returns {number}
  */
 export function captureExitCode(result = {}) {
+  // A single-clip failure record (a salvaged capture, AH-0MVNT29MC008BQPY)
+  // must fail the CLI even though it has no batch `iterations` array.
+  if (result && result.ok === false) return 1;
   // Batch aggregate: fail when any iteration failed (AH-0MUYTK941005E2M4, AC7).
   if (Array.isArray(result.iterations)) {
     return result.iterations.some((it) => !it || it.ok !== true) ? 1 : 0;
@@ -1948,9 +3065,29 @@ function formatBatchReport(batch) {
   return lines.join('\n');
 }
 
+/** Renders the human-readable summary for a failed single clip. */
+function formatFailureReport(result) {
+  const lines = [
+    'AI_Hell automated gameplay capture',
+    '=================================',
+    `Output:     ${result.output}`,
+    `Status:     FAILED — ${result.error ?? 'capture failed'}`,
+  ];
+  if (result.salvagedBytes > 0 && result.partialPath) {
+    lines.push(
+      `Salvaged:   ${result.salvagedBytes} B at ${result.partialPath}`,
+    );
+  }
+  return lines.join('\n');
+}
+
 function formatReport(result) {
   // A multi-clip batch reports a per-iteration summary instead of one clip.
   if (Array.isArray(result.iterations)) return formatBatchReport(result);
+  // A failed single clip (AH-0MVNT29MC008BQPY) reports its status instead of
+  // dereferencing the success fields; the actionable salvage line is printed
+  // first by `main()`.
+  if (result.ok === false) return formatFailureReport(result);
 
   const lines = [
     'AI_Hell automated gameplay capture',
@@ -1959,6 +3096,15 @@ function formatReport(result) {
     `Size:       ${(result.bytes / 1024).toFixed(1)} KiB`,
     `Resolution: ${result.width}x${result.height} @ ${Math.round(result.durationSeconds * 1000)} ms`,
   ];
+
+  // Multi-scene capture report block (AH-0MVFC70GT000B96J, AC3/AC4): the
+  // scene count and whether the 0.25 s fades were verified in the recording.
+  if (result.sceneCount) {
+    lines.push(
+      `Scenes:     ${result.sceneCount} in one WebM, ${formatDuration(result.fadeMs ?? 0)} fades each direction`,
+      `Fades:      ${result.fadeVerified ? 'verified in the recording' : `MISSING — ${(result.fadeReasons ?? []).join('; ')}`}`,
+    );
+  }
 
   // Action-intensity series + join anchor sidecars (AH-0MVDV4DMY001Z7CU,
   // AC1/AC2/AC5): reported when a clip exported them.
@@ -1988,6 +3134,15 @@ function formatReport(result) {
     `Colours:    ${result.uniqueColours} distinct (16-level buckets)`,
     `Motion:     ${result.motion.toFixed(4)} mean frame delta`,
     `Audio:      ${formatAudioSummary(result)}`,
+  );
+
+  // Opt-in diagnostics block (AH-0MVNT25JI004OVKQ): only present when
+  // `--diagnostics` was passed, so a normal report is unchanged (AC4).
+  if (result.diagnostics) {
+    lines.push(...formatDiagnosticsSummary(result.diagnostics).split('\n'));
+  }
+
+  lines.push(
     `Non-trivial:${result.nonTrivial ? ' yes' : ` no (${result.reasons.join('; ')})`}`,
   );
 
@@ -1998,7 +3153,10 @@ async function main() {
   const options = parseCaptureArgs();
   if (options.help) {
     console.log(
-      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--all-scenarios] [--list-scenarios] [--bot-config file]',
+      'Usage: node scripts/capture-gameplay.mjs [--duration ms] [--tail ms] [--max-duration ms] [--warmup ms] [--output path] [--count n] [--port n] [--headed] [--json] [--keep-server] [--scripted] [--scenario name] [--all-scenarios] [--list-scenarios] [--bot-config file] [--config scenes.json] [--diagnostics]',
+    );
+    console.log(
+      'Diagnostics: --diagnostics (off by default) records the base64 payload size of every recorder chunk handed to the CDP binding (count/max/p50/p95 plus a size-only timeline), samples node RSS at each progress heartbeat, reads the page heap at clip end, and taps the Playwright CDP pipe transport so an overflow can be classified (method + binding name + prefix) instead of guessed. It writes <stem>.diagnostics.json next to each clip; a failed write is reported and never fails the clip. A normal capture is unchanged.',
     );
     console.log(
       'Default: records a complete in-game demo run until the aihell:run-ended signal, then keeps recording --tail ms (default 5000), bounded by --max-duration ms (default 1800000).',
@@ -2024,6 +3182,9 @@ async function main() {
     console.log(
       'Series: every clip also exports <run-id>.action.jsonl (the per-run action-intensity series, documented docs/dev/action-intensity.md §7.2–§7.3) and <run-id>.capture.json (the §7.5 video-join anchor: the capture_started marker plus the telemetry run-header startedAt), written next to the WebM with a matching basename. The capture re-enables page telemetry; a partial or telemetry-less run still writes a header-only series.',
     );
+    console.log(
+      'Multi-scene: `npm run capture:scenes -- --config <file>` (alias --scenes) records every gym scene listed in the JSON config with ONE MediaRecorder on ONE page, fading to black and back (0.25 s each way) between scenes, and writes a single WebM plus a --json payload with per-scene { target, playMs, captureMs, startMs, endMs }, the total duration and the output path. The config schema is { "scenes": [{ "target": "GymPlayer", "playMs": 2000, "captureMs": 2000, "label": "optional" }] }; it is validated before any server or browser boots.',
+    );
     return;
   }
 
@@ -2034,8 +3195,39 @@ async function main() {
     return;
   }
 
+  if (options.scenesConfig) {
+    // Parse + validate the multi-scene config BEFORE any server or browser
+    // boots (AH-0MVFC70GT000B96J, AC1): a bad config fails fast with an
+    // actionable message and a non-zero exit, never after Chromium launches.
+    try {
+      options.scenes = loadScenesForCapture(options);
+    } catch (error) {
+      if (error instanceof SceneConfigError) {
+        console.error(`Scene config error: ${error.message}`);
+        process.exitCode = 1;
+        return;
+      }
+      throw error;
+    }
+  }
+
   const result = await runCapture(options);
   const isBatch = Array.isArray(result.iterations);
+
+  // AC2 (AH-0MVNT29MC008BQPY): exactly one actionable message per failure,
+  // printed first — before the report, the JSON payload or any raw stack. The
+  // salvage line names what failed, the bytes kept, the `.partial.webm` path
+  // and the next action.
+  const failedRecords = isBatch
+    ? result.iterations.filter((it) => !it.ok)
+    : result.ok === false
+      ? [result]
+      : [];
+  for (const record of failedRecords) {
+    const line = failureSalvageLine(record);
+    if (line) console.error(line);
+  }
+
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {
@@ -2052,7 +3244,7 @@ async function main() {
           );
         }
       }
-    } else if (result.pageErrors.length > 0) {
+    } else if (result.ok !== false && (result.pageErrors ?? []).length > 0) {
       console.warn(`Page errors (${result.pageErrors.length}):`);
       for (const error of result.pageErrors) console.warn(`  - ${error}`);
     }
@@ -2065,7 +3257,7 @@ async function main() {
         `${result.failed} of ${result.count} capture iteration(s) failed; exiting non-zero.`,
       );
     }
-  } else {
+  } else if (result.ok !== false) {
     if (result.fullRun && result.capHit) {
       console.error(
         'Capture hit the --max-duration safety cap without a run-end signal; ' +
@@ -2086,7 +3278,16 @@ const invokedDirectly =
   process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   main().catch((error) => {
-    if (error instanceof CaptureSetupError) {
+    if (error instanceof CaptureSalvageError) {
+      // One actionable line first, then the underlying stack as secondary
+      // diagnostics (AH-0MVNT29MC008BQPY AC2). Normal salvaged captures are
+      // handled per-iteration; this is the safety net for a failure that
+      // escapes before the batch loop exists (e.g. a browser launch crash).
+      console.error(`\n${error.message}`);
+      const cause = error.cause;
+      if (cause && cause.stack) console.error(cause.stack);
+      else if (error.stack) console.error(error.stack);
+    } else if (error instanceof CaptureSetupError) {
       console.error(`\n${error.message}`);
     } else {
       console.error(error);

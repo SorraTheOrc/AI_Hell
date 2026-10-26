@@ -66,6 +66,15 @@ export interface BalanceReport {
     readonly ticks: number;
     readonly dt: number;
     readonly sampleEveryTicks: number;
+    /**
+     * The batch's resolved run mode (AH-0MVD1RK2V009J5D2): `true` for a
+     * full-campaign batch (the default), `false` for `--skirmish` or an
+     * explicit per-level run. Omitted on a human report (a recorded game is
+     * the real game, not a harness mode).
+     */
+    readonly campaign?: boolean;
+    /** The explicit per-level mode's level (1–10), when one was selected. */
+    readonly level?: number;
   };
   /** Every run's summary, in (policy × seed) sweep order. */
   readonly runs: readonly BatchedRunSummary[];
@@ -219,6 +228,10 @@ export function buildBalanceReport(options: {
   ticks: number;
   dt: number;
   sampleEveryTicks: number;
+  /** Resolved batch mode (omitted on a human report). */
+  campaign?: boolean;
+  /** Explicit per-level mode's level, when one was selected. */
+  level?: number;
   runs: readonly BatchedRunSummary[];
   aggregate: BalanceAggregate;
 }): BalanceReport {
@@ -232,6 +245,10 @@ export function buildBalanceReport(options: {
       ticks: options.ticks,
       dt: options.dt,
       sampleEveryTicks: options.sampleEveryTicks,
+      // Conditionally present so a human report (no harness mode) keeps its
+      // existing shape; key-sorted serialisation keeps batches byte-stable.
+      ...(options.campaign === undefined ? {} : { campaign: options.campaign }),
+      ...(options.level === undefined ? {} : { level: options.level }),
     },
     runs: options.runs,
     aggregate: options.aggregate,

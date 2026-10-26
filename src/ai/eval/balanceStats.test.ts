@@ -7,6 +7,12 @@
  * emit), so a bot run and a recorded human game produce directly comparable
  * per-run and aggregate statistics. The pure core performs no I/O and never
  * reads the wall clock — asserted here by spy and clock-independence tests.
+ *
+ * Both harness modes are covered (AH-0MVD1RMV1002L0K9 AC2/AC3): the seeded
+ * **skirmish** (explicit `campaign: false`) carries no progression, while the
+ * batch-default **campaign** path (`campaign: true`) emits real
+ * wave/level/choice telemetry, so its `waveReached`, `levelReached` and
+ * `upgradesSelected` are meaningfully non-zero.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -96,8 +102,14 @@ describe('extractBalanceStats', () => {
     expect(stats.mineralsCollected).toBe(3);
   });
 
-  it('extracts from a real arena run and agrees with the legacy metrics', () => {
-    const result = runArena(createCompetentBotBrain(), { seed: 21, ticks: 240 });
+  it('extracts from a real skirmish run and agrees with the legacy metrics', () => {
+    // Explicit skirmish (the arena-layer default): this path has no campaign
+    // progression, which the campaign batch default opts into below.
+    const result = runArena(createCompetentBotBrain(), {
+      seed: 21,
+      ticks: 240,
+      campaign: false,
+    });
     const stats = extractBalanceStats(result.records);
     const point = extractMetricPoint(recordingRunFromRecords(result.records));
 
@@ -110,9 +122,28 @@ describe('extractBalanceStats', () => {
     expect(stats.asteroidsDestroyed).toBe(point.asteroidsDestroyed);
     expect(stats.avoidableHits).toBe(point.avoidableHits);
     expect(stats.survivalSeconds).toBeCloseTo(point.survivalSeconds, 9);
-    // The arena is a single-level skirmish: no wave/level progression.
+    // The seeded skirmish is a single level: no wave/level progression and no
+    // upgrade choices, so these fields stay at their empty/zero defaults.
     expect(stats.waveReached).toBe(0);
     expect(stats.levelReached).toBe(0);
+  });
+
+  it('extracts non-zero wave/level/upgrade statistics from a campaign run (AC3)', () => {
+    // The campaign path (the batch default) plays the shipped waves through the
+    // shared sequencer and resolves hold-full choices, so the previously-empty
+    // fields are now meaningful.
+    const result = runArena(createCompetentBotBrain(), {
+      seed: 21,
+      ticks: 1_800,
+      campaign: true,
+      spawns: { asteroids: 0 },
+    });
+    const stats = extractBalanceStats(result.records);
+    expect(stats.waveReached).toBeGreaterThan(0);
+    expect(stats.levelReached).toBeGreaterThan(0);
+    expect(Object.keys(stats.upgradesSelected).length).toBeGreaterThan(0);
+    // Same extractor, same schema: the campaign path is not a special case.
+    expect(stats.schemaVersion).toBe(BALANCE_STATISTICS_SCHEMA_VERSION);
   });
 
   it('returns zeroed run stats for an empty stream', () => {

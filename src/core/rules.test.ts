@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import {
+  extraLifeDropChance,
+  powerUpDropChance,
+  POWER_UP_DROP_CHANCE,
+} from './levelScaling';
+
 import { POWER_UP_SPAWN_INTERVAL } from './constants';
 import {
   DEFAULT_ASTEROID_EXTRA_LIFE_DROP_CHANCE,
@@ -140,6 +146,13 @@ describe('game rules configuration module', () => {
         mineralRedropBonusMax: 1.5,
         asteroidExtraLifeDropChance: 0.25,
         sequencedWavesEnabled: true,
+        // Level-scaling tunables (AH-0MVLJEE7O008RX9X) — tuned, non-default
+        // values so the round-trip proves storage carried them.
+        enemyCountMultiplierAtMaxLevel: 2.5,
+        powerUpDropChanceAtLevel1: 0.2,
+        powerUpDropChanceAtMaxLevel: 0.06,
+        levelScalingMaxLevel: 12,
+        enemyCountCap: 120,
       };
       saveRules(custom);
 
@@ -156,6 +169,11 @@ describe('game rules configuration module', () => {
       expect(loaded.mineralHoldCapacity).toBe(30);
       expect(loaded.mineralHoldGrowthMultiplier).toBe(3);
       expect(loaded.asteroidExtraLifeDropChance).toBe(0.25);
+      expect(loaded.enemyCountMultiplierAtMaxLevel).toBe(2.5);
+      expect(loaded.powerUpDropChanceAtLevel1).toBe(0.2);
+      expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.06);
+      expect(loaded.levelScalingMaxLevel).toBe(12);
+      expect(loaded.enemyCountCap).toBe(120);
     });
 
     it('merges a partial weapon weight table over the weapon defaults', () => {
@@ -781,5 +799,256 @@ describe('asteroid Extra Life drop chance (AH-0MV6M2M9P0078N4S)', () => {
     loaded.asteroidExtraLifeDropChance = 1;
     expect(DEFAULT_RULES.asteroidExtraLifeDropChance).toBe(0.05);
     expect(loadRules().asteroidExtraLifeDropChance).toBe(0.05);
+  });
+});
+
+// ── Level-scaling rules (AH-0MVLJCYGW001TRB3) ───────────────────────
+//
+// TEST-FIRST CONTRACT for the tunable level-scaling data that F1
+// (AH-0MVLJEE7O008RX9X) adds to `GameRules`. The fields are accessed through
+// a locally-declared shape so this file type-checks on pre-change HEAD;
+// every test was originally wrapped in `it.fails` (repo
+// red-before/green-after convention); **F1 (AH-0MVLJEE7O008RX9X) has
+// flipped each `it.fails` back to `it`**, so this block now runs as normal
+// green tests.
+//
+// Defaults pinned here; the curves themselves are pinned in
+// `levelScaling.test.ts`:
+//
+// - `enemyCountMultiplierAtMaxLevel` — enemy-count multiplier at the
+//   campaign maximum (default 2.00; level 1 is always 1). Loaded value is
+//   clamped to `[1, 10]`; a non-finite/non-number falls back to 2.
+// - `powerUpDropChanceAtLevel1` — per-kill drop chance at level 1 (default
+//   `POWER_UP_DROP_CHANCE`, 0.18). Clamped to `[0, 1]`; invalid → 0.18.
+// - `powerUpDropChanceAtMaxLevel` — per-kill drop chance at the campaign
+//   maximum (default 0.05). Clamped to `[0, powerUpDropChanceAtLevel1]` so a
+//   stored blob can never make the curve rise with level; invalid → 0.05.
+// - `levelScalingMaxLevel` — the campaign level span (default 10). Integers
+//   clamped to `[2, 100]`; non-integer/non-number → 10.
+// - `enemyCountCap` — per-group safety cap for scaled counts (default 200).
+//   Integers clamped to `[1, 1000]`; non-integer/non-number → 200.
+//
+// Backwards compatibility: a legacy persisted blob that predates these five
+// keys must load with the defaults merged in — no schema-version bump.
+
+/** The level-scaling fields F1 adds to `GameRules` (test-first contract). */
+interface LevelScalingRules {
+  enemyCountMultiplierAtMaxLevel: number;
+  powerUpDropChanceAtLevel1: number;
+  powerUpDropChanceAtMaxLevel: number;
+  levelScalingMaxLevel: number;
+  enemyCountCap: number;
+}
+
+/** Reads the scaling fields from a (possibly pre-F1) rules object. */
+function scalingRules(rules: GameRules): LevelScalingRules {
+  return rules as unknown as LevelScalingRules;
+}
+
+/** Builds rules with scaling tunables overridden (test-first field names). */
+function rulesWithScaling(overrides: Partial<LevelScalingRules>): GameRules {
+  return { ...DEFAULT_RULES, ...overrides } as unknown as GameRules;
+}
+
+describe('level-scaling rules (AH-0MVLJCYGW001TRB3)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('exposes the documented scaling defaults on DEFAULT_RULES and loadRules', () => {
+    const defaults = scalingRules(DEFAULT_RULES);
+    expect(defaults.enemyCountMultiplierAtMaxLevel).toBe(2);
+    expect(defaults.powerUpDropChanceAtLevel1).toBe(0.18);
+    expect(defaults.powerUpDropChanceAtMaxLevel).toBe(0.05);
+    expect(defaults.levelScalingMaxLevel).toBe(10);
+    expect(defaults.enemyCountCap).toBe(200);
+
+    const loaded = scalingRules(loadRules());
+    expect(loaded.enemyCountMultiplierAtMaxLevel).toBe(2);
+    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.18);
+    expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.05);
+    expect(loaded.levelScalingMaxLevel).toBe(10);
+    expect(loaded.enemyCountCap).toBe(200);
+  });
+
+  it('merges the scaling defaults into a legacy blob that predates the fields', () => {
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpSpawnInterval: 3 }),
+    );
+
+    const loaded = scalingRules(loadRules());
+    expect(loaded.enemyCountMultiplierAtMaxLevel).toBe(2);
+    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.18);
+    expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.05);
+    expect(loaded.levelScalingMaxLevel).toBe(10);
+    expect(loaded.enemyCountCap).toBe(200);
+    // The pre-existing persisted rule survives the merge untouched.
+    expect(loadRules().powerUpSpawnInterval).toBe(3);
+  });
+
+  it('clamps the max-level enemy-count multiplier into [1, 10]', () => {
+    const cases: Array<[unknown, number]> = [
+      [0.5, 1],
+      [-4, 1],
+      [99, 10],
+      [2.5, 2.5],
+      ['huge', 2],
+      [null, 2],
+    ];
+    for (const [stored, expected] of cases) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          version: RULES_SCHEMA_VERSION,
+          enemyCountMultiplierAtMaxLevel: stored,
+        }),
+      );
+      expect(scalingRules(loadRules()).enemyCountMultiplierAtMaxLevel).toBe(
+        expected,
+      );
+    }
+    // JSON.stringify turns Infinity into null; exercise a truly non-finite
+    // stored number through a raw blob.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      '{"version":4,"enemyCountMultiplierAtMaxLevel":1e999}',
+    );
+    expect(scalingRules(loadRules()).enemyCountMultiplierAtMaxLevel).toBe(2);
+  });
+
+  it('clamps both drop-chance tunables into [0, 1] and never lets the curve rise', () => {
+    for (const [stored, expected] of [
+      [1.7, 1],
+      [-0.2, 0],
+    ] as const) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({
+          version: RULES_SCHEMA_VERSION,
+          powerUpDropChanceAtLevel1: stored,
+        }),
+      );
+      expect(scalingRules(loadRules()).powerUpDropChanceAtLevel1).toBe(
+        expected,
+      );
+    }
+
+    // Non-numeric level-1 chance falls back to the 0.18 default.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpDropChanceAtLevel1: 'often' }),
+    );
+    expect(scalingRules(loadRules()).powerUpDropChanceAtLevel1).toBe(0.18);
+
+    // A max-level chance above the level-1 chance clamps down to it.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
+        powerUpDropChanceAtLevel1: 0.2,
+        powerUpDropChanceAtMaxLevel: 0.9,
+      }),
+    );
+    expect(scalingRules(loadRules()).powerUpDropChanceAtMaxLevel).toBe(0.2);
+
+    // Negative max-level chance clamps to 0.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({
+        version: RULES_SCHEMA_VERSION,
+        powerUpDropChanceAtLevel1: 0.18,
+        powerUpDropChanceAtMaxLevel: -1,
+      }),
+    );
+    expect(scalingRules(loadRules()).powerUpDropChanceAtMaxLevel).toBe(0);
+
+    // Non-numeric max-level chance falls back to the 0.05 default.
+    window.localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ version: RULES_SCHEMA_VERSION, powerUpDropChanceAtMaxLevel: 'rare' }),
+    );
+    expect(scalingRules(loadRules()).powerUpDropChanceAtMaxLevel).toBe(0.05);
+  });
+
+  it('clamps the campaign level span to [2, 100] and the count cap to [1, 1000]', () => {
+    const spanCases: Array<[unknown, number]> = [
+      [1, 2],
+      [1000, 100],
+      [8, 8],
+      [5.5, 10], // non-integer → default
+      ['ten', 10],
+    ];
+    for (const [stored, expected] of spanCases) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ version: RULES_SCHEMA_VERSION, levelScalingMaxLevel: stored }),
+      );
+      expect(scalingRules(loadRules()).levelScalingMaxLevel).toBe(expected);
+    }
+
+    const capCases: Array<[unknown, number]> = [
+      [0, 1],
+      [5000, 1000],
+      [120, 120],
+      [150.5, 200], // non-integer → default
+      ['lots', 200],
+    ];
+    for (const [stored, expected] of capCases) {
+      window.localStorage.clear();
+      window.localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ version: RULES_SCHEMA_VERSION, enemyCountCap: stored }),
+      );
+      expect(scalingRules(loadRules()).enemyCountCap).toBe(expected);
+    }
+  });
+
+  it('round-trips tuned scaling fields through saveRules', () => {
+    saveRules(
+      rulesWithScaling({
+        enemyCountMultiplierAtMaxLevel: 2.5,
+        powerUpDropChanceAtLevel1: 0.2,
+        powerUpDropChanceAtMaxLevel: 0.06,
+        levelScalingMaxLevel: 12,
+        enemyCountCap: 120,
+      }),
+    );
+
+    const loaded = scalingRules(loadRules());
+    expect(loaded.enemyCountMultiplierAtMaxLevel).toBe(2.5);
+    expect(loaded.powerUpDropChanceAtLevel1).toBe(0.2);
+    expect(loaded.powerUpDropChanceAtMaxLevel).toBe(0.06);
+    expect(loaded.levelScalingMaxLevel).toBe(12);
+    expect(loaded.enemyCountCap).toBe(120);
+  });
+
+  it('returns fresh scaling fields so a mutation cannot pollute the defaults', () => {
+    const loaded = scalingRules(loadRules());
+    loaded.enemyCountCap = 1;
+    expect(scalingRules(DEFAULT_RULES).enemyCountCap).toBe(200);
+    expect(scalingRules(loadRules()).enemyCountCap).toBe(200);
+  });
+
+  it('feeds the documented per-level curve from the loaded runtime rules (AH-0MVLJF4DI000BKMQ)', () => {
+    // The runtime rules (defaults merged by loadRules) drive the shared
+    // scaling module exactly as documented: level 1 reproduces today's flat
+    // 0.18 rate, the level-10 chance is ≤ 30 % of it, and the Extra Life
+    // roll follows the same ratio while staying unchanged at level 1.
+    const loaded = loadRules();
+    expect(powerUpDropChance(1, loaded)).toBeCloseTo(POWER_UP_DROP_CHANCE, 10);
+    expect(powerUpDropChance(10, loaded)).toBeLessThanOrEqual(
+      0.3 * powerUpDropChance(1, loaded),
+    );
+    expect(extraLifeDropChance(1, loaded)).toBeCloseTo(
+      loaded.asteroidExtraLifeDropChance,
+      10,
+    );
+    expect(extraLifeDropChance(10, loaded)).toBeLessThan(
+      extraLifeDropChance(1, loaded),
+    );
   });
 });

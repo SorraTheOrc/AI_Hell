@@ -323,6 +323,10 @@ function resolveBaseConfig(candidate: CandidateGroup): EnemyConfig {
       burstCount: 1,
       shotProbability: 1.0,
       health: 1,
+      // Unknown archetypes are never shielded (AH-0MVM8GRQ8006HGPK).
+      forceFieldStartLevel: 0,
+      forceFieldStartHits: 1,
+      forceFieldMaxHits: 1,
     };
   }
   // Merge the candidate's overrides onto the seed.

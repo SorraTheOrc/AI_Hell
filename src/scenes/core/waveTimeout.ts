@@ -62,3 +62,17 @@ export function detonateWaveTimeoutSurvivors<T extends WaveTimeoutDetonatable>(
 ): number {
   return 0;
 }
+
+/**
+ * True for non-blocking world hazards — archetypes that never gate wave
+ * completion and are never adopted as survivors between waves (Asteroid
+ * accounting, AH-0MUJM746P000QAEO). The Frogger lane traffic is the second
+ * such hazard (AH-0MV01EPM40008N8T).
+ *
+ * Shared so `PlayScene` and the level gyms (`GymLevel`) classify hazards with
+ * the same rule (AGENTS.md § Game Architecture Conventions,
+ * AH-0MV9AWR7A0084XJ0).
+ */
+export function isNonBlockingHazard(enemyKey: string): boolean {
+  return enemyKey === 'asteroid' || enemyKey === 'lane-traffic';
+}

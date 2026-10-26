@@ -38,7 +38,13 @@ import { resolvePolicyFactory } from './policies';
 import { extractMetricPoint, type MetricPoint } from './metrics';
 import { extractHumanBalanceStats } from './humanStats';
 import { buildSideBySideCapturePlan } from './video';
-import type { TelemetryRecord, TuneComparison, TuneEditRecord } from './types';
+import {
+  DEFAULT_BATCH_TICKS,
+  DEFAULT_EVALUATION_TICKS,
+  type TelemetryRecord,
+  type TuneComparison,
+  type TuneEditRecord,
+} from './types';
 
 export { hydrateBalanceConfig } from './balanceConfig';
 // Dev tools load the TS core via Vite SSR and need the shared human helper + 
@@ -61,7 +67,13 @@ export interface CliOptions {
   readonly baseline: string | null;
   readonly candidate: string | null;
   readonly seeds: readonly number[];
-  readonly ticks: number;
+  /**
+   * Maximum ticks per run, or `null` for the **mode default**:
+   * {@link DEFAULT_EVALUATION_TICKS} for a single-run evaluation and
+   * {@link DEFAULT_BATCH_TICKS} for a batch (AC3). The shell passes `null`
+   * when `--ticks` was omitted.
+   */
+  readonly ticks: number | null;
   readonly dt: number;
   readonly sampleEveryTicks: number;
   readonly outputDir: string;
@@ -75,6 +87,44 @@ export interface CliOptions {
   readonly humanRecordingText: string | null;
   /** The human run's seed to compare against; defaults to the last run. */
   readonly humanSeed: number | null;
+  /**
+   * Explicit campaign level (1–10) for the per-level campaign mode; `null`
+   * (default) keeps the unchanged seeded skirmish (AH-0MVLJFB1I0099X4Z).
+   */
+  readonly level: number | null;
+  /**
+   * Level-scaling curves for per-level mode: `true` (default) resolves the
+   * enemy-count multiplier and per-kill drop chance at the selected level;
+   * `false` resolves both to level 1 so a pre-change baseline is captured
+   * with the same harness code and seeds.
+   */
+  readonly scaleLevels: boolean;
+  /**
+   * Enemy force-field toggle (default `true`, epic
+   * AH-0MVJ8W4GE007OMNT AC5). `false` resolves every hostile's force field
+   * at level 1 — 0 hits for every shipped archetype — so the pre-change
+   * (hull-only) baseline is captured with the same harness code and seeds.
+   */
+  readonly forceFields: boolean;
+  /**
+   * Full-campaign mode for **batch** runs (AC1/AC2): `true` (the default)
+   * sweeps the whole shipped campaign; `false` is the CLI's `--skirmish`
+   * opt-out into the legacy single-level skirmish. Ignored outside batch
+   * mode: single-run evaluation, A/B and the human comparison keep the
+   * skirmish semantics (AC5).
+   */
+  readonly campaign: boolean;
+  /**
+   * Optional streaming sink for the batch's raw telemetry
+   * (AH-0MVD1RPPP001XJKN AC2/AC3). When supplied, every run's telemetry is
+   * serialised and handed over **as soon as the run finishes**, so the CLI
+   * core never accumulates the sweep's raw records: peak memory is bounded by
+   * one run's telemetry instead of the whole batch. The sink owns the
+   * `runs.jsonl` artifact, so {@link executeEvaluation} omits it from its
+   * returned artifacts. `null`/omitted keeps the in-memory behaviour (the
+   * shell writes `runs.jsonl` from the returned artifact).
+   */
+  readonly telemetrySink: ((jsonlChunk: string) => void) | null;
 }
 
 /** A file the shell should write under the output directory. */
@@ -101,9 +151,16 @@ function seedRange(count: number): number[] {
 function runConfig(options: CliOptions) {
   return {
     seeds: options.seeds,
-    ticks: options.ticks,
+    // Single-run evaluation keeps the historic skirmish window (AC5).
+    ticks: options.ticks ?? DEFAULT_EVALUATION_TICKS,
     dt: options.dt,
     sampleEveryTicks: options.sampleEveryTicks,
+    // Per-level campaign mode (AH-0MVLJFB1I0099X4Z): forwarded to every
+    // arena run; `null`/undefined keeps the unchanged seeded skirmish.
+    // Single-run evaluation never enables the full-campaign mode (AC5).
+    level: options.level ?? undefined,
+    scaleLevels: options.scaleLevels,
+    forceFields: options.forceFields,
   };
 }
 
@@ -120,17 +177,33 @@ export function executeEvaluation(options: CliOptions): CliResult {
       options.policies.length > 0 ? options.policies : [options.policy]
     ).map((name) => resolvePolicyFactory(name));
     const records: TelemetryRecord[] = [];
+    const telemetrySink = options.telemetrySink ?? null;
     const batch = runBatch({
       ...runConfig(options),
+      // Batch runs use the higher, finite campaign budget (AC3) and the
+      // full-campaign mode by default (AC1); `--skirmish` clears `campaign`.
+      ticks: options.ticks ?? DEFAULT_BATCH_TICKS,
+      campaign: options.campaign,
       policies: policyFactories,
       onRun: (run) => {
-        records.push(...run.records);
+        // Stream the run's telemetry out immediately when the shell supplies
+        // a sink (AH-0MVD1RPPP001XJKN AC2/AC3): a campaign batch emits far
+        // more telemetry than fits comfortably in memory, so only the
+        // per-run summaries are retained here.
+        if (telemetrySink !== null) {
+          telemetrySink(serialiseRecordsJsonl(run.records));
+        } else {
+          records.push(...run.records);
+        }
       },
     });
     const summary = formatBalanceReport(batch.report);
     artifacts.push({ name: 'balance-report.json', content: batch.json });
     artifacts.push({ name: 'balance-report.txt', content: summary });
-    artifacts.push({ name: 'runs.jsonl', content: serialiseRecordsJsonl(records) });
+    // The sink owns `runs.jsonl`; only the in-memory path returns it.
+    if (telemetrySink === null) {
+      artifacts.push({ name: 'runs.jsonl', content: serialiseRecordsJsonl(records) });
+    }
     stdout.push(options.json ? batch.json : summary);
     return {
       exitCode: 0,
@@ -259,7 +332,8 @@ export function defaultOptions(): CliOptions {
     baseline: null,
     candidate: null,
     seeds: seedRange(3),
-    ticks: 1800,
+    // `null` → the mode default (1800 single-run, 18000 batch); see AC3.
+    ticks: null,
     dt: 1 / 60,
     sampleEveryTicks: 1,
     outputDir: 'eval-output',
@@ -269,6 +343,11 @@ export function defaultOptions(): CliOptions {
     policies: [],
     humanRecordingText: null,
     humanSeed: null,
+    level: null,
+    scaleLevels: true,
+    forceFields: true,
+    campaign: true,
+    telemetrySink: null,
   };
 }
 
@@ -284,10 +363,15 @@ export function runBalanceBatch(options: CliOptions): BatchOutput {
   ).map((name) => resolvePolicyFactory(name));
   return runBatch({
     seeds: options.seeds,
-    ticks: options.ticks,
+    // The tune loop compares two batches, so it uses the batch budget/mode.
+    ticks: options.ticks ?? DEFAULT_BATCH_TICKS,
     dt: options.dt,
     sampleEveryTicks: options.sampleEveryTicks,
     policies: policyFactories,
+    level: options.level ?? undefined,
+    scaleLevels: options.scaleLevels,
+    forceFields: options.forceFields,
+    campaign: options.campaign,
   });
 }
 

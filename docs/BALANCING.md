@@ -32,7 +32,7 @@ git-ignored):
 |---|---|
 | `balance-report.json` | The versioned balance report (stable JSON): config, per-run summaries and the aggregate distributions. |
 | `balance-report.txt` | The same report rendered as a human-readable distribution summary. |
-| `runs.jsonl` | The **raw telemetry** for every game, in the shipped record schema (one record per line). |
+| `runs.jsonl` | The **raw telemetry** for every game, in the shipped record schema (one record per line). Written incrementally per run, so the sweep is never held in memory. |
 
 The text summary is printed to stdout unless `--json` is supplied, in which
 case the JSON report is printed instead. Both artifacts are always written.
@@ -45,20 +45,372 @@ batch-relevant flags are:
 | Flag | Meaning | Default |
 |---|---|---|
 | `--batch` | Enable batch mode (sweep seeds × policies, emit the balance report). | off |
+| `--skirmish` | Play the legacy single-level skirmish instead of the **full shipped campaign** (the batch default). | off (batch plays the campaign) |
 | `--games <count>` | Number of games — expands to seeds `1..count`. | `100` in batch mode (`3` otherwise) |
 | `--policies <a,b>` | Comma-separated policies to sweep; every policy plays every seed. | the `--policy` value (`competent`) |
 | `--policy <name>` | Single policy when `--policies` is omitted. | `competent` |
 | `--seed <n>` | An explicit seed (repeatable); overrides `--games`. | — |
-| `--ticks <n>` | Maximum ticks per game (a game may end early on death). | `1800` |
+| `--ticks <n>` | Maximum ticks per game — a **finite** budget (a run ends early on death or at the campaign boss / `gameComplete`). | `18000` in batch mode (`1800` for a single-run evaluation) |
 | `--dt <seconds>` | Fixed simulation step. | `1/60` |
 | `--sample-every <n>` | Record one state tick every Nth tick (smaller artifacts). | `1` |
 | `--out <dir>` | Artifact output directory. | `eval-output` |
 | `--json` | Print the machine-readable report instead of the text summary. | text |
+| `--level <n>` | Play the **real campaign waves** of level `n` (1–10) with the real per-kill drop rule (per-level campaign mode) instead of the seeded skirmish. | off |
+| `--scale-levels <on\|off>` | Level-scaling curves in per-level mode: `on` resolves the enemy-count multiplier and per-kill drop chance at the selected level; `off` resolves **both to level 1** so a pre-change baseline is captured with identical harness code and seeds. | `on` |
+| `--force-fields <on\|off>` | Enemy force fields (AH-0MVJ8W4GE007OMNT): `on` (default) resolves each hostile's field at the run level from the shared `enemyForceFieldHits` curve; `off` resolves every field at level 1 — 0 hits for every shipped archetype — so a pre-change (hull-only) baseline is captured with identical harness code and seeds. | `on` |
 
 The number of games in a batch is `policies × seeds`. For example,
 `--policies competent,legacy --games 100` runs **200** games (two policies
 over seeds 1..100) — comfortably above the epic's "~100 deterministic games"
 requirement even for a single policy.
+
+### Full-campaign runs (the batch default)
+
+```bash
+# the default batch: every game plays the whole shipped campaign
+npm run evaluate -- --batch --games 100 --out campaign-out
+
+# the legacy single-level skirmish, for a skirmish-era baseline
+npm run evaluate -- --batch --skirmish --games 100 --out skirmish-out
+```
+
+A batch plays the **full shipped campaign** by default (AH-0MVD1RK2V009J5D2,
+parent decision Q3=b): each game drives the shared `buildSequencedLevels`
+campaign through the shared `WaveManager` (all levels and waves, honouring
+`fixed`/`curve`/`dynamic` generation) and the shared hold-full upgrade-choice flow,
+so `waveReached`, `levelReached` and `upgradesSelected` carry real non-zero
+distributions instead of the old constant zero. `--skirmish` opts
+back into the previous single-level skirmish for backward compatibility;
+the seeded skirmish path itself is unchanged.
+
+**Bounded tick budget.** A campaign is far longer than one skirmish, so a
+batch defaults to a **finite** `18000`-tick budget (five simulated minutes at
+60 Hz) instead of the single-run `1800`. Every run still ends early on death
+or when the shared campaign manager reports the boss trigger /
+`gameComplete`; a run that stalls (e.g. a stationary hostile the bot cannot
+reach) stops at the budget. A 100-game campaign batch at this budget takes
+≈5 min on a dev machine (≈10 s at the old 1800-tick skirmish window); the
+current measured time and peak-memory numbers are recorded in
+[Campaign batch acceptance evidence](#campaign-batch-acceptance-evidence-ah-0mvd1rppp001xjkn)
+below (an earlier ≈47 s figure predates the campaign/upgrade-path work and is
+superseded).
+
+**Bounded memory.** Raw telemetry is **streamed to disk per run**, never
+accumulated across the sweep: `executeEvaluation` hands each run's serialised
+records to an optional `telemetrySink`, and the Node shell writes them
+synchronously to `runs.jsonl` (see
+[Campaign batch acceptance evidence](#campaign-batch-acceptance-evidence-ah-0mvd1rppp001xjkn)).
+Peak memory is therefore bounded by a single run's telemetry and does not grow
+with `--games`.
+
+**Comparability note.** Only **batch** mode defaults to the campaign.
+Single-run evaluation (`npm run evaluate` without `--batch`), A/B and the
+`--human` comparison keep the **skirmish** semantics deliberately (AC5), so
+their long-standing metrics stay comparable with earlier evidence and with
+recorded human runs. A balance report records its resolved mode in
+`config.campaign` (and `config.level` for a per-level run); the tune loop's
+same-sweep guard refuses to diff a campaign batch against a skirmish batch,
+so mixed-mode before/after comparisons cannot be mistaken for a tuning edit.
+
+**Determinism.** Unchanged: same policy + config + seeds ⇒ byte-identical
+records and report (`recordsHash` stable). Every campaign draw is
+seed-derived, and the pure eval core still reads no wall clock and does no
+I/O.
+
+### Reading the campaign distributions
+
+A campaign batch reports three progression fields that the seeded skirmish
+could not populate (they were constant `0` / empty before
+AH-0MVD1RGKM005GW0C and AH-0MVD1RIH2008YCNV):
+
+| Field | What it measures | How to read it |
+|---|---|---|
+| `waveReached` | The highest **within-level** wave number reached. `WaveManager.waveNumber` is 1-based *within the active level* and resets to 1 when the next level starts, so this is wave progress inside a level, **not** a cumulative campaign wave count. | Pair it with `levelReached`: `levelReached` 1 with a high `waveReached` means runs get deep into level 1; a low `waveReached` with `levelReached` 3 means runs reach level 3 but die early in it. It is also a density signal — a wave with more enemies takes longer to wipe, which shows up as a lower `waveReached` at a fixed tick budget even when kills/run and survival are flat. |
+| `levelReached` | The highest campaign level entered (1–10). | The headline progression metric. `mean` 1.15 with `min` 1 / `max` 2 says most runs stay in level 1; a rising mean means the campaign is getting easier (or the bot better). |
+| `upgradesSelected` | Per-choice-id counts of the upgrade the bot took through the shared hold-full flow. | Each key (a weapon/power-up/level id) has its own `DistributionStats`. A key whose `mean` collapses after a tuning edit while `stdDev` stays low made that choice consistently unappealing; a key that is never offered is a supply problem, not a balance one. |
+
+The per-wave aggregation is the **distribution over runs** of those per-run
+fields, not a per-wave table inside a single run: use `min`/`max`/`stdDev` to
+see how much run-to-run variance the campaign has, and `median` in preference
+to `mean` when one degenerate run (e.g. a stalled wave that exhausts the tick
+budget) skews the average. Every run is bounded by the `18000`-tick budget, so
+a run that stalls contributes its last reached wave rather than an unbounded
+sample.
+
+### Per-level campaign runs
+
+```bash
+# play level 5 of the real campaign (scaled curves): per-kill drop chance 0.122, 2x enemies at level 10
+npm run evaluate -- --batch --level 5 --games 40 --out level5-out
+
+# the pre-change baseline for the same level: curves resolved to level 1
+npm run evaluate -- --batch --level 5 --scale-levels off --games 40 --out level5-base-out
+```
+
+With `--level <n>` the harness switches to an **additive** per-level campaign
+mode: each game plays the **real campaign waves** of that level (the shared
+`Formations.LEVELS` data through the level-scaling seam, as documented in
+[`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`](./ENEMY_DESIGN_AND_IMPLEMENTATION.md)
+§5.1) instead of the single-level spawn reservoir, and power-up supply comes
+from the **real per-kill drop rule** (the shared `src/core/levelScaling.ts`
+module, the same rule the game's `PlayScene` rolls) rather than the seeded
+power-up reservoir. Waves progress in level order — the next wave spawns the
+moment the current wave is wiped — and clearing the final wave emits
+`level_cleared`, so the report's `levelReached` faithfully reflects the
+selected level.
+
+| Flag | Meaning |
+|---|---|
+| `--level <n>` | Campaign level to play (1–10). |
+| `--scale-levels off` | Capture a **baseline** (curves at level 1) with identical harness code and seeds. |
+
+**Determinism.** Identical to the skirmish: same policy + config + seed ⇒
+**byte-identical** records, including per-level runs and baseline runs. The
+per-level mode uses only seeded streams (positions, shot probability, drop
+rolls, wave progression) and never reads the wall clock.
+
+**Fidelity boundaries.** Per-level mode is the same *closed-loop headless
+arena* as the skirmish: wave members are stationary hostiles whose stats come
+from their archetype's `EnemyConfig` — formation movement and Phaser spawner
+behaviour are not modelled, and spawner-delivered archetypes (`ghosts`,
+`horde`, `centipede`, `laneTraffic`) appear as ordinary config-driven hostiles
+so the roster matches the game's wave accounting. The seeded mineral harvest
+and the asteroid shadow-hazard stay live (so the small-asteroid Extra Life
+roll is exercised). The **seeded skirmish** (`--skirmish`; without `--level`
+the default is the full campaign) is unchanged — its drops still come from
+the seeded power-up reservoir. `--level` takes precedence over the batch's
+full-campaign default, so a per-level run needs no extra flag.
+
+## Level-scaling curves and evidence (AH-0MVHT1M6O003PU7P)
+
+The campaign scales difficulty on two independent axes as the level rises: the
+waves hold **more enemies**, and each kill has a **lower power-up drop
+chance**. Both curves live in one pure module,
+[`src/core/levelScaling.ts`](../src/core/levelScaling.ts), and are tuning data
+in `GameRules` (`src/core/rules.ts`) — the game, the level gyms and this
+harness resolve them through the same functions, never a copy.
+
+### Scaling table (levels 1–10)
+
+Both curves are linear across the campaign range and clamp outside it. Level 1
+is exactly the pre-change behaviour (`1.00×` counts, `0.18` per-kill drop
+chance, `0.05` asteroid Extra Life chance), so onboarding and older baselines
+stay valid.
+
+| Level | Enemy-count multiplier | Per-kill power-up drop chance | Relative supply vs L1 | Asteroid Extra Life chance |
+|---|---|---|---|---|
+| 1 | 1.000× | 0.1800 | 1.000 | 0.0500 |
+| 2 | 1.111× | 0.1656 | 0.920 | 0.0460 |
+| 3 | 1.222× | 0.1511 | 0.840 | 0.0420 |
+| 4 | 1.333× | 0.1367 | 0.759 | 0.0380 |
+| 5 | 1.444× | 0.1222 | 0.679 | 0.0340 |
+| 6 | 1.556× | 0.1078 | 0.599 | 0.0299 |
+| 7 | 1.667× | 0.0933 | 0.519 | 0.0259 |
+| 8 | 1.778× | 0.0789 | 0.438 | 0.0219 |
+| 9 | 1.889× | 0.0644 | 0.358 | 0.0179 |
+| 10 | 2.000× | 0.0500 | 0.278 | 0.0139 |
+
+- **Enemy counts.** Each non-`single` wave group's `count` is multiplied by
+the level's factor, rounded half up (`Math.round`), floored at 1 and capped at
+`enemyCountCap` (200); `single`-formation groups stay at exactly 1. The same
+helper (`applyEnemyCountScaling`) is used by `PlayScene`'s campaign-build seam
+and by `GymLevel` / `GymBotTuning`, so a launched level spawns the game's
+counts (see
+[`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`](./ENEMY_DESIGN_AND_IMPLEMENTATION.md)
+§9.6 and §5.1).
+- **Supply.** Every kill-time drop roll in `PlayScene` uses
+`powerUpDropChance(level)` instead of the flat level-1 rate, and the asteroid
+Extra Life roll scales by the same ratio (`extraLifeDropChance`). Drop types,
+weights and timed effects are unchanged; the level gyms lengthen their supply
+cadence by the inverse ratio so their run is not over-supplied.
+- **Rationale.** The player's permanent weapon/power-up levels compound through
+the run, so both axes compensate for that growth: each level adds enemy work
+while handing out proportionally less supply. The endpoints (1→2× counts,
+0.18→0.05 drop chance) are the tuning contract from the parent work item; the
+values are data, so a future tuning change edits `GameRules` and re-runs this
+evidence.
+- **Documented divergence — formation gyms.** `GymFormationScene` and its
+scenes (`GymBoss`, `GymCentipede`, `GymFodderEnemies`, …) have **no
+campaign-level input**, so they keep their scene-specific flat
+`powerUpSpawnInterval` supply source. Only the level-based gyms (`GymLevel`,
+`GymBotTuning`) adopt the curves; the reason is recorded in the `GymLevel`
+scene header and in the parent work item.
+
+### The six permanent loadout slots — the demand-side counterpart (parent AH-0MVLIJT3M005HPHF)
+
+The level-scaling curves above reduce the **supply** of power-ups as the
+campaign rises (AH-0MVHT1M6O003PU7P); the six-slot cap is their **demand-side**
+counterpart. It bounds how many *distinct permanent kinds* one run can own, so
+the late-game ship stays strong but bounded no matter how generous the drop
+rolls are. The two levers are complementary, not redundant: supply shapes how
+often a reward arrives, the cap shapes what a run can become.
+
+- **Cap and pool.** `POWER_UP_SLOT_CAP = 6`
+  ([`src/core/constants.ts`](../src/core/constants.ts)) is a single named
+  constant. The six slots are **one pool shared** by power-up and weapon kinds:
+  the first six distinct kinds taken as a permanent reward (hold-full choice or
+  mini-boss reward) define the build for the rest of the run. Occupancy is
+  **derived** from the existing permanent-grant stores
+  (`PowerUpLevelStore.getLevels()` + `Player.getWeaponLevels()`) — there is no
+  second counter and no new persisted state.
+- **Eligibility only, not weights.** The cap gates *which* ids may be drawn or
+  offered once the pool is **full**; it never retunes a weight. Below the cap
+  every id remains eligible with its existing weight, so `powerUpWeights` /
+  `weaponWeights` keep their meaning and the pre-cap distribution is unchanged
+  — which is why the existing level-scaling baselines stay valid.
+- **Exemptions are data.** An entry that may still appear when the pool is full
+  carries `availableWhenSlotsFull` on its power-up catalogue entry (default
+  `false`). **Extra Life** and **Mystery UFO** are exempt today; adding or
+  removing an exemption is a catalogue edit, and a re-baseline of the affected
+  batches is the only harness work needed.
+- **Shared-pool starvation is intended semantics (producer Q1 answer (c)).**
+  Because weapons and power-ups share the six slots, a **weapon-heavy build can
+  occupy the pool before any power-up reward is taken** — a player who keeps
+  choosing weapon unlocks and level-ups may reach the cap with no permanent
+  Shield, Phase Shift or Magnet. This is the producer's **chosen** rule (Q1,
+  answer **(c)**: one shared pool, field pickups excluded), **not a bug**: the
+  shared pool is what gives each run a coherent build identity, and the exempt
+  entries plus the owned level-ups keep the choice useful when the pool fills.
+  A future change that splits the pool per family (or reserves slots) would be a
+  design change with new evidence, not a fix.
+- **Same rule in the game and the gyms.** The cap lives once in
+  [`src/powerups/slots.ts`](../src/powerups/slots.ts) and is consumed by the
+  shared drop draw (`drawNextDrop`, `src/scenes/core/dropLayer.ts`) and the
+  hold-full choice builder (`buildChoiceCandidates`,
+  `src/powerups/choice.ts`), so `PlayScene` and every gym behave identically
+  (gym↔game parity) and a gym run is a valid place to observe the rule.
+- **Evidence scope.** Existing bot/batch evidence was recorded before the cap,
+  so a late-game campaign run now sees a different permanent loadout. Re-running
+  and re-recording the bot batches is **out of scope** for the cap work item;
+  it becomes a linked follow-up only if a gate fails. Recorded user stories and
+  the producer decision live on the parent work item (AH-0MVLIJT3M005HPHF).
+
+### Evidence: same-seed baseline vs post-change batches
+
+Both batches use the **same seed set (1–100)**, the **competent** policy, 1800
+ticks (`dt` 1/60), and the identical harness code at commit **`ec0ccc7b`**.
+The baseline is per-level mode with the curves disabled (`--scale-levels off`,
+which resolves **both** axes to level 1 — the pre-change behaviour); the
+post-change batch resolves them at the selected level (`--scale-levels on`,
+the default). Each level is its own pair of runs because per-level mode plays
+that level's real campaign waves and real per-kill drop rule.
+
+```bash
+# baseline (curves resolved to level 1) and post-change, for a level n
+node scripts/evaluate.mjs --batch --level 5 --scale-levels off --games 100 --out /tmp/evidence/l5-off
+node scripts/evaluate.mjs --batch --level 5 --scale-levels on  --games 100 --out /tmp/evidence/l5-on
+
+# level 10 only: --sample-every 10 keeps the unsampled 100-game runs.jsonl
+# under Node's single-string write limit; events (and so every metric below)
+# are still recorded on every tick, survival is quantised to ~0.17 s.
+node scripts/evaluate.mjs --batch --level 10 --scale-levels off --games 100 --sample-every 10 --out /tmp/evidence/l10-off
+node scripts/evaluate.mjs --batch --level 10 --scale-levels on  --games 100 --sample-every 10 --out /tmp/evidence/l10-on
+```
+
+Aggregate means per 100-game batch (`n = 100`; power-ups per kill is the
+per-run "collected ÷ enemies killed" mean):
+
+| Level | Batch | Power-ups collected | Enemy kills/run | Power-ups per kill | Avoidable hits | Survival (s) | Wave reached | Level reached |
+|---|---|---|---|---|---|---|---|
+| 1 | baseline | 0.41 | 6.42 | 0.0694 | 1.38 | 28.37 | 1.40 | 1.00 |
+| 1 | post-change | 0.41 | 6.42 | 0.0694 | 1.38 | 28.37 | 1.40 | 1.00 |
+| 5 | baseline | 0.31 | 4.04 | 0.0679 | 1.75 | 25.49 | 1.44 | 5.00 |
+| 5 | post-change | 0.21 | 5.10 | **0.0432** (−36.4 %) | 1.91 | 25.34 | 1.24 | 5.00 |
+| 10 | baseline | 0.50 | 15.84 | 0.0282 | 2.88 | 15.78 | 1.00 | 10.00 |
+| 10 | post-change | 0.12 | 21.78 | **0.0055** (−80.5 %) | 2.98 | 13.14 | 1.00 | 10.00 |
+
+Per-archetype kills (aggregate means, the field the work item requires):
+
+| Level | Batch | Kills by archetype |
+|---|---|---|
+| 5 | baseline | `phaser` 4.04 |
+| 5 | post-change | `phaser` 5.10 |
+| 10 | baseline | `capturer` 0.32, `diver` 4.31, `ghost-ambush` 0.43, `ghost-chase` 0.50, `ghost-flank` 0.39, `ghost-wander` 0.42, `grunt` 0.38, `raider` 0.16, `swarm` 4.31, `tank` 4.62 |
+| 10 | post-change | `capturer` 0.19, `diver` 6.72, `ghost-ambush` 0.26, `ghost-chase` 0.41, `ghost-flank` 0.29, `ghost-wander` 0.35, `grunt` 0.20, `raider` 0.15, `swarm` 6.32, `tank` 6.89 |
+
+**Reading the evidence.**
+
+1. **L1 is byte-identical.** The two level-1 reports diff clean —
+   `--scale-levels off` and `on` produce the same `balance-report.json`, which
+   confirms the level-1 identity of both curves.
+2. **Mid/late supply per kill falls.** At level 5 it drops from 0.0679 to
+   0.0432 (−36.4 %); at level 10 from 0.0282 to 0.0055 (−80.5 %). Level 5's
+   collected supply (−32.3 %) closely tracks its drop-chance ratio (0.679),
+   and level 10's much larger fall is the same curve compounded by shorter
+   post-change runs (fewer collection opportunities).
+3. **The campaign stays playable.** All 600 runs completed without a crash and
+   produced a report. The reached-level metric is unchanged at both levels
+   (`levelReached` 5.00 and 10.00), and the completion metric is unchanged
+   (`won` / `level_cleared` = 0 in both batches — the competent bot dies before
+   clearing a 10-wave level at L5/L10, before and after). The bot also kills
+   **more** enemies in the same game (L5 +26 %, L10 +37 %) and survival is flat
+   at L5 (−0.6 %); at L10 survival is 17 % shorter because twice as many
+   enemies now occupy the same arena. At L5 the secondary `waveReached`
+   progress signal moves from 1.44 to 1.24 — a wave with 44 % more enemies
+   takes longer to wipe — which is the intended density escalation, not a
+   starvation or crash signal (kills/run and survival do not fall).
+4. **No tuning was changed after the evidence run.** The endpoints arrived at
+   from the design (`1→2×`, `0.18→0.05`) already move both measured axes in
+   the intended direction, so the documented values are the shipped ones. A
+   future tuning change edits `GameRules`, records the reason, and re-runs the
+   four commands above on the same seeds.
+
+Artifacts (`balance-report.json`, `balance-report.txt`, `runs.jsonl`) are
+written under the git-ignored output directories; the commands, seed set,
+commit and aggregates above are the durable record.
+
+## Enemy force-field evidence (AH-0MVJ8W4GE007OMNT)
+
+Enemy force fields (GDD §2.6/§4.1, enemy guide §1.6) are a **new additive
+durability layer**: from a per-archetype start level a shielded hostile absorbs
+field hits **before** its hull (`health`), resolved by the same pure
+`enemyForceFieldHits(level, config)` curve the game and level gyms use. The
+headless arena models that layer identically (barrier first, hull second), so
+balance evidence can quantify its cost.
+
+`--force-fields off` resolves every field at level 1 — **0 hits for every
+shipped archetype** — so the **pre-change hull-only baseline** is captured
+with the identical harness code and seed set. Level 1 is byte-identical
+on/off by construction (no shipped archetype shields at L1).
+
+```bash
+# baseline (hull-only: fields resolved at level 1) and post-change, for level n
+node scripts/evaluate.mjs --batch --level 1  --force-fields off --games 15 --out /tmp/evidence/l1-off
+node scripts/evaluate.mjs --batch --level 1  --force-fields on  --games 15 --out /tmp/evidence/l1-on
+node scripts/evaluate.mjs --batch --level 5  --force-fields off --games 15 --out /tmp/evidence/l5-off
+node scripts/evaluate.mjs --batch --level 5  --force-fields on  --games 15 --out /tmp/evidence/l5-on
+node scripts/evaluate.mjs --batch --level 10 --force-fields off --games 15 --out /tmp/evidence/l10-off
+node scripts/evaluate.mjs --batch --level 10 --force-fields on  --games 15 --out /tmp/evidence/l10-on
+```
+
+Aggregate means per 15-game batch (competent policy, seeds 1–15):
+
+| Level | Batch | Survival (s) | Level reached | Avoidable hits | Kills by archetype |
+|---|---|---|---|---|---|
+| 1 | baseline | 67.76 | 1.00 | 3.00 | `scout` 15.13 |
+| 1 | post-change | **67.76** | 1.00 | 3.00 | `scout` 15.13 |
+| 5 | baseline | 48.11 | 5.00 | 3.00 | `phaser` 9.33 |
+| 5 | post-change | 33.00 | 5.00 | 3.00 | `phaser` **2.40** |
+| 10 | baseline | 11.55 | 10.00 | 3.00 | `tank` 7.27, `diver` 5.80, `swarm` 5.47, `raider` 0.13 |
+| 10 | post-change | 12.50 | 10.00 | 3.00 | `tank` **1.33**, `diver` **1.13**, `swarm` **1.47**, `raider` **0.07** |
+
+**Reading the evidence.**
+
+1. **L1 is byte-identical.** The level-1 `runs.jsonl` on/off batches hash
+   identically (no archetype resolves a field at L1), so onboarding and the
+   pre-change baseline are untouched.
+2. **The barrier measurably hardens shielded archetypes.** At L5 phaser kills
+   drop 9.33 → 2.40 (−74 %); at L10 tank/diver/swarm kills drop by 66–82 %
+   under the same seeds, exactly the durability the field is meant to add.
+3. **The campaign stays playable.** Reached level is unchanged at every level
+   (1.00 / 5.00 / 10.00) and survival at L10 is comparable (12.50 s vs 11.55 s);
+   L5's shorter survival (33.00 s vs 48.11 s) is the intended extra durability
+   of mid-level shielded fodder, not a stall or crash — every run produced a
+   report. Evidence is **advisory**; the 5-hit cap and per-archetype CSV
+   values are the tuning levers.
+
+The headless model is pinned by `src/ai/eval/arena.test.ts` (L1 on/off
+byte-identity, L5/L10 divergence, barrier-before-hull ordering).
 
 ## Statistics schema
 
@@ -128,7 +480,9 @@ The JSON artifact is a versioned `BalanceReport`:
 - `datasetVersion` — the evaluation *interpretation* version
   (`EVAL_DATASET_VERSION`, bumped on a report shape change);
 - `kind: 'balance'`;
-- `config` — the swept `policies`, `seeds`, `ticks`, `dt` and `sampleEveryTicks`;
+- `config` — the swept `policies`, `seeds`, `ticks`, `dt` and `sampleEveryTicks`,
+  plus the resolved run mode: `campaign` (the batch default) and, for a
+  per-level run, `level`;
 - `runs` — every run's summary (`policy`, `seed`, `stats`, `recordsHash`, `recordCount`) in sweep order;
 - `aggregate` — the `BalanceAggregate`.
 
@@ -152,7 +506,8 @@ converted into the **same** `BalanceReport` shape by the shared pure helper
 Both artifacts are versioned `BalanceReport`s (`kind: 'balance'`,
 `config.policies: ['human']`, `schemaVersion:
 BALANCE_STATISTICS_SCHEMA_VERSION`) that are directly comparable to a bot
-batch report on the same fields. The helper splits the recording's flat
+batch report on the same fields. A human report omits `config.campaign` — a
+recorded session is the real game, not a harness mode. The helper splits the recording's flat
 `run_header` / `tick` / `event` stream into one `BalanceRunStats` per run and a
 single `BalanceAggregate`, **reusing** the bot path's
 `extractBalanceStats` / `aggregateBalanceStats` — the schema and the
@@ -179,7 +534,11 @@ loaders — there is no divergent copy of enemy, ship or wave stats:
 - **Ship stats** (`src/data/ship-config.csv` via `loadShipConfig`) map onto the
   `AsteroidsModel` physics.
 - **Difficulty curves** (`src/data/difficulty-curves.csv` via
-  `loadDifficultyCurves`) set how many hostile waves the spawn reservoir holds.
+  `loadDifficultyCurves`) drive the campaign: in the default full-campaign
+  batch they set every level's wave count and each wave's
+  `targetDifficulty`, which the shared `buildSequencedLevels` turns into
+  `fixed`/`curve`/`dynamic` wave groups. In the seeded skirmish they only set
+  how many hostile waves the spawn reservoir holds.
 
 `loadBalanceConfig()` in [`src/ai/eval/balanceConfig.ts`](../src/ai/eval/balanceConfig.ts)
 builds the resolved config; the Node shell awaits `hydrateBalanceConfig()`
@@ -286,11 +645,50 @@ manual steps.
 ## Fidelity boundary and limitations
 
 The batch runs the same **closed-loop headless arena** as the single-run
-harness, not the shipped Phaser game. It models the quantities the bot
-reasons about (player physics, collectables, hazards, auto-fire, enemy fire
-and collisions) rather than the full wave/VFX/enemy-behaviour stack (enemy
-formations, burst patterns and bullet lifetimes are intentionally not
-modelled). Balance conclusions drawn from a batch are therefore a
+harness, not the shipped Phaser game. Because the default batch now plays the
+campaign, this boundary is stated explicitly so a consumer never over-reads a
+balance report.
+
+**Modelled (the default campaign batch).**
+
+- **Wave/level progression** — every level and wave comes from the shared
+  sequencer (`buildSequencedLevels` + `WaveManager` + the level enemy-count
+  scaling seam, the same build `PlayScene` uses), honouring all three
+  generation modes: `fixed` (hand-authored composition), `curve`
+  (`targetDifficulty`-driven) and `dynamic` (curve rebuilt from the run seed).
+  The canonical `wave_start` / `wave_cleared` / `level_cleared` /
+  `boss_triggered` events are emitted by the shared manager, so `waveReached`
+  and `levelReached` are real per-run values.
+- **Upgrade choices** — when the shared `MineralHold` fills, the arena runs
+  the shared hold-full **upgrade-choice flow** (`chooseOptions` +
+  `applyMineralChoiceReward`): the bot picks from three offered options on the
+  seeded stream and the arena emits `choice_selected`, so `upgradesSelected`
+  carries a real per-choice-id distribution.
+- **Combat quantities the bot reasons about** — player Newtonian physics (the
+  shipped `AsteroidsModel`), collectables, minerals, hazards, auto-fire, enemy
+  fire and collisions, all driven by the real per-kill drop rule at the
+  current campaign level.
+
+**Simplified (not modelled; treat the report as a directional signal).**
+
+- **Boss and mini-boss encounters** — clearing the final level triggers
+  `boss_triggered`, which **ends the run**. No boss or mini-boss entity is
+  simulated; a mini-boss wave is only its authored group composition. A boss
+  balance question cannot be answered from a batch report alone.
+- **VFX** — explosions, particles, shake and audio cues are absent.
+- **Formations** — formation movement, burst patterns, bullet lifetimes and
+  the Phaser spawner's behaviour are not modelled; wave members are stationary
+  hostiles whose stats come from their archetype's `EnemyConfig`. Opt-in
+  spawner archetypes appear as ordinary config-driven hostiles so the roster
+  matches the game's wave accounting.
+- **Rendering** — there is no renderer, camera, resize or frame-rate coupling;
+  a run never boots Phaser.
+- **Chosen-upgrade effects** — a selection updates the ownership context used
+  by later offers, but the chosen weapon's fire pattern, shield/effect timing
+  and Extra Life lifegain are not simulated (the arena's auto-fire is fixed).
+
+Clearing the final level is therefore the run boundary, and a stall stops at
+the finite tick budget. Balance conclusions drawn from a batch are a
 **directional signal**, to be confirmed against the human-play statistics and
 periodic human-experience validation before a tuning change ships. For
 pixel-accurate, full-stack verification use the browser capture path
@@ -346,6 +744,67 @@ AC1/AC2/AC5, verifier AC1–AC5). The batch was run at commit
 
 Artifacts from this run are git-ignored (see `/.gitignore` `eval-output/`);
 the commands and aggregate evidence above are the durable record.
+
+## Campaign-by-default batch evidence (AH-0MVD1RK2V009J5D2)
+
+After the batch switched to the full campaign by default (parent decision
+Q3=b), a 100-game competent-policy batch on seeds 1–100 at the new
+**18000-tick** budget was measured on a dev machine (commit at implementation
+time, real balance CSVs via `loadBalanceConfig()`):
+
+```bash
+npm run evaluate -- --batch --games 100 --out campaign-out
+```
+
+- `waveReached`: mean 6.46 (min 2, max 10); `levelReached`: mean 1.15
+  (min 1, max 2) — a real distribution instead of the old constant zero.
+- `upgradesSelected` populated per choice id (the shared hold-full flow).
+- Runtime ≈47 s (vs ≈10 s for the old 1800-tick skirmish batch), i.e. a
+  practical, bounded 100-game campaign batch.
+- A run that stalls on a wave stops at the 18000-tick budget; a run that
+  clears the final level or dies ends early, so no simulation is unbounded.
+
+The previous 2026-10-14 acceptance run above was recorded against the old
+1800-tick **skirmish** default; re-run the command above to regenerate
+campaign-default evidence.
+
+## Campaign batch acceptance evidence (AH-0MVD1RPPP001XJKN)
+
+Final acceptance pass for the campaign batch (parent AC8/AC10), measured on a
+dev machine (16 logical cores, 30 GB RAM, Node 22, `/tmp` = tmpfs) against the
+real balance CSVs, competent policy, seeds 1–100:
+
+```bash
+npm run evaluate -- --batch --games 100 --out campaign-out
+```
+
+- **Runtime ≈ 5 min 23 s** (323 s wall; 351 s user CPU) — a practical
+  full-campaign 100-game batch. Most runs stall at the finite `18000`-tick
+  budget, so the cost is the simulation itself, not unbounded looping.
+- **Peak resident memory ≈ 1.0 GB** (`/usr/bin/time -v` `Maximum resident set
+  size` = 1,011,344 KB), and **flat in the game count**: 20 games → 958 MB,
+  50 games → 997 MB, 100 games → 1.01 GB. The plateau is one run's telemetry
+  (the arena's records are per run, then folded into the summary and streamed
+  out), not the sweep — memory does not grow with `--games`.
+- **Artifacts:** `balance-report.json` (40 KB), `balance-report.txt` (4.6 KB)
+  and `runs.jsonl` (1,812,966 records, 2.2 GB) — all three written, with the
+  JSONL streamed to disk run by run rather than buffered.
+- **Progression distributions** (unchanged by this pass, recorded for
+  completeness): `waveReached` mean 6.46 (min 2, max 10, sd 2.48);
+  `levelReached` mean 1.15 (min 1, max 2, sd 0.36); per-choice-id
+  `upgradesSelected` populated through the shared hold-full flow.
+- **Full suite** (`run_tests.py --scope full`): 307 test files / 6,855 tests,
+  0 failures at the commit implementing the streaming sink.
+
+When this pass was first attempted, the CLI shell accumulated **every** run's
+raw telemetry in one array before writing `runs.jsonl`, so a 100-game campaign
+batch died with `JavaScript heap out of memory` after ≈9 min at 4.7 GB RSS
+(5 games alone peaked at 1.4 GB). The shell now streams each run to disk via
+the core's `telemetrySink`; the batch core (`runBatch`) still retains only
+per-run summaries, and `executeEvaluation` no longer holds raw telemetry at
+all on the streaming path. Both are covered by tests in
+`src/ai/eval/cli.test.ts` (one sink chunk per run, in sweep order; streamed
+chunks byte-identical to the in-memory `runs.jsonl` artifact).
 
 ## Related work
 

@@ -54,6 +54,9 @@ function makeConfig(overrides: Partial<EnemyConfig> = {}): EnemyConfig {
     burstCount: overrides.burstCount ?? 1,
     shotProbability: overrides.shotProbability ?? 1.0,
     health: overrides.health ?? 1,
+    forceFieldStartLevel: overrides.forceFieldStartLevel ?? 0,
+    forceFieldStartHits: overrides.forceFieldStartHits ?? 1,
+    forceFieldMaxHits: overrides.forceFieldMaxHits ?? 1,
   };
 }
 

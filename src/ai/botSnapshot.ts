@@ -18,6 +18,10 @@
  *   (`BotSnapshotScene`) rather than `PlayScene` itself. `PlayScene`
  *   satisfies it via its existing getters, and tests can pass lightweight
  *   stubs instead of booting Phaser (AC3).
+ * - Every enemy entry carries a **stable bot-side id** (`BotEnemy.id`),
+ *   assigned here from a module-local `WeakMap` (AH-0MVI4QDN90037DIN · AC1).
+ *   Decision-layer state that must correlate an entity across ticks keys on
+ *   it; no per-archetype entity code is involved.
  * - `PlayScene` is wired to the builder in a later child; this module does
  *   not import `PlayScene` (avoiding a scene → AI → scene import cycle).
  *
@@ -74,6 +78,14 @@ export interface BotPlayer {
 
 /** A single enemy (or asteroid) and its threat-relevant state. */
 export interface BotEnemy {
+  /**
+   * Stable bot-side identity assigned by {@link buildBotSnapshot}
+   * (AH-0MVI4QDN90037DIN · AC1). Decision-layer state that must correlate an
+   * entity across ticks — today the hazard-velocity tracker — keys on it.
+   * Absent on snapshots hand-built by tests/fixtures, which the tracker then
+   * treats as stationary.
+   */
+  readonly id?: number;
   readonly x: number;
   readonly y: number;
   readonly alive: boolean;
@@ -217,6 +229,13 @@ export interface BotPlayerSource {
 
 /** Minimal enemy source (a `BaseEnemy`/`EnemyEntity` satisfies this). */
 export interface BotEnemySource {
+  /**
+   * Optional pre-existing stable id. When absent the builder assigns one from
+   * a module-local `WeakMap` keyed by the source object, so the identity is
+   * stable for the lifetime of the entity without any per-archetype edits
+   * (AH-0MVI4QDN90037DIN · AC1).
+   */
+  readonly id?: number;
   readonly x: number;
   readonly y: number;
   readonly alive: boolean;
@@ -335,6 +354,7 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
   return deepFreeze({
     player,
     enemies: scene.getEnemies().map((enemy) => ({
+      id: stableEnemyId(enemy),
       x: enemy.x,
       y: enemy.y,
       alive: enemy.alive,
@@ -378,6 +398,29 @@ export function buildBotSnapshot(scene: BotSnapshotScene): BotSnapshot {
     livesCap: scene.getLivesCap(),
     reverseEnabled: playerSource?.isReverseEnabled?.() ?? false,
   });
+}
+
+/**
+ * Allocates (or returns) the stable bot-side id for an enemy source
+ * (AH-0MVI4QDN90037DIN · AC1).
+ *
+ * A source that already exposes a numeric `id` keeps it; otherwise the builder
+ * assigns one from a module-local `WeakMap` and counter. The map is keyed by
+ * object identity, so the same live entity keeps its id across every snapshot
+ * (and the id is released with the entity) — no per-archetype entity changes
+ * and no snapshot-seam mutation of the source.
+ */
+const enemyIds = new WeakMap<object, number>();
+let nextEnemyId = 1;
+
+function stableEnemyId(source: BotEnemySource): number {
+  if (typeof source.id === 'number') return source.id;
+  const existing = enemyIds.get(source);
+  if (existing !== undefined) return existing;
+  const id = nextEnemyId;
+  nextEnemyId += 1;
+  enemyIds.set(source, id);
+  return id;
 }
 
 /**

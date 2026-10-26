@@ -88,21 +88,44 @@ describe('buildBotSnapshot — field mapping (AC1–AC3)', () => {
   });
 
   it('maps each enemy position, alive flag and archetype', () => {
+    const scout = { x: 100, y: 200, alive: true, archetype: 'scout' };
+    const asteroid = { x: 300, y: 400, alive: false, archetype: 'asteroid' };
     const scene = makeScene({
-      getEnemies: () => [
-        { x: 100, y: 200, alive: true, archetype: 'scout' },
-        { x: 300, y: 400, alive: false, archetype: 'asteroid' },
-      ],
+      getEnemies: () => [scout, asteroid],
       getAliveCount: () => 1,
     });
 
     const snapshot = buildBotSnapshot(scene);
 
-    expect(snapshot.enemies).toEqual([
+    expect(snapshot.enemies).toMatchObject([
       { x: 100, y: 200, alive: true, archetype: 'scout' },
       { x: 300, y: 400, alive: false, archetype: 'asteroid' },
     ]);
     expect(snapshot.aliveCount).toBe(1);
+  });
+
+  it('assigns a stable bot-side enemy id across snapshots (AH-0MVI4QDN90037DIN AC1)', () => {
+    const scout = { x: 100, y: 200, alive: true, archetype: 'scout' };
+    const asteroid = { x: 300, y: 400, alive: true, archetype: 'asteroid' };
+    const scene = makeScene({ getEnemies: () => [scout, asteroid] });
+
+    const first = buildBotSnapshot(scene);
+    const second = buildBotSnapshot(scene);
+
+    expect(typeof first.enemies[0].id).toBe('number');
+    // Identity is stable for the same source entity and unique per entity.
+    expect(second.enemies[0].id).toBe(first.enemies[0].id);
+    expect(second.enemies[1].id).toBe(first.enemies[1].id);
+    expect(first.enemies[0].id).not.toBe(first.enemies[1].id);
+  });
+
+  it('preserves an id the source already exposes', () => {
+    const scene = makeScene({
+      getEnemies: () => [
+        { id: 4242, x: 100, y: 200, alive: true, archetype: 'scout' },
+      ],
+    });
+    expect(buildBotSnapshot(scene).enemies[0].id).toBe(4242);
   });
 
   it('carries the fire-tell flag when the enemy source exposes it', () => {

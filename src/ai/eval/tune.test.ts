@@ -87,6 +87,8 @@ function balanceReport(overrides: {
   readonly ticks?: number;
   readonly dt?: number;
   readonly sampleEveryTicks?: number;
+  readonly campaign?: boolean;
+  readonly level?: number;
   readonly runs?: readonly BatchedRunSummary[];
 } = {}): BalanceReport {
   const policies = overrides.policies ?? ['competent'];
@@ -100,6 +102,8 @@ function balanceReport(overrides: {
     ticks: overrides.ticks ?? 1800,
     dt: overrides.dt ?? 1 / 60,
     sampleEveryTicks: overrides.sampleEveryTicks ?? 1,
+    campaign: overrides.campaign,
+    level: overrides.level,
     runs,
     aggregate: aggregateBalanceStats(runs.map((run) => run.stats)),
   });
@@ -497,6 +501,25 @@ describe('same-sweep guard — identical sweep configuration required (AC2)', ()
     ]);
   });
 
+  it('refuses to mix a full-campaign batch with a skirmish batch (AC5)', () => {
+    const campaign = balanceReport({ campaign: true });
+    const skirmish = balanceReport({ campaign: false });
+    expect(sweepConfigDifferences(campaign, skirmish)).toEqual([
+      { field: 'campaign', baseline: true, candidate: false },
+    ]);
+    const error = guardError(() => assertSameSweep(campaign, skirmish));
+    expect(error.code).toBe('sweep-config-mismatch');
+    expect(error.differences).toEqual([
+      { field: 'campaign', baseline: true, candidate: false },
+    ]);
+  });
+
+  it('pins the per-level mode as a sweep-config field', () => {
+    expect(
+      sweepConfigDifferences(balanceReport({ level: 5 }), balanceReport({ level: 6 })),
+    ).toEqual([{ field: 'level', baseline: 5, candidate: 6 }]);
+  });
+
   it('treats a reordered seed list as a byte-level config difference', () => {
     expect(sweepConfigDifferences(baseline, balanceReport({ seeds: [2, 1] }))).toEqual([
       { field: 'seeds', baseline: [1, 2], candidate: [2, 1] },
@@ -516,13 +539,15 @@ describe('same-sweep guard — identical sweep configuration required (AC2)', ()
     expect(error.message).toMatch(/refusing to compare/i);
   });
 
-  it('reports all five fields when everything differs', () => {
+  it('reports every sweep-config field when everything differs', () => {
     const wildlyDifferent = balanceReport({
       policies: ['aggressive'],
       seeds: [9],
       ticks: 60,
       dt: 0.5,
       sampleEveryTicks: 10,
+      campaign: false,
+      level: 5,
     });
     const error = guardError(() => assertSameSweep(baseline, wildlyDifferent));
     expect(error.code).toBe('sweep-config-mismatch');

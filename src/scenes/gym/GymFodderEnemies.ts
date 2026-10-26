@@ -44,6 +44,7 @@ import { makeCollapsible } from '../../utils/gymPanel';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
 import { fireForEnemy } from '../../entities/enemyFire';
 import { Asteroid } from '../../entities/Asteroid';
+import type { SceneSetupState } from '../core/sceneSetup';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
@@ -98,6 +99,13 @@ export const ENEMY_RESPAWN_ID = 'enemy-gym-respawn';
 export const ENEMY_TOGGLE_PLAYER_ID = 'enemy-gym-toggle-player';
 /** Live 0–100 archetype difficulty readout (AH-0MTZWZ7MC002B01K, AC5). */
 export const ENEMY_DIFFICULTY_ID = 'enemy-gym-difficulty';
+/**
+ * Divergence note for the force-field editor controls
+ * (AH-0MVM8GXEF009883O, AC4). The formation gym has no campaign context, so
+ * its force-field sliders set the spawned hits DIRECTLY instead of evaluating
+ * the level curve the game and the level gym share.
+ */
+export const ENEMY_FORCE_FIELD_NOTE_ID = 'enemy-gym-force-field-note';
 
 // Numeric slider ranges (mirrors GymPlayer SLIDER_RANGES pattern).
 const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: number }> = {
@@ -143,6 +151,15 @@ const ENEMY_SLIDER_RANGES: Record<string, { min: number; max: number; step: numb
   // stay inside the difficulty model's normalised range (AH-0MUDYTPMC002GLEJ).
   bulletLifetime: { min: 0.1, max: 5.0, step: 0.1 },
   burstCount: { min: 1, max: 24, step: 1 },
+  // Enemy force-field tuning (AH-0MVM8GXEF009883O, AC4). The formation gym
+  // has no campaign level, so `forceFieldStartHits` is used DIRECTLY as the
+  // spawned field strength (documented divergence — the game and the level
+  // gym evaluate the shared level curve instead). `forceFieldStartLevel` and
+  // `forceFieldMaxHits` remain editable so a config authored here is still
+  // coherent in the campaign, but they do not affect this gym's spawn.
+  forceFieldStartLevel: { min: 0, max: 10, step: 1 },
+  forceFieldStartHits: { min: 0, max: 5, step: 1 },
+  forceFieldMaxHits: { min: 0, max: 5, step: 1 },
 };
 
 const VISUAL_COLOR_FIELDS = ['color', 'bulletColor'] as const;
@@ -178,6 +195,26 @@ export function normaliseSpawnRanges(config: EnemyConfig): EnemyConfig {
   config.startYMin = yMin;
   config.startYMax = yMax;
   return config;
+}
+
+/**
+ * Direct force-field hits for a formation-gym spawn (AH-0MVM8GXEF009883O,
+ * AC4). The gym has no campaign level, so the authored `forceFieldStartHits`
+ * is applied DIRECTLY instead of evaluating `enemyForceFieldHits` — the
+ * documented divergence recorded next to the panel controls. Archetypes that
+ * the campaign never shields (`forceFieldStartLevel` = 0, e.g. asteroids and
+ * lane traffic) stay unshielded here too, so the gym editor cannot fabricate
+ * a field on a never-shielded enemy; to force one, raise the start level and
+ * set the hit count.
+ */
+export function gymDirectForceFieldHits(config: EnemyConfig): number {
+  const level = config.forceFieldStartLevel;
+  if (typeof level !== 'number' || !Number.isFinite(level) || level <= 0) {
+    return 0;
+  }
+  const hits = config.forceFieldStartHits;
+  if (typeof hits !== 'number' || !Number.isFinite(hits)) return 0;
+  return Math.min(5, Math.max(0, Math.round(hits)));
 }
 
 const FORMATION_KINDS = ['v', 'diver', 'rect', 'swarm', 'orbital', 'single', 'march'] as const;
@@ -236,7 +273,20 @@ function enemyConfigToFormationConfig(enemyKey: string): EnemyFormationConfig<En
     // enemy/player-avoiding placement.
     powerUps: {},
     createEntity: (scene: Phaser.Scene, x: number, y: number, offset: FormationOffset) =>
-      createEnemyFromConfig(scene, cfg, x, y, offset),
+      createEnemyFromConfig(
+        scene,
+        cfg,
+        x,
+        y,
+        offset,
+        undefined,
+        // Documented divergence (AH-0MVM8GXEF009883O): a formation gym has
+        // no campaign level, so the authored start hits are applied directly
+        // instead of evaluating `enemyForceFieldHits`. Must never leak into
+        // the shipped campaign CSV path — the game and level gym always use
+        // the level curve.
+        gymDirectForceFieldHits(cfg),
+      ),
     collectBullets,
     // Asteroid split seam (GDD §4.1 — E6 Asteroid): a destroyed large/medium
     // rock spawns exactly two smaller children that join the live formation
@@ -302,8 +352,12 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     super(enemyConfigToFormationConfig(GYM_FODDER_ENEMIES_DEFAULT_KEY));
   }
 
-  init(data?: { enemyKey?: string }): void {
-    const key = data?.enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
+  init(data?: { enemyKey?: string; enemy?: string } & SceneSetupState): void {
+    // The shared capture setup names the formation enemy `enemy`
+    // (AH-0MVNW8UCZ004CY0R); the legacy direct-gym launch uses `enemyKey`, so
+    // accept both and keep old callers working.
+    const key = data?.enemy ?? data?.enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
+    super.init(data);
     this.pendingKey = key;
     if (key === GYM_FODDER_ENEMIES_CENTIPEDE_KEY) {
       // The Centipede is a chain archetype (wave opt-in), not a CSV config:
@@ -373,6 +427,17 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     for (const [field, range] of Object.entries(ENEMY_SLIDER_RANGES)) {
       configBody.appendChild(this._sliderRow(field, range));
     }
+
+    // Force-field divergence copy (AH-0MVM8GXEF009883O, AC4): the editor
+    // controls are direct hit counts, not the shared campaign level curve.
+    const forceFieldNote = document.createElement('p');
+    forceFieldNote.id = ENEMY_FORCE_FIELD_NOTE_ID;
+    forceFieldNote.textContent =
+      'Force fields: this formation gym sets hits DIRECTLY from ' +
+      'forceFieldStartHits (no campaign level curve is evaluated here); ' +
+      'archetypes with forceFieldStartLevel 0 stay unshielded. The game and ' +
+      'the level gym resolve the shared curve.';
+    configBody.appendChild(forceFieldNote);
 
     // Colour inputs.
     for (const field of VISUAL_COLOR_FIELDS) {
@@ -818,7 +883,17 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     this.config.startYMin = cfg.startYMin;
     this.config.startYMax = cfg.startYMax;
     this.config.createEntity = (scene, x, y, offset) =>
-      createEnemyFromConfig(scene, cfg, x, y, offset);
+      createEnemyFromConfig(
+        scene,
+        cfg,
+        x,
+        y,
+        offset,
+        undefined,
+        // Documented divergence (AH-0MVM8GXEF009883O): direct slider value,
+        // never the campaign level curve.
+        gymDirectForceFieldHits(cfg),
+      );
 
     // A manual respawn is a clean slate for the player's shots too; the
     // shared respawn seam deliberately keeps them for the wipe→countdown path.

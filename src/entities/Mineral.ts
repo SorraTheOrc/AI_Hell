@@ -1,10 +1,15 @@
 /**
  * Mineral collectable entity (GDD §4.5 — Minerals, AH-0MUBVGI62004ED9Q).
  *
- * Renders as a small gold dot that is collected by overlap with the player
+ * Renders as a small dot that is collected by overlap with the player
  * ship or absorbed by non-asteroid enemies. Minerals are stationary, persist
  * until collected, and are never hit by bullets. They cause no damage or
  * collision response on contact with any entity.
+ *
+ * Body colour is gold ({@link MINERAL_COLOR}) by default; Salvage bounty
+ * drops render orange ({@link MINERAL_SALVAGE_COLOR}) so the bonus is
+ * visible on the field (AH-0MVJ72I8O0009T09). The colour is cosmetic — a
+ * salvage mineral is still worth exactly one mineral.
  *
  * The mineral is itself a `Phaser.GameObjects.Graphics` — it draws its gold
  * dot directly, so a single display-list object represents the collectable
@@ -34,6 +39,12 @@ export interface MineralConfig {
   y: number;
   /** Callback invoked when the mineral is collected (player/enemy overlap). */
   onCollect?: () => void;
+  /**
+   * Body fill colour, default {@link MINERAL_COLOR} (gold). Salvage bounty
+   * drops pass {@link MINERAL_SALVAGE_COLOR} so the bonus reads orange
+   * (AH-0MVJ72I8O0009T09); every existing caller keeps the gold default.
+   */
+  color?: number;
 }
 
 /**
@@ -53,15 +64,23 @@ export class Mineral extends Phaser.GameObjects.Graphics {
   private readonly _onCollect?: () => void;
 
   /**
+   * Body fill colour: gold ({@link MINERAL_COLOR}) by default, orange
+   * ({@link MINERAL_SALVAGE_COLOR}) for Salvage bounty drops.
+   */
+  readonly color: number;
+
+  /**
    * Create a mineral collectable at the given position.
    *
    * @param scene — Phaser scene
-   * @param config — spawn position and optional collection callback
+   * @param config — spawn position, optional collection callback and optional
+   *   body colour (defaults to gold, {@link MINERAL_COLOR})
    */
   constructor(scene: Phaser.Scene, config: MineralConfig) {
     super(scene, { x: config.x, y: config.y });
 
     this._onCollect = config.onCollect;
+    this.color = config.color ?? MINERAL_COLOR;
 
     // Render above regular gameplay graphics (depth 1) but below UI.
     this.setDepth(MINERAL_DEPTH);
@@ -82,11 +101,12 @@ export class Mineral extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * Draw the mineral body as a small filled gold circle.
+   * Draw the mineral body as a small filled circle in {@link color}
+   * (gold by default, salvage orange when configured).
    */
   private _drawBody(): void {
     this.clear();
-    this.fillStyle(MINERAL_COLOR, 1);
+    this.fillStyle(this.color, 1);
     this.fillCircle(0, 0, MINERAL_SIZE);
   }
 
@@ -141,6 +161,10 @@ export class Mineral extends Phaser.GameObjects.Graphics {
  * @param y — scatter-centre y position
  * @param count — number of minerals to spawn (returns none when ≤ 0)
  * @param rng — random-number generator (defaults to `Math.random`)
+ * @param color — body fill colour (defaults to gold, {@link MINERAL_COLOR});
+ *   salvage bounty drops pass {@link MINERAL_SALVAGE_COLOR}. Additive and
+ *   optional, so every existing caller is unchanged and the RNG draw order
+ *   is untouched.
  */
 export function scatterMineralDrops(
   scene: Phaser.Scene,
@@ -148,6 +172,7 @@ export function scatterMineralDrops(
   y: number,
   count: number,
   rng: () => number = Math.random,
+  color: number = MINERAL_COLOR,
 ): Mineral[] {
   if (count <= 0) return [];
 
@@ -159,6 +184,7 @@ export function scatterMineralDrops(
       new Mineral(scene, {
         x: x + Math.cos(angle) * radius,
         y: y + Math.sin(angle) * radius,
+        color,
       }),
     );
   }

@@ -341,7 +341,10 @@ export class GymPowerUpLeveling extends CombatScene<
 
   private _spawnRoundRobin(): void {
     this.spawnDrop(
-      this.roundRobinSpawner.next(),
+      this._drawNextDrop(
+        this.roundRobinSpawner,
+        this._resolveDropSlotState(),
+      ),
       SPAWN_POSITION.x,
       SPAWN_POSITION.y,
     );

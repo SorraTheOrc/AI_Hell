@@ -66,6 +66,13 @@ export interface LaneTrafficConfig {
    * Hit points before the enemy is destroyed (data-driven;
    * AH-0MUI820PM0038HS2). Defaults to `1` (single-hit).
    */
+  /**
+   * Remaining enemy force-field hits at spawn (epic AH-0MVJ8W4GE007OMNT
+   * AC2; resolved once by `enemyForceFieldHits`). Defaults to `0`
+   * (unshielded), so an entity built without a field behaves exactly as
+   * today.
+   */
+  forceFieldHits?: number;
   health?: number;
   /** Injectable random source (unused today; kept for the shared entity seam). */
   rng?: () => number;
@@ -98,6 +105,7 @@ export class LaneTraffic extends BaseEnemy {
       bulletColor: config.bulletColor,
       bulletSize: config.bulletSize,
       health: config.health,
+      forceFieldHits: config.forceFieldHits,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

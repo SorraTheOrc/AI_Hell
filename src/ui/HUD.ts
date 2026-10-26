@@ -18,7 +18,9 @@
  *
  * Consumable counts that the level alone does not convey (Shield shield
  * remaining absorptions, Phase Shift phase charges, Teleport teleport uses) are appended to
- * the label as ` ×N` so the value column stays strictly `∞`/countdown.
+ * the label as ` ×N` so the value column stays strictly `∞`/countdown. A
+ * recharging consumable (the Thorn Field, AH-0MVJ8YKR70096C6T) also appends
+ * its `next in Ns` recharge countdown to the label.
  *
  * A charge-based power-up the player **owns** but whose pool is currently
  * **empty** stays visible as a greyed-out row (icon + label + value all in
@@ -124,6 +126,13 @@ export interface HUDEntry {
   /** Consumable count (Shield absorptions, Phase Shift charges, Teleport teleports), if any. */
   stacks?: number;
   /**
+   * Seconds until the next automatic recharge for a recharging consumable
+   * (Thorn Field), or `undefined` when nothing is recharging. Rendered in the
+   * label as `next in Ns` so the row is never an inert bare label
+   * (AH-0MVJ8YKR70096C6T).
+   */
+  recharge?: number;
+  /**
    * True when the row is rendered inactive (greyed out) because a
    * charge-based pool the player owns is currently empty
    * (AH-0MV82I97Y007MB6M). Always `false` for charged rows and for
@@ -147,15 +156,24 @@ export function formatHUDValue(
 
 /**
  * Builds the rendered row label `"<Name> Lvl <N>"`, appending the optional
- * consumable count as ` ×<stacks>` so the value column stays `∞`/countdown.
+ * consumable count as ` ×<stacks>` so the value column stays `∞`/countdown,
+ * plus an optional `next in Ns` recharge countdown (Thorn Field,
+ * AH-0MVJ8YKR70096C6T) so a recharging row is never an inert bare label.
  */
 export function buildHUDLabel(
   name: string,
   level: number,
   stacks?: number,
+  rechargeSeconds?: number,
 ): string {
-  const base = `${name} Lvl ${level}`;
-  return stacks !== undefined && stacks > 0 ? `${base} ×${stacks}` : base;
+  const withStacks =
+    stacks !== undefined && stacks > 0
+      ? `${name} Lvl ${level} ×${stacks}`
+      : `${name} Lvl ${level}`;
+  if (rechargeSeconds === undefined || rechargeSeconds <= 0) {
+    return withStacks;
+  }
+  return `${withStacks} (next in ${Math.ceil(rechargeSeconds)}s)`;
 }
 
 /**
@@ -433,17 +451,19 @@ export class HUD extends Phaser.GameObjects.Container {
       const remaining = reg.powerUpTemporaryRemaining(id);
       const temporary = remaining !== undefined;
       const stacks = this._powerUpStacks(id);
+      const recharge = this._powerUpRecharge(id);
       const greyed = this._isPowerUpGreyed(id);
       rows.push({
         id,
         name: entry.name,
-        label: buildHUDLabel(entry.name, level, stacks),
+        label: buildHUDLabel(entry.name, level, stacks, recharge),
         icon: entry.id,
         value: formatHUDValue(temporary, remaining),
         level,
         temporary,
         greyed,
         ...(stacks !== undefined ? { stacks } : {}),
+        ...(recharge !== undefined ? { recharge } : {}),
       });
     }
     return rows;
@@ -531,6 +551,25 @@ export class HUD extends Phaser.GameObjects.Container {
         // Thorn Field carries its remaining ram absorbs so the HUD renders
         // `Thorn Field xN` and updates as rams are absorbed.
         return reg.thornsRemaining() || undefined;
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * Seconds until the next automatic recharge for a recharging consumable, or
+   * `undefined` when nothing is recharging. Only the Thorn Field recharges
+   * today (AH-0MVJ8YKR70096C6T); an armed field with a spent budget — and, in
+   * particular, a permanent (hold-full) field sitting at zero charges — shows
+   * its countdown so the row never reads as an inert bare label.
+   */
+  private _powerUpRecharge(id: PowerUpId): number | undefined {
+    const reg = this._registry!;
+    switch (id) {
+      case 'thorns': {
+        const seconds = reg.thornsRechargeRemaining();
+        return seconds > 0 ? seconds : undefined;
+      }
       default:
         return undefined;
     }

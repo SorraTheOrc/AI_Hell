@@ -62,6 +62,7 @@ import {
   applyPhaseGhost,
   drawForceFieldBubble,
   drawShieldBubble,
+  drawThornsAura,
 } from '../../core/CombatEffectVisuals';
 import {
   GAME_HEIGHT,
@@ -130,7 +131,7 @@ import {
 } from '../../core/bulletLifecycle';
 import {
   resolveMineralKillDrops,
-  scatterMineralDrops,
+  scatterSalvageMineralDrops,
   type MineralKillDropEntity,
 } from '../../core/mineralKillDrops';
 import {
@@ -150,6 +151,8 @@ import {
   type ChoiceStrategy,
 } from '../../../powerups/choice';
 import { type WeaponId } from '../../../utils/weapons';
+import { applySceneSetup, resolveSetupSeed, type SceneSetupState } from '../../core/sceneSetup';
+import { createSeededRng } from '../../../core/rng';
 import {
   WORMHOLE_OPEN_DURATION,
   WormholeController,
@@ -157,6 +160,7 @@ import {
   getSpawnState,
   placeWavePortal,
   startSpawnAnimation,
+  updateEnemyShimmer,
   updateSpawnAnimation,
   type SpawnAnimatable,
 } from '../../../vfx/wormholeSpawn';
@@ -477,6 +481,14 @@ export class GymFormationScene<
   protected player: Player | null = null;
 
   /**
+   * Optional capture-setup loadout/power-up state (AH-0MVNW8VNN004FFK1),
+   * applied to the player in `create()` before the first captured frame.
+   * `null` ⇒ no setup, so the scene keeps its pre-change behaviour (the
+   * formation gyms historically start with the bare cannon).
+   */
+  protected pendingSetup: SceneSetupState | null = null;
+
+  /**
    * Canonical player spawn (px) — the point {@link setPlayerEnabled}(true)
    * restores. Derived from `config.player` in `create()`; null when the
    * scene has no player component (AH-0MUII3F7Q002O7WX, gap 9).
@@ -541,6 +553,10 @@ export class GymFormationScene<
   private shieldBubbleDrawn = false;
   /** Force Field reflect-bubble graphics (Gradius homage, AH-0MV1BIX1W006XF95). */
   private forceFieldBubble: Phaser.GameObjects.Graphics | null = null;
+  /** Thorn Field lime spike aura (AH-0MVJ8YKR70096C6T). */
+  private thornsAura: Phaser.GameObjects.Graphics | null = null;
+  /** Whether the thorns aura was drawn in the last visual update. */
+  private thornsAuraDrawn = false;
 
   // ── Formation glide (AH-0MUL15N63003PUDB)
 
@@ -642,11 +658,30 @@ export class GymFormationScene<
     };
   }
 
+  /**
+   * Captures an optional capture setup supplied as scene-start data
+   * (AH-0MVNW8VNN004FFK1). Phaser passes the director's `scene.start(key,
+   * setup)` payload here before `create()`; an absent setup leaves
+   * {@link pendingSetup} null so the scene keeps its pre-change state.
+   *
+   * Formation-gym rosters stay config-driven: a setup can configure loadout
+   * and power-ups for these gyms, but not the enemy set (only
+   * `GymFodderEnemies` selects its roster from a setup). Recorded as an
+   * intentional divergence on AH-0MVNW8VNN004FFK1.
+   */
+  init(data?: SceneSetupState | null): void {
+    this.pendingSetup = data ?? null;
+    // Deterministic content (AH-0MVNW90FB003H3KM): a setup seed makes the
+    // mineral field, drop cadence and random picks reproducible. A setup-less
+    // start leaves the historical `Math.random` default untouched.
+    const seed = resolveSetupSeed(data ?? null);
+    if (seed !== null) this._sceneRng = createSeededRng(seed);
+  }
+
   create(): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
-    this.resetRunState();
-    const { config } = this;
+    this.resetRunState();    const { config } = this;
 
     // ── Spawn the formation ─────────────────────────────────────────
     const offsets = config.buildOffsets(config.count);
@@ -671,6 +706,13 @@ export class GymFormationScene<
       ) as WasdKeysLike | undefined;
     }
 
+    // Capture setup loadout/power-ups, applied through the one shared
+    // applier so every gym maps a setup to play state identically
+    // (AH-0MVNW8VNN004FFK1). No setup ⇒ no change to historical behaviour.
+    if (this.pendingSetup) {
+      applySceneSetup({ getPlayer: () => this.player }, this.pendingSetup);
+    }
+
     // ── Shared Shield/Phase Shift player visuals (parity with PlayScene/gym combat) ──
     // Drawn through the shared CombatEffectVisuals helper so the enemy gym
     // cannot drift from the other scenes (AH-0MUICQC34005QOYF).
@@ -679,6 +721,8 @@ export class GymFormationScene<
     this.shieldBubbleDrawn = false;
     this.forceFieldBubble = this.add.graphics();
     this.forceFieldBubble.setDepth(51);
+    this.thornsAura = this.add.graphics();
+    this.thornsAura.setDepth(52);
 
     // ── Controls (bottom-right HUD, minimal) ───────────────────────
     // AH-0MUAYB7O4009LWBF — repositioned from bottom-left to avoid
@@ -769,12 +813,18 @@ export class GymFormationScene<
     this.shieldBubble = null;
     this.shieldBubbleDrawn = false;
     this.forceFieldBubble = null;
+    this.thornsAura = null;
+    this.thornsAuraDrawn = false;
     this.minerals = [];
     this.mineralsSeeded = 0;
     this.mineralHoldModel.reset();
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
-    this._wormhole.close();
+    // Pass the shared `wormholeEffects` registry exactly as `PlayScene` does,
+    // so closing on reset removes the live wormhole (and its glow/pulse ring)
+    // from the registry instead of leaving it for SHUTDOWN
+    // (AH-0MVD2N9MM0007NGZ parity).
+    this._wormhole.close(this.wormholeEffects);
     this._resolveFormationBase();
   }
 
@@ -821,6 +871,9 @@ export class GymFormationScene<
     this.shieldBubbleDrawn = false;
     this.forceFieldBubble?.destroy();
     this.forceFieldBubble = null;
+    this.thornsAura?.destroy();
+    this.thornsAura = null;
+    this.thornsAuraDrawn = false;
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.glide.clear();
@@ -959,7 +1012,10 @@ export class GymFormationScene<
       return;
     }
 
-    const id = this.powerUpSpawner.next();
+    const id = this._drawNextDrop(
+      this.powerUpSpawner,
+      this._resolveDropSlotState(),
+    );
     const { x, y } = this.powerUpPlacement.place(
       this._powerUpPlacementContext(),
     );
@@ -1164,7 +1220,17 @@ export class GymFormationScene<
       this.player,
       this.effectsRegistry,
     );
+    this.thornsAuraDrawn = drawThornsAura(
+      this.thornsAura,
+      this.player,
+      this.effectsRegistry,
+    );
     applyPhaseGhost(this.player, this.effectsRegistry, this.invulnerable > 0);
+  }
+
+  /** Whether the Thorn Field aura was drawn in the last visual update. */
+  isThornsAuraVisible(): boolean {
+    return this.thornsAuraDrawn;
   }
 
   /** Whether the Shield shield bubble was drawn in the last visual update. */
@@ -1196,8 +1262,10 @@ export class GymFormationScene<
   seedMinerals(count: number): Mineral[] {
     const seeded: Mineral[] = [];
     for (let i = 0; i < count; i++) {
-      const x = 20 + Math.random() * (GAME_WIDTH - 40);
-      const y = 20 + Math.random() * (GAME_HEIGHT - 120);
+      // Drawn from the scene RNG so a setup seed reproduces the field exactly
+      // (AH-0MVNW90FB003H3KM). Defaults to `Math.random` when unseeded.
+      const x = 20 + this._sceneRng() * (GAME_WIDTH - 40);
+      const y = 20 + this._sceneRng() * (GAME_HEIGHT - 120);
       const mineral = new Mineral(this, { x, y });
       this.minerals.push(mineral);
       seeded.push(mineral);
@@ -1629,16 +1697,26 @@ export class GymFormationScene<
    */
   private _updateSpawnAnimations(dt: number): void {
     let anySpawning = false;
-    for (const entity of this.entities) {
-      if (!entity.isSpawning) continue;
+    // `getEnemyEntities()` is the scene's full live set: the formation
+    // entities here, plus anything a subclass adds (GymBoss's phase minions),
+    // so a summoned minion's spawn animation advances on the shared tick too
+    // (AH-0MV8BSMXC0097KLW).
+    for (const entity of this.getEnemyEntities()) {
+      const spawnState = entity as unknown as { isSpawning?: boolean; setSpawning?(v: boolean): void };
+      if (!spawnState.isSpawning) continue;
       const stillGrowing = updateSpawnAnimation(entity as unknown as SpawnAnimatable, dt);
+      // Per-entity emergence shimmer (AH-0MVD2N333004VDA9) rides the same
+      // shared spawn path, immediately after the growth write so its scale
+      // pulse layers on the growth scale instead of fighting it
+      // (AH-0MVD2N9MM0007NGZ wiring).
+      updateEnemyShimmer(entity as unknown as SpawnAnimatable, dt);
       if (stillGrowing) {
         anySpawning = true;
       } else {
-        entity.setSpawning?.(false);
+        spawnState.setSpawning?.(false);
       }
     }
-    if (!anySpawning) this._wormhole.close();
+    if (!anySpawning) this._wormhole.close(this.wormholeEffects);
   }
 
   /**
@@ -1647,12 +1725,13 @@ export class GymFormationScene<
    * Not used by gameplay.
    */
   finishSpawnAnimations(): void {
-    for (const entity of this.entities) {
-      if (!entity.isSpawning) continue;
+    for (const entity of this.getEnemyEntities()) {
+      const spawnState = entity as unknown as { isSpawning?: boolean; setSpawning?(v: boolean): void };
+      if (!spawnState.isSpawning) continue;
       updateSpawnAnimation(entity as unknown as SpawnAnimatable, 10);
-      entity.setSpawning?.(false);
+      spawnState.setSpawning?.(false);
     }
-    this._wormhole.close();
+    this._wormhole.close(this.wormholeEffects);
   }
 
   /** True while the formation's wormhole is live (single-live controller). */
@@ -1721,35 +1800,44 @@ export class GymFormationScene<
       // Containers are not auto-added to the display list — without this
       // the enemies would never render (project convention, see Gym.ts).
       this.add.existing(entity);
-      startSpawnAnimation(
-        entity as unknown as SpawnAnimatable,
-        entity.scaleX,
-        WORMHOLE_OPEN_DURATION,
-        canTransit
-          ? () => {
-              // Track the live slot so base drift/march during the transit
-              // is followed and the entity lands exactly on its live slot.
-              if (typeof orbitalSlot === 'function') {
-                return orbitalSlot.call(
-                  entity,
-                  this.formationBaseX,
-                  this.formationBaseY,
-                );
+      // Entities without the spawning seam (the Boss, test stubs) are not
+      // animated: they have no `isSpawning` flag for the update pass to
+      // advance, so shrinking them here would strand them at 1 px forever.
+      // The game spawns them fully formed (`PlayScene.spawnBoss`), so this is
+      // also the parity behaviour (AH-0MV8BSMXC0097KLW).
+      const animatable =
+        typeof (entity as { setSpawning?: unknown }).setSpawning === 'function';
+      if (animatable) {
+        startSpawnAnimation(
+          entity as unknown as SpawnAnimatable,
+          entity.scaleX,
+          WORMHOLE_OPEN_DURATION,
+          canTransit
+            ? () => {
+                // Track the live slot so base drift/march during the transit
+                // is followed and the entity lands exactly on its live slot.
+                if (typeof orbitalSlot === 'function') {
+                  return orbitalSlot.call(
+                    entity,
+                    this.formationBaseX,
+                    this.formationBaseY,
+                  );
+                }
+                return {
+                  x: this.formationBaseX + offset.col * this.config.spacingX,
+                  y: this.formationBaseY + offset.row * this.config.spacingY,
+                };
               }
-              return {
-                x: this.formationBaseX + offset.col * this.config.spacingX,
-                y: this.formationBaseY + offset.row * this.config.spacingY,
-              };
-            }
-          : undefined,
-      );
+            : undefined,
+        );
+      }
       entity.setSpawning?.(true);
       this.entities.push(entity);
     }
     // The fresh formation enters through a wormhole; the controller closes
     // any still-open previous wormhole first (single-live invariant).
     if (offsets.length > 0) {
-      this._wormhole.open(portal.x, portal.y);
+      this._wormhole.open(portal.x, portal.y, this.wormholeEffects);
     }
   }
 
@@ -1863,10 +1951,12 @@ export class GymFormationScene<
     if (drops.length > 0) this.minerals.push(...drops);
     // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
     // the wreck of a destroyed enemy ship (asteroids are not bounty targets).
+    // The shared seam renders them orange so the payout is visible against
+    // ordinary gold drops (AH-0MVJ72I8O0009T09) — identical to the game.
     const salvageBonus = this.getEffectsRegistry().salvageBonusMinerals();
     if (salvageBonus > 0 && typeof (entity as unknown as { getSizeTier?: unknown }).getSizeTier !== 'function') {
       this.minerals.push(
-        ...scatterMineralDrops(
+        ...scatterSalvageMineralDrops(
           this,
           entity.x,
           entity.y,

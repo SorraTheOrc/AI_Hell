@@ -233,9 +233,11 @@ export function compareBalanceAggregates(
 }
 
 /**
- * The five sweep-configuration fields the same-sweep guard compares. Both
- * batches must agree on **every** field before their deltas may be computed
- * (parent AC2).
+ * The sweep-configuration fields the same-sweep guard compares. Both batches
+ * must agree on **every** field before their deltas may be computed (parent
+ * AC2). `campaign` was added in AH-0MVD1RK2V009J5D2 (AC5): a full-campaign
+ * batch and a skirmish batch measure different things and must never be
+ * diffed as if they differed only by an edit. `level` pins the per-level mode.
  */
 export const SWEEP_CONFIG_FIELDS = Object.freeze([
   'policies',
@@ -243,6 +245,8 @@ export const SWEEP_CONFIG_FIELDS = Object.freeze([
   'ticks',
   'dt',
   'sampleEveryTicks',
+  'campaign',
+  'level',
 ] as const);
 
 /** One of the {@link SWEEP_CONFIG_FIELDS} compared by the guard. */
@@ -332,7 +336,8 @@ export function assertSameSweep(baseline: BalanceReport, candidate: BalanceRepor
   const fields = differences.map((difference) => difference.field).join(', ');
   throw new SameSweepGuardError(
     `Refusing to compare batches with different sweep configuration (${fields}): ` +
-      'both batches must use identical policies, seeds, ticks, dt and sampleEveryTicks.',
+      'both batches must use identical policies, seeds, ticks, dt, ' +
+      'sampleEveryTicks, campaign mode and level.',
     'sweep-config-mismatch',
     differences,
   );

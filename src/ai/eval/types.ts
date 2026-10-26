@@ -18,12 +18,21 @@
 
 import type { BotHumanInputTunables } from '../botHumanLike';
 import type { DifficultyCurveRow, EnemyConfig, ShipConfig } from '../../core/configTypes';
+import type { DropId } from '../../powerups/types';
+import type { LevelDefinition } from '../../waves/Formations';
 
 /** Telemetry schema version the arena emits (matches `src/telemetry/schema`). */
 export const EVAL_TELEMETRY_SCHEMA_VERSION = 1;
 
-/** Version of the evaluation *interpretation* (bump on a report shape change). */
-export const EVAL_DATASET_VERSION = 1;
+/**
+ * Version of the evaluation *interpretation* (bump on a report shape change).
+ *
+ * **v2** (AH-0MVD1RK2V009J5D2): the balance-batch report's `config` echoes the
+ * resolved run mode (`campaign` and, when set, `level`) so a report is
+ * self-describing and a comparison can refuse to mix campaign and skirmish
+ * batches.
+ */
+export const EVAL_DATASET_VERSION = 2;
 
 /** Build metadata carried in the run header. */
 export interface EvalBuild {
@@ -82,7 +91,7 @@ export interface ArenaState {
     readonly y: number;
     readonly type: string;
   }[];
-  readonly hold: { readonly minerals: number };
+  readonly hold: { readonly minerals: number; readonly capacity?: number };
   readonly boss: null;
 }
 
@@ -145,7 +154,27 @@ export interface ArenaBalanceConfig {
   readonly difficultyCurves: readonly DifficultyCurveRow[];
 }
 
-/** Arena configuration; only `seed` and `ticks` are required. */
+/**
+ * Optional tunables for the run's shared {@link MineralHold} model
+ * (capacity, per-pickup collect amount, growth multiplier) — the same
+ * model `GameState`/the gyms use, so the arena's hold-full cadence can be
+ * made fast/deterministic in tests (AH-0MVD1RIH2008YCNV AC1/AC5).
+ * Omitted fields fall back to the shipped rules defaults.
+ */
+export interface ArenaHoldOptions {
+  /** First-hold capacity (defaults to the shipped 5). */
+  readonly capacity?: number;
+  /** Minerals added per pickup (defaults to the shipped 1). */
+  readonly collectAmount?: number;
+  /** Capacity growth multiplier after each resolution (defaults to the shipped 2). */
+  readonly growthMultiplier?: number;
+}
+
+/**
+ * Config an evaluation harness can "play" a seeded arena run with
+ * (AH-0MUY08XLD009K4W4). Every field is optional except the seed and the tick
+ * budget, so a minimal consumer is `{ seed, ticks }`.
+ */
 export interface ArenaConfig {
   /** The run seed — drives every scenario draw and the bot governor's RNG. */
   readonly seed: number;
@@ -171,12 +200,93 @@ export interface ArenaConfig {
   /** Entity counts; omitted fields fall back to {@link DEFAULT_ARENA_SPAWNS}. */
   readonly spawns?: Partial<ArenaSpawns>;
   /**
+   * Explicit campaign level (1–10) for the **per-level campaign mode**
+   * (AH-0MVLJFB1I0099X4Z). When present, the arena plays the real campaign
+   * waves for that level — the shared `Formations.LEVELS` data through the
+   * level-scaling seam — instead of the single-level spawn reservoir, and
+   * power-up drops come from the **real per-kill drop rule** (the shared
+   * `src/core/levelScaling` module) rather than the seeded power-up
+   * reservoir. Absent → the unchanged seeded skirmish.
+   */
+  readonly level?: number;
+  /**
+   * Level-scaling curves toggle for per-level mode (default `true` when
+   * `level` is set). `false` resolves the enemy-count multiplier and the
+   * per-kill drop chance to level 1, so a pre-change **baseline** is
+   * captured with the same harness code and seeds. Ignored when `level` is
+   * absent (the seeded skirmish never scales).
+   */
+  readonly scaleLevels?: boolean;
+  /**
+   * Enemy force-field toggle (epic AH-0MVJ8W4GE007OMNT AC5, default
+   * `true`). `false` resolves every hostile's force field at level 1 — for
+   * the shipped curve that is **0 hits for every archetype** (neutral
+   * defaults are `0` start level), so a pre-change **baseline** without the
+   * enemy barrier is captured with identical harness code and seeds. L1 is
+   * byte-identical on/off by construction (level 1 never resolves a field).
+   */
+  readonly forceFields?: boolean;
+  /**
+   * **Full-campaign mode** (AH-0MVD1RGKM005GW0C): plays the **whole shipped
+   * campaign** — every level and wave of `buildSequencedLevels` (honouring
+   * `fixed`/`curve`/`dynamic` generation modes), drive by the shared
+   * {@link WaveManager} — instead of the single-level spawn reservoir.
+   * Wave/level progression, spawn planning and the canonical
+   * `wave_start`/`wave_cleared`/`level_cleared` events all come from the
+   * shared campaign core (no divergent copy in `src/ai/eval/`). An explicit
+   * {@link ArenaConfig.level} takes precedence (per-level mode); with neither
+   * set the unchanged seeded skirmish runs. Power-up supply comes from the
+   * real per-kill drop rule at the current campaign level, exactly like the
+   * per-level mode.
+   *
+   * **Fidelity boundary** (parent AC4): clearing the final level triggers the
+   * boss encounter, which is treated as the **end of the run** — no
+   * boss/mini-boss simulation this round.
+   *
+   * **Default resolution.** This field is opt-in at the arena layer: omitted
+   * or `false` keeps the seeded skirmish. The **batch** runner resolves the
+   * shipped default for a batch ({@link DEFAULT_BATCH_CAMPAIGN}: campaign
+   * unless explicitly disabled — AC1/AC2), while single-run evaluation, A/B
+   * and the human comparison deliberately keep the skirmish (AC5).
+   */
+  readonly campaign?: boolean;
+  /**
+   * Injectable campaign for **full-campaign mode** (test/experiment seam,
+   * mirroring `WaveManager`'s injectable levels and the per-level
+   * `balance` injection). When supplied, the arena plays these levels
+   * through the shared `WaveManager` instead of rebuilding the shipped
+   * campaign. Absent → `buildSequencedLevels` builds the real campaign from
+   * `balance.difficultyCurves` seeded with {@link ArenaConfig.seed}. Ignored
+   * unless `campaign` is `true` (`level` per-level mode never uses it).
+   */
+  readonly campaignLevels?: readonly LevelDefinition[];
+  /**
    * Resolved balance configuration (enemy archetypes, ship, difficulty
    * curves) built through the shared config loaders. When omitted,
    * `runArena` resolves it from the shared config store (seed defaults before
    * boot), so every arena path is config-driven (AH-0MV81YPBG0028WNM).
    */
   readonly balance?: ArenaBalanceConfig;
+  /** Hold tunables forwarded to each arena run (see {@link ArenaHoldOptions}). */
+  readonly hold?: ArenaHoldOptions;
+  /**
+   * The **upgrade-definition set** the hold-full choice offers
+   * (AH-0MVD1RLGZ002LT7B AC3, parent AC5).
+   *
+   * Test/experiment seam mirroring {@link ArenaConfig.balance},
+   * {@link ArenaConfig.campaignLevels} and {@link ArenaConfig.hold}: when
+   * supplied, the arena draws its hold-full options from this set through the
+   * shared weighted `randomChoiceStrategy`; omitted → the shipped shared
+   * `CHOICE_POOL` (byte-identical default behaviour).
+   *
+   * Making the offered set injectable is what makes the campaign report
+   * **provably sensitive to an upgrade-definition edit**: the same seed +
+   * config + policy with a different definition set produces a measurably
+   * different `upgradesSelected` distribution. The pool is the surface the
+   * shared choice flow (`src/powerups/choice.ts`) actually consumes, so no
+   * divergent option model is introduced in `src/ai/eval/`.
+   */
+  readonly choicePool?: readonly DropId[];
 }
 
 /** The shaped result of one headless arena run. */
@@ -197,6 +307,42 @@ export const DEFAULT_ARENA_SPAWNS: ArenaSpawns = Object.freeze({
   enemies: 4,
   asteroids: 4,
 });
+
+/**
+ * Default tick budget for a **single-run** evaluation: the historic 1800 ticks
+ * (30 simulated seconds at 60 Hz).
+ *
+ * Single-run evaluation ({@link import('./engine').runEvaluation}), A/B and
+ * the human comparison keep the **skirmish** semantics (AC5,
+ * AH-0MVD1RK2V009J5D2), so this window is deliberately unchanged: existing
+ * reports and recordings remain comparable.
+ */
+export const DEFAULT_EVALUATION_TICKS = 1_800;
+
+/**
+ * Default per-game tick budget for a **batch** run (AC3): 18 000 ticks (five
+ * simulated minutes at 60 Hz), ten times the single-run window.
+ *
+ * A full-campaign run is a much longer sequence than one skirmish, so the
+ * batch budget must be higher than {@link DEFAULT_EVALUATION_TICKS} — while
+ * staying **finite**: every run still ends early on death or when the shared
+ * campaign manager reports the boss trigger / `gameComplete`, and a run that
+ * stalls stops at this budget. Measured on a dev machine, a 100-game campaign
+ * batch at this budget completes in ~47 s (vs ~10 s at 1800 ticks).
+ */
+export const DEFAULT_BATCH_TICKS = 18_000;
+
+/**
+ * Default full-campaign mode for a **batch** run (AC1/AC2): batch mode plays
+ * the whole shipped campaign unless the caller opts back into the old
+ * single-level skirmish (`campaign: false`, CLI `--skirmish`).
+ *
+ * Single-run evaluation keeps the skirmish default (AC5), so
+ * {@link ArenaConfig.campaign} itself stays opt-in; the batch layer
+ * (`BatchConfig`) resolves this default and forwards the concrete value to
+ * the arena.
+ */
+export const DEFAULT_BATCH_CAMPAIGN = true;
 
 /**
  * Version of the shared **balance-statistics** schema

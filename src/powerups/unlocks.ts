@@ -18,8 +18,7 @@
 
 import type { WeaponId } from '../utils/weapons';
 import type { ChoiceContext, ChoiceOption } from './choice';
-import { isWeaponDrop, toChoiceOption } from './choice';
-import type { DropId } from './types';
+import { buildOwnedLevelUpOptions } from './choice';
 
 /**
  * Weapons that are locked at Level 1 and become available through mini-boss
@@ -114,24 +113,17 @@ export function lockedWeaponIds(
  * offers the hold-full choice uses (so applying them runs the shared
  * permanent-level machinery).
  *
+ * Delegates to the **single** shared option builder
+ * (`buildOwnedLevelUpOptions` in `./choice`), so the offer's level, item
+ * description and level-accurate `changeSummary` are identical to the
+ * hold-full choice — the reward text can never drift from the hold-full text
+ * (AH-0MVL9P2SF009QFON AC1/AC3). The permanent cannon is not a drop id, so it
+ * is never offered.
+ *
  * @param context - The run's owned weapon/power-up levels.
  */
 export function buildUpgradeOptions(
   context: ChoiceContext,
 ): ChoiceOption[] {
-  return [
-    ...(context.weaponLevels ?? [])
-      // The cannon is the permanent default and never a reward option.
-      .filter((entry) => isWeaponDrop(entry.id as DropId))
-      .map((entry) => ({
-        ...toChoiceOption(entry.id as DropId),
-        kind: 'weapon-level' as const,
-        level: entry.level + 1,
-      })),
-    ...(context.powerUpLevels ?? []).map((entry) => ({
-      ...toChoiceOption(entry.id),
-      kind: 'power-up-level' as const,
-      level: entry.level + 1,
-    })),
-  ];
+  return buildOwnedLevelUpOptions(context);
 }

@@ -29,7 +29,7 @@
  * - The curve is **strictly increasing** while `cap > base` and `k > 0`
  *   and never decreases (AC6).
  *
- * Integer-valued counts (projectile count, piercing, bounces, chain, split)
+ * Integer-valued counts (projectile count, maxHitPoints, bounces, chain, split)
  * are rounded to the nearest whole number and clamped to their cap so that
  * they step up and then flatten without ever exceeding the cap.
  *
@@ -84,8 +84,8 @@ export type WeaponUpgradeVariable =
   | 'bulletLifetime'
   /** Damage multiplier. */
   | 'damage'
-  /** Extra enemies a bullet passes through (integer). */
-  | 'piercing'
+  /** Total hit points a beam may deal before it is consumed (integer). */
+  | 'maxHitPoints'
   /** Extra wall/enemy bounces (integer). */
   | 'bounce'
   /** Homing strength, 0–1. */
@@ -115,7 +115,7 @@ export const UPGRADE_VARIABLES: readonly WeaponUpgradeVariable[] = [
   'bulletSpeed',
   'bulletLifetime',
   'damage',
-  'piercing',
+  'maxHitPoints',
   'bounce',
   'homing',
   'aoeRadius',
@@ -271,13 +271,16 @@ export const WEAPON_UPGRADE_SPECS: Record<
     discrete: false,
     tier: 'planned',
   },
-  piercing: {
-    variable: 'piercing',
-    label: 'Piercing',
-    description: 'Bullets pass through more enemies.',
+  maxHitPoints: {
+    variable: 'maxHitPoints',
+    label: 'Max Hit Points',
+    description: 'Beams deal more total damage before being consumed.',
     rationale:
-      'Piercing is very strong in crowds; the cap is 5 and k=0.25 grants ' +
-      'the first pierce at level 1 so it feels responsive.',
+      'A damage budget is very strong in crowds; the cap is 5 and k=0.25 ' +
+      'grants the first extra hit point at level 1 so it feels responsive. ' +
+      'The cap is the shared curve asymptote only — the weapon-level clamp ' +
+      'was removed, so the budget saturates at ~7 rather than a hard 5 ' +
+      '(AH-0MV97RISJ002WR2S).',
     curve: 'exponential-saturation',
     base: 0,
     cap: 5,
@@ -488,8 +491,8 @@ export interface WeaponLevelStats {
   bulletLifetime: number;
   /** Damage multiplier. */
   damage: number;
-  /** Extra enemies a bullet passes through. */
-  piercing: number;
+  /** Total hit points a beam may deal (damage budget). */
+  maxHitPoints: number;
   /** Extra bounces. */
   bounce: number;
   /** Homing strength (0–1). */
@@ -606,9 +609,9 @@ export function expandWeaponPattern(
  * - `offsets` — expanded by `projectileCount`/`spreadAngle`,
  * - `bulletLifetime` — range multiplier,
  * - `levelBulletSize` — bullet-radius upgrade multiplier,
- * - `piercing` — the base pass-through budget grown by the level's
- *   `piercing` upgrade and clamped to its spec cap (weapons with a base
- *   `piercing` only, e.g. the wave laser; AH-0MV1BIUSJ0090W92),
+ * - `maxHitPoints` — the base damage budget grown by the level's
+ *   `maxHitPoints` upgrade (weapons with a base `maxHitPoints` only, e.g. the
+ *   wave laser; AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S),
  * - `bounce` — the base wall-bounce budget grown by the level's `bounce`
  *   upgrade and clamped to its spec cap (weapons with a base `bounce` only,
  *   e.g. the ricochet; AH-0MV1BIV5L005NJAI),
@@ -652,15 +655,15 @@ export function resolveWeaponDefinition(
     bulletLifetime: base.bulletLifetime * stats.bulletLifetime,
     levelBulletSize: stats.bulletSize,
   };
-  // Piercing weapons (the R-Type wave laser) opt in with a base budget. Their
-  // effective pass-through grows with the level-resolved `piercing` upgrade,
-  // clamped to the variable's finite spec cap so the budget stays within it
-  // (AH-0MV1BIUSJ0090W92). Weapons without a base budget never gain one.
-  if (base.piercing !== undefined) {
-    leveled.piercing = Math.min(
-      WEAPON_UPGRADE_SPECS.piercing.cap,
-      base.piercing + stats.piercing,
-    );
+  // Damage-budget weapons (the R-Type wave laser) opt in with a base budget.
+  // Their effective budget is the base value plus the level-resolved
+  // `maxHitPoints` upgrade with **no clamp**: growth is governed only by the
+  // shared exponential-saturation curve, so the budget saturates near its
+  // asymptote (~base + 5) instead of flattening at a hard cap
+  // (AH-0MV1BIUSJ0090W92, AH-0MV97RISJ002WR2S). Weapons without a base
+  // budget never gain one.
+  if (base.maxHitPoints !== undefined) {
+    leveled.maxHitPoints = base.maxHitPoints + stats.maxHitPoints;
   }
   // Ricochet-style weapons opt in with a base wall-bounce budget. Their
   // effective budget grows with the level-resolved `bounce` upgrade, clamped
@@ -728,17 +731,25 @@ export function resolveVariable(
  * stats at `fromLevel` with those at `toLevel`.
  *
  * Only the MVP-visible variables
- * ({@link MVP_UPGRADE_VARIABLES}) are considered.  Each variable that
- * actually changes between the two levels contributes one formatted
- * fragment (see {@link formatDelta}); fragments are joined with `", "`.
+ * ({@link MVP_UPGRADE_VARIABLES}) are considered, and only those that can
+ * actually change *this* weapon's behaviour:
  *
- * When no MVP variable changes (the curve has flattened at the cap) the
- * result is the empty string.
+ * - The four MVP variables apply to every weapon.
+ * - `aoeRadius` is only listed for weapons that declare an `aoe`
+ *   descriptor (Nova, Mortar, Arc). A non-AoE weapon must never promise an
+ *   "Area" gain it cannot deliver (AH-0MVL9P2SF009QFON AC2).
+ *
+ * Each variable that actually changes between the two levels contributes one
+ * formatted fragment (see {@link formatDelta}); fragments are joined with
+ * `", "`.
+ *
+ * When no applicable MVP variable changes (the curve has flattened at the
+ * cap) the result is the empty string.
  *
  * This is the single source of truth for the hold-full choice overlay
- * (AH-0MUU1GOAU007RFVR).  The game and every gym consume the same
- * function so the displayed numbers can never drift from the level
- * maths.
+ * (AH-0MUU1GOAU007RFVR) **and** the mini-boss reward options
+ * (AH-0MVL9P2SF009QFON). The game and every gym consume the same function
+ * so the displayed numbers can never drift from the level maths.
  *
  * @param weaponId - The weapon to compare.
  * @param fromLevel - The current (pre-upgrade) level.
@@ -753,9 +764,18 @@ export function summariseWeaponLevelChange(
 ): string {
   const from = resolveWeaponAtLevel(weaponId, fromLevel);
   const to = resolveWeaponAtLevel(weaponId, toLevel);
+  // Applicability is a per-weapon property, so it is resolved once rather
+  // than inside the per-variable loop.
+  const hasAoe = getWeaponById(weaponId).aoe !== undefined;
 
   const parts: string[] = [];
   for (const variable of MVP_UPGRADE_VARIABLES) {
+    // `aoeRadius` only changes the behaviour of weapons with an AoE
+    // descriptor; every other weapon would otherwise report a fictional
+    // "+N% Area" delta (AH-0MVL9P2SF009QFON AC2).
+    if (variable === 'aoeRadius' && !hasAoe) {
+      continue;
+    }
     const delta = to[variable] - from[variable];
     if (Math.abs(delta) < 1e-9) {
       continue;

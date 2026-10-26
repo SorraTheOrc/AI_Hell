@@ -91,3 +91,33 @@ describe('Same-seed evaluation harness is documented (AH-0MUY08XLD009K4W4)', () 
     expect(doc).toContain('docs/BALANCING.md');
   });
 });
+
+describe('Campaign batch default and its fidelity boundary are documented (AH-0MVD1RO7D000AC4X)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('documents the campaign batch default, the --skirmish opt-out and the bounded budget (AC2)', () => {
+    expect(doc).toContain('--skirmish');
+    expect(doc).toMatch(/full shipped campaign|whole shipped campaign/);
+    expect(doc).toContain('18000');
+    expect(doc).toMatch(/finite|bounded/);
+    expect(doc).toMatch(/boss/);
+  });
+
+  it('states the campaign fidelity boundary instead of implying full parity (AC1/AC3)', () => {
+    // Modelled: the shared upgrade-choice flow. Simplified: boss/mini-boss,
+    // VFX, formations and rendering — so an EVALUATION.md reader knows what
+    // a batch report does (and does not) cover.
+    expect(doc).toMatch(/upgrade-choice/);
+    expect(doc).toMatch(/boss\/mini-boss|boss or mini-boss|mini-boss/i);
+    expect(doc).toMatch(/VFX/);
+    expect(doc).toMatch(/formation movement/);
+    expect(doc).toMatch(/rendering/);
+  });
+
+  it('is cross-linked from the README without a stale skirmish-only claim (AC3)', () => {
+    const readme = fs.readFileSync(README_PATH, 'utf8');
+    expect(readme).toMatch(/full shipped campaign/);
+    expect(readme).toMatch(/fidelity boundary/i);
+    expect(readme).not.toMatch(/skirmish-only|only a single-level skirmish/i);
+  });
+});

@@ -1165,3 +1165,51 @@ describe('GymPowerUpsCombat — shared wave-timeout (AH-0MUNR5LM1004B223)', () =
     expect(scene.getWaveTimeoutBar()?.visible).toBe(true);
   });
 });
+
+// ── Thorn Field visibility + absorb feedback (AH-0MVJ8YKR70096C6T) ─────
+
+describe('GymPowerUpsCombat — Thorn Field aura and absorb feedback (AH-0MVJ8YKR70096C6T)', () => {
+  it('draws the shared lime aura while the field is armed and clears it when spent', async () => {
+    const scene = await bootCombat();
+    const registry = scene.getEffectsRegistry();
+    scene.tick(1 / 60);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+
+    registry.applyCollect('thorns', true);
+    scene.tick(1 / 60);
+    expect(scene.isThornsAuraVisible()).toBe(true);
+
+    while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
+    scene.tick(1 / 60);
+    expect(scene.isThornsAuraVisible()).toBe(false);
+  });
+
+  it('fires the shared absorb burst and consumes a ram instead of taking the hit', async () => {
+    const scene = await bootCombat();
+    const registry = scene.getEffectsRegistry();
+    registry.applyCollect('thorns', true);
+    const charges = registry.thornsRemaining();
+    const hitsBefore = scene.getPlayerHitCount();
+
+    // Park the ship on a live scout; the thorn absorb (not the hit path)
+    // must resolve the collision.
+    const player = scene.getPlayer()!;
+    const scout = scene.getScouts().find((s) => s.alive)!;
+    // Park the ship on the scout in both the transform and the movement state
+    // (the shared player step resolves position from the state each frame).
+    player.setPosition(scout.x, scout.y);
+    const state = player.getMovementState();
+    (player as unknown as { _movementState: typeof state })._movementState = {
+      ...state,
+      x: scout.x,
+      y: scout.y,
+    };
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+
+    scene.tick(1 / 60);
+
+    expect(scene.getThornsAbsorbEffects()).toHaveLength(1);
+    expect(registry.thornsRemaining()).toBe(charges - 1);
+    expect(scene.getPlayerHitCount()).toBe(hitsBefore);
+  });
+});

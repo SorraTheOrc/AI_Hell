@@ -48,6 +48,16 @@ npm run capture -- --count 3 --output clips/demo.webm   # clips/demo-1..3.webm
 # record EVERY dev scenario in one process (one video per scenario, no demo)
 npm run capture -- --all-scenarios
 npm run capture -- --all-scenarios --output clips          # clips/<scenario>.webm
+
+# record several gym scenes into ONE video, fading between them (0.25 s each way)
+npm run capture:scenes -- --config scenes.json             # capture-output/scenes-<timestamp>.webm
+
+# investigate a long-run crash (off by default; writes <stem>.diagnostics.json)
+npm run capture -- --diagnostics --duration 420000 --output /tmp/soak.webm
+
+# compile the captured pool into a promo + showreel + highlight clips
+# (needs a full ffmpeg — see Compiling a promo package below)
+npm run compile:promo
 ```
 
 This was proven end to end on 2026-10-06: a 12 s clip recorded at
@@ -56,6 +66,12 @@ This was proven end to end on 2026-10-06: a 12 s clip recorded at
 motion**, with **zero page errors**. The clip also carries the **game's own
 SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
 [Audio capture](#audio-capture).
+
+A clip is **streamed to disk while it records** (`<stem>.partial.webm`,
+renamed to `<stem>.webm` on success), so a long run's memory does not grow
+with its length and a failed run keeps its bytes at the `.partial` path with
+one actionable message (see
+[Long-run memory budget and failure salvage](#long-run-memory-budget-and-failure-salvage)).
 
 ## Exact tooling & versions
 
@@ -102,12 +118,18 @@ SFX** (audio peak ≈ 0.44, RMS ≈ 0.08), decoded and verified in-page — see
    `--scripted` the deterministic bot plan (below) is replayed as **real
    Playwright `keyboard.down`/`keyboard.up` events** (trusted input, not
    synthesised DOM events); `--duration` keeps the legacy fixed-length clip.
-8. Stops the recorder, decodes the produced WebM back through a `<video>`
-   element and probes several sampled frames for **resolution, duration,
+8. Stops the recorder and probes the clip through a `<video>` element — the
+   **written file** when the clip is larger than the page's retained prefix,
+   otherwise the retained in-page Blob — for **resolution, duration,
    non-black fraction, colour variety and frame-to-frame motion**, then
-   decodes the audio with `decodeAudioData` for **peak and RMS**.
-9. Streams the encoded chunks to Node over an `exposeFunction` binding and
-   writes them to the output file.
+   decodes the audio with `decodeAudioData` for **peak and RMS** (see
+   [Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
+9. Streams every encoded chunk to Node over an `exposeFunction` binding and
+   writes it **straight to disk as it arrives** into `<stem>.partial.webm`
+   (see [Streaming the recording to disk](#streaming-the-recording-to-disk-bounded-chunk-sink)).
+   A successful clip renames it to `<stem>.webm`; any pipe/browser/recorder
+   failure leaves the partial in place and prints one actionable salvage
+   message (see [Failure and salvage](#failure-and-salvage-of-streamed-bytes)).
 10. Before the game boots, opts the page **into telemetry**
     (`VITE_TELEMETRY_ENABLED=true`, `VITE_TELEMETRY_SINK=jsonl` — the same
     flags `scripts/record-session.mjs` uses) so the run's per-tick
@@ -146,10 +168,14 @@ Every clip exports two artefacts alongside the WebM (basename-matched, e.g.
 The export is **additive and tolerant**: it cannot fail a clip (a failed
 write degrades to `seriesOutput: null`/`anchorOutput: null` on the result),
 and a telemetry-less or interrupted run writes a valid **header-only**
-series (AC3). The dev JSONL sink stores the run in the page's `localStorage`
-(`ai_hell_telemetry_jsonl`), so very long busy runs can hit the browser's
-storage quota — the sink then writes a *prefix* of the run and the series is
-partial (still schema-valid; see §7.3 of the action-intensity doc).
+series (AC3). The dev JSONL sink keeps the run in an **in-memory, per-run
+buffer** (`startRun()` resets it), which the dev-gated
+`window.__aiHellTelemetry.read()` accessor exposes to the capture script
+(AH-0MVIRYGD1000JVY3). Telemetry never uses `localStorage`, so a long busy
+run is captured in full — there is no storage-quota truncation, and the
+previous prefix-only series for long runs can no longer occur. The accessor
+is installed only in a dev build, so a production bundle has no telemetry
+page global at all.
 
 ## Pool inventory
 
@@ -185,6 +211,198 @@ also lists `missingFeatures`, so a gap is visible instead of being inferred.
 The lister is pure apart from a thin `node:fs` scan, and is unit-tested
 hermetically (`scripts/list-capture-pool.test.ts`) without footage, ffmpeg
 or a browser.
+
+## Compiling a promo package (`npm run compile:promo`)
+
+`npm run compile:promo` turns the captured pool into shareable material —
+a short promo, a longer showreel and individual highlight clips — by
+trimming, reordering, concatenating and muxing the source WebMs with
+`ffmpeg` (AH-0MVDV50Z20071RF4; the driver itself is
+AH-0MVDV4PNZ004ZWOZ). Nothing is hand-edited: the edit plan, the cut
+selection and the manifests all come from the recorded
+`.action.jsonl` series, so the package is reproducible from the pool.
+
+```bash
+# one-off: install a full ffmpeg (VP9 + Opus) — see Prerequisites below
+npm run compile:promo                     # plan + compile + validate
+
+# plan only (no ffmpeg required at all): writes the edit plan JSON to stdout
+node scripts/compile-promo.mjs | less
+
+# limit the pool to specific runs, or choose the output directory
+npm run capture -- --count 5              # ... capture more peaks first
+node scripts/compile-promo.mjs --runs gameplay-2026-10-23T12-28-08-402Z-3,boss-2026-10-19T16-25-05-656Z
+node scripts/compile-promo.mjs --compile --out capture-output/compile-promo.plan.json --out-dir capture-output
+
+# everything the tool accepts, with the prerequisites restated
+node scripts/compile-promo.mjs --help
+```
+
+### Prerequisites
+
+The compiler itself is pure Node (no dependencies beyond the repo) unless
+`--compile` is passed. `--compile` needs a **full `ffmpeg` install** — one
+with the **VP9 encoder (`libvpx-vp9`)** and the **Opus encoder
+(`libopus`)** — plus `ffprobe`, both on `PATH`:
+
+```bash
+sudo apt-get install ffmpeg        # Debian/Ubuntu
+brew install ffmpeg                # macOS (Homebrew)
+# static builds: https://johnvansickle.com/ffmpeg/
+```
+
+`FFMPEG_BIN` / `FFPROBE_BIN` override the resolved binaries (e.g. a static
+build in `~/.local/bin`). Playwright's bundled minimal ffmpeg is **not**
+sufficient (VP8-only, no VP9/Opus encoder).
+
+Detection is explicit and fails fast with an actionable message rather than
+an `ENOENT` stack: a missing `ffmpeg`/`ffprobe` exits non-zero and prints the
+install hints above plus `npm run compile:promo`. The output directory must
+already exist — a missing `--out-dir` is reported as such (with a `mkdir -p`
+suggestion) before any encoding starts.
+
+### Progress and output streams
+
+A full package is a few minutes of VP9 encoding, so `--compile` reports its
+progress on **stderr** — one `compile:` line for the plan summary, one per
+deliverable with its cut count and source, and one per deliverable when its
+encode finishes (`ok` or `FAIL` with the reason) — and only then prints the
+final validation summary on **stdout**:
+
+```text
+compile: plan ready: 13 promo cuts, 34 showreel cuts, 5 highlight clips → capture-output/compile-promo.plan.json
+compile: compiling 7 deliverables with /home/you/.local/bin/ffmpeg (26 sources)
+compile: [1/7] promo: 13 cuts → capture-output/promo.webm
+compile: [1/7] promo: ok — 57.9s
+compile: [2/7] showreel: 34 cuts → capture-output/showreel.webm
+...
+compile: verifying promo pace and deliverable sizing
+Compiled deliverables — all validated OK:
+...
+```
+
+Long silence between those lines is expected while `ffmpeg` encodes (a
+57 s promo is ~13 re-encoded cuts at 960×540/60 fps); watch stderr to
+confirm the run is progressing. stdout stays the machine-readable summary,
+so piping the command still yields only the report of record.
+
+### Inputs
+
+Per retained run under `capture-output/` (see
+[Action-intensity export](#action-intensity-export)):
+
+| Input | Required | Role |
+|---|---|---|
+| `<run>.webm` | yes | Source footage (960×540, VP9 + Opus, the game's own SFX). |
+| `<run>.action.jsonl` | yes | Recorded action-intensity series — drives the cut selection (§7.5 of [docs/dev/action-intensity.md](./action-intensity.md)). |
+| `<run>.capture.json` | no | Join anchor mapping series time to video time. Without it (or when flagged `approximate`) the mapping falls back to raw series time and the cut is approximate. |
+
+Runs missing the WebM or the series are excluded from the pool, and a missing
+**source** is a clear error (`missing source webm/series`); `npm run list:pool`
+lists what is usable before compiling (see [Pool inventory](#pool-inventory)).
+
+### Outputs
+
+Written into `--out-dir` (default `capture-output/`, gitignored — the
+deliverables are **never committed**):
+
+| File | Target | Notes |
+|---|---|---|
+| `promo.webm` | 45–60 s | Hook-first: opens on the strongest peak, jump-cuts across peaks. |
+| `showreel.webm` | > 2 min | Every surviving peak cut, in source-time order. |
+| `highlight-01.webm` … | 5 clips | One short clip per top-ranked peak. |
+| `compile-promo.plan.json` | — | The edit plan: the **selection manifest** and the **coverage manifest**. |
+| `compile-promo-report.json` | — | Per-deliverable validation, pace verification and target sizing. |
+
+All deliverables are encoded at the game's **native 960×540**, 60 fps,
+VP9 (`-crf 32`) + Opus 96 kb/s stereo, so they match what the game renders
+and keep the game's own SFX.
+
+### Manifests
+
+`compile-promo.plan.json` is the **selection manifest** plus the
+**coverage manifest**:
+
+```json
+{
+  "promo": [
+    {
+      "runId": "gameplay-2026-10-23T12-28-08-402Z-3",
+      "webm": "capture-output/gameplay-2026-10-23T12-28-08-402Z-3.webm",
+      "series": "capture-output/gameplay-2026-10-23T12-28-08-402Z-3.action.jsonl",
+      "videoInMs": 203017,
+      "videoOutMs": 205695,
+      "intensity": 0.852,
+      "burstiness": 0.0356,
+      "features": ["weapons", "enemies"]
+    }
+  ],
+  "coverage": [
+    {
+      "feature": "pickups",
+      "clips": [
+        { "runId": "gameplay-2026-10-23T12-52-04-638Z-5", "videoInMs": 5150, "videoOutMs": 7839 }
+      ]
+    }
+  ],
+  "uncoveredFeatures": []
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `promo` / `showreel` / `highlights` | The ordered cuts per deliverable. Each carries the **source** (`runId`, `webm`, `series`), the **mapped video timestamps** (`videoInMs`/`videoOutMs` in the source WebM timeline, already clamped to the source duration), the **motivating recorded values** (`intensity`, `burstiness`) and the `features` visible in that cut. |
+| `coverage` | The coverage manifest: for each editorial feature (`weapons`, `pickups`, `enemies`, `boss`) the source clip(s) and timestamp ranges that show it. |
+| `uncoveredFeatures` | Features with **no** footage in the pool — a visible gap, never silently omitted. |
+
+Which feature is visible in a cut is decided from the series `breakdown`
+(`playerBullets` → weapons, `drops` → pickups, `enemies` → enemies,
+`bosses` → boss), the same mapping the pool inventory uses.
+
+`compile-promo-report.json` records the compiled result:
+
+| Field | Meaning |
+|---|---|
+| `deliverables[]` | One entry per output: `name`, `output`, `ok`, `issues`, `probe` (codec, width/height, duration, audio codec/channels), `brightness`, `segments` (the same cut records as the plan, so the coverage claim can be checked **against the delivered clip**), `measuredMeanIntensity`. |
+| `pace` | The promo's pace verdict: `ok`, `issues`, `band` and `measured` (`openingNonBlackRatio`, `nonBlackRatio`, `meanIntensity`). Band and calibration: [docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo). |
+| `targets` | The deliverable sizing verdict: measured promo/showreel lengths and highlight count against the targets, with per-target issues. |
+| `errors` | Every blocking issue, so a failed run is diagnosable from the report alone. |
+
+### Validation
+
+Every output is validated before the run is reported as successful
+(`npm run compile:promo` exits non-zero if anything fails):
+
+- **decodable** — `ffprobe` returns usable streams;
+- **correct resolution** — 960×540 video;
+- **audio present** — an Opus track (the game's SFX);
+- **non-trivial pixels** — sampled luma (`signalstats` `YAVG`) shows the frame
+  is not blank, using the calibrated screen-render floor documented in
+  [docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo);
+- **pace** — the promo opens with action (first 5 s) and its cuts are
+  peak-sourced (mean recorded intensity), against the same documented band;
+- **target sizing** — the delivered promo/showreel lengths and highlight
+  count meet the targets above, so a thin pool fails loudly instead of
+  shipping a 5 s showreel.
+
+The per-cut intensities and features are printed in the report, and the
+summary line names the measured duration, resolution, audio, cut count, mean
+intensity, pace verdict and target verdict — so a package can be reviewed
+without opening the manifests.
+
+### Practical notes
+
+- **Capture peaks, not just footage.** Only runs whose series contains §7.5
+  peaks contribute cuts; a full demo run is **minutes** of wall clock and
+  yields a handful of peak windows, so a 2-minute showreel needs a pool of
+  many runs. `npm run list:pool` shows which runs carry peaks before a long
+  compile.
+- **Wall clock.** Encoding is the slow step (VP9 at 60 fps): a 13-cut promo
+  plus a 34-cut showreel and 5 clips takes roughly **10 minutes** on the
+  reference host.
+- **Deliverables are gitignored.** `capture-output/` never enters the
+  repository; only the scripts, tests and documentation are committed.
+  Keep the produced files wherever you want to publish them.
 
 ## Dev scenarios (`--scenario`)
 
@@ -380,6 +598,282 @@ not yet fully deterministic). A **defeat** run is typically much shorter. The
 no frame-exact reproducibility yet (see
 [Determinism gaps](#determinism-gaps)).
 
+**Wall clock and disk are the only costs that grow with the run — memory is
+not.** The recording streams to disk as it is produced (one chunk at a time)
+and the page retains only a bounded prefix, so node and page memory are
+**capped per component, not per duration** (see
+[Streaming the recording to disk](#streaming-the-recording-to-disk-bounded-chunk-sink)
+and the budget table in
+[Long-run memory budget](#long-run-memory-budget-and-failure-salvage)). The
+measured budget on a 420 s `--diagnostics` soak (run-end telemetry capped;
+provenance in the table) was:
+
+- **Node process:** peak RSS **~411 MiB** on a 420 s clip — under the
+  documented < 512 MiB target — with the recorder buffer contributing at most
+  one chunk (max observed **253 KiB**) because each chunk is decoded, written
+  and dropped in the same call.
+- **Page side:** the page retains at most **32 MiB** of recorded Blob data
+  (the probe's prefix budget), so the renderer's share of the recording never
+  grows with `--max-duration`; heap used at clip end was **~95 MiB** (of ~148
+  MiB total) on the same soak.
+- **Disk:** a 420 s clip is **~37.8 MB** of WebM (VP9 + Opus, ≈8 Mbps). A
+  **failed** clip keeps whatever had streamed at `<stem>.partial.webm` — see
+  [Failure and salvage of streamed bytes](#failure-and-salvage-of-streamed-bytes).
+
+To measure your own host, add `--diagnostics` (see
+[Diagnostics](#diagnostics---diagnostics)); the same soak parameters as the
+budget table are in that section.
+
+### Streaming the recording to disk (bounded chunk sink)
+
+Both capture paths (`--count`, `--all-scenarios` and `capture:scenes`) stream
+every recorder chunk **straight to disk** through
+`scripts/capture-chunk-sink.mjs` (AH-0MVNT26AQ005LDNS). Each base64 chunk is
+decoded, appended and dropped in the same call, so node peak memory is O(one
+chunk) rather than O(run duration): a 30-minute clip (≈1.8 GB at 8 Mbps)
+never has to fit in the heap, and the whole-run `Buffer.concat` is gone.
+
+- **Write target.** The bytes are appended to the documented partial path
+  `<stem>.partial.webm` (e.g. `gameplay-<timestamp>.webm` is written to
+  `gameplay-<timestamp>.partial.webm`). Only a **successful** clip renames it
+  to `<stem>.webm`; a failed clip leaves the partial file in place, which is
+  the seam the salvage work (AH-0MVNT29MC008BQPY) builds on.
+- **Memory bound.** The sink reports `bytesWritten`, `chunkCount` and
+  `peakPendingBytes`; `peakPendingBytes` never exceeds a single chunk and
+  nothing is retained between writes. A chunk larger than the cap is refused
+  with an actionable error (`CAPTURE_CHUNK_TOO_LARGE`) **before** it is
+  decoded; the page-side guard below slices payloads first
+  (AH-0MVNT27XR0080I3C), so in normal operation the sink never sees an
+  oversized chunk.
+- **Oversized payload guard (page side).** A stalled or retried recorder can
+  emit one `dataavailable` Blob far above the normal ~1 MiB cadence. The
+  page-side retention controller (`scripts/capture-recorder-page.mjs`) is
+  installed with the same cap and, when a chunk exceeds it, slices the Blob
+  into pieces at or below `MAX_CAPTURE_CHUNK_BYTES` and makes **one
+  `__aiHellCaptureChunk` binding call per slice** — the concatenation order
+  and total bytes are unchanged, but no single CDP message ever carries an
+  oversized base64 payload (the message class that overflows
+  `PipeTransport._dispatch`). A payload that cannot be split (no `slice()`,
+  a produced slice itself above the cap, or an unusable recorder state) is
+  rejected **before** it reaches the pipe with one actionable error naming the
+  payload size, the cap and the recorder state (audio track count, mime type,
+  elapsed recording ms); the clip then fails with that message instead of an
+  `ERR_STRING_TOO_LONG` stack, and the bytes already streamed stay at
+  `<stem>.partial.webm`.
+- **Shared limits.** Both capture limits are declared once, next to
+  `DEFAULT_MAX_CAPTURE_DURATION_MS` in `scripts/capture-run-lifecycle.mjs`,
+  and imported rather than re-declared:
+  - `MAX_CAPTURE_CHUNK_BYTES` (**16 MiB**) — the single-chunk cap, ~16x a
+    normal 1 MiB/s chunk and far below the ≈512 MiB CDP pipe ceiling that
+    overflows with `ERR_STRING_TOO_LONG`. It is the per-slice cap for the
+    page-side guard and the backstop the sink enforces.
+  - `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (**32 MiB**) — the bounded prefix the
+    page-side retention and the streamed probe measure from (≈32 s of 8 Mbps
+    footage).
+- **One recording pipeline for both paths.** The chunk sink, the page-side
+  guard install and the probe source are obtained from a single shared helper,
+  `scripts/capture-recording-pipeline.mjs` (AH-0MVNT2AFI00639N3). Both the
+  single/batch clip path and `capture:scenes` construct it once per clip, so a
+  change to the recording plumbing cannot drift into two divergent copies; the
+  `capture-gameplay.test.ts` duplication guard fails the suite if a second
+  `__aiHellCaptureChunk` binding, a second decode/append call or an in-memory
+  `Buffer.concat` of recorder chunks reappears.
+
+`scripts/capture-chunk-sink.test.ts` proves the bound hermetically: it drives
+the sink with simulated chunks whose cumulative total exceeds the 512 MiB CDP
+pipe budget, writing to a temp file (so the bound is tested without a
+30-minute soak), and asserts on-disk bytes equal the sum of the chunk sizes,
+`peakPendingBytes` stays at one chunk, nothing is retained, and repeated runs
+in fresh directories are byte-identical.
+
+### Probing long clips from the streamed file
+
+The end-of-clip probe used to hand the recording to the page as one
+`new Blob(chunks)`: for a 30-minute clip that materialises the recording in
+the renderer again. The probe therefore picks its source by the clip's
+**final streamed size** (`scripts/capture-probe.mjs`, AH-0MVNT28SJ008ZHDB):
+
+- **At or below the in-page threshold** (≤ `CAPTURE_PROBE_STREAM_THRESHOLD_BYTES`
+  = `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` = **32 MiB**) the clip fits entirely
+  in the page's retained prefix and keeps the **byte-identical in-page Blob
+  probe** — same verdict fields, same `durationSeconds`/fraction/colour/motion
+  values, whole-recording audio decode.
+- **Above the threshold** the page could only hold a truncated prefix, so the
+  probe reads the **written file back over the capture dev server's HTTP URL**
+  (the Vite server serves the repo root; `capture-output/` lives under it, and
+  the server answers byte-range requests for the `<video>` element). The
+  clip is probed at its `.partial` path **before** the success rename.
+  Audio peak/RMS are measured from a **bounded prefix** of the file
+  (`CAPTURE_PROBE_AUDIO_PREFIX_BYTES`, also 32 MiB — the same budget the
+  page retention keeps), so the renderer never holds the whole recording.
+
+The probe contract is unchanged on both paths (`durationSeconds`,
+`videoWidth`/`videoHeight`, `nonBlackFraction`, colour variety, `motion`,
+`audioPeak`, `audioRms`, `audioDecodeError`, `audioTrackCount`, the
+`sampleProbes` the multi-scene fade verification runs on). The streamed path
+additionally reports its measurement bounds additively:
+`audioProbeBytes` (bytes the peak/RMS came from) and `audioProbeCapped`
+(`true` when the decode was capped to the prefix). A capped or failed decode
+is reported through those fields and/or `audioDecodeError` — never silently
+passed. Each clip result also carries an additive `probeSource`
+(`'stream' | 'in-page'`) and `probeSourceReason`, so a soak run can confirm
+which source produced the verdicts. A clip too large for the page but whose
+file cannot be served (e.g. `--output` outside the repo) falls back to the
+in-page prefix probe and reports why, instead of failing or widening into a
+new dependency.
+
+### Long-run memory budget and failure salvage
+
+These are the documented budgets for a long capture, and where each number
+came from. They are **overflow defences**, not tuning knobs: every cap exists
+because crossing it risks a corrupted clip or a dead process, so the fix for a
+threshold being hit is to find out why the recorder or the telemetry upload
+grew — not to raise the number.
+
+| Component | Documented bound | Measured on a 420 s `--diagnostics` soak |
+|---|---|---|
+| Node process memory | peak RSS **< 512 MiB** (the reported failure crossed 512 MiB) | **411 MiB** peak (`process.memoryUsage().rss`), 346 MiB at clip end |
+| Node recorder buffer | **O(one chunk)** — decoded, written and dropped per chunk | 401 chunks, **max 253 KiB** (base64 payload total 48.1 MiB) |
+| Page-side retained Blobs | `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` = **32 MiB** prefix | heap used **95 MiB** / total **148 MiB** at clip end, backing 73 MiB |
+| Single recorder chunk | `MAX_CAPTURE_CHUNK_BYTES` = **16 MiB** (page slices above it) | max 253 KiB — ~0.05 % of V8's 512 MiB string limit |
+| Single CDP message | run-end telemetry upload capped at **8 MiB** | **4.63 MiB** largest message, `transport.overflow` empty |
+| Clip on disk | one WebM per clip, ≈8 Mbps | **37.8 MB** for 420 s |
+
+Provenance: the soak was a fixed-length 420 s clip (`--duration 420000`)
+recorded with `--diagnostics` on the committed fix; the raw artefact is the
+run's `<stem>.diagnostics.json` (per-chunk size timeline, RSS samples, page
+heap, transport tap). The pre-fix comparison comes from the diagnosis runs
+recorded in AH-0MVNT25JI004OVKQ — a 226 s full run peaked at **531 MiB RSS**
+with a single **59.5 MiB** CDP message (the run-end telemetry upload) and a
+420 s clip at **416 MiB RSS** with a **14.7 MB** message — i.e. node RSS and
+page heap both tracked run length and telemetry density, which is exactly what
+the streaming sink, the 32 MiB prefix budget and the upload cap remove. The
+long-run (30-minute) confirmation is a separate manual soak, not a CI test
+(see [Estimated CI cost](#estimated-ci-cost)).
+
+To reproduce: `npm run capture -- --diagnostics --duration 420000 --output
+/tmp/soak.webm`, then read `transport.maxMessageBytes`, `node.peakRssBytes`,
+`page.heapUsedBytes` and `chunks.maxBytes` from `/tmp/soak.diagnostics.json`.
+
+### Failure and salvage of streamed bytes
+
+Because the recording is on disk from the first chunk, a capture that dies
+mid-run (the reported `ERR_STRING_TOO_LONG` CDP transport crash, a closed
+page, a dead recorder) no longer loses the whole run:
+
+1. **The bytes already streamed stay.** Everything written so far is already
+   at the documented partial path `<stem>.partial.webm` (e.g.
+   `capture-output/gameplay-<timestamp>.partial.webm`) and the sink only
+   **renames** a partial into `<stem>.webm` after a successful clip. A failure
+   never renames, never deletes and never truncates, so the partial is left in
+   place for you to inspect or salvage with any WebM-capable player or tool.
+   A previous good clip with the same stem is never clobbered by a failure.
+2. **Exactly one actionable message is printed first,** before the report, the
+   `--json` payload or any raw stack. It names what failed, how many bytes
+   were salvaged, the `.partial.webm` path and the next action:
+
+   ```text
+   Capture failed (Target page, context or browser has been closed): salvaged
+   18734210 B (17.9 MiB) of streamed video at
+   capture-output/gameplay-2026-10-25T12-00-00-000Z.partial.webm. Next: re-run
+   the capture to record a fresh clip; the partial file keeps the streamed
+   bytes and is not a finished clip.
+   ```
+
+   When the failure precedes the first chunk there is nothing to salvage: the
+   message says so and **no** empty partial file is created.
+3. **The CLI exits non-zero** and the failure is attributed in the machine
+   output. A failed batch iteration / `--json` record gains **additive**
+   `salvagedBytes`, `partialPath` and `salvageMessage` fields — the success
+   shape, the probe verdicts and the exit codes are unchanged, and the
+   `.action.jsonl` / `.capture.json` sidecars belong to successful clips only
+   (a failed clip writes none).
+
+A salvaged partial is **not** a finished clip: it was never probed, has no
+sidecars, and its last GOP may be incomplete, so it can lose a fraction of a
+second at the tail. Treat it as recoverable footage, not as a capture result.
+The salvage seam lives in `scripts/capture-salvage.mjs`
+(AH-0MVNT29MC008BQPY).
+
+### Run-end telemetry upload cap
+
+A capture leaves the page's dev telemetry upload **on** (the action-intensity
+series and join anchor are read from the same in-memory buffer), so at run end
+the page POSTs the whole run's telemetry to `POST /api/telemetry/upload`. That
+body is reported by Playwright as `request.postData` inside a **single**
+`Network.requestWillBeSent` CDP message, so its size is the size of one
+page→node message and grows with the run — which is what killed long captures
+with `ERR_STRING_TOO_LONG` (diagnosed in AH-0MVNT25JI004OVKQ, fixed in
+AH-0MVNVGP55002G0KH).
+
+The uploader therefore applies a **client-side cap** before `fetch`:
+`DEFAULT_MAX_DEV_UPLOAD_MESSAGE_BYTES` = **8 MiB**
+(`src/telemetry/devUpload.ts`). A run whose upload message would exceed the cap
+is **not uploaded** — it is skipped with one actionable line in the page
+console — while the capture artefacts are unaffected: `.action.jsonl` /
+`.capture.json` are read from the page's in-memory buffer, not from the upload.
+`VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES` configures the cap (positive integer
+bytes, clamped to the server's 16 MiB bound), e.g.
+`VITE_TELEMETRY_MAX_UPLOAD_MESSAGE_BYTES=4194304 npm run capture`.
+
+The cap is metered on the **message**, not the raw telemetry: the body reaches
+Playwright as an escaped JSON string inside the CDP message, so real NDJSON
+inflates by ~2.4× (a 4.0 MiB body produced a **9.7 MiB** message). An 8 MiB cap
+therefore allows roughly 3 MiB of telemetry per upload — a normal demo run
+(0.67 MiB) still uploads, while a 420 s capture's 4.0 MiB run is skipped rather
+than shipped as one oversized message.
+
+To confirm the bound on a real long run, add `--diagnostics` and check
+`transport.maxMessageBytes` in `<stem>.diagnostics.json`. The same
+run-length-proportional message class existed when the capture reads the buffer
+back for the series export, so that read is **chunked** too
+(`readDevTelemetryBufferInChunks`, ≤ `TELEMETRY_READ_CHUNK_CHARS` = 2 Mi chars
+per slice) — no single page→node message on the capture path grows with the
+run. Measured on a 420 s `--diagnostics` soak (AH-0MVNVGP55002G0KH):
+`transport.maxMessageBytes` fell from **37.9 MiB** pre-fix (the run-end
+upload delivered as one message) to **4.63 MiB** post-fix — the largest
+message left on the path is a single chunked telemetry read, comfortably under
+the 8 MiB cap — with `transport.overflow` empty and no transport error.
+
+### Diagnostics (`--diagnostics`)
+
+`--diagnostics` is an **off-by-default** investigation mode for the long-run
+crash where Playwright's CDP pipe transport (`pipeTransport._dispatch`) throws
+`ERR_STRING_TOO_LONG` (AH-0MVNT25JI004OVKQ). It exists so a fix targets the
+*observed* overflowing message instead of a speculative buffer increase.
+
+```bash
+# a diagnostic soak: fixed 7-minute clip, diagnostics artefacts next to it
+npm run capture -- --diagnostics --duration 420000 --output /tmp/soak.webm
+```
+
+While enabled it records:
+
+- the **base64 payload size handed to the CDP binding** for every recorder
+  chunk, with a size-only timeline, and summarises count / max / p50 / p95; the
+  cumulative total is reported as a fraction of V8's 512 MiB string limit (the
+  ceiling the transport's `Buffer#toString` hits when it accumulates
+  undelimited JSON);
+- node **peak `process.memoryUsage().rss`**, sampled at the existing progress
+  heartbeat cadence;
+- the **page-side heap** at clip end (CDP `Runtime.getHeapUsage`, falling back
+  to `performance.memory`) plus the bytes written to disk and the chunk count;
+- a tap on the **CDP pipe transport itself**: the pending (undelimited) byte
+  count per data event and, on overflow, the accumulated buffer count, bytes,
+  a sanitised prefix and the JSON `method` / binding `name` — i.e. the class of
+  the overflowing message.
+
+The results are written next to the clip as **`<stem>.diagnostics.json`** (so
+`gameplay-<timestamp>-5.webm` gets `gameplay-<timestamp>-5.diagnostics.json`).
+The write is additive: a read-only output directory is reported as a warning
+and never fails the clip. On an actual transport overflow the process is about
+to die, so the same summary is written synchronously from the tap's overflow
+hook before the error propagates. The heartbeat also gains a `diag …` suffix
+(chunks, max, cumulative bytes, RSS, pending bytes) while enabled.
+
+A run **without** `--diagnostics` prints the same output, writes the same
+artefacts and returns the same `--json` shape as before.
+
 ## Batch capture (`--count` / `-n`)
 
 `--count <n>` (alias `-n`) records **`n` clips in a single process**
@@ -534,6 +1028,355 @@ parsing paths.
 - The aggregate summary prints every item and the process exits **non-zero**
   if any scenario failed or hit the `--max-duration` cap; a single-scenario
   failure does not abort the remaining scenarios (AC6).
+
+## Multi-scene capture (`capture:scenes`)
+
+`npm run capture:scenes` records **several gym scenes in config order** and
+compiles them into **one** WebM, with a **fade to black and back (0.25 s each
+way)** between consecutive scenes (feature AH-0MUX2NLFZ00128WC, driver
+AH-0MVFC70GT000B96J). One Vite dev server, one browser, **one page and one
+continuously running `MediaRecorder`** span every scene; the transitions are
+drawn page-side, so the recorder captures them and no relaunch is needed.
+
+```bash
+# one-time (if not already done)
+npm install
+npm run capture:install
+
+# compile the scenes listed in scenes.json into one WebM
+npm run capture:scenes -- --config scenes.json
+npm run capture:scenes -- --config scenes.json --output clips/showcase.webm
+
+# equivalent through the main capture command (`--scenes` is the older alias)
+npm run capture -- --config scenes.json
+```
+
+### Config schema
+
+A scene list is a JSON object with a non-empty `scenes` array; entries keep
+the file order and the list may be any length (at least one scene):
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `target` | string | yes | a **watchable gym scene key** (see below) |
+| `playMs` | positive integer | yes | warm-up play window for this scene |
+| `captureMs` | positive integer | yes | recorded capture window for this scene |
+| `label` | string | no | one-line note for your own reference (not written into the video) |
+
+```json
+{
+  "scenes": [
+    { "target": "GymPlayer", "playMs": 2000, "captureMs": 3000, "label": "player control" },
+    { "target": "GymWeapons", "playMs": 1500, "captureMs": 2500, "label": "weapons" },
+    { "target": "GymBoss", "playMs": 3000, "captureMs": 4000 }
+  ]
+}
+```
+
+#### Scene setups (`setup`)
+
+An entry may carry an optional `setup` object that configures the scene's
+**content** — the level and starting wave, the formation enemy, the player
+loadout, power-up levels and a determinism seed. Absent `setup`, the scene
+starts exactly as it does interactively (unchanged behaviour). Present, the
+setup is validated before boot and forwarded to the scene as its launch data.
+
+| Field | Type | Applies to | Default | Meaning |
+|---|---|---|---|---|
+| `level` | object | `GymLevel`, `GymBotTuning` | — | a `LevelDefinition`-shaped level (see below) |
+| `startWave` | positive integer | `GymLevel`, `GymBotTuning` | `1` | 1-based wave to start at (clamped to the level) |
+| `enemy` | enemy key | `GymFodderEnemies` | — | the formation enemy key (required for that target) |
+| `player` | object | all setup-capable gyms | see below | the player loadout (`player.weapons` / `player.timedWeapons`) |
+| `player.weapons` | weapon id array | all setup-capable gyms | `["spread", "dual"]` | permanent weapons for the run |
+| `player.timedWeapons` | weapon id array | all setup-capable gyms | `[]` | weapons granted with the timed countdown |
+| `powerUps` | `{ id: level }` | all setup-capable gyms | `{}` | power-up id → permanent level |
+| `seed` | uint32 | all setup-capable gyms | `0` | determinism seed for content RNGs |
+
+`level` is a `LevelDefinition`-shaped object: `{ level, name, waves[] }` where
+`level` is `1`–`LEVEL_COUNT`, `name` is a non-empty string, and each wave is
+`{ groups[], shootEnabled, ghosts?, centipede?, horde?, laneTraffic?, miniBoss? }`
+with groups of `{ enemyKey, formation, count, spacingX, spacingY, startX,
+startY, startXMin?, startXMax?, startYMin?, startYMax? }`. **Group counts are
+base counts**: the shared `applyEnemyCountScaling` grows them for the level, so
+the spawned count can exceed the configured `count` (the authored config is
+never mutated).
+
+`GymLevel`/`GymBotTuning` and `GymFodderEnemies` were previously rejected as
+parameterised; supplying the required parameter (`level` / `enemy`) makes them
+capturable. `GymCurveSequencer` is an editor and cannot consume a `setup` at
+all. Formation gyms accept the loadout/power-up/seed fields; their enemy roster
+stays fixed by the scene config (only `GymFodderEnemies` selects its roster
+from a setup).
+
+**Determinism.** A `seed` seeds the scene's content RNGs (mineral field, drop
+cadence and random picks), so the same `scenes.json` reproduces the same
+content. It is content-level, not frame-level: frame timing, audio and bot
+micro-jitter are not byte-identical, so clips are re-recordable but not
+byte-reproducible. The resolved seed is reported per scene in the `--json`
+payload.
+
+```json
+{
+  "scenes": [
+    {
+      "target": "GymLevel",
+      "playMs": 2000,
+      "captureMs": 5000,
+      "label": "level 4, wave 2, rapid + shield 2",
+      "setup": {
+        "level": {
+          "level": 4,
+          "name": "The Core",
+          "waves": [
+            {
+              "groups": [
+                { "enemyKey": "scout", "formation": "v", "count": 6, "spacingX": 26, "spacingY": 22, "startX": 240, "startY": 270 }
+              ],
+              "shootEnabled": true
+            }
+          ]
+        },
+        "startWave": 1,
+        "player": { "weapons": ["rapid"], "timedWeapons": [] },
+        "powerUps": { "shield": 2 },
+        "seed": 42
+      }
+    },
+    {
+      "target": "GymFodderEnemies",
+      "playMs": 1500,
+      "captureMs": 2500,
+      "setup": { "enemy": "grunt", "player": { "weapons": ["spread"] }, "seed": 7 }
+    }
+  ]
+}
+```
+
+#### Generated-level scenes (`PlayScene`)
+
+An entry may target the **shipped game** (`target: "PlayScene"`) instead of a
+dev gym, so a clip shows real, procedurally generated campaign gameplay. A
+`PlayScene` run is started **in-place** in the same page (no navigation, so the
+single `MediaRecorder` keeps rolling) as a fresh **demo (bot-driven)** run
+flying the persisted bot-tuning configuration, seeded from the entry's `seed`.
+
+| Field | Type | Required | Default | Meaning |
+|---|---|---|---|---|
+| `target` | `"PlayScene"` | yes | — | the shipped gameplay scene |
+| `playMs` | positive integer | yes | — | warm-up play window |
+| `captureMs` | positive integer | yes | — | nominal recorded capture window |
+| `seed` | uint32 | no | a fresh random seed | determinism seed for the run |
+| `level` | integer `1`–`LEVEL_COUNT` | no | `1` | campaign level to start at |
+| `minWaves` | positive integer | no | `2` | waves that must start before the window may end |
+| `maxCaptureMs` | positive integer | no | `3 × captureMs` | hard cap so a stalled run cannot hang |
+
+Levels are **not** fixed-length, so the capture window is multi-wave-aware:
+it runs for at least `captureMs`, extends until `minWaves` regular waves have
+started, is hard-capped by `maxCaptureMs`, and ends early (reporting
+`endedEarly: true`) if the run ends first. A truncated segment is **not** a
+capture failure. Generated-level and gym scenes may be mixed in one config.
+
+`level` and `seed` are also dev-gated at the game seam: `PlayScene` honours a
+`startLevel` start value only in dev builds (a production build always starts
+at level 1), and the live run position is published to the dev-only
+`window.__aiHellRunProgress` handle the driver polls. These `seed` / `level` /
+`minWaves` / `maxCaptureMs` fields are **siblings** of `playMs`/`captureMs`
+(they are generated-level-only; supplying them on a gym target is rejected
+with `unsupported-scene-field`, and gym configuration belongs in `setup`).
+
+```json
+{
+  "scenes": [
+    {
+      "target": "PlayScene",
+      "playMs": 2000,
+      "captureMs": 8000,
+      "level": 4,
+      "seed": 42,
+      "minWaves": 3,
+      "label": "generated level 4, three waves"
+    },
+    { "target": "GymBoss", "playMs": 3000, "captureMs": 4000, "label": "boss" }
+  ]
+}
+```
+
+Each generated-level scene in the `--json` payload additionally reports
+`seed`, `level`, `wavesCaptured` and `endedEarly` alongside its timings.
+
+#### Watchable gym scenes
+
+`target` must be one of the dev gym scenes discovered under `src/scenes/gym/`
+(`Gym<Name>`), minus the two **parameterised** scenes that cannot start
+without a caller-supplied parameter:
+
+`GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymMinerals`,
+`GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`, `GymPowerUpsCombat`,
+`GymPowerUpsUtility`, `GymWeaponLeveling`, `GymWeapons`.
+
+`GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
+setup) are **rejected** with `unsupported-target` when no setup is supplied;
+give them a valid `setup` and they become capturable. The registry
+(`WATCHABLE_GYM_SCENE_KEYS` in `scripts/capture-scenes.mjs`) is the **single
+source of truth** shared by the CLI's pre-boot validation and the page-side
+director's `start(key)` guard, and is pinned against the gym files on disk by
+`scripts/capture-scenes.test.ts` — adding or removing a gym scene without
+updating it fails the suite instead of silently drifting.
+
+### Validation (before anything boots)
+
+The config is read and validated **before any Vite server or browser starts**.
+A bad config fails fast, prints `Scene config error: <actionable message>` to
+stderr and exits **1** — it never records a partial or blank video:
+
+| Error code | Cause |
+|---|---|
+| `missing-file` / `unreadable-file` | the path does not exist / cannot be read |
+| `malformed-json` | the file is not valid JSON |
+| `invalid-config` | the JSON is not an object with a `scenes` list |
+| `empty-scenes` | `scenes` is empty |
+| `invalid-target` | `target` is missing or not a non-empty string |
+| `unknown-target` | `target` is not a discovered gym scene key |
+| `unsupported-target` | `target` is one of the parameterised gym scenes |
+| `invalid-duration` | `playMs`/`captureMs` is not a positive integer (mirrors `--count`) |
+| `unknown-setup-field` | a `setup` field that does not exist |
+| `invalid-setup-type` | a `setup` field has the wrong type or shape |
+| `unknown-enemy-key` | an unknown `enemy` / group `enemyKey` |
+| `unknown-formation-kind` | an unknown group `formation` |
+| `unknown-weapon-id` | an unknown weapon id in `player` |
+| `unknown-power-up-id` | an unknown `powerUps` key |
+| `invalid-level-index` | `level.level` is not an integer `1`–`LEVEL_COUNT` |
+| `invalid-wave-index` | `startWave` is not a valid 1-based wave index |
+| `missing-setup-parameter` | a parameterised target's setup omits `level`/`enemy` |
+| `setup-not-supported` | a `setup` (or a field it cannot consume) on a target that cannot accept it |
+| `invalid-seed` | `seed` is not a 32-bit unsigned integer |
+| `invalid-scene-level` | a generated-level `level` is not an integer `1`–`LEVEL_COUNT` |
+| `invalid-scene-field` | a generated-level `minWaves`/`maxCaptureMs` is not a positive integer |
+| `unsupported-scene-field` | a generated-level-only field (`seed`/`level`/`minWaves`/`maxCaptureMs`) is supplied on a gym target |
+
+### Fades and timing
+
+Between consecutive scenes the page-side overlay **fades to black over
+`SCENE_FADE_MS` (250 ms)**, the next scene is started **behind the black**, and
+the overlay **fades from black over another 250 ms** — a 500 ms transition.
+The recorded timeline is therefore:
+
+```text
+scene i window :  [startMs, endMs]  = playMs + captureMs
+next startMs   :  endMs + 2 * 250 ms
+totalMs        :  last endMs
+```
+
+`startMs`/`endMs` are the **planned** offsets in the output timeline, i.e.
+exactly what a `--json` consumer (or an editor) needs to locate each scene.
+The fade probe does not trust them alone: the driver records each scene's
+actual wall-clock start and probes the measured transition windows, so a short
+pre-roll or page round-trip jitter cannot desynchronise the verification.
+After recording it probes a frame at each scene midpoint and several frames
+across every transition window; a transition that never darkens the picture,
+or a fade with no measurable contrast, **fails the capture** rather than
+reporting a fade-less clip as OK (thresholds `SCENE_FADE_DARK_LUMA` /
+`SCENE_FADE_CONTRAST_LUMA` in `scripts/capture-scenes.mjs`).
+
+### Output
+
+A multi-scene capture writes exactly **one** WebM:
+
+| Invocation | Output file |
+|---|---|
+| `npm run capture:scenes -- --config scenes.json` | `capture-output/scenes-<ISO-timestamp>.webm` (git-ignored) |
+| `… --config scenes.json --output clips/showcase.webm` | `clips/showcase.webm` (a relative path resolves against the cwd — the package root under `npm run`; missing parent directories are created) |
+
+The video is **960×540** with the game's own SFX, preferring
+`video/webm;codecs=vp9,opus` and falling back per the shared
+`resolveCaptureMimeType` order (VP8+Opus, then plain WebM). The scene list is
+one output file recorded on one page, so `--count`/`--all-scenarios` do not
+apply to it.
+
+### `--json` shape
+
+`--json` prints the scene payload (the required fields) plus the shared probe
+fields (e.g. `output`, `bytes`, `nonTrivial`, `fadeVerified`, `fadeReasons`,
+`outputDurationMs`, `pageErrors`):
+
+```json
+{
+  "outputPath": "capture-output/scenes-2026-10-24T20-00-00-000Z.webm",
+  "sceneCount": 3,
+  "fadeMs": 250,
+  "totalMs": 17000,
+  "scenes": [
+    { "target": "GymPlayer", "playMs": 2000, "captureMs": 3000, "startMs": 0, "endMs": 5000 },
+    { "target": "GymWeapons", "playMs": 1500, "captureMs": 2500, "startMs": 5500, "endMs": 9500 },
+    { "target": "GymBoss", "playMs": 3000, "captureMs": 4000, "startMs": 10000, "endMs": 17000 }
+  ],
+  "output": "…/capture-output/scenes-2026-10-24T20-00-00-000Z.webm",
+  "nonTrivial": true,
+  "durationMs": 17000,
+  "outputDurationMs": 17020,
+  "fadeVerified": true,
+  "fadeReasons": []
+}
+```
+
+`durationMs` is the planned timeline; `outputDurationMs` is the decoded length
+of the written WebM (they differ by a few tens of milliseconds of encoder
+padding). `nonTrivial` is true only when **both** the shared video+audio
+verdict **and** the fade verification pass. The process exits `0` on success
+and `1` for an invalid config or a failed video/audio/fade verdict.
+
+### How it works
+
+The dedicated path reuses the existing capture session machinery rather than
+duplicating it:
+
+1. Read and validate the scene list (above), then boot one Vite dev server and
+   one headless Chromium browser.
+2. Load the game, press **Enter** (a trusted gesture that resumes the shared
+   `AudioContext`), and wait out `--warmup`.
+3. Install the audio tap, resolve the mime, and install the page-side
+   **composite overlay** canvas that mirrors the game canvas (plus a black fade
+   layer).
+4. Start **one** `MediaRecorder` on the composite canvas, then drive the scene
+   sequence: for each scene call the director's `start(key)`, wait `playMs`
+   then `captureMs`; between scenes fade to black, start the next scene behind
+   the black, and fade from black.
+5. Stop the recorder once, probe the decoded WebM (video, audio and the fade
+   windows), write the single output file and print the report / `--json`
+   payload.
+
+The page-side director is registered **at boot in dev builds only**
+(`import.meta.env.DEV`, mirroring `window.__aiHellScenario`); Vite folds the
+flag to `false` in a production build, so the registration body is
+dead-code-eliminated and `npm run check-bundle` stays green. `start(key)`
+switches scenes **in-page** through the Phaser scene manager — no navigation
+or reload, so the single recorder survives — and throws a typed
+`SceneConfigError` for an unknown, blank or parameterised key rather than
+recording a blank scene. Targets are **dev gym scenes**, not generated
+shipped-game levels.
+
+#### Exactly one scene runs and it is the visible one
+
+`start(key)` guarantees that after any switch **exactly one scene is running
+and it is the requested scene**, independent of Phaser's registration order
+and of whatever was running before (AH-0MVNWJ5FH006QD8V). It stops **every
+active scene other than the target** and then brings the target to the top.
+This matters because Phaser's `SceneManager.start(key)` only shuts down and
+restarts the **target** scene, while its renderer draws every running scene
+in **registration** order:
+
+- the **very first** switch already has a scene running — the capture pipeline
+  presses Enter to satisfy the autoplay policy, which starts `PlayScene` — so
+  without the stop it would be recorded underneath the first gym scene;
+- a boot-registered `PlayScene` renders **above** a lazily-added gym scene, so
+  later gym → level switches would record the wrong scene;
+- every previous capture scene would keep updating (CPU, timers, spawners and
+  in-flight SFX on the shared `AudioContext`) for the rest of the recording.
+
+Scenes are stopped, not slept, so re-requesting a scene records a **fresh**
+run rather than resuming a half-finished one. This is a capture-only
+behaviour: gameplay, scene registration order and the shipped bundle are
+unchanged.
 
 ## Progress output & dependency preflight
 
@@ -766,14 +1609,18 @@ separately.
 
 ### No MP4 output (ffmpeg)
 
-There is **no `ffmpeg` on `PATH`**, and Playwright's bundled ffmpeg is a
-minimal build (VP8 only, no VP9/H.264 encoder), so it **cannot** transcode the
-VP9 WebM to MP4 or extract frames. Output is therefore **WebM only**. An MP4
-export needs a full ffmpeg install; if added, post-process *after* capture
-(e.g. `ffmpeg -i gameplay.webm -c:v libx264 gameplay.mp4`) rather than
-changing the capture path. The audio tap deliberately needs **no full
-`ffmpeg`**: the game's Opus track is muxed in-browser by `MediaRecorder` and
-the bundled minimal ffmpeg is never invoked.
+Capture writes **WebM only**. Playwright's bundled ffmpeg is a minimal build
+(VP8 only, no VP9/H.264 encoder), so it cannot transcode VP9 or extract
+frames, and the capture path never invokes a system ffmpeg. The **audio tap**
+deliberately needs no full `ffmpeg`: the game's Opus track is muxed in-browser
+by `MediaRecorder`.
+
+A full `ffmpeg` is required only by the **promo compiler**
+(`npm run compile:promo`, see
+[Compiling a promo package](#compiling-a-promo-package-npm-run-compilepromo)),
+which is a post-processing step over already-captured WebMs — it never
+changes the capture path. If an MP4 is ever needed, transcode the compiled
+WebM the same way (`ffmpeg -i promo.webm -c:v libx264 promo.mp4`).
 
 ### Rejected fallback: offline WAV + external mux
 
@@ -785,6 +1632,41 @@ AH-0MUWTNPYJ0031FQE AC1), and it needs a full `ffmpeg` install that the
 Playwright bundle does not provide. The shipped path requires **no full
 `ffmpeg`**; retain this only as a documented fallback if the in-page Web
 Audio tap ever proves impossible.
+
+### Long-run memory and partial-output limits
+
+A long capture is bounded on every side, and the bounds have consequences worth
+knowing before a soak:
+
+- **Memory is capped per component, not per duration.** Node keeps at most one
+  recorder chunk in flight (`MAX_CAPTURE_CHUNK_BYTES` = 16 MiB, ~16x a normal
+  ~1 MiB/s chunk) and the page retains at most a 32 MiB prefix
+  (`CAPTURE_PROBE_PREFIX_BUDGET_BYTES`) of the clip, so a 30-minute clip does
+  **not** need 30 minutes' worth of RAM (see
+  [Long-run memory budget and failure salvage](#long-run-memory-budget-and-failure-salvage)).
+  The price is that the page can only reconstruct the **head** of a long clip;
+  that is why a clip above the threshold is probed by reading the written file
+  back over HTTP ([Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
+- **Caps are overflow defences, not tuning knobs.** `MAX_CAPTURE_CHUNK_BYTES`
+  (16 MiB), the 32 MiB prefix budget and the 8 MiB telemetry-upload cap all sit
+  far below V8's 512 MiB string limit so no single CDP message can approach it.
+  Hitting one means a recorder flush or a telemetry upload grew pathologically —
+  diagnose with `--diagnostics`, do not raise the cap.
+- **A failure keeps a partial file, not a clip.** `<stem>.partial.webm` holds
+  the streamed bytes of a failed run (never renamed, never deleted); it was not
+  probed, has no `.action.jsonl` / `.capture.json` sidecars and can lose a
+  fraction of a second at the tail, so it is recovered footage rather than a
+  capture result (see
+  [Failure and salvage of streamed bytes](#failure-and-salvage-of-streamed-bytes)).
+- **The probe is bounded too.** Audio peak/RMS for a streamed clip is measured
+  from a 32 MiB prefix and reported as such (`audioProbeBytes` /
+  `audioProbeCapped`), so a long clip's audio verdict describes its opening, not
+  its whole length; a manipulated or silent tail would not be caught.
+- **`--diagnostics` adds artefact writes, not memory unboundedness.** It keeps a
+  size-only per-chunk timeline and RSS samples for the clip's length (tens of
+  KiB to a few hundred KiB of JSON), and writes `<stem>.diagnostics.json`
+  additively — a read-only output directory degrades to a warning and never
+  fails the clip.
 
 ### Estimated CI cost
 
@@ -828,14 +1710,38 @@ full`) or `npm run build`.
 | `scripts/capture-gameplay.d.mts` | Types for the capture orchestrator's pure arg/mode helpers |
 | `scripts/capture-progress.mjs` | Pure duration / ETA / progress-bar + audio-summary formatting + setup hint |
 | `scripts/capture-progress.d.mts` | Types for the progress module |
-| `scripts/capture-run-lifecycle.mjs` | Pure run-lifecycle contracts: signal encode/decode, tail/cap arithmetic, the `waitForRunEnd` loop, run summary and demo dwell |
+| `scripts/capture-run-lifecycle.mjs` | Pure run-lifecycle contracts: signal encode/decode, tail/cap arithmetic, the `waitForRunEnd` loop, run summary, demo dwell and the shared capture limits (`MAX_CAPTURE_CHUNK_BYTES`, `CAPTURE_PROBE_PREFIX_BUDGET_BYTES`) |
 | `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
+| `scripts/capture-chunk-sink.mjs` | Bounded streaming chunk sink: append-decode-write each recorder chunk to `<stem>.partial.webm`, report `bytesWritten`/`chunkCount`/`peakPendingBytes`, finalise by rename |
+| `scripts/capture-chunk-sink.d.mts` | Types for the chunk sink |
+| `scripts/capture-chunk-sink.test.ts` | Hermetic tests for the sink's write path, memory bound beyond the 512 MiB CDP pipe budget, cap rejection and finalise/partial seam |
+| `scripts/capture-recorder-page.mjs` | Page-side bounded Blob retention + oversized-payload slicing: installs a controller that forwards every chunk to the sink exactly once and retains at most `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (uninstallable; self-contained for `addInitScript`) |
+| `scripts/capture-recorder-page.d.mts` | Types for the retention/payload-guard controller |
+| `scripts/capture-recording-pipeline.mjs` | Shared recording pipeline: one sink + guard install + `__aiHellCaptureChunk` binding + probe source per capture path (single-source rule, both paths) |
+| `scripts/capture-recording-pipeline.d.mts` | Types for the shared pipeline |
+| `scripts/capture-diagnostics.mjs` | Additive `--diagnostics` investigation mode: per-chunk base64 sizing, node RSS samples, page heap at clip end, CDP pipe transport tap + overflow classification, `<stem>.diagnostics.json` writer |
+| `scripts/capture-diagnostics.d.mts` | Types for the diagnostics tracker/tap |
+| `scripts/capture-probe.mjs` | Probe-source selection + streamed probe: pure `chooseProbeSource`/`resolveAudioProbeRange`/`buildProbeFileUrl` helpers and the self-contained page-side `probeRecordingInPage` (long clips probe the streamed file over HTTP, short clips keep the in-page Blob) |
+| `scripts/capture-probe.d.mts` | Types for the probe-source selection + streamed probe |
+| `scripts/capture-probe.test.ts` | Hermetic tests for source selection, the bounded audio prefix, the served-URL builder and the page-side probe (capped-audio reporting, contract fields, fade `sampleProbes`) |
+| `scripts/capture-salvage.mjs` | Salvage seam: keeps a failed clip's streamed bytes at `<stem>.partial.webm`, formats the one actionable message, attributes `salvagedBytes`/`partialPath`/`salvageMessage` |
+| `scripts/capture-salvage.d.mts` | Types for the salvage seam |
+| `scripts/capture-salvage.test.ts` | Hermetic tests for the injected mid-recording failure: partial kept, one actionable line, non-zero exit, additive `--json` fields |
+| `scripts/capture-scenes.mjs` | Pure multi-scene core: scene-list config parsing/validation, shared watchable-gym registry, scene/fade timeline and `--json` payload (browser-free) |
+| `scripts/capture-scenes.d.mts` | Types for the multi-scene core |
+| `scripts/capture-scenes.test.ts` | Hermetic tests for config validation, the scene/fade plan, the payload, fade-sample verification and the watchable-scene registry |
+| `src/core/captureDirector.ts` | Dev-gated `window.__aiHellCaptureDirector` in-page scene director (key validation shared with the CLI, no navigation); inert in production |
+| `src/core/captureDirector.test.ts` | Unit tests for the director's key validation, discovery and dev gate |
 | `scripts/capture-series.mjs` | Pure §7.2 series serialiser + §7.5 join-anchor builder + telemetry extraction (shared with the action-intensity export) |
 | `scripts/capture-series.d.mts` | Types for the series/anchor module |
+| `scripts/compile-promo.mjs` | Promo compiler + ffmpeg driver: edit plan from the recorded series, cut cadence, deliverable sizing, manifests, output validation and pace verification |
+| `scripts/compile-promo.d.mts` | Types for the promo compiler |
+| `scripts/compile-promo.test.ts` | Hermetic tests for the plan/selection/cadence/validation logic (no ffmpeg, no browser) |
+| `scripts/compile-promo.e2e.test.ts` | Gated end-to-end smoke test that compiles synthetic footage with real `ffmpeg`/`ffprobe` (skipped when absent) |
 | `scripts/list-capture-pool.mjs` | Capture-pool inventory: retains WebM + series + anchor triples, reports excluded runs and per-run feature evidence |
 | `scripts/list-capture-pool.d.mts` | Types for the pool inventory lister |
 | `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |
-| `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap and progress helpers |
+| `scripts/capture-gameplay.test.ts` | Hermetic unit tests for the plan builder, probe/audio-verdict predicates, audio tap, progress helpers, the shared pipeline and the duplication guard |
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
-| `package.json` | `capture` / `capture:install` / `list:pool` scripts; `playwright` devDependency |
+| `package.json` | `capture` / `capture:scenes` / `capture:install` / `list:pool` / `compile:promo` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |

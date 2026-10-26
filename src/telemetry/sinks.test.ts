@@ -13,8 +13,6 @@ import {
   JsonlTelemetrySink,
   NoopTelemetrySink,
   RemoteTelemetrySink,
-  TELEMETRY_JSONL_STORAGE_KEY,
-  createLocalStorageLineWriter,
   createMemoryLineWriter,
   createTelemetrySink,
   type TelemetryTransport,
@@ -54,25 +52,6 @@ const EVENT: TelemetryRecord = {
   payload: { type: 'spread' },
 };
 
-/** A `Storage` backed by a Map, so tests never touch real browser storage. */
-function fakeStorage(): Storage {
-  const map = new Map<string, string>();
-  return {
-    get length() {
-      return map.size;
-    },
-    clear: () => map.clear(),
-    getItem: (key: string) => map.get(key) ?? null,
-    key: (index: number) => Array.from(map.keys())[index] ?? null,
-    removeItem: (key: string) => {
-      map.delete(key);
-    },
-    setItem: (key: string, value: string) => {
-      map.set(key, String(value));
-    },
-  } as Storage;
-}
-
 describe('no-op sink (AC2/AC6)', () => {
   it('discards a batch without touching the configured writer', async () => {
     const writer = createMemoryLineWriter();
@@ -98,19 +77,38 @@ describe('JSONL sink (AC2/AC6)', () => {
     expect(writer.lines.every((line) => !line.includes('\n'))).toBe(true);
   });
 
-  it('appends newline-delimited JSON through a storage writer', () => {
-    const storage = fakeStorage();
-    const sink = new JsonlTelemetrySink(
-      createLocalStorageLineWriter(TELEMETRY_JSONL_STORAGE_KEY, storage),
-    );
+  it('reads the buffer back as NDJSON with a trailing newline (AC1/AC5)', () => {
+    const sink = new JsonlTelemetrySink(createMemoryLineWriter());
 
     sink.write([EVENT]);
     sink.write([HEADER]);
 
-    const stored = storage.getItem(TELEMETRY_JSONL_STORAGE_KEY);
-    expect(stored?.endsWith('\n')).toBe(true);
-    const lines = stored!.trimEnd().split('\n');
+    const content = sink.read();
+    expect(content?.endsWith('\n')).toBe(true);
+    const lines = content!.trimEnd().split('\n');
     expect(lines.map((line) => JSON.parse(line))).toEqual([EVENT, HEADER]);
+  });
+
+  it('reports an empty buffer as an empty string and resets to it', () => {
+    const sink = new JsonlTelemetrySink(createMemoryLineWriter());
+    expect(sink.read()).toBe('');
+
+    sink.write([HEADER]);
+    expect(sink.read()).not.toBe('');
+
+    sink.reset();
+    expect(sink.read()).toBe('');
+  });
+
+  it('reads null from a writer that does not buffer', () => {
+    const writer = { writeLine: vi.fn() };
+    const sink = new JsonlTelemetrySink(writer);
+
+    sink.write([HEADER]);
+
+    expect(writer.writeLine).toHaveBeenCalledTimes(1);
+    expect(sink.read()).toBeNull();
+    expect(() => sink.reset()).not.toThrow();
   });
 
   it('is selected by the factory when enabled with the jsonl sink', () => {
@@ -118,6 +116,20 @@ describe('JSONL sink (AC2/AC6)', () => {
     const sink = createTelemetrySink(config({ sink: 'jsonl' }), { lineWriter: writer });
 
     expect(sink).toBeInstanceOf(JsonlTelemetrySink);
+  });
+
+  it('defaults to an in-memory buffer that never touches browser storage (AC1)', async () => {
+    const setItem = vi.fn();
+    const getItem = vi.fn(() => null);
+    const sink = createTelemetrySink(config({ sink: 'jsonl' }));
+    vi.stubGlobal('localStorage', { getItem, setItem, removeItem: vi.fn(), clear: vi.fn() });
+
+    await sink.write([HEADER, EVENT]);
+
+    expect(getItem).not.toHaveBeenCalled();
+    expect(setItem).not.toHaveBeenCalled();
+    expect(sink.read?.()).toContain('"kind":"run_header"');
+    vi.unstubAllGlobals();
   });
 });
 

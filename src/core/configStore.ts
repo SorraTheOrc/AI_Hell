@@ -384,6 +384,11 @@ function genericEnemyDefault(key: string): EnemyConfig {
     burstCount: 1,
     shotProbability: 1.0,
     health: 1,
+    // Force-field fields are additive durability (AH-0MVM8GRQ8006HGPK);
+    // the generic fallback is never shielded.
+    forceFieldStartLevel: 0,
+    forceFieldStartHits: 1,
+    forceFieldMaxHits: 1,
   };
 }
 

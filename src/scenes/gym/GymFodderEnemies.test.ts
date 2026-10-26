@@ -1083,15 +1083,23 @@ describe('GymFodderEnemies — single reusable enemy gym', () => {
         bodyVisible: boolean;
         x: number;
         y: number;
+        forceFieldHits?: number;
       };
       expect(victim.alive).toBe(true);
       const countBefore = scene.aliveCount;
-      const pb = scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+      // A swarm member is shield-eligible in the gym (forceFieldStartLevel 4,
+      // direct hits from forceFieldStartHits — the documented formation-gym
+      // divergence, AH-0MVM8GXEF009883O), so drain its field before the kill.
+      const fieldHits = victim.forceFieldHits ?? 0;
+      const pbs: ReturnType<typeof scene.spawnPlayerBullet>[] = [];
+      for (let i = 0; i <= fieldHits; i++) {
+        pbs.push(scene.spawnPlayerBullet(victim.x, victim.y, 0, 0));
+      }
       scene.tick(0.05);
       expect(victim.alive).toBe(false);
       expect(scene.aliveCount).toBe(countBefore - 1);
       expect(victim.bodyVisible).toBe(false);
-      expect(scene.getPlayerBullets()).not.toContain(pb);
+      for (const pb of pbs) expect(scene.getPlayerBullets()).not.toContain(pb);
 
       // Remaining members fire bursts aimed at the live player. Each burst
       // applies an independent random spread (±0.15 rad per bullet), so a
@@ -2311,8 +2319,146 @@ describe('GymFodderEnemies — wormhole spawn animation parity (AH-0MURBER4L0082
     // Once transit completes the entity becomes vulnerable, as in the game.
     scene.finishSpawnAnimations();
     scene.tick(0.001); // settle the slot/wiggle position before aiming
-    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    // A shield-eligible archetype (scout, forceFieldStartLevel 3) spawned by
+    // the formation gym carries its direct start-hit field
+    // (AH-0MVM8GXEF009883O), so drain it before asserting the kill.
+    const victimFieldHits = (victim as unknown as { forceFieldHits?: number })
+      .forceFieldHits ?? 0;
+    for (let i = 0; i <= victimFieldHits; i++) {
+      scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+    }
     scene.tick(0.016);
     expect(victim.alive).toBe(false);
+  });
+});
+
+// ── Force-field editor controls (AH-0MVM8GXEF009883O, AC4) ──────────
+
+/**
+ * The formation gym has **no campaign context**, so its force-field controls
+ * set the spawned field hits DIRECTLY from `forceFieldStartHits` instead of
+ * evaluating the level curve (`enemyForceFieldHits`) — the documented
+ * divergence the work item and the gym panel copy record (and which the
+ * shipped campaign never uses; the game and level gym always resolve the
+ * curve).
+ */
+describe('GymFodderEnemies — force-field editor controls (AH-0MVM8GXEF009883O)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    resetConfigStore();
+    seedConfigStore(Object.values(DEFAULT_ENEMY_CONFIGS));
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+    document.getElementById('gym-config-panel')?.remove();
+  });
+
+  async function bootTank(): Promise<GymFodderEnemies> {
+    class Wrapper extends GymFodderEnemies {
+      override init(_data?: { enemyKey?: string }): void {
+        super.init({ enemyKey: 'tank' });
+      }
+    }
+    Object.defineProperty(Wrapper, 'name', { value: 'Wrapper_ff_tank' });
+    booted = await bootScene([Wrapper as unknown as typeof Phaser.Scene]);
+    return booted.scene as unknown as GymFodderEnemies;
+  }
+
+  /** The live formation entities' force-field surface. */
+  function shieldOf(entity: unknown): { forceFieldHits: number; hasForceField: boolean } {
+    return entity as unknown as { forceFieldHits: number; hasForceField: boolean };
+  }
+
+  it('gains force-field sliders and the documented divergence copy in the panel', async () => {
+    await bootTank();
+    const panel = document.getElementById('enemy-gym-panel')!;
+
+    const startLevel = panel.querySelector<HTMLInputElement>(
+      'input[data-config="forceFieldStartLevel"]',
+    );
+    const startHits = panel.querySelector<HTMLInputElement>(
+      'input[data-config="forceFieldStartHits"]',
+    );
+    const maxHits = panel.querySelector<HTMLInputElement>(
+      'input[data-config="forceFieldMaxHits"]',
+    );
+    expect(startLevel, 'forceFieldStartLevel slider missing').not.toBeNull();
+    expect(startHits, 'forceFieldStartHits slider missing').not.toBeNull();
+    expect(maxHits, 'forceFieldMaxHits slider missing').not.toBeNull();
+
+    // The divergence is documented in the gym panel copy.
+    const note = panel.querySelector<HTMLElement>('#enemy-gym-force-field-note');
+    expect(note, 'force-field divergence copy missing').not.toBeNull();
+    expect(note!.textContent!.toLowerCase()).toContain('direct');
+    expect(note!.textContent!.toLowerCase()).toContain('curve');
+  });
+
+  it('spawns a field with the chosen hit count directly (bypassing the level curve)', async () => {
+    const scene = await bootTank();
+
+    // A formation-gym Tank has no campaign level; setting the start-hits
+    // slider to 3 forces a 3-hit field on, even though a level-1 campaign
+    // resolution would be 0.
+    const slider = document.querySelector<HTMLInputElement>(
+      'input[data-config="forceFieldStartHits"]',
+    )!;
+    slider.value = '3';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(scene.currentConfig.forceFieldStartHits).toBe(3);
+
+    (document.getElementById('enemy-gym-respawn') as HTMLButtonElement).click();
+
+    const entities = scene.formationEntities;
+    expect(entities.length).toBeGreaterThan(0);
+    for (const entity of entities) {
+      expect(shieldOf(entity).forceFieldHits).toBe(3);
+      expect(shieldOf(entity).hasForceField).toBe(true);
+    }
+  });
+
+  it('returns to unshielded when the direct hits slider is 0', async () => {
+    const scene = await bootTank();
+    const slider = document.querySelector<HTMLInputElement>(
+      'input[data-config="forceFieldStartHits"]',
+    )!;
+    slider.value = '0';
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    (document.getElementById('enemy-gym-respawn') as HTMLButtonElement).click();
+
+    for (const entity of scene.formationEntities) {
+      expect(shieldOf(entity).forceFieldHits).toBe(0);
+      expect(shieldOf(entity).hasForceField).toBe(false);
+    }
+  });
+});
+
+describe('GymFodderEnemies — capture setup enemy selection (AH-0MVNW8VNN004FFK1)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.getElementById('enemy-gym-panel')?.remove();
+  });
+
+  it('selects the roster from a setup `enemy` key (director launch)', () => {
+    return (async () => {
+      booted = await bootScene([GymFodderEnemies]);
+      const manager = booted.game.scene;
+      // The director forwards the normalised setup as scene-start data, which
+      // names the formation enemy `enemy` (not the legacy `enemyKey`).
+      expect(() =>
+        manager.start('GymFodderEnemies', { enemy: 'tank' }),
+      ).not.toThrow();
+      const scene = manager.getScene('GymFodderEnemies') as GymFodderEnemies;
+      expect(scene.activeEnemyKey).toBe('tank');
+    })();
   });
 });
