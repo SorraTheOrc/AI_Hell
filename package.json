@@ -1,9 +1,9 @@
 {
   "name": "ai-hell",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "type": "module",
-  "description": "AI Hell \u2014 a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
+  "description": "AI Hell — a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
   "scripts": {
     "dev": "vite",
     "build-audio": "scripts/build-audio.sh",
