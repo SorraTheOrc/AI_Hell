@@ -2438,3 +2438,27 @@ describe('GymFodderEnemies — force-field editor controls (AH-0MVM8GXEF009883O)
     }
   });
 });
+
+describe('GymFodderEnemies — capture setup enemy selection (AH-0MVNW8VNN004FFK1)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.getElementById('enemy-gym-panel')?.remove();
+  });
+
+  it('selects the roster from a setup `enemy` key (director launch)', () => {
+    return (async () => {
+      booted = await bootScene([GymFodderEnemies]);
+      const manager = booted.game.scene;
+      // The director forwards the normalised setup as scene-start data, which
+      // names the formation enemy `enemy` (not the legacy `enemyKey`).
+      expect(() =>
+        manager.start('GymFodderEnemies', { enemy: 'tank' }),
+      ).not.toThrow();
+      const scene = manager.getScene('GymFodderEnemies') as GymFodderEnemies;
+      expect(scene.activeEnemyKey).toBe('tank');
+    })();
+  });
+});

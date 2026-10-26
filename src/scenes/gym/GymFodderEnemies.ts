@@ -44,6 +44,7 @@ import { makeCollapsible } from '../../utils/gymPanel';
 import { createEnemyFromConfig, type EnemyEntity } from '../../entities/enemyFactory';
 import { fireForEnemy } from '../../entities/enemyFire';
 import { Asteroid } from '../../entities/Asteroid';
+import type { SceneSetupState } from '../core/sceneSetup';
 import type { FormationSceneBullet } from './core/GymFormationScene';
 import { GymFormationScene, type EnemyFormationConfig } from './core/GymFormationScene';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
@@ -351,8 +352,12 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     super(enemyConfigToFormationConfig(GYM_FODDER_ENEMIES_DEFAULT_KEY));
   }
 
-  init(data?: { enemyKey?: string }): void {
-    const key = data?.enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
+  init(data?: { enemyKey?: string; enemy?: string } & SceneSetupState): void {
+    // The shared capture setup names the formation enemy `enemy`
+    // (AH-0MVNW8UCZ004CY0R); the legacy direct-gym launch uses `enemyKey`, so
+    // accept both and keep old callers working.
+    const key = data?.enemy ?? data?.enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
+    super.init(data);
     this.pendingKey = key;
     if (key === GYM_FODDER_ENEMIES_CENTIPEDE_KEY) {
       // The Centipede is a chain archetype (wave opt-in), not a CSV config:

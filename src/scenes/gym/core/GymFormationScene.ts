@@ -151,6 +151,7 @@ import {
   type ChoiceStrategy,
 } from '../../../powerups/choice';
 import { type WeaponId } from '../../../utils/weapons';
+import { applySceneSetup, type SceneSetupState } from '../../core/sceneSetup';
 import {
   WORMHOLE_OPEN_DURATION,
   WormholeController,
@@ -479,6 +480,14 @@ export class GymFormationScene<
   protected player: Player | null = null;
 
   /**
+   * Optional capture-setup loadout/power-up state (AH-0MVNW8VNN004FFK1),
+   * applied to the player in `create()` before the first captured frame.
+   * `null` ⇒ no setup, so the scene keeps its pre-change behaviour (the
+   * formation gyms historically start with the bare cannon).
+   */
+  protected pendingSetup: SceneSetupState | null = null;
+
+  /**
    * Canonical player spawn (px) — the point {@link setPlayerEnabled}(true)
    * restores. Derived from `config.player` in `create()`; null when the
    * scene has no player component (AH-0MUII3F7Q002O7WX, gap 9).
@@ -648,11 +657,25 @@ export class GymFormationScene<
     };
   }
 
+  /**
+   * Captures an optional capture setup supplied as scene-start data
+   * (AH-0MVNW8VNN004FFK1). Phaser passes the director's `scene.start(key,
+   * setup)` payload here before `create()`; an absent setup leaves
+   * {@link pendingSetup} null so the scene keeps its pre-change state.
+   *
+   * Formation-gym rosters stay config-driven: a setup can configure loadout
+   * and power-ups for these gyms, but not the enemy set (only
+   * `GymFodderEnemies` selects its roster from a setup). Recorded as an
+   * intentional divergence on AH-0MVNW8VNN004FFK1.
+   */
+  init(data?: SceneSetupState | null): void {
+    this.pendingSetup = data ?? null;
+  }
+
   create(): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
-    this.resetRunState();
-    const { config } = this;
+    this.resetRunState();    const { config } = this;
 
     // ── Spawn the formation ─────────────────────────────────────────
     const offsets = config.buildOffsets(config.count);
@@ -675,6 +698,13 @@ export class GymFormationScene<
       this.wasd = this.input.keyboard?.addKeys(
         'W,A,S,D',
       ) as WasdKeysLike | undefined;
+    }
+
+    // Capture setup loadout/power-ups, applied through the one shared
+    // applier so every gym maps a setup to play state identically
+    // (AH-0MVNW8VNN004FFK1). No setup ⇒ no change to historical behaviour.
+    if (this.pendingSetup) {
+      applySceneSetup({ getPlayer: () => this.player }, this.pendingSetup);
     }
 
     // ── Shared Shield/Phase Shift player visuals (parity with PlayScene/gym combat) ──

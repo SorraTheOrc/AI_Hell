@@ -83,6 +83,7 @@ import { makeCollapsible } from '../../utils/gymPanel';
 import { attachTooltip } from '../../utils/gymTooltip';
 import { generateRandomLevel } from '../../utils/randomLevel';
 import type { ControlInput } from '../../utils/movementModel';
+import type { SceneSetupState } from '../core/sceneSetup';
 import type { LevelDefinition } from '../../waves/Formations';
 import { GymLevel } from './GymLevel';
 
@@ -128,6 +129,12 @@ export interface GymBotTuningData {
   seed?: number;
   /** Optional pre-built level (bypasses the generator; used by tests). */
   level?: LevelDefinition;
+  /** Optional 1-based wave to start at (capture setups). */
+  startWave?: number;
+  /** Optional player loadout / power-up levels (capture setups). */
+  player?: SceneSetupState['player'];
+  /** Optional power-up id → permanent level (capture setups). */
+  powerUps?: SceneSetupState['powerUps'];
 }
 
 /**
@@ -175,7 +182,12 @@ export class GymBotTuning extends GymLevel {
     this.tuningValues = coerceTuningValues(getCurrentBotTuningConfig().values);
     this.completionDwell = 0;
     const level = data?.level ?? generateRandomLevel({ seed: this.seed });
-    super.init({ level });
+    super.init({
+      level,
+      startWave: data?.startWave,
+      player: data?.player,
+      powerUps: data?.powerUps,
+    });
   }
 
   override create(): void {

@@ -949,3 +949,67 @@ describe('GymLevel — force-field spawn resolution (AH-0MVM8GXEF009883O)', () =
     }
   });
 });
+
+describe('GymLevel — capture setup application (AH-0MVNW8VNN004FFK1)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function bootWith(data: GymLevelData): Promise<GymLevel> {
+    booted = await bootScene([GymLevel]);
+    const manager = booted.game.scene;
+    manager.start('GymLevel', data);
+    await advanceGame(booted.game, 200);
+    return manager.getScene('GymLevel') as GymLevel;
+  }
+
+  const level = () =>
+    makeLevel('Setup Level', [scoutWave(1), scoutWave(1), scoutWave(1)]);
+
+  it('applies the configured loadout, power-up levels and starting wave', async () => {
+    const scene = await bootWith({
+      level: level(),
+      startWave: 2,
+      player: { weapons: ['rapid'], timedWeapons: [] },
+      powerUps: { shield: 2 },
+    });
+
+    const player = scene.getPlayer();
+    expect(player).not.toBeNull();
+    // Explicit `player` overrides the default: only rapid is permanent.
+    expect(player!.getActiveWeapons()).toContain('rapid');
+    expect(player!.getActiveWeapons()).not.toContain('spread');
+    expect(player!.getPowerUpLevelStore().getEffectiveLevel('shield')).toBe(2);
+    // startWave is 2 (1-based) → wave index 1.
+    expect(scene.getCurrentWaveIndex()).toBe(1);
+  });
+
+  it('keeps the historical spread+dual start when no setup is supplied', async () => {
+    const scene = await bootWith({ level: level() });
+
+    const player = scene.getPlayer();
+    expect(player).not.toBeNull();
+    expect(player!.getActiveWeapons()).toEqual(
+      expect.arrayContaining(['spread', 'dual']),
+    );
+    expect(scene.getCurrentWaveIndex()).toBe(0);
+  });
+
+  it('starts a timed weapon with a countdown when configured as timed', async () => {
+    const scene = await bootWith({
+      level: level(),
+      player: { weapons: [], timedWeapons: ['rapid'] },
+    });
+    expect(scene.getPlayer()!.getActiveWeapons()).toContain('rapid');
+  });
+});

@@ -154,6 +154,11 @@ import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import type { SpawnEvent } from '../../waves/AsteroidSpawner';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 import {
+  applySceneSetup,
+  DEFAULT_GYM_LEVEL_WEAPONS,
+  type SceneSetupState,
+} from '../core/sceneSetup';
+import {
   WORMHOLE_OPEN_DURATION,
   WormholeController,
   formationCentre,
@@ -178,6 +183,15 @@ import {
 export interface GymLevelData {
   /** The level to play. Its `waves` are played sequentially. */
   level: LevelDefinition;
+  /**
+   * Optional 1-based wave to start at (capture setups, AH-0MVNW8VNN004FFK1).
+   * Clamped to the level's wave list; absent ⇒ the first wave.
+   */
+  startWave?: number;
+  /** Optional player loadout / power-up levels (capture setups). */
+  player?: SceneSetupState['player'];
+  /** Optional power-up id → permanent level (capture setups). */
+  powerUps?: SceneSetupState['powerUps'];
 }
 
 /** Scene key of the level gym (registered by the gym index glob). */
@@ -500,6 +514,17 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   private driftX = 0;
   /** Drift direction (+1 right, −1 left). */
   private driftDir = 1;
+  /**
+   * Loadout/power-up state from a capture setup (AH-0MVNW8VNN004FFK1).
+   * `null` ⇒ no setup, so `create()` applies the historical spread+dual
+   * default (unchanged behaviour).
+   */
+  private pendingSetup: SceneSetupState | null = null;
+  /**
+   * 0-based wave index requested by a capture setup's `startWave`, re-applied
+   * in `create()` after `resetRunState()` clears the wave cursor.
+   */
+  private pendingStartWaveIndex = 0;
 
   constructor(key: string = GYM_LEVEL_SCENE_KEY) {
     super({ key });
@@ -516,6 +541,9 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.driftDir = 1;
     this.globalWaveIndex = 0;
     this.asteroidHazard.reset();
+    this.pendingSetup = data && (data.player || data.powerUps)
+      ? { player: data.player, powerUps: data.powerUps }
+      : null;
 
     const level = data?.level;
     if (!level || !Array.isArray(level.waves) || level.waves.length === 0) {
@@ -525,6 +553,17 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       return;
     }
     this._applyLevel(level);
+    // Start at a configured wave when one is supplied (capture setups),
+    // clamped to the level's wave list so a stale/short list cannot stall.
+    // `create()` re-applies this after `resetRunState()` zeroes the cursor.
+    this.pendingStartWaveIndex = 0;
+    if (Number.isInteger(data?.startWave) && (data?.startWave ?? 0) > 1) {
+      this.pendingStartWaveIndex = (data?.startWave as number) - 1;
+      this.currentWaveIndex = Math.min(
+        this.pendingStartWaveIndex,
+        this.wavesToPlay.length - 1,
+      );
+    }
   }
 
   /**
@@ -580,6 +619,14 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
 
   create(): void {
     this.resetRunState();
+    // `resetRunState()` zeroes the wave cursor; restore a setup's start wave
+    // before the first wave is spawned so the captured window opens on it.
+    if (this.pendingStartWaveIndex > 0 && this.wavesToPlay.length > 0) {
+      this.currentWaveIndex = Math.min(
+        this.pendingStartWaveIndex,
+        this.wavesToPlay.length - 1,
+      );
+    }
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -612,9 +659,16 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       })
       .setOrigin(0.5);
 
-    // Spread + dual weapons equipped at scene start (AC4).
-    this.player.equipWeapon('spread', true);
-    this.player.equipWeapon('dual', true);
+    // Loadout/power-ups: the shared setup applier is the single place that
+    // knows how a setup becomes play state (AH-0MVNW8VNN004FFK1). With no
+    // setup it reproduces the historical spread+dual permanent start.
+    applySceneSetup(
+      { getPlayer: () => this.player },
+      this.pendingSetup ?? {
+        player: { weapons: DEFAULT_GYM_LEVEL_WEAPONS, timedWeapons: [] },
+        powerUps: {},
+      },
+    );
 
     this._spawnCurrentWave();
 
@@ -1152,7 +1206,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
 
   // ── Shared combat-core participant accessors ─────────────────────
 
-  protected override getPlayer(): Player | null {
+  override getPlayer(): Player | null {
     return this.player;
   }
 
