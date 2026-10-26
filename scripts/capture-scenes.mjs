@@ -91,6 +91,28 @@ export const SCENE_CONFIG_ERROR_CODES = Object.freeze({
   unsupportedTarget: 'unsupported-target',
   /** A scene entry's `playMs`/`captureMs` is not a positive integer. */
   invalidDuration: 'invalid-duration',
+  /** A `setup` object carries a field that does not exist. */
+  unknownSetupField: 'unknown-setup-field',
+  /** A `setup` field has the wrong type or shape. */
+  invalidSetupType: 'invalid-setup-type',
+  /** A `setup.level.waves[].groups[].enemyKey` is not a known enemy key. */
+  unknownEnemyKey: 'unknown-enemy-key',
+  /** A `setup.level.waves[].groups[].formation` is not a known formation. */
+  unknownFormationKind: 'unknown-formation-kind',
+  /** A `setup.player` weapon id is not a known weapon. */
+  unknownWeaponId: 'unknown-weapon-id',
+  /** A `setup.powerUps` key is not a known power-up id. */
+  unknownPowerUpId: 'unknown-power-up-id',
+  /** A `setup.level.level` is not an integer within the campaign. */
+  invalidLevelIndex: 'invalid-level-index',
+  /** A `setup.startWave` is not a valid 1-based wave index for the level. */
+  invalidWaveIndex: 'invalid-wave-index',
+  /** A parameterised target's setup omits its required parameter. */
+  missingSetupParameter: 'missing-setup-parameter',
+  /** A `setup` is supplied to a target that cannot consume it. */
+  setupNotSupported: 'setup-not-supported',
+  /** A `setup.seed` is not a 32-bit unsigned integer. */
+  invalidSeed: 'invalid-seed',
 });
 
 const CODE = SCENE_CONFIG_ERROR_CODES;
@@ -118,6 +140,190 @@ export class SceneConfigError extends Error {
 /** True for a plain object (not null, not an array). */
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Enemy keys the setup schema accepts for `setup.enemy` and
+group `enemyKey`s — a frozen mirror of the built-in `DEFAULT_ENEMY_KEYS`
+(`src/core/configDefaults.ts`). The module imports nothing, so
+`capture-scenes.test.ts` pins this list against the real registry (a parity
+test), keeping it from drifting.
+ */
+export const SCENE_SETUP_ENEMY_KEYS = Object.freeze([
+  'scout',
+  'diver',
+  'tank',
+  'phaser',
+  'swarm',
+  'boss',
+  'asteroid',
+  'harvester',
+  'march',
+  'capturer',
+  'ghost-chase',
+  'ghost-ambush',
+  'ghost-flank',
+  'ghost-wander',
+  'grunt',
+  'raider',
+  'lane-traffic',
+  'orbital-strike',
+]);
+
+/**
+ * Formation kinds accepted for a setup wave-group `formation` — a frozen
+ * mirror of `EnemyFormationKind` (`src/utils/formations.ts`). Pinned by a
+ * parity test.
+ */
+export const SCENE_SETUP_FORMATION_KINDS = Object.freeze([
+  'v',
+  'diver',
+  'rect',
+  'swarm',
+  'orbital',
+  'single',
+  'march',
+]);
+
+/**
+ * Weapon ids accepted in `setup.player.weapons` / `timedWeapons` — a frozen
+ * mirror of the `WeaponId` union (`src/utils/weapons.ts`). Pinned by a parity
+ * test against `WEAPON_CATALOGUE`.
+ */
+export const SCENE_SETUP_WEAPON_IDS = Object.freeze([
+  'cannon',
+  'spread',
+  'dual',
+  'rapid',
+  'wave_laser',
+  'ricochet',
+  'cluster',
+  'options',
+  'nova',
+  'mortar',
+  'arc',
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
+]);
+
+/**
+ * Power-up ids accepted as `setup.powerUps` keys — a frozen mirror of the
+ * `PowerUpId` union (`src/powerups/types.ts`). Pinned by a parity test
+ * against `POWER_UP_CATALOGUE`.
+ */
+export const SCENE_SETUP_POWER_UP_IDS = Object.freeze([
+  'shield',
+  'bomb',
+  'speed_boost',
+  'phase_shift',
+  'teleport',
+  'extra_life',
+  'magnet',
+  'mineral_scoop',
+  'smart_bomb',
+  'force_field',
+  'mystery_ufo',
+  'frenzy',
+  'chrono',
+  'thorns',
+  'salvage',
+  'strike',
+]);
+
+/**
+ * Number of campaign levels a `setup.level.level` may name — a frozen mirror
+ * of `LEVEL_COUNT` (`src/waves/Formations.ts`). Pinned by a parity test.
+ */
+export const SCENE_SETUP_LEVEL_COUNT = 10;
+
+/** Default `setup.seed` when the config omits one (deterministic by default). */
+export const DEFAULT_SCENE_SETUP_SEED = 0;
+
+/** Default `setup.startWave` when the config omits one (the level's first wave). */
+export const DEFAULT_SCENE_SETUP_START_WAVE = 1;
+
+/** Default permanent weapons when `setup.player` is omitted.
+ * Mirrors `GymLevel`'s pre-existing hard-coded spread + dual loadout, so an
+ * omitted `player` reproduces today's gym behaviour. */
+export const DEFAULT_SCENE_SETUP_PLAYER_WEAPONS = Object.freeze(['spread', 'dual']);
+
+/** Default timed weapons when `setup.player` is omitted (none). */
+export const DEFAULT_SCENE_SETUP_TIMED_WEAPONS = Object.freeze([]);
+
+/**
+ * Setup fields every setup-capable scene can consume: a player loadout, power-up
+ * levels and a determinism seed.
+ */
+export const SCENE_SETUP_COMMON_FIELDS = Object.freeze([
+  'player',
+  'powerUps',
+  'seed',
+]);
+
+/**
+ * Extra setup fields a specific target can consume beyond
+ * {@link SCENE_SETUP_COMMON_FIELDS}: `GymLevel`/`GymBotTuning` take a level and
+ * starting wave, `GymFodderEnemies` takes the formation enemy key.
+ */
+export const SCENE_SETUP_TARGET_EXTRA_FIELDS = Object.freeze({
+  GymLevel: Object.freeze(['level', 'startWave']),
+  GymBotTuning: Object.freeze(['level', 'startWave']),
+  GymFodderEnemies: Object.freeze(['enemy']),
+});
+
+/**
+ * Watchable gym scenes that cannot consume a `setup` at all (no player, no
+ * wave content — e.g. the curve sequencer is an editor). A setup on one of
+ * these is rejected rather than silently ignored.
+ */
+export const SCENE_SETUP_INCAPABLE_TARGETS = Object.freeze(['GymCurveSequencer']);
+
+/** Every setup field name (used to distinguish unknown vs unsupported). */
+const SETUP_ALL_FIELDS = Object.freeze([
+  'level',
+  'startWave',
+  'enemy',
+  'player',
+  'powerUps',
+  'seed',
+]);
+
+/** Whether `value` is any known scene key (watchable or parameterised). */
+function isKnownSceneKey(value) {
+  return (
+    typeof value === 'string'
+    && (WATCHABLE_GYM_SCENE_KEYS.includes(value)
+      || PARAMETERISED_GYM_SCENE_KEYS.includes(value))
+  );
+}
+
+/**
+ * The setup fields the scene `target` can consume. An empty list means the
+ * target **cannot** accept a setup at all.
+ *
+ * @param {string} target — a known scene key.
+ * @returns {string[]}
+ */
+export function sceneSetupFieldsFor(target) {
+  if (!isKnownSceneKey(target)) return [];
+  if (SCENE_SETUP_INCAPABLE_TARGETS.includes(target)) return [];
+  const extra = SCENE_SETUP_TARGET_EXTRA_FIELDS[target] ?? [];
+  return [...SCENE_SETUP_COMMON_FIELDS, ...extra];
+}
+
+/**
+ * The setup fields a parameterised target requires (its launch parameter).
+ *
+ * @param {string} target
+ * @returns {string[]}
+ */
+export function requiredSceneSetupFieldsFor(target) {
+  if (target === 'GymLevel') return ['level'];
+  if (target === 'GymFodderEnemies') return ['enemy'];
+  return [];
 }
 
 /** The watchable keys as a readable list for error messages. */
@@ -174,14 +380,402 @@ export function resolveWatchableSceneKey(value) {
 }
 
 /**
+ * Rejects any key of `value` not in `allowed`, distinguishing a setup field
+ * that exists but is not accepted by this target (`setup-not-supported`)
+ * from one that does not exist at all (`unknown-setup-field`).
+ *
+ * @param {Record<string, unknown>} value
+ * @param {readonly string[]} allowed
+ * @param {string} at
+ * @param {readonly string[]} [known] — the universe of valid names.
+ */
+function rejectUnknownFields(value, allowed, at, known = allowed) {
+  for (const key of Object.keys(value)) {
+    if (allowed.includes(key)) continue;
+    if (!known.includes(key)) {
+      throw new SceneConfigError(
+        CODE.unknownSetupField,
+        `${at}.${key} is not a setup field (valid fields: ${allowed.join(', ')})`,
+      );
+    }
+    throw new SceneConfigError(
+      CODE.setupNotSupported,
+      `${at}.${key} cannot be supplied to this target (accepted fields: ${allowed.join(', ')})`,
+    );
+  }
+}
+
+/** Requires a plain object, throwing `invalid-setup-type` otherwise. */
+function requireSetupObject(value, at) {
+  if (!isPlainObject(value)) {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at} must be an object (got ${JSON.stringify(value)})`,
+    );
+  }
+}
+
+/** Requires a finite number, throwing `invalid-setup-type` otherwise. */
+function requireSetupNumber(value, at) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at} must be a finite number (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+/** Requires a positive integer, throwing `invalid-setup-type` otherwise. */
+function requireSetupPositiveInt(value, at) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at} must be a positive integer (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+/** Requires a boolean, throwing `invalid-setup-type` otherwise. */
+function requireSetupBoolean(value, at) {
+  if (typeof value !== 'boolean') {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at} must be a boolean (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+/** Validates one wave group inside `setup.level`. */
+function validateSetupGroup(group, at) {
+  requireSetupObject(group, at);
+  rejectUnknownFields(
+    group,
+    ['enemyKey', 'formation', 'count', 'spacingX', 'spacingY', 'startX', 'startY', 'startXMin', 'startXMax', 'startYMin', 'startYMax'],
+    at,
+  );
+  if (typeof group.enemyKey !== 'string' || group.enemyKey.trim() === '') {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at}.enemyKey must be a non-empty enemy key (got ${JSON.stringify(group.enemyKey)})`,
+    );
+  }
+  if (!SCENE_SETUP_ENEMY_KEYS.includes(group.enemyKey)) {
+    throw new SceneConfigError(
+      CODE.unknownEnemyKey,
+      `${at}.enemyKey ${JSON.stringify(group.enemyKey)} is not a known enemy key`,
+    );
+  }
+  if (
+    typeof group.formation !== 'string'
+    || !SCENE_SETUP_FORMATION_KINDS.includes(group.formation)
+  ) {
+    throw new SceneConfigError(
+      CODE.unknownFormationKind,
+      `${at}.formation ${JSON.stringify(group.formation)} is not a known formation kind `
+        + `(valid: ${SCENE_SETUP_FORMATION_KINDS.join(', ')})`,
+    );
+  }
+  requireSetupPositiveInt(group.count, `${at}.count`);
+  for (const field of ['spacingX', 'spacingY', 'startX', 'startY']) {
+    requireSetupNumber(group[field], `${at}.${field}`);
+  }
+  for (const field of ['startXMin', 'startXMax', 'startYMin', 'startYMax']) {
+    if (group[field] !== undefined) requireSetupNumber(group[field], `${at}.${field}`);
+  }
+}
+
+/** Validates one wave inside `setup.level`. */
+function validateSetupWave(wave, at) {
+  requireSetupObject(wave, at);
+  rejectUnknownFields(
+    wave,
+    ['groups', 'shootEnabled', 'ghosts', 'centipede', 'horde', 'laneTraffic', 'miniBoss'],
+    at,
+  );
+  if (!Array.isArray(wave.groups) || wave.groups.length === 0) {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at}.groups must be a non-empty array of enemy groups`,
+    );
+  }
+  wave.groups.forEach((group, index) =>
+    validateSetupGroup(group, `${at}.groups[${index}]`),
+  );
+  requireSetupBoolean(wave.shootEnabled, `${at}.shootEnabled`);
+  for (const flag of ['ghosts', 'centipede', 'horde', 'laneTraffic', 'miniBoss']) {
+    if (wave[flag] !== undefined) requireSetupBoolean(wave[flag], `${at}.${flag}`);
+  }
+}
+
+/** Validates `setup.level`. */
+function validateSetupLevel(level, at) {
+  requireSetupObject(level, at);
+  rejectUnknownFields(level, ['level', 'name', 'waves'], at);
+  if (
+    typeof level.level !== 'number'
+    || !Number.isInteger(level.level)
+    || level.level < 1
+    || level.level > SCENE_SETUP_LEVEL_COUNT
+  ) {
+    throw new SceneConfigError(
+      CODE.invalidLevelIndex,
+      `${at}.level must be an integer 1-${SCENE_SETUP_LEVEL_COUNT} (got ${JSON.stringify(level.level)})`,
+    );
+  }
+  if (typeof level.name !== 'string' || level.name.trim() === '') {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at}.name must be a non-empty string (got ${JSON.stringify(level.name)})`,
+    );
+  }
+  if (!Array.isArray(level.waves) || level.waves.length === 0) {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at}.waves must be a non-empty array of waves`,
+    );
+  }
+  level.waves.forEach((wave, index) =>
+    validateSetupWave(wave, `${at}.waves[${index}]`),
+  );
+}
+
+/** Validates `setup.player`. */
+function validateSetupPlayer(player, at) {
+  requireSetupObject(player, at);
+  rejectUnknownFields(player, ['weapons', 'timedWeapons'], at);
+  for (const field of ['weapons', 'timedWeapons']) {
+    if (player[field] === undefined) continue;
+    if (!Array.isArray(player[field])) {
+      throw new SceneConfigError(
+        CODE.invalidSetupType,
+        `${at}.${field} must be an array of weapon ids (got ${JSON.stringify(player[field])})`,
+      );
+    }
+    player[field].forEach((id, index) => {
+      if (!SCENE_SETUP_WEAPON_IDS.includes(id)) {
+        throw new SceneConfigError(
+          CODE.unknownWeaponId,
+          `${at}.${field}[${index}] ${JSON.stringify(id)} is not a known weapon id`,
+        );
+      }
+    });
+  }
+}
+
+/** Validates `setup.powerUps`. */
+function validateSetupPowerUps(powerUps, at) {
+  requireSetupObject(powerUps, at);
+  for (const [id, level] of Object.entries(powerUps)) {
+    if (!SCENE_SETUP_POWER_UP_IDS.includes(id)) {
+      throw new SceneConfigError(
+        CODE.unknownPowerUpId,
+        `${at}.${id} is not a known power-up id`,
+      );
+    }
+    requireSetupPositiveInt(level, `${at}.${id}`);
+  }
+}
+
+/** Validates a `setup.seed` (32-bit unsigned integer). */
+function validateSetupSeed(seed, at) {
+  if (
+    typeof seed !== 'number'
+    || !Number.isInteger(seed)
+    || seed < 0
+    || seed > 0xffffffff
+  ) {
+    throw new SceneConfigError(
+      CODE.invalidSeed,
+      `${at} must be a 32-bit unsigned integer (0-4294967295), got ${JSON.stringify(seed)}`,
+    );
+  }
+  return seed;
+}
+
+/**
+ * Validates a raw `setup` object against the scene `target`.
+ *
+ * Pure (never mutates `rawSetup`) and total in the sense that it either
+ * returns `void` or throws a typed {@link SceneConfigError}. Every check is
+ * target-aware: a field the target cannot consume is `setup-not-supported`,
+ * a missing launch parameter is `missing-setup-parameter`, and structural
+ * problems in the level/player/power-up payloads have their own codes.
+ *
+ * @param {unknown} rawSetup
+ * @param {string} target — the scene key the setup belongs to.
+ * @param {string} [at] — dotted path used in error messages.
+ */
+export function validateSceneSetup(rawSetup, target, at = 'setup') {
+  requireSetupObject(rawSetup, at);
+  const allowed = sceneSetupFieldsFor(target);
+  if (allowed.length === 0) {
+    throw new SceneConfigError(
+      CODE.setupNotSupported,
+      `${at} cannot be supplied to target "${target}": that scene does not consume setup data`,
+    );
+  }
+  rejectUnknownFields(rawSetup, allowed, at, SETUP_ALL_FIELDS);
+
+  for (const field of requiredSceneSetupFieldsFor(target)) {
+    if (rawSetup[field] === undefined) {
+      throw new SceneConfigError(
+        CODE.missingSetupParameter,
+        `${at}.${field} is required for target "${target}"`,
+      );
+    }
+  }
+
+  if (rawSetup.level !== undefined) validateSetupLevel(rawSetup.level, `${at}.level`);
+  if (rawSetup.startWave !== undefined) {
+    const wave = rawSetup.startWave;
+    if (typeof wave !== 'number' || !Number.isInteger(wave) || wave < 1) {
+      throw new SceneConfigError(
+        CODE.invalidWaveIndex,
+        `${at}.startWave must be a positive integer wave index (got ${JSON.stringify(wave)})`,
+      );
+    }
+    if (
+      rawSetup.level !== undefined
+      && Array.isArray(rawSetup.level.waves)
+      && wave > rawSetup.level.waves.length
+    ) {
+      throw new SceneConfigError(
+        CODE.invalidWaveIndex,
+        `${at}.startWave ${wave} is out of range for a ${rawSetup.level.waves.length}-wave level`,
+      );
+    }
+  }
+  if (rawSetup.enemy !== undefined) {
+    const enemy = rawSetup.enemy;
+    if (typeof enemy !== 'string' || enemy.trim() === '') {
+      throw new SceneConfigError(
+        CODE.invalidSetupType,
+        `${at}.enemy must be a non-empty enemy key (got ${JSON.stringify(enemy)})`,
+      );
+    }
+    if (!SCENE_SETUP_ENEMY_KEYS.includes(enemy)) {
+      throw new SceneConfigError(
+        CODE.unknownEnemyKey,
+        `${at}.enemy ${JSON.stringify(enemy)} is not a known enemy key`,
+      );
+    }
+  }
+  if (rawSetup.player !== undefined) validateSetupPlayer(rawSetup.player, `${at}.player`);
+  if (rawSetup.powerUps !== undefined) validateSetupPowerUps(rawSetup.powerUps, `${at}.powerUps`);
+  if (rawSetup.seed !== undefined) validateSetupSeed(rawSetup.seed, `${at}.seed`);
+}
+
+/** Copies a validated level, preserving only its documented fields. */
+function normaliseSetupLevel(level) {
+  return {
+    level: level.level,
+    name: level.name,
+    waves: level.waves.map((wave) => {
+      const copy = {
+        groups: wave.groups.map((group) => {
+          const next = {
+            enemyKey: group.enemyKey,
+            formation: group.formation,
+            count: group.count,
+            spacingX: group.spacingX,
+            spacingY: group.spacingY,
+            startX: group.startX,
+            startY: group.startY,
+          };
+          for (const field of ['startXMin', 'startXMax', 'startYMin', 'startYMax']) {
+            if (group[field] !== undefined) next[field] = group[field];
+          }
+          return next;
+        }),
+        shootEnabled: wave.shootEnabled,
+      };
+      for (const flag of ['ghosts', 'centipede', 'horde', 'laneTraffic', 'miniBoss']) {
+        if (wave[flag] !== undefined) copy[flag] = wave[flag];
+      }
+      return copy;
+    }),
+  };
+}
+
+/**
+ * Fills documented defaults on an already-validated setup, returning a fresh
+ * object and never mutating `rawSetup`.
+ *
+ * **Idempotent:** `normaliseSceneSetup(normaliseSceneSetup(x))` deep-equals
+ * `normaliseSceneSetup(x)` — once the defaults are present they are simply
+ * preserved, so a normalised setup can be re-normalised safely (the director
+ * and the driver both do so). Array/object fields are always copied so callers
+ * never share mutable state.
+ *
+ * Defaults: `startWave` 1, `seed` {@link DEFAULT_SCENE_SETUP_SEED}, permanent
+ * weapons `['spread', 'dual']` (mirroring `GymLevel`'s existing loadout) and no
+ * timed weapons, no power-ups, and the level/enemy omitted when absent.
+ *
+ * @param {object} [rawSetup]
+ * @param {string} [target] — when given, only fields the target can consume are
+ *   emitted (so a normalised setup re-validates cleanly against the same
+ *   target); omitted, every present field plus all defaults is emitted.
+ * @returns {object}
+ */
+export function normaliseSceneSetup(rawSetup = {}, target) {
+  const setup = isPlainObject(rawSetup) ? rawSetup : {};
+  const allowed = typeof target === 'string' ? sceneSetupFieldsFor(target) : null;
+  const include = (field) =>
+    allowed === null ? true : allowed.includes(field);
+  const normalised = {};
+  if (include('level') && setup.level !== undefined) {
+    normalised.level = normaliseSetupLevel(setup.level);
+  }
+  if (include('enemy') && setup.enemy !== undefined) normalised.enemy = setup.enemy;
+  if (include('startWave')) {
+    normalised.startWave = setup.startWave === undefined
+      ? DEFAULT_SCENE_SETUP_START_WAVE
+      : setup.startWave;
+  }
+  if (include('player')) {
+    const player = isPlainObject(setup.player) ? setup.player : {};
+    normalised.player = {
+      weapons: [
+        ...(player.weapons ?? DEFAULT_SCENE_SETUP_PLAYER_WEAPONS),
+      ],
+      timedWeapons: [
+        ...(player.timedWeapons ?? DEFAULT_SCENE_SETUP_TIMED_WEAPONS),
+      ],
+    };
+  }
+  if (include('powerUps')) {
+    normalised.powerUps = { ...(isPlainObject(setup.powerUps) ? setup.powerUps : {}) };
+  }
+  if (include('seed')) {
+    normalised.seed = setup.seed === undefined ? DEFAULT_SCENE_SETUP_SEED : setup.seed;
+  }
+  return normalised;
+}
+
+/**
+ * Validates and normalises a raw `setup` for `target`.
+ *
+ * @param {unknown} rawSetup
+ * @param {string} target
+ * @param {string} [at]
+ * @returns {object} the normalised setup (defaults filled).
+ */
+export function parseSceneSetup(rawSetup, target, at = 'setup') {
+  validateSceneSetup(rawSetup, target, at);
+  return normaliseSceneSetup(rawSetup, target);
+}
+
+/**
  * Parses one JSON text string, mapping a syntax error onto a typed
  * `malformed-json` error.
  *
  * @param {string} text
  * @returns {unknown}
  */
-function parseJsonText(text) {
-  try {
+function parseJsonText(text) {  try {
     return JSON.parse(text);
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause);
@@ -220,9 +814,15 @@ function requireDurationMs(value, field) {
 /**
  * Validates and normalises one scene entry.
  *
+ * A `setup` is optional. Absent, the entry is exactly today's
+ * `{ target, playMs, captureMs, label }` (parameterised gyms stay rejected).
+ * Present, the entry gains a validated, normalised `setup` and a parameterised
+ * target becomes capturable **only** when its required parameter is supplied;
+ * a setup on a target that cannot consume it is rejected rather than ignored.
+ *
  * @param {unknown} entry
  * @param {number} index — zero-based position, used in error messages.
- * @returns {{ target: string, playMs: number, captureMs: number, label: string | null }}
+ * @returns {{ target: string, playMs: number, captureMs: number, label: string | null, setup?: object }}
  */
 function normaliseScene(entry, index) {
   const at = `scenes[${index}]`;
@@ -239,7 +839,23 @@ function normaliseScene(entry, index) {
       `${at}.target must be a non-empty gym scene key (got ${JSON.stringify(entry.target)})`,
     );
   }
-  const target = resolveWatchableSceneKey(entry.target);
+
+  const hasSetup = 'setup' in entry && entry.setup !== undefined;
+  let setup;
+  if (hasSetup) {
+    if (!isKnownSceneKey(entry.target)) {
+      throw new SceneConfigError(
+        CODE.unknownTarget,
+        `Unknown scene target ${JSON.stringify(entry.target)}: not a scene key`,
+      );
+    }
+    setup = parseSceneSetup(entry.setup, entry.target, `${at}.setup`);
+  } else {
+    // No setup: today's behaviour, including rejecting the parameterised gyms.
+    resolveWatchableSceneKey(entry.target);
+  }
+  const target = entry.target;
+
   const playMs = requireDurationMs(entry.playMs, `${at}.playMs`);
   const captureMs = requireDurationMs(entry.captureMs, `${at}.captureMs`);
 
@@ -254,7 +870,9 @@ function normaliseScene(entry, index) {
     label = entry.label;
   }
 
-  return { target, playMs, captureMs, label };
+  const normalised = { target, playMs, captureMs, label };
+  if (hasSetup) normalised.setup = setup;
+  return normalised;
 }
 
 /**

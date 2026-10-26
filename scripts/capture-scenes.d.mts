@@ -61,15 +61,101 @@ export const SCENE_CONFIG_ERROR_CODES: Readonly<{
   unsupportedTarget: 'unsupported-target';
   /** A scene entry's `playMs`/`captureMs` is not a positive integer. */
   invalidDuration: 'invalid-duration';
+  /** A `setup` object carries a field that does not exist. */
+  unknownSetupField: 'unknown-setup-field';
+  /** A `setup` field has the wrong type or shape. */
+  invalidSetupType: 'invalid-setup-type';
+  /** A `setup.level.waves[].groups[].enemyKey` is not a known enemy key. */
+  unknownEnemyKey: 'unknown-enemy-key';
+  /** A `setup.level.waves[].groups[].formation` is not a known formation. */
+  unknownFormationKind: 'unknown-formation-kind';
+  /** A `setup.player` weapon id is not a known weapon. */
+  unknownWeaponId: 'unknown-weapon-id';
+  /** A `setup.powerUps` key is not a known power-up id. */
+  unknownPowerUpId: 'unknown-power-up-id';
+  /** A `setup.level.level` is not an integer within the campaign. */
+  invalidLevelIndex: 'invalid-level-index';
+  /** A `setup.startWave` is not a valid 1-based wave index for the level. */
+  invalidWaveIndex: 'invalid-wave-index';
+  /** A parameterised target's setup omits its required parameter. */
+  missingSetupParameter: 'missing-setup-parameter';
+  /** A `setup` is supplied to a target that cannot consume it. */
+  setupNotSupported: 'setup-not-supported';
+  /** A `setup.seed` is not a 32-bit unsigned integer. */
+  invalidSeed: 'invalid-seed';
 }>;
 
 /** Stable machine-readable error code, as in {@link SCENE_CONFIG_ERROR_CODES}. */
 export type SceneConfigErrorCode =
   (typeof SCENE_CONFIG_ERROR_CODES)[keyof typeof SCENE_CONFIG_ERROR_CODES];
 
+/** One enemy group inside a setup-supplied level wave. */
+export interface SceneSetupGroup {
+  /** A known enemy key (pinned by `SCENE_SETUP_ENEMY_KEYS`). */
+  enemyKey: string;
+  /** A known formation kind (pinned by `SCENE_SETUP_FORMATION_KINDS`). */
+  formation: string;
+  /** Positive enemy count. */
+  count: number;
+  spacingX: number;
+  spacingY: number;
+  startX: number;
+  startY: number;
+  startXMin?: number;
+  startXMax?: number;
+  startYMin?: number;
+  startYMax?: number;
+}
+
+/** One wave inside a setup-supplied level. */
+export interface SceneSetupWave {
+  groups: SceneSetupGroup[];
+  shootEnabled: boolean;
+  ghosts?: boolean;
+  centipede?: boolean;
+  horde?: boolean;
+  laneTraffic?: boolean;
+  miniBoss?: boolean;
+}
+
+/** A `LevelDefinition`-shaped level supplied in a setup. */
+export interface SceneSetupLevel {
+  /** Campaign level number (1..SCENE_SETUP_LEVEL_COUNT). */
+  level: number;
+  /** Non-empty theme name. */
+  name: string;
+  /** Non-empty list of waves in play order. */
+  waves: SceneSetupWave[];
+}
+
+/** Player loadout supplied in a setup. */
+export interface SceneSetupPlayer {
+  /** Permanent weapon ids (defaults to `['spread', 'dual']`). */
+  weapons: string[];
+  /** Timed weapon ids (defaults to `[]`). */
+  timedWeapons: string[];
+}
+
+/**
+ * A normalised scene setup (defaults filled by
+ * {@link normaliseSceneSetup}). Fields the target cannot consume are absent.
+ */
+export interface SceneSetup {
+  level?: SceneSetupLevel;
+  /** Formation enemy key (for `GymFodderEnemies`). */
+  enemy?: string;
+  /** 1-based starting wave index (defaults to 1). */
+  startWave?: number;
+  player?: SceneSetupPlayer;
+  /** Power-up id → positive level. */
+  powerUps?: Record<string, number>;
+  /** 32-bit unsigned determinism seed (defaults to 0). */
+  seed?: number;
+}
+
 /** One validated scene-list entry (after config parsing/normalisation). */
 export interface SceneSpec {
-  /** A watchable gym scene key, e.g. `GymPlayer`. */
+  /** A watchable gym scene key, or a parameterised key when `setup` is present. */
   target: string;
   /** Warm-up play duration in milliseconds (positive integer). */
   playMs: number;
@@ -77,7 +163,48 @@ export interface SceneSpec {
   captureMs: number;
   /** Optional one-line label, or `null` when the config omitted it. */
   label: string | null;
+  /** Normalised setup, present only when the config supplied one. */
+  setup?: SceneSetup;
 }
+
+/** Enemy keys a setup may name — mirror of `DEFAULT_ENEMY_KEYS`. */
+export const SCENE_SETUP_ENEMY_KEYS: readonly string[];
+/** Formation kinds a setup wave-group may name — mirror of `EnemyFormationKind`. */
+export const SCENE_SETUP_FORMATION_KINDS: readonly string[];
+/** Weapon ids a setup may name — mirror of `WEAPON_CATALOGUE` keys. */
+export const SCENE_SETUP_WEAPON_IDS: readonly string[];
+/** Power-up ids a setup may name — mirror of `POWER_UP_CATALOGUE` keys. */
+export const SCENE_SETUP_POWER_UP_IDS: readonly string[];
+/** Campaign level count — mirror of `LEVEL_COUNT`. */
+export const SCENE_SETUP_LEVEL_COUNT: number;
+/** Default determinism seed (0). */
+export const DEFAULT_SCENE_SETUP_SEED: number;
+/** Default 1-based starting wave (1). */
+export const DEFAULT_SCENE_SETUP_START_WAVE: number;
+/** Default permanent weapons (`['spread', 'dual']`). */
+export const DEFAULT_SCENE_SETUP_PLAYER_WEAPONS: readonly string[];
+/** Default timed weapons (`[]`). */
+export const DEFAULT_SCENE_SETUP_TIMED_WEAPONS: readonly string[];
+/** Fields every setup-capable scene can consume. */
+export const SCENE_SETUP_COMMON_FIELDS: readonly string[];
+/** Per-target extra fields (`GymLevel`/`GymBotTuning`/`GymFodderEnemies`). */
+export const SCENE_SETUP_TARGET_EXTRA_FIELDS: Readonly<Record<string, readonly string[]>>;
+/** Watchable gyms that cannot consume a setup at all. */
+export const SCENE_SETUP_INCAPABLE_TARGETS: readonly string[];
+
+/** The setup fields `target` can consume (empty ⇒ cannot accept a setup). */
+export function sceneSetupFieldsFor(target: string): string[];
+/** The setup fields a parameterised target requires. */
+export function requiredSceneSetupFieldsFor(target: string): string[];
+
+/** Validates a raw setup against `target`, throwing a typed error on failure. */
+export function validateSceneSetup(rawSetup: unknown, target: string, at?: string): void;
+
+/** Fills documented defaults; idempotent. `target` restricts the emitted fields. */
+export function normaliseSceneSetup(rawSetup?: unknown, target?: string): SceneSetup;
+
+/** Validates and normalises a raw setup for `target`. */
+export function parseSceneSetup(rawSetup: unknown, target: string, at?: string): SceneSetup;
 
 /** The parsed scene-list config object. */
 export interface SceneConfig {

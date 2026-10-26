@@ -39,12 +39,28 @@ import { describe, expect, it } from 'vitest';
 
 import { cliSpawnEnv } from './cliChildEnv';
 import {
+  DEFAULT_ENEMY_KEYS,
+} from '../src/core/configDefaults';
+import { LEVEL_COUNT } from '../src/waves/Formations';
+import { POWER_UP_CATALOGUE } from '../src/powerups/types';
+import { WEAPON_CATALOGUE } from '../src/utils/weapons';
+import { FORMATION_BUILDERS } from '../src/utils/formations';
+import {
+  DEFAULT_SCENE_SETUP_PLAYER_WEAPONS,
+  DEFAULT_SCENE_SETUP_SEED,
+  DEFAULT_SCENE_SETUP_START_WAVE,
+  DEFAULT_SCENE_SETUP_TIMED_WEAPONS,
   PARAMETERISED_GYM_SCENE_KEYS,
   SCENE_CONFIG_ERROR_CODES,
   SCENE_FADE_CONTRAST_LUMA,
   SCENE_FADE_DARK_LUMA,
   SCENE_FADE_MS,
   SCENE_FADE_PROBE_POINTS,
+  SCENE_SETUP_ENEMY_KEYS,
+  SCENE_SETUP_FORMATION_KINDS,
+  SCENE_SETUP_LEVEL_COUNT,
+  SCENE_SETUP_POWER_UP_IDS,
+  SCENE_SETUP_WEAPON_IDS,
   SceneConfigError,
   WATCHABLE_GYM_SCENE_KEYS,
   buildScenePlan,
@@ -54,8 +70,13 @@ import {
   evaluateSceneFadeSamples,
   isWatchableGymSceneKey,
   loadSceneConfig,
+  normaliseSceneSetup,
   parseSceneConfig,
+  parseSceneSetup,
+  requiredSceneSetupFieldsFor,
   resolveWatchableSceneKey,
+  sceneSetupFieldsFor,
+  validateSceneSetup,
 } from './capture-scenes.mjs';
 
 const ERROR = SCENE_CONFIG_ERROR_CODES;
@@ -742,5 +763,169 @@ describe('evaluateSceneFadeSamples (AH-0MUX2NLFZ00128WC AC3)', () => {
   it('needs no transitions for a single scene (fadeVerified trivially true)', () => {
     expect(evaluateSceneFadeSamples({ scenes: scenes.slice(0, 1) }).fadeVerified).toBe(true);
     expect(evaluateSceneFadeSamples({}).fadeVerified).toBe(true);
+  });
+});
+
+describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
+  /** A minimal valid `LevelDefinition`-shaped setup level. */
+  function validLevel(overrides: Record<string, unknown> = {}) {
+    return {
+      level: 4,
+      name: 'The Core',
+      waves: [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 6,
+              spacingX: 26,
+              spacingY: 22,
+              startX: 240,
+              startY: 270,
+            },
+          ],
+          shootEnabled: true,
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  /** A valid `GymLevel` setup. */
+  function validLevelSetup(overrides: Record<string, unknown> = {}) {
+    return { level: validLevel(), ...overrides };
+  }
+
+  it('leaves an entry without setup exactly as it is today (unchanged behaviour)', () => {
+    const parsed = parseSceneConfig({
+      scenes: [{ target: 'GymPlayer', playMs: 2000, captureMs: 3000, label: 'p' }],
+    });
+    expect(parsed).toEqual([
+      { target: 'GymPlayer', playMs: 2000, captureMs: 3000, label: 'p' },
+    ]);
+    // The absent setup is not materialised as `undefined`/`null`.
+    expect('setup' in parsed[0]).toBe(false);
+  });
+
+  it('still rejects the parameterised gyms when no setup is supplied', () => {
+    for (const target of PARAMETERISED_GYM_SCENE_KEYS) {
+      expectConfigError(
+        () => parseSceneConfig({ scenes: [{ target, playMs: 1, captureMs: 1 }] }),
+        ERROR.unsupportedTarget,
+      );
+    }
+  });
+
+  it('accepts GymLevel and GymFodderEnemies with a valid setup, preserving file order', () => {
+    const parsed = parseSceneConfig({
+      scenes: [
+        PLAYER_SCENE,
+        { target: 'GymLevel', playMs: 1000, captureMs: 2000, setup: validLevelSetup() },
+        {
+          target: 'GymFodderEnemies',
+          playMs: 1500,
+          captureMs: 2500,
+          setup: { enemy: 'grunt', player: { weapons: ['spread'] } },
+        },
+      ],
+    });
+
+    expect(parsed.map((entry) => entry.target)).toEqual([
+      'GymPlayer',
+      'GymLevel',
+      'GymFodderEnemies',
+    ]);
+    expect(parsed[0].setup).toBeUndefined();
+    expect(parsed[1].setup?.level?.level).toBe(4);
+    expect(parsed[1].setup?.startWave).toBe(DEFAULT_SCENE_SETUP_START_WAVE);
+    expect(parsed[2].setup?.enemy).toBe('grunt');
+    expect(parsed[2].setup?.player?.weapons).toEqual(['spread']);
+  });
+
+  it('fills the documented defaults when normalising', () => {
+    const setup = normaliseSceneSetup({}, 'GymLevel');
+    expect(setup).toEqual({
+      startWave: DEFAULT_SCENE_SETUP_START_WAVE,
+      player: {
+        weapons: [...DEFAULT_SCENE_SETUP_PLAYER_WEAPONS],
+        timedWeapons: [...DEFAULT_SCENE_SETUP_TIMED_WEAPONS],
+      },
+      powerUps: {},
+      seed: DEFAULT_SCENE_SETUP_SEED,
+    });
+  });
+
+  it('normalisation is idempotent', () => {
+    const once = normaliseSceneSetup(validLevelSetup(), 'GymLevel');
+    const twice = normaliseSceneSetup(once, 'GymLevel');
+    expect(twice).toEqual(once);
+  });
+
+  it('only emits fields the target can consume (so a normalised setup re-validates)', () => {
+    const setup = normaliseSceneSetup({ enemy: 'grunt' }, 'GymFodderEnemies');
+    expect(setup).not.toHaveProperty('startWave');
+    expect(() => validateSceneSetup(setup, 'GymFodderEnemies')).not.toThrow();
+  });
+
+  it.each([
+    ['an unknown setup field', { level: validLevel(), nonsense: 1 }, 'GymLevel', ERROR.unknownSetupField],
+    ['a setup field the target cannot consume', { startWave: 2 }, 'GymFodderEnemies', ERROR.setupNotSupported],
+    ['a setup on a target that cannot accept one', { player: { weapons: ['spread'] } }, 'GymCurveSequencer', ERROR.setupNotSupported],
+    ['a non-object setup', 42, 'GymLevel', ERROR.invalidSetupType],
+    ['an unknown enemy key', { level: validLevel({ waves: [{ groups: [{ enemyKey: 'nope', formation: 'v', count: 1, spacingX: 1, spacingY: 1, startX: 1, startY: 1 }], shootEnabled: false }] }) }, 'GymLevel', ERROR.unknownEnemyKey],
+    ['an unknown formation kind', { level: validLevel({ waves: [{ groups: [{ enemyKey: 'scout', formation: 'grid', count: 1, spacingX: 1, spacingY: 1, startX: 1, startY: 1 }], shootEnabled: false }] }) }, 'GymLevel', ERROR.unknownFormationKind],
+    ['an unknown weapon id', { player: { weapons: ['laser'] } }, 'GymPlayer', ERROR.unknownWeaponId],
+    ['an unknown power-up id', { powerUps: { nope: 1 } }, 'GymPlayer', ERROR.unknownPowerUpId],
+    ['an out-of-range level index', { level: validLevel({ level: 99 }) }, 'GymLevel', ERROR.invalidLevelIndex],
+    ['an out-of-range wave index', { level: validLevel(), startWave: 5 }, 'GymLevel', ERROR.invalidWaveIndex],
+    ['a non-integer wave index', { level: validLevel(), startWave: 1.5 }, 'GymLevel', ERROR.invalidWaveIndex],
+    ['an out-of-range seed', { seed: -1 }, 'GymPlayer', ERROR.invalidSeed],
+    ['a non-integer seed', { seed: 1.2 }, 'GymPlayer', ERROR.invalidSeed],
+    ['a missing required parameter (GymLevel)', {}, 'GymLevel', ERROR.missingSetupParameter],
+    ['a missing required parameter (GymFodderEnemies)', { player: {} }, 'GymFodderEnemies', ERROR.missingSetupParameter],
+  ])('rejects %s', (_label, setup, target, code) => {
+    const error = expectConfigError(() => validateSceneSetup(setup, target), code);
+    expect(error.message).toContain('setup');
+  });
+
+  it('names the scene index and field(s) in parse errors', () => {
+    const error = expectConfigError(
+      () =>
+        parseSceneConfig({
+          scenes: [PLAYER_SCENE, { target: 'GymLevel', playMs: 1, captureMs: 1, setup: { level: validLevel({ level: 99 }) } }],
+        }),
+      ERROR.invalidLevelIndex,
+    );
+    expect(error.message).toContain('scenes[1]');
+    expect(error.message).toContain('level.level');
+  });
+
+  it('exposes the required parameter per parameterised target', () => {
+    expect(requiredSceneSetupFieldsFor('GymLevel')).toEqual(['level']);
+    expect(requiredSceneSetupFieldsFor('GymFodderEnemies')).toEqual(['enemy']);
+    expect(requiredSceneSetupFieldsFor('GymPlayer')).toEqual([]);
+    expect(sceneSetupFieldsFor('GymCurveSequencer')).toEqual([]);
+  });
+
+  it('pins the mirrored id registries against the real ones', () => {
+    expect([...SCENE_SETUP_ENEMY_KEYS].sort()).toEqual([...DEFAULT_ENEMY_KEYS].sort());
+    expect([...SCENE_SETUP_FORMATION_KINDS].sort()).toEqual(
+      Object.keys(FORMATION_BUILDERS).sort(),
+    );
+    expect([...SCENE_SETUP_WEAPON_IDS].sort()).toEqual(
+      Object.keys(WEAPON_CATALOGUE).sort(),
+    );
+    expect([...SCENE_SETUP_POWER_UP_IDS].sort()).toEqual(
+      Object.keys(POWER_UP_CATALOGUE).sort(),
+    );
+    expect(SCENE_SETUP_LEVEL_COUNT).toBe(LEVEL_COUNT);
+  });
+
+  it('parseSceneSetup == validate + normalise for a valid setup', () => {
+    const raw = validLevelSetup();
+    expect(parseSceneSetup(raw, 'GymLevel')).toEqual(
+      normaliseSceneSetup(raw, 'GymLevel'),
+    );
   });
 });
