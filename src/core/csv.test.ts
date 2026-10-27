@@ -1734,3 +1734,78 @@ describe('Enemy force-field columns (AH-0MVM8GQKI006B50M, test-first)', () => {
     }
   });
 });
+
+// ── Data-driven wrap-awareness (AH-0MVKXBPJI002UCC1) ────────────────
+
+/**
+ * Contract tests for the `wrapAware` enemy-config column (parent epic
+ * AH-0MV9G3DZ9003P7P8, AC1 + AC5).
+ *
+ * **TEST-FIRST.** Authored before the field existed, wrapped in Vitest's
+ * `it.fails` (the repo's red-before/green-after convention — see
+ * `src/core/levelScaling.test.ts`), so this block stays green on pre-change
+ * HEAD. **The implementation item (AH-0MVKXBQVT000B2WL) flips every
+ * `it.fails` back to `it`** once `EnemyConfig`, the codec and the seeds land;
+ * a leftover `it.fails` here fails the suite.
+ *
+ * The documented default is `true` (wrap-aware): a missing, blank or
+ * malformed-absent cell must resolve to `true`, so enabling seam-awareness is
+ * the out-of-the-box behaviour and only the explicit seed exclusions
+ * (`march`, `centipede`) opt out.
+ */
+describe('Enemy wrapAware config column (AH-0MVKXBPJI002UCC1, test-first)', () => {
+  /** Read just the `wrapAware` flag off a coerced config. */
+  function wrapAwareOf(config: unknown): boolean {
+    return (config as Record<string, unknown>).wrapAware as boolean;
+  }
+
+  it.fails('exposes wrapAware in the stable enemy column order (serialisation + plugin validation)', async () => {
+    const m = await loadCsvModule();
+    expect(m.ENEMY_COLUMN_ORDER).toContain('wrapAware');
+  });
+
+  it.fails('coerces an explicit wrapAware cell to a boolean', async () => {
+    const m = await loadCsvModule();
+    const aware = m.coerceEnemyConfig(
+      { ...legacyEnemyRow('scout'), wrapAware: 'true' },
+      DEFAULT_ENEMY_CONFIGS,
+    );
+    const unaware = m.coerceEnemyConfig(
+      { ...legacyEnemyRow('march'), wrapAware: 'false' },
+      DEFAULT_ENEMY_CONFIGS,
+    );
+    expect(wrapAwareOf(aware)).toBe(true);
+    expect(wrapAwareOf(unaware)).toBe(false);
+  });
+
+  it.fails('defaults an absent or blank wrapAware cell to true', async () => {
+    const m = await loadCsvModule();
+    // `brand-new-enemy` has no seed config at all: the fallback must still be
+    // wrap-aware, so a newly authored archetype is seam-aware by default.
+    for (const key of ['scout', 'brand-new-enemy']) {
+      const absent = m.coerceEnemyConfig(legacyEnemyRow(key), DEFAULT_ENEMY_CONFIGS);
+      expect(wrapAwareOf(absent), `${key} (absent cell)`).toBe(true);
+      const blank = m.coerceEnemyConfig(
+        { ...legacyEnemyRow(key), wrapAware: '' },
+        DEFAULT_ENEMY_CONFIGS,
+      );
+      expect(wrapAwareOf(blank), `${key} (blank cell)`).toBe(true);
+    }
+  });
+
+  it.fails('round-trips wrapAware through export → import', async () => {
+    const m = await loadCsvModule();
+    const authored = [
+      { ...DEFAULT_ENEMY_CONFIGS.scout, wrapAware: true },
+      { ...DEFAULT_ENEMY_CONFIGS.march, wrapAware: false },
+    ];
+    const csvString = m.serializeEnemyConfigs(authored);
+    const [header] = csvString.split('\n');
+    expect(header.split(',')).toContain('wrapAware');
+
+    const rows = m.parseCsvRows(csvString);
+    expect(rows.length).toBe(2);
+    expect(wrapAwareOf(m.coerceEnemyConfig(rows[0], DEFAULT_ENEMY_CONFIGS))).toBe(true);
+    expect(wrapAwareOf(m.coerceEnemyConfig(rows[1], DEFAULT_ENEMY_CONFIGS))).toBe(false);
+  });
+});

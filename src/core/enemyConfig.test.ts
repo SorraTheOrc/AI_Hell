@@ -288,3 +288,52 @@ describe('Force-field seed defaults (AH-0MVM8GQKI006B50M, test-first)', () => {
     }
   });
 });
+
+/**
+ * Contract tests for the `wrapAware` seed defaults (AH-0MVKXBPJI002UCC1,
+ * parent epic AH-0MV9G3DZ9003P7P8 AC1 + AC5).
+ *
+ * **TEST-FIRST.** Authored before the field existed, wrapped in Vitest's
+ * `it.fails` (the repo's red-before/green-after convention), so this block
+ * stays green on pre-change HEAD. **The implementation item
+ * (AH-0MVKXBQVT000B2WL) flips every `it.fails` back to `it`** once the seed
+ * defaults land; a leftover `it.fails` here fails the suite.
+ *
+ * Wrap-awareness is the default (`true`); only the explicit classic-arcade
+ * exclusions are non-aware. The exclusion list lives in the seed defaults so
+ * no other module needs a hard-coded archetype key list.
+ */
+const WRAP_AWARE_EXCLUSION_KEYS: readonly string[] = ['march', 'centipede'];
+
+describe('wrapAware seed defaults (AH-0MVKXBPJI002UCC1, test-first)', () => {
+  beforeEach(() => {
+    resetConfigStore();
+  });
+
+  /** Read just the `wrapAware` flag off a seed/generic config. */
+  function wrapAwareOf(config: unknown): boolean {
+    return (config as Record<string, unknown>).wrapAware as boolean;
+  }
+
+  it.fails('every non-excluded seed archetype is wrap-aware by default', () => {
+    for (const [key, seed] of Object.entries(DEFAULT_ENEMY_CONFIGS)) {
+      if (WRAP_AWARE_EXCLUSION_KEYS.includes(key)) continue;
+      expect(wrapAwareOf(seed), key).toBe(true);
+    }
+  });
+
+  it.fails('seeds the classic-arcade march archetype as non-aware', () => {
+    expect(wrapAwareOf(DEFAULT_ENEMY_CONFIGS.march)).toBe(false);
+  });
+
+  it.fails('resolves the Centipede archetype as non-aware through the config pipeline', () => {
+    // The Centipede is a linked chain, not a CSV-backed archetype: it has no
+    // `enemy-configs.csv` row (see the gym editor docs), so its exclusion is
+    // carried by the explicit seed-default exclusion list rather than a cell.
+    expect(wrapAwareOf(loadEnemyConfig('centipede'))).toBe(false);
+  });
+
+  it.fails('resolves a generic archetype with no seed config as wrap-aware', () => {
+    expect(wrapAwareOf(loadEnemyConfig('brand-new-enemy'))).toBe(true);
+  });
+});
