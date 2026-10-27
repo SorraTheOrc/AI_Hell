@@ -69,7 +69,11 @@ wall-clock number**:
    `src/test/deterministicBootGuard.test.ts` or
    `src/test/wallClockWaitGuard.test.ts` (its allow-list is empty).
 2. **Deterministic and repeatable.** Boot is fixed-delta by default; runs pass
-   under load without retries.
+   under load without retries. Tests whose *assertions* legitimately take
+   seconds of real computation declare an explicit per-file timing budget with
+   `vi.setConfig({ testTimeout: … })` instead of inheriting Vitest's 5 s
+   default — an inherited default turns shared-host load into a timeout
+   failure (see [Per-file timing budgets](#per-file-timing-budgets)).
 3. **The default suite excludes real-binary work** (the ~140 s ffmpeg promo
    compile lives in the gated `e2e` type), so the feedback loop pays only for
    assertion work plus the unavoidable Phaser transform.
@@ -174,6 +178,29 @@ Measured adoption (four gym suites, concurrent baseline/after runs at load
 49.6 s (−4 %). Per-boot medians on the same host: fresh 21–78 ms vs reused
 11–75 ms (the saving is the removed game construction/destroy; scene
 `create()` still runs).
+
+## Per-file timing budgets
+
+Vitest's default `testTimeout` is 5 000 ms and `vitest.config.ts` deliberately
+sets no global override, so most tests keep that tight budget. A test whose
+assertions are seconds of real computation — the eval-arena batch tests are the
+main case (`src/ai/eval/cli.test.ts`, `src/ai/eval/engine.test.ts`, which run a
+campaign batch resolving to `DEFAULT_BATCH_TICKS` = 18 000 and a ~100-game
+sweep) — **must declare its own budget** at the top of its file:
+
+```ts
+import { vi } from 'vitest';
+vi.setConfig({ testTimeout: 30000 });
+```
+
+Why: those two files failed the full suite three times on 2026-10-27 at
+5.5–6.5 s per test — just past the 5 s default, under shared-host load, with no
+assertion failure at all (AH-0MVR8QM89004OQZQ, recurring after
+AH-0MVPJETJF009E0S8 was closed as a load-induced flake). The budget is a
+*bound*, not a target: 30 s gives ~5x headroom over the observed worst case
+while still failing a genuine hang. Do **not** "fix" such a failure by
+reducing the work in the test, and do not raise the global default — a global
+budget loosens every fast test in the suite.
 
 ## Recording format
 
