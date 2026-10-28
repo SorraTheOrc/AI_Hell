@@ -51,8 +51,10 @@ const WORMHOLE_START_SCALE = 0.01;
 
 // ── Wormhole glow/pulse ring tunables (AH-0MVD2N6AW0073X5M) ─────────
 //
-// While a wormhole is open for a wave it gets a subtle glow/pulse ring at the
-// wormhole position (epic AH-0MV8BUKFK003Z23S AC4). It is drawn **once per
+// While a wormhole is open for a wave it carries a bright, unmistakable
+// glow/pulse ring at the wormhole position (epic AH-0MV8BUKFK003Z23S AC4;
+// magnitudes raised under AH-0MVNTXZ4X00031AU so the portal reads as the
+// source of the emergence before the enemies arrive). It is drawn **once per
 // wormhole** as a child of the wormhole container, so it is tracked by the
 // caller's existing `wormholeEffects` registry for free and is destroyed with
 // the container when the close tween completes (no separate teardown path to
@@ -72,11 +74,11 @@ export const WORMHOLE_RING_ENABLE = true;
  */
 export const WORMHOLE_RING_COLOR = 0xd9b3ff;
 
-/** Ring radius (px) at its neutral pulse position. */
-export const WORMHOLE_RING_RADIUS = 52;
+/** Ring radius (px) at its neutral pulse position. Raised 52 → 80 (unmistakable). */
+export const WORMHOLE_RING_RADIUS = 80;
 
-/** Ring stroke width (px). */
-export const WORMHOLE_RING_LINE_WIDTH = 3;
+/** Ring stroke width (px). Raised 3 → 6 (unmistakable). */
+export const WORMHOLE_RING_LINE_WIDTH = 6;
 
 /**
  * Radius pulse multipliers `[min, max]` — the ring "breathes" around its
@@ -88,11 +90,55 @@ export const WORMHOLE_RING_PULSE_RANGE: readonly [number, number] = [0.9, 1.15] 
 /** Duration (ms) of one pulse direction (min → max); the yoyo makes a full breath twice this. */
 export const WORMHOLE_RING_PULSE_DURATION_MS = 900;
 
-/** Soft glow alpha of the ring, within (0, 1]. */
-export const WORMHOLE_RING_GLOW_ALPHA = 0.45;
+/** Soft glow alpha of the ring, within (0, 1]. Raised 0.45 → 0.8 (unmistakable). */
+export const WORMHOLE_RING_GLOW_ALPHA = 0.8;
 
 /** Data key marking the ring graphics inside the wormhole container. */
 const WORMHOLE_RING_DATA_KEY = 'wormholeRing';
+
+// ── Wormhole open shockwave tunables (AH-0MVNTXZ4X00031AU) ───────────
+//
+// When the wormhole **opens** it fires a single expanding light pulse at the
+// portal mouth — the one-shot "enemies are coming from here" read — which
+// scales out past the neutral ring and fades away over
+// WORMHOLE_SHOCKWAVE_DURATION_MS, exactly once (no loop). Same violet-white
+// palette as the ring, so the portal reads as one cohesive source;
+// deliberately distinct from the phase-shift cyan/red split and the
+// player-death palette.
+
+/** Whether the one-shot open shockwave layer is enabled. */
+export const WORMHOLE_SHOCKWAVE_ENABLE = true;
+
+/**
+ * Shockwave colour — the same violet-white as the ring
+ * ({@link WORMHOLE_RING_COLOR}) so the open pulse reads as coming from the
+ * same portal. Deliberately distinct from `PHASE_SHIFT_SPLIT_COLOR_*` and
+ * `PLAYER_DEATH_FLASH_COLOR`.
+ */
+export const WORMHOLE_SHOCKWAVE_COLOR = 0xd9b3ff;
+
+/** Base radius (px) of the shockwave ring, before its expanding scale tween. */
+export const WORMHOLE_SHOCKWAVE_RADIUS = 64;
+
+/** Shockwave stroke width (px). */
+export const WORMHOLE_SHOCKWAVE_LINE_WIDTH = 6;
+
+/** Starting alpha of the shockwave (tweened to 0 over its one-shot duration). */
+export const WORMHOLE_SHOCKWAVE_ALPHA = 0.9;
+
+/** One-shot duration (ms) of the expanding shockwave pulse, within (0, 1 s]. */
+export const WORMHOLE_SHOCKWAVE_DURATION_MS = 400;
+
+/**
+ * Scale range `[from, to]` of the expanding shockwave — it grows out from a
+ * tight pulse at the portal mouth to well beyond the neutral ring, then the
+ * whole layer fades away. One-shot (`repeat: 0`), unlike the ring's
+ * breathing yoyo.
+ */
+export const WORMHOLE_SHOCKWAVE_SCALE_RANGE: readonly [number, number] = [0.35, 1.6] as const;
+
+/** Data key marking the open-shockwave graphics inside the wormhole container. */
+export const WORMHOLE_SHOCKWAVE_DATA_KEY = 'wormholeShockwave';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -192,6 +238,50 @@ function attachWormholeRing(
 }
 
 /**
+ * Adds the one-shot open shockwave to a freshly opened wormhole container: a
+ * stroked ring pulse that expands out past the neutral ring and fades away
+ * over {@link WORMHOLE_SHOCKWAVE_DURATION_MS}, fired exactly once per
+ * wormhole on open. A no-op when the layer is disabled or the scene exposes
+ * no tween manager (headless stub) — the wormhole itself is unaffected.
+ *
+ * @param scene - The wormhole's scene (owns the tween manager).
+ * @param container - The wormhole container the shockwave is parented to.
+ */
+function attachOpenShockwave(
+  scene: Phaser.Scene,
+  container: Phaser.GameObjects.Container,
+): void {
+  if (!WORMHOLE_SHOCKWAVE_ENABLE) return;
+  const add = scene?.add as
+    | { graphics?: () => Phaser.GameObjects.Graphics }
+    | undefined;
+  if (!add || typeof add.graphics !== 'function') return;
+
+  const shockwave = add.graphics();
+  shockwave.lineStyle(
+    WORMHOLE_SHOCKWAVE_LINE_WIDTH,
+    WORMHOLE_SHOCKWAVE_COLOR,
+    WORMHOLE_SHOCKWAVE_ALPHA,
+  );
+  shockwave.strokeCircle(0, 0, WORMHOLE_SHOCKWAVE_RADIUS);
+  shockwave.setData(WORMHOLE_SHOCKWAVE_DATA_KEY, true);
+  container.add(shockwave);
+
+  const tweens = scene?.tweens as
+    | { add?: (...args: unknown[]) => unknown }
+    | undefined;
+  if (!tweens || typeof tweens.add !== 'function') return;
+  const [fromScale, toScale] = WORMHOLE_SHOCKWAVE_SCALE_RANGE;
+  tweens.add({
+    targets: shockwave,
+    scale: { from: fromScale, to: toScale },
+    alpha: { from: WORMHOLE_SHOCKWAVE_ALPHA, to: 0 },
+    duration: WORMHOLE_SHOCKWAVE_DURATION_MS,
+    ease: 'Cubic.easeOut',
+  });
+}
+
+/**
  * Opens the wormhole VFX at (x, y): a neon swirl that scales up over
  * {@link WORMHOLE_OPEN_DURATION}, plus the glow/pulse ring
  * ({@link WORMHOLE_RING_ENABLE}) tracked as a child of the container.
@@ -222,23 +312,33 @@ export function spawnWormholeOpen(
     complete: false,
     isComplete: () => handle.complete,
   };
-  scene.tweens.add({
-    targets: container,
-    scale: 1,
-    duration: WORMHOLE_OPEN_DURATION * 1000,
-    ease: 'Cubic.easeOut',
-  });
-  // The glow/pulse ring is layered on after the open tween so the wormhole's
-  // own open animation remains the first tween registered for the container.
+  const tweens = scene?.tweens as
+    | { add?: (...args: unknown[]) => unknown }
+    | undefined;
+  if (tweens && typeof tweens.add === 'function') {
+    tweens.add({
+      targets: container,
+      scale: 1,
+      duration: WORMHOLE_OPEN_DURATION * 1000,
+      ease: 'Cubic.easeOut',
+    });
+  }
+  // The glow/pulse ring and the one-shot open shockwave are layered on after
+  // the open tween so the wormhole's own open animation remains the first
+  // tween registered for the container.
   attachWormholeRing(scene, container);
+  attachOpenShockwave(scene, container);
   return handle;
 }
 
 /**
  * Closes the wormhole: scales and fades it out over
  * {@link WORMHOLE_CLOSE_DURATION}, then — on tween completion — stops the
- * ring's looping pulse, removes the container from the registry and destroys
- * it exactly once. Idempotent: a second close on the same handle is a no-op.
+ * ring's looping pulse and the shockwave pulse, removes the container from
+ * the registry and destroys it exactly once. Idempotent: a second close on a
+ * completed handle is a full no-op (no new close tween, no double-remove, no
+ * second destroy). Headless-safe: a scene with no tween manager (test stub)
+ * is torn down immediately instead of throwing.
  *
  * @param scene - The owning scene (tween manager).
  * @param handle - The handle returned by {@link spawnWormholeOpen}.
@@ -249,35 +349,50 @@ export function spawnWormholeClose(
   handle: WormholeHandle,
   registry?: Phaser.GameObjects.Container[],
 ): void {
+  if (handle.complete) return;
   const container = handle.container;
-  scene.tweens.add({
+  const tweens = scene?.tweens as
+    | {
+        add?: (...args: unknown[]) => unknown;
+        killTweensOf?: (target: unknown) => unknown;
+      }
+    | undefined;
+  const finalise = (): void => {
+    handle.complete = true;
+    if (registry) {
+      const index = registry.indexOf(container);
+      if (index >= 0) registry.splice(index, 1);
+    }
+    // Stop every child loop (the ring's infinite pulse and any still-running
+    // shockwave pulse) before destroying the container: a looping tween left
+    // pointing at a destroyed child would keep ticking against a dead object
+    // (the same hazard `WormholeController.reset` documents). `killTweensOf`
+    // is feature-detected so headless stubs and scene-less callers stay safe.
+    if (typeof tweens?.killTweensOf === 'function') {
+      const ring = container.list?.find(
+        (child) => child.getData?.(WORMHOLE_RING_DATA_KEY) === true,
+      );
+      if (ring) tweens.killTweensOf(ring);
+      const shockwave = container.list?.find(
+        (child) => child.getData?.(WORMHOLE_SHOCKWAVE_DATA_KEY) === true,
+      );
+      if (shockwave) tweens.killTweensOf(shockwave);
+    }
+    container.destroy();
+  };
+  if (!tweens || typeof tweens.add !== 'function') {
+    // Headless / no-tween scene: nothing animates, so tear down immediately
+    // rather than leaving a live wormhole behind.
+    finalise();
+    return;
+  }
+  tweens.add({
     targets: container,
     scale: 0,
     alpha: 0,
     duration: WORMHOLE_CLOSE_DURATION * 1000,
     ease: 'Cubic.easeIn',
-    onComplete: () => {
-      handle.complete = true;
-      if (registry) {
-        const index = registry.indexOf(container);
-        if (index >= 0) registry.splice(index, 1);
-      }
-      // Stop the ring's infinite pulse tween before destroying the container:
-      // a looping tween left pointing at a destroyed child would keep ticking
-      // against a dead object (the same hazard `WormholeController.reset`
-      // documents). `killTweensOf` is feature-detected so headless stubs and
-      // scene-less callers stay safe.
-      const tweens = scene?.tweens as
-        | { killTweensOf?: (target: unknown) => unknown }
-        | undefined;
-      const ring = container.list?.find(
-        (child) => child.getData?.(WORMHOLE_RING_DATA_KEY) === true,
-      );
-      if (ring && typeof tweens?.killTweensOf === 'function') {
-        tweens.killTweensOf(ring);
-      }
-      container.destroy();
-    },
+    onComplete: finalise,
   });
 }
 

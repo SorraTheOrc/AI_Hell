@@ -9,8 +9,8 @@
  * The file ends with the test-first contract for the *unmistakable* emergence
  * treatment (AH-0MVNTXTYN001ZXM6): the per-entity outline/flicker/burst
  * contract and the wormhole ring/shockwave contract. The per-entity cases
- * landed with AH-0MVNTXXTA0081S38 and now run as plain `it`s; the wormhole ring
- * cases remain `it.fails` until AH-0MVNTXZ4X00031AU lands (see the block
+ * landed with AH-0MVNTXXTA0081S38 and the wormhole ring/shockwave cases
+ * landed with AH-0MVNTXZ4X00031AU; all now run as plain `it`s (see the block
  * comment before them).
  */
 
@@ -864,10 +864,9 @@ describe('wormholeSpawn — wormhole glow/pulse ring (ring landed in AH-0MVD2N6A
 
 // ── Unmistakable enemy emergence + wormhole ring — test-first contract ──
 //
-// Contract owner: AH-0MVNTXTYN001ZXM6. The per-entity emergence cases below
-// were implemented by AH-0MVNTXXTA0081S38 (per-enemy unmistakable emergence
-// shimmer) and now run as plain `it`s; the wormhole ring/shockwave cases stay
-// `it.fails` until AH-0MVNTXZ4X00031AU lands — a leftover `it.fails` fails the
+// Contract owner: AH-0MVNTXTYN001ZXM6. The per-entity emergence cases were
+// implemented by AH-0MVNTXXTA0081S38 and the wormhole ring/shockwave cases by
+// AH-0MVNTXZ4X00031AU — a leftover `it.fails` fails the
 // suite (vitest reports a passing `it.fails` as a failure).
 //
 // Pinned treatment (approach C of AH-0MVNTR89P0022JIU: the emergence path
@@ -1273,7 +1272,7 @@ describe('wormholeSpawn — unmistakable wormhole ring + open shockwave (AH-0MVN
     } as unknown as Phaser.Scene;
   }
 
-  it.fails('raises the ring to the unmistakable magnitudes and documents the shockwave tunables', () => {
+  it('raises the ring to the unmistakable magnitudes and documents the shockwave tunables', () => {
     // Brighter and larger than the pre-upgrade ring (r 52 / 3 px / α 0.45).
     expect(numberTunable('WORMHOLE_RING_RADIUS')).toBeGreaterThan(52);
     expect(numberTunable('WORMHOLE_RING_RADIUS')).toBeGreaterThanOrEqual(64);
@@ -1307,7 +1306,7 @@ describe('wormholeSpawn — unmistakable wormhole ring + open shockwave (AH-0MVN
     }
   });
 
-  it.fails('fires exactly one expanding open shockwave pulse per wormhole', async () => {
+  it('fires exactly one expanding open shockwave pulse per wormhole', async () => {
     const scene = await boot();
     const tweenSpy = vi.spyOn(scene.tweens, 'add');
 
@@ -1334,7 +1333,7 @@ describe('wormholeSpawn — unmistakable wormhole ring + open shockwave (AH-0MVN
     expect(endsAtZero).toBe(true);
   });
 
-  it.fails('stops the ring and shockwave tweens, then destroys them exactly once on close', async () => {
+  it('stops the ring and shockwave tweens, then destroys them exactly once on close', async () => {
     const scene = await boot();
     const registry: Phaser.GameObjects.Container[] = [];
     const handle = spawnWormholeOpen(scene, 10, 20, { registry });
@@ -1393,7 +1392,7 @@ describe('wormholeSpawn — unmistakable wormhole ring + open shockwave (AH-0MVN
     expect(registry).toHaveLength(0);
   });
 
-  it.fails('constructs and closes with a stubbed scene that has no tween manager (headless no-op)', () => {
+  it('constructs and closes with a stubbed scene that has no tween manager (headless no-op)', () => {
     const scene = stubHeadlessScene();
     const registry: Phaser.GameObjects.Container[] = [];
 
