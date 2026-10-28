@@ -5,12 +5,20 @@
  * Assert observable behaviour of the public API — spawn position, tween
  * parameters, registry lifecycle, handle completion, and the dt-driven
  * growth curve — rather than pixel output.
+ *
+ * The file ends with the test-first contract for the *unmistakable* emergence
+ * treatment (AH-0MVNTXTYN001ZXM6): the per-entity outline/flicker/burst
+ * contract and the wormhole ring/shockwave contract. Those cases use
+ * `it.fails` until their implementation siblings land (see the block comment
+ * before them).
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
+import { PHASE_SHIFT_SPLIT_COLOR_CYAN, PHASE_SHIFT_SPLIT_COLOR_RED } from './phaseShiftJuice';
+import { PLAYER_DEATH_FLASH_COLOR } from './playerDeathJuice';
 import {
   ENEMY_GROWTH_DURATION,
   TOTAL_SPAWN_PROTECTION_WINDOW,
@@ -18,7 +26,6 @@ import {
   WAVE_PORTAL_TRAJECTORY_HORIZON_SECONDS,
   WORMHOLE_CLOSE_DURATION,
   WORMHOLE_OPEN_DURATION,
-  WORMHOLE_RING_ENABLE,
   WormholeController,
   anchorSpawnsToPortal,
   formationCentre,
@@ -31,6 +38,7 @@ import {
   startSpawnAnimation,
   updateSpawnAnimation,
   type SpawnAnimatable,
+  type WormholeHandle,
 } from './wormholeSpawn';
 import * as wormholeSpawnModule from './wormholeSpawn';
 
@@ -65,9 +73,9 @@ describe('wormholeSpawn — wormhole open/close VFX', () => {
     expect(handle.container.y).toBe(120);
     expect(registry).toContain(handle.container);
     expect(scene.children.list).toContain(handle.container);
-    // One tween for the wormhole open animation, plus the ring's pulse
-    // tween when the ring layer is enabled (AH-0MVD2N6AW0073X5M).
-    expect(tweenSpy).toHaveBeenCalledTimes(WORMHOLE_RING_ENABLE ? 2 : 1);
+    // One tween for the wormhole open animation. (The ring pulse —
+    // AH-0MVD2N6AW0073X5M — and the open shockwave add further tweens, so the
+    // open animation is pinned by target rather than by a fragile total count.)
     expect(
       tweenSpy.mock.calls.filter(
         (c) =>
@@ -850,5 +858,550 @@ describe('wormholeSpawn — wormhole glow/pulse ring (ring landed in AH-0MVD2N6A
     expect(controller.isOpen).toBe(false);
     controller.close(registry);
     expect(registry).toHaveLength(0);
+  });
+});
+
+// ── Unmistakable enemy emergence + wormhole ring — test-first contract ──
+//
+// Contract owner: AH-0MVNTXTYN001ZXM6. Implemented by the sibling items
+// AH-0MVNTXXTA0081S38 (per-enemy unmistakable emergence shimmer) and
+// AH-0MVNTXZ4X00031AU (wormhole ring and open shockwave), which flip every
+// `it.fails` below back to a plain `it` once their layer lands — a leftover
+// `it.fails` fails the suite.
+//
+// Pinned treatment (approach C of AH-0MVNTR89P0022JIU: the emergence path
+// stays per-entity — no screen-space effect on it):
+//
+// Per enemy, while `SpawnState.growing`:
+//   - one outline/silhouette ring parented to the entity (never a scene-wide
+//     overlay), created on the first shimmering frame, its alpha pulsing
+//     between ENEMY_SHIMMER_OUTLINE_ALPHA_MIN/MAX at
+//     ENEMY_SHIMMER_OUTLINE_PULSE_HZ, marked with
+//     ENEMY_SHIMMER_OUTLINE_DATA_KEY;
+//   - the widened alpha flicker (ENEMY_SHIMMER_ALPHA_MIN/MAX, raised to the
+//     unmistakable range);
+//   - the strengthened leading-edge ripple burst
+//     (ENEMY_SHIMMER_BURST_ALPHA_BOOST / ENEMY_SHIMMER_BURST_SCALE_BOOST)
+//     decaying to zero within ENEMY_SHIMMER_BURST_DURATION_MS.
+// When growth ends: alpha/blend/scale restored, outline destroyed, the
+// per-entity shimmer clock dropped.
+//
+// Wormhole, on open (`spawnWormholeOpen`):
+//   - the single ring (existing) at the unmistakable magnitudes;
+//   - one one-shot open shockwave child marked with
+//     WORMHOLE_SHOCKWAVE_DATA_KEY, expanding and fading over
+//     WORMHOLE_SHOCKWAVE_DURATION_MS.
+// Both are children of the wormhole container, so the caller's
+// `wormholeEffects` registry tracks them for free; the close stops both
+// tweens before destroying the container exactly once (a second close is a
+// full no-op, and a scene SHUTDOWN never double-removes).
+//
+// All steps use deterministic dt ticks; no sleeps, wall-clock or randomness.
+
+/** Tunable/toggle reader over the module namespace (widened for the contract). */
+const contractModule = wormholeSpawnModule as unknown as {
+  updateEnemyShimmer: (enemy: SpawnAnimatable, dt: number) => boolean;
+} & Record<string, unknown>;
+
+/** Reads an exported numeric tunable, failing loudly when it is missing. */
+function numberTunable(name: string): number {
+  const value = contractModule[name];
+  expect(typeof value, `${name} must be an exported number`).toBe('number');
+  return value as number;
+}
+
+/** Reads an exported string tunable, failing loudly when it is missing. */
+function stringTunable(name: string): string {
+  const value = contractModule[name];
+  expect(typeof value, `${name} must be an exported string`).toBe('string');
+  return value as string;
+}
+
+/** The per-entity shimmer clock data key (private, but part of the contract). */
+const SHIMMER_STATE_DATA_KEY = '__shimmerState';
+
+describe('wormholeSpawn — unmistakable enemy emergence (AH-0MVNTXTYN001ZXM6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([WormholeVfxStubScene]);
+    return booted.scene;
+  }
+
+  /** Starts growth immediately (skips the wormhole-open delay). */
+  function startGrowth(scene: Phaser.Scene, originalScale = 1): SpawnAnimatable {
+    const enemy = scene.add.container(50, 50) as SpawnAnimatable;
+    startSpawnAnimation(enemy, originalScale);
+    updateSpawnAnimation(enemy, WORMHOLE_OPEN_DURATION);
+    return enemy;
+  }
+
+  /** The outline/silhouette child of `enemy`, when the layer exists. */
+  function outlineOf(
+    enemy: SpawnAnimatable,
+  ): (Phaser.GameObjects.GameObject & { alpha: number }) | undefined {
+    const key = contractModule.ENEMY_SHIMMER_OUTLINE_DATA_KEY;
+    if (typeof key !== 'string') return undefined;
+    return (
+      enemy.list.find((child) => child.getData?.(key) === true) as
+        | (Phaser.GameObjects.GameObject & { alpha: number })
+        | undefined
+    );
+  }
+
+  it.fails('creates exactly one pulsing outline/silhouette layer on the first shimmering frame', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(50, 50) as SpawnAnimatable;
+    startSpawnAnimation(enemy, 1);
+
+    // During the wormhole-open delay growth has not begun — no outline yet.
+    updateSpawnAnimation(enemy, WORMHOLE_OPEN_DURATION / 2);
+    expect(contractModule.updateEnemyShimmer(enemy, 0.016)).toBe(false);
+    expect(outlineOf(enemy)).toBeUndefined();
+
+    // First growing frame: exactly one outline, parented to the entity.
+    updateSpawnAnimation(enemy, WORMHOLE_OPEN_DURATION / 2);
+    expect(contractModule.updateEnemyShimmer(enemy, 0.016)).toBe(true);
+    const outlineKey = stringTunable('ENEMY_SHIMMER_OUTLINE_DATA_KEY');
+    expect(enemy.list.filter((child) => child.getData?.(outlineKey) === true)).toHaveLength(1);
+
+    // Pulses between ticks — but never allocates a second layer.
+    const outline = outlineOf(enemy)!;
+    const alphas: number[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      contractModule.updateEnemyShimmer(enemy, 0.02);
+      alphas.push(outline.alpha);
+    }
+    expect(new Set(alphas).size).toBeGreaterThan(1);
+    expect(enemy.list.filter((child) => child.getData?.(outlineKey) === true)).toHaveLength(1);
+
+    // The layer is a documented, togglable tunable set (default on).
+    expect(contractModule.ENEMY_SHIMMER_ENABLE_OUTLINE).toBe(true);
+    expect(numberTunable('ENEMY_SHIMMER_OUTLINE_RADIUS')).toBeGreaterThan(0);
+    expect(numberTunable('ENEMY_SHIMMER_OUTLINE_LINE_WIDTH')).toBeGreaterThan(0);
+    expect(numberTunable('ENEMY_SHIMMER_OUTLINE_PULSE_HZ')).toBeGreaterThan(0);
+    const outlineAlphaMin = numberTunable('ENEMY_SHIMMER_OUTLINE_ALPHA_MIN');
+    const outlineAlphaMax = numberTunable('ENEMY_SHIMMER_OUTLINE_ALPHA_MAX');
+    expect(outlineAlphaMax).toBeGreaterThan(outlineAlphaMin);
+    for (const alpha of alphas) {
+      expect(alpha).toBeGreaterThanOrEqual(outlineAlphaMin - 1e-6);
+      expect(alpha).toBeLessThanOrEqual(outlineAlphaMax + 1e-6);
+    }
+  });
+
+  it.fails('widens the alpha flicker to the unmistakable range, driven verbatim from its tunables', async () => {
+    const scene = await boot();
+    const enemy = startGrowth(scene);
+
+    const alphaMin = numberTunable('ENEMY_SHIMMER_ALPHA_MIN');
+    const alphaMax = numberTunable('ENEMY_SHIMMER_ALPHA_MAX');
+    // Unmistakable widening: a deep trough and a full crest.
+    expect(alphaMin).toBeLessThanOrEqual(0.35);
+    expect(alphaMax).toBeGreaterThanOrEqual(0.95);
+
+    // Let the leading-edge burst decay first (it adds on top of the flicker).
+    const burstSeconds = numberTunable('ENEMY_SHIMMER_BURST_DURATION_MS') / 1000;
+    contractModule.updateEnemyShimmer(enemy, burstSeconds * 1.25);
+
+    // Sample one full flicker period in fine, deterministic ticks.
+    const flickerHz = numberTunable('ENEMY_SHIMMER_FLICKER_HZ');
+    const step = 1 / (flickerHz * 64);
+    const samples: number[] = [];
+    for (let elapsed = 0; elapsed <= 1.5 / flickerHz; elapsed += step) {
+      contractModule.updateEnemyShimmer(enemy, step);
+      samples.push(enemy.alpha);
+    }
+
+    const observedMin = Math.min(...samples);
+    const observedMax = Math.max(...samples);
+    // The flicker sweeps the range the exported tunables document.
+    expect(observedMin).toBeLessThanOrEqual(alphaMin + 0.02);
+    expect(observedMax).toBeGreaterThanOrEqual(alphaMax - 0.02);
+    expect(observedMax - observedMin).toBeGreaterThanOrEqual(alphaMax - alphaMin - 0.05);
+  });
+
+  it.fails('strengthens the leading-edge ripple burst (verbatim tunables) and decays it to zero', async () => {
+    const scene = await boot();
+    const enemy = startGrowth(scene);
+
+    const burstAlphaBoost = numberTunable('ENEMY_SHIMMER_BURST_ALPHA_BOOST');
+    const burstScaleBoost = numberTunable('ENEMY_SHIMMER_BURST_SCALE_BOOST');
+    const alphaMax = numberTunable('ENEMY_SHIMMER_ALPHA_MAX');
+    // Strengthened, unmistakable magnitudes (up from the subtle 0.15 / 0.06).
+    expect(burstAlphaBoost).toBeGreaterThanOrEqual(0.3);
+    expect(burstScaleBoost).toBeGreaterThanOrEqual(0.12);
+
+    // Leading edge: a tiny first tick keeps the burst at (almost) full strength.
+    contractModule.updateEnemyShimmer(enemy, 0.001);
+    const leadingEdgeAlpha = enemy.alpha;
+
+    // One full flicker period later the flicker phase is identical, but the
+    // burst window has closed — its contribution is gone.
+    const flickerPeriod = 1 / numberTunable('ENEMY_SHIMMER_FLICKER_HZ');
+    contractModule.updateEnemyShimmer(enemy, flickerPeriod);
+    const settledAlpha = enemy.alpha;
+
+    expect(leadingEdgeAlpha - settledAlpha).toBeGreaterThanOrEqual(0.1);
+    // No residual burst after the documented window: back inside the flicker range.
+    expect(settledAlpha).toBeLessThanOrEqual(alphaMax + 0.02);
+    expect(settledAlpha).toBeGreaterThan(numberTunable('ENEMY_SHIMMER_ALPHA_MIN') - 0.02);
+  });
+
+  it.fails('fully restores the entity and destroys the outline when growth ends (no residual state)', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(50, 50) as SpawnAnimatable;
+    enemy.setAlpha(0.8);
+    const originalBlend = enemy.blendMode;
+    startSpawnAnimation(enemy, 1.5);
+
+    updateSpawnAnimation(enemy, WORMHOLE_OPEN_DURATION);
+    for (let i = 0; i < 5; i += 1) {
+      updateSpawnAnimation(enemy, ENEMY_GROWTH_DURATION / 10);
+      contractModule.updateEnemyShimmer(enemy, ENEMY_GROWTH_DURATION / 10);
+    }
+    // Mid-growth the treatment is visibly applied (outline + altered alpha).
+    expect(outlineOf(enemy)).toBeDefined();
+    expect(enemy.alpha).not.toBeCloseTo(0.8, 3);
+
+    // Finish the growth window.
+    expect(updateSpawnAnimation(enemy, ENEMY_GROWTH_DURATION)).toBe(false);
+    expect(contractModule.updateEnemyShimmer(enemy, 0.016)).toBe(false);
+
+    // Exactly restored, with no leftover layer or clock.
+    expect(enemy.alpha).toBeCloseTo(0.8, 5);
+    expect(enemy.blendMode).toBe(originalBlend);
+    expect(enemy.scaleX).toBeCloseTo(1.5, 5);
+    expect(outlineOf(enemy)).toBeUndefined();
+    expect(enemy.getData(SHIMMER_STATE_DATA_KEY)).toBeUndefined();
+  });
+
+  it('writes the growth scale absolutely within a frame — two shimmer ticks of dt equal one tick of 2·dt', async () => {
+    const scene = await boot();
+    const step = ENEMY_GROWTH_DURATION / 20;
+    const twice = startGrowth(scene);
+    const once = startGrowth(scene);
+
+    // Identical growth, then the same total shimmer time in one call versus
+    // two calls (same elapsed → same factor → same absolute scale).
+    updateSpawnAnimation(twice, step);
+    updateSpawnAnimation(once, step);
+    const controlScale = once.scaleX; // the pure, un-shimmered growth scale
+
+    contractModule.updateEnemyShimmer(twice, step / 2);
+    contractModule.updateEnemyShimmer(twice, step / 2);
+    contractModule.updateEnemyShimmer(once, step);
+
+    expect(twice.scaleX).toBeCloseTo(once.scaleX, 6);
+
+    // The pulse stays layered on the growth scale — never rescales it.
+    const scaleAmount = numberTunable('ENEMY_SHIMMER_SCALE_AMOUNT');
+    const burstScaleBoost = numberTunable('ENEMY_SHIMMER_BURST_SCALE_BOOST');
+    expect(twice.scaleX).toBeGreaterThanOrEqual(controlScale * (1 - scaleAmount - 1e-6));
+    expect(twice.scaleX).toBeLessThanOrEqual(
+      controlScale * (1 + scaleAmount + burstScaleBoost + 1e-6),
+    );
+  });
+
+  it.fails('never drifts the growth scale across interleaved frames (the real spawn+shimmer call pattern)', async () => {
+    // Every spawning entity is updated as
+    //   updateSpawnAnimation(entity, dt)   → an ABSOLUTE growth-scale write
+    //   updateEnemyShimmer(entity, dt)     → layers its pulse on top
+    // each frame (see PlayScene/GymFormationScene/GymLevel `_updateSpawnAnimations`).
+    // The shimmered scale must stay inside the documented envelope around the
+    // pure growth scale every frame — recovering the growth scale by dividing
+    // by a stale per-entity factor (as today) multiplies the pulse factors
+    // and drifts the scale outside that envelope. The implementation child
+    // (AH-0MVNTXXTA0081S38) must adopt an absolute-value write so the
+    // recorded growth scale is the one the spawn animation actually wrote.
+    const scene = await boot();
+    const step = ENEMY_GROWTH_DURATION / 20;
+    const shimmered = startGrowth(scene);
+    const control = startGrowth(scene);
+    const scaleAmount = numberTunable('ENEMY_SHIMMER_SCALE_AMOUNT');
+    const burstScaleBoost = numberTunable('ENEMY_SHIMMER_BURST_SCALE_BOOST');
+
+    for (let i = 0; i < 10; i += 1) {
+      updateSpawnAnimation(shimmered, step);
+      updateSpawnAnimation(control, step);
+      contractModule.updateEnemyShimmer(shimmered, step);
+      const ratio = shimmered.scaleX / control.scaleX;
+      expect(ratio).toBeGreaterThanOrEqual(1 - scaleAmount - 1e-6);
+      expect(ratio).toBeLessThanOrEqual(1 + scaleAmount + burstScaleBoost + 1e-6);
+    }
+  });
+
+  it('introduces no screen-wide overlay on the emergence path', async () => {
+    const scene = await boot();
+    const enemy = startGrowth(scene);
+    const sceneChildren = scene.children.list.length;
+    const camera = scene.cameras.main as Phaser.Cameras.Scene2D.Camera & {
+      filters?: { internal?: { list?: unknown[] } };
+    };
+    const filtersBefore = camera.filters?.internal?.list?.length ?? 0;
+
+    for (let i = 0; i < 20; i += 1) {
+      contractModule.updateEnemyShimmer(enemy, 0.016);
+    }
+
+    // Every layer stays inside the entity — nothing new at scene level and no
+    // camera filter (the emergence path is deliberately not a screen effect).
+    expect(scene.children.list).toHaveLength(sceneChildren);
+    expect(camera.filters?.internal?.list?.length ?? 0).toBe(filtersBefore);
+  });
+
+  it('leaves an entity that never shimmered completely untouched', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(50, 50) as SpawnAnimatable;
+    enemy.setAlpha(0.6);
+    const childrenBefore = enemy.list.length;
+
+    expect(contractModule.updateEnemyShimmer(enemy, 0.016)).toBe(false);
+
+    expect(enemy.alpha).toBeCloseTo(0.6, 5);
+    expect(enemy.list).toHaveLength(childrenBefore);
+    expect(enemy.getData(SHIMMER_STATE_DATA_KEY)).toBeUndefined();
+  });
+
+  it('is a safe no-op headless when the entity cannot host the outline layer', () => {
+    // A bare container-like entity with real spawn state but no scene/`add`
+    // (so the outline layer cannot be constructed) and no `setBlendMode`.
+    const data = new Map<string, unknown>();
+    const scaleHolder = { scaleX: 0.01 };
+    const bare = {
+      alpha: 1,
+      x: 0,
+      y: 0,
+      get scaleX() {
+        return scaleHolder.scaleX;
+      },
+      getData: (key: string) => data.get(key),
+      setData: (key: string, value: unknown) => {
+        data.set(key, value);
+        return bare;
+      },
+      setAlpha: (alpha: number) => {
+        bare.alpha = alpha;
+        return bare;
+      },
+      setScale: (scale: number) => {
+        scaleHolder.scaleX = scale;
+        return bare;
+      },
+    } as unknown as SpawnAnimatable;
+    startSpawnAnimation(bare, 1, 0);
+    updateSpawnAnimation(bare, 0);
+
+    expect(() => contractModule.updateEnemyShimmer(bare, 0.016)).not.toThrow();
+    expect(contractModule.updateEnemyShimmer(bare, 0.016)).toBe(true);
+  });
+});
+
+describe('wormholeSpawn — unmistakable wormhole ring + open shockwave (AH-0MVNTXTYN001ZXM6)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([WormholeVfxStubScene]);
+    return booted.scene;
+  }
+
+  /** The open-shockwave child of the wormhole container, when the layer exists. */
+  function shockwaveOf(handle: WormholeHandle): Phaser.GameObjects.GameObject | undefined {
+    const key = contractModule.WORMHOLE_SHOCKWAVE_DATA_KEY;
+    if (typeof key !== 'string') return undefined;
+    return handle.container.list.find((child) => child.getData?.(key) === true);
+  }
+
+  /** The glow/pulse ring child (existing layer) of the wormhole container. */
+  function ringOf(handle: WormholeHandle): Phaser.GameObjects.GameObject | undefined {
+    return handle.container.list.find((child) => child.getData?.('wormholeRing') === true);
+  }
+
+  /** A minimal headless scene stub: add factories but no tween manager. */
+  function stubHeadlessScene(): Phaser.Scene {
+    const makeGraphics = () => ({
+      alpha: 1,
+      scale: 1,
+      lineStyle: () => undefined,
+      strokeCircle: () => undefined,
+      beginPath: () => undefined,
+      moveTo: () => undefined,
+      lineTo: () => undefined,
+      strokePath: () => undefined,
+      setData: () => undefined,
+      getData: () => true,
+      setAlpha: () => undefined,
+      setScale: () => undefined,
+      destroy: () => undefined,
+    });
+    const makeContainer = (x: number, y: number) => {
+      const node = {
+        x,
+        y,
+        alpha: 1,
+        active: true,
+        list: [] as unknown[],
+        add: (child: unknown) => {
+          node.list.push(child);
+          return node;
+        },
+        setScale: () => node,
+        setAlpha: () => node,
+        setData: () => node,
+        getData: () => undefined,
+        destroy: () => {
+          node.active = false;
+        },
+      };
+      return node;
+    };
+    return {
+      add: { container: makeContainer, graphics: makeGraphics },
+      // Deliberately no `tweens`: the helpers must degrade to static layers.
+    } as unknown as Phaser.Scene;
+  }
+
+  it.fails('raises the ring to the unmistakable magnitudes and documents the shockwave tunables', () => {
+    // Brighter and larger than the pre-upgrade ring (r 52 / 3 px / α 0.45).
+    expect(numberTunable('WORMHOLE_RING_RADIUS')).toBeGreaterThan(52);
+    expect(numberTunable('WORMHOLE_RING_RADIUS')).toBeGreaterThanOrEqual(64);
+    expect(numberTunable('WORMHOLE_RING_LINE_WIDTH')).toBeGreaterThan(3);
+    expect(numberTunable('WORMHOLE_RING_LINE_WIDTH')).toBeGreaterThanOrEqual(4);
+    expect(numberTunable('WORMHOLE_RING_GLOW_ALPHA')).toBeGreaterThan(0.45);
+    expect(numberTunable('WORMHOLE_RING_GLOW_ALPHA')).toBeGreaterThanOrEqual(0.7);
+    expect(numberTunable('WORMHOLE_RING_GLOW_ALPHA')).toBeLessThanOrEqual(1);
+
+    // One-shot open shockwave: documented, togglable, and bounded.
+    expect(contractModule.WORMHOLE_SHOCKWAVE_ENABLE).toBe(true);
+    expect(numberTunable('WORMHOLE_SHOCKWAVE_RADIUS')).toBeGreaterThan(0);
+    expect(numberTunable('WORMHOLE_SHOCKWAVE_LINE_WIDTH')).toBeGreaterThan(0);
+    expect(numberTunable('WORMHOLE_SHOCKWAVE_ALPHA')).toBeGreaterThan(0);
+    expect(numberTunable('WORMHOLE_SHOCKWAVE_ALPHA')).toBeLessThanOrEqual(1);
+    expect(numberTunable('WORMHOLE_SHOCKWAVE_DURATION_MS')).toBeGreaterThanOrEqual(150);
+    expect(numberTunable('WORMHOLE_SHOCKWAVE_DURATION_MS')).toBeLessThanOrEqual(1000);
+    expect(typeof stringTunable('WORMHOLE_SHOCKWAVE_DATA_KEY')).toBe('string');
+    const scaleRange = contractModule.WORMHOLE_SHOCKWAVE_SCALE_RANGE as readonly [number, number];
+    expect(Array.isArray(scaleRange)).toBe(true);
+    expect(scaleRange[1]).toBeGreaterThan(scaleRange[0]);
+
+    // Distinct palette: neither the phase-shift split nor the player-death flash.
+    const ringColour = numberTunable('WORMHOLE_RING_COLOR');
+    const shockwaveColour = numberTunable('WORMHOLE_SHOCKWAVE_COLOR');
+    for (const colour of [ringColour, shockwaveColour]) {
+      expect(colour).toBeGreaterThan(0);
+      expect(colour).not.toBe(PHASE_SHIFT_SPLIT_COLOR_CYAN);
+      expect(colour).not.toBe(PHASE_SHIFT_SPLIT_COLOR_RED);
+      expect(colour).not.toBe(PLAYER_DEATH_FLASH_COLOR);
+    }
+  });
+
+  it.fails('fires exactly one expanding open shockwave pulse per wormhole', async () => {
+    const scene = await boot();
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    const handle = spawnWormholeOpen(scene, 120, 90, { registry: [] });
+
+    const shockwaves = handle.container.list.filter(
+      (child) => child.getData?.(stringTunable('WORMHOLE_SHOCKWAVE_DATA_KEY')) === true,
+    );
+    expect(shockwaves).toHaveLength(1);
+    expect(shockwaves[0]).toBeInstanceOf(Phaser.GameObjects.Graphics);
+
+    const pulse = tweenSpy.mock.calls
+      .map((call) => call[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((config) => config.targets === shockwaves[0]);
+    expect(pulse).toBeDefined();
+    expect(pulse!.duration).toBe(numberTunable('WORMHOLE_SHOCKWAVE_DURATION_MS'));
+    // One-shot: it must not loop like the ring's breathing pulse.
+    expect(pulse!.repeat === -1).toBe(false);
+    // Expands and fades out.
+    expect(pulse!.scale).toBeDefined();
+    const alphaTarget = pulse!.alpha as number | { to?: number } | undefined;
+    const endsAtZero =
+      typeof alphaTarget === 'number' ? alphaTarget === 0 : alphaTarget?.to === 0;
+    expect(endsAtZero).toBe(true);
+  });
+
+  it.fails('stops the ring and shockwave tweens, then destroys them exactly once on close', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.Container[] = [];
+    const handle = spawnWormholeOpen(scene, 10, 20, { registry });
+    const ring = ringOf(handle);
+    const shockwave = shockwaveOf(handle);
+    expect(ring).toBeDefined();
+    expect(shockwave).toBeDefined();
+
+    const killSpy = vi.spyOn(scene.tweens, 'killTweensOf');
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    const destroySpy = vi.spyOn(handle.container, 'destroy');
+
+    spawnWormholeClose(scene, handle, registry);
+    const closeTweens = () =>
+      tweenSpy.mock.calls
+        .map((call) => call[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+        .filter((config) => config.targets === handle.container && config.alpha === 0);
+
+    const close = closeTweens()[0];
+    expect(close).toBeDefined();
+    (close.onComplete as () => void)();
+
+    // Both loops are stopped before the container (and its children) go.
+    expect(killSpy).toHaveBeenCalledWith(ring);
+    expect(killSpy).toHaveBeenCalledWith(shockwave);
+    expect(handle.isComplete()).toBe(true);
+    expect(registry).toHaveLength(0);
+    expect(destroySpy).toHaveBeenCalledTimes(1);
+
+    // A second close on a complete handle is a full no-op: no second close
+    // tween, no double-remove, no second destroy, no re-kill.
+    const closeTweenCount = closeTweens().length;
+    expect(() => spawnWormholeClose(scene, handle, registry)).not.toThrow();
+    expect(closeTweens()).toHaveLength(closeTweenCount);
+    expect(registry).toHaveLength(0);
+    expect(destroySpy).toHaveBeenCalledTimes(1);
+    expect(killSpy.mock.calls.filter((call) => call[0] === shockwave)).toHaveLength(1);
+  });
+
+  it('tolerates a scene SHUTDOWN that destroys the wormhole before the close completes', async () => {
+    const scene = await boot();
+    const registry: Phaser.GameObjects.Container[] = [];
+    const handle = spawnWormholeOpen(scene, 10, 20, { registry });
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+    spawnWormholeClose(scene, handle, registry);
+    const close = tweenSpy.mock.calls
+      .map((call) => call[0] as Phaser.Types.Tweens.TweenBuilderConfig)
+      .find((config) => config.targets === handle.container && config.alpha === 0);
+
+    // CombatScene teardown destroys every registered effect and empties the list.
+    for (const effect of registry) effect.destroy();
+    registry.length = 0;
+
+    // The late close completion must not double-remove, re-destroy or throw.
+    expect(() => (close!.onComplete as () => void)()).not.toThrow();
+    expect(registry).toHaveLength(0);
+  });
+
+  it.fails('constructs and closes with a stubbed scene that has no tween manager (headless no-op)', () => {
+    const scene = stubHeadlessScene();
+    const registry: Phaser.GameObjects.Container[] = [];
+
+    let handle: WormholeHandle | undefined;
+    expect(() => {
+      handle = spawnWormholeOpen(scene, 10, 20, { registry });
+    }).not.toThrow();
+    expect(handle?.container).toBeDefined();
+
+    expect(() => spawnWormholeClose(scene, handle!, registry)).not.toThrow();
   });
 });
