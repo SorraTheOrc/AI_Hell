@@ -2491,6 +2491,28 @@ describe('wrap-aware aim and post-motion wrap — game↔gym parity (AH-0MVKXBXQ
     );
     expect(gymUnaware.x, 'gym non-aware body stays put').toBe(GAME_WIDTH + 40);
   });
+
+  it('every formation-positioning scene runs the shared post-motion wrap seam (AH-0MVKXBZ5N007LKH4)', () => {
+    // Game↔gym parity by construction: the wrap step is *called* by the game
+    // and by every player-bearing scene that positions enemies in its own
+    // loop, and never re-implemented. `GymFodderEnemies` and `GymCentipede`
+    // inherit the call from the shared `GymFormationScene` they extend.
+    for (const file of [
+      'src/scenes/PlayScene.ts',
+      'src/scenes/gym/core/GymFormationScene.ts',
+      'src/scenes/gym/GymLevel.ts',
+    ]) {
+      expect(
+        fs.readFileSync(path.resolve(process.cwd(), file), 'utf8'),
+        `${file} invokes applyPostMotionWrapAll`,
+      ).toContain('applyPostMotionWrapAll(');
+    }
+    // The shared helper owns the wrap body; a scene must never copy it.
+    expect(fs.readFileSync(
+      path.resolve(process.cwd(), 'src/scenes/core/enemyWrap.ts'),
+      'utf8',
+    )).toContain('applyPostMotionWrapAll');
+  });
 });
 
 // ── Consolidated epic parity guard (AH-0MUII3GOO001XEBB, AC1) ───────

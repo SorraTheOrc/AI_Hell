@@ -173,6 +173,70 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
     expect(scene.getWavesToPlayCount()).toBe(1);
   });
 
+  // ── AC4 — formed level enemies cross the seam like the game (AH-0MVKXBZ5N007LKH4) ──
+
+  it('wraps a wrap-aware formed enemy across the seam while the non-aware march stays off-edge', async () => {
+    // Both groups spawn beyond the right edge: the only thing that can bring
+    // an enemy back on-screen is the shared post-motion wrap seam — parity
+    // with `PlayScene._moveEnemies`. `scout` is wrap-aware by default;
+    // `march` is the classic-arcade non-aware archetype (`wrapAware: false`).
+    const scene = await bootWith({
+      level: makeLevel('Wrap Seam Level', [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 1,
+              spacingX: 26,
+              spacingY: 24,
+              startX: GAME_WIDTH + 40,
+              startY: 150,
+            },
+            {
+              enemyKey: 'march',
+              formation: 'v',
+              count: 1,
+              spacingX: 26,
+              spacingY: 24,
+              startX: GAME_WIDTH + 40,
+              startY: 300,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ]),
+    });
+
+    const enemies = formationEnemies(scene) as unknown as Array<{
+      wrapAware: boolean;
+      x: number;
+      y: number;
+      alive: boolean;
+    }>;
+    const scout = enemies.find((enemy) => enemy.wrapAware);
+    const march = enemies.find((enemy) => !enemy.wrapAware);
+    expect(scout, 'a wrap-aware scout is present').toBeDefined();
+    expect(march, 'a non-aware march is present').toBeDefined();
+    expect(enemies.filter((enemy) => enemy.wrapAware)).toHaveLength(1);
+    expect(enemies.filter((enemy) => !enemy.wrapAware)).toHaveLength(1);
+
+    // Snap both enemies to their formation slots (off the right edge for
+    // both groups), then run one frame of the shared tick: the post-motion
+    // wrap must relocate the aware scout onto the arena and leave the
+    // non-aware march at its bounded slot.
+    scene.finishSpawnAnimations();
+    scene.tick(1 / 60);
+
+    expect(scout!.alive).toBe(true);
+    expect(march!.alive).toBe(true);
+    // The wrap-aware scout crossed the seam to the opposite (left) edge ...
+    expect(scout!.x, 'wrap-aware scout wraps into the arena').toBeGreaterThanOrEqual(0);
+    expect(scout!.x, 'wrap-aware scout wraps into the arena').toBeLessThan(GAME_WIDTH);
+    // ... while the classic non-aware march keeps its off-screen slot.
+    expect(march!.x, 'non-aware march is not wrapped').toBeGreaterThan(GAME_WIDTH);
+  });
+
   it('AC3 — a generated level plays distinct wave compositions, not repeats', async () => {
     // Regression for the producer-audit rejection of this work item: a level
     // launched from a flat curve used to play the *same* wave three times.

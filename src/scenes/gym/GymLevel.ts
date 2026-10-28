@@ -80,6 +80,11 @@ import Phaser from 'phaser';
 import { CombatScene, type CombatDrop } from '../core/CombatScene';
 import { pushAimTargets, pushSeekTargets } from '../core/enemyTargeting';
 import { advancePlayerBullets, advanceWrappingBullets } from '../core/bulletLifecycle';
+import {
+  applyPostMotionWrapAll,
+  PLAYFIELD_WORLD,
+  type WrapAwareBody,
+} from '../core/enemyWrap';
 import { Player } from '../../entities/Player';
 import { PlayerBullet } from '../../entities/PlayerBullet';
 import {
@@ -1204,6 +1209,13 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       this.minerals,
     );
 
+    // Formation-positioned enemies of this frame — the shared post-motion wrap
+    // runs over exactly these bodies once the positioning pass has finished.
+    // Self-moving entities (asteroids, roaming seekers) keep their own
+    // existing four-edge wrap and are deliberately not re-wrapped here, the
+    // same selection `PlayScene._moveEnemies` makes.
+    const positioned: WrapAwareBody[] = [];
+
     for (const spawn of this.spawned) {
       if (!spawn.entity.alive) continue;
       const entity = spawn.entity;
@@ -1222,7 +1234,15 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
         spawn.spacingX,
         spawn.spacingY,
       );
+      positioned.push(entity);
     }
+
+    // Shared post-motion edge wrap (parent AH-0MV9G3DZ9003P7P8 AC3/AC4): the
+    // one seam the game and every gym run. Wrap-aware enemies cross the seam to
+    // the opposite edge (position only — velocity/heading preserved); `march`
+    // and `centipede` carry `wrapAware: false` and keep their bounded,
+    // wall-respecting behaviour.
+    applyPostMotionWrapAll(positioned, PLAYFIELD_WORLD);
   }
 
   // ── Shared combat-core participant accessors ─────────────────────
