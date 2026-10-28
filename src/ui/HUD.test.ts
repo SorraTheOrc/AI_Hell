@@ -720,7 +720,7 @@ function advanceStrikeClock(reg: EffectsRegistry, seconds: number): void {
 }
 
 describe('HUD Orbital Strike next-bolt countdown (AH-0MVS2T40T006QL7H)', () => {
-  it.fails('shows a live next-bolt countdown on the permanent strike row', async () => {
+  it('shows a live next-bolt countdown on the permanent strike row', async () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('strike', true); // hold-full (permanent) reward
     const interval = reg.strikeInterval();

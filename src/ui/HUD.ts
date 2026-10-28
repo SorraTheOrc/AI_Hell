@@ -562,6 +562,11 @@ export class HUD extends Phaser.GameObjects.Container {
    * today (AH-0MVJ8YKR70096C6T); an armed field with a spent budget — and, in
    * particular, a permanent (hold-full) field sitting at zero charges — shows
    * its countdown so the row never reads as an inert bare label.
+   *
+   * The permanent Orbital Strike row also carries a countdown to its next bolt
+   * (AH-0MVS2T40T006QL7H): a 10–30 s interval otherwise reads as an inert
+   * power-up. The registry owns the clock; the HUD only projects it through the
+   * same `next in Ns` label formatter, so there is one formatting path.
    */
   private _powerUpRecharge(id: PowerUpId): number | undefined {
     const reg = this._registry!;
@@ -570,6 +575,11 @@ export class HUD extends Phaser.GameObjects.Container {
         const seconds = reg.thornsRechargeRemaining();
         return seconds > 0 ? seconds : undefined;
       }
+      case 'strike':
+        // `undefined` when no permanent strike is armed (field pickup: no row)
+        // or a bolt is latched/landing, so the label never shows a stalled or
+        // negative countdown.
+        return reg.strikeNextBoltSeconds();
       default:
         return undefined;
     }

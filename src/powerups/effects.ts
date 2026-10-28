@@ -1296,6 +1296,32 @@ export class EffectsRegistry {
   }
 
   /**
+   * Seconds until the next Orbital Strike bolt for a **permanent** (hold-full)
+   * strike, or `undefined` when the countdown does not apply
+   * (AH-0MVS2T40T006QL7H).
+   *
+   * Read-only projection of the registry's own strike clock — the very
+   * `_strikePulseTimer` that {@link updateStrike} advances — so the HUD renders
+   * the countdown without recomputing the level-resolved interval. The value is
+   * `undefined` (never a fabricated number) when:
+   *
+   * - no permanent strike is armed — a field pickup is a one-shot and leaves no
+   *   HUD row, so there is no interval to count down; or
+   * - a bolt is currently latched/landing — the permanent interval timer is
+   *   frozen while the bolt is retained (AH-0MVS2T2DJ0069C0Y), so a countdown
+   *   would stall and misreport the remaining time.
+   *
+   * @returns Seconds until the next bolt (always `> 0` and finite), or
+   *   `undefined` when the countdown is not applicable.
+   */
+  strikeNextBoltSeconds(): number | undefined {
+    if (!this._strikePermanent || this._strikeLatched) return undefined;
+    const seconds = this._strikePulseTimer;
+    if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+    return seconds;
+  }
+
+  /**
    * Activates Phase Shift (upgrade-level duration for Teleport arrivals) —
    * e.g. on Teleport teleport arrival. Refreshes if already active — never
    * additive. This is the direct, charge-free activation path; it does not

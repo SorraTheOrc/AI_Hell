@@ -1811,3 +1811,77 @@ describe('Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y)', () => {
     expect(reg.updateStrike(1 / 60)).toBe(false);
   });
 });
+
+// ── Orbital Strike next-bolt countdown accessor (AH-0MVS2T40T006QL7H) ─
+//
+// The HUD renders the permanent strike row's `next in Ns` from this accessor,
+// so the registry — not the HUD — owns the clock. The accessor must report a
+// live, positive seconds-remaining value only while the interval is genuinely
+// running: no permanent strike, or a latched/landing bolt, has nothing to
+// count down.
+
+describe('Orbital Strike next-bolt countdown accessor (AH-0MVS2T40T006QL7H)', () => {
+  it('is undefined when no permanent strike is armed', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+
+    // A field pickup is a one-shot with no interval to count down.
+    reg.applyCollect('strike');
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+  });
+
+  it('counts down the level-resolved interval for a permanent strike', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true); // hold-full (permanent) reward
+    const interval = reg.strikeInterval();
+
+    // Land the opening bolt so the interval clock runs.
+    expect(reg.updateStrike(0.1)).toBe(true);
+    reg.resolveStrike();
+
+    const before = reg.strikeNextBoltSeconds();
+    expect(before).toBeDefined();
+    expect(before!).toBeGreaterThan(0);
+    expect(before!).toBeLessThanOrEqual(interval);
+
+    // The countdown is live: advancing the shared clock decreases it.
+    expect(reg.updateStrike(5)).toBe(false);
+    const after = reg.strikeNextBoltSeconds();
+    expect(after).toBeDefined();
+    expect(after!).toBeLessThan(before!);
+    expect(after!).toBeGreaterThan(0);
+  });
+
+  it('is undefined while a bolt is latched so the countdown never stalls', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true);
+    const interval = reg.strikeInterval();
+
+    // A bolt comes due with nobody able to resolve it (no live target): the
+    // interval clock is frozen, so there is no honest countdown to show.
+    expect(reg.updateStrike(interval + 1)).toBe(true);
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+
+    // Once the shared core lands the bolt, the countdown resumes.
+    reg.resolveStrike();
+    const resumed = reg.strikeNextBoltSeconds();
+    expect(resumed).toBeDefined();
+    expect(resumed!).toBeGreaterThan(0);
+    expect(resumed!).toBeLessThanOrEqual(interval);
+  });
+
+  it('never returns a negative or non-finite countdown', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true);
+    const interval = reg.strikeInterval();
+
+    for (let elapsed = 0; elapsed <= interval * 3; elapsed += 0.25) {
+      const seconds = reg.strikeNextBoltSeconds();
+      if (seconds !== undefined) {
+        expect(Number.isFinite(seconds)).toBe(true);
+        expect(seconds).toBeGreaterThan(0);
+      }
+      if (reg.updateStrike(0.25)) reg.resolveStrike();
+    }
+  });
+});
