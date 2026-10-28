@@ -1091,20 +1091,17 @@ describe('shared explosion-VFX registry (AH-0MUZQGRQR0086NP6, AC7)', () => {
 
 // ── Completion seam for the mini-boss death sweep (AH-0MVROEJJR002HDLS) ──
 //
-// **TEST-FIRST.** The mini-boss death sweep (`src/scenes/core/miniBossDeathSweep.ts`,
-// helper item AH-0MVROEKMT005RVML) must hold the reward overlay back until the
-// last burst has finished animating, so a burst needs to report its own
-// completion. `SpawnExplosionOptions.onComplete` is that seam; it does not exist
-// on pre-change HEAD, so these cases are wrapped in Vitest's `it.fails` (the
-// repo's red-before/green-after convention — see `src/core/levelScaling.test.ts`)
-// and **AH-0MVROEKMT005RVML flips them back to `it`**. A leftover `it.fails`
-// fails the suite.
+// **Implemented.** The mini-boss death sweep (`src/scenes/core/miniBossDeathSweep.ts`,
+// helper item AH-0MVROEKMT005RVML) holds the reward overlay back until the
+// last burst has finished animating, so a burst reports its own completion
+// through `SpawnExplosionOptions.onComplete` — wired to fire exactly once at
+// natural tween completion, and never on an explicit `destroy()` teardown.
 //
-// The spawn signature is widened locally (rather than typed against the
-// not-yet-extended `SpawnExplosionOptions`) so `tsc --noEmit` stays green while
-// the option is still absent.
+// The spawn call below is widened locally from `SpawnExplosionOptions` to
+// `Record<string, unknown>` so the suite pins exactly the option fields it
+// exercises without coupling to unrelated option fields.
 
-describe('spawnExplosionParticles completion seam (test-first, AH-0MVROEJJR002HDLS)', () => {
+describe('spawnExplosionParticles completion seam (AH-0MVROEKMT005RVML)', () => {
   type SpawnScene = Parameters<typeof spawnExplosionParticles>[0];
   /** The widened surface this suite pins: `onComplete` on the spawn options. */
   const spawnWithCompletion = spawnExplosionParticles as unknown as (
@@ -1116,7 +1113,7 @@ describe('spawnExplosionParticles completion seam (test-first, AH-0MVROEJJR002HD
     opts: Record<string, unknown>,
   ) => ExplosionHandle | null;
 
-  it.fails('invokes onComplete exactly once when the burst finishes animating', () => {
+  it('invokes onComplete exactly once when the burst finishes animating', () => {
     const scene = makeStubScene();
     const calls: string[] = [];
     spawnWithCompletion(
@@ -1137,7 +1134,7 @@ describe('spawnExplosionParticles completion seam (test-first, AH-0MVROEJJR002HD
     expect(calls).toEqual(['done']);
   });
 
-  it.fails('never fires onComplete on an explicit destroy() teardown', () => {
+  it('never fires onComplete on an explicit destroy() teardown', () => {
     const scene = makeStubScene();
     const calls: string[] = [];
     spawnWithCompletion(
@@ -1162,7 +1159,7 @@ describe('spawnExplosionParticles completion seam (test-first, AH-0MVROEJJR002HD
     expect(calls).toEqual(['done']);
   });
 
-  it.fails('reports the same completion point the sweep plan schedules', () => {
+  it('reports the same completion point the sweep plan schedules', () => {
     // The sweep plan's `completionDelayMs` is `delay + lifespan` of the burst
     // that finishes last; the tween that owns that burst is the one whose
     // completion must drive the callback. This case pins the two timings

@@ -589,6 +589,14 @@ export interface SpawnExplosionOptions {
    * ring/cross explosions.
    */
   registry?: { push(g: unknown): void; indexOf(g: unknown): number; splice(i: number, n: number): void };
+  /**
+   * Optional completion callback — fires exactly once, only when the burst
+   * has finished animating (its tween `onComplete`), never on the spawn
+   * frame and never on an explicit {@link ExplosionHandle.destroy} teardown.
+   * Used by the mini-boss death sweep so the reward overlay waits for the
+   * last burst (AH-0MVROEKMT005RVML).
+   */
+  onComplete?: () => void;
 }
 
 /** Live handle for a spawned explosion. Test seam: `particles` is the
@@ -715,6 +723,7 @@ export function spawnExplosionParticles(
   };
 
   const finish = (): void => {
+    if (!alive) return;
     alive = false;
     gfx.destroy();
     if (opts.registry) {
@@ -724,6 +733,16 @@ export function spawnExplosionParticles(
     if (kind && EXPLOSION_VFX_COUNTS[kind] > 0) {
       EXPLOSION_VFX_COUNTS[kind] -= 1;
     }
+  };
+
+  // Natural-completion seam: fires exactly once, only when the burst
+  // animates to the end. An explicit `destroy()` teardown (SHUTDOWN path)
+  // must never notify a waiting caller.
+  let notified = false;
+  const notifyComplete = (): void => {
+    if (notified) return;
+    notified = true;
+    opts.onComplete?.();
   };
 
   if (opts.registry) opts.registry.push(gfx);
@@ -777,7 +796,11 @@ export function spawnExplosionParticles(
       }
       draw();
     },
-    onComplete: () => { finish(); },
+    onComplete: () => {
+      const finishedAnimating = alive;
+      finish();
+      if (finishedAnimating) notifyComplete();
+    },
   });
 
   // Expose the stepper for headless verification (not part of the VFX path).

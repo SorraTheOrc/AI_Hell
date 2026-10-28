@@ -1,19 +1,17 @@
 /**
  * Contract tests for the mini-boss death sweep (AH-0MVROEJJR002HDLS).
  *
- * **TEST-FIRST.** This suite pins the sweep **before** the implementation
- * exists: `src/scenes/core/miniBossDeathSweep.ts` is authored by the sibling
- * helper item **AH-0MVROEKMT005RVML**, wired into `PlayScene` /
- * `GymMiniBoss` by AH-0MVROELN600410GP / AH-0MVROEMUO007Z3RY. Every case here
- * is wrapped in Vitest's `it.fails` (the repo's red-before/green-after
- * convention — see `src/core/levelScaling.test.ts`,
- * `src/core/enemyForceField.test.ts`) so the suite stays green on
- * pre-change HEAD; the helper item **flips every `it.fails` back to `it`**
- * once the module lands, and a leftover `it.fails` then fails the suite.
+ * This suite pins the sweep contract implemented by the sibling helper item
+ * **AH-0MVROEKMT005RVML** (`src/scenes/core/miniBossDeathSweep.ts`), wired
+ * into `PlayScene` / `GymMiniBoss` by AH-0MVROELN600410GP /
+ * AH-0MVROEMUO007Z3RY. Written test-first with Vitest's `it.fails` (the repo's
+ * red-before/green-after convention), then flipped back to green `it` by the
+ * helper item — a leftover `it.fails` fails the suite.
  *
- * The module is loaded through a non-literal dynamic import on purpose: a
- * static `import './miniBossDeathSweep'` would fail `tsc --noEmit` (and
- * therefore the build) while the module does not exist yet.
+ * The module is loaded through a non-literal dynamic import: a static
+ * `import './miniBossDeathSweep'` would break `tsc --noEmit` while the module
+ * did not yet exist at test-authoring time. Kept as-is (harmless) now that the
+ * module has landed.
  *
  * ## Pinned contract (AH-0MVROEKMT005RVML must match exactly)
  *
@@ -252,7 +250,7 @@ function makeStubScene(): StubScene {
 // ── AC2: the extra-burst count formula ────────────────────────────
 
 describe('mini-boss death sweep — extra-burst formula (AC2)', () => {
-  it.fails('follows max(0, 30 - n) at every documented edge', async () => {
+  it('follows max(0, 30 - n) at every documented edge', async () => {
     const { miniBossSweepExtras, MINI_BOSS_SWEEP_EXTRA_BASE } = await sweep();
     expect(MINI_BOSS_SWEEP_EXTRA_BASE).toBe(30);
 
@@ -263,7 +261,7 @@ describe('mini-boss death sweep — extra-burst formula (AC2)', () => {
     expect(miniBossSweepExtras(40)).toBe(0);
   });
 
-  it.fails('never yields a negative or non-integer extra count', async () => {
+  it('never yields a negative or non-integer extra count', async () => {
     const { miniBossSweepExtras } = await sweep();
     for (const swept of [31, 40, 100, 1000]) {
       expect(miniBossSweepExtras(swept)).toBe(0);
@@ -275,7 +273,7 @@ describe('mini-boss death sweep — extra-burst formula (AC2)', () => {
     expect(negative).toBeGreaterThanOrEqual(0);
   });
 
-  it.fails('plans exactly 10 anchored bursts at the mini-boss death point for every n', async () => {
+  it('plans exactly 10 anchored bursts at the mini-boss death point for every n', async () => {
     const { planMiniBossDeathSweep, MINI_BOSS_SWEEP_ANCHORED_COUNT } = await sweep();
     expect(MINI_BOSS_SWEEP_ANCHORED_COUNT).toBe(10);
     for (const swept of [0, 1, 5, 29, 30, 40]) {
@@ -288,13 +286,21 @@ describe('mini-boss death sweep — extra-burst formula (AC2)', () => {
     }
   });
 
-  it.fails('burns at most 40 bursts in total for any n', async () => {
+  it('burns at most 40 bursts in total while the extras formula applies (n ≤ 30)', async () => {
     const { planMiniBossDeathSweep } = await sweep();
     for (const swept of [0, 1, 10, 29, 30, 31, 40, 100]) {
       const plan = planMiniBossDeathSweep(planInput(escorts(swept)));
       const expected = swept + Math.max(0, 30 - swept) + 10;
       expect(plan.bursts.length, `n=${swept}`).toBe(expected);
-      expect(plan.bursts.length, `n=${swept}`).toBeLessThanOrEqual(40);
+      // The 40-burst particle budget belongs to the n ≤ 30 case, where the
+      // scattered extras fill the display up to 30 + the 10 anchored bursts.
+      // For n > 30 the extras clamp to 0, so the sweep is one enemy burst per
+      // target plus the 10 anchored bursts (it never adds extras on top).
+      if (swept <= 30) {
+        expect(plan.bursts.length, `n=${swept}`).toBeLessThanOrEqual(40);
+      } else {
+        expect(plan.bursts.length, `n=${swept}`).toBe(swept + 10);
+      }
       expect(plan.sweptCount, `n=${swept}`).toBe(swept);
       expect(plan.anchored, `n=${swept}`).toBe(10);
       expect(plan.extras, `n=${swept}`).toBe(Math.max(0, 30 - swept));
@@ -305,7 +311,7 @@ describe('mini-boss death sweep — extra-burst formula (AC2)', () => {
 // ── AC1/AC2: the scope split (escorts + minions, never hazards) ───
 
 describe('mini-boss death sweep — target scope (AC1)', () => {
-  it.fails('keeps wave-gating escorts and live minions and drops non-blocking hazards', async () => {
+  it('keeps wave-gating escorts and live minions and drops non-blocking hazards', async () => {
     const { collectSweepTargets } = await sweep();
     const live = [target('scout', 0), target('asteroid', 1), target('tank', 2)];
     const minions = [target('swarm', 3), target('lane-traffic', 4)];
@@ -319,7 +325,7 @@ describe('mini-boss death sweep — target scope (AC1)', () => {
     }
   });
 
-  it.fails('sweeps only the collected targets — hazards never get an enemy burst', async () => {
+  it('sweeps only the collected targets — hazards never get an enemy burst', async () => {
     const { collectSweepTargets, planMiniBossDeathSweep } = await sweep();
     const live = [
       target('scout', 0),
@@ -363,7 +369,7 @@ describe('mini-boss death sweep — target scope (AC1)', () => {
 // ── AC6: determinism ──────────────────────────────────────────────
 
 describe('mini-boss death sweep — determinism (AC6)', () => {
-  it.fails('replays an identical plan for the same seed', async () => {
+  it('replays an identical plan for the same seed', async () => {
     const { planMiniBossDeathSweep } = await sweep();
     const targets = escorts(6);
     const first = planMiniBossDeathSweep(planInput(targets, 4242));
@@ -373,7 +379,7 @@ describe('mini-boss death sweep — determinism (AC6)', () => {
     expect(second.completionDelayMs).toBe(first.completionDelayMs);
   });
 
-  it.fails('scatters differently for a different seed', async () => {
+  it('scatters differently for a different seed', async () => {
     const { planMiniBossDeathSweep } = await sweep();
     const targets = escorts(4);
     const a = planMiniBossDeathSweep(planInput(targets, 1));
@@ -384,7 +390,7 @@ describe('mini-boss death sweep — determinism (AC6)', () => {
     expect(positions(b)).not.toEqual(positions(a));
   });
 
-  it.fails('never draws placement from Math.random()', async () => {
+  it('never draws placement from Math.random()', async () => {
     // The deterministic-seed contract only holds if the module's own code
     // never reaches for the global RNG (comments are stripped first, so the
     // doc comment that names the anti-pattern does not trip the guard).
@@ -402,7 +408,7 @@ describe('mini-boss death sweep — determinism (AC6)', () => {
 // ── AC2: placement stays inside the playfield ────────────────────
 
 describe('mini-boss death sweep — placement (AC2)', () => {
-  it.fails('keeps every scattered burst inside the playfield inset', async () => {
+  it('keeps every scattered burst inside the playfield inset', async () => {
     const {
       planMiniBossDeathSweep,
       MINI_BOSS_SWEEP_INSET_PX,
@@ -425,7 +431,7 @@ describe('mini-boss death sweep — placement (AC2)', () => {
     }
   });
 
-  it.fails('anchors the 10 mini-boss bursts around the captured death position', async () => {
+  it('anchors the 10 mini-boss bursts around the captured death position', async () => {
     const {
       planMiniBossDeathSweep,
       MINI_BOSS_SWEEP_ANCHOR_SPREAD_PX,
@@ -439,7 +445,7 @@ describe('mini-boss death sweep — placement (AC2)', () => {
     }
   });
 
-  it.fails('places enemy bursts on the swept entities, staggered over the sweep', async () => {
+  it('places enemy bursts on the swept entities, staggered over the sweep', async () => {
     const { planMiniBossDeathSweep } = await sweep();
     const targets = escorts(4);
     const plan = planMiniBossDeathSweep(planInput(targets));
@@ -461,7 +467,7 @@ describe('mini-boss death sweep — placement (AC2)', () => {
 // ── AC3/AC6: completion ordering ─────────────────────────────────
 
 describe('mini-boss death sweep — completion ordering (AC3)', () => {
-  it.fails('reports a completion delay covering the last-finishing burst', async () => {
+  it('reports a completion delay covering the last-finishing burst', async () => {
     const { planMiniBossDeathSweep } = await sweep();
     const plan = planMiniBossDeathSweep(planInput(escorts(5)));
 
@@ -474,7 +480,7 @@ describe('mini-boss death sweep — completion ordering (AC3)', () => {
     expect(plan.completionDelayMs).toBeGreaterThan(0);
   });
 
-  it.fails('does not fire the completion callback on the spawn frame', async () => {
+  it('does not fire the completion callback on the spawn frame', async () => {
     const { spawnMiniBossDeathSweep } = await sweep();
     const scene = makeStubScene();
     let completions = 0;
@@ -490,7 +496,7 @@ describe('mini-boss death sweep — completion ordering (AC3)', () => {
     expect(completions).toBe(0);
   });
 
-  it.fails('fires completion exactly once, only after every burst has finished', async () => {
+  it('fires completion exactly once, only after every burst has finished', async () => {
     const { spawnMiniBossDeathSweep } = await sweep();
     const scene = makeStubScene();
     let completions = 0;
@@ -517,7 +523,7 @@ describe('mini-boss death sweep — completion ordering (AC3)', () => {
     expect(handle.explosions.length).toBe(handle.plan.bursts.length);
   });
 
-  it.fails('tears down mid-flight without firing completion', async () => {
+  it('tears down mid-flight without firing completion', async () => {
     const { spawnMiniBossDeathSweep } = await sweep();
     const scene = makeStubScene();
     let completions = 0;
