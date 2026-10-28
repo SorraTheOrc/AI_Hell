@@ -2,12 +2,14 @@
  * Camera-filter driver — capability probe / apply / teardown contract
  * (test-first for AH-0MVNTXV8P009B531, contract owned by AH-0MVNTXSQ1000QO12).
  *
- * **TEST-FIRST.** This suite was authored before `src/vfx/cameraFilters.ts`
- * existed, wrapped in Vitest's `it.fails` (the repo's red-before/green-after
- * convention — see `src/core/levelScaling.test.ts`) so the suite stays green on
- * pre-change HEAD. The implementation item **flips every `it.fails` back to a
- * plain `it`** once the module lands. A leftover `it.fails` here fails the
- * suite (an expected failure that stops failing is reported as a failure).
+ * **TEST-FIRST, now green.** This suite was authored before
+ * `src/vfx/cameraFilters.ts` existed, wrapped in Vitest's `it.fails` (the
+ * repo's red-before/green-after convention — see `src/core/levelScaling.test.ts`)
+ * so the suite stayed green on pre-change HEAD. The implementation item
+ * (AH-0MVNTXV8P009B531) flipped every `it.fails` back to a plain `it` when the
+ * module landed, so all 13 cases below are now ordinary passing tests — a
+ * regression fails the suite instead of quietly satisfying an expected
+ * failure.
  *
  * The module is loaded through a non-literal dynamic import on purpose: a
  * static `import './cameraFilters'` would fail `tsc --noEmit` (and therefore
@@ -22,7 +24,7 @@
  * This module is the single guarded entry point; the game and every gym share
  * it, so the two can never diverge.
  *
- * ## Pinned contract (AH-0MVNTXV8P009B531 must match exactly)
+ * ## Pinned contract (AH-0MVNTXV8P009B531 implements this exactly)
  *
  * `src/vfx/cameraFilters.ts` — no module-level mutable state, no I/O:
  *
@@ -59,8 +61,11 @@
  *     adds the same controller twice and never removes one layer when applying
  *     the other.
  *   - `update(dtSeconds)` advances the burst: the live barrel controller's
- *     `amount` decays monotonically toward `0` (mutating the existing
- *     controller, never allocating), and when the elapsed burst time reaches
+ *     `amount` decays monotonically down to Phaser's neutral value `1` — i.e.
+ *     the *distortion offset* (`amount - 1`) decays to zero, so the burst
+ *     settles instead of snapping when the controllers are removed
+ *     (mutating the existing controller, never allocating) — and when the
+ *     elapsed burst time reaches
  *     `PHASE_FILTER_BURST_DURATION_MS` the burst controllers are removed from
  *     the camera filter list and destroyed **exactly once**. The sustained
  *     controller (if applied) is untouched by `update`. Non-positive/`NaN`
@@ -73,6 +78,13 @@
  * All filter work targets `camera.filters.internal` (full-camera space); the
  * tests use a minimal fake filter list rather than a real WebGL context, so the
  * suite runs headless.
+ *
+ * Stub `kind` values are the **filter kinds** (`'pixelate'`, `'barrel'`, …) so
+ * the assertions can look a controller up by what it does; `calls[].factory`
+ * keeps the `FilterList` method name that produced it (`'addPixelate'`, …).
+ * (The original stub reused the method name for `kind`, which the assertions
+ * never matched — hidden while the suite was `it.fails`; corrected with the
+ * implementation in AH-0MVNTXV8P009B531.)
  *
  * @module vfx/cameraFilters.test
  */
@@ -154,8 +166,8 @@ function makeStubFilterList(): StubFilterList {
   const list: StubFilterController[] = [];
   const calls: StubFactoryCall[] = [];
 
-  const factory = (kind: string) => (amount?: number): StubFilterController => {
-    calls.push({ factory: kind, args: amount === undefined ? [] : [amount] });
+  const factory = (kind: string, method: string) => (amount?: number): StubFilterController => {
+    calls.push({ factory: method, args: amount === undefined ? [] : [amount] });
     const controller: StubFilterController = {
       kind,
       amount: amount ?? 1,
@@ -171,10 +183,10 @@ function makeStubFilterList(): StubFilterList {
   return {
     list,
     calls,
-    addPixelate: factory('addPixelate'),
-    addBarrel: factory('addBarrel'),
-    addGlow: factory('addGlow'),
-    addDisplacement: factory('addDisplacement'),
+    addPixelate: factory('pixelate', 'addPixelate'),
+    addBarrel: factory('barrel', 'addBarrel'),
+    addGlow: factory('glow', 'addGlow'),
+    addDisplacement: factory('displacement', 'addDisplacement'),
     remove(filter) {
       const index = list.indexOf(filter);
       if (index >= 0) {
@@ -213,7 +225,7 @@ function asScene(scene: StubFilterScene | Record<string, unknown>): Phaser.Scene
 }
 
 describe('supportsCameraFilters — capability probe (AH-0MVNTXSQ1000QO12)', () => {
-  it.fails('reports support for a WebGL scene whose camera exposes a usable filter list', async () => {
+  it('reports support for a WebGL scene whose camera exposes a usable filter list', async () => {
     const { supportsCameraFilters } = await cameraFilters();
     const scene = makeStubScene(Phaser.WEBGL);
 
@@ -223,14 +235,14 @@ describe('supportsCameraFilters — capability probe (AH-0MVNTXSQ1000QO12)', () 
     expect(scene.internal.list).toHaveLength(0);
   });
 
-  it.fails('reports no support on a canvas renderer even when a filter list exists', async () => {
+  it('reports no support on a canvas renderer even when a filter list exists', async () => {
     const { supportsCameraFilters } = await cameraFilters();
     const scene = makeStubScene(Phaser.CANVAS);
 
     expect(supportsCameraFilters(asScene(scene))).toBe(false);
   });
 
-  it.fails('never throws and reports no support for a partial or empty scene', async () => {
+  it('never throws and reports no support for a partial or empty scene', async () => {
     const { supportsCameraFilters } = await cameraFilters();
 
     // No scene at all.
@@ -277,7 +289,7 @@ describe('supportsCameraFilters — capability probe (AH-0MVNTXSQ1000QO12)', () 
 });
 
 describe('createPhaseFilterDriver — activation distortion burst', () => {
-  it.fails('adds exactly one pixelate + one barrel controller at the documented magnitudes', async () => {
+  it('adds exactly one pixelate + one barrel controller at the documented magnitudes', async () => {
     const { createPhaseFilterDriver, PHASE_FILTER_BURST_BARREL_AMOUNT, PHASE_FILTER_BURST_PIXELATE_SIZE } =
       await cameraFilters();
     const scene = makeStubScene();
@@ -300,7 +312,7 @@ describe('createPhaseFilterDriver — activation distortion burst', () => {
     expect(scene.external.list).toHaveLength(0);
   });
 
-  it.fails('does not duplicate the burst controllers when applied twice', async () => {
+  it('does not duplicate the burst controllers when applied twice', async () => {
     const { createPhaseFilterDriver } = await cameraFilters();
     const scene = makeStubScene();
     const driver = createPhaseFilterDriver(asScene(scene));
@@ -313,7 +325,7 @@ describe('createPhaseFilterDriver — activation distortion burst', () => {
     expect(driver.controllers).toHaveLength(2);
   });
 
-  it.fails(
+  it(
     'decays the barrel wobble and removes/destroys both controllers exactly once when the documented duration elapses',
     async () => {
       const { createPhaseFilterDriver, PHASE_FILTER_BURST_DURATION_MS } = await cameraFilters();
@@ -349,7 +361,7 @@ describe('createPhaseFilterDriver — activation distortion burst', () => {
     },
   );
 
-  it.fails('ignores non-positive and NaN deltas', async () => {
+  it('ignores non-positive and NaN deltas', async () => {
     const { createPhaseFilterDriver } = await cameraFilters();
     const scene = makeStubScene();
     const driver = createPhaseFilterDriver(asScene(scene));
@@ -365,7 +377,7 @@ describe('createPhaseFilterDriver — activation distortion burst', () => {
     expect(barrel.amount).toBe(initialAmount);
   });
 
-  it.fails('is a pure no-op on an unsupported scene: no allocation, no throw, falsy result', async () => {
+  it('is a pure no-op on an unsupported scene: no allocation, no throw, falsy result', async () => {
     const { createPhaseFilterDriver } = await cameraFilters();
     const scene = makeStubScene(Phaser.CANVAS);
     const driver = createPhaseFilterDriver(asScene(scene));
@@ -382,7 +394,7 @@ describe('createPhaseFilterDriver — activation distortion burst', () => {
 });
 
 describe('createPhaseFilterDriver — sustained filter layer', () => {
-  it.fails('adds exactly one gentle barrel controller, weaker than the burst', async () => {
+  it('adds exactly one gentle barrel controller, weaker than the burst', async () => {
     const {
       createPhaseFilterDriver,
       PHASE_FILTER_BURST_BARREL_AMOUNT,
@@ -403,7 +415,7 @@ describe('createPhaseFilterDriver — sustained filter layer', () => {
     expect(scene.internal.list).toHaveLength(1);
   });
 
-  it.fails('keeps the burst and sustained layers independent', async () => {
+  it('keeps the burst and sustained layers independent', async () => {
     const { createPhaseFilterDriver, PHASE_FILTER_BURST_DURATION_MS } = await cameraFilters();
     const scene = makeStubScene();
     const driver = createPhaseFilterDriver(asScene(scene));
@@ -425,7 +437,7 @@ describe('createPhaseFilterDriver — sustained filter layer', () => {
     expect(scene.internal.list).toHaveLength(3);
   });
 
-  it.fails('is a pure no-op on an unsupported scene', async () => {
+  it('is a pure no-op on an unsupported scene', async () => {
     const { createPhaseFilterDriver } = await cameraFilters();
     const scene = makeStubScene(Phaser.CANVAS);
     const driver = createPhaseFilterDriver(asScene(scene));
@@ -437,7 +449,7 @@ describe('createPhaseFilterDriver — sustained filter layer', () => {
 });
 
 describe('createPhaseFilterDriver — exact teardown', () => {
-  it.fails('removes and destroys only its own controllers, leaving a pre-existing filter untouched', async () => {
+  it('removes and destroys only its own controllers, leaving a pre-existing filter untouched', async () => {
     const { createPhaseFilterDriver } = await cameraFilters();
     const scene = makeStubScene();
     // A filter the rest of the game (or a future effect) already applied.
@@ -457,7 +469,7 @@ describe('createPhaseFilterDriver — exact teardown', () => {
     expect(scene.external.calls).toHaveLength(0);
   });
 
-  it.fails('is idempotent: a second clear neither throws nor double-destroys', async () => {
+  it('is idempotent: a second clear neither throws nor double-destroys', async () => {
     const { createPhaseFilterDriver } = await cameraFilters();
     const scene = makeStubScene();
     const driver = createPhaseFilterDriver(asScene(scene));
