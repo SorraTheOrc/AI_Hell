@@ -12,7 +12,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import { bootScene, BootedGame, stepGameUntil } from '../../test/gameHarness';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import {
@@ -205,4 +205,76 @@ describe('GymMiniBoss — config-driven mini-boss gym (AH-0MVCRAYSH0014BQJ)', ()
     }
     selectGymMiniBossDesign(1);
   });
+  // ── Mini-boss death sweep parity (AH-0MVROEMUO007Z3RY) ──────────
+
+  describe('EXPLODE runs the shared mini-boss death sweep (AC5)', () => {
+    /** Boots the design whose phase 1 summons minions (level 3, Shard Matron). */
+    async function bootMinionGym(): Promise<GymMiniBoss> {
+      selectGymMiniBossDesign(3);
+      const scene = await bootGym();
+      return scene;
+    }
+
+    afterEach(() => {
+      selectGymMiniBossDesign(1);
+    });
+
+    it('sweeps the mini-boss minions captured before the teardown, then completes', async () => {
+      const scene = await bootMinionGym();
+      const boss = scene.formationMiniBoss;
+      const minions = boss.getMinions();
+      expect(minions.length).toBeGreaterThan(0);
+
+      scene.explodeRandom();
+
+      // The minions were captured before the entity tore them down, so the
+      // sweep targets are exactly the live minions (the gym's wave-gating
+      // scope — no hazards are ever in the formation list).
+      const targets = scene.getMiniBossSweepTargets();
+      expect(targets).toHaveLength(minions.length);
+      for (const minion of minions) {
+        expect(
+          targets.some(
+            (target) =>
+              Math.abs(target.x - minion.x) < 0.001 &&
+              Math.abs(target.y - minion.y) < 0.001,
+          ),
+        ).toBe(true);
+        // Cosmetic removal: the entity is dead but never routed through a
+        // reward-bearing kill path.
+        expect(minion.alive).toBe(false);
+      }
+      expect(boss.alive).toBe(false);
+
+      // Completion is real animation time (burst tweens + the shared Clock
+      // watchdog), so it is reached by stepping the game, never on the
+      // trigger frame.
+      expect(scene.isMiniBossSweepActive()).toBe(true);
+      stepGameUntil(
+        booted!.game,
+        'gym mini-boss sweep completion',
+        () => !scene.isMiniBossSweepActive(),
+      );
+      expect(scene.isMiniBossSweepActive()).toBe(false);
+    });
+
+    it('is a no-op once the mini-boss is already defeated (one sweep per defeat)', async () => {
+      const scene = await bootMinionGym();
+      scene.explodeRandom();
+      const targetsAfterFirst = scene.getMiniBossSweepTargets();
+      stepGameUntil(
+        booted!.game,
+        'gym mini-boss sweep completion',
+        () => !scene.isMiniBossSweepActive(),
+      );
+
+      scene.explodeRandom();
+
+      // No second sweep is armed and the captured targets are unchanged.
+      expect(scene.isMiniBossSweepActive()).toBe(false);
+      expect(scene.getMiniBossSweepTargets()).toEqual(targetsAfterFirst);
+    });
+
+  });
 });
+
