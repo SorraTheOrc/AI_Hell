@@ -8,9 +8,10 @@
  *
  * The file ends with the test-first contract for the *unmistakable* emergence
  * treatment (AH-0MVNTXTYN001ZXM6): the per-entity outline/flicker/burst
- * contract and the wormhole ring/shockwave contract. Those cases use
- * `it.fails` until their implementation siblings land (see the block comment
- * before them).
+ * contract and the wormhole ring/shockwave contract. The per-entity cases
+ * landed with AH-0MVNTXXTA0081S38 and now run as plain `it`s; the wormhole ring
+ * cases remain `it.fails` until AH-0MVNTXZ4X00031AU lands (see the block
+ * comment before them).
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -863,11 +864,11 @@ describe('wormholeSpawn — wormhole glow/pulse ring (ring landed in AH-0MVD2N6A
 
 // ── Unmistakable enemy emergence + wormhole ring — test-first contract ──
 //
-// Contract owner: AH-0MVNTXTYN001ZXM6. Implemented by the sibling items
-// AH-0MVNTXXTA0081S38 (per-enemy unmistakable emergence shimmer) and
-// AH-0MVNTXZ4X00031AU (wormhole ring and open shockwave), which flip every
-// `it.fails` below back to a plain `it` once their layer lands — a leftover
-// `it.fails` fails the suite.
+// Contract owner: AH-0MVNTXTYN001ZXM6. The per-entity emergence cases below
+// were implemented by AH-0MVNTXXTA0081S38 (per-enemy unmistakable emergence
+// shimmer) and now run as plain `it`s; the wormhole ring/shockwave cases stay
+// `it.fails` until AH-0MVNTXZ4X00031AU lands — a leftover `it.fails` fails the
+// suite (vitest reports a passing `it.fails` as a failure).
 //
 // Pinned treatment (approach C of AH-0MVNTR89P0022JIU: the emergence path
 // stays per-entity — no screen-space effect on it):
@@ -955,7 +956,7 @@ describe('wormholeSpawn — unmistakable enemy emergence (AH-0MVNTXTYN001ZXM6)',
     );
   }
 
-  it.fails('creates exactly one pulsing outline/silhouette layer on the first shimmering frame', async () => {
+  it('creates exactly one pulsing outline/silhouette layer on the first shimmering frame', async () => {
     const scene = await boot();
     const enemy = scene.add.container(50, 50) as SpawnAnimatable;
     startSpawnAnimation(enemy, 1);
@@ -995,7 +996,7 @@ describe('wormholeSpawn — unmistakable enemy emergence (AH-0MVNTXTYN001ZXM6)',
     }
   });
 
-  it.fails('widens the alpha flicker to the unmistakable range, driven verbatim from its tunables', async () => {
+  it('widens the alpha flicker to the unmistakable range, driven verbatim from its tunables', async () => {
     const scene = await boot();
     const enemy = startGrowth(scene);
 
@@ -1026,7 +1027,7 @@ describe('wormholeSpawn — unmistakable enemy emergence (AH-0MVNTXTYN001ZXM6)',
     expect(observedMax - observedMin).toBeGreaterThanOrEqual(alphaMax - alphaMin - 0.05);
   });
 
-  it.fails('strengthens the leading-edge ripple burst (verbatim tunables) and decays it to zero', async () => {
+  it('strengthens the leading-edge ripple burst (verbatim tunables) and decays it to zero', async () => {
     const scene = await boot();
     const enemy = startGrowth(scene);
 
@@ -1053,7 +1054,7 @@ describe('wormholeSpawn — unmistakable enemy emergence (AH-0MVNTXTYN001ZXM6)',
     expect(settledAlpha).toBeGreaterThan(numberTunable('ENEMY_SHIMMER_ALPHA_MIN') - 0.02);
   });
 
-  it.fails('fully restores the entity and destroys the outline when growth ends (no residual state)', async () => {
+  it('fully restores the entity and destroys the outline when growth ends (no residual state)', async () => {
     const scene = await boot();
     const enemy = scene.add.container(50, 50) as SpawnAnimatable;
     enemy.setAlpha(0.8);
@@ -1108,7 +1109,7 @@ describe('wormholeSpawn — unmistakable enemy emergence (AH-0MVNTXTYN001ZXM6)',
     );
   });
 
-  it.fails('never drifts the growth scale across interleaved frames (the real spawn+shimmer call pattern)', async () => {
+  it('never drifts the growth scale across interleaved frames (the real spawn+shimmer call pattern)', async () => {
     // Every spawning entity is updated as
     //   updateSpawnAnimation(entity, dt)   → an ABSOLUTE growth-scale write
     //   updateEnemyShimmer(entity, dt)     → layers its pulse on top

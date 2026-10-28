@@ -371,6 +371,14 @@ export interface SpawnState {
   delay: number;
   /** The enemy's original (full) scale — restored after animation. */
   originalScale: number;
+  /**
+   * The absolute growth scale the spawn animation last wrote (the un-shimmered
+   * scale). The shimmer layers its pulse on top of this value instead of
+   * dividing the live scale by a stale per-entity factor, so the real
+   * spawn→shimmer call pattern can never compound or drift the scale
+   * (AH-0MVNTXXTA0081S38).
+   */
+  growthScale: number;
   /** Whether growth has begun (after the wormhole-open delay). */
   growing: boolean;
   /** World position where the enemy emerged (the wormhole origin). */
@@ -431,6 +439,7 @@ export function startSpawnAnimation(
     elapsed: 0,
     delay,
     originalScale,
+    growthScale: 0.01,
     growing: false,
     originX: enemy.x,
     originY: enemy.y,
@@ -495,7 +504,12 @@ export function updateSpawnAnimation(
     Math.min(growthElapsed / ENEMY_GROWTH_DURATION, 1),
   );
   const easedProgress = easeOutCubic(progress);
-  enemy.setScale(0.01 + (state.originalScale - 0.01) * easedProgress);
+  const growthScale = 0.01 + (state.originalScale - 0.01) * easedProgress;
+  // Record the absolute growth scale; the per-entity shimmer layers its pulse
+  // on top of THIS value (never on its own previous output), so the shared
+  // `updateSpawnAnimation` → `updateEnemyShimmer` call pattern stays drift-free.
+  state.growthScale = growthScale;
+  enemy.setScale(growthScale);
   if (state.moves) {
     // Wormhole-to-formation transit (AH-0MV8BSMXC0097KLW): travel from the
     // emergence point to the formation position in lock-step with the growth
@@ -510,6 +524,7 @@ export function updateSpawnAnimation(
   }
 
   if (progress >= 1) {
+    state.growthScale = state.originalScale;
     enemy.setScale(state.originalScale);
     if (state.moves) {
       const dest = resolveSpawnDestination(state);
@@ -549,20 +564,25 @@ function easeOutCubic(t: number): number {
  * materialise — the leading edge of the growth window. ~150–250 ms reads as
  * a glitch hit without dragging on. Toggle: {@link ENEMY_SHIMMER_ENABLE_BURST}.
  */
-export const ENEMY_SHIMMER_BURST_DURATION_MS = 200;
+export const ENEMY_SHIMMER_BURST_DURATION_MS = 240;
 
 /**
  * Extra alpha added at the start of the burst, decaying linearly to zero over
- * {@link ENEMY_SHIMMER_BURST_DURATION_MS}. Kept small so the clamp to 1 is
- * rarely reached.
+ * {@link ENEMY_SHIMMER_BURST_DURATION_MS}. Raised from the original subtle
+ * 0.15 to an unmistakable magnitude (AH-0MVNTXXTA0081S38) and applied as a
+ * *toward-opaque* lift — `alpha += (1 - alpha) * boost * remaining` — so the
+ * leading edge flashes hard without ever pinning the flicker at a saturated 1.
  */
-export const ENEMY_SHIMMER_BURST_ALPHA_BOOST = 0.15;
+export const ENEMY_SHIMMER_BURST_ALPHA_BOOST = 0.45;
 
 /**
  * Extra scale (fraction of the growth scale) added at the start of the burst,
  * decaying to zero over {@link ENEMY_SHIMMER_BURST_DURATION_MS} — the "ripple".
+ * Raised from the original subtle 0.06 to an unmistakable 0.18
+ * (AH-0MVNTXXTA0081S38); it stays layered on the absolute growth scale so it
+ * never compounds with the growth curve.
  */
-export const ENEMY_SHIMMER_BURST_SCALE_BOOST = 0.06;
+export const ENEMY_SHIMMER_BURST_SCALE_BOOST = 0.18;
 
 /**
  * Alpha-flicker rate (Hz) of the sustained shimmer. 2–4 Hz is a gentle pulse,
@@ -571,10 +591,10 @@ export const ENEMY_SHIMMER_BURST_SCALE_BOOST = 0.06;
 export const ENEMY_SHIMMER_FLICKER_HZ = 3;
 
 /** Lowest alpha the shimmer flickers to (must stay > 0 so the enemy never vanishes). */
-export const ENEMY_SHIMMER_ALPHA_MIN = 0.55;
+export const ENEMY_SHIMMER_ALPHA_MIN = 0.25;
 
 /** Highest alpha the shimmer flickers to (must stay <= 1). */
-export const ENEMY_SHIMMER_ALPHA_MAX = 0.85;
+export const ENEMY_SHIMMER_ALPHA_MAX = 1;
 
 /**
  * Amplitude of the sustained scale pulse, as a fraction of the current growth
@@ -605,6 +625,41 @@ export const ENEMY_SHIMMER_ENABLE_SHIMMER = true;
 /** Whether the soft additive colour-pulse layer is enabled. */
 export const ENEMY_SHIMMER_ENABLE_COLOUR_PULSE = true;
 
+// ── Outline / silhouette layer (AH-0MVNTXXTA0081S38) ─────────────────
+//
+// One pulsing stroked ring parented to the emerging entity — never a
+// scene-wide overlay — so each enemy carries its own "not solid yet"
+// silhouette for the whole growth window. Created once on the first growing
+// frame and destroyed on the falling edge.
+
+/** Whether the per-entity outline/silhouette layer is enabled (default on). */
+export const ENEMY_SHIMMER_ENABLE_OUTLINE = true;
+
+/** Data key marking the outline child on an emerging entity. */
+export const ENEMY_SHIMMER_OUTLINE_DATA_KEY = '__shimmerOutline';
+
+/** Outline ring radius (px) around the entity at full growth scale. */
+export const ENEMY_SHIMMER_OUTLINE_RADIUS = 30;
+
+/** Outline ring stroke width (px). */
+export const ENEMY_SHIMMER_OUTLINE_LINE_WIDTH = 4;
+
+/**
+ * Outline ring colour. Pale violet, matching the wormhole's own palette so the
+ * emergence reads as coming from the portal; deliberately distinct from the
+ * Phase Shift split and the player-death flash palettes.
+ */
+export const ENEMY_SHIMMER_OUTLINE_COLOR = 0xd9b3ff;
+
+/** Alpha pulse rate (Hz) of the outline ring — slow and breathing, not a strobe. */
+export const ENEMY_SHIMMER_OUTLINE_PULSE_HZ = 2;
+
+/** Lowest alpha of the pulsing outline ring. */
+export const ENEMY_SHIMMER_OUTLINE_ALPHA_MIN = 0.45;
+
+/** Highest alpha of the pulsing outline ring (must stay <= 1). */
+export const ENEMY_SHIMMER_OUTLINE_ALPHA_MAX = 0.95;
+
 /** Data key holding the per-entity shimmer clock (created lazily, reused). */
 const SHIMMER_STATE_KEY = '__shimmerState';
 
@@ -617,9 +672,9 @@ interface ShimmerState {
   /** Seconds since the shimmer started (its own clock, advanced by `dt`). */
   elapsed: number;
   /**
-   * Scale factor this helper applied on the previous frame. Dividing the
-   * current scale by it recovers the un-shimmered growth scale, so repeated
-   * calls never compound and the spawn animation's own scale is preserved.
+   * Scale factor this helper applied on the previous frame. Used only as a
+   * fallback recovery path (and to keep the recorded state inspectable); the
+   * authoritative growth scale comes from `SpawnState.growthScale`.
    */
   lastScaleFactor: number;
   /**
@@ -627,6 +682,17 @@ interface ShimmerState {
    * spawn window ends so no residual tint survives (teardown-clean).
    */
   baseAlpha: number;
+  /**
+   * The entity's own blend mode before the shimmer took it over, restored on
+   * teardown so the additive bloom leaves no residual state.
+   */
+  baseBlendMode: number | undefined;
+  /**
+   * The pulsing outline/silhouette ring parented to the entity, created once on
+   * the first growing frame and destroyed on the falling edge. `null` when the
+   * layer is disabled or the entity cannot host it (headless stub).
+   */
+  outline: Phaser.GameObjects.Graphics | null;
 }
 
 /** Returns the shimmer clock for `enemy`, creating it on first use. */
@@ -639,9 +705,45 @@ function ensureShimmerState(enemy: SpawnAnimatable): ShimmerState | null {
     elapsed: 0,
     lastScaleFactor: 1,
     baseAlpha: enemy.alpha,
+    baseBlendMode: (enemy as { blendMode?: number }).blendMode,
+    outline: ENEMY_SHIMMER_ENABLE_OUTLINE ? createShimmerOutline(enemy) : null,
   };
   setData.call(enemy, SHIMMER_STATE_KEY, created);
   return created;
+}
+
+/**
+ * Creates the per-entity outline/silhouette ring and parents it to `enemy`.
+ *
+ * Headless-safe: an entity without a live scene/`add`/graphics factory (or a
+ * stub without the drawing calls) simply gets no outline and no error, so the
+ * shimmer still runs its alpha/scale layers.
+ */
+function createShimmerOutline(enemy: SpawnAnimatable): Phaser.GameObjects.Graphics | null {
+  const scene = (enemy as { scene?: Phaser.Scene }).scene;
+  const addToEntity = (enemy as { add?: (child: unknown) => unknown }).add;
+  const graphicsFactory = (
+    scene as unknown as { add?: { graphics?: () => Phaser.GameObjects.Graphics } } | undefined
+  )?.add?.graphics;
+  if (!scene || typeof addToEntity !== 'function' || typeof graphicsFactory !== 'function') {
+    return null;
+  }
+  let outline: Phaser.GameObjects.Graphics | null = null;
+  try {
+    outline = graphicsFactory.call(scene.add);
+    outline.lineStyle(
+      ENEMY_SHIMMER_OUTLINE_LINE_WIDTH,
+      ENEMY_SHIMMER_OUTLINE_COLOR,
+      ENEMY_SHIMMER_OUTLINE_ALPHA_MAX,
+    );
+    outline.strokeCircle(0, 0, ENEMY_SHIMMER_OUTLINE_RADIUS);
+    outline.setData(ENEMY_SHIMMER_OUTLINE_DATA_KEY, true);
+    addToEntity.call(enemy, outline);
+    return outline;
+  } catch {
+    outline?.destroy();
+    return null;
+  }
 }
 
 /** Returns the existing shimmer clock for `enemy`, or `undefined` if inert. */
@@ -667,11 +769,32 @@ function releaseShimmerIfAny(enemy: SpawnAnimatable): void {
  */
 function releaseShimmer(enemy: SpawnAnimatable, state: ShimmerState): void {
   enemy.setAlpha(state.baseAlpha);
-  setEnemyBloom(enemy, false);
+  restoreEnemyBlendMode(enemy, state.baseBlendMode);
+  state.outline?.destroy();
+  state.outline = null;
   const setData = (enemy as { setData?: (key: string, value: unknown) => unknown }).setData;
   if (typeof setData === 'function') {
     setData.call(enemy, SHIMMER_STATE_KEY, undefined);
   }
+}
+
+/**
+ * Restores the entity's own blend mode, falling back to `NORMAL` when the
+ * pre-shimmer value is unknown (headless stub) or the entity cannot blend.
+ */
+function restoreEnemyBlendMode(
+  enemy: SpawnAnimatable,
+  blendMode: number | undefined,
+): void {
+  if (blendMode === undefined) {
+    setEnemyBloom(enemy, false);
+    return;
+  }
+  const setBlendMode = (
+    enemy as { setBlendMode?: (mode: unknown) => unknown }
+  ).setBlendMode;
+  if (typeof setBlendMode !== 'function') return;
+  setBlendMode.call(enemy, blendMode);
 }
 
 /**
@@ -686,9 +809,12 @@ function releaseShimmer(enemy: SpawnAnimatable, state: ShimmerState): void {
  * stubs, which never have spawn state).
  *
  * Layers (each with its own toggle):
- *   - **burst** — a brief ripple (extra scale + alpha) decaying over
- *     {@link ENEMY_SHIMMER_BURST_DURATION_MS};
- *   - **shimmer** — gentle alpha flicker (`ENEMY_SHIMMER_FLICKER_HZ`) plus a
+ *   - **outline** — one pulsing stroked ring parented to the entity for the
+ *     whole growth window (`ENEMY_SHIMMER_ENABLE_OUTLINE`), created on the
+ *     first growing frame and destroyed when growth ends;
+ *   - **burst** — a brief ripple (extra scale + a toward-opaque alpha lift)
+ *     decaying over {@link ENEMY_SHIMMER_BURST_DURATION_MS};
+ *   - **shimmer** — widened alpha flicker (`ENEMY_SHIMMER_FLICKER_HZ`) plus a
  *     tiny scale pulse;
  *   - **colour pulse** — soft additive bloom breathing at
  *     {@link ENEMY_SHIMMER_COLOUR_PULSE_PERIOD}.
@@ -735,24 +861,44 @@ export function updateEnemyShimmer(
     scaleFactor = 1 + ENEMY_SHIMMER_SCALE_AMOUNT * (u * 2 - 1);
   }
 
-  // Burst layer: a decaying ripple on the leading edge of the growth window.
+  // Burst layer: a decaying, toward-opaque lift on the leading edge of the
+  // growth window. Composing it as `alpha += (1 - alpha) * boost * remaining`
+  // keeps the flash strong without pinning consecutive frames at a saturated
+  // alpha of 1 (which would read as a flat hold rather than a flash).
   if (ENEMY_SHIMMER_ENABLE_BURST) {
     const burstDuration = ENEMY_SHIMMER_BURST_DURATION_MS / 1000;
     if (t < burstDuration) {
       const remaining = 1 - t / burstDuration;
-      alpha += ENEMY_SHIMMER_BURST_ALPHA_BOOST * remaining;
+      alpha += (1 - alpha) * ENEMY_SHIMMER_BURST_ALPHA_BOOST * remaining;
       scaleFactor += ENEMY_SHIMMER_BURST_SCALE_BOOST * remaining;
     }
   }
   enemy.setAlpha(Math.min(1, Math.max(0.01, alpha)));
 
-  // Scale: recover the un-shimmered growth scale, then re-apply this frame's
-  // factor. Writing the absolute value keeps the result stable no matter how
-  // many times the helper runs per frame.
+  // Scale: layer the pulse on the ABSOLUTE growth scale the spawn animation
+  // last wrote (never on this helper's own previous output), so every
+  // spawn→shimmer frame stays drift-free and a double tick equals one long
+  // tick. The division fallback covers entities whose spawn state predates
+  // `growthScale` (e.g. an externally seeded state).
   const previousFactor = state.lastScaleFactor || 1;
-  const growthScale = enemy.scaleX / previousFactor;
+  const growthScale =
+    typeof spawn.growthScale === 'number'
+      ? spawn.growthScale
+      : enemy.scaleX / previousFactor;
   enemy.setScale(growthScale * scaleFactor);
   state.lastScaleFactor = scaleFactor;
+
+  // Outline layer: one pulsing ring around the entity's own silhouette.
+  if (state.outline) {
+    const [outlineMin, outlineMax] = [
+      ENEMY_SHIMMER_OUTLINE_ALPHA_MIN,
+      ENEMY_SHIMMER_OUTLINE_ALPHA_MAX,
+    ];
+    const outlineWave =
+      0.5 +
+      0.5 * Math.sin(Math.PI * 2 * ENEMY_SHIMMER_OUTLINE_PULSE_HZ * t);
+    state.outline.setAlpha(outlineMin + (outlineMax - outlineMin) * outlineWave);
+  }
 
   // Colour pulse: soft additive bloom breathing far below the flicker rate.
   if (ENEMY_SHIMMER_ENABLE_COLOUR_PULSE) {
