@@ -18,6 +18,7 @@ import {
 } from '../core/checkpointStore';
 import { POWER_UP_CHARGE_CAP } from '../powerups/powerUpLevels';
 import type { PowerUpId, WeaponDropId } from '../powerups/types';
+import type { HUDEntry } from '../ui/HUD';
 import { toChoiceOption } from '../powerups/choice';
 import { applyMineralChoiceReward } from '../powerups/choiceReward';
 import type { WeaponId } from '../utils/weapons';
@@ -295,6 +296,29 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
       .map((child) => child.text);
   }
 
+  /**
+   * Drops the one inherently time-varying row field before a parity
+   * comparison (AH-0MVS2T40T006QL7H).
+   *
+   * The permanent Orbital Strike row renders a live `next in Ns` countdown to
+   * the next bolt, derived from the run's own strike clock. Two independent
+   * boots snapshot it at slightly different points in the interval (and one
+   * may hold a bolt latched while the other's has landed), so the countdown is
+   * a property of *elapsed time*, not of the restored state under test.
+   * Everything else in the row must still match exactly.
+   */
+  function withoutStrikeCountdown(rows: HUDEntry[]): HUDEntry[] {
+    return rows.map((row) => {
+      if (row.id !== 'strike') return row;
+      const stable: HUDEntry = {
+        ...row,
+        label: row.label.replace(/ \(next in \d+s\)$/, ''),
+      };
+      delete stable.recharge;
+      return stable;
+    });
+  }
+
   it('AC1 — a resumed run renders the same upgrade rows as a live run with the same grants', async () => {
     const resumed = await bootResumed();
     const resumedRows = resumed.getHUD()!.getRows();
@@ -309,8 +333,11 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     localStorage.clear();
 
     const live = await bootLiveGrants();
-    // Exact parity: same labels, levels and ∞ values as live play.
-    expect(resumedRows).toEqual(live.getHUD()!.getRows());
+    // Exact parity: same labels, levels and ∞ values as live play (ignoring
+    // only the strike row's time-derived next-bolt countdown).
+    expect(withoutStrikeCountdown(resumedRows)).toEqual(
+      withoutStrikeCountdown(live.getHUD()!.getRows()),
+    );
   });
 
   it('AC1 — weapon rows are restored with their run-scoped level', async () => {
