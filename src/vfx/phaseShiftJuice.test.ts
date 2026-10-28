@@ -304,11 +304,12 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     const mod = phaseShiftJuiceModule as unknown as Record<string, unknown>;
     const params = resolvePhaseShiftJuiceParams() as unknown as PredictedJuiceParams;
 
-    // Vivid split: alpha raised from 0.10 toward ~0.20, offset from 3 px toward ~6 px.
-    expect(params.splitAlpha).toBeGreaterThanOrEqual(0.15);
-    expect(params.splitAlpha).toBeLessThanOrEqual(0.3);
-    expect(params.splitOffset).toBeGreaterThanOrEqual(5);
-    expect(params.splitOffset).toBeLessThanOrEqual(9);
+    // Vivid split: alpha raised from 0.10 (→ 0.45) and offset from 3 px
+    // (→ 14 px) by the unmistakable treatment (AH-0MVNTXWJP004DBCW).
+    expect(params.splitAlpha).toBeGreaterThanOrEqual(0.4);
+    expect(params.splitAlpha).toBeLessThanOrEqual(0.6);
+    expect(params.splitOffset).toBeGreaterThanOrEqual(12);
+    expect(params.splitOffset).toBeLessThanOrEqual(20);
     // Both still map verbatim to their exported constants.
     expect(params.splitAlpha).toBe(mod.PHASE_SHIFT_SPLIT_ALPHA);
     expect(params.splitOffset).toBe(mod.PHASE_SHIFT_SPLIT_OFFSET);
@@ -390,8 +391,8 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
 // ── Unmistakable player treatment — test-first contract ─────────────
 //
 // Contract owner: AH-0MVNTXSQ1000QO12. Implemented by the sibling item
-// AH-0MVNTXWJP004DBCW (which flips every `it.fails` below back to a plain
-// `it` once the treatment lands — a leftover `it.fails` fails the suite).
+// AH-0MVNTXWJP004DBCW, which flipped every `it.fails` below to a plain `it`
+// when the treatment landed (a leftover `it.fails` fails the suite).
 //
 // Pinned treatment (approach C of AH-0MVNTR89P0022JIU: aggressive activation
 // edge / soft sustained state, never camera shake):
@@ -449,7 +450,9 @@ interface UnmistakableParams {
 }
 
 /** Juice options widened with the injected filter driver (test-first). */
-interface UnmistakableJuiceOptions extends PhaseShiftJuiceOptions {
+interface UnmistakableJuiceOptions {
+  registry?: Phaser.GameObjects.GameObject[];
+  params?: PhaseShiftJuiceParams;
   filters?: PhaseFilterDriver;
 }
 
@@ -517,7 +520,7 @@ function makeFakeFilterDriver(supported = true): {
 }
 
 describe('resolvePhaseShiftJuiceParams — unmistakable tunables (AH-0MVNTXSQ1000QO12)', () => {
-  it.fails('maps every new tunable and toggle verbatim', () => {
+  it('maps every new tunable and toggle verbatim', () => {
     const params = unmistakableParams();
 
     expect(params.flashColor).toBe(numberTunable('PHASE_SHIFT_FLASH_COLOR'));
@@ -533,7 +536,7 @@ describe('resolvePhaseShiftJuiceParams — unmistakable tunables (AH-0MVNTXSQ100
     expect(params.sustainedFilterEnabled).toBe(tunable('PHASE_SHIFT_ENABLE_SUSTAINED_FILTER'));
   });
 
-  it.fails('enables every unmistakable layer by default', () => {
+  it('enables every unmistakable layer by default', () => {
     const params = unmistakableParams();
 
     expect(params.flashEnabled).toBe(true);
@@ -542,7 +545,7 @@ describe('resolvePhaseShiftJuiceParams — unmistakable tunables (AH-0MVNTXSQ100
     expect(params.sustainedFilterEnabled).toBe(true);
   });
 
-  it.fails('raises the split and activation-surge magnitudes to the unmistakable range', () => {
+  it('raises the split and activation-surge magnitudes to the unmistakable range', () => {
     const params = unmistakableParams();
 
     // Widened chromatic split: α 0.20 → ≈0.45, offset 6 px → ≈14 px.
@@ -562,7 +565,7 @@ describe('resolvePhaseShiftJuiceParams — unmistakable tunables (AH-0MVNTXSQ100
     expect(params.burstOffset).toBe(numberTunable('PHASE_SHIFT_BURST_OFFSET'));
   });
 
-  it.fails('uses a flash / vignette palette distinct from the player-death flash', () => {
+  it('uses a flash / vignette palette distinct from the player-death flash', () => {
     const params = unmistakableParams();
 
     expect(params.flashColor).not.toBe(PLAYER_DEATH_FLASH_COLOR);
@@ -604,10 +607,13 @@ describe('PhaseShiftJuice — unmistakable activation edge and teardown', () => 
       filters: driver,
       ...(params ? { params } : {}),
     } as unknown as UnmistakableJuiceOptions;
-    return { juice: new PhaseShiftJuice(scene, options), registry };
+    return {
+      juice: new PhaseShiftJuice(scene, options as unknown as PhaseShiftJuiceOptions),
+      registry,
+    };
   }
 
-  it.fails('creates the full seven-layer activation set exactly once on the rising edge', async () => {
+  it('creates the full seven-layer activation set exactly once on the rising edge', async () => {
     const scene = await boot();
     const shake = vi
       .spyOn(scene.cameras.main, 'shake')
@@ -644,7 +650,7 @@ describe('PhaseShiftJuice — unmistakable activation edge and teardown', () => 
     expect(shake).not.toHaveBeenCalled();
   });
 
-  it.fails('decays the activation flash to zero within its documented duration', async () => {
+  it('decays the activation flash to zero within its documented duration', async () => {
     const scene = await boot();
     const { driver } = makeFakeFilterDriver();
     const { juice } = juiceWithFilters(scene, driver);
@@ -667,7 +673,7 @@ describe('PhaseShiftJuice — unmistakable activation edge and teardown', () => 
     expect(liveOverlays(juice)).toContain(flash);
   });
 
-  it.fails('ticks the sustained filter layer on every steady update', async () => {
+  it('ticks the sustained filter layer on every steady update', async () => {
     const scene = await boot();
     const { driver, calls } = makeFakeFilterDriver();
     const { juice } = juiceWithFilters(scene, driver);
@@ -683,7 +689,7 @@ describe('PhaseShiftJuice — unmistakable activation edge and teardown', () => 
     expect(calls.sustained).toBe(1);
   });
 
-  it.fails('drives the sustained split oscillation and flicker without allocating objects', async () => {
+  it('drives the sustained split oscillation and flicker without allocating objects', async () => {
     const scene = await boot();
     const { driver } = makeFakeFilterDriver();
     const { juice } = juiceWithFilters(scene, driver);
@@ -724,7 +730,7 @@ describe('PhaseShiftJuice — unmistakable activation edge and teardown', () => 
     expect(calls.updates).toHaveLength(0);
   });
 
-  it.fails('tears the whole unmistakable set down exactly and re-activates fresh', async () => {
+  it('tears the whole unmistakable set down exactly and re-activates fresh', async () => {
     const scene = await boot();
     const shake = vi
       .spyOn(scene.cameras.main, 'shake')
@@ -757,7 +763,7 @@ describe('PhaseShiftJuice — unmistakable activation edge and teardown', () => 
     expect(shake).not.toHaveBeenCalled();
   });
 
-  it.fails(
+  it(
     'falls back to the overlay-only layers on a non-WebGL renderer and never touches a filter API',
     async () => {
       const scene = await boot();
