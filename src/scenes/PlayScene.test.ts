@@ -6236,6 +6236,84 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     expect(wm.enemiesAlive).toBe(before - 1);
   });
 
+  /**
+   * Fixed 50-seed set for the multi-seed regression guard
+   * (AH-0MVRLH07H001KW8S): proves the isolate-wrapped exactly-once kill on
+   * every layout the bare (pre-fix) kill could flake on, not just one lucky
+   * layout, guarding the suite against a regression to this flake class
+   * (AH-0MVMEI9V1005H0LU).
+   *
+   * - The first four (202/350/353/589) are the seeds from the reproduction
+   *   sweep (AH-0MVRLGUTZ007V3E5) on which the un-hardened single-tick kill
+   *   deterministically FAILED — a wave asteroid overlapping the victim
+   *   grunt's edge spawn point absorbed the test bullet, so the victim
+   *   stayed alive and the accounting never moved. Keeping them in the set
+   *   means a regression to that mechanism fails the guard deterministically
+   *   (AC3), not just on a lucky/unlucky random re-run.
+   * - The remaining 46 are `3 + 17k` for k = 0..45 (3, 20, … 768): a
+   *   documented, evenly-spaced spread across the 0..999 range the
+   *   reproduction item swept. The layout sweep for this set (run during
+   *   this item's implementation; evidence on AH-0MVRLH07H001KW8S) shows it
+   *   spans every RNG-driven dimension of `computeHordeSpawns`
+   *   (src/waves/HordeSpawner.ts):
+   *   - **edge choice** — every layout releases grunts on all four arena
+   *     edges (the groups cycle top→right→bottom→left, 4 grunts per
+   *     edge), and the first-released grunt (the victim) sits at a
+   *     different top-edge spawn point per seed (49 of the 50 seeds give a
+   *     distinct point, spread across the full arena width);
+   *   - **group cadence / spawn-time jitter** — each grunt draws its own
+   *     ±0.25 s jitter from the seed's RNG stream, so the four groups'
+   *     release times differ per seed and the 50 seeds yield 50
+   *     pairwise-distinct layouts (no two identical).
+   *   The victim is always a group-0 (top-edge) grunt: every group-0 spawn
+   *   clamps up to the wave's min-time fraction (t = 1.5 s) and the plan's
+   *   group-index tiebreak keeps the earliest-cadence group first, so the
+   *   tested kill geometry varies *along* the edge, never across edges —
+   *   and the exactly-once contract must hold for every one of these
+   *   layouts. The set is a fixed literal array — runs are deterministic,
+   *   no RNG.
+   */
+  const HORDE_KILL_MULTI_SEEDS: number[] = [
+    202, 350, 353, 589,
+    3, 20, 37, 54, 71, 88, 105, 122, 139, 156, 173, 190, 207, 224, 241, 258,
+    275, 292, 309, 326, 343, 360, 377, 394, 411, 428, 445, 462, 479, 496, 513,
+    530, 547, 564, 581, 598, 615, 632, 649, 666, 683, 700, 717, 734, 751, 768,
+  ];
+
+  it.each(HORDE_KILL_MULTI_SEEDS)(
+    'killing a horde grunt advances wave accounting exactly once across fixed seeds (seed %i)',
+    async (seed) => {
+      const scene = await bootWithHordeWave(true, seed);
+      const wm = scene.getWaveManager();
+      releaseHorde(scene);
+      const total = DEFAULT_ENEMY_CONFIGS.grunt.count;
+      expect(wm.enemiesAlive).toBe(total);
+
+      const victim = liveGrunts(scene)[0];
+      const before = wm.enemiesAlive;
+      // The same isolate-wrapped kill as the pinned single-seed test
+      // (AH-0MVRLGZPG0036ZTV): auto-fire and overlapping enemies (e.g. the
+      // wave asteroid on the failing seeds) cannot absorb the test's bullet
+      // or add a second kill, so the exactly-once accounting holds for the
+      // victim alone on every layout in the set. Stubs restored in `finally`.
+      const restoreKill = isolateEnemyForKill(scene, victim);
+      try {
+        scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+        scene.tick(0.001);
+        // Exactly-once proof: extra ticks while still isolated must NOT move
+        // the accounting again — a kill is counted once at the moment the
+        // bullet resolves, never twice (no double-decrement, no deferred
+        // kill).
+        scene.tick(0.05);
+        scene.tick(0.05);
+      } finally {
+        restoreKill();
+      }
+      expect(victim.alive).toBe(false);
+      expect(wm.enemiesAlive).toBe(before - 1);
+    },
+  );
+
   it('does not spawn a horde for a wave without the opt-in', async () => {
     const scene = await bootWithHordeWave(false);
     releaseHorde(scene);
