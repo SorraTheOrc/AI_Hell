@@ -849,10 +849,9 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
     expect(parsed[2].setup?.player?.weapons).toEqual(['spread']);
   });
 
-  // TEST-FIRST (AH-0MVRMFMJP0070KTS): F2 (AH-0MVRMFOB4002LMZS) adds the
-  // documented `player.weaponLevels` default (`{}` — no level grants), so this
-  // expectation is red until that lands; F2 flips this `it.fails` back to `it`.
-  it.fails('fills the documented defaults when normalising', () => {
+  // Delivered by F2 (AH-0MVRMFOB4002LMZS): `player.weaponLevels` defaults to
+  // `{}` — no per-weapon level grants — so a setup-less loadout is unchanged.
+  it('fills the documented defaults when normalising', () => {
     const setup = normaliseSceneSetup({}, 'GymLevel');
     expect(setup).toEqual({
       startWave: DEFAULT_SCENE_SETUP_START_WAVE,
@@ -1464,7 +1463,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
 
   // ── AC1: parse / validate / normalise / idempotence ───────────────
 
-  it.fails('AC1 — parses and normalises player.weaponLevels (N grants == level N)', () => {
+  it('AC1 — parses and normalises player.weaponLevels (N grants == level N)', () => {
     const setup = arcNormalise(
       { player: { weapons: [], weaponLevels: { rapid: 3, spread: 1 } } },
       'GymPlayer',
@@ -1483,7 +1482,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     }
   });
 
-  it.fails('AC1/AC2 — rejects invalid player.weaponLevels shapes and values', () => {
+  it('AC1/AC2 — rejects invalid player.weaponLevels shapes and values', () => {
     // Wrong shape.
     expectConfigError(
       () => validateSceneSetup({ player: { weaponLevels: ['rapid'] } }, 'GymPlayer'),
@@ -1503,6 +1502,8 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     }
   });
 
+  // Still red until F3 (AH-0MVRMFPXF008BG77) lands `bossHitsRemaining`: this
+  // test spans both halves of the arc fields. F3 flips it back to `it`.
   it.fails('AC1 — normalising the arc fields is idempotent (deep-equal)', () => {
     const levelRaw = {
       player: { weapons: ['spread'], weaponLevels: { rapid: 3 } },
@@ -1568,7 +1569,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     }
   });
 
-  it.fails('AC2 — mineralReward is limited to the level gyms and its id is validated', () => {
+  it('AC2 — mineralReward is limited to the level gyms and its id is validated', () => {
     for (const target of ['GymLevel', 'GymBotTuning']) {
       expect(sceneSetupFieldsFor(target)).toContain('mineralReward');
     }
@@ -1592,6 +1593,8 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
 
   // ── Module registries the fields must add ─────────────────────────
 
+  // Still red until F3 (AH-0MVRMFPXF008BG77) lands `SCENE_SETUP_BOSS_TOTAL_HITS`;
+  // the weapon-level and mineral-reward registries are already in place (F2).
   it.fails('AC1/AC2 — exposes the arc registries, pinned to the shipped id/total tables', async () => {
     const module = await loadArcModule();
 
@@ -1612,5 +1615,106 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     ]) {
       expect(codes).toContain(code);
     }
+  });
+});
+
+/**
+ * Parser coverage for the fields F2 delivered (AH-0MVRMFOB4002LMZS): the
+ * target-aware accept path for `player.weaponLevels` / `mineralReward` through
+ * the **whole config parse** (not just the setup validator), so a real
+ * `scenes.json` entry round-trips, and the normaliser never aliases the
+ * caller's objects.
+ */
+describe('arc setup fields through the config parser (AH-0MVRMFOB4002LMZS)', () => {
+  const level = () => ({
+    level: 3,
+    name: 'Parser Level',
+    waves: [
+      {
+        groups: [
+          {
+            enemyKey: 'scout',
+            formation: 'v',
+            count: 2,
+            spacingX: 20,
+            spacingY: 20,
+            startX: 200,
+            startY: 160,
+          },
+        ],
+        shootEnabled: false,
+      },
+    ],
+  });
+
+  it('round-trips weapon levels and a forced reward through a parsed config', () => {
+    const [scene] = parseSceneConfig({
+      scenes: [
+        {
+          target: 'GymLevel',
+          playMs: 1000,
+          captureMs: 2000,
+          setup: {
+            level: level(),
+            player: { weapons: ['spread'], weaponLevels: { rapid: 4 } },
+            mineralReward: 'mineral_scoop',
+            seed: 99,
+          },
+        },
+      ],
+    });
+
+    expect(scene.setup?.player?.weaponLevels).toEqual({ rapid: 4 });
+    expect(scene.setup?.player?.weapons).toEqual(['spread']);
+    expect(scene.setup?.mineralReward).toBe('mineral_scoop');
+    // The normalised setup re-validates, so the director can re-parse it.
+    expect(() => parseSceneSetup(scene.setup as object, 'GymLevel')).not.toThrow();
+  });
+
+  it('rejects a forced reward on a target without a mineral hold', () => {
+    expectConfigError(
+      () =>
+        parseSceneConfig({
+          scenes: [
+            {
+              target: 'GymFodderEnemies',
+              playMs: 1000,
+              captureMs: 2000,
+              setup: { enemy: 'grunt', mineralReward: 'mineral_scoop' },
+            },
+          ],
+        }),
+      'setup-not-supported',
+    );
+  });
+
+  it('rejects a weapon level outside the documented capture range', () => {
+    for (const bad of [0, 6, 2.5]) {
+      expectConfigError(
+        () =>
+          parseSceneConfig({
+            scenes: [
+              {
+                target: 'GymPlayer',
+                playMs: 1000,
+                captureMs: 2000,
+                setup: { player: { weaponLevels: { rapid: bad } } },
+              },
+            ],
+          }),
+        'invalid-weapon-level',
+      );
+    }
+  });
+
+  it('copies weapon levels so a normalised setup never aliases the caller', () => {
+    const raw = { player: { weapons: [], weaponLevels: { rapid: 2 } } };
+    const normalised = normaliseSceneSetup(raw, 'GymPlayer');
+    normalised.player!.weaponLevels!.rapid = 5;
+
+    expect(raw.player.weaponLevels.rapid).toBe(2);
+    expect(normaliseSceneSetup(raw, 'GymPlayer').player?.weaponLevels).toEqual({
+      rapid: 2,
+    });
   });
 });

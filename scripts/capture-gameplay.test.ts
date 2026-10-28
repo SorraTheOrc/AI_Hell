@@ -4268,7 +4268,7 @@ describe('shared recording pipeline (AH-0MVNT2AFI00639N3)', () => {
 describe('driveSceneSequence forwards scene setups (AH-0MVNW8UCZ004CY0R)', () => {
   const setup = {
     startWave: 1,
-    player: { weapons: ['spread'], timedWeapons: [] },
+    player: { weapons: ['spread'], timedWeapons: [], weaponLevels: {} },
     powerUps: {},
     seed: 7,
   };

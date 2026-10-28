@@ -83,6 +83,10 @@ export const SCENE_CONFIG_ERROR_CODES: Readonly<{
   setupNotSupported: 'setup-not-supported';
   /** A `setup.seed` is not a 32-bit unsigned integer. */
   invalidSeed: 'invalid-seed';
+  /** A `setup.player.weaponLevels[id]` is out of the documented range. */
+  invalidWeaponLevel: 'invalid-weapon-level';
+  /** A `setup.mineralReward` is not a known hold-full reward id. */
+  unknownMineralReward: 'unknown-mineral-reward';
   /** A generated-level entry's `level` is not an integer in range. */
   invalidSceneLevel: 'invalid-scene-level';
   /** A generated-level entry's `minWaves`/`maxCaptureMs` is invalid. */
@@ -140,6 +144,12 @@ export interface SceneSetupPlayer {
   weapons: string[];
   /** Timed weapon ids (defaults to `[]`). */
   timedWeapons: string[];
+  /**
+   * Per-weapon permanent levels: `id` → a level `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX`
+   * (defaults to `{}`). A level is applied as that many permanent grants, so
+   * it stacks on the level-1 grant `weapons` provides.
+   */
+  weaponLevels: Record<string, number>;
 }
 
 /**
@@ -155,6 +165,11 @@ export interface SceneSetup {
   player?: SceneSetupPlayer;
   /** Power-up id → positive level. */
   powerUps?: Record<string, number>;
+  /**
+   * Hold-full reward id the level gyms resolve to when their mineral hold
+   * fills (`GymLevel`/`GymBotTuning` only).
+   */
+  mineralReward?: string;
   /** 32-bit unsigned determinism seed (defaults to 0). */
   seed?: number;
 }
@@ -207,6 +222,12 @@ export const DEFAULT_SCENE_SETUP_START_WAVE: number;
 export const DEFAULT_SCENE_SETUP_PLAYER_WEAPONS: readonly string[];
 /** Default timed weapons (`[]`). */
 export const DEFAULT_SCENE_SETUP_TIMED_WEAPONS: readonly string[];
+/** Default per-weapon level grants (`{}`). */
+export const DEFAULT_SCENE_SETUP_WEAPON_LEVELS: Readonly<Record<string, never>>;
+/** Highest permanent weapon level a setup may grant per weapon. */
+export const SCENE_SETUP_WEAPON_LEVEL_MAX: number;
+/** Hold-full reward ids a `setup.mineralReward` may force. */
+export const SCENE_SETUP_MINERAL_REWARD_IDS: readonly string[];
 /** Fields every setup-capable scene can consume. */
 export const SCENE_SETUP_COMMON_FIELDS: readonly string[];
 /** Per-target extra fields (`GymLevel`/`GymBotTuning`/`GymFodderEnemies`). */

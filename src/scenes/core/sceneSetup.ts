@@ -56,8 +56,19 @@ export interface SceneSetupState {
   player?: {
     weapons?: readonly string[];
     timedWeapons?: readonly string[];
+    /**
+     * Per-weapon permanent levels (`id` → level). A level `N` is applied as
+     * **N** permanent `equipWeapon(id, true)` grants, so a weapon configured
+     * both here and in `weapons` starts at `1 + N` (AH-0MVRMFOB4002LMZS).
+     */
+    weaponLevels?: Readonly<Record<string, number>>;
   };
   powerUps?: Readonly<Record<string, number>>;
+  /**
+   * Hold-full reward id the level gyms resolve to when their mineral hold
+   * fills, instead of the random choice (AH-0MVRMFOB4002LMZS).
+   */
+  mineralReward?: string;
   /**
    * 32-bit determinism seed (AH-0MVNW90FB003H3KM). When present, the scene
    * seeds its content RNGs from it so the same config reproduces the same
@@ -104,11 +115,42 @@ export function resolveSetupSeed(
 export const DEFAULT_GYM_LEVEL_WEAPONS: readonly WeaponId[] = ['spread', 'dual'];
 
 /**
+ * Resolves the reward id a full mineral hold should grant.
+ *
+ * The level gyms resolve a full hold **automatically** (no modal, so an
+ * autonomous bot keeps playing — a documented gym-only divergence). By
+ * default they draw a random option; a capture setup can force the reward so a
+ * scripted pay-off lands deterministically on camera (AH-0MVRMFOB4002LMZS).
+ *
+ * Pure and total: a forced `mineralReward` wins and `randomChoice` is **never**
+ * called (so a forced scene consumes no choice RNG); without one the caller's
+ * strategy chooses, i.e. today's behaviour is unchanged.
+ *
+ * @param setup — a normalised setup (or `null`/`undefined`).
+ * @param randomChoice — today's random resolution, invoked only when the
+ *   setup forces no reward.
+ * @returns the reward id to apply.
+ */
+export function resolveMineralReward(
+  setup: SceneSetupState | null | undefined,
+  randomChoice: () => string,
+): string {
+  const forced = setup?.mineralReward;
+  if (typeof forced === 'string' && forced !== '') return forced;
+  return randomChoice();
+}
+
+/**
  * Applies the loadout/power-up half of `setup` to the scene's player.
  *
  * - `setup.player.weapons` → `equipWeapon(id, true)` (permanent for the run).
  * - `setup.player.timedWeapons` → `equipWeapon(id, false)` (starts the shared
  *   timed-weapon countdown).
+ * - `setup.player.weaponLevels[id] = n` → **n** `equipWeapon(id, true)` calls,
+ *   after the `weapons` grants, so the weapon reaches level `1 + n` when it is
+ *   also listed in `weapons` (level N == N permanent grants; the same
+ *   increment `Player.equipWeapon` applies on every pickup). Non-positive or
+ *   non-integer levels are ignored, mirroring `powerUps`.
  * - `setup.powerUps[id] = n` → `collect(id, true)` **n** times, so the
  *   power-up reaches the configured permanent level.
  *
@@ -131,6 +173,12 @@ export function applySceneSetup(
   }
   for (const id of setup.player?.timedWeapons ?? []) {
     player.equipWeapon(id as WeaponId, false);
+  }
+  for (const [id, level] of Object.entries(setup.player?.weaponLevels ?? {})) {
+    if (!Number.isInteger(level) || level <= 0) continue;
+    for (let i = 0; i < level; i += 1) {
+      player.equipWeapon(id as WeaponId, true);
+    }
   }
 
   const store = player.getPowerUpLevelStore();

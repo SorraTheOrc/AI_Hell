@@ -1129,3 +1129,107 @@ describe('GymLevel — seeded setup determinism (AH-0MVNW90FB003H3KM)', () => {
     expect(a).not.toEqual(b);
   });
 });
+
+describe('GymLevel — arc setup fields (AH-0MVRMFOB4002LMZS)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function bootWith(data: GymLevelData): Promise<GymLevel> {
+    booted = await bootScene([GymLevel]);
+    const manager = booted.game.scene;
+    manager.start('GymLevel', data);
+    await advanceGame(booted.game, 200);
+    return manager.getScene('GymLevel') as GymLevel;
+  }
+
+  const level = () => makeLevel('Arc Level', [scoutWave(1)]);
+
+  it('starts each configured weapon at its permanent level', async () => {
+    const scene = await bootWith({
+      level: level(),
+      player: {
+        weapons: ['spread'],
+        timedWeapons: [],
+        weaponLevels: { rapid: 3, spread: 2 },
+      },
+    });
+
+    const player = scene.getPlayer()!;
+    // Level N == N permanent grants; `weapons` still contributes one grant.
+    expect(player.getWeaponLevel('rapid')).toBe(3);
+    expect(player.getWeaponLevel('spread')).toBe(3);
+    expect(player.hasWeapon('rapid')).toBe(true);
+  });
+
+  it('keeps the level-1 semantics of player.weapons when no levels are set', async () => {
+    const scene = await bootWith({
+      level: level(),
+      player: { weapons: ['spread'], timedWeapons: [] },
+    });
+
+    expect(scene.getPlayer()!.getWeaponLevel('spread')).toBe(1);
+  });
+
+  it('resolves a full hold to the forced mineralReward, not a random pick', async () => {
+    const scene = await bootWith({
+      level: level(),
+      player: { weapons: [], timedWeapons: [] },
+      mineralReward: 'mineral_scoop',
+    });
+
+    // The strategy is a spy: a forced reward must never consult it.
+    const strategy = vi.fn(() => [
+      { id: 'shield' as const, name: 'Shield', kind: 'powerup' as const },
+    ]);
+    scene.setMineralChoiceStrategy({ choose: strategy });
+
+    // Drop the seeded field so the fill is exact, then collect to capacity.
+    (scene as unknown as { minerals: unknown[] }).minerals.length = 0;
+    const capacity = scene.getMineralCapacity();
+    const player = scene.getPlayer()!;
+    for (const mineral of scene.seedMinerals(capacity)) {
+      mineral.setPosition(player.x, player.y);
+    }
+    scene.tick(0.016);
+
+    // The forced reward landed through the shared reward-application path.
+    expect(player.getPowerUpLevel('mineral_scoop')).toBe(1);
+    expect(player.getPowerUpLevel('shield')).toBe(0);
+    expect(strategy).not.toHaveBeenCalled();
+    // The hold resolved (it is no longer full).
+    expect(scene.getMineralHold()).toBe(0);
+  });
+
+  it('still resolves a full hold randomly when no reward is forced', async () => {
+    const scene = await bootWith({
+      level: level(),
+      player: { weapons: [], timedWeapons: [] },
+    });
+
+    const strategy = vi.fn(() => [
+      { id: 'shield' as const, name: 'Shield', kind: 'powerup' as const },
+    ]);
+    scene.setMineralChoiceStrategy({ choose: strategy });
+
+    (scene as unknown as { minerals: unknown[] }).minerals.length = 0;
+    const player = scene.getPlayer()!;
+    for (const mineral of scene.seedMinerals(scene.getMineralCapacity())) {
+      mineral.setPosition(player.x, player.y);
+    }
+    scene.tick(0.016);
+
+    expect(strategy).toHaveBeenCalledTimes(1);
+    expect(player.getPowerUpLevel('shield')).toBe(1);
+  });
+});

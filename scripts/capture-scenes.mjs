@@ -113,6 +113,16 @@ export const SCENE_CONFIG_ERROR_CODES = Object.freeze({
   setupNotSupported: 'setup-not-supported',
   /** A `setup.seed` is not a 32-bit unsigned integer. */
   invalidSeed: 'invalid-seed',
+  /**
+   * A `setup.player.weaponLevels[id]` is not an integer within the
+   * documented capture range (`1`–{@link SCENE_SETUP_WEAPON_LEVEL_MAX}).
+   */
+  invalidWeaponLevel: 'invalid-weapon-level',
+  /**
+   * A `setup.mineralReward` is not one of the hold-full choice ids
+   * ({@link SCENE_SETUP_MINERAL_REWARD_IDS}).
+   */
+  unknownMineralReward: 'unknown-mineral-reward',
   /** A generated-level entry's `level` is not an integer in range. */
   invalidSceneLevel: 'invalid-scene-level',
   /** A generated-level entry's `minWaves`/`maxCaptureMs` is invalid. */
@@ -216,6 +226,55 @@ export const SCENE_SETUP_WEAPON_IDS = Object.freeze([
 ]);
 
 /**
+ * Highest permanent weapon level a capture `setup.player.weaponLevels` entry
+ * may request. A weapon level is expressed as **N permanent grants** of that
+ * weapon (`equipWeapon(id, true)` increments the run-scoped level), so the
+ * maximum mirrors the shipped upgrade ceiling: level 1 (the free grant via
+ * `setup.player.weapons`) plus four upgrade levels.
+ */
+export const SCENE_SETUP_WEAPON_LEVEL_MAX = 5;
+
+/**
+ * Drop ids a `setup.mineralReward` may force for the hold-full resolution — a
+ * frozen mirror of `CHOICE_POOL` (`src/powerups/choice.ts`, the whole drop
+ * catalogue minus the `reset` utility). Pinned by a parity test so a forced
+ * reward can never name something the hold-full choice itself would not offer.
+ */
+export const SCENE_SETUP_MINERAL_REWARD_IDS = Object.freeze([
+  'shield',
+  'bomb',
+  'speed_boost',
+  'phase_shift',
+  'teleport',
+  'extra_life',
+  'magnet',
+  'mineral_scoop',
+  'smart_bomb',
+  'force_field',
+  'mystery_ufo',
+  'frenzy',
+  'chrono',
+  'thorns',
+  'salvage',
+  'strike',
+  'spread',
+  'dual',
+  'rapid',
+  'wave_laser',
+  'ricochet',
+  'cluster',
+  'options',
+  'nova',
+  'mortar',
+  'arc',
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
+]);
+
+/**
  * Power-up ids accepted as `setup.powerUps` keys — a frozen mirror of the
  * `PowerUpId` union (`src/powerups/types.ts`). Pinned by a parity test
  * against `POWER_UP_CATALOGUE`.
@@ -282,6 +341,13 @@ export const DEFAULT_SCENE_SETUP_PLAYER_WEAPONS = Object.freeze(['spread', 'dual
 export const DEFAULT_SCENE_SETUP_TIMED_WEAPONS = Object.freeze([]);
 
 /**
+ * Default `setup.player.weaponLevels` when omitted: no per-weapon level
+ * grants, so every weapon keeps the single level-1 grant that
+ * `setup.player.weapons` provides.
+ */
+export const DEFAULT_SCENE_SETUP_WEAPON_LEVELS = Object.freeze({});
+
+/**
  * Setup fields every setup-capable scene can consume: a player loadout, power-up
  * levels and a determinism seed.
  */
@@ -293,12 +359,15 @@ export const SCENE_SETUP_COMMON_FIELDS = Object.freeze([
 
 /**
  * Extra setup fields a specific target can consume beyond
- * {@link SCENE_SETUP_COMMON_FIELDS}: `GymLevel`/`GymBotTuning` take a level and
- * starting wave, `GymFodderEnemies` takes the formation enemy key.
+ * {@link SCENE_SETUP_COMMON_FIELDS}: `GymLevel`/`GymBotTuning` take a level, a
+ * starting wave and a forced hold-full reward, `GymFodderEnemies` takes the
+ * formation enemy key.
  */
 export const SCENE_SETUP_TARGET_EXTRA_FIELDS = Object.freeze({
-  GymLevel: Object.freeze(['level', 'startWave']),
-  GymBotTuning: Object.freeze(['level', 'startWave']),
+  // The level gyms resolve a full mineral hold automatically (no modal), so
+  // they can force which reward that resolution grants (AH-0MVRMFOB4002LMZS).
+  GymLevel: Object.freeze(['level', 'startWave', 'mineralReward']),
+  GymBotTuning: Object.freeze(['level', 'startWave', 'mineralReward']),
   GymFodderEnemies: Object.freeze(['enemy']),
 });
 
@@ -317,6 +386,7 @@ const SETUP_ALL_FIELDS = Object.freeze([
   'player',
   'powerUps',
   'seed',
+  'mineralReward',
 ]);
 
 /** Whether `value` is any known scene key (watchable or parameterised). */
@@ -573,7 +643,7 @@ function validateSetupLevel(level, at) {
 /** Validates `setup.player`. */
 function validateSetupPlayer(player, at) {
   requireSetupObject(player, at);
-  rejectUnknownFields(player, ['weapons', 'timedWeapons'], at);
+  rejectUnknownFields(player, ['weapons', 'timedWeapons', 'weaponLevels'], at);
   for (const field of ['weapons', 'timedWeapons']) {
     if (player[field] === undefined) continue;
     if (!Array.isArray(player[field])) {
@@ -591,6 +661,63 @@ function validateSetupPlayer(player, at) {
       }
     });
   }
+  if (player.weaponLevels !== undefined) {
+    validateSetupWeaponLevels(player.weaponLevels, `${at}.weaponLevels`);
+  }
+}
+
+/**
+ * Validates `setup.player.weaponLevels`: a plain object mapping a known weapon
+ * id to a permanent level `1`–{@link SCENE_SETUP_WEAPON_LEVEL_MAX}.
+ *
+ * A weapon level is expressed as that many permanent grants, so the level must
+ * be a whole number in range — the applier ignores anything else, and a parse
+ * error here is much more useful than a silently weaker loadout.
+ */
+function validateSetupWeaponLevels(weaponLevels, at) {
+  requireSetupObject(weaponLevels, at);
+  for (const [id, level] of Object.entries(weaponLevels)) {
+    if (!SCENE_SETUP_WEAPON_IDS.includes(id)) {
+      throw new SceneConfigError(
+        CODE.unknownWeaponId,
+        `${at}.${id} is not a known weapon id`,
+      );
+    }
+    if (
+      typeof level !== 'number'
+      || !Number.isInteger(level)
+      || level < 1
+      || level > SCENE_SETUP_WEAPON_LEVEL_MAX
+    ) {
+      throw new SceneConfigError(
+        CODE.invalidWeaponLevel,
+        `${at}.${id} must be an integer 1-${SCENE_SETUP_WEAPON_LEVEL_MAX} `
+          + `(got ${JSON.stringify(level)})`,
+      );
+    }
+  }
+}
+
+/**
+ * Validates `setup.mineralReward`: a hold-full reward id
+ * ({@link SCENE_SETUP_MINERAL_REWARD_IDS}). An id the hold-full choice itself
+ * could never offer is rejected here rather than silently ignored at reveal
+ * time.
+ */
+function validateSetupMineralReward(reward, at) {
+  if (typeof reward !== 'string') {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at} must be a hold-full reward id (got ${JSON.stringify(reward)})`,
+    );
+  }
+  if (!SCENE_SETUP_MINERAL_REWARD_IDS.includes(reward)) {
+    throw new SceneConfigError(
+      CODE.unknownMineralReward,
+      `${at} ${JSON.stringify(reward)} is not a known hold-full reward id`,
+    );
+  }
+  return reward;
 }
 
 /** Validates `setup.powerUps`. */
@@ -629,8 +756,10 @@ function validateSetupSeed(seed, at) {
  * Pure (never mutates `rawSetup`) and total in the sense that it either
  * returns `void` or throws a typed {@link SceneConfigError}. Every check is
  * target-aware: a field the target cannot consume is `setup-not-supported`,
- * a missing launch parameter is `missing-setup-parameter`, and structural
- * problems in the level/player/power-up payloads have their own codes.
+ * a missing launch parameter is `missing-setup-parameter` (reported only once
+ * every supplied field is known-good, so the concrete field error wins), and
+ * structural problems in the level/player/power-up payloads have their own
+ * codes.
  *
  * @param {unknown} rawSetup
  * @param {string} target — the scene key the setup belongs to.
@@ -646,15 +775,6 @@ export function validateSceneSetup(rawSetup, target, at = 'setup') {
     );
   }
   rejectUnknownFields(rawSetup, allowed, at, SETUP_ALL_FIELDS);
-
-  for (const field of requiredSceneSetupFieldsFor(target)) {
-    if (rawSetup[field] === undefined) {
-      throw new SceneConfigError(
-        CODE.missingSetupParameter,
-        `${at}.${field} is required for target "${target}"`,
-      );
-    }
-  }
 
   if (rawSetup.level !== undefined) validateSetupLevel(rawSetup.level, `${at}.level`);
   if (rawSetup.startWave !== undefined) {
@@ -694,6 +814,22 @@ export function validateSceneSetup(rawSetup, target, at = 'setup') {
   if (rawSetup.player !== undefined) validateSetupPlayer(rawSetup.player, `${at}.player`);
   if (rawSetup.powerUps !== undefined) validateSetupPowerUps(rawSetup.powerUps, `${at}.powerUps`);
   if (rawSetup.seed !== undefined) validateSetupSeed(rawSetup.seed, `${at}.seed`);
+  if (rawSetup.mineralReward !== undefined) {
+    validateSetupMineralReward(rawSetup.mineralReward, `${at}.mineralReward`);
+  }
+
+  // Required launch parameters are checked **last**, so a setup that also
+  // carries a malformed field reports the concrete field error (e.g.
+  // `unknown-mineral-reward`) rather than only "level is missing"
+  // (AH-0MVRMFOB4002LMZS).
+  for (const field of requiredSceneSetupFieldsFor(target)) {
+    if (rawSetup[field] === undefined) {
+      throw new SceneConfigError(
+        CODE.missingSetupParameter,
+        `${at}.${field} is required for target "${target}"`,
+      );
+    }
+  }
 }
 
 /** Copies a validated level, preserving only its documented fields. */
@@ -739,8 +875,10 @@ function normaliseSetupLevel(level) {
  * never share mutable state.
  *
  * Defaults: `startWave` 1, `seed` {@link DEFAULT_SCENE_SETUP_SEED}, permanent
- * weapons `['spread', 'dual']` (mirroring `GymLevel`'s existing loadout) and no
- * timed weapons, no power-ups, and the level/enemy omitted when absent.
+ * weapons `['spread', 'dual']` (mirroring `GymLevel`'s existing loadout), no
+ * timed weapons, no per-weapon level grants ({@link
+ * DEFAULT_SCENE_SETUP_WEAPON_LEVELS}), no power-ups, and the
+ * level/enemy/mineralReward omitted when absent.
  *
  * @param {object} [rawSetup]
  * @param {string} [target] — when given, only fields the target can consume are
@@ -772,10 +910,18 @@ export function normaliseSceneSetup(rawSetup = {}, target) {
       timedWeapons: [
         ...(player.timedWeapons ?? DEFAULT_SCENE_SETUP_TIMED_WEAPONS),
       ],
+      weaponLevels: {
+        ...(isPlainObject(player.weaponLevels)
+          ? player.weaponLevels
+          : DEFAULT_SCENE_SETUP_WEAPON_LEVELS),
+      },
     };
   }
   if (include('powerUps')) {
     normalised.powerUps = { ...(isPlainObject(setup.powerUps) ? setup.powerUps : {}) };
+  }
+  if (include('mineralReward') && setup.mineralReward !== undefined) {
+    normalised.mineralReward = setup.mineralReward;
   }
   if (include('seed')) {
     normalised.seed = setup.seed === undefined ? DEFAULT_SCENE_SETUP_SEED : setup.seed;

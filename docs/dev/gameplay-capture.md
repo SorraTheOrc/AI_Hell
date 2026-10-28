@@ -1120,9 +1120,11 @@ setup is validated before boot and forwarded to the scene as its launch data.
 | `startWave` | positive integer | `GymLevel`, `GymBotTuning` | `1` | 1-based wave to start at (clamped to the level) |
 | `enemy` | enemy key | `GymFodderEnemies` | — | the formation enemy key (required for that target) |
 | `player` | object | all setup-capable gyms | see below | the player loadout (`player.weapons` / `player.timedWeapons`) |
-| `player.weapons` | weapon id array | all setup-capable gyms | `["spread", "dual"]` | permanent weapons for the run |
+| `player.weapons` | weapon id array | all setup-capable gyms | `["spread", "dual"]` | permanent weapons for the run (one grant each) |
 | `player.timedWeapons` | weapon id array | all setup-capable gyms | `[]` | weapons granted with the timed countdown |
+| `player.weaponLevels` | `{ id: level }` | all setup-capable gyms | `{}` | per-weapon permanent level `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX` (`5`), applied as that many permanent grants on top of `player.weapons` |
 | `powerUps` | `{ id: level }` | all setup-capable gyms | `{}` | power-up id → permanent level |
+| `mineralReward` | hold-full reward id | `GymLevel`, `GymBotTuning` | — (random) | forces the reward a full mineral hold resolves to, instead of the gym's random choice |
 | `seed` | uint32 | all setup-capable gyms | `0` | determinism seed for content RNGs |
 
 `level` is a `LevelDefinition`-shaped object: `{ level, name, waves[] }` where
@@ -1283,6 +1285,8 @@ stderr and exits **1** — it never records a partial or blank video:
 | `missing-setup-parameter` | a parameterised target's setup omits `level`/`enemy` |
 | `setup-not-supported` | a `setup` (or a field it cannot consume) on a target that cannot accept it |
 | `invalid-seed` | `seed` is not a 32-bit unsigned integer |
+| `invalid-weapon-level` | a `player.weaponLevels` level is not an integer `1`–`5` |
+| `unknown-mineral-reward` | a `mineralReward` is not a hold-full choice reward id |
 | `invalid-scene-level` | a generated-level `level` is not an integer `1`–`LEVEL_COUNT` |
 | `invalid-scene-field` | a generated-level `minWaves`/`maxCaptureMs` is not a positive integer |
 | `unsupported-scene-field` | a generated-level-only field (`seed`/`level`/`minWaves`/`maxCaptureMs`) is supplied on a gym target |

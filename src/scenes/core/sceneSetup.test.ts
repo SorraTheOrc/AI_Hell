@@ -155,13 +155,10 @@ describe('resolveSetupSeed (AH-0MVNW90FB003H3KM)', () => {
  * Contract tests for the scripted-video arc's applier half (parent
  * AH-0MVPJ3NSK008V5VB, AC2 parts (a) and (c)).
  *
- * **TEST-FIRST.** The fields are declared locally (below) so this file
- * type-checks while `SceneSetupState` still lacks them, and the tests are
- * wrapped in Vitest's `it.fails` (the repo's red-before/green-after
- * convention — see `src/core/levelScaling.test.ts`), so the suite stays green
- * on pre-change HEAD. **F2 (AH-0MVRMFOB4002LMZS) flips every `it.fails` here
- * back to `it`** once the applier grants weapon levels and the forced
- * hold-full reward; a leftover `it.fails` fails the suite.
+ * **Delivered by F2 (AH-0MVRMFOB4002LMZS):** the applier grants weapon levels
+ * and the forced hold-full reward now that `SceneSetupState` carries both
+ * fields, so every test in this block runs as a normal `it` (they were
+ * `it.fails` while the contract was red).
  *
  * Pinned contract:
  *
@@ -215,7 +212,7 @@ const applyArc = (
   );
 
 describe('scene setup — scripted-video arc fields (AH-0MVRMFMJP0070KTS)', () => {
-  it.fails('AC3 — grants weaponLevels as N permanent equips (level N == N grants)', () => {
+  it('AC3 — grants weaponLevels as N permanent equips (level N == N grants)', () => {
     const { player, equipped, levels } = fakeArcPlayer();
     const store = {
       weaponLevels: {} as Record<string, number>,
@@ -245,7 +242,7 @@ describe('scene setup — scripted-video arc fields (AH-0MVRMFMJP0070KTS)', () =
     expect(levels.size).toBe(0);
   });
 
-  it.fails('AC3 — player.weapons still grants exactly level 1', () => {
+  it('AC3 — player.weapons still grants exactly level 1', () => {
     const { player, equipped } = fakeArcPlayer();
 
     applyArc(
@@ -262,7 +259,7 @@ describe('scene setup — scripted-video arc fields (AH-0MVRMFMJP0070KTS)', () =
     ]);
   });
 
-  it.fails('AC3 — ignores non-positive / non-integer weapon levels', () => {
+  it('AC3 — ignores non-positive / non-integer weapon levels', () => {
     const { player, equipped } = fakeArcPlayer();
 
     applyArc(
@@ -273,7 +270,7 @@ describe('scene setup — scripted-video arc fields (AH-0MVRMFMJP0070KTS)', () =
     expect(equipped).toEqual([{ id: 'spread', permanent: true }]);
   });
 
-  it.fails('AC3 — a forced mineralReward selects the named reward, never a random one', async () => {
+  it('AC3 — a forced mineralReward selects the named reward, never a random one', async () => {
     const module = await loadArcApplier();
     const randomChoice = vi.fn(() => 'shield');
 
@@ -283,7 +280,7 @@ describe('scene setup — scripted-video arc fields (AH-0MVRMFMJP0070KTS)', () =
     expect(randomChoice).not.toHaveBeenCalled();
   });
 
-  it.fails('AC3 — an absent mineralReward keeps the random hold-full resolution', async () => {
+  it('AC3 — an absent mineralReward keeps the random hold-full resolution', async () => {
     const module = await loadArcApplier();
     const randomChoice = vi.fn(() => 'shield');
 

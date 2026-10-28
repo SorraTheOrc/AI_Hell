@@ -140,6 +140,8 @@ import {
 } from '../../powerups/types';
 import {
   randomChoiceStrategy,
+  toChoiceOption,
+  type ChoiceOption,
   type ChoiceStrategy,
 } from '../../powerups/choice';
 import {
@@ -167,6 +169,7 @@ import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 import {
   applySceneSetup,
   DEFAULT_GYM_LEVEL_WEAPONS,
+  resolveMineralReward,
   resolveSetupSeed,
   type SceneSetupState,
 } from '../core/sceneSetup';
@@ -205,6 +208,12 @@ export interface GymLevelData {
   player?: SceneSetupState['player'];
   /** Optional power-up id → permanent level (capture setups). */
   powerUps?: SceneSetupState['powerUps'];
+  /**
+   * Optional forced hold-full reward id (capture setups, AH-0MVRMFOB4002LMZS).
+   * When present, a full mineral hold resolves to that reward instead of a
+   * random one, so a scripted pay-off lands deterministically on camera.
+   */
+  mineralReward?: SceneSetupState['mineralReward'];
   /**
    * Optional 32-bit determinism seed (capture setups, AH-0MVNW90FB003H3KM).
    * When present, the supply and asteroid RNGs are seeded from it so a config
@@ -560,6 +569,11 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
    */
   private pendingSetup: SceneSetupState | null = null;
   /**
+   * Forced hold-full reward id from a capture setup (AH-0MVRMFOB4002LMZS), or
+   * `null` for today's random resolution.
+   */
+  private pendingMineralReward: string | null = null;
+  /**
    * 0-based wave index requested by a capture setup's `startWave`, re-applied
    * in `create()` after `resetRunState()` clears the wave cursor.
    */
@@ -582,6 +596,11 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.asteroidHazard.reset();
     this.pendingSetup = data && (data.player || data.powerUps)
       ? { player: data.player, powerUps: data.powerUps }
+      : null;
+    // A captured scene can force the hold-full payoff so it lands inside the
+    // recording window (AH-0MVRMFOB4002LMZS). Absent ⇒ random (unchanged).
+    this.pendingMineralReward = typeof data?.mineralReward === 'string'
+      ? data.mineralReward
       : null;
     // Deterministic content (AH-0MVNW90FB003H3KM): a setup seed seeds the
     // shared supply + hazard streams (offset so each is its own stream),
@@ -1154,10 +1173,33 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   }
 
   /**
-   * Resolves a full hold with one shared random reward, with no modal pause so
-   * the autonomous bot keeps playing (documented gym-only divergence).
+   * Resolves a full hold with one shared reward, with no modal pause so the
+   * autonomous bot keeps playing (documented gym-only divergence).
+   *
+   * A capture setup can force which reward the resolution grants
+   * (`setup.mineralReward`, AH-0MVRMFOB4002LMZS); without one the configured
+   * `randomChoiceStrategy` picks exactly as before.
    */
   private _resolveMineralHold(): void {
+    const chosenId = resolveMineralReward(
+      this.pendingMineralReward === null
+        ? null
+        : { mineralReward: this.pendingMineralReward },
+      () => this._randomMineralChoice()?.id ?? '',
+    );
+    if (chosenId !== '') {
+      // One shared reward-application path for the random and forced cases.
+      applyMineralChoiceReward(
+        toChoiceOption(chosenId as DropId),
+        this.getEffectsRegistry(),
+        this.getPlayer(),
+      );
+    }
+    this.mineralHold.resolve();
+  }
+
+  /** Today's random hold-full choice (consumes the supply RNG stream). */
+  private _randomMineralChoice(): ChoiceOption | undefined {
     const options = this.mineralChoiceStrategy.choose(1, this.supplyRng, {
       weaponLevels: this.getPlayer()?.getWeaponLevels() ?? [],
       powerUpLevels: this.getPlayer()?.getPowerUpLevels() ?? [],
@@ -1166,15 +1208,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       tempPowerUpIds: this.getPlayer()?.getTempPowerUpIds() ?? [],
       tempWeaponIds: this.getPlayer()?.getTempWeaponIds() ?? [],
     });
-    const option = options[0];
-    if (option) {
-      applyMineralChoiceReward(
-        option,
-        this.getEffectsRegistry(),
-        this.getPlayer(),
-      );
-    }
-    this.mineralHold.resolve();
+    return options[0];
   }
 
   /** Mirrors the mineral hold onto the HUD bar. */
@@ -1546,6 +1580,11 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   /** Cumulative minerals seeded since the level started. */
   getSeededMineralCount(): number {
     return this.mineralsSeeded;
+  }
+
+  /** Overrides the pluggable hold-full choice strategy (test/tuning seam). */
+  setMineralChoiceStrategy(strategy: ChoiceStrategy): void {
+    this.mineralChoiceStrategy = strategy;
   }
 
   /** Current mineral hold value. */
