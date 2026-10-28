@@ -24,6 +24,8 @@ import Phaser from 'phaser';
 
 import { createBullet } from './bulletUtils';
 import { BaseEnemy, BaseEnemyConfig } from './BaseEnemy';
+import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
+import { aimVectorToTarget, type WrapWorld } from '../scenes/core/enemyTargeting';
 import { FormationOffset } from '../utils/formations';
 import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
 import type { EnemyBulletArchetype } from '../utils/bulletVisuals';
@@ -54,6 +56,12 @@ export const SCOUT_BULLET_SPEED = 100;
 
 /** Milliseconds a scout waits between aimed shots. */
 export const SCOUT_FIRE_INTERVAL = 1200;
+
+/**
+ * The playfield wrap model consumed by the shared aim maths — the same
+ * period enemy bullets wrap on (`GAME_WIDTH` × `GAME_HEIGHT`).
+ */
+const PLAYFIELD: WrapWorld = { width: GAME_WIDTH, height: GAME_HEIGHT };
 
 /**
  * Advance audio cue duration (ms) — the per-entity tell before each
@@ -319,11 +327,20 @@ export class Scout extends BaseEnemy {
       return null;
     }
 
-    const dx = this.target.x - this.x;
-    const dy = this.target.y - this.y;
-    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-    const heading = Math.atan2(dy, dx);
-
+    // Seam-aware aim (AH-0MVKXBTNJ003F1TC, parent AH-0MV9G3DZ9003P7P8): the
+    // launch heading follows the shortest wrapped path when this archetype is
+    // wrap-aware, so the shot leaves one edge and arrives from the opposite
+    // edge exactly as the wrapping bullet does. A non-aware archetype
+    // (`wrapAware: false`, e.g. march) returns the raw deltas untouched —
+    // bit-identical to the pre-wrap direct aim. The maths lives once in the
+    // shared `aimVectorToTarget` helper, so every archetype sharing this
+    // fire seam (Scout, march, Raider) inherits it without a per-class copy.
+    const { dx, dy, distance: dist, heading } = aimVectorToTarget(
+      this,
+      this.target,
+      this.wrapAware,
+      PLAYFIELD,
+    );
     // The shared Scout/Invader projectile identity (AH-0MV822CQL005R4MM): a
     // small alien pellet with an enemy-tinted core and a faint pulse, plus
     // its green launch pop — resolved from the shared identity registry and

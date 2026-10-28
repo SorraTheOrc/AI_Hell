@@ -647,10 +647,13 @@ pipeline as the rest of the tuning:
   re-parse the config, so enabling or disabling seam-awareness is a one-field
   change and the game and every gym read the same value.
 
-This slice only delivers the parameter pipeline (defaults, CSV, editor,
-accessor). Seam-aware aimed fire and post-motion edge wrapping are subsequent
-slices of the same epic and consume this flag; until they land, enabling the
-flag alone does not change gameplay behaviour.
+Seam-aware **aimed fire** is delivered: the shared aimed-shot method
+(`Scout.tryFireAimedBullet`, reused by march and the Raider) computes its
+launch heading through the single pure helper `aimVectorToTarget` in
+`src/scenes/core/enemyTargeting.ts` — the shortest wrapped path when
+`wrapAware` is true, bit-identical direct aim when `false`. Post-motion edge
+wrapping (wrap-aware enemies flying over the seam) is a later slice of the
+same epic and consumes the same flag.
 
 ---
 

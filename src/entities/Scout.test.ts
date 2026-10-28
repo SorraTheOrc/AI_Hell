@@ -178,14 +178,17 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     )).not.toBeNull();
   });
 
-  it('aims bullets at the configured target position', async () => {
+  it('aims bullets at the configured target position (non-aware: direct aim)', async () => {
     booted = await bootScene([HarnessScene]);
     const scene = booted.scene;
     // Scout on the left; target default is bottom-centre of the screen.
+    // `wrapAware: false` pins the pre-wrap direct aim (AH-0MVKXBTNJ003F1TC):
+    // the target stands in for the player, not the seam-aware path.
     const scout = new Scout(scene, {
       x: 100,
       y: 200,
       formationOffset: { row: 0, col: 0 },
+      wrapAware: false,
     });
     const target = scout.aimTarget;
 
@@ -405,10 +408,14 @@ describe('Scout entity (visuals, firing, destruction)', () => {
 
   it('setAimTarget retargets aimed shots to the player’s live position (replacing the stand-in)', async () => {
     booted = await bootScene([HarnessScene]);
+    // `wrapAware: false` keeps this assertion about the live retarget on the
+    // direct path; the seam-aware counterparts live in the dedicated
+    // wrap-aware-aim tests below (AH-0MVKXBTNJ003F1TC).
     const scout = new Scout(booted.scene, {
       x: 100,
       y: 200,
       formationOffset: { row: 0, col: 0 },
+      wrapAware: false,
     });
 
     // Default aim is the bottom-centre stand-in.
@@ -437,6 +444,88 @@ describe('Scout entity (visuals, firing, destruction)', () => {
     // of the bottom-centre stand-in (which would fly down-and-right).
     expect(bullet.vy).toBeLessThan(0);
     expect(bullet.vx).toBeGreaterThan(0);
+  });
+
+  // ── Seam-aware aim (AH-0MVKXBTNJ003F1TC, parent AH-0MV9G3DZ9003P7P8) ──
+
+  it('aims a wrap-aware scout along the shortest wrapped path by default (left edge → right edge)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = new Scout(booted.scene, {
+      x: 100,
+      y: 270,
+      formationOffset: { row: 0, col: 0 },
+    });
+    // Seam-awareness is the default: an absent config resolves to `true`.
+    expect(scout.wrapAware).toBe(true);
+
+    scout.setAimTarget(900, 270);
+    scout.shootEnabled = true;
+    // The tell gates still apply before the wrapped shot fires.
+    expect(scout.tryFireAimedBullet(1_000_000)).toBeNull();
+    const bullet = scout.tryFireAimedBullet(1_000_000 + SCOUT_ADVANCE_CUE_DURATION)!;
+
+    // 900 − 100 = 800 px > GAME_WIDTH / 2, so the shortest route is 160 px to
+    // the left — the shot leaves the LEFT edge and arrives from the right
+    // (the long direct line would fly right instead).
+    expect(bullet.vx).toBeCloseTo(-SCOUT_BULLET_SPEED, 6);
+    expect(bullet.vy).toBeCloseTo(0, 6);
+  });
+
+  it('wraps the aim across the vertical seam (top edge → bottom edge)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = new Scout(booted.scene, {
+      x: 480,
+      y: 50,
+      formationOffset: { row: 0, col: 0 },
+    });
+
+    scout.setAimTarget(480, 500);
+    scout.shootEnabled = true;
+    expect(scout.tryFireAimedBullet(2_000_000)).toBeNull(); // tell
+    const bullet = scout.tryFireAimedBullet(2_000_000 + SCOUT_ADVANCE_CUE_DURATION)!;
+
+    // 500 − 50 = 450 px > GAME_HEIGHT / 2, so the shortest route is 90 px up.
+    expect(bullet.vy).toBeCloseTo(-SCOUT_BULLET_SPEED, 6);
+    expect(bullet.vx).toBeCloseTo(0, 6);
+  });
+
+  it('keeps the direct aim mid-arena for a wrap-aware scout (no behaviour change)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = new Scout(booted.scene, {
+      x: 400,
+      y: 270,
+      formationOffset: { row: 0, col: 0 },
+    });
+
+    scout.setAimTarget(500, 300);
+    scout.shootEnabled = true;
+    expect(scout.tryFireAimedBullet(3_000_000)).toBeNull(); // tell
+    const bullet = scout.tryFireAimedBullet(3_000_000 + SCOUT_ADVANCE_CUE_DURATION)!;
+
+    const dist = Math.hypot(100, 30);
+    expect(bullet.vx).toBeCloseTo((100 / dist) * SCOUT_BULLET_SPEED, 6);
+    expect(bullet.vy).toBeCloseTo((30 / dist) * SCOUT_BULLET_SPEED, 6);
+  });
+
+  it('keeps the direct aim for a non-aware scout in identical seam geometry', async () => {
+    booted = await bootScene([HarnessScene]);
+    const scout = new Scout(booted.scene, {
+      x: 100,
+      y: 270,
+      formationOffset: { row: 0, col: 0 },
+      wrapAware: false,
+    });
+    expect(scout.wrapAware).toBe(false);
+
+    scout.setAimTarget(900, 270);
+    scout.shootEnabled = true;
+    expect(scout.tryFireAimedBullet(4_000_000)).toBeNull(); // tell
+    const bullet = scout.tryFireAimedBullet(4_000_000 + SCOUT_ADVANCE_CUE_DURATION)!;
+
+    // Not wrap-aware: the shot flies the long 800 px line straight right,
+    // never crossing the seam.
+    expect(bullet.vx).toBeCloseTo(SCOUT_BULLET_SPEED, 6);
+    expect(bullet.vy).toBeCloseTo(0, 6);
   });
 
   // ── Shot probability gate (AH-0MU0F1T2H003B4K0) ─────────────────
