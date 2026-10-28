@@ -321,7 +321,12 @@ describe('chunk sink memory bound beyond the CDP pipe budget (AC3)', () => {
       // Labelled environmental skip, not a weakened assertion: the full proof
       // (all of it, below) still runs wherever a temp filesystem has 1 GiB
       // free. See the file header for the footprint and resolution order.
-      context.skip(largeTempSkipNote('AH-0MVS1O1ZG007VCX3', largeFileTempRoot));
+      const note = largeTempSkipNote('AH-0MVS1O1ZG007VCX3', largeFileTempRoot);
+      // Print the label to the run output as well: reporters do not print the
+      // skip note, and an unlabelled skip is indistinguishable from a silently
+      // dropped test.
+      console.warn(note);
+      context.skip(note);
     }
     const dir = largeFileTempDir();
     const outputPath = join(dir, 'long.webm');

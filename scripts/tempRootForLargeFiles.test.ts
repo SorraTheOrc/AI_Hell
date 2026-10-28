@@ -92,7 +92,11 @@ describe('resolveTempRootForLargeFile (temp-root resolution order)', () => {
 
 describe('resolveTempRootForLargeFile (headroom arithmetic)', () => {
   it('exposes the 512 MiB + 512 MiB = 1 GiB footprint', () => {
-    const resolution = resolveTempRootForLargeFile({ probe: NO_HEADROOM });
+    // `env: {}` isolates this assertion from the AIHELL_CAPTURE_SINK_TEMP_REQUIRED_BYTES
+    // test hook (the resolver falls back to `process.env` when no env is
+    // injected), so the default footprint is asserted regardless of the
+    // caller's environment.
+    const resolution = resolveTempRootForLargeFile({ env: {}, probe: NO_HEADROOM });
     expect(LARGE_TEMP_REQUIRED_BYTES).toBe(536_870_912);
     expect(LARGE_TEMP_HEADROOM_MARGIN_BYTES).toBe(536_870_912);
     expect(LARGE_TEMP_BUDGET_BYTES).toBe(
