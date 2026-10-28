@@ -647,13 +647,105 @@ pipeline as the rest of the tuning:
   re-parse the config, so enabling or disabling seam-awareness is a one-field
   change and the game and every gym read the same value.
 
-Seam-aware **aimed fire** is delivered: the shared aimed-shot method
-(`Scout.tryFireAimedBullet`, reused by march and the Raider) computes its
-launch heading through the single pure helper `aimVectorToTarget` in
-`src/scenes/core/enemyTargeting.ts` — the shortest wrapped path when
-`wrapAware` is true, bit-identical direct aim when `false`. Post-motion edge
-wrapping (wrap-aware enemies flying over the seam) is a later slice of the
-same epic and consumes the same flag.
+The flag is a **pure data switch**: it selects between two shared code paths
+(seam-aware and bounded) and never forks an archetype's implementation. The
+neutral value is **`true`** — an archetype that says nothing about seam
+awareness is wrap-aware — so opting out is always an explicit `false`.
+
+#### 1.7.1 Seam-aware aimed fire
+
+The shared aimed-shot method (`Scout.tryFireAimedBullet`, reused by march and
+the Raider through the `ENEMY_FIRE_METHODS` dispatcher in
+`src/entities/enemyFire.ts`) computes its launch heading through the single
+pure helper `aimVectorToTarget` in `src/scenes/core/enemyTargeting.ts`:
+
+- `wrapAware: true` — each axis goes through `wrappedAxisDelta`, which picks
+  the shortest signed delta on that wrapped axis. When the wrap-around route
+  is shorter than the direct line the shot leaves one edge and arrives from
+  the opposite edge, exactly as the bullet itself will travel.
+- `wrapAware: false` — the raw `to − from` deltas are used, so the launch
+  heading is **bit-identical** to the pre-seam direct aim.
+- A delta of exactly half the axis is a tie; the direct delta is kept, so the
+  heading never flips arbitrarily at dead centre.
+
+The bullet wrap model is **unchanged**: enemy bullets already wrap all four
+edges and expire by lifetime (AH-0MU960UTE001PTV0). Only the launch direction
+is computed here — radial and spread patterns stay direction-symmetric and are
+out of scope for seam-aware aiming.
+
+#### 1.7.2 Wrap-aware movement
+
+The shared post-motion step is `applyPostMotionWrap` /
+`applyPostMotionWrapAll` in `src/scenes/core/enemyWrap.ts`, the single seam
+that carries an enemy across a playfield edge:
+
+- Every scene positions its enemies in its own loop, then calls the helper
+  **once** after that positioning pass: `PlayScene._moveEnemies`,
+  `GymFormationScene.tick` and `GymLevel._moveEnemies`. No per-scene or
+  per-entity copy exists.
+- The world is `PLAYFIELD_WORLD` (`GAME_WIDTH` × `GAME_HEIGHT`) — the same
+  period the player ship, player bullets, asteroids and enemy bullets already
+  wrap on — and the same `WrapWorld` the aim maths consumes, so there is one
+  wrap model in the codebase.
+- The step is **position-only**: velocity, heading, rotation and every other
+  state field are preserved (nothing is reflected), so a steering state
+  machine (dive arcs, ghost pursuit, grunt homing, formation drift) stays
+  authoritative and cannot fight the seam.
+- Non-aware archetypes are skipped structurally by the flag, and a body with
+  no resolved flag at all (the Boss, which is out of scope for seam
+  awareness, and test stubs) is never wrapped.
+
+#### 1.7.3 Why `march` and `centipede` are excluded
+
+The two classic set pieces are recognisable *because* they respect the walls,
+so seam awareness would destroy the archetype rather than improve it:
+
+- **`march` (Space Invaders)** — a stepping block that must reach the arena
+  edge, reverse and drop one row (`marchStep` / `marchDrop`, §8.1). Wrapping
+  it would teleport the block to the opposite side instead of reversing.
+- **`centipede`** — a linked chain that must weave *within* bounds; the chain
+  segments and the shared `CentipedeChain` logic assume a bounded arena
+  (`src/scenes/gym/core/centipedeFormation.ts` passes
+  `wrapAware: loadEnemyConfig('centipede').wrapAware`). It has no CSV row
+  (see §8.5), so its default comes from `resolveWrapAwareDefault`.
+
+Both are **statically seeded** in `WRAP_AWARE_EXCLUSION_KEYS`
+(`src/core/configDefaults.ts`): `march` carries `wrapAware: false` in its seed
+config *and* in `src/data/enemy-configs.csv`, and `centipede` resolves to
+`false` through the same list. No module hard-codes a separate key list.
+
+#### 1.7.4 Adding an exclusion, and the gym↔game parity obligation
+
+The seam is **shared code, not per-archetype code** (the parity convention in
+[§5.1](#51-gym-parity), AH-0MUGZDTFX004RBD1; also stated in
+[`AGENTS.md`](../AGENTS.md#game-architecture-conventions)). Consequently:
+
+- **Every new archetype is wrap-aware by default.** `resolveWrapAwareDefault`
+  returns `true` for any key not in `WRAP_AWARE_EXCLUSION_KEYS`, so a new
+  `Save As…` archetype needs no work to get seam-aware aim and movement.
+- **A new exclusion is data plus documentation, never a fork.** To exclude an
+  archetype, in one change:
+  1. add its key to `WRAP_AWARE_EXCLUSION_KEYS` in `src/core/configDefaults.ts`
+     (the single source of truth) and set `wrapAware: false` on its seed
+     config and CSV row;
+  2. record *why* the classic behaviour needs the walls in a code comment next
+     to the archetype's movement/formation logic (e.g.
+     `src/scenes/gym/core/centipedeFormation.ts`);
+  3. document the divergence in §5.1 as a **documented divergence** with the
+     reason, per the parity convention;
+  4. pin the exclusion with a unit test (the `enemyWrap` / `enemyConfig` suites
+     assert the resolved flag for the shipped seed configs).
+- **Gyms and the game run the same seams.** Seam-aware aim and movement are
+  exercised by `PlayScene` and the affected gym scenes (`GymFodderEnemies` via
+  `GymFormationScene`, `GymLevel`, `GymCentipede`) through the shared helpers
+  above; a gym must never re-implement wrapping, and a disabled feature is the
+  only legitimate difference. The repo-wide duplicate-body / parity guards
+  (`src/scenes/core/CombatScene.equivalence.test.ts`) stay green because the
+  behaviour lives only in `src/scenes/core/`.
+
+Tuning an archetype is therefore a **one-field change**: flip `wrapAware` in
+the CSV (or the gym editor's `wrapAware` checkbox, §8.5) and the game and every
+gym pick up the same behaviour on the next load.
 
 ---
 
@@ -1432,7 +1524,7 @@ only legitimate difference is a disabled feature — never a divergent copy.
 Every shared behaviour therefore lives once: the core template methods and
 hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
-`asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`), the shared dispatcher
+`asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`, `enemyWrap`), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
 helpers `resolveSpawnRange` / `pickInRange` in `src/core/configTypes.ts`
@@ -1445,6 +1537,17 @@ tests boot `PlayScene` and each gym to prove identical outcomes under the
 same input and `dt`. See
 [AGENTS.md § Game Architecture Conventions](../AGENTS.md#game-architecture-conventions)
 for the governing principle (tracked by AH-0MUGZDTFX004RBD1).
+
+**Documented divergence — `march` and `centipede` opt out of seam awareness.**
+The `wrapAware` flag (§1.7) is data, not a code fork: the shared aim maths
+(`aimVectorToTarget`) and post-motion wrap (`applyPostMotionWrapAll`) are the
+same code in the game and in every gym, and the classic set pieces simply
+carry `wrapAware: false`. That is a *disabled feature*, not a divergent copy:
+Space Invaders keeps reversing and dropping at the arena edge and the
+Centipede keeps weaving within bounds, exactly as before the epic. The
+exclusion list lives once, in `WRAP_AWARE_EXCLUSION_KEYS`
+(`src/core/configDefaults.ts`), and the rationale and the process for adding a
+future exclusion are documented in §1.7.3–§1.7.4 (AH-0MV9G3DZ9003P7P8).
 
 The classic-arcade power-up and weapon roster
 ([`CLASSIC_POWERUP_WEAPON_RESEARCH.md`](CLASSIC_POWERUP_WEAPON_RESEARCH.md),
@@ -1808,6 +1911,7 @@ animated by the shared `FormationGlide` helper
 | `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
 | `movementClass` | `EnemyMovementClass` | `'formation' \| 'diver' \| 'chaser' \| 'patroller' \| 'roamer'` — coarse behavioural movement class for wave-design/balance tooling (AH-0MV29NWI1007NKN7). Validated by `validateEnemyConfig`; an absent/invalid value falls back to `formation` (see §1.4). |
 | `attackClass` | `EnemyAttackClass` | `'contact' \| 'projectile' \| 'beam' \| 'area'` — coarse behavioural attack class; `contact` is contact-only (every enemy still damages on contact). Validated by `validateEnemyConfig`; an absent/invalid value is derived from the effective `shotPattern` (`none` → `contact`, otherwise `projectile`). See §1.4. |
+| `wrapAware` | `boolean?` | Seam-awareness switch (§1.7). **Default `true`** — absent, blank or malformed-absent cells resolve wrap-aware, so seam-aware aim and movement are the out-of-the-box behaviour; an explicit `false` is the only way to opt out. `march` and `centipede` ship `false`. Read through the single `BaseEnemy.wrapAware` accessor — scenes never re-parse it. |
 | `fireInterval` | `number` | ms between volleys. |
 | `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
 | `bulletSpeed` | `number` | Bullet velocity (px/s). Enemy archetype values were halved by AH-0MUWZ5GST003NMFQ (Scout **90**, Diver **110**, Tank **75**, Phaser **90**, Swarm **90**, Boss **80**, Asteroid **50**, Harvester **50**); because `bulletLifetime` is unchanged, each enemy's effective range (`bulletSpeed × lifetime`) is halved too. The player's `PLAYER_BULLET_SPEED` (350 px/s) is unchanged. |
@@ -1845,11 +1949,20 @@ The CSV files are the **single source of truth** for enemy and ship tuning:
   within it through the **shared** `resolveSpawnRange` / `pickInRange` helpers
   in `src/core/configTypes.ts`; reversed bounds are normalised so `min ≤ max`.
 - **Behavioural classification (AH-0MV29NWI1007NKN7):** `enemy-configs.csv`
-  carries two further columns, `movementClass` and `attackClass`, emitted last in
-  `ENEMY_COLUMN_ORDER`. They are the coarse wave-design groupings documented in
+  carries two further columns, `movementClass` and `attackClass`, emitted near
+  the end of `ENEMY_COLUMN_ORDER` (ahead of `wrapAware`, which was appended
+  after them). They are the coarse wave-design groupings documented in
   §1.4; both are optional for backward compatibility (absent/invalid values fall
   back to the documented defaults via `coerceEnemyConfig`), and the committed
   CSV always carries explicit values.
+- **Seam awareness (AH-0MV9G3DZ9003P7P8):** the `wrapAware` column is emitted
+  **after** `movementClass`/`attackClass`, last in `ENEMY_COLUMN_ORDER`, so
+  legacy rows without it stay byte-compatible on the leading columns and
+  resolve to the documented default. It accepts `true`/`false` (and `1`/`0`);
+  an absent or blank cell resolves to `DEFAULT_WRAP_AWARE` (`true` — the
+  neutral, seam-aware value), and any other value fails validation. The
+  column is documented in the CSV's own `#` header block and the field
+  semantics, exclusions and parity obligation are in §1.7.
 
 Supporting modules:
 
@@ -1970,7 +2083,9 @@ The **editor panel** (`src/scenes/gym/GymFodderEnemies.ts`, plain-DOM under
 `count/spacingX/spacingY/driftSpeed/startX/startY/startXMin/startXMax/startYMin/startYMax/size/bulletSize/fireInterval/shotProbability/bulletSpeed/bulletLifetime/burstCount`,
 colour pickers for `color/bulletColor`, selects for
 `formationKind`/`shotPattern`/`movementClass`/`attackClass` (the last two are
-persisted through the same CSV save path — AH-0MV29NWI1007NKN7),
+persisted through the same CSV save path — AH-0MV29NWI1007NKN7), a
+**`wrapAware` checkbox** (checked = seam-aware, the default; unchecked = the
+bounded classic behaviour — persisted through the same CSV save path, §1.7),
 plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
 plugin) and **Save As…** (sanitize → validate → duplicate check via
 `listEnemyConfigKeys()`, displayName = raw input; appends a new CSV row).

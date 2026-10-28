@@ -50,9 +50,15 @@
 #   forceFieldMaxHits    — Field hits at the campaign maximum level (10; default 1). The resolved
 #                           strength is always clamped to `[0, 5]`. Curve:
 #                           clamp(round(lerp(startHits @ startLevel → maxHits @ 10)), 0, 5).
-#   wrapAware       — Seam-awareness: `true` (default) lets the enemy aim across the shortest
-#                     wrapped path and fly over the screen edges; `false` keeps the classic
-#                     bounded behaviour for the Space Invaders march and the Centipede.
+#   wrapAware       — Seam-awareness: `true` (the default, and the neutral value for an
+#                     absent/blank cell) lets the enemy aim across the shortest wrapped path
+#                     and fly over the screen edges; `false` opts out explicitly and keeps the
+#                     bounded, wall-respecting behaviour. Only the classic set pieces ship
+#                     `false`: the Space Invaders `march` (reverses and drops at the arena edge)
+#                     and the `centipede` chain (weaves within bounds; it has no CSV row, so
+#                     its default comes from `resolveWrapAwareDefault`). Any new archetype is
+#                     wrap-aware unless it is added to `WRAP_AWARE_EXCLUSION_KEYS`; see
+#                     docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md §1.7 for the parity obligation.
 # To add a new enemy: add a new row with a unique key. The gym index will
 # discover it automatically. Ensure all required columns have values.
 key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,startXMin,startXMax,startYMin,startYMax,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability,health,forceFieldStartLevel,forceFieldStartHits,forceFieldMaxHits,marchStep,marchDrop,beamDuration,pullStrength,hordeGroupSize,hordeSpawnInterval,attackSpeed,commitRange,laneCount,laneSpacing,movementClass,attackClass,wrapAware
