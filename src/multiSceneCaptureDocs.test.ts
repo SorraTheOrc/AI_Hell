@@ -157,13 +157,25 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(level?.setup?.seed).toBe(42);
   });
 
-  it('keeps examples/scenes.json valid and setup-bearing', () => {
+  // TEST-FIRST (AH-0MVRMFMJP0070KTS): F4 (AH-0MVRMFRSO004H9JM) replaces the
+  // generic showcase example with the seven-beat excitement-curve arc; F4 flips
+  // this `it.fails` back to `it` once the arc is in place.
+  it.fails('keeps examples/scenes.json the seven-beat arc and setup-bearing', () => {
     const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
     const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
-    const withSetup = parsed.filter((scene) => scene.setup !== undefined);
-    expect(withSetup.length).toBeGreaterThanOrEqual(1);
-    expect(withSetup.some((scene) => scene.target === 'GymLevel')).toBe(true);
-    expect(withSetup.some((scene) => scene.target === 'GymFodderEnemies')).toBe(true);
+    // The shipped example is the scripted-video arc: seven beats, every one
+    // carrying the `setup` that realises it (no generic showcase entries).
+    expect(parsed).toHaveLength(7);
+    expect(parsed.every((scene) => scene.setup !== undefined)).toBe(true);
+    expect(parsed.map((scene) => scene.target)).toEqual([
+      'GymLevel',
+      'GymLevel',
+      'GymLevel',
+      'GymLevel',
+      'GymMiniBoss',
+      'GymLevel',
+      'GymBoss',
+    ]);
   });
 
   it('documents the generated-level PlayScene target and its fields', () => {
@@ -196,12 +208,42 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(level?.minWaves).toBe(3);
   });
 
-  it('keeps examples/scenes.json generated-level example valid', () => {
+  // TEST-FIRST (AH-0MVRMFMJP0070KTS): the arc is authored from gym targets
+  // (the beats need `setup`), so the shipped example no longer carries a
+  // generated-level entry. F4 flips this `it.fails` back to `it`.
+  it.fails('ships no generated-level example entry (the arc is gym scenes)', () => {
     const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
     const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
-    const level = parsed.find((scene) => scene.target === 'PlayScene');
-    expect(level).toBeDefined();
-    expect(level?.seed).toBe(42);
-    expect(level?.level).toBe(4);
+    // The generated-level target stays supported and documented (pinned by
+    // the `PlayScene` doc-example test above); the shipped *example config*
+    // is the gym-scene arc, because the beats need a `setup`.
+    expect(parsed.some((scene) => scene.target === 'PlayScene')).toBe(false);
+  });
+
+  it.fails('documents the arc setup fields and their error codes (AH-0MVRMFMJP0070KTS)', () => {
+    // The new fields, including the nested player field the generic field
+    // parity loop above cannot see.
+    for (const field of [
+      '`player.weaponLevels`',
+      '`bossHitsRemaining`',
+      '`mineralReward`',
+    ]) {
+      expect(captureDoc).toContain(field);
+    }
+    for (const code of [
+      'invalid-weapon-level',
+      'invalid-boss-hits',
+      'unknown-mineral-reward',
+    ]) {
+      expect(captureDoc).toContain(`\`${code}\``);
+    }
+  });
+
+  it.fails('describes examples/scenes.json as the excitement-curve arc (AH-0MVRMFMJP0070KTS)', () => {
+    expect(captureDoc).toMatch(/excitement[- ]curve/i);
+    expect(captureDoc).toContain('examples/scenes.json');
+    // The doc names the pay-offs the arc is built around.
+    expect(captureDoc).toMatch(/mini-boss/i);
+    expect(captureDoc).toMatch(/hold-full/i);
   });
 });

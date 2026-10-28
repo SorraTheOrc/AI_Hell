@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import Phaser from 'phaser';
 
 import {
@@ -947,5 +949,80 @@ describe('GymBoss — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', ()
     expect(registry.activeEffects()).toHaveLength(0);
     expect(registry.magnetStacks()).toBe(0);
     expect(registry.isShielded).toBe(false);
+  });
+});
+
+// ── Scripted-video boss hit preview (AH-0MVRMFMJP0070KTS, TEST-FIRST) ──────
+
+/** The entity's remaining hits, from its public HP accessors. */
+function remainingHits(entity: {
+  getHpFraction(): number;
+  getTotalHp(): number;
+}): number {
+  return Math.round(entity.getHpFraction() * entity.getTotalHp());
+}
+
+/**
+ * Contract tests for `setup.bossHitsRemaining` reaching the spawned boss
+ * (parent AH-0MVPJ3NSK008V5VB, AC2 part (b); spawn path, not a re-implemented
+ * copy of it).
+ *
+ * **TEST-FIRST.** The field does not exist yet, so the differed test is
+ * wrapped in Vitest's `it.fails` (the repo's red-before/green-after
+ * convention — see `src/core/levelScaling.test.ts`), keeping the suite green
+ * on pre-change HEAD. **F3 (AH-0MVRMFPXF008BG77) flips it back to `it`** once
+ * the gyms pass `initialHp` from the setup; a leftover `it.fails` fails the
+ * suite. The absent-field test is a normal green test: it pins today's
+ * full-HP spawn as unchanged behaviour.
+ */
+describe('GymBoss — scripted-video boss hit preview (AH-0MVRMFMJP0070KTS)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Boots the gym with scene-start data (the capture `setup`). */
+  async function bootWith(data: object): Promise<GymBoss> {
+    booted = await bootScene([GymBoss]);
+    booted.game.scene.start('GymBoss', data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene('GymBoss') as GymBoss;
+  }
+
+  it.fails('AC4 — spawns the boss with bossHitsRemaining as its initial hits', async () => {
+    const scene = await bootWith({ bossHitsRemaining: 12 });
+
+    expect(remainingHits(scene.formationBoss)).toBe(12);
+    // The hit preview configures the existing pool — it does not change it.
+    expect(scene.formationBoss.getTotalHp()).toBe(
+      BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE,
+    );
+  });
+
+  it('AC4 — an absent bossHitsRemaining keeps today\'s full-HP spawn', async () => {
+    const scene = await bootWith({});
+
+    expect(remainingHits(scene.formationBoss)).toBe(
+      BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE,
+    );
+  });
+
+  it.fails('AC2 — pins the hit pool the parser bounds bossHitsRemaining with', async () => {
+    // Loaded by file URL (Vite ignores it) so the pure capture module — which
+    // lives outside `src/` — is imported as plain Node ESM.
+    const moduleUrl = pathToFileURL(
+      resolvePath(process.cwd(), 'scripts/capture-scenes.mjs'),
+    ).href;
+    const module = (await import(/* @vite-ignore */ moduleUrl)) as unknown as {
+      SCENE_SETUP_BOSS_TOTAL_HITS: Record<string, number>;
+    };
+    booted = await bootScene([GymBoss]);
+    const scene = booted.scene as GymBoss;
+
+    expect(module.SCENE_SETUP_BOSS_TOTAL_HITS.GymBoss).toBe(
+      scene.formationBoss.getTotalHp(),
+    );
   });
 });

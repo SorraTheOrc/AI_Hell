@@ -43,6 +43,7 @@ import {
 } from '../src/core/configDefaults';
 import { LEVEL_COUNT } from '../src/waves/Formations';
 import { POWER_UP_CATALOGUE } from '../src/powerups/types';
+import { CHOICE_POOL } from '../src/powerups/choice';
 import { WEAPON_CATALOGUE } from '../src/utils/weapons';
 import { FORMATION_BUILDERS } from '../src/utils/formations';
 import {
@@ -848,13 +849,17 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
     expect(parsed[2].setup?.player?.weapons).toEqual(['spread']);
   });
 
-  it('fills the documented defaults when normalising', () => {
+  // TEST-FIRST (AH-0MVRMFMJP0070KTS): F2 (AH-0MVRMFOB4002LMZS) adds the
+  // documented `player.weaponLevels` default (`{}` — no level grants), so this
+  // expectation is red until that lands; F2 flips this `it.fails` back to `it`.
+  it.fails('fills the documented defaults when normalising', () => {
     const setup = normaliseSceneSetup({}, 'GymLevel');
     expect(setup).toEqual({
       startWave: DEFAULT_SCENE_SETUP_START_WAVE,
       player: {
         weapons: [...DEFAULT_SCENE_SETUP_PLAYER_WEAPONS],
         timedWeapons: [...DEFAULT_SCENE_SETUP_TIMED_WEAPONS],
+        weaponLevels: {},
       },
       powerUps: {},
       seed: DEFAULT_SCENE_SETUP_SEED,
@@ -1170,5 +1175,442 @@ describe('generated-level (PlayScene) entries (AH-0MVE01EY0008QEVX)', () => {
       wavesCaptured: 3,
       endedEarly: false,
     });
+  });
+});
+
+// ── Scripted-video arc (AH-0MVRMFMJP0070KTS, TEST-FIRST) ────────────────────
+
+/**
+ * The three scripted-video setup fields, declared **locally** while
+ * `scripts/capture-scenes.d.mts` still lacks them, so this file type-checks
+ * on pre-change HEAD (the same technique as the force-field columns in
+ * `src/core/csv.test.ts`).
+ */
+interface ArcSetup {
+  player?: {
+    weapons?: string[];
+    timedWeapons?: string[];
+    weaponLevels?: Record<string, number>;
+  };
+  level?: { waves?: Array<{ groups?: Array<{ enemyKey?: string }> }> };
+  powerUps?: Record<string, number>;
+  seed?: number;
+  mineralReward?: string;
+  bossHitsRemaining?: number;
+}
+
+/** A parsed scene entry, with the scripted-video fields exposed. */
+interface ArcScene {
+  target: string;
+  playMs: number;
+  captureMs: number;
+  label: string | null;
+  setup?: ArcSetup;
+}
+
+/**
+ * The `scripts/capture-scenes.mjs` members the scripted-video arc adds,
+ * declared locally for the same reason as {@link ArcSetup}.
+ */
+interface ArcCaptureModule {
+  SCENE_SETUP_WEAPON_LEVEL_MAX: number;
+  SCENE_SETUP_MINERAL_REWARD_IDS: readonly string[];
+  SCENE_SETUP_BOSS_TOTAL_HITS: Readonly<Record<string, number>>;
+  SCENE_CONFIG_ERROR_CODES: Readonly<Record<string, string>>;
+}
+
+/**
+ * Contract tests for the scripted-video arc (parent AH-0MVPJ3NSK008V5VB;
+ * covers parent AC5 and the determinism half of AC4).
+ *
+ * **TEST-FIRST.** These tests were authored **before** the fields existed and
+ * are wrapped in Vitest's `it.fails` (the repo's red-before/green-after
+ * convention — see `src/core/levelScaling.test.ts`), so the suite stays green
+ * on pre-change HEAD. The delivering slices must **flip every `it.fails` here
+ * back to `it`** once their behaviour lands; a leftover `it.fails` fails the
+ * suite:
+ *
+ * - **F2 (AH-0MVRMFOB4002LMZS)** — `player.weaponLevels` and `mineralReward`
+ *   parsing/normalisation/error codes, plus the mineral-reward id registry.
+ * - **F3 (AH-0MVRMFPXF008BG77)** — `bossHitsRemaining` parsing/normalisation,
+ *   its boss-capable target allow-list and its total-hit bounds.
+ * - **F4 (AH-0MVRMFRSO004H9JM)** — the seven-beat `examples/scenes.json`
+ *   table pinned by {@link ARC_BEATS}.
+ *
+ * ## Pinned arc table (F4 must match exactly)
+ *
+ * | # | Beat | Target | Seed | Weapons | Levels | Slots |
+ * |---|---|---|---|---|---|---|
+ * | 1 | Opening spectacle — maxed arsenal | `GymLevel` | 1101 | — | spread 5, dual 4, rapid 5, wave_laser 3, ricochet 2, nova 4 | 6 |
+ * | 2 | Humble origins — default cannon, hold-full pay-off | `GymLevel` | 2202 | cannon | — | 1 |
+ * | 3 | First steps up — three slots at level 1 | `GymLevel` | 3303 | spread, dual, rapid | — | 3 |
+ * | 4 | Escalation — five slots at levels 1-2 | `GymLevel` | 4404 | spread, dual, rapid | wave_laser 2, ricochet 2 | 5 |
+ * | 5 | Mini-boss — escort and death | `GymMiniBoss` | 5505 | spread, dual, rapid | wave_laser 2, ricochet 2, cluster 3 | 6 |
+ * | 6 | Reprise — different enemies, stronger guns | `GymLevel` | 6606 | spread, dual | rapid 3, wave_laser 3, ricochet 3, nova 3 | 6 |
+ * | 7 | Main boss — final death | `GymBoss` | 7707 | spread, dual, rapid | wave_laser 4, ricochet 4, nova 5 | 6 |
+ *
+ * Beat 2 forces `mineralReward: "mineral_scoop"` (the humble-origins pay-off),
+ * beat 5 starts the mini-boss with 8 hits left and beat 7 the main boss with
+ * 12, so each death lands inside its capture window.
+ */
+describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', () => {
+  const examplePath = resolve(process.cwd(), 'examples/scenes.json');
+
+  /** One pinned arc beat. */
+  interface ArcBeat {
+    target: string;
+    label: string;
+    seed: number;
+    weapons: string[];
+    weaponLevels: Record<string, number>;
+    slots: number;
+    bossHitsRemaining?: number;
+    mineralReward?: string;
+  }
+
+  /** The seven-beat excitement-curve table (see this block's doc comment). */
+  const ARC_BEATS: readonly ArcBeat[] = [
+    {
+      target: 'GymLevel',
+      label: 'Opening spectacle — maxed arsenal',
+      seed: 1101,
+      weapons: [],
+      weaponLevels: {
+        spread: 5,
+        dual: 4,
+        rapid: 5,
+        wave_laser: 3,
+        ricochet: 2,
+        nova: 4,
+      },
+      slots: 6,
+    },
+    {
+      target: 'GymLevel',
+      label: 'Humble origins — default cannon, hold-full pay-off',
+      seed: 2202,
+      weapons: ['cannon'],
+      weaponLevels: {},
+      slots: 1,
+      mineralReward: 'mineral_scoop',
+    },
+    {
+      target: 'GymLevel',
+      label: 'First steps up — three slots at level 1',
+      seed: 3303,
+      weapons: ['spread', 'dual', 'rapid'],
+      weaponLevels: {},
+      slots: 3,
+    },
+    {
+      target: 'GymLevel',
+      label: 'Escalation — five slots at levels 1-2',
+      seed: 4404,
+      weapons: ['spread', 'dual', 'rapid'],
+      weaponLevels: { wave_laser: 2, ricochet: 2 },
+      slots: 5,
+    },
+    {
+      target: 'GymMiniBoss',
+      label: 'Mini-boss — escort and death',
+      seed: 5505,
+      weapons: ['spread', 'dual', 'rapid'],
+      weaponLevels: { wave_laser: 2, ricochet: 2, cluster: 3 },
+      slots: 6,
+      bossHitsRemaining: 8,
+    },
+    {
+      target: 'GymLevel',
+      label: 'Reprise — different enemies, stronger guns',
+      seed: 6606,
+      weapons: ['spread', 'dual'],
+      weaponLevels: { rapid: 3, wave_laser: 3, ricochet: 3, nova: 3 },
+      slots: 6,
+    },
+    {
+      target: 'GymBoss',
+      label: 'Main boss — final death',
+      seed: 7707,
+      weapons: ['spread', 'dual', 'rapid'],
+      weaponLevels: { wave_laser: 4, ricochet: 4, nova: 5 },
+      slots: 6,
+      bossHitsRemaining: 12,
+    },
+  ];
+
+  /** Parses the shipped `examples/scenes.json` as the arc. */
+  function parseArc(): ArcScene[] {
+    return parseSceneConfig(readFileSync(examplePath, 'utf8')) as unknown as ArcScene[];
+  }
+
+  /** Normalises a raw setup for `target`, exposing the arc fields. */
+  function arcNormalise(raw: unknown, target: string): ArcSetup {
+    return normaliseSceneSetup(raw, target) as unknown as ArcSetup;
+  }
+
+  /** The distinct enemy keys a setup level's waves spawn. */
+  function enemyKeys(setup: ArcSetup | undefined): string[] {
+    const keys = (setup?.level?.waves ?? []).flatMap((wave) =>
+      (wave.groups ?? []).map((group) => group.enemyKey ?? ''),
+    );
+    return [...new Set(keys)].sort();
+  }
+
+  /**
+   * The distinct permanent weapon kinds a setup fills upgrade slots with.
+   * A second grant of an owned kind does not take a second slot, so the
+   * `weaponLevels` keys and the `weapons` ids are one set.
+   */
+  function slotFillers(setup: ArcSetup | undefined): string[] {
+    return [
+      ...new Set([
+        ...(setup?.player?.weapons ?? []),
+        ...Object.keys(setup?.player?.weaponLevels ?? {}),
+      ]),
+    ].sort();
+  }
+
+  /** Loads the module members this contract expects the arc to add. */
+  async function loadArcModule(): Promise<ArcCaptureModule> {
+    return (await import('./capture-scenes.mjs')) as unknown as ArcCaptureModule;
+  }
+
+  // ── AC5: the seven-beat arc table ─────────────────────────────────
+
+  it.fails('AC5 — pins the seven-beat arc: order, target, label, windows, seeds, loadouts and slots', () => {
+    const parsed = parseArc();
+
+    expect(parsed).toHaveLength(ARC_BEATS.length);
+    parsed.forEach((scene, index) => {
+      const beat = ARC_BEATS[index];
+      expect(scene.target).toBe(beat.target);
+      expect(scene.label).toBe(beat.label);
+      // Window presence: both durations are positive, and the capture window
+      // is long enough for a beat's pay-off to land on camera.
+      expect(Number.isInteger(scene.playMs)).toBe(true);
+      expect(Number.isInteger(scene.captureMs)).toBe(true);
+      expect(scene.playMs).toBeGreaterThan(0);
+      expect(scene.captureMs).toBeGreaterThanOrEqual(6000);
+
+      const setup = scene.setup;
+      expect(setup, `beat ${index + 1} must carry a setup`).toBeDefined();
+      // Every setup-bearing scene pins its own determinism seed explicitly.
+      expect(setup?.seed).toBe(beat.seed);
+      expect([...(setup?.player?.weapons ?? [])].sort()).toEqual([...beat.weapons].sort());
+      expect(setup?.player?.weaponLevels ?? {}).toEqual(beat.weaponLevels);
+      expect(slotFillers(setup)).toEqual([...new Set(beat.weapons.concat(Object.keys(beat.weaponLevels)))].sort());
+      expect(slotFillers(setup)).toHaveLength(beat.slots);
+      expect(setup?.bossHitsRemaining).toBe(beat.bossHitsRemaining);
+      expect(setup?.mineralReward).toBe(beat.mineralReward);
+    });
+
+    // The whole arc still fits the agreed ~60-75 s showcase envelope
+    // (longer beats are allowed, but not an unbounded sequence).
+    const totalMs = parsed.reduce((sum, scene) => sum + scene.playMs + scene.captureMs, 0);
+    expect(totalMs).toBeGreaterThanOrEqual(60000);
+    expect(totalMs).toBeLessThanOrEqual(85000);
+  });
+
+  it.fails('AC5 — starts the mini-boss and boss close to death, within their hit pools', () => {
+    const parsed = parseArc();
+    const miniBossBeat = parsed.find((scene) => scene.target === 'GymMiniBoss');
+    const bossBeat = parsed.find((scene) => scene.target === 'GymBoss');
+
+    expect(miniBossBeat?.setup?.bossHitsRemaining).toBe(8);
+    expect(bossBeat?.setup?.bossHitsRemaining).toBe(12);
+    // GymMiniBoss's hit pool is 2 phases x 5 (design level 1); GymBoss's is
+    // 4 phases x 50. The configured preview must fit inside each pool.
+    expect(miniBossBeat?.setup?.bossHitsRemaining ?? 0).toBeLessThanOrEqual(10);
+    expect(bossBeat?.setup?.bossHitsRemaining ?? 0).toBeLessThanOrEqual(200);
+    // No other beat previews boss hits.
+    for (const scene of parsed) {
+      if (scene.target === 'GymMiniBoss' || scene.target === 'GymBoss') continue;
+      expect(scene.setup?.bossHitsRemaining).toBeUndefined();
+    }
+  });
+
+  it.fails('AC5 — only the humble-origins beat forces its hold-full reward', () => {
+    const parsed = parseArc();
+    const humble = parsed[1];
+
+    expect(humble.target).toBe('GymLevel');
+    expect(humble.setup?.mineralReward).toBe('mineral_scoop');
+    expect(humble.setup?.player?.weapons).toEqual(['cannon']);
+    expect(
+      parsed.filter((scene) => scene.setup?.mineralReward !== undefined),
+    ).toHaveLength(1);
+  });
+
+  it.fails('AC5 — scene 6 reprises scene 4 with a different enemy mix and stronger guns', () => {
+    const parsed = parseArc();
+    const escalation = parsed[3];
+    const reprise = parsed[5];
+
+    const escalationEnemies = enemyKeys(escalation.setup);
+    const repriseEnemies = enemyKeys(reprise.setup);
+    expect(escalationEnemies.length).toBeGreaterThan(0);
+    expect(repriseEnemies.length).toBeGreaterThan(0);
+    expect(repriseEnemies).not.toEqual(escalationEnemies);
+
+    // More, and stronger, player weapons than the escalation beat.
+    expect(slotFillers(reprise.setup)).not.toEqual(slotFillers(escalation.setup));
+    expect(slotFillers(reprise.setup).length).toBeGreaterThanOrEqual(
+      slotFillers(escalation.setup).length,
+    );
+    const maxLevel = (setup: ArcSetup | undefined): number =>
+      Math.max(0, ...Object.values(setup?.player?.weaponLevels ?? {}));
+    expect(maxLevel(reprise.setup)).toBeGreaterThan(maxLevel(escalation.setup));
+  });
+
+  // ── AC1: parse / validate / normalise / idempotence ───────────────
+
+  it.fails('AC1 — parses and normalises player.weaponLevels (N grants == level N)', () => {
+    const setup = arcNormalise(
+      { player: { weapons: [], weaponLevels: { rapid: 3, spread: 1 } } },
+      'GymPlayer',
+    );
+    expect(setup.player?.weaponLevels).toEqual({ rapid: 3, spread: 1 });
+
+    // Documented default: no per-weapon level grants.
+    expect(arcNormalise({}, 'GymPlayer').player?.weaponLevels).toEqual({});
+
+    // Accepted on every target that already consumes `setup.player`.
+    for (const target of ['GymPlayer', 'GymLevel', 'GymBoss', 'GymMiniBoss']) {
+      expect(
+        arcNormalise({ player: { weaponLevels: { rapid: 2 } } }, target).player
+          ?.weaponLevels,
+      ).toEqual({ rapid: 2 });
+    }
+  });
+
+  it.fails('AC1/AC2 — rejects invalid player.weaponLevels shapes and values', () => {
+    // Wrong shape.
+    expectConfigError(
+      () => validateSceneSetup({ player: { weaponLevels: ['rapid'] } }, 'GymPlayer'),
+      'invalid-setup-type',
+    );
+    // Unknown weapon id keeps the existing code.
+    expectConfigError(
+      () => validateSceneSetup({ player: { weaponLevels: { laser: 2 } } }, 'GymPlayer'),
+      'unknown-weapon-id',
+    );
+    // Out-of-range values (0, negative, non-integer, above level 5, wrong type).
+    for (const bad of [0, -1, 6, 1.5, '3']) {
+      expectConfigError(
+        () => validateSceneSetup({ player: { weaponLevels: { rapid: bad } } }, 'GymPlayer'),
+        'invalid-weapon-level',
+      );
+    }
+  });
+
+  it.fails('AC1 — normalising the arc fields is idempotent (deep-equal)', () => {
+    const levelRaw = {
+      player: { weapons: ['spread'], weaponLevels: { rapid: 3 } },
+      mineralReward: 'mineral_scoop',
+      seed: 4242,
+    };
+    const levelOnce = arcNormalise(levelRaw, 'GymLevel');
+    expect(levelOnce.mineralReward).toBe('mineral_scoop');
+    expect(arcNormalise(levelOnce, 'GymLevel')).toEqual(levelOnce);
+
+    const bossRaw = {
+      player: { weapons: [], weaponLevels: { nova: 5 } },
+      bossHitsRemaining: 8,
+      seed: 7,
+    };
+    const bossOnce = arcNormalise(bossRaw, 'GymBoss');
+    expect(bossOnce.bossHitsRemaining).toBe(8);
+    expect(arcNormalise(bossOnce, 'GymBoss')).toEqual(bossOnce);
+    // A field the target cannot consume is not emitted, so it re-validates.
+    expect(() => validateSceneSetup(bossOnce, 'GymBoss')).not.toThrow();
+  });
+
+  // ── AC2: target-aware validation ──────────────────────────────────
+
+  it.fails('AC2 — bossHitsRemaining is accepted only on the boss-capable targets', () => {
+    const bossCapable = new Set(['GymBoss', 'GymMiniBoss']);
+    const targets = [...WATCHABLE_GYM_SCENE_KEYS, ...PARAMETERISED_GYM_SCENE_KEYS];
+
+    for (const target of targets) {
+      const fields = sceneSetupFieldsFor(target);
+      if (fields.length === 0) continue;
+      expect(fields.includes('bossHitsRemaining')).toBe(bossCapable.has(target));
+    }
+
+    for (const target of bossCapable) {
+      expect(arcNormalise({ bossHitsRemaining: 8 }, target).bossHitsRemaining).toBe(8);
+    }
+
+    // A known field on a target that cannot consume it is rejected, not
+    // silently ignored.
+    for (const target of ['GymPlayer', 'GymLevel', 'GymWeapons']) {
+      expectConfigError(
+        () => validateSceneSetup({ bossHitsRemaining: 8 }, target),
+        'setup-not-supported',
+      );
+    }
+  });
+
+  it.fails('AC2 — rejects bossHitsRemaining outside the entity hit pool', () => {
+    // GymBoss: 4 phases x 50 hits = 200. GymMiniBoss (gym pool): 2 x 5 = 10.
+    const pools: ReadonlyArray<readonly [string, number]> = [
+      ['GymBoss', 200],
+      ['GymMiniBoss', 10],
+    ];
+    for (const [target, total] of pools) {
+      expect(arcNormalise({ bossHitsRemaining: total }, target).bossHitsRemaining).toBe(total);
+      for (const bad of [0, -1, 1.5, total + 1, '6']) {
+        expectConfigError(
+          () => validateSceneSetup({ bossHitsRemaining: bad }, target),
+          'invalid-boss-hits',
+        );
+      }
+    }
+  });
+
+  it.fails('AC2 — mineralReward is limited to the level gyms and its id is validated', () => {
+    for (const target of ['GymLevel', 'GymBotTuning']) {
+      expect(sceneSetupFieldsFor(target)).toContain('mineralReward');
+    }
+    expect(arcNormalise({ mineralReward: 'mineral_scoop' }, 'GymLevel').mineralReward).toBe(
+      'mineral_scoop',
+    );
+
+    expectConfigError(
+      () => validateSceneSetup({ mineralReward: 'mineral_scoop' }, 'GymPlayer'),
+      'setup-not-supported',
+    );
+    expectConfigError(
+      () => validateSceneSetup({ mineralReward: 'not-a-reward' }, 'GymLevel'),
+      'unknown-mineral-reward',
+    );
+    expectConfigError(
+      () => validateSceneSetup({ mineralReward: 7 }, 'GymLevel'),
+      'invalid-setup-type',
+    );
+  });
+
+  // ── Module registries the fields must add ─────────────────────────
+
+  it.fails('AC1/AC2 — exposes the arc registries, pinned to the shipped id/total tables', async () => {
+    const module = await loadArcModule();
+
+    expect(module.SCENE_SETUP_WEAPON_LEVEL_MAX).toBe(5);
+    expect([...module.SCENE_SETUP_MINERAL_REWARD_IDS].sort()).toEqual(
+      [...CHOICE_POOL].sort(),
+    );
+    expect(module.SCENE_SETUP_BOSS_TOTAL_HITS).toMatchObject({
+      GymBoss: 200,
+      GymMiniBoss: 10,
+    });
+
+    const codes = Object.values(module.SCENE_CONFIG_ERROR_CODES);
+    for (const code of [
+      'invalid-weapon-level',
+      'invalid-boss-hits',
+      'unknown-mineral-reward',
+    ]) {
+      expect(codes).toContain(code);
+    }
   });
 });
