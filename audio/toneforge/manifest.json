@@ -71,6 +71,14 @@
       ]
     },
     {
+      "cue": "playForceFieldReflectSound",
+      "recipe": "aihell-forcefield-reflect",
+      "delivery": "baked",
+      "seeds": [
+        32276
+      ]
+    },
+    {
       "cue": "playTankAdvanceCue",
       "recipe": "aihell-tank-advance",
       "delivery": "baked",

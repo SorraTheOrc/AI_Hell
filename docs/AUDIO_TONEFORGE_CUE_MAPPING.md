@@ -79,6 +79,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playPlayerDestructionSound` | Layered hull breach: saw thump 120→32 Hz 0.4 s + triangle body 260→42 Hz 0.6 s + HP noise tail 0.28 s, ≤ 0.2 | Player hit / life lost, scheduled on the next 16th-note beat accent | `vfx/playerDeathJuice` | new | `aihell-player-hull-breach` (stack) |
 | `playMajorExplosionSound` | Layered major blast: saw thump 150→26 + triangle body 340→38 + LP noise tail, 4-voice limiter | Wave timeout — retained but unused | **none** | **retired** | — (see Retired cues) |
 | `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s, vol 0.12 | Player bullet destroys enemy bullet | `vfx/bulletImpact` | new | `aihell-bullet-destruction` |
+| `playForceFieldReflectSound` | Bright rising bounce — triangle 880→1320 Hz + short sine sparkle, ~0.11 s | Force Field reflects an enemy bullet (bounce-point feedback) | shared reflect branch in `CombatScene` (AH-0MVRDMMYO002SC5V) | new | `aihell-forcefield-reflect` |
 | `playTankDestructionSound` | Saw 220→30 Hz, 0.45 s, vol 0.2 | Intentionally unwired | **none** (test-only) | **retired** | — (see Retired cues) |
 | `playTankAdvanceCue` | Advancing saw 150→320 Hz + square sub 75→160 Hz, 0.6 s; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Advance cue (≥ 500 ms) | `entities/Tank` | new | `aihell-tank-advance` |
 | `playTankFireSound` | Heavy saw+sine cannon thump ~90→25 Hz, scheduled at cue end; runtime volume ×0.5 (`TANK_SCOUT_FIRE_VOLUME_SCALE`, AH-0MV74ROYR009X8U3) | Enemy fire / no-gap | `entities/Tank` | new | `aihell-tank-fire` |
@@ -197,6 +198,15 @@ the Phaser sequence reads level with the Tank/Scout ×0.5 advance+fire pairs. Th
 tables above are the **baked** tier; effective playback RMS is half of the baked value for these two
 cues (advance 0.0564→0.0282, fire 0.0550→0.0275).
 
+**Player feedback cue outside the enemy guard (AH-0MVRDMMYO002SC5V):** `playForceFieldReflectSound`
+(`aihell-forcefield-reflect`) is a **subtle one-shot** (rendered RMS 0.0552, target 0.055 ±1.5 dB,
+peak 0.204) but is deliberately placed **outside** the enemy balance tiers: it is the player Force
+Field's own reflect feedback, not an enemy sound, and `scripts/audio-balance-guard.mjs` only analyses
+cues it identifies as enemy-family. The recipe is therefore tagged `player`/`force-field`/`reflect`
+(no enemy tag) and has **no `AMPLITUDE_TIERS` key** — registering one would be inert (the guard never
+reads a non-enemy cue's tier) while implying the guard covers it. The 0.055 target is documented in
+the recipe header and this row; the rendered asset is verified byte-for-byte by `build-audio --verify`.
+
 ### A-minor scale conformance (AC3 — AH-0MVCRR203005HKVZ)
 
 Every pitched oscillator automation point (static frequency, `set`/ramp start,
@@ -234,6 +244,7 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-enemy-destruction` | `playDestructionSound` | Descending saw 440→60 Hz, 0.28 s — scale-degree variants: starts A3/A4/E5 → A1 (AC3) | 32113, 32128, 32144 |
 | `aihell-player-hull-breach` | `playPlayerDestructionSound` | Layered thump + body + HP noise tail (stack of three primitives) | 32120 |
 | `aihell-bullet-destruction` | `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s | 32130 |
+| `aihell-forcefield-reflect` | `playForceFieldReflectSound` | Bright rising bounce 880→1320 Hz + sine sparkle, ~0.11 s | 32276 |
 | `aihell-tank-advance` | `playTankAdvanceCue` | Saw 150→320 + square sub 75→160 Hz, 0.6 s | 32140 |
 | `aihell-tank-fire` | `playTankFireSound` | Saw+sine thump ~90→25 Hz | 32141 |
 | `aihell-pickup-spawn` | `playPowerUpSpawnSound` | Bright ascending blip | 32150 |

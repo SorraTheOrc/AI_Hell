@@ -455,6 +455,24 @@ export function playEnemyForceFieldBreakSound(): void {
   playCue('playBulletDestructionSound');
 }
 
+/**
+ * Bright rising bounce — the player Force Field **reflects** an enemy bullet
+ * (AH-0MVRDMMYO002SC5V, producer decision Q2 = c on AH-0MVBKT2WO001AR14).
+ *
+ * Decision (recorded here so the audio knowledge stays in the audio layer):
+ * this is a **dedicated baked cue**, not an alias like
+ * {@link playEnemyForceFieldBreakSound}. A reflection must read as its own
+ * event — distinct from the bullet-destruction tick
+ * (`playBulletDestructionSound`, a falling square), the ricochet tick
+ * (`playRicochetImpactSound`, a falling triangle with a noise smack) and an
+ * enemy force-field break. `aihell-forcefield-reflect` **rises**
+ * (880 → 1320 Hz) with a short sine sparkle, so "bounced back at the enemy"
+ * never sounds like "shot destroyed".
+ */
+export function playForceFieldReflectSound(): void {
+  playCue('playForceFieldReflectSound');
+}
+
 // ── Player weapon fire cues ─────────────────────────────────────────
 
 /** Solid medium blip — Cannon fire. */

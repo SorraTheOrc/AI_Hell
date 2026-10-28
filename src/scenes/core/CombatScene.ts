@@ -40,6 +40,7 @@ import {
 import {
   playBulletDestructionSound,
   playDestructionSound,
+  playForceFieldReflectSound,
   playMortarDetonationSound,
   playMortarImpactSound,
   playPhaseShiftSound,
@@ -1301,6 +1302,16 @@ export abstract class CombatScene<
         effects.tryConsumeForceFieldReflect()
       ) {
         this._reflectEnemyBullet(eb);
+        // Every intercepted bullet confirms itself at the bounce point: one
+        // shared flash tinted with the Force Field colour (registered for
+        // tests and teardown) plus the dedicated reflect cue. Both live in
+        // this shared branch, so the game and every gym read a reflection
+        // identically (AH-0MVRDMMYO002SC5V).
+        spawnBulletImpact(this, bulletX, bulletY, {
+          registry: this.bulletImpactEffects,
+          color: FORCE_FIELD_COLOR,
+        });
+        playForceFieldReflectSound();
         eb.graphics.destroy();
         continue;
       }
