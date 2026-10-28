@@ -1884,6 +1884,8 @@ Key events are announced by an **advance audio cue** with a minimum 500 ms lead 
 
 Background music is explicitly a **nice-to-have** and **out of scope for the MVP**. Simple SFX only. If music is added later, it would be a separate work item.
 
+The musical direction for that future work is defined in the **[AI Hell Music System — Audio Design Chapter](AUDIO_DESIGN_CHAPTER.md)** (GDD addendum, design reference only; AH-0MVAUUV1U005UM4W). It captures the tonal language (Phrygian Dominant combat / Lydian ambient), the core motifs and progressions, the instrumentation palette, the dynamic-mixing and state-driven transition rules, the implementation contract and the audio-accessibility requirements. The chapter does **not** change the MVP scope: the baked ToneForge pipeline and SFX catalogue above remain the only in-scope audio, and promoting music into the MVP requires an explicit producer decision (GDD §8). Implementation is future work, tracked by *Implement the Music System from the Audio Design Chapter* (AH-0MVKXT7O70061FXU).
+
 #### Browser Autoplay Policy
 
 AudioContext must be created and resumed only after a user gesture (e.g., clicking Start/Play). Audio is silent until the user interacts with the game. This is documented in §6.7 (risk entry).
@@ -1905,7 +1907,7 @@ The following are explicitly **out of scope** for the MVP but should be tracked 
 | **Online leaderboard** | Backend service for persistent, cross-machine leaderboards. |
 | **Additional levels** | Levels 6–10+ with new enemy types and pattern variations. |
 | **Online multiplayer** | Co-op or competitive play over network. |
-| **Background music** | Synthwave / retro electronic soundtrack (SFX is in scope for MVP per §7.3). |
+| **Background music** | Synthwave / retro electronic soundtrack (SFX is in scope for MVP per §7.3). Musical direction — Phrygian Dominant combat and Lydian ambient scales, Combat Motifs A/B and "Star Drift", the combat/boss/ambient progressions, instrumentation palette, dynamic-mixing and state-driven transition rules — is defined in the design-reference addendum [AI Hell Music System — Audio Design Chapter](./AUDIO_DESIGN_CHAPTER.md) (AH-0MVAUUV1U005UM4W); implementation is tracked by AH-0MVKXT7O70061FXU. |
 | **Save/load game state** | Pause and resume functionality. |
 | **Achievements** | Unlockable challenges and rewards. |
 | **Mobile support** | Touch controls for mobile devices. |
