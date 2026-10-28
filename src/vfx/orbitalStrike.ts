@@ -12,9 +12,9 @@
  * This module owns the strike's own composition instead: a **descending bolt**
  * — a tapered, glowing column drawn only in the target's column that streaks
  * from above the top of the play area down to the impact point — a **target
- * and a **target marker** (a bracketed reticle with a lock-on ring) that holds
- * on the target while the bolt falls,
- * and an **impact flash plus a brief outward shock ring** on arrival.
+ * marker** (a bracketed reticle with a lock-on ring) that holds on the target
+ * while the bolt falls, and an **impact flash plus a brief outward shock ring**
+ * on arrival.
  *
  * ## How it differs from the Smart Bomb ring
  *
