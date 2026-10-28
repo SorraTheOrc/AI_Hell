@@ -19,6 +19,7 @@ import {
   LARGE_TEMP_BUDGET_BYTES,
   LARGE_TEMP_HEADROOM_MARGIN_BYTES,
   LARGE_TEMP_REQUIRED_BYTES,
+  candidateTempRoots,
   largeTempSkipNote,
   resolveTempRootForLargeFile,
   type FreeSpaceProbe,
@@ -31,6 +32,11 @@ const freeFor = (dir: string, freeBytes: number): FreeSpaceProbe => (d) =>
 const NO_HEADROOM: FreeSpaceProbe = () => 0;
 
 describe('resolveTempRootForLargeFile (temp-root resolution order)', () => {
+  it('enumerates the candidate roots in resolution order, TMPDIR first, deduped', () => {
+    const roots = candidateTempRoots({ TMPDIR: '/probe/tmp' });
+    expect(roots).toEqual(['/probe/tmp', '/var/tmp', tmpdir()]);
+  });
+
   it('prefers an explicit TMPDIR when its filesystem has headroom', () => {
     const resolution = resolveTempRootForLargeFile({
       env: { TMPDIR: '/probe/tmp' },
@@ -48,10 +54,11 @@ describe('resolveTempRootForLargeFile (temp-root resolution order)', () => {
       probe,
     });
     expect(resolution.chosen?.dir).toBe('/var/tmp');
+    // `considered` lists only the candidates actually probed before the first
+    // qualifying root was picked (the resolver short-circuits at the choice).
     expect(resolution.considered.map((candidate) => candidate.dir)).toEqual([
       '/probe/tmp',
       '/var/tmp',
-      tmpdir(),
     ]);
   });
 
@@ -61,12 +68,22 @@ describe('resolveTempRootForLargeFile (temp-root resolution order)', () => {
       probe: freeFor(tmpdir(), LARGE_TEMP_BUDGET_BYTES + 1),
     });
     expect(resolution.chosen?.dir).toBe(tmpdir());
+    expect(resolution.considered.map((candidate) => candidate.dir)).toEqual([
+      '/probe/tmp',
+      '/var/tmp',
+      tmpdir(),
+    ]);
   });
 
   it('skips an unprobeable candidate (missing dir) without throwing', () => {
     const resolution = resolveTempRootForLargeFile({
       env: { TMPDIR: '/does/not/exist' },
-      probe: freeFor('/var/tmp', LARGE_TEMP_BUDGET_BYTES + 1),
+      probe: (dir) =>
+        dir === '/does/not/exist'
+          ? null
+          : dir === '/var/tmp'
+            ? LARGE_TEMP_BUDGET_BYTES + 1
+            : 0,
     });
     expect(resolution.chosen?.dir).toBe('/var/tmp');
     expect(resolution.considered[0].freeBytes).toBeNull();
