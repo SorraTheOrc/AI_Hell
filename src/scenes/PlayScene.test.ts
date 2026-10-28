@@ -6091,8 +6091,19 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
   /**
    * Boots the PlayScene with a single empty wave so horde accounting is
    * isolated from any formation kills. `horde` toggles the wave's opt-in.
+   *
+   * `seed` pins the run's RNG stream through the public `setRunSeed` seam
+   * (AH-0MVRLGUTZ007V3E5 AC1): `_initRunSeed()` adopts the injected seed at
+   * the next `create()`, so `computeHordeSpawns` plans the exact same grunt
+   * layout and spawn schedule for every run of that seed. Without it the
+   * scene draws a fresh `randomSeed()` per run and the horde layout varies
+   * (the source of the flaky kill assertion), which is why a fix must be
+   * justified by a reproduced seed rather than a green re-run.
    */
-  async function bootWithHordeWave(horde: boolean): Promise<PlayScene> {
+  async function bootWithHordeWave(
+    horde: boolean,
+    seed?: number,
+  ): Promise<PlayScene> {
     const levels: LevelDefinition[] = [
       {
         level: 1,
@@ -6108,6 +6119,8 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     const scene = booted.scene as PlayScene;
     scene.getWaveManager().setLevels(levels);
     scene.setHordeSpawnerEnabled(true);
+    // Inject before the restart: `_initRunSeed()` reads it during `create()`.
+    if (seed !== undefined) scene.setRunSeed(seed);
     scene.scene.restart();
     await advanceGame(scene.game, 200);
     return scene;
@@ -6203,6 +6216,25 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     scene.setHordeSpawnerEnabled(false);
     releaseHorde(scene);
     expect(liveGrunts(scene)).toHaveLength(0);
+  });
+
+  it('plans the same horde layout for a repeated seed', async () => {
+    // AH-0MVRLGUTZ007V3E5 AC1: the `seed` parameter must drive the horde
+    // plan (`computeHordeSpawns` reads the run RNG), not merely the
+    // drop/weapon rolls — a recorded seed is only a durable reproduction
+    // input when it reproduces the layout exactly.
+    const first = await bootWithHordeWave(true, 12345);
+    releaseHorde(first);
+    const firstLayout = liveGrunts(first).map((g) => [g.x, g.y] as const);
+    booted?.game.destroy(true);
+    booted = null;
+
+    const second = await bootWithHordeWave(true, 12345);
+    releaseHorde(second);
+    const secondLayout = liveGrunts(second).map((g) => [g.x, g.y] as const);
+
+    expect(firstLayout).toHaveLength(DEFAULT_ENEMY_CONFIGS.grunt.count);
+    expect(secondLayout).toEqual(firstLayout);
   });
 });
 
