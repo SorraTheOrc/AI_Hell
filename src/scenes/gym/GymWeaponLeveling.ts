@@ -376,6 +376,10 @@ export class GymWeaponLeveling extends CombatScene<
       weaponLevels: this.player?.getWeaponLevels() ?? [],
       // Offer level-ups for power-ups the player already owns (AH-0MUV5CLVO002ZHS9).
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      // Temporary stacks hold a slot; the shared gate must see them (parent
+      // AH-0MVLIJT3M005HPHF, gym↔game parity).
+      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
     this.mineralChoiceOpen = true;
     // Fade the gym player's engine hum out across the pause; it ramps back

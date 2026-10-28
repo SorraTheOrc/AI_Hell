@@ -747,6 +747,16 @@ export function playPowerUpCollectPopSound(): void {
   playCue('playPowerUpCollectPopSound');
 }
 
+/**
+ * Low two-step "denied" buzz — the six-slot pool is full and this drop cannot
+ * be collected (parent AH-0MVLIJT3M005HPHF, producer Q5b). Deliberately lower
+ * and shorter than the pickup cues so a refused pickup is audibly distinct
+ * from a successful one.
+ */
+export function playPowerUpBlockedSound(): void {
+  playCue('playPowerUpBlockedSound');
+}
+
 /** Widening fan sweep — Spread pickup activation. */
 export function playSpreadPickupSound(): void {
   playCue('playSpreadPickupSound');

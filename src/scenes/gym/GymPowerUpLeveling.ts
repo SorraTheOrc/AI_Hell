@@ -441,6 +441,11 @@ export class GymPowerUpLeveling extends CombatScene<
         // Offer level-ups for power-ups the player permanently owns this run
         // (AH-0MUV5CLVO002ZHS9); a field-only item stays ★ New.
         powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+        // Temporary (field-pickup) stacks hold a slot while they last, so the
+        // shared six-slot gate sees the same state as the game (parent
+        // AH-0MVLIJT3M005HPHF, gym↔game parity).
+        tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+        tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
       },
     );
     this.mineralChoiceOpen = true;

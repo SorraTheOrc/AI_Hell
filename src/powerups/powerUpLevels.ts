@@ -1428,9 +1428,23 @@ export class PowerUpLevelStore {
   }
 
   /**
+   * Snapshot of every power-up with an **active temporary stack** (a field
+   * pickup whose timed window has not expired). Used by the six-slot cap: a
+   * temporary stack occupies a slot while it lasts (parent AH-0MVLIJT3M005HPHF,
+   * producer Q4a), so occupancy must see these kinds alongside the permanent
+   * grants — derived, never counted by a second counter.
+   */
+  getTempPowerUpIds(): PowerUpId[] {
+    return [...this._tempStacks.entries()]
+      .filter(([, stacks]) => stacks > 0)
+      .map(([id]) => id);
+  }
+
+  /**
    * Removes `id`'s temporary stacks (its field-pickup window expired). The
    * permanent grants — and any consumable already granted (Phase Shift charges, Teleport
-   * teleports) — are left intact (Resolved decision 1b).
+   * teleports) — are left intact (Resolved decision 1b). The kind therefore
+   * stops occupying a six-slot slot unless it is permanently owned.
    */
   clearTemporary(id: PowerUpId): void {
     this._tempStacks.delete(id);

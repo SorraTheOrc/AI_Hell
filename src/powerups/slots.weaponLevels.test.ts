@@ -1,7 +1,7 @@
 /**
- * Six-slot accounting, weapon family (test-first companion to
- * `slots.test.ts`, AH-0MVNT2SD300874CP — AC1 "temporary field stacks of
- * **either** family consume none").
+ * Six-slot accounting, weapon family (companion to `slots.test.ts`, parent
+ * AH-0MVLIJT3M005HPHF AC1; producer Q4a — a temporary pickup occupies a slot
+ * while it lasts).
  *
  * ## Why this lives in its own file
  *
@@ -11,15 +11,6 @@
  * puts this file in the slower `integration` Vitest project, so the pure
  * accounting assertions stay in `slots.test.ts` on the fast unit project.
  *
- * ## Test-first status (read before editing)
- *
- * `src/powerups/slots.ts` is added by the follow-on item
- * AH-0MVNT2TEK001BNQ4, so the assertion is registered with Vitest's
- * `it(...)` — the repo's documented test-first convention (see
- * `powerUpIdNaming.test.ts`) — which keeps the suite
- * green while the assertion is red against the absent helper. Flip `.fails`
- * to a plain `it(...)` when the helper lands; the assertions must not change.
- *
  * @module powerups/slots.weaponLevels.test
  */
 
@@ -28,31 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { advanceGame, bootScene, type BootedGame } from '../test/gameHarness';
 import { Player } from '../entities/Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
-import type { DropId, PowerUpId } from './types';
-import type { WeaponId } from '../utils/weapons';
-
-// ── Pinned contract (implemented by AH-0MVNT2TEK001BNQ4) ────────────
-
-type PowerUpLevels = Array<{ id: PowerUpId; level: number }>;
-/** `Player.getWeaponLevels()` is `WeaponId`-keyed (it includes the cannon). */
-type WeaponLevels = Array<{ id: WeaponId; level: number }>;
-
-interface PowerUpSlotState {
-  readonly used: number;
-  readonly free: number;
-  readonly isFull: boolean;
-  readonly ownedIds: ReadonlySet<DropId>;
-}
-
-interface SlotsModule {
-  resolveSlotState(powerUpLevels: PowerUpLevels, weaponLevels: WeaponLevels): PowerUpSlotState;
-}
-
-const SLOTS_MODULE: string = './slots';
-
-async function loadSlots(): Promise<SlotsModule> {
-  return (await import(/* @vite-ignore */ SLOTS_MODULE)) as SlotsModule;
-}
+import { resolvePlayerSlotState, resolveSlotState } from './slots';
 
 describe('six-slot accounting for the weapon family (AC1)', () => {
   let booted: BootedGame | null = null;
@@ -79,24 +46,55 @@ describe('six-slot accounting for the weapon family (AC1)', () => {
     return player!;
   }
 
-  // Test-first: expected failure until the shared helper lands.
-  it('counts permanent weapon grants but not temporary field stacks', async () => {
-    const slots = await loadSlots();
+  it('counts a temporary weapon stack as a held slot and releases it on expiry', async () => {
     const player = await freshPlayer();
 
-    // A field pickup is temporary: `getWeaponLevels()` is permanent-only, so
-    // the accounting must see an empty pool.
+    // A field pickup is temporary, but it still occupies a slot while it lasts
+    // (producer Q4a) — the run can never hold more than six kinds at once.
     player.equipWeapon('spread');
     expect(player.getTempWeaponStacks('spread')).toBeGreaterThan(0);
-    expect(slots.resolveSlotState([], player.getWeaponLevels()).used).toBe(0);
+    const heldState = resolvePlayerSlotState(player);
+    expect(heldState.used).toBe(1);
+    expect(heldState.free).toBe(5);
+    expect(heldState.heldIds.has('spread')).toBe(true);
+    // Not permanently owned: the choice still offers it as a new permanent pick.
+    expect(heldState.ownedIds.has('spread')).toBe(false);
 
-    // A hold-full reward is permanent: it consumes exactly one slot.
+    // The timed window expiring (what `resetWeapon` does for timed activations)
+    // releases the slot again.
+    player.resetWeapon();
+    const expired = resolvePlayerSlotState(player);
+    expect(expired.used).toBe(0);
+    expect(expired.isFull).toBe(false);
+  });
+
+  it('counts a permanent weapon grant in the same pool', async () => {
+    const player = await freshPlayer();
+
     player.equipWeapon('spread', true);
-    const state = slots.resolveSlotState([], player.getWeaponLevels());
 
+    const state = resolvePlayerSlotState(player);
     expect(state.used).toBe(1);
-    expect(state.free).toBe(5);
-    expect(state.isFull).toBe(false);
     expect(state.ownedIds.has('spread')).toBe(true);
+    expect(state.heldIds.has('spread')).toBe(true);
+  });
+
+  it('never counts the permanent cannon', async () => {
+    const player = await freshPlayer();
+
+    // The cannon is always active but is never a permanent *grant*, so the
+    // snapshot the cap reads cannot contain it — it can never occupy a slot.
+    expect(player.hasWeapon('cannon')).toBe(true);
+    expect(player.getWeaponLevels().some((entry) => entry.id === 'cannon')).toBe(false);
+
+    const state = resolvePlayerSlotState(player);
+    expect(state.used).toBe(0);
+    expect(state.isFull).toBe(false);
+
+    // Defence in depth: the helper is `WeaponId`-keyed, so a snapshot that did
+    // carry the cannon must still be ignored (it is not a weapon drop).
+    const withCannon = resolveSlotState([], [{ id: 'cannon', level: 5 }]);
+    expect(withCannon.used).toBe(0);
+    expect(withCannon.heldIds.has('cannon' as never)).toBe(false);
   });
 });

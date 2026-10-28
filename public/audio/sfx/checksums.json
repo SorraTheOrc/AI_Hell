@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "99331ad0b9a1cd11071f60b553947b7f99ce7d428ebf6d510790c1992236e47c",
+  "inputs": "911a52b94a1b5fe5c045c23de682de204c30ae3adf38ccc02c83ebafaf93c755",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",
@@ -44,6 +44,7 @@
     "audio/sfx/aihell-phase-shift.32230.wav": "7011ab691151ed7795921aa327798c6b4488a45b1ca45b5703f6e52e26bf893a",
     "audio/sfx/aihell-phaser-advance.32170.wav": "0ff2bd232f0f544c5095b0da46403d1e2e75e0ced2955086265cbf8ca0418a50",
     "audio/sfx/aihell-phaser-fire.32171.wav": "b70eb57d71477361c65d4d74a0f3955efa971ba13c28df455e668f903417f658",
+    "audio/sfx/aihell-pickup-blocked.32153.wav": "2c43b06c6e16457c5179292ef73672f04c8201ba792ce070f9a1ee4ca5d13195",
     "audio/sfx/aihell-pickup-despawn.32151.wav": "9bfd10263a95cbee3cccbfc175d4e8fa5bb213d584ceab3534497578a4da6895",
     "audio/sfx/aihell-pickup-dual.32221.wav": "7da63fdfd680dcb1e49b3c30330ce79176ba42d9a725542025138bb9f92cd551",
     "audio/sfx/aihell-pickup-extralife.32225.wav": "d4ad40bd009663c8663c8cf6f969f31c08ea8f4ac51328925daff7fc42af0e18",

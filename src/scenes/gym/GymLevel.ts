@@ -1130,6 +1130,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     const options = this.mineralChoiceStrategy.choose(1, this.supplyRng, {
       weaponLevels: this.getPlayer()?.getWeaponLevels() ?? [],
       powerUpLevels: this.getPlayer()?.getPowerUpLevels() ?? [],
+      // Temporary field pickups hold a slot, so they participate in the
+      // six-slot gate here exactly as in the game (parent AH-0MVLIJT3M005HPHF).
+      tempPowerUpIds: this.getPlayer()?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.getPlayer()?.getTempWeaponIds() ?? [],
     });
     const option = options[0];
     if (option) {

@@ -826,6 +826,68 @@ describe('power-up choice strategy', () => {
       expect(candidates.length).toBeGreaterThanOrEqual(6);
     });
 
+    it('at six held kinds counts temporary field pickups and offers only the held ones (Q4a/Q6a)', () => {
+      // Five permanent kinds plus one temporary (field-pickup) kind fill the
+      // pool. The producer's instruction for a hold-full at full slots is:
+      // only offer items that are currently in the slots — so the temporary
+      // kind may be taken permanently (it already owns its slot), and nothing
+      // else outside the exempt entries may appear.
+      const context: ChoiceContext = {
+        weaponLevels: [
+          { id: 'spread', level: 1 },
+          { id: 'dual', level: 1 },
+        ],
+        powerUpLevels: [
+          { id: 'shield', level: 1 },
+          { id: 'bomb', level: 1 },
+          { id: 'speed_boost', level: 1 },
+        ],
+        tempPowerUpIds: [],
+        tempWeaponIds: ['rapid'],
+      };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+      const baseIds = candidates
+        .filter((o) => o.kind === 'powerup' || o.kind === 'weapon')
+        .map((o) => o.id)
+        .sort();
+
+      // The temp-held weapon is offered as a base (permanent) pick alongside
+      // the exempt entries — and nothing else.
+      expect(baseIds).toEqual(['rapid', ...SLOTS_FULL_EXEMPT_IDS].sort());
+      // Level-ups of the five permanently owned kinds survive.
+      const levelUps = candidates
+        .filter((o) => o.kind === 'weapon-level' || o.kind === 'power-up-level')
+        .map((o) => o.id)
+        .sort();
+      expect(levelUps).toEqual(
+        ['spread', 'dual', 'shield', 'bomb', 'speed_boost'].sort(),
+      );
+    });
+
+    it('a temporary stack alone does not gate the choice while permanent slots are free', () => {
+      // A single field pickup must never veto a deserved permanent pick: with
+      // four permanent + one temporary kind the pool is not full, so the full
+      // catalogue stays on offer (the union only matters at six).
+      const context: ChoiceContext = {
+        weaponLevels: [{ id: 'spread', level: 1 }],
+        powerUpLevels: [
+          { id: 'shield', level: 1 },
+          { id: 'bomb', level: 1 },
+          { id: 'speed_boost', level: 1 },
+        ],
+        tempWeaponIds: ['rapid'],
+      };
+      const baseIds = buildChoiceCandidates(CHOICE_POOL, context)
+        .filter((o) => o.kind === 'powerup' || o.kind === 'weapon')
+        .map((o) => o.id);
+
+      // Four owned base entries are suppressed as level-up offers; everything
+      // else (including unowned weapons/power-ups) is still offered.
+      expect(baseIds).toHaveLength(CHOICE_POOL.length - 4);
+      expect(baseIds).toContain('teleport');
+      expect(baseIds).toContain('wave_laser');
+    });
+
     it('leaves the candidate pool unchanged below the cap (five filled slots)', () => {
       // AC3-style no-behaviour-change guard for the choice side: with fewer
       // than six slots the gate is inert, so the full catalogue stays on

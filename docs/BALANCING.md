@@ -236,54 +236,69 @@ campaign-level input**, so they keep their scene-specific flat
 `GymBotTuning`) adopt the curves; the reason is recorded in the `GymLevel`
 scene header and in the parent work item.
 
-### The six permanent loadout slots — the demand-side counterpart (parent AH-0MVLIJT3M005HPHF)
+### The six loadout slots — the demand-side counterpart (parent AH-0MVLIJT3M005HPHF)
 
 The level-scaling curves above reduce the **supply** of power-ups as the
 campaign rises (AH-0MVHT1M6O003PU7P); the six-slot cap is their **demand-side**
-counterpart. It bounds how many *distinct permanent kinds* one run can own, so
-the late-game ship stays strong but bounded no matter how generous the drop
-rolls are. The two levers are complementary, not redundant: supply shapes how
-often a reward arrives, the cap shapes what a run can become.
+counterpart. It bounds how many *distinct kinds* one run can hold at once —
+permanently **or** by an active field pickup — so the late-game ship stays
+strong but bounded no matter how generous the drop rolls are. The two levers
+are complementary, not redundant: supply shapes how often a reward arrives, the
+cap shapes what a run can become.
 
 - **Cap and pool.** `POWER_UP_SLOT_CAP = 6`
   ([`src/core/constants.ts`](../src/core/constants.ts)) is a single named
-  constant. The six slots are **one pool shared** by power-up and weapon kinds:
-  the first six distinct kinds taken as a permanent reward (hold-full choice or
-  mini-boss reward) define the build for the rest of the run. Occupancy is
-  **derived** from the existing permanent-grant stores
-  (`PowerUpLevelStore.getLevels()` + `Player.getWeaponLevels()`) — there is no
-  second counter and no new persisted state.
-- **Eligibility only, not weights.** The cap gates *which* ids may be drawn or
-  offered once the pool is **full**; it never retunes a weight. Below the cap
-  every id remains eligible with its existing weight, so `powerUpWeights` /
-  `weaponWeights` keep their meaning and the pre-cap distribution is unchanged
-  — which is why the existing level-scaling baselines stay valid.
-- **Exemptions are data.** An entry that may still appear when the pool is full
-  carries `availableWhenSlotsFull` on its power-up catalogue entry (default
-  `false`). **Extra Life** and **Mystery UFO** are exempt today; adding or
-  removing an exemption is a catalogue edit, and a re-baseline of the affected
-  batches is the only harness work needed.
-- **Shared-pool starvation is intended semantics (producer Q1 answer (c)).**
-  Because weapons and power-ups share the six slots, a **weapon-heavy build can
-  occupy the pool before any power-up reward is taken** — a player who keeps
+  constant. The six slots are **one pool shared** by power-up and weapon kinds.
+  Occupancy is **derived** from the existing run-scoped stores
+  (`PowerUpLevelStore.getLevels()` + `getTempPowerUpIds()`,
+  `Player.getWeaponLevels()` + `getTempWeaponIds()`) — there is no second
+  counter and no new persisted state.
+- **Field pickups count while they last (producer Q4a).** A temporary field
+  pickup occupies one of the six slots for as long as its timed window is
+  active and releases it on expiry, so the cap bounds *simultaneously held
+  breadth* rather than a permanent-only loadout. Churn is accepted as intended:
+  a run whose six slots were filled by field pickups can see new kinds spawn
+  again once those windows expire. Run restart empties the pool.
+- **Blocked pickups are visible (producer Q5b).** At the cap a drop that cannot
+  be taken stays on the field, applies nothing and plays the distinct
+  not-collectable cue once, so a full pool never silently swallows a pickup the
+  player is chasing.
+- **Eligibility only, not weights.** The cap gates *which* ids may be drawn,
+  collected or offered once the pool is **full**; it never retunes a weight.
+  Below the cap every id remains eligible with its existing weight, so
+  `powerUpWeights` / `weaponWeights` keep their meaning and the pre-cap
+  distribution is unchanged — which is why the existing level-scaling baselines
+  stay valid.
+- **Exemptions are data and never occupy a slot (producer Q7a).** An entry that
+  may still appear when the pool is full carries `availableWhenSlotsFull` on its
+  power-up catalogue entry (default `false`). **Extra Life** and **Mystery UFO**
+  are exempt today; the flag also excludes them from the count, so taking an
+  exempt reward can never push a run past six. Adding or removing an exemption
+  is a catalogue edit, and a re-baseline of the affected batches is the only
+  harness work needed. The `reset` utility is likewise slot-exempt (it can never
+  hold a level).
+- **Shared-pool starvation is intended semantics (producer Q1 answer (c),
+  reaffirmed by the Q4/Q7 answers of 2026-10-27).** Because weapons and
+  power-ups share the six slots (permanent or temporary), a **weapon-heavy build
+  can occupy the pool before any power-up reward is taken** — a player who keeps
   choosing weapon unlocks and level-ups may reach the cap with no permanent
-  Shield, Phase Shift or Magnet. This is the producer's **chosen** rule (Q1,
-  answer **(c)**: one shared pool, field pickups excluded), **not a bug**: the
-  shared pool is what gives each run a coherent build identity, and the exempt
-  entries plus the owned level-ups keep the choice useful when the pool fills.
-  A future change that splits the pool per family (or reserves slots) would be a
-  design change with new evidence, not a fix.
+  Shield, Phase Shift or Magnet. This is the producer's **chosen** rule, **not a
+  bug**: the shared pool is what gives each run a coherent build identity, and
+  the exempt entries plus the owned level-ups keep the choice useful when the
+  pool fills. A future change that splits the pool per family (or reserves
+  slots) would be a design change with new evidence, not a fix.
 - **Same rule in the game and the gyms.** The cap lives once in
   [`src/powerups/slots.ts`](../src/powerups/slots.ts) and is consumed by the
-  shared drop draw (`drawNextDrop`, `src/scenes/core/dropLayer.ts`) and the
-  hold-full choice builder (`buildChoiceCandidates`,
-  `src/powerups/choice.ts`), so `PlayScene` and every gym behave identically
-  (gym↔game parity) and a gym run is a valid place to observe the rule.
+  shared drop draw (`drawNextDrop`, `src/scenes/core/dropLayer.ts`), the shared
+  collection gate (`CombatCoreScene`) and the hold-full choice builder
+  (`buildChoiceCandidates`, `src/powerups/choice.ts`), so `PlayScene` and every
+  gym behave identically (gym↔game parity) and a gym run is a valid place to
+  observe the rule.
 - **Evidence scope.** Existing bot/batch evidence was recorded before the cap,
-  so a late-game campaign run now sees a different permanent loadout. Re-running
-  and re-recording the bot batches is **out of scope** for the cap work item;
-  it becomes a linked follow-up only if a gate fails. Recorded user stories and
-  the producer decision live on the parent work item (AH-0MVLIJT3M005HPHF).
+  so a late-game campaign run now sees a different loadout. Re-running and
+  re-recording the bot batches is **out of scope** for the cap work item; it
+  becomes a linked follow-up only if a gate fails. Recorded user stories and the
+  producer decisions live on the parent work item (AH-0MVLIJT3M005HPHF).
 
 ### Evidence: same-seed baseline vs post-change batches
 

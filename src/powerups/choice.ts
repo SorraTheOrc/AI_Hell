@@ -158,6 +158,19 @@ export interface ChoiceContext {
    * (AH-0MUU2QJE2007JNR6 AC6).
    */
   powerUpLevels?: ReadonlyArray<{ id: PowerUpId; level: number }>;
+  /**
+   * Power-up kinds with an **active temporary (field-pickup) stack** this run.
+   * A temporary stack occupies a six-slot slot while it lasts (parent
+   * AH-0MVLIJT3M005HPHF, producer Q4a), so it is part of the pool occupancy
+   * the gate reads. Optional and backward compatible: when omitted the gate
+   * sees permanent holdings only.
+   */
+  tempPowerUpIds?: readonly PowerUpId[];
+  /**
+   * Weapon-drop kinds with an **active temporary (field-pickup) stack** this
+   * run. The weapon half of {@link ChoiceContext.tempPowerUpIds}.
+   */
+  tempWeaponIds?: readonly WeaponId[];
 }
 
 /** Weapon drops that can be levelled up (everything except the Reset utility). */
@@ -382,17 +395,21 @@ export interface ChoiceStrategy {
  *
  * ## Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4)
  *
- * Once the run's shared permanent pool is full
- * ({@link resolveSlotState} over the same context), base entries that would
- * create a seventh permanent kind — neither owned nor flagged
- * `availableWhenSlotsFull` — are gated out via {@link isWithinSlotPool}. Owned
- * kinds are already suppressed above and return as level-up offers, and the
- * flagged entries (Extra Life, Mystery UFO) stay on offer, so the candidate
- * list degrades gracefully instead of emptying. The gate lives **only** here:
- * the mini-boss reward inherits it through `buildOwnedLevelUpOptions`, and no
- * scene or `unlocks.ts` re-derives it. Below the cap `isWithinSlotPool` is
- * unconditionally true, so the candidate list (eligible set and weights) is
- * unchanged.
+ * Once the run's shared pool is full — counted over permanent grants **and**
+ * active temporary stacks ({@link resolveSlotState} over the same context) —
+ * base entries that would add a kind **not currently in the slots** are gated
+ * out via {@link isWithinSlotPool}. The producer's answer (2026-10-27, Q6a
+ * with the Q4 note) is explicit: *"if a hold-full is offered while all slots
+ * are full then only offer items that are currently in the slots"*, so a
+ * surviving base entry is either a kind held only temporarily (taking it makes
+ * it permanent — it already owns its slot) or one flagged
+ * `availableWhenSlotsFull` (which never occupies a slot, Q7a). Permanently
+ * owned kinds are suppressed above and return as level-up offers, so the
+ * candidate list degrades gracefully instead of emptying. The gate lives
+ * **only** here: the mini-boss reward inherits it through
+ * `buildOwnedLevelUpOptions`, and no scene or `unlocks.ts` re-derives it. Below
+ * the cap `isWithinSlotPool` is unconditionally true, so the candidate list
+ * (eligible set and weights) is unchanged.
  *
  * Populates optional display metadata (AH-0MUU1GOAU007RFVR):
  * - `changeSummary` for owned/levelled items, derived from the shared
@@ -422,10 +439,13 @@ export function buildChoiceCandidates(
   const powerUpOwnershipKnown = context?.powerUpLevels !== undefined;
 
   // Shared-pool occupancy, derived from the same context through the single
-  // slot helper (no second counter, no scene-local re-derivation).
+  // slot helper (no second counter, no scene-local re-derivation). Temporary
+  // stacks count while they last (producer Q4a).
   const slotState = resolveSlotState(
     context?.powerUpLevels ?? [],
     context?.weaponLevels ?? [],
+    context?.tempPowerUpIds ?? [],
+    context?.tempWeaponIds ?? [],
   );
 
   const candidates: ChoiceOption[] = [];
@@ -444,10 +464,13 @@ export function buildChoiceCandidates(
       continue;
     }
     // Six-slot gate (parent AC4): once the shared pool is full, a base entry
-    // that is neither owned nor `availableWhenSlotsFull` would create a
-    // seventh permanent kind, so it is not offered. Owned kinds already
-    // dropped out above and return as level-up offers below; the flagged
-    // entries survive here. Below the cap this predicate is inert.
+    // that is neither held (permanently or temporarily) nor
+    // `availableWhenSlotsFull` would add a kind outside the slots, so it is not
+    // offered — the producer's instruction is to offer only items currently in
+    // the slots. Owned kinds already dropped out above and return as level-up
+    // offers below; temporarily held kinds survive as a permanent pick (they
+    // already occupy their slot) and the flagged entries survive here. Below
+    // the cap this predicate is inert.
     if (slotState.isFull && !isWithinSlotPool(dropId, slotState)) {
       continue;
     }

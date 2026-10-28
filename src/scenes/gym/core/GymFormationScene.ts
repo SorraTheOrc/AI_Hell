@@ -1398,6 +1398,11 @@ export class GymFormationScene<
       // Offer level-ups for power-ups the player already owns (parent
       // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      // Temporary (field-pickup) stacks hold a slot too, so the gate in the
+      // shared builder sees the identical state as the game (gym↔game parity,
+      // parent AH-0MVLIJT3M005HPHF producer Q4a/Q6a).
+      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
     this.mineralChoiceOpen = true;
     // Fade the gym player's engine hum out across the pause; it ramps back

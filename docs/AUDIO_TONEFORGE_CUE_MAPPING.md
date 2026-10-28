@@ -86,6 +86,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playPowerUpDespawnSound` | Quick descending blip, lower vol, shorter | Power-up despawn | `GymWeapons`, `GymWeaponLeveling` | new | `aihell-pickup-despawn` |
 | `playPowerUpCollectSound` | Cheerful two-tone ascending chime | Power-up pickup | `dropLayer` | **existing** | `card-token-earn` |
 | `playPowerUpCollectPopSound` | Saw 600→100 Hz + filtered noise transient, ≤ 0.08 s | Power-up pickup (tactile pop) | `dropLayer` | new | `aihell-pickup-pop` |
+| `playPowerUpBlockedSound` | Low two-step descending square buzz 200→150→120 Hz, 0.18 s, vol 0.06 | Pickup refused — six-slot pool full (parent AH-0MVLIJT3M005HPHF, producer Q5b) | `scenes/core/CombatCoreScene` | new | `aihell-pickup-blocked` |
 | `playWeaponChangeSound` | Distinctive whoosh ("armed with new weapon") | Weapon change | **none** (no call sites) | **retired** | — (see Retired cues) |
 | `playSwarmBurstSound` | Saw buzz 120→80 Hz + sine whoosh 200→600 Hz, ~0.2 s | Swarm volley buzz | `entities/Swarm` | new | `aihell-swarm-burst` |
 | `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s; runtime volume ×0.5 (`PHASER_FIRE_VOLUME_SCALE`, AH-0MVFHE6VP006GEX0) | Advance cue (≥ 500 ms) | `entities/Phaser` | new | `aihell-phaser-advance` |
@@ -237,6 +238,7 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-pickup-spawn` | `playPowerUpSpawnSound` | Bright ascending blip | 32150 |
 | `aihell-pickup-despawn` | `playPowerUpDespawnSound` | Short descending blip | 32151 |
 | `aihell-pickup-pop` | `playPowerUpCollectPopSound` | Saw 600→100 Hz + filtered noise, ≤ 0.08 s | 32152 |
+| `aihell-pickup-blocked` | `playPowerUpBlockedSound` | Low descending square buzz 200→120 Hz, 0.18 s | 32153 |
 | `aihell-swarm-burst` | `playSwarmBurstSound` | Saw buzz + sine whoosh, ~0.2 s | 32160 |
 | `aihell-phaser-advance` | `playPhaserAdvanceCue` | Rising sine 660→880 Hz, 0.6 s | 32170 |
 | `aihell-phaser-fire` | `playPhaserFireSound` | Triangle 1000→500 Hz, ~0.08 s | 32171 |

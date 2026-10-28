@@ -8107,11 +8107,104 @@ describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
       'spread',
       'dual',
       ...EXEMPT_WHEN_FULL,
+      // The Reset utility can never hold a level, so the cap never gates it
+      // (parent AH-0MVLIJT3M005HPHF — slot-exempt utility drop).
+      'reset',
     ]);
     // Every other power-up and weapon id is never drawn.
     expect(drawn.filter((id) => !allowed.has(id))).toEqual([]);
     // No eligible id is starved: owned kinds and exempt entries all appear.
     for (const id of allowed) expect(drawn).toContain(id);
+  });
+
+  it('counts a temporary field pickup towards the six slots (AC1/AC2)', async () => {
+    // Five permanent kinds plus one *temporary* stack fill the pool, so the
+    // draw is gated exactly as if all six were permanent (producer Q4a).
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    player.getPowerUpLevelStore().collect('shield', true);
+    player.getPowerUpLevelStore().collect('bomb', true);
+    player.getPowerUpLevelStore().collect('speed_boost', true);
+    player.getPowerUpLevelStore().collect('phase_shift', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('rapid'); // field pickup: temporary sixth kind
+
+    expect(player.getTempWeaponStacks('rapid')).toBeGreaterThan(0);
+    expect(resolvePlayerSlotState(player).isFull).toBe(true);
+
+    let seed = 777 >>> 0;
+    scene.setRng(() => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    });
+    const roll = scene as unknown as {
+      _maybeDropPowerUp(x: number, y: number): void;
+    };
+    const spawn = vi
+      .spyOn(scene, 'spawnPowerUpDrop')
+      .mockImplementation(() => null);
+    for (let i = 0; i < 3000; i++) roll._maybeDropPowerUp(100, 120);
+    const drawn = spawn.mock.calls.map(([id]) => id as DropId);
+    spawn.mockRestore();
+
+    const allowed = new Set<DropId>([
+      'shield',
+      'bomb',
+      'speed_boost',
+      'phase_shift',
+      'spread',
+      'rapid',
+      ...EXEMPT_WHEN_FULL,
+      'reset',
+    ]);
+    expect(drawn.length).toBeGreaterThan(200);
+    expect(drawn.filter((id) => !allowed.has(id))).toEqual([]);
+    // The temporarily held weapon still spawns (it owns a slot).
+    expect(drawn).toContain('rapid');
+  });
+
+  it('a full pool blocks an unheld drop and plays the not-collectable cue once (AC8)', async () => {
+    const blockedCue = vi.spyOn(effectsModule, 'playPowerUpBlockedSound');
+    const popCue = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    player.getPowerUpLevelStore().collect('shield', true);
+    player.getPowerUpLevelStore().collect('bomb', true);
+    player.getPowerUpLevelStore().collect('speed_boost', true);
+    player.getPowerUpLevelStore().collect('phase_shift', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('dual', true);
+    expect(resolvePlayerSlotState(player).isFull).toBe(true);
+
+    // An unheld, non-exempt kind drops right on top of the ship.
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
+    expect(drop).not.toBeNull();
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // clear the collect gate
+    player.setPosition(drop.x, drop.y);
+
+    scene.tick(0.016);
+
+    // Refused: kept on the field, no collection, distinct cue played once.
+    expect(blockedCue).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).toContain(drop);
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(popCue).not.toHaveBeenCalled();
+
+    // Overlapping for several more frames must not spam the cue.
+    scene.tick(0.05);
+    scene.tick(0.05);
+    expect(blockedCue).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).toContain(drop);
+
+    // Free the pool (run restart clears both components) — the same drop is
+    // now collectable and the normal pickup path runs.
+    player.getPowerUpLevelStore().reset();
+    player.resetWeaponLevels();
+    expect(resolvePlayerSlotState(player).isFull).toBe(false);
+    scene.tick(0.016);
+    expect(popCue).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).not.toContain(drop);
+    expect(scene.getCollectAnimations().length).toBeGreaterThan(0);
   });
 
   it('below the cap the full weighted pool is still drawable (AC3)', async () => {

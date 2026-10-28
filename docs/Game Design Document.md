@@ -931,50 +931,73 @@ The player collects power-ups dropped by destroyed enemies through the shared we
 
 > **Catalogue descriptions + gym help overlay (AH-0MUAYB67I002REOZ):** Every catalogue entry now carries a one-line player-facing `description`: `POWER_UP_CATALOGUE.description` (`src/powerups/types.ts`) for all power-ups, and `WEAPON_CATALOGUE.description` plus a `RESET_DROP` entry (`src/utils/weapons.ts`) for Cannon/Spread/Dual/Rapid/**Nova/Mortar/Arc**/Reset. The three tuning gyms (`GymPowerUpsUtility`, `GymPowerUpsCombat`, `GymWeapons`) each render a `Help (?)` button next to `← INDEX` and also respond to the `?` key. Opening the help **pauses** the gym's simulation and launches the full-screen `HelpScene` (`src/scenes/HelpScene.ts`), which lists **exactly the drops that gym can spawn**, one row each showing the same code-drawn icon as the field drop, the display name and the catalogue description — read from the shared catalogues so the help text cannot drift from implemented behaviour. Closing via `?`, the `Close` control (focused by default, keyboard-operable) or **ESC** resumes the gym exactly where it paused; while the overlay is open ESC closes the help and does **not** return to the menu. The shared helper is `addHelpButton` (`src/utils/gymHelp.ts`), wired into the three gyms only (the full-pool formation gyms and the shipped `PlayScene` are out of scope).
 
-#### Permanent loadout slots — the shared six-slot cap (parent AH-0MVLIJT3M005HPHF)
+#### Loadout slots — the shared six-slot cap (parent AH-0MVLIJT3M005HPHF)
 
-A run's **permanent** loadout is capped at **six slots**, and that pool is
-**shared** across power-up and weapon permanent grants: the **first six
-distinct kinds** taken as a permanent reward (the hold-full choice §4.4.1 or a
-mini-boss reward §4.4.4) define the build for the rest of the run. This is the
-**demand-side** counterpart of the level-scaled supply reduction in §4.4
+A run's loadout is capped at **six slots**, and that pool is **shared** across
+power-up and weapon kinds. A kind holds a slot while it is held **permanently**
+(a hold-full choice §4.4.1 or mini-boss reward §4.4.4 grant) **or
+temporarily** (an active field pickup), so a run can never hold more than six
+distinct kinds at once, however they were acquired. This is the **demand-side**
+counterpart of the level-scaled supply reduction in §4.4
 (AH-0MVHT1M6O003PU7P); its balance rationale and the chosen shared-pool
 semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
 
 - **One named constant.** `POWER_UP_SLOT_CAP = 6`
   ([`src/core/constants.ts`](../src/core/constants.ts)) governs occupancy; a
-  slot is a **distinct permanently-owned drop kind**, whether that kind is a
-  power-up or a weapon drop.
-- **Derived, not counted.** Occupancy is **derived** from the two existing
-  permanent-grant stores — `PowerUpLevelStore.getLevels()` for power-ups and
-  `Player.getWeaponLevels()` for weapon drops — so there is **no second slot
-  counter** and a repeat permanent grant of an owned kind **levels it up**
-  instead of opening a new slot.
-- **Field pickups never consume a slot.** Only hold-full and mini-boss rewards
-  are permanent; a temporary field-pickup stack leaves the pool untouched. A
-  drop of an un-owned kind already on screen when the sixth slot fills stays
-  collectible for its temporary effect and simply stops spawning.
-- **The permanent cannon and `reset` never count.** The cannon cannot be granted
-  as a reward (it is not a weapon drop) and `reset` is not a `WeaponId` at all,
-  so a weapon slot means a real weapon **drop** at a permanent level ≥ 1.
+  slot is a **distinct held drop kind**, whether that kind is a power-up or a
+  weapon drop, and whether it is held permanently or temporarily.
+- **Derived, not counted.** Occupancy is **derived** from the existing
+  run-scoped stores — `PowerUpLevelStore.getLevels()` and
+  `PowerUpLevelStore.getTempPowerUpIds()` for power-ups,
+  `Player.getWeaponLevels()` and `Player.getTempWeaponIds()` for weapon drops —
+  so there is **no second slot counter**, and a repeat pickup or grant of a held
+  kind **levels it up** instead of opening a new slot.
+- **Field pickups occupy a slot while they last (producer Q4a, 2026-10-27).** A
+  temporary field-pickup stack counts towards the six for as long as its timed
+  window is active, and the slot is **released when the window expires**
+  (`PowerUpLevelStore.clearTemporary` / `Player.tickWeaponTimers`), so occupancy
+  can churn during a run. Run restart (`PowerUpLevelStore.reset()` /
+  `Player.resetWeaponLevels()`) clears both components, emptying the pool.
+- **A blocked drop is refused with a distinct cue (producer Q5b).** At six held
+  kinds a drop whose kind is neither held, nor available-when-full, nor the
+  slot-exempt `reset` utility is **not collectable**: it stays on the field (and
+  becomes collectable again if a slot frees), no effect or absorb animation is
+  applied, and the distinct **not-collectable cue**
+  (`playPowerUpBlockedSound()`, played once per drop while it stays blocked)
+  replaces the pickup pop, so the player can tell why the pickup failed. The
+  gate is the shared `canCollect` predicate of `collectOverlappingDrops`,
+  supplied by `CombatCoreScene`, so the game and the gyms refuse identically.
+- **The permanent cannon and `reset` never count.** The cannon can never hold a
+  timed level and the `reset` weapon utility cannot be permanently granted, so
+  neither can occupy a slot; `reset` is also never gated by the cap. A weapon
+  slot therefore means a real weapon **drop** at a permanent level ≥ 1 or with
+  an active temporary stack.
 - **Available-when-full is a per-entry catalogue flag.** Once all six slots are
-  filled, only the six owned kinds plus catalogue entries flagged
-  `availableWhenSlotsFull` may spawn or be offered as a **new permanent pick**.
-  The flag lives on the power-up catalogue entry
+  filled, only the held kinds plus catalogue entries flagged
+  `availableWhenSlotsFull` may spawn or be offered as a **permanent pick**. The
+  flag lives on the power-up catalogue entry
   (`PowerUpEntry.availableWhenSlotsFull`), **defaults to `false`** so a newly
   added entry is non-exempt unless it opts in, and there are no
   `id === '…'` special cases — a future exemption is a data change, not a code
-  change. **Extra Life** and **Mystery UFO** set the flag today (neither would
-  need a seventh permanent effect kind).
+  change. **Extra Life** and **Mystery UFO** set the flag today. An exempt entry
+  **never occupies a slot** (producer Q7a): it is excluded from the count as
+  well as from the gates, so taking it can never push a run past six.
+- **The hold-full choice offers only what is in the slots (producer Q6a).** When
+  a hold-full offer (or the mini-boss reward, which reuses the same builder) is
+  made at six held kinds, it offers level-ups of permanently-owned kinds, a
+  permanent pick for a kind held only temporarily (it already owns its slot) and
+  the available-when-full entries — never a kind outside the slots, so a seventh
+  kind can never be taken. Below the cap the gate is inert.
 - **One implementation, observable in the gyms.** The rule lives once in
   [`src/powerups/slots.ts`](../src/powerups/slots.ts). The shared drop draw
-  (`drawNextDrop` in [`src/scenes/core/dropLayer.ts`](../src/scenes/core/dropLayer.ts))
-  and the hold-full choice pool (`buildChoiceCandidates` in
-  [`src/powerups/choice.ts`](../src/powerups/choice.ts)) both consume it, so
+  (`drawNextDrop` in [`src/scenes/core/dropLayer.ts`](../src/scenes/core/dropLayer.ts)),
+  the shared collection gate (`CombatCoreScene`) and the hold-full choice pool
+  (`buildChoiceCandidates` in
+  [`src/powerups/choice.ts`](../src/powerups/choice.ts)) all consume it, so
   `PlayScene` and every gym apply the identical gate (gym↔game parity —
   [`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`](./ENEMY_DESIGN_AND_IMPLEMENTATION.md)
-  §5.1). Below the cap the gate is inert, so spawning and choice behaviour are
-  unchanged.
+  §5.1). Below the cap the gate is inert, so spawning, collection and choice
+  behaviour are unchanged.
 
 #### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
 
@@ -988,7 +1011,7 @@ Alongside power-up drops, destroying a **small `Asteroid`** leaves a **mineral**
   - A one-line **description** of what the item actually does, rendered beneath the option name and resolved from the shared catalogue `description` via `getHelpDescription` (`src/utils/gymHelp.ts`) — the same copy the gym help overlay shows, so the overlay and the help cannot drift (AH-0MV2N2591007UGPD). The change summary / **★ New** line sits beneath it, so every option is a **three-line block** (name → description → detail). The catalogue wording is **level-neutral**, accurate for both a timed field pickup and a permanent hold-full reward (hard-coded temporary-duration clauses such as "for 10 s" were removed, while the per-level deltas stay in the change summary).
   - A **change summary** (e.g. "+1 Projectiles, +15% Bullet size") beneath the name for weapon-level offers, derived from the shared level maths in `weaponLevels.ts`; power-up-level offers derive theirs from the shared power-up resolver in `powerUpLevels.ts` (AH-0MUU1GOAU007RFVR, AH-0MUU2QJE2007JNR6). Only variables that actually change are listed.
   - A **★ New** badge (orange) for weapons **and power-ups** the player does not yet own, distinguishing them from upgrade offers (AH-0MUU1GOAU007RFVR, AH-0MUU2QJE2007JNR6). Ownership is only known when the launcher supplies `ChoiceContext.powerUpLevels`; when it is omitted, no badge is shown (backward compatible).
-- **Six-slot gate at the choice (parent AH-0MVLIJT3M005HPHF, AC4)**: once all **six** permanent slots are filled (§4.4, "Permanent loadout slots") the choice offers **level-ups of owned items** plus entries flagged `availableWhenSlotsFull` (**Extra Life**, **Mystery UFO**) and **nothing else**. A base entry that would create a **seventh** permanent kind is never offered, so the candidate list degrades gracefully instead of emptying. The gate lives once in `buildChoiceCandidates` (`src/powerups/choice.ts`) and the mini-boss reward (§4.4.4) inherits it through the shared `buildOwnedLevelUpOptions` builder — no scene, gym or `unlocks.ts` re-derives it. Below the cap the gate is inert, so the candidate list and its weights are unchanged.
+- **Six-slot gate at the choice (parent AH-0MVLIJT3M005HPHF, AC4)**: once all **six** slots are held — permanently **or** by an active field pickup (§4.4, "Loadout slots") — the choice offers **only items currently in the slots**: level-ups of permanently-owned items, a permanent pick for a kind held only temporarily, and entries flagged `availableWhenSlotsFull` (**Extra Life**, **Mystery UFO**), which never occupy a slot. A kind outside the slots is never offered, so a seventh kind can never be taken and the candidate list degrades gracefully instead of emptying. The gate lives once in `buildChoiceCandidates` (`src/powerups/choice.ts`); the mini-boss reward (§4.4.4) inherits it through the shared `buildOwnedLevelUpOptions` builder — no scene, gym or `unlocks.ts` re-derives it. Launchers supply `ChoiceContext.tempPowerUpIds` / `tempWeaponIds` from the run's temporary stacks so the gate sees the same state as the spawn draw and the collection gate. Below the cap the gate is inert, so the candidate list and its weights are unchanged.
 - **Permanent pick**: the chosen option is applied to the player **permanently for the current run** via the shared `applyMineralChoiceReward` helper (also in `src/scenes/core/mineralLayer.ts`), so a choice grants the same effect in the game and in every gym — timed effects never expire and chosen weapons never time out (`EffectsRegistry.applyCollect(id, true)` / `applyWeapon(id, true)`, `Player.equipWeapon(id, true)`). A `weapon-level` option takes the same permanent `equipWeapon(id, true)` path, which raises the weapon's run-scoped level by one (parent AH-0MUPMPCB2009J54J §4.4.2); a `power-up-level` option takes the permanent `EffectsRegistry.applyCollect(id, true)` path, which raises the power-up's run-scoped level by one on the single player-owned store the registry consumes (parent AH-0MUV5CLVO002ZHS9 §4.4.3; single mutation point — AH-0MUV5CLW6005VF7K). Every launcher (`PlayScene`, `GymFormationScene` and `GymWeaponLeveling`) supplies `ChoiceContext.powerUpLevels` from the player's run-scoped power-up level store and `ChoiceContext.weaponLevels` from the weapon level state — both reporting **permanent** levels only (`PowerUpLevelStore.getLevels()` / `Player.getWeaponLevels()`), so a temporary field pickup never inflates an offer — and marks unowned base-pool power-ups as **★ New**. Permanence is scoped to the run and cleared on reset/restart.
 - **Metronomic ghost fire while the overlay is open (AH-0MV0QPO4N009KWVT)**: opening the hold-full choice pauses the launcher at the SceneManager level, which freezes the shared beat clock and would otherwise cut the fire audio dead. Instead, the overlay keeps playing the player's **currently active** weapon fire cues on the same beat grid (§4.4 beat-aligned fire grid) at a reduced volume — **`HOLD_FULL_FIRE_VOLUME_SCALE` (0.3×)** — with **no projectiles and no gameplay simulation advanced**. No enemy or other gameplay cue plays during the overlay. A pure scheduler (`createHoldFullFireMetronome`, `src/scenes/core/holdFullFire.ts`) derives every ghost tick from `src/utils/beat.ts` grid maths (phase-locked to the tick the next real shot would have used), and the launcher captures the frozen schedule (`buildHoldFullFireSchedule` from `Player.getActiveWeapons()` / `getFireInterval`) into the overlay's `fireSchedule` payload. The same cue path (`playWeaponFireSound`) serves live fire and the ghosts, so the two cannot drift.
 - **Beat-locked 3-2-1 countdown and resume (AH-0MV0QPO4N009KWVT)**: when the player selects an option the choice is **not applied instantly** — `MineralChoiceScene` plays a **3-2-1 countdown, one count per beat** (750 ms at the default 80 BPM, `createHoldFullCountdown` in `src/scenes/core/holdFullCountdown.ts`), each count showing a large on-screen numeral and playing the distinct countdown cue (`playCountdownTickSound`, baked `aihell-countdown-tick` ‑ see §7.3). The moment the choice is made the **choice screen is torn down** — the backdrop, the option rows and the heading disappear, leaving only the countdown numeral (AH-0MV722WJS0075UTZ). The tone **rises with each beat** (count 3 base, 2 a major third above, 1 a perfect fifth above — a C6→E6→G6 rise) by playing the single baked asset at a rising playback rate (`playCountdownTickSound(step)`, `countdownTickRate`, §7.3). The reduced-volume fire **continues underneath** the countdown and ends only when the overlay closes. On the beat after "1" (≈2.25 s after selection) the choice is applied and gameplay resumes via the same single `onSelect` contract; the launcher then **re-bases the frozen beat clock** across the whole overlay duration (`CombatCoreScene.rebaseBeatClockForHoldFullResume`) so the ship's real fire resumes **phase-locked on the same grid** — no phase jump or restart. The demo/attract auto-select drives the identical selection → countdown → resume path, so an attract-mode run never stalls and keeps its cadence (AC6).

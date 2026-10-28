@@ -3016,6 +3016,10 @@ export class PlayScene extends CombatScene<
     const owned: ChoiceOption[] = buildUpgradeOptions({
       weaponLevels: this.player?.getWeaponLevels() ?? [],
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      // The mini-boss reward reads the same six-slot view as the hold-full
+      // choice (parent AH-0MVLIJT3M005HPHF; temporary stacks hold a slot).
+      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
     // Option B — unlock one weapon still in the initially-locked pool.
     const unlocks: ChoiceOption[] = lockedWeaponIds(
@@ -4564,6 +4568,11 @@ export class PlayScene extends CombatScene<
       // Offer level-ups for power-ups the player already owns (parent
       // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      // Field pickups occupy a slot while they last, so the six-slot gate must
+      // see the temporary half of the run's holdings (parent AH-0MVLIJT3M005HPHF
+      // producer Q4a/Q6a: at full slots only offer items currently in the slots).
+      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
     this.mineralChoiceOpen = true;
     this.runTelemetry.holdFull(this.mineralChoiceOptions.map((o) => o.id));

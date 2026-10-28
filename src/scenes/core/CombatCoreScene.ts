@@ -126,6 +126,7 @@ import {
 } from './dropLayer';
 import {
   resolvePlayerSlotState,
+  isWithinSlotPool,
   type PowerUpSlotState,
 } from '../../powerups/slots';
 import {
@@ -143,6 +144,7 @@ import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import {
+  playPowerUpBlockedSound,
   setExplosionBeatClock,
   setThrusterBeatClock,
   updateThrusterSound,
@@ -233,6 +235,12 @@ export interface CombatDrop {
   weaponDropId?: string;
   /** True once collected and playing its absorb animation. */
   absorbing?: boolean;
+  /**
+   * True once the not-collectable cue has played for this drop (six-slot
+   * collection gate, parent AH-0MVLIJT3M005HPHF AC8). It is a cue-only flag:
+   * the drop stays collectable and is picked up normally if a slot frees.
+   */
+  blockedCuePlayed?: boolean;
 }
 
 /**
@@ -1365,9 +1373,40 @@ export class CombatCoreScene<
    * survivors.
    */
   protected _collectOverlappingDrops(drops: TDrop[]): TDrop[] {
-    return collectOverlappingDrops(drops, this.getPlayer(), (drop) =>
-      this._collectDrop(drop),
+    return collectOverlappingDrops(
+      drops,
+      this.getPlayer(),
+      (drop) => this._collectDrop(drop),
+      undefined,
+      {
+        canCollect: (drop) => this._canCollectDrop(drop),
+        onBlocked: (drop) => this._onDropCollectionBlocked(drop),
+      },
     );
+  }
+
+  /**
+   * Six-slot collection gate (parent AH-0MVLIJT3M005HPHF AC8): a drop may be
+   * collected unless the shared pool is full and its kind is neither held
+   * (permanently or temporarily), available-when-full, nor a slot-exempt
+   * utility. The rule comes from the single shared helper, so the game and
+   * every gym refuse exactly the same drops (gym↔game parity,
+   * AH-0MUGZDTFX004RBD1).
+   */
+  protected _canCollectDrop(drop: TDrop): boolean {
+    return isWithinSlotPool(drop.dropId, this._resolveDropSlotState());
+  }
+
+  /**
+   * Blocked-pickup feedback (parent AC8): plays the distinct not-collectable
+   * cue **once per drop** while it stays on the field. A drop can overlap the
+   * ship for many frames, so the cue is latched on the drop itself rather than
+   * re-fired every frame.
+   */
+  protected _onDropCollectionBlocked(drop: TDrop): void {
+    if (drop.blockedCuePlayed) return;
+    drop.blockedCuePlayed = true;
+    playPowerUpBlockedSound();
   }
 
   /**

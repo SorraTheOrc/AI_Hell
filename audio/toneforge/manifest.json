@@ -111,6 +111,14 @@
       ]
     },
     {
+      "cue": "playPowerUpBlockedSound",
+      "recipe": "aihell-pickup-blocked",
+      "delivery": "baked",
+      "seeds": [
+        32153
+      ]
+    },
+    {
       "cue": "playSwarmBurstSound",
       "recipe": "aihell-swarm-burst",
       "delivery": "baked",

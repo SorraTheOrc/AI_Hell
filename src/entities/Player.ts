@@ -923,6 +923,18 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Snapshot of every weapon with an **active temporary stack** (a field
+   * pickup whose 10 s window has not expired). Used by the six-slot cap: a
+   * temporary stack occupies a slot while it lasts (parent AH-0MVLIJT3M005HPHF,
+   * producer Q4a). The cannon never appears here — `equipWeapon` ignores it.
+   */
+  getTempWeaponIds(): WeaponId[] {
+    return [...this._tempWeaponStacks.entries()]
+      .filter(([, stacks]) => stacks > 0)
+      .map(([id]) => id);
+  }
+
+  /**
    * The **resolver level** for a weapon: the number of *upgrades* applied,
    * i.e. `collections − 1` (AC8). The first collection unlocks the weapon at
    * its base stats (level 1 = base, matching the pre-leveling timed-drop
@@ -980,6 +992,16 @@ export class Player extends Phaser.GameObjects.Graphics {
    */
   getPowerUpLevels(): Array<{ id: PowerUpId; level: number }> {
     return this._powerUpLevelStore.getLevels();
+  }
+
+  /**
+   * Snapshot of every power-up with an active **temporary** (field-pickup)
+   * stack — the temporary half of the six-slot occupancy view (parent
+   * AH-0MVLIJT3M005HPHF, producer Q4a). Derived from the single power-up level
+   * store, never counted separately.
+   */
+  getTempPowerUpIds(): PowerUpId[] {
+    return this._powerUpLevelStore.getTempPowerUpIds();
   }
 
   /**
