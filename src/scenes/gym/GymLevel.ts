@@ -85,6 +85,12 @@ import {
   PLAYFIELD_WORLD,
   type WrapAwareBody,
 } from '../core/enemyWrap';
+import {
+  resolveSpawnTransitTarget,
+  type SpawnTransitEntity,
+  type SpawnTransitInput,
+  type SpawnTransitPoint,
+} from '../core/spawnTransit';
 import { Player } from '../../entities/Player';
 import { PlayerBullet } from '../../entities/PlayerBullet';
 import {
@@ -351,23 +357,43 @@ export function spawnWave(
         spacingY: group.spacingY,
         offset,
       });
-      // Wormhole-entry transit: the destination is the live formation slot
-      // (drift tracked every frame), matching `PlayScene._spawnEnemy`.
-      const autonomous =
-        (enemy as { autonomousPositioning?: boolean }).autonomousPositioning ===
-        true;
+      // Wormhole-entry transit: the destination comes from the shared seam
+      // (AH-0MVRMHQC9003VDNN); the level gym owns the launched-formation
+      // base plus its live `driftX` (drift tracked every frame), matching
+      // `PlayScene._spawnEnemy`. GymLevel has not adopted the orbital
+      // `formationSlot` seam yet, so it declares only the autonomous-mover
+      // capability: the shared rule resolves the grid slot exactly as before,
+      // keeping this a behaviour-preserving refactor. The follow-up parity
+      // item (AH-0MVRMHSKH0066J9B) passes the entity itself.
+      const transitEntity: SpawnTransitEntity = {
+        autonomousPositioning: (enemy as { autonomousPositioning?: boolean })
+          .autonomousPositioning,
+      };
+      const transitInput = (base: SpawnTransitPoint): SpawnTransitInput => ({
+        entity: transitEntity,
+        transit: origin !== undefined,
+        base,
+        offset,
+        spacingX: group.spacingX,
+        spacingY: group.spacingY,
+      });
+      const transitBase = (): SpawnTransitPoint => ({
+        x: group.startX + (options.getDriftX?.() ?? 0),
+        y: group.startY,
+      });
+      // Resolved once up front so an exempt spawn gets no destination
+      // function at all (a destination would pin the entity to its origin).
+      const transitTarget = resolveSpawnTransitTarget(
+        transitInput(transitBase()),
+      );
       startSpawnAnimation(
         enemy as unknown as SpawnAnimatable,
         enemy.scaleX,
         WORMHOLE_OPEN_DURATION,
-        origin && !autonomous
-          ? () => {
-              const drift = options.getDriftX?.() ?? 0;
-              return {
-                x: group.startX + drift + offset.col * group.spacingX,
-                y: group.startY + offset.row * group.spacingY,
-              };
-            }
+        transitTarget
+          ? () =>
+              resolveSpawnTransitTarget(transitInput(transitBase())) ??
+              transitTarget
           : undefined,
       );
       enemy.setSpawning(true);

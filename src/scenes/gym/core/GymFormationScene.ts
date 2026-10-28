@@ -107,6 +107,12 @@ import {
   type MarchOptions,
   type MarchState,
 } from '../../../scenes/core/marchFormation';
+import {
+  resolveSpawnTransitTarget,
+  type SpawnTransitEntity,
+  type SpawnTransitInput,
+  type SpawnTransitPoint,
+} from '../../core/spawnTransit';
 import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
 import { PowerUp } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
@@ -1793,14 +1799,6 @@ export class GymFormationScene<
       playfield: { width: GAME_WIDTH, height: GAME_HEIGHT },
     });
     for (const offset of offsets) {
-      // Wormhole-entry transit (AH-0MV8BSMXC0097KLW): spawning-capable
-      // entities emerge at the portal (where the wormhole opens) and traverse
-      // to their slot over the spawn window — parity with `PlayScene.spawnWave`
-      // (composed with the portal placement AH-0MV8BR9Y70079TKC). Autonomous
-      // movers (`autonomousPositioning`, e.g. the Raider) are exempt: they
-      // emerge at the portal and their own motion carries them out, avoiding a
-      // position pop when the spawn window ends. Entities without the spawning
-      // seams (e.g. test stubs) are created straight on their slot.
       const slot = computeFormationPosition(
         portal.x,
         portal.y,
@@ -1809,20 +1807,33 @@ export class GymFormationScene<
         this.config.spacingY,
       );
       const entity = this.config.createEntity(this, portal.x, portal.y, offset);
-      const canTransit =
-        !(entity as { autonomousPositioning?: boolean })
-          .autonomousPositioning &&
+      // Wormhole-entry transit (AH-0MV8BSMXC0097KLW): spawning-capable
+      // entities emerge at the portal (where the wormhole opens) and traverse
+      // to their slot over the spawn window — parity with `PlayScene.spawnWave`
+      // (composed with the portal placement AH-0MV8BR9Y70079TKC). Autonomous
+      // movers (`autonomousPositioning`, e.g. the Raider) are exempt: they
+      // emerge at the portal and their own motion carries them out, avoiding a
+      // position pop when the spawn window ends. Entities without the spawning
+      // seams (e.g. test stubs) are created straight on their slot.
+      //
+      // The destination rule is the shared seam (AH-0MVRMHQC9003VDNN): the
+      // formation base is scene structure, `resolveSpawnTransitTarget` owns
+      // "autonomous exemption → orbital live slot → grid offset". See
+      // `src/scenes/core/spawnTransit.ts` for the rationale.
+      const animatable =
         typeof (entity as { setSpawning?: unknown }).setSpawning === 'function';
-      if (!canTransit) entity.setPosition(slot.x, slot.y);
-      // Orbital entities (the Phaser) expose a live formation-slot seam: the
-      // wormhole transit targets their orbital slot instead of the grid line,
-      // so they never appear in a line then snap onto the ring
-      // (AH-0MVEXVME1004SIIS, Q2=A). Every other enemy keeps the grid slot.
-      const orbitalSlot = (
-        entity as {
-          formationSlot?: (baseX: number, baseY: number) => { x: number; y: number };
-        }
-      ).formationSlot;
+      const transitInput = (base: SpawnTransitPoint): SpawnTransitInput => ({
+        entity: entity as unknown as SpawnTransitEntity,
+        transit: animatable,
+        base,
+        offset,
+        spacingX: this.config.spacingX,
+        spacingY: this.config.spacingY,
+      });
+      const transitTarget = resolveSpawnTransitTarget(
+        transitInput({ x: this.formationBaseX, y: this.formationBaseY }),
+      );
+      if (!transitTarget) entity.setPosition(slot.x, slot.y);
       // Containers are not auto-added to the display list — without this
       // the enemies would never render (project convention, see Gym.ts).
       this.add.existing(entity);
@@ -1831,29 +1842,21 @@ export class GymFormationScene<
       // advance, so shrinking them here would strand them at 1 px forever.
       // The game spawns them fully formed (`PlayScene.spawnBoss`), so this is
       // also the parity behaviour (AH-0MV8BSMXC0097KLW).
-      const animatable =
-        typeof (entity as { setSpawning?: unknown }).setSpawning === 'function';
       if (animatable) {
         startSpawnAnimation(
           entity as unknown as SpawnAnimatable,
           entity.scaleX,
           WORMHOLE_OPEN_DURATION,
-          canTransit
-            ? () => {
+          transitTarget
+            ? () =>
                 // Track the live slot so base drift/march during the transit
                 // is followed and the entity lands exactly on its live slot.
-                if (typeof orbitalSlot === 'function') {
-                  return orbitalSlot.call(
-                    entity,
-                    this.formationBaseX,
-                    this.formationBaseY,
-                  );
-                }
-                return {
-                  x: this.formationBaseX + offset.col * this.config.spacingX,
-                  y: this.formationBaseY + offset.row * this.config.spacingY,
-                };
-              }
+                resolveSpawnTransitTarget(
+                  transitInput({
+                    x: this.formationBaseX,
+                    y: this.formationBaseY,
+                  }),
+                ) ?? transitTarget
             : undefined,
         );
       }

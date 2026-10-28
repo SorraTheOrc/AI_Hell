@@ -2607,6 +2607,12 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   // consumed by PlayScene's spawn seam and GymLevel's launch seam, so a scene
   // that re-introduces a divergent copy fails the guard.
   ['enemyForceFieldHits', 'src/core/enemyForceField.ts'],
+  // Wormhole-transit destination rule (AH-0MVRMHQC9003VDNN): the
+  // "autonomous-mover exemption → orbital live slot → grid-slot/offset
+  // fallback" chain is defined once in `src/scenes/core/spawnTransit.ts` and
+  // consumed by PlayScene, GymFormationScene, GymLevel and GymBoss. A scene
+  // that re-introduces a copy fails the repo-wide duplicate-body guard.
+  ['resolveSpawnTransitTarget', 'src/scenes/core/spawnTransit.ts'],
 ];
 
 /**
@@ -2727,6 +2733,53 @@ describe('epic parity guard — the guard detects a re-introduced duplicate (AC3
         'export class Duplicate {}\n',
       );
       expect(collectProductionSourceFiles(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails when a production-like fixture redefines the shared transit resolver', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-guard-transit-'));
+    try {
+      const fixture = path.join(dir, 'DuplicateSpawnTransit.ts');
+      fs.writeFileSync(
+        fixture,
+        [
+          'export function resolveSpawnTransitTarget(input: { transit: boolean }): { x: number; y: number } | undefined {',
+          '  if (!input.transit) return undefined;',
+          '  return { x: 0, y: 0 };',
+          '}',
+          '',
+        ].join('\n'),
+      );
+
+      // The scanner observes the fixture as production source ...
+      const fixtureFiles = collectProductionSourceFiles(dir);
+      expect(fixtureFiles).toEqual([fixture]);
+      expect(
+        definesFunction(
+          fs.readFileSync(fixture, 'utf8'),
+          'resolveSpawnTransitTarget',
+        ),
+      ).toBe(true);
+
+      // ... so combined with the canonical definer the single-definer
+      // invariant is violated and the guard would fail.
+      const combined = [
+        ...fixtureFiles,
+        ...collectProductionSourceFiles(path.resolve(process.cwd(), 'src')),
+      ];
+      const definers = combined
+        .filter((file) =>
+          definesFunction(
+            fs.readFileSync(file, 'utf8'),
+            'resolveSpawnTransitTarget',
+          ),
+        )
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers.length).toBeGreaterThan(1);
+      expect(definers).not.toEqual(['src/scenes/core/spawnTransit.ts']);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

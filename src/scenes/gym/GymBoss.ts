@@ -54,6 +54,10 @@ import {
 import { makeCollapsible } from '../../utils/gymPanel';
 import { FormationOffset } from '../../utils/formations';
 import {
+  resolveSpawnTransitTarget,
+  type SpawnTransitEntity,
+} from '../core/spawnTransit';
+import {
   EnemyFormationConfig,
   GymFormationScene,
   FormationSceneBullet,
@@ -270,8 +274,22 @@ export class GymBoss extends GymFormationScene<
       // in place and is spawn-protected while it emerges — it is not part of
       // the wave's wormhole entry, so no destination is supplied. The shared
       // spawn-animation pass advances it because `getEnemyEntities()` includes
-      // the minions.
-      startSpawnAnimation(entity, entity.scaleX, WORMHOLE_OPEN_DURATION);
+      // the minions. The in-place exemption is asked of the shared transit seam
+      // (`transit: false`, AH-0MVRMHQC9003VDNN), not re-implemented here.
+      const transitTarget = resolveSpawnTransitTarget({
+        entity: entity as unknown as SpawnTransitEntity,
+        transit: false,
+        base: { x: spawn.x, y: spawn.y },
+        offset: spawn.offset,
+        spacingX: spawn.spacingX,
+        spacingY: spawn.spacingY,
+      });
+      startSpawnAnimation(
+        entity,
+        entity.scaleX,
+        WORMHOLE_OPEN_DURATION,
+        transitTarget ? () => transitTarget : undefined,
+      );
       entity.setSpawning(true);
       this.add.existing(entity);
       this.minions.push({

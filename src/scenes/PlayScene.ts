@@ -79,6 +79,12 @@ import {
 } from '../utils/formations';
 import { FormationGlide } from './core/formationGlide';
 import {
+  resolveSpawnTransitTarget,
+  type SpawnTransitEntity,
+  type SpawnTransitInput,
+  type SpawnTransitPoint,
+} from './core/spawnTransit';
+import {
   advanceMarch,
   computeMarchBounds,
   createMarchState,
@@ -1700,46 +1706,43 @@ export class PlayScene extends CombatScene<
     // Growth begins once the wormhole has finished opening. When the enemy
     // emerged from the wormhole it also traverses to its formation position
     // in lock-step with the growth animation (AH-0MV8BSMXC0097KLW).
-    // Entities with autonomous motion (e.g. the Raider, whose patrol/attack
-    // state drives its own position) are exempt: they emerge at the origin
-    // and their own motion carries them out, avoiding a position pop when
-    // the spawn window ends.
-    const transit =
-      origin && !(entity as { autonomousPositioning?: boolean }).autonomousPositioning;
-    // Orbital entities (the Phaser) expose a live formation-slot seam: the
-    // wormhole transit targets their orbital slot instead of the grid line,
-    // so they never appear in a line then snap onto the ring
-    // (AH-0MVEXVME1004SIIS, Q2=A). Every other enemy keeps the grid slot.
-    const orbitalSlot = (
-      entity as {
-        formationSlot?: (baseX: number, baseY: number) => { x: number; y: number };
-      }
-    ).formationSlot;
+    //
+    // The destination rule is the shared seam (AH-0MVRMHQC9003VDNN): the
+    // scene owns the live base below, `resolveSpawnTransitTarget` owns
+    // "autonomous exemption → orbital live slot → grid offset". See
+    // `src/scenes/core/spawnTransit.ts` for the rationale.
+    const transitBase = (): SpawnTransitPoint => {
+      // Track the live formation slot so formation drift/march during the
+      // transit is followed and the enemy lands exactly on it.
+      const isMarch = cfg.formationKind === 'march';
+      return {
+        x:
+          isMarch && this.marchState
+            ? this.marchState.x
+            : spawn.startX + this.driftX,
+        y: isMarch && this.marchState ? this.marchState.y : spawn.startY,
+      };
+    };
+    const transitInput = (base: SpawnTransitPoint): SpawnTransitInput => ({
+      entity: entity as unknown as SpawnTransitEntity,
+      transit: origin !== undefined,
+      base,
+      offset: spawn.offset,
+      spacingX: spawn.spacingX,
+      spacingY: spawn.spacingY,
+    });
+    // Resolved once up front so an exempt spawn (an autonomous mover, or an
+    // in-place spawn with no origin) gets no destination function at all — a
+    // destination would pin the entity to its emergence point.
+    const transitTarget = resolveSpawnTransitTarget(transitInput(transitBase()));
     startSpawnAnimation(
       entity,
       entity.scaleX,
       WORMHOLE_OPEN_DURATION,
-      transit
-        ? () => {
-            // Track the live formation slot so formation drift/march during
-            // the transit is followed and the enemy lands exactly on it.
-            const isMarch = cfg.formationKind === 'march';
-            const baseX =
-              isMarch && this.marchState
-                ? this.marchState.x
-                : spawn.startX + this.driftX;
-            const baseY =
-              isMarch && this.marchState
-                ? this.marchState.y
-                : spawn.startY;
-            if (typeof orbitalSlot === 'function') {
-              return orbitalSlot.call(entity, baseX, baseY);
-            }
-            return {
-              x: baseX + spawn.offset.col * spawn.spacingX,
-              y: baseY + spawn.offset.row * spawn.spacingY,
-            };
-          }
+      transitTarget
+        ? () =>
+            resolveSpawnTransitTarget(transitInput(transitBase())) ??
+            transitTarget
         : undefined,
     );
     entity.setSpawning(true);
