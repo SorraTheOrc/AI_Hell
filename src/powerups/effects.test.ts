@@ -1750,26 +1750,14 @@ describe('Thorn Field: automatic ram recharge (AH-0MVJ8YKR70096C6T)', () => {
 });
 // ── Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y) ───────
 //
-// TEST-FIRST (AH-0MVS2SW8V007ZBJQ): the no-silent-waste contract is that a
-// decided bolt stays **latched** until the shared core resolves it, exactly
-// once, never a banked volley. `EffectsRegistry.updateStrike` currently
-// consumes a queued bolt on read, so every case here is `it.fails` until the
-// retention item lands. The not-yet-existing acknowledgement surface is read
-// by name (repo convention — see the grey-out contract helpers in
-// `src/ui/HUD.test.ts`); the sibling flips each `it.fails` back to `it`.
-
-/** The not-yet-existing latch acknowledgement on `EffectsRegistry`. */
-interface StrikeLatchRegistry {
-  resolveStrike(): void;
-}
-
-/** Casts the registry so the not-yet-implemented surface type-checks. */
-function asLatch(reg: EffectsRegistry): EffectsRegistry & StrikeLatchRegistry {
-  return reg as unknown as EffectsRegistry & StrikeLatchRegistry;
-}
+// REGRESSION (test-first by AH-0MVS2SW8V007ZBJQ, implemented by
+// AH-0MVS2T2DJ0069C0Y): the no-silent-waste contract is that a decided bolt
+// stays **latched** until the shared core resolves it, exactly once, never a
+// banked volley. `EffectsRegistry.updateStrike` reports a due bolt every frame
+// and `resolveStrike()` is the acknowledgement that consumes it.
 
 describe('Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y)', () => {
-  it.fails('reports a due bolt on every frame until the shared core resolves it', () => {
+  it('reports a due bolt on every frame until the shared core resolves it', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('strike'); // a field pickup is due right now
 
@@ -1779,12 +1767,12 @@ describe('Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y)', () => {
     expect(reg.updateStrike(1 / 60)).toBe(true);
 
     // Acknowledging the landed bolt consumes exactly one shot.
-    asLatch(reg).resolveStrike();
+    reg.resolveStrike();
     expect(reg.updateStrike(1 / 60)).toBe(false);
     expect(reg.updateStrike(1 / 60)).toBe(false);
   });
 
-  it.fails('banks at most one bolt across a long enemy-free gap', () => {
+  it('banks at most one bolt across a long enemy-free gap', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('strike', true); // permanent
     const interval = reg.strikeInterval();
@@ -1795,11 +1783,11 @@ describe('Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y)', () => {
     }
 
     // One acknowledgement clears the *whole* gap — never a banked volley.
-    asLatch(reg).resolveStrike();
+    reg.resolveStrike();
     expect(reg.updateStrike(0.1)).toBe(false);
   });
 
-  it.fails('does not advance the permanent interval while a bolt is latched', () => {
+  it('does not advance the permanent interval while a bolt is latched', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('strike', true);
     const interval = reg.strikeInterval();
@@ -1808,7 +1796,7 @@ describe('Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y)', () => {
     for (let t = 0; t < interval - 1; t += 0.5) {
       reg.updateStrike(0.5);
     }
-    asLatch(reg).resolveStrike();
+    reg.resolveStrike();
 
     // The next bolt is still a full interval away — the clock was frozen,
     // not pre-spent by the gap.
@@ -1816,10 +1804,10 @@ describe('Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y)', () => {
     expect(reg.updateStrike(2)).toBe(true);
   });
 
-  it.fails('resolveStrike is a no-op when no bolt is due', () => {
+  it('resolveStrike is a no-op when no bolt is due', () => {
     const reg = new EffectsRegistry();
     // An acknowledgement with nothing latched must not mint a bolt.
-    expect(() => asLatch(reg).resolveStrike()).not.toThrow();
+    expect(() => reg.resolveStrike()).not.toThrow();
     expect(reg.updateStrike(1 / 60)).toBe(false);
   });
 });

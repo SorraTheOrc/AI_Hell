@@ -1,14 +1,12 @@
 /**
  * Orbital Strike no-silent-waste retention tests (AH-0MVS2SW8V007ZBJQ).
  *
- * **TEST-FIRST (parent AC3 / AH-0MVS2T2DJ0069C0Y).** The shared strike path
- * (`CombatCoreScene._updateOrbitalStrike` → `CombatScene.onOrbitalStrike`) is
- * supposed to **retain** a due bolt while no live enemy (or no live player)
- * is available, and land it — exactly once — on the first frame with a valid
- * target. Today `EffectsRegistry.updateStrike` consumes the bolt on read and
- * `onOrbitalStrike` returns early, so every case here is wrapped in Vitest's
- * `it.fails` (the repo's red-before/green-after convention) until the
- * retention item flips them back to `it`.
+ * **REGRESSION (parent AC3 / AH-0MVS2T2DJ0069C0Y).** The shared strike path
+ * (`CombatCoreScene._updateOrbitalStrike` → `CombatScene.onOrbitalStrike`)
+ * **retains** a due bolt while no live enemy (or no live player) is
+ * available, and lands it — exactly once — on the first frame with a valid
+ * target. Implemented by AH-0MVS2T2DJ0069C0Y: the registry latches a decided
+ * bolt until the shared core acknowledges it via `resolveStrike()`.
  *
  * These are shared-core regression tests: they drive the *real* shared
  * `_updateOrbitalStrike` / `onOrbitalStrike` implementation through a stub
@@ -194,7 +192,7 @@ describe('Orbital Strike retention — no live enemy (parent AC3)', () => {
     return booted.scene as OrbitalRetentionScene;
   }
 
-  it.fails('retains a queued bolt while no enemy is alive and lands it on the next one, exactly once', async () => {
+  it('retains a queued bolt while no enemy is alive and lands it on the next one, exactly once', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 480, y: 270 });
     const damage = scene.effects.strikeDamage();
@@ -215,7 +213,7 @@ describe('Orbital Strike retention — no live enemy (parent AC3)', () => {
     expect(target.hits).toBe(damage);
   });
 
-  it.fails('a permanent strike banks at most one bolt across a long enemy-free gap', async () => {
+  it('a permanent strike banks at most one bolt across a long enemy-free gap', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 480, y: 270 });
     const damage = scene.effects.strikeDamage();
@@ -254,7 +252,7 @@ describe('Orbital Strike retention — no live player (parent AC3)', () => {
     return booted.scene as OrbitalRetentionScene;
   }
 
-  it.fails('retains a queued bolt while no player is alive and lands it once a player exists', async () => {
+  it('retains a queued bolt while no player is alive and lands it once a player exists', async () => {
     const scene = await boot();
     const target = scene.addEnemy(320, 200);
     const damage = scene.effects.strikeDamage();

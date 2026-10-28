@@ -1654,22 +1654,34 @@ export class CombatCoreScene<
    * {@link _updateSmartBomb} so the strike runs in the game and every gym
    * from one implementation (AH-0MVH80ZJ7009W18Z).
    *
+   * The registry latches a decided bolt until it is acknowledged, so the
+   * bolt is only consumed when {@link onOrbitalStrike} reports that it
+   * actually landed. A frame with no live player or no live enemy leaves the
+   * bolt latched and it is retried on the next frame — a pickup is never
+   * silently wasted (AH-0MVS2T2DJ0069C0Y).
+   *
    * @param dt - Frame delta in seconds.
    */
   protected _updateOrbitalStrike(dt: number): void {
     const registry = this.getEffectsRegistry();
     if (!registry.updateStrike(dt)) return;
-    this.onOrbitalStrike(registry.strikeDamage());
+    if (!this.onOrbitalStrike(registry.strikeDamage())) return;
+    registry.resolveStrike();
   }
 
   /**
-   * Resolves one Orbital Strike bolt for `damage` hits. Default no-op (the
-   * enemy-damage seam lives in {@link CombatScene}); the concrete combat
-   * scene overrides it to pick the nearest enemy and apply the damage + VFX.
+   * Resolves one Orbital Strike bolt for `damage` hits, reporting whether it
+   * actually landed. Default `false` (nothing resolved, so the bolt stays
+   * latched for the next frame); the concrete combat scene overrides it to
+   * pick the nearest enemy and apply the damage + VFX.
    *
    * @param _damage - Level-resolved strike damage (whole hits).
+   * @returns True when the bolt was applied (and may be consumed); false when
+   *   there was no live player or no live enemy to resolve it against.
    */
-  protected onOrbitalStrike(_damage: number): void {}
+  protected onOrbitalStrike(_damage: number): boolean {
+    return false;
+  }
 
   /**
    * Resolves one Smart Bomb pulse at (x, y) through the shared area-effect

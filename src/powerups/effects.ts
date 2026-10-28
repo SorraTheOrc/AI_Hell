@@ -414,10 +414,24 @@ export class EffectsRegistry {
   /** Seconds until the next permanent strike (unused when not permanent). */
   private _strikePulseTimer = 0;
   /**
-   * One-shot strike request queued by a field pickup: the next
-   * {@link updateStrike} fires exactly once and clears it.
+   * One-shot strike request queued by a field pickup. The next
+   * {@link updateStrike} latches it (see {@link _strikeLatched}) instead of
+   * consuming it, so a bolt decided with no valid target is never lost.
    */
   private _strikePulsePending = false;
+  /**
+   * True while a decided bolt is **due but unresolved**
+   * (AH-0MVS2T2DJ0069C0Y). The registry reports `true` from
+   * {@link updateStrike} every frame until the shared combat core calls
+   * {@link resolveStrike} after actually landing the bolt, so a strike
+   * decided while no live enemy (or no live player) exists is retained and
+   * lands on the first valid frame.
+   *
+   * At most one bolt is ever latched: while it is held the permanent strike
+   * interval timer is frozen, so a long enemy-free gap cannot bank a volley.
+   * Cleared by {@link resolveStrike} or {@link reset}.
+   */
+  private _strikeLatched = false;
 
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
@@ -1228,19 +1242,30 @@ export class EffectsRegistry {
    * Advances the Orbital Strike bolt state by `dt` and reports whether a
    * bolt is due this frame.
    *
-   * - A field-pickup request fires exactly once and is then gone.
-   * - A permanent strike fires immediately on grant and then once per
-   *   {@link strikeInterval} seconds for the rest of the run.
+   * - A field pickup queues exactly one bolt. A permanent strike fires
+   *   immediately on grant and then once per {@link strikeInterval} seconds
+   *   for the rest of the run.
+   * - A decided bolt is **latched**, not consumed: `true` is reported on
+   *   every frame until the shared combat core acknowledges it through
+   *   {@link resolveStrike} once the bolt has actually landed. That keeps a
+   *   bolt decided with no live enemy (or no live player) from being
+   *   silently wasted (AH-0MVS2T2DJ0069C0Y).
+   * - While a bolt is latched the permanent interval timer is frozen, so at
+   *   most one bolt is ever retained and a long enemy-free gap cannot bank a
+   *   volley.
    *
    * The registry owns the decision; the shared combat core selects the
-   * nearest enemy and resolves the damage (AH-0MVCRC1Q0007JAV1).
+   * nearest enemy, resolves the damage and then acknowledges
+   * (AH-0MVCRC1Q0007JAV1).
    *
    * @param dt - Frame delta in seconds.
-   * @returns True when a bolt should strike this frame.
+   * @returns True when a bolt is due (retried every frame until resolved).
    */
   updateStrike(dt: number): boolean {
+    if (this._strikeLatched) return true;
     if (this._strikePulsePending) {
       this._strikePulsePending = false;
+      this._strikeLatched = true;
       if (this._strikePermanent) {
         this._strikePulseTimer = this.strikeInterval();
       }
@@ -1250,11 +1275,25 @@ export class EffectsRegistry {
     this._strikePulseTimer -= dt;
     if (this._strikePulseTimer <= 0) {
       this._strikePulseTimer = this.strikeInterval();
+      this._strikeLatched = true;
       return true;
     }
     return false;
   }
 
+  /**
+   * Acknowledges that the latched Orbital Strike bolt has been resolved (its
+   * damage was applied), consuming it (AH-0MVS2T2DJ0069C0Y).
+   *
+   * Called by the shared core only after `CombatCoreScene.onOrbitalStrike`
+   * reports the bolt actually landed. A no-op when no bolt is latched, so an
+   * acknowledgement with nothing due can never mint a bolt. A bolt that could
+   * not be resolved (no live enemy or no live player) is left latched and is
+   * retried on the next frame.
+   */
+  resolveStrike(): void {
+    this._strikeLatched = false;
+  }
 
   /**
    * Activates Phase Shift (upgrade-level duration for Teleport arrivals) —
@@ -1705,6 +1744,9 @@ export class EffectsRegistry {
     this._strikePermanent = false;
     this._strikePulseTimer = 0;
     this._strikePulsePending = false;
+    // A latched (retained) bolt never survives into a fresh run
+    // (AH-0MVS2T2DJ0069C0Y).
+    this._strikeLatched = false;
     this._levelStore.reset();
   }
 }

@@ -639,11 +639,17 @@ export abstract class CombatScene<
    * copy and no call site that can forget the sound. Damage is resolved at
    * trigger; the bolt's descent is visual only.
    *
+   * Returns whether the bolt actually landed (AH-0MVS2T2DJ0069C0Y): `false`
+   * when there is no live player or no live enemy, so the shared core leaves
+   * the bolt latched in the registry and retries it on the next frame
+   * instead of silently wasting the pickup.
+   *
    * @param damage - Level-resolved strike damage (whole hits).
+   * @returns True when the bolt was applied to a live enemy.
    */
-  protected override onOrbitalStrike(damage: number): void {
+  protected override onOrbitalStrike(damage: number): boolean {
     const player = this.getPlayer();
-    if (!player) return;
+    if (!player) return false;
     let target: TEnemy | null = null;
     let best = Number.POSITIVE_INFINITY;
     for (const enemy of this.getEnemyEntities()) {
@@ -654,11 +660,12 @@ export abstract class CombatScene<
         target = enemy;
       }
     }
-    if (!target) return;
+    if (!target) return false;
     spawnOrbitalStrike(this, target.x, target.y, {
       registry: this.aoeEffects,
     });
     this.damageEnemyViaAoe(target, damage);
+    return true;
   }
 
   /**
