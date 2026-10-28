@@ -10,7 +10,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
+import { advanceGame, bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
+import {
+  CHECKPOINT_STORAGE_KEY,
+  CHECKPOINT_VERSION,
+  type Checkpoint,
+} from '../core/checkpointStore';
+import { POWER_UP_CHARGE_CAP } from '../powerups/powerUpLevels';
+import type { PowerUpId, WeaponDropId } from '../powerups/types';
+import { toChoiceOption } from '../powerups/choice';
+import { applyMineralChoiceReward } from '../powerups/choiceReward';
+import type { WeaponId } from '../utils/weapons';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
@@ -168,5 +178,191 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
 
     expect(wm.level).toBe(2);
     expect(scene.getGameState().score).toBeGreaterThanOrEqual(scoreOnLevel1);
+  });
+});
+
+/**
+ * Checkpoint-resume HUD parity (AH-0MVSHI07B003BZIP).
+ *
+ * The HUD renders its upgrade rows from `EffectsRegistry` runtime state, so a
+ * resume that only replayed the ship's levels left the list (almost) empty and
+ * several permanent upgrades inert. These tests pin the fix: a resumed run is
+ * granted through the **same shared seam** live play uses, so its rows and
+ * effect state match a live run with identical grants.
+ */
+describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI07B003BZIP)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** The permanent weapon levels the seeded checkpoint owns. */
+  const WEAPON_LEVELS: Array<{ id: WeaponId; level: number }> = [
+    { id: 'spread', level: 2 },
+  ];
+
+  /**
+   * The permanent power-up levels the seeded checkpoint owns. Deliberately
+   * exercises every HUD visibility rule: timed-but-permanent (shield, speed
+   * boost, frenzy, chrono, force field), permanent pulses (bomb, smart bomb,
+   * strike), the thorns budget, the charge pools (phase shift, teleport —
+   * teleport is over-granted to prove the cap) and the permanent-stack hybrids
+   * (magnet, mineral scoop). Extra Life is included to pin the lives hazard.
+   */
+  const POWER_UP_LEVELS: Array<{ id: PowerUpId; level: number }> = [
+    { id: 'shield', level: 1 },
+    { id: 'speed_boost', level: 1 },
+    { id: 'bomb', level: 1 },
+    { id: 'smart_bomb', level: 1 },
+    { id: 'strike', level: 1 },
+    { id: 'thorns', level: 1 },
+    { id: 'frenzy', level: 1 },
+    { id: 'chrono', level: 1 },
+    { id: 'force_field', level: 1 },
+    { id: 'phase_shift', level: 2 },
+    // Over the charge cap on purpose: the replay must clamp, never stack.
+    { id: 'teleport', level: POWER_UP_CHARGE_CAP + 2 },
+    { id: 'magnet', level: 1 },
+    { id: 'mineral_scoop', level: 1 },
+    { id: 'extra_life', level: 2 },
+  ];
+
+  /** A resumable checkpoint carrying permanent weapon/power-up progress. */
+  const CHECKPOINT: Checkpoint = {
+    version: CHECKPOINT_VERSION,
+    level: 4,
+    wave: 1,
+    lives: 2,
+    score: 9876,
+    minerals: 3,
+    weaponLevels: WEAPON_LEVELS,
+    powerUpLevels: POWER_UP_LEVELS,
+    unlockedWeapons: [],
+    runSeed: 4242,
+    savedAt: '2026-10-20T00:00:00.000Z',
+  };
+
+  /** Boots a fresh game whose PlayScene continues from {@link CHECKPOINT}. */
+  async function bootResumed(): Promise<PlayScene> {
+    localStorage.setItem(CHECKPOINT_STORAGE_KEY, JSON.stringify(CHECKPOINT));
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    // Mirror `MenuScene`'s Continue flow: restart PlayScene with `resume`.
+    booted.game.scene.start('PlayScene', { resume: true });
+    await advanceGame(booted.game, 150);
+    const scene = booted.game.scene.getScene('PlayScene') as PlayScene;
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
+    return scene;
+  }
+
+  /**
+   * Boots a **non-resumed** run and applies the identical permanent grants
+   * through the live-play seam — the reference a resumed run must match.
+   */
+  async function bootLiveGrants(): Promise<PlayScene> {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    const registry = scene.getEffectsRegistry();
+    const player = scene.getPlayer();
+    for (const entry of WEAPON_LEVELS) {
+      for (let i = 0; i < entry.level; i += 1) {
+        applyMineralChoiceReward(
+          toChoiceOption(entry.id as WeaponDropId),
+          registry,
+          player,
+        );
+      }
+    }
+    for (const entry of POWER_UP_LEVELS) {
+      for (let i = 0; i < entry.level; i += 1) {
+        applyMineralChoiceReward(toChoiceOption(entry.id), registry, player);
+      }
+    }
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
+    return scene;
+  }
+
+  /** Text of every HUD row name/value rendered for the scene. */
+  function hudTexts(scene: PlayScene): string[] {
+    return (scene.getHUD()!.list as Phaser.GameObjects.GameObject[])
+      .filter((child): child is Phaser.GameObjects.Text =>
+        child instanceof Phaser.GameObjects.Text,
+      )
+      .map((child) => child.text);
+  }
+
+  it('AC1 — a resumed run renders the same upgrade rows as a live run with the same grants', async () => {
+    const resumed = await bootResumed();
+    const resumedRows = resumed.getHUD()!.getRows();
+    // Every seeded power-up is represented: the bug left most of them out.
+    expect(resumedRows.length).toBeGreaterThanOrEqual(POWER_UP_LEVELS.length - 1);
+    expect(resumedRows.some((row) => row.id === 'shield')).toBe(true);
+    expect(resumedRows.some((row) => row.id === 'bomb')).toBe(true);
+    expect(resumedRows.every((row) => row.value === '∞')).toBe(true);
+
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+
+    const live = await bootLiveGrants();
+    // Exact parity: same labels, levels and ∞ values as live play.
+    expect(resumedRows).toEqual(live.getHUD()!.getRows());
+  });
+
+  it('AC1 — weapon rows are restored with their run-scoped level', async () => {
+    const scene = await bootResumed();
+    expect(hudTexts(scene)).toContain('Weapon: spread Lvl 2');
+  });
+
+  it('AC2 — a resumed run arms every restored permanent effect', async () => {
+    const scene = await bootResumed();
+    const registry = scene.getEffectsRegistry();
+
+    expect(registry.isBombPermanent()).toBe(true);
+    expect(registry.isSmartBombPermanent()).toBe(true);
+    expect(registry.isStrikePermanent()).toBe(true);
+    expect(registry.isActive('shield')).toBe(true);
+    expect(registry.shieldAbsorptionsRemaining()).toBeGreaterThan(0);
+    expect(registry.thornsRemaining()).toBeGreaterThan(0);
+    expect(registry.isActive('frenzy')).toBe(true);
+    expect(registry.isActive('chrono')).toBe(true);
+    expect(registry.isForceFieldActive()).toBe(true);
+
+    const weapons = registry.activeWeapons();
+    expect(weapons.map((weapon) => weapon.weaponId)).toContain('spread');
+    expect(weapons.every((weapon) => weapon.permanent === true)).toBe(true);
+  });
+
+  it('AC4 — Extra Life replay never raises lives above the saved value', async () => {
+    const scene = await bootResumed();
+    expect(scene.getGameState().lives).toBe(CHECKPOINT.lives);
+    expect(scene.getEffectsRegistry().lives()).toBe(CHECKPOINT.lives);
+    expect(scene.getHUD()!.getLivesLabel()).toBe(`Lives: ${CHECKPOINT.lives}`);
+    expect(scene.getGameState().score).toBe(CHECKPOINT.score);
+    expect(scene.getGameState().minerals).toBe(CHECKPOINT.minerals);
+    expect(scene.getRunSeed()).toBe(CHECKPOINT.runSeed);
+  });
+
+  it('AC5 — replaying an over-granted charge pool stays within POWER_UP_CHARGE_CAP', async () => {
+    const scene = await bootResumed();
+    const registry = scene.getEffectsRegistry();
+    expect(registry.teleportStacks()).toBe(POWER_UP_CHARGE_CAP);
+    expect(registry.teleportStacks()).toBeLessThanOrEqual(POWER_UP_CHARGE_CAP);
+    expect(registry.phaseCharges()).toBeLessThanOrEqual(POWER_UP_CHARGE_CAP);
+    expect(registry.phaseCharges()).toBeGreaterThan(0);
+  });
+
+  it('AC3 — a fresh (non-resume) run starts with no upgrade rows or effects', async () => {
+    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
+    const scene = booted.scene as PlayScene;
+    scene.finishSpawnAnimations();
+    scene.tick(0.001);
+
+    expect(scene.getHUD()!.getRows()).toHaveLength(0);
+    expect(scene.getEffectsRegistry().activeWeapons()).toHaveLength(0);
   });
 });

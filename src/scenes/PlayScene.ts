@@ -267,6 +267,8 @@ import { splitAsteroid } from './core/asteroidSplit';
 import {
   applyMineralChoiceReward,
   collectMinerals,
+  grantPermanentPowerUp,
+  grantPermanentWeapon,
 } from './core/mineralLayer';
 import {
   applyPhaseGhost,
@@ -3290,26 +3292,42 @@ export class PlayScene extends CombatScene<
    * the run seed (reproducibility/leaderboard validity), permanent weapon and
    * power-up levels and the mini-boss unlock state. The WaveManager has
    * already started at the checkpoint level.
+   *
+   * The permanent grants are **replayed through the one shared grant seam**
+   * live play uses ({@link grantPermanentWeapon} / {@link grantPermanentPowerUp},
+   * the helpers behind `applyMineralChoiceReward`), so a resumed run ends up
+   * with both the ship's levels **and** the `EffectsRegistry` runtime state the
+   * HUD renders from and the permanent effects read (AH-0MVSHI07B003BZIP). One
+   * replay per persisted level therefore reproduces a live run's state exactly
+   * — no divergent copy, no second HUD data path.
+   *
+   * No gym implements checkpoint resume, so the gym↔game parity rule needs no
+   * gym counterpart for this path (the shared helpers themselves are already
+   * consumed by the game, every gym and the headless eval arena).
    */
   private _restoreCheckpoint(checkpoint: Checkpoint): void {
-    this.gameState.lives = checkpoint.lives;
     this.gameState.score = checkpoint.score;
     this.gameState.minerals = checkpoint.minerals;
     this.gameState.runSeed = checkpoint.runSeed;
     this.injectedRunSeed = checkpoint.runSeed;
-    this.effectsRegistry.setLives(checkpoint.lives);
     // Replay the permanent grants through the ordinary collection seam so the
-    // restored levels are identical to a run that earned them.
+    // restored registry state is identical to a run that earned them.
     for (const entry of checkpoint.weaponLevels) {
       for (let i = 0; i < entry.level; i += 1) {
-        this.player?.equipWeapon(entry.id, true);
+        grantPermanentWeapon(entry.id, this.effectsRegistry, this.player);
       }
     }
     for (const entry of checkpoint.powerUpLevels) {
       for (let i = 0; i < entry.level; i += 1) {
-        this.player?.collectPowerUp(entry.id, true);
+        grantPermanentPowerUp(entry.id, this.effectsRegistry);
       }
     }
+    // Lives are restored **after** the replay: `extra_life` grants raise the
+    // store's lives, and the checkpoint already reflects the lives the player
+    // had when it was written. Replaying must never inflate them, so the saved
+    // value is applied last and pushed into the store the HUD reads.
+    this.gameState.lives = checkpoint.lives;
+    this.effectsRegistry.setLives(checkpoint.lives);
     const unlocked = new Set<WeaponId>(this.miniBossUnlockState.unlockedWeapons);
     for (const weaponId of checkpoint.unlockedWeapons) unlocked.add(weaponId);
     this.miniBossUnlockState = { unlockedWeapons: unlocked };

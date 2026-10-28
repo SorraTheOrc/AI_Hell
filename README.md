@@ -953,6 +953,12 @@ instead.
   auto-writes a **checkpoint** (`ai_hell_checkpoint`) that the main menu's
   **Continue** resumes from (level after the mini-boss, wave 1) with lives,
   score, minerals, permanent levels, unlocks and the run seed restored. The
+  resume **replays the permanent grants through the same shared grant seam
+  live play uses** (`src/powerups/choiceReward.ts`), so the HUD upgrade list
+  and the permanent effects (shield, permanent Bomb/Smart Bomb/Strike pulses,
+  permanently-open timed windows, charge pools, permanent stacks) match a live
+  run and the saved lives are never inflated by the Extra Life replay
+  (AH-0MVSHI07B003BZIP). The
   catalogue now ships **16 weapons** (the 5 net-new unlock-pool weapons are
   Rear Guard, Broadside, Railgun, Shard Swarm and Heavy Slug) and **16
   power-ups**.
