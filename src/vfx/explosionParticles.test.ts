@@ -35,6 +35,7 @@ import {
   type Pattern,
   combinePatterns,
   spawnExplosionParticles,
+  type ExplosionHandle,
   EXPLOSION_IMPLOSION_MS,
   getExplosionVfxCounts,
   resetExplosionVfxCounts,
@@ -1085,5 +1086,99 @@ describe('shared explosion-VFX registry (AH-0MUZQGRQR0086NP6, AC7)', () => {
     );
     expect(handle).toBeNull();
     expect(getExplosionVfxCounts()).toEqual({ enemy: 0, boss: 0, player: 0 });
+  });
+});
+
+// ── Completion seam for the mini-boss death sweep (AH-0MVROEJJR002HDLS) ──
+//
+// **TEST-FIRST.** The mini-boss death sweep (`src/scenes/core/miniBossDeathSweep.ts`,
+// helper item AH-0MVROEKMT005RVML) must hold the reward overlay back until the
+// last burst has finished animating, so a burst needs to report its own
+// completion. `SpawnExplosionOptions.onComplete` is that seam; it does not exist
+// on pre-change HEAD, so these cases are wrapped in Vitest's `it.fails` (the
+// repo's red-before/green-after convention — see `src/core/levelScaling.test.ts`)
+// and **AH-0MVROEKMT005RVML flips them back to `it`**. A leftover `it.fails`
+// fails the suite.
+//
+// The spawn signature is widened locally (rather than typed against the
+// not-yet-extended `SpawnExplosionOptions`) so `tsc --noEmit` stays green while
+// the option is still absent.
+
+describe('spawnExplosionParticles completion seam (test-first, AH-0MVROEJJR002HDLS)', () => {
+  type SpawnScene = Parameters<typeof spawnExplosionParticles>[0];
+  /** The widened surface this suite pins: `onComplete` on the spawn options. */
+  const spawnWithCompletion = spawnExplosionParticles as unknown as (
+    scene: SpawnScene,
+    x: number,
+    y: number,
+    baseColor: number,
+    size: number,
+    opts: Record<string, unknown>,
+  ) => ExplosionHandle | null;
+
+  it.fails('invokes onComplete exactly once when the burst finishes animating', () => {
+    const scene = makeStubScene();
+    const calls: string[] = [];
+    spawnWithCompletion(
+      scene as unknown as SpawnScene, 0, 0, 0xff0000, 20,
+      { seed: 1, patterns: ['radial'], delay: 40, onComplete: () => calls.push('done') },
+    );
+
+    // The burst is scheduled with its delay, so nothing has finished yet.
+    expect(calls).toEqual([]);
+
+    const cfg = scene.tweenCfgs[0] as { onComplete?: () => void };
+    cfg.onComplete?.();
+    expect(calls).toEqual(['done']);
+
+    // A second completion signal (tween quirk / teardown after finish) must not
+    // re-fire the caller's callback.
+    cfg.onComplete?.();
+    expect(calls).toEqual(['done']);
+  });
+
+  it.fails('never fires onComplete on an explicit destroy() teardown', () => {
+    const scene = makeStubScene();
+    const calls: string[] = [];
+    spawnWithCompletion(
+      scene as unknown as SpawnScene, 0, 0, 0xff0000, 20,
+      { seed: 1, patterns: ['radial'], onComplete: () => calls.push('done') },
+    );
+
+    // First prove the callback is wired at all: a natural completion fires it.
+    // (On pre-change HEAD the option is ignored, so this assertion is what
+    // keeps the case red until the seam lands.)
+    scene.tweenCfgs[0].onComplete?.();
+    expect(calls).toEqual(['done']);
+
+    // SHUTDOWN teardown is not completion: the display was interrupted, so a
+    // caller waiting on it (the deferred reward overlay) must not be resumed
+    // by a burst that never animated to the end.
+    const second = spawnWithCompletion(
+      scene as unknown as SpawnScene, 0, 0, 0xff0000, 20,
+      { seed: 2, patterns: ['radial'], onComplete: () => calls.push('done') },
+    );
+    second?.destroy();
+    expect(calls).toEqual(['done']);
+  });
+
+  it.fails('reports the same completion point the sweep plan schedules', () => {
+    // The sweep plan's `completionDelayMs` is `delay + lifespan` of the burst
+    // that finishes last; the tween that owns that burst is the one whose
+    // completion must drive the callback. This case pins the two timings
+    // together so the plan cannot drift from the renderer.
+    const scene = makeStubScene();
+    const calls: string[] = [];
+    spawnWithCompletion(
+      scene as unknown as SpawnScene, 0, 0, 0xff0000, 20,
+      { seed: 1, patterns: ['radial'], delay: 60, lifespan: 400, onComplete: () => calls.push('done') },
+    );
+
+    const cfg = scene.tweenCfgs[0] as { delay?: number; duration?: number; onComplete?: () => void };
+    expect(cfg.delay).toBe(60);
+    expect(cfg.duration).toBe(400);
+    expect(calls).toEqual([]);
+    cfg.onComplete?.();
+    expect(calls).toEqual(['done']);
   });
 });
