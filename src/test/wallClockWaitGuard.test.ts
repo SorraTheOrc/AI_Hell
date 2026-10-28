@@ -43,8 +43,17 @@
  *   30 s `spawnSync` bound keeps the fail-fast contract, and a thrown
  *   spawn-error message that distinguishes a starved spawn from a real
  *   contract break.
+ * - AH-0MVSGJ5N6005U7P6 — the eval-arena per-level campaign test
+ *   (`src/ai/eval/arena.test.ts`, `selects the level: levels differ from
+ *   each other and from the seeded skirmish`) runs four full headless
+ *   600-tick campaign runs with full record-stream stringification; under
+ *   saturation it drifted past Vitest's 5 s default and died with the same
+ *   `Test timed out in 5000ms` and no assertion failure. Fixed by declaring
+ *   the file-level 30 s budget (`vi.setConfig({ testTimeout: 30000 })`,
+ *   mirroring `cli.test.ts` / `engine.test.ts` per AH-0MVR8QM89004OQZQ); the
+ *   run work and assertions are unchanged.
  *
- * Both fixes keep the behaviour the tests assert; the per-file budgets and
+ * All these fixes keep the behaviour the tests assert; the per-file budgets and
  * the skip condition are documented in `docs/dev/test-suite-timing.md`
  * ("Per-file timing budgets" and its subprocess-spawn subsection).
  *

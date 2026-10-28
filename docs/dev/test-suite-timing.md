@@ -186,7 +186,9 @@ sets no global override, so most tests keep that tight budget. A test whose
 assertions are seconds of real computation — the eval-arena batch tests are the
 main case (`src/ai/eval/cli.test.ts`, `src/ai/eval/engine.test.ts`, which run a
 campaign batch resolving to `DEFAULT_BATCH_TICKS` = 18 000 and a ~100-game
-sweep) — **must declare its own budget** at the top of its file:
+sweep, and `src/ai/eval/arena.test.ts`, whose per-level campaign tests run
+four full headless 600-tick arena simulations and stringify every record
+stream) — **must declare its own budget** at the top of its file:
 
 ```ts
 import { vi } from 'vitest';
@@ -201,6 +203,13 @@ AH-0MVPJETJF009E0S8 was closed as a load-induced flake). The budget is a
 while still failing a genuine hang. Do **not** "fix" such a failure by
 reducing the work in the test, and do not raise the global default — a global
 budget loosens every fast test in the suite.
+
+`src/ai/eval/arena.test.ts` joined the same budget on 2026-10-28 with observed
+symptom `Test timed out in 5000ms` (AH-0MVSGJ5N6005U7P6) — the env-arena
+member of the environmental-saturation family (AH-0MVSBEIVK003XAFB lineage,
+see `src/test/wallClockWaitGuard.test.ts`). Its four 600-tick runs and full
+record-stream stringifications were already pinned GREEN and unchanged; the
+budget is the only change.
 
 ### Subprocess-spawn tests
 

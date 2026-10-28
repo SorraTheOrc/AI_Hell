@@ -8,7 +8,23 @@
  * dev tooling can parse — rather than restating the implementation.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * Explicit timing budget for this file (AH-0MVR8QM89004OQZQ,
+ * AH-0MVSGJ5N6005U7P6).
+ *
+ * The per-level campaign tests below are real arena simulations: the level
+ * selection test runs four full headless 600-tick campaign arena runs (levels
+ * 1, 5 and 10 plus the seeded 600-tick skirmish) and stringifies every full
+ * record stream. Under a saturated shared host that drifts past Vitest's 5 s
+ * default and fails on the timeout rather than on an assertion
+ * (`Test timed out in 5000ms`, AH-0MVSGJ5N6005U7P6 — the eval-arena member of
+ * the environmental-saturation flake family AH-0MVSBEIVK003XAFB). 30 s keeps
+ * ~5x headroom over the observed worst case while still failing a genuine
+ * hang; the assertion work is unchanged.
+ */
+vi.setConfig({ testTimeout: 30000 });
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
