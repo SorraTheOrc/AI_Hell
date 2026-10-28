@@ -3277,3 +3277,101 @@ describe('GymFormationScene — shared multi-hit kill finalisation (F2)', () => 
     expect(vi.mocked(destroySound).mock.calls.length).toBe(before + 1);
   });
 });
+
+// ── Shared post-motion edge wrap (AH-0MVKXBXQX003S7K5) ───────────────
+
+/**
+ * The shared base gym is where the game and every gym run the post-motion
+ * wrap (parent AH-0MV9G3DZ9003P7P8 AC3; AH-0MVKXBWDY008R0YH). These tests
+ * exercise the seam through the base scene's own `tick`, with a selectable
+ * (wrap-aware) body and a classic non-aware body in the same formation, so
+ * the gated behaviour is asserted — not assumed.
+ */
+describe('GymFormationScene — shared post-motion edge wrap', () => {
+  /** Stub carrying the resolved seam-awareness flag the shared seam reads. */
+  class WrapStubEnemy extends StubEnemy {
+    readonly wrapAware: boolean;
+
+    constructor(
+      scene: Phaser.Scene,
+      offset: FormationOffset,
+      wrapAware: boolean,
+    ) {
+      super(scene, offset);
+      this.wrapAware = wrapAware;
+    }
+  }
+
+  /** One edge overshoot, with the base position that puts the slots over it. */
+  const EDGE_CASES = [
+    {
+      edge: 'right',
+      startX: GAME_WIDTH + 25,
+      startY: 100,
+      expected: { x: 25, y: 100 },
+    },
+    {
+      edge: 'top',
+      startX: 200,
+      startY: -25,
+      expected: { x: 200, y: GAME_HEIGHT - 25 },
+    },
+  ] as const;
+
+  function bootWrapScene(startX: number, startY: number) {
+    const config: EnemyFormationConfig<WrapStubEnemy, StubBullet> = {
+      sceneKey: 'WrapSeamGymScene',
+      count: 2,
+      spacingX: 0,
+      spacingY: 0,
+      driftSpeed: 0,
+      startX,
+      startY,
+      statusLabel: 'wrap',
+      hintText: 'wrap seam demo',
+      buildOffsets: () => [
+        { row: 0, col: 0 }, // wrap-aware
+        { row: 1, col: 0 }, // classic non-aware exclusion
+      ],
+      createEntity: (scene, x, y, offset) => {
+        const enemy = new WrapStubEnemy(scene, offset, offset.row === 0);
+        enemy.setPosition(x, y);
+        return enemy;
+      },
+      collectBullets: () => [],
+    };
+    return class WrapSeamGymScene extends GymFormationScene<
+      WrapStubEnemy,
+      StubBullet
+    > {
+      constructor() {
+        super(config);
+      }
+    };
+  }
+
+  it.each(EDGE_CASES)(
+    'wraps the selected body across the $edge edge and leaves the non-aware body in place',
+    async ({ startX, startY, expected }) => {
+      const booted = await reuse.boot([bootWrapScene(startX, startY)]);
+      const scene = booted.scene as GymFormationScene<
+        WrapStubEnemy,
+        StubBullet
+      >;
+      const [aware, unaware] = scene.formationEntities;
+
+      // Setup gate: the same geometry, one selectable and one excluded body.
+      expect(aware.wrapAware).toBe(true);
+      expect(unaware.wrapAware).toBe(false);
+
+      scene.tick(0);
+
+      // The aware body is carried across the seam to the opposite edge ...
+      expect(aware.x).toBeCloseTo(expected.x, 6);
+      expect(aware.y).toBeCloseTo(expected.y, 6);
+      // ... while the non-aware body keeps its over-edge (bounded) slot.
+      expect(unaware.x).toBeCloseTo(startX, 6);
+      expect(unaware.y).toBeCloseTo(startY, 6);
+    },
+  );
+});
