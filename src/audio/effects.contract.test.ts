@@ -327,3 +327,34 @@ describe('contract — cue to asset mapping', () => {
     expect(recipes.size).toBeGreaterThan(30);
   });
 });
+
+// ── Dedicated Orbital Strike cue (AH-0MVS2SZBY004HJ2D) ───────────────
+//
+// TEST-FIRST (AH-0MVS2SW8V007ZBJQ, parent AC2): the strike cue must go
+// through the manifested ToneForge pipeline — a callable, headless-safe
+// `playOrbitalStrikeSound` export wired to the shared master gain, never an
+// ad-hoc synthesis (the manifest-coverage tests above keep newly shipped
+// exports honest once the cue lands).
+
+describe('contract — dedicated orbital-strike cue (AH-0MVS2SZBY004HJ2D)', () => {
+  it.fails('playOrbitalStrikeSound is a manifested, headless-safe cue export', () => {
+    // Non-literal lookup so the missing export does not break `tsc --noEmit`.
+    const cue = (effects as unknown as Record<string, unknown>)
+      .playOrbitalStrikeSound;
+    expect(cue, 'playOrbitalStrikeSound is not exported').toBeTypeOf('function');
+    expect(
+      getCueAsset('playOrbitalStrikeSound'),
+      'playOrbitalStrikeSound is missing from CUE_MANIFEST',
+    ).toBeDefined();
+
+    // Headless (no AudioContext): silent no-op, never a throw.
+    expect(() => (cue as CueFn)()).not.toThrow();
+
+    // Headful: plays once through the single shared context + master gain,
+    // so volume/mute govern it like every other player cue.
+    installRecordingContext();
+    invokeCue('playOrbitalStrikeSound');
+    expect(RecordingAudioContext.instances).toHaveLength(1);
+    expect(masterGain()).toBeDefined();
+  });
+});

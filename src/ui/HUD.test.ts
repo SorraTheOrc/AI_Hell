@@ -690,6 +690,92 @@ describe('HUD Thorn Field recharge countdown (AH-0MVJ8YKR70096C6T)', () => {
   });
 });
 
+// ── Orbital Strike next-bolt countdown (AH-0MVS2T40T006QL7H) ─────────
+//
+// TEST-FIRST (AH-0MVS2SW8V007ZBJQ, parent AC6): a permanent strike's row is a
+// bare `∞` label today, so a 10–30 s interval reads as an inert power-up. The
+// countdown must reuse the shared `next in Ns` formatter (`buildHUDLabel`) and
+// be driven by the shared registry state, never recomputed in the HUD.
+
+/** The not-yet-existing latch acknowledgement on `EffectsRegistry`. */
+interface StrikeLatchRegistry {
+  resolveStrike(): void;
+}
+
+/**
+ * Acknowledges the bolt the shared core has just landed. The retention
+ * contract (AH-0MVS2T2DJ0069C0Y) keeps a due bolt latched until it is
+ * acknowledged, so a test that wants the *interval* running must resolve the
+ * opening bolt — read by name, per the repo's test-first convention.
+ */
+function ackStrike(reg: EffectsRegistry): void {
+  (reg as unknown as StrikeLatchRegistry).resolveStrike();
+}
+
+/** Advances the shared strike clock, landing any bolt that comes due. */
+function advanceStrikeClock(reg: EffectsRegistry, seconds: number): void {
+  for (let elapsed = 0; elapsed < seconds; elapsed += 0.1) {
+    if (reg.updateStrike(0.1)) ackStrike(reg);
+  }
+}
+
+describe('HUD Orbital Strike next-bolt countdown (AH-0MVS2T40T006QL7H)', () => {
+  it.fails('shows a live next-bolt countdown on the permanent strike row', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true); // hold-full (permanent) reward
+    const interval = reg.strikeInterval();
+    ackStrike(reg); // the opening bolt lands — the interval is now running
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = hud.getRows().find((r) => r.id === 'strike')!;
+    expect(row).toBeDefined();
+    expect(row.label).toContain('Orbital Strike');
+    expect(row.label).toContain('(next in');
+    // The value column still reads `∞` — the row is permanent, the countdown
+    // lives in the label via the shared formatter.
+    expect(row.value).toBe(PERMANENT_VALUE);
+
+    const first = row.recharge;
+    expect(first).toBeDefined();
+    expect(first!).toBeGreaterThan(0);
+    expect(first!).toBeLessThanOrEqual(interval);
+    expect(row.label).toContain(`(next in ${Math.ceil(first!)}s)`);
+
+    // The countdown is live: advancing the shared strike clock decreases it.
+    advanceStrikeClock(reg, 3);
+    hud.refresh();
+    const second = hud.getRows().find((r) => r.id === 'strike')!;
+    expect(second.recharge).toBeDefined();
+    expect(second.recharge!).toBeLessThan(first!);
+    expect(second.recharge!).toBeGreaterThan(0);
+    expect(second.label).toContain(`(next in ${Math.ceil(second.recharge!)}s)`);
+
+    // A bolt that lands resets the countdown — never negative, never NaN.
+    advanceStrikeClock(reg, interval);
+    hud.refresh();
+    const afterBolt = hud.getRows().find((r) => r.id === 'strike')!;
+    expect(afterBolt.recharge).toBeDefined();
+    expect(afterBolt.recharge!).toBeGreaterThan(0);
+    expect(afterBolt.label).not.toContain('NaN');
+    expect(afterBolt.label).not.toMatch(/next in -/);
+
+    destroy(game);
+  });
+
+  it('keeps a field-pickup-only strike off the HUD (no permanent row)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike'); // one-shot pickup, mirrors the Smart Bomb
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    expect(hud.getRows().some((r) => r.id === 'strike')).toBe(false);
+    destroy(game);
+  });
+});
+
 describe('HUD AC3: lives counter (P8)', () => {
   it('displays the lives state, starting at 3', async () => {
     const reg = new EffectsRegistry();

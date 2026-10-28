@@ -30,6 +30,7 @@ import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 import { POWER_UP_DROP_SIZE } from '../../core/constants';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import * as effectsModule from '../../audio/effects';
+import * as aoeEffectModule from '../../vfx/aoeEffect';
 import * as explosionModule from '../../vfx/explosionParticles';
 import * as playerDeathJuiceModule from '../../vfx/playerDeathJuice';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
@@ -1211,5 +1212,65 @@ describe('GymPowerUpsCombat — Thorn Field aura and absorb feedback (AH-0MVJ8YK
     expect(scene.getThornsAbsorbEffects()).toHaveLength(1);
     expect(registry.thornsRemaining()).toBe(charges - 1);
     expect(scene.getPlayerHitCount()).toBe(hitsBefore);
+  });
+});
+
+// ── Orbital Strike bolt observability (AH-0MVS2T0VQ00973W5) ──────────
+//
+// TEST-FIRST (AH-0MVS2SW8V007ZBJQ, parent AC5 gym↔game parity): the shared
+// strike path must spawn the new bolt VFX — and nothing else — in the gym.
+// Today `CombatScene.onOrbitalStrike` reuses `spawnNovaRing`, so this stays
+// `it.fails` until the wiring sibling lands and flips it back to `it`.
+
+/** Non-literal specifier so `tsc --noEmit` does not resolve the missing module. */
+const ORBITAL_STRIKE_MODULE = '../../vfx/orbitalStrike';
+
+/** The not-yet-existing bolt module surface this gym test pins. */
+interface BoltModuleContract {
+  spawnOrbitalStrike(
+    scene: Phaser.Scene,
+    x: number,
+    y: number,
+    options?: unknown,
+  ): { graphics: Phaser.GameObjects.Graphics };
+}
+
+describe('GymPowerUpsCombat — Orbital Strike bolt observability (AH-0MVS2T0VQ00973W5)', () => {
+  it.fails('the shared strike path spawns the bolt VFX, not the Smart Bomb ring', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    const boltModule = (await import(
+      ORBITAL_STRIKE_MODULE
+    )) as unknown as BoltModuleContract;
+    const boltSpy = vi.spyOn(boltModule, 'spawnOrbitalStrike');
+    const ringSpy = vi.spyOn(aoeEffectModule, 'spawnNovaRing');
+
+    scene.getEffectsRegistry().applyCollect('strike');
+    scene.tick(1 / 60); // the shared strike step resolves the bolt
+
+    // The gym's strike path invokes the shared bolt module exactly once…
+    expect(boltSpy).toHaveBeenCalledTimes(1);
+    const [targetScene, targetX, targetY] = boltSpy.mock.calls[0];
+    // …with the gym as the scene (no scene-specific copy) and an in-play
+    // target column.
+    expect(targetScene).toBe(scene);
+    expect(targetX).toBeGreaterThanOrEqual(0);
+    expect(targetX).toBeLessThanOrEqual(960);
+    expect(targetY).toBeGreaterThanOrEqual(0);
+    expect(targetY).toBeLessThanOrEqual(540);
+
+    // The spawned bolt is a real, live effect attached to the scene.
+    const handle = boltSpy.mock.results[0].value as {
+      graphics: Phaser.GameObjects.Graphics;
+    };
+    expect(handle.graphics).toBeInstanceOf(Phaser.GameObjects.Graphics);
+    expect(scene.children.list).toContain(handle.graphics);
+
+    // …and the Smart Bomb ring is NOT what the strike renders.
+    expect(ringSpy).not.toHaveBeenCalled();
+    boltSpy.mockRestore();
+    ringSpy.mockRestore();
   });
 });
