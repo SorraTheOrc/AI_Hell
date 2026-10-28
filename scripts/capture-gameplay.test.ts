@@ -9,6 +9,17 @@
  * recording cannot run in the vitest suite: `src/test/setup.ts` stubs the
  * canvas, so there is nothing real to record).
  *
+ * ## Spawned-CLI tests and load
+ *
+ * The tests that spawn the real `capture-gameplay.mjs` CLI (the
+ * `--list-scenarios` and the bad-config fail-fast tests) declare an explicit
+ * per-test timeout (~60 s) instead of inheriting Vitest's 5 s default: under
+ * a saturated shared host, spawning the Vite-SSR loader alone can exceed the
+ * default, which used to surface as a misleading "Test timed out" flake
+ * (AH-0MVE112BV006EDSZ, AH-0MVE466JU001HR8T, AH-0MVSAPI66009T6PU — family
+ * of the load-remediation epic AH-0MVSBEIVK003XAFB). See
+ * `docs/dev/test-suite-timing.md` §Per-file timing budgets.
+ *
  * @vitest-environment node
  */
 
@@ -2888,21 +2899,44 @@ describe('multi-scene capture arguments and config (AH-0MVFC70GT000B96J)', () =>
     expect((missingError as { code?: string }).code).toBe('missing-file');
   });
 
-  it('the spawned CLI fails fast and non-zero on a bad config without booting anything', () => {
-    // A missing config must exit 1 with an actionable message and must never
-    // reach the Vite/Chromium boot stage (that would exceed the bound).
-    const script = resolve(process.cwd(), 'scripts/capture-gameplay.mjs');
-    const result = spawnSync(
-      process.execPath,
-      [script, '--config', '/definitely/not/here.json'],
-      { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
-    );
+  it(
+    'the spawned CLI fails fast and non-zero on a bad config without booting anything',
+    // The real `main()` spawn must complete (exit 1) before vitest's default
+    // 5 s deadline — under a saturated shared host just spawning the Vite-SSR
+    // loader for capture-gameplay.mjs can exceed it (recorded 5889 ms,
+    // load flake AH-0MVSAPI66009T6PU; same family as the --list-scenarios
+    // spawn test above — AH-0MVE112BV006EDSZ / AH-0MVE466JU001HR8T — and the
+    // 5.5–6.5 s eval-AI tests, AH-0MVR8QM89004OQZQ). The 60 s bound mirrors
+    // the --list-scenarios spawn test; the child's own 30 s spawnSync time
+    // still keeps the fail-fast contract honest (exceeding it is a failure,
+    // not a pass).
+    { timeout: 60_000 },
+    () => {
+      // A missing config must exit 1 with an actionable message and must never
+      // reach the Vite/Chromium boot stage (that would exceed the bound).
+      const script = resolve(process.cwd(), 'scripts/capture-gameplay.mjs');
+      const result = spawnSync(
+        process.execPath,
+        [script, '--config', '/definitely/not/here.json'],
+        { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
+      );
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toMatch(/scene config error/i);
-    expect(result.stderr).toContain('/definitely/not/here.json');
-    expect(result.stdout).not.toContain('Starting Vite');
-  });
+      // Surface a spawned-child failure (ENOENT / kill / 30 s ETIMEDOUT) as
+      // a clear message instead of a bare `status: null` expectation
+      // mismatch, so under host saturation this is trivially distinguishable
+      // from a real fail-fast contract break.
+      if (result.error) {
+        throw new Error(
+          `spawn failed: ${result.error.message}; status=${result.status}; stderr=${result.stderr}`,
+        );
+      }
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/scene config error/i);
+      expect(result.stderr).toContain('/definitely/not/here.json');
+      expect(result.stdout).not.toContain('Starting Vite');
+    },
+  );
 });
 
 describe('driveSceneSequence (AH-0MVFC70GT000B96J AC3)', () => {

@@ -202,6 +202,38 @@ while still failing a genuine hang. Do **not** "fix" such a failure by
 reducing the work in the test, and do not raise the global default — a global
 budget loosens every fast test in the suite.
 
+### Subprocess-spawn tests
+
+The same reasoning applies to tests whose work is a **real child process**
+(`spawnSync` / `execFileSync` of a `scripts/*.mjs` CLI). Those are not slow
+assertions, but under a saturated shared host the child's module graph (the
+Vite-SSR loader, Playwright) can take longer to load than the 5 s default, so
+the test is killed mid-spawn with a misleading "Test timed out" and no
+assertion failure. Declare the budget **per test** (not per file, so the plain
+unit tests in the same file keep the tight 5 s default), and keep the child's
+own `spawnSync` timeout as the real fail-fast contract:
+
+```ts
+it('spawns the real CLI and fails fast', { timeout: 60_000 }, () => {
+  const result = spawnSync(process.execPath, [script, '--config', 'missing.json'], {
+    encoding: 'utf8',
+    timeout: 30_000, // the behavioural bound: exceeding it is a failure
+    env: cliSpawnEnv(),
+  });
+  if (result.error) throw new Error(`spawn failed: ${result.error.message}`);
+  expect(result.status).toBe(1);
+});
+```
+
+Observed cases: the two spawned-CLI tests in
+`scripts/capture-gameplay.test.ts` (`--list-scenarios` — AH-0MVE112BV006EDSZ /
+AH-0MVE466JU001HR8T; bad-config fail-fast — AH-0MVSAPI66009T6PU, recorded
+5 889 ms against the 5 s default) and `scripts/recording-cli.test.ts`, whose
+real-entry-point spawns declare `15_000` per test. On an idle host the bad
+config child exits in ~1.1 s, so the budget costs nothing in the normal case.
+Do not reduce the per-test timeout to "make it fast", and keep the child
+bound (30 s) small enough that a genuine hang still fails.
+
 ## Recording format
 
 One table row per measured run, in a work-item comment on the epic

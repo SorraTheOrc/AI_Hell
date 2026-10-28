@@ -23,6 +23,31 @@
  * exactly-once accounting should reuse `isolateEnemyForKill` plus a pinned
  * seed.
  *
+ * A third, non-wall-clock flake family was tracked by the load-remediation
+ * epic AH-0MVSBEIVK003XAFB: **environmental saturation flakes** in the
+ * `scripts/` capture suites. They never had a wall-clock wait — each one was
+ * a correct test with an undeclared resource assumption, so the remediation
+ * is a bound or a labelled skip, not a `setTimeout` removal:
+ *
+ * - AH-0MVS1O1ZG007VCX3 — `scripts/capture-chunk-sink.test.ts` writes a
+ *   512 MiB file (32 x 16 MiB chunks) into `os.tmpdir()`, which is a shared
+ *   16 GiB tmpfs on this host; under saturation it filled and the write
+ *   failed with `ENOSPC`. Fixed by resolving a headroom-checked temp root
+ *   (explicit `TMPDIR` → disk-backed fallback → `os.tmpdir()`) with a
+ *   labelled environmental skip naming the item when no candidate has room.
+ * - AH-0MVSAPI66009T6PU — the spawned-CLI fail-fast test in
+ *   `scripts/capture-gameplay.test.ts` inherits Vitest's 5 s default while
+ *   spawning the real CLI's Vite-SSR loader; under CPU saturation the spawn
+ *   alone took ~5.9 s and vitest killed the test mid-spawn. Fixed with an
+ *   explicit per-test budget (`{ timeout: 60_000 }`) while the child's own
+ *   30 s `spawnSync` bound keeps the fail-fast contract, and a thrown
+ *   spawn-error message that distinguishes a starved spawn from a real
+ *   contract break.
+ *
+ * Both fixes keep the behaviour the tests assert; the per-file budgets and
+ * the skip condition are documented in `docs/dev/test-suite-timing.md`
+ * ("Per-file timing budgets" and its subprocess-spawn subsection).
+ *
  * The scan asserts **code**, not prose: comments and string literals are
  * stripped first, so this file's own documentation and the deterministic-boot
  * guard's regexes do not count.
