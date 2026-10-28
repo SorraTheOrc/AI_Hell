@@ -2,15 +2,13 @@
  * Wrap-aware enemy movement — test-first contract
  * (AH-0MVKXBV0O005Q77P, parent AH-0MV9G3DZ9003P7P8, AC3 + AC5).
  *
- * **TEST-FIRST.** Pinned before the shared post-motion wrap exists, wrapped in
- * Vitest's `it.fails` (the repo's red-before/green-after convention — see
- * `src/core/enemyForceField.test.ts` and `src/core/levelScaling.test.ts`) so
- * the suite stays green on pre-change HEAD. The implementation item
- * (AH-0MVKXBWDY008R0YH) creates the module and **flips every `it.fails` here
- * back to `it`**; a leftover `it.fails` fails the suite once the seam lands.
- *
- * The module is loaded through a non-literal dynamic import so `tsc --noEmit`
- * stays green while it does not exist yet.
+ * **TEST-FIRST → GREEN.** Pinned in Vitest's `it.fails` (the repo's
+ * red-before/green-after convention — see `src/core/enemyForceField.test.ts`
+ * and `src/core/levelScaling.test.ts`) before the shared post-motion wrap
+ * existed; the implementation item (AH-0MVKXBWDY008R0YH) created the module
+ * and flipped every case back to `it` (a leftover `it.fails` would now fail
+ * the suite). The module is imported statically so the compiler also holds
+ * it to the pinned surface.
  *
  * ## Pinned contract (AH-0MVKXBWDY008R0YH must match exactly)
  *
@@ -61,34 +59,23 @@ import { centipedeArena } from '../../waves/CentipedeSpawner';
 import { createCentipedeSegment } from '../gym/core/centipedeFormation';
 import { CentipedeChain } from './centipedeChain';
 import type { WrapWorld } from './enemyTargeting';
+import {
+  applyPostMotionWrap,
+  applyPostMotionWrapAll,
+  wrapPosition,
+} from './enemyWrap';
 import { advanceMarch, createMarchState } from './marchFormation';
 
 /**
- * Non-literal specifier so TypeScript does not resolve the (not yet existing)
- * module at type-check time. Vitest still resolves it at runtime.
+ * The shared post-motion wrap surface this suite pins. Imported statically
+ * now that the seam exists (AH-0MVKXBWDY008R0YH), so the compiler — not only
+ * the runtime — holds the implementation to the contract.
  */
-const ENEMY_WRAP_MODULE = './enemyWrap';
-
-/** The post-motion wrap surface this suite pins (see the module doc above). */
 interface WrapAwareBody {
   x: number;
   y: number;
   readonly wrapAware: boolean;
   setPosition(x: number, y: number): void;
-}
-
-interface EnemyWrapContract {
-  wrapPosition(x: number, y: number, world: WrapWorld): { x: number; y: number };
-  applyPostMotionWrap(body: WrapAwareBody, world: WrapWorld): boolean;
-  applyPostMotionWrapAll(
-    bodies: readonly WrapAwareBody[],
-    world: WrapWorld,
-  ): number;
-}
-
-/** Loads the module under test; throws (⇒ expected red) on pre-change HEAD. */
-async function enemyWrap(): Promise<EnemyWrapContract> {
-  return (await import(ENEMY_WRAP_MODULE)) as EnemyWrapContract;
 }
 
 /** The playfield wrap model: the same period enemy bullets and the player wrap on. */
@@ -134,8 +121,7 @@ class RecordingBody implements WrapAwareBody {
 // ── The pure wrap maths ─────────────────────────────────────────────
 
 describe('wrapPosition — pure four-edge wrap', () => {
-  it.fails('wraps a point that crosses the right edge to the left', async () => {
-    const { wrapPosition } = await enemyWrap();
+  it('wraps a point that crosses the right edge to the left', async () => {
 
     expect(wrapPosition(GAME_WIDTH + 40, 100, WORLD)).toEqual({
       x: 40,
@@ -143,8 +129,7 @@ describe('wrapPosition — pure four-edge wrap', () => {
     });
   });
 
-  it.fails('wraps a point that crosses the left edge to the right', async () => {
-    const { wrapPosition } = await enemyWrap();
+  it('wraps a point that crosses the left edge to the right', async () => {
 
     expect(wrapPosition(-40, 100, WORLD)).toEqual({
       x: GAME_WIDTH - 40,
@@ -152,8 +137,7 @@ describe('wrapPosition — pure four-edge wrap', () => {
     });
   });
 
-  it.fails('wraps a point that crosses the bottom edge to the top', async () => {
-    const { wrapPosition } = await enemyWrap();
+  it('wraps a point that crosses the bottom edge to the top', async () => {
 
     expect(wrapPosition(100, GAME_HEIGHT + 40, WORLD)).toEqual({
       x: 100,
@@ -161,8 +145,7 @@ describe('wrapPosition — pure four-edge wrap', () => {
     });
   });
 
-  it.fails('wraps a point that crosses the top edge to the bottom', async () => {
-    const { wrapPosition } = await enemyWrap();
+  it('wraps a point that crosses the top edge to the bottom', async () => {
 
     expect(wrapPosition(100, -40, WORLD)).toEqual({
       x: 100,
@@ -170,14 +153,12 @@ describe('wrapPosition — pure four-edge wrap', () => {
     });
   });
 
-  it.fails('wraps both axes when a corner overshoots two edges at once', async () => {
-    const { wrapPosition } = await enemyWrap();
+  it('wraps both axes when a corner overshoots two edges at once', async () => {
 
     expect(wrapPosition(GAME_WIDTH + 5, -5, WORLD)).toEqual({ x: 5, y: GAME_HEIGHT - 5 });
   });
 
-  it.fails('maps an exact boundary to the wrap origin', async () => {
-    const { wrapPosition } = await enemyWrap();
+  it('maps an exact boundary to the wrap origin', async () => {
 
     expect(wrapPosition(GAME_WIDTH, GAME_HEIGHT, WORLD)).toEqual({ x: 0, y: 0 });
     expect(wrapPosition(0, 0, WORLD)).toEqual({ x: 0, y: 0 });
@@ -187,16 +168,14 @@ describe('wrapPosition — pure four-edge wrap', () => {
     });
   });
 
-  it.fails('wraps a multi-period overshoot by modulo, not by one edge', async () => {
-    const { wrapPosition } = await enemyWrap();
+  it('wraps a multi-period overshoot by modulo, not by one edge', async () => {
 
     expect(
       wrapPosition(-GAME_WIDTH * 2 - 30, GAME_HEIGHT * 3 + 45, WORLD),
     ).toEqual({ x: GAME_WIDTH - 30, y: 45 });
   });
 
-  it.fails('returns coordinates unchanged when the world has no wrap model', async () => {
-    const { wrapPosition } = await enemyWrap();
+  it('returns coordinates unchanged when the world has no wrap model', async () => {
 
     expect(wrapPosition(1234, -5, { width: 0, height: Number.NaN })).toEqual({
       x: 1234,
@@ -212,8 +191,7 @@ describe('wrapPosition — pure four-edge wrap', () => {
 // ── The shared post-motion seam ─────────────────────────────────────
 
 describe('applyPostMotionWrap — the single shared post-motion step', () => {
-  it.fails('wraps a wrap-aware body across the edge and reports the move', async () => {
-    const { applyPostMotionWrap } = await enemyWrap();
+  it('wraps a wrap-aware body across the edge and reports the move', async () => {
     const body = new RecordingBody(-40, 100);
 
     expect(applyPostMotionWrap(body, WORLD)).toBe(true);
@@ -222,8 +200,7 @@ describe('applyPostMotionWrap — the single shared post-motion step', () => {
     expect(body.writes).toEqual([[GAME_WIDTH - 40, 100]]);
   });
 
-  it.fails('never wraps a non-aware body, even far outside the arena bounds', async () => {
-    const { applyPostMotionWrap } = await enemyWrap();
+  it('never wraps a non-aware body, even far outside the arena bounds', async () => {
     const body = new RecordingBody(-100, GAME_HEIGHT + 100, false);
 
     expect(applyPostMotionWrap(body, WORLD)).toBe(false);
@@ -232,8 +209,7 @@ describe('applyPostMotionWrap — the single shared post-motion step', () => {
     expect(body.writes).toEqual([]);
   });
 
-  it.fails('leaves every non-position field alone (velocity and heading preserved)', async () => {
-    const { applyPostMotionWrap } = await enemyWrap();
+  it('leaves every non-position field alone (velocity and heading preserved)', async () => {
     const body = new RecordingBody(GAME_WIDTH + 5, 100);
 
     expect(applyPostMotionWrap(body, WORLD)).toBe(true);
@@ -242,8 +218,7 @@ describe('applyPostMotionWrap — the single shared post-motion step', () => {
     expect(body.heading).toBe(0.5);
   });
 
-  it.fails('applies the seam to a whole scene list and counts only the wrapped bodies', async () => {
-    const { applyPostMotionWrapAll } = await enemyWrap();
+  it('applies the seam to a whole scene list and counts only the wrapped bodies', async () => {
     const aware = new RecordingBody(GAME_WIDTH + 5, 100);
     const unaware = new RecordingBody(GAME_WIDTH + 5, 100, false);
     const awareTop = new RecordingBody(100, -5);
@@ -255,8 +230,7 @@ describe('applyPostMotionWrap — the single shared post-motion step', () => {
     expect(awareTop.y).toBe(GAME_HEIGHT - 5);
   });
 
-  it.fails('leaves a non-aware archetype position untouched at the seam', async () => {
-    const { applyPostMotionWrap } = await enemyWrap();
+  it('leaves a non-aware archetype position untouched at the seam', async () => {
     const { scene } = await reuse.boot([HarnessScene]);
     // The classic march archetype is wrap-aware: false (seed exclusion).
     const march = new Scout(scene, {
@@ -349,10 +323,9 @@ const WRAP_AWARE_CLASSES: readonly MovementClassCase[] = [
 describe.each(WRAP_AWARE_CLASSES)(
   'wrap-aware movement class: $movementClass',
   ({ movementClass, make }) => {
-    it.fails(
+    it(
       `wraps a ${movementClass} entity across each of the four edges`,
       async () => {
-        const { applyPostMotionWrap } = await enemyWrap();
         const { scene } = await reuse.boot([HarnessScene]);
 
         for (const { edge, from, to } of EDGES) {
@@ -370,8 +343,7 @@ describe.each(WRAP_AWARE_CLASSES)(
 );
 
 describe('post-motion seam — position only', () => {
-  it.fails('preserves a grunt heading and an asteroid velocity when wrapping', async () => {
-    const { applyPostMotionWrap } = await enemyWrap();
+  it('preserves a grunt heading and an asteroid velocity when wrapping', async () => {
     const { scene } = await reuse.boot([HarnessScene]);
 
     const grunt = new Grunt(scene, {
@@ -401,10 +373,9 @@ describe('post-motion seam — position only', () => {
 // ── The classic-arcade exclusions stay bounded ──────────────────────
 
 describe('classic-arcade exclusions remain bounded', () => {
-  it.fails(
+  it(
     'keeps march reversing and dropping at the arena edge, never wrapped by the seam',
     async () => {
-      const { applyPostMotionWrap } = await enemyWrap();
       const { scene } = await reuse.boot([HarnessScene]);
 
       // The shared march law (primary pin: marchFormation.test.ts) still
@@ -437,23 +408,31 @@ describe('classic-arcade exclusions remain bounded', () => {
     },
   );
 
-  it.fails(
+  it(
     'keeps centipede weaving within its arena bounds, never wrapped by the seam',
     async () => {
-      const { applyPostMotionWrap } = await enemyWrap();
       const { scene } = await reuse.boot([HarnessScene]);
       const arena = centipedeArena(GAME_WIDTH, GAME_HEIGHT);
+      // Start the lead just inside the right bound so it reaches the wall and
+      // reverses within the loop — the point is to observe the *turn*, not to
+      // march the whole arena width first.
       const chain = new CentipedeChain({
-        startX: arena.minX + 2,
+        startX: arena.maxX - 5,
         startY: arena.minY,
         arena,
         segmentCount: 3,
         spacing: 20,
         lateralSpeed: 90,
         descentSpeed: 16,
+        initialDir: 1,
       });
 
-      // The chain still weaves inside the arena (the existing chain law).
+      // The chain still weaves inside the arena bounds (the existing chain
+      // law). Only the *lead* is bounded by the triangle wave: followers are
+      // placed a fixed arc-length behind it along the recorded path, so at
+      // spawn they trail back past `startX` and can sit left of `minX` before
+      // the chain has travelled far enough. What matters for this contract is
+      // that the weave stays bounded and the seam never wraps it.
       let turned = false;
       let previousX = chain.segment(0)!.x;
       for (let i = 0; i < 60; i++) {
@@ -461,10 +440,8 @@ describe('classic-arcade exclusions remain bounded', () => {
         const leadX = chain.segment(0)!.x;
         if (leadX < previousX) turned = true;
         previousX = leadX;
-        for (const segment of chain.segments) {
-          expect(segment.x).toBeGreaterThanOrEqual(arena.minX - 1e-6);
-          expect(segment.x).toBeLessThanOrEqual(arena.maxX + 1e-6);
-        }
+        expect(leadX).toBeGreaterThanOrEqual(arena.minX - 1e-6);
+        expect(leadX).toBeLessThanOrEqual(arena.maxX + 1e-6);
       }
       expect(turned).toBe(true);
 

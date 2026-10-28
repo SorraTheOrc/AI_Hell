@@ -67,6 +67,11 @@ import {
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
 import { pushAimTargets, pushSeekTargets } from './core/enemyTargeting';
+import {
+  applyPostMotionWrapAll,
+  PLAYFIELD_WORLD,
+  type WrapAwareBody,
+} from './core/enemyWrap';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
 import {
   computeFormationReanchorDelta,
@@ -2416,6 +2421,15 @@ export class PlayScene extends CombatScene<
       this.minerals,
     );
 
+    // The formation-positioned enemies of this frame — the shared
+    // post-motion wrap runs over exactly these bodies once the positioning
+    // pass (and any re-anchor glide) has finished. Self-moving entities
+    // (hazards, orbital strikes, roaming seekers) keep their own existing
+    // four-edge wrap and are deliberately not re-wrapped here: an
+    // `enterFromOffscreen` asteroid must stay outside the viewport until it
+    // has drifted in (AH-0MUDYS2SZ004H123), which a second seam would undo.
+    const positioned: WrapAwareBody[] = [];
+
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
       // Non-blocking world hazards (Asteroid, Frogger lane traffic) advance
@@ -2463,6 +2477,7 @@ export class PlayScene extends CombatScene<
         s.spacingX,
         s.spacingY,
       );
+      positioned.push(s.entity);
     }
 
     // If a re-anchor fired (now or on an earlier frame), ease all living
@@ -2471,6 +2486,13 @@ export class PlayScene extends CombatScene<
     if (reanchorApplied || this.glide.active) {
       this.glide.update(dt);
     }
+
+    // Shared post-motion edge wrap (AH-0MVKXBWDY008R0YH, parent
+    // AH-0MV9G3DZ9003P7P8 AC3): the one seam the game and every gym run.
+    // Wrap-aware enemies cross the seam to the opposite edge (position only —
+    // velocity/heading preserved); `march` and `centipede` carry
+    // `wrapAware: false` and keep their bounded, wall-respecting behaviour.
+    applyPostMotionWrapAll(positioned, PLAYFIELD_WORLD);
   }
 
   /**

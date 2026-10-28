@@ -56,6 +56,10 @@ import {
   pushSeekTargets,
 } from '../../../scenes/core/enemyTargeting';
 import {
+  applyPostMotionWrapAll,
+  PLAYFIELD_WORLD,
+} from '../../../scenes/core/enemyWrap';
+import {
   FormationGlide,
 } from '../../../scenes/core/formationGlide';
 import {
@@ -198,6 +202,15 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
     spacingX: number,
     spacingY: number,
   ): void;
+  /**
+   * Optional: the resolved seam-awareness flag (parent AH-0MV9G3DZ9003P7P8,
+   * AH-0MVKXBWDY008R0YH). Every `BaseEnemy` exposes it, and a `true` value
+   * makes the shared post-motion wrap carry the entity across the playfield
+   * edge each frame. Entities that omit it — the Boss (out of scope for
+   * seam-awareness) and test stubs — are never wrapped, and the classic
+   * arcade exclusions (`march`, `centipede`) carry `false`.
+   */
+  readonly wrapAware?: boolean;
   /**
    * Optional: advances a non-formation (roaming) enemy's own motion for
    * this frame (e.g. Asteroid straight-line drift + four-edge wrap +
@@ -1634,6 +1647,13 @@ export class GymFormationScene<
     if (reanchorApplied || this.glide.active) {
       this.glide.update(dt);
     }
+
+    // Shared post-motion edge wrap (AH-0MVKXBWDY008R0YH, parent
+    // AH-0MV9G3DZ9003P7P8 AC3): the same seam `PlayScene._moveEnemies` runs,
+    // applied once after the positioning pass so the game and every gym wrap
+    // on the same period. Position only — velocity/heading are preserved —
+    // and non-aware archetypes (`march`, `centipede`) are untouched.
+    applyPostMotionWrapAll(this.entities, PLAYFIELD_WORLD);
 
     // Advance the wormhole spawn animation (AC1–AC4): grown enemies are
     // marked spawned and the wormhole closes once every entity has finished.

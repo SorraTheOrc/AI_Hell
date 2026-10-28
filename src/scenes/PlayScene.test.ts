@@ -6924,10 +6924,21 @@ describe('PlayScene — Phaser orbital spawn transit (AH-0MVEXVME1004SIIS)', () 
     scene.tick(0.001);
     const after = livePhasers(scene);
     expect(after).toHaveLength(12);
+    // The playfield is now a wrapped torus (AH-0MVKXBWDY008R0YH), so an
+    // orbital slot exactly on an edge is equivalent to its wrapped twin: the
+    // Phaser may legitimately cross the seam by one full period between
+    // samples. "No line then snap" therefore means the *wrapped* distance is
+    // one frame of motion, not that raw coordinates are adjacent.
     for (let i = 0; i < after.length; i++) {
-      expect(
-        Math.hypot(after[i].x - settled[i].x, after[i].y - settled[i].y),
-      ).toBeLessThanOrEqual(1);
+      const dx = Math.min(
+        Math.abs(after[i].x - settled[i].x),
+        Math.abs(GAME_WIDTH - Math.abs(after[i].x - settled[i].x)),
+      );
+      const dy = Math.min(
+        Math.abs(after[i].y - settled[i].y),
+        Math.abs(GAME_HEIGHT - Math.abs(after[i].y - settled[i].y)),
+      );
+      expect(Math.hypot(dx, dy)).toBeLessThanOrEqual(1);
     }
   });
 
