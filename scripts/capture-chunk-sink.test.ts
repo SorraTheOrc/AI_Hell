@@ -106,6 +106,17 @@ function tempDir(prefix = 'aihell-chunk-sink-'): string {
  */
 const largeFileTempRoot = resolveTempRootForLargeFile();
 
+/**
+ * Suffix for the >512 MiB test's title in the skipped case only, so the skip
+ * is labelled in the run output as well as in the reporter annotation. Empty
+ * on a host with headroom, leaving the test name unchanged (it is referenced
+ * by AH-0MVS1O1ZG007VCX3 and by flake triage).
+ */
+const LARGE_TEMP_SKIP_LABEL =
+  largeFileTempRoot.chosen === null
+    ? ` [SKIPPED: ${largeTempSkipNote('AH-0MVS1O1ZG007VCX3', largeFileTempRoot)}]`
+    : '';
+
 /** Fresh temp directory on the resolved large-file root (headroom checked). */
 function largeFileTempDir(prefix = 'aihell-chunk-sink-budget-'): string {
   const chosen = largeFileTempRoot.chosen;
@@ -316,16 +327,16 @@ describe('chunk sink write path (AH-0MVNT26AQ005LDNS AC1/AC2/AC5)', () => {
 });
 
 describe('chunk sink memory bound beyond the CDP pipe budget (AC3)', () => {
-  it('writes >512 MiB in one-chunk-sized pieces with a flat pending bound', async (context) => {
+  it(`writes >512 MiB in one-chunk-sized pieces with a flat pending bound${LARGE_TEMP_SKIP_LABEL}`, async (context) => {
     if (largeFileTempRoot.chosen === null) {
       // Labelled environmental skip, not a weakened assertion: the full proof
       // (all of it, below) still runs wherever a temp filesystem has 1 GiB
       // free. See the file header for the footprint and resolution order.
       const note = largeTempSkipNote('AH-0MVS1O1ZG007VCX3', largeFileTempRoot);
-      // Print the label to the run output as well: reporters do not print the
-      // skip note, and an unlabelled skip is indistinguishable from a silently
-      // dropped test.
-      console.warn(note);
+      // Written straight to stderr because vitest's reporters swallow console
+      // output from skipped tests, and an unlabelled skip is indistinguishable
+      // from a silently dropped test.
+      process.stderr.write(`${note}\n`);
       context.skip(note);
     }
     const dir = largeFileTempDir();
