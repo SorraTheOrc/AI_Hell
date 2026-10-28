@@ -49,6 +49,10 @@ npm run evaluate -- --baseline legacy --candidate competent --seeds 10
 # compare the bot against a recorded human run on the same seed
 npm run evaluate -- --human recordings/human.jsonl --human-seed 42
 
+# validate a measured balance report (human or bot) against the committed
+# intended-experience targets; exits non-zero on drift (docs/EXPERIENCE_VALIDATION.md)
+npm run validate-experience -- eval-output/balance-report.json
+
 # also emit the optional side-by-side capture/compose plan
 npm run evaluate -- --human recordings/human.jsonl --video
 ```
@@ -295,6 +299,11 @@ and `--skirmish` above for the opt-out.
 - `src/ai/eval/evaluationDocs.test.ts` — this document's key sections.
 - `src/ai/eval/balancingDocs.test.ts` — the automated-balancing document's
   contract ([`docs/BALANCING.md`](./BALANCING.md)).
+- `src/ai/eval/experienceTargets.test.ts` — the intended-experience targets
+  schema, the pure comparator and the validation report
+  ([`docs/EXPERIENCE_VALIDATION.md`](./EXPERIENCE_VALIDATION.md)).
+- `scripts/validate-experience.test.ts` — the validation CLI shell
+  (artifacts, exit codes, determinism).
 
 ## Related work
 
@@ -302,6 +311,8 @@ and `--skirmish` above for the opt-out.
   (AH-0MUY089KR003F8S4).
 - Automated balancing (batch runner + shared balance-statistics schema, epic
   AH-0MV1DLUZ8009OCJW): [`docs/BALANCING.md`](./BALANCING.md).
+- Periodic human-experience validation
+  (AH-0MV7WVHU0000U775): [`docs/EXPERIENCE_VALIDATION.md`](./EXPERIENCE_VALIDATION.md).
 - Telemetry: [`docs/TELEMETRY.md`](./TELEMETRY.md).
 - Bot framework: [`docs/BOT_FRAMEWORK.md`](./BOT_FRAMEWORK.md).
 - Recording/replay: [`docs/dev/recording-and-replay.md`](./dev/recording-and-replay.md).

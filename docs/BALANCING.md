@@ -537,6 +537,30 @@ telemetry/consent configuration changes and no PII in the artifact — only
 schema fields (numeric statistics, seeds, archetype/upgrade keys and record
 hashes).
 
+### Intended experience and periodic validation (AH-0MV7WVHU0000U775)
+
+A `BalanceReport` records what the game **did**; the intended experience says
+what it is **supposed to do**. The committed targets artifact
+[`src/data/experience-targets.json`](../src/data/experience-targets.json)
+records a target band (centre + tolerance) for the key metrics, derived from a
+recorded bot batch — the chosen source of intended experience. A bot report or
+a recorded human session is then checked against those bands:
+
+```bash
+# human session (npm run record writes balance-stats.json beside the recording)
+npm run validate-experience -- recordings/balance-stats.json
+
+# fresh bot batch (catches a drift in the baseline itself)
+npm run validate-experience -- eval-output/balance-report.json --json
+```
+
+A band is `max(2 × baseline stdDev, 10 % of |centre|, 0.5)` wide; the exact
+rule is recorded in the artifact. The command writes a versioned
+`experience-validation.json` and a Markdown `experience-validation.md` under
+`--out` (default `experience-out/`) and **exits non-zero on drift**. The full
+workflow, the report shape, scheduling and tolerance-tuning guidance are in
+[`docs/EXPERIENCE_VALIDATION.md`](./EXPERIENCE_VALIDATION.md).
+
 ## Config-driven simulation
 
 The batch consumes the **real balance data** through the shared config
@@ -723,6 +747,11 @@ pixel-accurate, full-stack verification use the browser capture path
   parsing and pure CLI-core behaviour, plus the tune-loop comparison core
   (`runBalanceBatch`, `buildTuneComparisonArtifacts`) and `--tune`/`--set`
   flag parsing (AH-0MVBNITA0005VQGN).
+- `src/ai/eval/experienceTargets.test.ts` — the intended-experience targets
+  schema, the pure comparator (in-band / above / below / missing / empty) and
+  the validation report's determinism.
+- `scripts/validate-experience.test.ts` — the validation CLI shell: artifacts,
+  exit codes, source labelling and byte-stable output.
 - `src/ai/eval/tune.test.ts` — the versioned before/after comparison and the
   same-sweep guard (determinism, empty deltas, threshold classification).
 - `src/utils/csvEdit.test.ts` and `scripts/csvEdit-shell.test.ts` — the
@@ -825,5 +854,7 @@ chunks byte-identical to the in-memory `runs.jsonl` artifact).
 
 - Epic: **Automated Balancing** (AH-0MV1DLUZ8009OCJW).
 - Same-seed evaluation harness: [`docs/EVALUATION.md`](./EVALUATION.md).
+- Periodic human-experience validation
+  (AH-0MV7WVHU0000U775): [`docs/EXPERIENCE_VALIDATION.md`](./EXPERIENCE_VALIDATION.md).
 - Telemetry schema: [`docs/TELEMETRY.md`](./TELEMETRY.md).
 - Config source of truth: `src/data/*.csv` + `src/core/configStore.ts`.

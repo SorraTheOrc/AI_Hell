@@ -809,6 +809,22 @@ and are measured by same-seed baseline (curves off) vs post-change per-level
 batches, with the scaling table, rationale and reproduction commands recorded
 in `docs/BALANCING.md`.
 
+#### Intended experience and periodic validation
+
+Balancing evidence says what the game **did**; the intended experience says
+what it is **supposed to do**. The committed targets artifact
+`src/data/experience-targets.json` records a tolerated band per key metric
+(survival, minerals, upgrades, wave/level progress, avoidable hits), derived
+from a recorded bot batch. `npm run validate-experience -- <balance-report.json>`
+checks a bot batch **or** a recorded human session against those bands, writes
+a versioned JSON report plus a Markdown summary and **exits non-zero on
+drift**, so the human experience can be reviewed on a schedule. Run it against
+the human report `npm run record` writes, or against a fresh
+`npm run evaluate -- --batch` report to catch a regression in the baseline.
+See **[docs/EXPERIENCE_VALIDATION.md](./docs/EXPERIENCE_VALIDATION.md)** for the
+targets, the tolerance rule, the report shape and a documented scheduling
+recipe (AH-0MV7WVHU0000U775).
+
 #### Style matching from telemetry
 
 The pipeline that makes the bot **match a recorded player's style** — extract

@@ -1,6 +1,6 @@
 # Game Design Document — AI_Hell
 
-> **Living Document** — This GDD may be edited during development as the game evolves. All changes should be tracked in the worklog so decisions remain traceable. Last updated: 2026-08-27.
+> **Living Document** — This GDD may be edited during development as the game evolves. All changes should be tracked in the worklog so decisions remain traceable. Last updated: 2026-10-28.
 
 ---
 
@@ -388,6 +388,48 @@ The following rules govern how enemy entities interact with each other and with 
 - **Ram/contact vs. a shielded enemy**: when the player **crashes into** a shielded enemy, the field absorbs the ram — exactly **one** field hit is consumed, the enemy survives and the player survives the collision (a short shared re-arm prevents the field draining frame-by-frame during sustained overlap). Once the field is down the original contact rule applies unchanged: contact destroys **both** the player and the enemy.
 
 - **The Wall wave (density challenge)**: Level 3's Wall wave is a **density challenge, not a blocking mechanic**. The Wall consists of a dense horizontal line of enemies that advances slowly. Enemies in the Wall pass through each other freely. To create a gap through which the player can advance or through which bullets can reach enemies behind the Wall, the player must destroy each Wall enemy individually — one bullet per enemy. There is no special "Wall shielding" that blocks bullets from reaching enemies behind the line; bullets simply pass through gaps created by destroyed enemies.
+
+---
+
+### 2.7 Intended experience: measurable targets
+
+The design intent in this chapter — survive the escalating waves, earn a
+power-up every hold-full, ramp through the campaign — is also recorded as a
+**versioned, machine-checkable statement**, so the experience can be validated
+periodically instead of remembered (AH-0MV7WVHU0000U775).
+
+- **Source of truth:** [`src/data/experience-targets.json`](../src/data/experience-targets.json)
+  — one target band (centre ± tolerance) per key experience metric, derived
+  from a recorded 100-game competent-bot campaign batch (seeds 1–100, 18 000
+  ticks per game, full shipped campaign). `targetsVersion` identifies the
+  standard.
+- **Narrative:** this section. The two are updated in the same change whenever
+  a band moves materially.
+
+| Experience dimension | Metric | Intended band (targets v1) | What it means in play |
+|---|---|---|---|
+| Survival | `survivalSeconds` | 300.00 ± 30.00 s | A competent run lasts about five simulated minutes — the batch tick budget — i.e. the run is not cut short by a death spiral. |
+| Reward cadence | `mineralsCollected` | 18.00 ± 1.80 | A run collects about eighteen minerals, enough for roughly two hold-full resolutions. |
+| Build progression | `upgradesSelected` (per run) | 2.00 ± 0.50 | A run takes about two upgrades through the shared hold-full choice flow, so a run develops a build identity. |
+| Pacing (within a level) | `waveReached` | 6.46 ± 4.96 | A run progresses to the middle of a level's wave list, not just the opening waves. |
+| Pacing (campaign) | `levelReached` | 1.15 ± 0.71 | Most runs stay in level 1–2, so later-level content is reached only by better play. |
+| Challenge | `avoidableHits` | 0.00 ± 0.50 | A competent run takes no hits that cost a life; a human run taking a hit is a prompt to investigate, not automatically a defect. |
+
+The band width is `max(2 × baseline std-dev, 10 % of |centre|, 0.5)` (the exact
+rule is stored in the artifact). Verify the measured experience — a bot batch
+**or** a recorded human session — against these bands with
+`npm run validate-experience -- <balance-report.json>`; it writes a versioned
+JSON report plus a Markdown summary and exits non-zero on drift. The workflow,
+the report shape, the scheduling recipe and the tolerance-tuning guidance are in
+[`docs/EXPERIENCE_VALIDATION.md`](./EXPERIENCE_VALIDATION.md).
+
+> **Fidelity caveat.** The bands come from the headless bot baseline, not from
+> human play (see the fidelity boundary in [`docs/BALANCING.md`](./BALANCING.md)).
+> They are deliberately tolerant and are a **directional** statement of intent:
+> an out-of-band human result starts an investigation (regression, deliberate
+> change, or stale baseline) rather than proving a bug. The recorded baseline's
+> degenerate metrics — survival at the tick budget, zero avoidable hits — and
+> the re-baseline workflow are documented in the validation guide.
 
 ---
 
