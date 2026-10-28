@@ -980,6 +980,15 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
     return booted!.scene as MenuScene;
   }
 
+  /** Dispatches a keydown through the scene keyboard plugin (as a user would). */
+  function pressKey(scene: MenuScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
   it('AC3 — Continue is hidden when no checkpoint exists', async () => {
     const scene = await bootMenu();
     const continueButton = scene.children.list.find(
@@ -1041,5 +1050,99 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
     expect(hasCheckpoint()).toBe(false);
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.getWaveManager().level).toBe(1);
+  });
+
+  // ── Keyboard reachability (AH-0MVSHH20J003YXDN AC1–AC3) ────────
+
+  it('AC1 — Continue is focused by default with a visible highlight', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+    expect(scene.getFocusedLabel()).toBe('⏵  Continue — Level 4');
+    const continueButton = findText(scene, '⏵  Continue — Level 4');
+    // Focus highlight applies a white stroke border (FocusManager pattern),
+    // matching the established behaviour for the default control.
+    expect(continueButton.style.stroke).toBeTruthy();
+    // The previously-default control is present but not focused.
+    expect(findText(scene, '▶  Play Game').style.strokeThickness).toBe(0);
+  });
+
+  it('AC2 — Tab cycles the checkpoint menu in visual order and wraps', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+    expect(scene.getFocusedLabel()).toBe('⏵  Continue — Level 4');
+
+    // Visual order: Continue sits above Play Game, then the original cycle
+    // (including the GitHub footer link), wrapping back to Continue.
+    for (const expected of [
+      '▶  Play Game',
+      '👁  Watch Demo',
+      '⚙  Settings',
+      '🏆  Leaderboard',
+      'GitHub',
+      '⚙  Gym Scene Index (dev)',
+      '⏵  Continue — Level 4',
+    ]) {
+      pressKey(scene, { key: 'Tab' });
+      expect(scene.getFocusedLabel()).toBe(expected);
+    }
+  });
+
+  it('AC2 — Arrow keys cycle the checkpoint menu; ArrowUp from the dev button lands on GitHub', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+    expect(scene.getFocusedLabel()).toBe('⏵  Continue — Level 4');
+
+    // ArrowDown walks the whole menu forward and wraps back to Continue.
+    for (const expected of [
+      '▶  Play Game',
+      '👁  Watch Demo',
+      '⚙  Settings',
+      '🏆  Leaderboard',
+      'GitHub',
+      '⚙  Gym Scene Index (dev)',
+      '⏵  Continue — Level 4',
+    ]) {
+      pressKey(scene, { key: 'ArrowDown' });
+      expect(scene.getFocusedLabel()).toBe(expected);
+    }
+
+    // ArrowUp from Continue wraps to the dev button; stepping back from the
+    // dev button lands on GitHub — never skipping (AC2 wrap guarantee).
+    pressKey(scene, { key: 'ArrowUp' });
+    expect(scene.getFocusedLabel()).toBe('⚙  Gym Scene Index (dev)');
+    pressKey(scene, { key: 'ArrowUp' });
+    expect(scene.getFocusedLabel()).toBe('GitHub');
+    pressKey(scene, { key: 'ArrowUp' });
+    expect(scene.getFocusedLabel()).toBe('🏆  Leaderboard');
+  });
+
+  it('AC3 — Enter on focused Continue resumes the saved run with its stats', async () => {
+    seedCheckpoint(4);
+    const scene = await bootMenu();
+
+    expect(scene.getFocusedLabel()).toBe('⏵  Continue — Level 4');
+    pressKey(scene, { key: 'Enter' });
+
+    // Activation does not move focus; the resume transition is processed on
+    // the next game step, so Continue is still focused synchronously.
+    expect(scene.getFocusedLabel()).toBe('⏵  Continue — Level 4');
+    await advanceGame(booted!.game, 500);
+
+    // Identical to the pointerdown resume path (existing AC3/AC4 assertions).
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getWaveManager().level).toBe(4);
+    expect(play.getWaveManager().waveNumber).toBe(1);
+    expect(play.getGameState().lives).toBe(2);
+    expect(play.getGameState().score).toBe(9876);
+    expect(play.getGameState().minerals).toBe(3);
+    expect(play.getUnlockedWeapons()).toContain('railgun');
+    expect(play.getRunSeed()).toBe(4242);
+    expect(
+      play
+        .getPlayer()!
+        .getWeaponLevels()
+        .some((entry) => entry.id === 'spread' && entry.level === 2),
+    ).toBe(true);
   });
 });

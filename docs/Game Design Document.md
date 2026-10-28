@@ -101,8 +101,12 @@ the game-over screen (the in-game pause menu follows the same model).
   focus style (brighter colour + highlight border); exactly one control is
   focused at a time.
 - **Menu (`MenuScene`):** *Play Game* is focused by default, so pressing
-  **Enter** starts a run; **Tab**/arrows cycle through *Play Game* →
-  *Watch Demo* → *Settings* → *Leaderboard* → *Gym Scene Index (dev)*.
+  **Enter** starts a run. When a resumable checkpoint exists, a **Continue**
+  control is added above it, becomes the focused default instead, and
+  pressing **Enter** resumes the saved run. **Tab**/arrows cycle in visual
+  order through *Continue* (when present) → *Play Game* → *Watch Demo* →
+  *Settings* → *Leaderboard* → *GitHub* → *Gym Scene Index (dev)*,
+  wrapping at both ends.
 - **Game over (`GameOverScene`):** the initials field is focused by default
   and **A–Z** / **Backspace** edit it; **Tab**/arrows move focus to
   *Return to Menu*. **Enter** auto-submits when the initials are complete;
@@ -1490,9 +1494,10 @@ src/
 │   │                      `GymFormationScene`; the single-definition guard and the cross-scene
 │   │                      overflow test live in `mineralLayer.equivalence.test.ts`.
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
-│   │                      Settings → SettingsScene (audio + controls, origin MenuScene),
-│   │                      Gym Scene Index (dev) → GymIndex; resumes Web Audio on click;
-│   │                      FocusManager keyboard navigation (default focus on Play Game)
+│   │                      Continue (checkpoint resume) → PlayScene, Settings → SettingsScene
+│   │                      (audio + controls, origin MenuScene), Gym Scene Index (dev) → GymIndex;
+│   │                      resumes Web Audio on click; FocusManager keyboard navigation
+│   │                      (default focus on Continue when a checkpoint exists, else Play Game)
 │   ├── PlayScene.ts     — Playable run (implemented): extends the shared `scenes/core/CombatScene`
 │   │                      base (which extends `CombatCoreScene`; implementing its hooks for
 │   │                      boss multi-hit, asteroid split (delegated to the shared
