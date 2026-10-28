@@ -1445,6 +1445,48 @@ fires the reward then checkpoint hooks exactly once
 (`setMiniBossRewardHook` / `setMiniBossCheckpointHook`, guarded while the
 reward/checkpoint features are absent) before advancing the level.
 
+**Defeat sweep (AH-0MVOFGB6K003YD0Z, GDD §3.3.1).** The defeat frame now runs
+the shared `miniBossDeathSweep` machinery
+(`src/scenes/core/miniBossDeathSweep.ts`) — one implementation, consumed by both
+`PlayScene` and `GymMiniBoss` (no divergent copy; the duplicate-body guard
+covers it):
+
+- **Capture before teardown.** `PlayScene._damageMiniBoss` snapshots the
+  mini-boss's death position and its live `getMinions()` **before**
+  `takeDamage()` (whose lethal blow clears the minions) and before
+  `miniBoss.destroy()`; the sweep targets are those minions plus every live
+  wave-gating escort (`isNonBlockingHazard` entities — asteroids, lane traffic
+  — are excluded and survive).
+- **Planner ⇒ executor.** The planner is pure and Phaser-free
+  (`collectSweepTargets`, `planMiniBossDeathSweep`, `miniBossSweepExtras`) and
+  emits `n` staggered enemy bursts, `max(0, 30 − n)` scattered bursts sampled
+  inside the inset playfield, and exactly 10 bursts anchored on the captured
+  death point (`n + max(0, 30 − n) + 10 ≤ 40` bursts); all randomness comes
+  from the run seed. The thin executor (`spawnMiniBossDeathSweep`) plays them
+  through the shared `spawnExplosionParticles` VFX.
+- **Completion is real animation time.** `spawnExplosionParticles` gained an
+  optional `onComplete` seam; the executor completes when the last burst tween
+  reports, with a `scene.time.delayedCall` watchdog at
+  `plan.completionDelayMs + margin` for scenes whose loop does not tick tweens
+  (the deterministic test harness). Neither signal is a frame count, and a
+  paused scene freezes both identically.
+- **Cosmetic teardown.** Swept enemies are removed with the shared
+  `BaseEnemy.destroySilently()` seam (alive flag cleared, body hidden,
+  force-field bubble cleared, **no** explosion of its own — the sweep supplies
+  the burst) and never route through the reward-bearing `_onEnemyKilled` path:
+  no score, no drops, no kill telemetry.
+- **Deferred finalisation.** `PlayScene._finaliseMiniBossDefeat` runs from the
+  executor's `onComplete`: it opens the reward overlay
+  (`openMiniBossReward`, `miniBossRewardOpen` latch ⇒ exactly one overlay per
+  defeat) and then advances the wave/level accounting exactly once — after the
+  sweep, never mid-display, never twice.
+- **Gym parity.** `GymMiniBoss.explodeRandom()` overrides the generic
+  "destroy one random entity" EXPLODE handler with the same sweep (capturing
+  the minions before the teardown) and exposes `isMiniBossSweepActive()` /
+  `getMiniBossSweepTargets()` so the gym verifies exactly what ships; the gym
+  has no reward overlay or wave accounting, so completion only reports itself
+  on the status line.
+
 ---
 
 ## 4. Known gotchas (browser rendering & conventions)
@@ -1524,7 +1566,9 @@ only legitimate difference is a disabled feature — never a divergent copy.
 Every shared behaviour therefore lives once: the core template methods and
 hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
-`asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`, `enemyWrap`), the shared dispatcher
+`asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`, `enemyWrap`,
+`miniBossDeathSweep` — the mini-boss defeat cascade shared by `PlayScene` and
+`GymMiniBoss`, §3.3), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
 helpers `resolveSpawnRange` / `pickInRange` in `src/core/configTypes.ts`

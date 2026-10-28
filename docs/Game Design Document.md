@@ -576,6 +576,45 @@ designs through the same shared core.
 > Scaling is applied once, when the encounter spawns, so it is deterministic
 > and an unupgraded player always sees the base values.
 
+#### 3.3.1 Mini-boss defeat sweep (AH-0MVOFGB6K003YD0Z)
+
+A mini-boss kill is a **celebration**, not just a body disappearing: the lethal
+hit triggers a staggered **explosion sweep** that runs to completion before the
+reward overlay (§4.4.4) appears.
+
+- **Swept scope.** Every remaining **wave-gating** enemy explodes — the
+  encounter's surviving escort ships **plus the mini-boss's live summoned
+  minions** (captured before the entity's own teardown clears them). Non-blocking
+  hazards (`asteroid`, `lane-traffic`, the shared `isNonBlockingHazard`
+  classifier) are **not** swept: they stay on the field and never gate the
+  wave.
+- **Cascade.** The swept enemies burst in a short staggered sweep starting on
+  the defeat frame (enemy-scale bursts through the shared
+  `spawnExplosionParticles` VFX, ~360 ms per burst), so the display reads as a
+  chain reaction rather than N simultaneous flashes.
+- **Celebration scatter.** The sweep adds `max(0, 30 − n)` extra bursts at
+  positions sampled uniformly inside the playfield (inset so no burst is
+  clipped off-screen), where `n` is the number of swept wave-gating enemies —
+  `n = 0` → 30 extras, `n = 30` → 0, `n > 30` → 0 (never negative) — **plus
+  exactly 10** bursts clustered around the mini-boss's death position captured
+  at destruction. A sweep is therefore bounded at
+  `n + max(0, 30 − n) + 10 ≤ 40` bursts.
+- **Cosmetic only.** Swept enemies are removed from play visually and award
+  **no score, no mineral/power-up/Extra-Life drops and no kill telemetry** —
+  they never route through the reward-bearing kill path. The mini-boss reward
+  (§4.4.4) remains the encounter's single reward.
+- **Ordering.** The reward overlay opens only after the **last** burst has
+  finished animating (its `setPaused(true)` would otherwise freeze the burst
+  tweens mid-flight), and the wave/level accounting advances **exactly once,
+  after** the sweep — never mid-display, never twice. Demo/attract mode keeps
+  its reward auto-select (§4.4.4) after that delay, so the demo never stalls.
+- **Determinism.** All placement and jitter draw from the run-seeded RNG (no
+  `Math.random()`), so a given seed replays the same display.
+- **Parity.** The sweep lives once in `src/scenes/core/miniBossDeathSweep.ts`
+  (pure planner + thin Phaser executor, with a Clock watchdog so completion is
+  real animation time) and is consumed by both `PlayScene` and the
+  `GymMiniBoss` gym — the gym's EXPLODE button shows the same cascade.
+
 ---
 
 ## 4. Content Catalogs
@@ -1172,6 +1211,13 @@ promises an unimplemented or inapplicable effect (AH-0MVL9P2SF009QFON).
 Coverage: `src/powerups/unlocks.test.ts`
 (the ~50 % locked-pool invariant, option builders, single consumption) and the
 `PlayScene — mini-boss encounter` reward tests.
+
+**The overlay waits for the defeat sweep (AH-0MVOFGB6K003YD0Z).** The reward is
+offered when the encounter is *defeated*, and a defeat now plays the staggered
+explosion sweep of §3.3.1 first: the overlay opens only once the last burst has
+finished animating, because its `setPaused(true)` would freeze the burst tweens
+mid-display. The `miniBossRewardOpen` latch still opens exactly **one** overlay
+per defeat, and the level advances once **after** the sweep.
 
 **Demo/attract auto-select (AH-0MVJ8U79V0056I2F).** In demo mode the reward is
 not left waiting for a human: the launcher passes the same overlay
