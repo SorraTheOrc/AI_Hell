@@ -4,15 +4,14 @@
  * **TEST-FIRST.** This suite pins the strike's visual identity **before** the
  * implementation exists: `src/vfx/orbitalStrike.ts` is authored by the sibling
  * item **AH-0MVS2SXTM000H5PL** (wired into the shared strike path by
- * AH-0MVS2T0VQ00973W5). Every case is wrapped in Vitest's `it.fails` (the
+ * AH-0MVS2T0VQ00973W5). Every case was wrapped in Vitest's `it.fails` (the
  * repo's red-before/green-after convention — see `src/core/levelScaling.test.ts`
- * and `src/scenes/core/miniBossDeathSweep.test.ts`) so the suite stays green on
- * pre-change HEAD; the implementation item **flips every `it.fails` back to
- * `it`** once the module lands, and a leftover `it.fails` then fails the suite.
- *
- * The module is loaded through a non-literal dynamic import on purpose: a
- * static `import './orbitalStrike'` would fail `tsc --noEmit` (and therefore
- * the build) while the module does not exist yet.
+ * and `src/scenes/core/miniBossDeathSweep.test.ts`) so the suite stayed green
+ * on pre-change HEAD; the implementation item **flipped every `it.fails` back
+ * to `it`** once the module landed, and a leftover `it.fails` would have failed
+ * the suite. The module here is loaded through a non-literal dynamic import on
+ * purpose: a static `import './orbitalStrike'` would fail `tsc --noEmit` (and
+ * therefore the build) while the module does not exist yet.
  *
  * ## Pinned contract (AH-0MVS2SXTM000H5PL must match exactly)
  *
@@ -320,7 +319,7 @@ describe('orbitalStrike — descending bolt composition (AH-0MVS2SXTM000H5PL)', 
     return booted.scene;
   }
 
-  it.fails('spawns the bolt at the impact point and registers it for teardown', async () => {
+  it('spawns the bolt at the impact point and registers it for teardown', async () => {
     const { spawnOrbitalStrike } = await strikeModule();
     const scene = await boot();
     const registry: Phaser.GameObjects.Graphics[] = [];
@@ -336,7 +335,7 @@ describe('orbitalStrike — descending bolt composition (AH-0MVS2SXTM000H5PL)', 
     expect(tweenSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
-  it.fails('draws a vertical bolt column from well above the target down to it', async () => {
+  it('draws a vertical bolt column from well above the target down to it', async () => {
     const { spawnOrbitalStrike, ORBITAL_STRIKE_BOLT_WIDTH } = await strikeModule();
     const scene = await boot();
 
@@ -354,7 +353,7 @@ describe('orbitalStrike — descending bolt composition (AH-0MVS2SXTM000H5PL)', 
     expect(Math.abs(column.x)).toBeLessThanOrEqual(ORBITAL_STRIKE_BOLT_WIDTH / 2 + 1);
   });
 
-  it.fails('marks the target while the bolt falls and flashes on impact', async () => {
+  it('marks the target while the bolt falls and flashes on impact', async () => {
     const { spawnOrbitalStrike, ORBITAL_STRIKE_MARKER_RADIUS } = await strikeModule();
     const scene = await boot();
 
@@ -379,7 +378,7 @@ describe('orbitalStrike — descending bolt composition (AH-0MVS2SXTM000H5PL)', 
     expect(filledShapeCount(handle.graphics)).toBeGreaterThanOrEqual(1);
   });
 
-  it.fails('stays within the target column and the marker radius (no screen-wide wash)', async () => {
+  it('stays within the target column and the marker radius (no screen-wide wash)', async () => {
     const {
       spawnOrbitalStrike,
       ORBITAL_STRIKE_BOLT_WIDTH,
@@ -399,7 +398,7 @@ describe('orbitalStrike — descending bolt composition (AH-0MVS2SXTM000H5PL)', 
     );
   });
 
-  it.fails('completes within the 0.35 s budget and never stacks into a wash', async () => {
+  it('completes within the 0.35 s budget and never stacks into a wash', async () => {
     const { spawnOrbitalStrike, ORBITAL_STRIKE_DURATION } = await strikeModule();
     const scene = await boot();
     const registries: Phaser.GameObjects.Graphics[] = [];
@@ -432,7 +431,7 @@ describe('orbitalStrike — distinct from the Smart Bomb ring (AH-0MUOOB3OR001V8
     return booted.scene;
   }
 
-  it.fails('is compositionally — not merely chromatically — distinct from spawnNovaRing', async () => {
+  it('is compositionally — not merely chromatically — distinct from spawnNovaRing', async () => {
     const { spawnOrbitalStrike } = await strikeModule();
     const scene = await boot();
     // Force both effects to the same colour so *only* the shape can differ:
@@ -471,7 +470,7 @@ describe('orbitalStrike — registry participation and completion', () => {
     return booted.scene;
   }
 
-  it.fails('removes itself from the registry and destroys on completion', async () => {
+  it('removes itself from the registry and destroys on completion', async () => {
     const { spawnOrbitalStrike } = await strikeModule();
     const scene = await boot();
     const registry: Phaser.GameObjects.Graphics[] = [];
@@ -487,7 +486,7 @@ describe('orbitalStrike — registry participation and completion', () => {
     expect(handle.graphics.active).toBe(false);
   });
 
-  it.fails('works without a registry (fire-and-forget effect)', async () => {
+  it('works without a registry (fire-and-forget effect)', async () => {
     const { spawnOrbitalStrike } = await strikeModule();
     const scene = await boot();
     const tweenSpy = vi.spyOn(scene.tweens, 'add');
