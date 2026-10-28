@@ -793,6 +793,10 @@ export class CombatCoreScene<
   /**
    * Shared screen-wide Phase Shift juice step (parent AH-0MUIYX1EE008FVS8).
    *
+   * This is the **single** place the player treatment is advanced: the game
+   * (`PlayScene`) and every combat gym — including the level gyms — call it,
+   * and none of them constructs a divergent copy (AH-0MVNTY0700053T9E).
+   *
    * Lazily creates the treatment the first time a ship exists, then advances
    * it for the current phased state: the overlays appear on the frame the
    * phase activates and are destroyed on the frame it expires. A no-op when
@@ -1763,6 +1767,12 @@ export class CombatCoreScene<
    * additional object families override this and call
    * `super.teardownRunState()` first (or last, provided the base call is
    * always reached).
+   *
+   * The Phase Shift treatment is released through its own `destroy()` — not
+   * just the overlay-registry sweep below — because it also owns the
+   * camera-filter driver: a plain `phaseShiftEffects` sweep cannot reach the
+   * WebGL filter controllers, so without this a stop/restart would keep the
+   * phase distortion (AH-0MVNTY0700053T9E).
    */
   protected teardownRunState(): void {
     for (const bullet of this.playerBullets) bullet.destroy();
@@ -1771,6 +1781,8 @@ export class CombatCoreScene<
     this.playerExplosions = [];
     for (const effect of this.playerDeathEffects) effect.destroy();
     this.playerDeathEffects = [];
+    this.phaseShiftJuice?.destroy();
+    this.phaseShiftJuice = null;
     for (const effect of this.phaseShiftEffects) effect.destroy();
     this.phaseShiftEffects = [];
     for (const anim of this.collectAnimations) anim.destroy();

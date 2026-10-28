@@ -99,8 +99,8 @@ import {
   formationExtents,
   placeWavePortal,
   startSpawnAnimation,
-  updateEnemyShimmer,
   updateSpawnAnimation,
+  updateSpawnEmergence,
   type PortalPoint,
   type SpawnAnimatable,
 } from '../vfx/wormholeSpawn';
@@ -1443,12 +1443,13 @@ export class PlayScene extends CombatScene<
     let anySpawning = false;
     for (const s of this.spawned) {
       if (!s.entity.isSpawning) continue;
-      const stillGrowing = updateSpawnAnimation(s.entity, dt);
-      // Per-entity emergence shimmer (AH-0MVD2N333004VDA9) rides the same
-      // shared spawn path, immediately after the growth write so its scale
-      // pulse layers on the growth scale instead of fighting it
-      // (AH-0MVD2N9MM0007NGZ wiring).
-      updateEnemyShimmer(s.entity as unknown as SpawnAnimatable, dt);
+      // One shared emergence step (AH-0MVNTY0700053T9E): the growth write is
+      // absolute and the per-entity shimmer is layered on top in the same call,
+      // so the game and every gym cannot drift on the shimmer.
+      const stillGrowing = updateSpawnEmergence(
+        s.entity as unknown as SpawnAnimatable,
+        dt,
+      );
       if (stillGrowing) {
         anySpawning = true;
       } else {

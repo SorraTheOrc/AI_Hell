@@ -146,6 +146,9 @@ class BareCoreScene extends CombatCoreScene {
   runUpdateDroneSpawning(dt: number): void {
     this._updateDroneSpawning(dt);
   }
+  runTeardownRunState(): void {
+    this.teardownRunState();
+  }
   /** Drives the four-directional right key for the shared-step tests. */
   pressRight(down: boolean): void {
     if (this.cursors) this.cursors.right.isDown = down;
@@ -1006,5 +1009,64 @@ describe('CombatCoreScene — collector-drone spawn wiring (AH-0MVBMQ04X0051002)
     scene.addPlayer({ x: 320, y: 240 });
     scene.runUpdateDroneSpawning(1 / 60);
     expect(scene.getDrones()).toHaveLength(1);
+  });
+});
+
+// ── Scene lifecycle: shared effect teardown (AH-0MVNTY0700053T9E) ────
+
+/**
+ * The Phase Shift treatment owns a camera-filter driver that a plain overlay
+ * registry sweep cannot reach. A scene `SHUTDOWN` must therefore go through
+ * the treatment's own `destroy()` — otherwise a WebGL camera keeps the phase
+ * distortion (and its controllers) into a restarted scene.
+ */
+describe('CombatCoreScene — SHUTDOWN releases the shared Phase Shift treatment (AH-0MVNTY0700053T9E)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  async function boot(): Promise<StubCoreScene> {
+    const booted = await bootScene([StubCoreScene]);
+    games.push(booted);
+    return booted.scene as unknown as StubCoreScene;
+  }
+
+  it('destroys the treatment (and therefore clears its camera filters) on teardown', async () => {
+    const scene = await boot();
+    const destroy = vi.fn();
+    const overlayDestroy = vi.fn();
+    // The overlay registry may still hold a leftover; teardown must destroy
+    // that too, but the filter-owning driver is only reachable via destroy().
+    (scene as unknown as { phaseShiftJuice: unknown }).phaseShiftJuice = {
+      destroy,
+    };
+    (scene as unknown as { phaseShiftEffects: unknown[] }).phaseShiftEffects = [
+      { destroy: overlayDestroy },
+    ];
+
+    scene.runTeardownRunState();
+
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(overlayDestroy).toHaveBeenCalledTimes(1);
+    expect(
+      (scene as unknown as { phaseShiftJuice: unknown }).phaseShiftJuice,
+    ).toBeNull();
+    expect(
+      (scene as unknown as { phaseShiftEffects: unknown[] }).phaseShiftEffects,
+    ).toHaveLength(0);
+  });
+
+  it('a second teardown is safe — no double destroy, no throw', async () => {
+    const scene = await boot();
+    const destroy = vi.fn();
+    (scene as unknown as { phaseShiftJuice: unknown }).phaseShiftJuice = {
+      destroy,
+    };
+
+    scene.runTeardownRunState();
+    expect(() => scene.runTeardownRunState()).not.toThrow();
+    expect(destroy).toHaveBeenCalledTimes(1);
   });
 });

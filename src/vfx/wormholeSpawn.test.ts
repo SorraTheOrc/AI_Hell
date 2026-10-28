@@ -38,6 +38,7 @@ import {
   spawnWormholeOpen,
   startSpawnAnimation,
   updateSpawnAnimation,
+  updateSpawnEmergence,
   type SpawnAnimatable,
   type WormholeHandle,
 } from './wormholeSpawn';
@@ -1134,6 +1135,53 @@ describe('wormholeSpawn — unmistakable enemy emergence (AH-0MVNTXTYN001ZXM6)',
       expect(ratio).toBeGreaterThanOrEqual(1 - scaleAmount - 1e-6);
       expect(ratio).toBeLessThanOrEqual(1 + scaleAmount + burstScaleBoost + 1e-6);
     }
+  });
+
+  it('updateSpawnEmergence drives growth + shimmer in one shared step (AH-0MVNTY0700053T9E)', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(50, 50) as SpawnAnimatable;
+    startSpawnAnimation(enemy, 1);
+
+    // Wormhole-open delay: growth holds at 1 px and shimmer stays off.
+    updateSpawnEmergence(enemy, WORMHOLE_OPEN_DURATION / 2);
+    expect(outlineOf(enemy)).toBeUndefined();
+
+    // First full step: growth begins (scale > 0.01) AND the shimmer outline
+    // layers on the very same frame — the shared step can never forget one.
+    updateSpawnEmergence(enemy, WORMHOLE_OPEN_DURATION / 2 + 1e-3);
+    expect(enemy.scaleX).toBeGreaterThan(0.01);
+    expect(outlineOf(enemy)).toBeDefined();
+
+    // Sustained per-frame steps keep both layers alive without re-creating.
+    const outlineKey = stringTunable('ENEMY_SHIMMER_OUTLINE_DATA_KEY');
+    for (let i = 0; i < 8; i += 1) updateSpawnEmergence(enemy, 0.02);
+    expect(
+      enemy.list.filter((child) => child.getData?.(outlineKey) === true),
+    ).toHaveLength(1);
+  });
+
+  it('updateSpawnEmergence restores the entity fully when growth ends (AH-0MVNTY0700053T9E)', async () => {
+    const scene = await boot();
+    const enemy = startGrowth(scene);
+    const originalAlpha = enemy.alpha;
+
+    // One step that crosses the whole growth window: growth completes and the
+    // shimmer is released in the same call (no residual layer or state).
+    expect(updateSpawnEmergence(enemy, ENEMY_GROWTH_DURATION)).toBe(false);
+    expect(enemy.scaleX).toBeCloseTo(1, 5);
+    expect(enemy.alpha).toBeCloseTo(originalAlpha, 5);
+    expect(outlineOf(enemy)).toBeUndefined();
+    expect(enemy.getData(SHIMMER_STATE_DATA_KEY)).toBeUndefined();
+  });
+
+  it('updateSpawnEmergence is a safe no-op on an entity that is not spawning (AH-0MVNTY0700053T9E)', async () => {
+    const scene = await boot();
+    const enemy = scene.add.container(50, 50) as SpawnAnimatable;
+    enemy.setAlpha(0.6);
+
+    expect(updateSpawnEmergence(enemy, 0.016)).toBe(false);
+    expect(enemy.alpha).toBeCloseTo(0.6, 5);
+    expect(enemy.getData(SHIMMER_STATE_DATA_KEY)).toBeUndefined();
   });
 
   it('introduces no screen-wide overlay on the emergence path', async () => {

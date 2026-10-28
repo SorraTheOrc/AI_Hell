@@ -1621,6 +1621,20 @@ classic-arcade gyms — a disabled feature is the only permitted divergence.
 See "Projectile identity & per-shot feel" in this document for the full
 per-attack roster.
 
+**Unmistakable VFX layers are shared, not scene-copies (AH-0MVNTY0700053T9E).** The
+player Phase Shift treatment (`src/vfx/phaseShiftJuice.ts`, including the WebGL
+camera-filter driver in `src/vfx/cameraFilters.ts`) is advanced in exactly one
+place — `CombatCoreScene._updatePhaseShiftJuice` — which `PlayScene`,
+`GymFormationScene` (and its subclasses), `GymPowerUpsCombat` and `GymLevel` all
+consume; the per-enemy emergence treatment is driven by the one shared step
+`updateSpawnEmergence` in `src/vfx/wormholeSpawn.ts` (growth + shimmer in a
+single call, so a scene cannot silently drop one), and the wormhole
+ring/shockwave is registered through the shared `WormholeController` into each
+scene's `wormholeEffects` registry. A scene gets the effect or none of it —
+there is no per-scene layer copy to drift — and the cross-scene equivalence
+suite boots the game and each gym to prove identical outcomes while the ship is
+phased or an enemy is emerging.
+
 **Documented divergence — the Player gym's obstacle course.** `GymPlayer`
 spawns a deterministic set of indestructible obstacles
 (`src/entities/Obstacle.ts`) that the shipped `PlayScene` does not yet have.

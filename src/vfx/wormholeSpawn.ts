@@ -1030,6 +1030,34 @@ export function updateEnemyShimmer(
 }
 
 /**
+ * The single shared emergence step: advances **one** emerging enemy through
+ * the whole spawn treatment in the canonical order — the growth animation
+ * first (an absolute scale write), then the per-entity shimmer layered on
+ * the growth scale (AH-0MVNTY0700053T9E, gym↔game parity).
+ *
+ * Scenes (the game and every formation/level gym) must call only this step
+ * in their per-frame spawn loop, never the two helpers piecemeal: the order
+ * and the pairing are the contract, and a scene that calls just
+ * {@link updateSpawnAnimation} would silently drop the unmistakable shimmer.
+ * The call is a safe no-op for any entity that is not spawning, so a scene
+ * may invoke it for its whole live set without an `isSpawning` pre-check.
+ *
+ * @param enemy - The emerging enemy (any container-like spawn entity).
+ * @param dt - Delta time in seconds (the scene tick step).
+ * @returns `true` while the animation is still in progress (matching
+ *   {@link updateSpawnAnimation}); `false` once growth has completed and the
+ *   entity is fully rendered (shimmer released).
+ */
+export function updateSpawnEmergence(
+  enemy: SpawnAnimatable,
+  dt: number,
+): boolean {
+  const stillGrowing = updateSpawnAnimation(enemy, dt);
+  updateEnemyShimmer(enemy, dt);
+  return stillGrowing;
+}
+
+/**
  * Applies (or clears) the shimmer's additive bloom on `enemy`, when the
  * entity supports `setBlendMode` (every Phaser 4 Container/Graphics does via
  * the BlendMode component). Silently skipped otherwise, so a headless stub or

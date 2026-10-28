@@ -1296,6 +1296,30 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     }
   });
 
+  it('applies the shared Phase Shift juice in the level gym too (AH-0MVNTY0700053T9E)', async () => {
+    const level = await bootScene([GymLevel], 'phase-juice-level-host');
+    games.push(level);
+    const levelScene = level.scene as GymLevel;
+    expect(levelScene.getPlayer()).not.toBeNull();
+
+    levelScene.getEffectsRegistry().applyCollect('phase_shift');
+    levelScene.getEffectsRegistry().applyPhaseShift();
+    levelScene.tick(0.016);
+
+    expect(levelScene.getEffectsRegistry().isPhased).toBe(true);
+    const overlays = levelScene.children.list.filter(
+      (obj) =>
+        (
+          obj as Phaser.GameObjects.GameObject & {
+            getData?: (key: string) => unknown;
+          }
+        ).getData?.('juiceLayer') === 'phaseShift',
+    );
+    // The level gym advances the treatment through the same shared step, so it
+    // cannot silently omit the effect the game and every other gym show.
+    expect(overlays.length).toBeGreaterThan(0);
+  });
+
   it('plays the Phase Shift cue exactly once when danger auto-triggers (parent AH-0MUIYX1EE008FVS8)', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],

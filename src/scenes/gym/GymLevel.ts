@@ -173,8 +173,8 @@ import {
   getSpawnState,
   placeWavePortal,
   startSpawnAnimation,
-  updateEnemyShimmer,
   updateSpawnAnimation,
+  updateSpawnEmergence,
   type PortalPoint,
   type SpawnAnimatable,
 } from '../../vfx/wormholeSpawn';
@@ -1335,6 +1335,11 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.effectsRegistry.tick(dt);
     this.hud?.refresh();
 
+    // Shared player Phase Shift treatment (AH-0MVNTY0700053T9E): the level
+    // gym advances the juice through the same shared step as the game and
+    // every other gym, so a phased ship is unmistakable here too.
+    this._updatePhaseShiftJuice(dt);
+
     // Wave progression: release any asteroid spawns whose planned time has
     // passed before the wave clock advances (so a timeout cannot release the
     // rest of the plan), then advance the shared wave-timeout.
@@ -1355,15 +1360,13 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     let anySpawning = false;
     for (const spawn of this.spawned) {
       if (!spawn.entity.isSpawning) continue;
-      const stillGrowing = updateSpawnAnimation(
+      // One shared emergence step (AH-0MVNTY0700053T9E): growth writes the
+      // absolute scale and the shimmer layers on top — identical to the game
+      // and every formation gym.
+      const stillGrowing = updateSpawnEmergence(
         spawn.entity as unknown as SpawnAnimatable,
         dt,
       );
-      // Per-entity emergence shimmer (AH-0MVD2N333004VDA9) rides the same
-      // shared spawn path, immediately after the growth write so its scale
-      // pulse layers on the growth scale instead of fighting it
-      // (AH-0MVD2N9MM0007NGZ wiring).
-      updateEnemyShimmer(spawn.entity as unknown as SpawnAnimatable, dt);
       if (stillGrowing) {
         anySpawning = true;
       } else {
