@@ -280,12 +280,12 @@ describe('enemy-configs.csv wrapAware data (AH-0MVKXBPJI002UCC1, test-first)', (
     return (config as Record<string, unknown>).wrapAware as boolean;
   }
 
-  it.fails('documents the wrapAware column in the header comment', () => {
+  it('documents the wrapAware column in the header comment', () => {
     const csv = readCsvFile('enemy-configs.csv');
     expect(csv).toContain('wrapAware');
   });
 
-  it.fails('every shipped row carries an explicit boolean wrapAware value', () => {
+  it('every shipped row carries an explicit boolean wrapAware value', () => {
     const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
     for (const row of rows) {
       expect(row.wrapAware, `${row.key}.wrapAware present`).toBeDefined();
@@ -293,7 +293,7 @@ describe('enemy-configs.csv wrapAware data (AH-0MVKXBPJI002UCC1, test-first)', (
     }
   });
 
-  it.fails('seeds only the march archetype as non-aware', () => {
+  it('seeds only the march archetype as non-aware', () => {
     const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
     for (const row of rows) {
       const expected = row.key === 'march' ? 'false' : 'true';
@@ -303,7 +303,7 @@ describe('enemy-configs.csv wrapAware data (AH-0MVKXBPJI002UCC1, test-first)', (
     expect(rows.some((row) => row.key === 'march')).toBe(true);
   });
 
-  it.fails('coerces every shipped row to its seed default', async () => {
+  it('coerces every shipped row to its seed default', async () => {
     const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
     const m = await import('../core/csv');
     for (const row of rows) {
@@ -319,7 +319,7 @@ describe('enemy-configs.csv wrapAware data (AH-0MVKXBPJI002UCC1, test-first)', (
     ).toBe(false);
   });
 
-  it.fails('is editable through the generic CSV editor without per-field admin', () => {
+  it('is editable through the generic CSV editor without per-field admin', () => {
     const csv = readCsvFile('enemy-configs.csv');
     const outcome = applyCsvEdit(csv, {
       rowKey: 'march',

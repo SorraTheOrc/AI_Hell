@@ -1759,12 +1759,12 @@ describe('Enemy wrapAware config column (AH-0MVKXBPJI002UCC1, test-first)', () =
     return (config as Record<string, unknown>).wrapAware as boolean;
   }
 
-  it.fails('exposes wrapAware in the stable enemy column order (serialisation + plugin validation)', async () => {
+  it('exposes wrapAware in the stable enemy column order (serialisation + plugin validation)', async () => {
     const m = await loadCsvModule();
     expect(m.ENEMY_COLUMN_ORDER).toContain('wrapAware');
   });
 
-  it.fails('coerces an explicit wrapAware cell to a boolean', async () => {
+  it('coerces an explicit wrapAware cell to a boolean', async () => {
     const m = await loadCsvModule();
     const aware = m.coerceEnemyConfig(
       { ...legacyEnemyRow('scout'), wrapAware: 'true' },
@@ -1778,7 +1778,7 @@ describe('Enemy wrapAware config column (AH-0MVKXBPJI002UCC1, test-first)', () =
     expect(wrapAwareOf(unaware)).toBe(false);
   });
 
-  it.fails('defaults an absent or blank wrapAware cell to true', async () => {
+  it('defaults an absent or blank wrapAware cell to true', async () => {
     const m = await loadCsvModule();
     // `brand-new-enemy` has no seed config at all: the fallback must still be
     // wrap-aware, so a newly authored archetype is seam-aware by default.
@@ -1793,7 +1793,7 @@ describe('Enemy wrapAware config column (AH-0MVKXBPJI002UCC1, test-first)', () =
     }
   });
 
-  it.fails('round-trips wrapAware through export → import', async () => {
+  it('round-trips wrapAware through export → import', async () => {
     const m = await loadCsvModule();
     const authored = [
       { ...DEFAULT_ENEMY_CONFIGS.scout, wrapAware: true },

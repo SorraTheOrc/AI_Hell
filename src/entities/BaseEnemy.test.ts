@@ -363,3 +363,43 @@ describe('BaseEnemy force-field bubble lifecycle (AH-0MVM8GW7W004SI0E)', () => {
     expect(enemy.forceFieldBubbleVisible).toBe(false);
   });
 });
+
+// ── Wrap-awareness parameter (AH-0MVKXBQVT000B2WL) ─────────────────
+
+/**
+ * `wrapAware` is the single data-driven seam-awareness flag every later
+ * gameplay slice reads (parent epic AH-0MV9G3DZ9003P7P8, AC1). The entity is
+ * the one accessor scenes use, so no caller re-parses the raw config: absent
+ * means wrap-aware (the backwards-compatible default), an explicit `false`
+ * opts the classic archetypes out.
+ */
+describe('BaseEnemy wrap-awareness surface (AH-0MVKXBQVT000B2WL)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function makeWrapEnemy(wrapAware?: boolean): Promise<TestEnemy> {
+    booted = await bootScene([HarnessScene]);
+    const config: BaseEnemyConfig = {
+      formationOffset: OFFSET,
+      size: 16,
+      color: 0x00ff00,
+      health: 1,
+      wrapAware,
+    };
+    return new TestEnemy(booted.scene, 100, 100, config);
+  }
+
+  it('exposes wrapAware and defaults an absent flag to true', async () => {
+    const enemy = await makeWrapEnemy();
+    expect(enemy.wrapAware).toBe(true);
+  });
+
+  it('honours an explicit wrapAware=false for the excluded archetypes', async () => {
+    const enemy = await makeWrapEnemy(false);
+    expect(enemy.wrapAware).toBe(false);
+  });
+});

@@ -106,6 +106,13 @@ export interface GhostConfig {
   /** Initial `wander` heading (radians); when absent a seeded draw is used. */
   wanderAngle?: number;
   /** Injectable random source (defaults to `Math.random`). */
+  /**
+   * Whether this enemy is aware of the playfield seam (AH-0MV9G3DZ9003P7P8).
+   * Absent resolves to `true` (seam-awareness is the default); the classic
+   * arcade exclusions (`march`, `centipede`) carry an explicit `false` via
+   * the shared factory thread.
+   */
+  wrapAware?: boolean;
   rng?: () => number;
 }
 
@@ -156,6 +163,7 @@ export class Ghost extends BaseEnemy {
       fireInterval: config.fireInterval,
       health: config.health,
       forceFieldHits: config.forceFieldHits,
+      wrapAware: config.wrapAware,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

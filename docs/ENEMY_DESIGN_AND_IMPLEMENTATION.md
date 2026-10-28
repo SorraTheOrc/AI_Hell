@@ -626,6 +626,32 @@ curve). L1 is byte-identical on/off (no shipped archetype shields at L1); at
 L5/L10 the field measurably reduces kills of shielded archetypes while the
 campaign stays playable (bot still reaches the level; survival comparable).
 
+### 1.7 Seam awareness (`wrapAware`, AH-0MV9G3DZ9003P7P8)
+
+The playfield wraps on all four edges (player ship, player bullets and
+asteroids already cross the seam). Every enemy archetype now carries one
+**data-driven seam-awareness flag**, `wrapAware`, in the same `EnemyConfig`
+pipeline as the rest of the tuning:
+
+- **`EnemyConfig.wrapAware?: boolean`** (CSV column `wrapAware`, editable in
+  the gym editor's AI Config panel). The documented default is **`true`**:
+  absent, blank or malformed-absent cells resolve wrap-aware, so seam
+  awareness is the out-of-the-box behaviour.
+- **Explicit exclusions** are seeded in `src/core/configDefaults.ts`
+  (`WRAP_AWARE_EXCLUSION_KEYS`): `march` (Space Invaders reverses and drops at
+  the arena edge) and `centipede` (a linked chain with no CSV row — see §8.5 —
+  which weaves within bounds). No other module hard-codes an archetype key
+  list; the resolver (`resolveWrapAwareDefault`) is the single source of truth.
+- **One accessor for scenes:** `BaseEnemy.wrapAware` returns the resolved flag
+  (default `true` when absent), threaded through `enemyFactory`. Scenes never
+  re-parse the config, so enabling or disabling seam-awareness is a one-field
+  change and the game and every gym read the same value.
+
+This slice only delivers the parameter pipeline (defaults, CSV, editor,
+accessor). Seam-aware aimed fire and post-motion edge wrapping are subsequent
+slices of the same epic and consume this flag; until they land, enabling the
+flag alone does not change gameplay behaviour.
+
 ---
 
 ## 2. Core library architecture

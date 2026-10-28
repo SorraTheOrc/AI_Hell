@@ -610,6 +610,31 @@ describe('GymFodderEnemies — single reusable enemy gym', () => {
     expect(document.getElementById('enemy-gym-save-status')).not.toBeNull();
   });
 
+  it('exposes the wrapAware checkbox seeded from the active config and edits it live (AH-0MVKXBQVT000B2WL)', async () => {
+    // `scout` is wrap-aware by default.
+    const scout = await bootWithKey('scout');
+    const checkbox = document.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][data-config="wrapAware"]',
+    );
+    expect(checkbox, 'wrapAware checkbox missing').not.toBeNull();
+    expect(checkbox!.checked).toBe(true);
+
+    checkbox!.checked = false;
+    checkbox!.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(scout.currentConfig.wrapAware).toBe(false);
+  });
+
+  it('seeds the wrapAware checkbox from a classic non-aware archetype (AH-0MVKXBQVT000B2WL)', async () => {
+    // The Space Invaders `march` archetype opts out of seam-awareness.
+    const march = await bootWithKey('march');
+    const checkbox = document.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][data-config="wrapAware"]',
+    );
+    expect(checkbox, 'wrapAware checkbox missing').not.toBeNull();
+    expect(checkbox!.checked).toBe(false);
+    expect(march.currentConfig.wrapAware).toBe(false);
+  });
+
   it('surfaces the homing-horde tuning sliders for the grunt archetype (AH-0MV01EKTL001NRE6)', async () => {
     const scene = await bootWithKey('grunt');
     const panel = document.getElementById('enemy-gym-panel')!;

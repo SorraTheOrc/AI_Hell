@@ -198,6 +198,29 @@ describe('Config-aware entity seam', () => {
     e.destroy(true);
   });
 
+  it('threads the data-driven wrapAware flag from config to the entity (AH-0MVKXBQVT000B2WL)', async () => {
+    booted = await bootScene([Harness]);
+    const scene = booted.scene;
+    // Excluded archetypes seed explicitly non-aware.
+    const march = createEnemyFromConfig(
+      scene,
+      DEFAULT_ENEMY_CONFIGS.march,
+      10, 10, { row: 0, col: 0 },
+    ) as unknown as BaseEnemy;
+    expect(DEFAULT_ENEMY_CONFIGS.march.wrapAware).toBe(false);
+    expect(march.wrapAware).toBe(false);
+    march.destroy(true);
+
+    // Default-aware archetypes (and genuinely absent config) stay true.
+    const scout = createEnemyFromConfig(
+      scene,
+      { ...DEFAULT_ENEMY_CONFIGS.scout, wrapAware: true },
+      10, 10, { row: 0, col: 0 },
+    ) as unknown as BaseEnemy;
+    expect(scout.wrapAware).toBe(true);
+    scout.destroy(true);
+  });
+
   it("createEnemyFromConfig('asteroid') returns an Asteroid with large-tier defaults", async () => {
     booted = await bootScene([Harness]);
     const scene = booted.scene;

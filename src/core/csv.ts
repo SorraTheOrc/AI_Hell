@@ -98,6 +98,10 @@ export const ENEMY_COLUMN_ORDER: (keyof EnemyConfig)[] = [
   // attack roles used by wave-design/balance tooling. Appended at the end so
   // existing CSV files remain byte-compatible on the leading columns.
   'movementClass', 'attackClass',
+  // Seam-awareness (AH-0MV9G3DZ9003P7P8): the per-archetype wrap-aware flag,
+  // default `true` (see {@link DEFAULT_WRAP_AWARE}). Appended last so legacy
+  // rows without the column keep resolving to the documented default.
+  'wrapAware',
 ];
 
 /** Documented default hit points for an enemy when the column is absent/invalid. */
@@ -121,6 +125,16 @@ export const DEFAULT_FORCE_FIELD_START_HITS = 1;
  * (AH-0MVM8GRQ8006HGPK): inert while `forceFieldStartLevel` is `0`.
  */
 export const DEFAULT_FORCE_FIELD_MAX_HITS = 1;
+
+/**
+ * Documented default for the `wrapAware` column (AH-0MV9G3DZ9003P7P8):
+ * `true` (seam-aware). The seam-aware behaviour is the out-of-the-box
+ * default, so an absent, blank or malformed-absent cell resolves to
+ * `true`; only the explicit seed exclusions (`march`, `centipede`) opt
+ * out. Scenes read the resolved value through the single
+ * `BaseEnemy.wrapAware` accessor — never a second copy of this default.
+ */
+export const DEFAULT_WRAP_AWARE = true;
 
 /**
  * Documented default `movementClass` when the column is absent/invalid
@@ -383,6 +397,17 @@ export function validateEnemyConfig(
     errors.push(`Invalid attackClass: "${row.attackClass}". Valid values: ${VALID_ATTACK_CLASSES.join(', ')}`);
   }
 
+  // Validate the seam-awareness flag (AH-0MV9G3DZ9003P7P8). Optional for
+  // backward compatibility; a present cell must be a recognised boolean.
+  const wrapAware = row.wrapAware;
+  if (
+    wrapAware != null &&
+    wrapAware.trim() !== '' &&
+    !['true', 'false', '1', '0'].includes(wrapAware.trim().toLowerCase())
+  ) {
+    errors.push(`Invalid wrapAware: "${wrapAware}" — must be true, false, 1 or 0`);
+  }
+
   // Validate key format (basic check).
   if (row.key && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(row.key)) {
     errors.push(`Invalid key format: "${row.key}" — must be lowercase, numbers, hyphens only`);
@@ -585,6 +610,12 @@ export function coerceEnemyConfig(
     VALID_ATTACK_CLASSES,
     deriveDefaultAttackClass(merged.shotPattern),
   );
+  // Seam-awareness (AH-0MV9G3DZ9003P7P8). Absent/blank cells resolve to the
+  // documented constant default (`true`), not a seed-inherited value: a legacy
+  // row or persisted blob still reads as wrap-aware, and only an explicit
+  // `false` (the seeded `march` exclusion) opts out. `true/false/1/0` are
+  // accepted case-insensitively, matching `coerceBoolean`.
+  merged.wrapAware = coerceBoolean(row.wrapAware, DEFAULT_WRAP_AWARE);
   merged.fireInterval = coerceNumber(row.fireInterval, merged.fireInterval);
   merged.bulletSpeed = coerceNumber(row.bulletSpeed, merged.bulletSpeed);
   merged.bulletLifetime = coerceNumber(row.bulletLifetime, merged.bulletLifetime);

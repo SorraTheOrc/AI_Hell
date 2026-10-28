@@ -77,6 +77,14 @@ export interface BaseEnemyConfig {
    * byte-for-byte today's behaviour: `health` is the only thing a hit touches.
    */
   forceFieldHits?: number;
+  /**
+   * Whether this enemy is aware of the playfield seam (AH-0MV9G3DZ9003P7P8).
+   * Absent resolves to `true` — seam-awareness is the default — while the
+   * classic arcade exclusions (`march`, `centipede`) carry an explicit
+   * `false`. Scenes must read the resolved {@link BaseEnemy.wrapAware}
+   * accessor rather than re-parsing the raw config.
+   */
+  wrapAware?: boolean;
   /** Random-number generator (defaults to `Math.random`). */
   rng?: () => number;
 }
@@ -193,6 +201,13 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   /** Random-number generator. */
   protected readonly _rng: () => number;
 
+  /**
+   * Resolved seam-awareness flag (AH-0MV9G3DZ9003P7P8): `true` unless the
+   * config explicitly opts out. This is the one value scenes read through the
+   * {@link wrapAware} accessor — no duplicated parsing anywhere else.
+   */
+  protected readonly _wrapAware: boolean;
+
   // ── Abstract method: pattern name for explosion VFX ────────────────
 
   /**
@@ -232,6 +247,7 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
     this._health = config.health ?? 1;
     this._forceFieldHits = sanitiseForceFieldHits(config.forceFieldHits);
     this._forceFieldMaxHits = this._forceFieldHits;
+    this._wrapAware = config.wrapAware ?? true;
     this._rng = config.rng ?? Math.random;
 
     // Shared graphics — created here but NOT added to the container.
@@ -410,6 +426,16 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
       this.destroySelf();
     }
     return this._health;
+  }
+
+  /**
+   * Whether this enemy is aware of the playfield seam (AH-0MV9G3DZ9003P7P8).
+   * The single resolved accessor every scene reads; an absent config resolves
+   * to `true` (seam-awareness is the default) and only the explicit seed
+   * exclusions (`march`, `centipede`) carry `false`.
+   */
+  get wrapAware(): boolean {
+    return this._wrapAware;
   }
 
   /** Remaining hit points before destruction. */

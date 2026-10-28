@@ -152,6 +152,13 @@ export interface AsteroidConfig {
    */
   forceFieldHits?: number;
   health?: number;
+  /**
+   * Whether this enemy is aware of the playfield seam (AH-0MV9G3DZ9003P7P8).
+   * Absent resolves to `true` (seam-awareness is the default); the classic
+   * arcade exclusions (`march`, `centipede`) carry an explicit `false` via
+   * the shared factory thread.
+   */
+  wrapAware?: boolean;
   rng?: () => number;
   /** Size tier — overrides the default for this entity. */
   sizeTier?: AsteroidSizeTier;
@@ -224,6 +231,7 @@ export class Asteroid extends BaseEnemy {
       shotProbability: config.shotProbability,
       health: config.health,
       forceFieldHits: config.forceFieldHits,
+      wrapAware: config.wrapAware,
       rng: config.rng,
     };
 
