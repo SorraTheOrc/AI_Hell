@@ -6190,18 +6190,50 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     expect(g.y).toBeLessThanOrEqual(GAME_HEIGHT);
   });
 
+  /**
+   * Fixed run seed for the horde kill test (AH-0MVRLGZPG0036ZTV): the first
+   * of the four seeds (202/350/353/589) on which the un-hardened
+   * single-tick kill deterministically FAILED during the seed sweep — a wave
+   * asteroid overlapping the victim grunt's edge spawn point absorbed the
+   * test bullet, so the victim stayed alive and the accounting never moved
+   * (AH-0MVMEI9V1005H0LU). Pinning it makes the horde layout and spawn
+   * schedule reproducible for every run, turning the isolated kill into a
+   * permanent regression proof: if the exactly-once contract ever regresses,
+   * the test fails on this seed instead of relying on random layout luck.
+   */
+  const HORDE_KILL_FIXED_SEED = 202;
+
   it('killing a grunt advances wave accounting exactly once', async () => {
-    const scene = await bootWithHordeWave(true);
+    const scene = await bootWithHordeWave(true, HORDE_KILL_FIXED_SEED);
     const wm = scene.getWaveManager();
     releaseHorde(scene);
     const total = DEFAULT_ENEMY_CONFIGS.grunt.count;
     expect(wm.enemiesAlive).toBe(total);
 
     const victim = liveGrunts(scene)[0];
-    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
-    scene.tick(0.001);
+    const before = wm.enemiesAlive;
+    // Isolate the kill so auto-fire or an overlapping enemy (e.g. the wave
+    // asteroid that absorbed the bullet on seed 202) cannot add a second
+    // kill or absorb the test's bullet and double-/never-decrement the wave
+    // accounting (AH-0MV1EN1NS000QLBK, AH-0MVMEI9V1005H0LU). The stubs are
+    // restored in `finally` so a leaked isolation cannot poison later tests
+    // — the same shape the pac-man pursuer kill test uses (~5893-5906).
+    const restoreKill = isolateEnemyForKill(scene, victim);
+    try {
+      scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+      scene.tick(0.001);
+      // Exactly-once proof: further ticks while still isolated must NOT move
+      // the accounting again — a kill is counted once at the moment the
+      // bullet resolves, never twice (no double-decrement, no deferred
+      // kill). The victim is already dead, so nothing else can die here;
+      // the count must stay pinned at (total - 1).
+      scene.tick(0.05);
+      scene.tick(0.05);
+    } finally {
+      restoreKill();
+    }
     expect(victim.alive).toBe(false);
-    expect(wm.enemiesAlive).toBe(total - 1);
+    expect(wm.enemiesAlive).toBe(before - 1);
   });
 
   it('does not spawn a horde for a wave without the opt-in', async () => {
