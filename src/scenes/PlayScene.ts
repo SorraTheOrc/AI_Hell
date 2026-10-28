@@ -282,6 +282,12 @@ import {
   WAVE_TIMER_BAR_X,
   WAVE_TIMER_BAR_Y,
 } from './core/waveTimeout';
+import {
+  collectSweepTargets,
+  spawnMiniBossDeathSweep,
+  type MiniBossDeathSweepHandle,
+  type MiniBossSweepTarget,
+} from './core/miniBossDeathSweep';
 
 // Re-exported for existing importers (tests, HUD); the single source of
 // truth now lives in `core/waveTimeout.ts`, shared with the gyms.
@@ -656,6 +662,17 @@ export class PlayScene extends CombatScene<
 
   /** The options offered by the open mini-boss reward overlay. */
   private miniBossRewardOptions: ChoiceOption[] = [];
+
+  /**
+   * Live handle for the in-flight mini-boss death sweep (parent
+   * AH-0MVOFGB6K003YD0Z, AH-0MVROELN600410GP), or null between encounters.
+   * Completion is driven by the shared sweep executor's real tween
+   * completion, never by a frame count the reward overlay pause could freeze.
+   */
+  private miniBossSweepHandle: MiniBossDeathSweepHandle | null = null;
+
+  /** Targets captured for the current/last mini-boss death sweep (test seam). */
+  private miniBossSweepTargets: readonly MiniBossSweepTarget[] = [];
 
   /**
    * Campaign level whose mini-boss has already been spawned this run. Guards
@@ -1182,6 +1199,8 @@ export class PlayScene extends CombatScene<
     this.miniBossUnlockState = initialUnlockState();
     this.miniBossRewardOpen = false;
     this.miniBossRewardOptions = [];
+    this.miniBossSweepHandle = null;
+    this.miniBossSweepTargets = [];
     this.driftX = 0;
     this.driftDir = 1;
     this.diverAnchorX = 0;
@@ -1263,6 +1282,11 @@ export class PlayScene extends CombatScene<
     this.player = null;
     this.boss?.destroy();
     this.boss = null;
+    // A sweep still animating at teardown must not leave its bursts (or the
+    // deferred reward/level finalisation) alive across sessions.
+    this.miniBossSweepHandle?.destroy();
+    this.miniBossSweepHandle = null;
+    this.miniBossSweepTargets = [];
     this.miniBoss?.destroy();
     this.miniBoss = null;
     this.bannerText?.destroy();
@@ -2955,17 +2979,35 @@ export class PlayScene extends CombatScene<
    * Handles one player hit on the active level's mini-boss (epic
    * AH-0MVCC8XSS007P01Z, AH-0MVCRBISU006NUN5). The shared `takeDamage()`
    * contract drives phases/patterns; on the lethal blow the encounter is
-   * finalised exactly once:
+   * finalised exactly once — through the shared mini-boss death sweep
+   * (parent AH-0MVOFGB6K003YD0Z, AH-0MVROELN600410GP):
    *
-   * 1. the reward and checkpoint hooks fire (capturing the level just
-   *    completed, before the run state advances) — AC3;
-   * 2. the registered gating spawn is replayed through the shared wave state
-   *    machine, which advances the level (or triggers the final boss on the
-   *    final level) — AC2/AC3.
+   * 1. the sweep targets are captured before anything is torn down (every
+   *    remaining wave-gating escort plus the mini-boss's live minions — the
+   *    lethal blow clears the minions inside `takeDamage()`); hazards
+   *    (`isNonBlockingHazard`) are never swept — AC1;
+   * 2. the reward/checkpoint hooks fire (capturing the level just completed,
+   *    before the run state advances) while the staggered cascade plays out;
+   *    the reward OVERLAY itself waits for the sweep's completion so its
+   *    pause cannot freeze a burst mid-animation — AC3;
+   * 3. after the sweep, the registered gating spawn is replayed through the
+   *    shared wave state machine, which advances the level (or triggers the
+   *    final boss on the final level) exactly once — AC4.
    */
   private _damageMiniBoss(hitX?: number, hitY?: number): void {
     const miniBoss = this.miniBoss;
     if (!miniBoss || !miniBoss.alive) return;
+
+    // Capture the sweep inputs on this frame, before anything moves or is
+    // destroyed: the death position the anchored bursts cluster around, and
+    // the live minions — `MiniBoss.takeDamage()` clears them on the lethal
+    // blow (`_clearMinions`), so the snapshot must be taken before it
+    // (parent AC1).
+    const deathX = miniBoss.x;
+    const deathY = miniBoss.y;
+    const minionTargets: MiniBossSweepTarget[] = miniBoss
+      .getMinions()
+      .map((minion) => this._sweepTargetForEntity(minion.archetype, minion));
 
     const result = miniBoss.takeDamage(hitX, hitY);
     if (!result.destroyed) return;
@@ -2976,28 +3018,107 @@ export class PlayScene extends CombatScene<
       miniBossName: miniBoss.resolvedConfig.name,
       isFinalLevel: this.waveManager.isFinalLevel,
     };
-    // Fully tear the encounter down. `takeDamage()` only fades the body and
-    // darkens the health bar; the entity's scene-level Graphics (the health
-    // bar and the telegraph/pulse-wave ring) live outside the container and
-    // would otherwise remain frozen on screen after the level advances
-    // (AH-0MVH85XXZ008INE2). `destroy()` removes them (and any minions).
+
+    // The wave-gating scope of the sweep (parent AC1): every remaining live
+    // escort plus the captured minions. The shared splitter drops the
+    // non-blocking hazards (asteroid, lane traffic), which survive.
+    const sweptSpawns = this.spawned.filter(
+      (s) => s.entity.alive && !isNonBlockingHazard(s.enemyKey),
+    );
+    const targets = collectSweepTargets(
+      sweptSpawns.map((s) => this._sweepTargetForEntity(s.enemyKey, s.entity)),
+      minionTargets,
+    );
+
+    // Fully tear the encounter down on the defeat frame. Swept escorts are
+    // removed cosmetically (parent AC4 — no score, no drops, no kill
+    // telemetry) and never route through `_onEnemyKilled`: `destroySilently()`
+    // is the shared "removed from play, no reward" seam (marks the entity dead
+    // so nothing still treats it as live) and the staggered burst visuals come
+    // from the shared sweep, so the entity must not also play its own
+    // explosion. `destroy(true)` then releases the entity's scene-level
+    // graphics. `takeDamage()` only fades the boss body and darkens the health
+    // bar; `destroy()` removes the scene-level Graphics (health bar,
+    // telegraph/pulse-wave ring) that would otherwise remain frozen on screen
+    // after the level advances (AH-0MVH85XXZ008INE2).
+    for (const s of sweptSpawns) {
+      s.entity.destroySilently();
+      s.entity.destroy(true);
+    }
+    if (sweptSpawns.length > 0) {
+      this.spawned = this.spawned.filter((s) => !sweptSpawns.includes(s));
+    }
     miniBoss.destroy();
     this.miniBoss = null;
+
+    // Fire the reward and checkpoint hooks (capturing the level just
+    // completed, before the run state advances) — AC3. The reward OVERLAY is
+    // deferred to the sweep's completion (see `_finaliseMiniBossDefeat`), so
+    // its `setPaused(true)` can never freeze the burst tweens mid-animation.
     this._fireMiniBossDefeatHooks(context);
 
-    // The mini-boss was registered as a gating dynamic spawn when it spawned,
-    // so this single destruction closes its encounter and advances the level
-    // (or triggers the final boss) through the ordinary wave path.
+    // Play the shared death sweep: the staggered cascade begins on this
+    // frame, and `onComplete` (real tween completion, exactly once) is what
+    // finalises the encounter — the reward overlay and the single wave/level
+    // advance both happen there, never mid-display.
+    this.miniBossSweepTargets = targets;
+    this.miniBossSweepHandle = spawnMiniBossDeathSweep(
+      this,
+      {
+        targets,
+        deathX,
+        deathY,
+        bounds: { x: 0, y: 0, width: GAME_WIDTH, height: GAME_HEIGHT },
+        seed: this.getRunSeed(),
+      },
+      {
+        onComplete: () => {
+          // The run can end while the sweep animates (a bullet already in
+          // flight can finish the player): never finalise a stopped scene.
+          if (!this.scene.isActive()) return;
+          this._finaliseMiniBossDefeat(context, sweptSpawns.length);
+        },
+      },
+    );
+  }
+
+  /**
+   * Finalises the mini-boss encounter once the death sweep has finished
+   * animating (parent AC3/AC4). Runs from the sweep executor's `onComplete` —
+   * never on the defeat frame, and never twice (the executor fires it exactly
+   * once): opens the reward overlay, then advances wave/level accounting
+   * exactly once.
+   */
+  private _finaliseMiniBossDefeat(
+    context: MiniBossDefeatContext,
+    sweptEscortCount: number,
+  ): void {
+    // Reward loop (AH-0MVCRBNO6003E1CH AC1): a defeat offers exactly ONE
+    // upgrade-or-unlock choice through the shared choice overlay, opened only
+    // now that every burst has finished animating. Off while a choice is
+    // already open; the `miniBossRewardOpen` latch inside also guarantees a
+    // single overlay per defeat.
+    if (!this.miniBossRewardOpen) this.openMiniBossReward(context);
+
+    // Wave accounting advances exactly once, after the sweep (parent AC4).
+    // The swept escorts left the field with the boss, so their still-counted
+    // wave slots are cleared through the shared "removed without a
+    // destruction event" seam; the mini-boss's own destruction then replays
+    // through the ordinary wave path exactly as before.
+    if (sweptEscortCount > 0) {
+      this.waveManager.unregisterDynamicSpawn(sweptEscortCount);
+    }
     let event = this.waveManager.onEnemyDestroyed();
 
     // Defeat reconciliation (AC2 — the level completes on the mini-boss
     // defeat). The wave-timeout carry-over path can leave the manager's alive
     // count above zero for enemies that are no longer on the field; without
     // this the mini-boss encounter — the one wave that cannot be timed out —
-    // would stall forever. When the field is empty, the mini-boss defeat is
+    // would stall forever. When no wave-gating enemy is left (hazards such as
+    // asteroids / lane traffic never gate the wave), the mini-boss defeat is
     // the authoritative gate, so clear the stale residual through the shared
     // "removed without a destruction event" seam and replay the clear once.
-    if (this.waveManager.miniBossActive && this.getAliveCount() === 0) {
+    if (this.waveManager.miniBossActive && this._waveGatingAliveCount() === 0) {
       this.waveManager.unregisterDynamicSpawn(this.waveManager.enemiesAlive);
       event = this.waveManager.onEnemyDestroyed();
     }
@@ -3005,10 +3126,31 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Captures one sweep target from a live entity: its archetype key, current
+   * position, and the archetype config's size/colour for the burst geometry.
+   */
+  private _sweepTargetForEntity(
+    key: string,
+    entity: EnemyEntity,
+  ): MiniBossSweepTarget {
+    const cfg = loadEnemyConfig(key);
+    return { key, x: entity.x, y: entity.y, size: cfg.size, color: cfg.color };
+  }
+
+  /** Live wave-gating enemies on the field (non-blocking hazards excluded). */
+  private _waveGatingAliveCount(): number {
+    return this.spawned.filter(
+      (s) => s.entity.alive && !isNonBlockingHazard(s.enemyKey),
+    ).length;
+  }
+
+  /**
    * Fires the reward then checkpoint hooks exactly once for one mini-boss
-   * defeat (AC3). Both are optional — guarded while no consumer is installed,
-   * so the gameplay path is unchanged until the reward/checkpoint features
-   * land.
+   * defeat (AC3), capturing the level just completed before the run state
+   * advances. Both are optional — guarded while no consumer is installed, so
+   * the gameplay path is unchanged until the reward/checkpoint features
+   * land. The reward OVERLAY is opened by `_finaliseMiniBossDefeat` once the
+   * death sweep has finished (AH-0MVROELN600410GP).
    */
   private _fireMiniBossDefeatHooks(context: MiniBossDefeatContext): void {
     this.miniBossDefeats += 1;
@@ -3016,10 +3158,6 @@ export class PlayScene extends CombatScene<
     this._saveCheckpoint(context);
     this.miniBossRewardHook?.(context);
     this.miniBossCheckpointHook?.(context);
-    // Reward loop (AH-0MVCRBNO6003E1CH AC1): a defeat offers exactly ONE
-    // upgrade-or-unlock choice through the shared choice overlay. Off in the
-    // headless/dev scenarios and while a choice is already open.
-    if (!this.miniBossRewardOpen) this.openMiniBossReward(context);
   }
 
   /**
@@ -3186,6 +3324,23 @@ export class PlayScene extends CombatScene<
   /** Whether the mini-boss reward overlay is open. */
   isMiniBossRewardOpen(): boolean {
     return this.miniBossRewardOpen;
+  }
+
+  /**
+   * Test/inspection seam: whether the mini-boss death sweep is still
+   * animating. The encounter — reward overlay plus the single wave/level
+   * advance — is finalised only once its last burst completes.
+   */
+  isMiniBossSweepActive(): boolean {
+    return this.miniBossSweepHandle !== null && !this.miniBossSweepHandle.complete;
+  }
+
+  /**
+   * Test/inspection seam: the targets captured for the current/last
+   * mini-boss death sweep (escorts plus live minions, hazards excluded).
+   */
+  getMiniBossSweepTargets(): readonly MiniBossSweepTarget[] {
+    return [...this.miniBossSweepTargets];
   }
 
   /** The weapons this run has unlocked through mini-boss rewards. */

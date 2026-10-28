@@ -12,7 +12,7 @@ import {
 } from '../../core/constants';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import { RULES_STORAGE_KEY } from '../../core/rules';
-import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, stepGameUntil, type BootedGame } from '../../test/gameHarness';
 import type { FormationOffset } from '../../utils/formations';
 import { PlayScene } from '../PlayScene';
 import { GameOverScene } from '../GameOverScene';
@@ -1875,6 +1875,18 @@ function reachPlayBoss(play: PlayScene): void {
         // A zero-length step resolves collisions without moving the target.
         play.tick(0);
       }
+    }
+    // The mini-boss defeat plays a tween-driven death sweep before it is
+    // finalised (deferred reward overlay + single level advance); step the
+    // game loop so every sweep completes and the walk can continue
+    // (AH-0MVROELN600410GP).
+    if (play.isMiniBossSweepActive()) {
+      stepGameUntil(
+        play.game,
+        'mini-boss death sweep',
+        () => !play.isMiniBossSweepActive(),
+        240,
+      );
     }
     // The mini-boss defeat offers the one upgrade-or-unlock reward choice
     // (AH-0MVCRBNO6003E1CH); resolve it so play can continue.

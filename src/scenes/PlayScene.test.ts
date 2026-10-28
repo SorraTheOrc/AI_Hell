@@ -45,7 +45,7 @@ import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
 import { Tank } from '../entities/Tank';
 import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
-import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss } from '../entities/MiniBoss';
+import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss, type MiniBossConfig } from '../entities/MiniBoss';
 import { minionCountForPhase } from '../waves/BossMinions';
 import type { WeaponDefinition } from '../utils/weapons';
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
@@ -53,6 +53,10 @@ import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
 import { PauseScene } from './PauseScene';
+import { MineralChoiceScene } from './MineralChoiceScene';
+import { RunTelemetry } from './core/runTelemetry';
+import { HOLD_FULL_COUNTDOWN_DURATION_MS } from './core/holdFullCountdown';
+import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
 import {
   BANNER_BACKGROUND_ALPHA,
   BANNER_DURATION_SECONDS,
@@ -100,7 +104,7 @@ import {
   extraLifeDropChance,
   powerUpDropChance,
 } from '../core/levelScaling';
-import { miniBossDesignForLevel } from '../waves/miniBossDesigns';
+import { miniBossConfigForLevel, miniBossDesignForLevel } from '../waves/miniBossDesigns';
 import { scaledEncounterHp } from '../core/difficultyScaling';
 import {
   MINI_BOSS_LOCKED_WEAPONS,
@@ -205,12 +209,32 @@ function clearMiniBossWave(scene: PlayScene): void {
 }
 
 /**
- * Destroys the active level's mini-boss (if any) via player bullets, disabling
- * auto-fire and the spawned-enemy hit list so only the mini-boss takes the
- * damage. A no-op outside the mini-boss encounter
+ * Drives the in-flight mini-boss death sweep to completion
+ * (AH-0MVROELN600410GP). Sweep completion is real animation time — the burst
+ * tweens plus the shared sweep's Clock watchdog (`scene.time.delayedCall`,
+ * the explicit lifespan + stagger timer) — and both advance through the
+ * Phaser game step, not through `scene.tick()`, so a deterministic
+ * fixed-delta game-step walk is required. Bounded well above the sweep's
+ * ~1 s maximum display window.
+ */
+function finishMiniBossSweep(scene: PlayScene): void {
+  stepGameUntil(
+    scene.game,
+    'mini-boss death sweep completion',
+    () => !scene.isMiniBossSweepActive(),
+    240,
+  );
+}
+
+/**
+ * Lands the hits that destroy the active level's mini-boss (if any) via
+ * player bullets, disabling auto-fire and the spawned-enemy hit list so only
+ * the mini-boss takes the damage. Leaves the death sweep (and therefore the
+ * deferred reward/level finalisation) in flight, so ordering tests can
+ * observe the pre-completion state. A no-op outside the mini-boss encounter
  * (AH-0MVCRBISU006NUN5).
  */
-function killMiniBoss(scene: PlayScene, resolveReward = true): void {
+function hitMiniBossUntilDead(scene: PlayScene): void {
   const miniBoss = scene.getMiniBoss();
   if (!miniBoss?.alive) return;
   const isolated = scene as unknown as {
@@ -238,6 +262,19 @@ function killMiniBoss(scene: PlayScene, resolveReward = true): void {
     isolated.getEnemyEntities = originalGetEnemyEntities;
     isolated.autoFireEnabled = originalAutoFireEnabled;
   }
+}
+
+/**
+ * Destroys the active level's mini-boss (if any) via player bullets and
+ * drives its death sweep to completion, so the encounter is fully finalised
+ * (reward overlay offered, wave/level accounting advanced). A no-op outside
+ * the mini-boss encounter (AH-0MVCRBISU006NUN5).
+ */
+function killMiniBoss(scene: PlayScene, resolveReward = true): void {
+  const miniBoss = scene.getMiniBoss();
+  if (!miniBoss?.alive) return;
+  hitMiniBossUntilDead(scene);
+  finishMiniBossSweep(scene);
   // A defeat offers the one upgrade-or-unlock reward choice
   // (AH-0MVCRBNO6003E1CH); a deterministic walk resolves it so play can
   // continue, exactly as a player picking the first option would. Tests that
@@ -504,7 +541,11 @@ function findAsteroids(scene: PlayScene): Asteroid[] {
  */
 async function bootSceneWithLevels(
   levels: LevelDefinition[],
-  options: { asteroidSpawner?: boolean } = {},
+  options: {
+    asteroidSpawner?: boolean;
+    /** Extra scenes registered after PlayScene (e.g. the choice overlay). */
+    extraScenes?: (typeof Phaser.Scene)[];
+  } = {},
 ): Promise<{ booted: BootedGame; scene: PlayScene }> {
   // The shipped default now sequences the campaign (AH-0MUJSUTLA006Q8E1),
   // which would override these injected fixtures on `create()`. Opt out so
@@ -513,7 +554,12 @@ async function bootSceneWithLevels(
     RULES_STORAGE_KEY,
     JSON.stringify({ sequencedWavesEnabled: false }),
   );
-  const game = await bootScene([PlayScene, GameOverScene, MenuScene]);
+  const game = await bootScene([
+    PlayScene,
+    ...(options.extraScenes ?? []),
+    GameOverScene,
+    MenuScene,
+  ]);
   const scene = game.scene as PlayScene;
   scene.getWaveManager().setLevels(levels);
   if (options.asteroidSpawner === false) {
@@ -7632,6 +7678,309 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(boss).not.toBeNull();
     expect(boss).not.toBeInstanceOf(MiniBoss);
     expect(boss!.alive).toBe(true);
+  });
+});
+
+/**
+ * Mini-boss death sweep wiring (parent AH-0MVOFGB6K003YD0Z,
+ * AH-0MVROELN600410GP).
+ *
+ * A mini-boss defeat explodes every remaining wave-gating enemy (escorts plus
+ * the mini-boss's live minions) in a staggered sweep, holds the reward
+ * overlay until the last burst has finished animating, and advances wave/
+ * level accounting exactly once after the sweep. The sweep itself (count
+ * formula, scope split, determinism, anchored/scattered placement, completion
+ * ordering) is pinned by `src/scenes/core/miniBossDeathSweep.test.ts`; this
+ * suite pins the **scene wiring**: capture-before-teardown, the deferred
+ * overlay, the single post-sweep advance, hazard survival and the
+ * cosmetic-only teardown.
+ */
+describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** A compact campaign whose last wave of each level is the mini-boss. */
+  function sweepCampaign(levelCount = 2): LevelDefinition[] {
+    const scoutGroup = (count: number) => ({
+      enemyKey: 'scout',
+      formation: 'v' as const,
+      count,
+      spacingX: 30,
+      spacingY: 26,
+      startX: GAME_WIDTH * 0.2,
+      startY: GAME_HEIGHT * 0.38,
+    });
+    return Array.from({ length: levelCount }, (_unused, i) => ({
+      level: i + 1,
+      name: i === 0 ? 'Entry' : 'Descent',
+      waves: [
+        { groups: [scoutGroup(2)], shootEnabled: false },
+        { groups: [scoutGroup(2)], shootEnabled: false, miniBoss: true },
+      ],
+    }));
+  }
+
+  async function bootSweepScene(
+    options: { extraScenes?: (typeof Phaser.Scene)[]; levels?: LevelDefinition[] } = {},
+  ): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(
+      options.levels ?? sweepCampaign(),
+      { asteroidSpawner: false, extraScenes: options.extraScenes },
+    );
+    booted = game;
+    return scene;
+  }
+
+  /** Clears every regular wave until the level's mini-boss wave is current. */
+  function advanceToMiniBoss(scene: PlayScene): void {
+    const wm = scene.getWaveManager();
+    scene.getGameState().lives = 99; // survive incidental fire while walking.
+    for (let guard = 0; guard < 20 && !wm.miniBossActive; guard++) {
+      if (resolveMineralChoiceIfOpen(scene)) continue;
+      killSpawnedEnemies(scene);
+      finishTransition(scene);
+    }
+    expect(wm.miniBossActive).toBe(true);
+    expect(scene.getMiniBoss()?.alive).toBe(true);
+  }
+
+  it('AC1/AC3 — the reward overlay opens only after the sweep, and the level advances exactly once', async () => {
+    const scene = await bootSweepScene();
+    advanceToMiniBoss(scene);
+    const wm = scene.getWaveManager();
+    const rewardSpy = vi.spyOn(scene, 'openMiniBossReward');
+
+    // Land the lethal hit; the sweep is animating on the defeat frame.
+    hitMiniBossUntilDead(scene);
+
+    // The overlay has NOT opened and the wave has NOT been accounted yet:
+    // nothing finalises mid-display.
+    expect(scene.getMiniBoss()).toBeNull();
+    expect(scene.isMiniBossSweepActive()).toBe(true);
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+    expect(rewardSpy).not.toHaveBeenCalled();
+    expect(wm.level).toBe(1);
+    expect(wm.miniBossActive).toBe(true);
+    expect(scene.isTransitioning()).toBe(false);
+
+    // Only the last burst's completion opens the overlay and advances the
+    // level — once.
+    finishMiniBossSweep(scene);
+
+    expect(scene.isMiniBossSweepActive()).toBe(false);
+    expect(scene.isMiniBossRewardOpen()).toBe(true);
+    expect(rewardSpy).toHaveBeenCalledTimes(1);
+    expect(wm.level).toBe(2);
+    expect(wm.waveNumber).toBe(1);
+    expect(wm.miniBossActive).toBe(false);
+
+    // Further simulation never re-opens the overlay or advances again.
+    scene.selectMiniBossReward(0);
+    finishTransition(scene);
+    scene.tick(0.016);
+    expect(wm.level).toBe(2);
+    expect(rewardSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+  });
+
+  it('AC1 — every remaining escort is swept while a non-blocking hazard survives', async () => {
+    const scene = await bootSweepScene();
+    advanceToMiniBoss(scene);
+    // A non-gating hazard on the field must never be swept (and must not
+    // stall the deferred level advance either).
+    const asteroid = scene.spawnAsteroidAt(
+      GAME_WIDTH * 0.08,
+      GAME_HEIGHT * 0.92,
+      'small',
+    );
+    const escorts = scene
+      .getEnemies()
+      .filter((enemy) => enemy.alive && enemy !== asteroid);
+    expect(escorts.length).toBeGreaterThan(0);
+
+    hitMiniBossUntilDead(scene);
+
+    // Every live escort was captured as a sweep target; the hazard was not.
+    const targets = scene.getMiniBossSweepTargets();
+    expect(targets).toHaveLength(escorts.length);
+    for (const escort of escorts) {
+      expect(
+        targets.some(
+          (target) =>
+            Math.abs(target.x - escort.x) < 0.001 &&
+            Math.abs(target.y - escort.y) < 0.001,
+        ),
+      ).toBe(true);
+    }
+    expect(targets.every((target) => target.key !== 'asteroid')).toBe(true);
+
+    finishMiniBossSweep(scene);
+
+    // Swept escorts are gone from play (removed cosmetically, AC4), the hazard
+    // remains on the field, and the wave still advanced exactly once. The
+    // next level's wave may already be spawning from the wormhole by now, so
+    // assert on the captured escort references rather than on the scene's
+    // whole live-entity list.
+    for (const escort of escorts) {
+      expect(escort.alive).toBe(false);
+      expect(escort.active).toBe(false);
+    }
+    expect(asteroid.alive).toBe(true);
+    expect(asteroid.active).toBe(true);
+    expect(scene.getEnemies()).toContain(asteroid);
+    expect(scene.getWaveManager().level).toBe(2);
+    expect(scene.getWaveManager().miniBossActive).toBe(false);
+  });
+
+  it("AC1 — the mini-boss's live minions are captured before the lethal blow clears them", async () => {
+    const scene = await bootSweepScene();
+    // Point the level-1 encounter at a two-phase design whose LAST phase (2)
+    // summons a minion wave — the minions are therefore alive at the capture
+    // moment and are torn down by the lethal blow itself.
+    const scoped = scene as unknown as {
+      miniBossConfigFor(level: number): MiniBossConfig;
+    };
+    scoped.miniBossConfigFor = () => {
+      const config = miniBossConfigForLevel(1, {
+        x: GAME_WIDTH / 2,
+        y: GAME_HEIGHT / 3,
+        formationOffset: { row: 0, col: 0 },
+      });
+      return {
+        ...config,
+        hpPerPhase: 3,
+        phases: [{ pattern: 'spread' }, { pattern: 'spiral' }],
+        minions: [
+          {
+            phase: 2,
+            shootEnabled: false,
+            groups: [
+              {
+                enemyKey: 'scout',
+                formation: 'v',
+                count: 2,
+                spacingX: 30,
+                spacingY: 24,
+                startX: GAME_WIDTH * 0.2,
+                startY: GAME_HEIGHT * 0.3,
+              },
+            ],
+          },
+        ],
+      };
+    };
+
+    advanceToMiniBoss(scene);
+    const miniBoss = scene.getMiniBoss()!;
+    expect(miniBoss.getPhaseCount()).toBe(2);
+
+    // Deplete phase 1 so the minion-bearing phase 2 begins.
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.getEnemyEntities = () => [];
+    isolated.autoFireEnabled = () => false;
+    try {
+      for (let hit = 0; hit < 3; hit++) {
+        scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+        scene.tick(0);
+      }
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    const minions = miniBoss.getMinions();
+    expect(minions).toHaveLength(2);
+    // Live escorts still on the field at capture time (they are swept, not
+    // hit, so their pre-defeat count is the escort half of the target list).
+    const escortsBefore = scene
+      .getEnemies()
+      .filter((enemy) => enemy.alive);
+    expect(escortsBefore.length).toBeGreaterThan(0);
+
+    hitMiniBossUntilDead(scene);
+
+    // The minions were captured as sweep targets even though the lethal blow
+    // has already torn their entities down.
+    const targets = scene.getMiniBossSweepTargets();
+    expect(targets).toHaveLength(escortsBefore.length + minions.length);
+    for (const minion of minions) {
+      expect(
+        targets.some(
+          (target) =>
+            Math.abs(target.x - minion.x) < 0.001 &&
+            Math.abs(target.y - minion.y) < 0.001,
+        ),
+      ).toBe(true);
+    }
+    expect(minions.every((minion) => minion.active === false)).toBe(true);
+
+    finishMiniBossSweep(scene);
+    expect(scene.getWaveManager().level).toBe(2);
+  });
+
+  it('AC4 — swept enemies award no score, drops or kill telemetry, and the wave clears once after the sweep', async () => {
+    const scene = await bootSweepScene();
+    advanceToMiniBoss(scene);
+    const wm = scene.getWaveManager();
+    const killTelemetry = vi.spyOn(RunTelemetry.prototype, 'enemyKilled');
+    const scoreBefore = scene.getGameState().score;
+    const mineralsBefore = scene.getMinerals().length;
+    const dropsBefore = scene.getDrops().length;
+
+    hitMiniBossUntilDead(scene);
+
+    // The swept escorts never route through the reward-bearing kill path
+    // (`_onEnemyKilled`): no score, no drops, no kill telemetry — and the
+    // wave has not been accounted yet.
+    expect(wm.level).toBe(1);
+    expect(killTelemetry).not.toHaveBeenCalled();
+    expect(scene.getGameState().score).toBe(scoreBefore);
+
+    finishMiniBossSweep(scene);
+
+    // The single post-sweep advance is the only wave accounting: the sweep
+    // itself awarded nothing.
+    expect(wm.level).toBe(2);
+    expect(killTelemetry).not.toHaveBeenCalled();
+    expect(scene.getGameState().score).toBe(scoreBefore);
+    expect(scene.getMinerals()).toHaveLength(mineralsBefore);
+    expect(scene.getDrops()).toHaveLength(dropsBefore);
+  });
+
+  it('AC3/AC4 — demo mode still auto-selects the reward after the sweep delay (no stall)', async () => {
+    const scene = await bootSweepScene({ extraScenes: [MineralChoiceScene] });
+    advanceToMiniBoss(scene);
+    scene.setDemoMode(true);
+    // Keep the attract walk deterministic: no player fire, no stray kills.
+    (scene as unknown as { autoFireEnabled(): boolean }).autoFireEnabled =
+      () => false;
+
+    killMiniBoss(scene, false);
+    expect(scene.isMiniBossRewardOpen()).toBe(true);
+
+    // The shared overlay auto-selects after the human-like demo delay and the
+    // 3-2-1 countdown — the attract run never stalls behind the new sweep.
+    await advanceGame(
+      scene.game,
+      BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400,
+    );
+
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(scene.isPaused()).toBe(false);
   });
 });
 

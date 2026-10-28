@@ -127,6 +127,7 @@ interface MiniBossDeathSweepContract {
   MINI_BOSS_SWEEP_ANCHORED_COUNT: number;
   MINI_BOSS_SWEEP_INSET_PX: number;
   MINI_BOSS_SWEEP_ANCHOR_SPREAD_PX: number;
+  MINI_BOSS_SWEEP_COMPLETION_MARGIN_MS: number;
   miniBossSweepExtras(sweptCount: number): number;
   collectSweepTargets(
     live: readonly SweepTarget[],
@@ -216,6 +217,15 @@ interface StubScene {
   tweenCfgs: CapturedTween[];
   add: { graphics(opts?: { x?: number; y?: number }): StubGraphics };
   tweens: { add(cfg: CapturedTween): void };
+  /** Optional recording Clock — absent for the tween-only stubs. */
+  time?: { delayedCall(delayMs: number, callback: () => void): unknown };
+}
+
+/** A recorded Clock watchdog timer. */
+interface CapturedTimer {
+  delayMs: number;
+  callback: () => void;
+  removed: boolean;
 }
 
 /** Creates a headless stub scene that records every scheduled tween. */
@@ -242,6 +252,27 @@ function makeStubScene(): StubScene {
       add(cfg: CapturedTween): void {
         scene.tweenCfgs.push(cfg);
       },
+    },
+  };
+  return scene;
+}
+
+/**
+ * Extends the stub scene with a recording Clock, so the executor's completion
+ * watchdog can be observed and fired by hand.
+ */
+function makeStubSceneWithClock(): StubScene & { timers: CapturedTimer[] } {
+  const scene = makeStubScene() as StubScene & { timers: CapturedTimer[] };
+  scene.timers = [];
+  scene.time = {
+    delayedCall(delayMs: number, callback: () => void): unknown {
+      const timer: CapturedTimer = { delayMs, callback, removed: false };
+      scene.timers.push(timer);
+      return {
+        remove(): void {
+          timer.removed = true;
+        },
+      };
     },
   };
   return scene;
@@ -538,5 +569,89 @@ describe('mini-boss death sweep — completion ordering (AC3)', () => {
     // must not be opened by a sweep that never finished animating.
     handle.destroy();
     expect(completions).toBe(0);
+  });
+});
+
+// ── AC3/AC6: the Clock watchdog completion seam ──────────────────
+
+describe('mini-boss death sweep — clock watchdog completion (AC3)', () => {
+  it('arms one watchdog after the last burst has finished animating', async () => {
+    const { spawnMiniBossDeathSweep, MINI_BOSS_SWEEP_COMPLETION_MARGIN_MS } =
+      await sweep();
+    const scene = makeStubSceneWithClock();
+
+    const handle = spawnMiniBossDeathSweep(scene, planInput(escorts(2)));
+
+    expect(scene.timers).toHaveLength(1);
+    // The watchdog can never fire before the display is over: it sits after
+    // the plan's own completion delay, which is the last burst's end.
+    expect(scene.timers[0].delayMs).toBe(
+      handle.plan.completionDelayMs + MINI_BOSS_SWEEP_COMPLETION_MARGIN_MS,
+    );
+    expect(scene.timers[0].delayMs).toBeGreaterThan(handle.plan.completionDelayMs);
+  });
+
+  it('completes from the watchdog when the burst tweens never tick (synthetic loop)', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    const scene = makeStubSceneWithClock();
+    let completions = 0;
+
+    const handle = spawnMiniBossDeathSweep(
+      scene,
+      planInput(escorts(2)),
+      { onComplete: () => { completions += 1; } },
+    );
+
+    // A scene whose game loop is stopped (the deterministic harness) never
+    // runs the burst tweens; the watchdog is the real timer that still ends
+    // the display.
+    expect(completions).toBe(0);
+    scene.timers[0].callback();
+    expect(completions).toBe(1);
+    expect(handle.complete).toBe(true);
+
+    // Idempotent: a second firing (and the burst tweens catching up) can
+    // never open a second reward overlay.
+    scene.timers[0].callback();
+    expect(completions).toBe(1);
+  });
+
+  it('cancels the watchdog once every burst tween reports completion', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    const scene = makeStubSceneWithClock();
+    let completions = 0;
+
+    const handle = spawnMiniBossDeathSweep(
+      scene,
+      planInput(escorts(2)),
+      { onComplete: () => { completions += 1; } },
+    );
+
+    for (const tween of [...scene.tweenCfgs]) tween.onComplete?.();
+
+    expect(completions).toBe(1);
+    expect(handle.complete).toBe(true);
+    expect(scene.timers[0].removed).toBe(true);
+    // A cancelled watchdog can never fire a late completion.
+    scene.timers[0].callback();
+    expect(completions).toBe(1);
+  });
+
+  it('never completes through the watchdog after a teardown', async () => {
+    const { spawnMiniBossDeathSweep } = await sweep();
+    const scene = makeStubSceneWithClock();
+    let completions = 0;
+
+    const handle = spawnMiniBossDeathSweep(
+      scene,
+      planInput(escorts(2)),
+      { onComplete: () => { completions += 1; } },
+    );
+
+    handle.destroy();
+    expect(scene.timers[0].removed).toBe(true);
+    scene.timers[0].callback();
+    expect(completions).toBe(0);
+    expect(handle.complete).toBe(false);
   });
 });

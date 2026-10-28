@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene, type BootedGame } from '../test/gameHarness';
+import { bootScene, stepGameUntil, type BootedGame } from '../test/gameHarness';
 import { GameOverScene } from './GameOverScene';
 import { MenuScene } from './MenuScene';
 import { PlayScene } from './PlayScene';
@@ -149,9 +149,20 @@ describe('PlayScene — HUD integration (AH-0MU731VTE004PPC9)', () => {
           // A zero-length step resolves collisions without moving the target.
           scene.tick(0);
         }
-        // The defeat offers the upgrade-or-unlock reward; resolve it.
-        if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
       }
+      // The defeat plays a tween-driven death sweep before finalising (the
+      // reward overlay + the level advance); step the game loop to complete
+      // it so the walk can continue (AH-0MVROELN600410GP).
+      if (scene.isMiniBossSweepActive()) {
+        stepGameUntil(
+          scene.game,
+          'mini-boss death sweep',
+          () => !scene.isMiniBossSweepActive(),
+          240,
+        );
+      }
+      // The defeat offers the upgrade-or-unlock reward; resolve it.
+      if (scene.isMiniBossRewardOpen()) scene.selectMiniBossReward(0);
       if (scene.isTransitioning()) scene.tick(1.6);
     }
 

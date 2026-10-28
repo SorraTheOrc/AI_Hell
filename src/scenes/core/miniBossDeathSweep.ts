@@ -94,6 +94,13 @@ export const MINI_BOSS_SWEEP_ANCHORED_PARTICLES = 16;
 /** Per-burst lifespan (ms) — same order as the shared explosion lifespan. */
 export const MINI_BOSS_SWEEP_LIFESPAN_MS = 360;
 
+/**
+ * Margin (ms) the completion watchdog adds after the last burst's scheduled
+ * end, so a running display always prefers the burst tweens' own completion
+ * over the watchdog.
+ */
+export const MINI_BOSS_SWEEP_COMPLETION_MARGIN_MS = 40;
+
 /** Geometry scale for enemy bursts — enemy-scale, not boss-scale (AC1). */
 export const MINI_BOSS_SWEEP_ENEMY_SCALE = 0.8;
 
@@ -189,6 +196,22 @@ export interface MiniBossDeathSweepOptions {
   /** Fires exactly once, after every burst has finished animating. */
   onComplete?: () => void;
 }
+
+/**
+ * The minimal Phaser `time` surface the executor's completion watchdog needs
+ * (a `Clock.delayedCall` timer). Kept structural — like {@link ExplosionScene}
+ * — so headless tests can inject a double, and optional so a scene without a
+ * Clock simply falls back to the bursts' own tween completion.
+ */
+export interface MiniBossSweepClock {
+  delayedCall(
+    delayMs: number,
+    callback: () => void,
+  ): { remove(dispatchCallback?: boolean): void } | unknown;
+}
+
+/** The scene surface `spawnMiniBossDeathSweep` needs (VFX + an optional Clock). */
+export type MiniBossSweepScene = ExplosionScene & { time?: MiniBossSweepClock };
 
 /** Live handle for a running sweep. */
 export interface MiniBossDeathSweepHandle {
@@ -377,9 +400,20 @@ export function planMiniBossDeathSweep(
  * Each burst spawn uses a deterministic per-burst seed derived from the
  * planner's run seed, so the particles themselves are reproducible for a
  * given seed.
+ *
+ * **Completion seam (two real signals, never a frame count).** The preferred
+ * signal is the last burst tween's own `onComplete` (every burst counted).
+ * Because a Phaser scene driven only by a stopped/synthetic game loop (the
+ * deterministic test harness) does not necessarily tick its tween manager,
+ * the executor also arms a Clock watchdog via `scene.time.delayedCall` at
+ * `plan.completionDelayMs + MINI_BOSS_SWEEP_COMPLETION_MARGIN_MS` — the
+ * explicit "burst lifespan + stagger" timer the intake sanctions. Whichever
+ * arrives first completes the sweep (exactly once); the watchdog is always
+ * scheduled *after* the last burst's scheduled end, so a running display
+ * never completes mid-animation.
  */
 export function spawnMiniBossDeathSweep(
-  scene: ExplosionScene | null | undefined,
+  scene: MiniBossSweepScene | null | undefined,
   input: MiniBossSweepPlanInput,
   options: MiniBossDeathSweepOptions = {},
 ): MiniBossDeathSweepHandle {
@@ -388,13 +422,20 @@ export function spawnMiniBossDeathSweep(
   let finished = 0;
   let destroyed = false;
   let done = false;
+  let timer: { remove(dispatchCallback?: boolean): void } | null = null;
+
+  /** Completes the sweep exactly once (shared by both real completion signals). */
+  const completeSweep = (): void => {
+    if (destroyed || done) return;
+    done = true;
+    timer?.remove(false);
+    timer = null;
+    options.onComplete?.();
+  };
 
   const notifyIfComplete = (): void => {
     if (destroyed || done) return;
-    if (finished >= plan.bursts.length) {
-      done = true;
-      options.onComplete?.();
-    }
+    if (finished >= plan.bursts.length) completeSweep();
   };
 
   for (let i = 0; i < plan.bursts.length; i += 1) {
@@ -427,6 +468,24 @@ export function spawnMiniBossDeathSweep(
     }
   }
 
+  // Completion watchdog: an explicit lifespan + stagger timer, never a frame
+  // count (a paused scene freezes it exactly like the burst tweens, so it can
+  // never race ahead of the display).
+  const timerHandle = scene?.time?.delayedCall(
+    plan.completionDelayMs + MINI_BOSS_SWEEP_COMPLETION_MARGIN_MS,
+    () => {
+      timer = null;
+      completeSweep();
+    },
+  );
+  if (timerHandle && typeof (timerHandle as { remove?: unknown }).remove === 'function') {
+    timer = timerHandle as { remove(dispatchCallback?: boolean): void };
+  }
+
+  // Every burst reported its own completion while the loop was spawning (a
+  // zero-particle burst finishes on spawn): complete without waiting.
+  notifyIfComplete();
+
   return {
     plan,
     explosions,
@@ -436,6 +495,8 @@ export function spawnMiniBossDeathSweep(
     destroy(): void {
       if (destroyed) return;
       destroyed = true;
+      timer?.remove(false);
+      timer = null;
       for (const explosion of explosions) {
         explosion.destroy();
       }

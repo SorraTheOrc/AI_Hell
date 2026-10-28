@@ -340,13 +340,29 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
    */
   destroySelf(scale = 1): void {
     if (!this._alive) return;
+    this.destroySilently();
+    this.playExplosion(scale);
+  }
+
+  /**
+   * Mark this enemy as destroyed **without** its own explosion VFX.
+   *
+   * This is the shared "removed from play, no reward" seam for callers that
+   * play their own burst at the same position — currently the mini-boss death
+   * sweep (`spawnMiniBossDeathSweep`, AH-0MVROELN600410GP), whose staggered
+   * cascade would otherwise be doubled by every swept enemy exploding twice.
+   * It does exactly what {@link destroySelf} does minus the particles: alive
+   * flag cleared, body hidden, force-field bubble cleared. It never awards
+   * score, drops or telemetry — that only happens in the scene's kill path.
+   */
+  destroySilently(): void {
+    if (!this._alive) return;
     this._alive = false;
     this.hideBody();
     // A destroyed enemy never leaves its barrier hovering in the arena —
     // cleared here so every subclass (including those overriding hideBody) is
     // covered.
     this._clearForceFieldBubble();
-    this.playExplosion(scale);
   }
 
   /**

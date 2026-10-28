@@ -362,6 +362,27 @@ describe('BaseEnemy force-field bubble lifecycle (AH-0MVM8GW7W004SI0E)', () => {
     expect(enemy.alive).toBe(false);
     expect(enemy.forceFieldBubbleVisible).toBe(false);
   });
+
+  it('destroySilently marks the enemy dead with no explosion of its own', async () => {
+    const scene = await boot();
+    const enemy = makeAttachedEnemy(scene, 5, 2);
+    // Spy after construction: the entity's own layers are built in the
+    // constructor, so any later tween belongs to a death animation.
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    // The mini-boss death sweep (AH-0MVROELN600410GP) plays the burst itself:
+    // the entity must be removed from play without a second explosion.
+    enemy.destroySilently();
+
+    expect(enemy.alive).toBe(false);
+    expect(enemy.bodyVisible).toBe(false);
+    expect(enemy.forceFieldBubbleVisible).toBe(false);
+    expect(tweenSpy).not.toHaveBeenCalled();
+
+    // A second call is a no-op (the same guard `destroySelf` uses).
+    expect(() => enemy.destroySilently()).not.toThrow();
+    expect(tweenSpy).not.toHaveBeenCalled();
+  });
 });
 
 // ── Wrap-awareness parameter (AH-0MVKXBQVT000B2WL) ─────────────────
