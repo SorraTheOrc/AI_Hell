@@ -280,11 +280,22 @@ lower-priority target can never outrank a higher-priority one):
 |---|---|---|
 | survival | `survive` | `evade` |
 | secure-life | `secure-life` | `collect` |
+| boss | `engage-boss` | `engage` |
 | minerals | `collect-mineral` | `collect` |
 | power-ups | `collect-powerup` | `collect` |
 | enemies | `engage-enemy` | `engage` |
 | asteroids | `engage-asteroid` | `engage` |
 | reposition | `reposition` | `reposition` |
+
+The `engage-boss` band (AH-0MVBMESIE003YQ68 · AC2) sits directly below
+`secure-life` and above every collection band. It is only valid while a live
+boss is inside `COMPETENT_BOT_TUNABLES.enemySeekRange`, and its target set is
+the boss **alone** — so while it is committed the `engage` behaviour cannot
+pick a nearer minion (hard priority, not a weighted bias). Once the boss dies
+or leaves the seek range the goal is achieved/invalid and the boss falls back
+to the `enemyTargets()` set weighted by its content `threat` (2, twice the
+neutral enemy weight). The band base (`bossBase`) is a competent tunable; the
+boss weight lives once in `COMPETENT_BOT_CONTENT` (see [section 11](#11-teaching-the-bot-about-new-content)).
 
 A goal's utility rises as its target gets closer (`prioritySpan`) but stays
 inside its band. `survive` is only valid while a shot urgently threatens, and
@@ -309,11 +320,13 @@ via the read-only snapshot — the bot introduces no cap constant of its own.
   and using reverse retro-thrust only to correct an **imminent overshoot**
   (AH-0MV2WJSY70070HK2 · AC2).
   The `secure-life` goal restricts this behaviour to live Extra Life drops.
-- **`engage`** (enemy/asteroid): line the target up inside `engagementRange`,
-  then hold the **aim axis** and coast so the forward-firing weapon stays on
-  target (aim/fire reasoning, AC3) instead of aiming only by accident of
-  travel. A target whose velocity is exposed is **led** — the objective is the
-  iterated intercept rather than the current position
+- **`engage`** (enemy/asteroid/boss): line the target up inside
+  `engagementRange`, then hold the **aim axis** and coast so the forward-
+  firing weapon stays on target (aim/fire reasoning, AC3) instead of aiming
+  only by accident of travel. The `engage-boss` goal restricts the target set
+  to the boss alone (AH-0MVBMESIE003YQ68 · AC3). A target whose velocity is
+  exposed is **led** — the objective is the iterated intercept rather than the
+  current position
   (AH-0MV1DUSM2005HL98 · AC2, [section 9.8](#98-rotation-skills-ah-0mv1dusm2005hl98)).
   Inside `reverseRetreatRange` it retreats under reverse thrust while
   keeping its nose on the target (kiting) **only when a genuine threat is
@@ -384,7 +397,7 @@ defaults behaves bit-for-bit as before (default-equivalence).
 | `competent/tunables.ts` | Single source of tuning + `resolveCompetentTunables`. |
 | `hazardVelocity.ts` | Bot-side hazard-velocity tracker (position deltas → clamped velocity). |
 | `competent/steering.ts` | Pure bearing fan, safety evaluation, predictive hazard avoidance, forward model, intercept solve. |
-| `competent/goals.ts` | The six registered goals and their utility bands. |
+| `competent/goals.ts` | The registered goals (survival, boss-focus, collection, engagement, reposition) and their utility bands. |
 | `competent/behaviours.ts` | collect / engage / evade / reposition. |
 | `competent/index.ts` | `createCompetentBotBrain()` factory. |
 
@@ -672,6 +685,16 @@ export interface EnemyContentProfile {
   into `liveAsteroids` (the `engage-asteroid` band). An unknown archetype is
   treated as a non-asteroid combat target.
 
+**The shipped boss profile.** `COMPETENT_BOT_CONTENT` registers
+`{ id: 'boss', threat: 2, aim: 'direct', asteroidLike: false }`
+(AH-0MVBMESIE003YQ68 · AC1) — twice the neutral enemy weight, aimed directly,
+with no `engagementRange` override so its standoff stays single-sourced in
+the tunables. The final boss and every per-level mini-boss arrive at the bot
+through the same `boss` snapshot slot, so they share this profile. While a
+live boss is inside the enemy seek range the `engage-boss` band (section 9.1)
+gives it hard priority regardless of nearer enemies; the `threat: 2` weight
+is the *fallback* value used when the band is invalid (boss out of range).
+
 ### 11.2 Power-up / weapon drop profiles (`DropContentProfile`)
 
 ```ts
@@ -728,8 +751,9 @@ Save-As archetype, so a new entity never freezes or derails the bot.
 
 The shipped profiles are in `src/ai/framework/competent/content.ts`
 (`COMPETENT_BOT_CONTENT`): every archetype `createEnemyFromConfig` can spawn
-and every id in `POWER_UP_CATALOGUE` / `WEAPON_DROP_IDS` has an entry. A guard
-test fails if a new game id is added without a profile.
+plus the boss (`BOSS_ENEMY_ID`, spawned by its own layer), and every id in
+`POWER_UP_CATALOGUE` / `WEAPON_DROP_IDS` has an entry. A guard test fails if a
+new game id is added without a profile.
 
 ## 12. Tuning the bot live (the bot-tuning gym)
 

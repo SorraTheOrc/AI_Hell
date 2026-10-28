@@ -13,7 +13,7 @@ import { createBotMemory } from '../memory';
 import type { BotBehaviourContext } from '../registry';
 import { buildBotWorld } from '../worldModel';
 import { enemyHazardKey } from '../hazardVelocity';
-import { bullet, drop, enemy, makeSnapshot, mineral } from '../testFixtures';
+import { boss, bullet, drop, enemy, makeSnapshot, mineral } from '../testFixtures';
 import { createCompetentBehaviours } from './behaviours';
 import { COMPETENT_GOAL_IDS, createCompetentGoals } from './goals';
 import { evaluateDirection } from './steering';
@@ -150,6 +150,47 @@ describe('engage behaviour (AC3 aim/fire reasoning)', () => {
       ),
     );
     expect(intent!.dirX).toBeCloseTo(1, 3);
+  });
+});
+
+/**
+ * Boss-only engage targeting (AH-0MVBMESIE003YQ68 · AC3).
+ *
+ * **TEST-FIRST.** Authored red under Vitest's `it.fails` (the repo's
+ * red-before/green-after convention — see `src/core/levelScaling.test.ts`),
+ * then flipped to `it` by the implementation items (AH-0MVRMYU3G001YPLT,
+ * AH-0MVRMYZF5008VFV5). A leftover `it.fails` fails the suite, so the flip is
+ * deliberate.
+ *
+ * A committed boss goal owns a **boss-only** target set, so the engage
+ * behaviour cannot select a nearer regular enemy (hard priority, not a
+ * weighted bias).
+ */
+describe('engage behaviour — boss-only targeting (AH-0MVBMESIE003YQ68 · AC3)', () => {
+  it('targets the boss alone despite a nearer regular enemy', () => {
+    const snapshot = makeSnapshot({
+      player: PLAYER,
+      // A nearby minion above the ship; the boss sits farther to the right.
+      enemies: [enemy(480, 120, 'scout')],
+      boss: boss(900, 270, 2),
+    });
+    const intent = engage.run(context(snapshot, 'engage-boss'));
+    expect(intent).not.toBeNull();
+    // Bears on the boss (right), never the closer minion (up): the boss goal
+    // owns a boss-only target set (hard priority, not a weighted bias).
+    expect(intent!.dirX).toBeCloseTo(1, 3);
+    expect(intent!.dirY).toBeCloseTo(0, 3);
+    expect(intent!.aim).toBe(true);
+  });
+
+  it('declines the boss goal when no live boss is present', () => {
+    const intent = engage.run(
+      context(
+        makeSnapshot({ player: PLAYER, enemies: [enemy(600, 270, 'scout')] }),
+        'engage-boss',
+      ),
+    );
+    expect(intent).toBeNull();
   });
 });
 

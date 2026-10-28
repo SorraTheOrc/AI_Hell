@@ -9,6 +9,7 @@
           "survivalBase": 11.5,
           "survivalUrgencyPort": 8,
           "lifeBase": 9,
+          "bossBase": 5,
           "mineralBase": 4,
           "powerUpBase": 4,
           "enemyBase": 2,
