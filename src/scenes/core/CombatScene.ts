@@ -51,6 +51,7 @@ import { Player } from '../../entities/Player';
 import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
 import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } from '../../vfx/aoeEffect';
+import { spawnOrbitalStrike } from '../../vfx/orbitalStrike';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
 import type { AoEDescriptor, WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
@@ -61,12 +62,6 @@ import {
   findTeleportDestination,
   type TeleportBody,
 } from '../../powerups/teleport';
-
-// ── Orbital Strike reward VFX (AH-0MVH80ZJ7009W18Z) ──────────────────
-/** Visual radius of the reward strike's expanding ring (px). */
-export const ORBITAL_STRIKE_RADIUS = 40;
-/** Distinct cyan-white colour for the reward strike's ring/impact. */
-export const ORBITAL_STRIKE_COLOR = 0x9ffcff;
 import {
   CombatCoreScene,
   SMART_BOMB_PULSE_COLOR,
@@ -630,12 +625,19 @@ export abstract class CombatScene<
   }
 
   /**
-   * Resolves one Orbital Strike bolt (AH-0MVH80ZJ7009W18Z): picks the live
-   * enemy nearest the ship and applies the level-resolved damage through the
-   * shared AOE kill seam (so score/drop/wave accounting runs exactly once),
-   * with a shared expanding-ring + impact flash at the target. Lights up in
-   * the game and every gym because the detection lives in the shared
-   * {@link CombatCoreScene._updateOrbitalStrike}.
+   * Resolves one Orbital Strike bolt (AH-0MVH80ZJ7009W18Z; identity reworked
+   * by AH-0MVS2T0VQ00973W5): picks the live enemy nearest the ship, applies
+   * the level-resolved damage through the shared AOE kill seam (so
+   * score/drop/wave accounting runs exactly once), and spawns the strike's own
+   * descending-bolt composition ({@link spawnOrbitalStrike}) — the bolt from
+   * orbit, its target reticle, the impact flash and the dedicated strike cue —
+   * in place of the generic Smart Bomb nova ring.
+   *
+   * The bolt module owns the look, the cue and their timing (the cue fires on
+   * impact), so the game and every gym get identical feedback from this one
+   * shared path (gym↔game parity, AH-0MUGZDTFX004RBD1) with no scene-specific
+   * copy and no call site that can forget the sound. Damage is resolved at
+   * trigger; the bolt's descent is visual only.
    *
    * @param damage - Level-resolved strike damage (whole hits).
    */
@@ -653,15 +655,8 @@ export abstract class CombatScene<
       }
     }
     if (!target) return;
-    const x = target.x;
-    const y = target.y;
-    spawnNovaRing(this, x, y, ORBITAL_STRIKE_RADIUS, {
+    spawnOrbitalStrike(this, target.x, target.y, {
       registry: this.aoeEffects,
-      color: ORBITAL_STRIKE_COLOR,
-    });
-    spawnBulletImpact(this, x, y, {
-      color: ORBITAL_STRIKE_COLOR,
-      registry: this.bulletImpactEffects,
     });
     this.damageEnemyViaAoe(target, damage);
   }

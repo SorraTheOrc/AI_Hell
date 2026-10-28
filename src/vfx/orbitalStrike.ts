@@ -39,10 +39,21 @@
  * assets, no runtime dependencies — and the effect is cosmetic only: it applies
  * no damage and awards no score.
  *
+ * ## The strike owns its cue (AH-0MVS2T0VQ00973W5)
+ *
+ * The module also plays the dedicated `playOrbitalStrikeSound()` cue at the
+ * bolt's **impact**, following the `thornsAbsorb.ts` precedent rather than
+ * leaving the call site to remember it: `PlayScene` and every combat gym reach
+ * the strike through the one shared path in `src/scenes/core/CombatScene.ts`,
+ * and a cue fired here can never be forgotten by a consumer nor forked by a
+ * scene.
+ *
  * @module vfx/orbitalStrike
  */
 
 import type Phaser from 'phaser';
+
+import { playOrbitalStrikeSound } from '../audio/effects';
 
 /**
  * The strike's colour — a cyan-white bolt that reads as reflected orbital
@@ -168,7 +179,9 @@ export interface OrbitalStrikeHandle {
  *    column drawn from above the top of the play area down to the target,
  *    with a bright bolt head streaking down it, over the target marker.
  * 2. **Impact** (the remainder) — a white-hot flash plus an outward shock ring
- *    at the impact point while the marker fades away.
+ *    at the impact point while the marker fades away, and the strike's
+ *    dedicated cue ({@link playOrbitalStrikeSound}) fired once, on arrival, so
+ *    the sound and the flash describe the same instant.
  *
  * The bolt column is only ever drawn within `±ORBITAL_STRIKE_BOLT_WIDTH / 2`
  * of the target's column, so the effect never becomes a screen-wide flash.
@@ -320,8 +333,11 @@ export function spawnOrbitalStrike(
     ease: 'Quad.easeIn',
     onUpdate: () => drawDescent(head.y),
     onComplete: () => {
-      // Stage 2 — arrival: flash + shock ring, then fade the whole effect out.
+      // Stage 2 — arrival: the strike's own cue lands with the flash (fired
+      // here, not at spawn, so the sound matches what the player sees), then
+      // the whole effect fades out.
       drawImpact();
+      playOrbitalStrikeSound();
       scene.tweens.add({
         targets: graphics,
         alpha: 0,

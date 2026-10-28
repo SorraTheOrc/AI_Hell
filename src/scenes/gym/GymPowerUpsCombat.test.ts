@@ -1219,8 +1219,9 @@ describe('GymPowerUpsCombat — Thorn Field aura and absorb feedback (AH-0MVJ8YK
 //
 // TEST-FIRST (AH-0MVS2SW8V007ZBJQ, parent AC5 gym↔game parity): the shared
 // strike path must spawn the new bolt VFX — and nothing else — in the gym.
-// Today `CombatScene.onOrbitalStrike` reuses `spawnNovaRing`, so this stays
-// `it.fails` until the wiring sibling lands and flips it back to `it`.
+// Flipped from `it.fails` to `it` by the wiring item (AH-0MVS2T0VQ00973W5)
+// once `CombatScene.onOrbitalStrike` spawned the bolt instead of the
+// Smart Bomb's `spawnNovaRing`.
 
 /** Non-literal specifier so `tsc --noEmit` does not resolve the missing module. */
 const ORBITAL_STRIKE_MODULE = '../../vfx/orbitalStrike';
@@ -1236,7 +1237,7 @@ interface BoltModuleContract {
 }
 
 describe('GymPowerUpsCombat — Orbital Strike bolt observability (AH-0MVS2T0VQ00973W5)', () => {
-  it.fails('the shared strike path spawns the bolt VFX, not the Smart Bomb ring', async () => {
+  it('the shared strike path spawns the bolt VFX, not the Smart Bomb ring', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);

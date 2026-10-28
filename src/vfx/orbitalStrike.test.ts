@@ -61,6 +61,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../test/gameHarness';
+import * as effectsModule from '../audio/effects';
 import { NOVA_RING_DURATION, spawnNovaRing } from './aoeEffect';
 
 // ── The not-yet-existing module, via a non-literal dynamic import ───
@@ -499,21 +500,60 @@ describe('orbitalStrike — registry participation and completion', () => {
   });
 });
 
+describe('orbitalStrike — dedicated impact cue (AH-0MVS2T0VQ00973W5)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /**
+   * The bolt owns its cue (the `thornsAbsorb.ts` precedent): every consumer
+   * that spawns the bolt — `PlayScene` and every combat gym, through the one
+   * shared strike path — gets the sound, so no call site can forget it and no
+   * scene can diverge.
+   */
+  it('plays the orbital-strike cue exactly once, on impact — not during the descent', async () => {
+    const { spawnOrbitalStrike } = await strikeModule();
+    booted = await bootScene([StrikeVfxStubScene]);
+    const scene = booted.scene;
+    const cueSpy = vi.spyOn(effectsModule, 'playOrbitalStrikeSound');
+    const tweenSpy = vi.spyOn(scene.tweens, 'add');
+
+    spawnOrbitalStrike(scene, TARGET_X, TARGET_Y);
+
+    // The bolt is still falling: the cue must land with the flash, not with
+    // the spawn, so the sound matches what the player sees.
+    expect(cueSpy).not.toHaveBeenCalled();
+
+    drainScheduledTweens(tweenSpy);
+
+    expect(cueSpy).toHaveBeenCalledTimes(1);
+    cueSpy.mockRestore();
+  });
+});
+
 /**
- * Runs every scheduled tween's completion callback, repeating while the
- * callbacks schedule follow-up stages (descent → impact flash), so a
+ * Runs every scheduled tween's completion callback **once**, repeating while
+ * the callbacks schedule follow-up stages (descent → impact flash), so a
  * multi-stage effect can be driven to completion without wall-clock waits.
+ *
+ * Only the calls added since the previous pass are invoked: re-running an
+ * already-fired `onComplete` would replay its stage (and any one-shot side
+ * effects such as the impact cue) once per pass.
  */
 function drainScheduledTweens(spy: {
   mock: { calls: unknown[][] };
 }): void {
+  let processed = 0;
   for (let pass = 0; pass < 10; pass += 1) {
-    const before = spy.mock.calls.length;
-    if (before === 0) return;
-    for (const call of spy.mock.calls.slice(0, before)) {
+    const scheduled = spy.mock.calls.length;
+    if (scheduled === processed) return;
+    for (const call of spy.mock.calls.slice(processed, scheduled)) {
       const config = call[0] as CapturedTween;
       config.onComplete?.();
     }
-    if (spy.mock.calls.length === before) return;
+    processed = scheduled;
   }
 }
