@@ -476,6 +476,10 @@ describe('enemy cue identification (real manifest)', () => {
       'playVolumeFeedback',
       'updateThrusterSound',
       'playCountdownTickSound',
+      // The Orbital Strike **power-up** cue (AH-0MVS2SZBY004HJ2D) is a
+      // player/power-up cue: its recipe is tagged `powerup`, so it must never
+      // be pulled into the enemy tier tables.
+      'playOrbitalStrikeSound',
     ]) {
       expect(named).not.toContain(excluded);
     }

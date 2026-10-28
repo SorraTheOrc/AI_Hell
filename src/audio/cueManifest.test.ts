@@ -71,7 +71,7 @@ describe('cueManifest — asset resolution', () => {
 // a clone of an existing recipe.
 
 describe('cueManifest — dedicated orbital-strike cue (AH-0MVS2SZBY004HJ2D)', () => {
-  it.fails('maps playOrbitalStrikeSound to the new baked aihell-orbital-strike recipe', () => {
+  it('maps playOrbitalStrikeSound to the new baked aihell-orbital-strike recipe', () => {
     const entry = getCueAsset('playOrbitalStrikeSound');
     expect(entry).toBeDefined();
     expect(entry!.recipe).toBe('aihell-orbital-strike');
@@ -88,5 +88,27 @@ describe('cueManifest — dedicated orbital-strike cue (AH-0MVS2SZBY004HJ2D)', (
     );
     // The preloader actually fetches the baked strike asset.
     expect(allSfxAssetUrls()).toContain(`audio/sfx/aihell-orbital-strike.${seed}.wav`);
+  });
+
+  it('is structurally distinct from the AOE sister cues (different recipe, seed, asset)', () => {
+    const strike = getCueAsset('playOrbitalStrikeSound');
+    const nova = getCueAsset('playNovaImpactSound');
+    const mortar = getCueAsset('playMortarDetonationSound');
+    expect(strike).toBeDefined();
+    expect(nova).toBeDefined();
+    expect(mortar).toBeDefined();
+    // Different recipe file, different baked seed, different asset URL — the
+    // strike never aliases the Nova ring ping or the Mortar detonation wash.
+    expect(strike!.recipe).not.toBe(nova!.recipe);
+    expect(strike!.recipe).not.toBe(mortar!.recipe);
+    const strikeSeed = strike!.seeds[0];
+    expect(nova!.seeds).not.toContain(strikeSeed);
+    expect(mortar!.seeds).not.toContain(strikeSeed);
+    expect(cueAssetUrl('playOrbitalStrikeSound')).not.toBe(
+      cueAssetUrl('playNovaImpactSound'),
+    );
+    expect(cueAssetUrl('playOrbitalStrikeSound')).not.toBe(
+      cueAssetUrl('playMortarDetonationSound'),
+    );
   });
 });

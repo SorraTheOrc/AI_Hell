@@ -54,7 +54,7 @@ card-game oriented. Three cues are retired.
 | Disposition | Count | Notes |
 |-------------|-------|-------|
 | `existing-recipe` | 2 | Power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
-| `new-recipe` | 38 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4), plus the thruster hum |
+| `new-recipe` | 39 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, and the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D), plus the thruster hum |
 | `new-recipe` (outside `effects.ts`) | 4 | `Boss.ts` inline cues using `blip()` — see the Boss.ts section |
 | `retired` | 3 | `playMajorExplosionSound`, `playTankDestructionSound`, `playWeaponChangeSound` |
 | control companion (in cue table) | 2 | `stopDiveSound`, `stopThrusterSound` — start/stop lifetime mapping |
@@ -113,6 +113,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playMortarFireSound` | Muffled triangle 220→90 Hz + high barrel tick | Player Mortar fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-mortar-fire` |
 | `playMortarImpactSound` | Sharp dry shell-impact crack — triangle 900→150 Hz + HP noise smack, ~0.12 s | Player Mortar shell lands / blast connects | shared AOE detonation seam in `CombatScene` (AH-0MV822C250051OVN) | new | `aihell-mortar-impact` |
 | `playMortarDetonationSound` | Heavy saw 180→40 Hz + LP noise wash | Mortar detonation | `CombatScene` | new | `aihell-mortar-detonation` |
+| `playOrbitalStrikeSound` | Orbital Strike power-up impact — falling triangle 1800→150 Hz + bandpass noise descent 3000→260 Hz (0→0.34 s) into a low saw thump 130→34 Hz + short HP crack (0.34→0.62 s), 0.62 s two-act fall-then-impact | Orbital Strike power-up (signature event) | Orbital Strike power-up strike path (wired by AH-0MVS2T0VQ00973W5) | new | `aihell-orbital-strike` |
 | `playArcFireSound` | Square 1400→500→1120 Hz + HP noise crackle | Player Arc fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` | new | `aihell-arc-fire` |
 | `playArcImpactSound` | Sharp electric crack — saw 2400→900→220 Hz + fast HP noise zipper, ~0.14 s | Player Arc bolt connects / chains | shared AOE chain seam in `CombatScene` (AH-0MV822CE7004MQ14) | new | `aihell-arc-impact` |
 | `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz with a brief sustain, ~0.1 s | Player wave-laser fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
@@ -263,6 +264,7 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-mortar-fire` | `playMortarFireSound` | Triangle 220→90 Hz + barrel tick | 32215 |
 | `aihell-mortar-impact` | `playMortarImpactSound` | Sharp shell-impact crack 900→150 Hz + HP noise smack | 32274 |
 | `aihell-mortar-detonation` | `playMortarDetonationSound` | Saw 180→40 Hz + LP noise wash | 32216 |
+| `aihell-orbital-strike` | `playOrbitalStrikeSound` | Falling triangle 1800→150 Hz + BP noise descent 3000→260 Hz into saw thump 130→34 Hz + HP crack, 0.62 s two-act fall-then-impact (AH-0MVS2SZBY004HJ2D) | 32195 |
 | `aihell-arc-fire` | `playArcFireSound` | Square 1400→500→1120 Hz + HP noise crackle | 32217 |
 | `aihell-arc-impact` | `playArcImpactSound` | Sharp electric crack 2400→900→220 Hz + fast HP noise zipper | 32275 |
 | `aihell-wave-laser-fire` | `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz, brief sustain, ~0.1 s | 32219 |
@@ -333,7 +335,7 @@ synthesis branch, shrinking the dead-code surface.
 | Parent AC | Mapping coverage |
 |-----------|------------------|
 | AC2 Cue-to-recipe mapping | This document: every `effects.ts` cue + the `Boss.ts` surface has exactly one disposition. |
-| AC3 Recipes in ToneForge | "New recipes to author" lists 37 game slugs + the 4 Boss slugs; two existing recipes reused. |
+| AC3 Recipes in ToneForge | "New recipes to author" lists 38 game slugs + the 4 Boss slugs; two existing recipes reused. |
 | AC4 Audible character preserved | "Original character" and "Character to reproduce" columns feed the audition on AH-0MUTYV8480019Z51. |
 | AC5 Global volume/mute | `setSfxVolume`/`setSfxMuted` + `playVolumeFeedback` retained (reuses `aihell-player-hull-breach`). |
 | AC6 Single shared context | `getAudioContext` retained as the single accessor. |

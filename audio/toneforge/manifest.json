@@ -353,6 +353,14 @@
       ]
     },
     {
+      "cue": "playOrbitalStrikeSound",
+      "recipe": "aihell-orbital-strike",
+      "delivery": "baked",
+      "seeds": [
+        32195
+      ]
+    },
+    {
       "cue": "playArcFireSound",
       "recipe": "aihell-arc-fire",
       "delivery": "baked",

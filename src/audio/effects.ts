@@ -584,6 +584,27 @@ export function playMortarDetonationSound(): void {
   playCue('playMortarDetonationSound');
 }
 
+/**
+ * Falling bolt from orbit into a low detonation thump plus a bright crack —
+ * the **Orbital Strike power-up's** impact cue
+ * (AH-0MVS2SZBY004HJ2D).
+ *
+ * A dedicated ToneForge recipe (`aihell-orbital-strike`, seed 32195) rather
+ * than a reused cue: the strike is a signature event and must not alias the
+ * Smart Bomb / Nova ring ping (`playNovaImpactSound`, a 0.16 s bright ring
+ * with no descent) or the Mortar detonation wash
+ * (`playMortarDetonationSound`, a sustained 0.32 s low boom). This cue is
+ * composed in two acts — a pitched + filtered-noise descent from orbit into a
+ * low saw thump and a short highpass crack — so the strike is unmistakable by
+ * ear even when the player is not looking at the target.
+ *
+ * Plays through the shared one-shot cue funnel like every other cue, so the
+ * global volume/mute, voice limiter and single shared `AudioContext` apply.
+ */
+export function playOrbitalStrikeSound(): void {
+  playCue('playOrbitalStrikeSound');
+}
+
 /** Bright electric zap — Arc fire. */
 export function playArcFireSound(): void {
   playCue('playArcFireSound');

@@ -337,7 +337,7 @@ describe('contract — cue to asset mapping', () => {
 // exports honest once the cue lands).
 
 describe('contract — dedicated orbital-strike cue (AH-0MVS2SZBY004HJ2D)', () => {
-  it.fails('playOrbitalStrikeSound is a manifested, headless-safe cue export', () => {
+  it('playOrbitalStrikeSound is a manifested, headless-safe cue export', () => {
     // Non-literal lookup so the missing export does not break `tsc --noEmit`.
     const cue = (effects as unknown as Record<string, unknown>)
       .playOrbitalStrikeSound;
