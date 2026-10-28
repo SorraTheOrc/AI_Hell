@@ -6215,9 +6215,14 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     // Isolate the kill so auto-fire or an overlapping enemy (e.g. the wave
     // asteroid that absorbed the bullet on seed 202) cannot add a second
     // kill or absorb the test's bullet and double-/never-decrement the wave
-    // accounting (AH-0MV1EN1NS000QLBK, AH-0MVMEI9V1005H0LU). The stubs are
-    // restored in `finally` so a leaked isolation cannot poison later tests
-    // — the same shape the pac-man pursuer kill test uses (~5893-5906).
+    // accounting (AH-0MV1EN1NS000QLBK, AH-0MVMEI9V1005H0LU). The fixed seed
+    // above additionally pins the phase gate: a wave-timeout transition (the
+    // carried-survivor-only collision pass) or a paused scene skips the
+    // bullet-vs-grunt collision entirely and leaves the victim alive — the
+    // transition/paused gating hazard identified in AH-0MVMEI9V1005H0LU.
+    // The stubs are restored in `finally` so a leaked isolation cannot
+    // poison later tests — the same shape the pac-man pursuer kill test
+    // uses (~5893-5906).
     const restoreKill = isolateEnemyForKill(scene, victim);
     try {
       scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);

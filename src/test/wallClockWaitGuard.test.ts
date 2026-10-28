@@ -12,6 +12,17 @@
  * - `stepGameUntil(game, label, predicate)` — pump until a condition holds;
  * - `expect.poll` / bounded polling with explicit raises, or vitest fake timers.
  *
+ * The kill-isolation flake family (AH-0MV1EN1NS000QLBK) gained a Robotron
+ * horde sibling: AH-0MVMEI9V1005H0LU fixed the same auto-fire/overlapping-
+ * enemy interference in `killing a grunt advances wave accounting exactly
+ * once` (src/scenes/PlayScene.test.ts) and added seed-pinning to the
+ * pattern — `bootWithHordeWave(horde, seed)` pins the run via `setRunSeed`
+ * and the hardened test uses the fixed `HORDE_KILL_FIXED_SEED`
+ * (~6197-6242), so the RNG-driven horde layout and spawn schedule are
+ * reproducible instead of drawn fresh per run. New kill tests asserting
+ * exactly-once accounting should reuse `isolateEnemyForKill` plus a pinned
+ * seed.
+ *
  * The scan asserts **code**, not prose: comments and string literals are
  * stripped first, so this file's own documentation and the deterministic-boot
  * guard's regexes do not count.
