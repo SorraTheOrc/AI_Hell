@@ -686,6 +686,39 @@ pipe budget, writing to a temp file (so the bound is tested without a
 `peakPendingBytes` stays at one chunk, nothing is retained, and repeated runs
 in fresh directories are byte-identical.
 
+### Proving the bound: disk footprint and temp-root resolution (AH-0MVS1O1ZG007VCX3)
+
+The memory-bound test writes **512 MiB** of real bytes: `ceil((CDP_PIPE_STRING_LIMIT_CHARS
++ 1) / MAX_CAPTURE_CHUNK_BYTES)` = **32 chunks x 16 MiB** = 536,870,912 B,
+streamed to `<dir>/long.partial.webm` (renamed by `finalise({ success: true })`)
+and re-read for the streaming sha256. That is deliberate real disk I/O — it
+exercises the shipped write path — so the test needs a temp filesystem with
+that much free headroom.
+
+- **Disk footprint.** 512 MiB file plus a 512 MiB margin: the test picks a
+temp root with at least **1 GiB** free.
+- **Temp-root resolution order.** The single >512 MiB test resolves its root
+through `resolveTempRootForLargeFile()` (`scripts/tempRootForLargeFiles.ts`),
+**not** `os.tmpdir()` directly: an explicit `TMPDIR` first, then the
+**disk-backed `/var/tmp`** (the root filesystem), then `os.tmpdir()` — the
+first whose filesystem reports the 1 GiB headroom wins. On hosts whose
+`/tmp` is a small shared tmpfs (a 16 GiB `/tmp` shared by every concurrent
+agent session failed here), the disk-backed fallback is what keeps the proof
+running.
+- **Labelled environmental skip.** When **no** candidate has headroom, this
+one test reports a labelled environmental skip naming AH-0MVS1O1ZG007VCX3 and
+the required footprint instead of failing on an opaque `ENOSPC` /
+`UNKNOWN: unknown error, write`. The skip decision and its label are unit
+tested with injected free-space figures (`scripts/tempRootForLargeFiles.test.ts`)
+— no test fills a disk to prove it. Every other test in the file keeps
+`os.tmpdir()` (small files only).
+- **Running on a squeezed host.** Point `TMPDIR` at a disk-backed directory
+with headroom, e.g. `TMPDIR=/var/tmp/aihell-tmp`. This replaces the previous
+undocumented ad-hoc workaround that every agent had to rediscover.
+- **Exercising the skip deliberately.** `AIHELL_CAPTURE_SINK_TEMP_REQUIRED_BYTES`
+(any positive integer) raises the required footprint so a gate run can
+demonstrate the labelled skip without filling a disk.
+
 ### Probing long clips from the streamed file
 
 The end-of-clip probe used to hand the recording to the page as one
@@ -1714,7 +1747,8 @@ full`) or `npm run build`.
 | `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
 | `scripts/capture-chunk-sink.mjs` | Bounded streaming chunk sink: append-decode-write each recorder chunk to `<stem>.partial.webm`, report `bytesWritten`/`chunkCount`/`peakPendingBytes`, finalise by rename |
 | `scripts/capture-chunk-sink.d.mts` | Types for the chunk sink |
-| `scripts/capture-chunk-sink.test.ts` | Hermetic tests for the sink's write path, memory bound beyond the 512 MiB CDP pipe budget, cap rejection and finalise/partial seam |
+| `scripts/capture-chunk-sink.test.ts` | Hermetic tests for the sink's write path, memory bound beyond the 512 MiB CDP pipe budget, cap rejection and finalise/partial seam; the >512 MiB proof's temp root is resolved by `tempRootForLargeFiles.ts` (labelled environmental skip when no temp filesystem has headroom) |
+| `scripts/tempRootForLargeFiles.ts` | Test-only temp-root resolution for the >512 MiB proof (`TMPDIR` → `/var/tmp` → `os.tmpdir()`, first with 1 GiB headroom wins), with unit tests in `scripts/tempRootForLargeFiles.test.ts` (AH-0MVS1O1ZG007VCX3) |
 | `scripts/capture-recorder-page.mjs` | Page-side bounded Blob retention + oversized-payload slicing: installs a controller that forwards every chunk to the sink exactly once and retains at most `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (uninstallable; self-contained for `addInitScript`) |
 | `scripts/capture-recorder-page.d.mts` | Types for the retention/payload-guard controller |
 | `scripts/capture-recording-pipeline.mjs` | Shared recording pipeline: one sink + guard install + `__aiHellCaptureChunk` binding + probe source per capture path (single-source rule, both paths) |
