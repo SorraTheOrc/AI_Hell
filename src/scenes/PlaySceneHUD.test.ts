@@ -246,9 +246,28 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     savedAt: '2026-10-20T00:00:00.000Z',
   };
 
-  /** Boots a fresh game whose PlayScene continues from {@link CHECKPOINT}. */
-  async function bootResumed(): Promise<PlayScene> {
-    localStorage.setItem(CHECKPOINT_STORAGE_KEY, JSON.stringify(CHECKPOINT));
+  /**
+   * A raw checkpoint payload for `localStorage`. `Partial<Checkpoint>` covers
+   * the shipped fields; `mineralHoldCapacity` is declared explicitly because it
+   * arrives with the schema-v2 sibling item (AH-0MVT1DYO5004UC4P) and the
+   * version-2 case below must stay writable before that field exists.
+   */
+  type CheckpointPayload = Partial<Checkpoint> & {
+    mineralHoldCapacity?: number;
+  };
+
+  /**
+   * Boots a fresh game whose PlayScene continues from {@link CHECKPOINT},
+   * optionally overriding individual persisted fields (e.g. an over-capacity
+   * mineral count) so a single fixture covers the resume variants.
+   */
+  async function bootResumed(
+    overrides: CheckpointPayload = {},
+  ): Promise<PlayScene> {
+    localStorage.setItem(
+      CHECKPOINT_STORAGE_KEY,
+      JSON.stringify({ ...CHECKPOINT, ...overrides }),
+    );
     booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
     // Mirror `MenuScene`'s Continue flow: restart PlayScene with `resume`.
     booted.game.scene.start('PlayScene', { resume: true });
@@ -391,5 +410,169 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
 
     expect(scene.getHUD()!.getRows()).toHaveLength(0);
     expect(scene.getEffectsRegistry().activeWeapons()).toHaveLength(0);
+  });
+
+  /**
+   * Resumed-hold regression (AH-0MVT1DW8V00406KV — child of
+   * AH-0MVSSSFXK005ZW8O).
+   *
+   * **TEST-FIRST.** These tests reproduce the reported sequence — Continue →
+   * first hold-full → resolve → an immediate second hold-full — and are
+   * authored **red** under Vitest's `it.fails` (the repo's red-before/
+   * green-after convention — see `src/core/enemyForceField.test.ts` and
+   * AH-0MVLJCYGW001TRB3), so the suite stays green on pre-change HEAD while
+   * the defect is pinned. The resume implementation item
+   * (AH-0MVT1DZRG000Q1US) **flips every `it.fails` here back to `it`** once
+   * `_restoreCheckpoint()` applies the checkpoint's hold capacity and clamps
+   * the restored store through the shared hold model; a leftover `it.fails`
+   * fails the suite, so the flip is deliberate.
+   *
+   * The checkpoint fixture (`bootResumed()` / `CHECKPOINT`) seeded `minerals:
+   * 3` — below the 5-mineral first hold — so the over-capacity restore path
+   * was previously untested. Each case below overrides only the fields that
+   * matter, and every assertion reads an observable seam (`getGameState()`,
+   * `isMineralChoiceOpen()`, `selectMineralChoice()`, the HUD's
+   * `getMineralStoreValue()` / `getMineralBarState()`).
+   */
+  describe('mineral hold on resume (AH-0MVT1DW8V00406KV)', () => {
+    /** The default first-hold capacity (`rules.mineralHoldCapacity`). */
+    const FIRST_HOLD_CAPACITY = 5;
+
+    /**
+     * A legacy (schema-v1) payload with an over-capacity saved count and no
+     * hold-capacity field, so it exercises the clamped-restore path with the
+     * first-hold default. Pinned to `version: 1` explicitly so the case stays
+     * legacy after the sibling item bumps `CHECKPOINT_VERSION` to 2
+     * (AH-0MVT1DYO5004UC4P).
+     */
+    const LEGACY_OVER_CAPACITY: CheckpointPayload = {
+      version: 1,
+      minerals: 20,
+    };
+
+    /**
+     * Collects exactly one mineral by spawning it on top of the ship. A
+     * collection tick also steps the held-full check and opens the choice
+     * when the hold reaches capacity.
+     */
+    function collectOne(scene: PlayScene): void {
+      const player = scene.getPlayer()!;
+      scene.spawnMineralAt(player.x, player.y);
+      scene.tick(0.016);
+    }
+
+    it.fails(
+      'AC1 — an over-capacity legacy checkpoint resumes with no hold-full choice pending',
+      async () => {
+        const scene = await bootResumed(LEGACY_OVER_CAPACITY);
+        const state = scene.getGameState();
+
+        // The resume really happened (the saved score and seed survived), so
+        // the hold assertions below cannot pass vacuously on a fresh run.
+        expect(state.score).toBe(CHECKPOINT.score);
+        expect(scene.getRunSeed()).toBe(CHECKPOINT.runSeed);
+
+        // Clamped into [0, capacity]: the saved 20 becomes a full first hold.
+        expect(state.mineralCapacity).toBe(FIRST_HOLD_CAPACITY);
+        expect(state.minerals).toBeLessThanOrEqual(state.mineralCapacity);
+        expect(state.minerals).toBe(state.mineralCapacity);
+
+        // No choice is pending on Continue (a full hold alone is legitimate).
+        expect(state.isHoldFull()).toBe(true);
+        expect(scene.isMineralChoiceOpen()).toBe(false);
+
+        // The first pick-up is what opens the first choice.
+        collectOne(scene);
+        expect(scene.isMineralChoiceOpen()).toBe(true);
+      },
+    );
+
+    it.fails(
+      'AC2 — resolving the first hold-full after Continue leaves the next hold not full',
+      async () => {
+        const scene = await bootResumed(LEGACY_OVER_CAPACITY);
+        const state = scene.getGameState();
+
+        // Resume clamps the saved surplus into the first hold.
+        expect(state.minerals).toBe(FIRST_HOLD_CAPACITY);
+        expect(state.mineralCapacity).toBe(FIRST_HOLD_CAPACITY);
+        expect(scene.isMineralChoiceOpen()).toBe(false);
+
+        // One pick-up opens the first hold-full choice…
+        collectOne(scene);
+        expect(scene.isMineralChoiceOpen()).toBe(true);
+
+        // …and resolving it carries **exactly that one mineral**, never the
+        // discarded saved surplus (the phantom-overflow bug): the next hold is
+        // 1/10, not already full.
+        expect(scene.selectMineralChoice(0)).not.toBeNull();
+        expect(state.mineralCapacity).toBe(FIRST_HOLD_CAPACITY * 2);
+        expect(state.minerals).toBe(1);
+        expect(state.isHoldFull()).toBe(false);
+        expect(scene.isMineralChoiceOpen()).toBe(false);
+
+        // A second choice needs the whole next hold collected: nine more
+        // pick-ups, not one (8 leaves 9/10 with no choice pending).
+        for (let i = 0; i < 8; i += 1) {
+          collectOne(scene);
+          expect(state.minerals).toBe(1 + i + 1);
+          expect(state.isHoldFull()).toBe(false);
+          expect(scene.isMineralChoiceOpen()).toBe(false);
+        }
+        collectOne(scene);
+        expect(state.minerals).toBe(state.mineralCapacity);
+        expect(scene.isMineralChoiceOpen()).toBe(true);
+      },
+    );
+
+    it.fails(
+      'AC3 — the resumed HUD hold bar never reports more than the hold can carry',
+      async () => {
+        const scene = await bootResumed(LEGACY_OVER_CAPACITY);
+        const state = scene.getGameState();
+        const hud = scene.getHUD()!;
+
+        // The counter is truthful: it shows the clamped store, not the saved
+        // over-capacity count.
+        const shown = hud.getMineralStoreValue();
+        expect(shown.capacity).toBe(FIRST_HOLD_CAPACITY);
+        expect(shown.minerals).toBe(state.minerals);
+        expect(shown.minerals).toBeLessThanOrEqual(shown.capacity);
+
+        // Regression guard on the painted bar: never wider than its track.
+        const bar = hud.getMineralBarState();
+        expect(bar.visible).toBe(true);
+        expect(bar.filled).toBeLessThanOrEqual(bar.total);
+      },
+    );
+
+    it.fails(
+      'AC4 — a version-2 checkpoint restores the earned hold capacity and clamps into it',
+      async () => {
+        const scene = await bootResumed({
+          version: 2,
+          minerals: 25,
+          mineralHoldCapacity: 20,
+        });
+        const state = scene.getGameState();
+
+        expect(state.score).toBe(CHECKPOINT.score);
+        // The earned capacity comes back with the run…
+        expect(state.mineralCapacity).toBe(20);
+        // …and the saved count is clamped into it, not into the first hold.
+        expect(state.minerals).toBe(20);
+        expect(state.minerals).toBeLessThanOrEqual(state.mineralCapacity);
+        expect(scene.isMineralChoiceOpen()).toBe(false);
+
+        // A single pick-up opens the first choice of the restored hold; the
+        // resolved next hold carries that mineral and doubles the capacity.
+        collectOne(scene);
+        expect(scene.isMineralChoiceOpen()).toBe(true);
+        expect(scene.selectMineralChoice(0)).not.toBeNull();
+        expect(state.mineralCapacity).toBe(40);
+        expect(state.minerals).toBe(1);
+        expect(state.isHoldFull()).toBe(false);
+      },
+    );
   });
 });
