@@ -29,6 +29,11 @@ import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { getCueAsset } from '../audio/cueManifest';
+import { POWER_UP_LEVEL_SPECS } from '../powerups/powerUpLevels';
+import {
+  STRIKE_INTERVAL_BEATS_BASE,
+  STRIKE_INTERVAL_BEATS_FLOOR,
+} from '../core/constants';
 
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const CUE_MAPPING_PATH = path.resolve(
@@ -188,6 +193,23 @@ describe('GDD §4.4.3 documents the Orbital Strike power-up identity (AC9)', () 
   it('documents the permanent strike HUD countdown', () => {
     expect(section).toMatch(/next in Ns/);
     expect(section).toMatch(/countdown/i);
+  });
+
+  it('documents the beat-aligned ~7 s cadence with the shipped level spec', () => {
+    // The producer's rejection (2026-10-29) asked for a ~7 s first-grant
+    // cadence on the audio system's BPM grid, so the docs must state the
+    // shipped values (read from the level spec, never duplicated here) and
+    // the beat-grid rationale that produced them.
+    const intervalSpec = POWER_UP_LEVEL_SPECS.strike.find(
+      (s) => s.variable === 'strikeInterval',
+    )!;
+    expect(section).toContain(`${intervalSpec.base} s`);
+    expect(section).toContain(`${intervalSpec.cap} s`);
+    expect(section).toContain(`${STRIKE_INTERVAL_BEATS_BASE} beats`);
+    expect(section).toContain(`${STRIKE_INTERVAL_BEATS_FLOOR} beats`);
+    expect(section).toMatch(/80 BPM/);
+    // First grant is within half a beat of the requested 7 s.
+    expect(Math.abs(intervalSpec.base - 7)).toBeLessThanOrEqual(0.375);
   });
 
   it('records the hazard as non-regressed rather than changed', () => {

@@ -407,8 +407,9 @@ export class EffectsRegistry {
   // ── Orbital Strike bolt state (AH-0MVCRC1Q0007JAV1) ───────────────
   /**
    * True when a hold-full Strike granted a permanent bolt for the run: it
-   * never expires and strikes every {@link strikeInterval} seconds. Cleared
-   * only by `reset()`.
+   * never expires and strikes every {@link strikeInterval} seconds — a
+   * whole-beat cadence on the shared 80 BPM grid (6.75 s at the first grant,
+   * AH-0MVRE6N08001TE4V). Cleared only by `reset()`.
    */
   private _strikePermanent = false;
   /** Seconds until the next permanent strike (unused when not permanent). */
@@ -1219,9 +1220,13 @@ export class EffectsRegistry {
   }
 
   /**
-   * The resolved strike interval in seconds: `max(10, 30 − 2×level)` (30 s on
-   * the first grant, 10 s at and beyond level 10). Mirrors the Smart Bomb
-   * descending interval schedule.
+   * The resolved strike interval in seconds: a whole-beat cadence on the
+   * shared 80 BPM grid (`src/utils/beat.ts`) — **9 beats = 6.75 s (~7 s) on
+   * the first grant**, one beat (0.75 s) sooner per level, floored at
+   * **3 beats = 2.25 s** (AH-0MVRE6N08001TE4V). The beat-aligned cadence keeps
+   * every bolt on the pulse the rest of the game's cues are quantised to. The
+   * seconds themselves live in `POWER_UP_LEVEL_SPECS.strike`; the constants in
+   * `src/core/constants.ts` state the same cadence in beats.
    */
   strikeInterval(): number {
     const interval = this._levelStore.stats('strike').strikeInterval;
@@ -1244,7 +1249,9 @@ export class EffectsRegistry {
    *
    * - A field pickup queues exactly one bolt. A permanent strike fires
    *   immediately on grant and then once per {@link strikeInterval} seconds
-   *   for the rest of the run.
+   *   for the rest of the run — at the first grant that is 6.75 s (9 beats of
+   *   the shared 80 BPM grid, ~7 s), shortening by one beat per level to a
+   *   2.25 s floor (AH-0MVRE6N08001TE4V).
    * - A decided bolt is **latched**, not consumed: `true` is reported on
    *   every frame until the shared combat core acknowledges it through
    *   {@link resolveStrike} once the bolt has actually landed. That keeps a

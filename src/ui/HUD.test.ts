@@ -733,6 +733,10 @@ describe('HUD Orbital Strike next-bolt countdown (AH-0MVS2T40T006QL7H)', () => {
     expect(row).toBeDefined();
     expect(row.label).toContain('Orbital Strike');
     expect(row.label).toContain('(next in');
+    // The first grant fires every 9 beats of the 80 BPM grid (6.75 s), so the
+    // rounded label reads "next in 7s" — the producer's ~7 s cadence
+    // (AH-0MVRE6N08001TE4V).
+    expect(row.label).toContain('(next in 7s)');
     // The value column still reads `∞` — the row is permanent, the countdown
     // lives in the label via the shared formatter.
     expect(row.value).toBe(PERMANENT_VALUE);

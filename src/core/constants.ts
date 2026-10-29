@@ -149,6 +149,30 @@ export const SMART_BOMB_INTERVAL_PER_LEVEL_SECONDS = 2;
 /** Permanent smart-bomb pulse interval floor (seconds): never faster than once per 10 s. */
 export const SMART_BOMB_INTERVAL_FLOOR_SECONDS = 10;
 
+// ── Orbital Strike (AH-0MVCRC1Q0007JAV1; cadence AH-0MVRE6N08001TE4V) ─
+//
+// The permanent strike's cadence is expressed in **whole beats of the shared
+// 80 BPM grid** (`src/utils/beat.ts`), not in whole seconds: the bolt is an
+// audible event, so it must land on the same pulse the rest of the game's
+// cues are quantised to (one beat = 750 ms; `DEFAULT_BPM`).
+
+/**
+ * Orbital Strike interval at level 0, in beats of the shared 80 BPM grid:
+ * **9 beats = 6.75 s** on the first grant — the producer's "around every
+ * 7 seconds" (AH-0MVRE6N08001TE4V), snapped DOWN to the nearest whole beat so
+ * a bolt always lands on the grid.
+ */
+export const STRIKE_INTERVAL_BEATS_BASE = 9;
+
+/** Orbital Strike interval shortening per level, in beats (−1 beat = −0.75 s). */
+export const STRIKE_INTERVAL_BEATS_PER_LEVEL = 1;
+
+/**
+ * Orbital Strike interval floor, in beats: never faster than once per
+ * **3 beats (2.25 s)**, reached six upgrades after the first grant.
+ */
+export const STRIKE_INTERVAL_BEATS_FLOOR = 3;
+
 // ── UI ───────────────────────────────────────────────────────────────
 
 /** Render depth of the standalone HUD — above gameplay objects. */

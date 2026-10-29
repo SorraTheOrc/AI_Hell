@@ -114,7 +114,18 @@ import {
   SMART_BOMB_RADIUS_CAP_MULTIPLIER,
   SMART_BOMB_RADIUS_PER_LEVEL,
   SMART_BOMB_RADIUS_SHIP_MULTIPLIER,
+  STRIKE_INTERVAL_BEATS_BASE,
+  STRIKE_INTERVAL_BEATS_FLOOR,
+  STRIKE_INTERVAL_BEATS_PER_LEVEL,
 } from '../core/constants';
+import { DEFAULT_BPM, beatPeriodMs } from '../utils/beat';
+
+/**
+ * One beat of the shared 80 BPM grid in seconds (0.75 s), the unit the
+ * Orbital Strike cadence is expressed in (AH-0MVRE6N08001TE4V). Derived from
+ * the beat module so the grid stays the single source of truth.
+ */
+const STRIKE_BEAT_SECONDS = beatPeriodMs(DEFAULT_BPM) / 1000;
 
 // ── Level variables ─────────────────────────────────────────────────
 
@@ -124,6 +135,8 @@ import {
  * the Smart Bomb pulse interval is the exception — it is stored **descending**
  * (`max(10, 30 − 2×level)` seconds) because a shorter pulse interval is an
  * improvement, and its derived pulses/second inverse stays non-decreasing.
+ * The Orbital Strike interval descends the same way, in whole beats of the
+ * shared 80 BPM grid (9 → 3 beats, −1 beat per level).
  */
 export type PowerUpLevelVariable =
   /** Shield — bubble duration in seconds. */
@@ -197,7 +210,7 @@ export type PowerUpLevelVariable =
   | 'salvageMinerals'
   /** Salvage — timed window during which wrecks pay out. */
   | 'salvageDuration'
-  /** Orbital Strike — seconds between bolts (descends; the strikes/s axis is its inverse). */
+  /** Orbital Strike — seconds between bolts (descends in whole 80 BPM beats; the strikes/s axis is its inverse). */
   | 'strikeInterval'
   /** Orbital Strike — hit points the bolt deals. */
   | 'strikeDamage';
@@ -962,17 +975,26 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
       unit: 's',
       description: 'Seconds between strikes for a permanent strike.',
       curve: 'linear-clamped',
-      // Descending interval: max(10, 30 − 2×level) s — 30 s on the first
-      // grant, −2 s per further level, floor 10 s. The stored strikes/second
-      // inverse stays monotonic non-decreasing.
-      base: 30,
-      cap: 10,
-      k: -2,
-      discrete: true,
+      // Descending interval, expressed in whole beats of the shared 80 BPM
+      // grid (0.75 s per beat) so every bolt lands on the same pulse the
+      // rest of the game's cues are quantised to: 9 beats (6.75 s) on the
+      // first grant, one beat sooner per level, floored at 3 beats (2.25 s).
+      // Fractional seconds are required to stay on the grid, so this axis is
+      // NOT discrete. The stored strikes/second inverse stays monotonic
+      // non-decreasing.
+      base: STRIKE_INTERVAL_BEATS_BASE * STRIKE_BEAT_SECONDS,
+      cap: STRIKE_INTERVAL_BEATS_FLOOR * STRIKE_BEAT_SECONDS,
+      k: -STRIKE_INTERVAL_BEATS_PER_LEVEL * STRIKE_BEAT_SECONDS,
+      discrete: false,
       rationale:
-        'A permanent bolt is strong offence, so it is deliberately rare: 30 s ' +
-        'between bolts, never faster than once per 10 s (mirrors the Smart ' +
-        'Bomb interval schedule). The derived frequency `1 / interval` stays ' +
+        'A permanent bolt is strong offence, but at 30 s between bolts it ' +
+        'read as "doing nothing" in play (producer rejection ' +
+        'AH-0MVRE6N08001TE4V). The cadence is now a whole-beat cadence on the ' +
+        'shared 80 BPM grid: 9 beats = 6.75 s (~7 s) on the first grant, so ' +
+        'the bolt is an audible event that lands with the music instead of ' +
+        'drifting against it. Each level sheds one beat (6.75 → 6.0 → 5.25 …) ' +
+        'to a 3-beat floor (2.25 s), which caps the rate as the 3 HP damage ' +
+        'cap bounds the payoff. The derived frequency `1 / interval` stays ' +
         'monotonic non-decreasing.',
     },
     {

@@ -27,7 +27,12 @@ import {
   summarisePowerUpLevelChange,
 } from './powerUpLevels';
 import { curveValue } from '../utils/curve';
-import { SHIP_SIZE } from '../core/constants';
+import { DEFAULT_BPM, beatPeriodMs } from '../utils/beat';
+import {
+  SHIP_SIZE,
+  STRIKE_INTERVAL_BEATS_BASE,
+  STRIKE_INTERVAL_BEATS_FLOOR,
+} from '../core/constants';
 
 const idsInCatalogue = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
 
@@ -335,6 +340,50 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
           resolvePowerUpAtLevel('force_field', level).forceFieldReflects!,
         ),
       ).toBe(true);
+    }
+  });
+
+  it('Orbital Strike cadence lands on the shared 80 BPM grid at ~7 s (AH-0MVRE6N08001TE4V)', () => {
+    // Producer rejection (2026-10-29): a 30 s first-grant interval read as
+    // "it does nothing". The permanent strike must fire roughly every 7 s,
+    // expressed in **whole beats** of the shared 80 BPM grid
+    // (`src/utils/beat.ts`, docs/AUDIO_DESIGN_CHAPTER.md §2 tempo zones) so a
+    // bolt lands on the same pulse every other timed cue is quantised to.
+    const intervalSpec = POWER_UP_LEVEL_SPECS.strike.find(
+      (s) => s.variable === 'strikeInterval',
+    )!;
+    const beatSeconds = beatPeriodMs(DEFAULT_BPM) / 1000; // 0.75 s at 80 BPM
+    const intervalAt = (level: number) =>
+      resolvePowerUpAtLevel('strike', level).strikeInterval!;
+
+    // First grant: 9 beats = 6.75 s — within half a beat of the requested 7 s.
+    expect(intervalAt(0)).toBeCloseTo(STRIKE_INTERVAL_BEATS_BASE * beatSeconds, 12);
+    expect(Math.abs(intervalAt(0) - 7)).toBeLessThanOrEqual(beatSeconds / 2);
+
+    // The ladder sheds exactly one beat per level (6.75 → 6.0 → 5.25 …) and
+    // flattens at the 3-beat floor (2.25 s).
+    expect(intervalAt(1)).toBeCloseTo(8 * beatSeconds, 12);
+    expect(intervalAt(2)).toBeCloseTo(7 * beatSeconds, 12);
+    expect(intervalAt(6)).toBeCloseTo(STRIKE_INTERVAL_BEATS_FLOOR * beatSeconds, 12);
+    expect(intervalAt(50)).toBeCloseTo(STRIKE_INTERVAL_BEATS_FLOOR * beatSeconds, 12);
+    expect(intervalSpec.base).toBeCloseTo(6.75, 12);
+    expect(intervalSpec.cap).toBeCloseTo(2.25, 12);
+    // Fractional seconds are required to stay on the grid: whole-second
+    // rounding would step off it (6.75 → 7 s is not a beat multiple).
+    expect(intervalSpec.discrete).toBe(false);
+
+    // Every level sits on a whole number of beats, and the derived
+    // strikes/second inverse never decreases (the model's "faster at a
+    // higher level" contract).
+    let previousFrequency = -Infinity;
+    for (let level = 0; level <= 50; level++) {
+      const interval = intervalAt(level);
+      const beats = interval / beatSeconds;
+      expect(Math.abs(beats - Math.round(beats))).toBeLessThan(1e-9);
+      const frequency = resolvePowerUpAtLevel('strike', level).strikeFrequency!;
+      expect(frequency).toBeCloseTo(1 / interval, 12);
+      expect(frequency).toBeGreaterThanOrEqual(previousFrequency);
+      previousFrequency = frequency;
     }
   });
 });

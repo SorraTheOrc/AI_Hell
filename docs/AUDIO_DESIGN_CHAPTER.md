@@ -226,6 +226,12 @@ destruction accents are deferred to the next 16th note of the same grid (GDD
 | **Ambient** | 80 | 1 beat = 750 ms; identical to the fire grid | AMBIENT, RESOLVE |
 | **Combat** | 160 | 2 × fire grid; one music beat = two fire-grid beats (375 ms) | ENGAGED, ESCALATION, BOSS |
 
+The permanent **Orbital Strike** power-up fires on the same grid rather than on
+a whole-second schedule: one bolt every **9 beats** of the 80 BPM clock (6.75 s
+≈ 7 s) on the first grant, one beat sooner per level, floored at **3 beats**
+(2.25 s) — so the strike's 0.62 s `aihell-orbital-strike` impact cue lands with
+the music instead of drifting against it (AH-0MVRE6N08001TE4V).
+
 At 160 BPM the music beat period is exactly 375 ms — the shipped Cannon fire
 interval — so an eighth-note pulse in the score aligns with two cannon shots.
 Composers should write combat material so that any 16th-note flourish lands on

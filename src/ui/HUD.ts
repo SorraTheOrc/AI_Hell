@@ -564,9 +564,10 @@ export class HUD extends Phaser.GameObjects.Container {
    * its countdown so the row never reads as an inert bare label.
    *
    * The permanent Orbital Strike row also carries a countdown to its next bolt
-   * (AH-0MVS2T40T006QL7H): a 10–30 s interval otherwise reads as an inert
-   * power-up. The registry owns the clock; the HUD only projects it through the
-   * same `next in Ns` label formatter, so there is one formatting path.
+   * (AH-0MVS2T40T006QL7H): a multi-second interval (6.75 s at the first grant,
+   * AH-0MVRE6N08001TE4V) otherwise reads as an inert power-up. The registry
+   * owns the clock; the HUD only projects it through the same `next in Ns`
+   * label formatter, so there is one formatting path.
    */
   private _powerUpRecharge(id: PowerUpId): number | undefined {
     const reg = this._registry!;

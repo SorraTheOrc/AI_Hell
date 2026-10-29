@@ -18,6 +18,7 @@ import {
   resolvePowerUpAtLevel,
 } from './powerUpLevels';
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
+import { beatPeriodMs } from '../utils/beat';
 import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
 import {
   activateEffectAtUpgradeLevel,
@@ -1812,7 +1813,64 @@ describe('Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y)', () => {
   });
 });
 
-// ── Orbital Strike next-bolt countdown accessor (AH-0MVS2T40T006QL7H) ─
+// ── Orbital Strike beat-aligned cadence (AH-0MVRE6N08001TE4V) ─────────
+//
+// REGRESSION (producer rejection 2026-10-29): the permanent strike's first
+// grant fired only once every 30 s, so in play it read as "it does nothing".
+// The cadence is now expressed in whole beats of the shared 80 BPM grid
+// (`src/utils/beat.ts`) so a bolt lands on the same pulse the rest of the
+// game's cues are quantised to: 9 beats (6.75 s, ≈ 7 s) from the first grant,
+// one beat sooner per level, floored at 3 beats (2.25 s).
+
+describe('Orbital Strike beat-aligned cadence (AH-0MVRE6N08001TE4V)', () => {
+  it('fires the permanent bolt every 9 beats (~7 s) from the first grant', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true); // hold-full (permanent) reward
+
+    // The opening bolt is due immediately; land it so the interval runs.
+    expect(reg.updateStrike(0.1)).toBe(true);
+    reg.resolveStrike();
+
+    const beatSeconds = beatPeriodMs() / 1000; // 0.75 s at the default 80 BPM
+    expect(reg.strikeInterval()).toBeCloseTo(9 * beatSeconds, 12);
+    // "Around every 7 seconds", snapped to the beat grid.
+    expect(Math.abs(reg.strikeInterval() - 7)).toBeLessThanOrEqual(
+      beatSeconds / 2,
+    );
+
+    // Drive the shared clock at 60 Hz until the next bolt comes due: the
+    // observed cadence — not just the resolved constant — is the behaviour
+    // the player hears and sees.
+    const step = 1 / 60;
+    let frames = 0;
+    while (!reg.updateStrike(step)) {
+      frames += 1;
+      expect(frames).toBeLessThan(60 * 30); // never a 30 s gap again
+    }
+    expect((frames + 1) * step).toBeCloseTo(9 * beatSeconds, 1);
+  });
+
+  it('keeps every level on a whole number of beats, down to the 3-beat floor', () => {
+    const beatSeconds = beatPeriodMs() / 1000;
+    const reg = new EffectsRegistry();
+
+    let previous = Infinity;
+    // Each hold-full grant adds one permanent upgrade level (0 → 9).
+    for (let grant = 1; grant <= 10; grant++) {
+      reg.applyCollect('strike', true);
+      const interval = reg.strikeInterval();
+      const beats = interval / beatSeconds;
+      expect(Math.abs(beats - Math.round(beats))).toBeLessThan(1e-9);
+      expect(beats).toBeGreaterThanOrEqual(3);
+      expect(beats).toBeLessThanOrEqual(9);
+      expect(interval).toBeLessThanOrEqual(previous);
+      previous = interval;
+    }
+    // The floor is reached (6 upgrades × 1 beat) and held from there on.
+    expect(reg.strikeInterval()).toBeCloseTo(3 * beatSeconds, 12);
+  });
+});
+
 //
 // The HUD renders the permanent strike row's `next in Ns` from this accessor,
 // so the registry — not the HUD — owns the clock. The accessor must report a
