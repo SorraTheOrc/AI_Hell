@@ -52,6 +52,16 @@
  *   the file-level 30 s budget (`vi.setConfig({ testTimeout: 30000 })`,
  *   mirroring `cli.test.ts` / `engine.test.ts` per AH-0MVR8QM89004OQZQ); the
  *   run work and assertions are unchanged.
+ * - AH-0MVST7XTT008AIYW — the GymLevel forced-mineral-reward test
+ *   (`src/scenes/gym/GymLevel.test.ts`, `resolves a full hold to the forced
+ *   mineralReward, not a random pick`) cleared the seeded mineral field but
+ *   not the shared `MineralHold`, so a mineral scooped during the randomised
+ *   200 ms boot overflowed the later exact fill and `resolve()` carried the
+ *   surplus back instead of resetting to 0 (GDD §4.5). It flaked run-to-run
+ *   under full-suite saturation. Fixed by resetting the field and the hold
+ *   together (`resetMineralHold`) so the exact-fill premise is deterministic;
+ *   every assertion is unchanged. Discovered by the epic's saturated-host
+ *   verification child AH-0MVSDKBZ6001EP4M.
  *
  * All these fixes keep the behaviour the tests assert; the per-file budgets and
  * the skip condition are documented in `docs/dev/test-suite-timing.md`

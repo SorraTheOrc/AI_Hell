@@ -1210,6 +1210,28 @@ describe('GymLevel — arc setup fields (AH-0MVRMFOB4002LMZS)', () => {
 
   const level = () => makeLevel('Arc Level', [scoutWave(1)]);
 
+  /**
+   * Makes the "empty hold" premise of the hold-full tests explicit.
+   *
+   * The scene seeds 50 minerals at start on the randomised `supplyRng`
+   * (`Math.random` when no setup seed is set), and the player may scoop some
+   * of them during the 200 ms deterministic boot. Clearing only `minerals`
+   * therefore leaves `MineralHold.store` non-zero, and a later exact fill
+   * overflows: `resolve()` carries the surplus back instead of resetting to 0
+   * (shared overflow semantics, GDD §4.5), so the assertion is layout-
+   * dependent and flakes run-to-run (AH-0MVST7XTT008AIYW, load-remediation
+   * epic AH-0MVSBEIVK003XAFB). Resetting both the field and the hold keeps
+   * the exact-fill premise deterministic without weakening any assertion.
+   */
+  function resetMineralHold(scene: GymLevel): void {
+    const internals = scene as unknown as {
+      minerals: unknown[];
+      mineralHold: { store: number };
+    };
+    internals.minerals.length = 0;
+    internals.mineralHold.store = 0;
+  }
+
   it('starts each configured weapon at its permanent level', async () => {
     const scene = await bootWith({
       level: level(),
@@ -1249,8 +1271,9 @@ describe('GymLevel — arc setup fields (AH-0MVRMFOB4002LMZS)', () => {
     ]);
     scene.setMineralChoiceStrategy({ choose: strategy });
 
-    // Drop the seeded field so the fill is exact, then collect to capacity.
-    (scene as unknown as { minerals: unknown[] }).minerals.length = 0;
+    // Drop the seeded field (and any minerals scooped during boot) so the
+    // fill is exact, then collect to capacity.
+    resetMineralHold(scene);
     const capacity = scene.getMineralCapacity();
     const player = scene.getPlayer()!;
     for (const mineral of scene.seedMinerals(capacity)) {
@@ -1277,7 +1300,7 @@ describe('GymLevel — arc setup fields (AH-0MVRMFOB4002LMZS)', () => {
     ]);
     scene.setMineralChoiceStrategy({ choose: strategy });
 
-    (scene as unknown as { minerals: unknown[] }).minerals.length = 0;
+    resetMineralHold(scene);
     const player = scene.getPlayer()!;
     for (const mineral of scene.seedMinerals(scene.getMineralCapacity())) {
       mineral.setPosition(player.x, player.y);
