@@ -23,6 +23,25 @@ import {
   DEFAULT_MINERAL_HOLD_GROWTH_MULTIPLIER,
 } from './rules';
 
+/**
+ * Restored hold values applied by {@link MineralHold.restore}. Both fields are
+ * optional: an omitted value leaves the current one in place (the store is
+ * still re-clamped to the hold's capacity).
+ */
+export interface MineralHoldRestoreOptions {
+  /**
+   * Capacity to restore (the hold capacity earned at the checkpoint). Non-
+   * finite, zero or negative values are ignored so the current capacity is
+   * kept.
+   */
+  capacity?: number;
+  /**
+   * Minerals to restore. Clamped into `[0, capacity]`; non-finite values
+   * restore as 0.
+   */
+  store?: number;
+}
+
 /** Construction overrides for a {@link MineralHold}. */
 export interface MineralHoldOptions {
   /**
@@ -149,6 +168,35 @@ export class MineralHold {
     const carried = this._overflow;
     this._overflow = 0;
     this._store = Math.min(Math.max(0, carried), this._capacity);
+  }
+
+  /**
+   * Restores the hold from a checkpoint (Continue path). Unlike
+   * {@link collect}, this never *records* overflow: the restored store is
+   * clamped into `[0, capacity]` and any previously recorded overflow is
+   * cleared, so a restored hold can never be over-capacity and the first
+   * hold-full choice after Continue needs a real collection.
+   *
+   * A restored {@link capacity} is applied directly, deliberately bypassing
+   * the {@link capacity} setter: the setter also re-bases the run-scoped
+   * first-hold baseline, which would make a later {@link reset} return to the
+   * restored capacity instead of the configured first hold.
+   *
+   * @param options — capacity and/or store to restore; invalid values fall
+   *   back (an invalid capacity keeps the current capacity, a negative or
+   *   non-finite store restores as 0).
+   */
+  restore(options: MineralHoldRestoreOptions = {}): void {
+    const { capacity, store } = options;
+
+    if (capacity !== undefined && Number.isFinite(capacity) && capacity > 0) {
+      this._capacity = capacity;
+    }
+
+    const restoredStore = store === undefined ? this._store : store;
+    const finiteStore = Number.isFinite(restoredStore) ? restoredStore : 0;
+    this._store = Math.min(Math.max(0, finiteStore), this._capacity);
+    this._overflow = 0;
   }
 
   /**

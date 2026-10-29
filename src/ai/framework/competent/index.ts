@@ -31,7 +31,7 @@ import {
   type CompetentBotTunables,
 } from './tunables';
 
-export { COMPETENT_BOT_CONTENT } from './content';
+export { BOSS_ENEMY_ID, COMPETENT_BOT_CONTENT } from './content';
 export { createBotContent, type BotContent } from '../content';
 
 export {
@@ -44,6 +44,7 @@ export {
   COMPETENT_GOAL_IDS,
   asteroidTargets,
   bestWeightedTarget,
+  bossTargets,
   createCompetentGoals,
   enemyTargets,
   nearestTarget,

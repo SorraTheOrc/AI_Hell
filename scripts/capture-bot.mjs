@@ -114,6 +114,19 @@ export function planDurationMs(plan) {
  * @param {{ bytes?: number, width?: number, height?: number, nonBlackFraction?: number, uniqueColours?: number, motion?: number }} probe
  * @returns {{ nonTrivial: boolean, reasons: string[] }}
  */
+/**
+ * Lowest effective frame rate a recording may have and still count as a real
+ * take (AH-0MVTI3O650064IM7).
+ *
+ * A CPU-starved capture page renders far below the display rate; Phaser caps
+ * its delta, so game time advances at a fraction of wall clock and a scene
+ * window contains almost no simulated time — scripted pay-offs (boss deaths,
+ * hold-full rewards) simply cannot happen, and the footage reads as a frozen
+ * frame. 15 fps is the documented floor: below it the clip is a stalled take,
+ * not a demonstration of the game.
+ */
+export const MIN_EFFECTIVE_FPS = 15;
+
 export function isNonTrivialClip(probe) {
   const reasons = [];
   const bytes = Number(probe?.bytes ?? 0);
@@ -128,6 +141,20 @@ export function isNonTrivialClip(probe) {
   if (nonBlackFraction < 0.002) reasons.push('frame is essentially black');
   if (uniqueColours < 8) reasons.push('too few distinct colours (static/black)');
   if (motion < 0.0005) reasons.push('sampled frames are static (no motion)');
+  // A recording can look fine by every other measure while the page rendered
+  // it at a crawl; report that as a stalled take (AH-0MVTI3O650064IM7). An
+  // unknown metric is never judged.
+  const effectiveFps = Number(probe?.effectiveFps);
+  if (
+    Number.isFinite(effectiveFps)
+    && effectiveFps > 0
+    && effectiveFps < MIN_EFFECTIVE_FPS
+  ) {
+    reasons.push(
+      `recording is stalled (${effectiveFps.toFixed(1)} fps < ${MIN_EFFECTIVE_FPS} fps): `
+        + 'the page rendered too slowly to record the scene — re-record on an idle host',
+    );
+  }
 
   return { nonTrivial: reasons.length === 0, reasons };
 }

@@ -3,7 +3,11 @@ import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
 import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
-import { PLAYER_BULLET_SPEED, PLAYER_RESPAWN_INVULNERABLE } from '../../core/constants';
+import {
+  FORCE_FIELD_COLOR,
+  PLAYER_BULLET_SPEED,
+  PLAYER_RESPAWN_INVULNERABLE,
+} from '../../core/constants';
 import { Player } from '../../entities/Player';
 import { PlayerBullet, advanceAndCull } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -2454,5 +2458,115 @@ describe('CombatScene — force-field ram absorption (AH-0MVM8GTG7002IRTL)', () 
     // untouched by the same contact.
     expect(scene.effects.thornsRemaining()).toBe(1);
     expect(enemy.forceFieldHits).toBe(2);
+  });
+});
+
+// ── Force Field reflect feedback (AH-0MVRDMMYO002SC5V) ────────────────
+//
+// Producer decision Q2 = c (parent AH-0MVBKT2WO001AR14): every bullet the
+// Force Field reflects flashes at the intercept point AND plays its own
+// dedicated baked "bounce" cue, so a reflection reads (and sounds) distinct
+// from a bullet destruction, a ricochet tick or taking a hit. The feedback
+// lives in the shared reflect branch, so `PlayScene` and every gym get it
+// with no scene edits (gym↔game parity, AH-0MUGZDTFX004RBD1).
+
+describe('CombatScene — Force Field reflect feedback (AH-0MVRDMMYO002SC5V)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<StubCombatScene> {
+    booted = await bootScene([StubCombatScene]);
+    return booted.scene as StubCombatScene;
+  }
+
+  /** Arms the shared reflect bubble and drops the player in mid-field. */
+  function armField(scene: StubCombatScene): Player {
+    scene.effects.applyCollect('force_field');
+    return scene.addPlayer({ x: 100, y: 100 });
+  }
+
+  it('AC5/AC6 — an intercepted bullet flashes once at the intercept point and plays the reflect cue once', async () => {
+    const scene = await boot();
+    const player = armField(scene);
+    const cue = vi.spyOn(effectsModule, 'playForceFieldReflectSound');
+    // Inside the shared bubble radius (SHIP_SIZE × 1.8 = 36 px + bullet 5 px)
+    // but well off the player centre, so the flash position proves the
+    // intercept point is used and not the ship's position.
+    const eb = new StubBullet(scene, player.x + 25, player.y + 10);
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    // The reflection itself is unchanged: one player-owned bullet, no hit.
+    expect(scene.getPlayerBullets()).toHaveLength(1);
+    expect(scene.hooks).not.toContain('onPlayerHit');
+
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(1);
+    expect(flashes[0].x).toBe(player.x + 25);
+    expect(flashes[0].y).toBe(player.y + 10);
+    expect(lastFillColor(flashes[0].commandBuffer as number[])).toBe(FORCE_FIELD_COLOR);
+
+    expect(cue).toHaveBeenCalledTimes(1);
+  });
+
+  it('AC5/AC6 — two intercepted bullets produce two flashes and two cue calls', async () => {
+    const scene = await boot();
+    const player = armField(scene);
+    const cue = vi.spyOn(effectsModule, 'playForceFieldReflectSound');
+    const first = new StubBullet(scene, player.x + 20, player.y);
+    const second = new StubBullet(scene, player.x, player.y + 24);
+    scene.bullets.push(first, second);
+
+    scene.runCollisions();
+
+    expect(scene.getPlayerBullets()).toHaveLength(2);
+    const flashes = scene.getBulletImpactEffects();
+    expect(flashes).toHaveLength(2);
+    expect(flashes.map((flash) => flash.x)).toEqual([player.x + 20, player.x]);
+    for (const flash of flashes) {
+      expect(lastFillColor(flash.commandBuffer as number[])).toBe(FORCE_FIELD_COLOR);
+    }
+    expect(cue).toHaveBeenCalledTimes(2);
+  });
+
+  it('AC5/AC6 — a bullet with no active field is not reflected and produces neither flash nor cue', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    const cue = vi.spyOn(effectsModule, 'playForceFieldReflectSound');
+    const eb = new StubBullet(scene, player.x, player.y);
+    scene.bullets.push(eb);
+
+    scene.runCollisions();
+
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(scene.getBulletImpactEffects()).toHaveLength(0);
+    expect(cue).not.toHaveBeenCalled();
+  });
+
+  it('AC5/AC6 — a spent reflect budget produces neither flash nor cue', async () => {
+    const scene = await boot();
+    const player = armField(scene);
+    const cue = vi.spyOn(effectsModule, 'playForceFieldReflectSound');
+    // Spend the whole budget first: the bubble stays visible but no longer
+    // reflects, so the same overlap must fall through to the hull hit.
+    let drained = 0;
+    while (scene.effects.tryConsumeForceFieldReflect()) drained += 1;
+    expect(drained).toBeGreaterThan(0);
+
+    scene.bullets.push(new StubBullet(scene, player.x, player.y));
+
+    scene.runCollisions();
+
+    expect(scene.getPlayerBullets()).toHaveLength(0);
+    expect(scene.hooks).toContain('onPlayerHit');
+    expect(scene.getBulletImpactEffects()).toHaveLength(0);
+    expect(cue).not.toHaveBeenCalled();
   });
 });

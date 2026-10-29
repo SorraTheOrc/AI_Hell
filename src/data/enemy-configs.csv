@@ -50,24 +50,33 @@
 #   forceFieldMaxHits    — Field hits at the campaign maximum level (10; default 1). The resolved
 #                           strength is always clamped to `[0, 5]`. Curve:
 #                           clamp(round(lerp(startHits @ startLevel → maxHits @ 10)), 0, 5).
+#   wrapAware       — Seam-awareness: `true` (the default, and the neutral value for an
+#                     absent/blank cell) lets the enemy aim across the shortest wrapped path
+#                     and fly over the screen edges; `false` opts out explicitly and keeps the
+#                     bounded, wall-respecting behaviour. Only the classic set pieces ship
+#                     `false`: the Space Invaders `march` (reverses and drops at the arena edge)
+#                     and the `centipede` chain (weaves within bounds; it has no CSV row, so
+#                     its default comes from `resolveWrapAwareDefault`). Any new archetype is
+#                     wrap-aware unless it is added to `WRAP_AWARE_EXCLUSION_KEYS`; see
+#                     docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md §1.7 for the parity obligation.
 # To add a new enemy: add a new row with a unique key. The gym index will
 # discover it automatically. Ensure all required columns have values.
-key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,startXMin,startXMax,startYMin,startYMax,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability,health,forceFieldStartLevel,forceFieldStartHits,forceFieldMaxHits,marchStep,marchDrop,beamDuration,pullStrength,hordeGroupSize,hordeSpawnInterval,attackSpeed,commitRange,laneCount,laneSpacing,movementClass,attackClass
-scout,Scout,v,6,26,22,40,240,270,240,240,270,270,16,0x00ff00,0xff4444,3,aimed,1200,90,1.4,1,0.45,0.45,3,1,2,,,,,,,,,,,formation,projectile
-diver,Diver,diver,6,30,25,30,240,243,240,240,243,243,18,0xffff00,0xffee88,3,spread,1000,110,1.5,4,1,1,2,1,2,,,,,,,,,,,diver,projectile
-tank,Tank,rect,6,50,45,18,240,270,240,240,270,270,28,0xff6600,0xffaa00,4,radial,2400,75,1.5,6,0.3,1,2,2,4,,,,,,,,,,,formation,projectile
-phaser,Phaser,orbital,4,80,80,30,336,270,336,336,270,270,14,0xff00ff,0xff4444,3,radial,2000,90,1.75,8,1,1,3,1,3,,,,,,,,,,,formation,projectile
-swarm,Swarm,swarm,15,28,24,60,144,162,144,144,162,162,15,0x0066ff,0x00ccff,3,coordinated,900,90,1.5,1,0.25,1,4,1,2,,,,,,,,,,,formation,projectile
-boss,Boss Swarm,single,1,0,0,0,480,170,480,480,170,170,50,0xff0000,0xffffff,4,radial,1200,80,0.7,8,1,1,2,3,5,,,,,,,,,,,formation,projectile
-asteroid,Asteroid,single,1,0,0,0,480,162,480,480,162,162,42,0x888888,0x888888,3,none,1000,50,1.5,1,1,1,0,1,1,,,,,,,,,,,roamer,contact
-harvester,Harvester,single,1,0,0,0,480,135,480,480,135,135,44,0x9b30ff,0xcc88ff,3,none,1000,50,1.5,1,1,5,3,3,5,,,,,,,,,,,roamer,contact
-march,Invader,march,11,26,24,20,480,135,480,480,135,135,16,0x00ff66,0xff4444,3,aimed,1400,90,1.4,1,0.4,1,4,1,2,20,14,,,,,,,,,formation,projectile
-capturer,Capturer,single,1,0,0,0,480,108,480,480,108,108,18,0xff33cc,0xff8888,3,none,1000,50,1,1,0,2,3,2,3,0,0,1800,90,,,,,,,formation,beam
-ghost-chase,Ghost (Chase),single,1,0,0,0,480,135,480,480,135,135,16,0xff2222,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,,,chaser,contact
-ghost-ambush,Ghost (Ambush),single,1,0,0,0,480,135,480,480,135,135,16,0xffb8ff,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,,,chaser,contact
-ghost-flank,Ghost (Flank),single,1,0,0,0,480,135,480,480,135,135,16,0x22ffff,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,,,chaser,contact
-ghost-wander,Ghost (Wander),single,1,0,0,0,480,135,480,480,135,135,16,0xffb852,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,,,chaser,contact
-grunt,Grunt Horde,swarm,16,30,26,110,480,189,480,480,189,189,12,0xff00aa,0xffffff,3,none,1000,50,1.5,1,0,1,5,1,2,,,,4,1.6,,,,,,chaser,contact
-raider,Raider,single,1,0,0,140,480,135,480,480,135,135,18,0xff4433,0xffddaa,3,aimed,1100,110,1.4,1,0.6,2,3,1,3,,,,,,,320,260,,,patroller,projectile
-lane-traffic,Lane Traffic,rect,4,140,0,180,480,270,480,480,270,270,22,0xffb020,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,2,120,roamer,contact
-orbital-strike,Orbital Strike,single,1,0,0,0,480,135,480,480,135,135,20,0x8800cc,0xff4444,4,none,1000,50,1.5,6,1,1,4,2,4,,,,,,,,,,,roamer,area
+key,displayName,formationKind,count,spacingX,spacingY,driftSpeed,startX,startY,startXMin,startXMax,startYMin,startYMax,size,color,bulletColor,bulletSize,shotPattern,fireInterval,bulletSpeed,bulletLifetime,burstCount,shotProbability,health,forceFieldStartLevel,forceFieldStartHits,forceFieldMaxHits,marchStep,marchDrop,beamDuration,pullStrength,hordeGroupSize,hordeSpawnInterval,attackSpeed,commitRange,laneCount,laneSpacing,movementClass,attackClass,wrapAware
+scout,Scout,v,6,26,22,40,240,270,240,240,270,270,16,0x00ff00,0xff4444,3,aimed,1200,90,1.4,1,0.45,0.45,3,1,2,,,,,,,,,,,formation,projectile,true
+diver,Diver,diver,6,30,25,30,240,243,240,240,243,243,18,0xffff00,0xffee88,3,spread,1000,110,1.5,4,1,1,2,1,2,,,,,,,,,,,diver,projectile,true
+tank,Tank,rect,6,50,45,18,240,270,240,240,270,270,28,0xff6600,0xffaa00,4,radial,2400,75,1.5,6,0.3,1,2,2,4,,,,,,,,,,,formation,projectile,true
+phaser,Phaser,orbital,4,80,80,30,336,270,336,336,270,270,14,0xff00ff,0xff4444,3,radial,2000,90,1.75,8,1,1,3,1,3,,,,,,,,,,,formation,projectile,true
+swarm,Swarm,swarm,15,28,24,60,144,162,144,144,162,162,15,0x0066ff,0x00ccff,3,coordinated,900,90,1.5,1,0.25,1,4,1,2,,,,,,,,,,,formation,projectile,true
+boss,Boss Swarm,single,1,0,0,0,480,170,480,480,170,170,50,0xff0000,0xffffff,4,radial,1200,80,0.7,8,1,1,2,3,5,,,,,,,,,,,formation,projectile,true
+asteroid,Asteroid,single,1,0,0,0,480,162,480,480,162,162,42,0x888888,0x888888,3,none,1000,50,1.5,1,1,1,0,1,1,,,,,,,,,,,roamer,contact,true
+harvester,Harvester,single,1,0,0,0,480,135,480,480,135,135,44,0x9b30ff,0xcc88ff,3,none,1000,50,1.5,1,1,5,3,3,5,,,,,,,,,,,roamer,contact,true
+march,Invader,march,11,26,24,20,480,135,480,480,135,135,16,0x00ff66,0xff4444,3,aimed,1400,90,1.4,1,0.4,1,4,1,2,20,14,,,,,,,,,formation,projectile,false
+capturer,Capturer,single,1,0,0,0,480,108,480,480,108,108,18,0xff33cc,0xff8888,3,none,1000,50,1,1,0,2,3,2,3,0,0,1800,90,,,,,,,formation,beam,true
+ghost-chase,Ghost (Chase),single,1,0,0,0,480,135,480,480,135,135,16,0xff2222,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,,,chaser,contact,true
+ghost-ambush,Ghost (Ambush),single,1,0,0,0,480,135,480,480,135,135,16,0xffb8ff,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,,,chaser,contact,true
+ghost-flank,Ghost (Flank),single,1,0,0,0,480,135,480,480,135,135,16,0x22ffff,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,,,chaser,contact,true
+ghost-wander,Ghost (Wander),single,1,0,0,0,480,135,480,480,135,135,16,0xffb852,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,,,chaser,contact,true
+grunt,Grunt Horde,swarm,16,30,26,110,480,189,480,480,189,189,12,0xff00aa,0xffffff,3,none,1000,50,1.5,1,0,1,5,1,2,,,,4,1.6,,,,,,chaser,contact,true
+raider,Raider,single,1,0,0,140,480,135,480,480,135,135,18,0xff4433,0xffddaa,3,aimed,1100,110,1.4,1,0.6,2,3,1,3,,,,,,,320,260,,,patroller,projectile,true
+lane-traffic,Lane Traffic,rect,4,140,0,180,480,270,480,480,270,270,22,0xffb020,0xffffff,3,none,1000,50,1.5,1,0,1,0,1,1,,,,,,,,,2,120,roamer,contact,true
+orbital-strike,Orbital Strike,single,1,0,0,0,480,135,480,480,135,135,20,0x8800cc,0xff4444,4,none,1000,50,1.5,6,1,1,4,2,4,,,,,,,,,,,roamer,area,true

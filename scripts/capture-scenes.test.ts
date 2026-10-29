@@ -57,10 +57,15 @@ import {
   SCENE_CONFIG_ERROR_CODES,
   SCENE_FADE_CONTRAST_LUMA,
   SCENE_FADE_DARK_LUMA,
+  SCENE_FADE_MIN_ABSOLUTE_LUMA,
+  SCENE_FADE_RELATIVE_FRACTION,
   SCENE_FADE_MS,
   SCENE_FADE_PROBE_POINTS,
   SCENE_SETUP_ENEMY_KEYS,
   SCENE_SETUP_FORMATION_KINDS,
+  SCENE_SETUP_COMMON_FIELDS,
+  SCENE_SETUP_SCENARIO_COUNT_BOUNDS,
+  SCENE_SETUP_TARGET_EXTRA_FIELDS,
   SCENE_SETUP_LEVEL_COUNT,
   SCENE_SETUP_POWER_UP_IDS,
   SCENE_SETUP_WEAPON_IDS,
@@ -169,6 +174,39 @@ describe('watchable scene registry', () => {
     expect(
       [...WATCHABLE_GYM_SCENE_KEYS, ...PARAMETERISED_GYM_SCENE_KEYS].sort(),
     ).toEqual(discovered);
+  });
+
+  it('exhaustively partitions the discovered gyms: no gap, no overlap (AC3)', () => {
+    const discovered = readdirSync(resolve(process.cwd(), 'src/scenes/gym'), {
+      withFileTypes: true,
+    })
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          entry.name.endsWith('.ts') &&
+          !entry.name.endsWith('.test.ts'),
+      )
+      .map((entry) => entry.name.replace(/\.ts$/, ''))
+      .sort();
+
+    const watchable = new Set(WATCHABLE_GYM_SCENE_KEYS);
+    const parameterised = new Set(PARAMETERISED_GYM_SCENE_KEYS);
+
+    // Every discovered gym is in exactly one of the two registries: never in
+    // both (the watchable set means "capturable with no parameter"), never
+    // missing from both (a new gym must be classified).
+    for (const key of discovered) {
+      const inWatchable = watchable.has(key);
+      const inParameterised = parameterised.has(key);
+      expect(
+        inWatchable !== inParameterised,
+        `${key} must be in exactly one registry`,
+      ).toBe(true);
+    }
+    expect([...watchable, ...parameterised].sort()).toEqual(discovered);
+    expect(
+      [...watchable].filter((key) => parameterised.has(key)),
+    ).toEqual([]);
   });
 
   it('imports under bare Node, so the director can share it without Vite', () => {
@@ -848,6 +886,8 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
     expect(parsed[2].setup?.player?.weapons).toEqual(['spread']);
   });
 
+  // Delivered by F2 (AH-0MVRMFOB4002LMZS): `player.weaponLevels` defaults to
+  // `{}` — no per-weapon level grants — so a setup-less loadout is unchanged.
   it('fills the documented defaults when normalising', () => {
     const setup = normaliseSceneSetup({}, 'GymLevel');
     expect(setup).toEqual({
@@ -855,6 +895,7 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
       player: {
         weapons: [...DEFAULT_SCENE_SETUP_PLAYER_WEAPONS],
         timedWeapons: [...DEFAULT_SCENE_SETUP_TIMED_WEAPONS],
+        weaponLevels: {},
       },
       powerUps: {},
       seed: DEFAULT_SCENE_SETUP_SEED,
@@ -876,7 +917,6 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
   it.each([
     ['an unknown setup field', { level: validLevel(), nonsense: 1 }, 'GymLevel', ERROR.unknownSetupField],
     ['a setup field the target cannot consume', { startWave: 2 }, 'GymFodderEnemies', ERROR.setupNotSupported],
-    ['a setup on a target that cannot accept one', { player: { weapons: ['spread'] } }, 'GymCurveSequencer', ERROR.setupNotSupported],
     ['a non-object setup', 42, 'GymLevel', ERROR.invalidSetupType],
     ['an unknown enemy key', { level: validLevel({ waves: [{ groups: [{ enemyKey: 'nope', formation: 'v', count: 1, spacingX: 1, spacingY: 1, startX: 1, startY: 1 }], shootEnabled: false }] }) }, 'GymLevel', ERROR.unknownEnemyKey],
     ['an unknown formation kind', { level: validLevel({ waves: [{ groups: [{ enemyKey: 'scout', formation: 'grid', count: 1, spacingX: 1, spacingY: 1, startX: 1, startY: 1 }], shootEnabled: false }] }) }, 'GymLevel', ERROR.unknownFormationKind],
@@ -910,7 +950,12 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
     expect(requiredSceneSetupFieldsFor('GymLevel')).toEqual(['level']);
     expect(requiredSceneSetupFieldsFor('GymFodderEnemies')).toEqual(['enemy']);
     expect(requiredSceneSetupFieldsFor('GymPlayer')).toEqual([]);
-    expect(sceneSetupFieldsFor('GymCurveSequencer')).toEqual([]);
+    // Every gym now consumes the common fields — there is no setup-incapable
+    // gym left (AH-0MVRMI0Q7001KG4Y lifted the curve-editor exclusion).
+    expect([...SCENE_SETUP_COMMON_FIELDS]).toEqual(['player', 'powerUps', 'seed']);
+    expect(sceneSetupFieldsFor('GymCurveSequencer')).toEqual([
+      ...SCENE_SETUP_COMMON_FIELDS,
+    ]);
   });
 
   it('pins the mirrored id registries against the real ones', () => {
@@ -932,6 +977,173 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
     expect(parseSceneSetup(raw, 'GymLevel')).toEqual(
       normaliseSceneSetup(raw, 'GymLevel'),
     );
+  });
+});
+
+describe('gym scenario parameters (AH-0MVRMI0Q7001KG4Y)', () => {
+  /** The target that owns each scenario field. */
+  const OWNERS: Record<string, string> = {
+    shootEnabled: 'GymPowerUpsCombat',
+    obstacles: 'GymPlayer',
+    practiceTargets: 'GymWeapons',
+    threatCount: 'GymPowerUpsCombat',
+    minerals: 'GymPowerUpsUtility',
+  };
+
+  it('pins the scenario count bounds', () => {
+    expect(SCENE_SETUP_SCENARIO_COUNT_BOUNDS).toEqual({
+      threatCount: { min: 1, max: 12 },
+      minerals: { min: 0, max: 200 },
+    });
+  });
+
+  it('declares every scenario field on the target(s) that consume it', () => {
+    for (const [field, target] of Object.entries(OWNERS)) {
+      expect(sceneSetupFieldsFor(target)).toContain(field);
+    }
+    // `shootEnabled` is shared by the fire-capable formation gyms plus the
+    // combat gym. `GymCentipede` and `GymMinerals` are excluded on purpose:
+    // their entities never fire and ignore the flag.
+    for (const target of [
+      'GymBoss',
+      'GymFodderEnemies',
+      'GymMiniBoss',
+      'GymPowerUpsCombat',
+    ]) {
+      expect(SCENE_SETUP_TARGET_EXTRA_FIELDS[target]).toContain('shootEnabled');
+    }
+    for (const target of ['GymCentipede', 'GymMinerals']) {
+      expect(SCENE_SETUP_TARGET_EXTRA_FIELDS[target]).toBeUndefined();
+      expect(sceneSetupFieldsFor(target)).not.toContain('shootEnabled');
+    }
+  });
+
+  it('accepts each scenario parameter on its owning target', () => {
+    const setups: Record<string, object> = {
+      GymPowerUpsCombat: { shootEnabled: false, threatCount: 5 },
+      GymBoss: { shootEnabled: true },
+      GymFodderEnemies: { enemy: 'grunt', shootEnabled: true },
+      GymMiniBoss: { shootEnabled: true },
+      GymPlayer: { obstacles: false },
+      GymWeapons: { practiceTargets: false },
+      GymPowerUpsUtility: { minerals: 0 },
+    };
+    for (const [target, setup] of Object.entries(setups)) {
+      expect(() => validateSceneSetup(setup, target)).not.toThrow();
+      const normalised = normaliseSceneSetup(setup, target);
+      for (const key of Object.keys(setup)) {
+        expect(normalised).toHaveProperty(key, (setup as Record<string, unknown>)[key]);
+      }
+      // Idempotent: re-normalising the emitted setup is a no-op.
+      expect(normaliseSceneSetup(normalised, target)).toEqual(normalised);
+    }
+  });
+
+  it('omits scenario fields that were not supplied (historical defaults stay)', () => {
+    for (const target of [
+      'GymPowerUpsCombat',
+      'GymBoss',
+      'GymFodderEnemies',
+      'GymMiniBoss',
+      'GymPlayer',
+      'GymWeapons',
+      'GymPowerUpsUtility',
+    ]) {
+      const setup = normaliseSceneSetup(
+        target === 'GymFodderEnemies' ? { enemy: 'grunt' } : {},
+        target,
+      );
+      for (const field of Object.keys(OWNERS)) {
+        expect(setup).not.toHaveProperty(field);
+      }
+    }
+  });
+
+  it.each([
+    ['shootEnabled', 'GymPlayer'],
+    ['shootEnabled', 'GymCentipede'],
+    ['shootEnabled', 'GymMinerals'],
+    ['obstacles', 'GymWeapons'],
+    ['practiceTargets', 'GymPlayer'],
+    ['threatCount', 'GymBoss'],
+    ['minerals', 'GymPlayer'],
+  ])('rejects %s on a target that does not consume it (%s)', (field, target) => {
+    const value = field === 'shootEnabled' || field === 'obstacles'
+      || field === 'practiceTargets'
+      ? true
+      : 2;
+    const error = expectConfigError(
+      () => validateSceneSetup({ [field]: value }, target),
+      ERROR.setupNotSupported,
+    );
+    // Actionable: names the offending field and lists what the target accepts.
+    expect(error.message).toContain(field);
+    expect(error.message).toContain('accepted fields');
+    expect(error.message).toContain('player');
+  });
+
+  it('rejects a launch parameter supplied to a non-parameterised target', () => {
+    for (const [field, value, target] of [
+      ['level', { level: { level: 1, name: 'x', waves: [] } }, 'GymBoss'],
+      ['enemy', 'grunt', 'GymPowerUpsCombat'],
+    ] as const) {
+      const error = expectConfigError(
+        () => validateSceneSetup({ [field]: value }, target),
+        ERROR.setupNotSupported,
+      );
+      expect(error.message).toContain(field);
+      expect(error.message).toContain('accepted fields');
+      // The target's accepted fields are listed, so the fix is obvious.
+      expect(error.message).toContain('seed');
+    }
+  });
+
+  it('rejects a missing launch parameter with an actionable message', () => {
+    for (const [target, field] of [
+      ['GymLevel', 'level'],
+      ['GymFodderEnemies', 'enemy'],
+    ] as const) {
+      const error = expectConfigError(
+        () => validateSceneSetup({ player: {} }, target),
+        ERROR.missingSetupParameter,
+      );
+      expect(error.message).toContain(`${field} is required`);
+      expect(error.message).toContain(target);
+    }
+  });
+
+  it('rejects malformed scenario values with stable codes', () => {
+    for (const [field, value] of [
+      ['shootEnabled', 'yes'],
+      ['obstacles', 1],
+      ['practiceTargets', null],
+    ] as const) {
+      expectConfigError(
+        () => validateSceneSetup({ [field]: value }, OWNERS[field]),
+        ERROR.invalidSetupType,
+      );
+    }
+
+    for (const [field, target, values] of [
+      ['threatCount', 'GymPowerUpsCombat', [0, 13, 1.5, -1, '3']],
+      ['minerals', 'GymPowerUpsUtility', [-1, 201, 2.5, 'many']],
+    ] as const) {
+      for (const value of values) {
+        const error = expectConfigError(
+          () => validateSceneSetup({ [field]: value }, target),
+          ERROR.invalidScenarioCount,
+        );
+        expect(error.message).toContain(field);
+        expect(error.message).toContain('integer');
+      }
+    }
+  });
+
+  it('accepts the boundary values of each scenario count', () => {
+    expect(() => validateSceneSetup({ threatCount: 1 }, 'GymPowerUpsCombat')).not.toThrow();
+    expect(() => validateSceneSetup({ threatCount: 12 }, 'GymPowerUpsCombat')).not.toThrow();
+    expect(() => validateSceneSetup({ minerals: 0 }, 'GymPowerUpsUtility')).not.toThrow();
+    expect(() => validateSceneSetup({ minerals: 200 }, 'GymPowerUpsUtility')).not.toThrow();
   });
 });
 
@@ -1000,11 +1212,14 @@ describe('resolveWatchableSceneEntry — shared CLI/director resolution (AH-0MVN
     ).toMatchObject({ enemy: 'grunt' });
   });
 
-  it('rejects a setup a target cannot consume', () => {
-    expectConfigError(
-      () => resolveWatchableSceneEntry({ target: 'GymCurveSequencer', setup: { player: {} } }),
-      ERROR.setupNotSupported,
-    );
+  it('accepts a setup on the curve-editor gym, forwarding the common fields', () => {
+    const { key, setup } = resolveWatchableSceneEntry({
+      target: 'GymCurveSequencer',
+      setup: { player: { weapons: ['rapid'] }, seed: 5 },
+    });
+    expect(key).toBe('GymCurveSequencer');
+    expect(setup?.player?.weapons).toEqual(['rapid']);
+    expect(setup?.seed).toBe(5);
   });
 
   it('threads the normalised setup through the plan and the --json payload', () => {
@@ -1044,6 +1259,53 @@ describe('examples/scenes.json setup-bearing example (AH-0MVNW91PH000HV2J)', () 
         target: scene.target,
         setup: scene.setup,
       })).not.toThrow();
+    }
+  });
+
+  it('is the gym-family showcase: schema-valid, field-complete entries (AC4/AC5)', () => {
+    const parsed = parseSceneConfig(readFileSync(examplePath, 'utf8'));
+
+    // AH-0MVTNTHTI0041QIF split the configs: `examples/scenes.json` is the
+    // gym showcase and `examples/teaserVideoScript.json` owns the seven-beat
+    // teaser (which targets the game scene, not a gym). The showcase must
+    // still cover EVERY gym scene, including the parameterised `GymLevel` and
+    // the boss gyms — the audit gaps of AH-0MVRMI0Q7001KG4Y (AC4) and
+    // AH-0MVP5IGX5005XTVV (AC6) were exactly those three going unrepresented.
+    expect(parsed.length).toBeGreaterThanOrEqual(8);
+    const allGymKeys = [
+      ...WATCHABLE_GYM_SCENE_KEYS,
+      ...PARAMETERISED_GYM_SCENE_KEYS,
+    ];
+    const covered = new Set(parsed.map((scene) => scene.target));
+    for (const key of covered) {
+      expect(allGymKeys, `${key} is not a gym scene key`).toContain(key);
+    }
+    // Every gym scene has a worked entry: no gym is left to "covered
+    // elsewhere" (the parameterised and boss gyms included).
+    for (const key of allGymKeys) {
+      expect(covered, `${key} has no example entry`).toContain(key);
+    }
+
+    // AC5 (dry run): every entry resolves to a known key, and every field it
+    // carries is accepted by that target — no entry relies on a field the
+    // validator would silently drop.
+    for (const scene of parsed) {
+      const resolved = resolveWatchableSceneEntry({
+        target: scene.target,
+        setup: scene.setup,
+      });
+      expect(resolved.key).toBe(scene.target);
+
+      const accepted = sceneSetupFieldsFor(scene.target);
+      for (const field of Object.keys(scene.setup ?? {})) {
+        expect(
+          accepted,
+          `${scene.target} does not accept setup.${field}`,
+        ).toContain(field);
+      }
+      for (const required of requiredSceneSetupFieldsFor(scene.target)) {
+        expect(scene.setup).toHaveProperty(required);
+      }
     }
   });
 });
@@ -1170,5 +1432,427 @@ describe('generated-level (PlayScene) entries (AH-0MVE01EY0008QEVX)', () => {
       wavesCaptured: 3,
       endedEarly: false,
     });
+  });
+});
+
+// ── Stationary heading for captured scenes (AH-0MVTJW9JW002PHJG) ────────────
+
+interface HeadingSetup {
+  player?: { heading?: unknown };
+}
+
+describe('setup.player.heading (AH-0MVTJW9JW002PHJG)', () => {
+  // `GymPlayer` needs no parameter, so the heading can be parsed on its own.
+  const parse = (setup: HeadingSetup) =>
+    parseSceneConfig({
+      scenes: [{ target: 'GymPlayer', playMs: 1000, captureMs: 1000, setup }],
+    });
+
+  it('accepts a finite heading and normalises it into (-180, 180]', () => {
+    const cases: Array<[number, number]> = [
+      [-90, -90],
+      [0, 0],
+      [180, 180],
+      [-180, 180],
+      [270, -90],
+      [450, 90],
+      [-450, -90],
+    ];
+    for (const [given, expected] of cases) {
+      const [scene] = parse({ player: { heading: given } });
+      expect((scene.setup as HeadingSetup).player?.heading).toBe(expected);
+    }
+  });
+
+  it('normalisation is idempotent', () => {
+    const [once] = parse({ player: { heading: 450 } });
+    const [twice] = parse({
+      player: { heading: (once.setup as HeadingSetup).player?.heading },
+    });
+    expect((twice.setup as HeadingSetup).player?.heading).toBe(90);
+  });
+
+  it('rejects a non-finite or non-numeric heading with a documented code', () => {
+    for (const bad of ['up', Number.NaN, Number.POSITIVE_INFINITY, null, {}]) {
+      expect(() => parse({ player: { heading: bad } })).toThrowError(
+        expect.objectContaining({ code: 'invalid-player-heading' }),
+      );
+    }
+  });
+
+  it('omits the heading when not configured (unchanged behaviour)', () => {
+    // A setup without a heading normalises without one, so an existing config
+    // keeps the ship's default facing.
+    const [withPlayer] = parse({ player: {} });
+    expect((withPlayer.setup as HeadingSetup).player?.heading).toBeUndefined();
+
+    // A scene with no setup at all gains none.
+    const [noSetup] = parseSceneConfig({
+      scenes: [{ target: 'GymPlayer', playMs: 1000, captureMs: 1000 }],
+    });
+    expect(noSetup.setup).toBeUndefined();
+  });
+});
+
+
+
+/**
+ * Contract tests for the scripted-video arc (parent AH-0MVPJ3NSK008V5VB;
+ * covers parent AC5 and the determinism half of AC4).
+ *
+ * **TEST-FIRST.** These tests were authored **before** the fields existed and
+ * are wrapped in Vitest's `it.fails` (the repo's red-before/green-after
+ * convention — see `src/core/levelScaling.test.ts`), so the suite stays green
+ * on pre-change HEAD. The delivering slices must **flip every `it.fails` here
+ * back to `it`** once their behaviour lands; a leftover `it.fails` fails the
+ * suite:
+ *
+ * - **F2 (AH-0MVRMFOB4002LMZS)** — `player.weaponLevels` and `mineralReward`
+ *   parsing/normalisation/error codes, plus the mineral-reward id registry.
+ * - **F3 (AH-0MVRMFPXF008BG77)** — `bossHitsRemaining` parsing/normalisation,
+ *   its boss-capable target allow-list and its total-hit bounds. **Landed:**
+ *   its markers below are back to `it`.
+ * - **F4 (AH-0MVRMFRSO004H9JM)** — the seven-beat `examples/scenes.json`
+ *   table pinned by {@link ARC_BEATS}. **Landed:** its markers below are back
+ *   to `it`.
+ *
+ * ## Pinned arc table (F4 must match exactly)
+ *
+ * | # | Beat | Target | Seed | Weapons | Levels | Slots |
+ * |---|---|---|---|---|---|---|
+ * | 1 | Opening spectacle — maxed arsenal | `GymLevel` | 1101 | — | spread 5, dual 4, rapid 5, wave_laser 3, ricochet 2, nova 4 | 6 |
+ * | 2 | Humble origins — default cannon, hold-full pay-off | `GymLevel` | 2202 | cannon | — | 1 |
+ * | 3 | First steps up — three slots at level 1 | `GymLevel` | 3303 | spread, dual, rapid | — | 3 |
+ * | 4 | Escalation — five slots at levels 1-2 | `GymLevel` | 4404 | spread, dual, rapid | wave_laser 2, ricochet 2 | 5 |
+ * | 5 | Mini-boss — escort and death | `GymMiniBoss` | 5505 | spread, dual, rapid, broadside | wave_laser 2, ricochet 2, broadside 3 | 6 |
+ * | 6 | Reprise — different enemies, stronger guns | `GymLevel` | 6606 | spread, dual | rapid 3, wave_laser 3, ricochet 3, nova 3 | 6 |
+ * | 7 | Main boss — final death | `GymBoss` | 7707 | spread, dual, rapid | wave_laser 4, ricochet 4, broadside 5 | 6 |
+ *
+ * Beat 2 forces `mineralReward: "mineral_scoop"` (the humble-origins pay-off).
+ * Beats 5 and 7 carry a **broadside** weapon and start their boss with
+ * `bossHitsRemaining: 1` (AH-0MVRMFVQ6007IC4D): a captioned gym scene records
+ * the auto-firing ship with no input, so it fires along its default heading
+ * (0 = right) and its forward guns can never reach a boss sitting directly
+ * above it. Broadside's perpendicular pair sends a shot straight up the
+ * screen, and one hit left means that first connecting lance finishes the
+ * boss inside the capture window (measured: ~2.5 s into the mini-boss window,
+ * ~5 s into the main-boss window). Nova/Cluster were the slots it replaced.
+ */
+describe('teaser video script (AH-0MVTNTHTI0041QIF)', () => {
+  // The teaser records the SHIPPED GAME with the bot playing — gyms draw debug
+  // chrome (index link, DAMAGE buttons) and never move the ship — so every beat
+  // targets `PlayScene` and carries its own dev-gated launch data:
+  // `level`/`seed` (campaign position), `startWave`/`startBoss` (where in the
+  // level the beat begins) and `setup` (loadout, forced hold-full reward, boss
+  // hit preview).
+  const teaserPath = resolve(process.cwd(), 'examples/teaserVideoScript.json');
+
+  interface TeaserSetup {
+    player?: {
+      weapons?: string[];
+      weaponLevels?: Record<string, number>;
+      heading?: number;
+    };
+    powerUps?: Record<string, number>;
+    mineralReward?: string;
+    bossHitsRemaining?: number;
+  }
+
+  interface TeaserScene {
+    target: string;
+    playMs: number;
+    captureMs: number;
+    label: string | null;
+    seed: number;
+    level: number;
+    startWave?: number;
+    startBoss?: boolean;
+    minWaves?: number;
+    maxCaptureMs?: number;
+    setup?: TeaserSetup;
+  }
+
+  interface TeaserBeat {
+    label: string;
+    level: number;
+    seed: number;
+    slots: number;
+    startWave?: number;
+    startBoss?: boolean;
+    mineralReward?: string;
+    bossHitsRemaining?: number;
+  }
+
+  /** The seven beats, in order (level ramp + where each beat starts). */
+  const TEASER_BEATS: readonly TeaserBeat[] = [
+    { label: 'Opening spectacle — maxed arsenal, dense waves', level: 7, seed: 1101, startWave: 6, slots: 6 },
+    { label: 'Humble origins — default cannon, hold-full pay-off', level: 1, seed: 2202, startWave: 10, slots: 1, mineralReward: 'mineral_scoop' },
+    { label: 'First steps up — three slots at level 1', level: 2, seed: 3303, startWave: 6, slots: 3 },
+    { label: 'Escalation — five slots at levels 1-2', level: 4, seed: 4404, startWave: 8, slots: 5 },
+    { label: 'Mini-boss — the wave-10 encounter and its death', level: 5, seed: 5505, startWave: 10, slots: 6 },
+    { label: 'Reprise — horde and lane traffic, stronger guns', level: 8, seed: 6606, startWave: 5, slots: 6 },
+    { label: 'Main boss — the Gauntlet finale and its death', level: 10, seed: 7707, startBoss: true, slots: 6, bossHitsRemaining: 40 },
+  ];
+
+  function parseTeaser(): TeaserScene[] {
+    return parseSceneConfig(
+      readFileSync(teaserPath, 'utf8'),
+    ) as unknown as TeaserScene[];
+  }
+
+  it('parses, normalises and stays idempotent through the documented schema', () => {
+    const parsed = parseTeaser();
+    expect(parsed).toHaveLength(TEASER_BEATS.length);
+    const again = parseSceneConfig(
+      JSON.stringify({ scenes: parsed }),
+    ) as unknown as TeaserScene[];
+    expect(again).toEqual(parsed);
+  });
+
+  it('pins the seven beats: order, label, campaign level, seed and start position', () => {
+    const parsed = parseTeaser();
+    parsed.forEach((scene, index) => {
+      const beat = TEASER_BEATS[index];
+      expect(scene.target, `beat ${index + 1} must be the game scene`).toBe('PlayScene');
+      expect(scene.label).toBe(beat.label);
+      expect(scene.level).toBe(beat.level);
+      expect(scene.seed).toBe(beat.seed);
+      expect(scene.startWave).toBe(beat.startWave);
+      expect(scene.startBoss).toBe(beat.startBoss);
+      // Windows stay in the agreed per-beat range, and are PINNED: a
+      // PlayScene beat otherwise extends its window until `minWaves` waves
+      // have started (up to 3x captureMs), which stretches the recorded
+      // timeline and desynchronises the fade probes (AH-0MVTNTIPI002X5G6).
+      expect(scene.playMs).toBeGreaterThan(0);
+      expect(scene.captureMs).toBeGreaterThanOrEqual(6000);
+      expect(scene.minWaves).toBe(1);
+      expect(scene.maxCaptureMs).toBe(scene.captureMs);
+    });
+  });
+
+  it('runs as one ~60–75 s showcase', () => {
+    const totalMs = parseTeaser().reduce(
+      (sum, scene) => sum + scene.playMs + scene.captureMs,
+      0,
+    );
+    expect(totalMs).toBeGreaterThanOrEqual(60000);
+    expect(totalMs).toBeLessThanOrEqual(75000);
+  });
+
+  it('never targets a gym (no debug chrome on camera) and never needs a bot config', () => {
+    const parsed = parseTeaser();
+    expect(parsed.every((scene) => scene.target === 'PlayScene')).toBe(true);
+    // The teaser runs on the shipped default demo bot: `demo` is supplied by
+    // the capture driver, not by the script.
+    expect(JSON.stringify(parsed)).not.toContain('botConfig');
+  });
+
+  it('forces its pay-offs through the game-scene setup', () => {
+    const parsed = parseTeaser();
+    const humble = parsed[1];
+    expect(humble.setup?.mineralReward).toBe('mineral_scoop');
+    // Only the humble beat forces the hold-full reward.
+    expect(parsed.filter((s) => s.setup?.mineralReward !== undefined)).toHaveLength(1);
+    // The finale previews the boss close to death so the death lands in-window.
+    const finale = parsed[parsed.length - 1];
+    expect(finale.startBoss).toBe(true);
+    expect(finale.setup?.bossHitsRemaining).toBe(40);
+    // No other beat previews boss hits.
+    for (const scene of parsed.slice(0, -1)) {
+      expect(scene.setup?.bossHitsRemaining).toBeUndefined();
+    }
+  });
+
+  it('pins the loadout slots each beat starts with', () => {
+    const parsed = parseTeaser();
+    parsed.forEach((scene, index) => {
+      const setup = scene.setup;
+      const fillers = [
+        ...new Set([
+          ...(setup?.player?.weapons ?? []),
+          ...Object.keys(setup?.player?.weaponLevels ?? {}),
+        ]),
+      ];
+      expect(fillers, `beat ${index + 1} slot fillers`).toHaveLength(
+        TEASER_BEATS[index].slots,
+      );
+    });
+  });
+
+  it('rejects gym-only configuration on a PlayScene beat', () => {
+    expect(() =>
+      parseSceneSetup({ level: { level: 1, name: 'x', waves: [] } }, 'PlayScene'),
+    ).toThrowError(expect.objectContaining({ code: 'setup-not-supported' }));
+    expect(() =>
+      parseSceneConfig({
+        scenes: [{ target: 'GymPlayer', playMs: 1000, captureMs: 1000, startBoss: true }],
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'unsupported-scene-field' }));
+  });
+
+  it('leaves examples/scenes.json as the gym-family showcase (no teaser entries)', () => {
+    const gymFamily = parseSceneConfig(
+      readFileSync(resolve(process.cwd(), 'examples/scenes.json'), 'utf8'),
+    );
+    expect(gymFamily.some((scene) => scene.target === 'PlayScene')).toBe(false);
+  });
+});
+
+describe('arc setup fields through the config parser (AH-0MVRMFOB4002LMZS)', () => {
+  const level = () => ({
+    level: 3,
+    name: 'Parser Level',
+    waves: [
+      {
+        groups: [
+          {
+            enemyKey: 'scout',
+            formation: 'v',
+            count: 2,
+            spacingX: 20,
+            spacingY: 20,
+            startX: 200,
+            startY: 160,
+          },
+        ],
+        shootEnabled: false,
+      },
+    ],
+  });
+
+  it('round-trips weapon levels and a forced reward through a parsed config', () => {
+    const [scene] = parseSceneConfig({
+      scenes: [
+        {
+          target: 'GymLevel',
+          playMs: 1000,
+          captureMs: 2000,
+          setup: {
+            level: level(),
+            player: { weapons: ['spread'], weaponLevels: { rapid: 4 } },
+            mineralReward: 'mineral_scoop',
+            seed: 99,
+          },
+        },
+      ],
+    });
+
+    expect(scene.setup?.player?.weaponLevels).toEqual({ rapid: 4 });
+    expect(scene.setup?.player?.weapons).toEqual(['spread']);
+    expect(scene.setup?.mineralReward).toBe('mineral_scoop');
+    // The normalised setup re-validates, so the director can re-parse it.
+    expect(() => parseSceneSetup(scene.setup as object, 'GymLevel')).not.toThrow();
+  });
+
+  it('rejects a forced reward on a target without a mineral hold', () => {
+    expectConfigError(
+      () =>
+        parseSceneConfig({
+          scenes: [
+            {
+              target: 'GymFodderEnemies',
+              playMs: 1000,
+              captureMs: 2000,
+              setup: { enemy: 'grunt', mineralReward: 'mineral_scoop' },
+            },
+          ],
+        }),
+      'setup-not-supported',
+    );
+  });
+
+  it('rejects a weapon level outside the documented capture range', () => {
+    for (const bad of [0, 6, 2.5]) {
+      expectConfigError(
+        () =>
+          parseSceneConfig({
+            scenes: [
+              {
+                target: 'GymPlayer',
+                playMs: 1000,
+                captureMs: 2000,
+                setup: { player: { weaponLevels: { rapid: bad } } },
+              },
+            ],
+          }),
+        'invalid-weapon-level',
+      );
+    }
+  });
+
+  it('copies weapon levels so a normalised setup never aliases the caller', () => {
+    const raw = { player: { weapons: [], weaponLevels: { rapid: 2 } } };
+    const normalised = normaliseSceneSetup(raw, 'GymPlayer');
+    normalised.player!.weaponLevels!.rapid = 5;
+
+    expect(raw.player.weaponLevels.rapid).toBe(2);
+    expect(normaliseSceneSetup(raw, 'GymPlayer').player?.weaponLevels).toEqual({
+      rapid: 2,
+    });
+  });
+});
+
+// ── Dark-footage fade rule (AH-0MVTNTIPI002X5G6) ────────────────────────────
+
+describe('fade verification on dark footage (AH-0MVTNTIPI002X5G6)', () => {
+  // AI_Hell renders neon on black: a real scene midpoint is often ~0.01 mean
+  // luma, where an absolute 1% contrast is larger than the whole frame. The
+  // teaser records the shipped game (no gym chrome), so that is the normal case.
+  const scenes = [
+    { target: 'PlayScene', playMs: 1000, captureMs: 2000, startMs: 0, endMs: 3000 },
+    { target: 'PlayScene', playMs: 1000, captureMs: 2000, startMs: 3500, endMs: 6500 },
+  ];
+  const planTimes = buildSceneSampleTimes(scenes, SCENE_FADE_MS);
+  const sceneTimes = planTimes.sceneSampleTimes;
+  const windows = planTimes.transitionWindows;
+
+  const samplesFor = (sceneLuma: number, fadeLuma: number) => {
+    const samples = sceneTimes.map((timeMs) => ({ timeMs, meanLuma: sceneLuma }));
+    for (const window of windows) {
+      // 5 probe points across the transition, the middle one at full black.
+      for (const timeMs of buildTransitionProbeTimes(window)) {
+        samples.push({ timeMs, meanLuma: fadeLuma });
+      }
+    }
+    return samples;
+  };
+
+  it('verifies a real fade on a dark scene (0.010 scene → 0.000 fade)', () => {
+    const { fadeVerified, reasons } = evaluateSceneFadeSamples({
+      scenes,
+      samples: samplesFor(0.01, 0),
+      sceneSampleTimes: sceneTimes,
+      transitionWindows: windows,
+    });
+    expect(reasons).toEqual([]);
+    expect(fadeVerified).toBe(true);
+  });
+
+  it('still rejects a clip that never faded, however dark it is', () => {
+    const { fadeVerified, reasons } = evaluateSceneFadeSamples({
+      scenes,
+      samples: samplesFor(0.01, 0.01),
+      sceneSampleTimes: sceneTimes,
+      transitionWindows: windows,
+    });
+    expect(fadeVerified).toBe(false);
+    expect(reasons[0]).toContain('did not measurably darken');
+  });
+
+  it('keeps rejecting a bright clip whose transitions are not dark', () => {
+    const { fadeVerified } = evaluateSceneFadeSamples({
+      scenes,
+      samples: samplesFor(0.4, 0.35),
+      sceneSampleTimes: sceneTimes,
+      transitionWindows: windows,
+    });
+    expect(fadeVerified).toBe(false);
+  });
+
+  it('documents the relative rule constants', () => {
+    expect(SCENE_FADE_RELATIVE_FRACTION).toBeGreaterThan(0);
+    expect(SCENE_FADE_RELATIVE_FRACTION).toBeLessThan(1);
+    expect(SCENE_FADE_MIN_ABSOLUTE_LUMA).toBeGreaterThan(0);
+    expect(SCENE_FADE_MIN_ABSOLUTE_LUMA).toBeLessThan(SCENE_FADE_CONTRAST_LUMA);
   });
 });

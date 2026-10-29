@@ -18,6 +18,7 @@ import {
   resolvePowerUpAtLevel,
 } from './powerUpLevels';
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
+import { beatPeriodMs } from '../utils/beat';
 import { PHASE_DURATION, PHASE_REARM_COOLDOWN, MAX_SPEED, SHIP_SIZE } from '../core/constants';
 import {
   activateEffectAtUpgradeLevel,
@@ -1746,5 +1747,199 @@ describe('Thorn Field: automatic ram recharge (AH-0MVJ8YKR70096C6T)', () => {
     expect(registry.thornsRechargeRemaining()).toBeGreaterThan(0);
     registry.tick(registry.thornsRechargeTime() + 0.01);
     expect(registry.thornsRechargeRemaining()).toBe(0); // refilled
+  });
+});
+// ── Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y) ───────
+//
+// REGRESSION (test-first by AH-0MVS2SW8V007ZBJQ, implemented by
+// AH-0MVS2T2DJ0069C0Y): the no-silent-waste contract is that a decided bolt
+// stays **latched** until the shared core resolves it, exactly once, never a
+// banked volley. `EffectsRegistry.updateStrike` reports a due bolt every frame
+// and `resolveStrike()` is the acknowledgement that consumes it.
+
+describe('Orbital Strike bolt retention latch (AH-0MVS2T2DJ0069C0Y)', () => {
+  it('reports a due bolt on every frame until the shared core resolves it', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike'); // a field pickup is due right now
+
+    // The bolt waits for a valid target: it must stay due, never vanish.
+    expect(reg.updateStrike(1 / 60)).toBe(true);
+    expect(reg.updateStrike(1 / 60)).toBe(true);
+    expect(reg.updateStrike(1 / 60)).toBe(true);
+
+    // Acknowledging the landed bolt consumes exactly one shot.
+    reg.resolveStrike();
+    expect(reg.updateStrike(1 / 60)).toBe(false);
+    expect(reg.updateStrike(1 / 60)).toBe(false);
+  });
+
+  it('banks at most one bolt across a long enemy-free gap', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true); // permanent
+    const interval = reg.strikeInterval();
+
+    // Several intervals elapse with nobody able to resolve the bolt.
+    for (let t = 0; t < interval * 3; t += 0.1) {
+      expect(reg.updateStrike(0.1)).toBe(true);
+    }
+
+    // One acknowledgement clears the *whole* gap — never a banked volley.
+    reg.resolveStrike();
+    expect(reg.updateStrike(0.1)).toBe(false);
+  });
+
+  it('does not advance the permanent interval while a bolt is latched', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true);
+    const interval = reg.strikeInterval();
+
+    // Hold the bolt latched for most of an interval without acknowledging it.
+    for (let t = 0; t < interval - 1; t += 0.5) {
+      reg.updateStrike(0.5);
+    }
+    reg.resolveStrike();
+
+    // The next bolt is still a full interval away — the clock was frozen,
+    // not pre-spent by the gap.
+    expect(reg.updateStrike(interval - 1)).toBe(false);
+    expect(reg.updateStrike(2)).toBe(true);
+  });
+
+  it('resolveStrike is a no-op when no bolt is due', () => {
+    const reg = new EffectsRegistry();
+    // An acknowledgement with nothing latched must not mint a bolt.
+    expect(() => reg.resolveStrike()).not.toThrow();
+    expect(reg.updateStrike(1 / 60)).toBe(false);
+  });
+});
+
+// ── Orbital Strike beat-aligned cadence (AH-0MVRE6N08001TE4V) ─────────
+//
+// REGRESSION (producer rejection 2026-10-29): the permanent strike's first
+// grant fired only once every 30 s, so in play it read as "it does nothing".
+// The cadence is now expressed in whole beats of the shared 80 BPM grid
+// (`src/utils/beat.ts`) so a bolt lands on the same pulse the rest of the
+// game's cues are quantised to: 9 beats (6.75 s, ≈ 7 s) from the first grant,
+// one beat sooner per level, floored at 3 beats (2.25 s).
+
+describe('Orbital Strike beat-aligned cadence (AH-0MVRE6N08001TE4V)', () => {
+  it('fires the permanent bolt every 9 beats (~7 s) from the first grant', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true); // hold-full (permanent) reward
+
+    // The opening bolt is due immediately; land it so the interval runs.
+    expect(reg.updateStrike(0.1)).toBe(true);
+    reg.resolveStrike();
+
+    const beatSeconds = beatPeriodMs() / 1000; // 0.75 s at the default 80 BPM
+    expect(reg.strikeInterval()).toBeCloseTo(9 * beatSeconds, 12);
+    // "Around every 7 seconds", snapped to the beat grid.
+    expect(Math.abs(reg.strikeInterval() - 7)).toBeLessThanOrEqual(
+      beatSeconds / 2,
+    );
+
+    // Drive the shared clock at 60 Hz until the next bolt comes due: the
+    // observed cadence — not just the resolved constant — is the behaviour
+    // the player hears and sees.
+    const step = 1 / 60;
+    let frames = 0;
+    while (!reg.updateStrike(step)) {
+      frames += 1;
+      expect(frames).toBeLessThan(60 * 30); // never a 30 s gap again
+    }
+    expect((frames + 1) * step).toBeCloseTo(9 * beatSeconds, 1);
+  });
+
+  it('keeps every level on a whole number of beats, down to the 3-beat floor', () => {
+    const beatSeconds = beatPeriodMs() / 1000;
+    const reg = new EffectsRegistry();
+
+    let previous = Infinity;
+    // Each hold-full grant adds one permanent upgrade level (0 → 9).
+    for (let grant = 1; grant <= 10; grant++) {
+      reg.applyCollect('strike', true);
+      const interval = reg.strikeInterval();
+      const beats = interval / beatSeconds;
+      expect(Math.abs(beats - Math.round(beats))).toBeLessThan(1e-9);
+      expect(beats).toBeGreaterThanOrEqual(3);
+      expect(beats).toBeLessThanOrEqual(9);
+      expect(interval).toBeLessThanOrEqual(previous);
+      previous = interval;
+    }
+    // The floor is reached (6 upgrades × 1 beat) and held from there on.
+    expect(reg.strikeInterval()).toBeCloseTo(3 * beatSeconds, 12);
+  });
+});
+
+//
+// The HUD renders the permanent strike row's `next in Ns` from this accessor,
+// so the registry — not the HUD — owns the clock. The accessor must report a
+// live, positive seconds-remaining value only while the interval is genuinely
+// running: no permanent strike, or a latched/landing bolt, has nothing to
+// count down.
+
+describe('Orbital Strike next-bolt countdown accessor (AH-0MVS2T40T006QL7H)', () => {
+  it('is undefined when no permanent strike is armed', () => {
+    const reg = new EffectsRegistry();
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+
+    // A field pickup is a one-shot with no interval to count down.
+    reg.applyCollect('strike');
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+  });
+
+  it('counts down the level-resolved interval for a permanent strike', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true); // hold-full (permanent) reward
+    const interval = reg.strikeInterval();
+
+    // Land the opening bolt so the interval clock runs.
+    expect(reg.updateStrike(0.1)).toBe(true);
+    reg.resolveStrike();
+
+    const before = reg.strikeNextBoltSeconds();
+    expect(before).toBeDefined();
+    expect(before!).toBeGreaterThan(0);
+    expect(before!).toBeLessThanOrEqual(interval);
+
+    // The countdown is live: advancing the shared clock decreases it.
+    expect(reg.updateStrike(5)).toBe(false);
+    const after = reg.strikeNextBoltSeconds();
+    expect(after).toBeDefined();
+    expect(after!).toBeLessThan(before!);
+    expect(after!).toBeGreaterThan(0);
+  });
+
+  it('is undefined while a bolt is latched so the countdown never stalls', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true);
+    const interval = reg.strikeInterval();
+
+    // A bolt comes due with nobody able to resolve it (no live target): the
+    // interval clock is frozen, so there is no honest countdown to show.
+    expect(reg.updateStrike(interval + 1)).toBe(true);
+    expect(reg.strikeNextBoltSeconds()).toBeUndefined();
+
+    // Once the shared core lands the bolt, the countdown resumes.
+    reg.resolveStrike();
+    const resumed = reg.strikeNextBoltSeconds();
+    expect(resumed).toBeDefined();
+    expect(resumed!).toBeGreaterThan(0);
+    expect(resumed!).toBeLessThanOrEqual(interval);
+  });
+
+  it('never returns a negative or non-finite countdown', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('strike', true);
+    const interval = reg.strikeInterval();
+
+    for (let elapsed = 0; elapsed <= interval * 3; elapsed += 0.25) {
+      const seconds = reg.strikeNextBoltSeconds();
+      if (seconds !== undefined) {
+        expect(Number.isFinite(seconds)).toBe(true);
+        expect(seconds).toBeGreaterThan(0);
+      }
+      if (reg.updateStrike(0.25)) reg.resolveStrike();
+    }
   });
 });

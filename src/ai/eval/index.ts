@@ -22,7 +22,16 @@
  * ```
  *
  * See `docs/EVALUATION.md` for how to run the CLI and interpret the report,
- * and `docs/BALANCING.md` for the batch mode and balance-statistics schema.
+ * `docs/BALANCING.md` for the batch mode and balance-statistics schema, and
+ * `docs/EXPERIENCE_VALIDATION.md` for the intended-experience targets and the
+ * periodic human-experience validation (AH-0MV7WVHU0000U775):
+ *
+ * ```ts
+ * import { compareExperience, validateExperienceTargets } from './ai/eval';
+ *
+ * const targets = validateExperienceTargets(targetsJson);
+ * const result = compareExperience(humanReport.aggregate, targets);
+ * ```
  *
  * @module src/ai/eval
  */
@@ -62,6 +71,36 @@ export {
   type TuneMetricDelta,
   type TuneThresholds,
 } from './types';
+export {
+  compareExperience,
+  buildExperienceValidationReport,
+  DEFAULT_EXPERIENCE_TOLERANCE_RULE,
+  deriveExperienceTargets,
+  describeExperienceSource,
+  EXPERIENCE_METRIC_LABELS,
+  EXPERIENCE_TARGETS_SCHEMA_VERSION,
+  EXPERIENCE_TOLERANCE_RULE_TEXT,
+  EXPERIENCE_TRACKED_METRICS,
+  ExperienceTargetsError,
+  formatExperienceValidationReport,
+  measureExperienceMetric,
+  readBalanceReportInput,
+  serialiseExperienceTargets,
+  serialiseExperienceValidationReport,
+  validateExperienceTargets,
+  type BalanceReportInput,
+  type ExperienceBaselineSource,
+  type ExperienceComparison,
+  type ExperienceMeasurement,
+  type ExperienceMetric,
+  type ExperienceMetricComparison,
+  type ExperienceTargetBand,
+  type ExperienceTargets,
+  type ExperienceToleranceRule,
+  type ExperienceValidationReport,
+  type ExperienceValidationSource,
+  type ExperienceVerdict,
+} from './experienceTargets';
 export {
   abEvaluate,
   aggregateBalanceStats,

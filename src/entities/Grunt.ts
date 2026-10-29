@@ -66,6 +66,13 @@ export interface GruntConfig {
   /** Initial heading in radians (defaults to a seeded draw). */
   heading?: number;
   /** Injectable random source (defaults to `Math.random`). */
+  /**
+   * Whether this enemy is aware of the playfield seam (AH-0MV9G3DZ9003P7P8).
+   * Absent resolves to `true` (seam-awareness is the default); the classic
+   * arcade exclusions (`march`, `centipede`) carry an explicit `false` via
+   * the shared factory thread.
+   */
+  wrapAware?: boolean;
   rng?: () => number;
 }
 
@@ -94,6 +101,7 @@ export class Grunt extends BaseEnemy {
       bulletColor: config.bulletColor,
       health: config.health,
       forceFieldHits: config.forceFieldHits,
+      wrapAware: config.wrapAware,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);
@@ -222,6 +230,10 @@ export class Grunt extends BaseEnemy {
    * it simply travels straight along its initial heading rather than
    * lurching toward the origin. The `baseX`/`baseY`/spacing parameters keep
    * the shared entity signature intact.
+   *
+   * The arena bound is applied only to non-aware archetypes: a wrap-aware
+   * grunt (the default) is allowed to leave the box so the scene's shared
+   * post-motion wrap carries it across the seam (AH-0MVKXBWDY008R0YH).
    */
   applyFormationPosition(
     _baseX: number,
@@ -242,8 +254,8 @@ export class Grunt extends BaseEnemy {
       );
       this._heading = next.heading;
       this.setPosition(
-        this._clamp(next.x, this._size / 2, GAME_WIDTH - this._size / 2),
-        this._clamp(next.y, this._size / 2, GAME_HEIGHT - this._size / 2),
+        this._boundToArena(next.x, this._size / 2, GAME_WIDTH - this._size / 2),
+        this._boundToArena(next.y, this._size / 2, GAME_HEIGHT - this._size / 2),
       );
       return;
     }
@@ -260,12 +272,21 @@ export class Grunt extends BaseEnemy {
     );
     this._heading = next.heading;
     this.setPosition(
-      this._clamp(next.x, this._size / 2, GAME_WIDTH - this._size / 2),
-      this._clamp(next.y, this._size / 2, GAME_HEIGHT - this._size / 2),
+      this._boundToArena(next.x, this._size / 2, GAME_WIDTH - this._size / 2),
+      this._boundToArena(next.y, this._size / 2, GAME_HEIGHT - this._size / 2),
     );
   }
 
-  private _clamp(value: number, lo: number, hi: number): number {
+  /**
+   * Bounds a coordinate inside the arena box, but only for non-aware
+   * archetypes. A wrap-aware enemy is bounded by the seam instead
+   * (AH-0MVKXBWDY008R0YH, parent AH-0MV9G3DZ9003P7P8 AC3): its position is
+   * returned untouched so the shared post-motion wrap in the scene loop can
+   * carry it across the edge. `march`/`centipede` and any other
+   * `wrapAware: false` caller keep the original clamped motion.
+   */
+  private _boundToArena(value: number, lo: number, hi: number): number {
+    if (this._wrapAware) return value;
     if (hi < lo) return lo;
     return Math.min(hi, Math.max(lo, value));
   }

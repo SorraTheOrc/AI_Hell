@@ -61,11 +61,19 @@
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically via
  * `gameHarness` without a real render loop.
+ *
+ * Scripted-scene setup (AH-0MVRMHYJR000Y9H8): the scene consumes the shared
+ * `applySceneSetup` applier through `_adoptCaptureSetup`, so a capture setup's
+ * player loadout, power-up levels and determinism seed are live before the
+ * first captured frame. The scout threat wave and its SHOOT toggle stay fixed
+ * gym-only scenario controls (documented in `docs/GYM_PARITY.md` and
+ * `docs/dev/gameplay-capture.md`).
  */
 
 import Phaser from 'phaser';
 
 import { CombatScene } from '../core/CombatScene';
+import type { SceneSetupState } from '../core/sceneSetup';
 import { advanceWrappingBullets } from '../core/bulletLifecycle';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import {
@@ -76,6 +84,21 @@ import {
 } from '../core/CombatEffectVisuals';
 import { Player } from '../../entities/Player';
 import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
+import {
+  createEnemyFromConfig,
+} from '../../entities/enemyFactory';
+import { loadEnemyConfig } from '../../core/enemyConfig';
+import {
+  WORMHOLE_OPEN_DURATION,
+  startSpawnAnimation,
+  updateSpawnAnimation,
+  updateSpawnEmergence,
+  type SpawnAnimatable,
+} from '../../vfx/wormholeSpawn';
+import {
+  resolveSpawnTransitTarget,
+  type SpawnTransitEntity,
+} from '../core/spawnTransit';
 import { fireForEnemy } from '../../entities/enemyFire';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -164,6 +187,12 @@ export class GymPowerUpsCombat extends CombatScene<
   private formationBaseX = COMBAT_START_X;
   private formationBaseY = COMBAT_START_Y;
   private shootEnabled = true;
+  /**
+   * Size of the scout threat wave (AH-0MVRMI0Q7001KG4Y). Defaults to the
+   * historical 3-scout V; a capture setup may resize it (schema-bounded to
+   * 1–12) so a clip can show a denser or sparser threat field.
+   */
+  private threatCount = COMBAT_SCOUT_COUNT;
 
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
@@ -183,7 +212,7 @@ export class GymPowerUpsCombat extends CombatScene<
     super({ key: 'GymPowerUpsCombat' });
   }
 
-  create(): void {
+  create(data?: SceneSetupState): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
@@ -192,6 +221,21 @@ export class GymPowerUpsCombat extends CombatScene<
       y: GAME_HEIGHT / 2,
     });
     this.add.existing(this.player);
+
+    // Scripted-scene setup (AH-0MVRMHYJR000Y9H8): loadout, power-up levels
+    // and content seed are live before the first captured frame. No setup
+    // ⇒ no behaviour change.
+    this._adoptCaptureSetup(data);
+
+    // Scenario parameters (AH-0MVRMI0Q7001KG4Y): the SHOOT toggle's initial
+    // state and the threat-wave size. Applied before the formation spawns so
+    // every scout inherits the firing state. Absent ⇒ historical defaults.
+    if (typeof data?.shootEnabled === 'boolean') {
+      this.shootEnabled = data.shootEnabled;
+    }
+    if (typeof data?.threatCount === 'number') {
+      this.threatCount = data.threatCount;
+    }
 
     addBackToIndexButton(this);
     // Shared "Help (?)" button + overlay: lists every drop this gym can
@@ -221,21 +265,26 @@ export class GymPowerUpsCombat extends CombatScene<
     // Spawn the small scout formation.
     this._spawnScoutFormation();
     playSpawnSound();
-    this.shootEnabled = true;
 
     // Small threats = a wave: arm the shared wave-timeout so survivors
     // detonate and the formation refreshes, mirroring the shipped game
     // (AH-0MUNR5LM1004B223).
     this.startWaveTimeout();
 
-    // SHOOT toggle (mirrors GymFormationScene)
-    this.shootButton = this.add.text(10, 10, 'SHOOT: ON', {
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      color: '#00ff00',
-      backgroundColor: '#1a1a1a',
-      padding: { x: 8, y: 4 },
-    });
+    // SHOOT toggle (mirrors GymFormationScene); its initial state is the
+    // setup's scenario parameter when one is supplied (AH-0MVRMI0Q7001KG4Y).
+    this.shootButton = this.add.text(
+      10,
+      10,
+      this.shootEnabled ? 'SHOOT: ON' : 'SHOOT: OFF',
+      {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#00ff00',
+        backgroundColor: '#1a1a1a',
+        padding: { x: 8, y: 4 },
+      },
+    );
     this.shootButton.setInteractive({ useHandCursor: true });
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
@@ -267,6 +316,7 @@ export class GymPowerUpsCombat extends CombatScene<
     this.formationBaseX = COMBAT_START_X;
     this.formationBaseY = COMBAT_START_Y;
     this.shootEnabled = true;
+    this.threatCount = COMBAT_SCOUT_COUNT;
     this.shieldBubble = null;
     this.forceFieldBubble = null;
     this.thornsAura = null;
@@ -357,6 +407,10 @@ export class GymPowerUpsCombat extends CombatScene<
     //    before gating so an activation this frame protects this frame ──
     this._updateAutoDefence(dt);
 
+    // ── Shared spawn presentation: grow each scout from 1 px while it is
+    // spawn-protected, exactly as the game does (D4, docs/GYM_PARITY.md) ──
+    this._updateSpawnAnimations(dt);
+
     // ── Hit response (bullets + bodies), gated by phase/shield ──
     this._handleCollisions();
 
@@ -386,18 +440,79 @@ export class GymPowerUpsCombat extends CombatScene<
   /**
    * Spawns the small V-formation of scouts at the current formation base.
    * Called on create and after a wave-timeout refresh.
+   *
+   * D4 parity (docs/GYM_PARITY.md): every threat is built through the shared
+   * `createEnemyFromConfig` factory — so the active `scout` `EnemyConfig`
+   * (size, colours, bullet geometry, fire tuning, health, force field,
+   * `wrapAware`, RNG) reaches the entity exactly as it does in `PlayScene` —
+   * and runs the shared spawn presentation (1 px growth + spawn protection),
+   * in place, through the shared transit exemption. A direct `new Scout` had
+   * bypassed both.
    */
   private _spawnScoutFormation(): void {
-    const offsets = buildVFormationOffsets(COMBAT_SCOUT_COUNT);
+    const config = loadEnemyConfig('scout');
+    const offsets = buildVFormationOffsets(this.threatCount);
     for (const offset of offsets) {
-      const scout = new Scout(this, {
-        x: this.formationBaseX + offset.col * COMBAT_SPACING_X,
-        y: this.formationBaseY + offset.row * COMBAT_SPACING_Y,
-        formationOffset: offset,
-      });
-      this.add.existing(scout);
+      const x = this.formationBaseX + offset.col * COMBAT_SPACING_X;
+      const y = this.formationBaseY + offset.row * COMBAT_SPACING_Y;
+      const scout = createEnemyFromConfig(
+        this,
+        config,
+        x,
+        y,
+        offset,
+      ) as Scout;
       scout.shootEnabled = this.shootEnabled;
+      // In-place spawn: the scouts are not part of a wave wormhole entry, so
+      // no destination is supplied (`transit: false` asks the shared seam for
+      // the exemption rather than re-implementing it).
+      const transitTarget = resolveSpawnTransitTarget({
+        entity: scout as unknown as SpawnTransitEntity,
+        transit: false,
+        base: { x, y },
+        offset,
+        spacingX: COMBAT_SPACING_X,
+        spacingY: COMBAT_SPACING_Y,
+      });
+      startSpawnAnimation(
+        scout as unknown as SpawnAnimatable,
+        scout.scaleX,
+        WORMHOLE_OPEN_DURATION,
+        transitTarget ? () => transitTarget : undefined,
+      );
+      scout.setSpawning(true);
+      this.add.existing(scout);
       this.scouts.push(scout);
+    }
+  }
+
+  /**
+   * Advances the shared emergence step for every spawning scout (D4 parity).
+   * This gym has no wave wormhole, so each threat simply grows from 1 px in
+   * place while spawn-protected and is fully formed when the step completes.
+   */
+  private _updateSpawnAnimations(dt: number): void {
+    for (const scout of this.scouts) {
+      if (!scout.alive || !scout.isSpawning) continue;
+      const stillGrowing = updateSpawnEmergence(
+        scout as unknown as SpawnAnimatable,
+        dt,
+      );
+      if (!stillGrowing) scout.setSpawning(false);
+    }
+  }
+
+  /**
+   * Test seam: completes every in-progress spawn emergence immediately, so a
+   * scene test observes fully-formed, hittable threats without waiting out the
+   * shared spawn-protection window (the same seam `PlayScene`/`GymLevel` use,
+   * AH-0MURBER4L00821RR). Not used by gameplay.
+   */
+  finishSpawnAnimations(): void {
+    for (const scout of this.scouts) {
+      if (!scout.isSpawning) continue;
+      updateSpawnAnimation(scout as unknown as SpawnAnimatable, 10);
+      scout.setSpawning(false);
     }
   }
 

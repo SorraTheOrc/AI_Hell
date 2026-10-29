@@ -18,7 +18,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
-import { bootScene } from '../test/gameHarness';
+import { bootScene, stepGameUntil } from '../test/gameHarness';
 import { RULES_STORAGE_KEY } from '../core/rules';
 import { getEntries } from '../core/Leaderboard';
 import { MenuScene } from './MenuScene';
@@ -178,6 +178,17 @@ function killMiniBoss(scene: PlayScene): void {
   } finally {
     isolated.getEnemyEntities = originalGetEnemyEntities;
     isolated.autoFireEnabled = originalAutoFireEnabled;
+  }
+  // The defeat finalises only once the tween-driven death sweep has finished
+  // (AH-0MVROELN600410GP); step the game loop so the reward opens and the
+  // level can advance, then resolve the offer so the walk continues.
+  if (scene.isMiniBossSweepActive()) {
+    stepGameUntil(
+      scene.game,
+      'mini-boss death sweep',
+      () => !scene.isMiniBossSweepActive(),
+      240,
+    );
   }
   // The mini-boss defeat offers the upgrade-or-unlock reward
   // (AH-0MVCRBNO6003E1CH); resolve it so the walk can continue.

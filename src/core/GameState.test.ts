@@ -19,6 +19,7 @@ import {
   GameSessionState,
 } from './GameState';
 import { POWER_UP_CATALOGUE } from '../powerups/types';
+import { DEFAULT_MINERAL_HOLD_CAPACITY } from './rules';
 
 describe('GameState (AH-0MU72SZP1005X14G)', () => {
   it('keeps the life cap single-sourced with the Extra Life catalogue entry (AH-0MV03GXZQ00801T4 · AC3)', () => {
@@ -193,5 +194,66 @@ describe('GameState (AH-0MU72SZP1005X14G)', () => {
     expect(gs.level).toBe(BOSS_LEVEL);
     expect(gs.bossDefeated).toBe(true);
     expect(gs.gameState).toBe('gameover');
+  });
+
+  // ── Clamped hold restore seam (AH-0MVT1DXG4008GATG) ────────────
+  //
+  // The resume path restores a checkpoint through `restoreHold` so it never
+  // writes minerals around the shared hold model: a restored hold can never
+  // be over-capacity and carries no phantom overflow.
+
+  describe('restoreHold (AH-0MVT1DXG4008GATG)', () => {
+    it('AC1/AC2 — clamps an over-capacity saved count and records no overflow', () => {
+      const gs = new GameState();
+
+      gs.restoreHold({ store: 20 });
+
+      expect(gs.mineralCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+      expect(gs.minerals).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+      expect(gs.isHoldFull()).toBe(true);
+    });
+
+    it('AC2 — the first pick-up after a clamped restore books only that mineral', () => {
+      const gs = new GameState();
+      gs.restoreHold({ store: 20 });
+
+      // The saved surplus (20 − 5) must not be re-recorded as overflow, so a
+      // single pick-up banks exactly one mineral, not fifteen.
+      expect(gs.addMinerals(1)).toBe(1);
+      expect(gs.minerals).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+
+      gs.resolveHold();
+
+      expect(gs.mineralCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY * 2);
+      expect(gs.minerals).toBe(1);
+      expect(gs.isHoldFull()).toBe(false);
+    });
+
+    it('AC1/AC3 — restores the checkpoint capacity, then startGame resets the progression', () => {
+      const gs = new GameState();
+
+      gs.restoreHold({ store: 25, capacity: 20 });
+      expect(gs.mineralCapacity).toBe(20);
+      expect(gs.minerals).toBe(20);
+
+      // A fresh run still starts from the first hold: the restore did not
+      // re-base the run-scoped baseline.
+      gs.startGame();
+      expect(gs.mineralCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+      expect(gs.minerals).toBe(0);
+      expect(gs.isHoldFull()).toBe(false);
+    });
+
+    it('AC4 — invalid saved values are defended', () => {
+      const gs = new GameState();
+
+      gs.restoreHold({ store: -4, capacity: 0 });
+      expect(gs.minerals).toBe(0);
+      expect(gs.mineralCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+
+      gs.restoreHold({ store: Number.NaN, capacity: Number.POSITIVE_INFINITY });
+      expect(gs.minerals).toBe(0);
+      expect(gs.mineralCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+    });
   });
 });

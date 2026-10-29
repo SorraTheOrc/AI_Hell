@@ -32,6 +32,10 @@ const SHIPPED_ENEMY_ARCHETYPES = [
   'phaser',
   'swarm',
   'scout',
+  // The boss (final boss and per-level mini-bosses alike) is spawned by its
+  // own layer rather than `createEnemyFromConfig`, but it reaches the bot as
+  // content, so it needs a shipped profile too (AH-0MVBMESIE003YQ68 · AC1).
+  'boss',
 ] as const;
 
 describe('shipped content registry (AC1/AC2)', () => {
@@ -56,6 +60,44 @@ describe('shipped content registry (AC1/AC2)', () => {
   it('single-sources the secure-life drop id from the Extra Life catalogue entry (AH-0MV03GXZQ00801T4 · AC3)', () => {
     expect(SECURE_LIFE_DROP_ID).toBe(POWER_UP_CATALOGUE.extra_life.id);
     expect(COMPETENT_BOT_CONTENT.hasDrop(SECURE_LIFE_DROP_ID)).toBe(true);
+  });
+});
+
+/**
+ * Boss focus fire, content half (AH-0MVBMESIE003YQ68 · AC1).
+ *
+ * **TEST-FIRST.** Authored red under Vitest's `it.fails` (the repo's
+ * red-before/green-after convention — see `src/core/levelScaling.test.ts`),
+ * then flipped to `it` by the implementation item (AH-0MVRMYU3G001YPLT) once
+ * the `boss` profile landed. A leftover `it.fails` fails the suite, so the
+ * flip is deliberate: these assertions are green against the shipped
+ * registry.
+ *
+ * The boss weight is a shipped content entry — twice the neutral enemy weight
+ * (`1`), aimed directly and not partitioned as an asteroid-like hazard — so a
+ * boss encounter is delivered by config rather than framework logic.
+ */
+describe('boss content profile (AH-0MVBMESIE003YQ68 · AC1)', () => {
+  it('ships a boss profile weighted twice the neutral enemy weight', () => {
+    const profile = COMPETENT_BOT_CONTENT.resolveEnemy('boss');
+    expect(profile.threat).toBe(2);
+    expect(profile.aim).toBe('direct');
+    expect(profile.asteroidLike).toBe(false);
+  });
+
+  it('does not treat the boss as an asteroid-like hazard', () => {
+    // The unknown-content fallback is also non-asteroid-like, so this stays
+    // green on pre-change HEAD; it guards the shipped profile against an
+    // accidental `asteroidLike: true` that would partition the boss into the
+    // asteroid band.
+    expect(COMPETENT_BOT_CONTENT.isAsteroidLike('boss')).toBe(false);
+  });
+
+  it('keeps the unknown-archetype fallback neutral', () => {
+    const fallback = COMPETENT_BOT_CONTENT.resolveEnemy('unregistered_archetype');
+    expect(fallback.threat).toBe(1);
+    expect(fallback.aim).toBe('direct');
+    expect(fallback.asteroidLike).toBe(false);
   });
 });
 

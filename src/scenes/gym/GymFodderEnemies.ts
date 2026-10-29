@@ -453,6 +453,11 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     configBody.appendChild(this._selectRow('movementClass', [...MOVEMENT_CLASSES]));
     configBody.appendChild(this._selectRow('attackClass', [...ATTACK_CLASSES]));
 
+    // Seam-awareness (AH-0MV9G3DZ9003P7P8): a single boolean checkbox, seeded
+    // from the active config and persisted through the same CSV save path as
+    // every other control. A checked box = wrap-aware (the default).
+    configBody.appendChild(this._booleanRow('wrapAware', 'wrapAware'));
+
     // Respawn + Player toggle row (controls that affect the live scene, not persistence).
     const utilRow = document.createElement('div');
     utilRow.className = 'gym-panel-actions';
@@ -534,6 +539,20 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
     const value = document.createElement('output');
     value.dataset['configValue'] = field;
     row.append(label, input, value);
+    return row;
+  }
+
+  private _booleanRow(field: string, label: string): HTMLElement {
+    const row = document.createElement('label');
+    row.className = 'gym-panel-row';
+    const text = document.createElement('span');
+    text.textContent = label;
+    text.className = 'gym-panel-label';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.dataset['config'] = field;
+    input.addEventListener('change', () => this._onConfigInput(field));
+    row.append(text, input);
     return row;
   }
 
@@ -663,6 +682,11 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
       const sel = this.panel?.querySelector<HTMLSelectElement>(`select[data-config="${field}"]`);
       if (sel) (next as unknown as Record<string, unknown>)[field] = sel.value;
     }
+    // Seam-awareness (AH-0MV9G3DZ9003P7P8): read the single boolean checkbox.
+    const wrapAware = this.panel?.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][data-config="wrapAware"]',
+    );
+    if (wrapAware) (next as unknown as Record<string, unknown>).wrapAware = wrapAware.checked;
     // Clamp to the canvas and enforce min <= max before the value is used.
     return normaliseSpawnRanges(next);
   }
@@ -683,6 +707,12 @@ export class GymFodderEnemies extends GymFormationScene<EnemyEntity, GymFodderEn
       const sel = this.panel.querySelector<HTMLSelectElement>(`select[data-config="${field}"]`);
       if (sel) sel.value = String((config as unknown as Record<string, unknown>)[field] ?? '');
     }
+    // Seam-awareness (AH-0MV9G3DZ9003P7P8): seed the checkbox from the
+    // resolved config (absent resolves to `true`, the wrap-aware default).
+    const wrapAware = this.panel.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][data-config="wrapAware"]',
+    );
+    if (wrapAware) wrapAware.checked = (config as unknown as Record<string, unknown>).wrapAware !== false;
     this._updateDifficulty(config);
   }
 

@@ -484,14 +484,21 @@ describe('startScene — setup pass-through (AH-0MVNW8UCZ004CY0R)', () => {
     expect((startedCalls[0].args[0] as { enemy: string }).enemy).toBe('grunt');
   });
 
-  it('rejects a setup on a target that cannot consume it, before touching the manager', () => {
+  it('rejects a setup field the target cannot consume, before touching the manager', () => {
     const { manager, started, stopped } = fakeSceneManager();
     expectSceneError(
-      () => startScene(fakeGame(manager), 'GymCurveSequencer', { player: {} }),
+      () => startScene(fakeGame(manager), 'GymPowerUpsCombat', { level: { level: 1 } }),
       ERROR.setupNotSupported,
     );
     expect(started).toEqual([]);
     expect(stopped).toEqual([]);
+  });
+
+  it('accepts a setup on the curve-editor gym (common fields are forwarded)', () => {
+    const { manager, startedCalls } = fakeSceneManager();
+    startScene(fakeGame(manager), 'GymCurveSequencer', { seed: 9 });
+    expect(startedCalls[0].key).toBe('GymCurveSequencer');
+    expect((startedCalls[0].args[0] as { seed: number }).seed).toBe(9);
   });
 
   it('resolveSceneEntry returns the resolved key plus normalised setup', () => {

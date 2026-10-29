@@ -455,6 +455,24 @@ export function playEnemyForceFieldBreakSound(): void {
   playCue('playBulletDestructionSound');
 }
 
+/**
+ * Bright rising bounce — the player Force Field **reflects** an enemy bullet
+ * (AH-0MVRDMMYO002SC5V, producer decision Q2 = c on AH-0MVBKT2WO001AR14).
+ *
+ * Decision (recorded here so the audio knowledge stays in the audio layer):
+ * this is a **dedicated baked cue**, not an alias like
+ * {@link playEnemyForceFieldBreakSound}. A reflection must read as its own
+ * event — distinct from the bullet-destruction tick
+ * (`playBulletDestructionSound`, a falling square), the ricochet tick
+ * (`playRicochetImpactSound`, a falling triangle with a noise smack) and an
+ * enemy force-field break. `aihell-forcefield-reflect` **rises**
+ * (880 → 1320 Hz) with a short sine sparkle, so "bounced back at the enemy"
+ * never sounds like "shot destroyed".
+ */
+export function playForceFieldReflectSound(): void {
+  playCue('playForceFieldReflectSound');
+}
+
 // ── Player weapon fire cues ─────────────────────────────────────────
 
 /** Solid medium blip — Cannon fire. */
@@ -582,6 +600,27 @@ export function playMortarImpactSound(): void {
 /** Heavy blast — Mortar detonation. */
 export function playMortarDetonationSound(): void {
   playCue('playMortarDetonationSound');
+}
+
+/**
+ * Falling bolt from orbit into a low detonation thump plus a bright crack —
+ * the **Orbital Strike power-up's** impact cue
+ * (AH-0MVS2SZBY004HJ2D).
+ *
+ * A dedicated ToneForge recipe (`aihell-orbital-strike`, seed 32195) rather
+ * than a reused cue: the strike is a signature event and must not alias the
+ * Smart Bomb / Nova ring ping (`playNovaImpactSound`, a 0.16 s bright ring
+ * with no descent) or the Mortar detonation wash
+ * (`playMortarDetonationSound`, a sustained 0.32 s low boom). This cue is
+ * composed in two acts — a pitched + filtered-noise descent from orbit into a
+ * low saw thump and a short highpass crack — so the strike is unmistakable by
+ * ear even when the player is not looking at the target.
+ *
+ * Plays through the shared one-shot cue funnel like every other cue, so the
+ * global volume/mute, voice limiter and single shared `AudioContext` apply.
+ */
+export function playOrbitalStrikeSound(): void {
+  playCue('playOrbitalStrikeSound');
 }
 
 /** Bright electric zap — Arc fire. */
@@ -745,6 +784,16 @@ export function playPowerUpDespawnSound(): void {
 /** Short percussive pop — power-up collection tactile feedback. */
 export function playPowerUpCollectPopSound(): void {
   playCue('playPowerUpCollectPopSound');
+}
+
+/**
+ * Low two-step "denied" buzz — the six-slot pool is full and this drop cannot
+ * be collected (parent AH-0MVLIJT3M005HPHF, producer Q5b). Deliberately lower
+ * and shorter than the pickup cues so a refused pickup is audibly distinct
+ * from a successful one.
+ */
+export function playPowerUpBlockedSound(): void {
+  playCue('playPowerUpBlockedSound');
 }
 
 /** Widening fan sweep — Spread pickup activation. */

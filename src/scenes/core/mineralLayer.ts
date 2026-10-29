@@ -30,8 +30,14 @@ export type { MineralHoldOptions } from '../../core/mineralHold';
 // The hold-full reward application lives in the Phaser-free
 // `powerups/choiceReward` module (shared with the headless eval arena) and
 // is re-exported here so every scene import stays unchanged
-// (AH-0MVD1RIH2008YCNV).
-export { applyMineralChoiceReward } from '../../powerups/choiceReward';
+// (AH-0MVD1RIH2008YCNV). The two permanent-grant helpers are re-exported for
+// the checkpoint-resume replay so the restore path consumes the same seam
+// (AH-0MVSHI07B003BZIP).
+export {
+  applyMineralChoiceReward,
+  grantPermanentPowerUp,
+  grantPermanentWeapon,
+} from '../../powerups/choiceReward';
 
 /**
  * Minimal structural contract an enemy must satisfy to absorb minerals.

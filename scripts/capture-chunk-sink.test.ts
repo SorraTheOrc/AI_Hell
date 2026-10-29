@@ -23,6 +23,40 @@
  * of it. The only injected calls are the two failure-path tests (a throwing
  * write, a close spy) where the fault cannot be produced otherwise.
  *
+ * ## The >512 MiB proof's disk footprint and temp root (AH-0MVS1O1ZG007VCX3)
+ *
+ * The memory-bound test writes **512 MiB exactly**: `ceil((CDP_PIPE_STRING_LIMIT_CHARS
+ * + 1) / MAX_CAPTURE_CHUNK_BYTES)` = **32 chunks x 16 MiB** = 536,870,912 B to
+ * `<dir>/long.webm`, once as the `.partial` file and then re-read for the
+ * streaming sha256. That is real disk I/O on purpose (it exercises the shipped
+ * write path), so the test needs a temp filesystem with room for it.
+ *
+ * Historically it used `os.tmpdir()` unconditionally. On a host whose `/tmp`
+ * is a small **shared tmpfs** (16 GiB on the host that filed this item, shared
+ * by every concurrent agent session) the full suite fills it, the write fails
+ * with `ENOSPC` surfaced as `UNKNOWN: unknown error, write`, and this test
+ * failed for reasons unrelated to the sink.
+ *
+ * This one test therefore resolves its root through
+ * `resolveTempRootForLargeFile()` (`scripts/tempRootForLargeFiles.ts`), in
+ * order:
+ *
+ * 1. an explicit `TMPDIR`, when set and its filesystem has headroom;
+ * 2. a disk-backed fallback, `/var/tmp` (the root filesystem);
+ * 3. `os.tmpdir()`.
+ *
+ * The first root with at least **1 GiB** free wins (the 512 MiB file plus a
+ * 512 MiB margin). When none qualifies, this one test reports a **labelled
+ * environmental skip** naming AH-0MVS1O1ZG007VCX3 and the required footprint
+ * instead of failing on an opaque disk-full write; the resolver unit tests in
+ * `scripts/tempRootForLargeFiles.test.ts` cover the ordering, the arithmetic
+ * and the skip note with injected free-space figures (no test fills a disk).
+ * Set `AIHELL_CAPTURE_SINK_TEMP_REQUIRED_BYTES` to raise the required
+ * footprint and exercise the skip path deliberately.
+ *
+ * Every other test in this file keeps `os.tmpdir()`: they write only small
+ * files, so the shared tmpfs is not a constraint for them.
+ *
  * @vitest-environment node
  */
 
@@ -38,6 +72,11 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import {
+  largeTempSkipNote,
+  resolveTempRootForLargeFile,
+} from './tempRootForLargeFiles';
 
 import { CDP_PIPE_STRING_LIMIT_CHARS } from './capture-diagnostics.mjs';
 import {
@@ -55,6 +94,37 @@ const tempDirs: string[] = [];
 /** Fresh temp directory per test (nothing is shared between runs). */
 function tempDir(prefix = 'aihell-chunk-sink-'): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+/**
+ * Where the >512 MiB proof file goes (AH-0MVS1O1ZG007VCX3): the first temp
+ * root with headroom for 512 MiB + margin, resolved once per run. `chosen` is
+ * null on a host with no qualifying temp filesystem — the test then reports a
+ * labelled environmental skip instead of an opaque disk-full failure.
+ */
+const largeFileTempRoot = resolveTempRootForLargeFile();
+
+/**
+ * Suffix for the >512 MiB test's title in the skipped case only, so the skip
+ * is labelled in the run output as well as in the reporter annotation. Empty
+ * on a host with headroom, leaving the test name unchanged (it is referenced
+ * by AH-0MVS1O1ZG007VCX3 and by flake triage).
+ */
+const LARGE_TEMP_SKIP_LABEL =
+  largeFileTempRoot.chosen === null
+    ? ` [SKIPPED: ${largeTempSkipNote('AH-0MVS1O1ZG007VCX3', largeFileTempRoot)}]`
+    : '';
+
+/** Fresh temp directory on the resolved large-file root (headroom checked). */
+function largeFileTempDir(prefix = 'aihell-chunk-sink-budget-'): string {
+  const chosen = largeFileTempRoot.chosen;
+  if (chosen === null) {
+    // Unreachable when largeFileTempRoot is resolved; keeps the helper total.
+    throw new Error(largeTempSkipNote('AH-0MVS1O1ZG007VCX3', largeFileTempRoot));
+  }
+  const dir = mkdtempSync(join(chosen.dir, prefix));
   tempDirs.push(dir);
   return dir;
 }
@@ -257,8 +327,19 @@ describe('chunk sink write path (AH-0MVNT26AQ005LDNS AC1/AC2/AC5)', () => {
 });
 
 describe('chunk sink memory bound beyond the CDP pipe budget (AC3)', () => {
-  it('writes >512 MiB in one-chunk-sized pieces with a flat pending bound', async () => {
-    const dir = tempDir('aihell-chunk-sink-budget-');
+  it(`writes >512 MiB in one-chunk-sized pieces with a flat pending bound${LARGE_TEMP_SKIP_LABEL}`, async (context) => {
+    if (largeFileTempRoot.chosen === null) {
+      // Labelled environmental skip, not a weakened assertion: the full proof
+      // (all of it, below) still runs wherever a temp filesystem has 1 GiB
+      // free. See the file header for the footprint and resolution order.
+      const note = largeTempSkipNote('AH-0MVS1O1ZG007VCX3', largeFileTempRoot);
+      // Written straight to stderr because vitest's reporters swallow console
+      // output from skipped tests, and an unlabelled skip is indistinguishable
+      // from a silently dropped test.
+      process.stderr.write(`${note}\n`);
+      context.skip(note);
+    }
+    const dir = largeFileTempDir();
     const outputPath = join(dir, 'long.webm');
     const sink = createChunkSink({ outputPath });
 

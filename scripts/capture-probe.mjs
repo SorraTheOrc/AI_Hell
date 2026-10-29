@@ -485,6 +485,28 @@ export async function probeRecordingInPage(options = {}, scope = globalThis) {
     ? video.duration
     : fallbackMs / 1000;
 
+  // Effective frame rate (AH-0MVTI3O650064IM7): a CPU-starved page renders far
+  // below the display rate, and Phaser caps its delta, so game time crawls and
+  // scripted pay-offs cannot happen inside their windows. Counting decoded
+  // frames over the clip's duration makes that starvation visible in the
+  // payload (and lets the verdict reject such a take) instead of shipping a
+  // stalled recording that passes every other probe.
+  const readDecodedFrames = () => {
+    try {
+      if (typeof video.getVideoPlaybackQuality === 'function') {
+        const quality = video.getVideoPlaybackQuality();
+        const total = Number(quality?.totalVideoFrames);
+        if (Number.isFinite(total) && total > 0) return total;
+      }
+      const legacy = Number(video.webkitDecodedFrameCount);
+      if (Number.isFinite(legacy) && legacy > 0) return legacy;
+    } catch {
+      /* an unreadable quality metric only means "fps unknown" */
+    }
+    return 0;
+  };
+  let frameCount = readDecodedFrames();
+
   const full = doc.createElement('canvas');
   full.width = width || 960;
   full.height = height || 540;
@@ -607,6 +629,14 @@ export async function probeRecordingInPage(options = {}, scope = globalThis) {
     }
   }
 
+  // Re-read after the end seek: the frame counter is monotonic and the last
+  // read is the most complete one.
+  frameCount = Math.max(frameCount, readDecodedFrames());
+  const effectiveFps =
+    frameCount > 0 && Number.isFinite(durationSeconds) && durationSeconds > 0
+      ? frameCount / durationSeconds
+      : null;
+
   if (objectUrl) page.URL.revokeObjectURL(objectUrl);
   delete page.__aiHellCapture;
 
@@ -614,6 +644,10 @@ export async function probeRecordingInPage(options = {}, scope = globalThis) {
     width,
     height,
     durationSeconds,
+    // Decoded frames and their rate over the clip: `null` when the browser
+    // exposes no frame count (the verdict then simply does not judge it).
+    frameCount,
+    effectiveFps,
     nonBlackFraction: nonBlackTotal / fractions.length,
     uniqueColours: colours.size,
     motion,

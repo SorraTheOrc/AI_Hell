@@ -1,0 +1,173 @@
+# AI Hell cue: aihell-orbital-strike — Orbital Strike power-up impact — a
+# falling filtered sweep from orbit into a low detonation thump plus a short
+# bright crack.
+#
+# (AH-0MVS2SZBY004HJ2D) The Orbital Strike power-up's signature cue, played at
+# the bolt's impact. Deliberately distinct from the other AOE cues in the
+# palette: the Nova impact (`aihell-nova-impact`) is a 0.16 s bright ring ping
+# with no descent, and the Mortar detonation (`aihell-mortar-detonation`) is a
+# 0.32 s saw + lowpass-noise wash with no fall and no bright transient. This
+# cue is longer (0.62 s) and composed as a two-act event: a pitched + filtered
+# noise *descent* from orbit (0 → 0.34 s) landing on a detonation thump and a
+# short highpass crack (0.34 → 0.62 s), so it reads as "something fell from the
+# sky and hit the ground".
+#
+# Seed 32195 is drawn from the game-specific reservation block (32100–32199,
+# docs/AUDIO_TONEFORGE_CUE_MAPPING.md) and baked via scripts/build-audio.sh.
+version: "0.1"
+meta:
+  name: aihell-orbital-strike
+  description: Orbital Strike power-up impact — a falling triangle sweep (1800 to 150 Hz) and bandpass noise descent (3000 to 260 Hz) landing at 0.34 s on a low saw detonation thump (130 to 34 Hz) plus a short bright highpass crack; a two-act fall-then-impact signature, distinct from the Nova ring ping and the Mortar detonation wash.
+  category: AIHell
+  tags:
+    - powerup
+    - strike
+  duration: 0.62
+nodes:
+  # ── Act 1 (0 → 0.34 s): the bolt falling from orbit ──
+  # v0 — pitched descent whistle: a triangle falling ~3.6 octaves.
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 1800
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 1800
+        - kind: exponentialRamp
+          time: 0.34
+          value: 150
+  e0:
+    kind: envelope
+    params:
+      attack: 0.03
+      decay: 0.31
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.14
+  # n0 — air rush behind the fall: bandpass noise sweeping down with it.
+  n0:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f0:
+    kind: biquadFilter
+    params:
+      type: bandpass
+      frequency: 3000
+      Q: 2
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 3000
+        - kind: exponentialRamp
+          time: 0.34
+          value: 260
+  e1:
+    kind: envelope
+    params:
+      attack: 0.02
+      decay: 0.32
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.2
+  # ── Act 2 (0.34 → 0.62 s): touchdown ──
+  # v1 — detonation thump: a low saw collapsing to sub-bass, gated on at impact.
+  v1:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 130
+    automation:
+      frequency:
+        - kind: set
+          time: 0.34
+          value: 130
+        - kind: exponentialRamp
+          time: 0.6
+          value: 34
+  e2:
+    kind: envelope
+    params:
+      attack: 0.005
+      decay: 0
+      sustain: 1
+      release: 0.02
+  g2:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.34
+          value: 0
+        - kind: linearRamp
+          time: 0.345
+          value: 0.42
+        - kind: exponentialRamp
+          time: 0.6
+          value: 0.0001
+  # n1 — bright impact crack: a very short highpass noise snap on the hit frame.
+  n1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 3200
+      Q: 1
+  e3:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0
+      sustain: 1
+      release: 0.01
+  g3:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.34
+          value: 0
+        - kind: linearRamp
+          time: 0.341
+          value: 0.2
+        - kind: exponentialRamp
+          time: 0.42
+          value: 0.0001
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [n0, f0, e1, g1, mix]
+  - chain: [v1, e2, g2, mix]
+  - chain: [n1, f1, e3, g3, mix]
+  - from: mix
+    to: out

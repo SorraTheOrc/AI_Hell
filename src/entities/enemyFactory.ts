@@ -110,6 +110,10 @@ export function createEnemyFromConfig(
     health: config.health,
     rng,
     forceFieldHits,
+    // Seam-awareness (AH-0MV9G3DZ9003P7P8): thread the single data-driven
+    // flag through the shared base, so every entity exposes the resolved
+    // value via `BaseEnemy.wrapAware` and no scene re-parses the config.
+    wrapAware: config.wrapAware,
   };
   // Tractor-beam tuning (Galaga capturer archetype, AH-0MV01EFII008298D).
   const beamOpts = {

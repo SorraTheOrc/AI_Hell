@@ -43,6 +43,14 @@
  *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically.
+ *
+ * Scripted-scene setup (AH-0MVRMHYJR000Y9H8): the scene consumes the shared
+ * `applySceneSetup` applier through `_adoptCaptureSetup`, so a capture setup's
+ * player loadout, power-up levels and determinism seed are live before the
+ * first captured frame (the seed also makes AOE `'onRandom'` placement
+ * reproducible). The practice-target gallery and round-robin drop cadence stay
+ * fixed gym-only scenarios (documented in `docs/GYM_PARITY.md` and
+ * `docs/dev/gameplay-capture.md`).
  */
 
 import Phaser from 'phaser';
@@ -52,6 +60,7 @@ import {
   type CombatEnemyEntity,
 } from '../core/CombatCoreScene';
 import { CombatScene } from '../core/CombatScene';
+import type { SceneSetupState } from '../core/sceneSetup';
 import { Player } from '../../entities/Player';
 import { advancePlayerBullets } from '../core/bulletLifecycle';
 import { PlayerBullet } from '../../entities/PlayerBullet';
@@ -221,7 +230,7 @@ export class GymWeapons extends CombatScene<
     super({ key: 'GymWeapons' });
   }
 
-  create(): void {
+  create(data?: SceneSetupState): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
@@ -230,6 +239,11 @@ export class GymWeapons extends CombatScene<
       y: GAME_HEIGHT / 2,
     });
     this.add.existing(this.player);
+
+    // Scripted-scene setup (AH-0MVRMHYJR000Y9H8): loadout, power-up levels
+    // and content seed are live before the first captured frame. No setup
+    // ⇒ no behaviour change.
+    this._adoptCaptureSetup(data);
 
     // Shared "← INDEX" button (reused by every gym).
     addBackToIndexButton(this);
@@ -253,7 +267,12 @@ export class GymWeapons extends CombatScene<
     this.spawnTimer = WEAPON_DROP_LIFETIME;
 
     // Inert practice targets so the AOE area effects are visible (F6 AC3).
-    this._spawnPracticeTargets();
+    // Scenario parameter (AH-0MVRMI0Q7001KG4Y): `setup.practiceTargets: false`
+    // omits them for a pure weapon-cadence capture. Absent (or `true`) ⇒ the
+    // historical tripod, so setup-less behaviour is unchanged.
+    if (data?.practiceTargets !== false) {
+      this._spawnPracticeTargets();
+    }
 
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).

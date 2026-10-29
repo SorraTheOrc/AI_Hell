@@ -35,9 +35,15 @@ import Phaser from 'phaser';
 
 import {
   Boss,
+  BOSS_HIT_POINTS_PER_PHASE,
   BOSS_PHASE_COUNT,
   BossBullet,
 } from '../../entities/Boss';
+import {
+  playerPowerScore,
+  scaledEncounterHp,
+} from '../../core/difficultyScaling';
+import type { Player } from '../../entities/Player';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import { fireForEnemy } from '../../entities/enemyFire';
@@ -53,6 +59,11 @@ import {
 } from '../../utils/gymPowerUpControl';
 import { makeCollapsible } from '../../utils/gymPanel';
 import { FormationOffset } from '../../utils/formations';
+import {
+  resolveSpawnTransitTarget,
+  type SpawnTransitEntity,
+} from '../core/spawnTransit';
+import type { SceneSetupState } from '../core/sceneSetup';
 import {
   EnemyFormationConfig,
   GymFormationScene,
@@ -112,11 +123,35 @@ const BOSS_CONFIG: EnemyFormationConfig<
     x: number,
     y: number,
     formationOffset: FormationOffset,
+    setup?: SceneSetupState | null,
   ): Boss => {
+    // D1 parity (docs/GYM_PARITY.md): `PlayScene.spawnBoss` scales the boss's
+    // per-phase pool with the player's permanent upgrades through the shared
+    // pure `playerPowerScore`/`scaledEncounterHp` helpers. The gym resolves the
+    // same pool from the same live player (created, with its setup applied,
+    // before the formation — see `GymFormationScene.create`). Only the pool
+    // construction changes: the formula, constants and balance are the game's.
+    const player = (scene as unknown as { getPlayer(): Player | null }).getPlayer();
+    const powerScore = playerPowerScore(
+      player?.getWeaponLevels() ?? [],
+      player?.getPowerUpLevels() ?? [],
+    );
     return new Boss(scene, {
       x,
       y,
       formationOffset,
+      // Dev-gated capture preview (AH-0MVRMFPXF008BG77): the setup's
+      // `bossHitsRemaining` is the boss's existing `initialHp` seam, so a
+      // scripted scene starts the boss close to death and its death lands on
+      // camera. Absent ⇒ the full `BOSS_PHASE_COUNT` pool, exactly as before;
+      // the pool itself is never changed by the preview. Like
+      // `PlayScene.spawnBoss`, an explicit `initialHp` pins the absolute pool
+      // and therefore leaves the per-phase scaling unset.
+      initialHp: setup?.bossHitsRemaining,
+      hitPointsPerPhase:
+        setup?.bossHitsRemaining === undefined
+          ? scaledEncounterHp(BOSS_HIT_POINTS_PER_PHASE, powerScore)
+          : undefined,
     });
   },
   collectBullets: (_entity, _now): (BossBullet | PulseWaveBullet)[] => []
@@ -270,8 +305,22 @@ export class GymBoss extends GymFormationScene<
       // in place and is spawn-protected while it emerges — it is not part of
       // the wave's wormhole entry, so no destination is supplied. The shared
       // spawn-animation pass advances it because `getEnemyEntities()` includes
-      // the minions.
-      startSpawnAnimation(entity, entity.scaleX, WORMHOLE_OPEN_DURATION);
+      // the minions. The in-place exemption is asked of the shared transit seam
+      // (`transit: false`, AH-0MVRMHQC9003VDNN), not re-implemented here.
+      const transitTarget = resolveSpawnTransitTarget({
+        entity: entity as unknown as SpawnTransitEntity,
+        transit: false,
+        base: { x: spawn.x, y: spawn.y },
+        offset: spawn.offset,
+        spacingX: spawn.spacingX,
+        spacingY: spawn.spacingY,
+      });
+      startSpawnAnimation(
+        entity,
+        entity.scaleX,
+        WORMHOLE_OPEN_DURATION,
+        transitTarget ? () => transitTarget : undefined,
+      );
       entity.setSpawning(true);
       this.add.existing(entity);
       this.minions.push({

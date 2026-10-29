@@ -12,6 +12,61 @@
  * - `stepGameUntil(game, label, predicate)` — pump until a condition holds;
  * - `expect.poll` / bounded polling with explicit raises, or vitest fake timers.
  *
+ * The kill-isolation flake family (AH-0MV1EN1NS000QLBK) gained a Robotron
+ * horde sibling: AH-0MVMEI9V1005H0LU fixed the same auto-fire/overlapping-
+ * enemy interference in `killing a grunt advances wave accounting exactly
+ * once` (src/scenes/PlayScene.test.ts) and added seed-pinning to the
+ * pattern — `bootWithHordeWave(horde, seed)` pins the run via `setRunSeed`
+ * and the hardened test uses the fixed `HORDE_KILL_FIXED_SEED`
+ * (~6197-6242), so the RNG-driven horde layout and spawn schedule are
+ * reproducible instead of drawn fresh per run. New kill tests asserting
+ * exactly-once accounting should reuse `isolateEnemyForKill` plus a pinned
+ * seed.
+ *
+ * A third, non-wall-clock flake family was tracked by the load-remediation
+ * epic AH-0MVSBEIVK003XAFB: **environmental saturation flakes** in the
+ * `scripts/` capture suites. They never had a wall-clock wait — each one was
+ * a correct test with an undeclared resource assumption, so the remediation
+ * is a bound or a labelled skip, not a `setTimeout` removal:
+ *
+ * - AH-0MVS1O1ZG007VCX3 — `scripts/capture-chunk-sink.test.ts` writes a
+ *   512 MiB file (32 x 16 MiB chunks) into `os.tmpdir()`, which is a shared
+ *   16 GiB tmpfs on this host; under saturation it filled and the write
+ *   failed with `ENOSPC`. Fixed by resolving a headroom-checked temp root
+ *   (explicit `TMPDIR` → disk-backed fallback → `os.tmpdir()`) with a
+ *   labelled environmental skip naming the item when no candidate has room.
+ * - AH-0MVSAPI66009T6PU — the spawned-CLI fail-fast test in
+ *   `scripts/capture-gameplay.test.ts` inherits Vitest's 5 s default while
+ *   spawning the real CLI's Vite-SSR loader; under CPU saturation the spawn
+ *   alone took ~5.9 s and vitest killed the test mid-spawn. Fixed with an
+ *   explicit per-test budget (`{ timeout: 60_000 }`) while the child's own
+ *   30 s `spawnSync` bound keeps the fail-fast contract, and a thrown
+ *   spawn-error message that distinguishes a starved spawn from a real
+ *   contract break.
+ * - AH-0MVSGJ5N6005U7P6 — the eval-arena per-level campaign test
+ *   (`src/ai/eval/arena.test.ts`, `selects the level: levels differ from
+ *   each other and from the seeded skirmish`) runs four full headless
+ *   600-tick campaign runs with full record-stream stringification; under
+ *   saturation it drifted past Vitest's 5 s default and died with the same
+ *   `Test timed out in 5000ms` and no assertion failure. Fixed by declaring
+ *   the file-level 30 s budget (`vi.setConfig({ testTimeout: 30000 })`,
+ *   mirroring `cli.test.ts` / `engine.test.ts` per AH-0MVR8QM89004OQZQ); the
+ *   run work and assertions are unchanged.
+ * - AH-0MVST7XTT008AIYW — the GymLevel forced-mineral-reward test
+ *   (`src/scenes/gym/GymLevel.test.ts`, `resolves a full hold to the forced
+ *   mineralReward, not a random pick`) cleared the seeded mineral field but
+ *   not the shared `MineralHold`, so a mineral scooped during the randomised
+ *   200 ms boot overflowed the later exact fill and `resolve()` carried the
+ *   surplus back instead of resetting to 0 (GDD §4.5). It flaked run-to-run
+ *   under full-suite saturation. Fixed by resetting the field and the hold
+ *   together (`resetMineralHold`) so the exact-fill premise is deterministic;
+ *   every assertion is unchanged. Discovered by the epic's saturated-host
+ *   verification child AH-0MVSDKBZ6001EP4M.
+ *
+ * All these fixes keep the behaviour the tests assert; the per-file budgets and
+ * the skip condition are documented in `docs/dev/test-suite-timing.md`
+ * ("Per-file timing budgets" and its subprocess-spawn subsection).
+ *
  * The scan asserts **code**, not prose: comments and string literals are
  * stripped first, so this file's own documentation and the deterministic-boot
  * guard's regexes do not count.

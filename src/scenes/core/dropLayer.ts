@@ -221,18 +221,44 @@ export function advanceDropLifecycles<T extends DropLifecycleDrop>(
 }
 
 /**
+ * Optional gates for {@link collectOverlappingDrops}.
+ */
+export interface CollectOverlapOptions<T extends DropLifecycleDrop> {
+  /**
+   * Whether this overlapping drop may actually be collected. Returning false
+   * keeps it on the field (the six-slot pool is full and the kind is neither
+   * held nor exempt — parent AC8).
+   */
+  canCollect?: (drop: T) => boolean;
+  /**
+   * Called for a drop that overlapped but was refused by `canCollect`, so the
+   * caller can play feedback (the not-collectable cue). Kept separate from
+   * `onCollect` so a refused drop never runs the collection path.
+   */
+  onBlocked?: (drop: T) => void;
+}
+
+/**
  * Collects every collectible drop whose current radius overlaps the player's
  * hull: the gate is `canCollect()` (≥ 3 % scale) plus hull-touches-bubble
  * (`dropCollectRadius(dropSize, scale)`). Calling `onCollect` removes the drop
  * from the returned array; the caller decides what collection applies.
  *
- * A null player leaves the drops untouched.
+ * ## Six-slot collection gate (parent AH-0MVLIJT3M005HPHF AC8)
+ *
+ * `options.canCollect` is consulted for a drop that passes the geometric
+ * gate. When it returns false the drop is **kept on the field** (it is not
+ * collected, so no effect is applied and it stays collectable if a slot frees
+ * later) and `options.onBlocked` runs so the caller can give feedback — the
+ * shared combat scene plays the not-collectable cue there. A null player
+ * leaves the drops untouched.
  */
 export function collectOverlappingDrops<T extends DropLifecycleDrop>(
   drops: T[],
   player: { x: number; y: number } | null,
   onCollect: (drop: T) => void,
   dropSize: number = POWER_UP_DROP_SIZE,
+  options: CollectOverlapOptions<T> = {},
 ): T[] {
   if (!player) return drops;
   const hull = SHIP_SIZE / 2;
@@ -244,6 +270,13 @@ export function collectOverlappingDrops<T extends DropLifecycleDrop>(
     }
     const radius = dropCollectRadius(dropSize, drop.powerUp.currentScale);
     if (Math.hypot(player.x - drop.x, player.y - drop.y) <= hull + radius) {
+      if (options.canCollect && !options.canCollect(drop)) {
+        // Eligible for overlap but not for pickup: keep it live and let the
+        // caller explain why (the drop may become collectable later).
+        options.onBlocked?.(drop);
+        kept.push(drop);
+        continue;
+      }
       onCollect(drop);
     } else {
       kept.push(drop);

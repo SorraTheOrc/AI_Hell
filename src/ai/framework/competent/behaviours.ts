@@ -12,13 +12,16 @@
  *   nearest for minerals, highest value-per-distance for power-ups via the
  *   content registry — braking so the ship arrives rather than barrelling
  *   through.
- * - `engage` (enemy / asteroid): pick the best target (nearest, weighted by
- *   each archetype's registered threat), line it up inside its preferred
- *   engagement range, then hold the aim axis and coast so the forward-firing
- *   weapon stays on target (AC3).  A target whose velocity is exposed is
- *   **led**: the aim objective is the iterated intercept, not the current
- *   position (AH-0MV1DUSM2005HL98 · AC2).  An archetype whose content profile
- *   declares `aim: 'none'` is closed on without aim reasoning.
+ * - `engage` (enemy / asteroid / boss): pick the best target (nearest,
+ *   weighted by each archetype's registered threat), line it up inside its
+ *   preferred engagement range, then hold the aim axis and coast so the
+ *   forward-firing weapon stays on target (AC3).  The `engage-boss` goal
+ *   restricts the target set to the boss alone, so a committed boss fight
+ *   cannot divert to a nearer minion (AH-0MVBMESIE003YQ68).  A target whose
+ *   velocity is exposed is **led**: the aim objective is the iterated
+ *   intercept, not the current position (AH-0MV1DUSM2005HL98 · AC2).  An
+ *   archetype whose content profile declares `aim: 'none'` is closed on
+ *   without aim reasoning.
  * - `evade`: predictive path away from the threats (away from the weighted
  *   centroid of threatening shots), with the steering fan pathing around
  *   anything else in the way (AC2).
@@ -41,6 +44,7 @@ import {
   COMPETENT_GOAL_IDS,
   asteroidTargets,
   bestWeightedTarget,
+  bossTargets,
   enemyTargets,
   extraLifeTargets,
   nearestTarget,
@@ -121,7 +125,7 @@ function collectBehaviour(
   };
 }
 
-/** Engages the best enemy (enemy goal) or asteroid (asteroid goal). */
+/** Engages the committed target: the boss alone, or the best enemy/asteroid. */
 function engageBehaviour(
   t: CompetentBotTunables,
   content: BotContent,
@@ -132,9 +136,16 @@ function engageBehaviour(
       const player = view.world.player;
       if (!player) return null;
       const isEnemy = view.goal.id === COMPETENT_GOAL_IDS.engageEnemy;
-      const targets = isEnemy
-        ? enemyTargets(view.world)
-        : asteroidTargets(view.world);
+      const isBoss = view.goal.id === COMPETENT_GOAL_IDS.engageBoss;
+      // The boss goal owns a boss-only target set, so a nearer regular enemy
+      // can never be selected while it is committed (AH-0MVBMESIE003YQ68 ·
+      // AC3). It declines when no live boss is present (AC2 validity mirrors
+      // this, so the brain would not have committed to it).
+      const targets = isBoss
+        ? bossTargets(view.world)
+        : isEnemy
+          ? enemyTargets(view.world)
+          : asteroidTargets(view.world);
       const best = bestWeightedTarget(
         targets,
         player,

@@ -10,9 +10,16 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import Phaser from 'phaser';
 
-import { bootScene, BootedGame } from '../../test/gameHarness';
+import {
+  advanceGame,
+  bootScene,
+  BootedGame,
+  stepGameUntil,
+} from '../../test/gameHarness';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import {
@@ -204,5 +211,151 @@ describe('GymMiniBoss — config-driven mini-boss gym (AH-0MVCRAYSH0014BQJ)', ()
       expect(boss.alive).toBe(true);
     }
     selectGymMiniBossDesign(1);
+  });
+  // ── Mini-boss death sweep parity (AH-0MVROEMUO007Z3RY) ──────────
+
+  describe('EXPLODE runs the shared mini-boss death sweep (AC5)', () => {
+    /** Boots the design whose phase 1 summons minions (level 3, Shard Matron). */
+    async function bootMinionGym(): Promise<GymMiniBoss> {
+      selectGymMiniBossDesign(3);
+      const scene = await bootGym();
+      return scene;
+    }
+
+    afterEach(() => {
+      selectGymMiniBossDesign(1);
+    });
+
+    it('sweeps the mini-boss minions captured before the teardown, then completes', async () => {
+      const scene = await bootMinionGym();
+      const boss = scene.formationMiniBoss;
+      const minions = boss.getMinions();
+      expect(minions.length).toBeGreaterThan(0);
+
+      scene.explodeRandom();
+
+      // The minions were captured before the entity tore them down, so the
+      // sweep targets are exactly the live minions (the gym's wave-gating
+      // scope — no hazards are ever in the formation list).
+      const targets = scene.getMiniBossSweepTargets();
+      expect(targets).toHaveLength(minions.length);
+      for (const minion of minions) {
+        expect(
+          targets.some(
+            (target) =>
+              Math.abs(target.x - minion.x) < 0.001 &&
+              Math.abs(target.y - minion.y) < 0.001,
+          ),
+        ).toBe(true);
+        // Cosmetic removal: the entity is dead but never routed through a
+        // reward-bearing kill path.
+        expect(minion.alive).toBe(false);
+      }
+      expect(boss.alive).toBe(false);
+
+      // Completion is real animation time (burst tweens + the shared Clock
+      // watchdog), so it is reached by stepping the game, never on the
+      // trigger frame.
+      expect(scene.isMiniBossSweepActive()).toBe(true);
+      stepGameUntil(
+        booted!.game,
+        'gym mini-boss sweep completion',
+        () => !scene.isMiniBossSweepActive(),
+      );
+      expect(scene.isMiniBossSweepActive()).toBe(false);
+    });
+
+    it('is a no-op once the mini-boss is already defeated (one sweep per defeat)', async () => {
+      const scene = await bootMinionGym();
+      scene.explodeRandom();
+      const targetsAfterFirst = scene.getMiniBossSweepTargets();
+      stepGameUntil(
+        booted!.game,
+        'gym mini-boss sweep completion',
+        () => !scene.isMiniBossSweepActive(),
+      );
+
+      scene.explodeRandom();
+
+      // No second sweep is armed and the captured targets are unchanged.
+      expect(scene.isMiniBossSweepActive()).toBe(false);
+      expect(scene.getMiniBossSweepTargets()).toEqual(targetsAfterFirst);
+    });
+
+  });
+});
+
+
+// ── Scripted-video boss hit preview (AH-0MVRMFMJP0070KTS, TEST-FIRST) ──────
+
+/** The entity's remaining hits, from its public HP accessors. */
+function remainingHits(entity: {
+  getHpFraction(): number;
+  getTotalHp(): number;
+}): number {
+  return Math.round(entity.getHpFraction() * entity.getTotalHp());
+}
+
+/**
+ * Contract tests for `setup.bossHitsRemaining` reaching the spawned mini-boss
+ * (parent AH-0MVPJ3NSK008V5VB, AC2 part (b); spawn path, not a re-implemented
+ * copy of it).
+ *
+ * **TEST-FIRST, now green.** These were authored red-before (Vitest's
+ * `it.fails`, the repo's convention — see `src/core/levelScaling.test.ts`)
+ * and **F3 (AH-0MVRMFPXF008BG77) flipped them back to `it`** when the gyms
+ * started passing `initialHp` from the setup. The absent-field test pins the
+ * full-HP spawn as unchanged behaviour.
+ */
+describe('GymMiniBoss — scripted-video boss hit preview (AH-0MVRMFMJP0070KTS)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Boots the gym with scene-start data (the capture `setup`). */
+  async function bootWith(data: object): Promise<GymMiniBoss> {
+    booted = await bootScene([GymMiniBoss]);
+    booted.game.scene.start('GymMiniBoss', data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene('GymMiniBoss') as GymMiniBoss;
+  }
+
+  it('AC4 — spawns the mini-boss with bossHitsRemaining as its initial hits', async () => {
+    const scene = await bootWith({ bossHitsRemaining: 8 });
+
+    expect(remainingHits(scene.formationMiniBoss)).toBe(8);
+    // The hit preview configures the gym's existing pool — it does not
+    // change it.
+    expect(scene.formationMiniBoss.getTotalHp()).toBe(
+      MINI_BOSS_GYM_PHASES.length * MINI_BOSS_GYM_HP_PER_PHASE,
+    );
+  });
+
+  it('AC4 — an absent bossHitsRemaining keeps today\'s full-HP spawn', async () => {
+    const scene = await bootWith({});
+
+    expect(remainingHits(scene.formationMiniBoss)).toBe(
+      MINI_BOSS_GYM_PHASES.length * MINI_BOSS_GYM_HP_PER_PHASE,
+    );
+  });
+
+  it('AC2 — pins the mini-boss hit pool the parser bounds bossHitsRemaining with', async () => {
+    // Loaded by file URL (Vite ignores it) so the pure capture module — which
+    // lives outside `src/` — is imported as plain Node ESM.
+    const moduleUrl = pathToFileURL(
+      resolvePath(process.cwd(), 'scripts/capture-scenes.mjs'),
+    ).href;
+    const module = (await import(/* @vite-ignore */ moduleUrl)) as unknown as {
+      SCENE_SETUP_BOSS_TOTAL_HITS: Record<string, number>;
+    };
+    booted = await bootScene([GymMiniBoss]);
+    const scene = booted.scene as GymMiniBoss;
+
+    expect(module.SCENE_SETUP_BOSS_TOTAL_HITS.GymMiniBoss).toBe(
+      scene.formationMiniBoss.getTotalHp(),
+    );
   });
 });

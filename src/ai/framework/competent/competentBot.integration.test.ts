@@ -17,6 +17,10 @@ import { BotInputGovernor } from '../../botHumanLike';
 import type { BotSnapshot } from '../../botSnapshot';
 import type { BotPolicy } from '../botBrain';
 import { createLegacyBotPolicy } from '../legacyPolicy';
+import { createBotMemory } from '../memory';
+import { buildBotWorld } from '../worldModel';
+import { boss } from '../testFixtures';
+import { COMPETENT_GOAL_IDS, createCompetentGoals, enemyTargets } from './goals';
 import { createCompetentBotBrain } from './index';
 import { COMPETENT_BOT_TUNABLES } from './tunables';
 
@@ -302,6 +306,134 @@ describe('survival hard constraint over a seeded run (AC4)', () => {
     expect(
       Math.hypot(result.final.x - 480, result.final.y - 270),
     ).toBeGreaterThan(20);
+  });
+});
+
+// ── Boss focus fire (AH-0MVBMESIE003YQ68 · AC3/AC4/AC5) ─────────────
+//
+// **TEST-FIRST.** Authored red under Vitest's `it.fails` (the repo's
+// red-before/green-after convention — see `src/core/levelScaling.test.ts`),
+// then flipped to `it` by the implementation items (AH-0MVRMYU3G001YPLT,
+// AH-0MVRMYZF5008VFV5). A leftover `it.fails` fails the suite, so the flip is
+// deliberate.
+
+/**
+ * A live boss to the ship's right with a **nearer** regular enemy above it —
+ * the arrangement in which a weighted bias would still pick the minion.
+ */
+function bossFocusSnapshot(
+  overrides: Partial<BotSnapshot> = {},
+): BotSnapshot {
+  return {
+    player: { x: 480, y: 270, vx: 0, vy: 0 },
+    enemies: [{ x: 480, y: 140, alive: true, archetype: 'scout' }],
+    enemyBullets: [],
+    playerBullets: [],
+    drops: [],
+    minerals: [],
+    boss: boss(900, 270, 2),
+    aliveCount: 1,
+    wave: null,
+    runSeed: RUN_SEED,
+    lives: 3,
+    livesCap: 5,
+    reverseEnabled: false,
+    ...overrides,
+  };
+}
+
+describe('boss focus fire — hard priority and sustained focus (AC3)', () => {
+  it('commits to the boss and aims at it despite a nearer regular enemy', () => {
+    const brain = createCompetentBotBrain({ fallback: null });
+    const intent = brain.decide(bossFocusSnapshot(), DT);
+    expect(brain.committedGoalId).toBe('engage-boss');
+    expect(intent.dirX).toBeCloseTo(1, 2);
+    expect(intent.dirY).toBeCloseTo(0, 2);
+  });
+
+  it('keeps the boss committed across consecutive ticks (no flip-flop to the minion)', () => {
+    const brain = createCompetentBotBrain({ fallback: null });
+    const snapshot = bossFocusSnapshot();
+    // Several unchanged ticks: a hysteresis flip-flop between the boss and
+    // the nearer minion would surface as a different committed goal or a
+    // bearing away from the boss.
+    for (let tick = 0; tick < 3; tick += 1) {
+      const intent = brain.decide(snapshot, DT);
+      expect(brain.committedGoalId).toBe('engage-boss');
+      expect(intent.dirX).toBeGreaterThan(0.9);
+    }
+  });
+});
+
+describe('boss focus fire — survival first, collection subordinated (AC4)', () => {
+  it('lets an urgent incoming shot pre-empt a live boss', () => {
+    const brain = createCompetentBotBrain({ fallback: null });
+    const snapshot = bossFocusSnapshot({
+      // A shot closing on the ship from the left.
+      enemyBullets: [{ x: 440, y: 270, vx: 100, vy: 0 }],
+    });
+    brain.decide(snapshot, DT);
+    expect(brain.committedGoalId).toBe(COMPETENT_GOAL_IDS.survive);
+
+    // The boss is still alive and in range: this is pre-emption, not
+    // invalidation of the boss goal.
+    const view = {
+      snapshot,
+      world: buildBotWorld(snapshot),
+      memory: createBotMemory(),
+      dt: DT,
+    };
+    const bossGoal = createCompetentGoals(COMPETENT_BOT_TUNABLES).require(
+      'engage-boss',
+    );
+    expect(bossGoal.isValid!(view)).toBe(true);
+  });
+
+  it('never diverts to a nearby mineral or power-up while the boss goal is valid', () => {
+    const brain = createCompetentBotBrain({ fallback: null });
+    const snapshot = bossFocusSnapshot({
+      // Collection targets nearer than the boss, on the other side of the
+      // ship: diverting shows up as a negative bearing or a collection goal.
+      minerals: [{ x: 400, y: 270, type: 'mineral' }],
+      drops: [
+        { x: 480, y: 380, type: 'smart_bomb' },
+        { x: 400, y: 320, type: 'spread' },
+      ],
+    });
+    for (let tick = 0; tick < 3; tick += 1) {
+      const intent = brain.decide(snapshot, DT);
+      expect(brain.committedGoalId).toBe('engage-boss');
+      expect(intent.dirX).toBeGreaterThan(0.9);
+    }
+  });
+});
+
+describe('boss snapshot parity — final boss and mini-bosses (AC5)', () => {
+  // `PlayScene.getBoss()` returns `miniBoss ?? boss`, so the final boss and
+  // every per-level mini-boss arrive at the bot as the same `boss` snapshot
+  // target (contentId 'boss'). One boss-focus rule therefore covers both, and
+  // this suite exercises that shared target rather than a scene-specific
+  // variant.
+  it('exposes the boss goal target as contentId "boss"', () => {
+    const snapshot = bossFocusSnapshot({ boss: boss(760, 270, 2) });
+    const world = buildBotWorld(snapshot);
+    expect(enemyTargets(world)).toContainEqual({
+      x: 760,
+      y: 270,
+      contentId: 'boss',
+    });
+  });
+
+  it('commits to the boss for the final boss and a mini-boss alike', () => {
+    for (const phase of [0, 2]) {
+      const brain = createCompetentBotBrain({ fallback: null });
+      const intent = brain.decide(
+        bossFocusSnapshot({ boss: boss(760, 270, phase) }),
+        DT,
+      );
+      expect(brain.committedGoalId).toBe('engage-boss');
+      expect(intent.dirX).toBeGreaterThan(0.9);
+    }
   });
 });
 

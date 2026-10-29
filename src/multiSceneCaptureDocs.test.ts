@@ -148,7 +148,9 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     const blocks = [...captureDoc.matchAll(/```json\n([\s\S]*?)```/g)].map(
       (match) => match[1],
     );
-    const setupBlock = blocks.find((block) => block.includes('"setup"'));
+    const setupBlock = blocks.find(
+      (block) => block.includes('"setup"') && block.includes('"GymLevel"'),
+    );
     expect(setupBlock).toBeDefined();
     const parsed = parseSceneConfig(JSON.parse(setupBlock as string));
     expect(parsed.length).toBeGreaterThan(0);
@@ -157,13 +159,55 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(level?.setup?.seed).toBe(42);
   });
 
-  it('keeps examples/scenes.json valid and setup-bearing', () => {
+  // AH-0MVTNTHTI0041QIF split the shipped configs: `examples/scenes.json` is
+  // the gym-family showcase and `examples/teaserVideoScript.json` is the
+  // seven-beat teaser, which records the SHIPPED GAME (bot-driven, no gym
+  // chrome) and therefore targets `PlayScene` only.
+  it('ships the gym-family showcase with a setup on every entry', () => {
     const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
     const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
-    const withSetup = parsed.filter((scene) => scene.setup !== undefined);
-    expect(withSetup.length).toBeGreaterThanOrEqual(1);
-    expect(withSetup.some((scene) => scene.target === 'GymLevel')).toBe(true);
-    expect(withSetup.some((scene) => scene.target === 'GymFodderEnemies')).toBe(true);
+    expect(parsed.length).toBeGreaterThanOrEqual(8);
+    expect(parsed.every((scene) => scene.setup !== undefined)).toBe(true);
+    // No teaser entries are duplicated into the gym-family file.
+    expect(parsed.some((scene) => scene.target === 'PlayScene')).toBe(false);
+    // Every gym scene is represented, the parameterised `GymLevel` and the
+    // boss gyms included (AH-0MVP5IGX5005XTVV AC6 / AC8).
+    const covered = new Set(parsed.map((scene) => scene.target));
+    for (const key of [
+      'GymBoss',
+      'GymBotTuning',
+      'GymCentipede',
+      'GymCurveSequencer',
+      'GymFodderEnemies',
+      'GymLevel',
+      'GymMinerals',
+      'GymMiniBoss',
+      'GymPlayer',
+      'GymPowerUpLeveling',
+      'GymPowerUpsCombat',
+      'GymPowerUpsUtility',
+      'GymWeaponLeveling',
+      'GymWeapons',
+    ]) {
+      expect(covered, `${key} has no example entry`).toContain(key);
+    }
+  });
+
+  it('ships the seven-beat teaser as game-scene beats with launch data', () => {
+    const teaserPath = path.resolve(
+      process.cwd(),
+      'examples/teaserVideoScript.json',
+    );
+    const parsed = parseSceneConfig(fs.readFileSync(teaserPath, 'utf8'));
+    expect(parsed).toHaveLength(7);
+    expect(parsed.every((scene) => scene.target === 'PlayScene')).toBe(true);
+    // Every beat names its campaign level and start position; the finale starts
+    // at the boss encounter so its death can land on camera.
+    for (const scene of parsed) {
+      expect(typeof scene.level).toBe('number');
+      expect(scene.startWave ?? 1).toBeGreaterThanOrEqual(1);
+    }
+    expect(parsed[parsed.length - 1].startBoss).toBe(true);
   });
 
   it('documents the generated-level PlayScene target and its fields', () => {
@@ -196,12 +240,70 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(level?.minWaves).toBe(3);
   });
 
-  it('keeps examples/scenes.json generated-level example valid', () => {
+  // TEST-FIRST (AH-0MVRMFMJP0070KTS): the arc is authored from gym targets
+  // (the beats need `setup`), so the shipped example no longer carries a
+  // generated-level entry. F4 landed it, so the marker is back to `it`.
+  it('ships no generated-level example entry (the arc is gym scenes)', () => {
     const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
     const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
-    const level = parsed.find((scene) => scene.target === 'PlayScene');
-    expect(level).toBeDefined();
-    expect(level?.seed).toBe(42);
-    expect(level?.level).toBe(4);
+    // The generated-level target stays supported and documented (pinned by
+    // the `PlayScene` doc-example test above); the shipped *example config*
+    // is the gym-scene arc, because the beats need a `setup`.
+    expect(parsed.some((scene) => scene.target === 'PlayScene')).toBe(false);
+  });
+
+  it('documents the arc setup fields and their error codes (AH-0MVRMFMJP0070KTS)', () => {
+    // The new fields, including the nested player field the generic field
+    // parity loop above cannot see.
+    for (const field of [
+      '`player.weaponLevels`',
+      '`player.heading`',
+      '`bossHitsRemaining`',
+      '`mineralReward`',
+    ]) {
+      expect(captureDoc).toContain(field);
+    }
+    for (const code of [
+      'invalid-weapon-level',
+      'invalid-player-heading',
+      'invalid-boss-hits',
+      'invalid-scenario-count',
+      'unknown-mineral-reward',
+    ]) {
+      expect(captureDoc).toContain(`\`${code}\``);
+    }
+  });
+
+  // TEST-FIRST (AH-0MVRMFMJP0070KTS): F4 (AH-0MVRMFRSO004H9JM) authored the
+  // arc and F5 (AH-0MVRMFTNQ0029YWD) documented it; the marker is back to
+  // `it` and the shipped-example description is also parsed here. The arc
+  // lives in `examples/teaserVideoScript.json` since AH-0MVTNTHTI0041QIF;
+  // `examples/scenes.json` is the gym showcase (AH-0MVP5IGX5005XTVV AC8).
+  it('describes the teaser arc and the gym showcase (AH-0MVRMFMJP0070KTS)', () => {
+    expect(captureDoc).toMatch(/excitement[- ]curve/i);
+    expect(captureDoc).toContain('examples/teaserVideoScript.json');
+    expect(captureDoc).toContain('examples/scenes.json');
+    // The doc names the pay-offs the arc is built around.
+    expect(captureDoc).toMatch(/mini-boss/i);
+    expect(captureDoc).toMatch(/hold-full/i);
+    // The arc's worked snippet is schema-valid and carries the new fields.
+    const blocks = [...captureDoc.matchAll(/```json\n([\s\S]*?)```/g)].map(
+      (match) => match[1],
+    );
+    const arcBlock = blocks.find((block) =>
+      block.includes('"label": "Opening spectacle'),
+    );
+    expect(arcBlock).toBeDefined();
+    const parsed = parseSceneConfig(JSON.parse(arcBlock as string));
+    expect(parsed.map((scene) => scene.target)).toEqual([
+      'GymLevel',
+      'GymMiniBoss',
+    ]);
+    expect(parsed[0].setup?.player?.weaponLevels).toEqual({
+      spread: 5,
+      dual: 4,
+      rapid: 5,
+    });
+    expect(parsed[1].setup?.bossHitsRemaining).toBe(1);
   });
 });

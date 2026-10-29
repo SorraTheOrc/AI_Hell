@@ -13,7 +13,10 @@
  * - {@link pushAimTargets} — push the live player position into aimed
  *   enemies (`setAimTarget`);
  * - {@link pushSeekTargets} — push the live mineral field into roaming
- *   seekers (`setSeekTargets`).
+ *   seekers (`setSeekTargets`);
+ * - {@link aimVectorToTarget} — the seam-aware aim maths (shortest wrapped
+ *   path) consumed by the shared aimed-fire seam, `Scout.tryFireAimedBullet`
+ *   (and therefore march and the Raider, which share that method).
  *
  * The helpers are **pure**: no Phaser import, no scene dependency, no hidden
  * state. They only *push position data* — cadence, telegraph, dive and
@@ -95,4 +98,90 @@ export function pushSeekTargets(
   for (const enemy of enemies) {
     enemy.setSeekTargets?.(minerals);
   }
+}
+
+// ── Seam-aware aim maths ──────────────────────────────────────────────
+
+/**
+ * The playfield dimensions of the four-edge wrap model. The enemy bullets
+ * wrap on exactly this period (`GAME_WIDTH` × `GAME_HEIGHT`), so an aimed
+ * shot that crosses the seam travels the same wrapped path the bullet will
+ * follow.
+ */
+export interface WrapWorld {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * The shortest signed delta from `from` to `to` on one wrapped axis of
+ * length `size` (AH-0MVKXBTNJ003F1TC, parent AH-0MV9G3DZ9003P7P8).
+ *
+ * Positions are expected to lie within one wrap period (enemies and the
+ * player are bounded by the playfield), so at most one period is added or
+ * subtracted. A delta of exactly half the axis is a **tie** — both routes
+ * are the same length — and the direct delta is kept, so the result never
+ * flips arbitrarily at dead centre.
+ *
+ * A non-positive or non-finite `size` is treated as "no wrap model" and the
+ * direct delta is returned unchanged (defensive; the game always passes the
+ * playfield dimensions).
+ */
+export function wrappedAxisDelta(
+  from: number,
+  to: number,
+  size: number,
+): number {
+  const direct = to - from;
+  if (!Number.isFinite(size) || size <= 0) return direct;
+  const half = size / 2;
+  if (direct > half) return direct - size;
+  if (direct < -half) return direct + size;
+  return direct;
+}
+
+/** The launch vector of an aimed shot. */
+export interface AimVector {
+  /** Horizontal delta along the chosen (possibly wrapped) path. */
+  readonly dx: number;
+  /** Vertical delta along the chosen (possibly wrapped) path. */
+  readonly dy: number;
+  /** Straight-line distance along the chosen path, never `0` (clamped to `1`). */
+  readonly distance: number;
+  /** Launch heading in radians (`atan2` convention). */
+  readonly heading: number;
+}
+
+/**
+ * The aim vector from `from` to `to`, along the shortest wrapped path when
+ * `wrapAware` is set. This is the **single** wrapped-aim calculation in the
+ * codebase: the shared aimed-fire seam (`Scout.tryFireAimedBullet`, inherited
+ * by march and the Raider) consumes it, so no entity carries its own copy.
+ *
+ * - `wrapAware: true` — each axis uses {@link wrappedAxisDelta}, so a shot can
+ *   leave one edge and arrive from the opposite edge.
+ * - `wrapAware: false` — the raw `to - from` deltas are returned untouched, so
+ *   the launch heading is **bit-identical** to the pre-wrap direct aim.
+ *
+ * Pure: no Phaser import and no entity access — it only reads the two
+ * positions.
+ */
+export function aimVectorToTarget(
+  from: LiveTarget,
+  to: LiveTarget,
+  wrapAware: boolean,
+  world: WrapWorld,
+): AimVector {
+  const dx = wrapAware
+    ? wrappedAxisDelta(from.x, to.x, world.width)
+    : to.x - from.x;
+  const dy = wrapAware
+    ? wrappedAxisDelta(from.y, to.y, world.height)
+    : to.y - from.y;
+  return {
+    dx,
+    dy,
+    distance: Math.sqrt(dx * dx + dy * dy) || 1,
+    heading: Math.atan2(dy, dx),
+  };
 }

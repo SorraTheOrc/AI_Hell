@@ -1,8 +1,8 @@
 /**
  * Docs guard for hold-full option descriptions (AH-0MV2N2591007UGPD AC7).
  *
- * The three-line option block (name → shared-catalogue description → change
- * summary / `★ New`) and the level-neutral catalogue wording must be recorded
+ * The three-part option block (name → two-line shared-catalogue description
+ * area → change summary / `★ New`) and the level-neutral catalogue wording must be recorded
  * in the player-facing references — GDD §4.4.1 and the README — so the copy
  * cannot silently drift. Like the sibling `choiceWeightingDocs.test.ts`, this
  * is a deliberate docs grep: it asserts the canonical documentation (the AC),
@@ -33,14 +33,16 @@ describe('hold-full option descriptions are documented (AH-0MV2N2591007UGPD)', (
     );
   });
 
-  it('the GDD §4.4.1 records the three-line option block and shared resolver', () => {
-    expect(gdd).toMatch(/three-line block/i);
+  it('the GDD §4.4.1 records the three-part option block and two-line area', () => {
+    expect(gdd).toMatch(/three-part block/i);
+    expect(gdd).toMatch(/two-line description area/i);
     expect(gdd).toContain('getHelpDescription');
     expect(gdd).toMatch(/level-neutral/i);
   });
 
-  it('the README records the option description line', () => {
-    expect(readme).toMatch(/three-line block/i);
+  it('the README records the option description area', () => {
+    expect(readme).toMatch(/three-part block/i);
+    expect(readme).toMatch(/two-line shared-catalogue description area/i);
     expect(readme).toContain('getHelpDescription');
   });
 });

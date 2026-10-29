@@ -626,6 +626,127 @@ curve). L1 is byte-identical on/off (no shipped archetype shields at L1); at
 L5/L10 the field measurably reduces kills of shielded archetypes while the
 campaign stays playable (bot still reaches the level; survival comparable).
 
+### 1.7 Seam awareness (`wrapAware`, AH-0MV9G3DZ9003P7P8)
+
+The playfield wraps on all four edges (player ship, player bullets and
+asteroids already cross the seam). Every enemy archetype now carries one
+**data-driven seam-awareness flag**, `wrapAware`, in the same `EnemyConfig`
+pipeline as the rest of the tuning:
+
+- **`EnemyConfig.wrapAware?: boolean`** (CSV column `wrapAware`, editable in
+  the gym editor's AI Config panel). The documented default is **`true`**:
+  absent, blank or malformed-absent cells resolve wrap-aware, so seam
+  awareness is the out-of-the-box behaviour.
+- **Explicit exclusions** are seeded in `src/core/configDefaults.ts`
+  (`WRAP_AWARE_EXCLUSION_KEYS`): `march` (Space Invaders reverses and drops at
+  the arena edge) and `centipede` (a linked chain with no CSV row — see §8.5 —
+  which weaves within bounds). No other module hard-codes an archetype key
+  list; the resolver (`resolveWrapAwareDefault`) is the single source of truth.
+- **One accessor for scenes:** `BaseEnemy.wrapAware` returns the resolved flag
+  (default `true` when absent), threaded through `enemyFactory`. Scenes never
+  re-parse the config, so enabling or disabling seam-awareness is a one-field
+  change and the game and every gym read the same value.
+
+The flag is a **pure data switch**: it selects between two shared code paths
+(seam-aware and bounded) and never forks an archetype's implementation. The
+neutral value is **`true`** — an archetype that says nothing about seam
+awareness is wrap-aware — so opting out is always an explicit `false`.
+
+#### 1.7.1 Seam-aware aimed fire
+
+The shared aimed-shot method (`Scout.tryFireAimedBullet`, reused by march and
+the Raider through the `ENEMY_FIRE_METHODS` dispatcher in
+`src/entities/enemyFire.ts`) computes its launch heading through the single
+pure helper `aimVectorToTarget` in `src/scenes/core/enemyTargeting.ts`:
+
+- `wrapAware: true` — each axis goes through `wrappedAxisDelta`, which picks
+  the shortest signed delta on that wrapped axis. When the wrap-around route
+  is shorter than the direct line the shot leaves one edge and arrives from
+  the opposite edge, exactly as the bullet itself will travel.
+- `wrapAware: false` — the raw `to − from` deltas are used, so the launch
+  heading is **bit-identical** to the pre-seam direct aim.
+- A delta of exactly half the axis is a tie; the direct delta is kept, so the
+  heading never flips arbitrarily at dead centre.
+
+The bullet wrap model is **unchanged**: enemy bullets already wrap all four
+edges and expire by lifetime (AH-0MU960UTE001PTV0). Only the launch direction
+is computed here — radial and spread patterns stay direction-symmetric and are
+out of scope for seam-aware aiming.
+
+#### 1.7.2 Wrap-aware movement
+
+The shared post-motion step is `applyPostMotionWrap` /
+`applyPostMotionWrapAll` in `src/scenes/core/enemyWrap.ts`, the single seam
+that carries an enemy across a playfield edge:
+
+- Every scene positions its enemies in its own loop, then calls the helper
+  **once** after that positioning pass: `PlayScene._moveEnemies`,
+  `GymFormationScene.tick` and `GymLevel._moveEnemies`. No per-scene or
+  per-entity copy exists.
+- The world is `PLAYFIELD_WORLD` (`GAME_WIDTH` × `GAME_HEIGHT`) — the same
+  period the player ship, player bullets, asteroids and enemy bullets already
+  wrap on — and the same `WrapWorld` the aim maths consumes, so there is one
+  wrap model in the codebase.
+- The step is **position-only**: velocity, heading, rotation and every other
+  state field are preserved (nothing is reflected), so a steering state
+  machine (dive arcs, ghost pursuit, grunt homing, formation drift) stays
+  authoritative and cannot fight the seam.
+- Non-aware archetypes are skipped structurally by the flag, and a body with
+  no resolved flag at all (the Boss, which is out of scope for seam
+  awareness, and test stubs) is never wrapped.
+
+#### 1.7.3 Why `march` and `centipede` are excluded
+
+The two classic set pieces are recognisable *because* they respect the walls,
+so seam awareness would destroy the archetype rather than improve it:
+
+- **`march` (Space Invaders)** — a stepping block that must reach the arena
+  edge, reverse and drop one row (`marchStep` / `marchDrop`, §8.1). Wrapping
+  it would teleport the block to the opposite side instead of reversing.
+- **`centipede`** — a linked chain that must weave *within* bounds; the chain
+  segments and the shared `CentipedeChain` logic assume a bounded arena
+  (`src/scenes/gym/core/centipedeFormation.ts` passes
+  `wrapAware: loadEnemyConfig('centipede').wrapAware`). It has no CSV row
+  (see §8.5), so its default comes from `resolveWrapAwareDefault`.
+
+Both are **statically seeded** in `WRAP_AWARE_EXCLUSION_KEYS`
+(`src/core/configDefaults.ts`): `march` carries `wrapAware: false` in its seed
+config *and* in `src/data/enemy-configs.csv`, and `centipede` resolves to
+`false` through the same list. No module hard-codes a separate key list.
+
+#### 1.7.4 Adding an exclusion, and the gym↔game parity obligation
+
+The seam is **shared code, not per-archetype code** (the parity convention in
+[§5.1](#51-gym-parity), AH-0MUGZDTFX004RBD1; also stated in
+[`AGENTS.md`](../AGENTS.md#game-architecture-conventions)). Consequently:
+
+- **Every new archetype is wrap-aware by default.** `resolveWrapAwareDefault`
+  returns `true` for any key not in `WRAP_AWARE_EXCLUSION_KEYS`, so a new
+  `Save As…` archetype needs no work to get seam-aware aim and movement.
+- **A new exclusion is data plus documentation, never a fork.** To exclude an
+  archetype, in one change:
+  1. add its key to `WRAP_AWARE_EXCLUSION_KEYS` in `src/core/configDefaults.ts`
+     (the single source of truth) and set `wrapAware: false` on its seed
+     config and CSV row;
+  2. record *why* the classic behaviour needs the walls in a code comment next
+     to the archetype's movement/formation logic (e.g.
+     `src/scenes/gym/core/centipedeFormation.ts`);
+  3. document the divergence in §5.1 as a **documented divergence** with the
+     reason, per the parity convention;
+  4. pin the exclusion with a unit test (the `enemyWrap` / `enemyConfig` suites
+     assert the resolved flag for the shipped seed configs).
+- **Gyms and the game run the same seams.** Seam-aware aim and movement are
+  exercised by `PlayScene` and the affected gym scenes (`GymFodderEnemies` via
+  `GymFormationScene`, `GymLevel`, `GymCentipede`) through the shared helpers
+  above; a gym must never re-implement wrapping, and a disabled feature is the
+  only legitimate difference. The repo-wide duplicate-body / parity guards
+  (`src/scenes/core/CombatScene.equivalence.test.ts`) stay green because the
+  behaviour lives only in `src/scenes/core/`.
+
+Tuning an archetype is therefore a **one-field change**: flip `wrapAware` in
+the CSV (or the gym editor's `wrapAware` checkbox, §8.5) and the game and every
+gym pick up the same behaviour on the next load.
+
 ---
 
 ## 2. Core library architecture
@@ -1324,6 +1445,48 @@ fires the reward then checkpoint hooks exactly once
 (`setMiniBossRewardHook` / `setMiniBossCheckpointHook`, guarded while the
 reward/checkpoint features are absent) before advancing the level.
 
+**Defeat sweep (AH-0MVOFGB6K003YD0Z, GDD §3.3.1).** The defeat frame now runs
+the shared `miniBossDeathSweep` machinery
+(`src/scenes/core/miniBossDeathSweep.ts`) — one implementation, consumed by both
+`PlayScene` and `GymMiniBoss` (no divergent copy; the duplicate-body guard
+covers it):
+
+- **Capture before teardown.** `PlayScene._damageMiniBoss` snapshots the
+  mini-boss's death position and its live `getMinions()` **before**
+  `takeDamage()` (whose lethal blow clears the minions) and before
+  `miniBoss.destroy()`; the sweep targets are those minions plus every live
+  wave-gating escort (`isNonBlockingHazard` entities — asteroids, lane traffic
+  — are excluded and survive).
+- **Planner ⇒ executor.** The planner is pure and Phaser-free
+  (`collectSweepTargets`, `planMiniBossDeathSweep`, `miniBossSweepExtras`) and
+  emits `n` staggered enemy bursts, `max(0, 30 − n)` scattered bursts sampled
+  inside the inset playfield, and exactly 10 bursts anchored on the captured
+  death point (`n + max(0, 30 − n) + 10 ≤ 40` bursts); all randomness comes
+  from the run seed. The thin executor (`spawnMiniBossDeathSweep`) plays them
+  through the shared `spawnExplosionParticles` VFX.
+- **Completion is real animation time.** `spawnExplosionParticles` gained an
+  optional `onComplete` seam; the executor completes when the last burst tween
+  reports, with a `scene.time.delayedCall` watchdog at
+  `plan.completionDelayMs + margin` for scenes whose loop does not tick tweens
+  (the deterministic test harness). Neither signal is a frame count, and a
+  paused scene freezes both identically.
+- **Cosmetic teardown.** Swept enemies are removed with the shared
+  `BaseEnemy.destroySilently()` seam (alive flag cleared, body hidden,
+  force-field bubble cleared, **no** explosion of its own — the sweep supplies
+  the burst) and never route through the reward-bearing `_onEnemyKilled` path:
+  no score, no drops, no kill telemetry.
+- **Deferred finalisation.** `PlayScene._finaliseMiniBossDefeat` runs from the
+  executor's `onComplete`: it opens the reward overlay
+  (`openMiniBossReward`, `miniBossRewardOpen` latch ⇒ exactly one overlay per
+  defeat) and then advances the wave/level accounting exactly once — after the
+  sweep, never mid-display, never twice.
+- **Gym parity.** `GymMiniBoss.explodeRandom()` overrides the generic
+  "destroy one random entity" EXPLODE handler with the same sweep (capturing
+  the minions before the teardown) and exposes `isMiniBossSweepActive()` /
+  `getMiniBossSweepTargets()` so the gym verifies exactly what ships; the gym
+  has no reward overlay or wave accounting, so completion only reports itself
+  on the status line.
+
 ---
 
 ## 4. Known gotchas (browser rendering & conventions)
@@ -1403,7 +1566,10 @@ only legitimate difference is a disabled feature — never a divergent copy.
 Every shared behaviour therefore lives once: the core template methods and
 hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
-`asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`), the shared dispatcher
+`asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`, `enemyWrap`,
+`miniBossDeathSweep` — the mini-boss defeat cascade shared by `PlayScene` and
+`GymMiniBoss`, §3.3 — and `spawnTransit`, the wormhole-transit destination
+rule below), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
 helpers `resolveSpawnRange` / `pickInRange` in `src/core/configTypes.ts`
@@ -1417,6 +1583,66 @@ same input and `dt`. See
 [AGENTS.md § Game Architecture Conventions](../AGENTS.md#game-architecture-conventions)
 for the governing principle (tracked by AH-0MUGZDTFX004RBD1).
 
+**Shared spawn-transit seam.** Where a newly emerged enemy travels is resolved
+once, by `resolveSpawnTransitTarget` in
+[`src/scenes/core/spawnTransit.ts`](../src/scenes/core/spawnTransit.ts)
+(AH-0MVRMHQC9003VDNN). The rule has three branches:
+
+1. **Autonomous movers are exempt.** An entity that owns its motion
+   (`autonomousPositioning`, e.g. the Raider) gets **no** destination: it
+   emerges at the wormhole and its own motion carries it out, so the spawn
+   window never fights its patrol/attack state.
+2. **Orbital entities target their live slot.** An entity exposing the live
+   `formationSlot(baseX, baseY)` seam (the Phaser) travels to that slot, so it
+   tracks the advancing orbit and lands exactly on the ring instead of
+   travelling to the grid line and snapping into place when the spawn window
+   ends.
+3. **Everything else keeps the grid slot.** A non-orbital enemy travels to
+   `base + offset × spacing` — the formation slot it occupies once the spawn
+   window closes.
+
+Each scene owns only the **base** (its formation, drift or live march state)
+and passes it in; the rule itself is defined exactly once. All four spawn
+sites resolve through it: the shipped `PlayScene._spawnEnemy`, the formation
+gyms (`GymFormationScene._spawnFormation`), the level-launch gym
+(`GymLevel.spawnWave`) and the boss gym's phase minions (`GymBoss`, which asks
+for the in-place `transit: false` exemption exactly as the game spawns its
+boss). `GymBotTuning` inherits the seam through `GymLevel`. The helper is
+registered in `EPIC_SHARED_HELPERS` (`CombatScene.equivalence.test.ts`), so a
+further copy fails the suite.
+
+**The level-launch path adopts the rest of the spawn contract.** A wave
+launched from the curve editor — or played in `GymBotTuning` — is a faithful
+preview of the shipped level, so `GymLevel.spawnWave` copies the wave's
+per-enemy `shootEnabled` onto every spawned entity (campaign levels 4+ carry
+`shootEnabled: true`, and `BaseEnemy` defaults to `false`, so omitting the
+hand-off made a launched level silently non-threatening) and drives a `march`
+wave through the shared `createMarchState` / `advanceMarch` block, re-anchoring
+each spawn to the live march base exactly as `PlayScene._spawnEnemy` does
+(AH-0MVRMHSKH0066J9B). Spawning, transit, marching and firing are therefore
+all part of the parity contract: a launched level behaves like the game.
+
+The per-gym verdicts — which shipped objects each gym runs, its spawn seam,
+whether it inherits the shipped start-of-wave/combat code and every retained
+divergence with its reason — are recorded in
+[`docs/GYM_PARITY.md`](./GYM_PARITY.md). The guard tests that enforce this
+convention are `src/scenes/gym/spawnParity.test.ts` (level-launch orbital
+transit, fire cadence and the march block), `src/scenes/gym/levelParity.test.ts`
+(level scaling and supply cadence), `src/scenes/core/CombatScene.equivalence.test.ts`
+(the repo-wide duplicate-body guard) and `src/scenes/core/gymParityDocs.test.ts`
+(the parity matrix and this section's rule text).
+
+**Documented divergence — `march` and `centipede` opt out of seam awareness.**
+The `wrapAware` flag (§1.7) is data, not a code fork: the shared aim maths
+(`aimVectorToTarget`) and post-motion wrap (`applyPostMotionWrapAll`) are the
+same code in the game and in every gym, and the classic set pieces simply
+carry `wrapAware: false`. That is a *disabled feature*, not a divergent copy:
+Space Invaders keeps reversing and dropping at the arena edge and the
+Centipede keeps weaving within bounds, exactly as before the epic. The
+exclusion list lives once, in `WRAP_AWARE_EXCLUSION_KEYS`
+(`src/core/configDefaults.ts`), and the rationale and the process for adding a
+future exclusion are documented in §1.7.3–§1.7.4 (AH-0MV9G3DZ9003P7P8).
+
 The classic-arcade power-up and weapon roster
 ([`CLASSIC_POWERUP_WEAPON_RESEARCH.md`](CLASSIC_POWERUP_WEAPON_RESEARCH.md),
 epic AH-0MV14SO0G0095IJ4) follows the same rule: every behaviour it adds runs
@@ -1426,6 +1652,10 @@ missile-split seams (`src/scenes/core/CombatCoreScene.ts`), the pure
 `AoEDescriptor` (`screenPulse`) pulse, and the shared `_reflectEnemyBullet`
 Force Field seam — so the game and every gym (`GymWeapons`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`) run identical arsenal behaviour.
+The Force Field's bounce-point flash and dedicated `playForceFieldReflectSound`
+cue are emitted inside that same shared branch (AH-0MVRDMMYO002SC5V), and its
+persistent/dimmed bubble is drawn by the single shared `drawForceFieldBubble`
+helper (AH-0MVRDMG0N000Y03Z), so neither can drift between the game and a gym.
 
 **Projectile identity & per-shot feel are shared (per-enemy visuals epic,
 AH-0MV2K5SR0005RTTE).** Every weapon/attack's in-flight look, fire-time
@@ -1444,6 +1674,20 @@ renders the same code-drawn silhouette, muzzle flash and hit feedback in
 classic-arcade gyms — a disabled feature is the only permitted divergence.
 See "Projectile identity & per-shot feel" in this document for the full
 per-attack roster.
+
+**Unmistakable VFX layers are shared, not scene-copies (AH-0MVNTY0700053T9E).** The
+player Phase Shift treatment (`src/vfx/phaseShiftJuice.ts`, including the WebGL
+camera-filter driver in `src/vfx/cameraFilters.ts`) is advanced in exactly one
+place — `CombatCoreScene._updatePhaseShiftJuice` — which `PlayScene`,
+`GymFormationScene` (and its subclasses), `GymPowerUpsCombat` and `GymLevel` all
+consume; the per-enemy emergence treatment is driven by the one shared step
+`updateSpawnEmergence` in `src/vfx/wormholeSpawn.ts` (growth + shimmer in a
+single call, so a scene cannot silently drop one), and the wormhole
+ring/shockwave is registered through the shared `WormholeController` into each
+scene's `wormholeEffects` registry. A scene gets the effect or none of it —
+there is no per-scene layer copy to drift — and the cross-scene equivalence
+suite boots the game and each gym to prove identical outcomes while the ship is
+phased or an enemy is emerging.
 
 **Documented divergence — the Player gym's obstacle course.** `GymPlayer`
 spawns a deterministic set of indestructible obstacles
@@ -1779,6 +2023,7 @@ animated by the shared `FormationGlide` helper
 | `shotPattern` | `EnemyShotPattern` | `'none' \| 'aimed' \| 'spread' \| 'radial' \| 'orbital' \| 'coordinated'` — validated in `src/utils/enemyShotPatterns.ts`. |
 | `movementClass` | `EnemyMovementClass` | `'formation' \| 'diver' \| 'chaser' \| 'patroller' \| 'roamer'` — coarse behavioural movement class for wave-design/balance tooling (AH-0MV29NWI1007NKN7). Validated by `validateEnemyConfig`; an absent/invalid value falls back to `formation` (see §1.4). |
 | `attackClass` | `EnemyAttackClass` | `'contact' \| 'projectile' \| 'beam' \| 'area'` — coarse behavioural attack class; `contact` is contact-only (every enemy still damages on contact). Validated by `validateEnemyConfig`; an absent/invalid value is derived from the effective `shotPattern` (`none` → `contact`, otherwise `projectile`). See §1.4. |
+| `wrapAware` | `boolean?` | Seam-awareness switch (§1.7). **Default `true`** — absent, blank or malformed-absent cells resolve wrap-aware, so seam-aware aim and movement are the out-of-the-box behaviour; an explicit `false` is the only way to opt out. `march` and `centipede` ship `false`. Read through the single `BaseEnemy.wrapAware` accessor — scenes never re-parse it. |
 | `fireInterval` | `number` | ms between volleys. |
 | `shotProbability` | `number` | Fraction `0.0`–`1.0` chance an individual enemy fires per shot cycle; rolled once at the fire decision point, a failed roll consumes the cycle (no bullet, no tell). Seed default `1.0` everywhere except the Swarm (`0.25`). |
 | `bulletSpeed` | `number` | Bullet velocity (px/s). Enemy archetype values were halved by AH-0MUWZ5GST003NMFQ (Scout **90**, Diver **110**, Tank **75**, Phaser **90**, Swarm **90**, Boss **80**, Asteroid **50**, Harvester **50**); because `bulletLifetime` is unchanged, each enemy's effective range (`bulletSpeed × lifetime`) is halved too. The player's `PLAYER_BULLET_SPEED` (350 px/s) is unchanged. |
@@ -1816,11 +2061,20 @@ The CSV files are the **single source of truth** for enemy and ship tuning:
   within it through the **shared** `resolveSpawnRange` / `pickInRange` helpers
   in `src/core/configTypes.ts`; reversed bounds are normalised so `min ≤ max`.
 - **Behavioural classification (AH-0MV29NWI1007NKN7):** `enemy-configs.csv`
-  carries two further columns, `movementClass` and `attackClass`, emitted last in
-  `ENEMY_COLUMN_ORDER`. They are the coarse wave-design groupings documented in
+  carries two further columns, `movementClass` and `attackClass`, emitted near
+  the end of `ENEMY_COLUMN_ORDER` (ahead of `wrapAware`, which was appended
+  after them). They are the coarse wave-design groupings documented in
   §1.4; both are optional for backward compatibility (absent/invalid values fall
   back to the documented defaults via `coerceEnemyConfig`), and the committed
   CSV always carries explicit values.
+- **Seam awareness (AH-0MV9G3DZ9003P7P8):** the `wrapAware` column is emitted
+  **after** `movementClass`/`attackClass`, last in `ENEMY_COLUMN_ORDER`, so
+  legacy rows without it stay byte-compatible on the leading columns and
+  resolve to the documented default. It accepts `true`/`false` (and `1`/`0`);
+  an absent or blank cell resolves to `DEFAULT_WRAP_AWARE` (`true` — the
+  neutral, seam-aware value), and any other value fails validation. The
+  column is documented in the CSV's own `#` header block and the field
+  semantics, exclusions and parity obligation are in §1.7.
 
 Supporting modules:
 
@@ -1941,7 +2195,9 @@ The **editor panel** (`src/scenes/gym/GymFodderEnemies.ts`, plain-DOM under
 `count/spacingX/spacingY/driftSpeed/startX/startY/startXMin/startXMax/startYMin/startYMax/size/bulletSize/fireInterval/shotProbability/bulletSpeed/bulletLifetime/burstCount`,
 colour pickers for `color/bulletColor`, selects for
 `formationKind`/`shotPattern`/`movementClass`/`attackClass` (the last two are
-persisted through the same CSV save path — AH-0MV29NWI1007NKN7),
+persisted through the same CSV save path — AH-0MV29NWI1007NKN7), a
+**`wrapAware` checkbox** (checked = seam-aware, the default; unchecked = the
+bounded classic behaviour — persisted through the same CSV save path, §1.7),
 plus **Save** (overwrite active row in `src/data/enemy-configs.csv` via the dev
 plugin) and **Save As…** (sanitize → validate → duplicate check via
 `listEnemyConfigKeys()`, displayName = raw input; appends a new CSV row).

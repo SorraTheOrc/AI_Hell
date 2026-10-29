@@ -34,6 +34,19 @@ import { EXTRA_LIFE_DROP_ID } from '../../../powerups/types';
 export const SECURE_LIFE_DROP_ID = EXTRA_LIFE_DROP_ID;
 
 /**
+ * The archetype key the game exposes for a boss target. Single-sourced here so
+ * the content profile, the world-model target set and the boss-focus goal all
+ * name the same id (AH-0MVBMESIE003YQ68).
+ *
+ * Both the final boss and every per-level mini-boss arrive at the bot through
+ * this one snapshot slot (`PlayScene.getBoss()` returns `miniBoss ?? boss`), so
+ * one profile covers both. It is deliberately **not** an enum member of the
+ * enemy-factory archetypes: the boss is spawned by its own boss layer, not by
+ * `createEnemyFromConfig`.
+ */
+export const BOSS_ENEMY_ID = 'boss';
+
+/**
  * The shipped content registry consumed by `createCompetentBotBrain()`.
  *
  * Enemy archetypes mirror `createEnemyFromConfig` in `src/entities/`;
@@ -61,6 +74,14 @@ export const COMPETENT_BOT_CONTENT: BotContent = createBotContent({
     // Asteroids are obstacles, not combat targets: the world model partitions
     // them into the asteroid band (AC1).
     { id: 'asteroid', threat: 1, engagementRange: 140, aim: 'direct', asteroidLike: true },
+    // The boss (final boss and per-level mini-bosses alike) is the encounter's
+    // objective: twice the neutral enemy weight, aimed directly. No
+    // `engagementRange` override, so its standoff stays single-sourced in
+    // `./tunables` like every other archetype. The weight is a *relative
+    // enemy-band* value; while the boss is in range the dedicated
+    // `engage-boss` band (see `./goals`) gives it hard priority
+    // (AH-0MVBMESIE003YQ68 · AC1).
+    { id: BOSS_ENEMY_ID, threat: 2, aim: 'direct', asteroidLike: false },
   ],
   drops: [
     // Power-ups, most desirable first (Order of the GDD's utility).

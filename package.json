@@ -17,6 +17,7 @@
     "list:pool": "node scripts/list-capture-pool.mjs",
     "compile:promo": "node scripts/compile-promo.mjs --compile",
     "evaluate": "node scripts/evaluate.mjs",
+    "validate-experience": "node scripts/validate-experience.mjs",
     "capture:install": "playwright install chromium",
     "record": "node scripts/record-session.mjs",
     "analyse": "node scripts/analyse-recording.mjs",

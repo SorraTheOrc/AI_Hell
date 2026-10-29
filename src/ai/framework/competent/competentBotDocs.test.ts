@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { COMPETENT_GOAL_IDS } from './goals';
+
 const DOC_PATH = path.resolve(process.cwd(), 'docs/BOT_FRAMEWORK.md');
 const WORK_ITEM_ID = 'AH-0MUY08WX3000ZEVO';
 
@@ -33,14 +35,10 @@ describe('competent bot is documented (AH-0MUY08WX3000ZEVO)', () => {
   });
 
   it('names every competent goal and behaviour id', () => {
-    for (const id of [
-      'survive',
-      'collect-mineral',
-      'collect-powerup',
-      'engage-enemy',
-      'engage-asteroid',
-      'reposition',
-    ]) {
+    // Derived from the goal registry, so a new goal id (e.g. `engage-boss`,
+    // AH-0MVBMESIE003YQ68) must be documented or this guard fails — the
+    // deliberate docs-guard update for the boss band.
+    for (const id of Object.values(COMPETENT_GOAL_IDS)) {
       expect(doc).toContain(id);
     }
   });

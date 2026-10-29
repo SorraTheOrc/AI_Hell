@@ -195,6 +195,34 @@ describe('Raider entity', () => {
     r.destroy(true);
   });
 
+  it('inherits seam-aware aim through the shared Scout fire seam (no per-class copy)', async () => {
+    const s = await scene();
+    // Raider left, live player far right: the direct line is longer than the
+    // wrap-around route, so a wrap-aware raider fires left out of the seam.
+    const r = make(s, {
+      x: 100,
+      y: 270,
+      patrolSpeed: 0,
+      attackSpeed: 1,
+      commitRange: 2000,
+      shotProbability: 1,
+      rng: () => 0,
+    });
+    expect(r.wrapAware).toBe(true);
+
+    r.setAimTarget(900, 270);
+    r.applyFormationPosition(0, 0, 0.1, 0, 0);
+    expect(r.mode).toBe('attack');
+
+    r.shootEnabled = true;
+    const t0 = 3_000_000;
+    expect(r.tryFireAimedBullet(t0)).toBeNull(); // tell
+    const bullet = r.tryFireAimedBullet(t0 + 600)!;
+    expect(bullet).not.toBeNull();
+    expect(bullet.vx).toBeLessThan(0);
+    r.destroy(true);
+  });
+
   it('passes through other enemies without colliding (GDD §2.6)', async () => {
     const s = await scene();
     const a = make(s, { x: 400, y: 300, rng: () => 0.9 });

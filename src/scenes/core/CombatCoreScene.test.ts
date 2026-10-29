@@ -143,8 +143,14 @@ class BareCoreScene extends CombatCoreScene {
   runTickPlayer(dt: number): void {
     this._tickPlayer(dt);
   }
+  runPlayerFireSuppressed(): boolean {
+    return this.playerFireSuppressed();
+  }
   runUpdateDroneSpawning(dt: number): void {
     this._updateDroneSpawning(dt);
+  }
+  runTeardownRunState(): void {
+    this.teardownRunState();
   }
   /** Drives the four-directional right key for the shared-step tests. */
   pressRight(down: boolean): void {
@@ -646,6 +652,53 @@ describe('CombatCoreScene — shared base class', () => {
     expect(scene.getPlayerBullets()).toEqual([]);
   });
 
+  // ── Run-end fire suppression (AH-0MVCB6LBE007I6R8) ───────────────
+
+  /** Runs the shared player step on a scene that reports a finished run. */
+  class RunOverScene extends StubCoreScene {
+    protected override playerFireSuppressed(): boolean {
+      return true;
+    }
+  }
+
+  it('AC5 — the shared fire-suppression hook defaults to "not suppressed"', async () => {
+    // The default is what keeps every gym (including `GymBoss`) firing after
+    // its own boss dies — the documented gym divergence.
+    const scene = await boot<BareCoreScene>(BareCoreScene);
+    expect(scene.runPlayerFireSuppressed()).toBe(false);
+  });
+
+  it('AC1 — _tickPlayer spawns no bullets and no fire cues while suppressed', async () => {
+    const scene = await boot<RunOverScene>(RunOverScene);
+    scene.addPlayer({ x: 100, y: 100 });
+
+    // Control: the same step on the same stub fires without suppression.
+    const control = await boot<StubCoreScene>(StubCoreScene);
+    control.addPlayer({ x: 100, y: 100 });
+    control.runTickPlayer(1);
+    expect(control.getPlayerBullets().length).toBeGreaterThan(0);
+    expect(control.hooks).toContain('onWeaponFired:cannon');
+
+    scene.runTickPlayer(1);
+    expect(scene.getPlayerBullets()).toEqual([]);
+    expect(scene.hooks).not.toContain('onWeaponFired:cannon');
+  });
+
+  it('AC4 — the shared beat clock keeps advancing while fire is suppressed', async () => {
+    const scene = await boot<RunOverScene>(RunOverScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+
+    expect(scene.getBeatClock().now()).toBe(0);
+    scene.runTickPlayer(0.5);
+    expect(scene.getBeatClock().now()).toBeCloseTo(500, 5);
+    scene.runTickPlayer(0.25);
+    expect(scene.getBeatClock().now()).toBeCloseTo(750, 5);
+
+    // The clock is shared with the player from the first suppressed frame, so
+    // the beat-modulated thruster hum / explosion grid stay on the run's grid.
+    expect(player.getBeatClock()).toBe(scene.getBeatClock());
+  });
+
   // ── AC4 — drop collection ─────────────────────────────────────────
 
   it('AC4 — _collectDrop applies a power-up, dispatches the hook and starts the absorb animation', async () => {
@@ -1006,5 +1059,64 @@ describe('CombatCoreScene — collector-drone spawn wiring (AH-0MVBMQ04X0051002)
     scene.addPlayer({ x: 320, y: 240 });
     scene.runUpdateDroneSpawning(1 / 60);
     expect(scene.getDrones()).toHaveLength(1);
+  });
+});
+
+// ── Scene lifecycle: shared effect teardown (AH-0MVNTY0700053T9E) ────
+
+/**
+ * The Phase Shift treatment owns a camera-filter driver that a plain overlay
+ * registry sweep cannot reach. A scene `SHUTDOWN` must therefore go through
+ * the treatment's own `destroy()` — otherwise a WebGL camera keeps the phase
+ * distortion (and its controllers) into a restarted scene.
+ */
+describe('CombatCoreScene — SHUTDOWN releases the shared Phase Shift treatment (AH-0MVNTY0700053T9E)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  async function boot(): Promise<StubCoreScene> {
+    const booted = await bootScene([StubCoreScene]);
+    games.push(booted);
+    return booted.scene as unknown as StubCoreScene;
+  }
+
+  it('destroys the treatment (and therefore clears its camera filters) on teardown', async () => {
+    const scene = await boot();
+    const destroy = vi.fn();
+    const overlayDestroy = vi.fn();
+    // The overlay registry may still hold a leftover; teardown must destroy
+    // that too, but the filter-owning driver is only reachable via destroy().
+    (scene as unknown as { phaseShiftJuice: unknown }).phaseShiftJuice = {
+      destroy,
+    };
+    (scene as unknown as { phaseShiftEffects: unknown[] }).phaseShiftEffects = [
+      { destroy: overlayDestroy },
+    ];
+
+    scene.runTeardownRunState();
+
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(overlayDestroy).toHaveBeenCalledTimes(1);
+    expect(
+      (scene as unknown as { phaseShiftJuice: unknown }).phaseShiftJuice,
+    ).toBeNull();
+    expect(
+      (scene as unknown as { phaseShiftEffects: unknown[] }).phaseShiftEffects,
+    ).toHaveLength(0);
+  });
+
+  it('a second teardown is safe — no double destroy, no throw', async () => {
+    const scene = await boot();
+    const destroy = vi.fn();
+    (scene as unknown as { phaseShiftJuice: unknown }).phaseShiftJuice = {
+      destroy,
+    };
+
+    scene.runTeardownRunState();
+    expect(() => scene.runTeardownRunState()).not.toThrow();
+    expect(destroy).toHaveBeenCalledTimes(1);
   });
 });

@@ -327,3 +327,79 @@ describe('contract — cue to asset mapping', () => {
     expect(recipes.size).toBeGreaterThan(30);
   });
 });
+
+// ── Dedicated Orbital Strike cue (AH-0MVS2SZBY004HJ2D) ───────────────
+//
+// TEST-FIRST (AH-0MVS2SW8V007ZBJQ, parent AC2): the strike cue must go
+// through the manifested ToneForge pipeline — a callable, headless-safe
+// `playOrbitalStrikeSound` export wired to the shared master gain, never an
+// ad-hoc synthesis (the manifest-coverage tests above keep newly shipped
+// exports honest once the cue lands).
+
+describe('contract — dedicated orbital-strike cue (AH-0MVS2SZBY004HJ2D)', () => {
+  it('playOrbitalStrikeSound is a manifested, headless-safe cue export', () => {
+    // Non-literal lookup so the missing export does not break `tsc --noEmit`.
+    const cue = (effects as unknown as Record<string, unknown>)
+      .playOrbitalStrikeSound;
+    expect(cue, 'playOrbitalStrikeSound is not exported').toBeTypeOf('function');
+    expect(
+      getCueAsset('playOrbitalStrikeSound'),
+      'playOrbitalStrikeSound is missing from CUE_MANIFEST',
+    ).toBeDefined();
+
+    // Headless (no AudioContext): silent no-op, never a throw.
+    expect(() => (cue as CueFn)()).not.toThrow();
+
+    // Headful: plays once through the single shared context + master gain,
+    // so volume/mute govern it like every other player cue.
+    installRecordingContext();
+    invokeCue('playOrbitalStrikeSound');
+    expect(RecordingAudioContext.instances).toHaveLength(1);
+    expect(masterGain()).toBeDefined();
+  });
+});
+
+// ── Dedicated Force Field reflect cue (AH-0MVRDMMYO002SC5V) ───────────
+//
+// Producer decision Q2 = c (parent AH-0MVBKT2WO001AR14): a reflection
+// sounds its own "bounce", distinct from a bullet destruction, a ricochet
+// tick, a hull hit and the enemy force-field break. Unlike
+// `playEnemyForceFieldBreakSound` (a deliberate alias of an existing baked
+// cue) this cue owns a dedicated ToneForge recipe and rendered asset, so it
+// can never collapse into another cue's sound.
+
+describe('contract — dedicated Force Field reflect cue (AH-0MVRDMMYO002SC5V)', () => {
+  it('playForceFieldReflectSound is a manifested baked cue with its own recipe and seed', () => {
+    const cue = (effects as unknown as Record<string, unknown>)
+      .playForceFieldReflectSound;
+    expect(cue, 'playForceFieldReflectSound is not exported').toBeTypeOf('function');
+
+    const entry = getCueAsset('playForceFieldReflectSound');
+    expect(
+      entry,
+      'playForceFieldReflectSound is missing from CUE_MANIFEST',
+    ).toBeDefined();
+    expect(entry!.delivery).toBe('baked');
+    expect(entry!.recipe).toBe('aihell-forcefield-reflect');
+    expect(entry!.seeds).toEqual([32276]);
+
+    // Not an alias: no other cue shares this recipe, and the seed is unique
+    // across the manifest, so the rendered asset cannot be reused silently.
+    const sharingRecipe = CUE_MANIFEST.filter(
+      (other) => other.recipe === entry!.recipe,
+    ).map((other) => other.cue);
+    expect(sharingRecipe).toEqual(['playForceFieldReflectSound']);
+    const allSeeds = CUE_MANIFEST.flatMap((other) => other.seeds);
+    expect(allSeeds.filter((seed) => seed === 32276)).toHaveLength(1);
+
+    // Headless (no AudioContext): silent no-op, never a throw.
+    expect(() => (cue as CueFn)()).not.toThrow();
+
+    // Headful: plays once through the single shared context + master gain,
+    // so volume/mute govern it like every other cue.
+    installRecordingContext();
+    invokeCue('playForceFieldReflectSound');
+    expect(RecordingAudioContext.instances).toHaveLength(1);
+    expect(masterGain()).toBeDefined();
+  });
+});

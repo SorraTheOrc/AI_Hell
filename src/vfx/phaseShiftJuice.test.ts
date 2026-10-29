@@ -28,9 +28,11 @@ import {
   PHASE_SHIFT_SPLIT_OFFSET,
   PhaseShiftJuice,
   resolvePhaseShiftJuiceParams,
+  type PhaseShiftJuiceOptions,
   type PhaseShiftJuiceParams,
 } from './phaseShiftJuice';
 import * as phaseShiftJuiceModule from './phaseShiftJuice';
+import { PLAYER_DEATH_FLASH_COLOR } from './playerDeathJuice';
 
 /** Minimal bootable scene for the VFX helpers. */
 class VfxStubScene extends Phaser.Scene {
@@ -59,6 +61,22 @@ class VfxStubScene extends Phaser.Scene {
 // child 1 predicted are now real members of `PhaseShiftJuiceParams`, so the
 // erased sub-type is just a readable alias over the real interface.
 interface PredictedJuiceParams extends PhaseShiftJuiceParams {}
+
+/**
+ * Params with the unmistakable layers (flash / vignette / distortion /
+ * sustained filter) explicitly disabled, so the *base* layer-set tests below
+ * keep pinning the pre-existing dim + split + activation-surge composition
+ * exactly (5 overlays) both before and after the unmistakable treatment lands.
+ * The unmistakable default set (7 overlays) is pinned by the contract block at
+ * the end of this file.
+ */
+function baseOnlyParams(): PhaseShiftJuiceParams {
+  return {
+    ...resolvePhaseShiftJuiceParams(),
+    flashEnabled: false,
+    vignetteEnabled: false,
+  } as unknown as PhaseShiftJuiceParams;
+}
 
 describe('resolvePhaseShiftJuiceParams — pure parameter model', () => {
   it('maps every tunable and toggle verbatim', () => {
@@ -134,12 +152,12 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     const scene = await boot();
     const shake = spyShake(scene);
     const registry: Phaser.GameObjects.GameObject[] = [];
-    const juice = new PhaseShiftJuice(scene, { registry });
-    const params = resolvePhaseShiftJuiceParams();
+    const params = baseOnlyParams();
+    const juice = new PhaseShiftJuice(scene, { registry, params });
 
     expect(juice.update(true, 0.016)).toBe(true);
     expect(juice.isActive).toBe(true);
-    // 1 dim + 2 split + 2 activation-burst overlays (default toggles on).
+    // 1 dim + 2 split + 2 activation-burst overlays (base set, new layers off).
     expect(juice.activeOverlays).toHaveLength(5);
     expect(registry).toHaveLength(5);
     // Regression: Phase Shift must not shake the camera (player-death overlap).
@@ -156,7 +174,7 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     const scene = await boot();
     const shake = spyShake(scene);
     const registry: Phaser.GameObjects.GameObject[] = [];
-    const juice = new PhaseShiftJuice(scene, { registry });
+    const juice = new PhaseShiftJuice(scene, { registry, params: baseOnlyParams() });
 
     juice.update(true, 0.016);
     const first = [...juice.activeOverlays];
@@ -188,7 +206,7 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     const scene = await boot();
     const shake = spyShake(scene);
     const registry: Phaser.GameObjects.GameObject[] = [];
-    const juice = new PhaseShiftJuice(scene, { registry });
+    const juice = new PhaseShiftJuice(scene, { registry, params: baseOnlyParams() });
 
     juice.update(true, 0.016);
     juice.update(false, 0.016);
@@ -202,10 +220,15 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     const scene = await boot();
     const shake = spyShake(scene);
     const registry: Phaser.GameObjects.GameObject[] = [];
-    const params = resolvePhaseShiftJuiceParams();
     const juice = new PhaseShiftJuice(scene, {
       registry,
-      params: { ...params, dimEnabled: false, splitEnabled: false },
+      params: {
+        ...resolvePhaseShiftJuiceParams(),
+        dimEnabled: false,
+        splitEnabled: false,
+        flashEnabled: false,
+        vignetteEnabled: false,
+      } as unknown as PhaseShiftJuiceParams,
     });
 
     juice.update(true, 0.016);
@@ -220,7 +243,12 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     const registry: Phaser.GameObjects.GameObject[] = [];
     const juice = new PhaseShiftJuice(scene, {
       registry,
-      params: { ...resolvePhaseShiftJuiceParams(), splitEnabled: false },
+      params: {
+        ...resolvePhaseShiftJuiceParams(),
+        splitEnabled: false,
+        flashEnabled: false,
+        vignetteEnabled: false,
+      } as unknown as PhaseShiftJuiceParams,
     });
 
     juice.update(true, 0.016);
@@ -276,11 +304,12 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     const mod = phaseShiftJuiceModule as unknown as Record<string, unknown>;
     const params = resolvePhaseShiftJuiceParams() as unknown as PredictedJuiceParams;
 
-    // Vivid split: alpha raised from 0.10 toward ~0.20, offset from 3 px toward ~6 px.
-    expect(params.splitAlpha).toBeGreaterThanOrEqual(0.15);
-    expect(params.splitAlpha).toBeLessThanOrEqual(0.3);
-    expect(params.splitOffset).toBeGreaterThanOrEqual(5);
-    expect(params.splitOffset).toBeLessThanOrEqual(9);
+    // Vivid split: alpha raised from 0.10 (→ 0.45) and offset from 3 px
+    // (→ 14 px) by the unmistakable treatment (AH-0MVNTXWJP004DBCW).
+    expect(params.splitAlpha).toBeGreaterThanOrEqual(0.4);
+    expect(params.splitAlpha).toBeLessThanOrEqual(0.6);
+    expect(params.splitOffset).toBeGreaterThanOrEqual(12);
+    expect(params.splitOffset).toBeLessThanOrEqual(20);
     // Both still map verbatim to their exported constants.
     expect(params.splitAlpha).toBe(mod.PHASE_SHIFT_SPLIT_ALPHA);
     expect(params.splitOffset).toBe(mod.PHASE_SHIFT_SPLIT_OFFSET);
@@ -345,6 +374,8 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
         ...resolvePhaseShiftJuiceParams(),
         burstEnabled: false,
         shimmerEnabled: false,
+        flashEnabled: false,
+        vignetteEnabled: false,
       } as unknown as PhaseShiftJuiceParams,
     });
     gated.update(true, 0.016);
@@ -355,4 +386,425 @@ describe('PhaseShiftJuice — edge-triggered overlays', () => {
     expect(juice.activeOverlays).toHaveLength(0);
     expect(registry).toHaveLength(0);
   });
+});
+
+// ── Unmistakable player treatment — test-first contract ─────────────
+//
+// Contract owner: AH-0MVNTXSQ1000QO12. Implemented by the sibling item
+// AH-0MVNTXWJP004DBCW, which flipped every `it.fails` below to a plain `it`
+// when the treatment landed (a leftover `it.fails` fails the suite).
+//
+// Pinned treatment (approach C of AH-0MVNTR89P0022JIU: aggressive activation
+// edge / soft sustained state, never camera shake):
+//
+// Rising edge, in the same frame, exactly once — seven overlays:
+//   1 dim           (existing)                NORMAL, params.dimColor / dimAlpha
+//   2 split         (existing, widened)       ADD,    params.splitColor* / splitAlpha at ±splitOffset
+//   2 surge pair    (existing, strengthened)  ADD,    params.burstAlpha at ±burstOffset
+//   1 flash         (new)                     full-screen rectangle in
+//                                             params.flashColor / flashAlpha that
+//                                             decays to 0 within flashDurationMs
+//                                             of deterministic dt ticks
+//   1 vignette      (new)                     a Graphics drawing
+//                                             params.vignetteBands stroked
+//                                             rectangles inward from the screen
+//                                             edge in params.vignetteColor /
+//                                             vignetteAlpha
+// plus the camera-filter distortion burst + sustained filter layers, driven
+// through an injected `PhaseFilterDriver` (see `cameraFilters.test.ts`).
+//
+// Sustained state: the split oscillation / flicker / colour pulse keep running
+// and the filter driver's `update(dt)` is ticked every frame — no new game
+// objects, no per-frame allocation.
+//
+// Falling edge: every overlay destroyed, every filter controller cleared
+// through `driver.clear()`, the registry emptied. Re-activation creates a
+// fresh seven-overlay set (no leaked or duplicated layer).
+//
+// Renderer fallback: a scene whose renderer is not WebGL (the headless boot
+// used here) gets the overlay-only layers and never touches a camera filter
+// API. `camera.shake` is never called in any phase.
+
+/** The camera-filter driver surface the treatment consumes (test-first). */
+interface PhaseFilterDriver {
+  readonly supported: boolean;
+  applyBurst(): boolean;
+  applySustained(): boolean;
+  update(dtSeconds: number): void;
+  clear(): void;
+}
+
+/** The new unmistakable tunables / toggles the params model must map. */
+interface UnmistakableParams {
+  flashColor?: number;
+  flashAlpha?: number;
+  flashDurationMs?: number;
+  flashEnabled?: boolean;
+  vignetteColor?: number;
+  vignetteAlpha?: number;
+  vignetteBands?: number;
+  vignetteBandWidth?: number;
+  vignetteEnabled?: boolean;
+  distortionEnabled?: boolean;
+  sustainedFilterEnabled?: boolean;
+}
+
+/** Juice options widened with the injected filter driver (test-first). */
+interface UnmistakableJuiceOptions {
+  registry?: Phaser.GameObjects.GameObject[];
+  params?: PhaseShiftJuiceParams;
+  filters?: PhaseFilterDriver;
+}
+
+/** Reads a (not yet declared) exported tunable by name. */
+function tunable(name: string): unknown {
+  return (phaseShiftJuiceModule as unknown as Record<string, unknown>)[name];
+}
+
+/** Reads a numeric tunable, failing loudly when it is missing. */
+function numberTunable(name: string): number {
+  const value = tunable(name);
+  expect(typeof value, `${name} must be an exported number`).toBe('number');
+  return value as number;
+}
+
+/** Resolves the params through the unmistakable contract shape. */
+function unmistakableParams(): PhaseShiftJuiceParams & UnmistakableParams {
+  return resolvePhaseShiftJuiceParams() as PhaseShiftJuiceParams & UnmistakableParams;
+}
+
+/** Every live overlay, seen as the loosest object shape the assertions need. */
+type LiveOverlay = Phaser.GameObjects.GameObject & {
+  alpha: number;
+  x: number;
+  fillColor?: number;
+};
+
+/** The live overlays widened for generic assertions. */
+function liveOverlays(juice: PhaseShiftJuice): LiveOverlay[] {
+  return juice.activeOverlays as unknown as LiveOverlay[];
+}
+
+/** The default unmistakable layer-set size (see the contract above). */
+const UNMISTAKABLE_OVERLAY_COUNT = 7;
+
+/** Records the filter-driver calls the treatment makes. */
+function makeFakeFilterDriver(supported = true): {
+  driver: PhaseFilterDriver;
+  calls: { burst: number; sustained: number; updates: number[]; clears: number };
+} {
+  const calls: { burst: number; sustained: number; updates: number[]; clears: number } = {
+    burst: 0,
+    sustained: 0,
+    updates: [],
+    clears: 0,
+  };
+  const driver: PhaseFilterDriver = {
+    supported,
+    applyBurst() {
+      calls.burst += 1;
+      return supported;
+    },
+    applySustained() {
+      calls.sustained += 1;
+      return supported;
+    },
+    update(dt: number) {
+      calls.updates.push(dt);
+    },
+    clear() {
+      calls.clears += 1;
+    },
+  };
+  return { driver, calls };
+}
+
+describe('resolvePhaseShiftJuiceParams — unmistakable tunables (AH-0MVNTXSQ1000QO12)', () => {
+  it('maps every new tunable and toggle verbatim', () => {
+    const params = unmistakableParams();
+
+    expect(params.flashColor).toBe(numberTunable('PHASE_SHIFT_FLASH_COLOR'));
+    expect(params.flashAlpha).toBe(numberTunable('PHASE_SHIFT_FLASH_ALPHA'));
+    expect(params.flashDurationMs).toBe(numberTunable('PHASE_SHIFT_FLASH_DURATION_MS'));
+    expect(params.flashEnabled).toBe(tunable('PHASE_SHIFT_ENABLE_FLASH'));
+    expect(params.vignetteColor).toBe(numberTunable('PHASE_SHIFT_VIGNETTE_COLOR'));
+    expect(params.vignetteAlpha).toBe(numberTunable('PHASE_SHIFT_VIGNETTE_ALPHA'));
+    expect(params.vignetteBands).toBe(numberTunable('PHASE_SHIFT_VIGNETTE_BANDS'));
+    expect(params.vignetteBandWidth).toBe(numberTunable('PHASE_SHIFT_VIGNETTE_BAND_WIDTH'));
+    expect(params.vignetteEnabled).toBe(tunable('PHASE_SHIFT_ENABLE_VIGNETTE'));
+    expect(params.distortionEnabled).toBe(tunable('PHASE_SHIFT_ENABLE_DISTORTION'));
+    expect(params.sustainedFilterEnabled).toBe(tunable('PHASE_SHIFT_ENABLE_SUSTAINED_FILTER'));
+  });
+
+  it('enables every unmistakable layer by default', () => {
+    const params = unmistakableParams();
+
+    expect(params.flashEnabled).toBe(true);
+    expect(params.vignetteEnabled).toBe(true);
+    expect(params.distortionEnabled).toBe(true);
+    expect(params.sustainedFilterEnabled).toBe(true);
+  });
+
+  it('raises the split and activation-surge magnitudes to the unmistakable range', () => {
+    const params = unmistakableParams();
+
+    // Widened chromatic split: α 0.20 → ≈0.45, offset 6 px → ≈14 px.
+    expect(params.splitAlpha).toBeGreaterThanOrEqual(0.4);
+    expect(params.splitAlpha).toBeLessThanOrEqual(0.6);
+    expect(params.splitOffset).toBeGreaterThanOrEqual(12);
+    expect(params.splitOffset).toBeLessThanOrEqual(20);
+    // Stronger/wider activation surge: α 0.35 → ≈0.7, offset 12 px → ≈26 px.
+    expect(params.burstAlpha).toBeGreaterThanOrEqual(0.6);
+    expect(params.burstAlpha).toBeLessThanOrEqual(0.85);
+    expect(params.burstOffset).toBeGreaterThanOrEqual(20);
+    expect(params.burstOffset).toBeLessThanOrEqual(32);
+    // Both still map verbatim to their exported constants.
+    expect(params.splitAlpha).toBe(numberTunable('PHASE_SHIFT_SPLIT_ALPHA'));
+    expect(params.splitOffset).toBe(numberTunable('PHASE_SHIFT_SPLIT_OFFSET'));
+    expect(params.burstAlpha).toBe(numberTunable('PHASE_SHIFT_BURST_ALPHA'));
+    expect(params.burstOffset).toBe(numberTunable('PHASE_SHIFT_BURST_OFFSET'));
+  });
+
+  it('uses a flash / vignette palette distinct from the player-death flash', () => {
+    const params = unmistakableParams();
+
+    expect(params.flashColor).not.toBe(PLAYER_DEATH_FLASH_COLOR);
+    expect(params.vignetteColor).not.toBe(PLAYER_DEATH_FLASH_COLOR);
+    // Magnitudes stay non-zero and bounded so the layers actually read.
+    expect(params.flashAlpha).toBeGreaterThan(0);
+    expect(params.flashAlpha).toBeLessThanOrEqual(0.8);
+    expect(params.flashDurationMs).toBeGreaterThanOrEqual(120);
+    expect(params.flashDurationMs).toBeLessThanOrEqual(400);
+    expect(params.vignetteAlpha).toBeGreaterThan(0);
+    expect(params.vignetteAlpha).toBeLessThanOrEqual(0.7);
+    expect(params.vignetteBands).toBeGreaterThanOrEqual(3);
+    expect(params.vignetteBandWidth).toBeGreaterThanOrEqual(8);
+  });
+});
+
+describe('PhaseShiftJuice — unmistakable activation edge and teardown', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<Phaser.Scene> {
+    booted = await bootScene([VfxStubScene]);
+    return booted.scene;
+  }
+
+  /** Builds the juice with an injected fake filter driver (test seat). */
+  function juiceWithFilters(
+    scene: Phaser.Scene,
+    driver: PhaseFilterDriver,
+    params?: PhaseShiftJuiceParams,
+  ): { juice: PhaseShiftJuice; registry: Phaser.GameObjects.GameObject[] } {
+    const registry: Phaser.GameObjects.GameObject[] = [];
+    const options = {
+      registry,
+      filters: driver,
+      ...(params ? { params } : {}),
+    } as unknown as UnmistakableJuiceOptions;
+    return {
+      juice: new PhaseShiftJuice(scene, options as unknown as PhaseShiftJuiceOptions),
+      registry,
+    };
+  }
+
+  it('creates the full seven-layer activation set exactly once on the rising edge', async () => {
+    const scene = await boot();
+    const shake = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
+    const { driver, calls } = makeFakeFilterDriver();
+    const { juice, registry } = juiceWithFilters(scene, driver);
+    const params = unmistakableParams();
+
+    expect(juice.update(true, 0.016)).toBe(true);
+    expect(liveOverlays(juice)).toHaveLength(UNMISTAKABLE_OVERLAY_COUNT);
+    expect(registry).toHaveLength(UNMISTAKABLE_OVERLAY_COUNT);
+
+    // The camera-filter burst and the sustained layer fire once, in the same frame.
+    expect(calls.burst).toBe(1);
+    expect(calls.sustained).toBe(1);
+
+    // The full-screen flash and the vignette are part of the same layer set.
+    const flash = liveOverlays(juice).find((o) => o.fillColor === params.flashColor);
+    expect(flash).toBeDefined();
+    expect(flash?.alpha).toBeGreaterThan(0);
+    expect(
+      liveOverlays(juice).some((o) => o instanceof Phaser.GameObjects.Graphics),
+    ).toBe(true);
+
+    // A second update in the same episode duplicates nothing.
+    const applied = liveOverlays(juice);
+    juice.update(true, 0.016);
+    expect(liveOverlays(juice)).toHaveLength(UNMISTAKABLE_OVERLAY_COUNT);
+    expect(liveOverlays(juice)).toEqual(applied);
+    expect(calls.burst).toBe(1);
+    expect(calls.sustained).toBe(1);
+    expect(registry).toHaveLength(UNMISTAKABLE_OVERLAY_COUNT);
+    // No camera shake in any phase (player-death distinctness).
+    expect(shake).not.toHaveBeenCalled();
+  });
+
+  it('decays the activation flash to zero within its documented duration', async () => {
+    const scene = await boot();
+    const { driver } = makeFakeFilterDriver();
+    const { juice } = juiceWithFilters(scene, driver);
+    const params = unmistakableParams();
+    const flashDurationMs = params.flashDurationMs ?? 0;
+
+    juice.update(true, 0.016);
+    const flash = liveOverlays(juice).find((o) => o.fillColor === params.flashColor);
+    expect(flash).toBeDefined();
+    expect(flash!.alpha).toBeGreaterThan(0);
+
+    // Deterministic ticks totalling the documented duration.
+    const ticks = 8;
+    for (let i = 0; i < ticks; i += 1) {
+      juice.update(true, flashDurationMs / 1000 / ticks);
+    }
+
+    expect(flash!.alpha).toBeLessThanOrEqual(0.01);
+    // The flash object is reused, never re-created mid-episode.
+    expect(liveOverlays(juice)).toContain(flash);
+  });
+
+  it('ticks the sustained filter layer on every steady update', async () => {
+    const scene = await boot();
+    const { driver, calls } = makeFakeFilterDriver();
+    const { juice } = juiceWithFilters(scene, driver);
+
+    juice.update(true, 0.016);
+    juice.update(true, 0.5);
+    juice.update(true, 0.25);
+
+    // Every steady tick advances the sustained layer with the frame delta.
+    expect(calls.updates.length).toBeGreaterThanOrEqual(2);
+    expect(calls.updates.slice(-2)).toEqual([0.5, 0.25]);
+    expect(calls.burst).toBe(1);
+    expect(calls.sustained).toBe(1);
+  });
+
+  it('drives the sustained split oscillation and flicker without allocating objects', async () => {
+    const scene = await boot();
+    const { driver } = makeFakeFilterDriver();
+    const { juice } = juiceWithFilters(scene, driver);
+
+    juice.update(true, 0.016);
+    const applied = liveOverlays(juice);
+    const initialXs = applied.map((o) => o.x);
+    const initialAlphas = applied.map((o) => o.alpha);
+
+    for (let i = 0; i < 12; i += 1) juice.update(true, 0.05);
+
+    // Object-count and identity stability across N ticks (no per-frame allocation).
+    expect(liveOverlays(juice)).toHaveLength(UNMISTAKABLE_OVERLAY_COUNT);
+    expect(liveOverlays(juice)).toEqual(applied);
+    // The split "breathes": positions and alphas both change over time.
+    expect(liveOverlays(juice).map((o) => o.x)).not.toEqual(initialXs);
+    expect(liveOverlays(juice).map((o) => o.alpha)).not.toEqual(initialAlphas);
+  });
+
+  it('honours the per-layer toggles of the new layers', async () => {
+    const scene = await boot();
+    const { driver, calls } = makeFakeFilterDriver();
+    // All four new layers off: the pre-existing five-overlay set only.
+    const disabled = {
+      ...unmistakableParams(),
+      flashEnabled: false,
+      vignetteEnabled: false,
+      distortionEnabled: false,
+      sustainedFilterEnabled: false,
+    } as unknown as PhaseShiftJuiceParams;
+    const { juice } = juiceWithFilters(scene, driver, disabled);
+
+    juice.update(true, 0.016);
+
+    expect(liveOverlays(juice)).toHaveLength(5);
+    expect(calls.burst).toBe(0);
+    expect(calls.sustained).toBe(0);
+    expect(calls.updates).toHaveLength(0);
+  });
+
+  it('tears the whole unmistakable set down exactly and re-activates fresh', async () => {
+    const scene = await boot();
+    const shake = vi
+      .spyOn(scene.cameras.main, 'shake')
+      .mockImplementation(() => scene.cameras.main as never);
+    const { driver, calls } = makeFakeFilterDriver();
+    const { juice, registry } = juiceWithFilters(scene, driver);
+
+    juice.update(true, 0.016);
+    const first = liveOverlays(juice);
+    const destroySpies = first.map((o) => vi.spyOn(o, 'destroy'));
+
+    expect(juice.update(false, 0.016)).toBe(false);
+    expect(liveOverlays(juice)).toHaveLength(0);
+    expect(registry).toHaveLength(0);
+    expect(calls.clears).toBe(1);
+    for (const spy of destroySpies) expect(spy).toHaveBeenCalledTimes(1);
+
+    // A second expiry/destroy is a safe no-op (no double teardown).
+    juice.destroy();
+    for (const spy of destroySpies) expect(spy).toHaveBeenCalledTimes(1);
+
+    // Re-activation produces a fresh, single layer set — no duplicates, no leak.
+    juice.update(true, 0.016);
+    const second = liveOverlays(juice);
+    expect(second).toHaveLength(UNMISTAKABLE_OVERLAY_COUNT);
+    expect(registry).toHaveLength(UNMISTAKABLE_OVERLAY_COUNT);
+    expect(second.some((overlay) => first.includes(overlay))).toBe(false);
+    expect(calls.burst).toBe(2);
+    expect(calls.sustained).toBe(2);
+    expect(shake).not.toHaveBeenCalled();
+  });
+
+  it(
+    'falls back to the overlay-only layers on a non-WebGL renderer and never touches a filter API',
+    async () => {
+      const scene = await boot();
+      // The headless harness boots a canvas renderer. Present a filter list
+      // anyway: the probe must refuse it and nothing may be added to it.
+      const touched = vi.fn(() => {
+        throw new Error('camera filter API must not be touched on a non-WebGL renderer');
+      });
+      // The stub mirrors the surface Phaser's `Camera.destroy` teardown needs
+      // (`destroy`, `remove`, `clear`) so game teardown stays clean.
+      const stubFilterList = () => ({
+        list: [] as unknown[],
+        addPixelate: touched,
+        addBarrel: touched,
+        remove: touched,
+        clear: touched,
+        destroy: () => undefined,
+      });
+      const internal = stubFilterList();
+      const external = stubFilterList();
+      Object.defineProperty(scene.cameras.main, 'filters', {
+        value: { internal, external },
+        configurable: true,
+      });
+
+      const registry: Phaser.GameObjects.GameObject[] = [];
+      const juice = new PhaseShiftJuice(scene, { registry });
+
+      expect(() => juice.update(true, 0.016)).not.toThrow();
+      // Overlay-only: the full seven overlay layers still apply...
+      expect(liveOverlays(juice)).toHaveLength(UNMISTAKABLE_OVERLAY_COUNT);
+      // ...and no camera filter was added (or even probed destructively).
+      expect(internal.list).toHaveLength(0);
+      expect(external.list).toHaveLength(0);
+      expect(touched).not.toHaveBeenCalled();
+
+      expect(() => {
+        for (let i = 0; i < 5; i += 1) juice.update(true, 0.05);
+        juice.update(false, 0.016);
+      }).not.toThrow();
+      expect(touched).not.toHaveBeenCalled();
+    },
+  );
 });

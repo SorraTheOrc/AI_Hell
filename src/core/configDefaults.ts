@@ -28,6 +28,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Scout',
     movementClass: 'formation',
     attackClass: 'projectile',
+    wrapAware: true,
     formationKind: 'v',
     count: 6,
     spacingX: 26,
@@ -59,6 +60,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Diver',
     movementClass: 'diver',
     attackClass: 'projectile',
+    wrapAware: true,
     formationKind: 'diver',
     count: 6,
     spacingX: 30,
@@ -90,6 +92,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Tank',
     movementClass: 'formation',
     attackClass: 'projectile',
+    wrapAware: true,
     formationKind: 'rect',
     count: 6,
     spacingX: 50,
@@ -121,6 +124,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Phaser',
     movementClass: 'formation',
     attackClass: 'projectile',
+    wrapAware: true,
     formationKind: 'orbital',
     count: 4,
     spacingX: 80,
@@ -152,6 +156,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Swarm',
     movementClass: 'formation',
     attackClass: 'projectile',
+    wrapAware: true,
     formationKind: 'swarm',
     count: 15,
     spacingX: 28,
@@ -185,6 +190,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Boss Swarm',
     movementClass: 'formation',
     attackClass: 'projectile',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -216,6 +222,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Asteroid',
     movementClass: 'roamer',
     attackClass: 'contact',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -252,6 +259,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Invader',
     movementClass: 'formation',
     attackClass: 'projectile',
+    wrapAware: false,
     formationKind: 'march',
     count: 11,
     spacingX: 26,
@@ -288,6 +296,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Capturer',
     movementClass: 'formation',
     attackClass: 'beam',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -328,6 +337,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Grunt Horde',
     movementClass: 'chaser',
     attackClass: 'contact',
+    wrapAware: true,
     formationKind: 'swarm',
     count: 16,
     spacingX: 30,
@@ -365,6 +375,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Ghost (Chase)',
     movementClass: 'chaser',
     attackClass: 'contact',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -396,6 +407,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Ghost (Ambush)',
     movementClass: 'chaser',
     attackClass: 'contact',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -427,6 +439,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Ghost (Flank)',
     movementClass: 'chaser',
     attackClass: 'contact',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -458,6 +471,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Ghost (Wander)',
     movementClass: 'chaser',
     attackClass: 'contact',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -496,6 +510,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Raider',
     movementClass: 'patroller',
     attackClass: 'projectile',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -534,6 +549,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Orbital Strike',
     movementClass: 'roamer',
     attackClass: 'area',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -565,6 +581,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Harvester',
     movementClass: 'roamer',
     attackClass: 'contact',
+    wrapAware: true,
     formationKind: 'single',
     count: 1,
     spacingX: 0,
@@ -604,6 +621,7 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
     displayName: 'Lane Traffic',
     movementClass: 'roamer',
     attackClass: 'contact',
+    wrapAware: true,
     // `rect` so the gym displays the lane as a row of `count` hazards (the
     // game's `LaneTrafficSpawner` places the same count per lane). A `single`
     // formation would show only one member in the gym, hiding the lane.
@@ -638,6 +656,32 @@ export const DEFAULT_ENEMY_CONFIGS: Record<string, EnemyConfig> = {
 };
 
 export const DEFAULT_ENEMY_KEYS = Object.keys(DEFAULT_ENEMY_CONFIGS);
+
+/**
+ * Explicit seed exclusions for the data-driven seam-awareness flag
+ * (AH-0MV9G3DZ9003P7P8, AC1): the classic arcade set pieces keep their
+ * bounded, wall-respecting behaviour. `march` (Space Invaders) reverses and
+ * drops at the arena edge; `centipede` (a linked chain with **no** CSV row or
+ * seed config — see `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §8.5) weaves
+ * within bounds. This list is the single source of truth for the exclusion:
+ * no other module hard-codes an archetype key list, and scenes read the
+ * resolved value from the one `BaseEnemy.wrapAware` accessor.
+ */
+export const WRAP_AWARE_EXCLUSION_KEYS: readonly string[] = ['march', 'centipede'];
+
+/**
+ * Resolves the seeded seam-awareness default for an archetype key
+ * (AH-0MV9G3DZ9003P7P8, AC1). Every archetype is wrap-aware **except** the
+ * explicit {@link WRAP_AWARE_EXCLUSION_KEYS}; an unknown key (a new Save As
+ * archetype) is therefore seam-aware out of the box. This is the fallback the
+ * config resolver uses for archetypes with no seed config (e.g. `centipede`),
+ * so the exclusion lives in exactly one place.
+ *
+ * @param key — the archetype's stable slug key.
+ */
+export function resolveWrapAwareDefault(key: string): boolean {
+  return !WRAP_AWARE_EXCLUSION_KEYS.includes(key);
+}
 
 /** Built-in ship defaults — sourced from the leaf `constants.ts` values. */
 export const DEFAULT_CONFIG: ShipConfig = {
