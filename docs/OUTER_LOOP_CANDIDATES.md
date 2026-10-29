@@ -3,12 +3,14 @@
 > **Work item:** AH-0MVTE4EOS008RMQ7 — Add Candidate D (Hangar War) and the discovery-progression rules
 > **Parent:** AH-0MVNSSY9L001P1CC — We need an outer loop
 > **Slices (complete):** AH-0MVRNIWHG0099ZS3 (framing + guard), AH-0MVRNJ0SL000RNHR (candidates + comparison), AH-0MVRNJ6BB009IGZX (cross-links + verification)
-> **Status:** Design only, not scheduled
+> **Status:** **Design only, not scheduled — the producer chose Candidate D (2026-10-29).** Build-out: AH-0MVU3VNJI00066YE
 
 This document is the decision-ready catalogue of candidate **outer loops** for
-AI_Hell. Four candidates are written up on the same footing so the producer can
-compare them, choose one, and have it written into the Game Design Document
-(GDD) with confidence:
+AI_Hell. Four candidates are written up on the same footing. The producer
+**chose Candidate D — Hangar War on 2026-10-29**; the choice is recorded in the
+[Producer decision record](#producer-decision-record), summarised in GDD §8, and
+scheduled by work item **AH-0MVU3VNJI00066YE** (build the hangar slice first,
+then the first hex ring).
 
 > **Design only.** Nothing in this document is scheduled, and none of it
 > changes gameplay: no gameplay code, no persistence-schema change and no new
@@ -74,12 +76,21 @@ options, and each candidate states how it complies in its own **Progression
 rules** subsection.
 
 **Rule 1 — start small, discover the rest.** Every version starts the player
-with a **reduced set of power-ups and upgrades**: the opening ship carries a
-minimal weapon and no permanent upgrades. Scarcity is the point — new power-ups,
-weapons and hulls arrive through play (mini-boss rewards, salvage, codex
-knowledge) instead of being handed out on first boot, so the middle loop keeps
-surprising a player 5 hours in. *Cost:* the first ten minutes are sparser than
-the current game, so the opening level must still be fun with the reduced kit.
+with a **reduced set of power-ups and upgrades**: the fleet the player brings
+into a run is minimal, so new hulls, starting weapons and modifiers arrive
+through play instead of being handed out on first boot, and the middle loop keeps
+surprising a player hours in.
+
+**Scope of the reduction — what "reduced" does *and* does not mean.** The
+reduction is in the **fleet the player owns before a run**, never in the shipped
+run itself. A run still uses the whole shipped middle loop unchanged: the **six
+shared loadout slots** (§4.4, any mix of power-up and weapon kinds) plus the two
+**slot-free** kinds, **Extra Life** and **Mystery UFO** — so a player still builds
+a **variety of six upgrades plus Extra Life and Mystery UFO** inside a
+deployment. Stripping that variety to create the outer loop's scarcity would
+gut the middle loop, which is the opposite of the intent. *Cost:* the first ten
+minutes are sparser in *fleet* terms (one hull, one starting weapon), so the
+opening hex must still be fun flown with the shipped run kit.
 
 **Rule 2 — the boss wields it before you own it.** Mini-bosses can **introduce
 new upgrades and weapon types** by using them against the player. An upgrade or
@@ -97,7 +108,7 @@ before it reads as a reward.
 | **Candidate A — Contested Regions / Home World** | Every new ship leaves home with **no upgrades** (A already rotates unupgraded ships onto the line) | A region's mini-boss demonstrates the region's signature weapon; the stationed-ship upgrade is earned by beating it |
 | **Candidate B — Salvage Fleet** | The hangar starts with **one basic hull and one starting weapon**; everything else is bought | A mini-boss's weapon appears in the hangar tree only after that mini-boss has been defeated wielding it |
 | **Candidate C — Signal Decode** | The codex starts **empty**, so the campaign starts plain and mutates as it is decoded | The boss's phases *are* the demonstration; each decoded rule unlocks the behaviour/weapon the player has just survived |
-| **Candidate D — Hangar War** | The hangar starts as in B; the first hex is taken with that bare loadout | A hex boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
+| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, one starting weapon, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | A hex boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
 
 ---
 
@@ -823,9 +834,40 @@ replace storage behind the same injectable interface (§6.6).
 
 - **Target run length:** one hex deployment ≈ the existing arcade run (≈5
   simulated minutes), unchanged — the hangar and the ring are outside the run.
-- **Hours-to-win:** **MVP (one ring) ≈10–15 hours** — Candidate B's 8–12 hours
-  plus the ring — and roughly **+2–4 hours per additional ring**, so the shipped
-  campaign is deliberately extendable rather than finite.
+- **Hours-to-win — an evening per ring, not a grind.** The **one-ring MVP targets
+  40–60 minutes** for a semi-skilled player: six ≈5-minute deployments (≈30
+  minutes) plus build/salvage time on the hangar and the cost of a few lost
+  attempts. **Ring 2 is larger — 12 hexes** — so it lands at ≈60 minutes of
+  deployments plus 10–40 minutes of builds and losses (**≈70–100 minutes**).
+  Ring *n* holds **6 × *n* hexes**, so every later ring takes progressively
+  longer: the campaign is deliberately **extendable rather than finite**, and the
+  growth comes from ring size rather than from repeating one fixed tune.
+
+### Playstyles supported
+
+The loop must reward different ways of playing rather than one correct route:
+
+- **The strategist.** Bosses, their strengths and weaknesses, and the weapon each
+  hex grants are **known ahead** of a deployment (see *Known-ahead intel and
+  anti-checklist mitigations*), so the player can plan "take that hex → I get the
+  weapon that counters the boss threatening my home hex" instead of learning the
+  map by losing to it.
+- **The grinder.** Five of the six hexes grant strength — salvage, hull
+  upgrades, better bots — so grinding the weaker hexes first makes the ring's
+  hard hex safer. A player can spend as long as they like growing the fleet
+  before committing to the push.
+- **The completer.** Every hex has a boss, but **only one of the six holds the
+  ring's new weapon — and that is the hardest hex in the ring.** A completer
+  takes it early and pushes straight into the next ring (faster, but risking
+  losses and an under-defended rear), or secures the entire ring first (slower,
+  safer).
+- **The rusher.** Pushing into the next ring with the current one only partly
+  held is legal and is the aggressive line: the frontier keeps pressuring the
+  hexes left behind, so speed is bought with risk.
+
+No style is strictly dominant — the aggressive line is **faster but riskier** and
+slow grinding is **safer but slower**, which is the intended trade (the 40–60
+minute ring budget is where that trade has to stay live; see *Effort and risk*).
 
 ### UI / scene surface
 
@@ -887,24 +929,82 @@ replace storage behind the same injectable interface (§6.6).
   - **Power creep** — a large fleet trivialises every hex. Mitigation: the ring
     grows in difficulty with ring depth, and each boss-granted weapon arrives
     only after it has been beaten.
-  - **The ring is a checklist** — six identical hexes are six chores. Mitigation:
-    vary hex bosses and granted weapons so each capture teaches something.
+  - **The ring is a checklist** — six identical hexes are six chores, and a
+    chore is not a war. Mitigation is **active, not cosmetic**: each hex
+    publishes its boss, that boss's **strengths and weaknesses**, its aggression
+    and the **exact weapon or upgrade it grants**, so the ring is a set of
+    **strategic choices** made before a life is spent; the single weapon hex is
+    the hardest in the ring, so one capture is materially different. Post-MVP
+    content (special missions, upgraded bots with special skills) is recorded in
+    *Known-ahead intel and anti-checklist mitigations*.
+  - **One playstyle dominating** — if rushing is always right, grinding is
+    busywork; if grinding is always right, the aggressive line is a trap. The
+    ring timing budget exists to keep both lines alive, and the choice of when to
+    take the weapon hex is the lever.
+
+### Known-ahead intel and anti-checklist mitigations
+
+The ring's biggest design risk is that it reads as a **checklist**: six identical
+hexes are six chores. The armoury against that is **information first**, then
+content.
+
+**MVP — make the choice informed (in scope).** Before committing to a deployment
+the player can see, for every hex: which **boss** holds it, what that boss is
+**strong and weak against**, the **aggression** it is defended at, and exactly
+**which weapon or upgrade it grants**. The ring stops being a queue and becomes a
+set of **strategic weapon grants** — "I need the weapon that is strong against
+the boss threatening my home hex, so I take *that* hex next" is a plan the player
+can form before spending a life — and the one-weapon hex becomes a real decision
+rather than a surprise.
+
+Going **beyond** strategic weapon grants is **out of scope for the MVP**. The
+ideas below are recorded so the loop has room to grow; they are **design only**
+and none is scheduled:
+
+- **Special missions.** Optional objective runs (escort a salvage convoy, hold a
+  hex for N frontier ticks, kill a boss without losing a life) that pay a
+  **special reward** instead of salvage — for example a **new hull type with
+  extra hit points or extra upgrade bays**, a one-run modifier, or an extra
+  defending bot.
+- **Upgraded bots with special skills.** Defending bots that are **more effective
+  against certain enemy or boss types** — an anti-swarm bot, an anti-armour bot,
+  a bot that repairs a neighbour's defence rating — so what the player leaves
+  behind is a composition decision, not a number.
+- **Hex personalities.** Per-hex environmental or enemy twists (a nebula that
+  slows projectiles, a boss that summons reinforcements) so no two captures play
+  the same.
+- **Contracts and bounties.** Posted objectives with a deadline in frontier
+  ticks, giving the map its own rhythm between runs.
+- **Ring landmarks.** One-off set-piece hexes per ring (a fortress hex needing two
+  captures, a cache hex that pays out instead of granting a weapon).
+
+Every idea above is judged by the same test as the loop itself: does it give the
+player a **choice** — what to take, what to leave, what to risk — rather than one
+more box to tick?
 
 ### Minimal first slice
 
 **Candidate B's MVP plus one ring of hexes**: the hangar from B (one extra hull,
 three unlockable starting weapons, one banked currency, one threat tier) plus a
 **single ring of six hexes** around the hangar, with the algorithmic defence
-resolver, one frontier tick that can retake a hex, and one boss-granted weapon.
-If "take a hex, leave a bot, buy a hull, retake what the AI stole" already feels
-like a war worth fighting, more rings can follow; if it does not, B alone stands
-(the slice is a strict superset of B's, so nothing is wasted).
+resolver, one frontier tick that can retake a hex, known-ahead boss/weapon intel
+for the ring, and **one boss-granted weapon on the ring's hardest hex**. The
+slice is budgeted at **40–60 minutes of play for a semi-skilled player**, so "the
+ring is a checklist" is answered by the plan the player forms before each
+deployment, not by volume. If "take a hex, leave a bot, buy a hull, retake what
+the AI stole" already feels like a war worth fighting, more rings can follow; if
+it does not, B alone stands (the slice is a strict superset of B's, so nothing is
+wasted).
 
 ### Progression rules
 
-- **Rule 1 — reduced starting kit.** The hangar starts as B's does — one basic
-  hull, one starting weapon, no modifiers — and the *first* hex is taken with
-  that bare loadout, so the fleet's range is earned outward from nothing.
+- **Rule 1 — reduced starting kit.** The **fleet** starts as B's does — one basic
+  hull, one starting weapon, no hangar modifiers — and the *first* hex is taken
+  with that bare fleet, so the fleet's range is earned outward from nothing. The
+  **run is not reduced**: it keeps the shipped **six shared loadout slots** plus
+  the two slot-free kinds, **Extra Life** and **Mystery UFO**, so the opening
+  deployment is the game players already know and the scarcity lives in what the
+  hangar owns between deployments.
 - **Rule 2 — the boss wields it first.** A hex boss demonstrates the hex's new
   weapon or power-up against the player; defeating it both **captures the hex**
   and **adds the entry to the hangar**, where it is then bought with salvage.
@@ -927,7 +1027,7 @@ one for those rows (called out in each cell).
 | Reuse of shipped systems | **Medium–High** — checkpoint, minerals/levels, curves, mini-boss rewards; the region war itself is all-new | **High** — checkpoint moments, minerals/levels, mini-boss rewards, curves, run unchanged | **Medium** — mini-boss/boss fragments, curves; mutations are new content | **High** — B's reusable set in full, plus the run unchanged; the ring is the only new surface |
 | New-system cost (High = expensive) | **High** — region graph, faction war, autonomous defence, onslaught | **Medium** — hangar economy, hulls/loadouts | **Medium–High** — codex + a real gameplay effect per decoded rule | **Medium** — B's hangar economy plus a *small* ring layer (map, frontier clock, algorithmic defence resolver), because defence and accrual are resolved from stored numbers rather than simulated |
 | Persistence complexity (High = complex) | **High** — map + ships + factions + onslaught state | **Medium** — banked balance + unlock flags | **Medium** — fragments + codex + decoded rules | **Medium** — hangar + ring in one versioned key; no simulation state to serialise |
-| Session-length fit | **Medium** — the campaign can inflate a sitting; risk to the arcade run | **High** — one run stays a deployment; meta is outside the run | **High** — run shape preserved; meta is a menu | **High** — a hex deployment is exactly the existing run; the ring is meta play |
+| Session-length fit | **Medium** — the campaign can inflate a sitting; risk to the arcade run | **High** — one run stays a deployment; meta is outside the run | **High** — run shape preserved; meta is a menu | **High** — a hex deployment is exactly the existing run, and a whole ring is an evening (**40–60 minutes** for the one-ring MVP) |
 | Legibility of progress | **Medium** — a map is legible if the UI is good, but faction/ship bookkeeping can be opaque | **High** — "you own X" is unmistakable | **Medium** — the codex reads as a list; "what have I learned" needs careful UI | **High** — two visible facts: the hexes you hold (a shape on screen) and the hulls you own (a list); a defence report explains any loss |
 | Gym / bot testability | **Medium** — the most simulation to expose; autonomous defence needs a harness | **High** — pure economy functions | **High** — pure codex functions, but every mutation must be exercised in a gym | **High** — pure economy *and* a pure defence resolver; the defending bot never has to be flown, so a demo cannot stall in defence |
 | Risk to the shipped campaign (High = risky) | **High** — replaces the run with a region campaign; may gut the 10-level campaign | **Low** — run unchanged; meta wraps it; the final boss stays | **Medium** — mutates the campaign; risks inconsistent or unfair runs | **Medium** — the run is unchanged (B's safety) and the boss stays, but hexes can be *lost* between runs (a front-loading frustration risk) and the boss becomes a recurring milestone rather than a single terminus |
@@ -989,9 +1089,10 @@ outer loop and nothing is wasted.
    than dismissed — its mechanics live on inside D, and a larger map is D's
    natural expansion.
 
-> The recommendation is a design judgement, not a decision: the producer owns
-> the choice, and the "Producer decision record" below is deliberately left
-> pending.
+> The recommendation was a design judgement; the producer has since **chosen
+> Candidate D — Hangar War (2026-10-29)**, recorded in the [Producer decision
+> record](#producer-decision-record) and scheduled by work item
+> **AH-0MVU3VNJI00066YE**.
 
 ## Considered but not selected
 
@@ -1016,11 +1117,14 @@ a one-line deferral reason each, so the pool can be revisited later:
 
 | Candidate | Decision | Date | Notes |
 |-----------|----------|------|-------|
-| Candidate A — Contested Regions / Home World | pending | — | — |
-| Candidate B — Salvage Fleet | pending | — | — |
-| Candidate C — Signal Decode | pending | — | — |
-| Candidate D — Hangar War | pending | — | Recommended; expected shipping order is B's MVP first, then the ring |
+| Candidate A — Contested Regions / Home World | not selected | 2026-10-29 | Superseded by D, which keeps A's territory axis with an algorithmic spine and a much smaller first slice |
+| Candidate B — Salvage Fleet | not selected as a standalone loop | 2026-10-29 | Shipped as the **first slice** of D (the hangar); remains the standalone fallback if the ring disappoints |
+| Candidate C — Signal Decode | not selected | 2026-10-29 | Strong fiction fit, but every decoded rule is new content and campaign mutation carries fairness risk |
+| Candidate D — Hangar War | **accepted — chosen** | 2026-10-29 | Chosen by the producer. Build-out: **AH-0MVU3VNJI00066YE** (hangar slice first, then the first hex ring). Ring timing set at **40–60 minutes** for the one-ring MVP, with ring 2 at 12 hexes; boss/weapon strength **known ahead** is MVP; special missions and upgraded bots are post-MVP |
 
-The producer's choice is recorded above once made. Writing the chosen loop into
-the GDD as playable specification is a **follow-on work item**; this document
-does not pre-empt that decision.
+The producer's choice is recorded above. Writing the chosen loop into the GDD as
+playable specification is the **follow-on work item**
+**AH-0MVU3VNJI00066YE**; GDD §8 now records the choice and the design
+adjustments agreed at the decision (ring timing, known-ahead intel, supported
+playstyles, and the clarification that the shipped run loadout — six slots plus
+Extra Life and Mystery UFO — is untouched).

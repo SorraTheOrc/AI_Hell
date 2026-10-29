@@ -2089,24 +2089,63 @@ Robotron **smart bomb weapon form**, the **Tempest Superzapper**, the
 recorded with a deferral reason each in the research document's "considered but
 not selected" section.
 
-**Outer loop (long-term progression).** The game has an inner loop (seconds:
-flying, dodging, destroying) and a middle loop (a run: minerals → hold-full
-power-up/weapon choices → levelled effects), but **no outer loop**: nothing
-persists between runs except the leaderboard (§5), player settings and a single
-run checkpoint (§6.6), and game over is final (§4.6). Four decision-ready
-candidates — **Contested Regions / Home World** (the producer's proposal),
-**Salvage Fleet**, **Signal Decode** and **Hangar War** (A's war wrapped around
-B's hangar) — are outlined on the same footing, compared across agreed criteria
-and ranked, with the producer's choice left pending, in
+**Outer loop (long-term progression) — Candidate D chosen.** The game has an
+inner loop (seconds: flying, dodging, destroying) and a middle loop (a run:
+minerals → hold-full power-up/weapon choices → levelled effects), but **no outer
+loop**: nothing persists between runs except the leaderboard (§5), player
+settings and a single run checkpoint (§6.6), and game over is final (§4.6). Four
+candidates were outlined on the same footing in
 [`OUTER_LOOP_CANDIDATES.md`](./OUTER_LOOP_CANDIDATES.md) (AH-0MVNSSY9L001P1CC,
-AH-0MVTE4EOS008RMQ7). That document carries two progression rules common to every
-candidate — a reduced starting kit so power is discovered through play, and
-mini-bosses that introduce a weapon the player must first defeat and then may
-use — recommends **Candidate D — Hangar War** (shipped as Candidate B's MVP plus
-one ring), and is **design only, not scheduled**: no candidate's gameplay,
-persistence-schema or scene implementation is specified here, and this GDD gains
-no playable specification until the producer chooses a loop (a follow-on work
-item).
+AH-0MVTE4EOS008RMQ7) and the producer **chose Candidate D — Hangar War** on
+2026-10-29: a hex frontier around the hangar (Contested Regions' war wrapped
+around Salvage Fleet's hangar), shipped as Candidate B's MVP plus one ring, with
+Candidate B remaining the standalone fallback. The choice is recorded in that
+document's *Producer decision record*, and the build is scheduled by work item
+**AH-0MVU3VNJI00066YE** (hangar slice first, then the first hex ring).
+
+Candidate D's loop, in brief: the player is surrounded by AI on a hex grid,
+attacks a weak neighbouring hex, collects salvage, defeats its boss to gain a new
+kind of power-up or weapon in the hangar, and leaves a bot behind to defend the
+hex. Border aggression rises between runs and can retake hexes unless the player
+defeats the attacking neighbour; the map grows in rings. Hex defence, mineral
+accrual and the aggression tick are **algorithmic resolutions over stored
+strength numbers**, not simulated battles. Two rules apply to every candidate and
+carry into the build: a **reduced fleet** (power is discovered through play) and
+**bosses that demonstrate a weapon before granting it** (defeat it, then use it).
+
+Design decisions agreed with the decision, carried by the build item:
+
+- **Ring timing is an evening's play, not a grind.** The **one-ring MVP is
+targeted at 40–60 minutes** for a semi-skilled player — six ≈5-minute
+deployments (≈30 minutes) plus builds, salvage and a few losses. **Ring 2 is
+larger at 12 hexes** (≈60 minutes of deployments plus 10–40 minutes of builds and
+losses, so ≈70–100 minutes), and ring *n* holds 6*n* hexes, so later rings take
+progressively longer. The campaign is therefore extendable rather than finite.
+- **Boss and weapon strength are known ahead.** Before committing, the player sees
+each hex's boss, its strengths and weaknesses, its aggression and exactly which
+weapon or upgrade it grants, so the ring supports **strategy** ("take that hex for
+the weapon that counters the boss threatening my home hex") instead of being a
+checklist.
+- **Different playstyles are all viable.** Every hex has a boss, but **only one of
+the six grants the ring's new weapon and it is the hardest hex**: players may take
+it early and push into the next ring, risking losses and an exposed rear, or
+**grind** the weaker hexes to secure the ring first. Strategists, grinders,
+completers and rushers each have a line, and no line is strictly dominant.
+- **The shipped run loadout is untouched.** The *fleet* starts minimal (one basic
+hull, one starting weapon, no hangar modifiers), but a run keeps the shipped
+middle loop in full — the **six** shared loadout slots plus the two slot-free
+kinds, **Extra Life** and **Mystery UFO**. The outer loop's scarcity lives in
+what the hangar owns between deployments, never in stripping the run.
+- **Post-MVP mitigation backlog (design intent only).** Beyond known-ahead intel:
+**special missions** paying special rewards (e.g. a new hull type with extra hit
+points or extra upgrade bays), **upgraded bots** with special skills that are more
+effective against certain enemy or boss types, per-hex personalities, contracts
+and ring landmarks — each judged on whether it adds a choice rather than a chore.
+
+This section records the **decision and the design intent only**: it is not a
+playable specification, and no candidate's gameplay, persistence-schema or scene
+implementation is specified here. The specification and implementation land
+through AH-0MVU3VNJI00066YE.
 
 ---
 
