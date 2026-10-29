@@ -159,34 +159,50 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(level?.setup?.seed).toBe(42);
   });
 
-  // TEST-FIRST (AH-0MVRMFMJP0070KTS): F4 (AH-0MVRMFRSO004H9JM) replaced the
-  // generic showcase example with the seven-beat excitement-curve arc; the
-  // marker is back to `it`.
-  it('keeps the seven-beat arc as its opening scenes and adds gym-family coverage', () => {
+  // AH-0MVTNTHTI0041QIF split the shipped configs: `examples/scenes.json` is
+  // the gym-family showcase and `examples/teaserVideoScript.json` is the
+  // seven-beat teaser, which records the SHIPPED GAME (bot-driven, no gym
+  // chrome) and therefore targets `PlayScene` only.
+  it('ships the gym-family showcase with a setup on every entry', () => {
     const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
     const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
-    // The shipped example opens with the scripted-video arc: seven beats, each
-    // carrying the `setup` that realises it (no generic showcase entries).
     expect(parsed.length).toBeGreaterThanOrEqual(8);
     expect(parsed.every((scene) => scene.setup !== undefined)).toBe(true);
-    expect(parsed.slice(0, 7).map((scene) => scene.target)).toEqual([
-      'GymLevel',
-      'GymLevel',
-      'GymLevel',
-      'GymLevel',
-      'GymMiniBoss',
-      'GymLevel',
-      'GymBoss',
-    ]);
-    // AH-0MVRMI0Q7001KG4Y: the remainder covers every gym scene, parameterised
-    // ones included, so the example is also the copy-paste gym-scenario guide.
+    // No teaser entries are duplicated into the gym-family file.
+    expect(parsed.some((scene) => scene.target === 'PlayScene')).toBe(false);
     const covered = new Set(parsed.map((scene) => scene.target));
     for (const key of [
-      ...WATCHABLE_GYM_SCENE_KEYS,
-      ...PARAMETERISED_GYM_SCENE_KEYS,
+      'GymBotTuning',
+      'GymCentipede',
+      'GymCurveSequencer',
+      'GymFodderEnemies',
+      'GymMinerals',
+      'GymPlayer',
+      'GymPowerUpLeveling',
+      'GymPowerUpsCombat',
+      'GymPowerUpsUtility',
+      'GymWeaponLeveling',
+      'GymWeapons',
     ]) {
       expect(covered, `${key} has no example entry`).toContain(key);
     }
+  });
+
+  it('ships the seven-beat teaser as game-scene beats with launch data', () => {
+    const teaserPath = path.resolve(
+      process.cwd(),
+      'examples/teaserVideoScript.json',
+    );
+    const parsed = parseSceneConfig(fs.readFileSync(teaserPath, 'utf8'));
+    expect(parsed).toHaveLength(7);
+    expect(parsed.every((scene) => scene.target === 'PlayScene')).toBe(true);
+    // Every beat names its campaign level and start position; the finale starts
+    // at the boss encounter so its death can land on camera.
+    for (const scene of parsed) {
+      expect(typeof scene.level).toBe('number');
+      expect(scene.startWave ?? 1).toBeGreaterThanOrEqual(1);
+    }
+    expect(parsed[parsed.length - 1].startBoss).toBe(true);
   });
 
   it('documents the generated-level PlayScene target and its fields', () => {

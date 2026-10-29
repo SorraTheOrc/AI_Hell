@@ -1,307 +1,16 @@
 {
   "scenes": [
     {
-      "target": "GymLevel",
-      "playMs": 2000,
-      "captureMs": 8000,
-      "label": "Opening spectacle — maxed arsenal",
-      "setup": {
-        "level": {
-          "level": 7,
-          "name": "Opening Spectacle",
-          "waves": [
-            {
-              "groups": [
-                { "enemyKey": "scout", "formation": "v", "count": 12, "spacingX": 30, "spacingY": 22, "startX": 180, "startY": 140 },
-                { "enemyKey": "diver", "formation": "diver", "count": 10, "spacingX": 24, "spacingY": 26, "startX": 480, "startY": 120 },
-                { "enemyKey": "swarm", "formation": "swarm", "count": 10, "spacingX": 24, "spacingY": 20, "startX": 720, "startY": 150 }
-              ],
-              "shootEnabled": true
-            },
-            {
-              "groups": [
-                { "enemyKey": "tank", "formation": "rect", "count": 8, "spacingX": 50, "spacingY": 44, "startX": 220, "startY": 200 },
-                { "enemyKey": "scout", "formation": "v", "count": 10, "spacingX": 28, "spacingY": 20, "startX": 520, "startY": 130 },
-                { "enemyKey": "swarm", "formation": "swarm", "count": 12, "spacingX": 24, "spacingY": 18, "startX": 760, "startY": 240 }
-              ],
-              "shootEnabled": true
-            },
-            {
-              "groups": [
-                { "enemyKey": "phaser", "formation": "orbital", "count": 6, "spacingX": 80, "spacingY": 80, "startX": 480, "startY": 200 },
-                { "enemyKey": "diver", "formation": "diver", "count": 10, "spacingX": 24, "spacingY": 28, "startX": 220, "startY": 180 },
-                { "enemyKey": "swarm", "formation": "swarm", "count": 12, "spacingX": 24, "spacingY": 18, "startX": 720, "startY": 200 }
-              ],
-              "shootEnabled": true
-            }
-          ]
-        },
-        "startWave": 1,
-        "player": {
-          "heading": -90,
-          "weapons": [],
-          "timedWeapons": [],
-          "weaponLevels": {
-            "spread": 5,
-            "dual": 4,
-            "rapid": 5,
-            "wave_laser": 3,
-            "ricochet": 2,
-            "nova": 4
-          }
-        },
-        "powerUps": {
-          "magnet": 3,
-          "mineral_scoop": 3,
-          "shield": 2
-        },
-        "seed": 1101
-      }
-    },
-    {
-      "target": "GymLevel",
-      "playMs": 2000,
-      "captureMs": 10000,
-      "label": "Humble origins — default cannon, hold-full pay-off",
-      "setup": {
-        "level": {
-          "level": 1,
-          "name": "Humble Origins",
-          "waves": [
-            {
-              "groups": [
-                { "enemyKey": "scout", "formation": "v", "count": 6, "spacingX": 34, "spacingY": 24, "startX": 300, "startY": 170 },
-                { "enemyKey": "asteroid", "formation": "swarm", "count": 8, "spacingX": 30, "spacingY": 26, "startX": 500, "startY": 230 }
-              ],
-              "shootEnabled": false
-            },
-            {
-              "groups": [
-                { "enemyKey": "scout", "formation": "v", "count": 8, "spacingX": 32, "spacingY": 22, "startX": 300, "startY": 160 },
-                { "enemyKey": "asteroid", "formation": "swarm", "count": 10, "spacingX": 30, "spacingY": 26, "startX": 520, "startY": 220 }
-              ],
-              "shootEnabled": false
-            },
-            {
-              "groups": [
-                { "enemyKey": "scout", "formation": "v", "count": 10, "spacingX": 30, "spacingY": 22, "startX": 300, "startY": 150 },
-                { "enemyKey": "asteroid", "formation": "swarm", "count": 12, "spacingX": 30, "spacingY": 26, "startX": 520, "startY": 220 }
-              ],
-              "shootEnabled": false
-            }
-          ]
-        },
-        "startWave": 1,
-        "player": {
-          "heading": -90,
-          "weapons": ["cannon"],
-          "timedWeapons": [],
-          "weaponLevels": {}
-        },
-        "powerUps": {
-          "magnet": 5,
-          "mineral_scoop": 5
-        },
-        "mineralReward": "mineral_scoop",
-        "seed": 2202
-      }
-    },
-    {
-      "target": "GymLevel",
-      "playMs": 2000,
-      "captureMs": 7000,
-      "label": "First steps up — three slots at level 1",
-      "setup": {
-        "level": {
-          "level": 3,
-          "name": "First Steps Up",
-          "waves": [
-            {
-              "groups": [
-                { "enemyKey": "scout", "formation": "v", "count": 6, "spacingX": 34, "spacingY": 24, "startX": 300, "startY": 160 },
-                { "enemyKey": "diver", "formation": "diver", "count": 6, "spacingX": 24, "spacingY": 28, "startX": 560, "startY": 160 }
-              ],
-              "shootEnabled": false
-            },
-            {
-              "groups": [
-                { "enemyKey": "scout", "formation": "v", "count": 8, "spacingX": 30, "spacingY": 22, "startX": 300, "startY": 150 },
-                { "enemyKey": "swarm", "formation": "swarm", "count": 8, "spacingX": 24, "spacingY": 20, "startX": 620, "startY": 200 }
-              ],
-              "shootEnabled": false
-            },
-            {
-              "groups": [
-                { "enemyKey": "diver", "formation": "diver", "count": 8, "spacingX": 24, "spacingY": 28, "startX": 360, "startY": 160 },
-                { "enemyKey": "swarm", "formation": "swarm", "count": 8, "spacingX": 24, "spacingY": 20, "startX": 660, "startY": 200 }
-              ],
-              "shootEnabled": false
-            }
-          ]
-        },
-        "startWave": 1,
-        "player": {
-          "heading": -90,
-          "weapons": ["spread", "dual", "rapid"],
-          "timedWeapons": [],
-          "weaponLevels": {}
-        },
-        "powerUps": {},
-        "seed": 3303
-      }
-    },
-    {
-      "target": "GymLevel",
-      "playMs": 2000,
-      "captureMs": 7000,
-      "label": "Escalation — five slots at levels 1-2",
-      "setup": {
-        "level": {
-          "level": 4,
-          "name": "Escalation",
-          "waves": [
-            {
-              "groups": [
-                { "enemyKey": "scout", "formation": "v", "count": 8, "spacingX": 30, "spacingY": 22, "startX": 160, "startY": 150 },
-                { "enemyKey": "diver", "formation": "diver", "count": 8, "spacingX": 24, "spacingY": 28, "startX": 480, "startY": 130 },
-                { "enemyKey": "swarm", "formation": "swarm", "count": 8, "spacingX": 24, "spacingY": 20, "startX": 760, "startY": 160 }
-              ],
-              "shootEnabled": true
-            },
-            {
-              "groups": [
-                { "enemyKey": "tank", "formation": "rect", "count": 8, "spacingX": 50, "spacingY": 44, "startX": 220, "startY": 200 },
-                { "enemyKey": "scout", "formation": "v", "count": 8, "spacingX": 28, "spacingY": 20, "startX": 560, "startY": 140 },
-                { "enemyKey": "swarm", "formation": "swarm", "count": 8, "spacingX": 24, "spacingY": 18, "startX": 760, "startY": 240 }
-              ],
-              "shootEnabled": true
-            },
-            {
-              "groups": [
-                { "enemyKey": "diver", "formation": "diver", "count": 10, "spacingX": 24, "spacingY": 28, "startX": 240, "startY": 180 },
-                { "enemyKey": "swarm", "formation": "swarm", "count": 10, "spacingX": 24, "spacingY": 18, "startX": 700, "startY": 200 },
-                { "enemyKey": "tank", "formation": "rect", "count": 6, "spacingX": 50, "spacingY": 44, "startX": 440, "startY": 240 }
-              ],
-              "shootEnabled": true
-            }
-          ]
-        },
-        "startWave": 1,
-        "player": {
-          "heading": -90,
-          "weapons": ["spread", "dual", "rapid"],
-          "timedWeapons": [],
-          "weaponLevels": {
-            "wave_laser": 2,
-            "ricochet": 2
-          }
-        },
-        "powerUps": {},
-        "seed": 4404
-      }
-    },
-    {
-      "target": "GymMiniBoss",
-      "playMs": 500,
-      "captureMs": 8000,
-      "label": "Mini-boss — escort and death",
-      "setup": {
-        "player": {
-          "heading": -90,
-          "weapons": ["spread", "dual", "rapid", "broadside"],
-          "timedWeapons": [],
-          "weaponLevels": {
-            "wave_laser": 2,
-            "ricochet": 2,
-            "broadside": 3
-          }
-        },
-        "powerUps": {},
-        "bossHitsRemaining": 6,
-        "seed": 5505
-      }
-    },
-    {
-      "target": "GymLevel",
-      "playMs": 2000,
-      "captureMs": 7000,
-      "label": "Reprise — different enemies, stronger guns",
-      "setup": {
-        "level": {
-          "level": 5,
-          "name": "Reprise",
-          "waves": [
-            {
-              "groups": [
-                { "enemyKey": "phaser", "formation": "orbital", "count": 6, "spacingX": 80, "spacingY": 80, "startX": 480, "startY": 200 },
-                { "enemyKey": "raider", "formation": "v", "count": 8, "spacingX": 30, "spacingY": 24, "startX": 200, "startY": 180 },
-                { "enemyKey": "grunt", "formation": "v", "count": 8, "spacingX": 30, "spacingY": 24, "startX": 700, "startY": 180 }
-              ],
-              "shootEnabled": true
-            },
-            {
-              "groups": [
-                { "enemyKey": "harvester", "formation": "v", "count": 6, "spacingX": 40, "spacingY": 30, "startX": 480, "startY": 160 },
-                { "enemyKey": "grunt", "formation": "v", "count": 8, "spacingX": 30, "spacingY": 24, "startX": 220, "startY": 200 },
-                { "enemyKey": "phaser", "formation": "orbital", "count": 6, "spacingX": 80, "spacingY": 80, "startX": 620, "startY": 240 }
-              ],
-              "shootEnabled": true
-            },
-            {
-              "groups": [
-                { "enemyKey": "raider", "formation": "v", "count": 10, "spacingX": 28, "spacingY": 22, "startX": 220, "startY": 160 },
-                { "enemyKey": "harvester", "formation": "v", "count": 8, "spacingX": 36, "spacingY": 28, "startX": 520, "startY": 180 },
-                { "enemyKey": "grunt", "formation": "v", "count": 8, "spacingX": 30, "spacingY": 24, "startX": 760, "startY": 220 }
-              ],
-              "shootEnabled": true
-            }
-          ]
-        },
-        "startWave": 1,
-        "player": {
-          "heading": -90,
-          "weapons": ["spread", "dual"],
-          "timedWeapons": [],
-          "weaponLevels": {
-            "rapid": 3,
-            "wave_laser": 3,
-            "ricochet": 3,
-            "nova": 3
-          }
-        },
-        "powerUps": {},
-        "seed": 6606
-      }
-    },
-    {
-      "target": "GymBoss",
-      "playMs": 500,
-      "captureMs": 10000,
-      "label": "Main boss — final death",
-      "setup": {
-        "player": {
-          "heading": -90,
-          "weapons": ["spread", "dual", "rapid"],
-          "timedWeapons": [],
-          "weaponLevels": {
-            "wave_laser": 4,
-            "ricochet": 4,
-            "broadside": 5
-          }
-        },
-        "powerUps": {},
-        "bossHitsRemaining": 40,
-        "seed": 7707
-      }
-    },
-    {
       "target": "GymBotTuning",
       "playMs": 1500,
       "captureMs": 6000,
-      "label": "Gym family — bot tuning on a generated level",
+      "label": "Gym family \u2014 bot tuning on a generated level",
       "setup": {
         "player": {
-          "weapons": ["spread", "dual"],
+          "weapons": [
+            "spread",
+            "dual"
+          ],
           "timedWeapons": [],
           "weaponLevels": {}
         },
@@ -313,9 +22,15 @@
       "target": "GymCentipede",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — centipede chain",
+      "label": "Gym family \u2014 centipede chain",
       "setup": {
-        "player": { "weapons": ["spread", "dual"], "timedWeapons": [] },
+        "player": {
+          "weapons": [
+            "spread",
+            "dual"
+          ],
+          "timedWeapons": []
+        },
         "powerUps": {},
         "seed": 8082
       }
@@ -324,10 +39,17 @@
       "target": "GymCurveSequencer",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — curve editor (setup forwarded to the launched level)",
+      "label": "Gym family \u2014 curve editor (setup forwarded to the launched level)",
       "setup": {
-        "player": { "weapons": ["rapid"], "timedWeapons": [] },
-        "powerUps": { "shield": 2 },
+        "player": {
+          "weapons": [
+            "rapid"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {
+          "shield": 2
+        },
         "seed": 8083
       }
     },
@@ -335,10 +57,15 @@
       "target": "GymFodderEnemies",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — grunt fodder with firing enabled",
+      "label": "Gym family \u2014 grunt fodder with firing enabled",
       "setup": {
         "enemy": "grunt",
-        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "player": {
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": []
+        },
         "powerUps": {},
         "shootEnabled": true,
         "seed": 8084
@@ -348,10 +75,17 @@
       "target": "GymMinerals",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — asteroid minerals with magnet",
+      "label": "Gym family \u2014 asteroid minerals with magnet",
       "setup": {
-        "player": { "weapons": ["spread"], "timedWeapons": [] },
-        "powerUps": { "magnet": 2 },
+        "player": {
+          "weapons": [
+            "spread"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {
+          "magnet": 2
+        },
         "seed": 8085
       }
     },
@@ -359,9 +93,14 @@
       "target": "GymPlayer",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — player control on the obstacle course",
+      "label": "Gym family \u2014 player control on the obstacle course",
       "setup": {
-        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "player": {
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": []
+        },
         "powerUps": {},
         "obstacles": true,
         "seed": 8086
@@ -371,10 +110,17 @@
       "target": "GymPowerUpLeveling",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — power-up leveling with speed boost",
+      "label": "Gym family \u2014 power-up leveling with speed boost",
       "setup": {
-        "player": { "weapons": ["cannon"], "timedWeapons": [] },
-        "powerUps": { "speed_boost": 2 },
+        "player": {
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {
+          "speed_boost": 2
+        },
         "seed": 8087
       }
     },
@@ -382,10 +128,17 @@
       "target": "GymPowerUpsCombat",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — combat power-ups against a five-scout wave",
+      "label": "Gym family \u2014 combat power-ups against a five-scout wave",
       "setup": {
-        "player": { "weapons": ["cannon"], "timedWeapons": [] },
-        "powerUps": { "shield": 2 },
+        "player": {
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {
+          "shield": 2
+        },
         "shootEnabled": true,
         "threatCount": 5,
         "seed": 8088
@@ -395,10 +148,16 @@
       "target": "GymPowerUpsUtility",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — non-combat power-ups over a 60-mineral field",
+      "label": "Gym family \u2014 non-combat power-ups over a 60-mineral field",
       "setup": {
-        "player": { "weapons": [], "timedWeapons": [] },
-        "powerUps": { "magnet": 2, "mineral_scoop": 2 },
+        "player": {
+          "weapons": [],
+          "timedWeapons": []
+        },
+        "powerUps": {
+          "magnet": 2,
+          "mineral_scoop": 2
+        },
         "minerals": 60,
         "seed": 8089
       }
@@ -407,9 +166,14 @@
       "target": "GymWeaponLeveling",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — weapon leveling round-robin",
+      "label": "Gym family \u2014 weapon leveling round-robin",
       "setup": {
-        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "player": {
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": []
+        },
         "powerUps": {},
         "seed": 8090
       }
@@ -418,9 +182,16 @@
       "target": "GymWeapons",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — weapon showcase against the practice targets",
+      "label": "Gym family \u2014 weapon showcase against the practice targets",
       "setup": {
-        "player": { "weapons": ["spread", "dual", "rapid"], "timedWeapons": [] },
+        "player": {
+          "weapons": [
+            "spread",
+            "dual",
+            "rapid"
+          ],
+          "timedWeapons": []
+        },
         "powerUps": {},
         "practiceTargets": true,
         "seed": 8091

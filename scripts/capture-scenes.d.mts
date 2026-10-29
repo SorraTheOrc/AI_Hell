@@ -227,6 +227,17 @@ export interface SceneSpec {
   label: string | null;
   /** Normalised setup, present only when the config supplied one. */
   setup?: SceneSetup;
+  /**
+   * Dev-gated campaign position the beat begins at (AH-0MVTPP7SX000JTWJ):
+   * a `PlayScene` beat is seconds long, so it starts at a mid-level wave
+   * rather than replaying the level from wave 1 (1-based, clamped).
+   */
+  startWave?: number;
+  /**
+   * Dev-gated flag to begin the beat at the level's final boss encounter
+   * (AH-0MVTPP7SX000JTWJ), so the boss fight and its death land in-window.
+   */
+  startBoss?: boolean;
   /** Generated-level determinism seed (present only for `PlayScene`). */
   seed?: number;
   /** Generated-level campaign level (present only for `PlayScene`). */
