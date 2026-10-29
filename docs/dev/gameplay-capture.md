@@ -1632,6 +1632,26 @@ probe (see [Audio capture](#audio-capture)): a clip with no audio track, or
 with decoded audio at/below the silence floor, fails and the command exits
 non-zero — so `npm run capture` can no longer silently emit a silent clip.
 
+### Effective frame rate: rejecting a starved recording
+
+The probe also counts the clip's **decoded frames** and reports the
+**effective frame rate** (`effectiveFps` = decoded frames ÷ clip duration,
+alongside `frameCount`; `null` when the browser exposes no frame count).
+`isNonTrivialClip` rejects a recording below **`MIN_EFFECTIVE_FPS` (15 fps)**
+with the reason `recording is stalled (<fps> fps < 15 fps): the page rendered
+too slowly to record the scene — re-record on an idle host`
+(AH-0MVTI3O650064IM7).
+
+Why it matters: the capture renders through software WebGL (SwiftShader) and
+encodes with `MediaRecorder` on the same CPU. On a busy host the page can drop
+to a few frames per second — a 78 s clip was once recorded in 441 frames
+(≈5.7 fps) — and because Phaser **caps its delta**, game time then advances at
+a fraction of wall clock: a 10 s `captureMs` window contains almost no
+simulated time, so scenes freeze on camera and scripted pay-offs (boss deaths,
+hold-full rewards) cannot happen. Such a clip used to pass every other verdict.
+**Record scripted scenes on an idle host** and check `effectiveFps` in the
+`--json` payload before accepting a take.
+
 For a `--count` **batch**, the report lists one line per iteration and the
 command exits non-zero if any iteration failed; the naming, validation,
 continue-on-failure and `--json` rules are documented in the **Batch capture**

@@ -44,6 +44,7 @@ import {
   CAPTURE_MIME_CANDIDATES,
   DEFAULT_CAPTURE_DURATION_MS,
   MOVE_KEYS,
+  MIN_EFFECTIVE_FPS,
   buildScriptedPlan,
   combineClipVerdict,
   evaluateAudioTrack,
@@ -282,6 +283,37 @@ describe('isNonTrivialClip', () => {
     expect(verdict.reasons).toContain(
       'sampled frames are static (no motion)',
     );
+  });
+
+  it('rejects a starvation-level recording (effective fps below the floor)', () => {
+    // AH-0MVTI3O650064IM7: at ~5 fps Phaser's delta cap makes game time crawl,
+    // so scene windows contain almost no simulated time and scripted pay-offs
+    // cannot happen — the clip must not pass as a good take.
+    const verdict = isNonTrivialClip({ ...healthy, effectiveFps: 5.7 });
+    expect(verdict.nonTrivial).toBe(false);
+    expect(verdict.reasons).toContain(
+      `recording is stalled (5.7 fps < ${MIN_EFFECTIVE_FPS} fps): the page rendered too slowly to record the scene — re-record on an idle host`,
+    );
+  });
+
+  it('accepts a recording at or above the fps floor', () => {
+    expect(isNonTrivialClip({ ...healthy, effectiveFps: MIN_EFFECTIVE_FPS })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+    });
+    expect(isNonTrivialClip({ ...healthy, effectiveFps: 60 })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+    });
+  });
+
+  it('does not judge an unknown effective fps (older probe sources)', () => {
+    // Absent/unknown metrics must never invent a failure.
+    expect(isNonTrivialClip(healthy)).toEqual({ nonTrivial: true, reasons: [] });
+    expect(isNonTrivialClip({ ...healthy, effectiveFps: null })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+    });
   });
 
   it('rejects a clip with almost no colour variety', () => {

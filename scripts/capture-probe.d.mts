@@ -79,6 +79,13 @@ export interface CaptureProbe {
   width: number;
   height: number;
   durationSeconds: number;
+  /** Decoded frames counted by the probe (`0` when unavailable). */
+  frameCount: number;
+  /**
+   * Decoded frames per second of clip: the recording's effective frame rate.
+   * `null` when the browser exposes no frame count (AH-0MVTI3O650064IM7).
+   */
+  effectiveFps: number | null;
   nonBlackFraction: number;
   uniqueColours: number;
   motion: number;
