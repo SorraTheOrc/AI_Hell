@@ -1450,6 +1450,19 @@ function normaliseScene(entry, index) {
     const minWaves = entry.minWaves === undefined
       ? DEFAULT_MIN_WAVES
       : requireGeneratedWindowField(entry.minWaves, `${at}.minWaves`);
+    // Dev-gated start position (AH-0MVTPP7SX000JTWJ): a teaser beat is
+    // seconds long, so it must be able to begin at a mid-level wave or at the
+    // boss encounter instead of replaying the level from wave 1.
+    const startWave = entry.startWave === undefined
+      ? null
+      : requireGeneratedWindowField(entry.startWave, `${at}.startWave`);
+    if (entry.startBoss !== undefined && typeof entry.startBoss !== 'boolean') {
+      throw new SceneConfigError(
+        CODE.invalidConfig,
+        `${at}.startBoss must be a boolean (got ${JSON.stringify(entry.startBoss)})`,
+      );
+    }
+    const startBoss = entry.startBoss === true;
     const maxCaptureMs = entry.maxCaptureMs === undefined
       ? captureMs * MAX_CAPTURE_MULTIPLIER
       : requireGeneratedWindowField(entry.maxCaptureMs, `${at}.maxCaptureMs`);
@@ -1462,8 +1475,22 @@ function normaliseScene(entry, index) {
       level,
       minWaves,
       maxCaptureMs,
+      ...(startWave !== null ? { startWave } : {}),
+      ...(startBoss ? { startBoss } : {}),
       ...(sceneSetup ? { setup: sceneSetup } : {}),
     };
+  }
+
+  // A `startWave`/`startBoss` on a gym entry is meaningless: those scenes are
+  // configured through `setup`, so reject rather than ignore.
+  for (const field of ['startWave', 'startBoss']) {
+    if (field in entry && entry[field] !== undefined) {
+      throw new SceneConfigError(
+        CODE.unsupportedSceneField,
+        `${at}.${field} is a generated-level-only field and cannot be supplied to gym target `
+          + `"${entry.target}"; put gym configuration in a "setup" object`,
+      );
+    }
   }
 
   // ── Gym entry: generated-level-only sibling fields are rejected ──

@@ -166,3 +166,48 @@ describe('PlayScene setup contract (AH-0MVTNTGXR0026LVN)', () => {
     }
   });
 });
+
+describe('PlayScene launch-data start position (AH-0MVTPP7SX000JTWJ)', () => {
+  it('starts the run at a configured wave of the configured level', async () => {
+    const { scene, booted } = await bootPlay({ startLevel: 4, startWave: 3 });
+    try {
+      const wm = (scene as unknown as {
+        waveManager: { level: number; waveNumber: number };
+      }).waveManager;
+      expect(wm.level).toBe(4);
+      expect(wm.waveNumber).toBe(3);
+    } finally {
+      booted.game.destroy(true);
+    }
+  });
+
+  it('starts the run at the boss encounter, honouring bossHitsRemaining', async () => {
+    const { scene, booted } = await bootPlay({
+      startLevel: 10,
+      startBoss: true,
+      setup: { bossHitsRemaining: 12 },
+    });
+    try {
+      const boss = scene.getBoss();
+      expect(boss).not.toBeNull();
+      // 12 of the boss's 200 hits remain, so the beat can end on camera.
+      expect(boss!.getHpFraction() * (4 * 50)).toBeCloseTo(12, 0);
+    } finally {
+      booted.game.destroy(true);
+    }
+  });
+
+  it('leaves today’s behaviour unchanged when neither field is supplied', async () => {
+    const { scene, booted } = await bootPlay({ startLevel: 2 });
+    try {
+      const wm = (scene as unknown as {
+        waveManager: { level: number; waveNumber: number };
+      }).waveManager;
+      expect(wm.level).toBe(2);
+      expect(wm.waveNumber).toBe(1);
+      expect(scene.getBoss()).toBeNull();
+    } finally {
+      booted.game.destroy(true);
+    }
+  });
+});

@@ -148,13 +148,21 @@ export class WaveManager {
    * @param startLevel - 1-based campaign level to begin at (default 1). The
    *   checkpoint resume path starts a run at the saved level; out-of-range
    *   values clamp to the campaign bounds.
+   * @param startWave - 1-based wave of that level to begin at (default 1),
+   *   clamped to the level's wave list (AH-0MVTPP7SX000JTWJ).
    */
-  beginGame(startLevel = 1): void {
+  beginGame(startLevel = 1, startWave = 1): void {
     const clamped = Number.isFinite(startLevel)
       ? Math.min(Math.max(1, Math.floor(startLevel)), this.levels.length)
       : 1;
     this._levelIndex = clamped - 1;
-    this._waveIndex = 0;
+    // Start at a later wave (dev-gated capture start, AH-0MVTPP7SX000JTWJ):
+    // a scripted beat needs the mid-level pressure and the wave-10 mini-boss
+    // without replaying the level from wave 1. Clamped to the level's list.
+    const waveCount = this.levels[this._levelIndex]?.waves.length ?? 0;
+    this._waveIndex = Number.isFinite(startWave) && waveCount > 0
+      ? Math.min(Math.max(1, Math.floor(startWave)), waveCount) - 1
+      : 0;
     this._bossTriggered = false;
     this._bossActive = false;
     this._bossDefeated = false;
@@ -474,6 +482,22 @@ export class WaveManager {
    * `bossTriggered` from {@link onEnemyDestroyed}.
    */
   beginBoss(): void {
+    this._bossActive = true;
+  }
+
+  /**
+   * Jumps straight into the current level's final boss encounter, with no
+   * regular waves played (dev-gated capture start, AH-0MVTPP7SX000JTWJ).
+   *
+   * A scripted teaser beat is only seconds long, so the post-wave boss is
+   * otherwise unreachable. Marks both the trigger and the active state so
+   * {@link currentWave} reports none and no wave spawns; the scene then
+   * spawns the boss through its normal path (so run-end handling is
+   * unchanged).
+   */
+  startBossEncounter(): void {
+    this._enemiesAlive = 0;
+    this._bossTriggered = true;
     this._bossActive = true;
   }
 

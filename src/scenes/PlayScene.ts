@@ -576,6 +576,19 @@ export class PlayScene extends CombatScene<
    * remaining hits as launch data. Always `null` in a production build.
    */
   private sceneSetup: SceneSetupState | null = null;
+  /**
+   * Dev-gated wave of {@link devStartLevel} this fresh run starts at
+   * (AH-0MVTPP7SX000JTWJ). A teaser beat is seconds long, so mid-level
+   * pressure and the wave-10 mini-boss are otherwise unreachable. Always `1`
+   * in a production build.
+   */
+  private devStartWave = 1;
+  /**
+   * Dev-gated flag to start the run at the level's **final boss encounter**
+   * (AH-0MVTPP7SX000JTWJ), so a scripted beat can show the boss fight and its
+   * death. Always `false` in a production build.
+   */
+  private devStartBoss = false;
 
   /**
    * Demo take-over handler active only while the demo runs
@@ -952,6 +965,16 @@ export class PlayScene extends CombatScene<
      * hits. Ignored in production builds, like `startLevel`.
      */
     setup?: SceneSetupState | null;
+    /**
+     * Dev-gated wave of `startLevel` to begin at (AH-0MVTPP7SX000JTWJ).
+     * Ignored in production builds.
+     */
+    startWave?: number;
+    /**
+     * Dev-gated flag to begin at the level's final boss encounter
+     * (AH-0MVTPP7SX000JTWJ). Ignored in production builds.
+     */
+    startBoss?: boolean;
   }): void {
     this.demoMode = data?.demo === true;
     // Continue from the last checkpoint (AH-0MVCRBTNF000DK51). It is loaded
@@ -985,6 +1008,15 @@ export class PlayScene extends CombatScene<
     this.sceneSetup = isRunProgressEnabled() && data?.setup
       ? (data.setup as SceneSetupState)
       : null;
+    // Start position is dev-gated exactly like `startLevel`: a shipped build
+    // always begins the campaign at level 1, wave 1, before the boss.
+    this.devStartWave = isRunProgressEnabled()
+      && typeof data?.startWave === 'number'
+      && Number.isInteger(data.startWave)
+      && data.startWave > 0
+      ? data.startWave
+      : 1;
+    this.devStartBoss = isRunProgressEnabled() && data?.startBoss === true;
   }
 
   create(): void {
@@ -1127,14 +1159,26 @@ export class PlayScene extends CombatScene<
     const resume = this.pendingResumeCheckpoint;
     this.pendingResumeCheckpoint = null;
     this.resumeFromCheckpoint = false;
-    this.waveManager.beginGame(resume?.level ?? this.devStartLevel);
+    this.waveManager.beginGame(
+      resume?.level ?? this.devStartLevel,
+      resume ? 1 : this.devStartWave,
+    );
     // Publish the live run position for a generated-level capture driver
     // (AH-0MVE01EY0008QEVX AC3); dev builds only.
     this._publishRunProgress(false);
     if (resume) this._restoreCheckpoint(resume);
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();
-    this.spawnWave();
+    if (this.devStartBoss) {
+      // Straight into the boss encounter (dev-gated capture start): the boss
+      // spawns through the normal path, so its death still ends the run the
+      // ordinary way (AH-0MVTPP7SX000JTWJ).
+      this.waveManager.startBossEncounter();
+      this.spawnBoss();
+      this._updateTransitionBanner();
+    } else {
+      this.spawnWave();
+    }
     this._announceLevel();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
