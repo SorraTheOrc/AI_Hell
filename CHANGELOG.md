@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.16 (2026-10-29)
+> **Release focus:** This release focuses on making late-game runs more challenging and readable, capping builds at six slots and ensuring phase shift and wormhole effects are clearly visible. It also strengthens run continuity with carry-over campaign progress and fixes for continuing saved runs, while improving enemy edge behavior and overall test reliability.
+### Features
+- Phase Shift and wormhole effects are now impossible to miss, with a dramatic glitch burst when phasing and clear outlines on emerging enemies. (AH-0MVNTR89P0022JIU)
+- Your build is now capped at six power-up and weapon slots, keeping late-game runs challenging. (AH-0MVLIJT3M005HPHF)
+- New showcase video follows a rising excitement curve, from humble beginnings to epic boss battles. (AH-0MVPJ3NSK008V5VB)
+- Your runs now build toward a bigger campaign, with progress that carries over between attempts. (AH-0MVNSSY9L001P1CC)
+- Added a music design chapter to the game docs, outlining the planned soundtrack's style and mood. (AH-0MVAUUV1U005UM4W)
+- Enemies can now fly and shoot across screen edges, so edge-camping is no longer safe. (AH-0MV9G3DZ9003P7P8)
+- The demo bot now focuses fire on bosses, making showcase fights look intentional. (AH-0MVBMESIE003YQ68)
+- Save bot tuning straight to the game's files from the tuning gym, no manual export needed. (AH-0MVBJ0DUI009B6AM)
+- Regular checks now flag when the game drifts from its intended balance. (AH-0MV7WVHU0000U775)
+- Your Force Field bubble now stays visible all run and dims when spent, and reflected shots flash and sound. (AH-0MVBKT2WO001AR14)
+- Your ship stops firing once the boss is destroyed, so the victory celebration stays clean. (AH-0MVCB6LBE007I6R8)
+- Orbital strikes now behave the same in Gym and campaign levels. (AH-0MVTZ6U94000KHA2)
+### Bug Fixes
+- Heavy simulation tests no longer fail spuriously on busy machines, keeping releases reliable. (AH-0MVR8QM89004OQZQ)
+- Robotron horde kills are now reliably counted exactly once, so wave progress stays accurate. (AH-0MVMEI9V1005H0LU)
+- You can now reach and activate Continue with the keyboard, and it's focused by default when resuming. (AH-0MVSHH20J003YXDN)
+- Continuing a saved run now shows all your upgrades on the HUD and they work properly. (AH-0MVSHI07B003BZIP)
+- Tests now run reliably even on busy machines, so unrelated failures won't block your updates. (AH-0MVSBEIVK003XAFB)
+- Orbital Strike now visibly drops a bolt with its own sound, and no longer gets wasted when no enemy is around. (AH-0MVRE6N08001TE4V)
+- Continuing a run now keeps your earned hold capacity and never shows a false second hold-full. (AH-0MVSSSFXK005ZW8O)
+- Practice and tuning modes now match real gameplay, so what you test is what you play. (AH-0MVP5IGX5005XTVV)
+> [Play the alpha release](https://sorratheorc.github.io/AI_Hell/). Provide feedback in [Discord](https://discord.gg/gUKQTFkzQ4)
+
 ## v0.1.15 (2026-10-26)
 > **Release focus:** This release focuses on making the automated showcase video system more flexible and reliable, with configurable enemy, weapon, and power-up selection, multi-scene transitions, real generated levels, and more dependable captures. It also tightens campaign difficulty with tougher later levels and shielded enemies, improves upgrade clarity and visual effects, and fixes bot behavior and settings persistence.
 ### Features
