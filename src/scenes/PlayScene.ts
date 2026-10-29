@@ -633,6 +633,16 @@ export class PlayScene extends CombatScene<
   private boss: Boss | null = null;
 
   /**
+   * Whether this run has ended with a victory — the per-run state behind
+   * {@link PlayScene.playerFireSuppressed} (AH-0MVCB6LBE007I6R8). Set on the
+   * frame the final boss is destroyed, before the victory celebration fires, so
+   * the next tick spawns no new player fire for the rest of the in-run victory
+   * hold. Cleared by {@link PlayScene.resetRunState} on scene create/restart, so
+   * a new run fires normally again.
+   */
+  private runFinished = false;
+
+  /**
    * The active level's wave-10 mini-boss entity (epic AH-0MVCC8XSS007P01Z),
    * spawned when the {@link WaveManager} opens the level's mini-boss wave and
    * held until it is defeated — the level only completes on its defeat.
@@ -1201,6 +1211,7 @@ export class PlayScene extends CombatScene<
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
     this.boss = null;
+    this.runFinished = false;
     this.miniBoss = null;
     this.miniBossDefeats = 0;
     this.miniBossSpawnedLevel = null;
@@ -2967,6 +2978,12 @@ export class PlayScene extends CombatScene<
       // linger as a dark rectangle through the victory celebration
       // (AH-0MVH85XXZ008INE2).
       boss.getHealthBarGraphics().setVisible(false);
+      // The run is over: stop the ship's auto-fire from the next tick so it
+      // spawns no bullets, muzzle flashes or shoot cues under the victory
+      // celebration (AH-0MVCB6LBE007I6R8, AC1). Shots already in flight keep
+      // flying (AC3); the beat clock keeps advancing (AC4); the celebration and
+      // the delayed `GameOverScene` transition are untouched (AC7).
+      this.runFinished = true;
       this._triggerVictoryCelebration(deathX, deathY);
       this._finishRunWithPurpose(true);
       return;
@@ -3503,6 +3520,23 @@ export class PlayScene extends CombatScene<
     // Shared player-fire path: the metronomic hold-full ghost fire and live
     // fire play the same cue through the same switch (AH-0MV55O9R5005W6J0).
     playWeaponFireSound(weaponId);
+  }
+
+  /**
+   * Stops the ship firing once the run is won (AH-0MVCB6LBE007I6R8).
+   *
+   * Overrides the shared {@link CombatCoreScene.playerFireSuppressed} gate, so
+   * the tick after the Central AI boss dies spawns no new player bullets,
+   * muzzle flashes or shoot cues for the whole in-run victory hold
+   * (`VICTORY_TRANSITION_HOLD_MS`, AC1). Driven purely by the per-run
+   * {@link PlayScene.runFinished} flag, which is set in
+   * {@link PlayScene._damageBoss} and cleared on scene create/restart — so a
+   * new run fires normally (AC6) and a mini-boss defeat, a wave/level
+   * transition or the transition pause is unaffected (AC2). The shared beat
+   * clock keeps advancing while suppressed (AC4).
+   */
+  protected override playerFireSuppressed(): boolean {
+    return this.runFinished;
   }
 
   /**

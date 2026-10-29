@@ -143,6 +143,9 @@ class BareCoreScene extends CombatCoreScene {
   runTickPlayer(dt: number): void {
     this._tickPlayer(dt);
   }
+  runPlayerFireSuppressed(): boolean {
+    return this.playerFireSuppressed();
+  }
   runUpdateDroneSpawning(dt: number): void {
     this._updateDroneSpawning(dt);
   }
@@ -647,6 +650,53 @@ describe('CombatCoreScene — shared base class', () => {
     scene.addPlayer({ x: 100, y: 100 });
     scene.runTickPlayer(1);
     expect(scene.getPlayerBullets()).toEqual([]);
+  });
+
+  // ── Run-end fire suppression (AH-0MVCB6LBE007I6R8) ───────────────
+
+  /** Runs the shared player step on a scene that reports a finished run. */
+  class RunOverScene extends StubCoreScene {
+    protected override playerFireSuppressed(): boolean {
+      return true;
+    }
+  }
+
+  it('AC5 — the shared fire-suppression hook defaults to "not suppressed"', async () => {
+    // The default is what keeps every gym (including `GymBoss`) firing after
+    // its own boss dies — the documented gym divergence.
+    const scene = await boot<BareCoreScene>(BareCoreScene);
+    expect(scene.runPlayerFireSuppressed()).toBe(false);
+  });
+
+  it('AC1 — _tickPlayer spawns no bullets and no fire cues while suppressed', async () => {
+    const scene = await boot<RunOverScene>(RunOverScene);
+    scene.addPlayer({ x: 100, y: 100 });
+
+    // Control: the same step on the same stub fires without suppression.
+    const control = await boot<StubCoreScene>(StubCoreScene);
+    control.addPlayer({ x: 100, y: 100 });
+    control.runTickPlayer(1);
+    expect(control.getPlayerBullets().length).toBeGreaterThan(0);
+    expect(control.hooks).toContain('onWeaponFired:cannon');
+
+    scene.runTickPlayer(1);
+    expect(scene.getPlayerBullets()).toEqual([]);
+    expect(scene.hooks).not.toContain('onWeaponFired:cannon');
+  });
+
+  it('AC4 — the shared beat clock keeps advancing while fire is suppressed', async () => {
+    const scene = await boot<RunOverScene>(RunOverScene);
+    const player = scene.addPlayer({ x: 100, y: 100 });
+
+    expect(scene.getBeatClock().now()).toBe(0);
+    scene.runTickPlayer(0.5);
+    expect(scene.getBeatClock().now()).toBeCloseTo(500, 5);
+    scene.runTickPlayer(0.25);
+    expect(scene.getBeatClock().now()).toBeCloseTo(750, 5);
+
+    // The clock is shared with the player from the first suppressed frame, so
+    // the beat-modulated thruster hum / explosion grid stay on the run's grid.
+    expect(player.getBeatClock()).toBe(scene.getBeatClock());
   });
 
   // ── AC4 — drop collection ─────────────────────────────────────────

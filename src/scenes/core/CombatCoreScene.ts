@@ -791,6 +791,37 @@ export class CombatCoreScene<
   }
 
   /**
+   * Whether player auto-fire is suppressed for the rest of the run
+   * (AH-0MVCB6LBE007I6R8). Default `false` — suppression is opt-in, so the
+   * shipped game and every combat gym keep firing unless a scene reports a
+   * finished run.
+   *
+   * `PlayScene` overrides this with its per-run "run finished" flag: from the
+   * tick after the Central AI boss dies the ship spawns no new player bullets,
+   * muzzle flashes or weapon fire cues for the rest of the in-run victory hold
+   * (`VICTORY_TRANSITION_HOLD_MS` in `src/scenes/PlayScene.ts`), up to the
+   * `GameOverScene` transition (AC1). Shots already in flight keep flying —
+   * only *new* shots are suppressed (AC3) — and mini-boss defeats, wave/level
+   * transitions and the transition pause keep the current behaviour (AC2,
+   * producer answer Q1 = A).
+   *
+   * The shared beat clock keeps advancing while suppression is active
+   * ({@link CombatCoreScene._tickPlayer}), because it drives the
+   * beat-modulated thruster hum (GDD §7.3) and the non-weapon explosion grid;
+   * suppressing fire must not stall it (AC4).
+   *
+   * **Gym parity (documented divergence, AC5).** No gym overrides this hook,
+   * so the default `false` keeps every combat gym firing — including
+   * `GymBoss`, which destroys its boss and then keeps auto-firing because the
+   * gym has no run-end screen. That mirrors the `GameOverScene` precedent in
+   * GDD §7.2: the divergence is *documented*, never copied, so this gate stays
+   * single-sourced here (producer answer Q3 = A).
+   */
+  protected playerFireSuppressed(): boolean {
+    return false;
+  }
+
+  /**
    * Shared screen-wide Phase Shift juice step (parent AH-0MUIYX1EE008FVS8).
    *
    * This is the **single** place the player treatment is advanced: the game
@@ -822,7 +853,10 @@ export class CombatCoreScene<
    * 3. read the scheme-appropriate input,
    * 4. step physics (screen-wrap),
    * 5. auto-fire the active weapons (unless the scene opts out via
-   *    {@link CombatCoreScene.autoFireEnabled}),
+   *    {@link CombatCoreScene.autoFireEnabled}, the player is capture-disabled,
+   *    or the scene reports a finished run via
+   *    {@link CombatCoreScene.playerFireSuppressed} — in which case only the
+   *    beat clock is advanced),
    * 6. advance the Bomb bomb pulse and fire a ranged clear when due
    *    ({@link CombatCoreScene._updateP4Bomb}).
    *
@@ -865,7 +899,20 @@ export class CombatCoreScene<
     // capture on this frame suppresses fire on this frame. Runs after physics
     // so the drag is applied to the ship's current position.
     this._updateCaptureBeams(dt);
-    if (this.autoFireEnabled() && !this.isCaptureDisabled()) this._autoFire(dt);
+    if (this.playerFireSuppressed()) {
+      // Run-end suppression (AH-0MVCB6LBE007I6R8): spawn no bullets, muzzle
+      // flashes or fire cues, but keep the shared beat clock advancing so the
+      // beat-modulated thruster hum (GDD §7.3) and the explosion grid do not
+      // stall through the victory hold (AC4). Normal fire resumes with the
+      // next run, because a scene restart re-anchors this clock and clears the
+      // scene's per-run flag (AC6).
+      this.beatClock.advance(dt * 1000);
+      if (player.getBeatClock() !== this.beatClock) {
+        player.setBeatClock(this.beatClock);
+      }
+    } else if (this.autoFireEnabled() && !this.isCaptureDisabled()) {
+      this._autoFire(dt);
+    }
     // Bomb bomb: advance the shared pulse state and fire a ranged clear when
     // one is due. Runs after physics so the pulse is centred on the player's
     // current position, and from this single shared step so the game and

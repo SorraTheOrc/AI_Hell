@@ -65,6 +65,7 @@ import {
   PlayScene,
   resolveCampaignLevels,
   SCORE_VALUES,
+  VICTORY_TRANSITION_HOLD_MS,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
@@ -5088,6 +5089,108 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     for (const effect of effects) {
       expect(effect.active).toBe(false);
     }
+  });
+
+  // ── Fire stops when the boss is destroyed (AH-0MVCB6LBE007I6R8) ──
+
+  /** Reads the shared fire-suppression gate (protected in the core). */
+  function fireSuppressed(scene: PlayScene): boolean {
+    return (scene as unknown as { playerFireSuppressed(): boolean }).playerFireSuppressed();
+  }
+
+  /** Ticks the scene at a fixed 100 ms step for `seconds` of sim time. */
+  function tickFor(scene: PlayScene, seconds: number): void {
+    const steps = Math.round(seconds / 0.1);
+    for (let i = 0; i < steps; i++) scene.tick(0.1);
+  }
+
+  it('AC1/AC2/AC7 — the ship stops firing for the whole victory hold', async () => {
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+
+    // AC2: reaching the boss already walked past the level's mini-boss defeat
+    // and the wave/level transitions — the run is live, so the ship is in
+    // control and firing normally.
+    expect(fireSuppressed(scene)).toBe(false);
+    tickFor(scene, 1.2);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
+
+    defeatBoss(scene);
+
+    // AC7: the run is won and the celebration still fires exactly once.
+    expect(scene.getBoss()!.alive).toBe(false);
+    expect(fireSuppressed(scene)).toBe(true);
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
+
+    // From the next tick on: no new player bullets, muzzle flashes or shoot
+    // cues, all the way through the 5 s in-run victory hold (AC1).
+    const spawnSpy = vi.spyOn(scene, 'spawnPlayerBullet');
+    const cueSpy = vi.spyOn(effectsModule, 'playWeaponFireSound');
+    const inFlightBefore = scene.getPlayerBullets().length;
+    tickFor(scene, VICTORY_TRANSITION_HOLD_MS / 1000 + 0.5);
+
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(cueSpy).not.toHaveBeenCalled();
+    // AC3: shots already in flight are not cleared in bulk...
+    expect(scene.getPlayerBullets().length).toBeLessThanOrEqual(inFlightBefore);
+    // ...the scene is still in the in-run hold (the delayed `GameOverScene`
+    // transition is asserted by the boss-encounter "defeating all 4 phases"
+    // test, which walks this same suppressed hold)...
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    // ...and the celebration is still the dominant effect.
+    expect(scene.getVictoryEffects().length).toBeGreaterThan(0);
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
+
+    spawnSpy.mockRestore();
+    cueSpy.mockRestore();
+  });
+
+  it('AC3 — a shot already in flight when the boss dies keeps flying', async () => {
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+    defeatBoss(scene);
+    expect(fireSuppressed(scene)).toBe(true);
+
+    const player = scene.getPlayer();
+    expect(player).not.toBeNull();
+    // A shot in flight at the moment of victory. The contract is "no new shots
+    // from the next tick", so this one must keep moving and stay live.
+    const inFlight = scene.spawnPlayerBullet(
+      player!.x,
+      player!.y - 40,
+      0,
+      -120,
+    );
+    const startY = inFlight.y;
+
+    scene.tick(0.1);
+
+    expect(scene.getPlayerBullets()).toContain(inFlight);
+    expect(inFlight.y).toBeLessThan(startY);
+  });
+
+  it('AC6 — a restarted run fires normally again', async () => {
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+    defeatBoss(scene);
+    expect(fireSuppressed(scene)).toBe(true);
+
+    // The suppression flag is per-run state, cleared by `create()`.
+    scene.scene.start('PlayScene');
+    await advanceGame(scene.game, 150);
+
+    const restarted = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(fireSuppressed(restarted)).toBe(false);
+
+    const spawnSpy = vi.spyOn(restarted, 'spawnPlayerBullet');
+    tickFor(restarted, 1.2);
+    expect(spawnSpy).toHaveBeenCalled();
+    spawnSpy.mockRestore();
   });
 
   // ── Demo/attract mode (AH-0MUX495VG0014MIY AC1/AC3/AC4/AC6) ────
