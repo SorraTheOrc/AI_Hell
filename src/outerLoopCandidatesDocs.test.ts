@@ -26,6 +26,10 @@
  * - AC7 (cross-link slice AH-0MVRNJ6BB009IGZX): the document is referenced from
  *   the GDD §8 future-scope section and from the README, and every reference
  *   resolves to a file on disk.
+ * - AC11–AC12 (Candidate D slice AH-0MVTE4EOS008RMQ7): Candidate D — Hangar War
+ *   carries the twelve required sections plus a Progression rules subsection,
+ *   and the cross-cutting progression-rules section exists and names every
+ *   candidate.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -72,6 +76,10 @@ const CANDIDATES = [
   {
     label: 'Candidate C — Signal Decode',
     heading: /^##\s+Candidate C\s*[—–-]\s*Signal Decode\s*$/im,
+  },
+  {
+    label: 'Candidate D — Hangar War',
+    heading: /^##\s+Candidate D\s*[—–-]\s*Hangar War\s*$/im,
   },
 ];
 
@@ -169,8 +177,42 @@ describe('Outer-loop candidates are documented (AH-0MVRNIWHG0099ZS3)', () => {
           expect(body).toMatch(headingPattern);
         },
       );
+
+      // AC12 (AH-0MVTE4EOS008RMQ7): every candidate states how it complies
+      // with the cross-cutting progression rules.
+      it('states how it complies with the progression rules (AC12)', () => {
+        expect(body).toMatch(/^###\s+Progression rules\s*$/im);
+      });
     },
   );
+
+  // ── AC12: cross-cutting progression rules ──────────────────────────
+
+  it('records the progression rules common to every candidate (AC12)', () => {
+    const heading = /^##\s+Progression rules common to every candidate\s*$/im.exec(
+      doc,
+    );
+    expect(heading).not.toBeNull();
+    const afterHeading = doc.slice((heading?.index ?? 0) + (heading?.[0].length ?? 0));
+    const nextHeading = /\n##\s+/.exec(afterHeading);
+    const section = nextHeading
+      ? afterHeading.slice(0, nextHeading.index)
+      : afterHeading;
+
+    // Rule 1: a reduced starting kit, so power is discovered through play.
+    expect(section).toMatch(/reduced set of power-ups and upgrades/i);
+    // Rule 2: mini-bosses introduce upgrades/weapons the player must first
+    // defeat, then may use.
+    expect(section).toMatch(/mini-bosses/i);
+    expect(section).toMatch(/defeat/i);
+    // The section is published before the candidates and names each of them,
+    // so no candidate can quietly opt out.
+    const firstCandidateIdx = CANDIDATES[0].heading.exec(doc)?.index ?? -1;
+    expect(heading?.index ?? -1).toBeLessThan(firstCandidateIdx);
+    for (const candidate of CANDIDATES) {
+      expect(section).toContain(candidate.label.split(' — ')[0]);
+    }
+  });
 
   // ── AC4: comparison table ──────────────────────────────────────────
 
@@ -191,6 +233,8 @@ describe('Outer-loop candidates are documented (AH-0MVRNIWHG0099ZS3)', () => {
     expect(section).toMatch(/Candidate A/i);
     expect(section).toMatch(/Candidate B/i);
     expect(section).toMatch(/Candidate C/i);
+    // AC14 (AH-0MVTE4EOS008RMQ7): Candidate D is scored in the same table.
+    expect(section).toMatch(/Candidate D/i);
     expect(section).toMatch(/recommend/i);
   });
 

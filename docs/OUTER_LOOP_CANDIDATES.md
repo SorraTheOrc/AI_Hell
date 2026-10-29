@@ -1,13 +1,14 @@
 # Outer-Loop Candidates
 
-> **Work item:** AH-0MVRNJ0SL000RNHR — Author the three outer-loop candidate outlines, comparison and recommendation
+> **Work item:** AH-0MVTE4EOS008RMQ7 — Add Candidate D (Hangar War) and the discovery-progression rules
 > **Parent:** AH-0MVNSSY9L001P1CC — We need an outer loop
+> **Slices (complete):** AH-0MVRNIWHG0099ZS3 (framing + guard), AH-0MVRNJ0SL000RNHR (candidates + comparison), AH-0MVRNJ6BB009IGZX (cross-links + verification)
 > **Status:** Design only, not scheduled
 
 This document is the decision-ready catalogue of candidate **outer loops** for
-AI_Hell. Each candidate is written up on the same footing so the producer can
+AI_Hell. Four candidates are written up on the same footing so the producer can
 compare them, choose one, and have it written into the Game Design Document
-(GDD) with confidence.
+(GDD) with confidence:
 
 > **Design only.** Nothing in this document is scheduled, and none of it
 > changes gameplay: no gameplay code, no persistence-schema change and no new
@@ -63,6 +64,40 @@ before the candidates so the comparison is auditable:
    bot without stalling.
 8. **Risk of trivialising or gutting the shipped campaign** — the chance it
    makes the 10-level campaign feel like a tutorial or replaces it outright.
+
+---
+
+## Progression rules common to every candidate
+
+Two rules apply to **all four candidates** below. They are requirements, not
+options, and each candidate states how it complies in its own **Progression
+rules** subsection.
+
+**Rule 1 — start small, discover the rest.** Every version starts the player
+with a **reduced set of power-ups and upgrades**: the opening ship carries a
+minimal weapon and no permanent upgrades. Scarcity is the point — new power-ups,
+weapons and hulls arrive through play (mini-boss rewards, salvage, codex
+knowledge) instead of being handed out on first boot, so the middle loop keeps
+surprising a player 5 hours in. *Cost:* the first ten minutes are sparser than
+the current game, so the opening level must still be fun with the reduced kit.
+
+**Rule 2 — the boss wields it before you own it.** Mini-bosses can **introduce
+new upgrades and weapon types** by using them against the player. An upgrade or
+weapon becomes available only after the player **defeats the boss that uses
+it** — the sequence is *demonstrated → survived → defeated → unlocked*. A boss
+fight therefore doubles as reconnaissance: you learn what the weapon does (and
+what it costs you) before you can hold it, which teaches its counter for free.
+*Cost:* every new weapon needs a boss or mini-boss that demonstrates it fairly
+and legibly, reusing the existing telegraph vocabulary (GDD §4.2,
+`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`); a weapon must read as a threat
+before it reads as a reward.
+
+| Candidate | Rule 1 — reduced starting kit | Rule 2 — boss demonstrates, then grants |
+|-----------|-------------------------------|-----------------------------------------|
+| **Candidate A — Contested Regions / Home World** | Every new ship leaves home with **no upgrades** (A already rotates unupgraded ships onto the line) | A region's mini-boss demonstrates the region's signature weapon; the stationed-ship upgrade is earned by beating it |
+| **Candidate B — Salvage Fleet** | The hangar starts with **one basic hull and one starting weapon**; everything else is bought | A mini-boss's weapon appears in the hangar tree only after that mini-boss has been defeated wielding it |
+| **Candidate C — Signal Decode** | The codex starts **empty**, so the campaign starts plain and mutates as it is decoded | The boss's phases *are* the demonstration; each decoded rule unlocks the behaviour/weapon the player has just survived |
+| **Candidate D — Hangar War** | The hangar starts as in B; the first hex is taken with that bare loadout | A hex boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
 
 ---
 
@@ -135,7 +170,8 @@ claimed.
 | **Per-region AI aggression level** | Drives a region's deployment difficulty (reuses the difficulty-curve vocabulary) and how hard the region fights back on defence | Small–Medium — a per-region scalar mapped onto the existing difficulty resolver |
 | **Warp budget** | A per-campaign or per-sortie limit on how far the ship can travel before it must return home | Small |
 | **Factional AI warfare simulation** | Warring factions fight over a region between runs; **the winner leaves a stronger force**, so region strength changes over time | Medium — a deterministic between-run resolvers with per-faction strength |
-| **Autonomous-pilot defence** | A fully upgraded ship can be **left in a region under an AI automated pilot** that defends it (reusing the existing attract bot as the defending intelligence) | Medium–Large — an offline (between-run) resolution of a defence |
+| **Autonomous-pilot defence** | A fully upgraded ship can be **left in a region under an AI automated pilot** that defends it. The defence **resolves algorithmically**: a deterministic comparison of stored strength numbers (defender rating vs. attacking force × region aggression), **not** a live simulated battle — the attract bot supplies the defender's *rating*, it does not fly the engagement | Small — a pure resolver over stored numbers |
+| **Stationed-ship mineral accrual** | A stationed ship's income between runs is **algorithmic** too: a per-tick arithmetic rule over the region's holdings, so the player's economy needs no simulation | Small — a per-tick arithmetic rule |
 | **Home world discovery + defence** | A zero-aggression region containing a planet that can **become home**; once found it must be defended | Medium |
 | **Onslaught clock** | The escalating "massive AI onslaught" that eventually tests every held region and the home world | Medium |
 
@@ -206,10 +242,11 @@ behind the same injectable interface, per the §6.6 migration note.
 - **Target run length:** one region deployment ≈ the existing arcade run (≈5
   simulated minutes; GDD §2.7 targets survival ≈300 s), so a player can make
   map progress in a single sitting.
-- **Hours-to-win:** the largest of the three — a full campaign of manipulating
+- **Hours-to-win:** the largest of A/B/C — a full campaign of manipulating
   factions, taking regions, stationing ships and repelling the onslaught is
   plausibly **10–20 hours** depending on map size, which is why this is called
-  out as the biggest candidate to build.
+  out as the biggest of the three territorial examples (only Candidate D, which
+  wraps this war around a hangar, is larger).
 
 ### UI / scene surface
 
@@ -256,9 +293,13 @@ behind the same injectable interface, per the §6.6 migration note.
 
 ### Effort and risk
 
-- **Size:** the **largest** of the three — a new map simulation, a between-run
-  faction model, an autonomous-defence resolver and a new set of meta screens,
-  on top of reusing the run.
+- **Size:** the **largest** of the three original candidates (A, B and C) — a
+  new map, a between-run faction model, a defence resolver and a new set of meta
+  screens, on top of reusing the run. **Reduced by the producer's amendment:**
+  because bot defence and mineral accrual are **algorithmic resolutions** rather
+  than live simulations, the heaviest single system shrinks to a pure resolver —
+  this is now a *large* candidate, not a *very large* one, though still bigger
+  than B and C on its own.
 - **Failure modes that would make the loop unfun:**
   - The simulation is **opaque** — the player cannot see *why* a region fell or
     a faction grew, so map changes feel arbitrary.
@@ -277,9 +318,22 @@ The smallest version that proves the loop is fun: **three regions** in a line
 **aggression-level** scalar per region driving the existing difficulty curve;
 **one** stationable ship with its checkpoint-persisted upgrades; **one** faction
 that fights over the middle region between runs and leaves a stronger force to
-the winner; and **one** onslaught test of the home region. If that slice makes
-"leave a ship to hold the line, go home, come back stronger" feel good, the map
-can grow; if it does not, no amount of extra regions will save it.
+the winner; and **one** onslaught test of the home region. Region defence,
+mineral accrual and the faction fight all **resolve algorithmically** from
+stored strength numbers — the slice contains **no simulation loop at all**, which
+is what makes it buildable. If that slice makes "leave a ship to hold the line,
+go home, come back stronger" feel good, the map can grow; if it does not, no
+amount of extra regions will save it.
+
+### Progression rules
+
+- **Rule 1 — reduced starting kit.** Satisfied structurally: A already rotates a
+  **ship with no upgrades** onto the line whenever one is stationed, so the
+  campaign naturally starts each hull bare and power is rebuilt per ship.
+- **Rule 2 — the boss wields it first.** A region's mini-boss demonstrates the
+  region's signature weapon or upgrade as its attack pattern; the drop or
+  unlock that makes a stationed ship strong enough to hold the region is earned
+  by defeating it.
 
 ---
 
@@ -442,6 +496,17 @@ final assault. If "lose the run, keep the salvage, buy a better ship" already
 feels like progress, the tree can grow; if it does not, more unlocks will not
 fix it.
 
+### Progression rules
+
+- **Rule 1 — reduced starting kit.** The hangar starts with **one basic hull and
+  one starting weapon** and no modifiers; every other hull, weapon and modifier
+  is earned. The shipped 10-level campaign therefore opens with a deliberately
+  thin loadout, and the run's own mineral/power-up economy does the rest.
+- **Rule 2 — the boss wields it first.** A new weapon or upgrade is **not** in
+  the hangar tree until its mini-boss has been defeated: the boss demonstrates
+  it as an attack (or carries it visibly), and its defeat both **drops the core**
+  that pays for the unlock and **reveals the entry** in the hangar.
+
 ---
 
 ## Candidate C — Signal Decode
@@ -598,61 +663,331 @@ the boss's **third phase**. If "find the fragment, decode the rule, the boss
 plays differently and is now beatable" feels like progress, the codex can grow;
 if it does not, more entries will not fix it.
 
+### Progression rules
+
+- **Rule 1 — reduced starting kit.** The codex starts **empty**, so the campaign
+  starts plain and gains its variety as knowledge arrives; the player meets the
+  simplest version of every system before the decoded rules complicate it.
+- **Rule 2 — the boss wields it first.** This candidate is the purest form of the
+  rule: the boss's phases **are** the demonstration, and each decoded rule
+  unlocks the behaviour or weapon the player has just survived. Nothing in the
+  codex is available before it has been used against the player.
+
+---
+
+## Candidate D — Hangar War
+
+> Merges Candidate A's map war with Candidate B's hangar progression (producer
+> proposal, 2026-10-29). Two outer-loop axes at once. **Design only, not
+> scheduled.**
+
+### Fantasy / pitch
+
+The resistance has exactly one thing left worth defending: **the hangar**. It
+sits at the centre of a hex-grid hell with the AI closing in from every side,
+and there is no promised planet to escape to — the war is the point, and the
+hangar is the home. You push out one ring at a time: take a weak hex, strip its
+wreck for **salvage**, kill the boss that guards it and come home with a **new
+kind of weapon for the fleet**, then leave a **bot** in the hex to hold it while
+you fly the next one. The frontier does not wait: the AI at the border grows
+stronger between sorties and takes back what you leave undefended, so every hex
+you own is a promise you have to keep. Build the fleet, hold the ring, and the
+hangar survives — that is what winning this hell looks like.
+
+### Loop structure
+
+- **Moment-to-moment (seconds):** unchanged — fly, dodge the formations,
+  auto-fire, clear waves (GDD §2.3–2.6).
+- **Run (a deployment, minutes):** warp into **one hex** and clear it. A hex
+  deployment is a normal campaign slice (a level or a wave set) whose difficulty
+  comes from that hex's **frontier aggression**, ending on the hex's boss.
+- **Meta (hours):** **two progressions running together**:
+  1. **The war on the map (Candidate A's axis):** the ring of hexes around the
+     hangar, which hexes are held, which hold a **defending bot**, and how
+     aggressive the frontier is.
+  2. **The range of the fleet (Candidate B's axis):** the **hangar** — hulls,
+     starting weapons, loadouts and permanent modifiers bought with salvage.
+     The map gives the hangar its **purpose**: a better hull is what lets you
+     take a harder hex, and a stronger hull is what you leave behind to hold
+     one.
+- **The capture cycle:** attack a **weak** neighbouring hex → collect salvage →
+  defeat its **boss** → receive a **new kind of power-up or weapon** into the
+  hangar → **leave a bot** (flying a hull of yours) in the hex, where it attempts
+  to **defend** it.
+- **What carries between runs — explicitly:** **both axes**. From B: **banked
+  salvage**, unlocked **hulls / starting weapons / modifiers** and the active
+  loadout. From A: the **ring state** — which hexes are held, which hull plus bot
+  defends each, each hex's **frontier aggression**, and the **ring depth**. A run's
+  temporary in-run loadout still dies with the ship (middle-loop semantics
+  unchanged); the hangar and the ring never do.
+
+### States
+
+- **Win (per ring):** every hex of the current ring is held and the AI's massed
+  counter-attack on the hangar is repelled — the hangar is safe and the ring is
+  yours. The next ring then opens, so a "win" is the campaign's milestone, not
+  its end.
+- **Lose:** the **hangar falls** — the last hex is taken and the hangar's own
+  defence fails. Losing a **run** never does this: the run's unbanked salvage is
+  forfeit, the hangar and the ring survive (Candidate B's rule, preserved).
+- **Partial progress:** a bad run still banks salvage from the checkpoints it
+  reached, still **lowers that hex's aggression** (you killed defenders), and
+  still leaves a bot defending what is already held.
+- **Regression is possible and intended:** the frontier can **retake** a hex
+  between runs, unless the player goes to the attacking neighbour and defeats
+  it. Progress can therefore go backwards — the risk the ring creates — but the
+  hangar never does.
+
+### New systems required
+
+| System | What it does | Rough size |
+|--------|--------------|-----------|
+| **Hangar (Candidate B)** | Salvage spend, unlock tree (hulls, starting weapons, modifiers), active loadout | Medium |
+| **Salvage banking (Candidate B)** | Convert run rewards to a persistent balance at checkpoint moments; unbanked is lost on death | Small–Medium |
+| **Hex ring map** | A hex grid whose first **ring** (6 hexes) surrounds the hangar; ring-by-ring growth for later expansions | Small–Medium — data + a map screen + a ring generator |
+| **Frontier aggression clock** | Each between-run tick raises border aggression and lets the AI **attack a held hex**, retaking it unless the player defeats the attacking neighbour first | Small — a deterministic per-tick rule |
+| **Defending bot assignment** | Leave a hull plus a **bot** in a hex; its **defence rating** derives from the hull's hangar upgrades, not from a live battle | Small |
+| **Algorithmic defence resolution** | A taken hex falls or holds by comparing stored numbers (defender rating vs. attacking force × aggression) — **no simulated battle** | Small — a pure resolver |
+| **Hex deployment + boss** | Reuse the run, with the hex's aggression selecting the difficulty curve and the hex's boss at the end | Small |
+| **Boss-granted weapon discovery** | A hex boss demonstrates a new weapon/power-up; defeating it adds the entry to the hangar tree | Small–Medium |
+
+### Reuse of existing systems
+
+- **Checkpoint store (`src/core/checkpointStore.ts`)** — one payload holds the
+  hangar (B) and the ring state (A), following the existing defensive-parse /
+  injectable-store pattern; a defending hull's permanent levels are exactly the
+  fields a checkpoint already persists.
+- **Minerals / power-up levels** — the run economy is untouched; salvage is its
+  persistent echo, banked at the existing checkpoint moments.
+- **Leaderboard (`src/core/Leaderboard.ts`)** — per-run score is unchanged; the
+  hangar can show the best-held-ring and best-score line.
+- **Difficulty curves (`src/data/difficulty-curves.csv`)** — a hex's frontier
+  aggression selects/perturbs the same curve, so hex difficulty needs no second
+  scaling system.
+- **Mini-boss rewards (`MiniBoss`, §4.4.4)** — the hex boss's
+  upgrade-or-unlock reward is the discovery channel (Rule 2) as well as the
+  extraction point.
+- **Bot / attract mode** — the survival-first `decideBotIntent` heuristic
+  supplies the **defender's rating** (it is never flown live in defence, so a
+  defence cannot stall a demo), and it traverses the hangar/hex screens.
+
+### Persistence and save model
+
+A sketch `localStorage` payload under GDD §6.6 rules (defensive parse, no
+backend). Both axes live in **one** key so a defence result can never be written
+without the hangar state it depends on:
+
+```jsonc
+// ai_hell_hangar_war — corrupt/shape-mismatch/unknown version → null
+{
+  "version": 1,
+  "seed": 123456789,               // deterministic resolution, replayable
+  "hangar": {
+    "bankedMinerals": 240,
+    "bankedCores": 3,
+    "unlockedHulls": ["hull-1", "hull-2"],
+    "unlockedWeapons": ["spread", "waveLaser"],   // waveLaser granted by beating its boss
+    "ownedModifiers": ["extra-life"],
+    "activeHull": "hull-1",
+    "activeLoadout": { "startingWeapons": ["spread"], "modifiers": [] }
+  },
+  "ring": {
+    "ringIndex": 1,                // MVP = 1 ring; later rings append
+    "hexes": [
+      {
+        "id": "hex-1",
+        "q": 1, "r": 0,          // axial hex coordinates
+        "held": true,
+        "aggression": 2,          // frontier pressure, rises between runs
+        "defender": {             // or null when unheld
+          "hullId": "hull-1",
+          "defenceRating": 7,     // derived from hangar upgrades, not a battle
+          "bankedMinerals": 12
+        },
+        "bossDefeated": true,
+        "grantedWeapon": "waveLaser"
+      }
+    ]
+  },
+  "pendingAttacks": [ { "hexId": "hex-1", "force": 9 } ],  // resolved next sortie
+  "bestScore": 18200
+}
+```
+
+**Migration note:** version the payload and default unknown/missing fields
+safely — an older hangar-only save must load as "hangar at its last valid state,
+empty ring", and a partial ring must never be discarded. A future backend can
+replace storage behind the same injectable interface (§6.6).
+
+### Session shape
+
+- **Target run length:** one hex deployment ≈ the existing arcade run (≈5
+  simulated minutes), unchanged — the hangar and the ring are outside the run.
+- **Hours-to-win:** **MVP (one ring) ≈10–15 hours** — Candidate B's 8–12 hours
+  plus the ring — and roughly **+2–4 hours per additional ring**, so the shipped
+  campaign is deliberately extendable rather than finite.
+
+### UI / scene surface
+
+- A **hex ring map screen**: the hangar at the centre, the ring around it, each
+  hex showing held/unheld, aggression, its defending hull and any pending attack.
+- The **hangar screen** (Candidate B's unlock tree) reachable from the map, so
+  "what I own" and "what I hold" sit one click apart.
+- A **deployment / hull-and-loadout selector** on the way into a hex.
+- A **between-sortie defence report**: which hexes were attacked, which held,
+  which fell, and what it would take to retake them.
+- In-run play reuses `PlayScene` and every existing in-run screen unchanged.
+
+### Gym testability and the bot
+
+- **Pure logic in gyms:** the hangar economy, the **hex defence resolver** and
+  the frontier clock are pure functions and ship in a dedicated `GymHangar` /
+  `GymHexWar` scene, so `take hex → leave bot → AI attacks → hex holds or falls`
+  is exercised end to end without a browser boot.
+- **Parity:** a boss-granted weapon or hull is a config variant on the shared
+  player weapon/boss paths, so it must run the **same code** in a gym
+  (`GymFodderEnemies` / `GymBoss`) and in the game (AGENTS.md gym↔game parity).
+- **Attract mode:** the bot traverses or skips every new screen — on the map it
+  auto-picks the **weakest** adjacent hex, in the hangar it auto-buys the
+  cheapest useful unlock (seeded), and it auto-advances the defence report.
+  Because defence is **resolved algorithmically**, there is no live defence
+  battle for the demo to stall in — the defending bot never needs to be flown.
+
+### Pillar impact
+
+- **Changes "no continue, game over is final" (GDD §4.6) at campaign level.** As
+  with B, a lost **run** is still final (ship and unbanked salvage gone), while
+  the hangar and the ring persist. **Additional cost unique to D:** hexes can be
+  *lost* between runs, so the campaign can move backwards — a deliberate,
+  legible stake rather than an accident.
+- **Changes the "single final boss" pillar (GDD §3.1/§4.3).** Each hex ends on a
+  boss and the ring ends on the hangar assault, so the boss becomes a recurring
+  milestone rather than a single terminus. Cost: the Central AI needs a
+  campaign-role decision (recurring hex boss vs. the assault's spearhead), and
+  "one clean boss" is no longer the shape of the game.
+- **Preserves "code-first, no backend"** — everything resolves locally and
+  deterministically from seeded numbers.
+
+### Effort and risk
+
+- **Size:** **medium–large** — Candidate B's systems plus a *small* ring layer
+  (map, frontier clock, defence resolver, discovery grants). Because hex defence
+  and mineral accrual are **algorithmic** rather than simulated, this is
+  materially cheaper than Candidate A while giving its war a reason to exist.
+- **Failure modes that would make the loop unfun:**
+  - **The frontier treadmill** — the AI retakes hexes faster than a casual
+    player can hold them, so the map feels like a losing chore. Mitigation: a
+    frontier tick the player can always answer (attack the neighbour), and
+    aggression that grows on a schedule the defence report makes legible.
+  - **Opaque defence** — a hex falls and the player cannot see why. Mitigation:
+    show the numbers (defender rating vs. attacking force) in the report.
+  - **Two progressions, twice the bookkeeping** — hangar plus ring becomes
+    admin. Mitigation: one screen holds both, and the hangar is one click from
+    the map.
+  - **Power creep** — a large fleet trivialises every hex. Mitigation: the ring
+    grows in difficulty with ring depth, and each boss-granted weapon arrives
+    only after it has been beaten.
+  - **The ring is a checklist** — six identical hexes are six chores. Mitigation:
+    vary hex bosses and granted weapons so each capture teaches something.
+
+### Minimal first slice
+
+**Candidate B's MVP plus one ring of hexes**: the hangar from B (one extra hull,
+three unlockable starting weapons, one banked currency, one threat tier) plus a
+**single ring of six hexes** around the hangar, with the algorithmic defence
+resolver, one frontier tick that can retake a hex, and one boss-granted weapon.
+If "take a hex, leave a bot, buy a hull, retake what the AI stole" already feels
+like a war worth fighting, more rings can follow; if it does not, B alone stands
+(the slice is a strict superset of B's, so nothing is wasted).
+
+### Progression rules
+
+- **Rule 1 — reduced starting kit.** The hangar starts as B's does — one basic
+  hull, one starting weapon, no modifiers — and the *first* hex is taken with
+  that bare loadout, so the fleet's range is earned outward from nothing.
+- **Rule 2 — the boss wields it first.** A hex boss demonstrates the hex's new
+  weapon or power-up against the player; defeating it both **captures the hex**
+  and **adds the entry to the hangar**, where it is then bought with salvage.
+  Nothing enters the fleet without being survived first.
+
 ---
 
 ## Comparison
 
-Each criterion from *Comparison criteria* is scored for all three candidates;
+Each criterion from *Comparison criteria* is scored for all four candidates;
 the ranking here drives the **Recommendation** section below. Scores are
 **High / Medium / Low** where **High is good for the project** — for
 *New-system cost*, *Persistence complexity* and *Risk to the shipped campaign*,
 "High" means **expensive / complex / risky**, so the lower rating is the better
 one for those rows (called out in each cell).
 
-| Criterion | Candidate A — Contested Regions | Candidate B — Salvage Fleet | Candidate C — Signal Decode |
-|-----------|---------------------------------|-----------------------------|-----------------------------|
-| Fit with the fiction | **High** — a war over territory and a home world for the humans is the fiction's natural conclusion | **Medium** — salvage/builds follow from stripped wrecks, but the "hell" itself is backdrop | **High** — decoding the AI and its rules is the fiction's core mystery |
-| Reuse of shipped systems | **Medium–High** — checkpoint, minerals/levels, curves, mini-boss rewards; the region war itself is all-new | **High** — checkpoint moments, minerals/levels, mini-boss rewards, curves, run unchanged | **Medium** — mini-boss/boss fragments, curves; mutations are new content |
-| New-system cost (High = expensive) | **High** — region graph, faction war, autonomous defence, onslaught | **Medium** — hangar economy, hulls/loadouts | **Medium–High** — codex + a real gameplay effect per decoded rule |
-| Persistence complexity (High = complex) | **High** — map + ships + factions + onslaught state | **Medium** — banked balance + unlock flags | **Medium** — fragments + codex + decoded rules |
-| Session-length fit | **Medium** — the campaign can inflate a sitting; risk to the arcade run | **High** — one run stays a deployment; meta is outside the run | **High** — run shape preserved; meta is a menu |
-| Legibility of progress | **Medium** — a map is legible if the UI is good, but faction/ship bookkeeping can be opaque | **High** — "you own X" is unmistakable | **Medium** — the codex reads as a list; "what have I learned" needs careful UI |
-| Gym / bot testability | **Medium** — the most simulation to expose; autonomous defence needs a harness | **High** — pure economy functions | **High** — pure codex functions, but every mutation must be exercised in a gym |
-| Risk to the shipped campaign (High = risky) | **High** — replaces the run with a region campaign; may gut the 10-level campaign | **Low** — run unchanged; meta wraps it; the final boss stays | **Medium** — mutates the campaign; risks inconsistent or unfair runs |
+| Criterion | Candidate A — Contested Regions | Candidate B — Salvage Fleet | Candidate C — Signal Decode | Candidate D — Hangar War |
+|-----------|---------------------------------|-----------------------------|-----------------------------|--------------------------|
+| Fit with the fiction | **High** — a war over territory and a home world for the humans is the fiction's natural conclusion | **Medium** — salvage/builds follow from stripped wrecks, but the "hell" itself is backdrop | **High** — decoding the AI and its rules is the fiction's core mystery | **High** — a hex frontier closing on the last hangar *is* "pilots in a digital hell", with no promised planet to escape to |
+| Reuse of shipped systems | **Medium–High** — checkpoint, minerals/levels, curves, mini-boss rewards; the region war itself is all-new | **High** — checkpoint moments, minerals/levels, mini-boss rewards, curves, run unchanged | **Medium** — mini-boss/boss fragments, curves; mutations are new content | **High** — B's reusable set in full, plus the run unchanged; the ring is the only new surface |
+| New-system cost (High = expensive) | **High** — region graph, faction war, autonomous defence, onslaught | **Medium** — hangar economy, hulls/loadouts | **Medium–High** — codex + a real gameplay effect per decoded rule | **Medium** — B's hangar economy plus a *small* ring layer (map, frontier clock, algorithmic defence resolver), because defence and accrual are resolved from stored numbers rather than simulated |
+| Persistence complexity (High = complex) | **High** — map + ships + factions + onslaught state | **Medium** — banked balance + unlock flags | **Medium** — fragments + codex + decoded rules | **Medium** — hangar + ring in one versioned key; no simulation state to serialise |
+| Session-length fit | **Medium** — the campaign can inflate a sitting; risk to the arcade run | **High** — one run stays a deployment; meta is outside the run | **High** — run shape preserved; meta is a menu | **High** — a hex deployment is exactly the existing run; the ring is meta play |
+| Legibility of progress | **Medium** — a map is legible if the UI is good, but faction/ship bookkeeping can be opaque | **High** — "you own X" is unmistakable | **Medium** — the codex reads as a list; "what have I learned" needs careful UI | **High** — two visible facts: the hexes you hold (a shape on screen) and the hulls you own (a list); a defence report explains any loss |
+| Gym / bot testability | **Medium** — the most simulation to expose; autonomous defence needs a harness | **High** — pure economy functions | **High** — pure codex functions, but every mutation must be exercised in a gym | **High** — pure economy *and* a pure defence resolver; the defending bot never has to be flown, so a demo cannot stall in defence |
+| Risk to the shipped campaign (High = risky) | **High** — replaces the run with a region campaign; may gut the 10-level campaign | **Low** — run unchanged; meta wraps it; the final boss stays | **Medium** — mutates the campaign; risks inconsistent or unfair runs | **Medium** — the run is unchanged (B's safety) and the boss stays, but hexes can be *lost* between runs (a front-loading frustration risk) and the boss becomes a recurring milestone rather than a single terminus |
 
 ## Recommendation
 
-**Recommend Candidate B — Salvage Fleet.** It is the best-balanced outer loop:
-it reuses the most shipped systems (checkpoint moments, minerals/levels,
-mini-boss rewards, difficulty curves, the run itself), has the lowest new-system
-cost and persistence complexity, keeps the arcade **run** and its shape intact,
-and carries the **lowest risk** of trivialising or gutting the shipped campaign
-while preserving the single final boss. Its progress ("you own more of the
-fleet") is the most legible of the three, and its hangar economy is the easiest
-to exercise in a gym and to drive with the attract bot. A resource/build axis is
-also the most conventional roguelite meta, which lowers design risk.
+**Recommend Candidate D — Hangar War, built as its own minimal first slice: Candidate
+B's MVP plus one ring.** It is the only candidate that gives the hangar a
+**reason** and the war a **shipping order**:
 
-**Ranked justification for the two non-recommended candidates:**
+- **It is B plus a small increment, not A plus B.** Because hex defence, mineral
+  accrual and the faction/aggression tick are **algorithmic resolutions over
+  stored numbers**, D's ring layer is a handful of pure functions — no
+  simulation, no offline battle — which takes Candidate A's most expensive
+  system out of the bill. D's new-system cost lands at *Medium*, not A's *High*.
+- **It keeps B's safety.** The run is untouched, the ship still dies for real
+  and the hangar never does; the 10-level campaign is wrapped, not replaced.
+- **It supplies the purpose B lacks.** B alone answers "what do I own?"; D also
+  answers "what am I doing it *for*?" — the fleet is what holds the ring around
+  the hangar. That is the fiction's natural conclusion without A's wholesale
+  campaign replacement.
+- **It is the most legible of the four.** Progress is a shape on a screen (hexes
+  held) plus a list (hulls owned), and a defence report explains any reversal
+  with the numbers that produced it.
+- **It is the most testable of the four.** Both axes are pure logic; the
+  defending bot is never flown, so gym coverage and attract-mode traversal are
+  straightforward.
+- **It is extendable by construction.** Rings are the expansion unit, so future
+  content grows the map without re-cutting the systems.
 
-1. **Candidate B — Salvage Fleet (recommended).**
-2. **Candidate C — Signal Decode (second).** Its fiction fit is as strong as
-   A's and its knowledge axis is the most original of the three, but it is
-   content-heavy: every decoded rule needs a real, fair gameplay effect, which
-   is expensive and balance-sensitive, and mutating the campaign risks
-   inconsistent or unfair runs. It ranks below B on cost, persistence and risk,
-   but above A because it preserves the arcade run shape and the single final
-   boss.
-3. **Candidate A — Contested Regions / Home World (third, on cost and risk).**
-   This is the producer's proposal and it has the strongest "war to win"
-   fiction fit, but it is the **largest** of the three (region graph, faction
-   warfare, autonomous defence, onslaught), has the most persistence
-   complexity, the least legible progress (faction and ship bookkeeping), and the
-   **highest risk of gutting the shipped campaign** by replacing the run with a
-   region campaign. It also introduces the most new simulation to make gym-
-   testable and bot-traversable, and its failure modes (opaque simulation,
-   offline-defence frustration) are the hardest to discover cheaply. It should
-   not be dismissed — it is the most ambitious — but it is the wrong *first*
-   outer loop to ship.
+**Ship it in B's shape first.** D's first slice *is* B's MVP plus one ring, so
+implement the hangar slice first and the ring second (see the ranked
+justification). If the ring disappoints in play, B stands alone as a shippable
+outer loop and nothing is wasted.
+
+**Ranked justification for the non-recommended candidates:**
+
+1. **Candidate D — Hangar War (recommended).**
+2. **Candidate B — Salvage Fleet (second).** It is not beaten on its own merits —
+   B is subsumed by D and is literally D's first slice. It ranks second because
+   shipping B alone leaves the hangar without a purpose and the game without a
+   war; D costs one small increment more. **Practical reading: ship B first, then
+   extend it into D.**
+3. **Candidate C — Signal Decode (third).** Its fiction fit is as strong as D's
+   and its knowledge axis is the most original of the four, but every decoded
+   rule needs a real, fair gameplay effect, which is content-heavy and
+   balance-sensitive, and mutating the campaign risks inconsistent or unfair
+   runs. It ranks below B/D on cost and risk, but above A because it preserves
+   the arcade run shape and the single final boss.
+4. **Candidate A — Contested Regions / Home World (fourth).** The producer's
+   original proposal, and now materially cheaper thanks to the algorithmic
+   resolution — but it is still the largest *single* commitment (a whole region
+   campaign rather than a ring around a hangar), it has the least legible
+   progress (faction and ship bookkeeping), and it carries the **highest risk of
+   gutting the shipped campaign** by replacing the run with a campaign. Crucially
+   **D is the better vehicle for exactly the same war**: D keeps A's territory
+   axis, gives it a cheap algorithmic spine and a reason (the hangar), and grows
+   in rings rather than arriving all at once. A is therefore superseded rather
+   than dismissed — its mechanics live on inside D, and a larger map is D's
+   natural expansion.
 
 > The recommendation is a design judgement, not a decision: the producer owns
 > the choice, and the "Producer decision record" below is deliberately left
@@ -684,6 +1019,7 @@ a one-line deferral reason each, so the pool can be revisited later:
 | Candidate A — Contested Regions / Home World | pending | — | — |
 | Candidate B — Salvage Fleet | pending | — | — |
 | Candidate C — Signal Decode | pending | — | — |
+| Candidate D — Hangar War | pending | — | Recommended; expected shipping order is B's MVP first, then the ring |
 
 The producer's choice is recorded above once made. Writing the chosen loop into
 the GDD as playable specification is a **follow-on work item**; this document

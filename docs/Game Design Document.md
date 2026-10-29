@@ -2076,13 +2076,17 @@ not selected" section.
 flying, dodging, destroying) and a middle loop (a run: minerals → hold-full
 power-up/weapon choices → levelled effects), but **no outer loop**: nothing
 persists between runs except the leaderboard (§5), player settings and a single
-run checkpoint (§6.6), and game over is final (§4.6). Three decision-ready
+run checkpoint (§6.6), and game over is final (§4.6). Four decision-ready
 candidates — **Contested Regions / Home World** (the producer's proposal),
-**Salvage Fleet** and **Signal Decode** — are outlined on the same footing,
-compared across agreed criteria and ranked, with the producer's choice left
-pending, in [`OUTER_LOOP_CANDIDATES.md`](./OUTER_LOOP_CANDIDATES.md)
-(AH-0MVNSSY9L001P1CC). That document recommends **Candidate B — Salvage Fleet**
-and is **design only, not scheduled**: no candidate's gameplay,
+**Salvage Fleet**, **Signal Decode** and **Hangar War** (A's war wrapped around
+B's hangar) — are outlined on the same footing, compared across agreed criteria
+and ranked, with the producer's choice left pending, in
+[`OUTER_LOOP_CANDIDATES.md`](./OUTER_LOOP_CANDIDATES.md) (AH-0MVNSSY9L001P1CC,
+AH-0MVTE4EOS008RMQ7). That document carries two progression rules common to every
+candidate — a reduced starting kit so power is discovered through play, and
+mini-bosses that introduce a weapon the player must first defeat and then may
+use — recommends **Candidate D — Hangar War** (shipped as Candidate B's MVP plus
+one ring), and is **design only, not scheduled**: no candidate's gameplay,
 persistence-schema or scene implementation is specified here, and this GDD gains
 no playable specification until the producer chooses a loop (a follow-on work
 item).
