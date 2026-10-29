@@ -1246,13 +1246,19 @@ interface ArcCaptureModule {
  * | 2 | Humble origins — default cannon, hold-full pay-off | `GymLevel` | 2202 | cannon | — | 1 |
  * | 3 | First steps up — three slots at level 1 | `GymLevel` | 3303 | spread, dual, rapid | — | 3 |
  * | 4 | Escalation — five slots at levels 1-2 | `GymLevel` | 4404 | spread, dual, rapid | wave_laser 2, ricochet 2 | 5 |
- * | 5 | Mini-boss — escort and death | `GymMiniBoss` | 5505 | spread, dual, rapid | wave_laser 2, ricochet 2, cluster 3 | 6 |
+ * | 5 | Mini-boss — escort and death | `GymMiniBoss` | 5505 | spread, dual, rapid, broadside | wave_laser 2, ricochet 2, broadside 3 | 6 |
  * | 6 | Reprise — different enemies, stronger guns | `GymLevel` | 6606 | spread, dual | rapid 3, wave_laser 3, ricochet 3, nova 3 | 6 |
- * | 7 | Main boss — final death | `GymBoss` | 7707 | spread, dual, rapid | wave_laser 4, ricochet 4, nova 5 | 6 |
+ * | 7 | Main boss — final death | `GymBoss` | 7707 | spread, dual, rapid | wave_laser 4, ricochet 4, broadside 5 | 6 |
  *
- * Beat 2 forces `mineralReward: "mineral_scoop"` (the humble-origins pay-off),
- * beat 5 starts the mini-boss with 8 hits left and beat 7 the main boss with
- * 12, so each death lands inside its capture window.
+ * Beat 2 forces `mineralReward: "mineral_scoop"` (the humble-origins pay-off).
+ * Beats 5 and 7 carry a **broadside** weapon and start their boss with
+ * `bossHitsRemaining: 1` (AH-0MVRMFVQ6007IC4D): a captioned gym scene records
+ * the auto-firing ship with no input, so it fires along its default heading
+ * (0 = right) and its forward guns can never reach a boss sitting directly
+ * above it. Broadside's perpendicular pair sends a shot straight up the
+ * screen, and one hit left means that first connecting lance finishes the
+ * boss inside the capture window (measured: ~2.5 s into the mini-boss window,
+ * ~5 s into the main-boss window). Nova/Cluster were the slots it replaced.
  */
 describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', () => {
   const examplePath = resolve(process.cwd(), 'examples/scenes.json');
@@ -1315,10 +1321,10 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
       target: 'GymMiniBoss',
       label: 'Mini-boss — escort and death',
       seed: 5505,
-      weapons: ['spread', 'dual', 'rapid'],
-      weaponLevels: { wave_laser: 2, ricochet: 2, cluster: 3 },
+      weapons: ['spread', 'dual', 'rapid', 'broadside'],
+      weaponLevels: { wave_laser: 2, ricochet: 2, broadside: 3 },
       slots: 6,
-      bossHitsRemaining: 8,
+      bossHitsRemaining: 1,
     },
     {
       target: 'GymLevel',
@@ -1333,9 +1339,9 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
       label: 'Main boss — final death',
       seed: 7707,
       weapons: ['spread', 'dual', 'rapid'],
-      weaponLevels: { wave_laser: 4, ricochet: 4, nova: 5 },
+      weaponLevels: { wave_laser: 4, ricochet: 4, broadside: 5 },
       slots: 6,
-      bossHitsRemaining: 12,
+      bossHitsRemaining: 1,
     },
   ];
 
@@ -1417,8 +1423,8 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     const miniBossBeat = parsed.find((scene) => scene.target === 'GymMiniBoss');
     const bossBeat = parsed.find((scene) => scene.target === 'GymBoss');
 
-    expect(miniBossBeat?.setup?.bossHitsRemaining).toBe(8);
-    expect(bossBeat?.setup?.bossHitsRemaining).toBe(12);
+    expect(miniBossBeat?.setup?.bossHitsRemaining).toBe(1);
+    expect(bossBeat?.setup?.bossHitsRemaining).toBe(1);
     // GymMiniBoss's hit pool is 2 phases x 5 (design level 1); GymBoss's is
     // 4 phases x 50. The configured preview must fit inside each pool.
     expect(miniBossBeat?.setup?.bossHitsRemaining ?? 0).toBeLessThanOrEqual(10);

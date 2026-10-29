@@ -1264,12 +1264,19 @@ its on-camera pay-off are deterministic:
 | 2 | Humble origins | `GymLevel` | `2202` | default cannon only; the full mineral hold resolves to the **Hull Full** (`mineral_scoop`) reward |
 | 3 | First steps up | `GymLevel` | `3303` | three weapon slots at level 1, roughly twice the enemies of scene 2 |
 | 4 | Escalation | `GymLevel` | `4404` | five slots at levels 1–2, twice the enemies of scene 3 |
-| 5 | Mini-boss | `GymMiniBoss` | `5505` | the **mini-boss death**, starting from `bossHitsRemaining: 8` |
+| 5 | Mini-boss | `GymMiniBoss` | `5505` | the **mini-boss death**: a broadside up-lance finishes it from `bossHitsRemaining: 1` |
 | 6 | Reprise | `GymLevel` | `6606` | scene 4's pressure with a different enemy mix and stronger weapons |
-| 7 | Main boss | `GymBoss` | `7707` | the **boss death**, starting from `bossHitsRemaining: 12` |
+| 7 | Main boss | `GymBoss` | `7707` | the **boss death**: a broadside up-lance finishes it from `bossHitsRemaining: 1` |
 
 The seeds (`1101`…`7707`) are pinned, so re-running the shipped config
-reproduces the same loadouts and content. Three setup fields exist for this
+reproduces the same loadouts and content. The two boss beats carry a
+**broadside** weapon on purpose: a captured gym scene takes no player input, so
+the auto-firing ship keeps its default heading (`0` = right) and its forward
+guns can never reach a boss that sits directly above it — broadside fires
+perpendicular to the heading, sending one shot straight up the screen. With
+`bossHitsRemaining: 1` the first connecting lance is the death, which lands
+inside the beat's capture window (measured at roughly 2.5 s into the mini-boss
+window and 5 s into the main-boss window). Three setup fields exist for this
 arc:
 
 - **`player.weaponLevels`** grants a weapon above level 1: each entry
@@ -1337,8 +1344,8 @@ shipped bundle and the gym↔game parity contract are unchanged.
       "captureMs": 8000,
       "label": "Mini-boss — escort and death",
       "setup": {
-        "player": { "weapons": ["spread", "dual", "rapid"], "weaponLevels": { "cluster": 3 } },
-        "bossHitsRemaining": 8,
+        "player": { "weapons": ["spread", "dual", "rapid", "broadside"], "weaponLevels": { "wave_laser": 2, "ricochet": 2, "broadside": 3 } },
+        "bossHitsRemaining": 1,
         "seed": 5505
       }
     }

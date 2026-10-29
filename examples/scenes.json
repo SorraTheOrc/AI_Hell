@@ -203,16 +203,16 @@
       "label": "Mini-boss — escort and death",
       "setup": {
         "player": {
-          "weapons": ["spread", "dual", "rapid"],
+          "weapons": ["spread", "dual", "rapid", "broadside"],
           "timedWeapons": [],
           "weaponLevels": {
             "wave_laser": 2,
             "ricochet": 2,
-            "cluster": 3
+            "broadside": 3
           }
         },
         "powerUps": {},
-        "bossHitsRemaining": 8,
+        "bossHitsRemaining": 1,
         "seed": 5505
       }
     },
@@ -279,11 +279,11 @@
           "weaponLevels": {
             "wave_laser": 4,
             "ricochet": 4,
-            "nova": 5
+            "broadside": 5
           }
         },
         "powerUps": {},
-        "bossHitsRemaining": 12,
+        "bossHitsRemaining": 1,
         "seed": 7707
       }
     }

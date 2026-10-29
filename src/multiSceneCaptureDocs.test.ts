@@ -266,6 +266,6 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
       dual: 4,
       rapid: 5,
     });
-    expect(parsed[1].setup?.bossHitsRemaining).toBe(8);
+    expect(parsed[1].setup?.bossHitsRemaining).toBe(1);
   });
 });
