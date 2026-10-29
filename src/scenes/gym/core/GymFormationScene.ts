@@ -441,6 +441,15 @@ export interface EnemyFormationConfig<
     x: number,
     y: number,
     offset: FormationOffset,
+    /**
+     * The scene's capture setup, when one was supplied
+     * (AH-0MVNW8VNN004FFK1). Passed so a gym can configure **spawn-time**
+     * entity state through this one seam — e.g. the boss gyms' hit preview
+     * (`setup.bossHitsRemaining` → the entity's existing `initialHp`
+     * constructor option, AH-0MVRMFPXF008BG77) — instead of adding a second
+     * spawn path that could drift from it.
+     */
+    setup?: SceneSetupState | null,
   ): TEntity;
   /** Collects any bullets the entity fires this frame (empty if none). */
   collectBullets(entity: TEntity, now: number): TBullet[];
@@ -1806,7 +1815,13 @@ export class GymFormationScene<
         this.config.spacingX,
         this.config.spacingY,
       );
-      const entity = this.config.createEntity(this, portal.x, portal.y, offset);
+      const entity = this.config.createEntity(
+        this,
+        portal.x,
+        portal.y,
+        offset,
+        this.pendingSetup,
+      );
       // Wormhole-entry transit (AH-0MV8BSMXC0097KLW): spawning-capable
       // entities emerge at the portal (where the wormhole opens) and traverse
       // to their slot over the spawn window — parity with `PlayScene.spawnWave`

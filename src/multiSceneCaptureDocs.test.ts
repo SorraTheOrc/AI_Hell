@@ -220,7 +220,7 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(parsed.some((scene) => scene.target === 'PlayScene')).toBe(false);
   });
 
-  it.fails('documents the arc setup fields and their error codes (AH-0MVRMFMJP0070KTS)', () => {
+  it('documents the arc setup fields and their error codes (AH-0MVRMFMJP0070KTS)', () => {
     // The new fields, including the nested player field the generic field
     // parity loop above cannot see.
     for (const field of [

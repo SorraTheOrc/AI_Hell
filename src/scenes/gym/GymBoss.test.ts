@@ -967,12 +967,10 @@ function remainingHits(entity: {
  * (parent AH-0MVPJ3NSK008V5VB, AC2 part (b); spawn path, not a re-implemented
  * copy of it).
  *
- * **TEST-FIRST.** The field does not exist yet, so the differed test is
- * wrapped in Vitest's `it.fails` (the repo's red-before/green-after
- * convention — see `src/core/levelScaling.test.ts`), keeping the suite green
- * on pre-change HEAD. **F3 (AH-0MVRMFPXF008BG77) flips it back to `it`** once
- * the gyms pass `initialHp` from the setup; a leftover `it.fails` fails the
- * suite. The absent-field test is a normal green test: it pins today's
+ * **TEST-FIRST, now green.** These were authored red-before (Vitest's
+ * `it.fails`, the repo's convention — see `src/core/levelScaling.test.ts`)
+ * and **F3 (AH-0MVRMFPXF008BG77) flipped them back to `it`** when the gyms
+ * started passing `initialHp` from the setup. The absent-field test pins the
  * full-HP spawn as unchanged behaviour.
  */
 describe('GymBoss — scripted-video boss hit preview (AH-0MVRMFMJP0070KTS)', () => {
@@ -991,7 +989,7 @@ describe('GymBoss — scripted-video boss hit preview (AH-0MVRMFMJP0070KTS)', ()
     return booted.game.scene.getScene('GymBoss') as GymBoss;
   }
 
-  it.fails('AC4 — spawns the boss with bossHitsRemaining as its initial hits', async () => {
+  it('AC4 — spawns the boss with bossHitsRemaining as its initial hits', async () => {
     const scene = await bootWith({ bossHitsRemaining: 12 });
 
     expect(remainingHits(scene.formationBoss)).toBe(12);
@@ -1009,7 +1007,7 @@ describe('GymBoss — scripted-video boss hit preview (AH-0MVRMFMJP0070KTS)', ()
     );
   });
 
-  it.fails('AC2 — pins the hit pool the parser bounds bossHitsRemaining with', async () => {
+  it('AC2 — pins the hit pool the parser bounds bossHitsRemaining with', async () => {
     // Loaded by file URL (Vite ignores it) so the pure capture module — which
     // lives outside `src/` — is imported as plain Node ESM.
     const moduleUrl = pathToFileURL(

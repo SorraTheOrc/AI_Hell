@@ -87,6 +87,8 @@ export const SCENE_CONFIG_ERROR_CODES: Readonly<{
   invalidWeaponLevel: 'invalid-weapon-level';
   /** A `setup.mineralReward` is not a known hold-full reward id. */
   unknownMineralReward: 'unknown-mineral-reward';
+  /** A `setup.bossHitsRemaining` is not a positive integer in the hit pool. */
+  invalidBossHits: 'invalid-boss-hits';
   /** A generated-level entry's `level` is not an integer in range. */
   invalidSceneLevel: 'invalid-scene-level';
   /** A generated-level entry's `minWaves`/`maxCaptureMs` is invalid. */
@@ -170,6 +172,13 @@ export interface SceneSetup {
    * fills (`GymLevel`/`GymBotTuning` only).
    */
   mineralReward?: string;
+  /**
+   * Hits the spawned boss entity has left when the scene starts
+   * (`GymBoss`/`GymMiniBoss` only): a positive integer within the target's
+   * total hit pool (`SCENE_SETUP_BOSS_TOTAL_HITS`). Reaches the entity through
+   * its existing `initialHp` seam; the pool itself is unchanged.
+   */
+  bossHitsRemaining?: number;
   /** 32-bit unsigned determinism seed (defaults to 0). */
   seed?: number;
 }
@@ -228,9 +237,11 @@ export const DEFAULT_SCENE_SETUP_WEAPON_LEVELS: Readonly<Record<string, never>>;
 export const SCENE_SETUP_WEAPON_LEVEL_MAX: number;
 /** Hold-full reward ids a `setup.mineralReward` may force. */
 export const SCENE_SETUP_MINERAL_REWARD_IDS: readonly string[];
+/** Total hit pool of each boss-capable gym (bounds `setup.bossHitsRemaining`). */
+export const SCENE_SETUP_BOSS_TOTAL_HITS: Readonly<Record<string, number>>;
 /** Fields every setup-capable scene can consume. */
 export const SCENE_SETUP_COMMON_FIELDS: readonly string[];
-/** Per-target extra fields (`GymLevel`/`GymBotTuning`/`GymFodderEnemies`). */
+/** Per-target extra fields (`GymLevel`/`GymBotTuning`/`GymFodderEnemies`/boss gyms). */
 export const SCENE_SETUP_TARGET_EXTRA_FIELDS: Readonly<Record<string, readonly string[]>>;
 /** Watchable gyms that cannot consume a setup at all. */
 export const SCENE_SETUP_INCAPABLE_TARGETS: readonly string[];

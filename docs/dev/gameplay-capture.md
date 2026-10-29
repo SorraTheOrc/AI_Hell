@@ -1125,6 +1125,7 @@ setup is validated before boot and forwarded to the scene as its launch data.
 | `player.weaponLevels` | `{ id: level }` | all setup-capable gyms | `{}` | per-weapon permanent level `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX` (`5`), applied as that many permanent grants on top of `player.weapons` |
 | `powerUps` | `{ id: level }` | all setup-capable gyms | `{}` | power-up id → permanent level |
 | `mineralReward` | hold-full reward id | `GymLevel`, `GymBotTuning` | — (random) | forces the reward a full mineral hold resolves to, instead of the gym's random choice |
+| `bossHitsRemaining` | positive integer | `GymBoss`, `GymMiniBoss` | — (full pool) | hits the spawned boss/mini-boss has left when the scene starts, via the entity's existing `initialHp` seam; bounded by the target's total hit pool (`SCENE_SETUP_BOSS_TOTAL_HITS`: 200 for `GymBoss`, 10 for `GymMiniBoss`) |
 | `seed` | uint32 | all setup-capable gyms | `0` | determinism seed for content RNGs |
 
 `level` is a `LevelDefinition`-shaped object: `{ level, name, waves[] }` where
@@ -1287,6 +1288,7 @@ stderr and exits **1** — it never records a partial or blank video:
 | `invalid-seed` | `seed` is not a 32-bit unsigned integer |
 | `invalid-weapon-level` | a `player.weaponLevels` level is not an integer `1`–`5` |
 | `unknown-mineral-reward` | a `mineralReward` is not a hold-full choice reward id |
+| `invalid-boss-hits` | a `bossHitsRemaining` is not a positive integer within the target's hit pool |
 | `invalid-scene-level` | a generated-level `level` is not an integer `1`–`LEVEL_COUNT` |
 | `invalid-scene-field` | a generated-level `minWaves`/`maxCaptureMs` is not a positive integer |
 | `unsupported-scene-field` | a generated-level-only field (`seed`/`level`/`minWaves`/`maxCaptureMs`) is supplied on a gym target |

@@ -123,6 +123,11 @@ export const SCENE_CONFIG_ERROR_CODES = Object.freeze({
    * ({@link SCENE_SETUP_MINERAL_REWARD_IDS}).
    */
   unknownMineralReward: 'unknown-mineral-reward',
+  /**
+   * A `setup.bossHitsRemaining` is not a positive integer within the
+   * target's total hit pool ({@link SCENE_SETUP_BOSS_TOTAL_HITS}).
+   */
+  invalidBossHits: 'invalid-boss-hits',
   /** A generated-level entry's `level` is not an integer in range. */
   invalidSceneLevel: 'invalid-scene-level',
   /** A generated-level entry's `minWaves`/`maxCaptureMs` is invalid. */
@@ -348,6 +353,25 @@ export const DEFAULT_SCENE_SETUP_TIMED_WEAPONS = Object.freeze([]);
 export const DEFAULT_SCENE_SETUP_WEAPON_LEVELS = Object.freeze({});
 
 /**
+ * Total hit pool of each boss-capable gym, used to bound
+ * `setup.bossHitsRemaining` (AH-0MVRMFPXF008BG77). A preview may start the
+ * entity anywhere inside its existing pool; it may never enlarge it.
+ *
+ * - `GymBoss` — the shared Boss pool: `BOSS_PHASE_COUNT` (4) x
+ *   `BOSS_HIT_POINTS_PER_PHASE` (50) = 200.
+ * - `GymMiniBoss` — the gym's deliberate small pool: design level 1 has two
+ *   phases at `MINI_BOSS_GYM_HP_PER_PHASE` (5) each = 10, so a tester can step
+ *   through every phase quickly.
+ *
+ * Both values are pinned to the live `getTotalHp()` of the spawned entities by
+ * tests, so a pool change can never silently admit an out-of-range preview.
+ */
+export const SCENE_SETUP_BOSS_TOTAL_HITS = Object.freeze({
+  GymBoss: 200,
+  GymMiniBoss: 10,
+});
+
+/**
  * Setup fields every setup-capable scene can consume: a player loadout, power-up
  * levels and a determinism seed.
  */
@@ -361,7 +385,7 @@ export const SCENE_SETUP_COMMON_FIELDS = Object.freeze([
  * Extra setup fields a specific target can consume beyond
  * {@link SCENE_SETUP_COMMON_FIELDS}: `GymLevel`/`GymBotTuning` take a level, a
  * starting wave and a forced hold-full reward, `GymFodderEnemies` takes the
- * formation enemy key.
+ * formation enemy key, and the boss-capable gyms take a hit preview.
  */
 export const SCENE_SETUP_TARGET_EXTRA_FIELDS = Object.freeze({
   // The level gyms resolve a full mineral hold automatically (no modal), so
@@ -369,6 +393,10 @@ export const SCENE_SETUP_TARGET_EXTRA_FIELDS = Object.freeze({
   GymLevel: Object.freeze(['level', 'startWave', 'mineralReward']),
   GymBotTuning: Object.freeze(['level', 'startWave', 'mineralReward']),
   GymFodderEnemies: Object.freeze(['enemy']),
+  // Only the boss-capable gyms host an entity with the `initialHp` seam, so
+  // only they may preview a boss close to death (AH-0MVRMFPXF008BG77).
+  GymBoss: Object.freeze(['bossHitsRemaining']),
+  GymMiniBoss: Object.freeze(['bossHitsRemaining']),
 });
 
 /**
@@ -387,6 +415,7 @@ const SETUP_ALL_FIELDS = Object.freeze([
   'powerUps',
   'seed',
   'mineralReward',
+  'bossHitsRemaining',
 ]);
 
 /** Whether `value` is any known scene key (watchable or parameterised). */
@@ -720,6 +749,30 @@ function validateSetupMineralReward(reward, at) {
   return reward;
 }
 
+/**
+ * Validates `setup.bossHitsRemaining`: a positive integer no greater than the
+ * target's total hit pool ({@link SCENE_SETUP_BOSS_TOTAL_HITS}). The preview
+ * starts the entity **inside** its existing pool — the pool itself is
+ * unchanged — so anything below one hit or above the pool is rejected here
+ * rather than silently clamped by the entity.
+ */
+function validateSetupBossHits(value, at, target) {
+  const total = SCENE_SETUP_BOSS_TOTAL_HITS[target];
+  if (
+    typeof value !== 'number'
+    || !Number.isInteger(value)
+    || value < 1
+    || (total !== undefined && value > total)
+  ) {
+    const range = total === undefined ? 'a positive integer' : `an integer 1-${total}`;
+    throw new SceneConfigError(
+      CODE.invalidBossHits,
+      `${at} must be ${range} (the ${target} hit pool), got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
 /** Validates `setup.powerUps`. */
 function validateSetupPowerUps(powerUps, at) {
   requireSetupObject(powerUps, at);
@@ -816,6 +869,13 @@ export function validateSceneSetup(rawSetup, target, at = 'setup') {
   if (rawSetup.seed !== undefined) validateSetupSeed(rawSetup.seed, `${at}.seed`);
   if (rawSetup.mineralReward !== undefined) {
     validateSetupMineralReward(rawSetup.mineralReward, `${at}.mineralReward`);
+  }
+  if (rawSetup.bossHitsRemaining !== undefined) {
+    validateSetupBossHits(
+      rawSetup.bossHitsRemaining,
+      `${at}.bossHitsRemaining`,
+      target,
+    );
   }
 
   // Required launch parameters are checked **last**, so a setup that also
@@ -922,6 +982,9 @@ export function normaliseSceneSetup(rawSetup = {}, target) {
   }
   if (include('mineralReward') && setup.mineralReward !== undefined) {
     normalised.mineralReward = setup.mineralReward;
+  }
+  if (include('bossHitsRemaining') && setup.bossHitsRemaining !== undefined) {
+    normalised.bossHitsRemaining = setup.bossHitsRemaining;
   }
   if (include('seed')) {
     normalised.seed = setup.seed === undefined ? DEFAULT_SCENE_SETUP_SEED : setup.seed;

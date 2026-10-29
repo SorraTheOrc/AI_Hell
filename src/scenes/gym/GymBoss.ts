@@ -57,6 +57,7 @@ import {
   resolveSpawnTransitTarget,
   type SpawnTransitEntity,
 } from '../core/spawnTransit';
+import type { SceneSetupState } from '../core/sceneSetup';
 import {
   EnemyFormationConfig,
   GymFormationScene,
@@ -116,11 +117,18 @@ const BOSS_CONFIG: EnemyFormationConfig<
     x: number,
     y: number,
     formationOffset: FormationOffset,
+    setup?: SceneSetupState | null,
   ): Boss => {
     return new Boss(scene, {
       x,
       y,
       formationOffset,
+      // Dev-gated capture preview (AH-0MVRMFPXF008BG77): the setup's
+      // `bossHitsRemaining` is the boss's existing `initialHp` seam, so a
+      // scripted scene starts the boss close to death and its death lands on
+      // camera. Absent ⇒ the full `BOSS_PHASE_COUNT` pool, exactly as before;
+      // the pool itself is never changed.
+      initialHp: setup?.bossHitsRemaining,
     });
   },
   collectBullets: (_entity, _now): (BossBullet | PulseWaveBullet)[] => []

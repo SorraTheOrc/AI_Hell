@@ -70,6 +70,14 @@ export interface SceneSetupState {
    */
   mineralReward?: string;
   /**
+   * Hits the boss-capable gyms (`GymBoss`/`GymMiniBoss`) leave their spawned
+   * entity when the scene starts (AH-0MVRMFPXF008BG77). Applied through the
+   * entity's existing `initialHp` constructor seam — the same one the dev boss
+   * scenario uses — so a scripted capture can start a boss close to death
+   * without changing the entity's total hit pool. Absent ⇒ the full pool.
+   */
+  bossHitsRemaining?: number;
+  /**
    * 32-bit determinism seed (AH-0MVNW90FB003H3KM). When present, the scene
    * seeds its content RNGs from it so the same config reproduces the same
    * enemy placement, minerals and drop cadence.

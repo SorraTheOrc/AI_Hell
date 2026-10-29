@@ -1232,7 +1232,8 @@ interface ArcCaptureModule {
  * - **F2 (AH-0MVRMFOB4002LMZS)** — `player.weaponLevels` and `mineralReward`
  *   parsing/normalisation/error codes, plus the mineral-reward id registry.
  * - **F3 (AH-0MVRMFPXF008BG77)** — `bossHitsRemaining` parsing/normalisation,
- *   its boss-capable target allow-list and its total-hit bounds.
+ *   its boss-capable target allow-list and its total-hit bounds. **Landed:**
+ *   its markers below are back to `it`.
  * - **F4 (AH-0MVRMFRSO004H9JM)** — the seven-beat `examples/scenes.json`
  *   table pinned by {@link ARC_BEATS}.
  *
@@ -1502,9 +1503,9 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     }
   });
 
-  // Still red until F3 (AH-0MVRMFPXF008BG77) lands `bossHitsRemaining`: this
-  // test spans both halves of the arc fields. F3 flips it back to `it`.
-  it.fails('AC1 — normalising the arc fields is idempotent (deep-equal)', () => {
+  // Spans both halves of the arc fields (F2 + F3); F3 landed
+  // `bossHitsRemaining`, so this is a plain `it` again.
+  it('AC1 — normalising the arc fields is idempotent (deep-equal)', () => {
     const levelRaw = {
       player: { weapons: ['spread'], weaponLevels: { rapid: 3 } },
       mineralReward: 'mineral_scoop',
@@ -1528,7 +1529,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
 
   // ── AC2: target-aware validation ──────────────────────────────────
 
-  it.fails('AC2 — bossHitsRemaining is accepted only on the boss-capable targets', () => {
+  it('AC2 — bossHitsRemaining is accepted only on the boss-capable targets', () => {
     const bossCapable = new Set(['GymBoss', 'GymMiniBoss']);
     const targets = [...WATCHABLE_GYM_SCENE_KEYS, ...PARAMETERISED_GYM_SCENE_KEYS];
 
@@ -1552,7 +1553,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     }
   });
 
-  it.fails('AC2 — rejects bossHitsRemaining outside the entity hit pool', () => {
+  it('AC2 — rejects bossHitsRemaining outside the entity hit pool', () => {
     // GymBoss: 4 phases x 50 hits = 200. GymMiniBoss (gym pool): 2 x 5 = 10.
     const pools: ReadonlyArray<readonly [string, number]> = [
       ['GymBoss', 200],
@@ -1593,9 +1594,9 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
 
   // ── Module registries the fields must add ─────────────────────────
 
-  // Still red until F3 (AH-0MVRMFPXF008BG77) lands `SCENE_SETUP_BOSS_TOTAL_HITS`;
-  // the weapon-level and mineral-reward registries are already in place (F2).
-  it.fails('AC1/AC2 — exposes the arc registries, pinned to the shipped id/total tables', async () => {
+  // F3 (AH-0MVRMFPXF008BG77) landed `SCENE_SETUP_BOSS_TOTAL_HITS`; the
+  // weapon-level and mineral-reward registries came with F2.
+  it('AC1/AC2 — exposes the arc registries, pinned to the shipped id/total tables', async () => {
     const module = await loadArcModule();
 
     expect(module.SCENE_SETUP_WEAPON_LEVEL_MAX).toBe(5);

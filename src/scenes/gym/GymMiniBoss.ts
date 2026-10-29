@@ -43,6 +43,7 @@ import type { BossBullet } from '../../entities/Boss';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import type { EnemyEntity } from '../../entities/enemyFactory';
 import type { FormationOffset } from '../../utils/formations';
+import type { SceneSetupState } from '../core/sceneSetup';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import {
   collectSweepTargets,
@@ -146,6 +147,7 @@ const MINI_BOSS_CONFIG: EnemyFormationConfig<MiniBoss | EnemyEntity, BossBullet>
     x: number,
     y: number,
     formationOffset: FormationOffset,
+    setup?: SceneSetupState | null,
   ): MiniBoss =>
     // The same config helper the game uses, so the gym exercises the real
     // per-level design (phases, colour, minions, archetype name). The gym
@@ -158,6 +160,11 @@ const MINI_BOSS_CONFIG: EnemyFormationConfig<MiniBoss | EnemyEntity, BossBullet>
         y,
         formationOffset,
         hpPerPhase: MINI_BOSS_GYM_HP_PER_PHASE,
+        // Dev-gated capture preview (AH-0MVRMFPXF008BG77): the setup's
+        // `bossHitsRemaining` is the entity's existing `initialHp` seam, so a
+        // scripted scene starts the mini-boss close to death and its death
+        // lands on camera. Absent ⇒ the full pool, exactly as before.
+        initialHp: setup?.bossHitsRemaining,
       }),
     ),
   collectBullets: () => [],
