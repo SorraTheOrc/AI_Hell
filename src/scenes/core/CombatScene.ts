@@ -1306,7 +1306,7 @@ export abstract class CombatScene<
         // shared flash tinted with the Force Field colour (registered for
         // tests and teardown) plus the dedicated reflect cue. Both live in
         // this shared branch, so the game and every gym read a reflection
-        // identically (AH-0MVRDMMYO002SC5V).
+        // identically (AH-0MVRDMMYO002SC5V, parent AH-0MVBKT2WO001AR14).
         spawnBulletImpact(this, bulletX, bulletY, {
           registry: this.bulletImpactEffects,
           color: FORCE_FIELD_COLOR,

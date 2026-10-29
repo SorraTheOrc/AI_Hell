@@ -1602,6 +1602,10 @@ missile-split seams (`src/scenes/core/CombatCoreScene.ts`), the pure
 `AoEDescriptor` (`screenPulse`) pulse, and the shared `_reflectEnemyBullet`
 Force Field seam — so the game and every gym (`GymWeapons`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`) run identical arsenal behaviour.
+The Force Field's bounce-point flash and dedicated `playForceFieldReflectSound`
+cue are emitted inside that same shared branch (AH-0MVRDMMYO002SC5V), and its
+persistent/dimmed bubble is drawn by the single shared `drawForceFieldBubble`
+helper (AH-0MVRDMG0N000Y03Z), so neither can drift between the game and a gym.
 
 **Projectile identity & per-shot feel are shared (per-enemy visuals epic,
 AH-0MV2K5SR0005RTTE).** Every weapon/attack's in-flight look, fire-time
