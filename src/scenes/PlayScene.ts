@@ -3344,10 +3344,24 @@ export class PlayScene extends CombatScene<
    * No gym implements checkpoint resume, so the gym↔game parity rule needs no
    * gym counterpart for this path (the shared helpers themselves are already
    * consumed by the game, every gym and the headless eval arena).
+   *
+   * The **resumed hold** keeps the capacity the run had earned: the
+   * checkpoint's hold capacity is applied first, then the saved mineral count
+   * is restored through the shared clamped seam (`GameState.restoreHold`), so
+   * an over-capacity count clamps into `[0, capacity]` and records no overflow
+   * — the hold can never resume over-capacity, the HUD never paints more than
+   * 100%, and the first hold-full choice after Continue needs a real fill, not
+   * the discarded saved surplus (AH-0MVT1DZRG000Q1US).
    */
   private _restoreCheckpoint(checkpoint: Checkpoint): void {
     this.gameState.score = checkpoint.score;
-    this.gameState.minerals = checkpoint.minerals;
+    // Capacity first, then the clamped store: `restoreHold` applies the
+    // checkpoint's hold capacity and clamps the restored minerals into
+    // `[0, capacity]`, clearing any overflow (never over-capacity on resume).
+    this.gameState.restoreHold({
+      capacity: checkpoint.mineralHoldCapacity,
+      store: checkpoint.minerals,
+    });
     this.gameState.runSeed = checkpoint.runSeed;
     this.injectedRunSeed = checkpoint.runSeed;
     // Replay the permanent grants through the ordinary collection seam so the

@@ -418,15 +418,14 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
    * AH-0MVSSSFXK005ZW8O).
    *
    * **TEST-FIRST.** These tests reproduce the reported sequence — Continue →
-   * first hold-full → resolve → an immediate second hold-full — and are
+   * first hold-full → resolve → an immediate second hold-full — and were
    * authored **red** under Vitest's `it.fails` (the repo's red-before/
    * green-after convention — see `src/core/enemyForceField.test.ts` and
-   * AH-0MVLJCYGW001TRB3), so the suite stays green on pre-change HEAD while
-   * the defect is pinned. The resume implementation item
-   * (AH-0MVT1DZRG000Q1US) **flips every `it.fails` here back to `it`** once
+   * AH-0MVLJCYGW001TRB3), so the suite stayed green on pre-change HEAD while
+   * the defect was pinned. The resume implementation item
+   * (AH-0MVT1DZRG000Q1US) flipped every `it.fails` here back to `it` once
    * `_restoreCheckpoint()` applies the checkpoint's hold capacity and clamps
-   * the restored store through the shared hold model; a leftover `it.fails`
-   * fails the suite, so the flip is deliberate.
+   * the restored store through the shared hold model.
    *
    * The checkpoint fixture (`bootResumed()` / `CHECKPOINT`) seeded `minerals:
    * 3` — below the 5-mineral first hold — so the over-capacity restore path
@@ -466,7 +465,7 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
       scene.tick(0.016);
     }
 
-    it.fails(
+    it(
       'AC1 — an over-capacity legacy checkpoint resumes with no hold-full choice pending',
       async () => {
         const scene = await bootResumed(LEGACY_OVER_CAPACITY);
@@ -492,7 +491,7 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
       },
     );
 
-    it.fails(
+    it(
       'AC2 — resolving the first hold-full after Continue leaves the next hold not full',
       async () => {
         const scene = await bootResumed(LEGACY_OVER_CAPACITY);
@@ -530,7 +529,7 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
       },
     );
 
-    it.fails(
+    it(
       'AC3 — the resumed HUD hold bar never reports more than the hold can carry',
       async () => {
         const scene = await bootResumed(LEGACY_OVER_CAPACITY);
@@ -551,7 +550,7 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
       },
     );
 
-    it.fails(
+    it(
       'AC4 — a version-2 checkpoint restores the earned hold capacity and clamps into it',
       async () => {
         const scene = await bootResumed({
