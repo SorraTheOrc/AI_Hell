@@ -147,6 +147,7 @@ import {
   applyEnemyCountScaling,
   dropChanceRatio,
 } from '../../core/levelScaling';
+import { LEVELS } from '../../waves/Formations';
 import { playSpawnSound } from '../../audio/effects';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import type { WasdKeysLike } from '../../utils/input';
@@ -781,6 +782,34 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
         this.wavesToPlay.length - 1,
       );
     }
+    this.globalWaveIndex = this._campaignWaveOffset(this.levelNumber)
+      + this.currentWaveIndex;
+  }
+
+  /**
+   * Waves that precede campaign level `levelNumber`, mirroring the game's
+   * campaign-cumulative index.
+   *
+   * `WaveManager.globalWaveIndex` is `sum(waves of earlier levels) +
+   * waveIndex`; the gym used to count only its own session waves, so a
+   * launched level above level 1 (or started beyond wave 1) planned a
+   * different asteroid-hazard and orbital-strike schedule than the same level
+   * in the game. Seeding from the campaign table keeps the shared planners
+   * fed the same index (AH-0MVTZ6U94000KHA2).
+   *
+   * @param levelNumber — 1-based campaign level of the launched definition.
+   * @returns the number of regular waves before that level (0 for level 1).
+   */
+  private _campaignWaveOffset(levelNumber: number): number {
+    const levels = Math.min(
+      Math.max(Math.trunc(levelNumber) - 1, 0),
+      LEVELS.length,
+    );
+    let offset = 0;
+    for (let i = 0; i < levels; i += 1) {
+      offset += LEVELS[i]?.waves.length ?? 0;
+    }
+    return offset;
   }
 
   /**
@@ -844,6 +873,11 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
         this.wavesToPlay.length - 1,
       );
     }
+    // `resetRunState()` also zeroes the planner input; re-seed it from the
+    // launched level + wave so the gym plans the same hazard/strike schedule
+    // as the game for that campaign position (AH-0MVTZ6U94000KHA2).
+    this.globalWaveIndex = this._campaignWaveOffset(this.levelNumber)
+      + this.currentWaveIndex;
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -1446,6 +1480,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.spawned = [];
     this.enemyBullets = [];
     this._applyLevel(level);
+    // A replaced level restarts at its wave 1, but the planner input is the
+    // campaign-cumulative index of that position — not a session-local zero
+    // (AH-0MVTZ6U94000KHA2).
+    this.globalWaveIndex = this._campaignWaveOffset(this.levelNumber);
     // Keep the supply cadence consistent with the newly loaded level (the
     // supply layer outlives the level; only the cadence is level-derived).
     if (this.dropSpawner) this._applySupplyInterval();

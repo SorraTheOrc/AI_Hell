@@ -232,6 +232,18 @@ Diver re-anchor parity (D2).
 tests: `src/scenes/gym/spawnParity.test.ts` — spawner-delivered content parity
 (D3), and `src/scenes/core/dynamicSpawnPlan.test.ts`.
 
+**Orbital strikes and the planner's wave index (AH-0MVTZ6U94000KHA2).** The
+strike plan is driven by the campaign-cumulative wave index
+(`WaveManager.globalWaveIndex` = waves of earlier levels + the level's wave
+index), which also feeds the asteroid hazard. `GymLevel` used to count only its
+own session waves from 0, so a launched level above level 1 — or one started
+at a later `startWave` — planned a different hazard/strike schedule than the
+same level in the game. The gym now seeds `globalWaveIndex` from the launched
+level and start wave exactly as the game computes it. The D3 parity suite
+covers all five archetypes, including a cross-scene **orbital-strike** case that
+starts both scenes on campaign level 1's fourth wave (`startWave: 4`, index 3 —
+the first strike wave) rather than playing through to it.
+
 - **Observed:** `spawnWave` iterates only `wave.groups`
   (`src/scenes/gym/GymLevel.ts:359`) and `_planAsteroidSpawns` plans only the
   asteroid hazard (`:977`). The per-wave spawner flags `ghosts`, `centipede`,

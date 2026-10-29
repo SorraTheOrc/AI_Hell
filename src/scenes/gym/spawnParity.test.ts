@@ -105,7 +105,17 @@ interface ParityWave {
   level: LevelDefinition;
   wave: WaveDefinition;
   group: WaveDefinition['groups'][number];
+  /** Dev-gated start wave (1-based); absent ⇒ play the level from wave 1. */
+  startWave?: number;
 }
+
+/** The spawner-delivered archetypes/hazards the D3 parity suite covers. */
+type DynamicFlag =
+  | 'centipede'
+  | 'ghosts'
+  | 'horde'
+  | 'laneTraffic'
+  | 'orbitalStrike';
 
 /** A single-wave level at level 1 (identity scaling) built from `group`. */
 function parityWave(group: WaveDefinition['groups'][number]): ParityWave {
@@ -244,7 +254,10 @@ async function bootGymBotTuning(data: {
 }
 
 /** Boots the shipped game scene with the same wave and aligned setup time. */
-async function bootPlayScene(level: LevelDefinition): Promise<SceneBoot<PlayScene>> {
+async function bootPlayScene(
+  level: LevelDefinition,
+  launch: { startWave?: number } = {},
+): Promise<SceneBoot<PlayScene>> {
   // The shipped default sequences the campaign; opt out so the probe level is
   // the one `create()` plays.
   localStorage.setItem(
@@ -262,7 +275,11 @@ async function bootPlayScene(level: LevelDefinition): Promise<SceneBoot<PlayScen
   scene.setRunSeed(PARITY_SEED);
   scene.getWaveManager().setLevels([level]);
   scene.setAsteroidSpawnerEnabled(false);
-  scene.scene.restart();
+  // Dev-gated launch data: a start wave lets a parity probe begin directly on
+  // the wave it exercises instead of playing through the earlier ones.
+  scene.scene.restart(
+    launch.startWave === undefined ? {} : { startWave: launch.startWave },
+  );
   // `restart()` is queued; the same fixed-dt settle the gym receives makes the
   // two scenes' per-create tick counts identical (drift, orbit phase, march
   // accumulator and spawn window all advance by the same number of steps).
@@ -868,7 +885,7 @@ describe('GymLevel × PlayScene — Diver re-anchor parity (D2)', () => {
 // ── D3 — spawner-delivered archetypes / hazards parity ─────────────
 
 /** A one-wave level opting into one dynamic spawner flag. */
-function dynamicProbe(flag: 'centipede' | 'ghosts' | 'horde' | 'laneTraffic'): ParityWave {
+function dynamicProbe(flag: DynamicFlag): ParityWave {
   const wave: WaveDefinition = {
     groups: [
       {
@@ -882,12 +899,21 @@ function dynamicProbe(flag: 'centipede' | 'ghosts' | 'horde' | 'laneTraffic'): P
       },
     ],
     shootEnabled: false,
-    [flag]: true,
+    ...(flag === 'orbitalStrike' ? {} : { [flag]: true }),
   };
+  // Orbital strikes are wave-index driven, not wave-flag driven: they plan
+  // once the campaign-cumulative index reaches `STRIKE_SPAWN_START_WAVE` (3).
+  // The probe therefore carries four plain waves and starts on the fourth, so
+  // both scenes plan strikes on their **first** played wave — no play-through.
+  const waves = flag === 'orbitalStrike'
+    ? [wave, wave, wave, wave]
+    : [wave];
+  const startWave = flag === 'orbitalStrike' ? 4 : undefined;
   return {
-    level: { level: 1, name: `Dynamic ${flag} probe`, waves: [wave] },
+    level: { level: 1, name: `Dynamic ${flag} probe`, waves },
     wave,
     group: wave.groups[0],
+    startWave,
   };
 }
 
@@ -915,13 +941,14 @@ function spawnedEntities(scene: GymLevel | PlayScene): unknown[] {
  */
 function plannedDynamic(
   scene: GymLevel | PlayScene,
-  flag: 'centipede' | 'ghosts' | 'horde' | 'laneTraffic',
+  flag: DynamicFlag,
 ): number {
   const plans = scene as unknown as {
     pendingGhostSpawns?: readonly unknown[];
     pendingCentipedeSpawn?: unknown | null;
     pendingHordeSpawns?: readonly unknown[];
     pendingLaneTrafficSpawns?: readonly unknown[];
+    pendingStrikeSpawns?: readonly unknown[];
   };
   switch (flag) {
     case 'ghosts':
@@ -932,15 +959,29 @@ function plannedDynamic(
       return plans.pendingHordeSpawns?.length ?? 0;
     case 'laneTraffic':
       return plans.pendingLaneTrafficSpawns?.length ?? 0;
+    case 'orbitalStrike':
+      return plans.pendingStrikeSpawns?.length ?? 0;
   }
+}
+
+/**
+ * Orchestral strikes released this wave, read from the scene's own release
+ * counter (the same counter the shared `releaseDueSpawns` rule advances).
+ */
+function releasedStrikes(scene: GymLevel | PlayScene): number {
+  return (
+    scene as unknown as { strikesSpawnedThisWave?: number }
+  ).strikesSpawnedThisWave ?? 0;
 }
 
 describe('GymLevel × PlayScene — spawner-delivered content parity (D3)', () => {
   const cases: ReadonlyArray<{
-    flag: 'centipede' | 'ghosts' | 'horde' | 'laneTraffic';
+    flag: DynamicFlag;
     label: string;
     count: (scene: GymLevel | PlayScene) => number;
     minimum: number;
+    /** Assert the release counts are equal, not merely non-zero. */
+    releaseParity?: boolean;
   }> = [
     {
       flag: 'centipede',
@@ -973,6 +1014,17 @@ describe('GymLevel × PlayScene — spawner-delivered content parity (D3)', () =
           .length,
       minimum: 1,
     },
+    {
+      // Wave-index driven (no wave flag): `STRIKE_SPAWN_START_WAVE` (3) is the
+      // first campaign-cumulative index that plans one, so the probe starts on
+      // campaign level 1's fourth wave (index 3) in both scenes
+      // (AH-0MVTZ6U94000KHA2).
+      flag: 'orbitalStrike',
+      label: 'telegraphed orbital strike',
+      count: (scene) => releasedStrikes(scene),
+      minimum: 1,
+      releaseParity: true,
+    },
   ];
 
   for (const testCase of cases) {
@@ -980,8 +1032,19 @@ describe('GymLevel × PlayScene — spawner-delivered content parity (D3)', () =
       `an identical dt sequence releases the same ${testCase.label} in the gym and the game`,
       async () => {
         const probe = dynamicProbe(testCase.flag);
-        const gym = await bootGymLevel({ level: probe.level, seed: PARITY_SEED });
-        const play = await bootPlayScene(probe.level);
+        const gym = await bootGymLevel({
+          level: probe.level,
+          seed: PARITY_SEED,
+          ...(probe.startWave === undefined
+            ? {}
+            : { startWave: probe.startWave }),
+        });
+        const play = await bootPlayScene(
+          probe.level,
+          probe.startWave === undefined
+            ? {}
+            : { startWave: probe.startWave },
+        );
         gym.scene.finishSpawnAnimations();
         play.scene.finishSpawnAnimations();
 
@@ -1007,6 +1070,17 @@ describe('GymLevel × PlayScene — spawner-delivered content parity (D3)', () =
         expect(gymCount, `gym ${testCase.label} released`).toBeGreaterThanOrEqual(
           testCase.minimum,
         );
+        // For the orbital-strike case the release half is a parity claim too:
+        // the game and the gym must have released the same number of events,
+        // not merely a non-zero one (AH-0MVTZ6U94000KHA2). The other cases keep
+        // their historical non-zero assertion — their release accounting is
+        // scene-specific (centipede chain segments, horde member counts).
+        if (testCase.releaseParity) {
+          expect(
+            gymCount,
+            `gym ${testCase.label} release count matches the game`,
+          ).toBe(testCase.count(play.scene));
+        }
       },
     );
   }
