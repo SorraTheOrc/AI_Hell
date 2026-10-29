@@ -176,6 +176,7 @@ interface ArcSetupState {
     weapons?: readonly string[];
     timedWeapons?: readonly string[];
     weaponLevels?: Readonly<Record<string, number>>;
+    heading?: number;
   };
   powerUps?: Readonly<Record<string, number>>;
   seed?: number;
@@ -257,6 +258,36 @@ describe('scene setup — scripted-video arc fields (AH-0MVRMFMJP0070KTS)', () =
       { id: 'spread', permanent: true },
       { id: 'spread', permanent: true },
     ]);
+  });
+
+  it('sets the stationary heading from player.heading degrees (AH-0MVTJW9JW002PHJG)', () => {
+    const { player, equipped } = fakeArcPlayer();
+    const headings: number[] = [];
+    const recording: SceneSetupPlayer = {
+      equipWeapon: (id, permanent = false) => player.equipWeapon(id, permanent),
+      getPowerUpLevelStore: () => player.getPowerUpLevelStore(),
+      setDefaultHeading: (radians) => headings.push(radians),
+    };
+
+    // A captured scene takes no input; `-90` degrees aims the ship up.
+    applyArc({ getPlayer: () => recording }, { player: { heading: -90 } });
+
+    expect(headings).toEqual([-Math.PI / 2]);
+    // The heading is not a weapon grant.
+    expect(equipped).toEqual([]);
+  });
+
+  it('leaves the heading alone when the setup has none (unchanged behaviour)', () => {
+    const { player } = fakeArcPlayer();
+    const headings: number[] = [];
+    const recording: SceneSetupPlayer = {
+      equipWeapon: (id, permanent = false) => player.equipWeapon(id, permanent),
+      getPowerUpLevelStore: () => player.getPowerUpLevelStore(),
+      setDefaultHeading: (radians) => headings.push(radians),
+    };
+
+    applyArc({ getPlayer: () => recording }, { player: { weapons: [] } });
+    expect(headings).toEqual([]);
   });
 
   it('AC3 — ignores non-positive / non-integer weapon levels', () => {

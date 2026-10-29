@@ -38,6 +38,7 @@
         },
         "startWave": 1,
         "player": {
+          "heading": -90,
           "weapons": [],
           "timedWeapons": [],
           "weaponLevels": {
@@ -60,7 +61,7 @@
     {
       "target": "GymLevel",
       "playMs": 2000,
-      "captureMs": 9000,
+      "captureMs": 10000,
       "label": "Humble origins — default cannon, hold-full pay-off",
       "setup": {
         "level": {
@@ -92,6 +93,7 @@
         },
         "startWave": 1,
         "player": {
+          "heading": -90,
           "weapons": ["cannon"],
           "timedWeapons": [],
           "weaponLevels": {}
@@ -139,6 +141,7 @@
         },
         "startWave": 1,
         "player": {
+          "heading": -90,
           "weapons": ["spread", "dual", "rapid"],
           "timedWeapons": [],
           "weaponLevels": {}
@@ -185,6 +188,7 @@
         },
         "startWave": 1,
         "player": {
+          "heading": -90,
           "weapons": ["spread", "dual", "rapid"],
           "timedWeapons": [],
           "weaponLevels": {
@@ -198,11 +202,12 @@
     },
     {
       "target": "GymMiniBoss",
-      "playMs": 2000,
+      "playMs": 500,
       "captureMs": 8000,
       "label": "Mini-boss — escort and death",
       "setup": {
         "player": {
+          "heading": -90,
           "weapons": ["spread", "dual", "rapid", "broadside"],
           "timedWeapons": [],
           "weaponLevels": {
@@ -212,7 +217,7 @@
           }
         },
         "powerUps": {},
-        "bossHitsRemaining": 1,
+        "bossHitsRemaining": 6,
         "seed": 5505
       }
     },
@@ -254,6 +259,7 @@
         },
         "startWave": 1,
         "player": {
+          "heading": -90,
           "weapons": ["spread", "dual"],
           "timedWeapons": [],
           "weaponLevels": {
@@ -269,11 +275,12 @@
     },
     {
       "target": "GymBoss",
-      "playMs": 2000,
+      "playMs": 500,
       "captureMs": 10000,
       "label": "Main boss — final death",
       "setup": {
         "player": {
+          "heading": -90,
           "weapons": ["spread", "dual", "rapid"],
           "timedWeapons": [],
           "weaponLevels": {
@@ -283,7 +290,7 @@
           }
         },
         "powerUps": {},
-        "bossHitsRemaining": 1,
+        "bossHitsRemaining": 40,
         "seed": 7707
       }
     },

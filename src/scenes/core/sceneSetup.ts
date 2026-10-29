@@ -36,6 +36,12 @@ import type { WeaponId } from '../../utils/weapons';
 export interface SceneSetupPlayer {
   /** Grants (`permanent`) or times (`!permanent`) a weapon. */
   equipWeapon(id: WeaponId, permanent?: boolean): void;
+  /**
+   * Sets the heading the ship reports while stationary (radians, `0` = right).
+   * Optional so a fake without heading support stays valid
+   * (AH-0MVTJW9JW002PHJG).
+   */
+  setDefaultHeading?(radians: number): void;
   /** The run-scoped power-up level store. */
   getPowerUpLevelStore(): {
     collect(id: PowerUpId, permanent?: boolean): number;
@@ -62,6 +68,13 @@ export interface SceneSetupState {
      * both here and in `weapons` starts at `1 + N` (AH-0MVRMFOB4002LMZS).
      */
     weaponLevels?: Readonly<Record<string, number>>;
+    /**
+     * Stationary facing in **degrees** (`0` = right/east, positive clockwise,
+     * `-90` = up). A captured scene takes no input, so without this the ship
+     * never moves, keeps `Player`'s default heading (right) and fires sideways
+     * past the enemies above it (AH-0MVTJW9JW002PHJG).
+     */
+    heading?: number;
   };
   powerUps?: Readonly<Record<string, number>>;
   /**
@@ -213,6 +226,16 @@ export function applySceneSetup(
   }
   for (const id of setup.player?.timedWeapons ?? []) {
     player.equipWeapon(id as WeaponId, false);
+  }
+  const headingDegrees = setup.player?.heading;
+  if (
+    typeof headingDegrees === 'number'
+    && Number.isFinite(headingDegrees)
+    && typeof player.setDefaultHeading === 'function'
+  ) {
+    // Degrees are the capture-config vocabulary; the player model works in
+    // radians (`0` = right, positive clockwise).
+    player.setDefaultHeading((headingDegrees * Math.PI) / 180);
   }
   for (const [id, level] of Object.entries(setup.player?.weaponLevels ?? {})) {
     if (!Number.isInteger(level) || level <= 0) continue;

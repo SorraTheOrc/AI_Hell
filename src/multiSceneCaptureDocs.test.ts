@@ -236,6 +236,7 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     // parity loop above cannot see.
     for (const field of [
       '`player.weaponLevels`',
+      '`player.heading`',
       '`bossHitsRemaining`',
       '`mineralReward`',
     ]) {
@@ -243,6 +244,7 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     }
     for (const code of [
       'invalid-weapon-level',
+      'invalid-player-heading',
       'invalid-boss-hits',
       'invalid-scenario-count',
       'unknown-mineral-reward',

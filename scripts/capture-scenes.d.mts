@@ -83,6 +83,8 @@ export const SCENE_CONFIG_ERROR_CODES: Readonly<{
   setupNotSupported: 'setup-not-supported';
   /** A `setup.seed` is not a 32-bit unsigned integer. */
   invalidSeed: 'invalid-seed';
+  /** A `setup.player.heading` is not a finite number of degrees. */
+  invalidPlayerHeading: 'invalid-player-heading';
   /** A `setup.player.weaponLevels[id]` is out of the documented range. */
   invalidWeaponLevel: 'invalid-weapon-level';
   /** A `setup.mineralReward` is not a known hold-full reward id. */
@@ -154,6 +156,13 @@ export interface SceneSetupPlayer {
    * it stacks on the level-1 grant `weapons` provides.
    */
   weaponLevels: Record<string, number>;
+  /**
+   * Stationary facing in degrees (`0` = right/east, positive clockwise,
+   * `-90` = up), normalised into `(-180, 180]`. Absent keeps the ship's
+   * default (right) — a captured scene takes no input, so this is how a setup
+   * aims the ship up the screen (AH-0MVTJW9JW002PHJG).
+   */
+  heading?: number;
 }
 
 /**

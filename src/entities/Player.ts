@@ -780,6 +780,31 @@ export class Player extends Phaser.GameObjects.Graphics {
     return this._lastHeading;
   }
 
+  /**
+   * Sets the heading the ship reports **while it has never moved** (the
+   * stationary fallback), in radians (`0` = right/east, positive clockwise).
+   *
+   * The shipped game never needs this — the player steers, so a real
+   * movement history always exists. A *captured* scene takes no input, so the
+   * ship stays at the constructor default (0 = right) and every shot flies
+   * sideways past the enemies above it; a capture setup sets this so the
+   * stationary ship aims up the screen (AH-0MVTJW9JW002PHJG). Non-finite
+   * values are ignored.
+   *
+   * @param radians — the stationary heading in radians.
+   */
+  setDefaultHeading(radians: number): void {
+    if (!Number.isFinite(radians)) return;
+    this._defaultHeading = radians;
+    // The fallback only applies when no movement history exists; seed the
+    // "last heading" too so a ship that has not moved yet reports it now.
+    this._lastHeading = radians;
+    // The rotating (Asteroids) model reports the movement state's `facing`
+    // (`?? 0`, i.e. right) instead of the fallback, and a stationary ship
+    // keeps it at its initial 0 — face the configured heading there too.
+    this._movementState = { ...this._movementState, facing: radians };
+  }
+
   private _normaliseAngle(angle: number): number {
     return ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
   }

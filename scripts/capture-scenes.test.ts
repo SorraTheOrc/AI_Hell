@@ -1422,6 +1422,65 @@ describe('generated-level (PlayScene) entries (AH-0MVE01EY0008QEVX)', () => {
   });
 });
 
+// ── Stationary heading for captured scenes (AH-0MVTJW9JW002PHJG) ────────────
+
+interface HeadingSetup {
+  player?: { heading?: unknown };
+}
+
+describe('setup.player.heading (AH-0MVTJW9JW002PHJG)', () => {
+  // `GymPlayer` needs no parameter, so the heading can be parsed on its own.
+  const parse = (setup: HeadingSetup) =>
+    parseSceneConfig({
+      scenes: [{ target: 'GymPlayer', playMs: 1000, captureMs: 1000, setup }],
+    });
+
+  it('accepts a finite heading and normalises it into (-180, 180]', () => {
+    const cases: Array<[number, number]> = [
+      [-90, -90],
+      [0, 0],
+      [180, 180],
+      [-180, 180],
+      [270, -90],
+      [450, 90],
+      [-450, -90],
+    ];
+    for (const [given, expected] of cases) {
+      const [scene] = parse({ player: { heading: given } });
+      expect((scene.setup as HeadingSetup).player?.heading).toBe(expected);
+    }
+  });
+
+  it('normalisation is idempotent', () => {
+    const [once] = parse({ player: { heading: 450 } });
+    const [twice] = parse({
+      player: { heading: (once.setup as HeadingSetup).player?.heading },
+    });
+    expect((twice.setup as HeadingSetup).player?.heading).toBe(90);
+  });
+
+  it('rejects a non-finite or non-numeric heading with a documented code', () => {
+    for (const bad of ['up', Number.NaN, Number.POSITIVE_INFINITY, null, {}]) {
+      expect(() => parse({ player: { heading: bad } })).toThrowError(
+        expect.objectContaining({ code: 'invalid-player-heading' }),
+      );
+    }
+  });
+
+  it('omits the heading when not configured (unchanged behaviour)', () => {
+    // A setup without a heading normalises without one, so an existing config
+    // keeps the ship's default facing.
+    const [withPlayer] = parse({ player: {} });
+    expect((withPlayer.setup as HeadingSetup).player?.heading).toBeUndefined();
+
+    // A scene with no setup at all gains none.
+    const [noSetup] = parseSceneConfig({
+      scenes: [{ target: 'GymPlayer', playMs: 1000, captureMs: 1000 }],
+    });
+    expect(noSetup.setup).toBeUndefined();
+  });
+});
+
 // ── Scripted-video arc (AH-0MVRMFMJP0070KTS, TEST-FIRST) ────────────────────
 
 /**
@@ -1435,6 +1494,7 @@ interface ArcSetup {
     weapons?: string[];
     timedWeapons?: string[];
     weaponLevels?: Record<string, number>;
+    heading?: number;
   };
   level?: { waves?: Array<{ groups?: Array<{ enemyKey?: string }> }> };
   powerUps?: Record<string, number>;
@@ -1569,7 +1629,9 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
       weapons: ['spread', 'dual', 'rapid', 'broadside'],
       weaponLevels: { wave_laser: 2, ricochet: 2, broadside: 3 },
       slots: 6,
-      bossHitsRemaining: 1,
+      // A fight the camera can read: the death lands inside the capture
+      // window rather than on the first frame (AH-0MVTJW9JW002PHJG).
+      bossHitsRemaining: 6,
     },
     {
       target: 'GymLevel',
@@ -1586,7 +1648,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
       weapons: ['spread', 'dual', 'rapid'],
       weaponLevels: { wave_laser: 4, ricochet: 4, broadside: 5 },
       slots: 6,
-      bossHitsRemaining: 1,
+      bossHitsRemaining: 40,
     },
   ];
 
@@ -1661,6 +1723,10 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
       expect(slotFillers(setup)).toHaveLength(beat.slots);
       expect(setup?.bossHitsRemaining).toBe(beat.bossHitsRemaining);
       expect(setup?.mineralReward).toBe(beat.mineralReward);
+      // Every beat aims the (unmoved) ship up the screen: a captured scene
+      // takes no input, so without this the cannon fires right and nothing
+      // dies (AH-0MVTJW9JW002PHJG).
+      expect(setup?.player?.heading).toBe(-90);
     });
 
     // The whole arc still fits the agreed ~60-75 s showcase envelope
@@ -1675,8 +1741,10 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     const miniBossBeat = parsed.find((scene) => scene.target === 'GymMiniBoss');
     const bossBeat = parsed.find((scene) => scene.target === 'GymBoss');
 
-    expect(miniBossBeat?.setup?.bossHitsRemaining).toBe(1);
-    expect(bossBeat?.setup?.bossHitsRemaining).toBe(1);
+    // Enough hits that the beat reads as a fight, few enough that the death
+    // still lands inside the capture window.
+    expect(miniBossBeat?.setup?.bossHitsRemaining).toBe(6);
+    expect(bossBeat?.setup?.bossHitsRemaining).toBe(40);
     // GymMiniBoss's hit pool is 2 phases x 5 (design level 1); GymBoss's is
     // 4 phases x 50. The configured preview must fit inside each pool.
     expect(miniBossBeat?.setup?.bossHitsRemaining ?? 0).toBeLessThanOrEqual(10);

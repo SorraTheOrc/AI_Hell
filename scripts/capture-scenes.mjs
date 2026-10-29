@@ -128,6 +128,14 @@ export const SCENE_CONFIG_ERROR_CODES = Object.freeze({
    * target's total hit pool ({@link SCENE_SETUP_BOSS_TOTAL_HITS}).
    */
   invalidBossHits: 'invalid-boss-hits',
+  /**
+   * A `setup.player.heading` is not a finite number of degrees. The heading is
+   * the direction the ship faces while it is **stationary** — the captured
+   * scenes take no input, so without one the ship fires to the right
+   * (`Player`'s documented default, 0 = right/east) and every shot misses the
+   * enemies above it (AH-0MVTJW9JW002PHJG).
+   */
+  invalidPlayerHeading: 'invalid-player-heading',
   /** A generated-level entry's `level` is not an integer in range. */
   invalidSceneLevel: 'invalid-scene-level',
   /** A generated-level entry's `minWaves`/`maxCaptureMs` is invalid. */
@@ -721,7 +729,11 @@ function validateSetupLevel(level, at) {
 /** Validates `setup.player`. */
 function validateSetupPlayer(player, at) {
   requireSetupObject(player, at);
-  rejectUnknownFields(player, ['weapons', 'timedWeapons', 'weaponLevels'], at);
+  rejectUnknownFields(
+    player,
+    ['weapons', 'timedWeapons', 'weaponLevels', 'heading'],
+    at,
+  );
   for (const field of ['weapons', 'timedWeapons']) {
     if (player[field] === undefined) continue;
     if (!Array.isArray(player[field])) {
@@ -742,6 +754,41 @@ function validateSetupPlayer(player, at) {
   if (player.weaponLevels !== undefined) {
     validateSetupWeaponLevels(player.weaponLevels, `${at}.weaponLevels`);
   }
+  if (player.heading !== undefined) {
+    validateSetupPlayerHeading(player.heading, `${at}.heading`);
+  }
+}
+
+/**
+ * Validates `setup.player.heading`: the ship's stationary facing in **degrees**
+ * (`0` = right/east, positive clockwise; `-90` = up), a finite number. The
+ * value is normalised into `(-180, 180]` so equivalent angles normalise
+ * identically.
+ *
+ * A captured scene takes no input, so the ship never moves and `Player`'s
+ * heading stays at its default (0 = right) — every shot then flies sideways
+ * past the enemies above it. Setting the heading is how a capture setup aims
+ * the (unmoved) ship up the screen (AH-0MVTJW9JW002PHJG).
+ */
+function validateSetupPlayerHeading(heading, at) {
+  if (typeof heading !== 'number' || !Number.isFinite(heading)) {
+    throw new SceneConfigError(
+      CODE.invalidPlayerHeading,
+      `${at} must be a finite number of degrees (0 = right, -90 = up) `
+        + `(got ${JSON.stringify(heading)})`,
+    );
+  }
+}
+
+/**
+ * Normalises a validated heading into `(-180, 180]`.
+ *
+ * @param {number} headingDegrees
+ * @returns {number}
+ */
+export function normalisePlayerHeading(headingDegrees) {
+  const wrapped = ((headingDegrees % 360) + 360) % 360;
+  return wrapped > 180 ? wrapped - 360 : wrapped;
 }
 
 /**
@@ -1060,6 +1107,11 @@ export function normaliseSceneSetup(rawSetup = {}, target) {
           ? player.weaponLevels
           : DEFAULT_SCENE_SETUP_WEAPON_LEVELS),
       },
+      // Only emitted when configured: an absent heading keeps every existing
+      // scene byte-for-byte identical (AH-0MVTJW9JW002PHJG).
+      ...(player.heading === undefined
+        ? {}
+        : { heading: normalisePlayerHeading(player.heading) }),
     };
   }
   if (include('powerUps')) {

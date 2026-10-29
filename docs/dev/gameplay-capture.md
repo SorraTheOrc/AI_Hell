@@ -1134,6 +1134,7 @@ setup is validated before boot and forwarded to the scene as its launch data.
 | `player.weapons` | weapon id array | all setup-capable gyms | `["spread", "dual"]` | permanent weapons for the run (one grant each) |
 | `player.timedWeapons` | weapon id array | all setup-capable gyms | `[]` | weapons granted with the timed countdown |
 | `player.weaponLevels` | `{ id: level }` | all setup-capable gyms | `{}` | per-weapon permanent level `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX` (`5`), applied as that many permanent grants on top of `player.weapons` |
+| `player.heading` | degrees (`0` = right/east, positive clockwise) | all setup-capable gyms | — (player default: right) | the heading the ship holds **while stationary**, normalised into `(-180, 180]`; a captured scene takes no input, so without it the ship keeps `Player`'s default heading (right) and every shot flies sideways past the enemies above it — capture setups set `-90` to aim up the screen |
 | `powerUps` | `{ id: level }` | all setup-capable gyms | `{}` | power-up id → permanent level |
 | `mineralReward` | hold-full reward id | `GymLevel`, `GymBotTuning` | — (random) | forces the reward a full mineral hold resolves to, instead of the gym's random choice |
 | `bossHitsRemaining` | positive integer | `GymBoss`, `GymMiniBoss` | — (full pool) | hits the spawned boss/mini-boss has left when the scene starts, via the entity's existing `initialHp` seam; bounded by the target's total hit pool (`SCENE_SETUP_BOSS_TOTAL_HITS`: 200 for `GymBoss`, 10 for `GymMiniBoss`) |
@@ -1496,6 +1497,7 @@ stderr and exits **1** — it never records a partial or blank video:
 | `setup-not-supported` | a `setup` (or a field it cannot consume) on a target that cannot accept it |
 | `invalid-seed` | `seed` is not a 32-bit unsigned integer |
 | `invalid-weapon-level` | a `player.weaponLevels` level is not an integer `1`–`5` |
+| `invalid-player-heading` | a `player.heading` is not a finite number of degrees |
 | `unknown-mineral-reward` | a `mineralReward` is not a hold-full choice reward id |
 | `invalid-boss-hits` | a `bossHitsRemaining` is not a positive integer within the target's hit pool |
 | `invalid-scenario-count` | a `threatCount`/`minerals` value is not an integer within `SCENE_SETUP_SCENARIO_COUNT_BOUNDS` |
