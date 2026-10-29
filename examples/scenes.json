@@ -1,6 +1,31 @@
 {
   "scenes": [
     {
+      "target": "GymBoss",
+      "playMs": 500,
+      "captureMs": 10000,
+      "label": "Gym family \u2014 main boss (final phase, close to death)",
+      "setup": {
+        "player": {
+          "heading": -90,
+          "weapons": [
+            "spread",
+            "dual",
+            "rapid"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {
+            "wave_laser": 4,
+            "ricochet": 4,
+            "broadside": 5
+          }
+        },
+        "powerUps": {},
+        "bossHitsRemaining": 40,
+        "seed": 8092
+      }
+    },
+    {
       "target": "GymBotTuning",
       "playMs": 1500,
       "captureMs": 6000,
@@ -72,6 +97,104 @@
       }
     },
     {
+      "target": "GymLevel",
+      "playMs": 2000,
+      "captureMs": 10000,
+      "label": "Gym family \u2014 launched campaign level (level 1)",
+      "setup": {
+        "level": {
+          "level": 1,
+          "name": "Humble Origins",
+          "waves": [
+            {
+              "groups": [
+                {
+                  "enemyKey": "scout",
+                  "formation": "v",
+                  "count": 6,
+                  "spacingX": 34,
+                  "spacingY": 24,
+                  "startX": 300,
+                  "startY": 170
+                },
+                {
+                  "enemyKey": "asteroid",
+                  "formation": "swarm",
+                  "count": 8,
+                  "spacingX": 30,
+                  "spacingY": 26,
+                  "startX": 500,
+                  "startY": 230
+                }
+              ],
+              "shootEnabled": false
+            },
+            {
+              "groups": [
+                {
+                  "enemyKey": "scout",
+                  "formation": "v",
+                  "count": 8,
+                  "spacingX": 32,
+                  "spacingY": 22,
+                  "startX": 300,
+                  "startY": 160
+                },
+                {
+                  "enemyKey": "asteroid",
+                  "formation": "swarm",
+                  "count": 10,
+                  "spacingX": 30,
+                  "spacingY": 26,
+                  "startX": 520,
+                  "startY": 220
+                }
+              ],
+              "shootEnabled": false
+            },
+            {
+              "groups": [
+                {
+                  "enemyKey": "scout",
+                  "formation": "v",
+                  "count": 10,
+                  "spacingX": 30,
+                  "spacingY": 22,
+                  "startX": 300,
+                  "startY": 150
+                },
+                {
+                  "enemyKey": "asteroid",
+                  "formation": "swarm",
+                  "count": 12,
+                  "spacingX": 30,
+                  "spacingY": 26,
+                  "startX": 520,
+                  "startY": 220
+                }
+              ],
+              "shootEnabled": false
+            }
+          ]
+        },
+        "startWave": 1,
+        "player": {
+          "heading": -90,
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {}
+        },
+        "powerUps": {
+          "magnet": 5,
+          "mineral_scoop": 5
+        },
+        "mineralReward": "mineral_scoop",
+        "seed": 8093
+      }
+    },
+    {
       "target": "GymMinerals",
       "playMs": 1500,
       "captureMs": 5000,
@@ -87,6 +210,32 @@
           "magnet": 2
         },
         "seed": 8085
+      }
+    },
+    {
+      "target": "GymMiniBoss",
+      "playMs": 500,
+      "captureMs": 8000,
+      "label": "Gym family \u2014 mini-boss escort and death",
+      "setup": {
+        "player": {
+          "heading": -90,
+          "weapons": [
+            "spread",
+            "dual",
+            "rapid",
+            "broadside"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {
+            "wave_laser": 2,
+            "ricochet": 2,
+            "broadside": 3
+          }
+        },
+        "powerUps": {},
+        "bossHitsRemaining": 6,
+        "seed": 8094
       }
     },
     {

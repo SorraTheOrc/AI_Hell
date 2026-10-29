@@ -1205,9 +1205,14 @@ capture framing), recorded with their reason in
 [`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8).
 
 **Every gym is representable in `examples/scenes.json`.** The shipped example
-now carries one scripted entry per gym scene — the seven-beat excitement-curve
-arc first, then a labelled entry for every remaining gym family (including the
-parameterised `GymLevel`/`GymFodderEnemies` and the curve editor).
+carries one scripted entry for every gym scene — all 14, including the
+parameterised `GymLevel`/`GymFodderEnemies`, the boss gyms (`GymBoss`,
+`GymMiniBoss`) and the curve editor. The seven-beat excitement-curve teaser
+lives in its own file, `examples/teaserVideoScript.json`, and records the
+shipped game scene rather than a gym (AH-0MVTNTHTI0041QIF); the two files are
+kept separate so neither duplicates the other. `scripts/capture-scenes.test.ts`
+and `src/multiSceneCaptureDocs.test.ts` pin the showcase against the full gym
+registry, so dropping any gym's example fails the suite.
 
 ```json
 {
@@ -1410,33 +1415,42 @@ controls, so they are for feature demos, not for the teaser.
 Each generated-level scene in the `--json` payload additionally reports
 `seed`, `level`, `wavesCaptured` and `endedEarly` alongside its timings.
 
-#### The shipped example: the excitement-curve arc
+#### The shipped examples: the teaser arc and the gym showcase
 
-`examples/scenes.json` is not a generic showcase — it is the **seven-beat
-excitement-curve arc** the scripted showcase video is recorded from (parent
-AH-0MVPJ3NSK008V5VB). Every beat carries its own `setup`, so its loadout and
-its on-camera pay-off are deterministic:
+Two config files ship with the repo, each with one purpose:
 
-| # | Beat | Target | Seed | Pay-off |
+- **`examples/teaserVideoScript.json`** — the **seven-beat excitement-curve
+  arc** the scripted showcase video is recorded from (parent
+  AH-0MVPJ3NSK008V5VB). Every beat targets the shipped `PlayScene`, played by
+  the demo bot with no gym chrome, and carries an explicit campaign `level`, a
+  pinned `seed` and a `playMs`/`captureMs` window, so its loadout and its
+  on-camera pay-off are deterministic (AH-0MVTNTHTI0041QIF).
+- **`examples/scenes.json`** — the **gym showcase**: one scripted entry for
+  every gym scene under `src/scenes/gym/` (all 14, including the parameterised
+  `GymLevel`/`GymFodderEnemies`, the boss gyms and the curve editor), each
+  carrying a copy-paste `setup`.
+
+The teaser arc, in order:
+
+| # | Beat | Level | Seed | Pay-off |
 |---|---|---|---|---|
-| 1 | Opening spectacle | `GymLevel` | `1101` | six slots of level 2–5 weapons against a heavy enemy field |
-| 2 | Humble origins | `GymLevel` | `2202` | default cannon only; the full mineral hold resolves to the **Hull Full** (`mineral_scoop`) reward |
-| 3 | First steps up | `GymLevel` | `3303` | three weapon slots at level 1, roughly twice the enemies of scene 2 |
-| 4 | Escalation | `GymLevel` | `4404` | five slots at levels 1–2, twice the enemies of scene 3 |
-| 5 | Mini-boss | `GymMiniBoss` | `5505` | the **mini-boss death**: a broadside up-lance finishes it from `bossHitsRemaining: 1` |
-| 6 | Reprise | `GymLevel` | `6606` | scene 4's pressure with a different enemy mix and stronger weapons |
-| 7 | Main boss | `GymBoss` | `7707` | the **boss death**: a broadside up-lance finishes it from `bossHitsRemaining: 1` |
+| 1 | Opening spectacle | 7 | `1101` | maxed arsenal against dense waves from wave 6 |
+| 2 | Humble origins | 1 | `2202` | default cannon only; the full mineral hold resolves to the **Hull Full** (`mineral_scoop`) reward |
+| 3 | First steps up | 2 | `3303` | three weapon slots at level 1 |
+| 4 | Escalation | 4 | `4404` | five slots at levels 1–2, denser waves |
+| 5 | Mini-boss | 5 | `5505` | the **mini-boss death** on the wave-10 encounter |
+| 6 | Reprise | 8 | `6606` | horde and lane traffic with stronger guns |
+| 7 | Main boss | 10 | `7707` | the **Gauntlet finale** and its death, shortened by `bossHitsRemaining: 40` |
 
-The seeds (`1101`…`7707`) are pinned, so re-running the shipped config
-reproduces the same loadouts and content. The two boss beats carry a
-**broadside** weapon on purpose: a captured gym scene takes no player input, so
-the auto-firing ship keeps its default heading (`0` = right) and its forward
-guns can never reach a boss that sits directly above it — broadside fires
-perpendicular to the heading, sending one shot straight up the screen. With
-`bossHitsRemaining: 1` the first connecting lance is the death, which lands
-inside the beat's capture window (measured at roughly 2.5 s into the mini-boss
-window and 5 s into the main-boss window). Three setup fields exist for this
-arc:
+The seeds (`1101`…`7707`) are pinned, so re-running the teaser reproduces the
+same loadouts and content. The two boss beats carry a **broadside** weapon on
+purpose: a captured scene takes no player input, so the auto-firing ship keeps
+its default heading (`0` = right) and its forward guns can never reach a boss
+that sits directly above it — broadside fires perpendicular to the heading,
+sending one shot straight up the screen. The boss beats reach their encounter
+on schedule through `level`/`startWave`/`startBoss`, and `bossHitsRemaining`
+starts the boss inside its pool so the death lands within the beat window.
+Three setup fields exist for these examples:
 
 - **`player.weaponLevels`** grants a weapon above level 1: each entry
   `{ "<weapon id>": <level> }` applies that many **permanent** grants with
@@ -1519,8 +1533,9 @@ shipped bundle and the gym↔game parity contract are unchanged.
 }
 ```
 
-Record the shipped arc once with `npm run capture:scenes -- --config
-examples/scenes.json`; `--json` reports the seven scenes' timings and seeds
+Record the teaser arc once with `npm run capture:scenes -- --config
+examples/teaserVideoScript.json`, and the gym showcase with `--config
+examples/scenes.json`; `--json` reports each scene's timings and seeds
 (see [Output](#output) and [`--json` shape](#json-shape)).
 
 #### Watchable gym scenes

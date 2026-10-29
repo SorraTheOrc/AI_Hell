@@ -712,10 +712,12 @@ added by AH-0MUWTNPYJ0031FQE):
   `GymLevel` / `GymFodderEnemies` capturable and reproduces the same content
   for the same seed (AH-0MVNW7U5G003SNO6). The arc fields
   `player.weaponLevels`, `mineralReward` and `bossHitsRemaining` extend that
-  setup; the shipped `examples/scenes.json` is the seven-beat
+  setup; the shipped `examples/teaserVideoScript.json` is the seven-beat
   **excitement-curve arc** (opening spectacle → humble origins → first steps
   up → escalation → mini-boss → reprise → main boss) with deterministic
-  pay-offs and pinned seeds (AH-0MVRMFRSO004H9JM). Entries may also target
+  pay-offs and pinned seeds (AH-0MVRMFRSO004H9JM), while
+  `examples/scenes.json` is the **gym showcase** — one worked entry for every
+  gym scene under `src/scenes/gym/`. Entries may also target
   the shipped game (`target: "PlayScene"`) with a
   `seed`/`level` and a multi-wave-aware window (`minWaves`, `maxCaptureMs`), so
   a promo shows real generated campaign gameplay mixed with gym demos

@@ -1265,11 +1265,12 @@ describe('examples/scenes.json setup-bearing example (AH-0MVNW91PH000HV2J)', () 
   it('is the gym-family showcase: schema-valid, field-complete entries (AC4/AC5)', () => {
     const parsed = parseSceneConfig(readFileSync(examplePath, 'utf8'));
 
-    // AH-0MVTNTHTI0041QIF split the configs: `examples/scenes.json` is now the
-    // gym-FAMILY showcase and `examples/teaserVideoScript.json` owns the
-    // seven-beat teaser (which targets the game scene, not a gym). The three
-    // boss/level gyms are exercised by the teaser and by their own captures, so
-    // the family example no longer has to carry them.
+    // AH-0MVTNTHTI0041QIF split the configs: `examples/scenes.json` is the
+    // gym showcase and `examples/teaserVideoScript.json` owns the seven-beat
+    // teaser (which targets the game scene, not a gym). The showcase must
+    // still cover EVERY gym scene, including the parameterised `GymLevel` and
+    // the boss gyms — the audit gaps of AH-0MVRMI0Q7001KG4Y (AC4) and
+    // AH-0MVP5IGX5005XTVV (AC6) were exactly those three going unrepresented.
     expect(parsed.length).toBeGreaterThanOrEqual(8);
     const allGymKeys = [
       ...WATCHABLE_GYM_SCENE_KEYS,
@@ -1279,21 +1280,9 @@ describe('examples/scenes.json setup-bearing example (AH-0MVNW91PH000HV2J)', () 
     for (const key of covered) {
       expect(allGymKeys, `${key} is not a gym scene key`).toContain(key);
     }
-    // Every family entry is present (the parameterised + boss demos may be
-    // covered elsewhere).
-    for (const key of [
-      'GymBotTuning',
-      'GymCentipede',
-      'GymCurveSequencer',
-      'GymFodderEnemies',
-      'GymMinerals',
-      'GymPlayer',
-      'GymPowerUpLeveling',
-      'GymPowerUpsCombat',
-      'GymPowerUpsUtility',
-      'GymWeaponLeveling',
-      'GymWeapons',
-    ]) {
+    // Every gym scene has a worked entry: no gym is left to "covered
+    // elsewhere" (the parameterised and boss gyms included).
+    for (const key of allGymKeys) {
       expect(covered, `${key} has no example entry`).toContain(key);
     }
 

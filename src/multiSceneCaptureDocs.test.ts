@@ -170,13 +170,18 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(parsed.every((scene) => scene.setup !== undefined)).toBe(true);
     // No teaser entries are duplicated into the gym-family file.
     expect(parsed.some((scene) => scene.target === 'PlayScene')).toBe(false);
+    // Every gym scene is represented, the parameterised `GymLevel` and the
+    // boss gyms included (AH-0MVP5IGX5005XTVV AC6 / AC8).
     const covered = new Set(parsed.map((scene) => scene.target));
     for (const key of [
+      'GymBoss',
       'GymBotTuning',
       'GymCentipede',
       'GymCurveSequencer',
       'GymFodderEnemies',
+      'GymLevel',
       'GymMinerals',
+      'GymMiniBoss',
       'GymPlayer',
       'GymPowerUpLeveling',
       'GymPowerUpsCombat',
@@ -271,9 +276,12 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
 
   // TEST-FIRST (AH-0MVRMFMJP0070KTS): F4 (AH-0MVRMFRSO004H9JM) authored the
   // arc and F5 (AH-0MVRMFTNQ0029YWD) documented it; the marker is back to
-  // `it` and the shipped-example description is also parsed here.
-  it('describes examples/scenes.json as the excitement-curve arc (AH-0MVRMFMJP0070KTS)', () => {
+  // `it` and the shipped-example description is also parsed here. The arc
+  // lives in `examples/teaserVideoScript.json` since AH-0MVTNTHTI0041QIF;
+  // `examples/scenes.json` is the gym showcase (AH-0MVP5IGX5005XTVV AC8).
+  it('describes the teaser arc and the gym showcase (AH-0MVRMFMJP0070KTS)', () => {
     expect(captureDoc).toMatch(/excitement[- ]curve/i);
+    expect(captureDoc).toContain('examples/teaserVideoScript.json');
     expect(captureDoc).toContain('examples/scenes.json');
     // The doc names the pay-offs the arc is built around.
     expect(captureDoc).toMatch(/mini-boss/i);
