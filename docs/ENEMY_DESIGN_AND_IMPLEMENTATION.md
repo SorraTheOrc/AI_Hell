@@ -1568,7 +1568,8 @@ hooks (§2.1), the pure helpers under `src/scenes/core/`
 (`bulletLifecycle`, `dropLayer`, `mineralLayer`, `mineralKillDrops`,
 `asteroidKillDrops`, `asteroidSplit`, `enemyTargeting`, `enemyWrap`,
 `miniBossDeathSweep` — the mini-boss defeat cascade shared by `PlayScene` and
-`GymMiniBoss`, §3.3), the shared dispatcher
+`GymMiniBoss`, §3.3 — and `spawnTransit`, the wormhole-transit destination
+rule below), the shared dispatcher
 `src/entities/enemyFire.ts`, the scheme→input helper
 `mapControlInput` in `src/utils/movementModel.ts`, and the spawn-range
 helpers `resolveSpawnRange` / `pickInRange` in `src/core/configTypes.ts`
@@ -1581,6 +1582,55 @@ tests boot `PlayScene` and each gym to prove identical outcomes under the
 same input and `dt`. See
 [AGENTS.md § Game Architecture Conventions](../AGENTS.md#game-architecture-conventions)
 for the governing principle (tracked by AH-0MUGZDTFX004RBD1).
+
+**Shared spawn-transit seam.** Where a newly emerged enemy travels is resolved
+once, by `resolveSpawnTransitTarget` in
+[`src/scenes/core/spawnTransit.ts`](../src/scenes/core/spawnTransit.ts)
+(AH-0MVRMHQC9003VDNN). The rule has three branches:
+
+1. **Autonomous movers are exempt.** An entity that owns its motion
+   (`autonomousPositioning`, e.g. the Raider) gets **no** destination: it
+   emerges at the wormhole and its own motion carries it out, so the spawn
+   window never fights its patrol/attack state.
+2. **Orbital entities target their live slot.** An entity exposing the live
+   `formationSlot(baseX, baseY)` seam (the Phaser) travels to that slot, so it
+   tracks the advancing orbit and lands exactly on the ring instead of
+   travelling to the grid line and snapping into place when the spawn window
+   ends.
+3. **Everything else keeps the grid slot.** A non-orbital enemy travels to
+   `base + offset × spacing` — the formation slot it occupies once the spawn
+   window closes.
+
+Each scene owns only the **base** (its formation, drift or live march state)
+and passes it in; the rule itself is defined exactly once. All four spawn
+sites resolve through it: the shipped `PlayScene._spawnEnemy`, the formation
+gyms (`GymFormationScene._spawnFormation`), the level-launch gym
+(`GymLevel.spawnWave`) and the boss gym's phase minions (`GymBoss`, which asks
+for the in-place `transit: false` exemption exactly as the game spawns its
+boss). `GymBotTuning` inherits the seam through `GymLevel`. The helper is
+registered in `EPIC_SHARED_HELPERS` (`CombatScene.equivalence.test.ts`), so a
+further copy fails the suite.
+
+**The level-launch path adopts the rest of the spawn contract.** A wave
+launched from the curve editor — or played in `GymBotTuning` — is a faithful
+preview of the shipped level, so `GymLevel.spawnWave` copies the wave's
+per-enemy `shootEnabled` onto every spawned entity (campaign levels 4+ carry
+`shootEnabled: true`, and `BaseEnemy` defaults to `false`, so omitting the
+hand-off made a launched level silently non-threatening) and drives a `march`
+wave through the shared `createMarchState` / `advanceMarch` block, re-anchoring
+each spawn to the live march base exactly as `PlayScene._spawnEnemy` does
+(AH-0MVRMHSKH0066J9B). Spawning, transit, marching and firing are therefore
+all part of the parity contract: a launched level behaves like the game.
+
+The per-gym verdicts — which shipped objects each gym runs, its spawn seam,
+whether it inherits the shipped start-of-wave/combat code and every retained
+divergence with its reason — are recorded in
+[`docs/GYM_PARITY.md`](./GYM_PARITY.md). The guard tests that enforce this
+convention are `src/scenes/gym/spawnParity.test.ts` (level-launch orbital
+transit, fire cadence and the march block), `src/scenes/gym/levelParity.test.ts`
+(level scaling and supply cadence), `src/scenes/core/CombatScene.equivalence.test.ts`
+(the repo-wide duplicate-body guard) and `src/scenes/core/gymParityDocs.test.ts`
+(the parity matrix and this section's rule text).
 
 **Documented divergence — `march` and `centipede` opt out of seam awareness.**
 The `wrapAware` flag (§1.7) is data, not a code fork: the shared aim maths

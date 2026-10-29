@@ -229,6 +229,13 @@ while handing out proportionally less supply. The endpoints (1→2× counts,
 0.18→0.05 drop chance) are the tuning contract from the parent work item; the
 values are data, so a future tuning change edits `GameRules` and re-runs this
 evidence.
+- **Spawn parity for tuning.** A launched level also spawns, transits, marches
+and fires through the same shared seams as the shipped game: the wormhole
+destination rule in `src/scenes/core/spawnTransit.ts`, the `shootEnabled`
+hand-off and the shared march block (§5.1 of
+[`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`](./ENEMY_DESIGN_AND_IMPLEMENTATION.md)).
+A balance pass recorded through `GymLevel` / `GymBotTuning` therefore measures
+shipped behaviour, not a gym-only approximation.
 - **Documented divergence — formation gyms.** `GymFormationScene` and its
 scenes (`GymBoss`, `GymCentipede`, `GymFodderEnemies`, …) have **no
 campaign-level input**, so they keep their scene-specific flat

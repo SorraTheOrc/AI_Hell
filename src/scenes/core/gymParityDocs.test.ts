@@ -20,6 +20,73 @@ import * as path from 'node:path';
  */
 const AGENTS_MD = path.resolve(process.cwd(), 'AGENTS.md');
 const GYM_PARITY_SECTION = '## Game Architecture Conventions';
+const ENEMY_DESIGN_MD = path.resolve(
+  process.cwd(),
+  'docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md',
+);
+const ENEMY_SPAWN_SEAM_SECTION = '### 5.1 Gym parity';
+
+/**
+ * Content §5.1 must state for the shared spawn seam (AH-0MVRMI2M50098WN5 AC1).
+ * Each requirement is a label plus the pattern that proves it, so the guard
+ * can report exactly which statement a future edit deleted.
+ */
+const SPAWN_SEAM_DOC_REQUIREMENTS: ReadonlyArray<{
+  readonly label: string;
+  readonly pattern: RegExp;
+}> = [
+  {
+    label: 'the shared seam module',
+    pattern: /src\/scenes\/core\/spawnTransit\.ts/,
+  },
+  { label: 'the autonomous-mover exemption', pattern: /autonomous/i },
+  {
+    label: 'the orbital live-slot branch',
+    pattern: /formationSlot|orbital/i,
+  },
+  { label: 'the grid-slot/offset fallback', pattern: /grid slot|offset fallback/i },
+  { label: 'the PlayScene spawn site', pattern: /PlayScene/ },
+  { label: 'the GymFormationScene spawn site', pattern: /GymFormationScene/ },
+  { label: 'the GymLevel spawn site', pattern: /GymLevel/ },
+  { label: 'the GymBoss spawn site', pattern: /GymBoss/ },
+  { label: 'the shootEnabled hand-off', pattern: /shootEnabled/ },
+  { label: 'the march block adoption', pattern: /march/i },
+  { label: 'the parity matrix link', pattern: /docs\/GYM_PARITY\.md/ },
+];
+
+/** Requirements (by label) that `source` does not state. */
+function unmetSpawnSeamDoc(source: string): string[] {
+  const text = source.replace(/\s+/g, ' ');
+  return SPAWN_SEAM_DOC_REQUIREMENTS.filter(
+    (requirement) => !requirement.pattern.test(text),
+  ).map((requirement) => requirement.label);
+}
+
+/**
+ * Spawn-seam statements the `AGENTS.md` shared-core surface must keep
+ * (AH-0MVRMI2M50098WN5 AC3).
+ */
+const AGENTS_SPAWN_SEAM_REQUIREMENTS: ReadonlyArray<{
+  readonly label: string;
+  readonly pattern: RegExp;
+}> = [
+  {
+    label: 'the spawn seam module in the shared core',
+    pattern: /src\/scenes\/core\/spawnTransit\.ts/,
+  },
+  {
+    label: 'the parity matrix link',
+    pattern: /docs\/GYM_PARITY\.md/,
+  },
+];
+
+/** Requirements (by label) that `source` does not state. */
+function unmetAgentsSpawnSeamDoc(source: string): string[] {
+  const text = source.replace(/\s+/g, ' ');
+  return AGENTS_SPAWN_SEAM_REQUIREMENTS.filter(
+    (requirement) => !requirement.pattern.test(text),
+  ).map((requirement) => requirement.label);
+}
 
 /** Return the body of `heading` up to the next level-2 heading (or EOF). */
 function sectionBody(source: string, heading: string): string {
@@ -63,6 +130,26 @@ describe('AGENTS.md documents the gym-parity principle (AH-0MUGZDTFX004RBD1)', (
   it('names the game-side scene and the shared core (AC2)', () => {
     expect(rule).toContain('PlayScene');
     expect(rule).toContain('src/scenes/core/');
+  });
+
+  it('names the spawn seam in the shared-core surface (AC3)', () => {
+    const section = sectionBody(source, GYM_PARITY_SECTION);
+    expect(unmetAgentsSpawnSeamDoc(section)).toEqual([]);
+  });
+
+  it('fails when the spawn seam or the matrix link is removed (AC3 red-before)', () => {
+    const section = sectionBody(source, GYM_PARITY_SECTION);
+    const withoutSeam = section.replace(
+      /src\/scenes\/core\/spawnTransit\.ts/g,
+      '',
+    );
+    expect(unmetAgentsSpawnSeamDoc(withoutSeam)).toContain(
+      'the spawn seam module in the shared core',
+    );
+    const withoutMatrix = section.replace(/docs\/GYM_PARITY\.md/g, '');
+    expect(unmetAgentsSpawnSeamDoc(withoutMatrix)).toContain(
+      'the parity matrix link',
+    );
   });
 });
 
@@ -248,5 +335,64 @@ describe('docs/GYM_PARITY.md records every gym scene (AH-0MVRMHUOG005P38A)', () 
     expect(matrix).toMatch(/absence of run telemetry/i);
     expect(matrix).toContain('docs/BALANCING.md');
     expect(matrix).toContain('ENEMY_DESIGN_AND_IMPLEMENTATION.md');
+  });
+});
+
+// ── §5.1 spawn-seam docs guard (AH-0MVRMI2M50098WN5) ──────────────
+//
+// §5.1 is where a developer joining the spawn code is sent, so it must name
+// the shared wormhole-transit seam (`src/scenes/core/spawnTransit.ts`), state
+// the resolver rule, list the four consuming spawn sites, record the
+// `shootEnabled`/march adoption on the level-launch path and point at the
+// parity matrix. The red-before cases edit a copy of the real section in
+// memory, so the guard is proven to fail when a future edit deletes the seam
+// or the matrix link without touching the repository.
+
+describe('docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md §5.1 documents the shared spawn seam (AH-0MVRMI2M50098WN5)', () => {
+  const source = fs.readFileSync(ENEMY_DESIGN_MD, 'utf8');
+  const section = sectionBody(source, ENEMY_SPAWN_SEAM_SECTION);
+
+  it('is a non-empty §5.1 section', () => {
+    expect(source).toContain(ENEMY_SPAWN_SEAM_SECTION);
+    expect(section.trim().length).toBeGreaterThan(0);
+  });
+
+  it('names the seam, the rule, the four spawn sites and the matrix (AC1)', () => {
+    expect(unmetSpawnSeamDoc(section)).toEqual([]);
+  });
+
+  it('fails when the spawn-seam module is deleted (AC4 red-before)', () => {
+    const stale = section.replace(/src\/scenes\/core\/spawnTransit\.ts/g, '');
+    expect(unmetSpawnSeamDoc(stale)).toContain('the shared seam module');
+  });
+
+  it('fails when the parity-matrix link is deleted (AC4 red-before)', () => {
+    const stale = section.replace(/docs\/GYM_PARITY\.md/g, '');
+    expect(unmetSpawnSeamDoc(stale)).toContain('the parity matrix link');
+  });
+
+  it('fails when a consuming spawn site is dropped (AC4 red-before)', () => {
+    const stale = section.replace(/GymBoss/g, 'a gym');
+    expect(unmetSpawnSeamDoc(stale)).toContain('the GymBoss spawn site');
+  });
+
+  it('keeps the documented intentional divergences (AC2)', () => {
+    expect(section).toMatch(/obstacle course/i);
+    expect(section).toMatch(/AOE practice targets/i);
+    expect(section).toMatch(/flat supply cadence/i);
+    expect(section).toContain('docs/BALANCING.md');
+  });
+
+  it('points at the guard tests that enforce the convention (AC1)', () => {
+    expect(section).toContain('spawnParity.test.ts');
+    expect(section).toContain('CombatScene.equivalence.test.ts');
+    expect(section).toContain('gymParityDocs.test.ts');
+  });
+
+  it('does not point at a non-existent matrix path (AC1)', () => {
+    expect(source).toContain('[`docs/GYM_PARITY.md`](./GYM_PARITY.md)');
+    expect(fs.existsSync(path.resolve(process.cwd(), 'docs/GYM_PARITY.md'))).toBe(
+      true,
+    );
   });
 });

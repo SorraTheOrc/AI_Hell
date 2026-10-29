@@ -25,6 +25,24 @@
  * positioning and roaming-entity motion). It follows the standard gym
  * navigation pattern: a "← INDEX" button plus ESC-to-menu.
  *
+ * ## Spawn parity (AH-0MVRMHSKH0066J9B)
+ *
+ * A launched level spawns, transits, marches and fires through the same shared
+ * seams as the shipped game, so the gym is a faithful preview:
+ *
+ * - Each enemy's wormhole destination is resolved by the shared
+ *   `resolveSpawnTransitTarget` (`src/scenes/core/spawnTransit.ts`): an orbital
+ *   enemy targets its live `formationSlot()` (no line-then-snap), an autonomous
+ *   mover is exempt, and every other enemy keeps its grid slot.
+ * - Every spawned entity inherits the wave's `shootEnabled`, as
+ *   `PlayScene._spawnEnemy` does, so a launched level 4+ wave is threatening.
+ * - A `march` wave steps and drops through the shared
+ *   `createMarchState` / `advanceMarch` block, and each spawn is re-anchored to
+ *   the live march base exactly as it is in the game.
+ *
+ * The behaviour is pinned by `src/scenes/gym/spawnParity.test.ts`, and
+ * `GymBotTuning` inherits it through this scene.
+ *
  * ## Supply layer (AH-0MV4D7LAD009XYR0 producer-audit fix)
  *
  * The level plays exactly as the game does: a mineral field is seeded, a

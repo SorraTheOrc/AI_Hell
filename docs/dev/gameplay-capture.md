@@ -1175,6 +1175,17 @@ gameplay is the launched level. Its registry entry now accepts the common
 fields too (`SCENE_SETUP_INCAPABLE_TARGETS` is empty), so a setup is never
 rejected or silently ignored there.
 
+**A recorded gym is a faithful preview (spawn parity).** Because every gym
+consumes the shared spawn seams, a capture records the game's behaviour rather
+than a gym-only approximation: the wormhole-transit destination comes from
+`resolveSpawnTransitTarget` (`src/scenes/core/spawnTransit.ts`), the
+level-launch path copies each wave's `shootEnabled` and drives `march` waves
+through the shared block (AH-0MVRMHSKH0066J9B), and
+`src/scenes/gym/spawnParity.test.ts` pins the orbital transit, fire cadence and
+march block against `PlayScene`. Per-gym verdicts and intentional divergences
+(e.g. a gym-only HUD) are recorded in
+[`docs/GYM_PARITY.md`](../GYM_PARITY.md#matrix).
+
 **Per-gym scenario parameters (AH-0MVRMI0Q7001KG4Y).** The fields above are the
 whole schema: each gym's scenario knobs that used to be fixed constants are now
 first-class `setup` fields consumed by that scene — the formation-family SHOOT
