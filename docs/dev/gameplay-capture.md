@@ -1150,15 +1150,39 @@ never mutated).
 
 `GymLevel`/`GymBotTuning` and `GymFodderEnemies` were previously rejected as
 parameterised; supplying the required parameter (`level` / `enemy`) makes them
-capturable. `GymCurveSequencer` is an editor and cannot consume a `setup` at
-all. Formation gyms accept the loadout/power-up/seed fields; their enemy roster
-stays fixed by the scene config (only `GymFodderEnemies` selects its roster
-from a setup).
+capturable. Formation gyms accept the loadout/power-up/seed fields; their enemy
+roster stays fixed by the scene config (only `GymFodderEnemies` selects its
+roster from a setup).
+
+**In-scene adoption (AH-0MVRMHYJR000Y9H8).** Every gym scene now applies the
+shared `applySceneSetup` applier and re-seeds its content RNG from
+`resolveSetupSeed` (through `CombatCoreScene._adoptCaptureSetup`), so the
+`player`, `powerUps` and `seed` fields are live **before the first captured
+frame** in every gym — including the six combat gyms (`GymPlayer`, `GymWeapons`,
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymWeaponLeveling`,
+`GymPowerUpLeveling`) that previously ignored an incoming setup. An absent setup
+remains a no-op. `GymCurveSequencer` has no player and no intrinsic random
+content (its waves are derived deterministically from the curve), so it applies
+the shared seam as a documented no-op and **forwards** the setup (loadout,
+power-up levels and resolved seed) to the `GymLevel` it launches — the recorded
+gameplay is the launched level. Its capture-CLI registry entry is still
+setup-incapable; lifting that is AH-0MVRMI0Q7001KG4Y's registry work.
+
+Per-gym scenario parameters that the shared schema does not express stay fixed
+gym-only scenarios and are recorded with their reason in
+[`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8):
+the `GymPlayer` obstacle course, the `GymWeapons` practice-target gallery, the
+`GymPowerUpsCombat` threat wave and SHOOT toggle, the round-robin drop cadences
+and mineral-hold cadence, and the curve editor's edited curve. Schema expansion
+for those is tracked by AH-0MVRMI0Q7001KG4Y rather than overloading the loadout
+schema.
 
 **Determinism.** A `seed` seeds the scene's content RNGs (mineral field, drop
 cadence and random picks), so the same `scenes.json` reproduces the same
-content. It is content-level, not frame-level: frame timing, audio and bot
-micro-jitter are not byte-identical, so clips are re-recordable but not
+content. Every gym consumes it through the shared `resolveSetupSeed`; where a
+gym has no random content (e.g. `GymPlayer`'s fixed obstacle course) the seed
+is simply inert. It is content-level, not frame-level: frame timing, audio and
+bot micro-jitter are not byte-identical, so clips are re-recordable but not
 byte-reproducible. The resolved seed is reported per scene in the `--json`
 payload.
 

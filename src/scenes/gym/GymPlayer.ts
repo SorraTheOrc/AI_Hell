@@ -35,11 +35,19 @@
  *
  * A shared "← INDEX" back button lets the tester return to the gym index
  * without reloading the page, and ESC returns to the main menu.
+ *
+ * Scripted-scene setup (AH-0MVRMHYJR000Y9H8): the scene consumes the shared
+ * `applySceneSetup` applier through `_adoptCaptureSetup`, so a capture setup's
+ * player loadout, power-up levels and determinism seed are live before the
+ * first captured frame. The obstacle course itself stays a fixed gym-only
+ * scenario (it is not expressible in the shared setup schema); the training
+ * layout is documented in `docs/GYM_PARITY.md` and `docs/dev/gameplay-capture.md`.
  */
 
 import Phaser from 'phaser';
 
 import { CombatScene } from '../core/CombatScene';
+import type { SceneSetupState } from '../core/sceneSetup';
 import type { CombatEnemyBullet } from '../core/CombatCoreScene';
 import { advancePlayerBullets } from '../core/bulletLifecycle';
 import { Player } from '../../entities/Player';
@@ -161,7 +169,7 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
     super({ key: 'GymPlayer' });
   }
 
-  create(): void {
+  create(data?: SceneSetupState): void {
     // A stop/restart of the same instance must start clean — no stale ship,
     // obstacles, bullets or input bindings (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
@@ -177,6 +185,11 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
     // A Graphics built via `new` is not on the scene display list until
     // added — without this the ship is never rendered.
     this.add.existing(this.player);
+
+    // Scripted-scene setup (AH-0MVRMHYJR000Y9H8): the shared applier/seed
+    // helper makes a configured loadout, power-up levels and content seed
+    // live before the first captured frame. No setup ⇒ unchanged behaviour.
+    this._adoptCaptureSetup(data);
 
     // ── Indestructible obstacle course ───────────────────────────────
     this._spawnObstacles();

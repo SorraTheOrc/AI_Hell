@@ -77,11 +77,71 @@ column). No other verdict is accepted by the guard.
 | `GymMinerals` | `GymFormationScene` (`src/scenes/gym/GymMinerals.ts:89`) | `Asteroid` (+ shared `splitAsteroid` `:80`), shared mineral kill drops/hold/choice, shared per-kill Extra Life roll | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Asteroid construction matches the game's `new Asteroid` hazard spawn (`PlayScene.ts:4738`); intentional: asteroids-only field with 3 seeded rocks (`GymMinerals.ts:69`) and the base class's 100 demonstration minerals (`GymFormationScene.ts:1371`) |
 | `GymMiniBoss` | `GymFormationScene` (`src/scenes/gym/GymMiniBoss.ts:174`) | `MiniBoss` through the shared design helper (`:156`), shared minion planner/factory/fire seam, shared `miniBossDeathSweep` | inherited `_spawnFormation` (`GymFormationScene.ts:1790`); `MiniBoss` has no spawning seam so it spawns in place, exactly as `PlayScene` spawns it (`PlayScene.ts:1618`) | yes — inherited `CombatScene`/`_advanceBoss` loop | `parity` | Intentional (documented): gym-only fixed hit pool for fast phase stepping (`MINI_BOSS_GYM_HP_PER_PHASE`, `GymMiniBoss.ts:78`), DAMAGE/EXPLODE/SHOOT controls; the shared death sweep is used for EXPLODE (`GymMiniBoss.ts:267`) |
 | `GymPlayer` | `CombatScene` (`src/scenes/gym/GymPlayer.ts:152`) | `Player`, `PlayerBullet`, shared auto-fire/input/collision lifecycle; `Obstacle` (shared entity, gym-only scenario) | n/a — no enemy spawn | yes — `_tickPlayer` `:574`, `_handleCollisions` `:584`; only the destruction hooks are overridden | `intentional divergence` | Obstacle course is the documented gym-only training scenario (`GymPlayer.ts:23`; §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). The obstacle entity and the collision/auto-fire code are shared |
-| `GymPowerUpLeveling` | `CombatScene` (`src/scenes/gym/GymPowerUpLeveling.ts:177`) | `Player` + every power-up through the shared `EffectsRegistry`/`resolvePowerUpAtLevel`, shared drop layer, minerals, `MineralHold` and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:306`, shared drop/mineral/hold-full passes | `parity` | Intentional: gym-only round-robin drop source (no kills to roll) and the level/stats readout panel (`src/scenes/gym/GymPowerUpLeveling.ts:177`, `gym-powerup-level-readout`); the level curve and effects are shared, not copied |
-| `GymPowerUpsCombat` | `CombatScene` (`src/scenes/gym/GymPowerUpsCombat.ts:148`) | `Scout` threat formation + shared `fireForEnemy` (`:554`), Shield/Bomb/Phase Shift/Teleport through the shared `EffectsRegistry`, shared drop layer, shared teleport/auto-defence seams | `_spawnScoutFormation` → `createEnemyFromConfig` + `resolveSpawnTransitTarget({transit:false})` + `startSpawnAnimation`/`updateSpawnEmergence` (`src/scenes/gym/GymPowerUpsCombat.ts:405`), matching the shared factory + in-place spawn presentation | yes — `_tickPlayer` `:333`, `_handleCollisions` `:361` | `parity` | **D4 closed by AH-0MVRMHWNC002H4B5** — threats are built through the shared factory (the active `scout` `EnemyConfig` reaches them) and grow from 1 px behind the shared spawn protection, in place; pinned by `src/scenes/gym/GymPowerUpsCombat.test.ts` (D4 parity). Intentional: auto-fire disabled (`:317`) so the defensive power-ups, not player fire, are the demonstration; HUD is gym-only |
+| `GymPowerUpLeveling` | `CombatScene` (`src/scenes/gym/GymPowerUpLeveling.ts:185`) | `Player` + every power-up through the shared `EffectsRegistry`/`resolvePowerUpAtLevel`, shared drop layer, minerals, `MineralHold` and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:306`, shared drop/mineral/hold-full passes | `parity` | Intentional: gym-only round-robin drop source (no kills to roll) and the level/stats readout panel (`src/scenes/gym/GymPowerUpLeveling.ts:185`, `gym-powerup-level-readout`); the level curve and effects are shared, not copied |
+| `GymPowerUpsCombat` | `CombatScene` (`src/scenes/gym/GymPowerUpsCombat.ts:171`) | `Scout` threat formation + shared `fireForEnemy` (`:554`), Shield/Bomb/Phase Shift/Teleport through the shared `EffectsRegistry`, shared drop layer, shared teleport/auto-defence seams | `_spawnScoutFormation` → `createEnemyFromConfig` + `resolveSpawnTransitTarget({transit:false})` + `startSpawnAnimation`/`updateSpawnEmergence` (`src/scenes/gym/GymPowerUpsCombat.ts:405`), matching the shared factory + in-place spawn presentation | yes — `_tickPlayer` `:333`, `_handleCollisions` `:361` | `parity` | **D4 closed by AH-0MVRMHWNC002H4B5** — threats are built through the shared factory (the active `scout` `EnemyConfig` reaches them) and grow from 1 px behind the shared spawn protection, in place; pinned by `src/scenes/gym/GymPowerUpsCombat.test.ts` (D4 parity). Intentional: auto-fire disabled (`:317`) so the defensive power-ups, not player fire, are the demonstration; HUD is gym-only |
 | `GymPowerUpsUtility` | `CombatCoreScene` (`src/scenes/gym/GymPowerUpsUtility.ts:116`) | `Player` + Speed Boost/Extra Life/Magnet/Mineral Scoop/Mystery UFO through the shared `EffectsRegistry`, shared drop layer, `MineralHold` and mineral scoop | no enemy spawn; round-robin drop source | partial — `CombatCoreScene` only (`_tickPlayer` `:247`, input/auto-fire/drop passes); no collision pass because the scene is threat-free | `parity` | Intentional: threat-free utility gallery (no enemy objects to collide with), auto-fire disabled (`src/scenes/gym/GymPowerUpsUtility.ts:232`), gym-only round-robin source and 40 seeded minerals (`:176`). Disabling a feature is a permitted difference; no enabled object runs divergent code |
-| `GymWeaponLeveling` | `CombatScene` (`src/scenes/gym/GymWeaponLeveling.ts:137`) | `Player` + every weapon through the shared `EffectsRegistry`/level resolver, shared AOE dispatch/VFX, shared drop layer, minerals and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:250`, shared effect/drop/mineral passes | `parity` | Intentional: gym-only round-robin drop source and level readout; weapon behaviour lives once in the shared arsenal (`src/utils/weapons.ts`, `src/powerups/effects.ts`) |
+| `GymWeaponLeveling` | `CombatScene` (`src/scenes/gym/GymWeaponLeveling.ts:145`) | `Player` + every weapon through the shared `EffectsRegistry`/level resolver, shared AOE dispatch/VFX, shared drop layer, minerals and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:250`, shared effect/drop/mineral passes | `parity` | Intentional: gym-only round-robin drop source and level readout; weapon behaviour lives once in the shared arsenal (`src/utils/weapons.ts`, `src/powerups/effects.ts`) |
 | `GymWeapons` | `CombatScene` (`src/scenes/gym/GymWeapons.ts:200`) | `Player` + cannon/Spread/Dual/Rapid/Nova/Mortar/Arc through the shared combat core, shared AOE dispatch/VFX, shared drop layer | no enemy spawn; `TrainingTarget` fixtures only (`:171`, `:504`) | yes — `_tickPlayer` `:303`, `_handleCollisions` inherited | `intentional divergence` | AOE practice targets are the documented gym-only divergence (F6 AC5, `GymWeapons.ts:120`, `:165`; §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). The AOE resolution and VFX are shared, not copied |
+
+## Scripted-scene setup adoption (AH-0MVRMHYJR000Y9H8)
+
+Every gym scene consumes the shared scripted-scene `setup` seam, so any gym
+can be launched with a loadout, power-up levels and a determinism seed and
+recorded from `examples/scenes.json`. Adoption runs through **one** shared
+policy — `CombatCoreScene._adoptCaptureSetup` calls the single
+`applySceneSetup` applier (`src/scenes/core/sceneSetup.ts`) and re-seeds the
+scene's content RNG from `resolveSetupSeed`. The setup→state mapping is never
+copied into a gym, and an absent setup is a no-op (the applier is intentionally
+total), so setup-less gym behaviour is unchanged.
+
+- **Formation family** — `GymFormationScene` and its subclasses (`GymBoss`,
+  `GymCentipede`, `GymFodderEnemies`, `GymMinerals`, `GymMiniBoss`) consume
+  `player`, `powerUps` and `seed`; `GymFodderEnemies` also consumes `enemy` and
+  the boss gyms consume `bossHitsRemaining`. Limitation: the enemy roster stays
+  config-driven for formation gyms (`GymFormationScene.init`,
+  `src/scenes/gym/core/GymFormationScene.ts:693`) — a formation gym has no
+  roster selector, so a setup cannot change it.
+- **Level family** — `GymLevel` / `GymBotTuning` consume `player`, `powerUps`,
+  `seed`, `level`, `startWave` and `mineralReward`. Limitation: the full-hold
+  reward resolves without a modal pause (gym-only, documented in the matrix
+  above).
+- **`GymPlayer`** — consumes `player`, `powerUps`, `seed`. Limitation: the
+  obstacle course is a fixed gym-only training scenario (`OBSTACLE_LAYOUT`,
+  `src/scenes/gym/GymPlayer.ts:104`); the shared schema has no obstacle field.
+  Tracked for schema expansion by AH-0MVRMI0Q7001KG4Y.
+- **`GymWeapons`** — consumes `player`, `powerUps`, `seed` (the seed also makes
+  AOE `'onRandom'` placement reproducible). Limitation: the practice-target
+  gallery and round-robin drop order are fixed gym-only scenarios
+  (`src/scenes/gym/GymWeapons.ts:98`, `:392`). Tracked by AH-0MVRMI0Q7001KG4Y.
+- **`GymPowerUpsCombat`** — consumes `player`, `powerUps`, `seed`. Limitation:
+  the scout threat wave and its SHOOT toggle are fixed gym-only controls
+  (`src/scenes/gym/GymPowerUpsCombat.ts:171`). Tracked by AH-0MVRMI0Q7001KG4Y.
+- **`GymPowerUpsUtility`** — consumes `player`, `powerUps`, `seed` (seeds the
+  demonstration mineral field). Limitation: the round-robin drop cadence and
+  the seeded mineral count are fixed gym-only scenarios
+  (`UTILITY_MINERAL_SEED_COUNT`, `src/scenes/gym/GymPowerUpsUtility.ts:85`).
+  Tracked by AH-0MVRMI0Q7001KG4Y.
+- **`GymWeaponLeveling`** — consumes `player`, `powerUps`, `seed` (seeds the
+  mineral field). Limitation: the round-robin drop and mineral-hold cadences
+  are fixed gym-only scenarios (`src/scenes/gym/GymWeaponLeveling.ts:145`).
+  Tracked by AH-0MVRMI0Q7001KG4Y.
+- **`GymPowerUpLeveling`** — consumes `player`, `powerUps`, `seed` (seeds the
+  mineral field). Limitation: the round-robin drop and mineral-hold cadences
+  are fixed gym-only scenarios (`src/scenes/gym/GymPowerUpLeveling.ts:185`).
+  Tracked by AH-0MVRMI0Q7001KG4Y.
+- **`GymCurveSequencer`** — consumes `player`, `powerUps`, `seed` by
+  **forwarding** them to the launched `GymLevel` (`_launchData`,
+  `src/scenes/gym/GymCurveSequencer.ts:702`). Limitation: the editor has no
+  player and no intrinsic content RNG (its waves are derived deterministically
+  from the curve), so `applySceneSetup` is a documented no-op there; the edited
+  curve and launched level/wave are launch parameters, not setup fields. The
+  capture CLI still marks the editor setup-incapable until AH-0MVRMI0Q7001KG4Y
+  updates the registry.
+
+Adoption is pinned by `src/scenes/gym/gymSceneSetupAdoption.test.ts`: per gym,
+a supplied setup's loadout/levels are live in the first observed frame, a
+supplied seed reproduces the content, and no setup keeps the historical
+bare-cannon loadout and `Math.random` stream.
 
 ## Divergences closed by AH-0MVRMHWNC002H4B5
 

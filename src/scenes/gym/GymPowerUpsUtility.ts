@@ -35,11 +35,20 @@
  *
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically.
+ *
+ * Scripted-scene setup (AH-0MVRMHYJR000Y9H8): the scene consumes the shared
+ * `applySceneSetup` applier through `_adoptCaptureSetup`, so a capture setup's
+ * player loadout, power-up levels and determinism seed are live before the
+ * first captured frame. The seed drives the demonstration mineral field, so a
+ * scripted capture's mineral layout is reproducible. The round-robin drop
+ * cadence and mineral count stay fixed gym-only scenarios (documented in
+ * `docs/GYM_PARITY.md` and `docs/dev/gameplay-capture.md`).
  */
 
 import Phaser from 'phaser';
 
 import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from '../core/CombatCoreScene';
+import type { SceneSetupState } from '../core/sceneSetup';
 import { Player } from '../../entities/Player';
 import { Mineral } from '../../entities/Mineral';
 import { collectMinerals } from '../core/mineralLayer';
@@ -144,7 +153,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     super({ key: 'GymPowerUpsUtility' });
   }
 
-  create(): void {
+  create(data?: SceneSetupState): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
@@ -153,6 +162,12 @@ export class GymPowerUpsUtility extends CombatCoreScene<
       y: GAME_HEIGHT / 2,
     });
     this.add.existing(this.player);
+
+    // Scripted-scene setup (AH-0MVRMHYJR000Y9H8): loadout, power-up levels
+    // and the content seed are applied before the mineral field is seeded
+    // below, so a seeded capture reproduces the same field. No setup ⇒ no
+    // behaviour change.
+    this._adoptCaptureSetup(data);
 
     // Shared "← INDEX" button (AC5 of the parent), reused by every gym.
     addBackToIndexButton(this);
@@ -356,8 +371,8 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     const cy = GAME_HEIGHT / 2;
     const seeded: Mineral[] = [];
     for (let i = 0; i < count; i++) {
-      const x = 20 + Math.random() * (GAME_WIDTH - 40);
-      const y = 20 + Math.random() * (GAME_HEIGHT - 120);
+      const x = 20 + this.sceneRng() * (GAME_WIDTH - 40);
+      const y = 20 + this.sceneRng() * (GAME_HEIGHT - 120);
       let px = x;
       let py = y;
       const distance = Math.hypot(x - cx, y - cy);

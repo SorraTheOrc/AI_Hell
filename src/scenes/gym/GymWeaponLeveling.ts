@@ -23,6 +23,13 @@
  *
  * Discovered automatically by `GymIndex` via the `Gym<Name>.ts` convention.
  *
+ * Scripted-scene setup (AH-0MVRMHYJR000Y9H8): the scene consumes the shared
+ * `applySceneSetup` applier through `_adoptCaptureSetup`, so a capture setup's
+ * player loadout, power-up levels and determinism seed are live before the
+ * first captured frame, and the seed reproduces the mineral field. The
+ * round-robin drop cadence and mineral hold stay fixed gym-only scenarios
+ * (documented in `docs/GYM_PARITY.md` and `docs/dev/gameplay-capture.md`).
+ *
  * @module src/scenes/gym/GymWeaponLeveling
  */
 
@@ -33,6 +40,7 @@ import {
   type CombatEnemyEntity,
 } from '../core/CombatCoreScene';
 import { CombatScene } from '../core/CombatScene';
+import type { SceneSetupState } from '../core/sceneSetup';
 import { Player } from '../../entities/Player';
 import { advancePlayerBullets } from '../core/bulletLifecycle';
 import { PlayerBullet } from '../../entities/PlayerBullet';
@@ -178,13 +186,19 @@ export class GymWeaponLeveling extends CombatScene<
     super({ key: 'GymWeaponLeveling' });
   }
 
-  create(): void {
+  create(data?: SceneSetupState): void {
     this.resetRunState();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT - 80,
     });
     this.add.existing(this.player);
+
+    // Scripted-scene setup (AH-0MVRMHYJR000Y9H8): loadout, power-up levels
+    // and the content seed are applied before any content spawns, so a
+    // configured setup is live before the first captured frame. No setup
+    // ⇒ unchanged behaviour.
+    this._adoptCaptureSetup(data);
 
     addBackToIndexButton(this);
     addBackToMenuOnEsc(this);
@@ -329,8 +343,8 @@ export class GymWeaponLeveling extends CombatScene<
 
   /** Spawns a mineral at a random position. Public test seam. */
   spawnMineral(x?: number, y?: number): LevelingMineral {
-    const px = x ?? 80 + Math.random() * (GAME_WIDTH - 160);
-    const py = y ?? 120 + Math.random() * (GAME_HEIGHT - 240);
+    const px = x ?? 80 + this.sceneRng() * (GAME_WIDTH - 160);
+    const py = y ?? 120 + this.sceneRng() * (GAME_HEIGHT - 240);
     const entity = new Mineral(this, { x: px, y: py });
     const mineral: LevelingMineral = {
       entity,

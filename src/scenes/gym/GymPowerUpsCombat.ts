@@ -61,11 +61,19 @@
  * All per-frame logic lives in the public `tick(dt)` method (called by
  * Phaser's `update`), so tests can drive the scene deterministically via
  * `gameHarness` without a real render loop.
+ *
+ * Scripted-scene setup (AH-0MVRMHYJR000Y9H8): the scene consumes the shared
+ * `applySceneSetup` applier through `_adoptCaptureSetup`, so a capture setup's
+ * player loadout, power-up levels and determinism seed are live before the
+ * first captured frame. The scout threat wave and its SHOOT toggle stay fixed
+ * gym-only scenario controls (documented in `docs/GYM_PARITY.md` and
+ * `docs/dev/gameplay-capture.md`).
  */
 
 import Phaser from 'phaser';
 
 import { CombatScene } from '../core/CombatScene';
+import type { SceneSetupState } from '../core/sceneSetup';
 import { advanceWrappingBullets } from '../core/bulletLifecycle';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import {
@@ -198,7 +206,7 @@ export class GymPowerUpsCombat extends CombatScene<
     super({ key: 'GymPowerUpsCombat' });
   }
 
-  create(): void {
+  create(data?: SceneSetupState): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
@@ -207,6 +215,11 @@ export class GymPowerUpsCombat extends CombatScene<
       y: GAME_HEIGHT / 2,
     });
     this.add.existing(this.player);
+
+    // Scripted-scene setup (AH-0MVRMHYJR000Y9H8): loadout, power-up levels
+    // and content seed are live before the first captured frame. No setup
+    // ⇒ no behaviour change.
+    this._adoptCaptureSetup(data);
 
     addBackToIndexButton(this);
     // Shared "Help (?)" button + overlay: lists every drop this gym can

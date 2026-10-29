@@ -101,6 +101,7 @@ import {
   type ControlInput,
 } from '../../utils/movementModel';
 import type { WasdKeysLike } from '../../utils/input';
+import { createSeededRng } from '../../core/rng';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import {
@@ -136,6 +137,11 @@ import {
   DEFAULT_CAPTURE_DISABLE_MS,
   type CaptureBeamState,
 } from './captureBeam';
+import {
+  applySceneSetup,
+  resolveSetupSeed,
+  type SceneSetupState,
+} from './sceneSetup';
 import {
   applyMineralScoop,
   type MovableMineral,
@@ -265,6 +271,50 @@ export class CombatCoreScene<
    * (AH-0MUY08V6W001SJJN). Gyms that omit it keep the unseeded default.
    */
   protected sceneRng: () => number = () => Math.random();
+
+  /**
+   * Adopts the shared scripted-scene `setup` seam (AH-0MVRMHYJR000Y9H8).
+   *
+   * Every combat gym calls this once in `create()`, immediately after its
+   * player exists and before any content is spawned, so a configured loadout,
+   * power-up levels and seed are live **before** the first captured frame (the
+   * `playMs` warm-up). The setup→state mapping itself stays in the single
+   * shared {@link applySceneSetup}; this helper only adds the scene-level
+   * pieces a gym owns:
+   *
+   * - a supplied `seed` re-seeds {@link sceneRng}, the content stream the
+   *   shared core draws from (AOE `'onRandom'` placement) and the gyms draw
+   *   their mineral/drop positions from, so the same setup reproduces the
+   *   same content;
+   * - an absent seed restores the historical dynamic `Math.random` thunk, so
+   *   a setup-less scene keeps its pre-change RNG stream exactly (an old
+   *   seeded run cannot leak into a restart).
+   *
+   * `applySceneSetup` is intentionally total: an absent setup (or a scene
+   * without a player) is a no-op, which is what keeps a setup-less gym
+   * byte-compatible with its previous behaviour.
+   *
+   * @param data — the scene-start data Phaser passes to `create()`.
+   */
+  protected _adoptCaptureSetup(data?: SceneSetupState | null): void {
+    const setup = data ?? null;
+    const seed = resolveSetupSeed(setup);
+    this.sceneRng = seed === null
+      ? () => Math.random()
+      : createSeededRng(seed);
+    applySceneSetup({ getPlayer: () => this.getPlayer() }, setup);
+  }
+
+  /**
+   * The scene's live content RNG — the setup-seeded stream when a capture
+   * `setup` supplies a seed, otherwise the historical dynamic `Math.random`
+   * thunk. Read-only diagnostic seam so capture-determinism tests can assert
+   * that a supplied seed actually re-seeds the scene's content randomness.
+   */
+  getContentRng(): () => number {
+    return this.sceneRng;
+  }
+
   /** Live player-explosion VFX graphics (tracked for observation). */
   protected playerExplosions: Phaser.GameObjects.Graphics[] = [];
   /**
