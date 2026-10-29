@@ -28,6 +28,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { cliSpawnEnv } from './cliChildEnv';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -97,6 +98,8 @@ import {
   BOT_TUNING_STORAGE_KEY,
   installBotTuningConfig,
   writeCaptureSeriesArtifacts,
+  explainMidRunFailure,
+  watchForMidRunNavigation,
 } from './capture-gameplay.mjs';
 import {
   ACTION_INTENSITY_SERIES_SCHEMA_VERSION as SERIES_SCHEMA_VERSION,
@@ -2467,6 +2470,205 @@ describe('--all-scenarios batch capture (AH-0MV6JGQFK007MXGX)', () => {
     // The single-clip output resolution is untouched by the new flags.
     const [single] = resolveOutputPaths(null, 1);
     expect(basename(single)).toMatch(/^gameplay-.*\.webm$/);
+  });
+});
+
+// ── Capture Vite isolation and mid-run reload diagnosis (AH-0MVTEKPM6003R5NW) ──
+
+describe('capture Vite isolation (AH-0MVTEKPM6003R5NW)', () => {
+  const silentReporter = { step() {}, progress() {}, done() {} };
+
+  function fakeSessionDeps(onServerOptions?: (options: any) => void) {
+    const fakeServer = {
+      listen: async () => {},
+      httpServer: { address: () => ({ port: 4321 }) },
+      waitForRequestsIdle: async () => {},
+      close: async () => {},
+    };
+    const fakeBrowser = {
+      newPage: async () => ({ close: async () => {} }),
+      close: async () => {},
+    };
+    return {
+      createViteServer: async (options: any) => {
+        if (onServerOptions) onServerOptions(options);
+        return fakeServer;
+      },
+      launchBrowser: async () => fakeBrowser,
+    };
+  }
+
+  const item = () => [
+    {
+      index: 1,
+      scenario: null,
+      outputPath: join(tmpdir(), 'capture-vite-isolation.webm'),
+    },
+  ];
+
+  it('gives the capture server a private per-run dependency cache (never the shared workspace cache)', async () => {
+    const seen: any[] = [];
+    const deps = fakeSessionDeps((options) => seen.push(options));
+
+    const runOnce = () =>
+      runCaptureSession({
+        items: item(),
+        options: {},
+        reporter: silentReporter,
+        ...deps,
+        captureOne: async ({ outputPath }) => ({
+          output: outputPath,
+          bytes: 1,
+          durationMs: 1,
+          nonTrivial: true,
+          reasons: [],
+          pageErrors: [],
+        }),
+      });
+
+    await runOnce();
+    await runOnce();
+
+    expect(seen).toHaveLength(2);
+    const [first, second] = seen;
+    // A per-run temp cache: nothing else in the environment can invalidate the
+    // running page's optimised deps (the shared `node_modules/.vite` cache is
+    // written by every Vite instance in every worktree).
+    for (const options of seen) {
+      expect(typeof options.cacheDir).toBe('string');
+      expect(options.cacheDir).not.toContain(join('node_modules', '.vite'));
+      expect(options.cacheDir.startsWith(tmpdir())).toBe(true);
+      // No HMR / file watching: a file change must never reload the page
+      // while the single MediaRecorder is running.
+      expect(options.server).toMatchObject({ hmr: false, watch: null });
+    }
+    expect(first.cacheDir).not.toBe(second.cacheDir);
+  });
+
+  it('removes its private cache directory after the run, and leaves a caller-supplied one alone', async () => {
+    let created: string | null = null;
+    const deps = fakeSessionDeps((options) => {
+      created = options.cacheDir;
+      mkdirSync(options.cacheDir, { recursive: true });
+      writeFileSync(join(options.cacheDir, 'marker'), 'x');
+    });
+    const captureOne = async ({ outputPath }: { outputPath: string }) => ({
+      output: outputPath,
+      bytes: 1,
+      durationMs: 1,
+      nonTrivial: true,
+      reasons: [],
+      pageErrors: [],
+    });
+
+    await runCaptureSession({
+      items: item(),
+      options: {},
+      reporter: silentReporter,
+      ...deps,
+      captureOne,
+    });
+    expect(created).not.toBeNull();
+    expect(existsSync(created as unknown as string)).toBe(false);
+
+    // A caller-specified cacheDir is honoured and never deleted.
+    const owned = mkdtempSync(join(tmpdir(), 'aihell-capture-cachedir-'));
+    try {
+      let specified: string | null = null;
+      await runCaptureSession({
+        items: item(),
+        options: { cacheDir: owned },
+        reporter: silentReporter,
+        ...fakeSessionDeps((options) => (specified = options.cacheDir)),
+        captureOne,
+      });
+      expect(specified).toBe(owned);
+      expect(existsSync(owned)).toBe(true);
+    } finally {
+      rmSync(owned, { recursive: true, force: true });
+    }
+  });
+
+  it('exposes a dependency-settle callback to the capture so the graph is warm before recording', async () => {
+    let settled = 0;
+    const fakeServer = {
+      listen: async () => {},
+      httpServer: { address: () => ({ port: 4321 }) },
+      waitForRequestsIdle: async () => {
+        settled += 1;
+      },
+      close: async () => {},
+    };
+    const fakeBrowser = {
+      newPage: async () => ({ close: async () => {} }),
+      close: async () => {},
+    };
+    let session: any = null;
+
+    await runCaptureSession({
+      items: item(),
+      options: {},
+      reporter: silentReporter,
+      createViteServer: async () => fakeServer,
+      launchBrowser: async () => fakeBrowser,
+      captureOne: async ({ outputPath, session: s }) => {
+        session = s;
+        return {
+          output: outputPath,
+          bytes: 1,
+          durationMs: 1,
+          nonTrivial: true,
+          reasons: [],
+          pageErrors: [],
+        };
+      },
+    });
+
+    expect(typeof session.waitForDeps).toBe('function');
+    await session.waitForDeps();
+    expect(settled).toBe(1);
+  });
+});
+
+describe('mid-run page navigation (AH-0MVTEKPM6003R5NW)', () => {
+  it('records main-frame navigations only', () => {
+    const handlers: Array<(frame: unknown) => void> = [];
+    const page = { on: (event: string, handler: (frame: unknown) => void) => {
+      if (event === 'framenavigated') handlers.push(handler);
+    } };
+
+    const navigations = watchForMidRunNavigation(page, () => 42);
+    expect(navigations).toEqual([]);
+
+    handlers[0]({ url: () => 'http://127.0.0.1:1/', mainFrame: () => null });
+    expect(navigations).toEqual([{ url: 'http://127.0.0.1:1/', atMs: 42 }]);
+  });
+
+  it('tolerates a page that cannot be watched', () => {
+    expect(watchForMidRunNavigation(null)).toEqual([]);
+    expect(watchForMidRunNavigation({})).toEqual([]);
+  });
+
+  it('turns a mid-recording reload into an actionable error instead of the opaque fade TypeError', () => {
+    const original = new TypeError("Cannot read properties of undefined (reading 'fadeTo')");
+    const explained = explainMidRunFailure(
+      original,
+      [{ url: 'http://127.0.0.1:43127/', atMs: 39_000 }],
+      { sceneCount: 7 },
+    );
+
+    expect(explained).not.toBe(original);
+    expect(explained.message).toContain('reloaded');
+    expect(explained.message).toContain('39.0s');
+    expect(explained.message).toContain('private');
+    expect(explained.message).toContain('Vite');
+    // The original failure stays visible as the cause.
+    expect(explained.message).toContain("reading 'fadeTo'");
+  });
+
+  it('leaves an unrelated failure untouched when the page never navigated', () => {
+    const original = new Error('codec exploded');
+    expect(explainMidRunFailure(original, [], { sceneCount: 7 })).toBe(original);
   });
 });
 

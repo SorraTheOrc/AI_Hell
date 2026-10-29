@@ -1902,3 +1902,33 @@ full`) or `npm run build`.
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
 | `package.json` | `capture` / `capture:scenes` / `capture:install` / `list:pool` / `compile:promo` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |
+
+#### The recorder must never be interrupted by a page reload
+
+The single-`MediaRecorder` invariant is fragile: the recorder and the fade
+overlay (`window.__aiHellFade`) live in the **page**, so a page reload
+mid-recording wipes both and every later `fadeTo` call fails with an opaque
+`Cannot read properties of undefined (reading 'fadeTo')`
+(AH-0MVTEKPM6003R5NW).
+
+Two things keep a reload out of the recording window:
+
+- **A private Vite dependency cache.** The capture boots its dev server with a
+  per-run `cacheDir` under the OS temp directory (removed when the run ends)
+  instead of the workspace default `node_modules/.vite`. That default is
+  **shared** by every Vite instance in every worktree (worktrees symlink
+  `node_modules`), so a concurrent dev server or test run could re-optimise it
+  mid-recording; the Vite dev client then reloads the page on the now-outdated
+  dependency URL. The capture also disables HMR and file watching
+  (`server.hmr: false`, `server.watch: null`), so editing a file mid-run
+  cannot reload the page either. `--cache-dir` is not a CLI flag: pass
+  `options.cacheDir` when embedding `runCaptureSession`.
+- **A dependency settle before recording starts.** After the first page load —
+  which triggers the cold private cache's optimisation — the driver awaits
+  `server.waitForRequestsIdle()` so the graph is warm before the recorder
+  starts.
+
+If the page still navigates mid-run, the capture fails loudly with an
+actionable error naming the reload time and the likely cause (another Vite
+process on the same workspace), instead of surfacing the `fadeTo` `TypeError`
+and a silently truncated `*.partial.webm`.
