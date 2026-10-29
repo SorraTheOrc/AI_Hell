@@ -79,10 +79,11 @@ export interface SceneSetupState {
   bossHitsRemaining?: number;
   /**
    * Initial state of a formation/combat gym's SHOOT toggle
-   * (AH-0MVRMI0Q7001KG4Y). Consumed by the gyms whose HUD exposes the toggle
-   * (`GymFormationScene` subclasses and `GymPowerUpsCombat`); absent ⇒ the
-   * scene's historical default (OFF for the formation family, ON for the
-   * combat power-up gym).
+   * (AH-0MVRMI0Q7001KG4Y). Consumed by the fire-capable gyms whose HUD exposes
+   * the toggle (`GymBoss`, `GymFodderEnemies`, `GymMiniBoss`,
+   * `GymPowerUpsCombat`); absent ⇒ the scene's historical default (OFF for the
+   * formation family, ON for the combat power-up gym). The no-fire
+   * `GymCentipede`/`GymMinerals` do not accept it.
    */
   shootEnabled?: boolean;
   /**

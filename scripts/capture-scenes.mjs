@@ -421,11 +421,12 @@ export const SCENE_SETUP_TARGET_EXTRA_FIELDS = Object.freeze({
   // only they may preview a boss close to death (AH-0MVRMFPXF008BG77).
   GymBoss: Object.freeze(['bossHitsRemaining', 'shootEnabled']),
   GymMiniBoss: Object.freeze(['bossHitsRemaining', 'shootEnabled']),
-  // Formation-family gyms expose the HUD SHOOT toggle as their scenario
-  // parameter (it is ON/OFF, not a wave payload): the flag sets the initial
-  // state, and every spawned entity inherits it (AH-0MVRMI0Q7001KG4Y).
-  GymCentipede: Object.freeze(['shootEnabled']),
-  GymMinerals: Object.freeze(['shootEnabled']),
+  // Formation-family gyms that can fire expose the HUD SHOOT toggle as their
+  // scenario parameter (it is ON/OFF, not a wave payload): the flag sets the
+  // initial state and every spawned entity inherits it (AH-0MVRMI0Q7001KG4Y).
+  // `GymCentipede` (segments never fire) and `GymMinerals` (asteroids never
+  // fire) are intentionally absent: their entities ignore `shootEnabled`, so
+  // accepting it there would silently drop the field.
   // The combat power-up gym owns both its SHOOT toggle and the size of the
   // scout threat wave that makes the defensive power-ups meaningful.
   GymPowerUpsCombat: Object.freeze(['shootEnabled', 'threatCount']),

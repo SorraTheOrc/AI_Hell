@@ -96,10 +96,14 @@ total), so setup-less gym behaviour is unchanged.
 
 - **Formation family** — `GymFormationScene` and its subclasses (`GymBoss`,
   `GymCentipede`, `GymFodderEnemies`, `GymMinerals`, `GymMiniBoss`) consume
-  `player`, `powerUps`, `seed` and the scenario parameter `shootEnabled` (the
-  HUD SHOOT toggle's initial state, inherited by every spawned entity);
-  `GymFodderEnemies` also consumes `enemy` and the boss gyms consume
-  `bossHitsRemaining`. Limitation: the enemy roster stays config-driven for
+  `player`, `powerUps` and `seed`; the fire-capable ones (`GymBoss`,
+  `GymFodderEnemies`, `GymMiniBoss`) also consume the scenario parameter
+  `shootEnabled` (the HUD SHOOT toggle's initial state, inherited by every
+  spawned entity). `GymFodderEnemies` also consumes `enemy` and the boss gyms
+  consume `bossHitsRemaining`. `GymCentipede` (segments never fire) and
+  `GymMinerals` (asteroids never fire) intentionally do not accept
+  `shootEnabled`: their entities ignore the flag, so accepting it would
+  silently drop it. Limitation: the enemy roster stays config-driven for
   formation gyms (`GymFormationScene.init`,
   `src/scenes/gym/core/GymFormationScene.ts:693`) — a formation gym has no
   roster selector, so a setup cannot change it.

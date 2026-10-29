@@ -1137,7 +1137,7 @@ setup is validated before boot and forwarded to the scene as its launch data.
 | `powerUps` | `{ id: level }` | all setup-capable gyms | `{}` | power-up id → permanent level |
 | `mineralReward` | hold-full reward id | `GymLevel`, `GymBotTuning` | — (random) | forces the reward a full mineral hold resolves to, instead of the gym's random choice |
 | `bossHitsRemaining` | positive integer | `GymBoss`, `GymMiniBoss` | — (full pool) | hits the spawned boss/mini-boss has left when the scene starts, via the entity's existing `initialHp` seam; bounded by the target's total hit pool (`SCENE_SETUP_BOSS_TOTAL_HITS`: 200 for `GymBoss`, 10 for `GymMiniBoss`) |
-| `shootEnabled` | boolean | `GymBoss`, `GymCentipede`, `GymFodderEnemies`, `GymMinerals`, `GymMiniBoss`, `GymPowerUpsCombat` | `false` (formation family) / `true` (`GymPowerUpsCombat`) | initial state of the HUD SHOOT toggle; every spawned entity inherits it |
+| `shootEnabled` | boolean | `GymBoss`, `GymFodderEnemies`, `GymMiniBoss`, `GymPowerUpsCombat` | `false` (formation family) / `true` (`GymPowerUpsCombat`) | initial state of the HUD SHOOT toggle; every spawned entity inherits it. Not accepted on `GymCentipede`/`GymMinerals`, whose entities never fire |
 | `obstacles` | boolean | `GymPlayer` | `true` | `false` records a clean-flight capture with no obstacle course |
 | `practiceTargets` | boolean | `GymWeapons` | `true` | `false` omits the inert AOE practice-target tripod |
 | `threatCount` | integer `1`–`12` | `GymPowerUpsCombat` | `3` | size of the scout threat wave (`SCENE_SETUP_SCENARIO_COUNT_BOUNDS.threatCount`) |
@@ -1177,16 +1177,19 @@ rejected or silently ignored there.
 **Per-gym scenario parameters (AH-0MVRMI0Q7001KG4Y).** The fields above are the
 whole schema: each gym's scenario knobs that used to be fixed constants are now
 first-class `setup` fields consumed by that scene — the formation-family SHOOT
-toggle (`shootEnabled`, inherited by every spawned entity),
+toggle (`shootEnabled`, inherited by every spawned entity, accepted on the
+fire-capable `GymBoss`/`GymFodderEnemies`/`GymMiniBoss`),
 `GymPowerUpsCombat`'s threat-wave size (`threatCount`), `GymPlayer`'s obstacle
 course (`obstacles`), `GymWeapons`' practice targets (`practiceTargets`) and
 `GymPowerUpsUtility`'s mineral-field size (`minerals`). Because
 `SCENE_SETUP_TARGET_EXTRA_FIELDS` is the whitelist the validator checks, a field
 is only accepted on a target that actually consumes it; everything else is
-rejected with `setup-not-supported`. The round-robin **drop cadence** and the
-leveling gyms' **mineral-hold cadence** stay fixed at the gyms' historical
-values (they are parity/tuning constants, not capture framing), recorded with
-their reason in
+rejected with `setup-not-supported`. `GymCentipede` and `GymMinerals`
+intentionally do **not** accept `shootEnabled`: their entities are no-fire by
+design and ignore the flag, so accepting it would silently drop it. The
+round-robin **drop cadence** and the leveling gyms' **mineral-hold cadence** stay
+fixed at the gyms' historical values (they are parity/tuning constants, not
+capture framing), recorded with their reason in
 [`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8).
 
 **Every gym is representable in `examples/scenes.json`.** The shipped example

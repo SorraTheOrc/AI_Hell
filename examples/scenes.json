@@ -306,11 +306,10 @@
       "target": "GymCentipede",
       "playMs": 1500,
       "captureMs": 5000,
-      "label": "Gym family — centipede chain with firing enabled",
+      "label": "Gym family — centipede chain",
       "setup": {
         "player": { "weapons": ["spread", "dual"], "timedWeapons": [] },
         "powerUps": {},
-        "shootEnabled": true,
         "seed": 8082
       }
     },
@@ -346,7 +345,6 @@
       "setup": {
         "player": { "weapons": ["spread"], "timedWeapons": [] },
         "powerUps": { "magnet": 2 },
-        "shootEnabled": false,
         "seed": 8085
       }
     },

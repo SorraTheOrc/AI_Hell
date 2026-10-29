@@ -1000,16 +1000,20 @@ describe('gym scenario parameters (AH-0MVRMI0Q7001KG4Y)', () => {
     for (const [field, target] of Object.entries(OWNERS)) {
       expect(sceneSetupFieldsFor(target)).toContain(field);
     }
-    // `shootEnabled` is shared by the formation family plus the combat gym.
+    // `shootEnabled` is shared by the fire-capable formation gyms plus the
+    // combat gym. `GymCentipede` and `GymMinerals` are excluded on purpose:
+    // their entities never fire and ignore the flag.
     for (const target of [
       'GymBoss',
-      'GymCentipede',
       'GymFodderEnemies',
-      'GymMinerals',
       'GymMiniBoss',
       'GymPowerUpsCombat',
     ]) {
       expect(SCENE_SETUP_TARGET_EXTRA_FIELDS[target]).toContain('shootEnabled');
+    }
+    for (const target of ['GymCentipede', 'GymMinerals']) {
+      expect(SCENE_SETUP_TARGET_EXTRA_FIELDS[target]).toBeUndefined();
+      expect(sceneSetupFieldsFor(target)).not.toContain('shootEnabled');
     }
   });
 
@@ -1017,9 +1021,7 @@ describe('gym scenario parameters (AH-0MVRMI0Q7001KG4Y)', () => {
     const setups: Record<string, object> = {
       GymPowerUpsCombat: { shootEnabled: false, threatCount: 5 },
       GymBoss: { shootEnabled: true },
-      GymCentipede: { shootEnabled: true },
       GymFodderEnemies: { enemy: 'grunt', shootEnabled: true },
-      GymMinerals: { shootEnabled: true },
       GymMiniBoss: { shootEnabled: true },
       GymPlayer: { obstacles: false },
       GymWeapons: { practiceTargets: false },
@@ -1040,9 +1042,7 @@ describe('gym scenario parameters (AH-0MVRMI0Q7001KG4Y)', () => {
     for (const target of [
       'GymPowerUpsCombat',
       'GymBoss',
-      'GymCentipede',
       'GymFodderEnemies',
-      'GymMinerals',
       'GymMiniBoss',
       'GymPlayer',
       'GymWeapons',
@@ -1060,6 +1060,8 @@ describe('gym scenario parameters (AH-0MVRMI0Q7001KG4Y)', () => {
 
   it.each([
     ['shootEnabled', 'GymPlayer'],
+    ['shootEnabled', 'GymCentipede'],
+    ['shootEnabled', 'GymMinerals'],
     ['obstacles', 'GymWeapons'],
     ['practiceTargets', 'GymPlayer'],
     ['threatCount', 'GymBoss'],
