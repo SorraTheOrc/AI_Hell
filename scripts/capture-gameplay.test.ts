@@ -4499,6 +4499,74 @@ describe('shared recording pipeline (AH-0MVNT2AFI00639N3)', () => {
   });
 });
 
+describe('driveSceneSequence forwards PlayScene launch data (AH-0MVTNTIPI002X5G6)', () => {
+  it('passes the bot flag, seed, campaign position, start position and setup', async () => {
+    const setup = {
+      player: { weapons: ['spread'], timedWeapons: [], weaponLevels: { rapid: 2 } },
+      powerUps: { magnet: 1 },
+      mineralReward: 'mineral_scoop',
+      bossHitsRemaining: 12,
+    };
+    const plan = buildScenePlan([
+      {
+        target: 'PlayScene',
+        playMs: 10,
+        captureMs: 10,
+        label: 'boss beat',
+        seed: 4242,
+        level: 10,
+        startWave: 10,
+        startBoss: true,
+        minWaves: 1,
+        maxCaptureMs: 10,
+        setup,
+      },
+    ]);
+    const calls: Array<{ key: string; data: unknown }> = [];
+
+    await driveSceneSequence({
+      plan,
+      startScene: async (key, data) => {
+        calls.push({ key, data });
+      },
+      fade: async () => {},
+      wait: async () => {},
+    });
+
+    expect(calls).toEqual([
+      {
+        key: 'PlayScene',
+        data: {
+          demo: true,
+          seed: 4242,
+          startLevel: 10,
+          startWave: 10,
+          startBoss: true,
+          setup,
+        },
+      },
+    ]);
+  });
+
+  it('omits an absent start position and setup (unchanged launch data)', async () => {
+    const plan = buildScenePlan([
+      { target: 'PlayScene', playMs: 10, captureMs: 10, label: null, seed: 5, level: 3 },
+    ]);
+    const calls: Array<{ data: unknown }> = [];
+
+    await driveSceneSequence({
+      plan,
+      startScene: async (_key, data) => {
+        calls.push({ data });
+      },
+      fade: async () => {},
+      wait: async () => {},
+    });
+
+    expect(calls[0].data).toEqual({ demo: true, seed: 5, startLevel: 3 });
+  });
+});
+
 describe('driveSceneSequence forwards scene setups (AH-0MVNW8UCZ004CY0R)', () => {
   const setup = {
     startWave: 1,

@@ -26,7 +26,9 @@
           "magnet": 3,
           "mineral_scoop": 3
         }
-      }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 8000
     },
     {
       "target": "PlayScene",
@@ -35,7 +37,7 @@
       "playMs": 2000,
       "captureMs": 10000,
       "label": "Humble origins \u2014 default cannon, hold-full pay-off",
-      "startWave": 1,
+      "startWave": 10,
       "setup": {
         "player": {
           "weapons": [
@@ -49,7 +51,9 @@
           "mineral_scoop": 5
         },
         "mineralReward": "mineral_scoop"
-      }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 10000
     },
     {
       "target": "PlayScene",
@@ -58,7 +62,7 @@
       "playMs": 2000,
       "captureMs": 7000,
       "label": "First steps up \u2014 three slots at level 1",
-      "startWave": 2,
+      "startWave": 6,
       "setup": {
         "player": {
           "weapons": [
@@ -70,7 +74,9 @@
           "weaponLevels": {}
         },
         "powerUps": {}
-      }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 7000
     },
     {
       "target": "PlayScene",
@@ -79,7 +85,7 @@
       "playMs": 2000,
       "captureMs": 7000,
       "label": "Escalation \u2014 five slots at levels 1-2",
-      "startWave": 4,
+      "startWave": 8,
       "setup": {
         "player": {
           "weapons": [
@@ -96,7 +102,9 @@
         "powerUps": {
           "magnet": 2
         }
-      }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 7000
     },
     {
       "target": "PlayScene",
@@ -124,7 +132,9 @@
         "powerUps": {
           "shield": 2
         }
-      }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 9000
     },
     {
       "target": "PlayScene",
@@ -152,7 +162,9 @@
           "magnet": 2,
           "shield": 2
         }
-      }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 7000
     },
     {
       "target": "PlayScene",
@@ -180,7 +192,9 @@
           "shield": 3
         },
         "bossHitsRemaining": 40
-      }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 10000
     }
   ]
 }

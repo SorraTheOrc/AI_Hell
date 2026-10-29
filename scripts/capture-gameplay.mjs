@@ -1169,10 +1169,18 @@ export async function driveSceneSequence({
   /** Launch data for a scene: gym setup, or the PlayScene demo payload. */
   const launchDataFor = (scene) => {
     if (scene.target === GENERATED_LEVEL_SCENE_KEY) {
+      // Generated-level launch data (AH-0MVE01EY0008QEVX + AH-0MVTPP7SX000JTWJ
+      // + AH-0MVTNTHE0008UT2C): the bot (`demo`), the seeded campaign start,
+      // where in the level the beat begins, and the dev-gated run setup that
+      // forces its loadout/pay-offs. Dropping any of these silently records a
+      // different beat than the script describes.
       return {
         demo: true,
         seed: scene.seed,
         startLevel: scene.level,
+        ...(scene.startWave !== undefined ? { startWave: scene.startWave } : {}),
+        ...(scene.startBoss ? { startBoss: true } : {}),
+        ...(scene.setup ? { setup: scene.setup } : {}),
       };
     }
     return scene.setup;

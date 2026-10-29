@@ -21,6 +21,16 @@ export const SCENE_FADE_DARK_LUMA: number;
 /** Minimum mean-luma difference between a scene frame and its darkest
  * frame inside the adjacent fade window. */
 export const SCENE_FADE_CONTRAST_LUMA: number;
+/**
+ * Absolute luma a fade frame must fall below for the fade to count as
+ * measurably dark (AH-0MVTNTIPI002X5G6).
+ */
+export const SCENE_FADE_MIN_ABSOLUTE_LUMA: number;
+/**
+ * Fraction of the scene's own brightness a fade frame must fall below
+ * (relative contrast for neon-on-black footage, AH-0MVTNTIPI002X5G6).
+ */
+export const SCENE_FADE_RELATIVE_FRACTION: number;
 
 /** Probe points sampled across one fade window. */
 export const SCENE_FADE_PROBE_POINTS: number;
@@ -346,6 +356,10 @@ export interface ScenePlanEntry {
   wavesCaptured?: number;
   /** True when the run ended before the window was satisfied. */
   endedEarly?: boolean;
+  /** Dev-gated wave the beat begins at (AH-0MVTPP7SX000JTWJ). */
+  startWave?: number;
+  /** Dev-gated flag to begin at the level's final boss encounter. */
+  startBoss?: boolean;
 }
 
 /** The `--json` payload shape for a multi-scene capture. */

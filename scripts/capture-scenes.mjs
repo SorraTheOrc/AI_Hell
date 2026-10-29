@@ -1663,6 +1663,10 @@ export function buildScenePlan(scenes) {
       ...(scene.level === undefined ? {} : { level: scene.level }),
       ...(scene.minWaves === undefined ? {} : { minWaves: scene.minWaves }),
       ...(scene.maxCaptureMs === undefined ? {} : { maxCaptureMs: scene.maxCaptureMs }),
+      // Start position inside the level (AH-0MVTPP7SX000JTWJ): carried into
+      // the plan so the driver can forward it as launch data.
+      ...(scene.startWave === undefined ? {} : { startWave: scene.startWave }),
+      ...(scene.startBoss === undefined ? {} : { startBoss: scene.startBoss }),
     });
     cursorMs = endMs + 2 * SCENE_FADE_MS;
   }
@@ -1698,6 +1702,30 @@ export const SCENE_FADE_DARK_LUMA = 0.3;
  * genuinely dark gym (this game's space backdrop is dark) still passes.
  */
 export const SCENE_FADE_CONTRAST_LUMA = 0.01;
+
+/**
+ * Minimum absolute luma a fade frame must fall **below** for the fade to count
+ * as measurably dark (AH-0MVTNTIPI002X5G6).
+ *
+ * The dark-scene rule below uses a *relative* contrast — a neon-on-black game
+ * renders mean luma around 0.005–0.02, where an absolute 1 % contrast is
+ * larger than the whole scene. This floor keeps the rule honest for genuinely
+ * black footage: a frame that never faded sits at the scene's own (tiny)
+ * luma and still fails.
+ */
+export const SCENE_FADE_MIN_ABSOLUTE_LUMA = 0.003;
+
+/**
+ * Fraction of the scene's own brightness a fade frame must fall below
+ * (AH-0MVTNTIPI002X5G6): `darkest <= max(SCENE_FADE_MIN_ABSOLUTE_LUMA,
+ * sceneLuma × SCENE_FADE_RELATIVE_FRACTION)`.
+ *
+ * A relative rule is what makes the check work on dark footage — 0.000 against
+ * a 0.010 scene is a > 90 % darkening but only a 0.010 absolute drop, which the
+ * old absolute test rejected. A clip that never faded keeps the scene's luma
+ * and fails on either rule.
+ */
+export const SCENE_FADE_RELATIVE_FRACTION = 0.25;
 
 /**
  * Probe points sampled across one fade window (fade-to + fade-from). Several
@@ -1849,10 +1877,18 @@ export function evaluateSceneFadeSamples(options = {}) {
       reasons.push(`${label}: missing scene probe sample`);
       continue;
     }
-    if (sceneSample.meanLuma <= darkest + SCENE_FADE_CONTRAST_LUMA) {
+    // Relative contrast (AH-0MVTNTIPI002X5G6): AI_Hell is neon-on-black, so a
+    // scene's mean luma is often only ~0.01; requiring an absolute 1 % drop
+    // there rejects a real, near-total fade.
+    const fadeFloor = Math.max(
+      SCENE_FADE_MIN_ABSOLUTE_LUMA,
+      sceneSample.meanLuma * SCENE_FADE_RELATIVE_FRACTION,
+    );
+    if (darkest > fadeFloor) {
       reasons.push(
         `${label}: the fade did not measurably darken the frame `
-          + `(scene ${sceneSample.meanLuma.toFixed(3)} vs fade ${darkest.toFixed(3)})`,
+          + `(scene ${sceneSample.meanLuma.toFixed(3)} vs fade ${darkest.toFixed(3)}, `
+          + `fade floor ${fadeFloor.toFixed(3)})`,
       );
     }
   }

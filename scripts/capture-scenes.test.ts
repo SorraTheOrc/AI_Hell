@@ -57,6 +57,8 @@ import {
   SCENE_CONFIG_ERROR_CODES,
   SCENE_FADE_CONTRAST_LUMA,
   SCENE_FADE_DARK_LUMA,
+  SCENE_FADE_MIN_ABSOLUTE_LUMA,
+  SCENE_FADE_RELATIVE_FRACTION,
   SCENE_FADE_MS,
   SCENE_FADE_PROBE_POINTS,
   SCENE_SETUP_ENEMY_KEYS,
@@ -1576,6 +1578,8 @@ describe('teaser video script (AH-0MVTNTHTI0041QIF)', () => {
     level: number;
     startWave?: number;
     startBoss?: boolean;
+    minWaves?: number;
+    maxCaptureMs?: number;
     setup?: TeaserSetup;
   }
 
@@ -1593,9 +1597,9 @@ describe('teaser video script (AH-0MVTNTHTI0041QIF)', () => {
   /** The seven beats, in order (level ramp + where each beat starts). */
   const TEASER_BEATS: readonly TeaserBeat[] = [
     { label: 'Opening spectacle — maxed arsenal, dense waves', level: 7, seed: 1101, startWave: 6, slots: 6 },
-    { label: 'Humble origins — default cannon, hold-full pay-off', level: 1, seed: 2202, startWave: 1, slots: 1, mineralReward: 'mineral_scoop' },
-    { label: 'First steps up — three slots at level 1', level: 2, seed: 3303, startWave: 2, slots: 3 },
-    { label: 'Escalation — five slots at levels 1-2', level: 4, seed: 4404, startWave: 4, slots: 5 },
+    { label: 'Humble origins — default cannon, hold-full pay-off', level: 1, seed: 2202, startWave: 10, slots: 1, mineralReward: 'mineral_scoop' },
+    { label: 'First steps up — three slots at level 1', level: 2, seed: 3303, startWave: 6, slots: 3 },
+    { label: 'Escalation — five slots at levels 1-2', level: 4, seed: 4404, startWave: 8, slots: 5 },
     { label: 'Mini-boss — the wave-10 encounter and its death', level: 5, seed: 5505, startWave: 10, slots: 6 },
     { label: 'Reprise — horde and lane traffic, stronger guns', level: 8, seed: 6606, startWave: 5, slots: 6 },
     { label: 'Main boss — the Gauntlet finale and its death', level: 10, seed: 7707, startBoss: true, slots: 6, bossHitsRemaining: 40 },
@@ -1626,9 +1630,14 @@ describe('teaser video script (AH-0MVTNTHTI0041QIF)', () => {
       expect(scene.seed).toBe(beat.seed);
       expect(scene.startWave).toBe(beat.startWave);
       expect(scene.startBoss).toBe(beat.startBoss);
-      // Windows stay in the agreed per-beat range.
+      // Windows stay in the agreed per-beat range, and are PINNED: a
+      // PlayScene beat otherwise extends its window until `minWaves` waves
+      // have started (up to 3x captureMs), which stretches the recorded
+      // timeline and desynchronises the fade probes (AH-0MVTNTIPI002X5G6).
       expect(scene.playMs).toBeGreaterThan(0);
       expect(scene.captureMs).toBeGreaterThanOrEqual(6000);
+      expect(scene.minWaves).toBe(1);
+      expect(scene.maxCaptureMs).toBe(scene.captureMs);
     });
   });
 
@@ -1791,5 +1800,70 @@ describe('arc setup fields through the config parser (AH-0MVRMFOB4002LMZS)', () 
     expect(normaliseSceneSetup(raw, 'GymPlayer').player?.weaponLevels).toEqual({
       rapid: 2,
     });
+  });
+});
+
+// ── Dark-footage fade rule (AH-0MVTNTIPI002X5G6) ────────────────────────────
+
+describe('fade verification on dark footage (AH-0MVTNTIPI002X5G6)', () => {
+  // AI_Hell renders neon on black: a real scene midpoint is often ~0.01 mean
+  // luma, where an absolute 1% contrast is larger than the whole frame. The
+  // teaser records the shipped game (no gym chrome), so that is the normal case.
+  const scenes = [
+    { target: 'PlayScene', playMs: 1000, captureMs: 2000, startMs: 0, endMs: 3000 },
+    { target: 'PlayScene', playMs: 1000, captureMs: 2000, startMs: 3500, endMs: 6500 },
+  ];
+  const planTimes = buildSceneSampleTimes(scenes, SCENE_FADE_MS);
+  const sceneTimes = planTimes.sceneSampleTimes;
+  const windows = planTimes.transitionWindows;
+
+  const samplesFor = (sceneLuma: number, fadeLuma: number) => {
+    const samples = sceneTimes.map((timeMs) => ({ timeMs, meanLuma: sceneLuma }));
+    for (const window of windows) {
+      // 5 probe points across the transition, the middle one at full black.
+      for (const timeMs of buildTransitionProbeTimes(window)) {
+        samples.push({ timeMs, meanLuma: fadeLuma });
+      }
+    }
+    return samples;
+  };
+
+  it('verifies a real fade on a dark scene (0.010 scene → 0.000 fade)', () => {
+    const { fadeVerified, reasons } = evaluateSceneFadeSamples({
+      scenes,
+      samples: samplesFor(0.01, 0),
+      sceneSampleTimes: sceneTimes,
+      transitionWindows: windows,
+    });
+    expect(reasons).toEqual([]);
+    expect(fadeVerified).toBe(true);
+  });
+
+  it('still rejects a clip that never faded, however dark it is', () => {
+    const { fadeVerified, reasons } = evaluateSceneFadeSamples({
+      scenes,
+      samples: samplesFor(0.01, 0.01),
+      sceneSampleTimes: sceneTimes,
+      transitionWindows: windows,
+    });
+    expect(fadeVerified).toBe(false);
+    expect(reasons[0]).toContain('did not measurably darken');
+  });
+
+  it('keeps rejecting a bright clip whose transitions are not dark', () => {
+    const { fadeVerified } = evaluateSceneFadeSamples({
+      scenes,
+      samples: samplesFor(0.4, 0.35),
+      sceneSampleTimes: sceneTimes,
+      transitionWindows: windows,
+    });
+    expect(fadeVerified).toBe(false);
+  });
+
+  it('documents the relative rule constants', () => {
+    expect(SCENE_FADE_RELATIVE_FRACTION).toBeGreaterThan(0);
+    expect(SCENE_FADE_RELATIVE_FRACTION).toBeLessThan(1);
+    expect(SCENE_FADE_MIN_ABSOLUTE_LUMA).toBeGreaterThan(0);
+    expect(SCENE_FADE_MIN_ABSOLUTE_LUMA).toBeLessThan(SCENE_FADE_CONTRAST_LUMA);
   });
 });
