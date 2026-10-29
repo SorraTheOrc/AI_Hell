@@ -3304,7 +3304,9 @@ export class PlayScene extends CombatScene<
    * Writes the run checkpoint after a mini-boss defeat (AC2). The saved level
    * is the level the run **resumes** at — the one after the defeated
    * mini-boss (capped at the final level), at wave 1 — so Continue always
-   * restarts cleanly at the beginning of a level.
+   * restarts cleanly at the beginning of a level. The **live** hold capacity
+   * is persisted alongside the minerals, so Continue keeps the capacity
+   * progression the run had earned (schema v2, AH-0MVT1DYO5004UC4P).
    */
   private _saveCheckpoint(context: MiniBossDefeatContext): void {
     const resumeLevel = Math.min(context.level + 1, MAX_LEVEL);
@@ -3315,6 +3317,7 @@ export class PlayScene extends CombatScene<
       lives: this.gameState.lives,
       score: this.gameState.score,
       minerals: this.gameState.minerals,
+      mineralHoldCapacity: this.gameState.mineralCapacity,
       weaponLevels: this.player?.getWeaponLevels() ?? [],
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
       unlockedWeapons: this.getUnlockedWeapons(),

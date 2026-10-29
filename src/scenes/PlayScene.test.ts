@@ -7410,6 +7410,9 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     scene.getGameState().score = 4321;
     scene.getGameState().lives = 2;
     scene.getGameState().minerals = 5;
+    // A non-default live capacity proves the save path persists the run's
+    // current value rather than the first-hold default (AH-0MVT1DYO5004UC4P AC5).
+    scene.getGameState().mineralCapacity = 20;
     scene.getPlayer()!.equipWeapon('spread', true);
 
     killMiniBoss(scene, false);
@@ -7421,6 +7424,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(saved!.lives).toBe(2);
     expect(saved!.score).toBe(4321);
     expect(saved!.minerals).toBe(5);
+    expect(saved!.mineralHoldCapacity).toBe(20);
     expect(saved!.runSeed).toBe(scene.getRunSeed());
     expect(saved!.weaponLevels.some((entry) => entry.id === 'spread')).toBe(true);
   });

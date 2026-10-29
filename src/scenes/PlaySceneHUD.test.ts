@@ -239,6 +239,8 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     lives: 2,
     score: 9876,
     minerals: 3,
+    // Schema v2: the fixture's earned capacity is the untouched first hold.
+    mineralHoldCapacity: 5,
     weaponLevels: WEAPON_LEVELS,
     powerUpLevels: POWER_UP_LEVELS,
     unlockedWeapons: [],
@@ -247,10 +249,9 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
   };
 
   /**
-   * A raw checkpoint payload for `localStorage`. `Partial<Checkpoint>` covers
-   * the shipped fields; `mineralHoldCapacity` is declared explicitly because it
-   * arrives with the schema-v2 sibling item (AH-0MVT1DYO5004UC4P) and the
-   * version-2 case below must stay writable before that field exists.
+   * A raw checkpoint payload for `localStorage`; `Partial<Checkpoint>` lets a
+   * case override just the fields it exercises (e.g. a legacy over-capacity
+   * mineral count with no capacity field, or a schema-v2 earned capacity).
    */
   type CheckpointPayload = Partial<Checkpoint> & {
     mineralHoldCapacity?: number;
@@ -448,6 +449,10 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     const LEGACY_OVER_CAPACITY: CheckpointPayload = {
       version: 1,
       minerals: 20,
+      // `JSON.stringify` drops `undefined` properties, so this override keeps
+      // the serialised payload genuinely field-free while the shared fixture
+      // (a schema-v2 `Checkpoint` literal) still carries the field.
+      mineralHoldCapacity: undefined,
     };
 
     /**

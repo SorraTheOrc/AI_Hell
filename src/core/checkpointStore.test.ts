@@ -16,6 +16,7 @@ import {
   type Checkpoint,
   type CheckpointStorage,
 } from './checkpointStore';
+import { DEFAULT_MINERAL_HOLD_CAPACITY } from './rules';
 
 /** Minimal in-memory storage double. */
 function memoryStorage(): CheckpointStorage & { map: Map<string, string> } {
@@ -36,6 +37,7 @@ function checkpoint(overrides: Partial<Checkpoint> = {}): Checkpoint {
     lives: 2,
     score: 1234,
     minerals: 3,
+    mineralHoldCapacity: DEFAULT_MINERAL_HOLD_CAPACITY,
     weaponLevels: [{ id: 'spread', level: 2 }],
     powerUpLevels: [{ id: 'shield', level: 1 }],
     unlockedWeapons: ['railgun'],
@@ -91,6 +93,7 @@ describe('checkpointStore (AH-0MVCRBTNF000DK51)', () => {
     expect(parsed).not.toBeNull();
     expect(parsed!.wave).toBe(1);
     expect(parsed!.minerals).toBe(0);
+    expect(parsed!.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
     expect(parsed!.weaponLevels).toEqual([]);
     expect(parsed!.powerUpLevels).toEqual([]);
     expect(parsed!.unlockedWeapons).toEqual([]);
@@ -105,5 +108,70 @@ describe('checkpointStore (AH-0MVCRBTNF000DK51)', () => {
     expect(loadCheckpoint(storage)).toBeNull();
     // Clearing an absent checkpoint is a no-op.
     expect(() => clearCheckpoint(storage)).not.toThrow();
+  });
+
+  it('AC1/AC4 — schema v2 writes and round-trips a non-default hold capacity', () => {
+    expect(CHECKPOINT_VERSION).toBe(2);
+    expect(saveCheckpoint(checkpoint({ mineralHoldCapacity: 20 }), storage)).toBe(
+      true,
+    );
+
+    const raw = JSON.parse(storage.map.get(CHECKPOINT_STORAGE_KEY)!) as {
+      version: number;
+      mineralHoldCapacity: number;
+    };
+    expect(raw.version).toBe(2);
+    expect(raw.mineralHoldCapacity).toBe(20);
+    // The round-trip preserves the earned capacity, not the first-hold default.
+    expect(loadCheckpoint(storage)!.mineralHoldCapacity).toBe(20);
+  });
+
+  it('AC2 — a legacy version-1 payload without a capacity field defaults to the first hold', () => {
+    storage.setItem(
+      CHECKPOINT_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        level: 4,
+        wave: 1,
+        lives: 2,
+        score: 1234,
+        minerals: 3,
+        weaponLevels: [],
+        powerUpLevels: [],
+        unlockedWeapons: [],
+        runSeed: 4242,
+        savedAt: '2026-10-20T00:00:00.000Z',
+      }),
+    );
+
+    const loaded = loadCheckpoint(storage);
+    expect(loaded).not.toBeNull();
+    // The legacy payload still loads (not "no checkpoint")…
+    expect(loaded!.version).toBe(CHECKPOINT_VERSION);
+    // …and its absent capacity defaults to the canonical first hold.
+    expect(loaded!.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+  });
+
+  it('AC4 — an invalid hold capacity falls back to the first-hold default', () => {
+    const invalidCapacities: unknown[] = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      -5,
+      0,
+      '20',
+      null,
+      {},
+    ];
+    for (const mineralHoldCapacity of invalidCapacities) {
+      const parsed = parseCheckpoint({
+        level: 2,
+        lives: 3,
+        score: 10,
+        mineralHoldCapacity,
+      });
+      expect(parsed).not.toBeNull();
+      expect(parsed!.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+    }
   });
 });
