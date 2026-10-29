@@ -343,6 +343,10 @@ export const GENERATED_LEVEL_ONLY_FIELDS = Object.freeze([
   'level',
   'minWaves',
   'maxCaptureMs',
+  // Start position inside the level (AH-0MVTPP7SX000JTWJ): a teaser beat is
+  // seconds long, so it begins at a mid-level wave or at the boss encounter.
+  'startWave',
+  'startBoss',
 ]);
 
 /** Default `setup.seed` when the config omits one (deterministic by default). */

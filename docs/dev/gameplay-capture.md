@@ -1310,6 +1310,9 @@ flying the persisted bot-tuning configuration, seeded from the entry's `seed`.
 | `level` | integer `1`–`LEVEL_COUNT` | no | `1` | campaign level to start at |
 | `minWaves` | positive integer | no | `2` | waves that must start before the window may end |
 | `maxCaptureMs` | positive integer | no | `3 × captureMs` | hard cap so a stalled run cannot hang |
+| `startWave` | positive integer | no | `1` | wave of `level` the beat begins at (clamped to the level's wave list) — the way to show mid-level pressure or the **wave-10 mini-boss** in a short beat |
+| `startBoss` | boolean | no | `false` | begin at the level's **final boss encounter** (no regular waves) so a beat can show the boss fight and its death |
+| `setup` | object | no | — | dev-gated run configuration (loadout, power-ups, forced hold-full reward, boss hit preview) — see below |
 
 Levels are **not** fixed-length, so the capture window is multi-wave-aware:
 it runs for at least `captureMs`, extends until `minWaves` regular waves have
@@ -1317,13 +1320,36 @@ started, is hard-capped by `maxCaptureMs`, and ends early (reporting
 `endedEarly: true`) if the run ends first. A truncated segment is **not** a
 capture failure. Generated-level and gym scenes may be mixed in one config.
 
-`level` and `seed` are also dev-gated at the game seam: `PlayScene` honours a
-`startLevel` start value only in dev builds (a production build always starts
-at level 1), and the live run position is published to the dev-only
-`window.__aiHellRunProgress` handle the driver polls. These `seed` / `level` /
-`minWaves` / `maxCaptureMs` fields are **siblings** of `playMs`/`captureMs`
+`level`, `seed`, `startWave` and `startBoss` are also dev-gated at the game
+seam: `PlayScene` honours the launch-data start position only in dev builds (a
+production build always starts at level 1, wave 1, before the boss), and the
+live run position is published to the dev-only `window.__aiHellRunProgress`
+handle the driver polls. These `seed` / `level` / `minWaves` / `maxCaptureMs` /
+`startWave` / `startBoss` fields are **siblings** of `playMs`/`captureMs`
 (they are generated-level-only; supplying them on a gym target is rejected
 with `unsupported-scene-field`, and gym configuration belongs in `setup`).
+
+##### Configuring a game-scene run (`setup`)
+
+A `PlayScene` entry may also carry a `setup`, which the game scene applies as
+**dev-gated launch data** (AH-0MVTNTHE0008UT2C). It is the same vocabulary the
+gyms use, minus the level/formation fields (those are the campaign's job here):
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `player.weapons` | weapon id array | `["spread", "dual"]` | permanent weapons for the run |
+| `player.timedWeapons` | weapon id array | `[]` | weapons granted with the timed countdown |
+| `player.weaponLevels` | `{ id: level }` | `{}` | per-weapon permanent level `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX` (`5`) |
+| `player.heading` | degrees (`0` = right, `-90` = up) | — | stationary facing; ignored by the bot, which steers |
+| `powerUps` | `{ id: level }` | `{}` | power-up id → permanent level |
+| `mineralReward` | hold-full reward id | — (random) | forces the reward a full mineral hold resolves to; a demo (bot) run always takes it |
+| `bossHitsRemaining` | positive integer | — (full pool) | hits the boss has left when it spawns (the entity's `initialHp` seam), bounded by the 200-hit pool |
+
+Absent `setup` (and every production build) behaves exactly as an ordinary
+run. A field the game scene cannot consume is rejected with
+`setup-not-supported`; the hold-full reward id must be one of
+`SCENE_SETUP_MINERAL_REWARD_IDS` (`unknown-mineral-reward`), and the hit
+preview must be `1`–`200` (`invalid-boss-hits`).
 
 ```json
 {
@@ -1335,12 +1361,51 @@ with `unsupported-scene-field`, and gym configuration belongs in `setup`).
       "level": 4,
       "seed": 42,
       "minWaves": 3,
-      "label": "generated level 4, three waves"
+      "startWave": 2,
+      "label": "generated level 4 from wave 2, three waves"
     },
     { "target": "GymBoss", "playMs": 3000, "captureMs": 4000, "label": "boss" }
   ]
 }
 ```
+
+#### Which config ships what: teaser vs gym family
+
+Two example configs ship, each with a single purpose:
+
+| File | Purpose | Targets |
+|---|---|---|
+| `examples/teaserVideoScript.json` | the **teaser/showcase video** — the real game, played by the bot, no debug chrome | `PlayScene` only |
+| `examples/scenes.json` | the **gym-family showcase** — one entry per gym, as a copy-paste guide to each scenario's setup | dev gyms only |
+
+Record the teaser with:
+
+```bash
+npm run capture:scenes -- --config examples/teaserVideoScript.json \
+  --output capture-output/teaser.webm --json
+```
+
+The teaser is **seven beats** with a deliberate difficulty curve, each a short
+window into a campaign level with its own determinism seed, start position and
+`setup`:
+
+| # | Beat | Level | Start | Pay-off |
+|---|---|---|---|---|
+| 1 | Opening spectacle — maxed arsenal, dense waves | 7 | wave 6 | six-slot level 2–5 loadout in a late-level fight |
+| 2 | Humble origins — default cannon | 1 | wave 1 | forced `mineral_scoop` hold-full resolution |
+| 3 | First steps up | 2 | wave 2 | three weapons at level 1 |
+| 4 | Escalation | 4 | wave 4 | five slots at levels 1–2 |
+| 5 | Mini-boss | 5 | **wave 10** | the wave-10 mini-boss dies on camera |
+| 6 | Reprise — horde and lane traffic | 8 | wave 5 | stronger guns, different pressure |
+| 7 | Main boss — the Gauntlet finale | 10 | **boss encounter** | boss spawns with 40 hits left and dies on camera |
+
+**When to use which target.** Use `PlayScene` when the clip should look like
+the game a player buys — the bot playing, shipped HUD, no dev overlays — and
+when the beat's state can be expressed with `level`/`seed`/`startWave`/
+`startBoss` plus the `setup` above. Use a **gym** when you need to demonstrate
+one mechanic in isolation with exact state (formations, weapon benches,
+power-up utilities): gyms draw a scene index link and on-screen DAMAGE/SHOOT
+controls, so they are for feature demos, not for the teaser.
 
 Each generated-level scene in the `--json` payload additionally reports
 `seed`, `level`, `wavesCaptured` and `endedEarly` alongside its timings.
