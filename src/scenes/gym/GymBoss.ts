@@ -35,9 +35,15 @@ import Phaser from 'phaser';
 
 import {
   Boss,
+  BOSS_HIT_POINTS_PER_PHASE,
   BOSS_PHASE_COUNT,
   BossBullet,
 } from '../../entities/Boss';
+import {
+  playerPowerScore,
+  scaledEncounterHp,
+} from '../../core/difficultyScaling';
+import type { Player } from '../../entities/Player';
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
 import { loadEnemyConfig } from '../../core/enemyConfig';
 import { fireForEnemy } from '../../entities/enemyFire';
@@ -119,6 +125,17 @@ const BOSS_CONFIG: EnemyFormationConfig<
     formationOffset: FormationOffset,
     setup?: SceneSetupState | null,
   ): Boss => {
+    // D1 parity (docs/GYM_PARITY.md): `PlayScene.spawnBoss` scales the boss's
+    // per-phase pool with the player's permanent upgrades through the shared
+    // pure `playerPowerScore`/`scaledEncounterHp` helpers. The gym resolves the
+    // same pool from the same live player (created, with its setup applied,
+    // before the formation — see `GymFormationScene.create`). Only the pool
+    // construction changes: the formula, constants and balance are the game's.
+    const player = (scene as unknown as { getPlayer(): Player | null }).getPlayer();
+    const powerScore = playerPowerScore(
+      player?.getWeaponLevels() ?? [],
+      player?.getPowerUpLevels() ?? [],
+    );
     return new Boss(scene, {
       x,
       y,
@@ -127,8 +144,14 @@ const BOSS_CONFIG: EnemyFormationConfig<
       // `bossHitsRemaining` is the boss's existing `initialHp` seam, so a
       // scripted scene starts the boss close to death and its death lands on
       // camera. Absent ⇒ the full `BOSS_PHASE_COUNT` pool, exactly as before;
-      // the pool itself is never changed.
+      // the pool itself is never changed by the preview. Like
+      // `PlayScene.spawnBoss`, an explicit `initialHp` pins the absolute pool
+      // and therefore leaves the per-phase scaling unset.
       initialHp: setup?.bossHitsRemaining,
+      hitPointsPerPhase:
+        setup?.bossHitsRemaining === undefined
+          ? scaledEncounterHp(BOSS_HIT_POINTS_PER_PHASE, powerScore)
+          : undefined,
     });
   },
   collectBullets: (_entity, _now): (BossBullet | PulseWaveBullet)[] => []

@@ -49,6 +49,10 @@ import {
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { MenuScene } from '../MenuScene';
 import { planMinionSpawns } from '../../waves/BossMinions';
+import {
+  playerPowerScore,
+  scaledEncounterHp,
+} from '../../core/difficultyScaling';
 
 /** Finds an on-screen text button by label. */
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -1022,5 +1026,72 @@ describe('GymBoss — scripted-video boss hit preview (AH-0MVRMFMJP0070KTS)', ()
     expect(module.SCENE_SETUP_BOSS_TOTAL_HITS.GymBoss).toBe(
       scene.formationBoss.getTotalHp(),
     );
+  });
+});
+
+// ── D1 parity: the boss hit pool scales with the player's upgrades ──────────
+// Matrix row `GymBoss` (docs/GYM_PARITY.md D1): PlayScene.spawnBoss passes
+// `scaledEncounterHp(BOSS_HIT_POINTS_PER_PHASE, getPlayerPowerScore())`, so an
+// upgraded ship faces a tougher boss. The gym must spawn the same pool through
+// the same shared pure helpers, and a `bossHitsRemaining` preview must keep its
+// explicit absolute pool unchanged.
+describe('GymBoss — D1 parity: boss hit pool scales with player upgrades', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWith(data: object): Promise<GymBoss> {
+    booted = await bootScene([GymBoss]);
+    booted.game.scene.start('GymBoss', data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene('GymBoss') as GymBoss;
+  }
+
+  it('spawns the same scaled pool PlayScene.spawnBoss resolves', async () => {
+    const scene = await bootWith({
+      player: { weapons: ['spread'], weaponLevels: { spread: 4 } },
+      powerUps: { shield: 3 },
+    });
+    const player = scene.getPlayer()!;
+    const expected = scaledEncounterHp(
+      BOSS_HIT_POINTS_PER_PHASE,
+      playerPowerScore(player.getWeaponLevels(), player.getPowerUpLevels()),
+    );
+
+    expect(expected).toBeGreaterThan(BOSS_HIT_POINTS_PER_PHASE);
+    expect(scene.formationBoss.getHitPointsPerPhase()).toBe(expected);
+    expect(scene.formationBoss.getTotalHp()).toBe(BOSS_PHASE_COUNT * expected);
+  });
+
+  it('keeps the design pool for an unupgraded ship (no balance change)', async () => {
+    const scene = await bootWith({});
+
+    expect(scene.formationBoss.getHitPointsPerPhase()).toBe(
+      BOSS_HIT_POINTS_PER_PHASE,
+    );
+    expect(scene.formationBoss.getTotalHp()).toBe(
+      BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE,
+    );
+  });
+
+  it('keeps the bossHitsRemaining preview an explicit absolute pool', async () => {
+    const scene = await bootWith({
+      bossHitsRemaining: 12,
+      player: { weapons: ['spread'], weaponLevels: { spread: 4 } },
+      powerUps: { shield: 3 },
+    });
+
+    // The preview pins the remaining hits; it must not be re-scaled by the
+    // upgrade score (PlayScene's dev scenario does the same).
+    expect(scene.formationBoss.getTotalHp()).toBe(
+      BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE,
+    );
+    expect(scene.formationBoss.getHitPointsPerPhase()).toBe(
+      BOSS_HIT_POINTS_PER_PHASE,
+    );
+    expect(remainingHits(scene.formationBoss)).toBe(12);
   });
 });

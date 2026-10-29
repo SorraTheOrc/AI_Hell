@@ -36,6 +36,7 @@ import * as playerDeathJuiceModule from '../../vfx/playerDeathJuice';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
+import { loadEnemyConfig } from '../../core/enemyConfig';
 
 /**
  * One Phaser game shell per file, rebooted into a fresh scene instance per
@@ -472,6 +473,9 @@ describe('GymPowerUpsCombat — Force Field reflector (AH-0MV1BIX1W006XF95)', ()
 
   it('the reflected bullet is a real player bullet that can damage enemies', async () => {
     const scene = await bootCombat();
+    // D4: threats are spawn-protected while they emerge; complete the shared
+    // emergence step so this test observes a fully-formed, hittable threat.
+    scene.finishSpawnAnimations();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
     scene.getEffectsRegistry().applyCollect('force_field');
@@ -1187,6 +1191,8 @@ describe('GymPowerUpsCombat — Thorn Field aura and absorb feedback (AH-0MVJ8YK
 
   it('fires the shared absorb burst and consumes a ram instead of taking the hit', async () => {
     const scene = await bootCombat();
+    // D4: complete the shared in-place spawn presentation before ramming.
+    scene.finishSpawnAnimations();
     const registry = scene.getEffectsRegistry();
     registry.applyCollect('thorns', true);
     const charges = registry.thornsRemaining();
@@ -1273,5 +1279,50 @@ describe('GymPowerUpsCombat — Orbital Strike bolt observability (AH-0MVS2T0VQ0
     expect(ringSpy).not.toHaveBeenCalled();
     boltSpy.mockRestore();
     ringSpy.mockRestore();
+  });
+});
+
+// ── D4 parity: factory-built threats + shared spawn presentation ────────────
+// Matrix row `GymPowerUpsCombat` (docs/GYM_PARITY.md D4): the scout threat wave
+// used to bypass the shared enemy factory and spawn presentation. These pin the
+// two observable consequences: the active `scout` EnemyConfig reaches the
+// entity, and the threat grows from 1 px behind the shared spawn protection.
+describe('GymPowerUpsCombat — D4 parity: shared factory + spawn presentation', () => {
+  it('applies the active scout EnemyConfig to every threat (factory-built)', async () => {
+    // Tune the active config: a direct `new Scout` would ignore this entirely.
+    seedConfigStore(
+      [{ ...loadEnemyConfig('scout'), health: 2 }],
+      { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' },
+    );
+    const booted = await reuse.boot([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+
+    const scouts = scene.getScouts();
+    expect(scouts).toHaveLength(3);
+    for (const scout of scouts) expect(scout.health).toBe(2);
+  });
+
+  it('grows each threat from 1 px behind the shared spawn protection, in place', async () => {
+    const booted = await reuse.boot([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+
+    const scouts = scene.getScouts();
+    expect(scouts).toHaveLength(3);
+    for (const scout of scouts) {
+      expect(scout.isSpawning, 'threat spawn-protected on creation').toBe(true);
+      expect(scout.scaleX, 'threat starts at 1 px').toBeLessThan(0.1);
+    }
+
+    // The shared emergence step completes on the scene clock.
+    let guard = 0;
+    while (scouts[0].isSpawning && guard < 600) {
+      scene.tick(1 / 60);
+      guard += 1;
+    }
+    expect(scouts[0].isSpawning).toBe(false);
+    expect(scouts[0].scaleX).toBeCloseTo(1, 1);
+    // In place: the threat did not transit away from its formation position.
+    expect(scouts[0].x).toBeGreaterThan(0);
+    expect(scouts[0].y).toBeGreaterThan(0);
   });
 });

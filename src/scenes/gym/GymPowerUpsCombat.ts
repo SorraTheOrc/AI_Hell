@@ -76,6 +76,21 @@ import {
 } from '../core/CombatEffectVisuals';
 import { Player } from '../../entities/Player';
 import { Scout, ScoutBullet, SCOUT_SIZE } from '../../entities/Scout';
+import {
+  createEnemyFromConfig,
+} from '../../entities/enemyFactory';
+import { loadEnemyConfig } from '../../core/enemyConfig';
+import {
+  WORMHOLE_OPEN_DURATION,
+  startSpawnAnimation,
+  updateSpawnAnimation,
+  updateSpawnEmergence,
+  type SpawnAnimatable,
+} from '../../vfx/wormholeSpawn';
+import {
+  resolveSpawnTransitTarget,
+  type SpawnTransitEntity,
+} from '../core/spawnTransit';
 import { fireForEnemy } from '../../entities/enemyFire';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
@@ -357,6 +372,10 @@ export class GymPowerUpsCombat extends CombatScene<
     //    before gating so an activation this frame protects this frame ──
     this._updateAutoDefence(dt);
 
+    // ── Shared spawn presentation: grow each scout from 1 px while it is
+    // spawn-protected, exactly as the game does (D4, docs/GYM_PARITY.md) ──
+    this._updateSpawnAnimations(dt);
+
     // ── Hit response (bullets + bodies), gated by phase/shield ──
     this._handleCollisions();
 
@@ -386,18 +405,79 @@ export class GymPowerUpsCombat extends CombatScene<
   /**
    * Spawns the small V-formation of scouts at the current formation base.
    * Called on create and after a wave-timeout refresh.
+   *
+   * D4 parity (docs/GYM_PARITY.md): every threat is built through the shared
+   * `createEnemyFromConfig` factory — so the active `scout` `EnemyConfig`
+   * (size, colours, bullet geometry, fire tuning, health, force field,
+   * `wrapAware`, RNG) reaches the entity exactly as it does in `PlayScene` —
+   * and runs the shared spawn presentation (1 px growth + spawn protection),
+   * in place, through the shared transit exemption. A direct `new Scout` had
+   * bypassed both.
    */
   private _spawnScoutFormation(): void {
+    const config = loadEnemyConfig('scout');
     const offsets = buildVFormationOffsets(COMBAT_SCOUT_COUNT);
     for (const offset of offsets) {
-      const scout = new Scout(this, {
-        x: this.formationBaseX + offset.col * COMBAT_SPACING_X,
-        y: this.formationBaseY + offset.row * COMBAT_SPACING_Y,
-        formationOffset: offset,
-      });
-      this.add.existing(scout);
+      const x = this.formationBaseX + offset.col * COMBAT_SPACING_X;
+      const y = this.formationBaseY + offset.row * COMBAT_SPACING_Y;
+      const scout = createEnemyFromConfig(
+        this,
+        config,
+        x,
+        y,
+        offset,
+      ) as Scout;
       scout.shootEnabled = this.shootEnabled;
+      // In-place spawn: the scouts are not part of a wave wormhole entry, so
+      // no destination is supplied (`transit: false` asks the shared seam for
+      // the exemption rather than re-implementing it).
+      const transitTarget = resolveSpawnTransitTarget({
+        entity: scout as unknown as SpawnTransitEntity,
+        transit: false,
+        base: { x, y },
+        offset,
+        spacingX: COMBAT_SPACING_X,
+        spacingY: COMBAT_SPACING_Y,
+      });
+      startSpawnAnimation(
+        scout as unknown as SpawnAnimatable,
+        scout.scaleX,
+        WORMHOLE_OPEN_DURATION,
+        transitTarget ? () => transitTarget : undefined,
+      );
+      scout.setSpawning(true);
+      this.add.existing(scout);
       this.scouts.push(scout);
+    }
+  }
+
+  /**
+   * Advances the shared emergence step for every spawning scout (D4 parity).
+   * This gym has no wave wormhole, so each threat simply grows from 1 px in
+   * place while spawn-protected and is fully formed when the step completes.
+   */
+  private _updateSpawnAnimations(dt: number): void {
+    for (const scout of this.scouts) {
+      if (!scout.alive || !scout.isSpawning) continue;
+      const stillGrowing = updateSpawnEmergence(
+        scout as unknown as SpawnAnimatable,
+        dt,
+      );
+      if (!stillGrowing) scout.setSpawning(false);
+    }
+  }
+
+  /**
+   * Test seam: completes every in-progress spawn emergence immediately, so a
+   * scene test observes fully-formed, hittable threats without waiting out the
+   * shared spawn-protection window (the same seam `PlayScene`/`GymLevel` use,
+   * AH-0MURBER4L00821RR). Not used by gameplay.
+   */
+  finishSpawnAnimations(): void {
+    for (const scout of this.scouts) {
+      if (!scout.isSpawning) continue;
+      updateSpawnAnimation(scout as unknown as SpawnAnimatable, 10);
+      scout.setSpawning(false);
     }
   }
 

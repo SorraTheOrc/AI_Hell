@@ -4027,16 +4027,21 @@ describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () =>
     scene.tick(0.05);
 
     // Verify the glide is active and includes only the Diver.
-    const glide = (scene as unknown as { glide: { active: boolean; states: Map<unknown, unknown> } }).glide;
-    expect(glide.active).toBe(true);
-    expect(glide.states.size).toBe(1); // only the Diver
+    const reanchor = (scene as unknown as {
+      reanchor: {
+        isGliding: boolean;
+        glideStates: Map<unknown, unknown>;
+      };
+    }).reanchor;
+    expect(reanchor.isGliding).toBe(true);
+    expect(reanchor.glideStates.size).toBe(1); // only the Diver
 
     // The Scout stayed where it was (no vertical shift).
     expect(scout.y).toBeCloseTo(scoutBefore.y, 5);
 
     // Finish the glide and verify the Diver is at its slot (no residual).
     for (let i = 0; i < 20; i++) scene.tick(0.05);
-    expect(glide.active).toBe(false);
+    expect(reanchor.isGliding).toBe(false);
     expect(diver.y).toBeCloseTo(diverBefore.y, 5);
   });
 });

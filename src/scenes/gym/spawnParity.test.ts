@@ -65,6 +65,11 @@ import {
 } from '../../core/configStore';
 import { resetBotTuningStore } from '../../core/botTuningStore';
 import type { EnemyEntity } from '../../entities/enemyFactory';
+import { Diver } from '../../entities/Diver';
+import { Centipede } from '../../entities/Centipede';
+import { Ghost } from '../../entities/Ghost';
+import { Grunt } from '../../entities/Grunt';
+import { LaneTraffic } from '../../entities/LaneTraffic';
 import { PHASER_ORBITAL_RADIUS, PhaserEntity } from '../../entities/Phaser';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
 import {
@@ -74,6 +79,7 @@ import {
   type SpawnAnimatable,
 } from '../../vfx/wormholeSpawn';
 import { DEFAULT_MARCH_DROP } from '../core/marchFormation';
+import type { FormationReanchorController } from '../core/formationReanchor';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
 import { PlayScene } from '../PlayScene';
@@ -728,4 +734,280 @@ describe('GymBotTuning — inherits the level-gym spawn parity (AH-0MVRMHJZS001Z
       expect(observedFrames, 'spawn window observed').toBeGreaterThan(30);
     },
   );
+});
+
+// ── D2 — Diver re-anchor / glide parity (docs/GYM_PARITY.md) ────────
+
+/** A launched Diver group plus a non-Diver neighbour. */
+function diverProbe(): ParityWave {
+  const wave: WaveDefinition = {
+    groups: [
+      {
+        enemyKey: 'diver',
+        formation: 'diver',
+        count: 1,
+        spacingX: 40,
+        spacingY: 30,
+        startX: GAME_WIDTH * 0.5,
+        startY: GAME_HEIGHT * 0.3,
+      },
+      {
+        enemyKey: 'scout',
+        formation: 'v',
+        count: 3,
+        spacingX: 26,
+        spacingY: 26,
+        startX: GAME_WIDTH * 0.5,
+        startY: GAME_HEIGHT * 0.3,
+      },
+    ],
+    shootEnabled: false,
+  };
+  return {
+    level: { level: 1, name: 'Diver re-anchor parity probe', waves: [wave] },
+    wave,
+    group: wave.groups[0],
+  };
+}
+
+/** Live Divers in spawn order. */
+function liveDivers(scene: GymLevel | PlayScene): Diver[] {
+  return scene
+    .getEnemies()
+    .filter((enemy): enemy is Diver => enemy instanceof Diver && enemy.alive);
+}
+
+describe('GymLevel × PlayScene — Diver re-anchor parity (D2)', () => {
+  it(
+    'an identical dt sequence re-anchors the Diver group so its slot lands on the attack end in both scenes',
+    async () => {
+      const probe = diverProbe();
+      const gym = await bootGymLevel({ level: probe.level, seed: PARITY_SEED });
+      const play = await bootPlayScene(probe.level);
+      gym.scene.finishSpawnAnimations();
+      play.scene.finishSpawnAnimations();
+
+      const [gymDiver] = liveDivers(gym.scene);
+      const [playDiver] = liveDivers(play.scene);
+      expect(gymDiver, 'gym diver').toBeDefined();
+      expect(playDiver, 'game diver').toBeDefined();
+
+      // The Diver dives at the player; keep the ship invulnerable so the
+      // probe observes the full attack (ram resolution would otherwise destroy
+      // the Diver before it can report its re-anchor request).
+      (gym.scene as unknown as { invulnerable: number }).invulnerable = 1e9;
+      (play.scene as unknown as { invulnerable: number }).invulnerable = 1e9;
+
+      const stepper = createLockStep([gym.game, play.game]);
+
+      // The shared controller state each scene owns (no re-implementation of
+      // the rule in the test).
+      const gymReanchor = (
+        gym.scene as unknown as { reanchor: FormationReanchorController }
+      ).reanchor;
+      const playReanchor = (
+        play.scene as unknown as { reanchor: FormationReanchorController }
+      ).reanchor;
+
+      // A Diver latches its re-anchor request when its attack ends; the sharing
+      // scene consumes it on the following tick. Capture each request as soon
+      // as it appears (the two scenes may latch a frame or two apart), then
+      // keep ticking until both anchors have moved.
+      type Request = { x: number; y: number; offset: { row: number; col: number } };
+      const pendingOf = (entity: Diver): Request | null =>
+        (entity as unknown as { _pendingReanchor?: Request | null })
+          ._pendingReanchor ?? null;
+      let gymRequest: Request | null = null;
+      let playRequest: Request | null = null;
+      for (
+        let frame = 0;
+        frame < 1200 && (!gymRequest || !playRequest);
+        frame += 1
+      ) {
+        stepper.tick();
+        gymRequest ??= pendingOf(gymDiver);
+        playRequest ??= pendingOf(playDiver);
+      }
+      expect(gymRequest, 'gym Diver latched a re-anchor request').not.toBeNull();
+      expect(playRequest, 'game Diver latched a re-anchor request').not.toBeNull();
+
+      // Both scenes run the shared rule: the anchor moved by the request's
+      // slot offset (non-zero for this probe).
+      for (let frame = 0; frame < 30; frame += 1) {
+        if (
+          Math.abs(gymReanchor.anchorX) + Math.abs(gymReanchor.anchorY) > 1
+          && Math.abs(playReanchor.anchorX) + Math.abs(playReanchor.anchorY) > 1
+        ) {
+          break;
+        }
+        stepper.tick();
+      }
+      expect(
+        Math.abs(gymReanchor.anchorX) + Math.abs(gymReanchor.anchorY),
+        'gym Diver group re-anchored',
+      ).toBeGreaterThan(1);
+      expect(
+        Math.abs(playReanchor.anchorX) + Math.abs(playReanchor.anchorY),
+        'game Diver group re-anchored',
+      ).toBeGreaterThan(1);
+
+      // Let the shared glide finish so the Diver settles on its new slot.
+      for (let frame = 0; frame < 30; frame += 1) stepper.tick();
+
+      // Both scenes land the Diver on the attack end it reported. Y is
+      // wiggle-free; X is within the shared ±1.5 px idle wiggle. The attack
+      // ends themselves differ between the gym and the game because the game's
+      // portal is placed away from the player while the gym has no ship (a
+      // documented spawn-origin difference, not the re-anchor rule).
+      expect(gymDiver.y, 'gym diver y').toBeCloseTo(gymRequest!.y, 5);
+      expect(playDiver.y, 'game diver y').toBeCloseTo(playRequest!.y, 5);
+    },
+  );
+});
+
+// ── D3 — spawner-delivered archetypes / hazards parity ─────────────
+
+/** A one-wave level opting into one dynamic spawner flag. */
+function dynamicProbe(flag: 'centipede' | 'ghosts' | 'horde' | 'laneTraffic'): ParityWave {
+  const wave: WaveDefinition = {
+    groups: [
+      {
+        enemyKey: 'scout',
+        formation: 'v',
+        count: 2,
+        spacingX: 26,
+        spacingY: 26,
+        startX: GAME_WIDTH * 0.5,
+        startY: GAME_HEIGHT * 0.25,
+      },
+    ],
+    shootEnabled: false,
+    [flag]: true,
+  };
+  return {
+    level: { level: 1, name: `Dynamic ${flag} probe`, waves: [wave] },
+    wave,
+    group: wave.groups[0],
+  };
+}
+
+/**
+ * Every spawn this scene has produced, including already-destroyed entries
+ * (both scenes keep `spawned` until a wave clear). Counting cumulative
+ * releases keeps the assertion independent of player/enemy collisions during
+ * the long release window; the probe's immortal formation scouts prevent a
+ * wave clear from pruning the list.
+ */
+function spawnedEntities(scene: GymLevel | PlayScene): unknown[] {
+  const spawned = (
+    scene as unknown as { spawned?: Array<{ entity: unknown }> }
+  ).spawned;
+  return (spawned ?? []).map((entry) => entry.entity);
+}
+
+/**
+ * The size of the scene's per-wave dynamic plan for `flag`, read from the
+ * scene's own plan state. The plans are built once per wave from the same
+ * shared planner module, so equal sizes are the cross-scene parity signal for
+ * the planning half; the release half is asserted behaviourally below. The
+ * Centipede plan is counted as one plan regardless of its RNG-chosen segment
+ * count (that count is intentionally random in the game too).
+ */
+function plannedDynamic(
+  scene: GymLevel | PlayScene,
+  flag: 'centipede' | 'ghosts' | 'horde' | 'laneTraffic',
+): number {
+  const plans = scene as unknown as {
+    pendingGhostSpawns?: readonly unknown[];
+    pendingCentipedeSpawn?: unknown | null;
+    pendingHordeSpawns?: readonly unknown[];
+    pendingLaneTrafficSpawns?: readonly unknown[];
+  };
+  switch (flag) {
+    case 'ghosts':
+      return plans.pendingGhostSpawns?.length ?? 0;
+    case 'centipede':
+      return plans.pendingCentipedeSpawn ? 1 : 0;
+    case 'horde':
+      return plans.pendingHordeSpawns?.length ?? 0;
+    case 'laneTraffic':
+      return plans.pendingLaneTrafficSpawns?.length ?? 0;
+  }
+}
+
+describe('GymLevel × PlayScene — spawner-delivered content parity (D3)', () => {
+  const cases: ReadonlyArray<{
+    flag: 'centipede' | 'ghosts' | 'horde' | 'laneTraffic';
+    label: string;
+    count: (scene: GymLevel | PlayScene) => number;
+    minimum: number;
+  }> = [
+    {
+      flag: 'centipede',
+      label: 'Centipede chain',
+      count: (scene) =>
+        scene.getEnemies().filter(
+          (enemy) => enemy instanceof Centipede && enemy.alive,
+        ).length,
+      minimum: 1,
+    },
+    {
+      flag: 'ghosts',
+      label: 'Pac-Man ghost group',
+      count: (scene) =>
+        spawnedEntities(scene).filter((enemy) => enemy instanceof Ghost).length,
+      minimum: 4,
+    },
+    {
+      flag: 'horde',
+      label: 'Robotron horde',
+      count: (scene) =>
+        spawnedEntities(scene).filter((enemy) => enemy instanceof Grunt).length,
+      minimum: 1,
+    },
+    {
+      flag: 'laneTraffic',
+      label: 'Frogger lane traffic',
+      count: (scene) =>
+        spawnedEntities(scene).filter((enemy) => enemy instanceof LaneTraffic)
+          .length,
+      minimum: 1,
+    },
+  ];
+
+  for (const testCase of cases) {
+    it(
+      `an identical dt sequence releases the same ${testCase.label} in the gym and the game`,
+      async () => {
+        const probe = dynamicProbe(testCase.flag);
+        const gym = await bootGymLevel({ level: probe.level, seed: PARITY_SEED });
+        const play = await bootPlayScene(probe.level);
+        gym.scene.finishSpawnAnimations();
+        play.scene.finishSpawnAnimations();
+
+        // Planning half: both scenes build the same plan for the same wave
+        // definition through the shared planner module.
+        const gymPlan = plannedDynamic(gym.scene, testCase.flag);
+        const playPlan = plannedDynamic(play.scene, testCase.flag);
+        expect(gymPlan, `gym ${testCase.label} plan`).toBeGreaterThan(0);
+        expect(playPlan, `game ${testCase.label} plan`).toBeGreaterThan(0);
+        expect(gymPlan, `gym ${testCase.label} plan size matches the game`).toBe(
+          playPlan,
+        );
+
+        // Release half: the gym actually releases the content (red-before it
+        // released nothing at all).
+        const stepper = createLockStep([gym.game, play.game]);
+        // Run past the last scheduled release (planners cap at 0.85 × the
+        // 30 s wave ≈ 25.5 s) but before the wave timeout, so the whole plan
+        // has been released regardless of RNG-dependent scheduling.
+        for (let frame = 0; frame < 1600; frame += 1) stepper.tick();
+
+        const gymCount = testCase.count(gym.scene);
+        expect(gymCount, `gym ${testCase.label} released`).toBeGreaterThanOrEqual(
+          testCase.minimum,
+        );
+      },
+    );
+  }
 });

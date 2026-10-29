@@ -74,10 +74,9 @@ import {
 } from './core/enemyWrap';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
 import {
-  computeFormationReanchorDelta,
-  type FormationReanchorRequest,
-} from '../utils/formations';
-import { FormationGlide } from './core/formationGlide';
+  FormationReanchorController,
+  type FormationReanchorCandidate,
+} from './core/formationReanchor';
 import {
   resolveSpawnTransitTarget,
   type SpawnTransitEntity,
@@ -208,7 +207,14 @@ import {
   createAsteroidFromEvent,
 } from './core/asteroidHazard';
 import {
-  computeSpawns as computeStrikeSpawns,
+  planCentipedeWaveSpawn,
+  planGhostWaveSpawns,
+  planHordeWaveSpawns,
+  planLaneTrafficWaveSpawns,
+  planStrikeWaveSpawns,
+  releaseDueSpawns,
+} from './core/dynamicSpawnPlan';
+import {
   type SpawnEvent as StrikeSpawnEvent,
 } from '../waves/StrikeSpawner';
 import { OrbitalStrike } from '../entities/OrbitalStrike';
@@ -217,7 +223,6 @@ import {
   type HarvesterSpawnEvent,
 } from '../waves/HarvesterSpawner';
 import {
-  computeGhostSpawns,
   type GhostSpawnEvent,
 } from '../waves/GhostSpawner';
 import {
@@ -226,22 +231,14 @@ import {
   CENTIPEDE_LATERAL_SPEED,
   CENTIPEDE_SEGMENT_SPACING,
   centipedeArena,
-  computeCentipedeSpawn,
   type CentipedeSpawnEvent,
 } from '../waves/CentipedeSpawner';
 import { Centipede } from '../entities/Centipede';
 import { CentipedeChain } from './core/centipedeChain';
 import {
-  HORDE_DEFAULT_GROUP_SIZE,
-  HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS,
-  GRUNT_ENEMY_KEY,
-  computeHordeSpawns,
   type HordeSpawnEvent,
 } from '../waves/HordeSpawner';
 import {
-  LANE_TRAFFIC_DEFAULT_LANE_COUNT,
-  LANE_TRAFFIC_DEFAULT_LANE_SPACING,
-  computeLaneTrafficSpawns,
   type LaneTrafficSpawnEvent,
 } from '../waves/LaneTrafficSpawner';
 import { LaneTraffic } from '../entities/LaneTraffic';
@@ -726,17 +723,11 @@ export class PlayScene extends CombatScene<
   /** Resolved march tuning for the current wave (null when no march block). */
   private marchOptions: MarchOptions | null = null;
   /**
-   * Diver-group re-anchor offset (px), added only to Diver spawns' origin on
-   * top of the drift. A Diver's attack re-anchors the Diver group by adding
-   * the shared delta here, so the Diver's slot lands on its attack end while
-   * every other enemy stays where it is (producer review,
-   * AH-0MUL15N63003PUDB).
+   * Diver-group re-anchor + glide state (D2, docs/GYM_PARITY.md): the shared
+   * controller owns the anchor offset and the glide, so `PlayScene`,
+   * `GymFormationScene` and `GymLevel` run the same rule (AH-0MUL15N63003PUDB).
    */
-  private diverAnchorX = 0;
-  private diverAnchorY = 0;
-
-  /** Glide manager: eases enemies to their re-anchored slots (AH-0MUL15N63003PUDB). */
-  private glide = new FormationGlide();
+  private readonly reanchor = new FormationReanchorController();
 
   private transitionTimer = 0;
 
@@ -1222,8 +1213,7 @@ export class PlayScene extends CombatScene<
     this.miniBossSweepTargets = [];
     this.driftX = 0;
     this.driftDir = 1;
-    this.diverAnchorX = 0;
-    this.diverAnchorY = 0;
+    this.reanchor.reset();
     this.transitionTimer = 0;
     this.bannerTimer = 0;
     this.waveTimer = 0;
@@ -1318,7 +1308,7 @@ export class PlayScene extends CombatScene<
     this.victoryEffects = [];
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
-    this.glide.clear();
+    this.reanchor.reset();
 
     // Flush any buffered records so the run tail (run_end) reaches the sink
     // before the scene is torn down (AH-0MUY08VVQ007HSSH).
@@ -1568,8 +1558,7 @@ export class PlayScene extends CombatScene<
     if (carriedFormation.length === 0) {
       this.driftX = 0;
       this.driftDir = 1;
-      this.diverAnchorX = 0;
-      this.diverAnchorY = 0;
+      this.reanchor.reset();
       this._resetMarchFormation(anchoredSpawns);
     } else {
       // Keep the continuous drift, its direction and the Diver anchor exactly
@@ -1898,11 +1887,10 @@ export class PlayScene extends CombatScene<
       return;
     }
     const player = this.getPlayer();
-    this.pendingStrikeSpawns = computeStrikeSpawns(
+    // Shared planner (D3, docs/GYM_PARITY.md) — the same plan the level gym
+    // builds for a launched campaign wave.
+    this.pendingStrikeSpawns = planStrikeWaveSpawns(
       wm.globalWaveIndex,
-      GAME_WIDTH,
-      GAME_HEIGHT,
-      WAVE_TIME_LIMIT_SECONDS,
       player?.x ?? GAME_WIDTH / 2,
       player?.y ?? GAME_HEIGHT / 2,
       this.rng,
@@ -1928,12 +1916,12 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.strikesSpawnedThisWave < this.pendingStrikeSpawns.length) {
-      const event = this.pendingStrikeSpawns[this.strikesSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledStrike(event);
-      this.strikesSpawnedThisWave += 1;
-    }
+    this.strikesSpawnedThisWave = releaseDueSpawns(
+      this.pendingStrikeSpawns,
+      this.strikesSpawnedThisWave,
+      elapsed,
+      (event) => this._spawnScheduledStrike(event),
+    );
   }
 
   /**
@@ -2070,12 +2058,7 @@ export class PlayScene extends CombatScene<
       this.ghostsSpawnedThisWave = 0;
       return;
     }
-    this.pendingGhostSpawns = computeGhostSpawns(
-      GAME_WIDTH,
-      GAME_HEIGHT,
-      WAVE_TIME_LIMIT_SECONDS,
-      this.rng,
-    );
+    this.pendingGhostSpawns = planGhostWaveSpawns(this.rng);
     this.ghostsSpawnedThisWave = 0;
   }
 
@@ -2097,12 +2080,12 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.ghostsSpawnedThisWave < this.pendingGhostSpawns.length) {
-      const event = this.pendingGhostSpawns[this.ghostsSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledGhost(event);
-      this.ghostsSpawnedThisWave += 1;
-    }
+    this.ghostsSpawnedThisWave = releaseDueSpawns(
+      this.pendingGhostSpawns,
+      this.ghostsSpawnedThisWave,
+      elapsed,
+      (event) => this._spawnScheduledGhost(event),
+    );
   }
 
   /**
@@ -2154,12 +2137,7 @@ export class PlayScene extends CombatScene<
       this.centipedeSpawnedThisWave = false;
       return;
     }
-    this.pendingCentipedeSpawn = computeCentipedeSpawn(
-      GAME_WIDTH,
-      GAME_HEIGHT,
-      WAVE_TIME_LIMIT_SECONDS,
-      this.rng,
-    );
+    this.pendingCentipedeSpawn = planCentipedeWaveSpawn(this.rng);
     this.centipedeSpawnedThisWave = false;
   }
 
@@ -2182,9 +2160,13 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    if (elapsed + 1e-9 < this.pendingCentipedeSpawn.timeSeconds) return;
-    this._spawnScheduledCentipede(this.pendingCentipedeSpawn);
-    this.centipedeSpawnedThisWave = true;
+    const released = releaseDueSpawns(
+      [this.pendingCentipedeSpawn],
+      this.centipedeSpawnedThisWave ? 1 : 0,
+      elapsed,
+      (event) => this._spawnScheduledCentipede(event),
+    );
+    this.centipedeSpawnedThisWave = released > 0;
   }
 
   /**
@@ -2249,17 +2231,7 @@ export class PlayScene extends CombatScene<
       this.hordeSpawnedThisWave = 0;
       return;
     }
-    const cfg = loadEnemyConfig(GRUNT_ENEMY_KEY);
-    this.pendingHordeSpawns = computeHordeSpawns({
-      gameWidth: GAME_WIDTH,
-      gameHeight: GAME_HEIGHT,
-      waveTimeLimitSeconds: WAVE_TIME_LIMIT_SECONDS,
-      count: cfg.count,
-      groupSize: cfg.hordeGroupSize ?? HORDE_DEFAULT_GROUP_SIZE,
-      spawnIntervalSeconds:
-        cfg.hordeSpawnInterval ?? HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS,
-      rng: this.rng,
-    });
+    this.pendingHordeSpawns = planHordeWaveSpawns(this.rng);
     this.hordeSpawnedThisWave = 0;
   }
 
@@ -2281,12 +2253,12 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.hordeSpawnedThisWave < this.pendingHordeSpawns.length) {
-      const event = this.pendingHordeSpawns[this.hordeSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledHorde(event);
-      this.hordeSpawnedThisWave += 1;
-    }
+    this.hordeSpawnedThisWave = releaseDueSpawns(
+      this.pendingHordeSpawns,
+      this.hordeSpawnedThisWave,
+      elapsed,
+      (event) => this._spawnScheduledHorde(event),
+    );
   }
 
   /**
@@ -2343,18 +2315,7 @@ export class PlayScene extends CombatScene<
       this.laneTrafficSpawnedThisWave = 0;
       return;
     }
-    const cfg = loadEnemyConfig('lane-traffic');
-    this.pendingLaneTrafficSpawns = computeLaneTrafficSpawns({
-      gameWidth: GAME_WIDTH,
-      gameHeight: GAME_HEIGHT,
-      waveTimeLimitSeconds: WAVE_TIME_LIMIT_SECONDS,
-      laneCount: cfg.laneCount ?? LANE_TRAFFIC_DEFAULT_LANE_COUNT,
-      perLaneCount: cfg.count,
-      spacing: cfg.spacingX,
-      laneSpacing: cfg.laneSpacing ?? LANE_TRAFFIC_DEFAULT_LANE_SPACING,
-      speed: cfg.driftSpeed,
-      rng: this.rng,
-    });
+    this.pendingLaneTrafficSpawns = planLaneTrafficWaveSpawns(this.rng);
     this.laneTrafficSpawnedThisWave = 0;
   }
 
@@ -2376,13 +2337,12 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.laneTrafficSpawnedThisWave < this.pendingLaneTrafficSpawns.length) {
-      const event =
-        this.pendingLaneTrafficSpawns[this.laneTrafficSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledLaneTraffic(event);
-      this.laneTrafficSpawnedThisWave += 1;
-    }
+    this.laneTrafficSpawnedThisWave = releaseDueSpawns(
+      this.pendingLaneTrafficSpawns,
+      this.laneTrafficSpawnedThisWave,
+      elapsed,
+      (event) => this._spawnScheduledLaneTraffic(event),
+    );
   }
 
   /**
@@ -2512,8 +2472,8 @@ export class PlayScene extends CombatScene<
         s.march && this.marchState ? this.marchState.x : s.startX + this.driftX;
       const baseY = s.march && this.marchState ? this.marchState.y : s.startY;
       s.entity.applyFormationPosition(
-        baseX + (isDiver ? this.diverAnchorX : 0),
-        baseY + (isDiver ? this.diverAnchorY : 0),
+        baseX + (isDiver ? this.reanchor.anchorX : 0),
+        baseY + (isDiver ? this.reanchor.anchorY : 0),
         dt,
         s.spacingX,
         s.spacingY,
@@ -2521,12 +2481,10 @@ export class PlayScene extends CombatScene<
       positioned.push(s.entity);
     }
 
-    // If a re-anchor fired (now or on an earlier frame), ease all living
-    // entities from their old positions to the live (drifting) slot
-    // (AH-0MUL15N63003PUDB). A no-op when no glide is active.
-    if (reanchorApplied || this.glide.active) {
-      this.glide.update(dt);
-    }
+    // If a re-anchor fired (now or on an earlier frame), ease the Divers from
+    // their old positions to the live (drifting) slot (AH-0MUL15N63003PUDB).
+    // The shared controller owns the rule (D2, docs/GYM_PARITY.md).
+    this.reanchor.afterPositioning(dt, reanchorApplied);
 
     // Shared post-motion edge wrap (AH-0MVKXBWDY008R0YH, parent
     // AH-0MV9G3DZ9003P7P8 AC3): the one seam the game and every gym run.
@@ -2538,46 +2496,29 @@ export class PlayScene extends CombatScene<
 
   /**
    * Consumes any pending enemy re-anchor requests and shifts the Diver-group
-   * anchor so the requesting Diver's slot lands on its attack end (shared rule
-   * in `computeFormationReanchorDelta`). The most recent request wins when
-   * Divers are desynchronised (documented assumption). Only the Divers move:
-   * every other enemy stays where it is (producer review,
-   * AH-0MUL15N63003PUDB).
+   * anchor so the requesting Diver's slot lands on its attack end. The rule is
+   * the shared `FormationReanchorController` (D2, docs/GYM_PARITY.md) — the
+   * most recent request wins when Divers are desynchronised, and only the
+   * Divers glide to their new slots. Every other enemy stays where it is
+   * (producer review, AH-0MUL15N63003PUDB).
    *
    * @returns `true` if a re-anchor was applied (and the glide was begun),
    *   `false` otherwise.
    */
   private _applyFormationReanchor(): boolean {
-    let latest: { request: FormationReanchorRequest; spawn: SpawnedEnemy } | null = null;
-    for (const spawn of this.spawned) {
-      const request = spawn.entity.consumeFormationReanchor?.();
-      if (request) latest = { request, spawn };
-    }
-    if (!latest) return false;
-
-    const { request, spawn } = latest;
-    // Re-anchor the Diver group only: the delta moves the Diver origin so the
-    // requester's slot lands on the attack end. Every other enemy is left
-    // exactly where it is (producer review, AH-0MUL15N63003PUDB).
-    const { dx, dy } = computeFormationReanchorDelta(
-      request,
-      spawn.startX + this.driftX + this.diverAnchorX,
-      spawn.startY + this.diverAnchorY,
-      spawn.spacingX,
-      spawn.spacingY,
-    );
-    this.diverAnchorX += dx;
-    this.diverAnchorY += dy;
-
-    // Only the Divers glide to their new slots; non-Divers did not move this
-    // frame, so they are not tracked by the glide.
-    const glideTargets = this.spawned
+    const candidates = this.spawned
       .filter(
-        (s) => s.entity.alive && s.entity.consumeFormationReanchor != null,
+        (spawn) =>
+          spawn.entity.alive && spawn.entity.consumeFormationReanchor != null,
       )
-      .map((s) => s.entity);
-    this.glide.begin(glideTargets);
-    return true;
+      .map((spawn) => ({
+        entity: spawn.entity as unknown as FormationReanchorCandidate['entity'],
+        originX: spawn.startX + this.driftX,
+        originY: spawn.startY,
+        spacingX: spawn.spacingX,
+        spacingY: spawn.spacingY,
+      }));
+    return this.reanchor.apply(candidates);
   }
 
   /**

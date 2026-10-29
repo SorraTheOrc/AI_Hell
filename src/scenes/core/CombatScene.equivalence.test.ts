@@ -2613,6 +2613,22 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   // consumed by PlayScene, GymFormationScene, GymLevel and GymBoss. A scene
   // that re-introduces a copy fails the repo-wide duplicate-body guard.
   ['resolveSpawnTransitTarget', 'src/scenes/core/spawnTransit.ts'],
+  // Diver re-anchor request consumption (D2, docs/GYM_PARITY.md): the rule
+  // that turns an entity's re-anchor request into a formation-origin delta is
+  // defined once here and consumed by PlayScene, GymFormationScene and
+  // GymLevel through `FormationReanchorController`.
+  ['consumeFormationReanchor', 'src/scenes/core/formationReanchor.ts'],
+  // Spawner-delivered dynamic wave plan/release rule (D3, docs/GYM_PARITY.md):
+  // the game and the level gym build the same ghost/centipede/horde/lane
+  // traffic/orbital-strike plans and release them through the same
+  // time-ordered rule. Scene-specific entity construction and wave accounting
+  // stay scene-side, so no gameplay object is forked.
+  ['planGhostWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['planCentipedeWaveSpawn', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['planHordeWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['planLaneTrafficWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['planStrikeWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['releaseDueSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
 ];
 
 /**

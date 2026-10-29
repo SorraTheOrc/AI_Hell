@@ -60,8 +60,9 @@ import {
   PLAYFIELD_WORLD,
 } from '../../../scenes/core/enemyWrap';
 import {
-  FormationGlide,
-} from '../../../scenes/core/formationGlide';
+  FormationReanchorController,
+  type FormationReanchorCandidate,
+} from '../../../scenes/core/formationReanchor';
 import {
   applyPhaseGhost,
   drawForceFieldBubble,
@@ -81,7 +82,6 @@ import {
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
 import {
   computeFormationPosition,
-  computeFormationReanchorDelta,
   FormationOffset,
   type FormationReanchorRequest,
 } from '../../../utils/formations';
@@ -586,19 +586,13 @@ export class GymFormationScene<
   /** Whether the thorns aura was drawn in the last visual update. */
   private thornsAuraDrawn = false;
 
-  // ── Formation glide (AH-0MUL15N63003PUDB)
-
-  /** Glide manager: eases enemies from their old positions to the re-anchored slots. */
-  private glide = new FormationGlide();
+  // ── Formation glide (AH-0MUL15N63003PUDB, D2)
 
   /**
-   * Diver-group re-anchor offset (px). Only entities that expose the
-   * `consumeFormationReanchor` seam (Divers) have this offset added to their
-   * origin, so a Diver's attack re-anchors the Diver group alone and every
-   * other enemy stays where it is (producer review, AH-0MUL15N63003PUDB).
+   * Shared Diver re-anchor + glide controller: the anchor offset and the glide
+   * are the same rule `PlayScene` and `GymLevel` run (D2, docs/GYM_PARITY.md).
    */
-  private diverAnchorX = 0;
-  private diverAnchorY = 0;
+  private readonly reanchor = new FormationReanchorController();
 
   // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
 
@@ -649,8 +643,7 @@ export class GymFormationScene<
     );
     // A fresh base (initial create or respawn) starts with no Diver re-anchor
     // offset, so the Diver group is back on the shared formation base.
-    this.diverAnchorX = 0;
-    this.diverAnchorY = 0;
+    this.reanchor.reset();
 
     // A marching block (Space Invaders archetype) starts fresh at the
     // resolved base heading right; non-march formations leave the state null
@@ -711,14 +704,14 @@ export class GymFormationScene<
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();    const { config } = this;
 
-    // ── Spawn the formation ─────────────────────────────────────────
-    const offsets = config.buildOffsets(config.count);
-    // Wormhole opens at the formation origin; every entity grows from
-    // 1 px to its full size while protected (AC1–AC4, gym parity).
-    this._spawnFormation(offsets);
-    playSpawnSound();
-
     // ── Player ship (optional per-scene opt-in) ────────────────────
+    // The ship and its capture setup are created **before** the formation so
+    // an encounter built at spawn time can resolve the player's permanent
+    // upgrades (D1: `GymBoss`'s hit pool, `docs/GYM_PARITY.md`). The order is
+    // observationally irrelevant to every other gym — player construction and
+    // `applySceneSetup` consume no scene RNG and the formation portal is
+    // anchored independently of the ship — but it makes the setup state live
+    // for `config.createEntity`.
     if (config.player) {
       this.playerSpawnX = config.player.x;
       this.playerSpawnY = config.player.y;
@@ -740,6 +733,13 @@ export class GymFormationScene<
     if (this.pendingSetup) {
       applySceneSetup({ getPlayer: () => this.player }, this.pendingSetup);
     }
+
+    // ── Spawn the formation ─────────────────────────────────────────
+    const offsets = config.buildOffsets(config.count);
+    // Wormhole opens at the formation origin; every entity grows from
+    // 1 px to its full size while protected (AC1–AC4, gym parity).
+    this._spawnFormation(offsets);
+    playSpawnSound();
 
     // ── Shared Shield/Phase Shift player visuals (parity with PlayScene/gym combat) ──
     // Drawn through the shared CombatEffectVisuals helper so the enemy gym
@@ -904,7 +904,7 @@ export class GymFormationScene<
     this.thornsAuraDrawn = false;
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
-    this.glide.clear();
+    this.reanchor.reset();
   }
 
   // ── Button helpers ───────────────────────────────────────────────
@@ -1209,12 +1209,12 @@ export class GymFormationScene<
    * sit on {@link formationX}/{@link formationY} alone.
    */
   get diverFormationX(): number {
-    return this.formationBaseX + this.diverAnchorX;
+    return this.formationBaseX + this.reanchor.anchorX;
   }
 
   /** Current origin y for the re-anchor-capable (Diver) group. */
   get diverFormationY(): number {
-    return this.formationBaseY + this.diverAnchorY;
+    return this.formationBaseY + this.reanchor.anchorY;
   }
 
   /** The player ship (null when the config omitted `player`). */
@@ -1643,8 +1643,8 @@ export class GymFormationScene<
       // stays where it is when a Diver re-anchors (AC5).
       const isDiver = entity.consumeFormationReanchor != null;
       entity.applyFormationPosition(
-        this.formationBaseX + (isDiver ? this.diverAnchorX : 0),
-        this.formationBaseY + (isDiver ? this.diverAnchorY : 0),
+        this.formationBaseX + (isDiver ? this.reanchor.anchorX : 0),
+        this.formationBaseY + (isDiver ? this.reanchor.anchorY : 0),
         dt,
         config.spacingX,
         config.spacingY,
@@ -1656,12 +1656,8 @@ export class GymFormationScene<
 
     // If a re-anchor fired (now or on an earlier frame), ease every entity
     // from its old position to the live (drifting) slot over a short glide
-    // (AH-0MUL15N63003PUDB). Applied once after the positioning pass so each
-    // entity's live target is read after `applyFormationPosition` set it for
-    // this frame. A no-op when no glide is active.
-    if (reanchorApplied || this.glide.active) {
-      this.glide.update(dt);
-    }
+    // (AH-0MUL15N63003PUDB). The shared controller owns the rule (D2).
+    this.reanchor.afterPositioning(dt, reanchorApplied);
 
     // Shared post-motion edge wrap (AH-0MVKXBWDY008R0YH, parent
     // AH-0MV9G3DZ9003P7P8 AC3): the same seam `PlayScene._moveEnemies` runs,
@@ -1886,44 +1882,27 @@ export class GymFormationScene<
   }
 
   /**
-   * Consumes any pending entity re-anchor requests (GDD §4.1 — E2, Diver)
-   * and re-bases `formationBaseX`/`formationBaseY` so the requesting entity's
-   * slot lands on its attack-end position. Every other entity shifts by the
-   * same delta, preserving the grid's relative offsets. The most recent
-   * request wins when Divers are desynchronised (documented assumption).
+   * Consumes any pending entity re-anchor requests (GDD §4.1 — E2, Diver) and
+   * re-bases the Diver-group anchor so the requesting entity's slot lands on
+   * its attack-end position. The rule is the shared
+   * `FormationReanchorController` (D2, docs/GYM_PARITY.md), so this scene, the
+   * game and `GymLevel` cannot drift. Every other enemy stays where it is
+   * (producer review, AH-0MUL15N63003PUDB).
    *
    * @returns `true` if a re-anchor was applied (and the glide was begun),
    *   `false` otherwise.
    */
   private _applyFormationReanchor(): boolean {
-    let latest: FormationReanchorRequest | null = null;
-    for (const entity of this.entities) {
-      const request = entity.consumeFormationReanchor?.();
-      if (request) latest = request;
-    }
-    if (!latest) return false;
-
-    // Re-anchor the Diver group only: the delta moves the Diver origin so the
-    // requester's slot lands on the attack end. Every other enemy is left
-    // exactly where it is (producer review, AH-0MUL15N63003PUDB) — the shared
-    // formation base is untouched.
-    const { dx, dy } = computeFormationReanchorDelta(
-      latest,
-      this.formationBaseX + this.diverAnchorX,
-      this.formationBaseY + this.diverAnchorY,
-      this.config.spacingX,
-      this.config.spacingY,
-    );
-    this.diverAnchorX += dx;
-    this.diverAnchorY += dy;
-
-    // Only the re-anchor-capable (Diver) entities glide to their new slots;
-    // non-Divers did not move this frame, so they are not tracked.
-    const glideTargets = this.entities.filter(
-      (entity) => entity.consumeFormationReanchor != null,
-    );
-    this.glide.begin(glideTargets);
-    return true;
+    const candidates = this.entities
+      .filter((entity) => entity.consumeFormationReanchor != null)
+      .map((entity) => ({
+        entity: entity as unknown as FormationReanchorCandidate['entity'],
+        originX: this.formationBaseX,
+        originY: this.formationBaseY,
+        spacingX: this.config.spacingX,
+        spacingY: this.config.spacingY,
+      }));
+    return this.reanchor.apply(candidates);
   }
 
   /**
@@ -2113,7 +2092,7 @@ export class GymFormationScene<
     this.bullets.length = 0;
 
     // Drop the glide for dead entities; survivors keep their live positions.
-    this.glide.clear();
+    this.reanchor.clearGlide();
 
     // Keep live survivors in place; tear down only the dead entities.
     for (const entity of this.entities) {
@@ -2160,7 +2139,7 @@ export class GymFormationScene<
 
     // Drop any in-flight glide: its tracked entities are about to be
     // destroyed and recreated at the initial geometry (AH-0MUL15N63003PUDB).
-    this.glide.clear();
+    this.reanchor.clearGlide();
 
     // Tear down the old (dead) entities and recreate the formation at its
     // initial geometry, matching the initial create() path.
