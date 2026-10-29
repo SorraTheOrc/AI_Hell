@@ -50,7 +50,12 @@
  * `PlayScene` runs) and the wave pressure signal are shared, so the bot sees
  * and reacts to minerals, power-ups, weapons, drifting asteroids and the wave
  * clock exactly as it does in the game (AH-0MV4D7LAD009XYR0,
- * AH-0MV9AWR7A0084XJ0).
+ * AH-0MV9AWR7A0084XJ0). The formation (entity) RNG is seeded from the same
+ * level seed the supply and hazard streams use, and is threaded into
+ * `createEnemyFromConfig` exactly as `PlayScene` threads its run RNG, so
+ * per-enemy randomness (wiggle phase, shot roll) is the game's randomness at
+ * the same seed and a launched wave fires on the same cadence
+ * (AH-0MVRMHSKH0066J9B).
  *
  * @module src/scenes/gym/GymBotTuning
  */
@@ -198,6 +203,10 @@ export class GymBotTuning extends GymLevel {
     // hazard schedule is its own stream), so a seed reproduces the asteroid
     // plan as well (AH-0MV9AWR7A0084XJ0).
     this.hazardRng = createSeededRng(this.seed + 1);
+    // Seed the inherited formation (entity) RNG from the same seed so a seed
+    // reproduces per-enemy randomness exactly as a `PlayScene` run at the same
+    // seed does (AH-0MVRMHSKH0066J9B).
+    this.formationRng = createSeededRng(this.seed);
     this.tuningValues = coerceTuningValues(getCurrentBotTuningConfig().values);
     this.completionDwell = 0;
     const level = data?.level ?? generateRandomLevel({ seed: this.seed });
@@ -330,6 +339,9 @@ export class GymBotTuning extends GymLevel {
     // Re-seed the hazard stream for the new level so the asteroid schedule is
     // reproducible from the new seed (AH-0MV9AWR7A0084XJ0).
     this.hazardRng = createSeededRng(this.seed + 1);
+    // Re-seed the formation (entity) RNG for the new level so per-enemy
+    // randomness is reproducible from the new seed (AH-0MVRMHSKH0066J9B).
+    this.formationRng = createSeededRng(this.seed);
     const level = generateRandomLevel({ seed: this.seed });
     this.loadLevel(level);
     this.completionDwell = 0;

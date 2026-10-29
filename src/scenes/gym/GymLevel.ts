@@ -91,6 +91,15 @@ import {
   type SpawnTransitInput,
   type SpawnTransitPoint,
 } from '../core/spawnTransit';
+import {
+  advanceMarch,
+  computeMarchBounds,
+  createMarchState,
+  DEFAULT_MARCH_DROP,
+  DEFAULT_MARCH_STEP,
+  type MarchOptions,
+  type MarchState,
+} from '../core/marchFormation';
 import { Player } from '../../entities/Player';
 import { PlayerBullet } from '../../entities/PlayerBullet';
 import {
@@ -165,7 +174,11 @@ import {
 } from '../core/asteroidHazard';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import type { SpawnEvent } from '../../waves/AsteroidSpawner';
-import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
+import type {
+  LevelDefinition,
+  WaveDefinition,
+  WaveGroup,
+} from '../../waves/Formations';
 import {
   applySceneSetup,
   DEFAULT_GYM_LEVEL_WEAPONS,
@@ -253,12 +266,25 @@ export interface GymLevelBullet {
   elapsed: number;
 }
 
-/** Per-enemy spawn metadata needed to reposition it each frame. */
+/**
+ * Per-enemy spawn metadata needed to reposition it each frame.
+ *
+ * `march` marks a member of the wave's shared march block (Space Invaders
+ * archetype): such enemies are positioned from the live march state instead of
+ * the global continuous drift, exactly as `PlayScene` positions them
+ * (AH-0MVRMHSKH0066J9B AC3).
+ */
 export interface LevelSpawn {
   /** The spawned enemy entity. */
   entity: EnemyEntity;
   /** Archetype key, for the shared fire dispatcher. */
   key: string;
+  /**
+   * True when this enemy belongs to the wave's shared march block (Space
+   * Invaders archetype): it is positioned from the live march state instead of
+   * the global continuous drift, exactly as `PlayScene` positions it.
+   */
+  march?: boolean;
   /**
    * True for a scheduled **non-blocking world hazard** spawn (the shared
    * asteroid hazard). Hazards never gate wave completion and persist across
@@ -292,6 +318,20 @@ export interface GymLevelWaveSpawnOptions {
   origin?: PortalPoint;
   /** Live formation drift (px) for this frame, read by the transit target. */
   getDriftX?: () => number;
+  /**
+   * Live shared march-formation state for the active wave (Space Invaders
+   * archetype), or `null` when the wave has no march block. Read every frame
+   * by a march spawn's transit target so it lands on the moving block, exactly
+   * as `PlayScene._spawnEnemy` does (AH-0MVRMHSKH0066J9B AC3).
+   */
+  getMarchState?: () => MarchState | null;
+  /**
+   * The formation RNG threaded into `createEnemyFromConfig`, so per-enemy
+   * randomness (e.g. the Scout's wiggle phase and shot-probability roll) is
+   * the same deterministic stream the game uses at the same seed
+   * (AH-0MVRMHSKH0066J9B). Defaults to the entity factory's `Math.random`.
+   */
+  rng?: () => number;
   /**
    * Campaign level the wave is launched at, used to resolve enemy force
    * fields through the shared pure curve (`enemyForceFieldHits`). The level
@@ -336,6 +376,9 @@ export function spawnWave(
     // (game↔gym parity, epic AH-0MVJ8W4GE007OMNT AC4). A formation gym without
     // campaign context sets the hits directly instead (see GymFodderEnemies).
     const forceFieldHits = enemyForceFieldHits(level, baseConfig);
+    // A march-config archetype rides the wave's shared march block, exactly as
+    // `PlayScene` marks it from `cfg.formationKind === 'march'`.
+    const isMarch = baseConfig.formationKind === 'march';
 
     // Per-group formation spacing/position overrides (WaveGroup, not the
     // archetype config) so a generated wave is spawned exactly as authored.
@@ -353,13 +396,21 @@ export function spawnWave(
         origin?.x ?? x,
         origin?.y ?? y,
         offset,
-        undefined,
+        // The formation RNG, threaded exactly as `PlayScene._spawnEnemy`
+        // threads its run RNG (AH-0MVRMHSKH0066J9B).
+        options.rng,
         forceFieldHits,
       );
+      // Fire hand-off, exactly as `PlayScene._spawnEnemy` does: the wave's
+      // rule flows onto every entity its group spawned (campaign Levels 4+
+      // carry `shootEnabled: true`). `BaseEnemy` defaults to `false`, so
+      // omitting this made every launched wave silently non-threatening.
+      enemy.shootEnabled = wave.shootEnabled;
       scene.add.existing(enemy);
       spawned.push({
         entity: enemy,
         key,
+        march: isMarch,
         startX: group.startX,
         startY: group.startY,
         spacingX: group.spacingX,
@@ -368,16 +419,13 @@ export function spawnWave(
       });
       // Wormhole-entry transit: the destination comes from the shared seam
       // (AH-0MVRMHQC9003VDNN); the level gym owns the launched-formation
-      // base plus its live `driftX` (drift tracked every frame), matching
-      // `PlayScene._spawnEnemy`. GymLevel has not adopted the orbital
-      // `formationSlot` seam yet, so it declares only the autonomous-mover
-      // capability: the shared rule resolves the grid slot exactly as before,
-      // keeping this a behaviour-preserving refactor. The follow-up parity
-      // item (AH-0MVRMHSKH0066J9B) passes the entity itself.
-      const transitEntity: SpawnTransitEntity = {
-        autonomousPositioning: (enemy as { autonomousPositioning?: boolean })
-          .autonomousPositioning,
-      };
+      // base plus its live drift/march base, matching `PlayScene._spawnEnemy`.
+      // The entity itself is passed (not a reduced shape), so an orbital
+      // Phaser's live `formationSlot()` seam stays authoritative and it
+      // transits straight onto its ring instead of a straight grid line
+      // (AH-0MVRMHSKH0066J9B AC1). A march spawn's base is the live march
+      // state (AH-0MVRMHSKH0066J9B AC3).
+      const transitEntity: SpawnTransitEntity = enemy as unknown as SpawnTransitEntity;
       const transitInput = (base: SpawnTransitPoint): SpawnTransitInput => ({
         entity: transitEntity,
         transit: origin !== undefined,
@@ -386,10 +434,12 @@ export function spawnWave(
         spacingX: group.spacingX,
         spacingY: group.spacingY,
       });
-      const transitBase = (): SpawnTransitPoint => ({
-        x: group.startX + (options.getDriftX?.() ?? 0),
-        y: group.startY,
-      });
+      const transitBase = (): SpawnTransitPoint => {
+        const marchState = options.getMarchState?.() ?? null;
+        return isMarch && marchState
+          ? { x: marchState.x, y: marchState.y }
+          : { x: group.startX + (options.getDriftX?.() ?? 0), y: group.startY };
+      };
       // Resolved once up front so an exempt spawn gets no destination
       // function at all (a destination would pin the entity to its origin).
       const transitTarget = resolveSpawnTransitTarget(
@@ -512,6 +562,15 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     return this.driftX;
   }
 
+  /**
+   * The active wave's shared march-formation state (test/parity seam), or
+   * `null` when the wave has no march block. Mirrors the live state the
+   * position and transit passes consume.
+   */
+  getMarchState(): MarchState | null {
+    return this.marchState ? { ...this.marchState } : null;
+  }
+
   // ── Scheduled asteroid hazard + timed waves (AH-0MV9AWR7A0084XJ0) ──
   //
   // The shipped game plays a random offscreen asteroid hazard inside a timed
@@ -563,6 +622,23 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   /** Drift direction (+1 right, −1 left). */
   private driftDir = 1;
   /**
+   * Shared march-formation state for the active wave (Space Invaders
+   * archetype, AH-0MV01EDZS0005R20). `march` archetype enemies are positioned
+   * from this state instead of the global continuous drift, exactly as
+   * `PlayScene` positions them. `null` when the wave has no march block.
+   */
+  private marchState: MarchState | null = null;
+  /** Resolved march tuning for the active wave (null when no march block). */
+  private marchOptions: MarchOptions | null = null;
+  /**
+   * RNG for spawned entities (per-enemy formation/scatter randomness),
+   * threaded into `createEnemyFromConfig` the same way `PlayScene` threads
+   * its run RNG so per-enemy randomness in the gym is the game's randomness
+   * (AH-0MVRMHSKH0066J9B AC2). Defaults to `Math.random`; a capture setup
+   * seed (and `GymBotTuning`'s level seed) replace it with a seeded stream.
+   */
+  protected formationRng: () => number = () => Math.random();
+  /**
    * Loadout/power-up state from a capture setup (AH-0MVNW8VNN004FFK1).
    * `null` ⇒ no setup, so `create()` applies the historical spread+dual
    * default (unchanged behaviour).
@@ -610,6 +686,10 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     if (seed !== null) {
       this.supplyRng = createSeededRng(seed);
       this.hazardRng = createSeededRng(seed + 1);
+      // The formation (entity) RNG is the same stream the game seeds from the
+      // run seed, so per-enemy randomness reproduces the game's at the same
+      // seed (AH-0MVRMHSKH0066J9B).
+      this.formationRng = createSeededRng(seed);
     }
 
     const level = data?.level;
@@ -760,6 +840,11 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       `${this.label} — Wave ${this.currentWaveIndex + 1}/${this.wavesToPlay.length}`,
     );
 
+    // Reset the shared march block for this wave, exactly where `PlayScene`
+    // resets it (per wave, never per enemy). A launched march wave then steps,
+    // reverses and drops as the game's block does (AH-0MVRMHSKH0066J9B AC3).
+    this._resetMarchFormation(wave.groups);
+
     // The wave enters through a wormhole exactly as it does in the game
     // (AH-0MV8BSMXC0097KLW, gym↔game parity): the portal opens at the centre
     // of the wave's formation (gyms have no ship to avoid, so the shared
@@ -774,6 +859,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       ...spawnWave(this, wave, this.spawned, {
         origin: portal ?? undefined,
         getDriftX: () => this.driftX,
+        getMarchState: () => this.marchState,
+        rng: this.formationRng,
         // The launched campaign level drives the shared force-field curve.
         level: this.levelNumber,
       }),
@@ -792,6 +879,53 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     // shared spawn sound once per wave). Without this the launched level is
     // silent on entry — the second half of the producer audit.
     playSpawnSound();
+  }
+
+  /**
+   * Initialises (or clears) the shared march-formation state for a wave
+   * (Space Invaders archetype, AH-0MV01EDZS0005R20), mirroring
+   * `PlayScene._resetMarchFormation` so the game and the level gym cannot
+   * diverge on the block's origin, bounds or cadence.
+   *
+   * A wave may contain at most one march block — the block is a single rigid
+   * body, so it marches as one unit. The block's arena-edge bounds are derived
+   * from its widest column and the group spacing, exactly as the game derives
+   * them; the cadence/step/drop come from the archetype config. A wave with no
+   * march spawns clears the state and keeps the legacy continuous drift.
+   *
+   * Called once per wave from {@link _spawnCurrentWave}, never per enemy: the
+   * shared pure policy ({@link advanceMarch}) owns the motion in
+   * {@link _moveEnemies}.
+   */
+  private _resetMarchFormation(groups: readonly WaveGroup[]): void {
+    const marchGroups = groups.filter(
+      (group) => loadEnemyConfig(group.enemyKey).formationKind === 'march',
+    );
+    const marchOffsets = marchGroups.flatMap((group) =>
+      getFormationBuilder(group.formation)(group.count),
+    );
+    if (marchOffsets.length === 0) {
+      this.marchState = null;
+      this.marchOptions = null;
+      return;
+    }
+
+    const first = marchGroups[0];
+    const cfg = loadEnemyConfig(first.enemyKey);
+    const maxAbsCol = marchOffsets.reduce(
+      (max, offset) => Math.max(max, Math.abs(offset.col)),
+      0,
+    );
+    const bounds = computeMarchBounds(maxAbsCol * first.spacingX, GAME_WIDTH);
+    this.marchState = createMarchState(first.startX, first.startY, 1);
+    this.marchOptions = {
+      step: cfg.marchStep ?? DEFAULT_MARCH_STEP,
+      drop: cfg.marchDrop ?? DEFAULT_MARCH_DROP,
+      referenceSpeed: cfg.driftSpeed,
+      minX: bounds.minX,
+      maxX: bounds.maxX,
+      initialCount: marchOffsets.length,
+    };
   }
 
   /**
@@ -983,6 +1117,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.levelComplete = false;
     this.driftX = 0;
     this.driftDir = 1;
+    this.marchState = null;
+    this.marchOptions = null;
     this.globalWaveIndex = 0;
     this.hideWaveTimeout();
     this.asteroidHazard.reset();
@@ -1257,6 +1393,23 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       this.driftDir = 1;
     }
 
+    // Advance the shared march block for this wave (Space Invaders archetype,
+    // AH-0MV01EDZS0005R20): the same pure step/reverse/drop/speed-up policy the
+    // game runs, with the cadence scaled by the block's live alive count.
+    if (this.marchState && this.marchOptions) {
+      const alive = this.spawned.reduce(
+        (count, spawn) =>
+          count + (spawn.march && spawn.entity.alive ? 1 : 0),
+        0,
+      );
+      this.marchState = advanceMarch(
+        this.marchState,
+        dt,
+        alive,
+        this.marchOptions,
+      );
+    }
+
     // Live mineral-seek: push the scene's live mineral field so roaming
     // seekers (Harvester) steer toward the nearest live mineral — parity with
     // PlayScene._moveEnemies, which passes its live field. The previous empty
@@ -1288,8 +1441,13 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
       }
 
       entity.applyFormationPosition(
-        spawn.startX + this.driftX,
-        spawn.startY,
+        // March-block enemies are positioned from the shared march state (which
+        // already carries the drop); every other enemy keeps the global drift —
+        // the same selection `PlayScene._moveEnemies` makes.
+        spawn.march && this.marchState
+          ? this.marchState.x
+          : spawn.startX + this.driftX,
+        spawn.march && this.marchState ? this.marchState.y : spawn.startY,
         dt,
         spawn.spacingX,
         spawn.spacingY,
@@ -1478,6 +1636,8 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.levelComplete = false;
     this.driftX = 0;
     this.driftDir = 1;
+    this.marchState = null;
+    this.marchOptions = null;
     this.globalWaveIndex = 0;
     this.asteroidHazard.reset();
     // Supply layer state.

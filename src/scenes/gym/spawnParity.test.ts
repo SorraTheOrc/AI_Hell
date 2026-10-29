@@ -24,19 +24,20 @@
  *
  * ## Red-before / green-after (repo convention)
  *
- * Every assertion in this file **fails on the pre-fix HEAD** and is written as
- * Vitest `it.fails(...)` — the repo's red-before/green-after convention (cf.
+ * Every assertion in this file **failed on the pre-fix HEAD** and was written
+ * as Vitest `it.fails(...)` — the repo's red-before/green-after convention (cf.
  * the header of `levelParity.test.ts` and the "per-level kill-drop chance"
  * precedent in `PlayScene.test.ts`, AH-0MVLJF4DI000BKMQ). The red state is
- * recorded in this item's comment with the exact failing output; the sibling
- * fix items flip these markers to plain `it`:
+ * recorded in AH-0MVRMHJZS001Z6CX's comment with the exact failing output;
+ * the fix items have now flipped every marker to a plain `it`, so a regression
+ * fails loudly:
  *
  * - shared transit seam: AH-0MVRMHQC9003VDNN
- * - `GymLevel` / `GymBotTuning` behaviour fix: AH-0MVRMHSKH0066J9B
+ * - `GymLevel` / `GymBotTuning` behaviour fix: AH-0MVRMHSKH0066J9B (this item)
  *
- * `it.fails` keeps the *rest* of the suite green while the red-before
- * assertions exist (AC5) and makes an unexpected pass fail loudly, so the fix
- * cannot land without flipping the markers.
+ * While the red-before assertions existed, `it.fails` kept the *rest* of the
+ * suite green (AC5) and made an unexpected pass fail loudly, so the fix could
+ * not land without flipping the markers.
  *
  * ## No divergent copy
  *
@@ -351,7 +352,7 @@ interface MarchSample {
 // ── AC1 — orbital spawn transit ─────────────────────────────────────
 
 describe('GymLevel × PlayScene — orbital spawn transit parity (AH-0MVRMHJZS001Z6CX)', () => {
-  it.fails(
+  it(
     'AC1 (red-before) — every frame of the spawn window transits each Phaser to its live formationSlot(), not the grid line',
     async () => {
       const probe = orbitalProbe(6);
@@ -493,7 +494,7 @@ function collectNewBullets<TBullet extends { vx: number; vy: number }>(
 }
 
 describe('GymLevel × PlayScene — launched-wave fire cadence parity (AH-0MVRMHJZS001Z6CX)', () => {
-  it.fails(
+  it(
     'AC2 (red-before) — a wave with shootEnabled: true fires the same bullets at the same ticks and speed in the gym as in the game',
     async () => {
       const probe = firingProbe();
@@ -554,7 +555,7 @@ describe('GymLevel × PlayScene — launched-wave fire cadence parity (AH-0MVRMH
 // ── AC3 — march block ───────────────────────────────────────────────
 
 describe('GymLevel × PlayScene — launched march block parity (AH-0MVRMHJZS001Z6CX)', () => {
-  it.fails(
+  it(
     'AC3 (red-before) — an identical dt sequence produces the identical march base (step, edge reversal and drop) in the gym and the game',
     async () => {
       const probe = marchProbe();
@@ -687,7 +688,7 @@ describe('GymLevel × PlayScene — launched march block parity (AH-0MVRMHJZS001
 // ── AC4 — GymBotTuning (inherits GymLevel) ──────────────────────────
 
 describe('GymBotTuning — inherits the level-gym spawn parity (AH-0MVRMHJZS001Z6CX)', () => {
-  it.fails(
+  it(
     'AC4 (red-before) — the bot-tuning gym transits Phasers to their live formationSlot(), not the grid line',
     async () => {
       const probe = orbitalProbe(6);

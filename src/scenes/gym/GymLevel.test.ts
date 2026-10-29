@@ -16,6 +16,7 @@ import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../../utils/gymNavigation';
 import { GymIndex } from '../GymIndex';
 import { MenuScene } from '../MenuScene';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
+import { LEVELS } from '../../waves/Formations';
 import { sequenceVariedWaves } from './GymCurveSequencer';
 import {
   GYM_LEVEL_DEFAULT_LABEL,
@@ -660,7 +661,6 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
     expect(victim.alive).toBe(true);
 
     // A transiting enemy cannot fire.
-    victim.shootEnabled = true;
     scene.tick(0.1);
     expect(scene.getActiveEnemyBullets()).toHaveLength(0);
 
@@ -676,6 +676,61 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
     scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
     scene.tick(0.016);
     expect(victim.alive).toBe(false);
+  });
+
+  it('hands the wave shootEnabled rule onto every spawned entity, like PlayScene (AH-0MVRMHSKH0066J9B AC2)', async () => {
+    // A firing launch: every enemy carries the wave's `true` rule — the flag
+    // flows from the wave/spawn descriptor, never hand-set by the test (the
+    // old workaround removed by AH-0MVRMHSKH0066J9B).
+    const firing = await bootWave(firingScoutWave(3));
+    for (const enemy of formationEnemies(firing)) {
+      expect(enemy.shootEnabled, 'firing wave hand-off').toBe(true);
+    }
+
+    // A quiet launch (Levels 1–3, GDD §2.4): the same seam propagates the
+    // wave's `false` rule instead of leaving the BaseEnemy default.
+    const quiet = await bootWave(scoutWave(3));
+    for (const enemy of formationEnemies(quiet)) {
+      expect(enemy.shootEnabled, 'quiet wave hand-off').toBe(false);
+    }
+  });
+
+  it('launches a real campaign march level firing and marching, not as a static line (AH-0MVRMHSKH0066J9B AC5)', async () => {
+    // The shipped campaign's march level (Level 6, wave 1: a `march` block of
+    // Invaders plus Scouts, `openFire`). Before this item a launched block
+    // rendered as a static line and its enemies were silently non-threatening;
+    // this pins the end-to-end behaviour the gym exists to preview.
+    const level = LEVELS[5];
+    booted = await bootScene([GymLevel]);
+    booted.game.scene.start('GymLevel', { level });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene('GymLevel') as GymLevel;
+    scene.setAsteroidSpawnerEnabled(false);
+
+    const enemies = formationEnemies(scene);
+    expect(enemies.length).toBeGreaterThan(0);
+    // The firing rule flows from the launched wave definition (Levels 4+).
+    expect(enemies.every((enemy) => enemy.shootEnabled)).toBe(true);
+
+    // The wave's march block is live and rides the shared march policy: its
+    // base steps once per `step / referenceSpeed` second, and the Invaders are
+    // positioned from it rather than from the global drift.
+    const before = scene.getMarchState();
+    expect(before, 'launched march wave has no march block').not.toBeNull();
+    scene.finishSpawnAnimations();
+    for (let frame = 0; frame < 90; frame += 1) scene.tick(1 / 60); // 1.5 s
+    const after = scene.getMarchState()!;
+    expect(
+      after.x !== before!.x || after.y !== before!.y,
+      'the launched march block stepped',
+    ).toBe(true);
+    const invader = enemies.find((enemy) => !enemy.wrapAware);
+    expect(invader, 'the launched wave has no march member').toBeDefined();
+    // The Invader's body sits on the block's live base + its column offset (the
+    // shared body wiggle adds up to ±2 px).
+    expect(
+      Math.abs(invader!.x - (after.x + invader!.offset.col * 26)),
+    ).toBeLessThanOrEqual(3);
   });
 
   it('shimmers each emerging enemy from the shared spawn path, and restores it when growth ends (AH-0MVD2N9MM0007NGZ parity)', async () => {
