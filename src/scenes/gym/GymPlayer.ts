@@ -192,7 +192,12 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
     this._adoptCaptureSetup(data);
 
     // ── Indestructible obstacle course ───────────────────────────────
-    this._spawnObstacles();
+    // Scenario parameter (AH-0MVRMI0Q7001KG4Y): `setup.obstacles: false`
+    // records a clean-flight capture. Absent (or `true`) ⇒ the historical
+    // deterministic course, so setup-less behaviour is unchanged.
+    if (data?.obstacles !== false) {
+      this._spawnObstacles();
+    }
 
     // ── Input keys ─────────────────────────────────────────────────
     // cursor keys (arrows) + WASD via a comma-separated key string,

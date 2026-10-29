@@ -1137,6 +1137,11 @@ setup is validated before boot and forwarded to the scene as its launch data.
 | `powerUps` | `{ id: level }` | all setup-capable gyms | `{}` | power-up id → permanent level |
 | `mineralReward` | hold-full reward id | `GymLevel`, `GymBotTuning` | — (random) | forces the reward a full mineral hold resolves to, instead of the gym's random choice |
 | `bossHitsRemaining` | positive integer | `GymBoss`, `GymMiniBoss` | — (full pool) | hits the spawned boss/mini-boss has left when the scene starts, via the entity's existing `initialHp` seam; bounded by the target's total hit pool (`SCENE_SETUP_BOSS_TOTAL_HITS`: 200 for `GymBoss`, 10 for `GymMiniBoss`) |
+| `shootEnabled` | boolean | `GymBoss`, `GymCentipede`, `GymFodderEnemies`, `GymMinerals`, `GymMiniBoss`, `GymPowerUpsCombat` | `false` (formation family) / `true` (`GymPowerUpsCombat`) | initial state of the HUD SHOOT toggle; every spawned entity inherits it |
+| `obstacles` | boolean | `GymPlayer` | `true` | `false` records a clean-flight capture with no obstacle course |
+| `practiceTargets` | boolean | `GymWeapons` | `true` | `false` omits the inert AOE practice-target tripod |
+| `threatCount` | integer `1`–`12` | `GymPowerUpsCombat` | `3` | size of the scout threat wave (`SCENE_SETUP_SCENARIO_COUNT_BOUNDS.threatCount`) |
+| `minerals` | integer `0`–`200` | `GymPowerUpsUtility` | `40` | size of the seeded demonstration mineral field (`SCENE_SETUP_SCENARIO_COUNT_BOUNDS.minerals`) |
 | `seed` | uint32 | all setup-capable gyms | `0` | determinism seed for content RNGs |
 
 `level` is a `LevelDefinition`-shaped object: `{ level, name, waves[] }` where
@@ -1165,17 +1170,67 @@ remains a no-op. `GymCurveSequencer` has no player and no intrinsic random
 content (its waves are derived deterministically from the curve), so it applies
 the shared seam as a documented no-op and **forwards** the setup (loadout,
 power-up levels and resolved seed) to the `GymLevel` it launches — the recorded
-gameplay is the launched level. Its capture-CLI registry entry is still
-setup-incapable; lifting that is AH-0MVRMI0Q7001KG4Y's registry work.
+gameplay is the launched level. Its registry entry now accepts the common
+fields too (`SCENE_SETUP_INCAPABLE_TARGETS` is empty), so a setup is never
+rejected or silently ignored there.
 
-Per-gym scenario parameters that the shared schema does not express stay fixed
-gym-only scenarios and are recorded with their reason in
-[`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8):
-the `GymPlayer` obstacle course, the `GymWeapons` practice-target gallery, the
-`GymPowerUpsCombat` threat wave and SHOOT toggle, the round-robin drop cadences
-and mineral-hold cadence, and the curve editor's edited curve. Schema expansion
-for those is tracked by AH-0MVRMI0Q7001KG4Y rather than overloading the loadout
-schema.
+**Per-gym scenario parameters (AH-0MVRMI0Q7001KG4Y).** The fields above are the
+whole schema: each gym's scenario knobs that used to be fixed constants are now
+first-class `setup` fields consumed by that scene — the formation-family SHOOT
+toggle (`shootEnabled`, inherited by every spawned entity),
+`GymPowerUpsCombat`'s threat-wave size (`threatCount`), `GymPlayer`'s obstacle
+course (`obstacles`), `GymWeapons`' practice targets (`practiceTargets`) and
+`GymPowerUpsUtility`'s mineral-field size (`minerals`). Because
+`SCENE_SETUP_TARGET_EXTRA_FIELDS` is the whitelist the validator checks, a field
+is only accepted on a target that actually consumes it; everything else is
+rejected with `setup-not-supported`. The round-robin **drop cadence** and the
+leveling gyms' **mineral-hold cadence** stay fixed at the gyms' historical
+values (they are parity/tuning constants, not capture framing), recorded with
+their reason in
+[`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8).
+
+**Every gym is representable in `examples/scenes.json`.** The shipped example
+now carries one scripted entry per gym scene — the seven-beat excitement-curve
+arc first, then a labelled entry for every remaining gym family (including the
+parameterised `GymLevel`/`GymFodderEnemies` and the curve editor).
+
+```json
+{
+  "scenes": [
+    {
+      "target": "GymPowerUpsCombat",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "five-scout wave, firing on, shield 2",
+      "setup": {
+        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "powerUps": { "shield": 2 },
+        "shootEnabled": true,
+        "threatCount": 5,
+        "seed": 8088
+      }
+    },
+    {
+      "target": "GymWeapons",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "weapon showcase, practice targets on",
+      "setup": {
+        "player": { "weapons": ["spread", "dual", "rapid"], "timedWeapons": [] },
+        "practiceTargets": true,
+        "seed": 8091
+      }
+    },
+    {
+      "target": "GymPlayer",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "clean flight, no obstacles",
+      "setup": { "player": { "weapons": ["cannon"], "timedWeapons": [] }, "obstacles": false, "seed": 8086 }
+    }
+  ]
+}
+```
 
 **Determinism.** A `seed` seeds the scene's content RNGs (mineral field, drop
 cadence and random picks), so the same `scenes.json` reproduces the same
@@ -1327,6 +1382,13 @@ arc:
   omit it for the full pool. A non-integer, non-positive or out-of-pool value
   raises `invalid-boss-hits`; the field on any other target raises
   `setup-not-supported`.
+- **Scenario knobs** (`shootEnabled`, `threatCount`, `obstacles`,
+  `practiceTargets`, `minerals`) configure the gym-only training layers listed
+  in the table above. Booleans accept only `true`/`false`
+  (`invalid-setup-type`); counts must be integers inside
+  `SCENE_SETUP_SCENARIO_COUNT_BOUNDS` (`invalid-scenario-count`). Supplying one
+  on a target that does not declare it raises `setup-not-supported`, so an
+  accepted field is always consumed by the scene.
 
 These fields configure state the game already has (permanent weapon grants,
 `initialHp`, the hold-full choice), so they are config-only and dev-gated: the
@@ -1393,12 +1455,15 @@ without a caller-supplied parameter:
 
 `GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
 setup) are **rejected** with `unsupported-target` when no setup is supplied;
-give them a valid `setup` and they become capturable. The registry
-(`WATCHABLE_GYM_SCENE_KEYS` in `scripts/capture-scenes.mjs`) is the **single
-source of truth** shared by the CLI's pre-boot validation and the page-side
-director's `start(key)` guard, and is pinned against the gym files on disk by
-`scripts/capture-scenes.test.ts` — adding or removing a gym scene without
-updating it fails the suite instead of silently drifting.
+give them a valid `setup` and they become capturable. Every gym is therefore
+either **watchable directly** or **watchable with a required launch
+parameter** — the two registries (`WATCHABLE_GYM_SCENE_KEYS` and
+`PARAMETERISED_GYM_SCENE_KEYS` in `scripts/capture-scenes.mjs`) exhaustively
+partition the gyms, with no gym in both and none in neither; the pinning test
+asserts that partition against the gym files on disk. The registry is the
+**single source of truth** shared by the CLI's pre-boot validation and the
+page-side director's `start(key)` guard, so adding or removing a gym scene
+without updating it fails the suite instead of silently drifting.
 
 ### Validation (before anything boots)
 
@@ -1430,6 +1495,7 @@ stderr and exits **1** — it never records a partial or blank video:
 | `invalid-weapon-level` | a `player.weaponLevels` level is not an integer `1`–`5` |
 | `unknown-mineral-reward` | a `mineralReward` is not a hold-full choice reward id |
 | `invalid-boss-hits` | a `bossHitsRemaining` is not a positive integer within the target's hit pool |
+| `invalid-scenario-count` | a `threatCount`/`minerals` value is not an integer within `SCENE_SETUP_SCENARIO_COUNT_BOUNDS` |
 | `invalid-scene-level` | a generated-level `level` is not an integer `1`–`LEVEL_COUNT` |
 | `invalid-scene-field` | a generated-level `minWaves`/`maxCaptureMs` is not a positive integer |
 | `unsupported-scene-field` | a generated-level-only field (`seed`/`level`/`minWaves`/`maxCaptureMs`) is supplied on a gym target |

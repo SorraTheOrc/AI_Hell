@@ -148,7 +148,9 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     const blocks = [...captureDoc.matchAll(/```json\n([\s\S]*?)```/g)].map(
       (match) => match[1],
     );
-    const setupBlock = blocks.find((block) => block.includes('"setup"'));
+    const setupBlock = blocks.find(
+      (block) => block.includes('"setup"') && block.includes('"GymLevel"'),
+    );
     expect(setupBlock).toBeDefined();
     const parsed = parseSceneConfig(JSON.parse(setupBlock as string));
     expect(parsed.length).toBeGreaterThan(0);
@@ -160,14 +162,14 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
   // TEST-FIRST (AH-0MVRMFMJP0070KTS): F4 (AH-0MVRMFRSO004H9JM) replaced the
   // generic showcase example with the seven-beat excitement-curve arc; the
   // marker is back to `it`.
-  it('keeps examples/scenes.json the seven-beat arc and setup-bearing', () => {
+  it('keeps the seven-beat arc as its opening scenes and adds gym-family coverage', () => {
     const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
     const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
-    // The shipped example is the scripted-video arc: seven beats, every one
+    // The shipped example opens with the scripted-video arc: seven beats, each
     // carrying the `setup` that realises it (no generic showcase entries).
-    expect(parsed).toHaveLength(7);
+    expect(parsed.length).toBeGreaterThanOrEqual(8);
     expect(parsed.every((scene) => scene.setup !== undefined)).toBe(true);
-    expect(parsed.map((scene) => scene.target)).toEqual([
+    expect(parsed.slice(0, 7).map((scene) => scene.target)).toEqual([
       'GymLevel',
       'GymLevel',
       'GymLevel',
@@ -176,6 +178,15 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
       'GymLevel',
       'GymBoss',
     ]);
+    // AH-0MVRMI0Q7001KG4Y: the remainder covers every gym scene, parameterised
+    // ones included, so the example is also the copy-paste gym-scenario guide.
+    const covered = new Set(parsed.map((scene) => scene.target));
+    for (const key of [
+      ...WATCHABLE_GYM_SCENE_KEYS,
+      ...PARAMETERISED_GYM_SCENE_KEYS,
+    ]) {
+      expect(covered, `${key} has no example entry`).toContain(key);
+    }
   });
 
   it('documents the generated-level PlayScene target and its fields', () => {
@@ -233,6 +244,7 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     for (const code of [
       'invalid-weapon-level',
       'invalid-boss-hits',
+      'invalid-scenario-count',
       'unknown-mineral-reward',
     ]) {
       expect(captureDoc).toContain(`\`${code}\``);

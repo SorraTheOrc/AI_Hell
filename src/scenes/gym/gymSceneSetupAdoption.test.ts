@@ -37,6 +37,7 @@ import type { Player } from '../../entities/Player';
 import type { SceneSetupState } from '../core/sceneSetup';
 import { GymPlayer } from './GymPlayer';
 import { GymWeapons } from './GymWeapons';
+import { GymFodderEnemies } from './GymFodderEnemies';
 import { GymPowerUpsCombat } from './GymPowerUpsCombat';
 import { GymPowerUpsUtility } from './GymPowerUpsUtility';
 import { GymWeaponLeveling } from './GymWeaponLeveling';
@@ -155,12 +156,18 @@ afterEach(() => {
 });
 
 /**
+ * The launch-data shape the scenario tests use: the shared setup plus the
+ * `GymFodderEnemies` roster selector (which lives outside the loadout schema).
+ */
+type BootSetup = SceneSetupState & { enemy?: string; enemyKey?: string };
+
+/**
  * Boots `SceneClass`, restarts it with `setup` as its launch data (the same
  * path the capture director uses), and returns the settled scene.
  */
 async function bootGym<T extends SetupAwareScene>(
   SceneClass: new () => T,
-  setup?: SceneSetupState,
+  setup?: BootSetup,
 ): Promise<T> {
   booted = await reuse.boot([SceneClass as unknown as typeof Phaser.Scene]);
   const manager = booted.game.scene;
@@ -270,5 +277,80 @@ describe('GymCurveSequencer — setup adoption (AH-0MVRMHYJR000Y9H8)', () => {
 
     expect(first.minerals.length).toBeGreaterThan(0);
     expect(second.minerals).toEqual(first.minerals);
+  });
+});
+
+describe('gym scenario parameters (AH-0MVRMI0Q7001KG4Y)', () => {
+  it('GymPlayer — obstacles:false omits the course, absent keeps it', async () => {
+    const without = await bootGym(GymPlayer, { obstacles: false });
+    expect(without.getObstacles()).toEqual([]);
+
+    const withCourse = await bootGym(GymPlayer, { obstacles: true });
+    const withCourseCount = withCourse.getObstacles().length;
+    expect(withCourseCount).toBeGreaterThan(0);
+
+    // Absent keeps the historical course exactly (no behaviour change).
+    const historical = await bootGym(GymPlayer);
+    expect(historical.getObstacles()).toHaveLength(withCourseCount);
+  });
+
+  it('GymWeapons — practiceTargets:false omits the targets, absent keeps them', async () => {
+    const without = await bootGym(GymWeapons, { practiceTargets: false });
+    expect(without.getTargets()).toEqual([]);
+
+    const withTargets = await bootGym(GymWeapons, { practiceTargets: true });
+    const withTargetsCount = withTargets.getTargets().length;
+    expect(withTargetsCount).toBeGreaterThan(0);
+
+    const historical = await bootGym(GymWeapons);
+    expect(historical.getTargets()).toHaveLength(withTargetsCount);
+  });
+
+  it('GymPowerUpsCombat — applies the SHOOT state and threat-wave size', async () => {
+    const configured = await bootGym(GymPowerUpsCombat, {
+      shootEnabled: false,
+      threatCount: 5,
+    });
+    expect(configured.shootingEnabled).toBe(false);
+    expect(configured.getScouts()).toHaveLength(5);
+    expect(configured.getScouts().every((scout) => scout.shootEnabled === false))
+      .toBe(true);
+
+    // Absent keeps the historical 3-scout, firing-by-default wave.
+    const historical = await bootGym(GymPowerUpsCombat);
+    expect(historical.shootingEnabled).toBe(true);
+    expect(historical.getScouts()).toHaveLength(3);
+  });
+
+  it('GymPowerUpsUtility — applies the seeded mineral-field size', async () => {
+    const empty = await bootGym(GymPowerUpsUtility, { minerals: 0 });
+    expect(empty.getMinerals()).toEqual([]);
+
+    const configured = await bootGym(GymPowerUpsUtility, { minerals: 12 });
+    expect(configured.getMinerals()).toHaveLength(12);
+
+    const historical = await bootGym(GymPowerUpsUtility);
+    expect(historical.getMinerals().length).toBeGreaterThan(12);
+  });
+
+  it('formation gyms — applies the initial SHOOT state to HUD and entities', async () => {
+    // A config-driven formation enemy (Scout) honours `shootEnabled`; the
+    // Centipede deliberately ignores writes (it never fires), so it is not a
+    // valid probe for this scenario parameter (AH-0MVRMI0Q7001KG4Y).
+    const on = await bootGym(GymFodderEnemies, {
+      enemy: 'scout',
+      shootEnabled: true,
+    });
+    expect(on.shootingEnabled).toBe(true);
+    const states = on.getEntityShootingStates();
+    expect(states.length).toBeGreaterThan(0);
+    expect(states.every((state) => state === true)).toBe(true);
+
+    // Absent keeps the historical OFF start for the formation family.
+    const historical = await bootGym(GymFodderEnemies, { enemy: 'scout' });
+    expect(historical.shootingEnabled).toBe(false);
+    expect(
+      historical.getEntityShootingStates().every((state) => state === false),
+    ).toBe(true);
   });
 });

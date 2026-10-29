@@ -134,6 +134,12 @@ export const SCENE_CONFIG_ERROR_CODES = Object.freeze({
   invalidSceneField: 'invalid-scene-field',
   /** A generated-level-only field is supplied on a gym target. */
   unsupportedSceneField: 'unsupported-scene-field',
+  /**
+   * A scenario count (`setup.threatCount`, `setup.minerals`) is not an
+   * integer within its documented bounds
+   * ({@link SCENE_SETUP_SCENARIO_COUNT_BOUNDS}).
+   */
+  invalidScenarioCount: 'invalid-scenario-count',
 });
 
 const CODE = SCENE_CONFIG_ERROR_CODES;
@@ -372,6 +378,24 @@ export const SCENE_SETUP_BOSS_TOTAL_HITS = Object.freeze({
 });
 
 /**
+ * Inclusive bounds for the per-gym scenario counts a capture setup may supply
+ * (AH-0MVRMI0Q7001KG4Y).
+ *
+ * - `threatCount` (`GymPowerUpsCombat`) — the scout threat wave size:
+ *   at least one threat (the gym exists to demonstrate threat responses) and
+ *   at most 12 so the V-formation stays inside the arena.
+ * - `minerals` (`GymPowerUpsUtility`) — the seeded mineral field size: `0` is
+ *   allowed (an empty field is a valid demonstration) and at most 200 so the
+ *   capture stays readable and bounded.
+ *
+ * The bounds are schema values, pinned by `scripts/capture-scenes.test.ts`.
+ */
+export const SCENE_SETUP_SCENARIO_COUNT_BOUNDS = Object.freeze({
+  threatCount: Object.freeze({ min: 1, max: 12 }),
+  minerals: Object.freeze({ min: 0, max: 200 }),
+});
+
+/**
  * Setup fields every setup-capable scene can consume: a player loadout, power-up
  * levels and a determinism seed.
  */
@@ -392,19 +416,38 @@ export const SCENE_SETUP_TARGET_EXTRA_FIELDS = Object.freeze({
   // they can force which reward that resolution grants (AH-0MVRMFOB4002LMZS).
   GymLevel: Object.freeze(['level', 'startWave', 'mineralReward']),
   GymBotTuning: Object.freeze(['level', 'startWave', 'mineralReward']),
-  GymFodderEnemies: Object.freeze(['enemy']),
+  GymFodderEnemies: Object.freeze(['enemy', 'shootEnabled']),
   // Only the boss-capable gyms host an entity with the `initialHp` seam, so
   // only they may preview a boss close to death (AH-0MVRMFPXF008BG77).
-  GymBoss: Object.freeze(['bossHitsRemaining']),
-  GymMiniBoss: Object.freeze(['bossHitsRemaining']),
+  GymBoss: Object.freeze(['bossHitsRemaining', 'shootEnabled']),
+  GymMiniBoss: Object.freeze(['bossHitsRemaining', 'shootEnabled']),
+  // Formation-family gyms expose the HUD SHOOT toggle as their scenario
+  // parameter (it is ON/OFF, not a wave payload): the flag sets the initial
+  // state, and every spawned entity inherits it (AH-0MVRMI0Q7001KG4Y).
+  GymCentipede: Object.freeze(['shootEnabled']),
+  GymMinerals: Object.freeze(['shootEnabled']),
+  // The combat power-up gym owns both its SHOOT toggle and the size of the
+  // scout threat wave that makes the defensive power-ups meaningful.
+  GymPowerUpsCombat: Object.freeze(['shootEnabled', 'threatCount']),
+  // The player gym's obstacle course is an optional scenario layer.
+  GymPlayer: Object.freeze(['obstacles']),
+  // The weapon gym's inert AOE practice targets are an optional layer, and
+  // the utility gym's demonstration mineral field is sized per capture.
+  GymWeapons: Object.freeze(['practiceTargets']),
+  GymPowerUpsUtility: Object.freeze(['minerals']),
 });
 
 /**
- * Watchable gym scenes that cannot consume a `setup` at all (no player, no
- * wave content — e.g. the curve sequencer is an editor). A setup on one of
- * these is rejected rather than silently ignored.
+ * Watchable gym scenes that cannot consume a `setup` at all.
+ *
+ * **Empty since AH-0MVRMI0Q7001KG4Y.** `GymCurveSequencer` used to be listed
+ * here; the editor consumes the shared `applySceneSetup`/`resolveSetupSeed`
+ * seam (as a documented no-op where it has no player) and forwards the setup
+ * to the `GymLevel` it launches, so the common loadout/power-up/seed fields are
+ * accepted rather than rejected. The export is kept (empty, frozen) so the
+ * registry contract and its consumers do not change shape.
  */
-export const SCENE_SETUP_INCAPABLE_TARGETS = Object.freeze(['GymCurveSequencer']);
+export const SCENE_SETUP_INCAPABLE_TARGETS = Object.freeze([]);
 
 /** Every setup field name (used to distinguish unknown vs unsupported). */
 const SETUP_ALL_FIELDS = Object.freeze([
@@ -416,6 +459,11 @@ const SETUP_ALL_FIELDS = Object.freeze([
   'seed',
   'mineralReward',
   'bossHitsRemaining',
+  'shootEnabled',
+  'obstacles',
+  'practiceTargets',
+  'threatCount',
+  'minerals',
 ]);
 
 /** Whether `value` is any known scene key (watchable or parameterised). */
@@ -787,6 +835,27 @@ function validateSetupPowerUps(powerUps, at) {
   }
 }
 
+/**
+ * Validates a per-gym scenario count (`setup.threatCount` / `setup.minerals`)
+ * against its inclusive bounds
+ * ({@link SCENE_SETUP_SCENARIO_COUNT_BOUNDS}).
+ */
+function validateSetupScenarioCount(value, field, at) {
+  const bounds = SCENE_SETUP_SCENARIO_COUNT_BOUNDS[field];
+  if (
+    typeof value !== 'number'
+    || !Number.isInteger(value)
+    || value < bounds.min
+    || value > bounds.max
+  ) {
+    throw new SceneConfigError(
+      CODE.invalidScenarioCount,
+      `${at} must be an integer ${bounds.min}-${bounds.max} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
 /** Validates a `setup.seed` (32-bit unsigned integer). */
 function validateSetupSeed(seed, at) {
   if (
@@ -876,6 +945,21 @@ export function validateSceneSetup(rawSetup, target, at = 'setup') {
       `${at}.bossHitsRemaining`,
       target,
     );
+  }
+  // Scenario parameters (AH-0MVRMI0Q7001KG4Y): booleans and bounded counts a
+  // gym consumes directly (its SHOOT toggle, optional scenario layers, threat
+  // wave size, demonstration mineral field). A target that does not declare
+  // the field is rejected earlier by `rejectUnknownFields`, so an accepted
+  // field is always consumed by the scene.
+  for (const field of ['shootEnabled', 'obstacles', 'practiceTargets']) {
+    if (rawSetup[field] !== undefined) {
+      requireSetupBoolean(rawSetup[field], `${at}.${field}`);
+    }
+  }
+  for (const field of ['threatCount', 'minerals']) {
+    if (rawSetup[field] !== undefined) {
+      validateSetupScenarioCount(rawSetup[field], field, `${at}.${field}`);
+    }
   }
 
   // Required launch parameters are checked **last**, so a setup that also
@@ -985,6 +1069,19 @@ export function normaliseSceneSetup(rawSetup = {}, target) {
   }
   if (include('bossHitsRemaining') && setup.bossHitsRemaining !== undefined) {
     normalised.bossHitsRemaining = setup.bossHitsRemaining;
+  }
+  // Scenario parameters are only emitted when supplied: their defaults live in
+  // the scenes (the historical gym behaviour), so an omitted field keeps the
+  // pre-change scene configuration exactly (AH-0MVRMI0Q7001KG4Y).
+  for (const field of ['shootEnabled', 'obstacles', 'practiceTargets']) {
+    if (include(field) && setup[field] !== undefined) {
+      normalised[field] = setup[field];
+    }
+  }
+  for (const field of ['threatCount', 'minerals']) {
+    if (include(field) && setup[field] !== undefined) {
+      normalised[field] = setup[field];
+    }
   }
   if (include('seed')) {
     normalised.seed = setup.seed === undefined ? DEFAULT_SCENE_SETUP_SEED : setup.seed;

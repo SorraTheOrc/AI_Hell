@@ -71,7 +71,7 @@ column). No other verdict is accepted by the guard.
 | `GymBoss` | `GymFormationScene` (`src/scenes/gym/GymBoss.ts:149`) | `Boss` (all four phases), phase minions via shared `planMinionSpawns`, shared `fireForEnemy` dispatcher | Boss in place (matches `PlayScene.spawnBoss`); minions in place through the shared transit exemption (`transit:false` `:287`) + `startSpawnAnimation` (`:295`) | yes — inherits `CombatScene`/`CombatCoreScene`; Boss advances through the shared `_advanceBoss` hook | `parity` | **D1 closed by AH-0MVRMHWNC002H4B5** — the per-phase hit pool is `scaledEncounterHp(BOSS_HIT_POINTS_PER_PHASE, playerPowerScore(...))` from the shared `src/core/difficultyScaling.ts`, resolved from the live setup-upgraded player (`src/scenes/gym/GymBoss.ts:115`); pinned by `src/scenes/gym/GymBoss.test.ts` (D1 parity). Intentional: gym-only health bar, DAMAGE and SHOOT controls (`GymBoss.ts:186`), no wave timer (same as the game's boss) |
 | `GymBotTuning` | `GymLevel` (`src/scenes/gym/GymBotTuning.ts:173`) | shared bot brain/governor (`createCompetentBotBrain` `:179`, `getBotInput` `:231`), random generated levels (`generateRandomLevel` `:212`), inherited supply layer, asteroid hazard, wave clock and spawner-delivered content | inherited from `GymLevel` (`src/scenes/gym/GymLevel.ts:359`) | yes — inherited `CombatScene` loop plus the shared bot input seam | `parity` | **D2/D3 closed by AH-0MVRMHWNC002H4B5** (fixed in the inherited `GymLevel`: shared `formationReanchor` controller and shared `dynamicSpawnPlan`); pinned by `src/scenes/gym/spawnParity.test.ts` (D2, D3). Intentional: gym-only tuning panel/export and the random-level scenario, no run telemetry |
 | `GymCentipede` | `GymFormationScene` (`src/scenes/gym/GymCentipede.ts:41`) | `Centipede` + shared `CentipedeChain` (`src/scenes/gym/core/centipedeFormation.ts:87`); segments never fire by entity override | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Chain construction matches the game's direct `new Centipede` spawn (`PlayScene.ts:2196`); classic `wrapAware:false` exclusion applied (`centipedeFormation.ts:87`). Segments never fire in the game either (`src/entities/Centipede.ts:170`) |
-| `GymCurveSequencer` | `Phaser.Scene` (`src/scenes/gym/GymCurveSequencer.ts:443`) | none (curve editor UI); launches `GymLevel` with the edited curve/level (`:638`, `:646`) | n/a — no gameplay objects | n/a — not a combat scene | `intentional divergence` | Editor/sequencer UI only; documented scene-setup exclusion (`SCENE_SETUP_INCAPABLE_TARGETS`, `scripts/capture-scenes.mjs:407`) and recorded as the parameterised-launch path for `GymLevel` (`docs/dev/gameplay-capture.md`) |
+| `GymCurveSequencer` | `Phaser.Scene` (`src/scenes/gym/GymCurveSequencer.ts:443`) | none (curve editor UI); launches `GymLevel` with the edited curve/level (`:638`, `:646`) | n/a — no gameplay objects | n/a — not a combat scene | `intentional divergence` | Editor/sequencer UI only; consumes the shared setup seam as a documented no-op and forwards the loadout/seed to the launched `GymLevel` (setup-capable in the capture registry since AH-0MVRMI0Q7001KG4Y), and recorded as the parameterised-launch path for `GymLevel` (`docs/dev/gameplay-capture.md`) |
 | `GymFodderEnemies` | `GymFormationScene` (`src/scenes/gym/GymFodderEnemies.ts:343`) | every non-boss `EnemyConfig` via the shared factory (`:276`, `:916`), shared `fireForEnemy` dispatcher (`:246`), shared asteroid split/mineral layers, centipede option | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Intentional (documented): editor/tuning panel, boss excluded from the dropdown (`src/scenes/gym/GymFodderEnemies.ts:652`) and the wave timeout (`:270`), and force-field sliders set hits directly with no campaign level (`:283`, `:431`) |
 | `GymLevel` | `CombatScene` (`src/scenes/gym/GymLevel.ts:509`) | wave-group enemies via the shared factory + `fireForEnemy`, march block, supply layer (minerals/drops), asteroid hazard, spawner-delivered ghosts/centipede/horde/lane traffic/orbital strikes, shared wave timeout | `spawnWave` → `resolveSpawnTransitTarget` + `startSpawnAnimation` + `WormholeController`; `shootEnabled` hand-off, march and the shared `formationReanchor` controller; dynamic content planned/released through shared `dynamicSpawnPlan` (`src/scenes/gym/GymLevel.ts:946`, `:981`) | yes — `_tickPlayer`, `_handleCollisions`, shared wrap and shared boss hooks | `parity` | **D2/D3 closed by AH-0MVRMHWNC002H4B5** — the Diver group uses the shared `FormationReanchorController` (`src/scenes/core/formationReanchor.ts`) and the per-wave dynamic content uses the shared `dynamicSpawnPlan` planners + `releaseDueSpawns`; pinned by `src/scenes/gym/spawnParity.test.ts` (D2, D3). Intentional: full-hold reward resolves without a modal pause so an autonomous bot keeps playing (`:1144`, `:1312`); mineral field seeded for the demo (`:1176`) |
 | `GymMinerals` | `GymFormationScene` (`src/scenes/gym/GymMinerals.ts:89`) | `Asteroid` (+ shared `splitAsteroid` `:80`), shared mineral kill drops/hold/choice, shared per-kill Extra Life roll | inherited `_spawnFormation` (`GymFormationScene.ts:1790`) | yes — inherited `CombatScene` loop | `parity` | Asteroid construction matches the game's `new Asteroid` hazard spawn (`PlayScene.ts:4738`); intentional: asteroids-only field with 3 seeded rocks (`GymMinerals.ts:69`) and the base class's 100 demonstration minerals (`GymFormationScene.ts:1371`) |
@@ -96,47 +96,53 @@ total), so setup-less gym behaviour is unchanged.
 
 - **Formation family** — `GymFormationScene` and its subclasses (`GymBoss`,
   `GymCentipede`, `GymFodderEnemies`, `GymMinerals`, `GymMiniBoss`) consume
-  `player`, `powerUps` and `seed`; `GymFodderEnemies` also consumes `enemy` and
-  the boss gyms consume `bossHitsRemaining`. Limitation: the enemy roster stays
-  config-driven for formation gyms (`GymFormationScene.init`,
+  `player`, `powerUps`, `seed` and the scenario parameter `shootEnabled` (the
+  HUD SHOOT toggle's initial state, inherited by every spawned entity);
+  `GymFodderEnemies` also consumes `enemy` and the boss gyms consume
+  `bossHitsRemaining`. Limitation: the enemy roster stays config-driven for
+  formation gyms (`GymFormationScene.init`,
   `src/scenes/gym/core/GymFormationScene.ts:693`) — a formation gym has no
   roster selector, so a setup cannot change it.
 - **Level family** — `GymLevel` / `GymBotTuning` consume `player`, `powerUps`,
   `seed`, `level`, `startWave` and `mineralReward`. Limitation: the full-hold
   reward resolves without a modal pause (gym-only, documented in the matrix
   above).
-- **`GymPlayer`** — consumes `player`, `powerUps`, `seed`. Limitation: the
-  obstacle course is a fixed gym-only training scenario (`OBSTACLE_LAYOUT`,
-  `src/scenes/gym/GymPlayer.ts:104`); the shared schema has no obstacle field.
-  Tracked for schema expansion by AH-0MVRMI0Q7001KG4Y.
+- **`GymPlayer`** — consumes `player`, `powerUps`, `seed` and `obstacles`
+  (`false` omits the fixed gym-only obstacle course, `OBSTACLE_LAYOUT`,
+  `src/scenes/gym/GymPlayer.ts:104`). The shared collision/auto-fire code is
+  unchanged either way.
 - **`GymWeapons`** — consumes `player`, `powerUps`, `seed` (the seed also makes
-  AOE `'onRandom'` placement reproducible). Limitation: the practice-target
-  gallery and round-robin drop order are fixed gym-only scenarios
-  (`src/scenes/gym/GymWeapons.ts:98`, `:392`). Tracked by AH-0MVRMI0Q7001KG4Y.
-- **`GymPowerUpsCombat`** — consumes `player`, `powerUps`, `seed`. Limitation:
-  the scout threat wave and its SHOOT toggle are fixed gym-only controls
-  (`src/scenes/gym/GymPowerUpsCombat.ts:171`). Tracked by AH-0MVRMI0Q7001KG4Y.
+  AOE `'onRandom'` placement reproducible) and `practiceTargets` (`false` omits
+  the inert AOE practice-target tripod). Limitation: the round-robin drop order
+  is a fixed gym-only scenario (`src/scenes/gym/GymWeapons.ts:98`) — it is the
+  gym's documented divergence, and changing it would remove the demonstration
+  the gym exists for.
+- **`GymPowerUpsCombat`** — consumes `player`, `powerUps`, `seed`,
+  `shootEnabled` and `threatCount` (the scout threat-wave size, schema-bounded
+  to 1–12). Both are composition parameters for the gym-only threats; the
+  threats themselves run the shared factory/projectile seams as before.
 - **`GymPowerUpsUtility`** — consumes `player`, `powerUps`, `seed` (seeds the
-  demonstration mineral field). Limitation: the round-robin drop cadence and
-  the seeded mineral count are fixed gym-only scenarios
-  (`UTILITY_MINERAL_SEED_COUNT`, `src/scenes/gym/GymPowerUpsUtility.ts:85`).
-  Tracked by AH-0MVRMI0Q7001KG4Y.
+  demonstration mineral field) and `minerals` (the seeded field size,
+  schema-bounded to 0–200). Limitation: the round-robin drop cadence stays at
+  the shared shipped interval (`POWER_UP_SPAWN_INTERVAL`) — it is a supply-cadence
+  parity constant, not capture framing.
 - **`GymWeaponLeveling`** — consumes `player`, `powerUps`, `seed` (seeds the
   mineral field). Limitation: the round-robin drop and mineral-hold cadences
-  are fixed gym-only scenarios (`src/scenes/gym/GymWeaponLeveling.ts:145`).
-  Tracked by AH-0MVRMI0Q7001KG4Y.
+  are fixed gym-only scenarios (`src/scenes/gym/GymWeaponLeveling.ts:145`);
+  they stay at the shipped cadence.
 - **`GymPowerUpLeveling`** — consumes `player`, `powerUps`, `seed` (seeds the
   mineral field). Limitation: the round-robin drop and mineral-hold cadences
-  are fixed gym-only scenarios (`src/scenes/gym/GymPowerUpLeveling.ts:185`).
-  Tracked by AH-0MVRMI0Q7001KG4Y.
+  are fixed gym-only scenarios (`src/scenes/gym/GymPowerUpLeveling.ts:185`);
+  they stay at the shipped cadence.
 - **`GymCurveSequencer`** — consumes `player`, `powerUps`, `seed` by
   **forwarding** them to the launched `GymLevel` (`_launchData`,
-  `src/scenes/gym/GymCurveSequencer.ts:702`). Limitation: the editor has no
-  player and no intrinsic content RNG (its waves are derived deterministically
-  from the curve), so `applySceneSetup` is a documented no-op there; the edited
-  curve and launched level/wave are launch parameters, not setup fields. The
-  capture CLI still marks the editor setup-incapable until AH-0MVRMI0Q7001KG4Y
-  updates the registry.
+  `src/scenes/gym/GymCurveSequencer.ts:702`), and is no longer
+  setup-incapable in the capture registry (`SCENE_SETUP_INCAPABLE_TARGETS` is
+  empty). Limitation: the editor has no player and no intrinsic content RNG
+  (its waves are derived deterministically from the curve), so
+  `applySceneSetup` is a documented no-op there; the edited curve and launched
+  level/wave are interactive editor launch parameters, not setup fields, and
+  the recorded editor segment is the editor UI by design.
 
 Adoption is pinned by `src/scenes/gym/gymSceneSetupAdoption.test.ts`: per gym,
 a supplied setup's loadout/levels are live in the first observed frame, a

@@ -286,6 +286,140 @@
         "bossHitsRemaining": 1,
         "seed": 7707
       }
+    },
+    {
+      "target": "GymBotTuning",
+      "playMs": 1500,
+      "captureMs": 6000,
+      "label": "Gym family — bot tuning on a generated level",
+      "setup": {
+        "player": {
+          "weapons": ["spread", "dual"],
+          "timedWeapons": [],
+          "weaponLevels": {}
+        },
+        "powerUps": {},
+        "seed": 8081
+      }
+    },
+    {
+      "target": "GymCentipede",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — centipede chain with firing enabled",
+      "setup": {
+        "player": { "weapons": ["spread", "dual"], "timedWeapons": [] },
+        "powerUps": {},
+        "shootEnabled": true,
+        "seed": 8082
+      }
+    },
+    {
+      "target": "GymCurveSequencer",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — curve editor (setup forwarded to the launched level)",
+      "setup": {
+        "player": { "weapons": ["rapid"], "timedWeapons": [] },
+        "powerUps": { "shield": 2 },
+        "seed": 8083
+      }
+    },
+    {
+      "target": "GymFodderEnemies",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — grunt fodder with firing enabled",
+      "setup": {
+        "enemy": "grunt",
+        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "powerUps": {},
+        "shootEnabled": true,
+        "seed": 8084
+      }
+    },
+    {
+      "target": "GymMinerals",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — asteroid minerals with magnet",
+      "setup": {
+        "player": { "weapons": ["spread"], "timedWeapons": [] },
+        "powerUps": { "magnet": 2 },
+        "shootEnabled": false,
+        "seed": 8085
+      }
+    },
+    {
+      "target": "GymPlayer",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — player control on the obstacle course",
+      "setup": {
+        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "powerUps": {},
+        "obstacles": true,
+        "seed": 8086
+      }
+    },
+    {
+      "target": "GymPowerUpLeveling",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — power-up leveling with speed boost",
+      "setup": {
+        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "powerUps": { "speed_boost": 2 },
+        "seed": 8087
+      }
+    },
+    {
+      "target": "GymPowerUpsCombat",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — combat power-ups against a five-scout wave",
+      "setup": {
+        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "powerUps": { "shield": 2 },
+        "shootEnabled": true,
+        "threatCount": 5,
+        "seed": 8088
+      }
+    },
+    {
+      "target": "GymPowerUpsUtility",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — non-combat power-ups over a 60-mineral field",
+      "setup": {
+        "player": { "weapons": [], "timedWeapons": [] },
+        "powerUps": { "magnet": 2, "mineral_scoop": 2 },
+        "minerals": 60,
+        "seed": 8089
+      }
+    },
+    {
+      "target": "GymWeaponLeveling",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — weapon leveling round-robin",
+      "setup": {
+        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "powerUps": {},
+        "seed": 8090
+      }
+    },
+    {
+      "target": "GymWeapons",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family — weapon showcase against the practice targets",
+      "setup": {
+        "player": { "weapons": ["spread", "dual", "rapid"], "timedWeapons": [] },
+        "powerUps": {},
+        "practiceTargets": true,
+        "seed": 8091
+      }
     }
   ]
 }

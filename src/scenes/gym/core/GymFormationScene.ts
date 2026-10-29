@@ -771,6 +771,20 @@ export class GymFormationScene<
     this.explodeButton.on('pointerdown', () => this.explodeRandom());
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
+    // Scenario parameter (AH-0MVRMI0Q7001KG4Y): a capture setup may start the
+    // formation with firing already on. Applied after the formation spawned so
+    // every entity inherits the state, and after the HUD exists so the label
+    // matches. Absent ⇒ the historical OFF start (no behaviour change).
+    if (typeof this.pendingSetup?.shootEnabled === 'boolean') {
+      this.shootEnabled = this.pendingSetup.shootEnabled;
+      for (const entity of this.entities) {
+        entity.shootEnabled = this.shootEnabled;
+      }
+      this.shootButton.setText(
+        this.shootEnabled ? 'SHOOT: ON' : 'SHOOT: OFF',
+      );
+    }
+
     this.statusText = this.add.text(
       GAME_WIDTH - 10,
       GAME_HEIGHT - 36,
@@ -1182,6 +1196,16 @@ export class GymFormationScene<
   /** Whether firing is currently enabled. */
   get shootingEnabled(): boolean {
     return this.shootEnabled;
+  }
+
+  /**
+   * The live firing flag of every spawned entity, in formation order
+   * (AH-0MVRMI0Q7001KG4Y). Diagnostic seam: a capture setup's `shootEnabled`
+   * scenario parameter must reach the entities, not just the HUD button, so
+   * this exposes what the scene actually applied.
+   */
+  getEntityShootingStates(): boolean[] {
+    return this.entities.map((entity) => entity.shootEnabled);
   }
 
   // `isRespawnCountdownActive` / `getRespawnCountdownRemaining` /

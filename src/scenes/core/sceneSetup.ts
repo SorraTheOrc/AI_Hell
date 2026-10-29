@@ -78,6 +78,37 @@ export interface SceneSetupState {
    */
   bossHitsRemaining?: number;
   /**
+   * Initial state of a formation/combat gym's SHOOT toggle
+   * (AH-0MVRMI0Q7001KG4Y). Consumed by the gyms whose HUD exposes the toggle
+   * (`GymFormationScene` subclasses and `GymPowerUpsCombat`); absent ⇒ the
+   * scene's historical default (OFF for the formation family, ON for the
+   * combat power-up gym).
+   */
+  shootEnabled?: boolean;
+  /**
+   * Whether `GymPlayer` spawns its deterministic obstacle course
+   * (AH-0MVRMI0Q7001KG4Y). Absent or `true` ⇒ the historical course; `false`
+   * ⇒ an empty arena, for a clean-flight capture.
+   */
+  obstacles?: boolean;
+  /**
+   * Whether `GymWeapons` spawns its inert AOE practice targets
+   * (AH-0MVRMI0Q7001KG4Y). Absent or `true` ⇒ the historical tripod; `false`
+   * ⇒ no targets, for a pure weapon-cadence capture.
+   */
+  practiceTargets?: boolean;
+  /**
+   * Size of `GymPowerUpsCombat`'s scout threat wave (AH-0MVRMI0Q7001KG4Y),
+   * bounded by the capture schema to 1–12. Absent ⇒ the historical 3-scout V.
+   */
+  threatCount?: number;
+  /**
+   * Size of `GymPowerUpsUtility`'s seeded mineral field
+   * (AH-0MVRMI0Q7001KG4Y), bounded by the capture schema to 0–200. Absent ⇒
+   * the historical 40-mineral demonstration field.
+   */
+  minerals?: number;
+  /**
    * 32-bit determinism seed (AH-0MVNW90FB003H3KM). When present, the scene
    * seeds its content RNGs from it so the same config reproduces the same
    * enemy placement, minerals and drop cadence.

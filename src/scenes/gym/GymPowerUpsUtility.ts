@@ -188,7 +188,14 @@ export class GymPowerUpsUtility extends CombatCoreScene<
 
     // Mineral field: seeded so the Mineral Scoop runs the same shared
     // attraction + collection pass as the game and the formation gyms (AC5).
-    this.seedMinerals(UTILITY_MINERAL_SEED_COUNT);
+    // Scenario parameter (AH-0MVRMI0Q7001KG4Y): a capture setup may resize
+    // the field (`setup.minerals`, schema-bounded to 0–200); absent ⇒ the
+    // historical 40-mineral demonstration field.
+    this.seedMinerals(
+      typeof data?.minerals === 'number'
+        ? data.minerals
+        : UTILITY_MINERAL_SEED_COUNT,
+    );
 
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).

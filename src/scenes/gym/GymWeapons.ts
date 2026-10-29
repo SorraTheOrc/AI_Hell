@@ -267,7 +267,12 @@ export class GymWeapons extends CombatScene<
     this.spawnTimer = WEAPON_DROP_LIFETIME;
 
     // Inert practice targets so the AOE area effects are visible (F6 AC3).
-    this._spawnPracticeTargets();
+    // Scenario parameter (AH-0MVRMI0Q7001KG4Y): `setup.practiceTargets: false`
+    // omits them for a pure weapon-cadence capture. Absent (or `true`) ⇒ the
+    // historical tripod, so setup-less behaviour is unchanged.
+    if (data?.practiceTargets !== false) {
+      this._spawnPracticeTargets();
+    }
 
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).

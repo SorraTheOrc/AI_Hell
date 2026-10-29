@@ -62,6 +62,9 @@ import {
   SCENE_FADE_PROBE_POINTS,
   SCENE_SETUP_ENEMY_KEYS,
   SCENE_SETUP_FORMATION_KINDS,
+  SCENE_SETUP_COMMON_FIELDS,
+  SCENE_SETUP_SCENARIO_COUNT_BOUNDS,
+  SCENE_SETUP_TARGET_EXTRA_FIELDS,
   SCENE_SETUP_LEVEL_COUNT,
   SCENE_SETUP_POWER_UP_IDS,
   SCENE_SETUP_WEAPON_IDS,
@@ -170,6 +173,39 @@ describe('watchable scene registry', () => {
     expect(
       [...WATCHABLE_GYM_SCENE_KEYS, ...PARAMETERISED_GYM_SCENE_KEYS].sort(),
     ).toEqual(discovered);
+  });
+
+  it('exhaustively partitions the discovered gyms: no gap, no overlap (AC3)', () => {
+    const discovered = readdirSync(resolve(process.cwd(), 'src/scenes/gym'), {
+      withFileTypes: true,
+    })
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          entry.name.endsWith('.ts') &&
+          !entry.name.endsWith('.test.ts'),
+      )
+      .map((entry) => entry.name.replace(/\.ts$/, ''))
+      .sort();
+
+    const watchable = new Set(WATCHABLE_GYM_SCENE_KEYS);
+    const parameterised = new Set(PARAMETERISED_GYM_SCENE_KEYS);
+
+    // Every discovered gym is in exactly one of the two registries: never in
+    // both (the watchable set means "capturable with no parameter"), never
+    // missing from both (a new gym must be classified).
+    for (const key of discovered) {
+      const inWatchable = watchable.has(key);
+      const inParameterised = parameterised.has(key);
+      expect(
+        inWatchable !== inParameterised,
+        `${key} must be in exactly one registry`,
+      ).toBe(true);
+    }
+    expect([...watchable, ...parameterised].sort()).toEqual(discovered);
+    expect(
+      [...watchable].filter((key) => parameterised.has(key)),
+    ).toEqual([]);
   });
 
   it('imports under bare Node, so the director can share it without Vite', () => {
@@ -880,7 +916,6 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
   it.each([
     ['an unknown setup field', { level: validLevel(), nonsense: 1 }, 'GymLevel', ERROR.unknownSetupField],
     ['a setup field the target cannot consume', { startWave: 2 }, 'GymFodderEnemies', ERROR.setupNotSupported],
-    ['a setup on a target that cannot accept one', { player: { weapons: ['spread'] } }, 'GymCurveSequencer', ERROR.setupNotSupported],
     ['a non-object setup', 42, 'GymLevel', ERROR.invalidSetupType],
     ['an unknown enemy key', { level: validLevel({ waves: [{ groups: [{ enemyKey: 'nope', formation: 'v', count: 1, spacingX: 1, spacingY: 1, startX: 1, startY: 1 }], shootEnabled: false }] }) }, 'GymLevel', ERROR.unknownEnemyKey],
     ['an unknown formation kind', { level: validLevel({ waves: [{ groups: [{ enemyKey: 'scout', formation: 'grid', count: 1, spacingX: 1, spacingY: 1, startX: 1, startY: 1 }], shootEnabled: false }] }) }, 'GymLevel', ERROR.unknownFormationKind],
@@ -914,7 +949,12 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
     expect(requiredSceneSetupFieldsFor('GymLevel')).toEqual(['level']);
     expect(requiredSceneSetupFieldsFor('GymFodderEnemies')).toEqual(['enemy']);
     expect(requiredSceneSetupFieldsFor('GymPlayer')).toEqual([]);
-    expect(sceneSetupFieldsFor('GymCurveSequencer')).toEqual([]);
+    // Every gym now consumes the common fields — there is no setup-incapable
+    // gym left (AH-0MVRMI0Q7001KG4Y lifted the curve-editor exclusion).
+    expect([...SCENE_SETUP_COMMON_FIELDS]).toEqual(['player', 'powerUps', 'seed']);
+    expect(sceneSetupFieldsFor('GymCurveSequencer')).toEqual([
+      ...SCENE_SETUP_COMMON_FIELDS,
+    ]);
   });
 
   it('pins the mirrored id registries against the real ones', () => {
@@ -936,6 +976,171 @@ describe('scene setup schema (AH-0MVNW8SY8008U3TA)', () => {
     expect(parseSceneSetup(raw, 'GymLevel')).toEqual(
       normaliseSceneSetup(raw, 'GymLevel'),
     );
+  });
+});
+
+describe('gym scenario parameters (AH-0MVRMI0Q7001KG4Y)', () => {
+  /** The target that owns each scenario field. */
+  const OWNERS: Record<string, string> = {
+    shootEnabled: 'GymPowerUpsCombat',
+    obstacles: 'GymPlayer',
+    practiceTargets: 'GymWeapons',
+    threatCount: 'GymPowerUpsCombat',
+    minerals: 'GymPowerUpsUtility',
+  };
+
+  it('pins the scenario count bounds', () => {
+    expect(SCENE_SETUP_SCENARIO_COUNT_BOUNDS).toEqual({
+      threatCount: { min: 1, max: 12 },
+      minerals: { min: 0, max: 200 },
+    });
+  });
+
+  it('declares every scenario field on the target(s) that consume it', () => {
+    for (const [field, target] of Object.entries(OWNERS)) {
+      expect(sceneSetupFieldsFor(target)).toContain(field);
+    }
+    // `shootEnabled` is shared by the formation family plus the combat gym.
+    for (const target of [
+      'GymBoss',
+      'GymCentipede',
+      'GymFodderEnemies',
+      'GymMinerals',
+      'GymMiniBoss',
+      'GymPowerUpsCombat',
+    ]) {
+      expect(SCENE_SETUP_TARGET_EXTRA_FIELDS[target]).toContain('shootEnabled');
+    }
+  });
+
+  it('accepts each scenario parameter on its owning target', () => {
+    const setups: Record<string, object> = {
+      GymPowerUpsCombat: { shootEnabled: false, threatCount: 5 },
+      GymBoss: { shootEnabled: true },
+      GymCentipede: { shootEnabled: true },
+      GymFodderEnemies: { enemy: 'grunt', shootEnabled: true },
+      GymMinerals: { shootEnabled: true },
+      GymMiniBoss: { shootEnabled: true },
+      GymPlayer: { obstacles: false },
+      GymWeapons: { practiceTargets: false },
+      GymPowerUpsUtility: { minerals: 0 },
+    };
+    for (const [target, setup] of Object.entries(setups)) {
+      expect(() => validateSceneSetup(setup, target)).not.toThrow();
+      const normalised = normaliseSceneSetup(setup, target);
+      for (const key of Object.keys(setup)) {
+        expect(normalised).toHaveProperty(key, (setup as Record<string, unknown>)[key]);
+      }
+      // Idempotent: re-normalising the emitted setup is a no-op.
+      expect(normaliseSceneSetup(normalised, target)).toEqual(normalised);
+    }
+  });
+
+  it('omits scenario fields that were not supplied (historical defaults stay)', () => {
+    for (const target of [
+      'GymPowerUpsCombat',
+      'GymBoss',
+      'GymCentipede',
+      'GymFodderEnemies',
+      'GymMinerals',
+      'GymMiniBoss',
+      'GymPlayer',
+      'GymWeapons',
+      'GymPowerUpsUtility',
+    ]) {
+      const setup = normaliseSceneSetup(
+        target === 'GymFodderEnemies' ? { enemy: 'grunt' } : {},
+        target,
+      );
+      for (const field of Object.keys(OWNERS)) {
+        expect(setup).not.toHaveProperty(field);
+      }
+    }
+  });
+
+  it.each([
+    ['shootEnabled', 'GymPlayer'],
+    ['obstacles', 'GymWeapons'],
+    ['practiceTargets', 'GymPlayer'],
+    ['threatCount', 'GymBoss'],
+    ['minerals', 'GymPlayer'],
+  ])('rejects %s on a target that does not consume it (%s)', (field, target) => {
+    const value = field === 'shootEnabled' || field === 'obstacles'
+      || field === 'practiceTargets'
+      ? true
+      : 2;
+    const error = expectConfigError(
+      () => validateSceneSetup({ [field]: value }, target),
+      ERROR.setupNotSupported,
+    );
+    // Actionable: names the offending field and lists what the target accepts.
+    expect(error.message).toContain(field);
+    expect(error.message).toContain('accepted fields');
+    expect(error.message).toContain('player');
+  });
+
+  it('rejects a launch parameter supplied to a non-parameterised target', () => {
+    for (const [field, value, target] of [
+      ['level', { level: { level: 1, name: 'x', waves: [] } }, 'GymBoss'],
+      ['enemy', 'grunt', 'GymPowerUpsCombat'],
+    ] as const) {
+      const error = expectConfigError(
+        () => validateSceneSetup({ [field]: value }, target),
+        ERROR.setupNotSupported,
+      );
+      expect(error.message).toContain(field);
+      expect(error.message).toContain('accepted fields');
+      // The target's accepted fields are listed, so the fix is obvious.
+      expect(error.message).toContain('seed');
+    }
+  });
+
+  it('rejects a missing launch parameter with an actionable message', () => {
+    for (const [target, field] of [
+      ['GymLevel', 'level'],
+      ['GymFodderEnemies', 'enemy'],
+    ] as const) {
+      const error = expectConfigError(
+        () => validateSceneSetup({ player: {} }, target),
+        ERROR.missingSetupParameter,
+      );
+      expect(error.message).toContain(`${field} is required`);
+      expect(error.message).toContain(target);
+    }
+  });
+
+  it('rejects malformed scenario values with stable codes', () => {
+    for (const [field, value] of [
+      ['shootEnabled', 'yes'],
+      ['obstacles', 1],
+      ['practiceTargets', null],
+    ] as const) {
+      expectConfigError(
+        () => validateSceneSetup({ [field]: value }, OWNERS[field]),
+        ERROR.invalidSetupType,
+      );
+    }
+
+    for (const [field, target, values] of [
+      ['threatCount', 'GymPowerUpsCombat', [0, 13, 1.5, -1, '3']],
+      ['minerals', 'GymPowerUpsUtility', [-1, 201, 2.5, 'many']],
+    ] as const) {
+      for (const value of values) {
+        const error = expectConfigError(
+          () => validateSceneSetup({ [field]: value }, target),
+          ERROR.invalidScenarioCount,
+        );
+        expect(error.message).toContain(field);
+        expect(error.message).toContain('integer');
+      }
+    }
+  });
+
+  it('accepts the boundary values of each scenario count', () => {
+    expect(() => validateSceneSetup({ threatCount: 1 }, 'GymPowerUpsCombat')).not.toThrow();
+    expect(() => validateSceneSetup({ threatCount: 12 }, 'GymPowerUpsCombat')).not.toThrow();
+    expect(() => validateSceneSetup({ minerals: 0 }, 'GymPowerUpsUtility')).not.toThrow();
+    expect(() => validateSceneSetup({ minerals: 200 }, 'GymPowerUpsUtility')).not.toThrow();
   });
 });
 
@@ -1004,11 +1209,14 @@ describe('resolveWatchableSceneEntry — shared CLI/director resolution (AH-0MVN
     ).toMatchObject({ enemy: 'grunt' });
   });
 
-  it('rejects a setup a target cannot consume', () => {
-    expectConfigError(
-      () => resolveWatchableSceneEntry({ target: 'GymCurveSequencer', setup: { player: {} } }),
-      ERROR.setupNotSupported,
-    );
+  it('accepts a setup on the curve-editor gym, forwarding the common fields', () => {
+    const { key, setup } = resolveWatchableSceneEntry({
+      target: 'GymCurveSequencer',
+      setup: { player: { weapons: ['rapid'] }, seed: 5 },
+    });
+    expect(key).toBe('GymCurveSequencer');
+    expect(setup?.player?.weapons).toEqual(['rapid']);
+    expect(setup?.seed).toBe(5);
   });
 
   it('threads the normalised setup through the plan and the --json payload', () => {
@@ -1048,6 +1256,41 @@ describe('examples/scenes.json setup-bearing example (AH-0MVNW91PH000HV2J)', () 
         target: scene.target,
         setup: scene.setup,
       })).not.toThrow();
+    }
+  });
+
+  it('covers every gym scene with a schema-valid, field-complete entry (AC4/AC5)', () => {
+    const parsed = parseSceneConfig(readFileSync(examplePath, 'utf8'));
+
+    // AC4: at least 8 entries, and every discovered gym scene represented.
+    expect(parsed.length).toBeGreaterThanOrEqual(8);
+    const allGymKeys = [
+      ...WATCHABLE_GYM_SCENE_KEYS,
+      ...PARAMETERISED_GYM_SCENE_KEYS,
+    ];
+    const covered = new Set(parsed.map((scene) => scene.target));
+    expect([...allGymKeys].sort()).toEqual([...covered].sort());
+
+    // AC5 (dry run): every entry resolves to a known key, and every field it
+    // carries is accepted by that target — no entry relies on a field the
+    // validator would silently drop.
+    for (const scene of parsed) {
+      const resolved = resolveWatchableSceneEntry({
+        target: scene.target,
+        setup: scene.setup,
+      });
+      expect(resolved.key).toBe(scene.target);
+
+      const accepted = sceneSetupFieldsFor(scene.target);
+      for (const field of Object.keys(scene.setup ?? {})) {
+        expect(
+          accepted,
+          `${scene.target} does not accept setup.${field}`,
+        ).toContain(field);
+      }
+      for (const required of requiredSceneSetupFieldsFor(scene.target)) {
+        expect(scene.setup).toHaveProperty(required);
+      }
     }
   });
 });
@@ -1345,9 +1588,16 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     },
   ];
 
-  /** Parses the shipped `examples/scenes.json` as the arc. */
+  /**
+   * Parses the shipped `examples/scenes.json` and returns the seven-beat arc
+   * prefix. The file also carries one entry per remaining gym family
+   * (AH-0MVRMI0Q7001KG4Y), which the arc contract does not pin.
+   */
   function parseArc(): ArcScene[] {
-    return parseSceneConfig(readFileSync(examplePath, 'utf8')) as unknown as ArcScene[];
+    const parsed = parseSceneConfig(
+      readFileSync(examplePath, 'utf8'),
+    ) as unknown as ArcScene[];
+    return parsed.slice(0, ARC_BEATS.length);
   }
 
   /** Normalises a raw setup for `target`, exposing the arc fields. */

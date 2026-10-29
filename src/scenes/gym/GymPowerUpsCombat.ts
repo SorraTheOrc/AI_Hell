@@ -187,6 +187,12 @@ export class GymPowerUpsCombat extends CombatScene<
   private formationBaseX = COMBAT_START_X;
   private formationBaseY = COMBAT_START_Y;
   private shootEnabled = true;
+  /**
+   * Size of the scout threat wave (AH-0MVRMI0Q7001KG4Y). Defaults to the
+   * historical 3-scout V; a capture setup may resize it (schema-bounded to
+   * 1–12) so a clip can show a denser or sparser threat field.
+   */
+  private threatCount = COMBAT_SCOUT_COUNT;
 
   // Visual feedback
   private shieldBubble: Phaser.GameObjects.Graphics | null = null;
@@ -221,6 +227,16 @@ export class GymPowerUpsCombat extends CombatScene<
     // ⇒ no behaviour change.
     this._adoptCaptureSetup(data);
 
+    // Scenario parameters (AH-0MVRMI0Q7001KG4Y): the SHOOT toggle's initial
+    // state and the threat-wave size. Applied before the formation spawns so
+    // every scout inherits the firing state. Absent ⇒ historical defaults.
+    if (typeof data?.shootEnabled === 'boolean') {
+      this.shootEnabled = data.shootEnabled;
+    }
+    if (typeof data?.threatCount === 'number') {
+      this.threatCount = data.threatCount;
+    }
+
     addBackToIndexButton(this);
     // Shared "Help (?)" button + overlay: lists every drop this gym can
     // spawn, sourced from the shared catalogues (AH-0MUAYB67I002REOZ).
@@ -249,21 +265,26 @@ export class GymPowerUpsCombat extends CombatScene<
     // Spawn the small scout formation.
     this._spawnScoutFormation();
     playSpawnSound();
-    this.shootEnabled = true;
 
     // Small threats = a wave: arm the shared wave-timeout so survivors
     // detonate and the formation refreshes, mirroring the shipped game
     // (AH-0MUNR5LM1004B223).
     this.startWaveTimeout();
 
-    // SHOOT toggle (mirrors GymFormationScene)
-    this.shootButton = this.add.text(10, 10, 'SHOOT: ON', {
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      color: '#00ff00',
-      backgroundColor: '#1a1a1a',
-      padding: { x: 8, y: 4 },
-    });
+    // SHOOT toggle (mirrors GymFormationScene); its initial state is the
+    // setup's scenario parameter when one is supplied (AH-0MVRMI0Q7001KG4Y).
+    this.shootButton = this.add.text(
+      10,
+      10,
+      this.shootEnabled ? 'SHOOT: ON' : 'SHOOT: OFF',
+      {
+        fontFamily: 'monospace',
+        fontSize: '14px',
+        color: '#00ff00',
+        backgroundColor: '#1a1a1a',
+        padding: { x: 8, y: 4 },
+      },
+    );
     this.shootButton.setInteractive({ useHandCursor: true });
     this.shootButton.on('pointerdown', () => this.toggleShooting());
 
@@ -295,6 +316,7 @@ export class GymPowerUpsCombat extends CombatScene<
     this.formationBaseX = COMBAT_START_X;
     this.formationBaseY = COMBAT_START_Y;
     this.shootEnabled = true;
+    this.threatCount = COMBAT_SCOUT_COUNT;
     this.shieldBubble = null;
     this.forceFieldBubble = null;
     this.thornsAura = null;
@@ -429,7 +451,7 @@ export class GymPowerUpsCombat extends CombatScene<
    */
   private _spawnScoutFormation(): void {
     const config = loadEnemyConfig('scout');
-    const offsets = buildVFormationOffsets(COMBAT_SCOUT_COUNT);
+    const offsets = buildVFormationOffsets(this.threatCount);
     for (const offset of offsets) {
       const x = this.formationBaseX + offset.col * COMBAT_SPACING_X;
       const y = this.formationBaseY + offset.row * COMBAT_SPACING_Y;

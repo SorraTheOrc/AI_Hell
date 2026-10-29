@@ -95,6 +95,8 @@ export const SCENE_CONFIG_ERROR_CODES: Readonly<{
   invalidSceneField: 'invalid-scene-field';
   /** A generated-level-only field is supplied on a gym target. */
   unsupportedSceneField: 'unsupported-scene-field';
+  /** A scenario count is not an integer within its documented bounds. */
+  invalidScenarioCount: 'invalid-scenario-count';
 }>;
 
 /** Stable machine-readable error code, as in {@link SCENE_CONFIG_ERROR_CODES}. */
@@ -179,6 +181,27 @@ export interface SceneSetup {
    * its existing `initialHp` seam; the pool itself is unchanged.
    */
   bossHitsRemaining?: number;
+  /**
+   * Initial state of a formation/combat gym's SHOOT toggle
+   * (`GymBoss`, `GymCentipede`, `GymFodderEnemies`, `GymMinerals`,
+   * `GymMiniBoss`, `GymPowerUpsCombat`). Absent ⇒ the scene's historical
+   * default (OFF for the formation family, ON for `GymPowerUpsCombat`).
+   */
+  shootEnabled?: boolean;
+  /** Whether `GymPlayer` spawns its deterministic obstacle course. */
+  obstacles?: boolean;
+  /** Whether `GymWeapons` spawns its inert AOE practice targets. */
+  practiceTargets?: boolean;
+  /**
+   * Size of `GymPowerUpsCombat`'s scout threat wave, bounded by
+   * `SCENE_SETUP_SCENARIO_COUNT_BOUNDS.threatCount` (1–12).
+   */
+  threatCount?: number;
+  /**
+   * Size of `GymPowerUpsUtility`'s seeded mineral field, bounded by
+   * `SCENE_SETUP_SCENARIO_COUNT_BOUNDS.minerals` (0–200).
+   */
+  minerals?: number;
   /** 32-bit unsigned determinism seed (defaults to 0). */
   seed?: number;
 }
@@ -239,6 +262,10 @@ export const SCENE_SETUP_WEAPON_LEVEL_MAX: number;
 export const SCENE_SETUP_MINERAL_REWARD_IDS: readonly string[];
 /** Total hit pool of each boss-capable gym (bounds `setup.bossHitsRemaining`). */
 export const SCENE_SETUP_BOSS_TOTAL_HITS: Readonly<Record<string, number>>;
+/** Inclusive bounds for the per-gym scenario counts (`threatCount`, `minerals`). */
+export const SCENE_SETUP_SCENARIO_COUNT_BOUNDS: Readonly<
+  Record<'threatCount' | 'minerals', Readonly<{ min: number; max: number }>>
+>;
 /** Fields every setup-capable scene can consume. */
 export const SCENE_SETUP_COMMON_FIELDS: readonly string[];
 /** Per-target extra fields (`GymLevel`/`GymBotTuning`/`GymFodderEnemies`/boss gyms). */
