@@ -119,11 +119,17 @@ import {
 } from '../vfx/endOfRunJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
+  CHOICE_POOL,
   randomChoiceStrategy,
   toChoiceOption,
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../powerups/choice';
+import {
+  filterOptionsWithinSlotPool,
+  resolvePlayerSlotState,
+  type PowerUpSlotState,
+} from '../powerups/slots';
 import {
   buildUpgradeOptions,
   initialUnlockState,
@@ -3225,7 +3231,28 @@ export class PlayScene extends CombatScene<
     const unlocks: ChoiceOption[] = lockedWeaponIds(
       this.miniBossUnlockState,
     ).map((weaponId) => toChoiceOption(weaponId as DropId));
-    const options = [...owned, ...unlocks];
+    // Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4). The unlock half is a
+    // base-entry offer built outside `buildChoiceCandidates`, so it must consult
+    // the shared pool itself: at six held kinds a mini-boss unlock of a
+    // brand-new weapon kind would be a seventh slot — the path the producer
+    // reported. Only an unlock for a kind held *temporarily* survives (taking
+    // it makes it permanent without adding a kind); upgrade options name kinds
+    // already held permanently, so they always survive. Below the cap the gate
+    // is inert and the offer is unchanged.
+    const slotState = resolvePlayerSlotState(this.player);
+    const candidates = [...owned, ...unlocks];
+    const admissible = filterOptionsWithinSlotPool(candidates, slotState);
+    // The overlay pauses play, so it must never open with nothing to pick — an
+    // empty offer would stall the run. At a full pool the held kinds themselves
+    // are always admissible (taking one makes a temporarily-held kind
+    // permanent), so fall back to those rather than re-admitting a seventh
+    // kind. Below the cap the unfiltered list is already admissible.
+    const options =
+      admissible.length > 0
+        ? admissible
+        : slotState.isFull
+          ? this._heldKindRewardOptions(slotState)
+          : candidates;
     this.miniBossRewardOptions = options;
     this.miniBossRewardOpen = true;
     this.mineralChoiceOpen = true;
@@ -3254,6 +3281,23 @@ export class PlayScene extends CombatScene<
       });
     }
     return [...this.miniBossRewardOptions];
+  }
+
+  /**
+   * The last-resort mini-boss reward offer: base picks of the kinds already in
+   * the slots.
+   *
+   * Reached only at a full pool when the ordinary offer list is empty (no
+   * permanent holdings to upgrade and no temporarily-held locked weapon to
+   * unlock) — the overlay pauses play, so an empty list would soft-lock the
+   * run. Taking one of these makes a temporarily-held kind permanent, which
+   * adds no new kind, so the cap still holds. `reset` is excluded by
+   * construction through {@link CHOICE_POOL}.
+   */
+  private _heldKindRewardOptions(state: PowerUpSlotState): ChoiceOption[] {
+    return [...state.heldIds]
+      .filter((id) => (CHOICE_POOL as readonly string[]).includes(id))
+      .map((id) => toChoiceOption(id));
   }
 
   /**

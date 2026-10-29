@@ -334,3 +334,25 @@ export function eligibleForSlotPool(
 ): DropId[] {
   return dropIds.filter((dropId) => isWithinSlotPool(dropId, state));
 }
+
+/**
+ * Filters offer objects that carry a drop `id` (choice/reward options) to
+ * those admissible on the shared pool.
+ *
+ * Offer surfaces that do **not** build their list through
+ * `buildChoiceCandidates` must consult this: the mini-boss reward's **unlock**
+ * half offers brand-new weapon kinds (`lockedWeaponIds()`), so without the gate
+ * a single mini-boss unlock could grant a seventh kind and defeat the cap
+ * (parent AH-0MVLIJT3M005HPHF AC4 — the reward must offer only items currently
+ * in the slots). A level-up offer names a kind the player already holds
+ * permanently, so it is always admissible and always survives; below the cap
+ * the filter keeps every offer, so below-cap behaviour is unchanged.
+ *
+ * Never mutates the input list.
+ */
+export function filterOptionsWithinSlotPool<T extends { id: DropId }>(
+  options: readonly T[],
+  state: PowerUpSlotState,
+): T[] {
+  return options.filter((option) => isWithinSlotPool(option.id, state));
+}

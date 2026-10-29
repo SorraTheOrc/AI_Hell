@@ -1075,6 +1075,19 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   permanent pick for a kind held only temporarily (it already owns its slot) and
   the available-when-full entries — never a kind outside the slots, so a seventh
   kind can never be taken. Below the cap the gate is inert.
+- **Every permanent-grant surface is gated, including the mini-boss unlock.**
+  The mini-boss reward (§4.4.4) offers two option families, and only the
+  **upgrade** half is built by `buildChoiceCandidates`. Its **unlock** half — a
+  brand-new weapon kind from the initially-locked pool — is an offer of its own,
+  so it is filtered through the same shared predicate
+  (`filterOptionsWithinSlotPool` in [`src/powerups/slots.ts`](../src/powerups/slots.ts))
+  before the reward opens. At six held kinds an unlock survives only for a kind
+  already in the slots (a locked weapon currently held from a field pickup,
+  taking it makes it permanent); every other unlock is withheld. A full pool
+  therefore cannot be exceeded through a reward screen: the reward offers only
+  what is in the slots, and if that leaves nothing to pick it falls back to base
+  picks of the held kinds (which add no new kind) so the paused overlay can
+  never open empty.
 - **One implementation, observable in the gyms.** The rule lives once in
   [`src/powerups/slots.ts`](../src/powerups/slots.ts). The shared drop draw
   (`drawNextDrop` in [`src/scenes/core/dropLayer.ts`](../src/scenes/core/dropLayer.ts)),
@@ -1204,7 +1217,11 @@ choice (same pause, countdown and `onSelect` contract):
 - **Unlock** — add **one** weapon from the initially-locked pool
   (`src/powerups/unlocks.ts`): at Level 1 exactly **8 of the 16** weapons are
   locked (the five net-new unlock-pool weapons plus Wave Laser, Cluster Missile
-  and Arc), biased toward the newer and later-level picks.
+  and Arc), biased toward the newer and later-level picks. Unlocks obey the
+  six-slot loadout cap (§4.4): at six held kinds only an unlock for a kind
+  already in the slots is offered, so a reward can never add a seventh kind —
+  and if the gated offer would be empty, the reward falls back to base picks of
+  the held kinds rather than opening with nothing to choose.
 
 The chosen option is applied immediately through the shared
 `applyMineralChoiceReward` seam; an unlock is recorded in the run-scoped unlock

@@ -155,6 +155,27 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVLIJT3M005HPH
     expect(choice).toMatch(/tempPowerUpIds/);
   });
 
+  // Producer rejection 2026-10-29 ("we seem able to get 7 slots"): the leak was
+  // the mini-boss reward's unlock half, a base-entry offer that does not come
+  // through `buildChoiceCandidates`. The rule now applies to every offer
+  // surface, and the docs must say so.
+  it('the GDD records that the mini-boss unlock half is gated by the same pool', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/mini-boss/i);
+    expect(section).toContain('filterOptionsWithinSlotPool');
+    expect(section).toMatch(/unlock/i);
+    expect(section).toMatch(/seventh/i);
+    expect(section).toMatch(/falls back to\s+base picks|never open empty/i);
+  });
+
+  it('docs/BALANCING.md records that no reward screen can breach the cap', () => {
+    const section = balancingSection(balancing);
+    expect(section).toContain('filterOptionsWithinSlotPool');
+    expect(section).toMatch(/mini-boss/i);
+    expect(section).toMatch(/unlock/i);
+    expect(section).toMatch(/held\s+kinds/i);
+  });
+
   it('the GDD records the parity note: the game and the gyms consume the same gate', () => {
     const section = slotsSection(gdd);
     expect(section).toContain('src/powerups/slots.ts');

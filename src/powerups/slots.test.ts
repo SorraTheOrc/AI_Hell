@@ -24,11 +24,12 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
+import { POWER_UP_CATALOGUE, type DropId, type PowerUpId } from './types';
 import { PowerUpLevelStore } from './powerUpLevels';
 import { CHOICE_POOL } from './choice';
 import {
   eligibleForSlotPool,
+  filterOptionsWithinSlotPool,
   isWithinSlotPool,
   resolveSlotState,
   type PowerUpSlotState,
@@ -349,5 +350,71 @@ describe('drop eligibility (AC3 below the cap, AC2+AC5 at the cap)', () => {
     expect(eligibleForSlotPool(CHOICE_POOL, first)).toEqual(
       eligibleForSlotPool(CHOICE_POOL, second),
     );
+  });
+});
+
+// ── AC4 — offer surfaces outside buildChoiceCandidates ───────────────
+describe('filterOptionsWithinSlotPool — every offer path obeys the cap (AC4)', () => {
+  /** A minimal offer shape: the drop id is all the gate reads. */
+  const offers = (...ids: DropId[]): Array<{ id: DropId; label: string }> =>
+    ids.map((id) => ({ id, label: id }));
+
+  const idsOf = (list: ReadonlyArray<{ id: DropId }>): DropId[] =>
+    list.map((entry) => entry.id);
+
+  it('drops offers for kinds outside a full pool and keeps held, exempt and slot-exempt kinds', () => {
+    // Six filled slots: shield, bomb, speed_boost, phase_shift, spread, dual.
+    const state = sixFilledSlots();
+
+    const filtered = filterOptionsWithinSlotPool(
+      offers('railgun', 'spread', 'extra_life', 'reset', 'mystery_ufo', 'teleport'),
+      state,
+    );
+
+    // The mini-boss unlock of a brand-new weapon kind (railgun) and a new
+    // power-up kind (teleport) are the seventh-slot paths this gate closes
+    // (parent AH-0MVLIJT3M005HPHF AC4).
+    expect(idsOf(filtered)).toEqual([
+      'spread',
+      'extra_life',
+      'reset',
+      'mystery_ufo',
+    ]);
+  });
+
+  it('keeps an offer for a kind held only temporarily at the cap', () => {
+    // Five permanent kinds plus an active field pickup of `railgun` fill the
+    // pool, so making that kind permanent adds no new kind.
+    const state = resolveSlotState(
+      ownedPowerUps('shield', 'bomb', 'speed_boost', 'phase_shift', 'magnet'),
+      [],
+      [],
+      ['railgun'],
+    );
+    expect(state.isFull).toBe(true);
+
+    expect(idsOf(filterOptionsWithinSlotPool(offers('railgun', 'broadside'), state))).toEqual([
+      'railgun',
+    ]);
+  });
+
+  it('keeps every offer below the cap (below-cap behaviour unchanged, AC3)', () => {
+    const state = resolveSlotState(ownedPowerUps('shield'), ownedWeapons('spread'));
+    expect(state.isFull).toBe(false);
+
+    const all = offers(...CHOICE_POOL);
+    expect(filterOptionsWithinSlotPool(all, state)).toEqual(all);
+  });
+
+  it('never mutates the offer list it filters and returns an empty list for empty input', () => {
+    const state = sixFilledSlots();
+    const input = offers('railgun', 'spread');
+    const snapshot = JSON.stringify(input);
+
+    const filtered = filterOptionsWithinSlotPool(input, state);
+
+    expect(JSON.stringify(input)).toBe(snapshot);
+    expect(filtered).not.toBe(input);
+    expect(filterOptionsWithinSlotPool([], state)).toEqual([]);
   });
 });

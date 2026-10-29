@@ -297,10 +297,18 @@ cap shapes what a run can become.
 - **Same rule in the game and the gyms.** The cap lives once in
   [`src/powerups/slots.ts`](../src/powerups/slots.ts) and is consumed by the
   shared drop draw (`drawNextDrop`, `src/scenes/core/dropLayer.ts`), the shared
-  collection gate (`CombatCoreScene`) and the hold-full choice builder
-  (`buildChoiceCandidates`, `src/powerups/choice.ts`), so `PlayScene` and every
-  gym behave identically (gym↔game parity) and a gym run is a valid place to
-  observe the rule.
+  collection gate (`CombatCoreScene`), the hold-full choice builder
+  (`buildChoiceCandidates`, `src/powerups/choice.ts`) and every other offer
+  surface (`filterOptionsWithinSlotPool` — the mini-boss reward's unlock half),
+  so `PlayScene` and every gym behave identically (gym↔game parity) and a gym
+  run is a valid place to observe the rule.
+- **No reward screen can breach the cap.** The mini-boss reward (§4.4.4) used to
+  offer an unlock of any still-locked weapon, a brand-new kind that bypassed the
+  pool; unlocks now pass through the same eligibility predicate as the drop draw
+  and the choice, so the six slots bound every acquisition path (drop, field
+  pickup, hold-full choice, mini-boss upgrade and mini-boss unlock). A gated
+  reward that would offer nothing falls back to base picks of the held kinds, so
+  the rule can never stall a paused overlay.
 - **Evidence scope.** Existing bot/batch evidence was recorded before the cap,
   so a late-game campaign run now sees a different loadout. Re-running and
   re-recording the bot batches is **out of scope** for the cap work item; it

@@ -7403,6 +7403,104 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(MINI_BOSS_LOCKED_WEAPONS).toContain('railgun');
   });
 
+  // ── Six-slot cap on the reward offer (parent AH-0MVLIJT3M005HPHF AC4) ──
+
+  it('AH-0MVLIJT3M005HPHF AC4 — at six filled slots the reward offers no brand-new weapon unlock', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    // Start from an empty loadout: walking to the mini-boss resolves hold-full
+    // choices, which would otherwise leave an unknown permanent loadout behind.
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+    // Fill all six counted slots: one permanent weapon plus five permanent
+    // power-up kinds, through the player's own run-scoped stores.
+    player.equipWeapon('spread', true);
+    for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift', 'magnet'] as const) {
+      player.collectPowerUp(id, true);
+    }
+
+    killMiniBoss(scene, false);
+
+    const options = scene.getMiniBossRewardOptions();
+    expect(options.length).toBeGreaterThan(0);
+    // The upgrade half survives — it names kinds already in the slots.
+    expect(
+      options.some((option) => option.kind === 'weapon-level' && option.id === 'spread'),
+    ).toBe(true);
+    // The unlock half is gated: no kind outside the slots can be added, so a
+    // seventh kind can never come from a mini-boss reward (the producer's
+    // "we seem able to get 7 slots" path).
+    expect(options.every((option) => option.kind !== 'weapon')).toBe(true);
+    const held = new Set([
+      'spread',
+      'shield',
+      'bomb',
+      'speed_boost',
+      'phase_shift',
+      'magnet',
+    ]);
+    for (const option of options) {
+      expect(held.has(option.id), `${option.id} is outside the slots`).toBe(true);
+    }
+  });
+
+  it('AH-0MVLIJT3M005HPHF AC4 — a kind held only temporarily can still be made permanent at the cap', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+    player.equipWeapon('spread', true);
+    for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift'] as const) {
+      player.collectPowerUp(id, true);
+    }
+    // The sixth slot is a field pickup of a still-locked weapon, so taking the
+    // unlock adds no new kind — it makes an already-slotted kind permanent.
+    player.equipWeapon('railgun', false);
+
+    killMiniBoss(scene, false);
+
+    const unlockIds = scene
+      .getMiniBossRewardOptions()
+      .filter((option) => option.kind === 'weapon')
+      .map((option) => option.id);
+    expect(unlockIds).toEqual(['railgun']);
+  });
+
+  it('AH-0MVLIJT3M005HPHF AC4 — a full pool never opens an empty reward (no soft-lock)', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    // A run holding six field pickups and nothing permanent: the upgrade half
+    // is empty and no locked weapon is held, so a naive gate would offer zero
+    // options and the paused overlay would never resolve.
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+    for (const id of [
+      'shield',
+      'bomb',
+      'speed_boost',
+      'phase_shift',
+      'teleport',
+      'magnet',
+    ] as const) {
+      player.collectPowerUp(id);
+    }
+
+    killMiniBoss(scene, false);
+
+    const options = scene.getMiniBossRewardOptions();
+    expect(options.length).toBeGreaterThan(0);
+    // The fallback offers only kinds already in the slots (taking one makes it
+    // permanent), never a brand-new kind.
+    expect(options.every((option) => option.kind !== 'weapon')).toBe(true);
+    expect(options.map((option) => option.id)).not.toContain('reset');
+    // And the reward still resolves, so play resumes.
+    expect(scene.selectMiniBossReward(0)).not.toBeNull();
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+  });
+
   it('AC2 — a mini-boss defeat auto-saves the run checkpoint', async () => {
     localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
     const scene = await bootMiniBossCampaign();
