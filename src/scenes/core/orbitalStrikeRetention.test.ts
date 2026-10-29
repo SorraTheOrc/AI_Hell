@@ -33,6 +33,7 @@ import { BaseEnemy, type BaseEnemyConfig } from '../../entities/BaseEnemy';
 import { Player } from '../../entities/Player';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
+import { beatPeriodMs } from '../../utils/beat';
 import type { FormationOffset } from '../../utils/formations';
 import {
   CombatScene,
@@ -79,6 +80,13 @@ class StrikeTarget extends BaseEnemy {
 
   protected _drawBody(): void {
     // No body needed: the retention contract is state, not pixels.
+  }
+}
+
+/** A live asteroid: targetable by every other weapon, never by a strike. */
+class AsteroidTarget extends StrikeTarget {
+  override get archetype(): string {
+    return 'asteroid';
   }
 }
 
@@ -164,6 +172,12 @@ class OrbitalRetentionScene extends CombatScene<
     const enemy = new StrikeTarget(this, x, y);
     this.entities.push(enemy);
     return enemy;
+  }
+  /** Adds a live asteroid-shaped entity to the same field. */
+  addAsteroid(x: number, y: number): AsteroidTarget {
+    const rock = new AsteroidTarget(this, x, y);
+    this.entities.push(rock);
+    return rock;
   }
   /**
    * Runs the shared strike step for `seconds` of frame time (fixed dt), the
@@ -303,5 +317,107 @@ describe('Orbital Strike retention — run reset clears a latched bolt', () => {
     scene.effects.applyCollect('strike');
     scene.runStrikeFrames(1);
     expect(target.hits).toBe(damage);
+  });
+});
+
+describe('Orbital Strike targets the nearest enemy, never an asteroid (AH-0MVU3341U001B40T)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<OrbitalRetentionScene> {
+    booted = await bootScene([OrbitalRetentionScene]);
+    return booted.scene as OrbitalRetentionScene;
+  }
+
+  it('lands on the nearest enemy even when an asteroid is closer to the ship', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 480, y: 270 });
+    const damage = scene.effects.strikeDamage();
+
+    // REGRESSION (producer rejection): the rock is the *nearest* entity, so
+    // the old nearest-entity loop burned the bolt on it.
+    const rock = scene.addAsteroid(player.x + 20, player.y);
+    const enemy = scene.addEnemy(player.x + 180, player.y);
+
+    scene.effects.applyCollect('strike');
+    scene.runStrikeFrames(1);
+
+    expect(enemy.hits).toBe(damage);
+    expect(rock.hits).toBe(0);
+  });
+
+  it('retains the bolt while only asteroids are live, then lands it on the next enemy', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 480, y: 270 });
+    const damage = scene.effects.strikeDamage();
+    const rock = scene.addAsteroid(player.x + 40, player.y);
+
+    scene.effects.applyCollect('strike');
+    // An asteroid-only field is "no enemy": the pickup must not be wasted on
+    // rock, and it must not be consumed either.
+    scene.runStrikeFrames(3);
+    expect(rock.hits).toBe(0);
+
+    const enemy = scene.addEnemy(player.x - 120, player.y);
+    scene.runStrikeFrames(1);
+    expect(enemy.hits).toBe(damage);
+    expect(rock.hits).toBe(0);
+
+    // Still one bolt — the retained bolt never becomes a volley.
+    scene.runStrikeFrames(5);
+    expect(enemy.hits).toBe(damage);
+    expect(rock.hits).toBe(0);
+  });
+});
+
+describe('Orbital Strike cadence is evidence-backed end-to-end (AH-0MVU3341U001B40T)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<OrbitalRetentionScene> {
+    booted = await bootScene([OrbitalRetentionScene]);
+    return booted.scene as OrbitalRetentionScene;
+  }
+
+  it('lands a permanent bolt every 9 beats (~7 s) through the real shared step', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 480, y: 270 });
+    const target = scene.addEnemy(player.x + 120, player.y);
+    const beatSeconds = beatPeriodMs() / 1000; // 0.75 s at the default 80 BPM
+    const expected = 9 * beatSeconds; // 6.75 s — the producer's "approx 7 s"
+
+    // The registry and the shared step agree on the cadence …
+    expect(scene.effects.strikeInterval()).toBeCloseTo(expected, 12);
+
+    scene.effects.applyCollect('strike', true); // hold-full (permanent) reward
+
+    // … and the *observed* bolt-to-bolt gap, measured frame by frame through
+    // the real `_updateOrbitalStrike` → `onOrbitalStrike` path, matches it.
+    const step = 1 / 60;
+    const windows = Math.round((expected * 3 + 0.5) / step);
+    const landings: number[] = [];
+    let previous = target.hits;
+    for (let frame = 0; frame < windows; frame += 1) {
+      scene.runStrikeFrames(step, step);
+      if (target.hits > previous) {
+        previous = target.hits;
+        landings.push((frame + 1) * step);
+      }
+    }
+
+    // The opening bolt lands at once, then one per interval: 4 bolts in ~20 s.
+    expect(landings).toHaveLength(4);
+    const gaps = landings.slice(1).map((at, i) => at - landings[i]);
+    for (const gap of gaps) {
+      expect(Math.abs(gap - expected)).toBeLessThanOrEqual(step + 1e-9);
+    }
   });
 });

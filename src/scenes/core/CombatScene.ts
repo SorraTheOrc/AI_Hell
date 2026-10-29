@@ -53,6 +53,7 @@ import type { PlayerBullet } from '../../entities/PlayerBullet';
 import { resolveBulletVsBulletImpact, spawnBulletImpact } from '../../vfx/bulletImpact';
 import { spawnMortarBurst, spawnNovaRing, spawnArcChain, type ArcChainPoint } from '../../vfx/aoeEffect';
 import { spawnOrbitalStrike } from '../../vfx/orbitalStrike';
+import { selectOrbitalStrikeTarget } from './strikeTargeting';
 import { isPointNearSegment, selectAoETargets, selectChainTargets, selectRandomPoint } from '../../utils/aoe';
 import type { AoEDescriptor, WeaponDefinition, WeaponId } from '../../utils/weapons';
 import { spawnPlayerDeathJuice } from '../../vfx/playerDeathJuice';
@@ -634,6 +635,12 @@ export abstract class CombatScene<
    * orbit, its target reticle, the impact flash and the dedicated strike cue —
    * in place of the generic Smart Bomb nova ring.
    *
+   * The target itself comes from the shared rule
+   * {@link selectOrbitalStrikeTarget} (AH-0MVU3341U001B40T): the nearest live
+   * **non-asteroid** enemy. Asteroids are a non-blocking world hazard, and a
+   * one-hit bolt spent on rock read in play as "it fires on asteroids / does
+   * nothing" (producer rejection of AH-0MVRE6N08001TE4V).
+   *
    * The bolt module owns the look, the cue and their timing (the cue fires on
    * impact), so the game and every gym get identical feedback from this one
    * shared path (gym↔game parity, AH-0MUGZDTFX004RBD1) with no scene-specific
@@ -641,9 +648,10 @@ export abstract class CombatScene<
    * trigger; the bolt's descent is visual only.
    *
    * Returns whether the bolt actually landed (AH-0MVS2T2DJ0069C0Y): `false`
-   * when there is no live player or no live enemy, so the shared core leaves
-   * the bolt latched in the registry and retries it on the next frame
-   * instead of silently wasting the pickup.
+   * when there is no live player or no eligible enemy — a field holding only
+   * asteroids is "no enemy" — so the shared core leaves the bolt latched in
+   * the registry and retries it on the next frame instead of silently wasting
+   * the pickup.
    *
    * @param damage - Level-resolved strike damage (whole hits).
    * @returns True when the bolt was applied to a live enemy.
@@ -651,16 +659,7 @@ export abstract class CombatScene<
   protected override onOrbitalStrike(damage: number): boolean {
     const player = this.getPlayer();
     if (!player) return false;
-    let target: TEnemy | null = null;
-    let best = Number.POSITIVE_INFINITY;
-    for (const enemy of this.getEnemyEntities()) {
-      if (!enemy.alive) continue;
-      const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
-      if (distance < best) {
-        best = distance;
-        target = enemy;
-      }
-    }
+    const target = selectOrbitalStrikeTarget(player, this.getEnemyEntities());
     if (!target) return false;
     spawnOrbitalStrike(this, target.x, target.y, {
       registry: this.aoeEffects,
