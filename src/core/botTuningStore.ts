@@ -30,35 +30,37 @@
 
 import {
   coerceTuningValues,
-  defaultBotTuningValues,
   type BotTuningValues,
 } from '../ai/tuningFields';
 import { bundledBotTuningJson } from './bundledConfig';
+import type { SaveResult } from './configStore';
+import {
+  BOT_TUNING_SCHEMA_VERSION,
+  BOT_TUNING_WRITE_PATH,
+  createBuiltinDefaultBotTuningState,
+  parseBotTuningStateBlob,
+  serialiseBotTuningStateBlob,
+  type BotTuningConfig,
+  type BotTuningState,
+} from './botTuningSchema';
+
+// The persisted shape lives in `botTuningSchema` so the store, the gym and the
+// dev-only write-back middleware share one definition (AH-0MVBJ0DUI009B6AM).
+// Re-exported here because this module is the store's public entry point.
+export {
+  BOT_TUNING_FILE_PATH,
+  BOT_TUNING_SCHEMA_VERSION,
+  BOT_TUNING_WRITE_PATH,
+  DEFAULT_BOT_TUNING_NAME,
+  type BotTuningConfig,
+  type BotTuningState,
+} from './botTuningSchema';
 
 /** localStorage key holding the persisted tuning state. */
 export const BOT_TUNING_STORAGE_KEY = 'ai-hell-bot-tuning';
 
-/** Persisted schema version (bump on a breaking shape change). */
-export const BOT_TUNING_SCHEMA_VERSION = 1;
-
-/** Name of the built-in configuration that always exists. */
-export const DEFAULT_BOT_TUNING_NAME = 'Default';
-
 /** Maximum stored configuration-name length (after normalisation). */
 export const MAX_BOT_TUNING_NAME_LENGTH = 40;
-
-/** A named set of bot-tuning values. */
-export interface BotTuningConfig {
-  readonly name: string;
-  readonly values: BotTuningValues;
-}
-
-/** The whole persisted state: the current selection plus every named config. */
-export interface BotTuningState {
-  readonly version: number;
-  readonly current: string;
-  readonly configs: readonly BotTuningConfig[];
-}
 
 // ── Internals ───────────────────────────────────────────────────────
 
@@ -79,52 +81,6 @@ function storage(): Storage | null {
   }
 }
 
-/** A fresh state containing only the built-in `Default` configuration. */
-function createBuiltinDefaultState(): BotTuningState {
-  return {
-    version: BOT_TUNING_SCHEMA_VERSION,
-    current: DEFAULT_BOT_TUNING_NAME,
-    configs: [
-      { name: DEFAULT_BOT_TUNING_NAME, values: defaultBotTuningValues() },
-    ],
-  };
-}
-
-/**
- * Parses a raw blob into a valid state, or `null` when it is unusable.
- * Never throws. The caller applies the fallback chain.
- */
-function parseStateObject(raw: string | null): BotTuningState | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      parsed === null ||
-      typeof parsed !== 'object' ||
-      (parsed as { version?: unknown }).version !== BOT_TUNING_SCHEMA_VERSION ||
-      !Array.isArray((parsed as { configs?: unknown }).configs)
-    ) {
-      return null;
-    }
-    const configs: BotTuningConfig[] = [];
-    for (const entry of (parsed as { configs: unknown[] }).configs) {
-      if (entry === null || typeof entry !== 'object') continue;
-      const name = (entry as { name?: unknown }).name;
-      if (typeof name !== 'string' || name.trim() === '') continue;
-      configs.push({ name, values: coerceTuningValues((entry as { values?: unknown }).values) });
-    }
-    if (configs.length === 0) return null;
-    const requested = (parsed as { current?: unknown }).current;
-    const current =
-      typeof requested === 'string' && configs.some((c) => c.name === requested)
-        ? requested
-        : configs[0].name;
-    return { version: BOT_TUNING_SCHEMA_VERSION, current, configs };
-  } catch {
-    return null;
-  }
-}
-
 /**
  * The shipped baseline state: the Git-tracked `bot-tuning.json` bundled into
  * every build (AH-0MV9GZD2C005IIU3), parsed through the same corrupt-safe
@@ -133,7 +89,8 @@ function parseStateObject(raw: string | null): BotTuningState | null {
  * or degrades demo behaviour.
  */
 function createDefaultState(): BotTuningState {
-  return parseStateObject(bundledBotTuningJson) ?? createBuiltinDefaultState();
+  return parseBotTuningStateBlob(bundledBotTuningJson) ??
+    createBuiltinDefaultBotTuningState();
 }
 
 /**
@@ -142,7 +99,7 @@ function createDefaultState(): BotTuningState {
  * throws.
  */
 function parseState(raw: string | null): BotTuningState {
-  return parseStateObject(raw) ?? createDefaultState();
+  return parseBotTuningStateBlob(raw) ?? createDefaultState();
 }
 
 /** Persists the state (best-effort; a missing storage is not an error). */
@@ -262,8 +219,67 @@ export function resetBotTuningStore(): void {
  * This is the exact blob {@link parseState} accepts, so the export round-trips
  * through {@link window.localStorage} — the gym's **Export** action hands this
  * to the user, and the recording tools inject it into a fresh page before the
- * game boots so the demo plays the saved tuning.
+ * game boots so the demo plays the saved tuning. The committed baseline file
+ * carries the same bytes plus a trailing newline
+ * (`serialiseBotTuningFile`, see `botTuningSchema`).
  */
 export function serialiseBotTuningState(): string {
-  return JSON.stringify(loadBotTuningState(), null, 2);
+  return serialiseBotTuningStateBlob(loadBotTuningState());
+}
+
+// ── Dev write-back ──────────────────────────────────────────────────
+
+/** True when running under the Vite dev server (write-back available). */
+function isDev(): boolean {
+  return import.meta.env.DEV === true;
+}
+
+/** Reason reported when the write path is unavailable (non-dev builds). */
+const BOT_TUNING_WRITE_UNAVAILABLE =
+  'Bot-tuning writes are unavailable in production builds (read-only baseline).';
+
+/** Reads the middleware's rejection detail, falling back to the HTTP status. */
+async function describeWriteFailure(res: Response): Promise<string> {
+  try {
+    const payload = (await res.json()) as { errors?: unknown };
+    if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+      return payload.errors.map(String).join('; ');
+    }
+  } catch {
+    // Non-JSON error body: fall through to the status description.
+  }
+  return `Write failed with HTTP ${res.status}`;
+}
+
+/**
+ * Persists the current tuning state to the Git-tracked baseline
+ * `src/data/bot-tuning.json` through the dev-only Vite middleware
+ * (AH-0MVBJ0DUI009B6AM).
+ *
+ * This is the gym's **Save to repo** action: it writes exactly the bytes the
+ * **Export** button produces (plus the file's trailing newline) so the next
+ * build and every fresh browser fly the tuned baseline without the manual
+ * Export → overwrite → commit dance. It is an *explicit* action — never a
+ * background sync on every slider move.
+ *
+ * Outside the dev server (a production/static build) there is no write path
+ * at all: the function reports unavailability instead of touching anything,
+ * mirroring `saveShipConfig` / `saveEnemyConfig` in `configStore`.
+ */
+export async function saveBotTuningToRepo(): Promise<SaveResult> {
+  if (!isDev()) return { ok: false, reason: BOT_TUNING_WRITE_UNAVAILABLE };
+  try {
+    const res = await fetch(BOT_TUNING_WRITE_PATH, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: serialiseBotTuningState(),
+    });
+    if (!res.ok) return { ok: false, reason: await describeWriteFailure(res) };
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : 'Write failed',
+    };
+  }
 }

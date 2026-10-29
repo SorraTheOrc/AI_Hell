@@ -818,6 +818,17 @@ and adjust its parameters in real time.
   (AH-0MV9GZD2C005IIU3). Every Git-tracked build therefore ships the tuned
   configurations, so a fresh checkout or a distributed build (e.g. the GitHub
   Pages alpha) flies the same definitions instead of generic factory defaults.
+- **Save to repo (dev server only).** The **Save to repo** button writes the
+  current store state back to the Git-tracked baseline
+  `src/data/bot-tuning.json` through a dev-only Vite middleware
+  (`vite/plugins/botTuningPlugin.ts`, `PUT /api/bot-tuning/src/data/bot-tuning.json`),
+  so refreshing the shipped baseline no longer needs the manual
+  Export → overwrite → commit dance (AH-0MVBJ0DUI009B6AM). It mirrors the CSV
+  write-back precedent: `apply: 'serve'` only, a one-entry allowed-path
+  allowlist, schema validation before any file access, and an atomic
+  temp-file + rename write. Outside the dev server the control is disabled
+  and the store reports the write as unavailable, so a production/static
+  build can never mutate the shipped baseline.
 - **Watch Demo and recordings fly the saved config.** The shipped attract
   demo (`PlayScene` demo mode) reads the same store when it starts — and when
   the demo is re-enabled mid-session — and rebuilds its `BotBrain` /
@@ -837,11 +848,25 @@ baseline (`src/data/bot-tuning.json`) → built-in `Default`. A user who saves a
 configuration locally keeps it locally; every other context sees the shipped
 baseline.
 
-**Refresh workflow (tune → Export → commit):** after tuning in the gym, click
-**Export** (`bot-tuning.json`) and overwrite `src/data/bot-tuning.json` with
-that exact file (the Export output is byte-equivalent to `serialiseBotTuningState()`), then commit. The next build and every fresh machine/browser
-fly the updated baseline. The GitHub Pages alpha is cut from release tags, so a
-baseline committed to `dev` reaches it at the next `dev` → `main` release.
+**Refresh workflow (dev server: Save to repo):** with `npm run dev` running,
+tune in the gym and click **Save to repo**. The button PUTs the current store
+state to the dev-only endpoint (`PUT /api/bot-tuning/src/data/bot-tuning.json`,
+served by `vite/plugins/botTuningPlugin.ts`), which validates the blob against
+the shared schema (`src/core/botTuningSchema.ts`) and atomically rewrites
+`src/data/bot-tuning.json` in the committed format (pretty-printed JSON plus a
+trailing newline). Review the diff and commit it with Git; the next build and
+every fresh machine/browser fly the updated baseline. An invalid blob is
+rejected with a `SaveResult` reason and the committed file stays byte-identical,
+and the write path exists **only** on the dev server (a production/static build
+has no endpoint and the button is disabled).
+
+**Refresh workflow (no dev server: tune → Export → commit):** without a dev
+server (e.g. a static preview), click **Export** (`bot-tuning.json`) and
+overwrite `src/data/bot-tuning.json` with that exact file (the Export output is
+byte-equivalent to `serialiseBotTuningState()`, and the file adds only the
+trailing newline), then commit. Both paths produce the same bytes. The GitHub
+Pages alpha is cut from release tags, so a baseline committed to `dev` reaches
+it at the next `dev` → `main` release.
 
 Keep the file as the single source of the shipped
 baseline — like the committed CSVs — so a stale committed baseline is the only
@@ -856,8 +881,10 @@ The tuning surface is a curated subset of `COMPETENT_BOT_TUNABLES` /
 `BOT_HUMAN_INPUT_TUNABLES`; `tuningFields.ts` reconstructs the nested
 `commitment.*` and `world.*` overrides the brain expects. Tests live in
 `src/ai/tuningFields.test.ts`, `src/core/botTuningStore.test.ts`,
+`src/core/botTuningWriteBack.test.ts`, `vite/plugins/botTuningPlugin.test.ts`,
 `src/utils/randomLevel.test.ts` and `src/scenes/gym/GymBotTuning.test.ts`
-(the latter covers the mineral/drop supply layer end to end).
+(the last covers the write-back affordance and the mineral/drop supply layer
+end to end).
 
 ## References
 

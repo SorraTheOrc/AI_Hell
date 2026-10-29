@@ -554,9 +554,20 @@ The pure `installBotTuningConfig` / `loadBotTuningConfigFile` helpers live in
 
 The bundled `src/data/bot-tuning.json` is the **single source of the shipped
 baseline**, so the *values it contains* are exactly what a fresh browser or a
-distributed build (e.g. the GitHub Pages alpha) flies. The refresh workflow is
-**tune in the gym → Export → overwrite `src/data/bot-tuning.json` → commit**
-(see [BOT_FRAMEWORK.md §12](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym)).
+distributed build (e.g. the GitHub Pages alpha) flies. Two equivalent refresh
+workflows keep it in sync (both produce the same bytes — the pretty-printed
+store Export plus a trailing newline):
+
+- **Dev server:** in the Bot Tuning gym click **Save to repo**. The dev-only
+  middleware (`vite/plugins/botTuningPlugin.ts`) validates the store's blob
+  against the shared schema (`src/core/botTuningSchema.ts`) and atomically
+  rewrites `src/data/bot-tuning.json`; review and commit the diff
+  (AH-0MVBJ0DUI009B6AM).
+- **No dev server:** click **Export** and overwrite
+  `src/data/bot-tuning.json` with the download
+  (see [BOT_FRAMEWORK.md §12](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym)),
+  then commit.
+
 The file is byte-equivalent to the gym's Export output, so it is safe to
 overwrite it wholesale with an Export download.
 

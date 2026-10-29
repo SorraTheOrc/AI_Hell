@@ -23,6 +23,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer, request as httpRequest, type IncomingMessage, type Server } from 'node:http';
+import type { ViteDevServer } from 'vite';
 
 import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
 import {
@@ -31,8 +36,11 @@ import {
   BOT_TUNING_PANEL_ID,
   BOT_TUNING_SAVE_AS_ID,
   BOT_TUNING_SAVE_AS_INPUT_ID,
+  BOT_TUNING_SAVE_ID,
+  BOT_TUNING_SAVE_TO_REPO_ID,
   BOT_TUNING_SLIDER_ATTR,
   BOT_TUNING_SLIDER_VALUE_ATTR,
+  BOT_TUNING_STATUS_ID,
   BOT_TUNING_TOGGLE_ATTR,
   GYM_BOT_TUNING_SCENE_KEY,
   GymBotTuning,
@@ -61,7 +69,10 @@ import {
 import {
   listBotTuningNames,
   resetBotTuningStore,
+  serialiseBotTuningState,
 } from '../../core/botTuningStore';
+import { BOT_TUNING_FILE_PATH } from '../../core/botTuningSchema';
+import { botTuningPlugin } from '../../../vite/plugins/botTuningPlugin';
 import { discoverGymScenes, loadGymSceneModules } from '../../utils/gymDiscovery';
 import {
   GYM_TOOLTIP_CLASS,
@@ -95,6 +106,108 @@ function makeLevel(name: string, waves: WaveDefinition[]): LevelDefinition {
   return { level: 1, name, waves };
 }
 
+// ── Dev write-back harness (AH-0MVBJ0DUI009B6AM) ────────────────────
+
+const writeBackServers: Server[] = [];
+const writeBackRoots: string[] = [];
+
+/** A temp project root whose committed baseline is the current store Export. */
+function makeTempRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), 'gym-bot-tuning-writeback-'));
+  const filePath = join(root, BOT_TUNING_FILE_PATH);
+  mkdirSync(join(filePath, '..'), { recursive: true });
+  writeFileSync(filePath, `${serialiseBotTuningState()}\n`);
+  writeBackRoots.push(root);
+  return root;
+}
+
+/** Runs the dev-only bot-tuning endpoint against `root`; returns its base URL. */
+function startBotTuningServer(root: string): Promise<string> {
+  const plugin = botTuningPlugin({ root });
+  let middleware: ((req: unknown, res: unknown, next: () => void) => void) | null =
+    null;
+  const configureServer = plugin.configureServer as
+    | ((server: ViteDevServer) => void)
+    | undefined;
+  configureServer?.({
+    config: { command: 'serve', mode: 'development' },
+    middlewares: {
+      use: (fn: (req: unknown, res: unknown, next: () => void) => void) => {
+        middleware = fn;
+      },
+    },
+  } as unknown as ViteDevServer);
+
+  const httpServer = createServer((req, res) => {
+    if (!middleware) {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+    middleware(req, res, () => {
+      res.statusCode = 404;
+      res.end();
+    });
+  });
+  writeBackServers.push(httpServer);
+
+  return new Promise((resolve) => {
+    httpServer.listen(0, '127.0.0.1', () => {
+      const address = httpServer.address();
+      const port =
+        typeof address === 'object' && address !== null ? address.port : 0;
+      resolve(`http://127.0.0.1:${port}`);
+    });
+  });
+}
+
+/**
+ * Route the store's fetches through the plugin server with Node's HTTP
+ * client, skipping the happy-dom browser fetch (whose same-origin policy
+ * rejects cross-origin 127.0.0.1 requests from the `localhost:3000`
+ * document). The middleware and the file I/O are still exercised for real.
+ */
+function installFetchBridge(baseUrl: string): void {
+  vi.stubGlobal(
+    'fetch',
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      const urlObj = new URL(String(input), baseUrl);
+      return new Promise<Response>((resolve, reject) => {
+        const req = httpRequest(
+          urlObj,
+          {
+            method: init?.method ?? 'GET',
+            headers: init?.headers as Record<string, string> | undefined,
+          },
+          (res: IncomingMessage) => {
+            const chunks: Buffer[] = [];
+            res.on('data', (chunk: Buffer) => chunks.push(chunk));
+            res.on('end', () => {
+              const headers = new Headers();
+              for (const [key, value] of Object.entries(res.headers)) {
+                if (value !== undefined) headers.set(key, String(value));
+              }
+              resolve(
+                new Response(Buffer.concat(chunks).toString('utf8'), {
+                  status: res.statusCode ?? 500,
+                  headers,
+                }),
+              );
+            });
+          },
+        );
+        req.on('error', reject);
+        if (init?.body) req.write(String(init.body));
+        req.end();
+      });
+    },
+  );
+}
+
+function readWrittenBaseline(root: string): string {
+  return readFileSync(join(root, BOT_TUNING_FILE_PATH), 'utf8');
+}
+
 /** Waits for Phaser scene transitions to settle. */
 
 describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
@@ -112,7 +225,13 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     booted?.game.destroy(true);
     booted = null;
     document.body.innerHTML = '';
+    for (const s of writeBackServers.splice(0)) s.close();
+    for (const root of writeBackRoots.splice(0)) {
+      rmSync(root, { recursive: true, force: true });
+    }
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   async function bootTuning(data?: GymBotTuningData): Promise<GymBotTuning> {
@@ -493,7 +612,85 @@ describe('GymBotTuning — AI bot tuning gym (AH-0MV4D7LAD009XYR0)', () => {
     expect(exported.values.competent['powerUpSeekRange']).toBe(825);
   });
 
+  // ── Dev write-back (AH-0MVBJ0DUI009B6AM) ────────────────────────
+
+  it('Save to repo persists the current tuning through the dev endpoint (AC4)', async () => {
+    vi.stubEnv('DEV', true);
+    const root = makeTempRepo();
+    installFetchBridge(await startBotTuningServer(root));
+    await bootTuning({ seed: 808 });
+
+    // Tune, then Save the current configuration so the store holds the value.
+    const input = document.querySelector<HTMLInputElement>(
+      `input[${BOT_TUNING_SLIDER_ATTR}="mineralSeekRange"]`,
+    )!;
+    input.value = '875';
+    input.dispatchEvent(new Event('input'));
+    document
+      .getElementById(BOT_TUNING_SAVE_ID)!
+      .dispatchEvent(new MouseEvent('click'));
+
+    document
+      .getElementById(BOT_TUNING_SAVE_TO_REPO_ID)!
+      .dispatchEvent(new MouseEvent('click'));
+
+    const status = document.getElementById(BOT_TUNING_STATUS_ID)!;
+    await vi.waitFor(() => expect(status.textContent).toContain('Saved to'));
+
+    // A real file write: the committed baseline now holds the store Export.
+    const written = readWrittenBaseline(root);
+    expect(written).toBe(`${serialiseBotTuningState()}\n`);
+    const parsed = JSON.parse(written) as {
+      configs: Array<{ name: string; values: { competent: Record<string, number> } }>;
+    };
+    expect(parsed.configs[0].values.competent['mineralSeekRange']).toBe(875);
+  });
+
+  it('Save to repo reports the failure reason when the write is rejected (AC4)', async () => {
+    vi.stubEnv('DEV', true);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ ok: false, errors: ['baseline is read-only'] }), {
+          status: 400,
+        }),
+      ),
+    );
+    await bootTuning({ seed: 809 });
+
+    document
+      .getElementById(BOT_TUNING_SAVE_TO_REPO_ID)!
+      .dispatchEvent(new MouseEvent('click'));
+
+    const status = document.getElementById(BOT_TUNING_STATUS_ID)!;
+    await vi.waitFor(() =>
+      expect(status.textContent).toContain('baseline is read-only'),
+    );
+  });
+
+  it('Save to repo is disabled outside dev and never issues a write (AC3/AC4)', async () => {
+    vi.stubEnv('DEV', false);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    await bootTuning({ seed: 810 });
+
+    const button = document.getElementById(
+      BOT_TUNING_SAVE_TO_REPO_ID,
+    ) as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    expect(button.disabled).toBe(true);
+
+    button.dispatchEvent(new MouseEvent('click'));
+    await advanceGame(booted!.game, 40);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(document.getElementById(BOT_TUNING_STATUS_ID)!.textContent).not.toContain(
+      'Saved to',
+    );
+  });
+
   it('associates every slider and toggle with a tooltip holding its description', async () => {
+
     await bootTuning({ seed: 77 });
 
     const panel = document.getElementById(BOT_TUNING_PANEL_ID)!;
