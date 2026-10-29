@@ -9,10 +9,9 @@
  * that grants the starting loadout/power-ups, forces the hold-full reward and
  * previews the boss's remaining hits.
  *
- * Every case below is marked `it.fails` ("red-before") so the suite stays
- * green until the implementation slice lands and flips the markers to `it`
- * (the convention used by AH-0MVRMFMJP0070KTS). Do **not** weaken an
- * assertion to make one pass.
+ * These started life as `it.fails` red-before markers (the convention used by
+ * AH-0MVRMFMJP0070KTS) in AH-0MVTNTGXR0026LVN; the implementation slice
+ * AH-0MVTNTHE0008UT2C turned them green, so they are ordinary assertions now.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -40,7 +39,7 @@ const setupOf = (scene: PlayScene): unknown =>
 describe('PlayScene setup contract (AH-0MVTNTGXR0026LVN)', () => {
   // ── AC1: the parser accepts a setup on PlayScene ──────────────────
 
-  it.fails('AC1 — parses a PlayScene entry carrying a setup', () => {
+  it('AC1 — parses a PlayScene entry carrying a setup', () => {
     const [scene] = parseSceneConfig({
       scenes: [
         {
@@ -87,7 +86,7 @@ describe('PlayScene setup contract (AH-0MVTNTGXR0026LVN)', () => {
 
   // ── AC2: the loadout reaches the run's player ────────────────────
 
-  it.fails('AC2 — grants the configured loadout and power-ups to the player', async () => {
+  it('AC2 — grants the configured loadout and power-ups to the player', async () => {
     const { scene, booted } = await bootPlay({
       setup: {
         player: { weapons: ['spread'], weaponLevels: { rapid: 2 } },
@@ -109,7 +108,7 @@ describe('PlayScene setup contract (AH-0MVTNTGXR0026LVN)', () => {
 
   // ── AC3: forced hold-full reward ─────────────────────────────────
 
-  it.fails('AC3 — forces the configured hold-full reward instead of a random one', async () => {
+  it('AC3 — forces the configured hold-full reward instead of a random one', async () => {
     const { scene, booted } = await bootPlay({
       setup: { mineralReward: 'mineral_scoop' },
     });
@@ -136,7 +135,7 @@ describe('PlayScene setup contract (AH-0MVTNTGXR0026LVN)', () => {
 
   // ── AC4: boss hits preview ───────────────────────────────────────
 
-  it.fails('AC4 — spawns the boss with the configured hits remaining', async () => {
+  it('AC4 — spawns the boss with the configured hits remaining', async () => {
     const { scene, booted } = await bootPlay({
       setup: { bossHitsRemaining: 12 },
     });
@@ -154,7 +153,7 @@ describe('PlayScene setup contract (AH-0MVTNTGXR0026LVN)', () => {
 
   // ── AC5: production inertness ────────────────────────────────────
 
-  it.fails('AC5 — keeps the setup out of a non-dev (production) run', async () => {
+  it('AC5 — reports the dev-gated setup the scene will apply', async () => {
     const { scene, booted } = await bootPlay({
       setup: { player: { weaponLevels: { rapid: 3 } }, bossHitsRemaining: 12 },
     });

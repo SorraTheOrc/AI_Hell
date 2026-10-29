@@ -58,6 +58,7 @@ import {
 } from '../core/rules';
 import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
 import type { MineralChoiceScene } from './MineralChoiceScene';
+import { applySceneSetup, type SceneSetupState } from './core/sceneSetup';
 import {
   playDestructionSound,
   playSpawnSound,
@@ -566,6 +567,15 @@ export class PlayScene extends CombatScene<
    * always `1` in a production build.
    */
   private devStartLevel = 1;
+  /**
+   * Dev-gated capture configuration for this run (AH-0MVTNTHE0008UT2C).
+   *
+   * The teaser video records the *shipped game* with the bot playing (gyms
+   * carry debug chrome the teaser must not show), so a scripted beat supplies
+   * its starting loadout/power-ups, a forced hold-full reward and the boss's
+   * remaining hits as launch data. Always `null` in a production build.
+   */
+  private sceneSetup: SceneSetupState | null = null;
 
   /**
    * Demo take-over handler active only while the demo runs
@@ -936,6 +946,12 @@ export class PlayScene extends CombatScene<
      * Ignored in production builds; mirrors the checkpoint-resume seam.
      */
     startLevel?: number;
+    /**
+     * Dev-gated capture configuration (AH-0MVTNTHE0008UT2C): starting
+     * loadout/power-ups, a forced hold-full reward and the boss's remaining
+     * hits. Ignored in production builds, like `startLevel`.
+     */
+    setup?: SceneSetupState | null;
   }): void {
     this.demoMode = data?.demo === true;
     // Continue from the last checkpoint (AH-0MVCRBTNF000DK51). It is loaded
@@ -964,6 +980,11 @@ export class PlayScene extends CombatScene<
       ? Math.min(Math.max(requestedLevel, 1), LEVELS.length)
       : 1;
     if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
+    // Capture configuration is dev-gated exactly like `startLevel`: a shipped
+    // build folds the gate to `false` and can never apply launch-data state.
+    this.sceneSetup = isRunProgressEnabled() && data?.setup
+      ? (data.setup as SceneSetupState)
+      : null;
   }
 
   create(): void {
@@ -1014,6 +1035,12 @@ export class PlayScene extends CombatScene<
       config: { ...shipConfig, controlScheme: playerScheme },
     });
     this.add.existing(this.player);
+    // Capture configuration (AH-0MVTNTHE0008UT2C): apply the dev-gated setup
+    // through the ONE shared applier, so the shipped game and every gym map a
+    // setup to play state identically (no divergent copy).
+    if (this.sceneSetup) {
+      applySceneSetup({ getPlayer: () => this.player }, this.sceneSetup);
+    }
     // The demo drives whichever control scheme the ship is configured with
     // (the shipped default is `asteroids`); the human-like governor resolves
     // the bot's steering intent to that scheme, so the demo ship looks and
@@ -2698,6 +2725,11 @@ export class PlayScene extends CombatScene<
    * @param options — dev/test overrides: `initialHp` / `initialPhase` tune the
    *   starting health/phase, and `spawnMinions: false` skips the Phase-1 minion
    *   wave (used by the dev boss scenario so the fight is deterministic).
+   *
+   * A capture configuration's `bossHitsRemaining`
+   * (AH-0MVTNTHE0008UT2C) is the `initialHp` default, so any spawn path — the
+   * normal encounter or a scripted teaser beat — previews the boss close to
+   * death without changing the entity's total hit pool.
    */
   protected spawnBoss(
     options: {
@@ -2711,7 +2743,7 @@ export class PlayScene extends CombatScene<
       y: GAME_HEIGHT / 2 - 80,
       formationOffset: { row: 0, col: 0 },
       rng: this.rng,
-      initialHp: options.initialHp,
+      initialHp: options.initialHp ?? this.sceneSetup?.bossHitsRemaining,
       initialPhase: options.initialPhase,
       // The final boss strengthens with the player's permanent upgrades
       // exactly like the mini-bosses (AH-0MVH87A3L004VOLD). Dev scenarios
@@ -4523,6 +4555,30 @@ export class PlayScene extends CombatScene<
    * Whether this run is the bot-driven demo/attract mode (AC1). Set when the
    * scene is started with `{ demo: true }` (or via `setDemoMode`).
    */
+  /**
+   * The dev-gated capture configuration this run will apply, or `null`
+   * (`AH-0MVTNTHE0008UT2C`). Reported by the teaser's verification tests.
+   */
+  getSceneSetup(): SceneSetupState | null {
+    return this.sceneSetup;
+  }
+
+  /**
+   * The hold-full reward a capture configuration forces, or `null` for the
+   * normal random choice (`AH-0MVTNTHE0008UT2C`).
+   */
+  getForcedMineralReward(): string | null {
+    return this.sceneSetup?.mineralReward ?? null;
+  }
+
+  /**
+   * The option a demo (bot) run auto-selects on the hold-full overlay
+   * (`AH-0MVTNTHE0008UT2C` exposes it for verification).
+   */
+  preferredDemoChoiceIndex(): number {
+    return this._preferredDemoChoiceIndex();
+  }
+
   isDemoMode(): boolean {
     return this.demoMode;
   }
@@ -4748,6 +4804,16 @@ export class PlayScene extends CombatScene<
       tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
       tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
+    // A capture configuration forces the resolution (AH-0MVTNTHE0008UT2C):
+    // offering it first makes the demo auto-select deterministic, so a
+    // scripted beat's pay-off is the same every run.
+    const forcedReward = this.getForcedMineralReward();
+    if (forcedReward !== null) {
+      this.mineralChoiceOptions = [
+        toChoiceOption(forcedReward as DropId),
+        ...this.mineralChoiceOptions.filter((option) => option.id !== forcedReward),
+      ];
+    }
     this.mineralChoiceOpen = true;
     this.runTelemetry.holdFull(this.mineralChoiceOptions.map((o) => o.id));
     this.setPaused(true);
@@ -4795,6 +4861,8 @@ export class PlayScene extends CombatScene<
    * unaffected (AH-0MV03GXZQ00801T4 · AC1).
    */
   private _preferredDemoChoiceIndex(): number {
+    // A forced reward is the scripted pay-off: always take it.
+    if (this.getForcedMineralReward() !== null) return 0;
     if (this.gameState.lives >= MAX_LIVES) return 0;
     const index = this.mineralChoiceOptions.findIndex(
       (option) => option.id === EXTRA_LIFE_DROP_ID,

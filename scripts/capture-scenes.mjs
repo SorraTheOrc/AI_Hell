@@ -383,6 +383,10 @@ export const DEFAULT_SCENE_SETUP_WEAPON_LEVELS = Object.freeze({});
 export const SCENE_SETUP_BOSS_TOTAL_HITS = Object.freeze({
   GymBoss: 200,
   GymMiniBoss: 10,
+  // The shipped game scene hosts the same Central AI boss (4 phases x 50), so a
+  // teaser beat can preview its hits through the identical `initialHp` seam
+  // (AH-0MVTNTHE0008UT2C).
+  PlayScene: 200,
 });
 
 /**
@@ -402,6 +406,25 @@ export const SCENE_SETUP_SCENARIO_COUNT_BOUNDS = Object.freeze({
   threatCount: Object.freeze({ min: 1, max: 12 }),
   minerals: Object.freeze({ min: 0, max: 200 }),
 });
+
+/**
+ * Setup fields the **game scene** (`PlayScene`) can consume
+ * (AH-0MVTNTHE0008UT2C, parent AH-0MVTN7EJY004713X).
+ *
+ * The teaser records the shipped game with the bot playing, so it cannot use a
+ * gym: gym scenes draw debug chrome (index link, DAMAGE buttons). PlayScene
+ * therefore accepts the same capture configuration it needs for a scripted
+ * beat — the starting loadout/power-ups, a forced hold-full reward and a boss
+ * hit preview — delivered as dev-gated launch data. `seed`/`level`/`minWaves`
+ * stay **sibling** fields of the entry (generated-level launch data), not part
+ * of the setup.
+ */
+export const SCENE_SETUP_PLAYSCENE_FIELDS = Object.freeze([
+  'player',
+  'powerUps',
+  'mineralReward',
+  'bossHitsRemaining',
+]);
 
 /**
  * Setup fields every setup-capable scene can consume: a player loadout, power-up
@@ -492,6 +515,9 @@ function isKnownSceneKey(value) {
  * @returns {string[]}
  */
 export function sceneSetupFieldsFor(target) {
+  // The shipped game scene is setup-capable through dev-gated launch data
+  // (AH-0MVTNTHE0008UT2C) even though it is not a gym key.
+  if (target === GENERATED_LEVEL_SCENE_KEY) return [...SCENE_SETUP_PLAYSCENE_FIELDS];
   if (!isKnownSceneKey(target)) return [];
   if (SCENE_SETUP_INCAPABLE_TARGETS.includes(target)) return [];
   const extra = SCENE_SETUP_TARGET_EXTRA_FIELDS[target] ?? [];
@@ -1408,13 +1434,13 @@ function normaliseScene(entry, index) {
 
   // ── Generated-level (`PlayScene`) entry ──────────────────────────
   if (entry.target === GENERATED_LEVEL_SCENE_KEY) {
-    if ('setup' in entry && entry.setup !== undefined) {
-      throw new SceneConfigError(
-        CODE.setupNotSupported,
-        `${at}.setup is not supported on "${GENERATED_LEVEL_SCENE_KEY}"; use the `
-          + 'sibling seed/level/minWaves/maxCaptureMs fields instead',
-      );
-    }
+    // A setup is the dev-gated launch data the game scene applies to the run
+    // (loadout/power-ups, forced hold-full reward, boss hit preview) — the
+    // teaser needs it because it records the real game, not a gym
+    // (AH-0MVTNTHE0008UT2C).
+    const sceneSetup = 'setup' in entry && entry.setup !== undefined
+      ? parseSceneSetup(entry.setup, GENERATED_LEVEL_SCENE_KEY, `${at}.setup`)
+      : null;
     const level = entry.level === undefined
       ? 1
       : requireGeneratedLevel(entry.level, `${at}.level`);
@@ -1436,6 +1462,7 @@ function normaliseScene(entry, index) {
       level,
       minWaves,
       maxCaptureMs,
+      ...(sceneSetup ? { setup: sceneSetup } : {}),
     };
   }
 
