@@ -239,11 +239,33 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     }
   });
 
-  it.fails('describes examples/scenes.json as the excitement-curve arc (AH-0MVRMFMJP0070KTS)', () => {
+  // TEST-FIRST (AH-0MVRMFMJP0070KTS): F4 (AH-0MVRMFRSO004H9JM) authored the
+  // arc and F5 (AH-0MVRMFTNQ0029YWD) documented it; the marker is back to
+  // `it` and the shipped-example description is also parsed here.
+  it('describes examples/scenes.json as the excitement-curve arc (AH-0MVRMFMJP0070KTS)', () => {
     expect(captureDoc).toMatch(/excitement[- ]curve/i);
     expect(captureDoc).toContain('examples/scenes.json');
     // The doc names the pay-offs the arc is built around.
     expect(captureDoc).toMatch(/mini-boss/i);
     expect(captureDoc).toMatch(/hold-full/i);
+    // The arc's worked snippet is schema-valid and carries the new fields.
+    const blocks = [...captureDoc.matchAll(/```json\n([\s\S]*?)```/g)].map(
+      (match) => match[1],
+    );
+    const arcBlock = blocks.find((block) =>
+      block.includes('"label": "Opening spectacle'),
+    );
+    expect(arcBlock).toBeDefined();
+    const parsed = parseSceneConfig(JSON.parse(arcBlock as string));
+    expect(parsed.map((scene) => scene.target)).toEqual([
+      'GymLevel',
+      'GymMiniBoss',
+    ]);
+    expect(parsed[0].setup?.player?.weaponLevels).toEqual({
+      spread: 5,
+      dual: 4,
+      rapid: 5,
+    });
+    expect(parsed[1].setup?.bossHitsRemaining).toBe(8);
   });
 });

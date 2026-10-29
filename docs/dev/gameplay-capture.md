@@ -1240,6 +1240,105 @@ with `unsupported-scene-field`, and gym configuration belongs in `setup`).
 Each generated-level scene in the `--json` payload additionally reports
 `seed`, `level`, `wavesCaptured` and `endedEarly` alongside its timings.
 
+#### The shipped example: the excitement-curve arc
+
+`examples/scenes.json` is not a generic showcase — it is the **seven-beat
+excitement-curve arc** the scripted showcase video is recorded from (parent
+AH-0MVPJ3NSK008V5VB). Every beat carries its own `setup`, so its loadout and
+its on-camera pay-off are deterministic:
+
+| # | Beat | Target | Seed | Pay-off |
+|---|---|---|---|---|
+| 1 | Opening spectacle | `GymLevel` | `1101` | six slots of level 2–5 weapons against a heavy enemy field |
+| 2 | Humble origins | `GymLevel` | `2202` | default cannon only; the full mineral hold resolves to the **Hull Full** (`mineral_scoop`) reward |
+| 3 | First steps up | `GymLevel` | `3303` | three weapon slots at level 1, roughly twice the enemies of scene 2 |
+| 4 | Escalation | `GymLevel` | `4404` | five slots at levels 1–2, twice the enemies of scene 3 |
+| 5 | Mini-boss | `GymMiniBoss` | `5505` | the **mini-boss death**, starting from `bossHitsRemaining: 8` |
+| 6 | Reprise | `GymLevel` | `6606` | scene 4's pressure with a different enemy mix and stronger weapons |
+| 7 | Main boss | `GymBoss` | `7707` | the **boss death**, starting from `bossHitsRemaining: 12` |
+
+The seeds (`1101`…`7707`) are pinned, so re-running the shipped config
+reproduces the same loadouts and content. Three setup fields exist for this
+arc:
+
+- **`player.weaponLevels`** grants a weapon above level 1: each entry
+  `{ "<weapon id>": <level> }` applies that many **permanent** grants with
+  `equipWeapon(id, true)`, so a weapon listed in both `player.weapons` (the
+  level-1 grant) and `weaponLevels` starts at `1 + level`. Levels must be
+  integers `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX` (`5`); omit the field (or leave
+  it `{}`) for no extra grants, so every weapon stays at the level
+  `player.weapons` gives it. Any setup-capable gym accepts it; an out-of-range
+  level raises `invalid-weapon-level` (and an unknown weapon id raises
+  `unknown-weapon-id`).
+- **`setup.mineralReward`** forces the reward a **full mineral hold** resolves
+  to in the level gyms (`GymLevel`, `GymBotTuning`), instead of their random
+  pick — the deterministic Hull Full pay-off in scene 2. The value must be one
+  of the hold-full choice ids (`SCENE_SETUP_MINERAL_REWARD_IDS`: the drop
+  catalogue minus the `reset` utility); omit it to keep the random choice. A
+  non-choice id raises `unknown-mineral-reward`, and the field on a target
+  that cannot consume it raises `setup-not-supported`.
+- **`setup.bossHitsRemaining`** starts the spawned boss/mini-boss with that
+  many hits left, through the entity's existing `initialHp` seam. It is
+  accepted only on the boss-capable gyms (`GymBoss`, `GymMiniBoss`) and must
+  be a positive integer no greater than the target's total hit pool
+  (`SCENE_SETUP_BOSS_TOTAL_HITS`: `200` for `GymBoss`, `10` for `GymMiniBoss`);
+  omit it for the full pool. A non-integer, non-positive or out-of-pool value
+  raises `invalid-boss-hits`; the field on any other target raises
+  `setup-not-supported`.
+
+These fields configure state the game already has (permanent weapon grants,
+`initialHp`, the hold-full choice), so they are config-only and dev-gated: the
+shipped bundle and the gym↔game parity contract are unchanged.
+
+```json
+{
+  "scenes": [
+    {
+      "target": "GymLevel",
+      "playMs": 2000,
+      "captureMs": 8000,
+      "label": "Opening spectacle — maxed arsenal",
+      "setup": {
+        "level": {
+          "level": 7,
+          "name": "Opening Spectacle",
+          "waves": [
+            {
+              "groups": [
+                { "enemyKey": "scout", "formation": "v", "count": 12, "spacingX": 30, "spacingY": 22, "startX": 180, "startY": 140 }
+              ],
+              "shootEnabled": true
+            }
+          ]
+        },
+        "player": {
+          "weapons": [],
+          "timedWeapons": [],
+          "weaponLevels": { "spread": 5, "dual": 4, "rapid": 5 }
+        },
+        "powerUps": { "magnet": 3, "mineral_scoop": 3 },
+        "seed": 1101
+      }
+    },
+    {
+      "target": "GymMiniBoss",
+      "playMs": 2000,
+      "captureMs": 8000,
+      "label": "Mini-boss — escort and death",
+      "setup": {
+        "player": { "weapons": ["spread", "dual", "rapid"], "weaponLevels": { "cluster": 3 } },
+        "bossHitsRemaining": 8,
+        "seed": 5505
+      }
+    }
+  ]
+}
+```
+
+Record the shipped arc once with `npm run capture:scenes -- --config
+examples/scenes.json`; `--json` reports the seven scenes' timings and seeds
+(see [Output](#output) and [`--json` shape](#json-shape)).
+
 #### Watchable gym scenes
 
 `target` must be one of the dev gym scenes discovered under `src/scenes/gym/`

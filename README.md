@@ -705,8 +705,13 @@ added by AH-0MUWTNPYJ0031FQE):
   player loadout (`player.weapons` / `player.timedWeapons`), `powerUps` levels
   and a determinism `seed` — which makes the previously parameterised
   `GymLevel` / `GymFodderEnemies` capturable and reproduces the same content
-  for the same seed (AH-0MVNW7U5G003SNO6). Output is a single
-  Entries may also target the shipped game (`target: "PlayScene"`) with a
+  for the same seed (AH-0MVNW7U5G003SNO6). The arc fields
+  `player.weaponLevels`, `mineralReward` and `bossHitsRemaining` extend that
+  setup; the shipped `examples/scenes.json` is the seven-beat
+  **excitement-curve arc** (opening spectacle → humble origins → first steps
+  up → escalation → mini-boss → reprise → main boss) with deterministic
+  pay-offs and pinned seeds (AH-0MVRMFRSO004H9JM). Entries may also target
+  the shipped game (`target: "PlayScene"`) with a
   `seed`/`level` and a multi-wave-aware window (`minWaves`, `maxCaptureMs`), so
   a promo shows real generated campaign gameplay mixed with gym demos
   (AH-0MVE01EY0008QEVX). Output is a single
