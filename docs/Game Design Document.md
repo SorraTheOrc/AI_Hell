@@ -2072,6 +2072,21 @@ Robotron **smart bomb weapon form**, the **Tempest Superzapper**, the
 recorded with a deferral reason each in the research document's "considered but
 not selected" section.
 
+**Outer loop (long-term progression).** The game has an inner loop (seconds:
+flying, dodging, destroying) and a middle loop (a run: minerals → hold-full
+power-up/weapon choices → levelled effects), but **no outer loop**: nothing
+persists between runs except the leaderboard (§5), player settings and a single
+run checkpoint (§6.6), and game over is final (§4.6). Three decision-ready
+candidates — **Contested Regions / Home World** (the producer's proposal),
+**Salvage Fleet** and **Signal Decode** — are outlined on the same footing,
+compared across agreed criteria and ranked, with the producer's choice left
+pending, in [`OUTER_LOOP_CANDIDATES.md`](./OUTER_LOOP_CANDIDATES.md)
+(AH-0MVNSSY9L001P1CC). That document recommends **Candidate B — Salvage Fleet**
+and is **design only, not scheduled**: no candidate's gameplay,
+persistence-schema or scene implementation is specified here, and this GDD gains
+no playable specification until the producer chooses a loop (a follow-on work
+item).
+
 ---
 
 ## 9. Appendix: Clarifying Questions & Answers

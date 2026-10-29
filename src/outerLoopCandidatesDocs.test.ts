@@ -23,6 +23,9 @@
  * - AC4: A comparison section carries a ranked comparison table.
  * - AC5: The "Considered but not selected" and "Producer decision record"
  *   sections exist.
+ * - AC7 (cross-link slice AH-0MVRNJ6BB009IGZX): the document is referenced from
+ *   the GDD §8 future-scope section and from the README, and every reference
+ *   resolves to a file on disk.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -33,6 +36,9 @@ const DOC_PATH = path.resolve(
   process.cwd(),
   'docs/OUTER_LOOP_CANDIDATES.md',
 );
+
+const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
+const README_PATH = path.resolve(process.cwd(), 'README.md');
 
 /** The three loop tiers the document must define. */
 const TIERS = ['Inner', 'Middle', 'Outer'];
@@ -207,5 +213,47 @@ describe('Outer-loop candidates are documented (AH-0MVRNIWHG0099ZS3)', () => {
     expect(section).toMatch(/\|.*\|/);
     expect(section).toMatch(/pending/i);
     expect(section).toMatch(/follow[- ]on/i);
+  });
+});
+
+/**
+ * Every markdown link target in `text` that points at the deliverable.
+ * Kept deliberately narrow: the guard only resolves links to *this* document
+ * (AC7 of the parent item), never the rest of the file's prose.
+ */
+const outerLoopLinkTargets = (text: string): string[] => {
+  const targets: string[] = [];
+  const pattern = /\]\(([^)\s]*OUTER_LOOP_CANDIDATES[^)\s]*)\)/g;
+  let match: RegExpExecArray | null = pattern.exec(text);
+  while (match !== null) {
+    targets.push(match[1]);
+    match = pattern.exec(text);
+  }
+  return targets;
+};
+
+describe('Outer-loop candidates are cross-linked, not orphaned (AH-0MVRNJ6BB009IGZX)', () => {
+  it.each([
+    ['the Game Design Document §8 future scope', GDD_PATH],
+    ['the README', README_PATH],
+  ])('is referenced from %s (AC7)', (_label, filePath) => {
+    expect(fs.existsSync(filePath)).toBe(true);
+    const text = fs.readFileSync(filePath, 'utf8');
+    expect(text).toContain('OUTER_LOOP_CANDIDATES');
+  });
+
+  it.each([
+    ['the Game Design Document §8 future scope', GDD_PATH],
+    ['the README', README_PATH],
+  ])('every reference from %s resolves to a file (AC7)', (_label, filePath) => {
+    const text = fs.readFileSync(filePath, 'utf8');
+    const targets = outerLoopLinkTargets(text);
+    // A prose mention without a resolvable link would re-orphan the document.
+    expect(targets.length).toBeGreaterThan(0);
+    for (const target of targets) {
+      const [filePart] = target.split('#');
+      const resolved = path.resolve(path.dirname(filePath), filePart);
+      expect(fs.existsSync(resolved)).toBe(true);
+    }
   });
 });

@@ -398,6 +398,8 @@ The local high-score table is owned by `src/core/Leaderboard.ts` and rendered th
 - **Keyboard entry:** the game-over initials field is focused by default; **A–Z** / **Backspace** edit it and refresh the prospective row, **Enter** auto-submits once three letters are entered, and **Tab**/arrow keys move focus (GDD §5.1). No on-screen keyboard is used.
 - **Stub retirement:** the earlier `GameOverScene` stub (`readLeaderboard` / `saveScoreEntry` / its local `LeaderboardEntry` and `LEADERBOARD_STORAGE_KEY`) has been removed in favour of the module.
 
+> **Outer loop (design only, not scheduled)** — the score table, settings and the single run checkpoint are everything that survives a run today: the game has an inner loop (seconds) and a middle loop (a run) but **no outer loop**, and game over is final (GDD §4.6). Three decision-ready candidates — **Contested Regions / Home World**, **Salvage Fleet** and **Signal Decode** — are outlined, compared and ranked in [`docs/OUTER_LOOP_CANDIDATES.md`](docs/OUTER_LOOP_CANDIDATES.md) (AH-0MVNSSY9L001P1CC), the sibling catalogue of [`docs/CLASSIC_ENEMY_RESEARCH.md`](docs/CLASSIC_ENEMY_RESEARCH.md) and [`docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md`](docs/CLASSIC_POWERUP_WEAPON_RESEARCH.md). That document recommends **Candidate B — Salvage Fleet** and leaves the producer's choice **pending**; no candidate is implemented and the GDD gains no playable specification for one (GDD §8).
+
 #### Gym Index Entry Scene (dev tooling)
 
 The gym index (`src/scenes/GymIndex.ts`, key `GymIndex`) is the **dev-mode playground**: it is reachable from the main menu via the **Gym Scene Index (dev)** button (clearly marked as a developer tool) rather than being the boot scene. It lists every gym scene for isolated testing:
