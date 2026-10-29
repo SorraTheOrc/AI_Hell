@@ -15,7 +15,7 @@ import { getSpawnState, type SpawnAnimatable, type SpawnState } from '../../vfx/
 import * as effectsModule from '../../audio/effects';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import { DEFAULT_ENEMY_CONFIGS } from '../../core/enemyConfig';
-import { resetConfigStore, seedConfigStore } from '../../core/configStore';
+import { loadEnemyConfig, resetConfigStore, seedConfigStore } from '../../core/configStore';
 
 // Simulate the dev-server CSV plugin: writes update the in-memory registry.
 vi.mock('../../core/configStore', async (importOriginal) => {
@@ -56,7 +56,11 @@ import { OrbitalStrike } from '../../entities/OrbitalStrike';
 import { TANK_COLOR } from '../../entities/Tank';
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { SWARM_BURST_INTERVAL } from '../../entities/Swarm';
+import type { Player } from '../../entities/Player';
 import { Centipede } from '../../entities/Centipede';
+import { Scout } from '../../entities/Scout';
+import { fireForEnemy } from '../../entities/enemyFire';
+import { createEnemyFromConfig } from '../../entities/enemyFactory';
 import { CentipedeChain } from '../core/centipedeChain';
 import { CENTIPEDE_SEGMENT_COUNT } from '../../waves/CentipedeSpawner';
 
@@ -608,6 +612,31 @@ describe('GymFodderEnemies — single reusable enemy gym', () => {
     expect(document.getElementById('enemy-gym-save-as')).not.toBeNull();
     expect(document.getElementById('enemy-gym-save-as-input')).not.toBeNull();
     expect(document.getElementById('enemy-gym-save-status')).not.toBeNull();
+  });
+
+  it('exposes the wrapAware checkbox seeded from the active config and edits it live (AH-0MVKXBQVT000B2WL)', async () => {
+    // `scout` is wrap-aware by default.
+    const scout = await bootWithKey('scout');
+    const checkbox = document.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][data-config="wrapAware"]',
+    );
+    expect(checkbox, 'wrapAware checkbox missing').not.toBeNull();
+    expect(checkbox!.checked).toBe(true);
+
+    checkbox!.checked = false;
+    checkbox!.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(scout.currentConfig.wrapAware).toBe(false);
+  });
+
+  it('seeds the wrapAware checkbox from a classic non-aware archetype (AH-0MVKXBQVT000B2WL)', async () => {
+    // The Space Invaders `march` archetype opts out of seam-awareness.
+    const march = await bootWithKey('march');
+    const checkbox = document.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][data-config="wrapAware"]',
+    );
+    expect(checkbox, 'wrapAware checkbox missing').not.toBeNull();
+    expect(checkbox!.checked).toBe(false);
+    expect(march.currentConfig.wrapAware).toBe(false);
   });
 
   it('surfaces the homing-horde tuning sliders for the grunt archetype (AH-0MV01EKTL001NRE6)', async () => {
@@ -2460,5 +2489,167 @@ describe('GymFodderEnemies — capture setup enemy selection (AH-0MVNW8VNN004FFK
       const scene = manager.getScene('GymFodderEnemies') as GymFodderEnemies;
       expect(scene.activeEnemyKey).toBe('tank');
     })();
+  });
+});
+
+// ── Wrap-aware behaviour hosted by the fodder gym (AH-0MVKXBXQX003S7K5) ─
+
+/**
+ * The fodder gym hosts wrap-aware archetypes (the Scout and every aimed
+ * archetype sharing its fire seam) and the classic non-aware exclusions. The
+ * shared seams are exercised through this gym's own `tick` and fire
+ * dispatcher (parent AH-0MV9G3DZ9003P7P8; AC2/AC3 of the parity test item).
+ */
+describe('GymFodderEnemies — wrap behaviour it hosts (AH-0MVKXBXQX003S7K5)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    resetConfigStore();
+    seedConfigStore(Object.values(DEFAULT_ENEMY_CONFIGS));
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+    document.getElementById('enemy-gym-panel')?.remove();
+  });
+
+  async function bootWithKey(enemyKey?: string): Promise<GymFodderEnemies> {
+    const key = enemyKey ?? GYM_FODDER_ENEMIES_DEFAULT_KEY;
+    class Wrapper extends GymFodderEnemies {
+      override init(_data?: { enemyKey?: string }): void {
+        super.init({ enemyKey: key });
+      }
+    }
+    Object.defineProperty(Wrapper, 'name', { value: `Wrapper_${key}` });
+    booted = await bootScene([Wrapper as unknown as typeof Phaser.Scene]);
+    return booted.scene as unknown as GymFodderEnemies;
+  }
+
+  /** Pins the gym player at (x, y) without the next `physicsTick` snapping it back. */
+  function placePlayer(player: Player, x: number, y: number): void {
+    player.setPosition(x, y);
+    const state = player.getMovementState();
+    (
+      player as unknown as {
+        _movementState: ReturnType<Player['getMovementState']>;
+      }
+    )._movementState = { ...state, x, y, vx: 0, vy: 0 };
+  }
+
+  it('fires a wrap-aware aimed shot across the seam at the live player', async () => {
+    const scene = await bootWithKey('scout');
+    // Freshly booted entities are still in the wormhole spawn animation, and a
+    // spawning enemy cannot fire (`fireForEnemy` returns no bullets). Complete
+    // the sequence deterministically before aiming.
+    scene.finishSpawnAnimations();
+    const scout = scene.formationEntities[0] as unknown as Scout;
+    expect(scout.wrapAware).toBe(true);
+
+    // Place the live player on the far side of the horizontal seam so the
+    // wrap-around route to the ship is shorter than the direct line.
+    const player = scene.getPlayer()!;
+    const targetX = scout.x < GAME_WIDTH / 2 ? GAME_WIDTH - 60 : 60;
+    placePlayer(player, targetX, scout.y);
+
+    // The scene pushes the live player into the aimed enemy before fire.
+    // (Shooting is off, so this tick only pushes the aim; it cannot fire.)
+    scene.tick(0);
+    expect(scout.aimTarget.x).toBeCloseTo(targetX, 5);
+    expect(scout.aimTarget.y).toBeCloseTo(scout.y, 5);
+
+    // Fire through the shared dispatcher with a controlled clock. The seeded
+    // Scout's clock is the Phaser scene clock (epoch-based), so reset its fire
+    // state first — the disabled→enabled hop clears a boot-time tell — then
+    // drive a fresh tell (first call) → shot (second call) with a synthetic
+    // clock above the 1.2 s interval.
+    scout.shootEnabled = false;
+    scene.tick(0);
+    scout.shootEnabled = true;
+    fireForEnemy(scout, 'scout', 10_000);
+    const [bullet] = fireForEnemy<{ vx: number; vy: number }>(
+      scout,
+      'scout',
+      11_000,
+    );
+    expect(bullet).toBeDefined();
+
+    // The direct line points toward the player; the seam route is the
+    // opposite way — assert the launch takes the shorter wrapped route.
+    const directDx = targetX - scout.x;
+    expect(Math.abs(directDx)).toBeGreaterThan(GAME_WIDTH / 2);
+    expect(Math.sign(bullet.vx)).toBe(-Math.sign(directDx));
+    expect(Math.abs(bullet.vx)).toBeCloseTo(
+      DEFAULT_ENEMY_CONFIGS.scout.bulletSpeed,
+      5,
+    );
+    expect(Math.abs(bullet.vy)).toBeCloseTo(0, 5);
+  });
+
+  it('keeps the direct aim for a non-wrap-aware archetype across the same seam', async () => {
+    const scene = await bootWithKey('scout');
+    const march = createEnemyFromConfig(
+      scene,
+      { ...loadEnemyConfig('march'), fireInterval: 1, shotProbability: 1 },
+      700,
+      300,
+      { row: 0, col: 0 },
+    );
+    expect(march.wrapAware).toBe(false);
+    march.shootEnabled = true;
+    (march as { setAimTarget?(x: number, y: number): void }).setAimTarget?.(
+      60,
+      300,
+    );
+
+    fireForEnemy(march, 'march', 1_000);
+    const [bullet] = fireForEnemy<{ vx: number; vy: number }>(
+      march,
+      'march',
+      2_000,
+    );
+    expect(bullet).toBeDefined();
+    // Non-aware: the direct aim toward the player (leftwards) is kept, so the
+    // bullet points toward the ship rather than across the seam.
+    expect(bullet.vx).toBeLessThan(0);
+    expect(bullet.vy).toBeCloseTo(0, 5);
+  });
+
+  it('wraps a roster entity whose slot crosses the seam and leaves the classic exclusion in place', async () => {
+    const scene = await bootWithKey('scout');
+
+    // A slot 40 columns to the right of the drifting formation base sits far
+    // over the right edge — inside, the shared post-motion seam relocates it.
+    const COL = 40;
+    const aware = new Scout(scene, {
+      x: 0,
+      y: 100,
+      formationOffset: { row: 0, col: COL },
+    });
+    scene.registerDynamicEntity(aware);
+    const exclusion = createEnemyFromConfig(
+      scene,
+      loadEnemyConfig('march'),
+      0,
+      100,
+      { row: 0, col: COL },
+    );
+    scene.registerDynamicEntity(exclusion);
+
+    const slotX = scene.formationX + COL * DEFAULT_ENEMY_CONFIGS.scout.spacingX;
+    expect(slotX, 'setup gate: the slot is over the seam').toBeGreaterThan(
+      GAME_WIDTH,
+    );
+
+    scene.tick(0);
+
+    // The wrap-aware body was carried back onto the playfield ...
+    expect(aware.x).toBeGreaterThanOrEqual(0);
+    expect(aware.x).toBeLessThan(GAME_WIDTH);
+    // ... while the classic exclusion keeps its over-edge (bounded) slot.
+    expect(exclusion.x).toBeGreaterThan(GAME_WIDTH);
   });
 });

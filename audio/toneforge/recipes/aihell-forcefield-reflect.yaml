@@ -1,0 +1,75 @@
+# AI Hell cue: aihell-forcefield-reflect — Force Field bounces an enemy bullet — bright RISING
+# triangle bounce A5 to E6 (880 to 1320 Hz) with a short sine sparkle on top.
+# Amplitude tier: subtle one-shot (target RMS 0.055 +/-1.5 dB, AH-0MVRDMMYO002SC5V).
+#
+# Deliberately distinct from the neighbouring player-feedback ticks:
+#   - aihell-bullet-destruction: square tick 1400 -> 900 Hz, FALLING (a shot destroyed);
+#   - aihell-ricochet-impact:    triangle 1800 -> 900 Hz, FALLING + noise smack (a wall bounce);
+#   - this cue:                  triangle 880 -> 1320 Hz, RISING (a shot bounced back at the enemy).
+#
+# Balance-guard route: this is player Force Field feedback, not an enemy cue, so the recipe is
+# tagged player/force-field/reflect with no enemy-family tag. `scripts/audio-balance-guard.mjs`
+# therefore leaves it outside the enemy balance tiers; the 0.055 subtle one-shot target above is
+# enforced by the rendered-asset review recorded in docs/AUDIO_TONEFORGE_CUE_MAPPING.md.
+version: "0.1"
+meta:
+  name: aihell-forcefield-reflect
+  description: Force Field reflect bounce — bright rising triangle bounce 880 to 1320 Hz with a short sine sparkle, the "bounced back" cue of the reflect bubble.
+  category: AIHell
+  tags:
+    - player
+    - force-field
+    - reflect
+  duration: 0.11
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 880
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 880
+        - kind: exponentialRamp
+          time: 0.09
+          value: 1320
+  e0:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.1
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.2
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 1760
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.05
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.073
+  mix:
+    kind: gain
+    params:
+      gain: 0.815
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - from: mix
+    to: out

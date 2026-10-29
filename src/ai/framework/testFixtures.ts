@@ -8,6 +8,7 @@
  */
 
 import type {
+  BotBoss,
   BotBullet,
   BotDrop,
   BotEnemy,
@@ -136,6 +137,22 @@ export function bullet(
   vy: number,
 ): BotBullet {
   return { x, y, vx, vy };
+}
+
+/**
+ * Builds a boss fixture (AH-0MVBMESIE003YQ68).
+ *
+ * The final boss and every per-level mini-boss arrive at the bot through the
+ * same `boss` snapshot slot (`PlayScene.getBoss()` returns `miniBoss ?? boss`),
+ * so one builder covers both; only the phase differs.
+ */
+export function boss(
+  x: number,
+  y: number,
+  phase = 1,
+  alive = true,
+): BotBoss {
+  return { x, y, alive, phase };
 }
 
 /** Builds a drop fixture. */

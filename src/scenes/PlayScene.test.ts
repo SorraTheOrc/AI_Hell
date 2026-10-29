@@ -45,7 +45,7 @@ import { Diver, DiverState } from '../entities/Diver';
 import { Scout } from '../entities/Scout';
 import { Tank } from '../entities/Tank';
 import { BOSS_HIT_POINTS_PER_PHASE, BOSS_PHASE_COUNT } from '../entities/Boss';
-import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss } from '../entities/MiniBoss';
+import { MINI_BOSS_DEFAULT_HP_PER_PHASE, MiniBoss, type MiniBossConfig } from '../entities/MiniBoss';
 import { minionCountForPhase } from '../waves/BossMinions';
 import type { WeaponDefinition } from '../utils/weapons';
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
@@ -53,6 +53,10 @@ import { GameOverScene } from './GameOverScene';
 import type { EnemyEntity } from '../entities/enemyFactory';
 import { MenuScene } from './MenuScene';
 import { PauseScene } from './PauseScene';
+import { MineralChoiceScene } from './MineralChoiceScene';
+import { RunTelemetry } from './core/runTelemetry';
+import { HOLD_FULL_COUNTDOWN_DURATION_MS } from './core/holdFullCountdown';
+import { BOT_MINERAL_CHOICE_DELAY_MS } from '../ai/botHumanLike';
 import {
   BANNER_BACKGROUND_ALPHA,
   BANNER_DURATION_SECONDS,
@@ -61,6 +65,7 @@ import {
   PlayScene,
   resolveCampaignLevels,
   SCORE_VALUES,
+  VICTORY_TRANSITION_HOLD_MS,
   WAVE_TIME_LIMIT_SECONDS,
   WAVE_TIMEOUT_EXPLOSION_SCALE,
 } from './PlayScene';
@@ -100,7 +105,7 @@ import {
   extraLifeDropChance,
   powerUpDropChance,
 } from '../core/levelScaling';
-import { miniBossDesignForLevel } from '../waves/miniBossDesigns';
+import { miniBossConfigForLevel, miniBossDesignForLevel } from '../waves/miniBossDesigns';
 import { scaledEncounterHp } from '../core/difficultyScaling';
 import {
   MINI_BOSS_LOCKED_WEAPONS,
@@ -205,12 +210,32 @@ function clearMiniBossWave(scene: PlayScene): void {
 }
 
 /**
- * Destroys the active level's mini-boss (if any) via player bullets, disabling
- * auto-fire and the spawned-enemy hit list so only the mini-boss takes the
- * damage. A no-op outside the mini-boss encounter
+ * Drives the in-flight mini-boss death sweep to completion
+ * (AH-0MVROELN600410GP). Sweep completion is real animation time — the burst
+ * tweens plus the shared sweep's Clock watchdog (`scene.time.delayedCall`,
+ * the explicit lifespan + stagger timer) — and both advance through the
+ * Phaser game step, not through `scene.tick()`, so a deterministic
+ * fixed-delta game-step walk is required. Bounded well above the sweep's
+ * ~1 s maximum display window.
+ */
+function finishMiniBossSweep(scene: PlayScene): void {
+  stepGameUntil(
+    scene.game,
+    'mini-boss death sweep completion',
+    () => !scene.isMiniBossSweepActive(),
+    240,
+  );
+}
+
+/**
+ * Lands the hits that destroy the active level's mini-boss (if any) via
+ * player bullets, disabling auto-fire and the spawned-enemy hit list so only
+ * the mini-boss takes the damage. Leaves the death sweep (and therefore the
+ * deferred reward/level finalisation) in flight, so ordering tests can
+ * observe the pre-completion state. A no-op outside the mini-boss encounter
  * (AH-0MVCRBISU006NUN5).
  */
-function killMiniBoss(scene: PlayScene, resolveReward = true): void {
+function hitMiniBossUntilDead(scene: PlayScene): void {
   const miniBoss = scene.getMiniBoss();
   if (!miniBoss?.alive) return;
   const isolated = scene as unknown as {
@@ -238,6 +263,19 @@ function killMiniBoss(scene: PlayScene, resolveReward = true): void {
     isolated.getEnemyEntities = originalGetEnemyEntities;
     isolated.autoFireEnabled = originalAutoFireEnabled;
   }
+}
+
+/**
+ * Destroys the active level's mini-boss (if any) via player bullets and
+ * drives its death sweep to completion, so the encounter is fully finalised
+ * (reward overlay offered, wave/level accounting advanced). A no-op outside
+ * the mini-boss encounter (AH-0MVCRBISU006NUN5).
+ */
+function killMiniBoss(scene: PlayScene, resolveReward = true): void {
+  const miniBoss = scene.getMiniBoss();
+  if (!miniBoss?.alive) return;
+  hitMiniBossUntilDead(scene);
+  finishMiniBossSweep(scene);
   // A defeat offers the one upgrade-or-unlock reward choice
   // (AH-0MVCRBNO6003E1CH); a deterministic walk resolves it so play can
   // continue, exactly as a player picking the first option would. Tests that
@@ -504,7 +542,11 @@ function findAsteroids(scene: PlayScene): Asteroid[] {
  */
 async function bootSceneWithLevels(
   levels: LevelDefinition[],
-  options: { asteroidSpawner?: boolean } = {},
+  options: {
+    asteroidSpawner?: boolean;
+    /** Extra scenes registered after PlayScene (e.g. the choice overlay). */
+    extraScenes?: (typeof Phaser.Scene)[];
+  } = {},
 ): Promise<{ booted: BootedGame; scene: PlayScene }> {
   // The shipped default now sequences the campaign (AH-0MUJSUTLA006Q8E1),
   // which would override these injected fixtures on `create()`. Opt out so
@@ -513,7 +555,12 @@ async function bootSceneWithLevels(
     RULES_STORAGE_KEY,
     JSON.stringify({ sequencedWavesEnabled: false }),
   );
-  const game = await bootScene([PlayScene, GameOverScene, MenuScene]);
+  const game = await bootScene([
+    PlayScene,
+    ...(options.extraScenes ?? []),
+    GameOverScene,
+    MenuScene,
+  ]);
   const scene = game.scene as PlayScene;
   scene.getWaveManager().setLevels(levels);
   if (options.asteroidSpawner === false) {
@@ -3980,16 +4027,21 @@ describe('PlayScene — Diver attack-end re-anchor (AH-0MUAYB957002EMYV)', () =>
     scene.tick(0.05);
 
     // Verify the glide is active and includes only the Diver.
-    const glide = (scene as unknown as { glide: { active: boolean; states: Map<unknown, unknown> } }).glide;
-    expect(glide.active).toBe(true);
-    expect(glide.states.size).toBe(1); // only the Diver
+    const reanchor = (scene as unknown as {
+      reanchor: {
+        isGliding: boolean;
+        glideStates: Map<unknown, unknown>;
+      };
+    }).reanchor;
+    expect(reanchor.isGliding).toBe(true);
+    expect(reanchor.glideStates.size).toBe(1); // only the Diver
 
     // The Scout stayed where it was (no vertical shift).
     expect(scout.y).toBeCloseTo(scoutBefore.y, 5);
 
     // Finish the glide and verify the Diver is at its slot (no residual).
     for (let i = 0; i < 20; i++) scene.tick(0.05);
-    expect(glide.active).toBe(false);
+    expect(reanchor.isGliding).toBe(false);
     expect(diver.y).toBeCloseTo(diverBefore.y, 5);
   });
 });
@@ -5044,6 +5096,108 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
     }
   });
 
+  // ── Fire stops when the boss is destroyed (AH-0MVCB6LBE007I6R8) ──
+
+  /** Reads the shared fire-suppression gate (protected in the core). */
+  function fireSuppressed(scene: PlayScene): boolean {
+    return (scene as unknown as { playerFireSuppressed(): boolean }).playerFireSuppressed();
+  }
+
+  /** Ticks the scene at a fixed 100 ms step for `seconds` of sim time. */
+  function tickFor(scene: PlayScene, seconds: number): void {
+    const steps = Math.round(seconds / 0.1);
+    for (let i = 0; i < steps; i++) scene.tick(0.1);
+  }
+
+  it('AC1/AC2/AC7 — the ship stops firing for the whole victory hold', async () => {
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+
+    // AC2: reaching the boss already walked past the level's mini-boss defeat
+    // and the wave/level transitions — the run is live, so the ship is in
+    // control and firing normally.
+    expect(fireSuppressed(scene)).toBe(false);
+    tickFor(scene, 1.2);
+    expect(scene.getPlayerBullets().length).toBeGreaterThan(0);
+
+    const fanfareSpy = vi.spyOn(effectsModule, 'playVictoryFanfareSound');
+    const fireworksSpy = vi.spyOn(endOfRunModule, 'spawnVictoryFireworks');
+
+    defeatBoss(scene);
+
+    // AC7: the run is won and the celebration still fires exactly once.
+    expect(scene.getBoss()!.alive).toBe(false);
+    expect(fireSuppressed(scene)).toBe(true);
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
+
+    // From the next tick on: no new player bullets, muzzle flashes or shoot
+    // cues, all the way through the 5 s in-run victory hold (AC1).
+    const spawnSpy = vi.spyOn(scene, 'spawnPlayerBullet');
+    const cueSpy = vi.spyOn(effectsModule, 'playWeaponFireSound');
+    const inFlightBefore = scene.getPlayerBullets().length;
+    tickFor(scene, VICTORY_TRANSITION_HOLD_MS / 1000 + 0.5);
+
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(cueSpy).not.toHaveBeenCalled();
+    // AC3: shots already in flight are not cleared in bulk...
+    expect(scene.getPlayerBullets().length).toBeLessThanOrEqual(inFlightBefore);
+    // ...the scene is still in the in-run hold (the delayed `GameOverScene`
+    // transition is asserted by the boss-encounter "defeating all 4 phases"
+    // test, which walks this same suppressed hold)...
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    // ...and the celebration is still the dominant effect.
+    expect(scene.getVictoryEffects().length).toBeGreaterThan(0);
+    expect(fanfareSpy).toHaveBeenCalledTimes(1);
+    expect(fireworksSpy).toHaveBeenCalledTimes(1);
+
+    spawnSpy.mockRestore();
+    cueSpy.mockRestore();
+  });
+
+  it('AC3 — a shot already in flight when the boss dies keeps flying', async () => {
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+    defeatBoss(scene);
+    expect(fireSuppressed(scene)).toBe(true);
+
+    const player = scene.getPlayer();
+    expect(player).not.toBeNull();
+    // A shot in flight at the moment of victory. The contract is "no new shots
+    // from the next tick", so this one must keep moving and stay live.
+    const inFlight = scene.spawnPlayerBullet(
+      player!.x,
+      player!.y - 40,
+      0,
+      -120,
+    );
+    const startY = inFlight.y;
+
+    scene.tick(0.1);
+
+    expect(scene.getPlayerBullets()).toContain(inFlight);
+    expect(inFlight.y).toBeLessThan(startY);
+  });
+
+  it('AC6 — a restarted run fires normally again', async () => {
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+    defeatBoss(scene);
+    expect(fireSuppressed(scene)).toBe(true);
+
+    // The suppression flag is per-run state, cleared by `create()`.
+    scene.scene.start('PlayScene');
+    await advanceGame(scene.game, 150);
+
+    const restarted = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(fireSuppressed(restarted)).toBe(false);
+
+    const spawnSpy = vi.spyOn(restarted, 'spawnPlayerBullet');
+    tickFor(restarted, 1.2);
+    expect(spawnSpy).toHaveBeenCalled();
+    spawnSpy.mockRestore();
+  });
+
   // ── Demo/attract mode (AH-0MUX495VG0014MIY AC1/AC3/AC4/AC6) ────
 
   describe('Demo mode flag (AC1/AC6)', () => {
@@ -6091,8 +6245,19 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
   /**
    * Boots the PlayScene with a single empty wave so horde accounting is
    * isolated from any formation kills. `horde` toggles the wave's opt-in.
+   *
+   * `seed` pins the run's RNG stream through the public `setRunSeed` seam
+   * (AH-0MVRLGUTZ007V3E5 AC1): `_initRunSeed()` adopts the injected seed at
+   * the next `create()`, so `computeHordeSpawns` plans the exact same grunt
+   * layout and spawn schedule for every run of that seed. Without it the
+   * scene draws a fresh `randomSeed()` per run and the horde layout varies
+   * (the source of the flaky kill assertion), which is why a fix must be
+   * justified by a reproduced seed rather than a green re-run.
    */
-  async function bootWithHordeWave(horde: boolean): Promise<PlayScene> {
+  async function bootWithHordeWave(
+    horde: boolean,
+    seed?: number,
+  ): Promise<PlayScene> {
     const levels: LevelDefinition[] = [
       {
         level: 1,
@@ -6108,6 +6273,8 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     const scene = booted.scene as PlayScene;
     scene.getWaveManager().setLevels(levels);
     scene.setHordeSpawnerEnabled(true);
+    // Inject before the restart: `_initRunSeed()` reads it during `create()`.
+    if (seed !== undefined) scene.setRunSeed(seed);
     scene.scene.restart();
     await advanceGame(scene.game, 200);
     return scene;
@@ -6177,19 +6344,134 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     expect(g.y).toBeLessThanOrEqual(GAME_HEIGHT);
   });
 
+  /**
+   * Fixed run seed for the horde kill test (AH-0MVRLGZPG0036ZTV): the first
+   * of the four seeds (202/350/353/589) on which the un-hardened
+   * single-tick kill deterministically FAILED during the seed sweep — a wave
+   * asteroid overlapping the victim grunt's edge spawn point absorbed the
+   * test bullet, so the victim stayed alive and the accounting never moved
+   * (AH-0MVMEI9V1005H0LU). Pinning it makes the horde layout and spawn
+   * schedule reproducible for every run, turning the isolated kill into a
+   * permanent regression proof: if the exactly-once contract ever regresses,
+   * the test fails on this seed instead of relying on random layout luck.
+   */
+  const HORDE_KILL_FIXED_SEED = 202;
+
   it('killing a grunt advances wave accounting exactly once', async () => {
-    const scene = await bootWithHordeWave(true);
+    const scene = await bootWithHordeWave(true, HORDE_KILL_FIXED_SEED);
     const wm = scene.getWaveManager();
     releaseHorde(scene);
     const total = DEFAULT_ENEMY_CONFIGS.grunt.count;
     expect(wm.enemiesAlive).toBe(total);
 
     const victim = liveGrunts(scene)[0];
-    scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
-    scene.tick(0.001);
+    const before = wm.enemiesAlive;
+    // Isolate the kill so auto-fire or an overlapping enemy (e.g. the wave
+    // asteroid that absorbed the bullet on seed 202) cannot add a second
+    // kill or absorb the test's bullet and double-/never-decrement the wave
+    // accounting (AH-0MV1EN1NS000QLBK, AH-0MVMEI9V1005H0LU). The fixed seed
+    // above additionally pins the phase gate: a wave-timeout transition (the
+    // carried-survivor-only collision pass) or a paused scene skips the
+    // bullet-vs-grunt collision entirely and leaves the victim alive — the
+    // transition/paused gating hazard identified in AH-0MVMEI9V1005H0LU.
+    // The stubs are restored in `finally` so a leaked isolation cannot
+    // poison later tests — the same shape the pac-man pursuer kill test
+    // uses (~5893-5906).
+    const restoreKill = isolateEnemyForKill(scene, victim);
+    try {
+      scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+      scene.tick(0.001);
+      // Exactly-once proof: further ticks while still isolated must NOT move
+      // the accounting again — a kill is counted once at the moment the
+      // bullet resolves, never twice (no double-decrement, no deferred
+      // kill). The victim is already dead, so nothing else can die here;
+      // the count must stay pinned at (total - 1).
+      scene.tick(0.05);
+      scene.tick(0.05);
+    } finally {
+      restoreKill();
+    }
     expect(victim.alive).toBe(false);
-    expect(wm.enemiesAlive).toBe(total - 1);
+    expect(wm.enemiesAlive).toBe(before - 1);
   });
+
+  /**
+   * Fixed 50-seed set for the multi-seed regression guard
+   * (AH-0MVRLH07H001KW8S): proves the isolate-wrapped exactly-once kill on
+   * every layout the bare (pre-fix) kill could flake on, not just one lucky
+   * layout, guarding the suite against a regression to this flake class
+   * (AH-0MVMEI9V1005H0LU).
+   *
+   * - The first four (202/350/353/589) are the seeds from the reproduction
+   *   sweep (AH-0MVRLGUTZ007V3E5) on which the un-hardened single-tick kill
+   *   deterministically FAILED — a wave asteroid overlapping the victim
+   *   grunt's edge spawn point absorbed the test bullet, so the victim
+   *   stayed alive and the accounting never moved. Keeping them in the set
+   *   means a regression to that mechanism fails the guard deterministically
+   *   (AC3), not just on a lucky/unlucky random re-run.
+   * - The remaining 46 are `3 + 17k` for k = 0..45 (3, 20, … 768): a
+   *   documented, evenly-spaced spread across the 0..999 range the
+   *   reproduction item swept. The layout sweep for this set (run during
+   *   this item's implementation; evidence on AH-0MVRLH07H001KW8S) shows it
+   *   spans every RNG-driven dimension of `computeHordeSpawns`
+   *   (src/waves/HordeSpawner.ts):
+   *   - **edge choice** — every layout releases grunts on all four arena
+   *     edges (the groups cycle top→right→bottom→left, 4 grunts per
+   *     edge), and the first-released grunt (the victim) sits at a
+   *     different top-edge spawn point per seed (49 of the 50 seeds give a
+   *     distinct point, spread across the full arena width);
+   *   - **group cadence / spawn-time jitter** — each grunt draws its own
+   *     ±0.25 s jitter from the seed's RNG stream, so the four groups'
+   *     release times differ per seed and the 50 seeds yield 50
+   *     pairwise-distinct layouts (no two identical).
+   *   The victim is always a group-0 (top-edge) grunt: every group-0 spawn
+   *   clamps up to the wave's min-time fraction (t = 1.5 s) and the plan's
+   *   group-index tiebreak keeps the earliest-cadence group first, so the
+   *   tested kill geometry varies *along* the edge, never across edges —
+   *   and the exactly-once contract must hold for every one of these
+   *   layouts. The set is a fixed literal array — runs are deterministic,
+   *   no RNG.
+   */
+  const HORDE_KILL_MULTI_SEEDS: number[] = [
+    202, 350, 353, 589,
+    3, 20, 37, 54, 71, 88, 105, 122, 139, 156, 173, 190, 207, 224, 241, 258,
+    275, 292, 309, 326, 343, 360, 377, 394, 411, 428, 445, 462, 479, 496, 513,
+    530, 547, 564, 581, 598, 615, 632, 649, 666, 683, 700, 717, 734, 751, 768,
+  ];
+
+  it.each(HORDE_KILL_MULTI_SEEDS)(
+    'killing a horde grunt advances wave accounting exactly once across fixed seeds (seed %i)',
+    async (seed) => {
+      const scene = await bootWithHordeWave(true, seed);
+      const wm = scene.getWaveManager();
+      releaseHorde(scene);
+      const total = DEFAULT_ENEMY_CONFIGS.grunt.count;
+      expect(wm.enemiesAlive).toBe(total);
+
+      const victim = liveGrunts(scene)[0];
+      const before = wm.enemiesAlive;
+      // The same isolate-wrapped kill as the pinned single-seed test
+      // (AH-0MVRLGZPG0036ZTV): auto-fire and overlapping enemies (e.g. the
+      // wave asteroid on the failing seeds) cannot absorb the test's bullet
+      // or add a second kill, so the exactly-once accounting holds for the
+      // victim alone on every layout in the set. Stubs restored in `finally`.
+      const restoreKill = isolateEnemyForKill(scene, victim);
+      try {
+        scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
+        scene.tick(0.001);
+        // Exactly-once proof: extra ticks while still isolated must NOT move
+        // the accounting again — a kill is counted once at the moment the
+        // bullet resolves, never twice (no double-decrement, no deferred
+        // kill).
+        scene.tick(0.05);
+        scene.tick(0.05);
+      } finally {
+        restoreKill();
+      }
+      expect(victim.alive).toBe(false);
+      expect(wm.enemiesAlive).toBe(before - 1);
+    },
+  );
 
   it('does not spawn a horde for a wave without the opt-in', async () => {
     const scene = await bootWithHordeWave(false);
@@ -6203,6 +6485,25 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
     scene.setHordeSpawnerEnabled(false);
     releaseHorde(scene);
     expect(liveGrunts(scene)).toHaveLength(0);
+  });
+
+  it('plans the same horde layout for a repeated seed', async () => {
+    // AH-0MVRLGUTZ007V3E5 AC1: the `seed` parameter must drive the horde
+    // plan (`computeHordeSpawns` reads the run RNG), not merely the
+    // drop/weapon rolls — a recorded seed is only a durable reproduction
+    // input when it reproduces the layout exactly.
+    const first = await bootWithHordeWave(true, 12345);
+    releaseHorde(first);
+    const firstLayout = liveGrunts(first).map((g) => [g.x, g.y] as const);
+    booted?.game.destroy(true);
+    booted = null;
+
+    const second = await bootWithHordeWave(true, 12345);
+    releaseHorde(second);
+    const secondLayout = liveGrunts(second).map((g) => [g.x, g.y] as const);
+
+    expect(firstLayout).toHaveLength(DEFAULT_ENEMY_CONFIGS.grunt.count);
+    expect(secondLayout).toEqual(firstLayout);
   });
 });
 
@@ -6777,10 +7078,21 @@ describe('PlayScene — Phaser orbital spawn transit (AH-0MVEXVME1004SIIS)', () 
     scene.tick(0.001);
     const after = livePhasers(scene);
     expect(after).toHaveLength(12);
+    // The playfield is now a wrapped torus (AH-0MVKXBWDY008R0YH), so an
+    // orbital slot exactly on an edge is equivalent to its wrapped twin: the
+    // Phaser may legitimately cross the seam by one full period between
+    // samples. "No line then snap" therefore means the *wrapped* distance is
+    // one frame of motion, not that raw coordinates are adjacent.
     for (let i = 0; i < after.length; i++) {
-      expect(
-        Math.hypot(after[i].x - settled[i].x, after[i].y - settled[i].y),
-      ).toBeLessThanOrEqual(1);
+      const dx = Math.min(
+        Math.abs(after[i].x - settled[i].x),
+        Math.abs(GAME_WIDTH - Math.abs(after[i].x - settled[i].x)),
+      );
+      const dy = Math.min(
+        Math.abs(after[i].y - settled[i].y),
+        Math.abs(GAME_HEIGHT - Math.abs(after[i].y - settled[i].y)),
+      );
+      expect(Math.hypot(dx, dy)).toBeLessThanOrEqual(1);
     }
   });
 
@@ -7091,6 +7403,104 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(MINI_BOSS_LOCKED_WEAPONS).toContain('railgun');
   });
 
+  // ── Six-slot cap on the reward offer (parent AH-0MVLIJT3M005HPHF AC4) ──
+
+  it('AH-0MVLIJT3M005HPHF AC4 — at six filled slots the reward offers no brand-new weapon unlock', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    // Start from an empty loadout: walking to the mini-boss resolves hold-full
+    // choices, which would otherwise leave an unknown permanent loadout behind.
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+    // Fill all six counted slots: one permanent weapon plus five permanent
+    // power-up kinds, through the player's own run-scoped stores.
+    player.equipWeapon('spread', true);
+    for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift', 'magnet'] as const) {
+      player.collectPowerUp(id, true);
+    }
+
+    killMiniBoss(scene, false);
+
+    const options = scene.getMiniBossRewardOptions();
+    expect(options.length).toBeGreaterThan(0);
+    // The upgrade half survives — it names kinds already in the slots.
+    expect(
+      options.some((option) => option.kind === 'weapon-level' && option.id === 'spread'),
+    ).toBe(true);
+    // The unlock half is gated: no kind outside the slots can be added, so a
+    // seventh kind can never come from a mini-boss reward (the producer's
+    // "we seem able to get 7 slots" path).
+    expect(options.every((option) => option.kind !== 'weapon')).toBe(true);
+    const held = new Set([
+      'spread',
+      'shield',
+      'bomb',
+      'speed_boost',
+      'phase_shift',
+      'magnet',
+    ]);
+    for (const option of options) {
+      expect(held.has(option.id), `${option.id} is outside the slots`).toBe(true);
+    }
+  });
+
+  it('AH-0MVLIJT3M005HPHF AC4 — a kind held only temporarily can still be made permanent at the cap', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+    player.equipWeapon('spread', true);
+    for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift'] as const) {
+      player.collectPowerUp(id, true);
+    }
+    // The sixth slot is a field pickup of a still-locked weapon, so taking the
+    // unlock adds no new kind — it makes an already-slotted kind permanent.
+    player.equipWeapon('railgun', false);
+
+    killMiniBoss(scene, false);
+
+    const unlockIds = scene
+      .getMiniBossRewardOptions()
+      .filter((option) => option.kind === 'weapon')
+      .map((option) => option.id);
+    expect(unlockIds).toEqual(['railgun']);
+  });
+
+  it('AH-0MVLIJT3M005HPHF AC4 — a full pool never opens an empty reward (no soft-lock)', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    // A run holding six field pickups and nothing permanent: the upgrade half
+    // is empty and no locked weapon is held, so a naive gate would offer zero
+    // options and the paused overlay would never resolve.
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+    for (const id of [
+      'shield',
+      'bomb',
+      'speed_boost',
+      'phase_shift',
+      'teleport',
+      'magnet',
+    ] as const) {
+      player.collectPowerUp(id);
+    }
+
+    killMiniBoss(scene, false);
+
+    const options = scene.getMiniBossRewardOptions();
+    expect(options.length).toBeGreaterThan(0);
+    // The fallback offers only kinds already in the slots (taking one makes it
+    // permanent), never a brand-new kind.
+    expect(options.every((option) => option.kind !== 'weapon')).toBe(true);
+    expect(options.map((option) => option.id)).not.toContain('reset');
+    // And the reward still resolves, so play resumes.
+    expect(scene.selectMiniBossReward(0)).not.toBeNull();
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+  });
+
   it('AC2 — a mini-boss defeat auto-saves the run checkpoint', async () => {
     localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
     const scene = await bootMiniBossCampaign();
@@ -7098,6 +7508,9 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     scene.getGameState().score = 4321;
     scene.getGameState().lives = 2;
     scene.getGameState().minerals = 5;
+    // A non-default live capacity proves the save path persists the run's
+    // current value rather than the first-hold default (AH-0MVT1DYO5004UC4P AC5).
+    scene.getGameState().mineralCapacity = 20;
     scene.getPlayer()!.equipWeapon('spread', true);
 
     killMiniBoss(scene, false);
@@ -7109,6 +7522,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(saved!.lives).toBe(2);
     expect(saved!.score).toBe(4321);
     expect(saved!.minerals).toBe(5);
+    expect(saved!.mineralHoldCapacity).toBe(20);
     expect(saved!.runSeed).toBe(scene.getRunSeed());
     expect(saved!.weaponLevels.some((entry) => entry.id === 'spread')).toBe(true);
   });
@@ -7474,6 +7888,309 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(boss).not.toBeNull();
     expect(boss).not.toBeInstanceOf(MiniBoss);
     expect(boss!.alive).toBe(true);
+  });
+});
+
+/**
+ * Mini-boss death sweep wiring (parent AH-0MVOFGB6K003YD0Z,
+ * AH-0MVROELN600410GP).
+ *
+ * A mini-boss defeat explodes every remaining wave-gating enemy (escorts plus
+ * the mini-boss's live minions) in a staggered sweep, holds the reward
+ * overlay until the last burst has finished animating, and advances wave/
+ * level accounting exactly once after the sweep. The sweep itself (count
+ * formula, scope split, determinism, anchored/scattered placement, completion
+ * ordering) is pinned by `src/scenes/core/miniBossDeathSweep.test.ts`; this
+ * suite pins the **scene wiring**: capture-before-teardown, the deferred
+ * overlay, the single post-sweep advance, hazard survival and the
+ * cosmetic-only teardown.
+ */
+describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  /** A compact campaign whose last wave of each level is the mini-boss. */
+  function sweepCampaign(levelCount = 2): LevelDefinition[] {
+    const scoutGroup = (count: number) => ({
+      enemyKey: 'scout',
+      formation: 'v' as const,
+      count,
+      spacingX: 30,
+      spacingY: 26,
+      startX: GAME_WIDTH * 0.2,
+      startY: GAME_HEIGHT * 0.38,
+    });
+    return Array.from({ length: levelCount }, (_unused, i) => ({
+      level: i + 1,
+      name: i === 0 ? 'Entry' : 'Descent',
+      waves: [
+        { groups: [scoutGroup(2)], shootEnabled: false },
+        { groups: [scoutGroup(2)], shootEnabled: false, miniBoss: true },
+      ],
+    }));
+  }
+
+  async function bootSweepScene(
+    options: { extraScenes?: (typeof Phaser.Scene)[]; levels?: LevelDefinition[] } = {},
+  ): Promise<PlayScene> {
+    const { booted: game, scene } = await bootSceneWithLevels(
+      options.levels ?? sweepCampaign(),
+      { asteroidSpawner: false, extraScenes: options.extraScenes },
+    );
+    booted = game;
+    return scene;
+  }
+
+  /** Clears every regular wave until the level's mini-boss wave is current. */
+  function advanceToMiniBoss(scene: PlayScene): void {
+    const wm = scene.getWaveManager();
+    scene.getGameState().lives = 99; // survive incidental fire while walking.
+    for (let guard = 0; guard < 20 && !wm.miniBossActive; guard++) {
+      if (resolveMineralChoiceIfOpen(scene)) continue;
+      killSpawnedEnemies(scene);
+      finishTransition(scene);
+    }
+    expect(wm.miniBossActive).toBe(true);
+    expect(scene.getMiniBoss()?.alive).toBe(true);
+  }
+
+  it('AC1/AC3 — the reward overlay opens only after the sweep, and the level advances exactly once', async () => {
+    const scene = await bootSweepScene();
+    advanceToMiniBoss(scene);
+    const wm = scene.getWaveManager();
+    const rewardSpy = vi.spyOn(scene, 'openMiniBossReward');
+
+    // Land the lethal hit; the sweep is animating on the defeat frame.
+    hitMiniBossUntilDead(scene);
+
+    // The overlay has NOT opened and the wave has NOT been accounted yet:
+    // nothing finalises mid-display.
+    expect(scene.getMiniBoss()).toBeNull();
+    expect(scene.isMiniBossSweepActive()).toBe(true);
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+    expect(rewardSpy).not.toHaveBeenCalled();
+    expect(wm.level).toBe(1);
+    expect(wm.miniBossActive).toBe(true);
+    expect(scene.isTransitioning()).toBe(false);
+
+    // Only the last burst's completion opens the overlay and advances the
+    // level — once.
+    finishMiniBossSweep(scene);
+
+    expect(scene.isMiniBossSweepActive()).toBe(false);
+    expect(scene.isMiniBossRewardOpen()).toBe(true);
+    expect(rewardSpy).toHaveBeenCalledTimes(1);
+    expect(wm.level).toBe(2);
+    expect(wm.waveNumber).toBe(1);
+    expect(wm.miniBossActive).toBe(false);
+
+    // Further simulation never re-opens the overlay or advances again.
+    scene.selectMiniBossReward(0);
+    finishTransition(scene);
+    scene.tick(0.016);
+    expect(wm.level).toBe(2);
+    expect(rewardSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getMiniBossDefeatCount()).toBe(1);
+  });
+
+  it('AC1 — every remaining escort is swept while a non-blocking hazard survives', async () => {
+    const scene = await bootSweepScene();
+    advanceToMiniBoss(scene);
+    // A non-gating hazard on the field must never be swept (and must not
+    // stall the deferred level advance either).
+    const asteroid = scene.spawnAsteroidAt(
+      GAME_WIDTH * 0.08,
+      GAME_HEIGHT * 0.92,
+      'small',
+    );
+    const escorts = scene
+      .getEnemies()
+      .filter((enemy) => enemy.alive && enemy !== asteroid);
+    expect(escorts.length).toBeGreaterThan(0);
+
+    hitMiniBossUntilDead(scene);
+
+    // Every live escort was captured as a sweep target; the hazard was not.
+    const targets = scene.getMiniBossSweepTargets();
+    expect(targets).toHaveLength(escorts.length);
+    for (const escort of escorts) {
+      expect(
+        targets.some(
+          (target) =>
+            Math.abs(target.x - escort.x) < 0.001 &&
+            Math.abs(target.y - escort.y) < 0.001,
+        ),
+      ).toBe(true);
+    }
+    expect(targets.every((target) => target.key !== 'asteroid')).toBe(true);
+
+    finishMiniBossSweep(scene);
+
+    // Swept escorts are gone from play (removed cosmetically, AC4), the hazard
+    // remains on the field, and the wave still advanced exactly once. The
+    // next level's wave may already be spawning from the wormhole by now, so
+    // assert on the captured escort references rather than on the scene's
+    // whole live-entity list.
+    for (const escort of escorts) {
+      expect(escort.alive).toBe(false);
+      expect(escort.active).toBe(false);
+    }
+    expect(asteroid.alive).toBe(true);
+    expect(asteroid.active).toBe(true);
+    expect(scene.getEnemies()).toContain(asteroid);
+    expect(scene.getWaveManager().level).toBe(2);
+    expect(scene.getWaveManager().miniBossActive).toBe(false);
+  });
+
+  it("AC1 — the mini-boss's live minions are captured before the lethal blow clears them", async () => {
+    const scene = await bootSweepScene();
+    // Point the level-1 encounter at a two-phase design whose LAST phase (2)
+    // summons a minion wave — the minions are therefore alive at the capture
+    // moment and are torn down by the lethal blow itself.
+    const scoped = scene as unknown as {
+      miniBossConfigFor(level: number): MiniBossConfig;
+    };
+    scoped.miniBossConfigFor = () => {
+      const config = miniBossConfigForLevel(1, {
+        x: GAME_WIDTH / 2,
+        y: GAME_HEIGHT / 3,
+        formationOffset: { row: 0, col: 0 },
+      });
+      return {
+        ...config,
+        hpPerPhase: 3,
+        phases: [{ pattern: 'spread' }, { pattern: 'spiral' }],
+        minions: [
+          {
+            phase: 2,
+            shootEnabled: false,
+            groups: [
+              {
+                enemyKey: 'scout',
+                formation: 'v',
+                count: 2,
+                spacingX: 30,
+                spacingY: 24,
+                startX: GAME_WIDTH * 0.2,
+                startY: GAME_HEIGHT * 0.3,
+              },
+            ],
+          },
+        ],
+      };
+    };
+
+    advanceToMiniBoss(scene);
+    const miniBoss = scene.getMiniBoss()!;
+    expect(miniBoss.getPhaseCount()).toBe(2);
+
+    // Deplete phase 1 so the minion-bearing phase 2 begins.
+    const isolated = scene as unknown as {
+      getEnemyEntities(): readonly unknown[];
+      autoFireEnabled(): boolean;
+    };
+    const originalGetEnemyEntities = isolated.getEnemyEntities;
+    const originalAutoFireEnabled = isolated.autoFireEnabled;
+    isolated.getEnemyEntities = () => [];
+    isolated.autoFireEnabled = () => false;
+    try {
+      for (let hit = 0; hit < 3; hit++) {
+        scene.spawnPlayerBullet(miniBoss.x, miniBoss.y, 0, 0);
+        scene.tick(0);
+      }
+    } finally {
+      isolated.getEnemyEntities = originalGetEnemyEntities;
+      isolated.autoFireEnabled = originalAutoFireEnabled;
+    }
+    const minions = miniBoss.getMinions();
+    expect(minions).toHaveLength(2);
+    // Live escorts still on the field at capture time (they are swept, not
+    // hit, so their pre-defeat count is the escort half of the target list).
+    const escortsBefore = scene
+      .getEnemies()
+      .filter((enemy) => enemy.alive);
+    expect(escortsBefore.length).toBeGreaterThan(0);
+
+    hitMiniBossUntilDead(scene);
+
+    // The minions were captured as sweep targets even though the lethal blow
+    // has already torn their entities down.
+    const targets = scene.getMiniBossSweepTargets();
+    expect(targets).toHaveLength(escortsBefore.length + minions.length);
+    for (const minion of minions) {
+      expect(
+        targets.some(
+          (target) =>
+            Math.abs(target.x - minion.x) < 0.001 &&
+            Math.abs(target.y - minion.y) < 0.001,
+        ),
+      ).toBe(true);
+    }
+    expect(minions.every((minion) => minion.active === false)).toBe(true);
+
+    finishMiniBossSweep(scene);
+    expect(scene.getWaveManager().level).toBe(2);
+  });
+
+  it('AC4 — swept enemies award no score, drops or kill telemetry, and the wave clears once after the sweep', async () => {
+    const scene = await bootSweepScene();
+    advanceToMiniBoss(scene);
+    const wm = scene.getWaveManager();
+    const killTelemetry = vi.spyOn(RunTelemetry.prototype, 'enemyKilled');
+    const scoreBefore = scene.getGameState().score;
+    const mineralsBefore = scene.getMinerals().length;
+    const dropsBefore = scene.getDrops().length;
+
+    hitMiniBossUntilDead(scene);
+
+    // The swept escorts never route through the reward-bearing kill path
+    // (`_onEnemyKilled`): no score, no drops, no kill telemetry — and the
+    // wave has not been accounted yet.
+    expect(wm.level).toBe(1);
+    expect(killTelemetry).not.toHaveBeenCalled();
+    expect(scene.getGameState().score).toBe(scoreBefore);
+
+    finishMiniBossSweep(scene);
+
+    // The single post-sweep advance is the only wave accounting: the sweep
+    // itself awarded nothing.
+    expect(wm.level).toBe(2);
+    expect(killTelemetry).not.toHaveBeenCalled();
+    expect(scene.getGameState().score).toBe(scoreBefore);
+    expect(scene.getMinerals()).toHaveLength(mineralsBefore);
+    expect(scene.getDrops()).toHaveLength(dropsBefore);
+  });
+
+  it('AC3/AC4 — demo mode still auto-selects the reward after the sweep delay (no stall)', async () => {
+    const scene = await bootSweepScene({ extraScenes: [MineralChoiceScene] });
+    advanceToMiniBoss(scene);
+    scene.setDemoMode(true);
+    // Keep the attract walk deterministic: no player fire, no stray kills.
+    (scene as unknown as { autoFireEnabled(): boolean }).autoFireEnabled =
+      () => false;
+
+    killMiniBoss(scene, false);
+    expect(scene.isMiniBossRewardOpen()).toBe(true);
+
+    // The shared overlay auto-selects after the human-like demo delay and the
+    // 3-2-1 countdown — the attract run never stalls behind the new sweep.
+    await advanceGame(
+      scene.game,
+      BOT_MINERAL_CHOICE_DELAY_MS + HOLD_FULL_COUNTDOWN_DURATION_MS + 400,
+    );
+
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+    expect(scene.isMineralChoiceOpen()).toBe(false);
+    expect(scene.isPaused()).toBe(false);
   });
 });
 
@@ -8107,11 +8824,104 @@ describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
       'spread',
       'dual',
       ...EXEMPT_WHEN_FULL,
+      // The Reset utility can never hold a level, so the cap never gates it
+      // (parent AH-0MVLIJT3M005HPHF — slot-exempt utility drop).
+      'reset',
     ]);
     // Every other power-up and weapon id is never drawn.
     expect(drawn.filter((id) => !allowed.has(id))).toEqual([]);
     // No eligible id is starved: owned kinds and exempt entries all appear.
     for (const id of allowed) expect(drawn).toContain(id);
+  });
+
+  it('counts a temporary field pickup towards the six slots (AC1/AC2)', async () => {
+    // Five permanent kinds plus one *temporary* stack fill the pool, so the
+    // draw is gated exactly as if all six were permanent (producer Q4a).
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    player.getPowerUpLevelStore().collect('shield', true);
+    player.getPowerUpLevelStore().collect('bomb', true);
+    player.getPowerUpLevelStore().collect('speed_boost', true);
+    player.getPowerUpLevelStore().collect('phase_shift', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('rapid'); // field pickup: temporary sixth kind
+
+    expect(player.getTempWeaponStacks('rapid')).toBeGreaterThan(0);
+    expect(resolvePlayerSlotState(player).isFull).toBe(true);
+
+    let seed = 777 >>> 0;
+    scene.setRng(() => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x100000000;
+    });
+    const roll = scene as unknown as {
+      _maybeDropPowerUp(x: number, y: number): void;
+    };
+    const spawn = vi
+      .spyOn(scene, 'spawnPowerUpDrop')
+      .mockImplementation(() => null);
+    for (let i = 0; i < 3000; i++) roll._maybeDropPowerUp(100, 120);
+    const drawn = spawn.mock.calls.map(([id]) => id as DropId);
+    spawn.mockRestore();
+
+    const allowed = new Set<DropId>([
+      'shield',
+      'bomb',
+      'speed_boost',
+      'phase_shift',
+      'spread',
+      'rapid',
+      ...EXEMPT_WHEN_FULL,
+      'reset',
+    ]);
+    expect(drawn.length).toBeGreaterThan(200);
+    expect(drawn.filter((id) => !allowed.has(id))).toEqual([]);
+    // The temporarily held weapon still spawns (it owns a slot).
+    expect(drawn).toContain('rapid');
+  });
+
+  it('a full pool blocks an unheld drop and plays the not-collectable cue once (AC8)', async () => {
+    const blockedCue = vi.spyOn(effectsModule, 'playPowerUpBlockedSound');
+    const popCue = vi.spyOn(effectsModule, 'playPowerUpCollectPopSound');
+    const scene = await bootGatedScene();
+    const player = scene.getPlayer()!;
+    player.getPowerUpLevelStore().collect('shield', true);
+    player.getPowerUpLevelStore().collect('bomb', true);
+    player.getPowerUpLevelStore().collect('speed_boost', true);
+    player.getPowerUpLevelStore().collect('phase_shift', true);
+    player.equipWeapon('spread', true);
+    player.equipWeapon('dual', true);
+    expect(resolvePlayerSlotState(player).isFull).toBe(true);
+
+    // An unheld, non-exempt kind drops right on top of the ship.
+    const drop = scene.spawnPowerUpDrop('teleport', player.x, player.y)!;
+    expect(drop).not.toBeNull();
+    for (let i = 0; i < 40; i++) drop.powerUp.advance(0.05); // clear the collect gate
+    player.setPosition(drop.x, drop.y);
+
+    scene.tick(0.016);
+
+    // Refused: kept on the field, no collection, distinct cue played once.
+    expect(blockedCue).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).toContain(drop);
+    expect(scene.getCollectAnimations()).toHaveLength(0);
+    expect(popCue).not.toHaveBeenCalled();
+
+    // Overlapping for several more frames must not spam the cue.
+    scene.tick(0.05);
+    scene.tick(0.05);
+    expect(blockedCue).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).toContain(drop);
+
+    // Free the pool (run restart clears both components) — the same drop is
+    // now collectable and the normal pickup path runs.
+    player.getPowerUpLevelStore().reset();
+    player.resetWeaponLevels();
+    expect(resolvePlayerSlotState(player).isFull).toBe(false);
+    scene.tick(0.016);
+    expect(popCue).toHaveBeenCalledTimes(1);
+    expect(scene.getDrops()).not.toContain(drop);
+    expect(scene.getCollectAnimations().length).toBeGreaterThan(0);
   });
 
   it('below the cap the full weighted pool is still drawable (AC3)', async () => {

@@ -5,10 +5,14 @@ import * as path from 'node:path';
 import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
-import { PLAYER_BULLET_SPEED } from '../../core/constants';
+import {
+  GAME_HEIGHT,
+  GAME_WIDTH,
+  PLAYER_BULLET_SPEED,
+} from '../../core/constants';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import { RULES_STORAGE_KEY } from '../../core/rules';
-import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
+import { advanceGame, bootScene, stepGameUntil, type BootedGame } from '../../test/gameHarness';
 import type { FormationOffset } from '../../utils/formations';
 import { PlayScene } from '../PlayScene';
 import { GameOverScene } from '../GameOverScene';
@@ -1292,6 +1296,30 @@ describe('shared teleport path — GymPowerUpsCombat (gap 7)', () => {
     }
   });
 
+  it('applies the shared Phase Shift juice in the level gym too (AH-0MVNTY0700053T9E)', async () => {
+    const level = await bootScene([GymLevel], 'phase-juice-level-host');
+    games.push(level);
+    const levelScene = level.scene as GymLevel;
+    expect(levelScene.getPlayer()).not.toBeNull();
+
+    levelScene.getEffectsRegistry().applyCollect('phase_shift');
+    levelScene.getEffectsRegistry().applyPhaseShift();
+    levelScene.tick(0.016);
+
+    expect(levelScene.getEffectsRegistry().isPhased).toBe(true);
+    const overlays = levelScene.children.list.filter(
+      (obj) =>
+        (
+          obj as Phaser.GameObjects.GameObject & {
+            getData?: (key: string) => unknown;
+          }
+        ).getData?.('juiceLayer') === 'phaseShift',
+    );
+    // The level gym advances the treatment through the same shared step, so it
+    // cannot silently omit the effect the game and every other gym show.
+    expect(overlays.length).toBeGreaterThan(0);
+  });
+
   it('plays the Phase Shift cue exactly once when danger auto-triggers (parent AH-0MUIYX1EE008FVS8)', async () => {
     const play = await bootScene(
       [PlayScene, GameOverScene, MenuScene],
@@ -1872,6 +1900,18 @@ function reachPlayBoss(play: PlayScene): void {
         play.tick(0);
       }
     }
+    // The mini-boss defeat plays a tween-driven death sweep before it is
+    // finalised (deferred reward overlay + single level advance); step the
+    // game loop so every sweep completes and the walk can continue
+    // (AH-0MVROELN600410GP).
+    if (play.isMiniBossSweepActive()) {
+      stepGameUntil(
+        play.game,
+        'mini-boss death sweep',
+        () => !play.isMiniBossSweepActive(),
+        240,
+      );
+    }
     // The mini-boss defeat offers the one upgrade-or-unlock reward choice
     // (AH-0MVCRBNO6003E1CH); resolve it so play can continue.
     if (play.isMiniBossRewardOpen()) play.selectMiniBossReward(0);
@@ -2174,6 +2214,343 @@ describe('boss encounter — game↔gym parity (AH-0MUZMTU3Y001Y8XZ)', () => {
   });
 });
 
+// ── Wrap-aware aim + post-motion wrap — game↔gym parity ────────────
+
+/**
+ * Wrap-aware aim and post-motion movement parity (parent
+ * AH-0MV9G3DZ9003P7P8, test item AH-0MVKXBXQX003S7K5 AC2/AC3).
+ *
+ * The seam maths (`aimVectorToTarget`, `wrappedAxisDelta`) and the shared
+ * post-motion seam (`applyPostMotionWrapAll`) live once in the shared core and
+ * are consumed by `PlayScene` and every gym. These tests drive the *scene*
+ * paths — the game and a real gym fire the same aimed shot, and both scene
+ * loops run the same post-motion wrap — so the equivalence claims are proven
+ * end-to-end rather than inferred from the shared source.
+ */
+describe('wrap-aware aim and post-motion wrap — game↔gym parity (AH-0MVKXBXQX003S7K5)', () => {
+  const games: BootedGame[] = [];
+
+  afterEach(() => {
+    for (const game of games.splice(0)) game.game.destroy(true);
+  });
+
+  /** The aim geometry used in both scenes: the wrap route is the short one. */
+  const ENEMY_POS = { x: 100, y: 100 };
+  const PLAYER_POS = { x: 800, y: 500 };
+  /** The wrapped deltas for that geometry (right/top seams are nearer). */
+  const WRAPPED_DX = PLAYER_POS.x - ENEMY_POS.x - GAME_WIDTH; // −260
+  const WRAPPED_DY = PLAYER_POS.y - ENEMY_POS.y - GAME_HEIGHT; // −140
+
+  /**
+   * Fires one aimed shot from a freshly created Scout in `scene`.
+   *
+   * The Scout is created at the shared geometry, aimed through the same
+   * `setAimTarget` seam the scenes push, and fired through the shared
+   * `fireForEnemy` dispatcher (tell → shot) — exactly what the scene's own
+   * `_collectEnemyFire` loop does.
+   */
+  function aimedShot(
+    scene: Phaser.Scene,
+    wrapAware: boolean,
+  ): { vx: number; vy: number } {
+    const config = {
+      ...loadEnemyConfig('scout'),
+      wrapAware,
+      fireInterval: 1,
+      shotProbability: 1,
+    };
+    const enemy = createEnemyFromConfig(
+      scene,
+      config,
+      ENEMY_POS.x,
+      ENEMY_POS.y,
+      { row: 0, col: 0 },
+    );
+    enemy.shootEnabled = true;
+    (enemy as { setAimTarget?(x: number, y: number): void }).setAimTarget?.(
+      PLAYER_POS.x,
+      PLAYER_POS.y,
+    );
+    // Identical clock sequence in both scenes: tell first, then the shot.
+    fireForEnemy(enemy, 'scout', 1_000);
+    const [bullet] = fireForEnemy<{ vx: number; vy: number }>(
+      enemy,
+      'scout',
+      2_000,
+    );
+    expect(bullet, 'the aimed shot fired').toBeDefined();
+    return bullet;
+  }
+
+  async function bootAimOwners(): Promise<{
+    play: PlayScene;
+    gym: GymFodderEnemies;
+  }> {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'wrap-aim-play-host',
+    );
+    const gym = await bootScene([GymFodderEnemies], 'wrap-aim-gym-host');
+    games.push(play, gym);
+    return { play: play.scene as PlayScene, gym: gym.scene as GymFodderEnemies };
+  }
+
+  it('fires a wrap-aware aimed shot on the same wrapped heading in the game and the enemy gym', async () => {
+    const { play, gym } = await bootAimOwners();
+
+    const gameBullet = aimedShot(play, true);
+    const gymBullet = aimedShot(gym, true);
+
+    // Same geometry ⇒ same launch vector in both scenes.
+    expect(gymBullet.vx, 'gym vx matches the game').toBeCloseTo(
+      gameBullet.vx,
+      6,
+    );
+    expect(gymBullet.vy, 'gym vy matches the game').toBeCloseTo(
+      gameBullet.vy,
+      6,
+    );
+
+    // The launch angle follows the shortest wrapped path ...
+    const wrappedHeading = Math.atan2(WRAPPED_DY, WRAPPED_DX);
+    expect(Math.atan2(gameBullet.vy, gameBullet.vx)).toBeCloseTo(
+      wrappedHeading,
+      6,
+    );
+    // ... which is not the direct line to the player (the seam shot wins).
+    const directHeading = Math.atan2(
+      PLAYER_POS.y - ENEMY_POS.y,
+      PLAYER_POS.x - ENEMY_POS.x,
+    );
+    expect(Math.atan2(gameBullet.vy, gameBullet.vx)).not.toBeCloseTo(
+      directHeading,
+      3,
+    );
+  });
+
+  it('keeps the direct heading for a non-aware archetype in the game and the enemy gym', async () => {
+    const { play, gym } = await bootAimOwners();
+
+    const gameBullet = aimedShot(play, false);
+    const gymBullet = aimedShot(gym, false);
+
+    expect(gymBullet.vx, 'gym vx matches the game').toBeCloseTo(
+      gameBullet.vx,
+      6,
+    );
+    expect(gymBullet.vy, 'gym vy matches the game').toBeCloseTo(
+      gameBullet.vy,
+      6,
+    );
+
+    const directHeading = Math.atan2(
+      PLAYER_POS.y - ENEMY_POS.y,
+      PLAYER_POS.x - ENEMY_POS.x,
+    );
+    expect(Math.atan2(gymBullet.vy, gymBullet.vx)).toBeCloseTo(
+      directHeading,
+      6,
+    );
+  });
+
+  /**
+   * A deterministic body for the post-motion seam parity test: it holds the
+   * position it is placed at (no formation or steering motion), so the only
+   * thing that can move it is the shared seam both scene loops run.
+   */
+  class WrapParityEnemy
+    extends Phaser.GameObjects.Container
+    implements FormationSceneEntity
+  {
+    alive = true;
+    shootEnabled = false;
+    readonly offset: FormationOffset;
+    readonly wrapAware: boolean;
+
+    constructor(
+      scene: Phaser.Scene,
+      x: number,
+      y: number,
+      offset: FormationOffset,
+      wrapAware: boolean,
+    ) {
+      super(scene, x, y);
+      this.offset = offset;
+      this.wrapAware = wrapAware;
+      this.setPosition(x, y);
+    }
+
+    destroySelf(): void {
+      this.alive = false;
+    }
+
+    getHitRadius(): number {
+      return 10;
+    }
+
+    applyFormationPosition(): void {
+      // Static body — the seam is the only thing allowed to move it.
+    }
+  }
+
+  const WRAP_PARITY_GYM_CONFIG: EnemyFormationConfig<
+    WrapParityEnemy,
+    EquivBullet
+  > = {
+    sceneKey: 'WrapParityGymScene',
+    count: 1,
+    spacingX: 0,
+    spacingY: 0,
+    driftSpeed: 0,
+    startX: 300,
+    startY: 300,
+    statusLabel: 'wrap',
+    hintText: 'wrap parity',
+    buildOffsets: () => [{ row: 0, col: 0 }],
+    createEntity: (scene, x, y, offset) =>
+      new WrapParityEnemy(scene, x, y, offset, true),
+    collectBullets: () => [],
+  };
+
+  class WrapParityGymScene extends GymFormationScene<
+    WrapParityEnemy,
+    EquivBullet
+  > {
+    constructor() {
+      super(WRAP_PARITY_GYM_CONFIG);
+    }
+  }
+
+  it('relocates a crossing enemy to the identical position in the game and the formation gym', async () => {
+    const play = await bootScene(
+      [PlayScene, GameOverScene, MenuScene],
+      'wrap-motion-play-host',
+    );
+    const gym = await bootScene([WrapParityGymScene], 'wrap-motion-gym-host');
+    games.push(play, gym);
+    const playScene = play.scene as PlayScene;
+    const gymScene = gym.scene as WrapParityGymScene;
+
+    // One body per edge, plus one non-aware body that must never move.
+    const cases = [
+      {
+        label: 'right→left',
+        from: { x: GAME_WIDTH + 40, y: 100 },
+        to: { x: 40, y: 100 },
+      },
+      {
+        label: 'left→right',
+        from: { x: -40, y: 100 },
+        to: { x: GAME_WIDTH - 40, y: 100 },
+      },
+      {
+        label: 'bottom→top',
+        from: { x: 300, y: GAME_HEIGHT + 40 },
+        to: { x: 300, y: 40 },
+      },
+      {
+        label: 'top→bottom',
+        from: { x: 300, y: -40 },
+        to: { x: 300, y: GAME_HEIGHT - 40 },
+      },
+    ];
+
+    const gameBodies = cases.map((testCase) => {
+      const body = new WrapParityEnemy(
+        playScene,
+        testCase.from.x,
+        testCase.from.y,
+        { row: 0, col: 0 },
+        true,
+      );
+      playScene.registerEnemy(body as unknown as never, 'scout');
+      return body;
+    });
+    const gymBodies = cases.map((testCase) => {
+      const body = new WrapParityEnemy(
+        gymScene,
+        testCase.from.x,
+        testCase.from.y,
+        { row: 0, col: 0 },
+        true,
+      );
+      gymScene.registerDynamicEntity(body);
+      return body;
+    });
+
+    // The non-aware control body, placed over the seam in both scenes.
+    const gameUnaware = new WrapParityEnemy(
+      playScene,
+      GAME_WIDTH + 40,
+      200,
+      { row: 0, col: 0 },
+      false,
+    );
+    playScene.registerEnemy(gameUnaware as unknown as never, 'scout');
+    const gymUnaware = new WrapParityEnemy(
+      gymScene,
+      GAME_WIDTH + 40,
+      200,
+      { row: 0, col: 0 },
+      false,
+    );
+    gymScene.registerDynamicEntity(gymUnaware);
+
+    // One deterministic step in each scene (the shared tick).
+    playScene.tick(0);
+    gymScene.tick(0);
+
+    cases.forEach((testCase, index) => {
+      const gameBody = gameBodies[index];
+      const gymBody = gymBodies[index];
+      expect(gymBody.x, `${testCase.label} gym x matches the game`).toBeCloseTo(
+        gameBody.x,
+        6,
+      );
+      expect(gymBody.y, `${testCase.label} gym y matches the game`).toBeCloseTo(
+        gameBody.y,
+        6,
+      );
+      expect(gameBody.x, `${testCase.label} wrapped x`).toBeCloseTo(
+        testCase.to.x,
+        6,
+      );
+      expect(gameBody.y, `${testCase.label} wrapped y`).toBeCloseTo(
+        testCase.to.y,
+        6,
+      );
+    });
+
+    // The flag gates the seam identically in both scenes.
+    expect(gameUnaware.x, 'game non-aware body stays put').toBe(
+      GAME_WIDTH + 40,
+    );
+    expect(gymUnaware.x, 'gym non-aware body stays put').toBe(GAME_WIDTH + 40);
+  });
+
+  it('every formation-positioning scene runs the shared post-motion wrap seam (AH-0MVKXBZ5N007LKH4)', () => {
+    // Game↔gym parity by construction: the wrap step is *called* by the game
+    // and by every player-bearing scene that positions enemies in its own
+    // loop, and never re-implemented. `GymFodderEnemies` and `GymCentipede`
+    // inherit the call from the shared `GymFormationScene` they extend.
+    for (const file of [
+      'src/scenes/PlayScene.ts',
+      'src/scenes/gym/core/GymFormationScene.ts',
+      'src/scenes/gym/GymLevel.ts',
+    ]) {
+      expect(
+        fs.readFileSync(path.resolve(process.cwd(), file), 'utf8'),
+        `${file} invokes applyPostMotionWrapAll`,
+      ).toContain('applyPostMotionWrapAll(');
+    }
+    // The shared helper owns the wrap body; a scene must never copy it.
+    expect(fs.readFileSync(
+      path.resolve(process.cwd(), 'src/scenes/core/enemyWrap.ts'),
+      'utf8',
+    )).toContain('applyPostMotionWrapAll');
+  });
+});
+
 // ── Consolidated epic parity guard (AH-0MUII3GOO001XEBB, AC1) ───────
 
 /**
@@ -2215,11 +2592,43 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   // and the temporary PENDING red-first wrapper has been removed.
   ['pushAimTargets', 'src/scenes/core/enemyTargeting.ts'],
   ['pushSeekTargets', 'src/scenes/core/enemyTargeting.ts'],
+  // Seam-aware aim + shared post-motion wrap (parent AH-0MV9G3DZ9003P7P8;
+  // equivalence guard coverage requested by AH-0MVKXBXQX003S7K5 AC1). The
+  // wrapped-aim maths and the post-motion seam are each defined once and
+  // consumed by `PlayScene` and every gym, so a scene that re-introduces a
+  // copy fails the repo-wide duplicate-body guard.
+  ['wrappedAxisDelta', 'src/scenes/core/enemyTargeting.ts'],
+  ['aimVectorToTarget', 'src/scenes/core/enemyTargeting.ts'],
+  ['wrapPosition', 'src/scenes/core/enemyWrap.ts'],
+  ['applyPostMotionWrap', 'src/scenes/core/enemyWrap.ts'],
+  ['applyPostMotionWrapAll', 'src/scenes/core/enemyWrap.ts'],
   // Enemy force-field resolver (epic AH-0MVJ8W4GE007OMNT AC4,
   // AH-0MVM8GXEF009883O): the curve is evaluated once in this pure module and
   // consumed by PlayScene's spawn seam and GymLevel's launch seam, so a scene
   // that re-introduces a divergent copy fails the guard.
   ['enemyForceFieldHits', 'src/core/enemyForceField.ts'],
+  // Wormhole-transit destination rule (AH-0MVRMHQC9003VDNN): the
+  // "autonomous-mover exemption → orbital live slot → grid-slot/offset
+  // fallback" chain is defined once in `src/scenes/core/spawnTransit.ts` and
+  // consumed by PlayScene, GymFormationScene, GymLevel and GymBoss. A scene
+  // that re-introduces a copy fails the repo-wide duplicate-body guard.
+  ['resolveSpawnTransitTarget', 'src/scenes/core/spawnTransit.ts'],
+  // Diver re-anchor request consumption (D2, docs/GYM_PARITY.md): the rule
+  // that turns an entity's re-anchor request into a formation-origin delta is
+  // defined once here and consumed by PlayScene, GymFormationScene and
+  // GymLevel through `FormationReanchorController`.
+  ['consumeFormationReanchor', 'src/scenes/core/formationReanchor.ts'],
+  // Spawner-delivered dynamic wave plan/release rule (D3, docs/GYM_PARITY.md):
+  // the game and the level gym build the same ghost/centipede/horde/lane
+  // traffic/orbital-strike plans and release them through the same
+  // time-ordered rule. Scene-specific entity construction and wave accounting
+  // stay scene-side, so no gameplay object is forked.
+  ['planGhostWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['planCentipedeWaveSpawn', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['planHordeWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['planLaneTrafficWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['planStrikeWaveSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
+  ['releaseDueSpawns', 'src/scenes/core/dynamicSpawnPlan.ts'],
 ];
 
 /**
@@ -2340,6 +2749,53 @@ describe('epic parity guard — the guard detects a re-introduced duplicate (AC3
         'export class Duplicate {}\n',
       );
       expect(collectProductionSourceFiles(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails when a production-like fixture redefines the shared transit resolver', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-guard-transit-'));
+    try {
+      const fixture = path.join(dir, 'DuplicateSpawnTransit.ts');
+      fs.writeFileSync(
+        fixture,
+        [
+          'export function resolveSpawnTransitTarget(input: { transit: boolean }): { x: number; y: number } | undefined {',
+          '  if (!input.transit) return undefined;',
+          '  return { x: 0, y: 0 };',
+          '}',
+          '',
+        ].join('\n'),
+      );
+
+      // The scanner observes the fixture as production source ...
+      const fixtureFiles = collectProductionSourceFiles(dir);
+      expect(fixtureFiles).toEqual([fixture]);
+      expect(
+        definesFunction(
+          fs.readFileSync(fixture, 'utf8'),
+          'resolveSpawnTransitTarget',
+        ),
+      ).toBe(true);
+
+      // ... so combined with the canonical definer the single-definer
+      // invariant is violated and the guard would fail.
+      const combined = [
+        ...fixtureFiles,
+        ...collectProductionSourceFiles(path.resolve(process.cwd(), 'src')),
+      ];
+      const definers = combined
+        .filter((file) =>
+          definesFunction(
+            fs.readFileSync(file, 'utf8'),
+            'resolveSpawnTransitTarget',
+          ),
+        )
+        .map((file) => path.relative(process.cwd(), file))
+        .sort();
+      expect(definers.length).toBeGreaterThan(1);
+      expect(definers).not.toEqual(['src/scenes/core/spawnTransit.ts']);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

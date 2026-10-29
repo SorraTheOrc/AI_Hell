@@ -101,6 +101,7 @@ import {
   type ControlInput,
 } from '../../utils/movementModel';
 import type { WasdKeysLike } from '../../utils/input';
+import { createSeededRng } from '../../core/rng';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import {
@@ -126,6 +127,7 @@ import {
 } from './dropLayer';
 import {
   resolvePlayerSlotState,
+  isWithinSlotPool,
   type PowerUpSlotState,
 } from '../../powerups/slots';
 import {
@@ -136,6 +138,11 @@ import {
   type CaptureBeamState,
 } from './captureBeam';
 import {
+  applySceneSetup,
+  resolveSetupSeed,
+  type SceneSetupState,
+} from './sceneSetup';
+import {
   applyMineralScoop,
   type MovableMineral,
 } from '../../powerups/mineralScoop';
@@ -143,6 +150,7 @@ import { spawnNovaRing } from '../../vfx/aoeEffect';
 import { spawnSplitBurst } from '../../vfx/splitBurst';
 import { PhaseShiftJuice } from '../../vfx/phaseShiftJuice';
 import {
+  playPowerUpBlockedSound,
   setExplosionBeatClock,
   setThrusterBeatClock,
   updateThrusterSound,
@@ -233,6 +241,12 @@ export interface CombatDrop {
   weaponDropId?: string;
   /** True once collected and playing its absorb animation. */
   absorbing?: boolean;
+  /**
+   * True once the not-collectable cue has played for this drop (six-slot
+   * collection gate, parent AH-0MVLIJT3M005HPHF AC8). It is a cue-only flag:
+   * the drop stays collectable and is picked up normally if a slot frees.
+   */
+  blockedCuePlayed?: boolean;
 }
 
 /**
@@ -257,6 +271,50 @@ export class CombatCoreScene<
    * (AH-0MUY08V6W001SJJN). Gyms that omit it keep the unseeded default.
    */
   protected sceneRng: () => number = () => Math.random();
+
+  /**
+   * Adopts the shared scripted-scene `setup` seam (AH-0MVRMHYJR000Y9H8).
+   *
+   * Every combat gym calls this once in `create()`, immediately after its
+   * player exists and before any content is spawned, so a configured loadout,
+   * power-up levels and seed are live **before** the first captured frame (the
+   * `playMs` warm-up). The setup→state mapping itself stays in the single
+   * shared {@link applySceneSetup}; this helper only adds the scene-level
+   * pieces a gym owns:
+   *
+   * - a supplied `seed` re-seeds {@link sceneRng}, the content stream the
+   *   shared core draws from (AOE `'onRandom'` placement) and the gyms draw
+   *   their mineral/drop positions from, so the same setup reproduces the
+   *   same content;
+   * - an absent seed restores the historical dynamic `Math.random` thunk, so
+   *   a setup-less scene keeps its pre-change RNG stream exactly (an old
+   *   seeded run cannot leak into a restart).
+   *
+   * `applySceneSetup` is intentionally total: an absent setup (or a scene
+   * without a player) is a no-op, which is what keeps a setup-less gym
+   * byte-compatible with its previous behaviour.
+   *
+   * @param data — the scene-start data Phaser passes to `create()`.
+   */
+  protected _adoptCaptureSetup(data?: SceneSetupState | null): void {
+    const setup = data ?? null;
+    const seed = resolveSetupSeed(setup);
+    this.sceneRng = seed === null
+      ? () => Math.random()
+      : createSeededRng(seed);
+    applySceneSetup({ getPlayer: () => this.getPlayer() }, setup);
+  }
+
+  /**
+   * The scene's live content RNG — the setup-seeded stream when a capture
+   * `setup` supplies a seed, otherwise the historical dynamic `Math.random`
+   * thunk. Read-only diagnostic seam so capture-determinism tests can assert
+   * that a supplied seed actually re-seeds the scene's content randomness.
+   */
+  getContentRng(): () => number {
+    return this.sceneRng;
+  }
+
   /** Live player-explosion VFX graphics (tracked for observation). */
   protected playerExplosions: Phaser.GameObjects.Graphics[] = [];
   /**
@@ -783,7 +841,42 @@ export class CombatCoreScene<
   }
 
   /**
+   * Whether player auto-fire is suppressed for the rest of the run
+   * (AH-0MVCB6LBE007I6R8). Default `false` — suppression is opt-in, so the
+   * shipped game and every combat gym keep firing unless a scene reports a
+   * finished run.
+   *
+   * `PlayScene` overrides this with its per-run "run finished" flag: from the
+   * tick after the Central AI boss dies the ship spawns no new player bullets,
+   * muzzle flashes or weapon fire cues for the rest of the in-run victory hold
+   * (`VICTORY_TRANSITION_HOLD_MS` in `src/scenes/PlayScene.ts`), up to the
+   * `GameOverScene` transition (AC1). Shots already in flight keep flying —
+   * only *new* shots are suppressed (AC3) — and mini-boss defeats, wave/level
+   * transitions and the transition pause keep the current behaviour (AC2,
+   * producer answer Q1 = A).
+   *
+   * The shared beat clock keeps advancing while suppression is active
+   * ({@link CombatCoreScene._tickPlayer}), because it drives the
+   * beat-modulated thruster hum (GDD §7.3) and the non-weapon explosion grid;
+   * suppressing fire must not stall it (AC4).
+   *
+   * **Gym parity (documented divergence, AC5).** No gym overrides this hook,
+   * so the default `false` keeps every combat gym firing — including
+   * `GymBoss`, which destroys its boss and then keeps auto-firing because the
+   * gym has no run-end screen. That mirrors the `GameOverScene` precedent in
+   * GDD §7.2: the divergence is *documented*, never copied, so this gate stays
+   * single-sourced here (producer answer Q3 = A).
+   */
+  protected playerFireSuppressed(): boolean {
+    return false;
+  }
+
+  /**
    * Shared screen-wide Phase Shift juice step (parent AH-0MUIYX1EE008FVS8).
+   *
+   * This is the **single** place the player treatment is advanced: the game
+   * (`PlayScene`) and every combat gym — including the level gyms — call it,
+   * and none of them constructs a divergent copy (AH-0MVNTY0700053T9E).
    *
    * Lazily creates the treatment the first time a ship exists, then advances
    * it for the current phased state: the overlays appear on the frame the
@@ -810,7 +903,10 @@ export class CombatCoreScene<
    * 3. read the scheme-appropriate input,
    * 4. step physics (screen-wrap),
    * 5. auto-fire the active weapons (unless the scene opts out via
-   *    {@link CombatCoreScene.autoFireEnabled}),
+   *    {@link CombatCoreScene.autoFireEnabled}, the player is capture-disabled,
+   *    or the scene reports a finished run via
+   *    {@link CombatCoreScene.playerFireSuppressed} — in which case only the
+   *    beat clock is advanced),
    * 6. advance the Bomb bomb pulse and fire a ranged clear when due
    *    ({@link CombatCoreScene._updateP4Bomb}).
    *
@@ -853,7 +949,20 @@ export class CombatCoreScene<
     // capture on this frame suppresses fire on this frame. Runs after physics
     // so the drag is applied to the ship's current position.
     this._updateCaptureBeams(dt);
-    if (this.autoFireEnabled() && !this.isCaptureDisabled()) this._autoFire(dt);
+    if (this.playerFireSuppressed()) {
+      // Run-end suppression (AH-0MVCB6LBE007I6R8): spawn no bullets, muzzle
+      // flashes or fire cues, but keep the shared beat clock advancing so the
+      // beat-modulated thruster hum (GDD §7.3) and the explosion grid do not
+      // stall through the victory hold (AC4). Normal fire resumes with the
+      // next run, because a scene restart re-anchors this clock and clears the
+      // scene's per-run flag (AC6).
+      this.beatClock.advance(dt * 1000);
+      if (player.getBeatClock() !== this.beatClock) {
+        player.setBeatClock(this.beatClock);
+      }
+    } else if (this.autoFireEnabled() && !this.isCaptureDisabled()) {
+      this._autoFire(dt);
+    }
     // Bomb bomb: advance the shared pulse state and fire a ranged clear when
     // one is due. Runs after physics so the pulse is centred on the player's
     // current position, and from this single shared step so the game and
@@ -1365,9 +1474,40 @@ export class CombatCoreScene<
    * survivors.
    */
   protected _collectOverlappingDrops(drops: TDrop[]): TDrop[] {
-    return collectOverlappingDrops(drops, this.getPlayer(), (drop) =>
-      this._collectDrop(drop),
+    return collectOverlappingDrops(
+      drops,
+      this.getPlayer(),
+      (drop) => this._collectDrop(drop),
+      undefined,
+      {
+        canCollect: (drop) => this._canCollectDrop(drop),
+        onBlocked: (drop) => this._onDropCollectionBlocked(drop),
+      },
     );
+  }
+
+  /**
+   * Six-slot collection gate (parent AH-0MVLIJT3M005HPHF AC8): a drop may be
+   * collected unless the shared pool is full and its kind is neither held
+   * (permanently or temporarily), available-when-full, nor a slot-exempt
+   * utility. The rule comes from the single shared helper, so the game and
+   * every gym refuse exactly the same drops (gym↔game parity,
+   * AH-0MUGZDTFX004RBD1).
+   */
+  protected _canCollectDrop(drop: TDrop): boolean {
+    return isWithinSlotPool(drop.dropId, this._resolveDropSlotState());
+  }
+
+  /**
+   * Blocked-pickup feedback (parent AC8): plays the distinct not-collectable
+   * cue **once per drop** while it stays on the field. A drop can overlap the
+   * ship for many frames, so the cue is latched on the drop itself rather than
+   * re-fired every frame.
+   */
+  protected _onDropCollectionBlocked(drop: TDrop): void {
+    if (drop.blockedCuePlayed) return;
+    drop.blockedCuePlayed = true;
+    playPowerUpBlockedSound();
   }
 
   /**
@@ -1611,22 +1751,34 @@ export class CombatCoreScene<
    * {@link _updateSmartBomb} so the strike runs in the game and every gym
    * from one implementation (AH-0MVH80ZJ7009W18Z).
    *
+   * The registry latches a decided bolt until it is acknowledged, so the
+   * bolt is only consumed when {@link onOrbitalStrike} reports that it
+   * actually landed. A frame with no live player or no live enemy leaves the
+   * bolt latched and it is retried on the next frame — a pickup is never
+   * silently wasted (AH-0MVS2T2DJ0069C0Y).
+   *
    * @param dt - Frame delta in seconds.
    */
   protected _updateOrbitalStrike(dt: number): void {
     const registry = this.getEffectsRegistry();
     if (!registry.updateStrike(dt)) return;
-    this.onOrbitalStrike(registry.strikeDamage());
+    if (!this.onOrbitalStrike(registry.strikeDamage())) return;
+    registry.resolveStrike();
   }
 
   /**
-   * Resolves one Orbital Strike bolt for `damage` hits. Default no-op (the
-   * enemy-damage seam lives in {@link CombatScene}); the concrete combat
-   * scene overrides it to pick the nearest enemy and apply the damage + VFX.
+   * Resolves one Orbital Strike bolt for `damage` hits, reporting whether it
+   * actually landed. Default `false` (nothing resolved, so the bolt stays
+   * latched for the next frame); the concrete combat scene overrides it to
+   * pick the nearest enemy and apply the damage + VFX.
    *
    * @param _damage - Level-resolved strike damage (whole hits).
+   * @returns True when the bolt was applied (and may be consumed); false when
+   *   there was no live player or no live enemy to resolve it against.
    */
-  protected onOrbitalStrike(_damage: number): void {}
+  protected onOrbitalStrike(_damage: number): boolean {
+    return false;
+  }
 
   /**
    * Resolves one Smart Bomb pulse at (x, y) through the shared area-effect
@@ -1724,6 +1876,12 @@ export class CombatCoreScene<
    * additional object families override this and call
    * `super.teardownRunState()` first (or last, provided the base call is
    * always reached).
+   *
+   * The Phase Shift treatment is released through its own `destroy()` — not
+   * just the overlay-registry sweep below — because it also owns the
+   * camera-filter driver: a plain `phaseShiftEffects` sweep cannot reach the
+   * WebGL filter controllers, so without this a stop/restart would keep the
+   * phase distortion (AH-0MVNTY0700053T9E).
    */
   protected teardownRunState(): void {
     for (const bullet of this.playerBullets) bullet.destroy();
@@ -1732,6 +1890,8 @@ export class CombatCoreScene<
     this.playerExplosions = [];
     for (const effect of this.playerDeathEffects) effect.destroy();
     this.playerDeathEffects = [];
+    this.phaseShiftJuice?.destroy();
+    this.phaseShiftJuice = null;
     for (const effect of this.phaseShiftEffects) effect.destroy();
     this.phaseShiftEffects = [];
     for (const anim of this.collectAnimations) anim.destroy();

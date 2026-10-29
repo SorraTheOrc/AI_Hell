@@ -51,8 +51,10 @@ const WORMHOLE_START_SCALE = 0.01;
 
 // ── Wormhole glow/pulse ring tunables (AH-0MVD2N6AW0073X5M) ─────────
 //
-// While a wormhole is open for a wave it gets a subtle glow/pulse ring at the
-// wormhole position (epic AH-0MV8BUKFK003Z23S AC4). It is drawn **once per
+// While a wormhole is open for a wave it carries a bright, unmistakable
+// glow/pulse ring at the wormhole position (epic AH-0MV8BUKFK003Z23S AC4;
+// magnitudes raised under AH-0MVNTXZ4X00031AU so the portal reads as the
+// source of the emergence before the enemies arrive). It is drawn **once per
 // wormhole** as a child of the wormhole container, so it is tracked by the
 // caller's existing `wormholeEffects` registry for free and is destroyed with
 // the container when the close tween completes (no separate teardown path to
@@ -72,11 +74,11 @@ export const WORMHOLE_RING_ENABLE = true;
  */
 export const WORMHOLE_RING_COLOR = 0xd9b3ff;
 
-/** Ring radius (px) at its neutral pulse position. */
-export const WORMHOLE_RING_RADIUS = 52;
+/** Ring radius (px) at its neutral pulse position. Raised 52 → 80 (unmistakable). */
+export const WORMHOLE_RING_RADIUS = 80;
 
-/** Ring stroke width (px). */
-export const WORMHOLE_RING_LINE_WIDTH = 3;
+/** Ring stroke width (px). Raised 3 → 6 (unmistakable). */
+export const WORMHOLE_RING_LINE_WIDTH = 6;
 
 /**
  * Radius pulse multipliers `[min, max]` — the ring "breathes" around its
@@ -88,11 +90,55 @@ export const WORMHOLE_RING_PULSE_RANGE: readonly [number, number] = [0.9, 1.15] 
 /** Duration (ms) of one pulse direction (min → max); the yoyo makes a full breath twice this. */
 export const WORMHOLE_RING_PULSE_DURATION_MS = 900;
 
-/** Soft glow alpha of the ring, within (0, 1]. */
-export const WORMHOLE_RING_GLOW_ALPHA = 0.45;
+/** Soft glow alpha of the ring, within (0, 1]. Raised 0.45 → 0.8 (unmistakable). */
+export const WORMHOLE_RING_GLOW_ALPHA = 0.8;
 
 /** Data key marking the ring graphics inside the wormhole container. */
 const WORMHOLE_RING_DATA_KEY = 'wormholeRing';
+
+// ── Wormhole open shockwave tunables (AH-0MVNTXZ4X00031AU) ───────────
+//
+// When the wormhole **opens** it fires a single expanding light pulse at the
+// portal mouth — the one-shot "enemies are coming from here" read — which
+// scales out past the neutral ring and fades away over
+// WORMHOLE_SHOCKWAVE_DURATION_MS, exactly once (no loop). Same violet-white
+// palette as the ring, so the portal reads as one cohesive source;
+// deliberately distinct from the phase-shift cyan/red split and the
+// player-death palette.
+
+/** Whether the one-shot open shockwave layer is enabled. */
+export const WORMHOLE_SHOCKWAVE_ENABLE = true;
+
+/**
+ * Shockwave colour — the same violet-white as the ring
+ * ({@link WORMHOLE_RING_COLOR}) so the open pulse reads as coming from the
+ * same portal. Deliberately distinct from `PHASE_SHIFT_SPLIT_COLOR_*` and
+ * `PLAYER_DEATH_FLASH_COLOR`.
+ */
+export const WORMHOLE_SHOCKWAVE_COLOR = 0xd9b3ff;
+
+/** Base radius (px) of the shockwave ring, before its expanding scale tween. */
+export const WORMHOLE_SHOCKWAVE_RADIUS = 64;
+
+/** Shockwave stroke width (px). */
+export const WORMHOLE_SHOCKWAVE_LINE_WIDTH = 6;
+
+/** Starting alpha of the shockwave (tweened to 0 over its one-shot duration). */
+export const WORMHOLE_SHOCKWAVE_ALPHA = 0.9;
+
+/** One-shot duration (ms) of the expanding shockwave pulse, within (0, 1 s]. */
+export const WORMHOLE_SHOCKWAVE_DURATION_MS = 400;
+
+/**
+ * Scale range `[from, to]` of the expanding shockwave — it grows out from a
+ * tight pulse at the portal mouth to well beyond the neutral ring, then the
+ * whole layer fades away. One-shot (`repeat: 0`), unlike the ring's
+ * breathing yoyo.
+ */
+export const WORMHOLE_SHOCKWAVE_SCALE_RANGE: readonly [number, number] = [0.35, 1.6] as const;
+
+/** Data key marking the open-shockwave graphics inside the wormhole container. */
+export const WORMHOLE_SHOCKWAVE_DATA_KEY = 'wormholeShockwave';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -192,6 +238,50 @@ function attachWormholeRing(
 }
 
 /**
+ * Adds the one-shot open shockwave to a freshly opened wormhole container: a
+ * stroked ring pulse that expands out past the neutral ring and fades away
+ * over {@link WORMHOLE_SHOCKWAVE_DURATION_MS}, fired exactly once per
+ * wormhole on open. A no-op when the layer is disabled or the scene exposes
+ * no tween manager (headless stub) — the wormhole itself is unaffected.
+ *
+ * @param scene - The wormhole's scene (owns the tween manager).
+ * @param container - The wormhole container the shockwave is parented to.
+ */
+function attachOpenShockwave(
+  scene: Phaser.Scene,
+  container: Phaser.GameObjects.Container,
+): void {
+  if (!WORMHOLE_SHOCKWAVE_ENABLE) return;
+  const add = scene?.add as
+    | { graphics?: () => Phaser.GameObjects.Graphics }
+    | undefined;
+  if (!add || typeof add.graphics !== 'function') return;
+
+  const shockwave = add.graphics();
+  shockwave.lineStyle(
+    WORMHOLE_SHOCKWAVE_LINE_WIDTH,
+    WORMHOLE_SHOCKWAVE_COLOR,
+    WORMHOLE_SHOCKWAVE_ALPHA,
+  );
+  shockwave.strokeCircle(0, 0, WORMHOLE_SHOCKWAVE_RADIUS);
+  shockwave.setData(WORMHOLE_SHOCKWAVE_DATA_KEY, true);
+  container.add(shockwave);
+
+  const tweens = scene?.tweens as
+    | { add?: (...args: unknown[]) => unknown }
+    | undefined;
+  if (!tweens || typeof tweens.add !== 'function') return;
+  const [fromScale, toScale] = WORMHOLE_SHOCKWAVE_SCALE_RANGE;
+  tweens.add({
+    targets: shockwave,
+    scale: { from: fromScale, to: toScale },
+    alpha: { from: WORMHOLE_SHOCKWAVE_ALPHA, to: 0 },
+    duration: WORMHOLE_SHOCKWAVE_DURATION_MS,
+    ease: 'Cubic.easeOut',
+  });
+}
+
+/**
  * Opens the wormhole VFX at (x, y): a neon swirl that scales up over
  * {@link WORMHOLE_OPEN_DURATION}, plus the glow/pulse ring
  * ({@link WORMHOLE_RING_ENABLE}) tracked as a child of the container.
@@ -222,23 +312,33 @@ export function spawnWormholeOpen(
     complete: false,
     isComplete: () => handle.complete,
   };
-  scene.tweens.add({
-    targets: container,
-    scale: 1,
-    duration: WORMHOLE_OPEN_DURATION * 1000,
-    ease: 'Cubic.easeOut',
-  });
-  // The glow/pulse ring is layered on after the open tween so the wormhole's
-  // own open animation remains the first tween registered for the container.
+  const tweens = scene?.tweens as
+    | { add?: (...args: unknown[]) => unknown }
+    | undefined;
+  if (tweens && typeof tweens.add === 'function') {
+    tweens.add({
+      targets: container,
+      scale: 1,
+      duration: WORMHOLE_OPEN_DURATION * 1000,
+      ease: 'Cubic.easeOut',
+    });
+  }
+  // The glow/pulse ring and the one-shot open shockwave are layered on after
+  // the open tween so the wormhole's own open animation remains the first
+  // tween registered for the container.
   attachWormholeRing(scene, container);
+  attachOpenShockwave(scene, container);
   return handle;
 }
 
 /**
  * Closes the wormhole: scales and fades it out over
  * {@link WORMHOLE_CLOSE_DURATION}, then — on tween completion — stops the
- * ring's looping pulse, removes the container from the registry and destroys
- * it exactly once. Idempotent: a second close on the same handle is a no-op.
+ * ring's looping pulse and the shockwave pulse, removes the container from
+ * the registry and destroys it exactly once. Idempotent: a second close on a
+ * completed handle is a full no-op (no new close tween, no double-remove, no
+ * second destroy). Headless-safe: a scene with no tween manager (test stub)
+ * is torn down immediately instead of throwing.
  *
  * @param scene - The owning scene (tween manager).
  * @param handle - The handle returned by {@link spawnWormholeOpen}.
@@ -249,35 +349,50 @@ export function spawnWormholeClose(
   handle: WormholeHandle,
   registry?: Phaser.GameObjects.Container[],
 ): void {
+  if (handle.complete) return;
   const container = handle.container;
-  scene.tweens.add({
+  const tweens = scene?.tweens as
+    | {
+        add?: (...args: unknown[]) => unknown;
+        killTweensOf?: (target: unknown) => unknown;
+      }
+    | undefined;
+  const finalise = (): void => {
+    handle.complete = true;
+    if (registry) {
+      const index = registry.indexOf(container);
+      if (index >= 0) registry.splice(index, 1);
+    }
+    // Stop every child loop (the ring's infinite pulse and any still-running
+    // shockwave pulse) before destroying the container: a looping tween left
+    // pointing at a destroyed child would keep ticking against a dead object
+    // (the same hazard `WormholeController.reset` documents). `killTweensOf`
+    // is feature-detected so headless stubs and scene-less callers stay safe.
+    if (typeof tweens?.killTweensOf === 'function') {
+      const ring = container.list?.find(
+        (child) => child.getData?.(WORMHOLE_RING_DATA_KEY) === true,
+      );
+      if (ring) tweens.killTweensOf(ring);
+      const shockwave = container.list?.find(
+        (child) => child.getData?.(WORMHOLE_SHOCKWAVE_DATA_KEY) === true,
+      );
+      if (shockwave) tweens.killTweensOf(shockwave);
+    }
+    container.destroy();
+  };
+  if (!tweens || typeof tweens.add !== 'function') {
+    // Headless / no-tween scene: nothing animates, so tear down immediately
+    // rather than leaving a live wormhole behind.
+    finalise();
+    return;
+  }
+  tweens.add({
     targets: container,
     scale: 0,
     alpha: 0,
     duration: WORMHOLE_CLOSE_DURATION * 1000,
     ease: 'Cubic.easeIn',
-    onComplete: () => {
-      handle.complete = true;
-      if (registry) {
-        const index = registry.indexOf(container);
-        if (index >= 0) registry.splice(index, 1);
-      }
-      // Stop the ring's infinite pulse tween before destroying the container:
-      // a looping tween left pointing at a destroyed child would keep ticking
-      // against a dead object (the same hazard `WormholeController.reset`
-      // documents). `killTweensOf` is feature-detected so headless stubs and
-      // scene-less callers stay safe.
-      const tweens = scene?.tweens as
-        | { killTweensOf?: (target: unknown) => unknown }
-        | undefined;
-      const ring = container.list?.find(
-        (child) => child.getData?.(WORMHOLE_RING_DATA_KEY) === true,
-      );
-      if (ring && typeof tweens?.killTweensOf === 'function') {
-        tweens.killTweensOf(ring);
-      }
-      container.destroy();
-    },
+    onComplete: finalise,
   });
 }
 
@@ -371,6 +486,14 @@ export interface SpawnState {
   delay: number;
   /** The enemy's original (full) scale — restored after animation. */
   originalScale: number;
+  /**
+   * The absolute growth scale the spawn animation last wrote (the un-shimmered
+   * scale). The shimmer layers its pulse on top of this value instead of
+   * dividing the live scale by a stale per-entity factor, so the real
+   * spawn→shimmer call pattern can never compound or drift the scale
+   * (AH-0MVNTXXTA0081S38).
+   */
+  growthScale: number;
   /** Whether growth has begun (after the wormhole-open delay). */
   growing: boolean;
   /** World position where the enemy emerged (the wormhole origin). */
@@ -431,6 +554,7 @@ export function startSpawnAnimation(
     elapsed: 0,
     delay,
     originalScale,
+    growthScale: 0.01,
     growing: false,
     originX: enemy.x,
     originY: enemy.y,
@@ -495,7 +619,12 @@ export function updateSpawnAnimation(
     Math.min(growthElapsed / ENEMY_GROWTH_DURATION, 1),
   );
   const easedProgress = easeOutCubic(progress);
-  enemy.setScale(0.01 + (state.originalScale - 0.01) * easedProgress);
+  const growthScale = 0.01 + (state.originalScale - 0.01) * easedProgress;
+  // Record the absolute growth scale; the per-entity shimmer layers its pulse
+  // on top of THIS value (never on its own previous output), so the shared
+  // `updateSpawnAnimation` → `updateEnemyShimmer` call pattern stays drift-free.
+  state.growthScale = growthScale;
+  enemy.setScale(growthScale);
   if (state.moves) {
     // Wormhole-to-formation transit (AH-0MV8BSMXC0097KLW): travel from the
     // emergence point to the formation position in lock-step with the growth
@@ -510,6 +639,7 @@ export function updateSpawnAnimation(
   }
 
   if (progress >= 1) {
+    state.growthScale = state.originalScale;
     enemy.setScale(state.originalScale);
     if (state.moves) {
       const dest = resolveSpawnDestination(state);
@@ -549,20 +679,25 @@ function easeOutCubic(t: number): number {
  * materialise — the leading edge of the growth window. ~150–250 ms reads as
  * a glitch hit without dragging on. Toggle: {@link ENEMY_SHIMMER_ENABLE_BURST}.
  */
-export const ENEMY_SHIMMER_BURST_DURATION_MS = 200;
+export const ENEMY_SHIMMER_BURST_DURATION_MS = 240;
 
 /**
  * Extra alpha added at the start of the burst, decaying linearly to zero over
- * {@link ENEMY_SHIMMER_BURST_DURATION_MS}. Kept small so the clamp to 1 is
- * rarely reached.
+ * {@link ENEMY_SHIMMER_BURST_DURATION_MS}. Raised from the original subtle
+ * 0.15 to an unmistakable magnitude (AH-0MVNTXXTA0081S38) and applied as a
+ * *toward-opaque* lift — `alpha += (1 - alpha) * boost * remaining` — so the
+ * leading edge flashes hard without ever pinning the flicker at a saturated 1.
  */
-export const ENEMY_SHIMMER_BURST_ALPHA_BOOST = 0.15;
+export const ENEMY_SHIMMER_BURST_ALPHA_BOOST = 0.45;
 
 /**
  * Extra scale (fraction of the growth scale) added at the start of the burst,
  * decaying to zero over {@link ENEMY_SHIMMER_BURST_DURATION_MS} — the "ripple".
+ * Raised from the original subtle 0.06 to an unmistakable 0.18
+ * (AH-0MVNTXXTA0081S38); it stays layered on the absolute growth scale so it
+ * never compounds with the growth curve.
  */
-export const ENEMY_SHIMMER_BURST_SCALE_BOOST = 0.06;
+export const ENEMY_SHIMMER_BURST_SCALE_BOOST = 0.18;
 
 /**
  * Alpha-flicker rate (Hz) of the sustained shimmer. 2–4 Hz is a gentle pulse,
@@ -571,10 +706,10 @@ export const ENEMY_SHIMMER_BURST_SCALE_BOOST = 0.06;
 export const ENEMY_SHIMMER_FLICKER_HZ = 3;
 
 /** Lowest alpha the shimmer flickers to (must stay > 0 so the enemy never vanishes). */
-export const ENEMY_SHIMMER_ALPHA_MIN = 0.55;
+export const ENEMY_SHIMMER_ALPHA_MIN = 0.25;
 
 /** Highest alpha the shimmer flickers to (must stay <= 1). */
-export const ENEMY_SHIMMER_ALPHA_MAX = 0.85;
+export const ENEMY_SHIMMER_ALPHA_MAX = 1;
 
 /**
  * Amplitude of the sustained scale pulse, as a fraction of the current growth
@@ -605,6 +740,41 @@ export const ENEMY_SHIMMER_ENABLE_SHIMMER = true;
 /** Whether the soft additive colour-pulse layer is enabled. */
 export const ENEMY_SHIMMER_ENABLE_COLOUR_PULSE = true;
 
+// ── Outline / silhouette layer (AH-0MVNTXXTA0081S38) ─────────────────
+//
+// One pulsing stroked ring parented to the emerging entity — never a
+// scene-wide overlay — so each enemy carries its own "not solid yet"
+// silhouette for the whole growth window. Created once on the first growing
+// frame and destroyed on the falling edge.
+
+/** Whether the per-entity outline/silhouette layer is enabled (default on). */
+export const ENEMY_SHIMMER_ENABLE_OUTLINE = true;
+
+/** Data key marking the outline child on an emerging entity. */
+export const ENEMY_SHIMMER_OUTLINE_DATA_KEY = '__shimmerOutline';
+
+/** Outline ring radius (px) around the entity at full growth scale. */
+export const ENEMY_SHIMMER_OUTLINE_RADIUS = 30;
+
+/** Outline ring stroke width (px). */
+export const ENEMY_SHIMMER_OUTLINE_LINE_WIDTH = 4;
+
+/**
+ * Outline ring colour. Pale violet, matching the wormhole's own palette so the
+ * emergence reads as coming from the portal; deliberately distinct from the
+ * Phase Shift split and the player-death flash palettes.
+ */
+export const ENEMY_SHIMMER_OUTLINE_COLOR = 0xd9b3ff;
+
+/** Alpha pulse rate (Hz) of the outline ring — slow and breathing, not a strobe. */
+export const ENEMY_SHIMMER_OUTLINE_PULSE_HZ = 2;
+
+/** Lowest alpha of the pulsing outline ring. */
+export const ENEMY_SHIMMER_OUTLINE_ALPHA_MIN = 0.45;
+
+/** Highest alpha of the pulsing outline ring (must stay <= 1). */
+export const ENEMY_SHIMMER_OUTLINE_ALPHA_MAX = 0.95;
+
 /** Data key holding the per-entity shimmer clock (created lazily, reused). */
 const SHIMMER_STATE_KEY = '__shimmerState';
 
@@ -617,9 +787,9 @@ interface ShimmerState {
   /** Seconds since the shimmer started (its own clock, advanced by `dt`). */
   elapsed: number;
   /**
-   * Scale factor this helper applied on the previous frame. Dividing the
-   * current scale by it recovers the un-shimmered growth scale, so repeated
-   * calls never compound and the spawn animation's own scale is preserved.
+   * Scale factor this helper applied on the previous frame. Used only as a
+   * fallback recovery path (and to keep the recorded state inspectable); the
+   * authoritative growth scale comes from `SpawnState.growthScale`.
    */
   lastScaleFactor: number;
   /**
@@ -627,6 +797,17 @@ interface ShimmerState {
    * spawn window ends so no residual tint survives (teardown-clean).
    */
   baseAlpha: number;
+  /**
+   * The entity's own blend mode before the shimmer took it over, restored on
+   * teardown so the additive bloom leaves no residual state.
+   */
+  baseBlendMode: number | undefined;
+  /**
+   * The pulsing outline/silhouette ring parented to the entity, created once on
+   * the first growing frame and destroyed on the falling edge. `null` when the
+   * layer is disabled or the entity cannot host it (headless stub).
+   */
+  outline: Phaser.GameObjects.Graphics | null;
 }
 
 /** Returns the shimmer clock for `enemy`, creating it on first use. */
@@ -639,9 +820,45 @@ function ensureShimmerState(enemy: SpawnAnimatable): ShimmerState | null {
     elapsed: 0,
     lastScaleFactor: 1,
     baseAlpha: enemy.alpha,
+    baseBlendMode: (enemy as { blendMode?: number }).blendMode,
+    outline: ENEMY_SHIMMER_ENABLE_OUTLINE ? createShimmerOutline(enemy) : null,
   };
   setData.call(enemy, SHIMMER_STATE_KEY, created);
   return created;
+}
+
+/**
+ * Creates the per-entity outline/silhouette ring and parents it to `enemy`.
+ *
+ * Headless-safe: an entity without a live scene/`add`/graphics factory (or a
+ * stub without the drawing calls) simply gets no outline and no error, so the
+ * shimmer still runs its alpha/scale layers.
+ */
+function createShimmerOutline(enemy: SpawnAnimatable): Phaser.GameObjects.Graphics | null {
+  const scene = (enemy as { scene?: Phaser.Scene }).scene;
+  const addToEntity = (enemy as { add?: (child: unknown) => unknown }).add;
+  const graphicsFactory = (
+    scene as unknown as { add?: { graphics?: () => Phaser.GameObjects.Graphics } } | undefined
+  )?.add?.graphics;
+  if (!scene || typeof addToEntity !== 'function' || typeof graphicsFactory !== 'function') {
+    return null;
+  }
+  let outline: Phaser.GameObjects.Graphics | null = null;
+  try {
+    outline = graphicsFactory.call(scene.add);
+    outline.lineStyle(
+      ENEMY_SHIMMER_OUTLINE_LINE_WIDTH,
+      ENEMY_SHIMMER_OUTLINE_COLOR,
+      ENEMY_SHIMMER_OUTLINE_ALPHA_MAX,
+    );
+    outline.strokeCircle(0, 0, ENEMY_SHIMMER_OUTLINE_RADIUS);
+    outline.setData(ENEMY_SHIMMER_OUTLINE_DATA_KEY, true);
+    addToEntity.call(enemy, outline);
+    return outline;
+  } catch {
+    outline?.destroy();
+    return null;
+  }
 }
 
 /** Returns the existing shimmer clock for `enemy`, or `undefined` if inert. */
@@ -667,11 +884,32 @@ function releaseShimmerIfAny(enemy: SpawnAnimatable): void {
  */
 function releaseShimmer(enemy: SpawnAnimatable, state: ShimmerState): void {
   enemy.setAlpha(state.baseAlpha);
-  setEnemyBloom(enemy, false);
+  restoreEnemyBlendMode(enemy, state.baseBlendMode);
+  state.outline?.destroy();
+  state.outline = null;
   const setData = (enemy as { setData?: (key: string, value: unknown) => unknown }).setData;
   if (typeof setData === 'function') {
     setData.call(enemy, SHIMMER_STATE_KEY, undefined);
   }
+}
+
+/**
+ * Restores the entity's own blend mode, falling back to `NORMAL` when the
+ * pre-shimmer value is unknown (headless stub) or the entity cannot blend.
+ */
+function restoreEnemyBlendMode(
+  enemy: SpawnAnimatable,
+  blendMode: number | undefined,
+): void {
+  if (blendMode === undefined) {
+    setEnemyBloom(enemy, false);
+    return;
+  }
+  const setBlendMode = (
+    enemy as { setBlendMode?: (mode: unknown) => unknown }
+  ).setBlendMode;
+  if (typeof setBlendMode !== 'function') return;
+  setBlendMode.call(enemy, blendMode);
 }
 
 /**
@@ -686,9 +924,12 @@ function releaseShimmer(enemy: SpawnAnimatable, state: ShimmerState): void {
  * stubs, which never have spawn state).
  *
  * Layers (each with its own toggle):
- *   - **burst** — a brief ripple (extra scale + alpha) decaying over
- *     {@link ENEMY_SHIMMER_BURST_DURATION_MS};
- *   - **shimmer** — gentle alpha flicker (`ENEMY_SHIMMER_FLICKER_HZ`) plus a
+ *   - **outline** — one pulsing stroked ring parented to the entity for the
+ *     whole growth window (`ENEMY_SHIMMER_ENABLE_OUTLINE`), created on the
+ *     first growing frame and destroyed when growth ends;
+ *   - **burst** — a brief ripple (extra scale + a toward-opaque alpha lift)
+ *     decaying over {@link ENEMY_SHIMMER_BURST_DURATION_MS};
+ *   - **shimmer** — widened alpha flicker (`ENEMY_SHIMMER_FLICKER_HZ`) plus a
  *     tiny scale pulse;
  *   - **colour pulse** — soft additive bloom breathing at
  *     {@link ENEMY_SHIMMER_COLOUR_PULSE_PERIOD}.
@@ -735,24 +976,44 @@ export function updateEnemyShimmer(
     scaleFactor = 1 + ENEMY_SHIMMER_SCALE_AMOUNT * (u * 2 - 1);
   }
 
-  // Burst layer: a decaying ripple on the leading edge of the growth window.
+  // Burst layer: a decaying, toward-opaque lift on the leading edge of the
+  // growth window. Composing it as `alpha += (1 - alpha) * boost * remaining`
+  // keeps the flash strong without pinning consecutive frames at a saturated
+  // alpha of 1 (which would read as a flat hold rather than a flash).
   if (ENEMY_SHIMMER_ENABLE_BURST) {
     const burstDuration = ENEMY_SHIMMER_BURST_DURATION_MS / 1000;
     if (t < burstDuration) {
       const remaining = 1 - t / burstDuration;
-      alpha += ENEMY_SHIMMER_BURST_ALPHA_BOOST * remaining;
+      alpha += (1 - alpha) * ENEMY_SHIMMER_BURST_ALPHA_BOOST * remaining;
       scaleFactor += ENEMY_SHIMMER_BURST_SCALE_BOOST * remaining;
     }
   }
   enemy.setAlpha(Math.min(1, Math.max(0.01, alpha)));
 
-  // Scale: recover the un-shimmered growth scale, then re-apply this frame's
-  // factor. Writing the absolute value keeps the result stable no matter how
-  // many times the helper runs per frame.
+  // Scale: layer the pulse on the ABSOLUTE growth scale the spawn animation
+  // last wrote (never on this helper's own previous output), so every
+  // spawn→shimmer frame stays drift-free and a double tick equals one long
+  // tick. The division fallback covers entities whose spawn state predates
+  // `growthScale` (e.g. an externally seeded state).
   const previousFactor = state.lastScaleFactor || 1;
-  const growthScale = enemy.scaleX / previousFactor;
+  const growthScale =
+    typeof spawn.growthScale === 'number'
+      ? spawn.growthScale
+      : enemy.scaleX / previousFactor;
   enemy.setScale(growthScale * scaleFactor);
   state.lastScaleFactor = scaleFactor;
+
+  // Outline layer: one pulsing ring around the entity's own silhouette.
+  if (state.outline) {
+    const [outlineMin, outlineMax] = [
+      ENEMY_SHIMMER_OUTLINE_ALPHA_MIN,
+      ENEMY_SHIMMER_OUTLINE_ALPHA_MAX,
+    ];
+    const outlineWave =
+      0.5 +
+      0.5 * Math.sin(Math.PI * 2 * ENEMY_SHIMMER_OUTLINE_PULSE_HZ * t);
+    state.outline.setAlpha(outlineMin + (outlineMax - outlineMin) * outlineWave);
+  }
 
   // Colour pulse: soft additive bloom breathing far below the flicker rate.
   if (ENEMY_SHIMMER_ENABLE_COLOUR_PULSE) {
@@ -766,6 +1027,34 @@ export function updateEnemyShimmer(
   }
 
   return true;
+}
+
+/**
+ * The single shared emergence step: advances **one** emerging enemy through
+ * the whole spawn treatment in the canonical order — the growth animation
+ * first (an absolute scale write), then the per-entity shimmer layered on
+ * the growth scale (AH-0MVNTY0700053T9E, gym↔game parity).
+ *
+ * Scenes (the game and every formation/level gym) must call only this step
+ * in their per-frame spawn loop, never the two helpers piecemeal: the order
+ * and the pairing are the contract, and a scene that calls just
+ * {@link updateSpawnAnimation} would silently drop the unmistakable shimmer.
+ * The call is a safe no-op for any entity that is not spawning, so a scene
+ * may invoke it for its whole live set without an `isSpawning` pre-check.
+ *
+ * @param enemy - The emerging enemy (any container-like spawn entity).
+ * @param dt - Delta time in seconds (the scene tick step).
+ * @returns `true` while the animation is still in progress (matching
+ *   {@link updateSpawnAnimation}); `false` once growth has completed and the
+ *   entity is fully rendered (shimmer released).
+ */
+export function updateSpawnEmergence(
+  enemy: SpawnAnimatable,
+  dt: number,
+): boolean {
+  const stillGrowing = updateSpawnAnimation(enemy, dt);
+  updateEnemyShimmer(enemy, dt);
+  return stillGrowing;
 }
 
 /**

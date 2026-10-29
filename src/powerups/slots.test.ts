@@ -1,42 +1,23 @@
 /**
- * Six-slot permanent loadout — shared accounting and drop eligibility
- * (test-first slice AH-0MVNT2SD300874CP, parent "Limit the number of powerup
- * slots" AH-0MVLIJT3M005HPHF).
+ * Six-slot loadout — shared accounting and drop eligibility
+ * (parent "Limit the number of powerup slots" AH-0MVLIJT3M005HPHF).
  *
- * ## Test-first status (read before editing)
+ * ## The rule under test
  *
- * The shared helper (`src/powerups/slots.ts`) and the cap constant
- * (`POWER_UP_SLOT_CAP` in `src/core/constants.ts`) are added by the follow-on
- * item AH-0MVNT2TEK001BNQ4. This slice pins their **contract before they
- * exist**, so every behavioural assertion below is registered with Vitest's
- * `it(...)` — the repo's documented test-first convention (see
- * `src/powerups/powerUpIdNaming.test.ts`) — which keeps the suite green for
- * the developer test gate and the dev-push full-suite gate while the
- * assertions are genuinely red against the absent module.
- *
- * When AH-0MVNT2TEK001BNQ4 lands, flip each `.fails` to a plain `it(...)`.
- * Activation is the only permitted edit: the assertions themselves must not
- * change (that is what makes this a contract rather than a wish list).
- *
- * The helper is loaded through a *non-literal* dynamic import on purpose: a
- * static `import './slots'` would fail collection of this whole file (red
- * suite) instead of producing an expected test failure.
- *
- * ## The contract this slice pins
- *
- * - `src/core/constants.ts` exports `POWER_UP_SLOT_CAP = 6`.
- * - `src/powerups/slots.ts` exports:
- *   - `resolveSlotState(powerUpLevels, weaponLevels)` → `{ used, free,
- *     isFull, ownedIds }`, where the inputs are the permanent-only snapshots
- *     `PowerUpLevelStore.getLevels()` and `Player.getWeaponLevels()` return;
- *   - `isWithinSlotPool(dropId, state)` → may this drop be drawn/offered?
- *   - `eligibleForSlotPool(dropIds, state)` → the same list, filtered.
+ * A kind occupies one of the six slots while it is held **permanently**
+ * (hold-full / mini-boss reward) **or** **temporarily** (an active field
+ * pickup); the slot frees when the field-pickup window expires. Exempt
+ * catalogue entries (`availableWhenSlotsFull`) and the slot-exempt `reset`
+ * utility never occupy a slot. Producer decisions 2026-10-27: Q4(a), Q7(a);
+ * see the parent work item.
  *
  * The helper is pure and derived: no new counter, no Phaser import, no
- * `Math.random()`/wall-clock read. Only the two existing permanent-grant
- * stores decide occupancy, which is why every accounting case below is
- * exercised through the real `PowerUpLevelStore` (the weapon half needs a
- * live `Player`, so it lives in `slots.weaponLevels.test.ts`).
+ * `Math.random()`/wall-clock read. Occupancy comes from the four existing
+ * snapshots (`getLevels()`, `getTempPowerUpIds()`, `getWeaponLevels()`,
+ * `getTempWeaponIds()`), which is why the power-up cases below are exercised
+ * through the real `PowerUpLevelStore` and the weapon cases through the
+ * explicit snapshot parameters (the live-`Player` variant lives in
+ * `slots.weaponLevels.test.ts`).
  *
  * @module powerups/slots.test
  */
@@ -46,57 +27,17 @@ import { describe, expect, it } from 'vitest';
 import { POWER_UP_CATALOGUE, type DropId, type PowerUpId } from './types';
 import { PowerUpLevelStore } from './powerUpLevels';
 import { CHOICE_POOL } from './choice';
+import {
+  eligibleForSlotPool,
+  filterOptionsWithinSlotPool,
+  isWithinSlotPool,
+  resolveSlotState,
+  type PowerUpSlotState,
+} from './slots';
 import type { WeaponId } from '../utils/weapons';
 
-// ── Pinned contract (implemented by AH-0MVNT2TEK001BNQ4) ────────────
-
-/**
- * A permanent-only snapshot, as returned by the two ownership stores.
- *
- * The weapon snapshot is `WeaponId`-keyed because that is exactly what
- * `Player.getWeaponLevels()` returns — it includes the never-permanent
- * `cannon`, which the accounting must ignore (see the cannon/reset case).
- */
 type PowerUpLevels = Array<{ id: PowerUpId; level: number }>;
 type WeaponLevels = Array<{ id: WeaponId; level: number }>;
-
-/** Slot occupancy plus the owned-kind view the eligibility predicates need. */
-interface PowerUpSlotState {
-  readonly used: number;
-  readonly free: number;
-  readonly isFull: boolean;
-  readonly ownedIds: ReadonlySet<DropId>;
-}
-
-/** The shared helper module's surface, pinned by this slice. */
-interface SlotsModule {
-  resolveSlotState(powerUpLevels: PowerUpLevels, weaponLevels: WeaponLevels): PowerUpSlotState;
-  isWithinSlotPool(dropId: DropId, state: PowerUpSlotState): boolean;
-  eligibleForSlotPool(dropIds: readonly DropId[], state: PowerUpSlotState): DropId[];
-}
-
-/**
- * Module specifiers are `string`-typed so TypeScript does not try to resolve
- * modules that this test-first slice deliberately lands before. The cast on
- * the result restores the pinned surface.
- */
-const SLOTS_MODULE: string = './slots';
-const CONSTANTS_MODULE: string = '../core/constants';
-
-async function loadSlots(): Promise<SlotsModule> {
-  return (await import(/* @vite-ignore */ SLOTS_MODULE)) as SlotsModule;
-}
-
-async function loadCap(): Promise<number> {
-  const constants = (await import(/* @vite-ignore */ CONSTANTS_MODULE)) as {
-    POWER_UP_SLOT_CAP?: number;
-  };
-  const cap = constants.POWER_UP_SLOT_CAP;
-  if (typeof cap !== 'number') {
-    throw new Error('src/core/constants.ts must export POWER_UP_SLOT_CAP');
-  }
-  return cap;
-}
 
 /** Builds a permanent power-up snapshot at level 1 (one grant each). */
 const ownedPowerUps = (...ids: PowerUpId[]): PowerUpLevels =>
@@ -109,20 +50,33 @@ const ownedWeapons = (...ids: WeaponId[]): WeaponLevels =>
 /** Every catalogue power-up id, in catalogue order. */
 const CATALOGUE_IDS = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
 
+/** A full state built from six permanent kinds (four power-ups, two weapons). */
+function sixFilledSlots(): PowerUpSlotState {
+  return resolveSlotState(
+    ownedPowerUps('shield', 'bomb', 'speed_boost', 'phase_shift'),
+    ownedWeapons('spread', 'dual'),
+  );
+}
+
 // ── AC1 — one named cap ─────────────────────────────────────────────
 
-describe('POWER_UP_SLOT_CAP (AC1 — a single named cap governs permanent ownership)', () => {
-  // Test-first: expected failure until `slots.ts` + the constant land.
-  it('exports the cap as 6 from src/core/constants.ts', async () => {
-    expect(await loadCap()).toBe(6);
+describe('the six-slot cap (AC1)', () => {
+  it('is a state derived only from the four run-scoped snapshots', () => {
+    const state = sixFilledSlots();
+
+    expect(state.used).toBe(6);
+    expect(state.free).toBe(0);
+    expect(state.isFull).toBe(true);
+    expect([...state.heldIds].sort()).toEqual(
+      ['shield', 'bomb', 'speed_boost', 'phase_shift', 'spread', 'dual'].sort(),
+    );
   });
 });
 
 // ── AC1 — shared accounting ─────────────────────────────────────────
 
-describe('resolveSlotState (AC1 — one shared pool of six permanent kinds)', () => {
-  it('fills the pool with six distinct permanent power-up grants', async () => {
-    const slots = await loadSlots();
+describe('resolveSlotState (AC1 — one shared pool of six held kinds)', () => {
+  it('fills the pool with six distinct permanent power-up grants', () => {
     const owned = ownedPowerUps(
       'shield',
       'bomb',
@@ -132,19 +86,17 @@ describe('resolveSlotState (AC1 — one shared pool of six permanent kinds)', ()
       'magnet',
     );
 
-    const state = slots.resolveSlotState(owned, []);
+    const state = resolveSlotState(owned, []);
 
-    expect(state.used).toBe(await loadCap());
     expect(state.used).toBe(6);
     expect(state.free).toBe(0);
     expect(state.isFull).toBe(true);
     expect([...state.ownedIds].sort()).toEqual(owned.map((entry) => entry.id).sort());
+    expect([...state.heldIds].sort()).toEqual(owned.map((entry) => entry.id).sort());
   });
 
-  it('shares the six slots between power-up and weapon kinds', async () => {
-    const slots = await loadSlots();
-
-    const state = slots.resolveSlotState(
+  it('shares the six slots between power-up and weapon kinds', () => {
+    const state = resolveSlotState(
       ownedPowerUps('shield', 'bomb', 'speed_boost'),
       ownedWeapons('spread', 'dual', 'rapid'),
     );
@@ -157,14 +109,13 @@ describe('resolveSlotState (AC1 — one shared pool of six permanent kinds)', ()
     );
   });
 
-  it('levels a repeat grant of an owned kind up without consuming a second slot', async () => {
-    const slots = await loadSlots();
+  it('levels a repeat grant of an owned kind up without consuming a second slot', () => {
     const store = new PowerUpLevelStore();
 
     store.collect('shield', true); // hold-full reward: opens the slot
     store.collect('shield', true); // hold-full reward: levels it up
 
-    const state = slots.resolveSlotState(store.getLevels(), []);
+    const state = resolveSlotState(store.getLevels(), []);
 
     // The store still reports one permanent kind, at level 2.
     expect(store.getLevels()).toEqual([{ id: 'shield', level: 2 }]);
@@ -173,135 +124,196 @@ describe('resolveSlotState (AC1 — one shared pool of six permanent kinds)', ()
     expect(state.isFull).toBe(false);
   });
 
-  it('counts a permanent weapon grant in the same pool', async () => {
-    const slots = await loadSlots();
-
-    const state = slots.resolveSlotState(
+  it('counts a permanent weapon grant in the same pool', () => {
+    const state = resolveSlotState(
       ownedPowerUps('shield', 'bomb', 'speed_boost', 'phase_shift', 'teleport'),
       ownedWeapons('spread'),
     );
 
     expect(state.used).toBe(6);
-    expect(state.free).toBe(0);
     expect(state.isFull).toBe(true);
     expect(state.ownedIds.has('spread')).toBe(true);
   });
 
-  it('ignores temporary field-pickup stacks', async () => {
-    const slots = await loadSlots();
+  // AC1 / producer Q4a — a temporary (field) pickup occupies a slot too.
+  it('counts an active temporary field-pickup stack as a held kind', () => {
     const store = new PowerUpLevelStore();
 
     store.collect('magnet'); // field pickup only: a temporary stack
 
-    const state = slots.resolveSlotState(store.getLevels(), []);
+    const state = resolveSlotState(store.getLevels(), [], store.getTempPowerUpIds());
 
     expect(store.getTempStacks('magnet')).toBe(1);
     expect(store.getLevels()).toEqual([]);
+    expect(state.used).toBe(1);
+    expect(state.free).toBe(5);
+    expect(state.isFull).toBe(false);
+    // Held but not permanently owned — the choice still treats it as a new
+    // permanent kind (it owns its slot, so taking it adds no seventh kind).
+    expect(state.heldIds.has('magnet')).toBe(true);
+    expect(state.ownedIds.has('magnet')).toBe(false);
+  });
+
+  it('counts a temporary weapon stack in the same pool', () => {
+    const state = resolveSlotState([], [], ['shield', 'bomb'], ['spread']);
+
+    expect(state.used).toBe(3);
+    expect(state.heldIds.has('spread')).toBe(true);
+    expect(state.ownedIds.has('spread')).toBe(false);
+  });
+
+  it('does not double-count a kind held both permanently and temporarily', () => {
+    const store = new PowerUpLevelStore();
+
+    store.collect('magnet'); // temporary stack
+    store.collect('magnet', true); // then a hold-full reward
+
+    const state = resolveSlotState(store.getLevels(), [], store.getTempPowerUpIds());
+
+    expect(state.used).toBe(1);
+    expect(state.ownedIds.has('magnet')).toBe(true);
+    expect(state.heldIds.has('magnet')).toBe(true);
+  });
+
+  it('releases the slot when the temporary window expires', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('magnet');
+    expect(resolveSlotState(store.getLevels(), [], store.getTempPowerUpIds()).used).toBe(1);
+
+    // What the effect path does when the timed window elapses.
+    store.clearTemporary('magnet');
+
+    const state = resolveSlotState(store.getLevels(), [], store.getTempPowerUpIds());
+    expect(store.getTempPowerUpIds()).toEqual([]);
     expect(state.used).toBe(0);
-    expect(state.free).toBe(6);
     expect(state.isFull).toBe(false);
   });
 
-  it('never counts the permanent cannon or the reset utility', async () => {
-    const slots = await loadSlots();
+  it('fills the pool from a mix of permanent and temporary holdings', () => {
+    const store = new PowerUpLevelStore();
+    for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift'] as const) {
+      store.collect(id, true);
+    }
+    store.collect('magnet'); // temporary fifth kind
+
+    const state = resolveSlotState(
+      store.getLevels(),
+      ownedWeapons('spread'),
+      store.getTempPowerUpIds(),
+    );
+
+    expect(state.used).toBe(6);
+    expect(state.isFull).toBe(true);
+    expect(state.heldIds.has('magnet')).toBe(true);
+  });
+
+  // Producer Q7a — the exemption flag excludes an entry from the count.
+  it('never counts an available-when-full entry, permanently owned or not', () => {
+    const store = new PowerUpLevelStore();
+    for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift', 'teleport', 'magnet'] as const) {
+      store.collect(id, true);
+    }
+    store.collect('extra_life', true); // exempt: available when full
+    store.collect('mystery_ufo'); // exempt: temporary pickup
+
+    const state = resolveSlotState(store.getLevels(), [], store.getTempPowerUpIds());
+
+    // The exempt kinds are held (so they stay eligible) but never counted.
+    expect(state.used).toBe(6);
+    expect(state.free).toBe(0);
+    expect(state.isFull).toBe(true);
+    expect(state.heldIds.has('extra_life')).toBe(true);
+    expect(state.heldIds.has('mystery_ufo')).toBe(true);
+  });
+
+  it('never counts the permanent cannon or the slot-exempt reset utility', () => {
     // The cannon is a `WeaponId` but is never a drop, so it can never occupy
     // one of the six slots — even if a permanent grant ever slipped through
     // the `isTimedWeapon` guard. `reset` is a `WeaponDropId` that is not a
-    // `WeaponId` at all, so it cannot even appear in a weapon-level snapshot.
+    // `WeaponId` at all, so it can never hold a level either.
     const cannonOnly: WeaponLevels = [{ id: 'cannon', level: 5 }];
 
-    const state = slots.resolveSlotState([], cannonOnly);
+    const state = resolveSlotState([], cannonOnly, [], []);
 
     expect(state.used).toBe(0);
     expect(state.isFull).toBe(false);
     expect(state.ownedIds.size).toBe(0);
-    expect(state.ownedIds.has('reset')).toBe(false);
+    expect(state.heldIds.has('reset')).toBe(false);
   });
 
-  it('reports zero free slots when an exempt grant overflows the pool', async () => {
-    const slots = await loadSlots();
-    // Extra Life is available when full, so a player can keep taking it after
-    // the six slots are occupied. Occupancy is the count of owned kinds, but
-    // `free` must never go negative.
-    const overflowing = ownedPowerUps(
-      'shield',
-      'bomb',
-      'speed_boost',
-      'phase_shift',
-      'teleport',
-      'magnet',
-      'extra_life',
-    );
+  it('reports zero free slots at exactly the cap (never negative)', () => {
+    const state = sixFilledSlots();
 
-    const state = slots.resolveSlotState(overflowing, []);
-
-    expect(state.used).toBe(7);
+    expect(state.used).toBe(6);
     expect(state.free).toBe(0);
-    expect(state.isFull).toBe(true);
   });
 });
 
 // ── AC2/AC3/AC5 — eligibility ───────────────────────────────────────
 
 describe('drop eligibility (AC3 below the cap, AC2+AC5 at the cap)', () => {
-  it('keeps the whole catalogue eligible below the cap (AC3 — no behaviour change)', async () => {
-    const slots = await loadSlots();
-
-    const state = slots.resolveSlotState(ownedPowerUps('shield'), []);
+  it('keeps the whole catalogue eligible below the cap (AC3 — no behaviour change)', () => {
+    const state = resolveSlotState(ownedPowerUps('shield'), []);
 
     expect(state.isFull).toBe(false);
-    expect(slots.eligibleForSlotPool(CHOICE_POOL, state)).toEqual([...CHOICE_POOL]);
+    expect(eligibleForSlotPool(CHOICE_POOL, state)).toEqual([...CHOICE_POOL]);
     for (const id of CATALOGUE_IDS) {
-      expect(slots.isWithinSlotPool(id, state)).toBe(true);
+      expect(isWithinSlotPool(id, state)).toBe(true);
     }
   });
 
-  it('offers only owned kinds plus flagged entries at the cap (AC2/AC5)', async () => {
-    const slots = await loadSlots();
+  it('offers only held kinds plus flagged entries at the cap (AC2/AC5)', () => {
     const owned: PowerUpId[] = ['shield', 'bomb', 'frenzy', 'thorns', 'salvage', 'strike'];
 
-    const state = slots.resolveSlotState(ownedPowerUps(...owned), []);
+    const state = resolveSlotState(ownedPowerUps(...owned), []);
 
     expect(state.isFull).toBe(true);
-    expect(slots.eligibleForSlotPool(CHOICE_POOL, state).sort()).toEqual(
+    expect(eligibleForSlotPool(CHOICE_POOL, state).sort()).toEqual(
       [...owned, 'extra_life', 'mystery_ufo'].sort(),
     );
   });
 
-  it('never offers a non-owned weapon at the cap (AC2)', async () => {
-    const slots = await loadSlots();
-    const state = slots.resolveSlotState(
-      ownedPowerUps('shield', 'bomb', 'frenzy', 'thorns', 'salvage', 'strike'),
-      [],
-    );
-
-    expect(slots.isWithinSlotPool('spread', state)).toBe(false);
-    expect(slots.isWithinSlotPool('wave_laser', state)).toBe(false);
-    expect(slots.eligibleForSlotPool(CHOICE_POOL, state)).not.toContain('spread');
-  });
-
-  it('keeps an owned weapon eligible at the cap (AC2 — one shared pool)', async () => {
-    const slots = await loadSlots();
-    const state = slots.resolveSlotState(
+  it('keeps a kind held only temporarily eligible at the cap (Q4a)', () => {
+    const state = resolveSlotState(
       ownedPowerUps('shield', 'bomb', 'frenzy', 'thorns', 'salvage'),
-      ownedWeapons('spread'),
+      [],
+      ['strike'], // temporary sixth kind
     );
 
-    expect(state.used).toBe(6);
     expect(state.isFull).toBe(true);
-    expect(slots.isWithinSlotPool('spread', state)).toBe(true);
-    expect(slots.eligibleForSlotPool(CHOICE_POOL, state)).toContain('spread');
+    expect(isWithinSlotPool('strike', state)).toBe(true);
+    expect(isWithinSlotPool('teleport', state)).toBe(false);
   });
 
-  it('never returns an empty eligible set (weapon-only build at the cap)', async () => {
-    const slots = await loadSlots();
+  it('never offers a non-held weapon at the cap (AC2)', () => {
+    const state = sixFilledSlots();
+
+    expect(isWithinSlotPool('wave_laser', state)).toBe(false);
+    expect(eligibleForSlotPool(CHOICE_POOL, state)).not.toContain('wave_laser');
+  });
+
+  it('keeps an owned weapon eligible at the cap (AC2 — one shared pool)', () => {
+    const state = sixFilledSlots();
+
+    expect(isWithinSlotPool('spread', state)).toBe(true);
+    expect(eligibleForSlotPool(CHOICE_POOL, state)).toContain('spread');
+  });
+
+  it('never gates the slot-exempt reset utility at the cap', () => {
+    const state = sixFilledSlots();
+
+    // `reset` cannot hold a level, so the cap never suppresses it.
+    expect(isWithinSlotPool('reset', state)).toBe(true);
+  });
+
+  it('never returns an empty eligible set (weapon-only build at the cap)', () => {
     // A weapon-heavy build can consume the whole pool before any power-up
     // reward (documented design consequence). The draw must still degrade to
-    // the owned weapons plus the flagged entries — never to nothing.
+    // the held weapons plus the flagged entries — never to nothing.
     const weapons = ownedWeapons('spread', 'dual', 'rapid', 'wave_laser', 'ricochet', 'cluster');
 
-    const state = slots.resolveSlotState([], weapons);
-    const eligible = slots.eligibleForSlotPool(CHOICE_POOL, state);
+    const state = resolveSlotState([], weapons);
+    const eligible = eligibleForSlotPool(CHOICE_POOL, state);
 
     expect(state.isFull).toBe(true);
     expect(eligible.length).toBeGreaterThan(0);
@@ -311,35 +323,98 @@ describe('drop eligibility (AC3 below the cap, AC2+AC5 at the cap)', () => {
     expect(eligible).not.toContain('shield');
   });
 
-  it('reads the exemption from the catalogue flag, not an id special case (AC5)', async () => {
-    const slots = await loadSlots();
-    const state = slots.resolveSlotState(
-      ownedPowerUps('shield', 'bomb', 'frenzy', 'thorns', 'salvage', 'strike'),
-      [],
-    );
+  it('reads the exemption from the catalogue flag, not an id special case (AC5)', () => {
+    const state = sixFilledSlots();
 
-    // The two `availableWhenSlotsFull` entries stay available even though the
-    // player owns neither; that decision comes from catalogue data only.
-    expect(slots.isWithinSlotPool('extra_life', state)).toBe(true);
-    expect(slots.isWithinSlotPool('mystery_ufo', state)).toBe(true);
-    expect(slots.isWithinSlotPool('speed_boost', state)).toBe(false);
-    expect(slots.isWithinSlotPool('smart_bomb', state)).toBe(false);
+    // The two `availableWhenSlotsFull` entries stay available even when the
+    // player holds neither; that decision comes from catalogue data only.
+    expect(isWithinSlotPool('extra_life', state)).toBe(true);
+    expect(isWithinSlotPool('mystery_ufo', state)).toBe(true);
+    expect(isWithinSlotPool('teleport', state)).toBe(false);
+    expect(isWithinSlotPool('smart_bomb', state)).toBe(false);
   });
 
-  it('never mutates its inputs and is a pure function of them', async () => {
-    const slots = await loadSlots();
+  it('never mutates its inputs and is a pure function of them', () => {
     const powerUps = ownedPowerUps('shield', 'bomb');
     const weapons = ownedWeapons('spread');
-    const before = JSON.stringify({ powerUps, weapons });
+    const tempPowerUps: PowerUpId[] = ['magnet'];
+    const tempWeapons: WeaponId[] = ['dual'];
+    const before = JSON.stringify({ powerUps, weapons, tempPowerUps, tempWeapons });
 
-    const first = slots.resolveSlotState(powerUps, weapons);
-    const second = slots.resolveSlotState(powerUps, weapons);
+    const first = resolveSlotState(powerUps, weapons, tempPowerUps, tempWeapons);
+    const second = resolveSlotState(powerUps, weapons, tempPowerUps, tempWeapons);
 
-    expect(JSON.stringify({ powerUps, weapons })).toBe(before);
+    expect(JSON.stringify({ powerUps, weapons, tempPowerUps, tempWeapons })).toBe(before);
     expect(first.used).toBe(second.used);
-    expect([...first.ownedIds].sort()).toEqual([...second.ownedIds].sort());
-    expect(slots.eligibleForSlotPool(CHOICE_POOL, first)).toEqual(
-      slots.eligibleForSlotPool(CHOICE_POOL, second),
+    expect([...first.heldIds].sort()).toEqual([...second.heldIds].sort());
+    expect(eligibleForSlotPool(CHOICE_POOL, first)).toEqual(
+      eligibleForSlotPool(CHOICE_POOL, second),
     );
+  });
+});
+
+// ── AC4 — offer surfaces outside buildChoiceCandidates ───────────────
+describe('filterOptionsWithinSlotPool — every offer path obeys the cap (AC4)', () => {
+  /** A minimal offer shape: the drop id is all the gate reads. */
+  const offers = (...ids: DropId[]): Array<{ id: DropId; label: string }> =>
+    ids.map((id) => ({ id, label: id }));
+
+  const idsOf = (list: ReadonlyArray<{ id: DropId }>): DropId[] =>
+    list.map((entry) => entry.id);
+
+  it('drops offers for kinds outside a full pool and keeps held, exempt and slot-exempt kinds', () => {
+    // Six filled slots: shield, bomb, speed_boost, phase_shift, spread, dual.
+    const state = sixFilledSlots();
+
+    const filtered = filterOptionsWithinSlotPool(
+      offers('railgun', 'spread', 'extra_life', 'reset', 'mystery_ufo', 'teleport'),
+      state,
+    );
+
+    // The mini-boss unlock of a brand-new weapon kind (railgun) and a new
+    // power-up kind (teleport) are the seventh-slot paths this gate closes
+    // (parent AH-0MVLIJT3M005HPHF AC4).
+    expect(idsOf(filtered)).toEqual([
+      'spread',
+      'extra_life',
+      'reset',
+      'mystery_ufo',
+    ]);
+  });
+
+  it('keeps an offer for a kind held only temporarily at the cap', () => {
+    // Five permanent kinds plus an active field pickup of `railgun` fill the
+    // pool, so making that kind permanent adds no new kind.
+    const state = resolveSlotState(
+      ownedPowerUps('shield', 'bomb', 'speed_boost', 'phase_shift', 'magnet'),
+      [],
+      [],
+      ['railgun'],
+    );
+    expect(state.isFull).toBe(true);
+
+    expect(idsOf(filterOptionsWithinSlotPool(offers('railgun', 'broadside'), state))).toEqual([
+      'railgun',
+    ]);
+  });
+
+  it('keeps every offer below the cap (below-cap behaviour unchanged, AC3)', () => {
+    const state = resolveSlotState(ownedPowerUps('shield'), ownedWeapons('spread'));
+    expect(state.isFull).toBe(false);
+
+    const all = offers(...CHOICE_POOL);
+    expect(filterOptionsWithinSlotPool(all, state)).toEqual(all);
+  });
+
+  it('never mutates the offer list it filters and returns an empty list for empty input', () => {
+    const state = sixFilledSlots();
+    const input = offers('railgun', 'spread');
+    const snapshot = JSON.stringify(input);
+
+    const filtered = filterOptionsWithinSlotPool(input, state);
+
+    expect(JSON.stringify(input)).toBe(snapshot);
+    expect(filtered).not.toBe(input);
+    expect(filterOptionsWithinSlotPool([], state)).toEqual([]);
   });
 });

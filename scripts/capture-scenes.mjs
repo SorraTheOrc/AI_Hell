@@ -113,12 +113,41 @@ export const SCENE_CONFIG_ERROR_CODES = Object.freeze({
   setupNotSupported: 'setup-not-supported',
   /** A `setup.seed` is not a 32-bit unsigned integer. */
   invalidSeed: 'invalid-seed',
+  /**
+   * A `setup.player.weaponLevels[id]` is not an integer within the
+   * documented capture range (`1`–{@link SCENE_SETUP_WEAPON_LEVEL_MAX}).
+   */
+  invalidWeaponLevel: 'invalid-weapon-level',
+  /**
+   * A `setup.mineralReward` is not one of the hold-full choice ids
+   * ({@link SCENE_SETUP_MINERAL_REWARD_IDS}).
+   */
+  unknownMineralReward: 'unknown-mineral-reward',
+  /**
+   * A `setup.bossHitsRemaining` is not a positive integer within the
+   * target's total hit pool ({@link SCENE_SETUP_BOSS_TOTAL_HITS}).
+   */
+  invalidBossHits: 'invalid-boss-hits',
+  /**
+   * A `setup.player.heading` is not a finite number of degrees. The heading is
+   * the direction the ship faces while it is **stationary** — the captured
+   * scenes take no input, so without one the ship fires to the right
+   * (`Player`'s documented default, 0 = right/east) and every shot misses the
+   * enemies above it (AH-0MVTJW9JW002PHJG).
+   */
+  invalidPlayerHeading: 'invalid-player-heading',
   /** A generated-level entry's `level` is not an integer in range. */
   invalidSceneLevel: 'invalid-scene-level',
   /** A generated-level entry's `minWaves`/`maxCaptureMs` is invalid. */
   invalidSceneField: 'invalid-scene-field',
   /** A generated-level-only field is supplied on a gym target. */
   unsupportedSceneField: 'unsupported-scene-field',
+  /**
+   * A scenario count (`setup.threatCount`, `setup.minerals`) is not an
+   * integer within its documented bounds
+   * ({@link SCENE_SETUP_SCENARIO_COUNT_BOUNDS}).
+   */
+  invalidScenarioCount: 'invalid-scenario-count',
 });
 
 const CODE = SCENE_CONFIG_ERROR_CODES;
@@ -216,6 +245,55 @@ export const SCENE_SETUP_WEAPON_IDS = Object.freeze([
 ]);
 
 /**
+ * Highest permanent weapon level a capture `setup.player.weaponLevels` entry
+ * may request. A weapon level is expressed as **N permanent grants** of that
+ * weapon (`equipWeapon(id, true)` increments the run-scoped level), so the
+ * maximum mirrors the shipped upgrade ceiling: level 1 (the free grant via
+ * `setup.player.weapons`) plus four upgrade levels.
+ */
+export const SCENE_SETUP_WEAPON_LEVEL_MAX = 5;
+
+/**
+ * Drop ids a `setup.mineralReward` may force for the hold-full resolution — a
+ * frozen mirror of `CHOICE_POOL` (`src/powerups/choice.ts`, the whole drop
+ * catalogue minus the `reset` utility). Pinned by a parity test so a forced
+ * reward can never name something the hold-full choice itself would not offer.
+ */
+export const SCENE_SETUP_MINERAL_REWARD_IDS = Object.freeze([
+  'shield',
+  'bomb',
+  'speed_boost',
+  'phase_shift',
+  'teleport',
+  'extra_life',
+  'magnet',
+  'mineral_scoop',
+  'smart_bomb',
+  'force_field',
+  'mystery_ufo',
+  'frenzy',
+  'chrono',
+  'thorns',
+  'salvage',
+  'strike',
+  'spread',
+  'dual',
+  'rapid',
+  'wave_laser',
+  'ricochet',
+  'cluster',
+  'options',
+  'nova',
+  'mortar',
+  'arc',
+  'rear_guard',
+  'broadside',
+  'railgun',
+  'shard_swarm',
+  'heavy_slug',
+]);
+
+/**
  * Power-up ids accepted as `setup.powerUps` keys — a frozen mirror of the
  * `PowerUpId` union (`src/powerups/types.ts`). Pinned by a parity test
  * against `POWER_UP_CATALOGUE`.
@@ -265,6 +343,10 @@ export const GENERATED_LEVEL_ONLY_FIELDS = Object.freeze([
   'level',
   'minWaves',
   'maxCaptureMs',
+  // Start position inside the level (AH-0MVTPP7SX000JTWJ): a teaser beat is
+  // seconds long, so it begins at a mid-level wave or at the boss encounter.
+  'startWave',
+  'startBoss',
 ]);
 
 /** Default `setup.seed` when the config omits one (deterministic by default). */
@@ -282,6 +364,73 @@ export const DEFAULT_SCENE_SETUP_PLAYER_WEAPONS = Object.freeze(['spread', 'dual
 export const DEFAULT_SCENE_SETUP_TIMED_WEAPONS = Object.freeze([]);
 
 /**
+ * Default `setup.player.weaponLevels` when omitted: no per-weapon level
+ * grants, so every weapon keeps the single level-1 grant that
+ * `setup.player.weapons` provides.
+ */
+export const DEFAULT_SCENE_SETUP_WEAPON_LEVELS = Object.freeze({});
+
+/**
+ * Total hit pool of each boss-capable gym, used to bound
+ * `setup.bossHitsRemaining` (AH-0MVRMFPXF008BG77). A preview may start the
+ * entity anywhere inside its existing pool; it may never enlarge it.
+ *
+ * - `GymBoss` — the shared Boss pool: `BOSS_PHASE_COUNT` (4) x
+ *   `BOSS_HIT_POINTS_PER_PHASE` (50) = 200.
+ * - `GymMiniBoss` — the gym's deliberate small pool: design level 1 has two
+ *   phases at `MINI_BOSS_GYM_HP_PER_PHASE` (5) each = 10, so a tester can step
+ *   through every phase quickly.
+ *
+ * Both values are pinned to the live `getTotalHp()` of the spawned entities by
+ * tests, so a pool change can never silently admit an out-of-range preview.
+ */
+export const SCENE_SETUP_BOSS_TOTAL_HITS = Object.freeze({
+  GymBoss: 200,
+  GymMiniBoss: 10,
+  // The shipped game scene hosts the same Central AI boss (4 phases x 50), so a
+  // teaser beat can preview its hits through the identical `initialHp` seam
+  // (AH-0MVTNTHE0008UT2C).
+  PlayScene: 200,
+});
+
+/**
+ * Inclusive bounds for the per-gym scenario counts a capture setup may supply
+ * (AH-0MVRMI0Q7001KG4Y).
+ *
+ * - `threatCount` (`GymPowerUpsCombat`) — the scout threat wave size:
+ *   at least one threat (the gym exists to demonstrate threat responses) and
+ *   at most 12 so the V-formation stays inside the arena.
+ * - `minerals` (`GymPowerUpsUtility`) — the seeded mineral field size: `0` is
+ *   allowed (an empty field is a valid demonstration) and at most 200 so the
+ *   capture stays readable and bounded.
+ *
+ * The bounds are schema values, pinned by `scripts/capture-scenes.test.ts`.
+ */
+export const SCENE_SETUP_SCENARIO_COUNT_BOUNDS = Object.freeze({
+  threatCount: Object.freeze({ min: 1, max: 12 }),
+  minerals: Object.freeze({ min: 0, max: 200 }),
+});
+
+/**
+ * Setup fields the **game scene** (`PlayScene`) can consume
+ * (AH-0MVTNTHE0008UT2C, parent AH-0MVTN7EJY004713X).
+ *
+ * The teaser records the shipped game with the bot playing, so it cannot use a
+ * gym: gym scenes draw debug chrome (index link, DAMAGE buttons). PlayScene
+ * therefore accepts the same capture configuration it needs for a scripted
+ * beat — the starting loadout/power-ups, a forced hold-full reward and a boss
+ * hit preview — delivered as dev-gated launch data. `seed`/`level`/`minWaves`
+ * stay **sibling** fields of the entry (generated-level launch data), not part
+ * of the setup.
+ */
+export const SCENE_SETUP_PLAYSCENE_FIELDS = Object.freeze([
+  'player',
+  'powerUps',
+  'mineralReward',
+  'bossHitsRemaining',
+]);
+
+/**
  * Setup fields every setup-capable scene can consume: a player loadout, power-up
  * levels and a determinism seed.
  */
@@ -293,21 +442,48 @@ export const SCENE_SETUP_COMMON_FIELDS = Object.freeze([
 
 /**
  * Extra setup fields a specific target can consume beyond
- * {@link SCENE_SETUP_COMMON_FIELDS}: `GymLevel`/`GymBotTuning` take a level and
- * starting wave, `GymFodderEnemies` takes the formation enemy key.
+ * {@link SCENE_SETUP_COMMON_FIELDS}: `GymLevel`/`GymBotTuning` take a level, a
+ * starting wave and a forced hold-full reward, `GymFodderEnemies` takes the
+ * formation enemy key, and the boss-capable gyms take a hit preview.
  */
 export const SCENE_SETUP_TARGET_EXTRA_FIELDS = Object.freeze({
-  GymLevel: Object.freeze(['level', 'startWave']),
-  GymBotTuning: Object.freeze(['level', 'startWave']),
-  GymFodderEnemies: Object.freeze(['enemy']),
+  // The level gyms resolve a full mineral hold automatically (no modal), so
+  // they can force which reward that resolution grants (AH-0MVRMFOB4002LMZS).
+  GymLevel: Object.freeze(['level', 'startWave', 'mineralReward']),
+  GymBotTuning: Object.freeze(['level', 'startWave', 'mineralReward']),
+  GymFodderEnemies: Object.freeze(['enemy', 'shootEnabled']),
+  // Only the boss-capable gyms host an entity with the `initialHp` seam, so
+  // only they may preview a boss close to death (AH-0MVRMFPXF008BG77).
+  GymBoss: Object.freeze(['bossHitsRemaining', 'shootEnabled']),
+  GymMiniBoss: Object.freeze(['bossHitsRemaining', 'shootEnabled']),
+  // Formation-family gyms that can fire expose the HUD SHOOT toggle as their
+  // scenario parameter (it is ON/OFF, not a wave payload): the flag sets the
+  // initial state and every spawned entity inherits it (AH-0MVRMI0Q7001KG4Y).
+  // `GymCentipede` (segments never fire) and `GymMinerals` (asteroids never
+  // fire) are intentionally absent: their entities ignore `shootEnabled`, so
+  // accepting it there would silently drop the field.
+  // The combat power-up gym owns both its SHOOT toggle and the size of the
+  // scout threat wave that makes the defensive power-ups meaningful.
+  GymPowerUpsCombat: Object.freeze(['shootEnabled', 'threatCount']),
+  // The player gym's obstacle course is an optional scenario layer.
+  GymPlayer: Object.freeze(['obstacles']),
+  // The weapon gym's inert AOE practice targets are an optional layer, and
+  // the utility gym's demonstration mineral field is sized per capture.
+  GymWeapons: Object.freeze(['practiceTargets']),
+  GymPowerUpsUtility: Object.freeze(['minerals']),
 });
 
 /**
- * Watchable gym scenes that cannot consume a `setup` at all (no player, no
- * wave content — e.g. the curve sequencer is an editor). A setup on one of
- * these is rejected rather than silently ignored.
+ * Watchable gym scenes that cannot consume a `setup` at all.
+ *
+ * **Empty since AH-0MVRMI0Q7001KG4Y.** `GymCurveSequencer` used to be listed
+ * here; the editor consumes the shared `applySceneSetup`/`resolveSetupSeed`
+ * seam (as a documented no-op where it has no player) and forwards the setup
+ * to the `GymLevel` it launches, so the common loadout/power-up/seed fields are
+ * accepted rather than rejected. The export is kept (empty, frozen) so the
+ * registry contract and its consumers do not change shape.
  */
-export const SCENE_SETUP_INCAPABLE_TARGETS = Object.freeze(['GymCurveSequencer']);
+export const SCENE_SETUP_INCAPABLE_TARGETS = Object.freeze([]);
 
 /** Every setup field name (used to distinguish unknown vs unsupported). */
 const SETUP_ALL_FIELDS = Object.freeze([
@@ -317,6 +493,13 @@ const SETUP_ALL_FIELDS = Object.freeze([
   'player',
   'powerUps',
   'seed',
+  'mineralReward',
+  'bossHitsRemaining',
+  'shootEnabled',
+  'obstacles',
+  'practiceTargets',
+  'threatCount',
+  'minerals',
 ]);
 
 /** Whether `value` is any known scene key (watchable or parameterised). */
@@ -336,6 +519,9 @@ function isKnownSceneKey(value) {
  * @returns {string[]}
  */
 export function sceneSetupFieldsFor(target) {
+  // The shipped game scene is setup-capable through dev-gated launch data
+  // (AH-0MVTNTHE0008UT2C) even though it is not a gym key.
+  if (target === GENERATED_LEVEL_SCENE_KEY) return [...SCENE_SETUP_PLAYSCENE_FIELDS];
   if (!isKnownSceneKey(target)) return [];
   if (SCENE_SETUP_INCAPABLE_TARGETS.includes(target)) return [];
   const extra = SCENE_SETUP_TARGET_EXTRA_FIELDS[target] ?? [];
@@ -573,7 +759,11 @@ function validateSetupLevel(level, at) {
 /** Validates `setup.player`. */
 function validateSetupPlayer(player, at) {
   requireSetupObject(player, at);
-  rejectUnknownFields(player, ['weapons', 'timedWeapons'], at);
+  rejectUnknownFields(
+    player,
+    ['weapons', 'timedWeapons', 'weaponLevels', 'heading'],
+    at,
+  );
   for (const field of ['weapons', 'timedWeapons']) {
     if (player[field] === undefined) continue;
     if (!Array.isArray(player[field])) {
@@ -591,6 +781,122 @@ function validateSetupPlayer(player, at) {
       }
     });
   }
+  if (player.weaponLevels !== undefined) {
+    validateSetupWeaponLevels(player.weaponLevels, `${at}.weaponLevels`);
+  }
+  if (player.heading !== undefined) {
+    validateSetupPlayerHeading(player.heading, `${at}.heading`);
+  }
+}
+
+/**
+ * Validates `setup.player.heading`: the ship's stationary facing in **degrees**
+ * (`0` = right/east, positive clockwise; `-90` = up), a finite number. The
+ * value is normalised into `(-180, 180]` so equivalent angles normalise
+ * identically.
+ *
+ * A captured scene takes no input, so the ship never moves and `Player`'s
+ * heading stays at its default (0 = right) — every shot then flies sideways
+ * past the enemies above it. Setting the heading is how a capture setup aims
+ * the (unmoved) ship up the screen (AH-0MVTJW9JW002PHJG).
+ */
+function validateSetupPlayerHeading(heading, at) {
+  if (typeof heading !== 'number' || !Number.isFinite(heading)) {
+    throw new SceneConfigError(
+      CODE.invalidPlayerHeading,
+      `${at} must be a finite number of degrees (0 = right, -90 = up) `
+        + `(got ${JSON.stringify(heading)})`,
+    );
+  }
+}
+
+/**
+ * Normalises a validated heading into `(-180, 180]`.
+ *
+ * @param {number} headingDegrees
+ * @returns {number}
+ */
+export function normalisePlayerHeading(headingDegrees) {
+  const wrapped = ((headingDegrees % 360) + 360) % 360;
+  return wrapped > 180 ? wrapped - 360 : wrapped;
+}
+
+/**
+ * Validates `setup.player.weaponLevels`: a plain object mapping a known weapon
+ * id to a permanent level `1`–{@link SCENE_SETUP_WEAPON_LEVEL_MAX}.
+ *
+ * A weapon level is expressed as that many permanent grants, so the level must
+ * be a whole number in range — the applier ignores anything else, and a parse
+ * error here is much more useful than a silently weaker loadout.
+ */
+function validateSetupWeaponLevels(weaponLevels, at) {
+  requireSetupObject(weaponLevels, at);
+  for (const [id, level] of Object.entries(weaponLevels)) {
+    if (!SCENE_SETUP_WEAPON_IDS.includes(id)) {
+      throw new SceneConfigError(
+        CODE.unknownWeaponId,
+        `${at}.${id} is not a known weapon id`,
+      );
+    }
+    if (
+      typeof level !== 'number'
+      || !Number.isInteger(level)
+      || level < 1
+      || level > SCENE_SETUP_WEAPON_LEVEL_MAX
+    ) {
+      throw new SceneConfigError(
+        CODE.invalidWeaponLevel,
+        `${at}.${id} must be an integer 1-${SCENE_SETUP_WEAPON_LEVEL_MAX} `
+          + `(got ${JSON.stringify(level)})`,
+      );
+    }
+  }
+}
+
+/**
+ * Validates `setup.mineralReward`: a hold-full reward id
+ * ({@link SCENE_SETUP_MINERAL_REWARD_IDS}). An id the hold-full choice itself
+ * could never offer is rejected here rather than silently ignored at reveal
+ * time.
+ */
+function validateSetupMineralReward(reward, at) {
+  if (typeof reward !== 'string') {
+    throw new SceneConfigError(
+      CODE.invalidSetupType,
+      `${at} must be a hold-full reward id (got ${JSON.stringify(reward)})`,
+    );
+  }
+  if (!SCENE_SETUP_MINERAL_REWARD_IDS.includes(reward)) {
+    throw new SceneConfigError(
+      CODE.unknownMineralReward,
+      `${at} ${JSON.stringify(reward)} is not a known hold-full reward id`,
+    );
+  }
+  return reward;
+}
+
+/**
+ * Validates `setup.bossHitsRemaining`: a positive integer no greater than the
+ * target's total hit pool ({@link SCENE_SETUP_BOSS_TOTAL_HITS}). The preview
+ * starts the entity **inside** its existing pool — the pool itself is
+ * unchanged — so anything below one hit or above the pool is rejected here
+ * rather than silently clamped by the entity.
+ */
+function validateSetupBossHits(value, at, target) {
+  const total = SCENE_SETUP_BOSS_TOTAL_HITS[target];
+  if (
+    typeof value !== 'number'
+    || !Number.isInteger(value)
+    || value < 1
+    || (total !== undefined && value > total)
+  ) {
+    const range = total === undefined ? 'a positive integer' : `an integer 1-${total}`;
+    throw new SceneConfigError(
+      CODE.invalidBossHits,
+      `${at} must be ${range} (the ${target} hit pool), got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
 }
 
 /** Validates `setup.powerUps`. */
@@ -605,6 +911,27 @@ function validateSetupPowerUps(powerUps, at) {
     }
     requireSetupPositiveInt(level, `${at}.${id}`);
   }
+}
+
+/**
+ * Validates a per-gym scenario count (`setup.threatCount` / `setup.minerals`)
+ * against its inclusive bounds
+ * ({@link SCENE_SETUP_SCENARIO_COUNT_BOUNDS}).
+ */
+function validateSetupScenarioCount(value, field, at) {
+  const bounds = SCENE_SETUP_SCENARIO_COUNT_BOUNDS[field];
+  if (
+    typeof value !== 'number'
+    || !Number.isInteger(value)
+    || value < bounds.min
+    || value > bounds.max
+  ) {
+    throw new SceneConfigError(
+      CODE.invalidScenarioCount,
+      `${at} must be an integer ${bounds.min}-${bounds.max} (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
 }
 
 /** Validates a `setup.seed` (32-bit unsigned integer). */
@@ -629,8 +956,10 @@ function validateSetupSeed(seed, at) {
  * Pure (never mutates `rawSetup`) and total in the sense that it either
  * returns `void` or throws a typed {@link SceneConfigError}. Every check is
  * target-aware: a field the target cannot consume is `setup-not-supported`,
- * a missing launch parameter is `missing-setup-parameter`, and structural
- * problems in the level/player/power-up payloads have their own codes.
+ * a missing launch parameter is `missing-setup-parameter` (reported only once
+ * every supplied field is known-good, so the concrete field error wins), and
+ * structural problems in the level/player/power-up payloads have their own
+ * codes.
  *
  * @param {unknown} rawSetup
  * @param {string} target — the scene key the setup belongs to.
@@ -646,15 +975,6 @@ export function validateSceneSetup(rawSetup, target, at = 'setup') {
     );
   }
   rejectUnknownFields(rawSetup, allowed, at, SETUP_ALL_FIELDS);
-
-  for (const field of requiredSceneSetupFieldsFor(target)) {
-    if (rawSetup[field] === undefined) {
-      throw new SceneConfigError(
-        CODE.missingSetupParameter,
-        `${at}.${field} is required for target "${target}"`,
-      );
-    }
-  }
 
   if (rawSetup.level !== undefined) validateSetupLevel(rawSetup.level, `${at}.level`);
   if (rawSetup.startWave !== undefined) {
@@ -694,6 +1014,44 @@ export function validateSceneSetup(rawSetup, target, at = 'setup') {
   if (rawSetup.player !== undefined) validateSetupPlayer(rawSetup.player, `${at}.player`);
   if (rawSetup.powerUps !== undefined) validateSetupPowerUps(rawSetup.powerUps, `${at}.powerUps`);
   if (rawSetup.seed !== undefined) validateSetupSeed(rawSetup.seed, `${at}.seed`);
+  if (rawSetup.mineralReward !== undefined) {
+    validateSetupMineralReward(rawSetup.mineralReward, `${at}.mineralReward`);
+  }
+  if (rawSetup.bossHitsRemaining !== undefined) {
+    validateSetupBossHits(
+      rawSetup.bossHitsRemaining,
+      `${at}.bossHitsRemaining`,
+      target,
+    );
+  }
+  // Scenario parameters (AH-0MVRMI0Q7001KG4Y): booleans and bounded counts a
+  // gym consumes directly (its SHOOT toggle, optional scenario layers, threat
+  // wave size, demonstration mineral field). A target that does not declare
+  // the field is rejected earlier by `rejectUnknownFields`, so an accepted
+  // field is always consumed by the scene.
+  for (const field of ['shootEnabled', 'obstacles', 'practiceTargets']) {
+    if (rawSetup[field] !== undefined) {
+      requireSetupBoolean(rawSetup[field], `${at}.${field}`);
+    }
+  }
+  for (const field of ['threatCount', 'minerals']) {
+    if (rawSetup[field] !== undefined) {
+      validateSetupScenarioCount(rawSetup[field], field, `${at}.${field}`);
+    }
+  }
+
+  // Required launch parameters are checked **last**, so a setup that also
+  // carries a malformed field reports the concrete field error (e.g.
+  // `unknown-mineral-reward`) rather than only "level is missing"
+  // (AH-0MVRMFOB4002LMZS).
+  for (const field of requiredSceneSetupFieldsFor(target)) {
+    if (rawSetup[field] === undefined) {
+      throw new SceneConfigError(
+        CODE.missingSetupParameter,
+        `${at}.${field} is required for target "${target}"`,
+      );
+    }
+  }
 }
 
 /** Copies a validated level, preserving only its documented fields. */
@@ -739,8 +1097,10 @@ function normaliseSetupLevel(level) {
  * never share mutable state.
  *
  * Defaults: `startWave` 1, `seed` {@link DEFAULT_SCENE_SETUP_SEED}, permanent
- * weapons `['spread', 'dual']` (mirroring `GymLevel`'s existing loadout) and no
- * timed weapons, no power-ups, and the level/enemy omitted when absent.
+ * weapons `['spread', 'dual']` (mirroring `GymLevel`'s existing loadout), no
+ * timed weapons, no per-weapon level grants ({@link
+ * DEFAULT_SCENE_SETUP_WEAPON_LEVELS}), no power-ups, and the
+ * level/enemy/mineralReward omitted when absent.
  *
  * @param {object} [rawSetup]
  * @param {string} [target] — when given, only fields the target can consume are
@@ -772,10 +1132,39 @@ export function normaliseSceneSetup(rawSetup = {}, target) {
       timedWeapons: [
         ...(player.timedWeapons ?? DEFAULT_SCENE_SETUP_TIMED_WEAPONS),
       ],
+      weaponLevels: {
+        ...(isPlainObject(player.weaponLevels)
+          ? player.weaponLevels
+          : DEFAULT_SCENE_SETUP_WEAPON_LEVELS),
+      },
+      // Only emitted when configured: an absent heading keeps every existing
+      // scene byte-for-byte identical (AH-0MVTJW9JW002PHJG).
+      ...(player.heading === undefined
+        ? {}
+        : { heading: normalisePlayerHeading(player.heading) }),
     };
   }
   if (include('powerUps')) {
     normalised.powerUps = { ...(isPlainObject(setup.powerUps) ? setup.powerUps : {}) };
+  }
+  if (include('mineralReward') && setup.mineralReward !== undefined) {
+    normalised.mineralReward = setup.mineralReward;
+  }
+  if (include('bossHitsRemaining') && setup.bossHitsRemaining !== undefined) {
+    normalised.bossHitsRemaining = setup.bossHitsRemaining;
+  }
+  // Scenario parameters are only emitted when supplied: their defaults live in
+  // the scenes (the historical gym behaviour), so an omitted field keeps the
+  // pre-change scene configuration exactly (AH-0MVRMI0Q7001KG4Y).
+  for (const field of ['shootEnabled', 'obstacles', 'practiceTargets']) {
+    if (include(field) && setup[field] !== undefined) {
+      normalised[field] = setup[field];
+    }
+  }
+  for (const field of ['threatCount', 'minerals']) {
+    if (include(field) && setup[field] !== undefined) {
+      normalised[field] = setup[field];
+    }
   }
   if (include('seed')) {
     normalised.seed = setup.seed === undefined ? DEFAULT_SCENE_SETUP_SEED : setup.seed;
@@ -1049,13 +1438,13 @@ function normaliseScene(entry, index) {
 
   // ── Generated-level (`PlayScene`) entry ──────────────────────────
   if (entry.target === GENERATED_LEVEL_SCENE_KEY) {
-    if ('setup' in entry && entry.setup !== undefined) {
-      throw new SceneConfigError(
-        CODE.setupNotSupported,
-        `${at}.setup is not supported on "${GENERATED_LEVEL_SCENE_KEY}"; use the `
-          + 'sibling seed/level/minWaves/maxCaptureMs fields instead',
-      );
-    }
+    // A setup is the dev-gated launch data the game scene applies to the run
+    // (loadout/power-ups, forced hold-full reward, boss hit preview) — the
+    // teaser needs it because it records the real game, not a gym
+    // (AH-0MVTNTHE0008UT2C).
+    const sceneSetup = 'setup' in entry && entry.setup !== undefined
+      ? parseSceneSetup(entry.setup, GENERATED_LEVEL_SCENE_KEY, `${at}.setup`)
+      : null;
     const level = entry.level === undefined
       ? 1
       : requireGeneratedLevel(entry.level, `${at}.level`);
@@ -1065,6 +1454,19 @@ function normaliseScene(entry, index) {
     const minWaves = entry.minWaves === undefined
       ? DEFAULT_MIN_WAVES
       : requireGeneratedWindowField(entry.minWaves, `${at}.minWaves`);
+    // Dev-gated start position (AH-0MVTPP7SX000JTWJ): a teaser beat is
+    // seconds long, so it must be able to begin at a mid-level wave or at the
+    // boss encounter instead of replaying the level from wave 1.
+    const startWave = entry.startWave === undefined
+      ? null
+      : requireGeneratedWindowField(entry.startWave, `${at}.startWave`);
+    if (entry.startBoss !== undefined && typeof entry.startBoss !== 'boolean') {
+      throw new SceneConfigError(
+        CODE.invalidConfig,
+        `${at}.startBoss must be a boolean (got ${JSON.stringify(entry.startBoss)})`,
+      );
+    }
+    const startBoss = entry.startBoss === true;
     const maxCaptureMs = entry.maxCaptureMs === undefined
       ? captureMs * MAX_CAPTURE_MULTIPLIER
       : requireGeneratedWindowField(entry.maxCaptureMs, `${at}.maxCaptureMs`);
@@ -1077,7 +1479,22 @@ function normaliseScene(entry, index) {
       level,
       minWaves,
       maxCaptureMs,
+      ...(startWave !== null ? { startWave } : {}),
+      ...(startBoss ? { startBoss } : {}),
+      ...(sceneSetup ? { setup: sceneSetup } : {}),
     };
+  }
+
+  // A `startWave`/`startBoss` on a gym entry is meaningless: those scenes are
+  // configured through `setup`, so reject rather than ignore.
+  for (const field of ['startWave', 'startBoss']) {
+    if (field in entry && entry[field] !== undefined) {
+      throw new SceneConfigError(
+        CODE.unsupportedSceneField,
+        `${at}.${field} is a generated-level-only field and cannot be supplied to gym target `
+          + `"${entry.target}"; put gym configuration in a "setup" object`,
+      );
+    }
   }
 
   // ── Gym entry: generated-level-only sibling fields are rejected ──
@@ -1246,6 +1663,10 @@ export function buildScenePlan(scenes) {
       ...(scene.level === undefined ? {} : { level: scene.level }),
       ...(scene.minWaves === undefined ? {} : { minWaves: scene.minWaves }),
       ...(scene.maxCaptureMs === undefined ? {} : { maxCaptureMs: scene.maxCaptureMs }),
+      // Start position inside the level (AH-0MVTPP7SX000JTWJ): carried into
+      // the plan so the driver can forward it as launch data.
+      ...(scene.startWave === undefined ? {} : { startWave: scene.startWave }),
+      ...(scene.startBoss === undefined ? {} : { startBoss: scene.startBoss }),
     });
     cursorMs = endMs + 2 * SCENE_FADE_MS;
   }
@@ -1281,6 +1702,30 @@ export const SCENE_FADE_DARK_LUMA = 0.3;
  * genuinely dark gym (this game's space backdrop is dark) still passes.
  */
 export const SCENE_FADE_CONTRAST_LUMA = 0.01;
+
+/**
+ * Minimum absolute luma a fade frame must fall **below** for the fade to count
+ * as measurably dark (AH-0MVTNTIPI002X5G6).
+ *
+ * The dark-scene rule below uses a *relative* contrast — a neon-on-black game
+ * renders mean luma around 0.005–0.02, where an absolute 1 % contrast is
+ * larger than the whole scene. This floor keeps the rule honest for genuinely
+ * black footage: a frame that never faded sits at the scene's own (tiny)
+ * luma and still fails.
+ */
+export const SCENE_FADE_MIN_ABSOLUTE_LUMA = 0.003;
+
+/**
+ * Fraction of the scene's own brightness a fade frame must fall below
+ * (AH-0MVTNTIPI002X5G6): `darkest <= max(SCENE_FADE_MIN_ABSOLUTE_LUMA,
+ * sceneLuma × SCENE_FADE_RELATIVE_FRACTION)`.
+ *
+ * A relative rule is what makes the check work on dark footage — 0.000 against
+ * a 0.010 scene is a > 90 % darkening but only a 0.010 absolute drop, which the
+ * old absolute test rejected. A clip that never faded keeps the scene's luma
+ * and fails on either rule.
+ */
+export const SCENE_FADE_RELATIVE_FRACTION = 0.25;
 
 /**
  * Probe points sampled across one fade window (fade-to + fade-from). Several
@@ -1432,10 +1877,18 @@ export function evaluateSceneFadeSamples(options = {}) {
       reasons.push(`${label}: missing scene probe sample`);
       continue;
     }
-    if (sceneSample.meanLuma <= darkest + SCENE_FADE_CONTRAST_LUMA) {
+    // Relative contrast (AH-0MVTNTIPI002X5G6): AI_Hell is neon-on-black, so a
+    // scene's mean luma is often only ~0.01; requiring an absolute 1 % drop
+    // there rejects a real, near-total fade.
+    const fadeFloor = Math.max(
+      SCENE_FADE_MIN_ABSOLUTE_LUMA,
+      sceneSample.meanLuma * SCENE_FADE_RELATIVE_FRACTION,
+    );
+    if (darkest > fadeFloor) {
       reasons.push(
         `${label}: the fade did not measurably darken the frame `
-          + `(scene ${sceneSample.meanLuma.toFixed(3)} vs fade ${darkest.toFixed(3)})`,
+          + `(scene ${sceneSample.meanLuma.toFixed(3)} vs fade ${darkest.toFixed(3)}, `
+          + `fade floor ${fadeFloor.toFixed(3)})`,
       );
     }
   }

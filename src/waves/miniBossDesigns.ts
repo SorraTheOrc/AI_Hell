@@ -272,6 +272,13 @@ export interface MiniBossSpawnOptions {
    * escalation value.
    */
   hpPerPhase?: number;
+  /**
+   * Optional starting hits (dev/capture shortcut, clamped to the total pool).
+   * A scripted scene sets this through `setup.bossHitsRemaining` so the
+   * mini-boss dies inside its capture window (AH-0MVRMFPXF008BG77); the
+   * total pool is unchanged.
+   */
+  initialHp?: number;
 }
 
 /**
@@ -308,5 +315,6 @@ export function miniBossConfigForLevel(
       groups: wave.groups.map((group) => ({ ...group })),
     })),
     rng: options.rng,
+    initialHp: options.initialHp,
   };
 }

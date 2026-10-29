@@ -287,8 +287,10 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Orbital Strike',
     description:
       'A lightning bolt strikes the nearest enemy. A pickup fires one; the permanent reward strikes on a level-resolved interval.',
-    // Timed window for the field pickup is procedural (see strikeInterval);
-    // the catalogue base duration mirrors the guardrail (30 s).
+    // A field pickup fires exactly one bolt — there is no timed window in
+    // play, so this catalogue `duration` is only the generic drop guardrail
+    // (the permanent cadence lives in `POWER_UP_LEVEL_SPECS.strike`, which is
+    // a whole-beat cadence on the shared 80 BPM grid: 6.75 s → 2.25 s).
     duration: 30,
   },
 };

@@ -109,6 +109,13 @@ export interface OrbitalStrikeConfig {
   forceFieldHits?: number;
   health?: number;
   /** Injectable random source for deterministic burst direction (optional). */
+  /**
+   * Whether this enemy is aware of the playfield seam (AH-0MV9G3DZ9003P7P8).
+   * Absent resolves to `true` (seam-awareness is the default); the classic
+   * arcade exclusions (`march`, `centipede`) carry an explicit `false` via
+   * the shared factory thread.
+   */
+  wrapAware?: boolean;
   rng?: () => number;
 }
 
@@ -189,6 +196,7 @@ export class OrbitalStrike extends BaseEnemy {
       color: config.color ?? ORBITAL_STRIKE_COLOR,
       health: config.health,
       forceFieldHits: config.forceFieldHits,
+      wrapAware: config.wrapAware,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

@@ -66,6 +66,8 @@ interface FakeScopeConfig {
   fetchImpl?: (url: string, init?: { headers?: Record<string, string> }) => unknown;
   videoWidth?: number;
   videoHeight?: number;
+  /** Decoded frames reported by `getVideoPlaybackQuality` (probe fps metric). */
+  decodedFrames?: number | null;
 }
 
 /** A fake HTMLVideoElement that answers the probe's seek/load events. */
@@ -102,6 +104,16 @@ function makeFakeVideo(config: FakeScopeConfig) {
     get duration() {
       return seekedToEnd ? FAKE_DURATION_SECONDS : Infinity;
     },
+    // Chrome reports the decoded frame count here; the probe derives the
+    // recording's effective fps from it (AH-0MVTI3O650064IM7).
+    ...(config.decodedFrames === null
+      ? {}
+      : {
+          getVideoPlaybackQuality: () => ({
+            totalVideoFrames:
+              config.decodedFrames ?? Math.round(FAKE_DURATION_SECONDS * 30),
+          }),
+        }),
     addEventListener(type: string, handler: Handler) {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type)!.push(handler);
@@ -487,6 +499,55 @@ describe('probeRecordingInPage (AH-0MVNT28SJ008ZHDB AC1–AC5)', () => {
       expect(probe.audioProbeBytes).toBe(CAPTURE_PROBE_AUDIO_PREFIX_BYTES);
       expect(probe.audioProbeCapped).toBe(true);
       expect(probe.bytes).toBe(50 * 1024 * 1024);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports the decoded frame count and effective fps from the playback quality', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const { scope } = createProbeScope({ audioTracks: 1, decodedFrames: 100 });
+      captureState({ audioTracks: 1 }, scope);
+
+      const { probe } = await probeRecordingInPage(
+        {
+          source: 'stream',
+          videoUrl: 'http://127.0.0.1:5173/capture-output/gameplay-1.webm',
+          sourceBytes: 1024,
+          audioRange: null,
+          fallbackMs: 13_000,
+        },
+        scope,
+      );
+
+      expect(probe.frameCount).toBe(100);
+      // 100 decoded frames over a 12.5 s clip is 8 fps: a starvation-level take.
+      expect(probe.effectiveFps).toBeCloseTo(8, 5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports effectiveFps as null when the browser exposes no frame count', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const { scope } = createProbeScope({ audioTracks: 1, decodedFrames: null });
+      captureState({ audioTracks: 1 }, scope);
+
+      const { probe } = await probeRecordingInPage(
+        {
+          source: 'stream',
+          videoUrl: 'http://127.0.0.1:5173/capture-output/gameplay-1.webm',
+          sourceBytes: 1024,
+          audioRange: null,
+          fallbackMs: 13_000,
+        },
+        scope,
+      );
+
+      expect(probe.frameCount).toBe(0);
+      expect(probe.effectiveFps).toBeNull();
     } finally {
       vi.useRealTimers();
     }

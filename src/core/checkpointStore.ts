@@ -17,14 +17,28 @@
  * @module checkpointStore
  */
 
+// The first-hold default is imported from the canonical rules module rather
+// than duplicated as a literal: `rules.ts` is a pure, cycle-free module (no
+// Phaser/DOM), so the store gains one dependency and the default cannot drift
+// from the gameplay value (AH-0MVT1DYO5004UC4P).
+import { DEFAULT_MINERAL_HOLD_CAPACITY } from './rules';
 import type { PowerUpId } from '../powerups/types';
 import type { WeaponId } from '../utils/weapons';
 
 /** localStorage key for the run checkpoint. */
 export const CHECKPOINT_STORAGE_KEY = 'ai_hell_checkpoint';
 
-/** Schema version. Bump when the payload shape changes incompatibly. */
-export const CHECKPOINT_VERSION = 1;
+/**
+ * Schema version. Bump when the payload shape changes incompatibly.
+ *
+ * - **v1** — original payload (AH-0MVCRBTNF000DK51).
+ * - **v2** — adds {@link Checkpoint.mineralHoldCapacity} so Continue keeps the
+ *   hold-capacity progression the run had earned (AH-0MVT1DYO5004UC4P).
+ *   Legacy v1 payloads have no field and load with the first-hold default;
+ *   migration is decided by field presence, so the version itself is
+ *   informational (it is stamped with the current value on parse).
+ */
+export const CHECKPOINT_VERSION = 2;
 
 /** One persisted weapon's permanent level. */
 export interface CheckpointWeaponLevel {
@@ -58,6 +72,15 @@ export interface Checkpoint {
   score: number;
   /** Minerals in the hold. */
   minerals: number;
+  /**
+   * The hold capacity the run had earned at the checkpoint (5, 10, 20, …).
+   *
+   * Persisted since schema v2 so Continue restores the earned progression
+   * instead of silently resetting it to the first hold. A legacy payload
+   * without the field loads with {@link DEFAULT_MINERAL_HOLD_CAPACITY}, the
+   * canonical first-hold default (AH-0MVT1DYO5004UC4P).
+   */
+  mineralHoldCapacity: number;
   /** Permanent weapon levels owned at the checkpoint. */
   weaponLevels: CheckpointWeaponLevel[];
   /** Permanent power-up levels owned at the checkpoint. */
@@ -130,6 +153,15 @@ export function parseCheckpoint(raw: unknown): Checkpoint | null {
   const minerals = isFiniteNumber(value.minerals) && value.minerals >= 0
     ? Math.floor(value.minerals)
     : 0;
+  // A hold capacity is validated as a positive integer size: a non-numeric,
+  // non-finite, negative, zero (or otherwise sub-1) value is unusable and
+  // falls back to the first-hold default, so corrupt data can never shrink the
+  // hold to nothing. A missing field is the legacy schema-v1 case and takes
+  // the same default (AH-0MVT1DYO5004UC4P AC2/AC4).
+  const mineralHoldCapacity =
+    isFiniteNumber(value.mineralHoldCapacity) && value.mineralHoldCapacity >= 1
+      ? Math.floor(value.mineralHoldCapacity)
+      : DEFAULT_MINERAL_HOLD_CAPACITY;
   const runSeed = isFiniteNumber(value.runSeed) ? value.runSeed : 0;
   const wave = isFiniteNumber(value.wave) && value.wave >= 1
     ? Math.floor(value.wave)
@@ -142,6 +174,7 @@ export function parseCheckpoint(raw: unknown): Checkpoint | null {
     lives: Math.floor(lives),
     score: Math.floor(score),
     minerals,
+    mineralHoldCapacity,
     weaponLevels: toLevelList<WeaponId>(value.weaponLevels, () => true),
     powerUpLevels: toLevelList<PowerUpId>(value.powerUpLevels, () => true),
     unlockedWeapons: Array.isArray(value.unlockedWeapons)

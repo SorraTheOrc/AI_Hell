@@ -101,6 +101,20 @@ export interface EnemyConfig {
    */
   marchDrop?: number;
   /**
+   * Whether this archetype is aware of the playfield seam (the four-edge
+   * wrap-around world; AH-0MV9G3DZ9003P7P8). Defaults to **`true`** — the
+   * seam-aware behaviour is the out-of-the-box default, so most enemies aim
+   * across the shortest wrapped path and fly over an edge instead of being
+   * clamped. The classic arcade set pieces opt out explicitly — the `march`
+   * seed config and the `centipede` seed-default exclusion both set `false`:
+   * Space Invaders reverses and drops at the arena edge, and the Centipede
+   * weaves within bounds, so both must keep their bounded, wall-respecting
+   * movement. An absent value resolves to `true`; scenes read the resolved
+   * flag through the single `BaseEnemy.wrapAware` accessor, never by
+   * re-parsing this config.
+   */
+  wrapAware?: boolean;
+  /**
    * Tractor-beam lifetime (ms) for the Galaga capturer archetype
    * (AH-0MV01EFII008298D). Neutral for other archetypes; absent values fall
    * back to `DEFAULT_BEAM_DURATION_MS` at the beam site.

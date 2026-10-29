@@ -3,7 +3,19 @@
  * (AH-0MUY08XLD009K4W4, AC1/AC2/AC3/AC5).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * Explicit timing budget for this file (AH-0MVR8QM89004OQZQ).
+ *
+ * The batch tests below run real arena simulations — the ~100-game sweep is
+ * 100 seeds x 30 ticks of deterministic play — so they sit far above the 5 s
+ * default even when idle, and measured 5.5–6.5 s on a loaded shared host, where
+ * they failed on Vitest's timeout rather than on an assertion
+ * (AH-0MVPJETJF009E0S8, AH-0MVR8QM89004OQZQ). 30 s keeps ~5x headroom over the
+ * observed worst case while still failing a genuine hang.
+ */
+vi.setConfig({ testTimeout: 30000 });
 
 import { parseRecording } from '../../../scripts/recording.mjs';
 import { coerceEnemyConfig, parseCsvRows } from '../../core/csv';

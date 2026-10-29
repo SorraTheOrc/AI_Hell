@@ -32,6 +32,19 @@ export interface CompetentBotTunables {
    * free life is never traded for another objective (AH-0MV03GXZQ00801T4).
    */
   lifeBase: number;
+  /**
+   * Base utility of the boss-focus band: a live boss inside the enemy seek
+   * range. It sits below survival and `secure-life` (never trade a life for the
+   * boss) and above every collection band, so the bot commits to the boss
+   * instead of diverting to minerals or power-ups during the encounter
+   * (AH-0MVBMESIE003YQ68 · AC2).
+   *
+   * The band spans `[bossBase, bossBase + prioritySpan]`, so it must clear the
+   * collection bands' maximum (`mineralBase + prioritySpan`) and stay under
+   * `lifeBase`. At the shipped defaults that is 5.0–5.5, above minerals
+   * (4.0–4.5) and power-ups (3.0–3.75) and below `lifeBase` (6).
+   */
+  bossBase: number;
   /** Base utility of the mineral-collection band. */
   mineralBase: number;
   /** Base utility of the power-up band (below minerals, AC1 order). */
@@ -220,6 +233,7 @@ export const COMPETENT_BOT_TUNABLES: CompetentBotTunables = {
   survivalBase: 10,
   survivalUrgencyPort: 5,
   lifeBase: 6,
+  bossBase: 5,
   mineralBase: 4,
   powerUpBase: 3,
   enemyBase: 2,

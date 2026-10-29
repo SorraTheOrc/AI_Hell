@@ -75,6 +75,13 @@ export interface LaneTrafficConfig {
   forceFieldHits?: number;
   health?: number;
   /** Injectable random source (unused today; kept for the shared entity seam). */
+  /**
+   * Whether this enemy is aware of the playfield seam (AH-0MV9G3DZ9003P7P8).
+   * Absent resolves to `true` (seam-awareness is the default); the classic
+   * arcade exclusions (`march`, `centipede`) carry an explicit `false` via
+   * the shared factory thread.
+   */
+  wrapAware?: boolean;
   rng?: () => number;
 }
 
@@ -106,6 +113,7 @@ export class LaneTraffic extends BaseEnemy {
       bulletSize: config.bulletSize,
       health: config.health,
       forceFieldHits: config.forceFieldHits,
+      wrapAware: config.wrapAware,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

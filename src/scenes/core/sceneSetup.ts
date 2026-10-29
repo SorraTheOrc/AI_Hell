@@ -36,6 +36,12 @@ import type { WeaponId } from '../../utils/weapons';
 export interface SceneSetupPlayer {
   /** Grants (`permanent`) or times (`!permanent`) a weapon. */
   equipWeapon(id: WeaponId, permanent?: boolean): void;
+  /**
+   * Sets the heading the ship reports while stationary (radians, `0` = right).
+   * Optional so a fake without heading support stays valid
+   * (AH-0MVTJW9JW002PHJG).
+   */
+  setDefaultHeading?(radians: number): void;
   /** The run-scoped power-up level store. */
   getPowerUpLevelStore(): {
     collect(id: PowerUpId, permanent?: boolean): number;
@@ -56,8 +62,66 @@ export interface SceneSetupState {
   player?: {
     weapons?: readonly string[];
     timedWeapons?: readonly string[];
+    /**
+     * Per-weapon permanent levels (`id` → level). A level `N` is applied as
+     * **N** permanent `equipWeapon(id, true)` grants, so a weapon configured
+     * both here and in `weapons` starts at `1 + N` (AH-0MVRMFOB4002LMZS).
+     */
+    weaponLevels?: Readonly<Record<string, number>>;
+    /**
+     * Stationary facing in **degrees** (`0` = right/east, positive clockwise,
+     * `-90` = up). A captured scene takes no input, so without this the ship
+     * never moves, keeps `Player`'s default heading (right) and fires sideways
+     * past the enemies above it (AH-0MVTJW9JW002PHJG).
+     */
+    heading?: number;
   };
   powerUps?: Readonly<Record<string, number>>;
+  /**
+   * Hold-full reward id the level gyms resolve to when their mineral hold
+   * fills, instead of the random choice (AH-0MVRMFOB4002LMZS).
+   */
+  mineralReward?: string;
+  /**
+   * Hits the boss-capable gyms (`GymBoss`/`GymMiniBoss`) leave their spawned
+   * entity when the scene starts (AH-0MVRMFPXF008BG77). Applied through the
+   * entity's existing `initialHp` constructor seam — the same one the dev boss
+   * scenario uses — so a scripted capture can start a boss close to death
+   * without changing the entity's total hit pool. Absent ⇒ the full pool.
+   */
+  bossHitsRemaining?: number;
+  /**
+   * Initial state of a formation/combat gym's SHOOT toggle
+   * (AH-0MVRMI0Q7001KG4Y). Consumed by the fire-capable gyms whose HUD exposes
+   * the toggle (`GymBoss`, `GymFodderEnemies`, `GymMiniBoss`,
+   * `GymPowerUpsCombat`); absent ⇒ the scene's historical default (OFF for the
+   * formation family, ON for the combat power-up gym). The no-fire
+   * `GymCentipede`/`GymMinerals` do not accept it.
+   */
+  shootEnabled?: boolean;
+  /**
+   * Whether `GymPlayer` spawns its deterministic obstacle course
+   * (AH-0MVRMI0Q7001KG4Y). Absent or `true` ⇒ the historical course; `false`
+   * ⇒ an empty arena, for a clean-flight capture.
+   */
+  obstacles?: boolean;
+  /**
+   * Whether `GymWeapons` spawns its inert AOE practice targets
+   * (AH-0MVRMI0Q7001KG4Y). Absent or `true` ⇒ the historical tripod; `false`
+   * ⇒ no targets, for a pure weapon-cadence capture.
+   */
+  practiceTargets?: boolean;
+  /**
+   * Size of `GymPowerUpsCombat`'s scout threat wave (AH-0MVRMI0Q7001KG4Y),
+   * bounded by the capture schema to 1–12. Absent ⇒ the historical 3-scout V.
+   */
+  threatCount?: number;
+  /**
+   * Size of `GymPowerUpsUtility`'s seeded mineral field
+   * (AH-0MVRMI0Q7001KG4Y), bounded by the capture schema to 0–200. Absent ⇒
+   * the historical 40-mineral demonstration field.
+   */
+  minerals?: number;
   /**
    * 32-bit determinism seed (AH-0MVNW90FB003H3KM). When present, the scene
    * seeds its content RNGs from it so the same config reproduces the same
@@ -104,11 +168,42 @@ export function resolveSetupSeed(
 export const DEFAULT_GYM_LEVEL_WEAPONS: readonly WeaponId[] = ['spread', 'dual'];
 
 /**
+ * Resolves the reward id a full mineral hold should grant.
+ *
+ * The level gyms resolve a full hold **automatically** (no modal, so an
+ * autonomous bot keeps playing — a documented gym-only divergence). By
+ * default they draw a random option; a capture setup can force the reward so a
+ * scripted pay-off lands deterministically on camera (AH-0MVRMFOB4002LMZS).
+ *
+ * Pure and total: a forced `mineralReward` wins and `randomChoice` is **never**
+ * called (so a forced scene consumes no choice RNG); without one the caller's
+ * strategy chooses, i.e. today's behaviour is unchanged.
+ *
+ * @param setup — a normalised setup (or `null`/`undefined`).
+ * @param randomChoice — today's random resolution, invoked only when the
+ *   setup forces no reward.
+ * @returns the reward id to apply.
+ */
+export function resolveMineralReward(
+  setup: SceneSetupState | null | undefined,
+  randomChoice: () => string,
+): string {
+  const forced = setup?.mineralReward;
+  if (typeof forced === 'string' && forced !== '') return forced;
+  return randomChoice();
+}
+
+/**
  * Applies the loadout/power-up half of `setup` to the scene's player.
  *
  * - `setup.player.weapons` → `equipWeapon(id, true)` (permanent for the run).
  * - `setup.player.timedWeapons` → `equipWeapon(id, false)` (starts the shared
  *   timed-weapon countdown).
+ * - `setup.player.weaponLevels[id] = n` → **n** `equipWeapon(id, true)` calls,
+ *   after the `weapons` grants, so the weapon reaches level `1 + n` when it is
+ *   also listed in `weapons` (level N == N permanent grants; the same
+ *   increment `Player.equipWeapon` applies on every pickup). Non-positive or
+ *   non-integer levels are ignored, mirroring `powerUps`.
  * - `setup.powerUps[id] = n` → `collect(id, true)` **n** times, so the
  *   power-up reaches the configured permanent level.
  *
@@ -131,6 +226,22 @@ export function applySceneSetup(
   }
   for (const id of setup.player?.timedWeapons ?? []) {
     player.equipWeapon(id as WeaponId, false);
+  }
+  const headingDegrees = setup.player?.heading;
+  if (
+    typeof headingDegrees === 'number'
+    && Number.isFinite(headingDegrees)
+    && typeof player.setDefaultHeading === 'function'
+  ) {
+    // Degrees are the capture-config vocabulary; the player model works in
+    // radians (`0` = right, positive clockwise).
+    player.setDefaultHeading((headingDegrees * Math.PI) / 180);
+  }
+  for (const [id, level] of Object.entries(setup.player?.weaponLevels ?? {})) {
+    if (!Number.isInteger(level) || level <= 0) continue;
+    for (let i = 0; i < level; i += 1) {
+      player.equipWeapon(id as WeaponId, true);
+    }
   }
 
   const store = player.getPowerUpLevelStore();

@@ -151,6 +151,29 @@ export function installCaptureComposite(scope?: object): {
   height: number;
 } | null;
 
+/**
+ * Watches the capture page for a **main-frame navigation** while a recording
+ * is running (AH-0MVTEKPM6003R5NW): a reload destroys the page-side fade
+ * overlay (`window.__aiHellFade`) and the single `MediaRecorder`. Defensive —
+ * a page without `on()` yields no records.
+ */
+export function watchForMidRunNavigation(
+  page: { on?: Function } | null | undefined,
+  now?: () => number,
+): Array<{ url: string; atMs: number }>;
+
+/**
+ * Explains a failed multi-scene recording when the page navigated mid-run
+ * (AH-0MVTEKPM6003R5NW), naming the reload time and the likely cause instead
+ * of the opaque `reading 'fadeTo'` TypeError. Returns the original error
+ * untouched when no navigation was recorded.
+ */
+export function explainMidRunFailure<E extends Error>(
+  error: E,
+  navigations?: Array<{ url: string; atMs: number }>,
+  context?: { sceneCount?: number },
+): E | Error;
+
 /** Exported bot-tuning store state injected into the recording page. */
 export interface BotTuningStoreState {
   version: number;
@@ -405,14 +428,20 @@ export function runCaptureIterations(params: {
  */
 export function runCaptureSession(params: {
   items: CapturePlanItem[];
-  options?: object;
+  /** `cacheDir` overrides the private per-run Vite dependency cache. */
+  options?: { cacheDir?: string; [key: string]: unknown };
   reporter?: object;
   captureOne: (args: {
     item: CapturePlanItem;
     index: number;
     outputPath: string;
     page: object;
-    session: { browser: object; baseUrl: string };
+    session: {
+      browser: object;
+      baseUrl: string;
+      /** Resolves once Vite has settled the dependency graph. */
+      waitForDeps: () => Promise<void>;
+    };
   }) => Promise<Record<string, unknown>>;
   createViteServer?: Function;
   launchBrowser?: Function;

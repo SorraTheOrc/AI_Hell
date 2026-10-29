@@ -554,9 +554,20 @@ The pure `installBotTuningConfig` / `loadBotTuningConfigFile` helpers live in
 
 The bundled `src/data/bot-tuning.json` is the **single source of the shipped
 baseline**, so the *values it contains* are exactly what a fresh browser or a
-distributed build (e.g. the GitHub Pages alpha) flies. The refresh workflow is
-**tune in the gym → Export → overwrite `src/data/bot-tuning.json` → commit**
-(see [BOT_FRAMEWORK.md §12](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym)).
+distributed build (e.g. the GitHub Pages alpha) flies. Two equivalent refresh
+workflows keep it in sync (both produce the same bytes — the pretty-printed
+store Export plus a trailing newline):
+
+- **Dev server:** in the Bot Tuning gym click **Save to repo**. The dev-only
+  middleware (`vite/plugins/botTuningPlugin.ts`) validates the store's blob
+  against the shared schema (`src/core/botTuningSchema.ts`) and atomically
+  rewrites `src/data/bot-tuning.json`; review and commit the diff
+  (AH-0MVBJ0DUI009B6AM).
+- **No dev server:** click **Export** and overwrite
+  `src/data/bot-tuning.json` with the download
+  (see [BOT_FRAMEWORK.md §12](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym)),
+  then commit.
+
 The file is byte-equivalent to the gym's Export output, so it is safe to
 overwrite it wholesale with an Export download.
 
@@ -685,6 +696,39 @@ pipe budget, writing to a temp file (so the bound is tested without a
 30-minute soak), and asserts on-disk bytes equal the sum of the chunk sizes,
 `peakPendingBytes` stays at one chunk, nothing is retained, and repeated runs
 in fresh directories are byte-identical.
+
+### Proving the bound: disk footprint and temp-root resolution (AH-0MVS1O1ZG007VCX3)
+
+The memory-bound test writes **512 MiB** of real bytes: `ceil((CDP_PIPE_STRING_LIMIT_CHARS
++ 1) / MAX_CAPTURE_CHUNK_BYTES)` = **32 chunks x 16 MiB** = 536,870,912 B,
+streamed to `<dir>/long.partial.webm` (renamed by `finalise({ success: true })`)
+and re-read for the streaming sha256. That is deliberate real disk I/O — it
+exercises the shipped write path — so the test needs a temp filesystem with
+that much free headroom.
+
+- **Disk footprint.** 512 MiB file plus a 512 MiB margin: the test picks a
+temp root with at least **1 GiB** free.
+- **Temp-root resolution order.** The single >512 MiB test resolves its root
+through `resolveTempRootForLargeFile()` (`scripts/tempRootForLargeFiles.ts`),
+**not** `os.tmpdir()` directly: an explicit `TMPDIR` first, then the
+**disk-backed `/var/tmp`** (the root filesystem), then `os.tmpdir()` — the
+first whose filesystem reports the 1 GiB headroom wins. On hosts whose
+`/tmp` is a small shared tmpfs (a 16 GiB `/tmp` shared by every concurrent
+agent session failed here), the disk-backed fallback is what keeps the proof
+running.
+- **Labelled environmental skip.** When **no** candidate has headroom, this
+one test reports a labelled environmental skip naming AH-0MVS1O1ZG007VCX3 and
+the required footprint instead of failing on an opaque `ENOSPC` /
+`UNKNOWN: unknown error, write`. The skip decision and its label are unit
+tested with injected free-space figures (`scripts/tempRootForLargeFiles.test.ts`)
+— no test fills a disk to prove it. Every other test in the file keeps
+`os.tmpdir()` (small files only).
+- **Running on a squeezed host.** Point `TMPDIR` at a disk-backed directory
+with headroom, e.g. `TMPDIR=/var/tmp/aihell-tmp`. This replaces the previous
+undocumented ad-hoc workaround that every agent had to rediscover.
+- **Exercising the skip deliberately.** `AIHELL_CAPTURE_SINK_TEMP_REQUIRED_BYTES`
+(any positive integer) raises the required footprint so a gate run can
+demonstrate the labelled skip without filling a disk.
 
 ### Probing long clips from the streamed file
 
@@ -1087,9 +1131,18 @@ setup is validated before boot and forwarded to the scene as its launch data.
 | `startWave` | positive integer | `GymLevel`, `GymBotTuning` | `1` | 1-based wave to start at (clamped to the level) |
 | `enemy` | enemy key | `GymFodderEnemies` | — | the formation enemy key (required for that target) |
 | `player` | object | all setup-capable gyms | see below | the player loadout (`player.weapons` / `player.timedWeapons`) |
-| `player.weapons` | weapon id array | all setup-capable gyms | `["spread", "dual"]` | permanent weapons for the run |
+| `player.weapons` | weapon id array | all setup-capable gyms | `["spread", "dual"]` | permanent weapons for the run (one grant each) |
 | `player.timedWeapons` | weapon id array | all setup-capable gyms | `[]` | weapons granted with the timed countdown |
+| `player.weaponLevels` | `{ id: level }` | all setup-capable gyms | `{}` | per-weapon permanent level `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX` (`5`), applied as that many permanent grants on top of `player.weapons` |
+| `player.heading` | degrees (`0` = right/east, positive clockwise) | all setup-capable gyms | — (player default: right) | the heading the ship holds **while stationary**, normalised into `(-180, 180]`; a captured scene takes no input, so without it the ship keeps `Player`'s default heading (right) and every shot flies sideways past the enemies above it — capture setups set `-90` to aim up the screen |
 | `powerUps` | `{ id: level }` | all setup-capable gyms | `{}` | power-up id → permanent level |
+| `mineralReward` | hold-full reward id | `GymLevel`, `GymBotTuning` | — (random) | forces the reward a full mineral hold resolves to, instead of the gym's random choice |
+| `bossHitsRemaining` | positive integer | `GymBoss`, `GymMiniBoss` | — (full pool) | hits the spawned boss/mini-boss has left when the scene starts, via the entity's existing `initialHp` seam; bounded by the target's total hit pool (`SCENE_SETUP_BOSS_TOTAL_HITS`: 200 for `GymBoss`, 10 for `GymMiniBoss`) |
+| `shootEnabled` | boolean | `GymBoss`, `GymFodderEnemies`, `GymMiniBoss`, `GymPowerUpsCombat` | `false` (formation family) / `true` (`GymPowerUpsCombat`) | initial state of the HUD SHOOT toggle; every spawned entity inherits it. Not accepted on `GymCentipede`/`GymMinerals`, whose entities never fire |
+| `obstacles` | boolean | `GymPlayer` | `true` | `false` records a clean-flight capture with no obstacle course |
+| `practiceTargets` | boolean | `GymWeapons` | `true` | `false` omits the inert AOE practice-target tripod |
+| `threatCount` | integer `1`–`12` | `GymPowerUpsCombat` | `3` | size of the scout threat wave (`SCENE_SETUP_SCENARIO_COUNT_BOUNDS.threatCount`) |
+| `minerals` | integer `0`–`200` | `GymPowerUpsUtility` | `40` | size of the seeded demonstration mineral field (`SCENE_SETUP_SCENARIO_COUNT_BOUNDS.minerals`) |
 | `seed` | uint32 | all setup-capable gyms | `0` | determinism seed for content RNGs |
 
 `level` is a `LevelDefinition`-shaped object: `{ level, name, waves[] }` where
@@ -1103,15 +1156,108 @@ never mutated).
 
 `GymLevel`/`GymBotTuning` and `GymFodderEnemies` were previously rejected as
 parameterised; supplying the required parameter (`level` / `enemy`) makes them
-capturable. `GymCurveSequencer` is an editor and cannot consume a `setup` at
-all. Formation gyms accept the loadout/power-up/seed fields; their enemy roster
-stays fixed by the scene config (only `GymFodderEnemies` selects its roster
-from a setup).
+capturable. Formation gyms accept the loadout/power-up/seed fields; their enemy
+roster stays fixed by the scene config (only `GymFodderEnemies` selects its
+roster from a setup).
+
+**In-scene adoption (AH-0MVRMHYJR000Y9H8).** Every gym scene now applies the
+shared `applySceneSetup` applier and re-seeds its content RNG from
+`resolveSetupSeed` (through `CombatCoreScene._adoptCaptureSetup`), so the
+`player`, `powerUps` and `seed` fields are live **before the first captured
+frame** in every gym — including the six combat gyms (`GymPlayer`, `GymWeapons`,
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymWeaponLeveling`,
+`GymPowerUpLeveling`) that previously ignored an incoming setup. An absent setup
+remains a no-op. `GymCurveSequencer` has no player and no intrinsic random
+content (its waves are derived deterministically from the curve), so it applies
+the shared seam as a documented no-op and **forwards** the setup (loadout,
+power-up levels and resolved seed) to the `GymLevel` it launches — the recorded
+gameplay is the launched level. Its registry entry now accepts the common
+fields too (`SCENE_SETUP_INCAPABLE_TARGETS` is empty), so a setup is never
+rejected or silently ignored there.
+
+**A recorded gym is a faithful preview (spawn parity).** Because every gym
+consumes the shared spawn seams, a capture records the game's behaviour rather
+than a gym-only approximation: the wormhole-transit destination comes from
+`resolveSpawnTransitTarget` (`src/scenes/core/spawnTransit.ts`), the
+level-launch path copies each wave's `shootEnabled` and drives `march` waves
+through the shared block (AH-0MVRMHSKH0066J9B), and
+`src/scenes/gym/spawnParity.test.ts` pins the orbital transit, fire cadence and
+march block against `PlayScene`. Per-gym verdicts and intentional divergences
+(e.g. a gym-only HUD) are recorded in
+[`docs/GYM_PARITY.md`](../GYM_PARITY.md#matrix).
+
+**Per-gym scenario parameters (AH-0MVRMI0Q7001KG4Y).** The fields above are the
+whole schema: each gym's scenario knobs that used to be fixed constants are now
+first-class `setup` fields consumed by that scene — the formation-family SHOOT
+toggle (`shootEnabled`, inherited by every spawned entity, accepted on the
+fire-capable `GymBoss`/`GymFodderEnemies`/`GymMiniBoss`),
+`GymPowerUpsCombat`'s threat-wave size (`threatCount`), `GymPlayer`'s obstacle
+course (`obstacles`), `GymWeapons`' practice targets (`practiceTargets`) and
+`GymPowerUpsUtility`'s mineral-field size (`minerals`). Because
+`SCENE_SETUP_TARGET_EXTRA_FIELDS` is the whitelist the validator checks, a field
+is only accepted on a target that actually consumes it; everything else is
+rejected with `setup-not-supported`. `GymCentipede` and `GymMinerals`
+intentionally do **not** accept `shootEnabled`: their entities are no-fire by
+design and ignore the flag, so accepting it would silently drop it. The
+round-robin **drop cadence** and the leveling gyms' **mineral-hold cadence** stay
+fixed at the gyms' historical values (they are parity/tuning constants, not
+capture framing), recorded with their reason in
+[`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8).
+
+**Every gym is representable in `examples/scenes.json`.** The shipped example
+carries one scripted entry for every gym scene — all 14, including the
+parameterised `GymLevel`/`GymFodderEnemies`, the boss gyms (`GymBoss`,
+`GymMiniBoss`) and the curve editor. The seven-beat excitement-curve teaser
+lives in its own file, `examples/teaserVideoScript.json`, and records the
+shipped game scene rather than a gym (AH-0MVTNTHTI0041QIF); the two files are
+kept separate so neither duplicates the other. `scripts/capture-scenes.test.ts`
+and `src/multiSceneCaptureDocs.test.ts` pin the showcase against the full gym
+registry, so dropping any gym's example fails the suite.
+
+```json
+{
+  "scenes": [
+    {
+      "target": "GymPowerUpsCombat",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "five-scout wave, firing on, shield 2",
+      "setup": {
+        "player": { "weapons": ["cannon"], "timedWeapons": [] },
+        "powerUps": { "shield": 2 },
+        "shootEnabled": true,
+        "threatCount": 5,
+        "seed": 8088
+      }
+    },
+    {
+      "target": "GymWeapons",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "weapon showcase, practice targets on",
+      "setup": {
+        "player": { "weapons": ["spread", "dual", "rapid"], "timedWeapons": [] },
+        "practiceTargets": true,
+        "seed": 8091
+      }
+    },
+    {
+      "target": "GymPlayer",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "clean flight, no obstacles",
+      "setup": { "player": { "weapons": ["cannon"], "timedWeapons": [] }, "obstacles": false, "seed": 8086 }
+    }
+  ]
+}
+```
 
 **Determinism.** A `seed` seeds the scene's content RNGs (mineral field, drop
 cadence and random picks), so the same `scenes.json` reproduces the same
-content. It is content-level, not frame-level: frame timing, audio and bot
-micro-jitter are not byte-identical, so clips are re-recordable but not
+content. Every gym consumes it through the shared `resolveSetupSeed`; where a
+gym has no random content (e.g. `GymPlayer`'s fixed obstacle course) the seed
+is simply inert. It is content-level, not frame-level: frame timing, audio and
+bot micro-jitter are not byte-identical, so clips are re-recordable but not
 byte-reproducible. The resolved seed is reported per scene in the `--json`
 payload.
 
@@ -1169,6 +1315,9 @@ flying the persisted bot-tuning configuration, seeded from the entry's `seed`.
 | `level` | integer `1`–`LEVEL_COUNT` | no | `1` | campaign level to start at |
 | `minWaves` | positive integer | no | `2` | waves that must start before the window may end |
 | `maxCaptureMs` | positive integer | no | `3 × captureMs` | hard cap so a stalled run cannot hang |
+| `startWave` | positive integer | no | `1` | wave of `level` the beat begins at (clamped to the level's wave list) — the way to show mid-level pressure or the **wave-10 mini-boss** in a short beat |
+| `startBoss` | boolean | no | `false` | begin at the level's **final boss encounter** (no regular waves) so a beat can show the boss fight and its death |
+| `setup` | object | no | — | dev-gated run configuration (loadout, power-ups, forced hold-full reward, boss hit preview) — see below |
 
 Levels are **not** fixed-length, so the capture window is multi-wave-aware:
 it runs for at least `captureMs`, extends until `minWaves` regular waves have
@@ -1176,13 +1325,36 @@ started, is hard-capped by `maxCaptureMs`, and ends early (reporting
 `endedEarly: true`) if the run ends first. A truncated segment is **not** a
 capture failure. Generated-level and gym scenes may be mixed in one config.
 
-`level` and `seed` are also dev-gated at the game seam: `PlayScene` honours a
-`startLevel` start value only in dev builds (a production build always starts
-at level 1), and the live run position is published to the dev-only
-`window.__aiHellRunProgress` handle the driver polls. These `seed` / `level` /
-`minWaves` / `maxCaptureMs` fields are **siblings** of `playMs`/`captureMs`
+`level`, `seed`, `startWave` and `startBoss` are also dev-gated at the game
+seam: `PlayScene` honours the launch-data start position only in dev builds (a
+production build always starts at level 1, wave 1, before the boss), and the
+live run position is published to the dev-only `window.__aiHellRunProgress`
+handle the driver polls. These `seed` / `level` / `minWaves` / `maxCaptureMs` /
+`startWave` / `startBoss` fields are **siblings** of `playMs`/`captureMs`
 (they are generated-level-only; supplying them on a gym target is rejected
 with `unsupported-scene-field`, and gym configuration belongs in `setup`).
+
+##### Configuring a game-scene run (`setup`)
+
+A `PlayScene` entry may also carry a `setup`, which the game scene applies as
+**dev-gated launch data** (AH-0MVTNTHE0008UT2C). It is the same vocabulary the
+gyms use, minus the level/formation fields (those are the campaign's job here):
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `player.weapons` | weapon id array | `["spread", "dual"]` | permanent weapons for the run |
+| `player.timedWeapons` | weapon id array | `[]` | weapons granted with the timed countdown |
+| `player.weaponLevels` | `{ id: level }` | `{}` | per-weapon permanent level `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX` (`5`) |
+| `player.heading` | degrees (`0` = right, `-90` = up) | — | stationary facing; ignored by the bot, which steers |
+| `powerUps` | `{ id: level }` | `{}` | power-up id → permanent level |
+| `mineralReward` | hold-full reward id | — (random) | forces the reward a full mineral hold resolves to; a demo (bot) run always takes it |
+| `bossHitsRemaining` | positive integer | — (full pool) | hits the boss has left when it spawns (the entity's `initialHp` seam), bounded by the 200-hit pool |
+
+Absent `setup` (and every production build) behaves exactly as an ordinary
+run. A field the game scene cannot consume is rejected with
+`setup-not-supported`; the hold-full reward id must be one of
+`SCENE_SETUP_MINERAL_REWARD_IDS` (`unknown-mineral-reward`), and the hit
+preview must be `1`–`200` (`invalid-boss-hits`).
 
 ```json
 {
@@ -1194,15 +1366,177 @@ with `unsupported-scene-field`, and gym configuration belongs in `setup`).
       "level": 4,
       "seed": 42,
       "minWaves": 3,
-      "label": "generated level 4, three waves"
+      "startWave": 2,
+      "label": "generated level 4 from wave 2, three waves"
     },
     { "target": "GymBoss", "playMs": 3000, "captureMs": 4000, "label": "boss" }
   ]
 }
 ```
 
+#### Which config ships what: teaser vs gym family
+
+Two example configs ship, each with a single purpose:
+
+| File | Purpose | Targets |
+|---|---|---|
+| `examples/teaserVideoScript.json` | the **teaser/showcase video** — the real game, played by the bot, no debug chrome | `PlayScene` only |
+| `examples/scenes.json` | the **gym-family showcase** — one entry per gym, as a copy-paste guide to each scenario's setup | dev gyms only |
+
+Record the teaser with:
+
+```bash
+npm run capture:scenes -- --config examples/teaserVideoScript.json \
+  --output capture-output/teaser.webm --json
+```
+
+The teaser is **seven beats** with a deliberate difficulty curve, each a short
+window into a campaign level with its own determinism seed, start position and
+`setup`:
+
+| # | Beat | Level | Start | Pay-off |
+|---|---|---|---|---|
+| 1 | Opening spectacle — maxed arsenal, dense waves | 7 | wave 6 | six-slot level 2–5 loadout in a late-level fight |
+| 2 | Humble origins — default cannon | 1 | wave 1 | forced `mineral_scoop` hold-full resolution |
+| 3 | First steps up | 2 | wave 2 | three weapons at level 1 |
+| 4 | Escalation | 4 | wave 4 | five slots at levels 1–2 |
+| 5 | Mini-boss | 5 | **wave 10** | the wave-10 mini-boss dies on camera |
+| 6 | Reprise — horde and lane traffic | 8 | wave 5 | stronger guns, different pressure |
+| 7 | Main boss — the Gauntlet finale | 10 | **boss encounter** | boss spawns with 40 hits left and dies on camera |
+
+**When to use which target.** Use `PlayScene` when the clip should look like
+the game a player buys — the bot playing, shipped HUD, no dev overlays — and
+when the beat's state can be expressed with `level`/`seed`/`startWave`/
+`startBoss` plus the `setup` above. Use a **gym** when you need to demonstrate
+one mechanic in isolation with exact state (formations, weapon benches,
+power-up utilities): gyms draw a scene index link and on-screen DAMAGE/SHOOT
+controls, so they are for feature demos, not for the teaser.
+
 Each generated-level scene in the `--json` payload additionally reports
 `seed`, `level`, `wavesCaptured` and `endedEarly` alongside its timings.
+
+#### The shipped examples: the teaser arc and the gym showcase
+
+Two config files ship with the repo, each with one purpose:
+
+- **`examples/teaserVideoScript.json`** — the **seven-beat excitement-curve
+  arc** the scripted showcase video is recorded from (parent
+  AH-0MVPJ3NSK008V5VB). Every beat targets the shipped `PlayScene`, played by
+  the demo bot with no gym chrome, and carries an explicit campaign `level`, a
+  pinned `seed` and a `playMs`/`captureMs` window, so its loadout and its
+  on-camera pay-off are deterministic (AH-0MVTNTHTI0041QIF).
+- **`examples/scenes.json`** — the **gym showcase**: one scripted entry for
+  every gym scene under `src/scenes/gym/` (all 14, including the parameterised
+  `GymLevel`/`GymFodderEnemies`, the boss gyms and the curve editor), each
+  carrying a copy-paste `setup`.
+
+The teaser arc, in order:
+
+| # | Beat | Level | Seed | Pay-off |
+|---|---|---|---|---|
+| 1 | Opening spectacle | 7 | `1101` | maxed arsenal against dense waves from wave 6 |
+| 2 | Humble origins | 1 | `2202` | default cannon only; the full mineral hold resolves to the **Hull Full** (`mineral_scoop`) reward |
+| 3 | First steps up | 2 | `3303` | three weapon slots at level 1 |
+| 4 | Escalation | 4 | `4404` | five slots at levels 1–2, denser waves |
+| 5 | Mini-boss | 5 | `5505` | the **mini-boss death** on the wave-10 encounter |
+| 6 | Reprise | 8 | `6606` | horde and lane traffic with stronger guns |
+| 7 | Main boss | 10 | `7707` | the **Gauntlet finale** and its death, shortened by `bossHitsRemaining: 40` |
+
+The seeds (`1101`…`7707`) are pinned, so re-running the teaser reproduces the
+same loadouts and content. The two boss beats carry a **broadside** weapon on
+purpose: a captured scene takes no player input, so the auto-firing ship keeps
+its default heading (`0` = right) and its forward guns can never reach a boss
+that sits directly above it — broadside fires perpendicular to the heading,
+sending one shot straight up the screen. The boss beats reach their encounter
+on schedule through `level`/`startWave`/`startBoss`, and `bossHitsRemaining`
+starts the boss inside its pool so the death lands within the beat window.
+Three setup fields exist for these examples:
+
+- **`player.weaponLevels`** grants a weapon above level 1: each entry
+  `{ "<weapon id>": <level> }` applies that many **permanent** grants with
+  `equipWeapon(id, true)`, so a weapon listed in both `player.weapons` (the
+  level-1 grant) and `weaponLevels` starts at `1 + level`. Levels must be
+  integers `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX` (`5`); omit the field (or leave
+  it `{}`) for no extra grants, so every weapon stays at the level
+  `player.weapons` gives it. Any setup-capable gym accepts it; an out-of-range
+  level raises `invalid-weapon-level` (and an unknown weapon id raises
+  `unknown-weapon-id`).
+- **`setup.mineralReward`** forces the reward a **full mineral hold** resolves
+  to in the level gyms (`GymLevel`, `GymBotTuning`), instead of their random
+  pick — the deterministic Hull Full pay-off in scene 2. The value must be one
+  of the hold-full choice ids (`SCENE_SETUP_MINERAL_REWARD_IDS`: the drop
+  catalogue minus the `reset` utility); omit it to keep the random choice. A
+  non-choice id raises `unknown-mineral-reward`, and the field on a target
+  that cannot consume it raises `setup-not-supported`.
+- **`setup.bossHitsRemaining`** starts the spawned boss/mini-boss with that
+  many hits left, through the entity's existing `initialHp` seam. It is
+  accepted only on the boss-capable gyms (`GymBoss`, `GymMiniBoss`) and must
+  be a positive integer no greater than the target's total hit pool
+  (`SCENE_SETUP_BOSS_TOTAL_HITS`: `200` for `GymBoss`, `10` for `GymMiniBoss`);
+  omit it for the full pool. A non-integer, non-positive or out-of-pool value
+  raises `invalid-boss-hits`; the field on any other target raises
+  `setup-not-supported`.
+- **Scenario knobs** (`shootEnabled`, `threatCount`, `obstacles`,
+  `practiceTargets`, `minerals`) configure the gym-only training layers listed
+  in the table above. Booleans accept only `true`/`false`
+  (`invalid-setup-type`); counts must be integers inside
+  `SCENE_SETUP_SCENARIO_COUNT_BOUNDS` (`invalid-scenario-count`). Supplying one
+  on a target that does not declare it raises `setup-not-supported`, so an
+  accepted field is always consumed by the scene.
+
+These fields configure state the game already has (permanent weapon grants,
+`initialHp`, the hold-full choice), so they are config-only and dev-gated: the
+shipped bundle and the gym↔game parity contract are unchanged.
+
+```json
+{
+  "scenes": [
+    {
+      "target": "GymLevel",
+      "playMs": 2000,
+      "captureMs": 8000,
+      "label": "Opening spectacle — maxed arsenal",
+      "setup": {
+        "level": {
+          "level": 7,
+          "name": "Opening Spectacle",
+          "waves": [
+            {
+              "groups": [
+                { "enemyKey": "scout", "formation": "v", "count": 12, "spacingX": 30, "spacingY": 22, "startX": 180, "startY": 140 }
+              ],
+              "shootEnabled": true
+            }
+          ]
+        },
+        "player": {
+          "weapons": [],
+          "timedWeapons": [],
+          "weaponLevels": { "spread": 5, "dual": 4, "rapid": 5 }
+        },
+        "powerUps": { "magnet": 3, "mineral_scoop": 3 },
+        "seed": 1101
+      }
+    },
+    {
+      "target": "GymMiniBoss",
+      "playMs": 2000,
+      "captureMs": 8000,
+      "label": "Mini-boss — escort and death",
+      "setup": {
+        "player": { "weapons": ["spread", "dual", "rapid", "broadside"], "weaponLevels": { "wave_laser": 2, "ricochet": 2, "broadside": 3 } },
+        "bossHitsRemaining": 1,
+        "seed": 5505
+      }
+    }
+  ]
+}
+```
+
+Record the teaser arc once with `npm run capture:scenes -- --config
+examples/teaserVideoScript.json`, and the gym showcase with `--config
+examples/scenes.json`; `--json` reports each scene's timings and seeds
+(see [Output](#output) and [`--json` shape](#json-shape)).
 
 #### Watchable gym scenes
 
@@ -1216,12 +1550,15 @@ without a caller-supplied parameter:
 
 `GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
 setup) are **rejected** with `unsupported-target` when no setup is supplied;
-give them a valid `setup` and they become capturable. The registry
-(`WATCHABLE_GYM_SCENE_KEYS` in `scripts/capture-scenes.mjs`) is the **single
-source of truth** shared by the CLI's pre-boot validation and the page-side
-director's `start(key)` guard, and is pinned against the gym files on disk by
-`scripts/capture-scenes.test.ts` — adding or removing a gym scene without
-updating it fails the suite instead of silently drifting.
+give them a valid `setup` and they become capturable. Every gym is therefore
+either **watchable directly** or **watchable with a required launch
+parameter** — the two registries (`WATCHABLE_GYM_SCENE_KEYS` and
+`PARAMETERISED_GYM_SCENE_KEYS` in `scripts/capture-scenes.mjs`) exhaustively
+partition the gyms, with no gym in both and none in neither; the pinning test
+asserts that partition against the gym files on disk. The registry is the
+**single source of truth** shared by the CLI's pre-boot validation and the
+page-side director's `start(key)` guard, so adding or removing a gym scene
+without updating it fails the suite instead of silently drifting.
 
 ### Validation (before anything boots)
 
@@ -1250,6 +1587,11 @@ stderr and exits **1** — it never records a partial or blank video:
 | `missing-setup-parameter` | a parameterised target's setup omits `level`/`enemy` |
 | `setup-not-supported` | a `setup` (or a field it cannot consume) on a target that cannot accept it |
 | `invalid-seed` | `seed` is not a 32-bit unsigned integer |
+| `invalid-weapon-level` | a `player.weaponLevels` level is not an integer `1`–`5` |
+| `invalid-player-heading` | a `player.heading` is not a finite number of degrees |
+| `unknown-mineral-reward` | a `mineralReward` is not a hold-full choice reward id |
+| `invalid-boss-hits` | a `bossHitsRemaining` is not a positive integer within the target's hit pool |
+| `invalid-scenario-count` | a `threatCount`/`minerals` value is not an integer within `SCENE_SETUP_SCENARIO_COUNT_BOUNDS` |
 | `invalid-scene-level` | a generated-level `level` is not an integer `1`–`LEVEL_COUNT` |
 | `invalid-scene-field` | a generated-level `minWaves`/`maxCaptureMs` is not a positive integer |
 | `unsupported-scene-field` | a generated-level-only field (`seed`/`level`/`minWaves`/`maxCaptureMs`) is supplied on a gym target |
@@ -1475,6 +1817,26 @@ The clip verdict is now the **combination** of the video probe and the audio
 probe (see [Audio capture](#audio-capture)): a clip with no audio track, or
 with decoded audio at/below the silence floor, fails and the command exits
 non-zero — so `npm run capture` can no longer silently emit a silent clip.
+
+### Effective frame rate: rejecting a starved recording
+
+The probe also counts the clip's **decoded frames** and reports the
+**effective frame rate** (`effectiveFps` = decoded frames ÷ clip duration,
+alongside `frameCount`; `null` when the browser exposes no frame count).
+`isNonTrivialClip` rejects a recording below **`MIN_EFFECTIVE_FPS` (15 fps)**
+with the reason `recording is stalled (<fps> fps < 15 fps): the page rendered
+too slowly to record the scene — re-record on an idle host`
+(AH-0MVTI3O650064IM7).
+
+Why it matters: the capture renders through software WebGL (SwiftShader) and
+encodes with `MediaRecorder` on the same CPU. On a busy host the page can drop
+to a few frames per second — a 78 s clip was once recorded in 441 frames
+(≈5.7 fps) — and because Phaser **caps its delta**, game time then advances at
+a fraction of wall clock: a 10 s `captureMs` window contains almost no
+simulated time, so scenes freeze on camera and scripted pay-offs (boss deaths,
+hold-full rewards) cannot happen. Such a clip used to pass every other verdict.
+**Record scripted scenes on an idle host** and check `effectiveFps` in the
+`--json` payload before accepting a take.
 
 For a `--count` **batch**, the report lists one line per iteration and the
 command exits non-zero if any iteration failed; the naming, validation,
@@ -1714,7 +2076,8 @@ full`) or `npm run build`.
 | `scripts/capture-run-lifecycle.d.mts` | Types for the run-lifecycle module |
 | `scripts/capture-chunk-sink.mjs` | Bounded streaming chunk sink: append-decode-write each recorder chunk to `<stem>.partial.webm`, report `bytesWritten`/`chunkCount`/`peakPendingBytes`, finalise by rename |
 | `scripts/capture-chunk-sink.d.mts` | Types for the chunk sink |
-| `scripts/capture-chunk-sink.test.ts` | Hermetic tests for the sink's write path, memory bound beyond the 512 MiB CDP pipe budget, cap rejection and finalise/partial seam |
+| `scripts/capture-chunk-sink.test.ts` | Hermetic tests for the sink's write path, memory bound beyond the 512 MiB CDP pipe budget, cap rejection and finalise/partial seam; the >512 MiB proof's temp root is resolved by `tempRootForLargeFiles.ts` (labelled environmental skip when no temp filesystem has headroom) |
+| `scripts/tempRootForLargeFiles.ts` | Test-only temp-root resolution for the >512 MiB proof (`TMPDIR` → `/var/tmp` → `os.tmpdir()`, first with 1 GiB headroom wins), with unit tests in `scripts/tempRootForLargeFiles.test.ts` (AH-0MVS1O1ZG007VCX3) |
 | `scripts/capture-recorder-page.mjs` | Page-side bounded Blob retention + oversized-payload slicing: installs a controller that forwards every chunk to the sink exactly once and retains at most `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (uninstallable; self-contained for `addInitScript`) |
 | `scripts/capture-recorder-page.d.mts` | Types for the retention/payload-guard controller |
 | `scripts/capture-recording-pipeline.mjs` | Shared recording pipeline: one sink + guard install + `__aiHellCaptureChunk` binding + probe source per capture path (single-source rule, both paths) |
@@ -1745,3 +2108,33 @@ full`) or `npm run build`.
 | `src/core/devScenario.ts` | Dev-gated scenario resolver + page-side release handle consumed by `--scenario` (pure, testable; no-op in production) |
 | `package.json` | `capture` / `capture:scenes` / `capture:install` / `list:pool` / `compile:promo` scripts; `playwright` devDependency |
 | `.gitignore` | ignores `capture-output/` |
+
+#### The recorder must never be interrupted by a page reload
+
+The single-`MediaRecorder` invariant is fragile: the recorder and the fade
+overlay (`window.__aiHellFade`) live in the **page**, so a page reload
+mid-recording wipes both and every later `fadeTo` call fails with an opaque
+`Cannot read properties of undefined (reading 'fadeTo')`
+(AH-0MVTEKPM6003R5NW).
+
+Two things keep a reload out of the recording window:
+
+- **A private Vite dependency cache.** The capture boots its dev server with a
+  per-run `cacheDir` under the OS temp directory (removed when the run ends)
+  instead of the workspace default `node_modules/.vite`. That default is
+  **shared** by every Vite instance in every worktree (worktrees symlink
+  `node_modules`), so a concurrent dev server or test run could re-optimise it
+  mid-recording; the Vite dev client then reloads the page on the now-outdated
+  dependency URL. The capture also disables HMR and file watching
+  (`server.hmr: false`, `server.watch: null`), so editing a file mid-run
+  cannot reload the page either. `--cache-dir` is not a CLI flag: pass
+  `options.cacheDir` when embedding `runCaptureSession`.
+- **A dependency settle before recording starts.** After the first page load —
+  which triggers the cold private cache's optimisation — the driver awaits
+  `server.waitForRequestsIdle()` so the graph is warm before the recorder
+  starts.
+
+If the page still navigates mid-run, the capture fails loudly with an
+actionable error naming the reload time and the likely cause (another Vite
+process on the same workspace), instead of surfacing the `fadeTo` `TypeError`
+and a silently truncated `*.partial.webm`.

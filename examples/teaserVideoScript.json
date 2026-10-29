@@ -1,0 +1,200 @@
+{
+  "scenes": [
+    {
+      "target": "PlayScene",
+      "level": 7,
+      "seed": 1101,
+      "playMs": 2000,
+      "captureMs": 8000,
+      "label": "Opening spectacle \u2014 maxed arsenal, dense waves",
+      "startWave": 6,
+      "setup": {
+        "player": {
+          "weapons": [
+            "spread",
+            "dual"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {
+            "rapid": 5,
+            "wave_laser": 3,
+            "ricochet": 2,
+            "nova": 4
+          }
+        },
+        "powerUps": {
+          "magnet": 3,
+          "mineral_scoop": 3
+        }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 8000
+    },
+    {
+      "target": "PlayScene",
+      "level": 1,
+      "seed": 2202,
+      "playMs": 2000,
+      "captureMs": 10000,
+      "label": "Humble origins \u2014 default cannon, hold-full pay-off",
+      "startWave": 10,
+      "setup": {
+        "player": {
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {}
+        },
+        "powerUps": {
+          "magnet": 5,
+          "mineral_scoop": 5
+        },
+        "mineralReward": "mineral_scoop"
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 10000
+    },
+    {
+      "target": "PlayScene",
+      "level": 2,
+      "seed": 3303,
+      "playMs": 2000,
+      "captureMs": 7000,
+      "label": "First steps up \u2014 three slots at level 1",
+      "startWave": 6,
+      "setup": {
+        "player": {
+          "weapons": [
+            "spread",
+            "dual",
+            "rapid"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {}
+        },
+        "powerUps": {}
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 7000
+    },
+    {
+      "target": "PlayScene",
+      "level": 4,
+      "seed": 4404,
+      "playMs": 2000,
+      "captureMs": 7000,
+      "label": "Escalation \u2014 five slots at levels 1-2",
+      "startWave": 8,
+      "setup": {
+        "player": {
+          "weapons": [
+            "spread",
+            "dual",
+            "rapid"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {
+            "wave_laser": 2,
+            "ricochet": 2
+          }
+        },
+        "powerUps": {
+          "magnet": 2
+        }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 7000
+    },
+    {
+      "target": "PlayScene",
+      "level": 5,
+      "seed": 5505,
+      "playMs": 500,
+      "captureMs": 9000,
+      "label": "Mini-boss \u2014 the wave-10 encounter and its death",
+      "startWave": 10,
+      "setup": {
+        "player": {
+          "weapons": [
+            "spread",
+            "dual",
+            "rapid",
+            "broadside"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {
+            "wave_laser": 2,
+            "ricochet": 2,
+            "broadside": 3
+          }
+        },
+        "powerUps": {
+          "shield": 2
+        }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 9000
+    },
+    {
+      "target": "PlayScene",
+      "level": 8,
+      "seed": 6606,
+      "playMs": 2000,
+      "captureMs": 7000,
+      "label": "Reprise \u2014 horde and lane traffic, stronger guns",
+      "startWave": 5,
+      "setup": {
+        "player": {
+          "weapons": [
+            "spread",
+            "dual"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {
+            "rapid": 3,
+            "wave_laser": 3,
+            "ricochet": 3,
+            "nova": 3
+          }
+        },
+        "powerUps": {
+          "magnet": 2,
+          "shield": 2
+        }
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 7000
+    },
+    {
+      "target": "PlayScene",
+      "level": 10,
+      "seed": 7707,
+      "playMs": 500,
+      "captureMs": 10000,
+      "label": "Main boss \u2014 the Gauntlet finale and its death",
+      "startBoss": true,
+      "setup": {
+        "player": {
+          "weapons": [
+            "spread",
+            "dual",
+            "rapid"
+          ],
+          "timedWeapons": [],
+          "weaponLevels": {
+            "wave_laser": 4,
+            "ricochet": 4,
+            "broadside": 5
+          }
+        },
+        "powerUps": {
+          "shield": 3
+        },
+        "bossHitsRemaining": 40
+      },
+      "minWaves": 1,
+      "maxCaptureMs": 10000
+    }
+  ]
+}

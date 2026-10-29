@@ -24,6 +24,17 @@
  *
  * Non-goals (see the work item): saving/loading curves, visual formation
  * previews, multi-group waves, drag-to-reorder.
+ *
+ * Scripted-scene setup (AH-0MVRMHYJR000Y9H8): the editor consumes the shared
+ * scripted-scene seam so a supplied `setup` is never silently ignored. It has
+ * no player and no intrinsic content RNG (waves are derived deterministically
+ * from the curve), so the shared `applySceneSetup` is a documented no-op here;
+ * `resolveSetupSeed` seeds the deterministic stream and, with the loadout and
+ * power-up levels, is forwarded to the launched `GymLevel` — the recorded
+ * gameplay is the launched level, so that is where the setup takes effect.
+ * The editor's own launch parameters (the edited curve and launched
+ * level/wave) are not expressible in the shared setup schema, a documented
+ * exclusion recorded in `docs/GYM_PARITY.md` and `docs/dev/gameplay-capture.md`.
  */
 
 import Phaser from 'phaser';
@@ -47,7 +58,12 @@ import type {
   WaveDefinition,
   WaveGroup,
 } from '../../waves/Formations';
-import { GYM_LEVEL_SCENE_KEY } from './GymLevel';
+import { GYM_LEVEL_SCENE_KEY, type GymLevelData } from './GymLevel';
+import {
+  applySceneSetup,
+  resolveSetupSeed,
+  type SceneSetupState,
+} from '../core/sceneSetup';
 
 // ── Panel element ids + data attributes (asserted by tests) ──────────
 
@@ -465,12 +481,40 @@ export class GymCurveSequencer extends Phaser.Scene {
   private rows: HTMLDivElement | null = null;
   /** Candidate pool the sequencer chooses from. */
   private readonly candidates: CandidateGroup[] = defaultCandidatePool();
+  /**
+   * Capture setup supplied as scene-start data (AH-0MVRMHYJR000Y9H8). The
+   * sequencer has no player, so its loadout/power-up fields have nothing to
+   * configure here; they are forwarded to the launched `GymLevel`.
+   */
+  private pendingSetup: SceneSetupState | null = null;
+  /**
+   * Deterministic seed resolved from the setup (AH-0MVRMHYJR000Y9H8),
+   * forwarded to the launched `GymLevel` so a scripted capture's content is
+   * reproducible even though the editor itself draws no random content.
+   */
+  private pendingSeed: number | null = null;
 
   constructor() {
     super({ key: 'GymCurveSequencer' });
   }
 
+  /**
+   * Captures the optional capture setup Phaser forwards as scene-start data
+   * (AH-0MVRMHYJR000Y9H8). An absent setup leaves both pending fields null, so
+   * an interactive launch keeps today's behaviour.
+   */
+  init(data?: SceneSetupState | null): void {
+    this.pendingSetup = data ?? null;
+    this.pendingSeed = resolveSetupSeed(data ?? null);
+  }
+
   create(): void {
+    // Scripted-scene setup (AH-0MVRMHYJR000Y9H8): call the one shared applier
+    // even though this editor has no player (the applier is intentionally
+    // total and no-ops). The resolved seed and loadout are forwarded to the
+    // launched level by `_launchData`, so nothing is silently dropped.
+    applySceneSetup({ getPlayer: () => null }, this.pendingSetup);
+
     // Shared gym navigation: "← INDEX" button + ESC → main menu (AC7/AC8).
     addBackToIndexButton(this);
     addBackToMenuOnEsc(this);
@@ -635,7 +679,7 @@ export class GymCurveSequencer extends Phaser.Scene {
   private _launchLevel(levelIndex: number): void {
     const level = this.levels[levelIndex];
     if (!level) return;
-    this.scene.start(GYM_LEVEL_SCENE_KEY, { level });
+    this.scene.start(GYM_LEVEL_SCENE_KEY, this._launchData({ level }));
   }
 
   /** Boots the Level Gym scene with one wave (AC2). */
@@ -643,9 +687,28 @@ export class GymCurveSequencer extends Phaser.Scene {
     const wave = this.sequencedWaves[waveIndex];
     if (!wave) return;
     const name = `Wave ${waveIndex + 1}`;
-    this.scene.start(GYM_LEVEL_SCENE_KEY, {
+    this.scene.start(GYM_LEVEL_SCENE_KEY, this._launchData({
       level: { level: 0, name, waves: [toWaveDefinition(wave)] },
-    });
+    }));
+  }
+
+  /**
+   * Merges a capture setup into the launched level's data
+   * (AH-0MVRMHYJR000Y9H8). The clicked level/wave always wins, so the editor
+   * still launches exactly the preview the producer selected; the setup's
+   * loadout, power-up levels and resolved seed are carried through to the
+   * `GymLevel` that records the gameplay.
+   */
+  private _launchData(base: GymLevelData): GymLevelData {
+    const setup = this.pendingSetup;
+    if (!setup) return base;
+    return {
+      player: setup.player,
+      powerUps: setup.powerUps,
+      mineralReward: setup.mineralReward,
+      seed: this.pendingSeed ?? undefined,
+      ...base,
+    };
   }
 
   // ── Curve editor (plain-DOM panel) ───────────────────────────────

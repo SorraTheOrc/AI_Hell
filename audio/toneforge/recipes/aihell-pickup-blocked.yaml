@@ -1,0 +1,54 @@
+# AI Hell cue: aihell-pickup-blocked — Pickup refused (six slots full) — low two-step descending square buzz 200 to 120 Hz.
+#
+# Parent AH-0MVLIJT3M005HPHF (producer Q5b): a drop that cannot be collected
+# because the shared six-slot pool is full needs audible feedback. The cue is
+# deliberately low, short and "closed" (square wave, fast decay) so it reads as
+# a refusal rather than a pickup, and it cannot be confused with the generic
+# collect pop (saw 600→100 Hz, ≤ 0.08 s) or the despawn blip (sine 880→220 Hz).
+version: "0.1"
+meta:
+  name: aihell-pickup-blocked
+  description: Pickup refused (six slots full) — low two-step descending square buzz 200 to 120 Hz.
+  category: AIHell
+  tags:
+    - pickup
+    - blocked
+  duration: 0.18
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 200
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 200
+        - kind: set
+          time: 0.06
+          value: 150
+        - kind: exponentialRamp
+          time: 0.178
+          value: 120
+  e0:
+    kind: envelope
+    params:
+      attack: 0.003
+      decay: 0.177
+      sustain: 0
+      release: 0.02
+  g0:
+    kind: gain
+    params:
+      gain: 0.06
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - from: mix
+    to: out

@@ -10,7 +10,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import * as effects from '../../audio/effects';
+import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { HOLD_FULL_FIRE_VOLUME_SCALE } from '../../core/rules';
+import {
+  CHOICE_DESCRIPTION_MAX_CHARS_PER_LINE,
+  CHOICE_DESCRIPTION_MAX_LINES,
+} from '../core/choiceDescriptionWrap';
 import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
 import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import { RecordingSfxProvider } from '../../test/audioTestDouble';
@@ -196,7 +201,7 @@ describe('MineralChoiceScene', () => {
   });
 
   describe('option descriptions (AH-0MV2N2591007UGPD)', () => {
-    it('AC2 — renders a description line as part of a three-line block', async () => {
+    it('AC2 — renders a description line as part of a three-part block', async () => {
       booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted.game.scene.start('MineralChoiceScene', {
         options: [
@@ -264,6 +269,175 @@ describe('MineralChoiceScene', () => {
       expect(scene.getDescriptionLines()).toEqual([]);
       expect(scene.getDetailLines()).toEqual([]);
       expect(scene.getOptionLabels()).toHaveLength(1);
+    });
+  });
+
+  describe('two-line description area (AH-0MVBLBSG3002WHBI)', () => {
+    /** The longest description in the shared catalogue (Teleport, 210 chars). */
+    const LONGEST_COPY =
+      'Stores up to 3 uses; when the ship is in danger, one is spent automatically to warp to the nearest safe spot and grant a short Phase Shift on arrival. Teleporting can be disorienting — keep your wits about you.';
+
+    it('AC1/AC7 — wraps the longest catalogue copy onto two lines inside the playfield', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'teleport',
+            name: 'Teleport',
+            kind: 'powerup',
+            description: LONGEST_COPY,
+            changeSummary: 'Permanent for this run',
+          },
+        ],
+      });
+      await advanceGame(booted!.game, 50);
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      // AC4: the public copy contract still returns the catalogue copy.
+      expect(scene.getDescriptionLines()).toEqual([LONGEST_COPY]);
+
+      const rendered = scene.getDescriptionRenderedLines();
+      expect(rendered).toHaveLength(1);
+      expect(rendered[0]).toHaveLength(CHOICE_DESCRIPTION_MAX_LINES);
+      expect(rendered[0].join(' ')).toBe(LONGEST_COPY);
+      for (const line of rendered[0]) {
+        expect(line.length).toBeLessThanOrEqual(
+          CHOICE_DESCRIPTION_MAX_CHARS_PER_LINE,
+        );
+      }
+
+      const [row] = scene.getRowLayout();
+      expect(row.description).not.toBeNull();
+      expect(row.description?.lines).toBe(CHOICE_DESCRIPTION_MAX_LINES);
+      // The description sits below the name and above the change summary.
+      expect(row.description!.top).toBeGreaterThanOrEqual(row.name.bottom);
+      expect(row.description!.bottom).toBeLessThanOrEqual(row.detail!.top);
+      // Two wrapped lines never leave the 960 x 540 playfield.
+      expect(row.description!.left).toBeGreaterThanOrEqual(0);
+      expect(row.description!.right).toBeLessThanOrEqual(GAME_WIDTH);
+      expect(row.bottom).toBeLessThanOrEqual(GAME_HEIGHT);
+    });
+
+    it('AC3 — truncates copy longer than two lines with an ellipsis and keeps it on screen', async () => {
+      const overlong = Array.from(
+        { length: 60 },
+        (_, index) => `word${index}`,
+      ).join(' ');
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'teleport',
+            name: 'Teleport',
+            kind: 'powerup',
+            description: overlong,
+            changeSummary: 'Permanent for this run',
+          },
+        ],
+      });
+      await advanceGame(booted!.game, 50);
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      const rendered = scene.getDescriptionRenderedLines()[0];
+      expect(rendered).toHaveLength(CHOICE_DESCRIPTION_MAX_LINES);
+      expect(rendered[1].endsWith('…')).toBe(true);
+      for (const line of rendered) {
+        expect(line.length).toBeLessThanOrEqual(
+          CHOICE_DESCRIPTION_MAX_CHARS_PER_LINE,
+        );
+      }
+
+      const [row] = scene.getRowLayout();
+      expect(row.description!.bottom).toBeLessThanOrEqual(row.detail!.top);
+      expect(row.bottom).toBeLessThanOrEqual(GAME_HEIGHT);
+    });
+
+    it('AC4/AC7 — one-line descriptions stay one line; no description draws no area', async () => {
+      const shortCopy = 'Adds a 3-bullet fan (−30°/0°/+30°).';
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'spread',
+            name: 'Spread Shot',
+            kind: 'weapon',
+            description: shortCopy,
+            changeSummary: '+1 Projectiles',
+          },
+          { id: 'speed_boost', name: 'Speed Boost', kind: 'powerup' },
+        ],
+      });
+      await advanceGame(booted!.game, 50);
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      expect(scene.getDescriptionLines()).toEqual([shortCopy]);
+      expect(scene.getDescriptionRenderedLines()).toEqual([[shortCopy]]);
+
+      const [shortRow, blankRow] = scene.getRowLayout();
+      expect(shortRow.description!.lines).toBe(1);
+      expect(blankRow.description).toBeNull();
+      expect(blankRow.detail).toBeNull();
+      // No description: the row is just the name, with no phantom area.
+      expect(blankRow.bottom).toBe(blankRow.name.bottom);
+      expect(blankRow.top).toBe(blankRow.name.top);
+    });
+
+    it('AC2/AC7 — mixed one- and two-line rows never overlap vertically', async () => {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [
+          {
+            id: 'teleport',
+            name: 'Teleport',
+            kind: 'powerup',
+            description: LONGEST_COPY,
+            changeSummary: 'Permanent for this run',
+          },
+          {
+            id: 'noval',
+            name: 'Nova',
+            kind: 'weapon',
+            description: 'AOE: an expanding ring around the ship.',
+            isNew: true,
+          },
+          {
+            id: 'spread',
+            name: 'Spread Shot Lv.3',
+            kind: 'weapon-level',
+            level: 3,
+            description:
+              'Three bullets in a widening fan; every level adds another projectile and a little more spread, so the fan covers a wider arc.',
+            changeSummary: '+1 Projectiles',
+          },
+        ],
+      });
+      await advanceGame(booted!.game, 50);
+
+      const scene = booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+      const rows = scene.getRowLayout();
+      expect(rows).toHaveLength(3);
+      expect(rows[0].description!.lines).toBe(2);
+      expect(rows[1].description!.lines).toBe(1);
+      expect(rows[2].description!.lines).toBe(2);
+
+      for (const row of rows) {
+        expect(row.name.bottom).toBeLessThanOrEqual(row.description!.top);
+        expect(row.description!.bottom).toBeLessThanOrEqual(row.detail!.top);
+        expect(row.top).toBeGreaterThanOrEqual(0);
+        expect(row.bottom).toBeLessThanOrEqual(GAME_HEIGHT);
+      }
+      for (let i = 1; i < rows.length; i += 1) {
+        // Strictly separated: consecutive blocks never collide.
+        expect(rows[i].top).toBeGreaterThan(rows[i - 1].bottom);
+      }
     });
   });
 

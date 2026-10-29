@@ -1,6 +1,6 @@
 {
   "name": "ai-hell",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "private": true,
   "type": "module",
   "description": "AI Hell — a Phaser 4 + TypeScript shoot-em-up built with AI assistance (see GDD).",
@@ -17,6 +17,7 @@
     "list:pool": "node scripts/list-capture-pool.mjs",
     "compile:promo": "node scripts/compile-promo.mjs --compile",
     "evaluate": "node scripts/evaluate.mjs",
+    "validate-experience": "node scripts/validate-experience.mjs",
     "capture:install": "playwright install chromium",
     "record": "node scripts/record-session.mjs",
     "analyse": "node scripts/analyse-recording.mjs",

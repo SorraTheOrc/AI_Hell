@@ -71,6 +71,14 @@
       ]
     },
     {
+      "cue": "playForceFieldReflectSound",
+      "recipe": "aihell-forcefield-reflect",
+      "delivery": "baked",
+      "seeds": [
+        32276
+      ]
+    },
+    {
       "cue": "playTankAdvanceCue",
       "recipe": "aihell-tank-advance",
       "delivery": "baked",
@@ -108,6 +116,14 @@
       "delivery": "baked",
       "seeds": [
         32152
+      ]
+    },
+    {
+      "cue": "playPowerUpBlockedSound",
+      "recipe": "aihell-pickup-blocked",
+      "delivery": "baked",
+      "seeds": [
+        32153
       ]
     },
     {
@@ -342,6 +358,14 @@
       "delivery": "baked",
       "seeds": [
         32216
+      ]
+    },
+    {
+      "cue": "playOrbitalStrikeSound",
+      "recipe": "aihell-orbital-strike",
+      "delivery": "baked",
+      "seeds": [
+        32195
       ]
     },
     {

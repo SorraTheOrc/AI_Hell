@@ -68,7 +68,9 @@
  */
 
 import { createServer } from 'vite';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1167,10 +1169,18 @@ export async function driveSceneSequence({
   /** Launch data for a scene: gym setup, or the PlayScene demo payload. */
   const launchDataFor = (scene) => {
     if (scene.target === GENERATED_LEVEL_SCENE_KEY) {
+      // Generated-level launch data (AH-0MVE01EY0008QEVX + AH-0MVTPP7SX000JTWJ
+      // + AH-0MVTNTHE0008UT2C): the bot (`demo`), the seeded campaign start,
+      // where in the level the beat begins, and the dev-gated run setup that
+      // forces its loadout/pay-offs. Dropping any of these silently records a
+      // different beat than the script describes.
       return {
         demo: true,
         seed: scene.seed,
         startLevel: scene.level,
+        ...(scene.startWave !== undefined ? { startWave: scene.startWave } : {}),
+        ...(scene.startBoss ? { startBoss: true } : {}),
+        ...(scene.setup ? { setup: scene.setup } : {}),
       };
     }
     return scene.setup;
@@ -1246,6 +1256,82 @@ export async function driveSceneSequence({
       onScene({ index: i + 2, total: plan.length, scene: next });
     }
   }
+}
+
+/**
+ * Watches the capture page for a **main-frame navigation** while a recording
+ * is running (AH-0MVTEKPM6003R5NW).
+ *
+ * The multi-scene capture keeps one `MediaRecorder` and the page-side fade
+ * overlay (`window.__aiHellFade`, installed by
+ * {@link installCaptureComposite}) alive across every scene, so a page reload
+ * is fatal: it wipes both and every later `fadeTo` call fails with an opaque
+ * `Cannot read properties of undefined`. Recording the navigation here turns
+ * that into an actionable error (see {@link explainMidRunFailure}).
+ *
+ * Defensive by design: a page without `on()` (hermetic fakes) or a frame
+ * without `parentFrame()` simply yields no records rather than throwing.
+ *
+ * @param {{ on?: Function } | null} page — the Playwright page (or a fake).
+ * @param {() => number} [now] — clock for the `atMs` stamp (injectable).
+ * @returns {Array<{ url: string, atMs: number }>} the recorded navigations,
+ *   in order.
+ */
+export function watchForMidRunNavigation(page, now = () => Date.now()) {
+  const navigations = [];
+  if (!page || typeof page.on !== 'function') return navigations;
+  page.on('framenavigated', (frame) => {
+    // Sub-frame navigations (iframes) leave the recorded document intact.
+    if (typeof frame?.parentFrame === 'function' && frame.parentFrame() !== null) {
+      return;
+    }
+    const url = typeof frame?.url === 'function' ? frame.url() : '';
+    navigations.push({ url, atMs: now() });
+  });
+  return navigations;
+}
+
+/**
+ * Explains a failed multi-scene recording when the page navigated mid-run
+ * (AH-0MVTEKPM6003R5NW).
+ *
+ * Returns the original error untouched when no navigation was recorded, so an
+ * unrelated failure keeps its own message. When the page did navigate, the
+ * returned error names the reload time and the most likely cause (another
+ * Vite process re-optimising a shared dependency cache) instead of surfacing
+ * the opaque `reading 'fadeTo'` TypeError the driver would otherwise throw.
+ *
+ * @param {unknown} error — the underlying failure (returned as `cause`).
+ * @param {Array<{ url: string, atMs: number }>} navigations — from
+ *   {@link watchForMidRunNavigation}.
+ * @param {{ sceneCount?: number }} [context] — planned scene count, for the
+ *   diagnosis text.
+ * @returns {unknown} the original error, or a new actionable one.
+ */
+export function explainMidRunFailure(error, navigations = [], context = {}) {
+  if (!Array.isArray(navigations) || navigations.length === 0) return error;
+  const first = navigations[0] ?? {};
+  const atMs = Number.isFinite(first.atMs) ? first.atMs : null;
+  const where =
+    atMs === null
+      ? 'while the recorder was running'
+      : `after ${formatDuration(atMs)} of recording`;
+  const scenes = Number.isFinite(context.sceneCount)
+    ? ` (${navigations.length} reload(s), ${context.sceneCount} scene(s) planned)`
+    : ` (${navigations.length} reload(s))`;
+  const original = error instanceof Error ? error.message : String(error ?? 'unknown error');
+  const explained = new Error(
+    `The capture page reloaded ${where}${scenes} — ${first.url || 'unknown URL'}. `
+      + 'A reload destroys the page-side capture state (`window.__aiHellFade`) and '
+      + 'the single MediaRecorder. This run used a private Vite dependency cache '
+      + 'with HMR disabled, so the navigation came from outside it: most likely '
+      + 'another Vite process (a concurrent dev server or test run on the same '
+      + 'workspace) re-optimised a dependency, or the page reloaded itself. '
+      + `Re-run the capture to record a fresh clip. Original failure: ${original}`,
+  );
+  explained.cause = error;
+  explained.navigations = navigations;
+  return explained;
 }
 
 /**
@@ -2220,13 +2306,40 @@ export async function runCaptureSession({
   let server;
   let browser;
   const clips = [];
+  // A private per-run Vite dependency cache (see below): created here so the
+  // `finally` cleanup can see it whether or not the server ever booted.
+  const ownsCacheDir = options.cacheDir === undefined;
+  let cacheDir = options.cacheDir ?? null;
 
   try {
     reporter.step('Starting Vite dev server…');
+    // A **private** dependency cache: the workspace cache
+    // (`node_modules/.vite`) is shared by every Vite instance in every
+    // worktree (worktrees symlink `node_modules`), so any other dev server or
+    // test run can re-optimise it mid-recording. The dev client then reloads
+    // the page on an outdated dep URL, which destroys the page-side capture
+    // state (`window.__aiHellFade`) and the single `MediaRecorder`
+    // (AH-0MVTEKPM6003R5NW). A per-run temp cache cannot be invalidated by
+    // anything else.
+    if (cacheDir === null) {
+      // `mkdtempSync` guarantees a unique directory per run, so two captures
+      // started in the same millisecond cannot share (and invalidate) a cache.
+      cacheDir = mkdtempSync(join(tmpdir(), 'ai-hell-capture-vite-'));
+    }
     server = await createViteServer({
       root: REPO_ROOT,
       logLevel: 'warn',
-      server: { port: options.port, strictPort: false, open: false },
+      cacheDir,
+      // No HMR and no file watching: a file change (in this checkout or any
+      // other worktree sharing the tree) must never reload the page while the
+      // recorder is running.
+      server: {
+        port: options.port,
+        strictPort: false,
+        open: false,
+        hmr: false,
+        watch: null,
+      },
     });
     await server.listen();
     const address = server.httpServer?.address();
@@ -2280,7 +2393,18 @@ export async function runCaptureSession({
           index,
           outputPath,
           page,
-          session: { browser, baseUrl },
+          session: {
+            browser,
+            baseUrl,
+            // Lets the capture wait until Vite has finished transforming the
+            // graph the first page load requested, so a later dependency
+            // optimisation cannot reload the page after recording starts
+            // (AH-0MVTEKPM6003R5NW).
+            waitForDeps: () =>
+              typeof server.waitForRequestsIdle === 'function'
+                ? server.waitForRequestsIdle()
+                : Promise.resolve(),
+          },
         });
         clips[index - 1] = clip;
         return clip;
@@ -2292,6 +2416,11 @@ export async function runCaptureSession({
     reporter.done();
     if (browser && !options.keepServer) await browser.close().catch(() => {});
     if (server && !options.keepServer) await server.close().catch(() => {});
+    // Only clean up a cache directory this run created; a caller-supplied one
+    // (tests) belongs to the caller.
+    if (ownsCacheDir && cacheDir) {
+      await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }
 
@@ -2331,6 +2460,7 @@ async function runScenesCapture(options, reporter = createReporter()) {
         reporter,
         plan,
         payload,
+        waitForDeps: session.waitForDeps,
       }),
   });
 
@@ -2363,6 +2493,7 @@ async function captureScenes({
   reporter,
   plan,
   payload,
+  waitForDeps = null,
 }) {
   const totalMs = payload.totalMs;
   const sceneCount = plan.length;
@@ -2430,6 +2561,12 @@ async function captureScenes({
     const mimeType = await resolvePageCaptureMimeType(page, hasAudio);
     if (!mimeType) throw new Error('no supported WebM MediaRecorder codec');
 
+    // Settle the dependency graph before the recorder starts: with the private
+    // per-run Vite cache the first page load triggers the optimisation, and a
+    // late optimisation would reload the page and kill the recording
+    // (AH-0MVTEKPM6003R5NW).
+    if (typeof waitForDeps === 'function') await waitForDeps();
+
     // The page-side fade overlay the recorder captures (AC3).
     const composite = await page.evaluate(installCaptureComposite);
     if (!composite) {
@@ -2446,6 +2583,14 @@ async function captureScenes({
 
     const startedEpoch = Date.now();
     const sceneEpochs = [];
+    // A page reload mid-recording destroys the page-side fade overlay and the
+    // single MediaRecorder; record any main-frame navigation so the failure is
+    // reported actionably instead of as `reading 'fadeTo'` on undefined
+    // (AH-0MVTEKPM6003R5NW).
+    const navigations = watchForMidRunNavigation(
+      page,
+      () => Date.now() - startedEpoch,
+    );
     let elapsedMs = 0;
     const reportProgress = () => {
       diagnostics.sampleRss();
@@ -2462,46 +2607,60 @@ async function captureScenes({
       reporter,
     });
 
-    await driveSceneSequence({
-      plan,
-      startScene: (key, setup) =>
-        page.evaluate(
-          ([sceneKey, sceneSetup]) =>
-            window.__aiHellCaptureDirector.start(sceneKey, sceneSetup),
-          [key, setup],
-        ),
-      fade: (alpha, durationMs) =>
-        page.evaluate(
-          ([targetAlpha, fadeMs]) =>
-            window.__aiHellFade.fadeTo(targetAlpha, fadeMs),
-          [alpha, durationMs],
-        ),
-      wait: async (ms) => {
-        let remaining = ms;
-        while (remaining > 0) {
-          const step = Math.min(SCENE_WAIT_HEARTBEAT_MS, remaining);
-          await page.waitForTimeout(step);
-          remaining -= step;
-          elapsedMs += step;
-          reportProgress();
-        }
-      },
-      // Generated-level scenes poll the dev-gated run-progress handle so the
-      // window can extend/truncate to the live wave/ended state
-      // (AH-0MVE01EY0008QEVX AC4).
-      readProgress: () =>
-        page.evaluate(() => window.__aiHellRunProgress ?? null),
-      onScene: ({ index, scene }) => {
-        // Wall-clock start of each scene's play window, used to probe the
-        // fades at their *actual* recorded offsets (page round-trips add a
-        // little drift to the plan-derived times).
-        sceneEpochs[index - 1] = Date.now();
-        reporter.step(
-          `Scene ${index}/${sceneCount}: ${scene.target} `
-            + `(play ${formatDuration(scene.playMs)}, capture ${formatDuration(scene.captureMs)})`,
-        );
-      },
-    });
+    let sequenceError = null;
+    try {
+      await driveSceneSequence({
+        plan,
+        startScene: (key, setup) =>
+          page.evaluate(
+            ([sceneKey, sceneSetup]) =>
+              window.__aiHellCaptureDirector.start(sceneKey, sceneSetup),
+            [key, setup],
+          ),
+        fade: (alpha, durationMs) =>
+          page.evaluate(
+            ([targetAlpha, fadeMs]) =>
+              window.__aiHellFade.fadeTo(targetAlpha, fadeMs),
+            [alpha, durationMs],
+          ),
+        wait: async (ms) => {
+          let remaining = ms;
+          while (remaining > 0) {
+            const step = Math.min(SCENE_WAIT_HEARTBEAT_MS, remaining);
+            await page.waitForTimeout(step);
+            remaining -= step;
+            elapsedMs += step;
+            reportProgress();
+          }
+        },
+        // Generated-level scenes poll the dev-gated run-progress handle so the
+        // window can extend/truncate to the live wave/ended state
+        // (AH-0MVE01EY0008QEVX AC4).
+        readProgress: () =>
+          page.evaluate(() => window.__aiHellRunProgress ?? null),
+        onScene: ({ index, scene }) => {
+          // Wall-clock start of each scene's play window, used to probe the
+          // fades at their *actual* recorded offsets (page round-trips add a
+          // little drift to the plan-derived times).
+          sceneEpochs[index - 1] = Date.now();
+          reporter.step(
+            `Scene ${index}/${sceneCount}: ${scene.target} `
+              + `(play ${formatDuration(scene.playMs)}, capture ${formatDuration(scene.captureMs)})`,
+          );
+        },
+      });
+    } catch (error) {
+      sequenceError = error;
+    }
+    // A reload corrupts the recording even when the sequence limps to the
+    // end (the fades silently stop landing), so it fails the clip either way.
+    if (sequenceError || navigations.length > 0) {
+      throw explainMidRunFailure(
+        sequenceError ?? new Error('the capture page navigated during the recording'),
+        navigations,
+        { sceneCount },
+      );
+    }
     // Reflect each generated-level scene's measured window into the payload
     // (captureMs, wavesCaptured, endedEarly) so `--json` reports what was
     // actually recorded (AH-0MVE01EY0008QEVX AC5).

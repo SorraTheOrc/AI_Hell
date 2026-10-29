@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import Phaser from 'phaser';
 
 import {
@@ -47,6 +49,10 @@ import {
 import { BACK_TO_INDEX_LABEL } from '../../utils/gymNavigation';
 import { MenuScene } from '../MenuScene';
 import { planMinionSpawns } from '../../waves/BossMinions';
+import {
+  playerPowerScore,
+  scaledEncounterHp,
+} from '../../core/difficultyScaling';
 
 /** Finds an on-screen text button by label. */
 function findButton(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -947,5 +953,145 @@ describe('GymBoss — restart/teardown parity (AH-0MUII3FYN0072QRT, gap 10)', ()
     expect(registry.activeEffects()).toHaveLength(0);
     expect(registry.magnetStacks()).toBe(0);
     expect(registry.isShielded).toBe(false);
+  });
+});
+
+// ── Scripted-video boss hit preview (AH-0MVRMFMJP0070KTS, TEST-FIRST) ──────
+
+/** The entity's remaining hits, from its public HP accessors. */
+function remainingHits(entity: {
+  getHpFraction(): number;
+  getTotalHp(): number;
+}): number {
+  return Math.round(entity.getHpFraction() * entity.getTotalHp());
+}
+
+/**
+ * Contract tests for `setup.bossHitsRemaining` reaching the spawned boss
+ * (parent AH-0MVPJ3NSK008V5VB, AC2 part (b); spawn path, not a re-implemented
+ * copy of it).
+ *
+ * **TEST-FIRST, now green.** These were authored red-before (Vitest's
+ * `it.fails`, the repo's convention — see `src/core/levelScaling.test.ts`)
+ * and **F3 (AH-0MVRMFPXF008BG77) flipped them back to `it`** when the gyms
+ * started passing `initialHp` from the setup. The absent-field test pins the
+ * full-HP spawn as unchanged behaviour.
+ */
+describe('GymBoss — scripted-video boss hit preview (AH-0MVRMFMJP0070KTS)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  /** Boots the gym with scene-start data (the capture `setup`). */
+  async function bootWith(data: object): Promise<GymBoss> {
+    booted = await bootScene([GymBoss]);
+    booted.game.scene.start('GymBoss', data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene('GymBoss') as GymBoss;
+  }
+
+  it('AC4 — spawns the boss with bossHitsRemaining as its initial hits', async () => {
+    const scene = await bootWith({ bossHitsRemaining: 12 });
+
+    expect(remainingHits(scene.formationBoss)).toBe(12);
+    // The hit preview configures the existing pool — it does not change it.
+    expect(scene.formationBoss.getTotalHp()).toBe(
+      BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE,
+    );
+  });
+
+  it('AC4 — an absent bossHitsRemaining keeps today\'s full-HP spawn', async () => {
+    const scene = await bootWith({});
+
+    expect(remainingHits(scene.formationBoss)).toBe(
+      BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE,
+    );
+  });
+
+  it('AC2 — pins the hit pool the parser bounds bossHitsRemaining with', async () => {
+    // Loaded by file URL (Vite ignores it) so the pure capture module — which
+    // lives outside `src/` — is imported as plain Node ESM.
+    const moduleUrl = pathToFileURL(
+      resolvePath(process.cwd(), 'scripts/capture-scenes.mjs'),
+    ).href;
+    const module = (await import(/* @vite-ignore */ moduleUrl)) as unknown as {
+      SCENE_SETUP_BOSS_TOTAL_HITS: Record<string, number>;
+    };
+    booted = await bootScene([GymBoss]);
+    const scene = booted.scene as GymBoss;
+
+    expect(module.SCENE_SETUP_BOSS_TOTAL_HITS.GymBoss).toBe(
+      scene.formationBoss.getTotalHp(),
+    );
+  });
+});
+
+// ── D1 parity: the boss hit pool scales with the player's upgrades ──────────
+// Matrix row `GymBoss` (docs/GYM_PARITY.md D1): PlayScene.spawnBoss passes
+// `scaledEncounterHp(BOSS_HIT_POINTS_PER_PHASE, getPlayerPowerScore())`, so an
+// upgraded ship faces a tougher boss. The gym must spawn the same pool through
+// the same shared pure helpers, and a `bossHitsRemaining` preview must keep its
+// explicit absolute pool unchanged.
+describe('GymBoss — D1 parity: boss hit pool scales with player upgrades', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function bootWith(data: object): Promise<GymBoss> {
+    booted = await bootScene([GymBoss]);
+    booted.game.scene.start('GymBoss', data);
+    await advanceGame(booted.game, 200);
+    return booted.game.scene.getScene('GymBoss') as GymBoss;
+  }
+
+  it('spawns the same scaled pool PlayScene.spawnBoss resolves', async () => {
+    const scene = await bootWith({
+      player: { weapons: ['spread'], weaponLevels: { spread: 4 } },
+      powerUps: { shield: 3 },
+    });
+    const player = scene.getPlayer()!;
+    const expected = scaledEncounterHp(
+      BOSS_HIT_POINTS_PER_PHASE,
+      playerPowerScore(player.getWeaponLevels(), player.getPowerUpLevels()),
+    );
+
+    expect(expected).toBeGreaterThan(BOSS_HIT_POINTS_PER_PHASE);
+    expect(scene.formationBoss.getHitPointsPerPhase()).toBe(expected);
+    expect(scene.formationBoss.getTotalHp()).toBe(BOSS_PHASE_COUNT * expected);
+  });
+
+  it('keeps the design pool for an unupgraded ship (no balance change)', async () => {
+    const scene = await bootWith({});
+
+    expect(scene.formationBoss.getHitPointsPerPhase()).toBe(
+      BOSS_HIT_POINTS_PER_PHASE,
+    );
+    expect(scene.formationBoss.getTotalHp()).toBe(
+      BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE,
+    );
+  });
+
+  it('keeps the bossHitsRemaining preview an explicit absolute pool', async () => {
+    const scene = await bootWith({
+      bossHitsRemaining: 12,
+      player: { weapons: ['spread'], weaponLevels: { spread: 4 } },
+      powerUps: { shield: 3 },
+    });
+
+    // The preview pins the remaining hits; it must not be re-scaled by the
+    // upgrade score (PlayScene's dev scenario does the same).
+    expect(scene.formationBoss.getTotalHp()).toBe(
+      BOSS_PHASE_COUNT * BOSS_HIT_POINTS_PER_PHASE,
+    );
+    expect(scene.formationBoss.getHitPointsPerPhase()).toBe(
+      BOSS_HIT_POINTS_PER_PHASE,
+    );
+    expect(remainingHits(scene.formationBoss)).toBe(12);
   });
 });

@@ -19,7 +19,10 @@
  * On-screen controls mirror `GymBoss`:
  *
  * - **DAMAGE** — applies one hit, advancing phases at the configured HP.
- * - **EXPLODE** — destroys the mini-boss (shared HUD button).
+ * - **EXPLODE** — defeats the mini-boss through the **same** shared death
+ *   sweep the game runs (`spawnMiniBossDeathSweep`, AH-0MVROEMUO007Z3RY): the
+ *   mini-boss's live minions are captured before the teardown, swept with the
+ *   staggered cascade, and the status line reports the sweep's completion.
  * - **SHOOT: ON/OFF** — toggles the mini-boss's volleys.
  * - **← INDEX** — returns to the gym index.
  */
@@ -40,6 +43,14 @@ import type { BossBullet } from '../../entities/Boss';
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import type { EnemyEntity } from '../../entities/enemyFactory';
 import type { FormationOffset } from '../../utils/formations';
+import type { SceneSetupState } from '../core/sceneSetup';
+import { loadEnemyConfig } from '../../core/enemyConfig';
+import {
+  collectSweepTargets,
+  spawnMiniBossDeathSweep,
+  type MiniBossDeathSweepHandle,
+  type MiniBossSweepTarget,
+} from '../core/miniBossDeathSweep';
 import {
   EnemyFormationConfig,
   GymFormationScene,
@@ -65,6 +76,13 @@ export const MINI_BOSS_GYM_LEVEL = 1;
  * real design).
  */
 export const MINI_BOSS_GYM_HP_PER_PHASE = 5;
+
+/**
+ * Fixed seed for the gym's death sweep (AH-0MVROEMUO007Z3RY). The game uses
+ * the run seed; the gym has no run, so a constant keeps every repetition of
+ * the EXPLODE display — and every parity assertion — identical.
+ */
+export const MINI_BOSS_GYM_SWEEP_SEED = 0x5eed_1b05;
 
 // Level-1 design constants, surfaced for the gym's tests and the index row.
 // They mirror the bespoke catalogue rather than a separate demo config, so a
@@ -129,6 +147,7 @@ const MINI_BOSS_CONFIG: EnemyFormationConfig<MiniBoss | EnemyEntity, BossBullet>
     x: number,
     y: number,
     formationOffset: FormationOffset,
+    setup?: SceneSetupState | null,
   ): MiniBoss =>
     // The same config helper the game uses, so the gym exercises the real
     // per-level design (phases, colour, minions, archetype name). The gym
@@ -141,6 +160,11 @@ const MINI_BOSS_CONFIG: EnemyFormationConfig<MiniBoss | EnemyEntity, BossBullet>
         y,
         formationOffset,
         hpPerPhase: MINI_BOSS_GYM_HP_PER_PHASE,
+        // Dev-gated capture preview (AH-0MVRMFPXF008BG77): the setup's
+        // `bossHitsRemaining` is the entity's existing `initialHp` seam, so a
+        // scripted scene starts the mini-boss close to death and its death
+        // lands on camera. Absent ⇒ the full pool, exactly as before.
+        initialHp: setup?.bossHitsRemaining,
       }),
     ),
   collectBullets: () => [],
@@ -152,6 +176,16 @@ export class GymMiniBoss extends GymFormationScene<
   BossBullet
 > {
   private damageButton!: Phaser.GameObjects.Text;
+
+  /**
+   * Live handle for the in-flight mini-boss death sweep, or null between
+   * defeats (AH-0MVROEMUO007Z3RY). The gym runs the *same* shared executor as
+   * `PlayScene`, so what a tester verifies here is what ships (AC5).
+   */
+  private defeatSweep: MiniBossDeathSweepHandle | null = null;
+
+  /** Targets captured for the current/last defeat sweep (test seam). */
+  private defeatSweepTargets: readonly MiniBossSweepTarget[] = [];
 
   constructor() {
     super(MINI_BOSS_CONFIG);
@@ -216,6 +250,94 @@ export class GymMiniBoss extends GymFormationScene<
     );
   }
 
+  // ── Defeat sweep (shared with PlayScene, AC5) ───────────────────
+
+  /**
+   * The gym's EXPLODE path (AH-0MVROEMUO007Z3RY).
+   *
+   * Replaces the generic "destroy one random entity" behaviour with the
+   * mini-boss **defeat sweep** the game runs, through the same shared
+   * `spawnMiniBossDeathSweep` helper: the mini-boss's live minions are
+   * captured *before* the teardown (the entity clears them on destruction),
+   * every captured target is removed cosmetically, and the staggered cascade
+   * plus the scattered/anchored celebration bursts play out. The gym has no
+   * reward overlay or wave accounting, so completion only reports itself on
+   * the status line — the same display the game shows, minus the reward.
+   */
+  override explodeRandom(): void {
+    const boss = this.formationMiniBoss;
+    if (!boss?.alive) return;
+
+    // Capture on this frame, before the entity is destroyed: the death
+    // position the anchored bursts cluster around and the live minions the
+    // entity tears down with its own body (AC1/AC5).
+    const deathX = boss.x;
+    const deathY = boss.y;
+    const minionTargets = boss
+      .getMinions()
+      .map((minion) => this._sweepTargetForEntity(minion.archetype, minion));
+
+    // The gym's wave-gating scope: any live formation enemy that is not the
+    // mini-boss itself (the mini-boss plays its own boss-scale death), plus
+    // the captured minions. Hazards are dropped by the shared splitter.
+    const sweptEscorts = this.entities.filter(
+      (entity): entity is EnemyEntity =>
+        entity !== boss &&
+        entity.alive &&
+        typeof (entity as { archetype?: unknown }).archetype === 'string',
+    );
+    const targets = collectSweepTargets(
+      sweptEscorts.map((entity) =>
+        this._sweepTargetForEntity(entity.archetype, entity),
+      ),
+      minionTargets,
+    );
+
+    // Cosmetic removal: the shared silent seam marks the entity dead, then its
+    // scene-level graphics are released. The burst visuals come from the sweep
+    // itself, and nothing here awards score, drops or a kill roll.
+    for (const entity of sweptEscorts) {
+      entity.destroySilently();
+      entity.destroy(true);
+    }
+    for (const minion of boss.getMinions()) {
+      minion.destroySilently();
+      minion.destroy(true);
+    }
+
+    // The mini-boss's own boss-scale death, then the shared sweep from the
+    // death point the entity occupied when the blow landed.
+    boss.destroySelf();
+    boss.destroy(true);
+
+    this.defeatSweepTargets = targets;
+    this.defeatSweep = spawnMiniBossDeathSweep(
+      this,
+      {
+        targets,
+        deathX,
+        deathY,
+        bounds: { x: 0, y: 0, width: GAME_WIDTH, height: GAME_HEIGHT },
+        seed: MINI_BOSS_GYM_SWEEP_SEED,
+      },
+      {
+        onComplete: () => {
+          this._refreshStatus('sweep complete');
+        },
+      },
+    );
+    this._refreshStatus(`exploded — ${targets.length} swept`);
+  }
+
+  /** Captures one sweep target from a live entity (archetype size/colour). */
+  private _sweepTargetForEntity(
+    key: string,
+    entity: EnemyEntity,
+  ): MiniBossSweepTarget {
+    const cfg = loadEnemyConfig(key);
+    return { key, x: entity.x, y: entity.y, size: cfg.size, color: cfg.color };
+  }
+
   /** Updates the status line with the live phase/pattern/minion state. */
   private _refreshStatus(prefix?: string): void {
     const boss = this.formationMiniBoss;
@@ -242,6 +364,20 @@ export class GymMiniBoss extends GymFormationScene<
   /** The DAMAGE button (test seam for pointer activation). */
   get damageLabel(): Phaser.GameObjects.Text {
     return this.damageButton;
+  }
+
+  /**
+   * Test/inspection seam: whether the defeat sweep is still animating. The
+   * gym mirrors `PlayScene.isMiniBossSweepActive()` so the same parity check
+   * holds in both scenes (AH-0MVROEMUO007Z3RY).
+   */
+  isMiniBossSweepActive(): boolean {
+    return this.defeatSweep !== null && !this.defeatSweep.complete;
+  }
+
+  /** Test/inspection seam: the targets captured for the defeat sweep. */
+  getMiniBossSweepTargets(): readonly MiniBossSweepTarget[] {
+    return [...this.defeatSweepTargets];
   }
 
   /** Entities in the shared collision pass (boss body + summoned minions). */

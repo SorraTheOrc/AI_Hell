@@ -24,6 +24,7 @@
 import Phaser from 'phaser';
 
 import { GAME_HEIGHT, GAME_WIDTH, PLAYER_SPAWN } from '../../../core/constants';
+import { loadEnemyConfig } from '../../../core/configStore';
 import type { FormationOffset } from '../../../utils/formations';
 import { CentipedeChain } from '../../core/centipedeChain';
 import { Centipede } from '../../../entities/Centipede';
@@ -89,6 +90,12 @@ export function createCentipedeSegment(
     formationOffset: offset,
     chain,
     segmentId: offset.col,
+    // The classic Centipede exclusion is data-driven (`centipede` is seeded
+    // with `wrapAware: false`). The game threads that flag through
+    // `createEnemyFromConfig`; the gym builds its segments directly, so it
+    // must resolve the same flag here or the gym would wrap while the game
+    // stays bounded (AH-0MVKXBWDY008R0YH, gym↔game parity).
+    wrapAware: loadEnemyConfig('centipede').wrapAware,
   });
 }
 

@@ -21,6 +21,16 @@ export const SCENE_FADE_DARK_LUMA: number;
 /** Minimum mean-luma difference between a scene frame and its darkest
  * frame inside the adjacent fade window. */
 export const SCENE_FADE_CONTRAST_LUMA: number;
+/**
+ * Absolute luma a fade frame must fall below for the fade to count as
+ * measurably dark (AH-0MVTNTIPI002X5G6).
+ */
+export const SCENE_FADE_MIN_ABSOLUTE_LUMA: number;
+/**
+ * Fraction of the scene's own brightness a fade frame must fall below
+ * (relative contrast for neon-on-black footage, AH-0MVTNTIPI002X5G6).
+ */
+export const SCENE_FADE_RELATIVE_FRACTION: number;
 
 /** Probe points sampled across one fade window. */
 export const SCENE_FADE_PROBE_POINTS: number;
@@ -83,12 +93,22 @@ export const SCENE_CONFIG_ERROR_CODES: Readonly<{
   setupNotSupported: 'setup-not-supported';
   /** A `setup.seed` is not a 32-bit unsigned integer. */
   invalidSeed: 'invalid-seed';
+  /** A `setup.player.heading` is not a finite number of degrees. */
+  invalidPlayerHeading: 'invalid-player-heading';
+  /** A `setup.player.weaponLevels[id]` is out of the documented range. */
+  invalidWeaponLevel: 'invalid-weapon-level';
+  /** A `setup.mineralReward` is not a known hold-full reward id. */
+  unknownMineralReward: 'unknown-mineral-reward';
+  /** A `setup.bossHitsRemaining` is not a positive integer in the hit pool. */
+  invalidBossHits: 'invalid-boss-hits';
   /** A generated-level entry's `level` is not an integer in range. */
   invalidSceneLevel: 'invalid-scene-level';
   /** A generated-level entry's `minWaves`/`maxCaptureMs` is invalid. */
   invalidSceneField: 'invalid-scene-field';
   /** A generated-level-only field is supplied on a gym target. */
   unsupportedSceneField: 'unsupported-scene-field';
+  /** A scenario count is not an integer within its documented bounds. */
+  invalidScenarioCount: 'invalid-scenario-count';
 }>;
 
 /** Stable machine-readable error code, as in {@link SCENE_CONFIG_ERROR_CODES}. */
@@ -140,6 +160,19 @@ export interface SceneSetupPlayer {
   weapons: string[];
   /** Timed weapon ids (defaults to `[]`). */
   timedWeapons: string[];
+  /**
+   * Per-weapon permanent levels: `id` → a level `1`–`SCENE_SETUP_WEAPON_LEVEL_MAX`
+   * (defaults to `{}`). A level is applied as that many permanent grants, so
+   * it stacks on the level-1 grant `weapons` provides.
+   */
+  weaponLevels: Record<string, number>;
+  /**
+   * Stationary facing in degrees (`0` = right/east, positive clockwise,
+   * `-90` = up), normalised into `(-180, 180]`. Absent keeps the ship's
+   * default (right) — a captured scene takes no input, so this is how a setup
+   * aims the ship up the screen (AH-0MVTJW9JW002PHJG).
+   */
+  heading?: number;
 }
 
 /**
@@ -155,6 +188,39 @@ export interface SceneSetup {
   player?: SceneSetupPlayer;
   /** Power-up id → positive level. */
   powerUps?: Record<string, number>;
+  /**
+   * Hold-full reward id the level gyms resolve to when their mineral hold
+   * fills (`GymLevel`/`GymBotTuning` only).
+   */
+  mineralReward?: string;
+  /**
+   * Hits the spawned boss entity has left when the scene starts
+   * (`GymBoss`/`GymMiniBoss` only): a positive integer within the target's
+   * total hit pool (`SCENE_SETUP_BOSS_TOTAL_HITS`). Reaches the entity through
+   * its existing `initialHp` seam; the pool itself is unchanged.
+   */
+  bossHitsRemaining?: number;
+  /**
+   * Initial state of a formation/combat gym's SHOOT toggle
+   * (`GymBoss`, `GymCentipede`, `GymFodderEnemies`, `GymMinerals`,
+   * `GymMiniBoss`, `GymPowerUpsCombat`). Absent ⇒ the scene's historical
+   * default (OFF for the formation family, ON for `GymPowerUpsCombat`).
+   */
+  shootEnabled?: boolean;
+  /** Whether `GymPlayer` spawns its deterministic obstacle course. */
+  obstacles?: boolean;
+  /** Whether `GymWeapons` spawns its inert AOE practice targets. */
+  practiceTargets?: boolean;
+  /**
+   * Size of `GymPowerUpsCombat`'s scout threat wave, bounded by
+   * `SCENE_SETUP_SCENARIO_COUNT_BOUNDS.threatCount` (1–12).
+   */
+  threatCount?: number;
+  /**
+   * Size of `GymPowerUpsUtility`'s seeded mineral field, bounded by
+   * `SCENE_SETUP_SCENARIO_COUNT_BOUNDS.minerals` (0–200).
+   */
+  minerals?: number;
   /** 32-bit unsigned determinism seed (defaults to 0). */
   seed?: number;
 }
@@ -171,6 +237,17 @@ export interface SceneSpec {
   label: string | null;
   /** Normalised setup, present only when the config supplied one. */
   setup?: SceneSetup;
+  /**
+   * Dev-gated campaign position the beat begins at (AH-0MVTPP7SX000JTWJ):
+   * a `PlayScene` beat is seconds long, so it starts at a mid-level wave
+   * rather than replaying the level from wave 1 (1-based, clamped).
+   */
+  startWave?: number;
+  /**
+   * Dev-gated flag to begin the beat at the level's final boss encounter
+   * (AH-0MVTPP7SX000JTWJ), so the boss fight and its death land in-window.
+   */
+  startBoss?: boolean;
   /** Generated-level determinism seed (present only for `PlayScene`). */
   seed?: number;
   /** Generated-level campaign level (present only for `PlayScene`). */
@@ -207,9 +284,21 @@ export const DEFAULT_SCENE_SETUP_START_WAVE: number;
 export const DEFAULT_SCENE_SETUP_PLAYER_WEAPONS: readonly string[];
 /** Default timed weapons (`[]`). */
 export const DEFAULT_SCENE_SETUP_TIMED_WEAPONS: readonly string[];
+/** Default per-weapon level grants (`{}`). */
+export const DEFAULT_SCENE_SETUP_WEAPON_LEVELS: Readonly<Record<string, never>>;
+/** Highest permanent weapon level a setup may grant per weapon. */
+export const SCENE_SETUP_WEAPON_LEVEL_MAX: number;
+/** Hold-full reward ids a `setup.mineralReward` may force. */
+export const SCENE_SETUP_MINERAL_REWARD_IDS: readonly string[];
+/** Total hit pool of each boss-capable gym (bounds `setup.bossHitsRemaining`). */
+export const SCENE_SETUP_BOSS_TOTAL_HITS: Readonly<Record<string, number>>;
+/** Inclusive bounds for the per-gym scenario counts (`threatCount`, `minerals`). */
+export const SCENE_SETUP_SCENARIO_COUNT_BOUNDS: Readonly<
+  Record<'threatCount' | 'minerals', Readonly<{ min: number; max: number }>>
+>;
 /** Fields every setup-capable scene can consume. */
 export const SCENE_SETUP_COMMON_FIELDS: readonly string[];
-/** Per-target extra fields (`GymLevel`/`GymBotTuning`/`GymFodderEnemies`). */
+/** Per-target extra fields (`GymLevel`/`GymBotTuning`/`GymFodderEnemies`/boss gyms). */
 export const SCENE_SETUP_TARGET_EXTRA_FIELDS: Readonly<Record<string, readonly string[]>>;
 /** Watchable gyms that cannot consume a setup at all. */
 export const SCENE_SETUP_INCAPABLE_TARGETS: readonly string[];
@@ -267,6 +356,10 @@ export interface ScenePlanEntry {
   wavesCaptured?: number;
   /** True when the run ended before the window was satisfied. */
   endedEarly?: boolean;
+  /** Dev-gated wave the beat begins at (AH-0MVTPP7SX000JTWJ). */
+  startWave?: number;
+  /** Dev-gated flag to begin at the level's final boss encounter. */
+  startBoss?: boolean;
 }
 
 /** The `--json` payload shape for a multi-scene capture. */

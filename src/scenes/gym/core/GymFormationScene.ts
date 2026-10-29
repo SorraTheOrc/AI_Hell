@@ -56,8 +56,13 @@ import {
   pushSeekTargets,
 } from '../../../scenes/core/enemyTargeting';
 import {
-  FormationGlide,
-} from '../../../scenes/core/formationGlide';
+  applyPostMotionWrapAll,
+  PLAYFIELD_WORLD,
+} from '../../../scenes/core/enemyWrap';
+import {
+  FormationReanchorController,
+  type FormationReanchorCandidate,
+} from '../../../scenes/core/formationReanchor';
 import {
   applyPhaseGhost,
   drawForceFieldBubble,
@@ -77,7 +82,6 @@ import {
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../../utils/gymNavigation';
 import {
   computeFormationPosition,
-  computeFormationReanchorDelta,
   FormationOffset,
   type FormationReanchorRequest,
 } from '../../../utils/formations';
@@ -103,6 +107,12 @@ import {
   type MarchOptions,
   type MarchState,
 } from '../../../scenes/core/marchFormation';
+import {
+  resolveSpawnTransitTarget,
+  type SpawnTransitEntity,
+  type SpawnTransitInput,
+  type SpawnTransitPoint,
+} from '../../core/spawnTransit';
 import { drawPowerUpDrop, drawWeaponDrop } from '../../../powerups/icons';
 import { PowerUp } from '../../../powerups/PowerUp';
 import { EffectsRegistry } from '../../../powerups/effects';
@@ -160,8 +170,8 @@ import {
   getSpawnState,
   placeWavePortal,
   startSpawnAnimation,
-  updateEnemyShimmer,
   updateSpawnAnimation,
+  updateSpawnEmergence,
   type SpawnAnimatable,
 } from '../../../vfx/wormholeSpawn';
 
@@ -198,6 +208,15 @@ export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
     spacingX: number,
     spacingY: number,
   ): void;
+  /**
+   * Optional: the resolved seam-awareness flag (parent AH-0MV9G3DZ9003P7P8,
+   * AH-0MVKXBWDY008R0YH). Every `BaseEnemy` exposes it, and a `true` value
+   * makes the shared post-motion wrap carry the entity across the playfield
+   * edge each frame. Entities that omit it — the Boss (out of scope for
+   * seam-awareness) and test stubs — are never wrapped, and the classic
+   * arcade exclusions (`march`, `centipede`) carry `false`.
+   */
+  readonly wrapAware?: boolean;
   /**
    * Optional: advances a non-formation (roaming) enemy's own motion for
    * this frame (e.g. Asteroid straight-line drift + four-edge wrap +
@@ -422,6 +441,15 @@ export interface EnemyFormationConfig<
     x: number,
     y: number,
     offset: FormationOffset,
+    /**
+     * The scene's capture setup, when one was supplied
+     * (AH-0MVNW8VNN004FFK1). Passed so a gym can configure **spawn-time**
+     * entity state through this one seam — e.g. the boss gyms' hit preview
+     * (`setup.bossHitsRemaining` → the entity's existing `initialHp`
+     * constructor option, AH-0MVRMFPXF008BG77) — instead of adding a second
+     * spawn path that could drift from it.
+     */
+    setup?: SceneSetupState | null,
   ): TEntity;
   /** Collects any bullets the entity fires this frame (empty if none). */
   collectBullets(entity: TEntity, now: number): TBullet[];
@@ -558,19 +586,13 @@ export class GymFormationScene<
   /** Whether the thorns aura was drawn in the last visual update. */
   private thornsAuraDrawn = false;
 
-  // ── Formation glide (AH-0MUL15N63003PUDB)
-
-  /** Glide manager: eases enemies from their old positions to the re-anchored slots. */
-  private glide = new FormationGlide();
+  // ── Formation glide (AH-0MUL15N63003PUDB, D2)
 
   /**
-   * Diver-group re-anchor offset (px). Only entities that expose the
-   * `consumeFormationReanchor` seam (Divers) have this offset added to their
-   * origin, so a Diver's attack re-anchors the Diver group alone and every
-   * other enemy stays where it is (producer review, AH-0MUL15N63003PUDB).
+   * Shared Diver re-anchor + glide controller: the anchor offset and the glide
+   * are the same rule `PlayScene` and `GymLevel` run (D2, docs/GYM_PARITY.md).
    */
-  private diverAnchorX = 0;
-  private diverAnchorY = 0;
+  private readonly reanchor = new FormationReanchorController();
 
   // ── Mineral layer (GDD §4.5, AH-0MUBVGI62004ED9Q) ───────────────
 
@@ -621,8 +643,7 @@ export class GymFormationScene<
     );
     // A fresh base (initial create or respawn) starts with no Diver re-anchor
     // offset, so the Diver group is back on the shared formation base.
-    this.diverAnchorX = 0;
-    this.diverAnchorY = 0;
+    this.reanchor.reset();
 
     // A marching block (Space Invaders archetype) starts fresh at the
     // resolved base heading right; non-march formations leave the state null
@@ -683,14 +704,14 @@ export class GymFormationScene<
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();    const { config } = this;
 
-    // ── Spawn the formation ─────────────────────────────────────────
-    const offsets = config.buildOffsets(config.count);
-    // Wormhole opens at the formation origin; every entity grows from
-    // 1 px to its full size while protected (AC1–AC4, gym parity).
-    this._spawnFormation(offsets);
-    playSpawnSound();
-
     // ── Player ship (optional per-scene opt-in) ────────────────────
+    // The ship and its capture setup are created **before** the formation so
+    // an encounter built at spawn time can resolve the player's permanent
+    // upgrades (D1: `GymBoss`'s hit pool, `docs/GYM_PARITY.md`). The order is
+    // observationally irrelevant to every other gym — player construction and
+    // `applySceneSetup` consume no scene RNG and the formation portal is
+    // anchored independently of the ship — but it makes the setup state live
+    // for `config.createEntity`.
     if (config.player) {
       this.playerSpawnX = config.player.x;
       this.playerSpawnY = config.player.y;
@@ -712,6 +733,13 @@ export class GymFormationScene<
     if (this.pendingSetup) {
       applySceneSetup({ getPlayer: () => this.player }, this.pendingSetup);
     }
+
+    // ── Spawn the formation ─────────────────────────────────────────
+    const offsets = config.buildOffsets(config.count);
+    // Wormhole opens at the formation origin; every entity grows from
+    // 1 px to its full size while protected (AC1–AC4, gym parity).
+    this._spawnFormation(offsets);
+    playSpawnSound();
 
     // ── Shared Shield/Phase Shift player visuals (parity with PlayScene/gym combat) ──
     // Drawn through the shared CombatEffectVisuals helper so the enemy gym
@@ -742,6 +770,20 @@ export class GymFormationScene<
 
     this.explodeButton.on('pointerdown', () => this.explodeRandom());
     this.shootButton.on('pointerdown', () => this.toggleShooting());
+
+    // Scenario parameter (AH-0MVRMI0Q7001KG4Y): a capture setup may start the
+    // formation with firing already on. Applied after the formation spawned so
+    // every entity inherits the state, and after the HUD exists so the label
+    // matches. Absent ⇒ the historical OFF start (no behaviour change).
+    if (typeof this.pendingSetup?.shootEnabled === 'boolean') {
+      this.shootEnabled = this.pendingSetup.shootEnabled;
+      for (const entity of this.entities) {
+        entity.shootEnabled = this.shootEnabled;
+      }
+      this.shootButton.setText(
+        this.shootEnabled ? 'SHOOT: ON' : 'SHOOT: OFF',
+      );
+    }
 
     this.statusText = this.add.text(
       GAME_WIDTH - 10,
@@ -876,7 +918,7 @@ export class GymFormationScene<
     this.thornsAuraDrawn = false;
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
-    this.glide.clear();
+    this.reanchor.reset();
   }
 
   // ── Button helpers ───────────────────────────────────────────────
@@ -1156,6 +1198,16 @@ export class GymFormationScene<
     return this.shootEnabled;
   }
 
+  /**
+   * The live firing flag of every spawned entity, in formation order
+   * (AH-0MVRMI0Q7001KG4Y). Diagnostic seam: a capture setup's `shootEnabled`
+   * scenario parameter must reach the entities, not just the HUD button, so
+   * this exposes what the scene actually applied.
+   */
+  getEntityShootingStates(): boolean[] {
+    return this.entities.map((entity) => entity.shootEnabled);
+  }
+
   // `isRespawnCountdownActive` / `getRespawnCountdownRemaining` /
   // `getRespawnCountdownText` are inherited from the shared `CombatScene`
   // core (AH-0MUNR5LM1004B223).
@@ -1181,12 +1233,12 @@ export class GymFormationScene<
    * sit on {@link formationX}/{@link formationY} alone.
    */
   get diverFormationX(): number {
-    return this.formationBaseX + this.diverAnchorX;
+    return this.formationBaseX + this.reanchor.anchorX;
   }
 
   /** Current origin y for the re-anchor-capable (Diver) group. */
   get diverFormationY(): number {
-    return this.formationBaseY + this.diverAnchorY;
+    return this.formationBaseY + this.reanchor.anchorY;
   }
 
   /** The player ship (null when the config omitted `player`). */
@@ -1398,6 +1450,11 @@ export class GymFormationScene<
       // Offer level-ups for power-ups the player already owns (parent
       // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      // Temporary (field-pickup) stacks hold a slot too, so the gate in the
+      // shared builder sees the identical state as the game (gym↔game parity,
+      // parent AH-0MVLIJT3M005HPHF producer Q4a/Q6a).
+      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
     this.mineralChoiceOpen = true;
     // Fade the gym player's engine hum out across the pause; it ramps back
@@ -1610,8 +1667,8 @@ export class GymFormationScene<
       // stays where it is when a Diver re-anchors (AC5).
       const isDiver = entity.consumeFormationReanchor != null;
       entity.applyFormationPosition(
-        this.formationBaseX + (isDiver ? this.diverAnchorX : 0),
-        this.formationBaseY + (isDiver ? this.diverAnchorY : 0),
+        this.formationBaseX + (isDiver ? this.reanchor.anchorX : 0),
+        this.formationBaseY + (isDiver ? this.reanchor.anchorY : 0),
         dt,
         config.spacingX,
         config.spacingY,
@@ -1623,12 +1680,15 @@ export class GymFormationScene<
 
     // If a re-anchor fired (now or on an earlier frame), ease every entity
     // from its old position to the live (drifting) slot over a short glide
-    // (AH-0MUL15N63003PUDB). Applied once after the positioning pass so each
-    // entity's live target is read after `applyFormationPosition` set it for
-    // this frame. A no-op when no glide is active.
-    if (reanchorApplied || this.glide.active) {
-      this.glide.update(dt);
-    }
+    // (AH-0MUL15N63003PUDB). The shared controller owns the rule (D2).
+    this.reanchor.afterPositioning(dt, reanchorApplied);
+
+    // Shared post-motion edge wrap (AH-0MVKXBWDY008R0YH, parent
+    // AH-0MV9G3DZ9003P7P8 AC3): the same seam `PlayScene._moveEnemies` runs,
+    // applied once after the positioning pass so the game and every gym wrap
+    // on the same period. Position only — velocity/heading are preserved —
+    // and non-aware archetypes (`march`, `centipede`) are untouched.
+    applyPostMotionWrapAll(this.entities, PLAYFIELD_WORLD);
 
     // Advance the wormhole spawn animation (AC1–AC4): grown enemies are
     // marked spawned and the wormhole closes once every entity has finished.
@@ -1704,12 +1764,13 @@ export class GymFormationScene<
     for (const entity of this.getEnemyEntities()) {
       const spawnState = entity as unknown as { isSpawning?: boolean; setSpawning?(v: boolean): void };
       if (!spawnState.isSpawning) continue;
-      const stillGrowing = updateSpawnAnimation(entity as unknown as SpawnAnimatable, dt);
-      // Per-entity emergence shimmer (AH-0MVD2N333004VDA9) rides the same
-      // shared spawn path, immediately after the growth write so its scale
-      // pulse layers on the growth scale instead of fighting it
-      // (AH-0MVD2N9MM0007NGZ wiring).
-      updateEnemyShimmer(entity as unknown as SpawnAnimatable, dt);
+      // One shared emergence step (AH-0MVNTY0700053T9E): growth writes the
+      // absolute scale, then the shimmer layers its pulse on top — the same
+      // call the game and every other gym run.
+      const stillGrowing = updateSpawnEmergence(
+        entity as unknown as SpawnAnimatable,
+        dt,
+      );
       if (stillGrowing) {
         anySpawning = true;
       } else {
@@ -1767,6 +1828,20 @@ export class GymFormationScene<
       playfield: { width: GAME_WIDTH, height: GAME_HEIGHT },
     });
     for (const offset of offsets) {
+      const slot = computeFormationPosition(
+        portal.x,
+        portal.y,
+        offset,
+        this.config.spacingX,
+        this.config.spacingY,
+      );
+      const entity = this.config.createEntity(
+        this,
+        portal.x,
+        portal.y,
+        offset,
+        this.pendingSetup,
+      );
       // Wormhole-entry transit (AH-0MV8BSMXC0097KLW): spawning-capable
       // entities emerge at the portal (where the wormhole opens) and traverse
       // to their slot over the spawn window — parity with `PlayScene.spawnWave`
@@ -1775,28 +1850,25 @@ export class GymFormationScene<
       // emerge at the portal and their own motion carries them out, avoiding a
       // position pop when the spawn window ends. Entities without the spawning
       // seams (e.g. test stubs) are created straight on their slot.
-      const slot = computeFormationPosition(
-        portal.x,
-        portal.y,
-        offset,
-        this.config.spacingX,
-        this.config.spacingY,
-      );
-      const entity = this.config.createEntity(this, portal.x, portal.y, offset);
-      const canTransit =
-        !(entity as { autonomousPositioning?: boolean })
-          .autonomousPositioning &&
+      //
+      // The destination rule is the shared seam (AH-0MVRMHQC9003VDNN): the
+      // formation base is scene structure, `resolveSpawnTransitTarget` owns
+      // "autonomous exemption → orbital live slot → grid offset". See
+      // `src/scenes/core/spawnTransit.ts` for the rationale.
+      const animatable =
         typeof (entity as { setSpawning?: unknown }).setSpawning === 'function';
-      if (!canTransit) entity.setPosition(slot.x, slot.y);
-      // Orbital entities (the Phaser) expose a live formation-slot seam: the
-      // wormhole transit targets their orbital slot instead of the grid line,
-      // so they never appear in a line then snap onto the ring
-      // (AH-0MVEXVME1004SIIS, Q2=A). Every other enemy keeps the grid slot.
-      const orbitalSlot = (
-        entity as {
-          formationSlot?: (baseX: number, baseY: number) => { x: number; y: number };
-        }
-      ).formationSlot;
+      const transitInput = (base: SpawnTransitPoint): SpawnTransitInput => ({
+        entity: entity as unknown as SpawnTransitEntity,
+        transit: animatable,
+        base,
+        offset,
+        spacingX: this.config.spacingX,
+        spacingY: this.config.spacingY,
+      });
+      const transitTarget = resolveSpawnTransitTarget(
+        transitInput({ x: this.formationBaseX, y: this.formationBaseY }),
+      );
+      if (!transitTarget) entity.setPosition(slot.x, slot.y);
       // Containers are not auto-added to the display list — without this
       // the enemies would never render (project convention, see Gym.ts).
       this.add.existing(entity);
@@ -1805,29 +1877,21 @@ export class GymFormationScene<
       // advance, so shrinking them here would strand them at 1 px forever.
       // The game spawns them fully formed (`PlayScene.spawnBoss`), so this is
       // also the parity behaviour (AH-0MV8BSMXC0097KLW).
-      const animatable =
-        typeof (entity as { setSpawning?: unknown }).setSpawning === 'function';
       if (animatable) {
         startSpawnAnimation(
           entity as unknown as SpawnAnimatable,
           entity.scaleX,
           WORMHOLE_OPEN_DURATION,
-          canTransit
-            ? () => {
+          transitTarget
+            ? () =>
                 // Track the live slot so base drift/march during the transit
                 // is followed and the entity lands exactly on its live slot.
-                if (typeof orbitalSlot === 'function') {
-                  return orbitalSlot.call(
-                    entity,
-                    this.formationBaseX,
-                    this.formationBaseY,
-                  );
-                }
-                return {
-                  x: this.formationBaseX + offset.col * this.config.spacingX,
-                  y: this.formationBaseY + offset.row * this.config.spacingY,
-                };
-              }
+                resolveSpawnTransitTarget(
+                  transitInput({
+                    x: this.formationBaseX,
+                    y: this.formationBaseY,
+                  }),
+                ) ?? transitTarget
             : undefined,
         );
       }
@@ -1842,44 +1906,27 @@ export class GymFormationScene<
   }
 
   /**
-   * Consumes any pending entity re-anchor requests (GDD §4.1 — E2, Diver)
-   * and re-bases `formationBaseX`/`formationBaseY` so the requesting entity's
-   * slot lands on its attack-end position. Every other entity shifts by the
-   * same delta, preserving the grid's relative offsets. The most recent
-   * request wins when Divers are desynchronised (documented assumption).
+   * Consumes any pending entity re-anchor requests (GDD §4.1 — E2, Diver) and
+   * re-bases the Diver-group anchor so the requesting entity's slot lands on
+   * its attack-end position. The rule is the shared
+   * `FormationReanchorController` (D2, docs/GYM_PARITY.md), so this scene, the
+   * game and `GymLevel` cannot drift. Every other enemy stays where it is
+   * (producer review, AH-0MUL15N63003PUDB).
    *
    * @returns `true` if a re-anchor was applied (and the glide was begun),
    *   `false` otherwise.
    */
   private _applyFormationReanchor(): boolean {
-    let latest: FormationReanchorRequest | null = null;
-    for (const entity of this.entities) {
-      const request = entity.consumeFormationReanchor?.();
-      if (request) latest = request;
-    }
-    if (!latest) return false;
-
-    // Re-anchor the Diver group only: the delta moves the Diver origin so the
-    // requester's slot lands on the attack end. Every other enemy is left
-    // exactly where it is (producer review, AH-0MUL15N63003PUDB) — the shared
-    // formation base is untouched.
-    const { dx, dy } = computeFormationReanchorDelta(
-      latest,
-      this.formationBaseX + this.diverAnchorX,
-      this.formationBaseY + this.diverAnchorY,
-      this.config.spacingX,
-      this.config.spacingY,
-    );
-    this.diverAnchorX += dx;
-    this.diverAnchorY += dy;
-
-    // Only the re-anchor-capable (Diver) entities glide to their new slots;
-    // non-Divers did not move this frame, so they are not tracked.
-    const glideTargets = this.entities.filter(
-      (entity) => entity.consumeFormationReanchor != null,
-    );
-    this.glide.begin(glideTargets);
-    return true;
+    const candidates = this.entities
+      .filter((entity) => entity.consumeFormationReanchor != null)
+      .map((entity) => ({
+        entity: entity as unknown as FormationReanchorCandidate['entity'],
+        originX: this.formationBaseX,
+        originY: this.formationBaseY,
+        spacingX: this.config.spacingX,
+        spacingY: this.config.spacingY,
+      }));
+    return this.reanchor.apply(candidates);
   }
 
   /**
@@ -2069,7 +2116,7 @@ export class GymFormationScene<
     this.bullets.length = 0;
 
     // Drop the glide for dead entities; survivors keep their live positions.
-    this.glide.clear();
+    this.reanchor.clearGlide();
 
     // Keep live survivors in place; tear down only the dead entities.
     for (const entity of this.entities) {
@@ -2116,7 +2163,7 @@ export class GymFormationScene<
 
     // Drop any in-flight glide: its tracked entities are about to be
     // destroyed and recreated at the initial geometry (AH-0MUL15N63003PUDB).
-    this.glide.clear();
+    this.reanchor.clearGlide();
 
     // Tear down the old (dead) entities and recreate the formation at its
     // initial geometry, matching the initial create() path.

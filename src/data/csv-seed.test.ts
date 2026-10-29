@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { parseCsvRows, parseDifficultyCurves } from '../core/csv';
+import { applyCsvEdit } from '../utils/csvEdit';
 import { DEFAULT_ENEMY_CONFIGS, DEFAULT_ENEMY_KEYS } from '../core/enemyConfig';
 import { DEFAULT_CONFIG } from '../core/config';
 import { defaultDifficultyCurves } from '../core/configStore';
@@ -254,6 +255,92 @@ describe('enemy-configs.csv force-field data (AH-0MVM8GQKI006B50M, test-first)',
           `${row.key}.${column} seeded`).toBe(true);
       }
       expect(coerced, row.key).toEqual(defaults);
+    }
+  });
+});
+
+/**
+ * Wrap-awareness data contract for the committed enemy-config CSV
+ * (AH-0MVKXBPJI002UCC1, parent epic AH-0MV9G3DZ9003P7P8 AC1 + AC5).
+ *
+ * **TEST-FIRST.** Wrapped in Vitest's `it.fails` (the repo's
+ * red-before/green-after convention) so this block stays green until the
+ * implementation item (AH-0MVKXBQVT000B2WL) adds the column; that item flips
+ * every `it.fails` back to `it`. A leftover `it.fails` here fails the suite.
+ *
+ * The CSV is the runtime source of truth, so every shipped row carries the
+ * value explicitly: the codec's absent-cell default (`true`, wrap-aware) is
+ * the backwards-compatibility path, not the shipped data. `march` is the only
+ * CSV-backed exclusion — the Centipede is a linked chain with no CSV row, so
+ * its exclusion lives in the seed-default exclusion list instead.
+ */
+describe('enemy-configs.csv wrapAware data (AH-0MVKXBPJI002UCC1, test-first)', () => {
+  /** Read just the `wrapAware` flag off a coerced config. */
+  function wrapAwareOf(config: unknown): boolean {
+    return (config as Record<string, unknown>).wrapAware as boolean;
+  }
+
+  it('documents the wrapAware column in the header comment', () => {
+    const csv = readCsvFile('enemy-configs.csv');
+    expect(csv).toContain('wrapAware');
+  });
+
+  it('every shipped row carries an explicit boolean wrapAware value', () => {
+    const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
+    for (const row of rows) {
+      expect(row.wrapAware, `${row.key}.wrapAware present`).toBeDefined();
+      expect(['true', 'false'], row.key).toContain(row.wrapAware?.trim());
+    }
+  });
+
+  it('seeds only the march archetype as non-aware', () => {
+    const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
+    for (const row of rows) {
+      const expected = row.key === 'march' ? 'false' : 'true';
+      expect(row.wrapAware?.trim(), row.key).toBe(expected);
+    }
+    // The exclusion is present, not merely implied by the default.
+    expect(rows.some((row) => row.key === 'march')).toBe(true);
+  });
+
+  it('coerces every shipped row to its seed default', async () => {
+    const rows = parseCsvRows(readCsvFile('enemy-configs.csv'));
+    const m = await import('../core/csv');
+    for (const row of rows) {
+      const seed = DEFAULT_ENEMY_CONFIGS[row.key];
+      expect(seed, row.key).toBeDefined();
+      expect(wrapAwareOf(m.coerceEnemyConfig(row, DEFAULT_ENEMY_CONFIGS)), row.key)
+        .toBe(wrapAwareOf(seed));
+    }
+    const march = rows.find((row) => row.key === 'march');
+    expect(march, 'march row').toBeDefined();
+    expect(
+      wrapAwareOf(m.coerceEnemyConfig(march as Record<string, string>, DEFAULT_ENEMY_CONFIGS)),
+    ).toBe(false);
+  });
+
+  it('is editable through the generic CSV editor without per-field admin', () => {
+    const csv = readCsvFile('enemy-configs.csv');
+    const outcome = applyCsvEdit(csv, {
+      rowKey: 'march',
+      field: 'wrapAware',
+      value: 'true',
+    });
+    expect(outcome.previousValue).toBe('false');
+    expect(outcome.changed).toBe(true);
+
+    // The edit touched exactly the march wrapAware cell: the comment/header
+    // block and every other row are byte-identical, and only march flips.
+    const headerEnd = csv.indexOf('key,');
+    expect(outcome.csv.slice(0, headerEnd)).toBe(csv.slice(0, headerEnd));
+    expect(outcome.csv.split('\n').length).toBe(csv.split('\n').length);
+    const before = parseCsvRows(csv);
+    const after = parseCsvRows(outcome.csv);
+    expect(after.length).toBe(before.length);
+    for (let i = 0; i < before.length; i += 1) {
+      const expected = { ...before[i] };
+      if (expected.key === 'march') expected.wrapAware = 'true';
+      expect(after[i], expected.key).toEqual(expected);
     }
   });
 });

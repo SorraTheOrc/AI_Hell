@@ -14,6 +14,8 @@ import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { BOSS_ENEMY_ID } from './competent/content';
+
 const DOC_PATH = path.resolve(process.cwd(), 'docs/BOT_FRAMEWORK.md');
 const WORK_ITEM_ID = 'AH-0MUY08X98002TRHT';
 
@@ -52,6 +54,15 @@ describe('content-adaptive configuration is documented (AH-0MUY08X98002TRHT)', (
     ]) {
       expect(doc).toContain(symbol);
     }
+  });
+
+  it('documents the boss profile shipped for the boss-focus band (AH-0MVBMESIE003YQ68)', () => {
+    // The boss is content, not a core special case: §11 documents its profile
+    // next to the other archetypes, and §9 documents the band that gives it
+    // hard priority while it is inside the enemy seek range.
+    expect(doc).toContain(BOSS_ENEMY_ID);
+    expect(doc).toContain('engage-boss');
+    expect(doc).toContain('bossBase');
   });
 
   it('documents the unknown-content default (AC4)', () => {

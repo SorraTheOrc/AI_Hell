@@ -6,7 +6,20 @@
  * tests drive `executeEvaluation` directly with an in-memory human recording.
  */
 
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
+
+/**
+ * Explicit timing budget for this file (AH-0MVR8QM89004OQZQ).
+ *
+ * The batch tests below are legitimately long-running: a campaign batch
+ * resolves `--ticks` to `DEFAULT_BATCH_TICKS` (18 000) and a 100-game sweep
+ * runs every seed against the arena. Vitest's 5 s default is a budget for
+ * unit-scale tests, not for these; on a loaded shared host the campaign test
+ * measured 5.5–6.5 s and failed on the timeout rather than on an assertion
+ * (AH-0MVPJETJF009E0S8, AH-0MVR8QM89004OQZQ). 30 s keeps ~5x headroom over the
+ * observed worst case while still failing a genuine hang.
+ */
+vi.setConfig({ testTimeout: 30000 });
 
 import { runEvaluation } from './engine';
 import { resetConfigStore, seedConfigStore } from '../../core/configStore';

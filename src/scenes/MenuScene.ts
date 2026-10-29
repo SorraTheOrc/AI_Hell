@@ -18,10 +18,12 @@
  *   Tab cycle (GDD §2.1).
  *
  * Keyboard navigation (AH-0MU9LKQEP008LCX9-C2) is provided by a shared
- * {@link FocusManager}: Play Game is focused by default, Tab and the arrow
- * keys cycle focus among the controls (wrapping), and Enter/Space
- * activate the focused control. Pointer handlers are unchanged (keyboard
- * support is additive).
+ * {@link FocusManager}: Play Game is focused by default, unless a resumable
+ * checkpoint exists, in which case the **Continue** control is registered
+ * first and focused by default (AH-0MVSHH20J003YXDN). Tab and the arrow keys
+ * cycle focus among the controls (wrapping), and Enter/Space activate the
+ * focused control. Pointer handlers are unchanged (keyboard support is
+ * additive).
  *
  * Styling follows the neon-cyan / dark background palette from the GDD
  * colour scheme (§7.1).
@@ -234,6 +236,15 @@ export class MenuScene extends Phaser.Scene {
       this.controls.push({
         label: `⏵  Continue — Level ${checkpoint.level}`,
         text: continueButton,
+      });
+      // Registering here — before Play Game — makes Continue the first
+      // FocusManager control, so it is focused by default and leads the
+      // Tab cycle when a checkpoint exists (AH-0MVSHH20J003YXDN AC1/AC2).
+      // The activate callback mirrors the pointerdown handler exactly, so
+      // keyboard and pointer resume through the same code path.
+      this.focusManager.register(continueButton, () => {
+        resumeAudioContext(this.sound);
+        this.scene.start('PlayScene', { demo: false, resume: true });
       });
     }
 
@@ -491,11 +502,14 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // ── Keyboard focus (AH-0MU9LKQEP008LCX9-C2) ──────────────────
-    // Register controls in visual order; the first (Play Game) is focused
-    // by default. The action callbacks mirror the pointerdown handlers so
-    // activation behaves identically for keyboard and pointer input. The
-    // shared FocusManager owns Tab / arrow cycling and Enter / Space
-    // activation — the scene contains no ad-hoc key routing.
+    // Register controls in visual order; the first is focused by default.
+    // Without a checkpoint that is Play Game; with a checkpoint the Continue
+    // control was already registered above (AH-0MVSHH20J003YXDN), so it
+    // takes the default focus and Play Game follows it. The action callbacks
+    // mirror the pointerdown handlers so activation behaves identically for
+    // keyboard and pointer input. The shared FocusManager owns Tab / arrow
+    // cycling and Enter / Space activation — the scene contains no ad-hoc
+    // key routing.
     this.focusManager.register(playButton, () => {
       resumeAudioContext(this.sound);
       // Explicit non-demo payload (see the pointerdown handler above) so a

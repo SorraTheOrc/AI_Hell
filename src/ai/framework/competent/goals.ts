@@ -28,6 +28,7 @@
  * |---------------|-----------------|--------------------|
  * | survival      | 10 – 15         | `survive`          |
  * | secure-life   | 6.0 – 6.5       | `secure-life`      |
+ * | boss          | 5.0 – 5.5       | `engage-boss`      |
  * | minerals      | 4.0 – 4.5       | `collect-mineral`  |
  * | power-ups     | 3.0 – 3.75      | `collect-powerup`  |
  * | enemies       | 2.0 – 2.75      | `engage-enemy`     |
@@ -42,6 +43,14 @@
  * is below its life cap and a live Extra Life drop is on screen, so it never
  * competes at the cap (AH-0MV03GXZQ00801T4).
  *
+ * The `engage-boss` band sits directly below `secure-life` and above every
+ * collection band, and is only valid while a live boss is inside the enemy
+ * seek range (AH-0MVBMESIE003YQ68 · AC2). Its target set is the boss **alone**,
+ * so while it is valid the engage behaviour cannot pick a nearer minion: that
+ * is hard priority, not a weighted bias. The boss stays in `enemyTargets()`
+ * (weighted by its content `threat`) as the fallback for when the band is
+ * invalid, e.g. after the boss leaves the seek range.
+ *
  * @module src/ai/framework/competent/goals
  */
 
@@ -51,7 +60,7 @@ import type { BotWorld, BotWorldPoint } from '../worldModel';
 import { livesBelowCap } from '../../botSnapshot';
 import type { BotContent } from '../content';
 import { createBotContent } from '../content';
-import { SECURE_LIFE_DROP_ID } from './content';
+import { BOSS_ENEMY_ID, SECURE_LIFE_DROP_ID } from './content';
 import type { CompetentBotTunables } from './tunables';
 
 /** Stable behaviour ids the goals name. */
@@ -66,6 +75,7 @@ export const COMPETENT_BEHAVIOUR_IDS = {
 export const COMPETENT_GOAL_IDS = {
   survive: 'survive',
   secureLife: 'secure-life',
+  engageBoss: 'engage-boss',
   collectMineral: 'collect-mineral',
   collectPowerUp: 'collect-powerup',
   engageEnemy: 'engage-enemy',
@@ -191,9 +201,42 @@ export function enemyTargets(world: BotWorld): ContentTarget[] {
       : {}),
   }));
   if (world.boss) {
-    targets.push({ x: world.boss.x, y: world.boss.y, contentId: 'boss' });
+    targets.push({ x: world.boss.x, y: world.boss.y, contentId: BOSS_ENEMY_ID });
   }
   return targets;
+}
+
+/**
+ * The live boss as a content target, or an empty set when there is no live
+ * boss (AH-0MVBMESIE003YQ68).
+ *
+ * This is the boss-focus goal's **boss-only** target set, deliberately a
+ * sibling of {@link enemyTargets}/{@link asteroidTargets} so the engage
+ * behaviour chooses its target set by goal id rather than by inspecting a
+ * content id. Because it contains nothing but the boss, a committed boss goal
+ * cannot pick a nearer regular enemy — that is what makes the priority hard
+ * rather than a weighted bias (AC3).
+ *
+ * The final boss and every per-level mini-boss surface through the same
+ * `world.boss` slot, so one rule covers both (AC5).
+ *
+ * @param world — the derived world view.
+ * @param range — optional seek radius (px): when given, a boss farther than
+ *   this from the ship is excluded, so a goal can express "in range" as the
+ *   same selector it scores and executes with.
+ */
+export function bossTargets(
+  world: BotWorld,
+  range?: number,
+): ContentTarget[] {
+  const boss = world.boss;
+  if (!boss) return [];
+  if (range !== undefined) {
+    const player = world.player;
+    if (!player) return [];
+    if (Math.hypot(boss.x - player.x, boss.y - player.y) > range) return [];
+  }
+  return [{ x: boss.x, y: boss.y, contentId: BOSS_ENEMY_ID }];
 }
 
 /** The live asteroids as content targets. */
@@ -282,6 +325,37 @@ function secureLifeGoal(t: CompetentBotTunables): BotGoal {
   };
 }
 
+/**
+ * An `engage-boss` goal: valid only while a live boss is inside the enemy
+ * seek range (AH-0MVBMESIE003YQ68 · AC2).
+ *
+ * It owns a **boss-only** target set (`bossTargets`), so once committed the
+ * engage behaviour cannot select a nearer regular enemy — hard priority, not
+ * a weighted bias (AC3). It scores its single target at weight 1: `threat: 2`
+ * is a *relative enemy-band* weight, and using it inside this band would
+ * double the span and break the band invariant (the boss band stays
+ * `[bossBase, bossBase + prioritySpan]`).
+ */
+function bossGoal(t: CompetentBotTunables): BotGoal {
+  const inRange = (view: BotGoalView): readonly ContentTarget[] =>
+    bossTargets(view.world, t.enemySeekRange);
+  return {
+    id: COMPETENT_GOAL_IDS.engageBoss,
+    behaviourId: COMPETENT_BEHAVIOUR_IDS.engage,
+    utility: (view: BotGoalView) =>
+      weightedUtility(
+        view,
+        inRange(view),
+        t.bossBase,
+        t.enemySeekRange,
+        t.prioritySpan,
+        () => 1,
+      ),
+    isValid: (view) => inRange(view).length > 0,
+    isAchieved: (view) => inRange(view).length === 0,
+  };
+}
+
 /** A goal whose target set is derived from the world each tick. */
 type TargetSelector = (world: BotWorld) => readonly ContentTarget[];
 
@@ -339,8 +413,7 @@ function engageGoal(
   };
 }
 
-/** The reposition/idle fallback: always valid, always lowest scored. */
-function repositionGoal(t: CompetentBotTunables): BotGoal {
+/** The reposition/idle fallback: always valid, always lowest scored. */function repositionGoal(t: CompetentBotTunables): BotGoal {
   return {
     id: COMPETENT_GOAL_IDS.reposition,
     behaviourId: COMPETENT_BEHAVIOUR_IDS.reposition,
@@ -369,6 +442,7 @@ export function createCompetentGoals(
   return createGoalRegistry([
     surviveGoal(t),
     secureLifeGoal(t),
+    bossGoal(t),
     collectGoal(
       COMPETENT_GOAL_IDS.collectMineral,
       t,

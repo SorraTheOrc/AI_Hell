@@ -58,6 +58,7 @@ import {
 } from '../core/rules';
 import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
 import type { MineralChoiceScene } from './MineralChoiceScene';
+import { applySceneSetup, type SceneSetupState } from './core/sceneSetup';
 import {
   playDestructionSound,
   playSpawnSound,
@@ -67,12 +68,22 @@ import {
 import { Player } from '../entities/Player';
 import { PlayerBullet } from '../entities/PlayerBullet';
 import { pushAimTargets, pushSeekTargets } from './core/enemyTargeting';
+import {
+  applyPostMotionWrapAll,
+  PLAYFIELD_WORLD,
+  type WrapAwareBody,
+} from './core/enemyWrap';
 import { createEnemyFromConfig, type EnemyEntity } from '../entities/enemyFactory';
 import {
-  computeFormationReanchorDelta,
-  type FormationReanchorRequest,
-} from '../utils/formations';
-import { FormationGlide } from './core/formationGlide';
+  FormationReanchorController,
+  type FormationReanchorCandidate,
+} from './core/formationReanchor';
+import {
+  resolveSpawnTransitTarget,
+  type SpawnTransitEntity,
+  type SpawnTransitInput,
+  type SpawnTransitPoint,
+} from './core/spawnTransit';
 import {
   advanceMarch,
   computeMarchBounds,
@@ -94,8 +105,8 @@ import {
   formationExtents,
   placeWavePortal,
   startSpawnAnimation,
-  updateEnemyShimmer,
   updateSpawnAnimation,
+  updateSpawnEmergence,
   type PortalPoint,
   type SpawnAnimatable,
 } from '../vfx/wormholeSpawn';
@@ -108,11 +119,17 @@ import {
 } from '../vfx/endOfRunJuice';
 import { EffectsRegistry } from '../powerups/effects';
 import {
+  CHOICE_POOL,
   randomChoiceStrategy,
   toChoiceOption,
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../powerups/choice';
+import {
+  filterOptionsWithinSlotPool,
+  resolvePlayerSlotState,
+  type PowerUpSlotState,
+} from '../powerups/slots';
 import {
   buildUpgradeOptions,
   initialUnlockState,
@@ -197,7 +214,14 @@ import {
   createAsteroidFromEvent,
 } from './core/asteroidHazard';
 import {
-  computeSpawns as computeStrikeSpawns,
+  planCentipedeWaveSpawn,
+  planGhostWaveSpawns,
+  planHordeWaveSpawns,
+  planLaneTrafficWaveSpawns,
+  planStrikeWaveSpawns,
+  releaseDueSpawns,
+} from './core/dynamicSpawnPlan';
+import {
   type SpawnEvent as StrikeSpawnEvent,
 } from '../waves/StrikeSpawner';
 import { OrbitalStrike } from '../entities/OrbitalStrike';
@@ -206,7 +230,6 @@ import {
   type HarvesterSpawnEvent,
 } from '../waves/HarvesterSpawner';
 import {
-  computeGhostSpawns,
   type GhostSpawnEvent,
 } from '../waves/GhostSpawner';
 import {
@@ -215,22 +238,14 @@ import {
   CENTIPEDE_LATERAL_SPEED,
   CENTIPEDE_SEGMENT_SPACING,
   centipedeArena,
-  computeCentipedeSpawn,
   type CentipedeSpawnEvent,
 } from '../waves/CentipedeSpawner';
 import { Centipede } from '../entities/Centipede';
 import { CentipedeChain } from './core/centipedeChain';
 import {
-  HORDE_DEFAULT_GROUP_SIZE,
-  HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS,
-  GRUNT_ENEMY_KEY,
-  computeHordeSpawns,
   type HordeSpawnEvent,
 } from '../waves/HordeSpawner';
 import {
-  LANE_TRAFFIC_DEFAULT_LANE_COUNT,
-  LANE_TRAFFIC_DEFAULT_LANE_SPACING,
-  computeLaneTrafficSpawns,
   type LaneTrafficSpawnEvent,
 } from '../waves/LaneTrafficSpawner';
 import { LaneTraffic } from '../entities/LaneTraffic';
@@ -262,6 +277,8 @@ import { splitAsteroid } from './core/asteroidSplit';
 import {
   applyMineralChoiceReward,
   collectMinerals,
+  grantPermanentPowerUp,
+  grantPermanentWeapon,
 } from './core/mineralLayer';
 import {
   applyPhaseGhost,
@@ -277,6 +294,12 @@ import {
   WAVE_TIMER_BAR_X,
   WAVE_TIMER_BAR_Y,
 } from './core/waveTimeout';
+import {
+  collectSweepTargets,
+  spawnMiniBossDeathSweep,
+  type MiniBossDeathSweepHandle,
+  type MiniBossSweepTarget,
+} from './core/miniBossDeathSweep';
 
 // Re-exported for existing importers (tests, HUD); the single source of
 // truth now lives in `core/waveTimeout.ts`, shared with the gyms.
@@ -550,6 +573,28 @@ export class PlayScene extends CombatScene<
    * always `1` in a production build.
    */
   private devStartLevel = 1;
+  /**
+   * Dev-gated capture configuration for this run (AH-0MVTNTHE0008UT2C).
+   *
+   * The teaser video records the *shipped game* with the bot playing (gyms
+   * carry debug chrome the teaser must not show), so a scripted beat supplies
+   * its starting loadout/power-ups, a forced hold-full reward and the boss's
+   * remaining hits as launch data. Always `null` in a production build.
+   */
+  private sceneSetup: SceneSetupState | null = null;
+  /**
+   * Dev-gated wave of {@link devStartLevel} this fresh run starts at
+   * (AH-0MVTPP7SX000JTWJ). A teaser beat is seconds long, so mid-level
+   * pressure and the wave-10 mini-boss are otherwise unreachable. Always `1`
+   * in a production build.
+   */
+  private devStartWave = 1;
+  /**
+   * Dev-gated flag to start the run at the level's **final boss encounter**
+   * (AH-0MVTPP7SX000JTWJ), so a scripted beat can show the boss fight and its
+   * death. Always `false` in a production build.
+   */
+  private devStartBoss = false;
 
   /**
    * Demo take-over handler active only while the demo runs
@@ -614,6 +659,16 @@ export class PlayScene extends CombatScene<
   private boss: Boss | null = null;
 
   /**
+   * Whether this run has ended with a victory — the per-run state behind
+   * {@link PlayScene.playerFireSuppressed} (AH-0MVCB6LBE007I6R8). Set on the
+   * frame the final boss is destroyed, before the victory celebration fires, so
+   * the next tick spawns no new player fire for the rest of the in-run victory
+   * hold. Cleared by {@link PlayScene.resetRunState} on scene create/restart, so
+   * a new run fires normally again.
+   */
+  private runFinished = false;
+
+  /**
    * The active level's wave-10 mini-boss entity (epic AH-0MVCC8XSS007P01Z),
    * spawned when the {@link WaveManager} opens the level's mini-boss wave and
    * held until it is defeated — the level only completes on its defeat.
@@ -653,6 +708,17 @@ export class PlayScene extends CombatScene<
   private miniBossRewardOptions: ChoiceOption[] = [];
 
   /**
+   * Live handle for the in-flight mini-boss death sweep (parent
+   * AH-0MVOFGB6K003YD0Z, AH-0MVROELN600410GP), or null between encounters.
+   * Completion is driven by the shared sweep executor's real tween
+   * completion, never by a frame count the reward overlay pause could freeze.
+   */
+  private miniBossSweepHandle: MiniBossDeathSweepHandle | null = null;
+
+  /** Targets captured for the current/last mini-boss death sweep (test seam). */
+  private miniBossSweepTargets: readonly MiniBossSweepTarget[] = [];
+
+  /**
    * Campaign level whose mini-boss has already been spawned this run. Guards
    * {@link _spawnMiniBossIfDue} against re-spawning (and double-registering
    * the gating spawn) if `spawnWave` were ever re-entered while the wave's
@@ -686,17 +752,11 @@ export class PlayScene extends CombatScene<
   /** Resolved march tuning for the current wave (null when no march block). */
   private marchOptions: MarchOptions | null = null;
   /**
-   * Diver-group re-anchor offset (px), added only to Diver spawns' origin on
-   * top of the drift. A Diver's attack re-anchors the Diver group by adding
-   * the shared delta here, so the Diver's slot lands on its attack end while
-   * every other enemy stays where it is (producer review,
-   * AH-0MUL15N63003PUDB).
+   * Diver-group re-anchor + glide state (D2, docs/GYM_PARITY.md): the shared
+   * controller owns the anchor offset and the glide, so `PlayScene`,
+   * `GymFormationScene` and `GymLevel` run the same rule (AH-0MUL15N63003PUDB).
    */
-  private diverAnchorX = 0;
-  private diverAnchorY = 0;
-
-  /** Glide manager: eases enemies to their re-anchored slots (AH-0MUL15N63003PUDB). */
-  private glide = new FormationGlide();
+  private readonly reanchor = new FormationReanchorController();
 
   private transitionTimer = 0;
 
@@ -905,6 +965,22 @@ export class PlayScene extends CombatScene<
      * Ignored in production builds; mirrors the checkpoint-resume seam.
      */
     startLevel?: number;
+    /**
+     * Dev-gated capture configuration (AH-0MVTNTHE0008UT2C): starting
+     * loadout/power-ups, a forced hold-full reward and the boss's remaining
+     * hits. Ignored in production builds, like `startLevel`.
+     */
+    setup?: SceneSetupState | null;
+    /**
+     * Dev-gated wave of `startLevel` to begin at (AH-0MVTPP7SX000JTWJ).
+     * Ignored in production builds.
+     */
+    startWave?: number;
+    /**
+     * Dev-gated flag to begin at the level's final boss encounter
+     * (AH-0MVTPP7SX000JTWJ). Ignored in production builds.
+     */
+    startBoss?: boolean;
   }): void {
     this.demoMode = data?.demo === true;
     // Continue from the last checkpoint (AH-0MVCRBTNF000DK51). It is loaded
@@ -933,6 +1009,20 @@ export class PlayScene extends CombatScene<
       ? Math.min(Math.max(requestedLevel, 1), LEVELS.length)
       : 1;
     if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
+    // Capture configuration is dev-gated exactly like `startLevel`: a shipped
+    // build folds the gate to `false` and can never apply launch-data state.
+    this.sceneSetup = isRunProgressEnabled() && data?.setup
+      ? (data.setup as SceneSetupState)
+      : null;
+    // Start position is dev-gated exactly like `startLevel`: a shipped build
+    // always begins the campaign at level 1, wave 1, before the boss.
+    this.devStartWave = isRunProgressEnabled()
+      && typeof data?.startWave === 'number'
+      && Number.isInteger(data.startWave)
+      && data.startWave > 0
+      ? data.startWave
+      : 1;
+    this.devStartBoss = isRunProgressEnabled() && data?.startBoss === true;
   }
 
   create(): void {
@@ -983,6 +1073,12 @@ export class PlayScene extends CombatScene<
       config: { ...shipConfig, controlScheme: playerScheme },
     });
     this.add.existing(this.player);
+    // Capture configuration (AH-0MVTNTHE0008UT2C): apply the dev-gated setup
+    // through the ONE shared applier, so the shipped game and every gym map a
+    // setup to play state identically (no divergent copy).
+    if (this.sceneSetup) {
+      applySceneSetup({ getPlayer: () => this.player }, this.sceneSetup);
+    }
     // The demo drives whichever control scheme the ship is configured with
     // (the shipped default is `asteroids`); the human-like governor resolves
     // the bot's steering intent to that scheme, so the demo ship looks and
@@ -1069,14 +1165,26 @@ export class PlayScene extends CombatScene<
     const resume = this.pendingResumeCheckpoint;
     this.pendingResumeCheckpoint = null;
     this.resumeFromCheckpoint = false;
-    this.waveManager.beginGame(resume?.level ?? this.devStartLevel);
+    this.waveManager.beginGame(
+      resume?.level ?? this.devStartLevel,
+      resume ? 1 : this.devStartWave,
+    );
     // Publish the live run position for a generated-level capture driver
     // (AH-0MVE01EY0008QEVX AC3); dev builds only.
     this._publishRunProgress(false);
     if (resume) this._restoreCheckpoint(resume);
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();
-    this.spawnWave();
+    if (this.devStartBoss) {
+      // Straight into the boss encounter (dev-gated capture start): the boss
+      // spawns through the normal path, so its death still ends the run the
+      // ordinary way (AH-0MVTPP7SX000JTWJ).
+      this.waveManager.startBossEncounter();
+      this.spawnBoss();
+      this._updateTransitionBanner();
+    } else {
+      this.spawnWave();
+    }
     this._announceLevel();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardownRunState());
@@ -1171,16 +1279,18 @@ export class PlayScene extends CombatScene<
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
     this.boss = null;
+    this.runFinished = false;
     this.miniBoss = null;
     this.miniBossDefeats = 0;
     this.miniBossSpawnedLevel = null;
     this.miniBossUnlockState = initialUnlockState();
     this.miniBossRewardOpen = false;
     this.miniBossRewardOptions = [];
+    this.miniBossSweepHandle = null;
+    this.miniBossSweepTargets = [];
     this.driftX = 0;
     this.driftDir = 1;
-    this.diverAnchorX = 0;
-    this.diverAnchorY = 0;
+    this.reanchor.reset();
     this.transitionTimer = 0;
     this.bannerTimer = 0;
     this.waveTimer = 0;
@@ -1258,6 +1368,11 @@ export class PlayScene extends CombatScene<
     this.player = null;
     this.boss?.destroy();
     this.boss = null;
+    // A sweep still animating at teardown must not leave its bursts (or the
+    // deferred reward/level finalisation) alive across sessions.
+    this.miniBossSweepHandle?.destroy();
+    this.miniBossSweepHandle = null;
+    this.miniBossSweepTargets = [];
     this.miniBoss?.destroy();
     this.miniBoss = null;
     this.bannerText?.destroy();
@@ -1270,7 +1385,7 @@ export class PlayScene extends CombatScene<
     this.victoryEffects = [];
 
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
-    this.glide.clear();
+    this.reanchor.reset();
 
     // Flush any buffered records so the run tail (run_end) reaches the sink
     // before the scene is torn down (AH-0MUY08VVQ007HSSH).
@@ -1414,12 +1529,13 @@ export class PlayScene extends CombatScene<
     let anySpawning = false;
     for (const s of this.spawned) {
       if (!s.entity.isSpawning) continue;
-      const stillGrowing = updateSpawnAnimation(s.entity, dt);
-      // Per-entity emergence shimmer (AH-0MVD2N333004VDA9) rides the same
-      // shared spawn path, immediately after the growth write so its scale
-      // pulse layers on the growth scale instead of fighting it
-      // (AH-0MVD2N9MM0007NGZ wiring).
-      updateEnemyShimmer(s.entity as unknown as SpawnAnimatable, dt);
+      // One shared emergence step (AH-0MVNTY0700053T9E): the growth write is
+      // absolute and the per-entity shimmer is layered on top in the same call,
+      // so the game and every gym cannot drift on the shimmer.
+      const stillGrowing = updateSpawnEmergence(
+        s.entity as unknown as SpawnAnimatable,
+        dt,
+      );
       if (stillGrowing) {
         anySpawning = true;
       } else {
@@ -1519,8 +1635,7 @@ export class PlayScene extends CombatScene<
     if (carriedFormation.length === 0) {
       this.driftX = 0;
       this.driftDir = 1;
-      this.diverAnchorX = 0;
-      this.diverAnchorY = 0;
+      this.reanchor.reset();
       this._resetMarchFormation(anchoredSpawns);
     } else {
       // Keep the continuous drift, its direction and the Diver anchor exactly
@@ -1668,46 +1783,43 @@ export class PlayScene extends CombatScene<
     // Growth begins once the wormhole has finished opening. When the enemy
     // emerged from the wormhole it also traverses to its formation position
     // in lock-step with the growth animation (AH-0MV8BSMXC0097KLW).
-    // Entities with autonomous motion (e.g. the Raider, whose patrol/attack
-    // state drives its own position) are exempt: they emerge at the origin
-    // and their own motion carries them out, avoiding a position pop when
-    // the spawn window ends.
-    const transit =
-      origin && !(entity as { autonomousPositioning?: boolean }).autonomousPositioning;
-    // Orbital entities (the Phaser) expose a live formation-slot seam: the
-    // wormhole transit targets their orbital slot instead of the grid line,
-    // so they never appear in a line then snap onto the ring
-    // (AH-0MVEXVME1004SIIS, Q2=A). Every other enemy keeps the grid slot.
-    const orbitalSlot = (
-      entity as {
-        formationSlot?: (baseX: number, baseY: number) => { x: number; y: number };
-      }
-    ).formationSlot;
+    //
+    // The destination rule is the shared seam (AH-0MVRMHQC9003VDNN): the
+    // scene owns the live base below, `resolveSpawnTransitTarget` owns
+    // "autonomous exemption → orbital live slot → grid offset". See
+    // `src/scenes/core/spawnTransit.ts` for the rationale.
+    const transitBase = (): SpawnTransitPoint => {
+      // Track the live formation slot so formation drift/march during the
+      // transit is followed and the enemy lands exactly on it.
+      const isMarch = cfg.formationKind === 'march';
+      return {
+        x:
+          isMarch && this.marchState
+            ? this.marchState.x
+            : spawn.startX + this.driftX,
+        y: isMarch && this.marchState ? this.marchState.y : spawn.startY,
+      };
+    };
+    const transitInput = (base: SpawnTransitPoint): SpawnTransitInput => ({
+      entity: entity as unknown as SpawnTransitEntity,
+      transit: origin !== undefined,
+      base,
+      offset: spawn.offset,
+      spacingX: spawn.spacingX,
+      spacingY: spawn.spacingY,
+    });
+    // Resolved once up front so an exempt spawn (an autonomous mover, or an
+    // in-place spawn with no origin) gets no destination function at all — a
+    // destination would pin the entity to its emergence point.
+    const transitTarget = resolveSpawnTransitTarget(transitInput(transitBase()));
     startSpawnAnimation(
       entity,
       entity.scaleX,
       WORMHOLE_OPEN_DURATION,
-      transit
-        ? () => {
-            // Track the live formation slot so formation drift/march during
-            // the transit is followed and the enemy lands exactly on it.
-            const isMarch = cfg.formationKind === 'march';
-            const baseX =
-              isMarch && this.marchState
-                ? this.marchState.x
-                : spawn.startX + this.driftX;
-            const baseY =
-              isMarch && this.marchState
-                ? this.marchState.y
-                : spawn.startY;
-            if (typeof orbitalSlot === 'function') {
-              return orbitalSlot.call(entity, baseX, baseY);
-            }
-            return {
-              x: baseX + spawn.offset.col * spawn.spacingX,
-              y: baseY + spawn.offset.row * spawn.spacingY,
-            };
-          }
+      transitTarget
+        ? () =>
+            resolveSpawnTransitTarget(transitInput(transitBase())) ??
+            transitTarget
         : undefined,
     );
     entity.setSpawning(true);
@@ -1852,11 +1964,10 @@ export class PlayScene extends CombatScene<
       return;
     }
     const player = this.getPlayer();
-    this.pendingStrikeSpawns = computeStrikeSpawns(
+    // Shared planner (D3, docs/GYM_PARITY.md) — the same plan the level gym
+    // builds for a launched campaign wave.
+    this.pendingStrikeSpawns = planStrikeWaveSpawns(
       wm.globalWaveIndex,
-      GAME_WIDTH,
-      GAME_HEIGHT,
-      WAVE_TIME_LIMIT_SECONDS,
       player?.x ?? GAME_WIDTH / 2,
       player?.y ?? GAME_HEIGHT / 2,
       this.rng,
@@ -1882,12 +1993,12 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.strikesSpawnedThisWave < this.pendingStrikeSpawns.length) {
-      const event = this.pendingStrikeSpawns[this.strikesSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledStrike(event);
-      this.strikesSpawnedThisWave += 1;
-    }
+    this.strikesSpawnedThisWave = releaseDueSpawns(
+      this.pendingStrikeSpawns,
+      this.strikesSpawnedThisWave,
+      elapsed,
+      (event) => this._spawnScheduledStrike(event),
+    );
   }
 
   /**
@@ -2024,12 +2135,7 @@ export class PlayScene extends CombatScene<
       this.ghostsSpawnedThisWave = 0;
       return;
     }
-    this.pendingGhostSpawns = computeGhostSpawns(
-      GAME_WIDTH,
-      GAME_HEIGHT,
-      WAVE_TIME_LIMIT_SECONDS,
-      this.rng,
-    );
+    this.pendingGhostSpawns = planGhostWaveSpawns(this.rng);
     this.ghostsSpawnedThisWave = 0;
   }
 
@@ -2051,12 +2157,12 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.ghostsSpawnedThisWave < this.pendingGhostSpawns.length) {
-      const event = this.pendingGhostSpawns[this.ghostsSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledGhost(event);
-      this.ghostsSpawnedThisWave += 1;
-    }
+    this.ghostsSpawnedThisWave = releaseDueSpawns(
+      this.pendingGhostSpawns,
+      this.ghostsSpawnedThisWave,
+      elapsed,
+      (event) => this._spawnScheduledGhost(event),
+    );
   }
 
   /**
@@ -2108,12 +2214,7 @@ export class PlayScene extends CombatScene<
       this.centipedeSpawnedThisWave = false;
       return;
     }
-    this.pendingCentipedeSpawn = computeCentipedeSpawn(
-      GAME_WIDTH,
-      GAME_HEIGHT,
-      WAVE_TIME_LIMIT_SECONDS,
-      this.rng,
-    );
+    this.pendingCentipedeSpawn = planCentipedeWaveSpawn(this.rng);
     this.centipedeSpawnedThisWave = false;
   }
 
@@ -2136,9 +2237,13 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    if (elapsed + 1e-9 < this.pendingCentipedeSpawn.timeSeconds) return;
-    this._spawnScheduledCentipede(this.pendingCentipedeSpawn);
-    this.centipedeSpawnedThisWave = true;
+    const released = releaseDueSpawns(
+      [this.pendingCentipedeSpawn],
+      this.centipedeSpawnedThisWave ? 1 : 0,
+      elapsed,
+      (event) => this._spawnScheduledCentipede(event),
+    );
+    this.centipedeSpawnedThisWave = released > 0;
   }
 
   /**
@@ -2203,17 +2308,7 @@ export class PlayScene extends CombatScene<
       this.hordeSpawnedThisWave = 0;
       return;
     }
-    const cfg = loadEnemyConfig(GRUNT_ENEMY_KEY);
-    this.pendingHordeSpawns = computeHordeSpawns({
-      gameWidth: GAME_WIDTH,
-      gameHeight: GAME_HEIGHT,
-      waveTimeLimitSeconds: WAVE_TIME_LIMIT_SECONDS,
-      count: cfg.count,
-      groupSize: cfg.hordeGroupSize ?? HORDE_DEFAULT_GROUP_SIZE,
-      spawnIntervalSeconds:
-        cfg.hordeSpawnInterval ?? HORDE_DEFAULT_SPAWN_INTERVAL_SECONDS,
-      rng: this.rng,
-    });
+    this.pendingHordeSpawns = planHordeWaveSpawns(this.rng);
     this.hordeSpawnedThisWave = 0;
   }
 
@@ -2235,12 +2330,12 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.hordeSpawnedThisWave < this.pendingHordeSpawns.length) {
-      const event = this.pendingHordeSpawns[this.hordeSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledHorde(event);
-      this.hordeSpawnedThisWave += 1;
-    }
+    this.hordeSpawnedThisWave = releaseDueSpawns(
+      this.pendingHordeSpawns,
+      this.hordeSpawnedThisWave,
+      elapsed,
+      (event) => this._spawnScheduledHorde(event),
+    );
   }
 
   /**
@@ -2297,18 +2392,7 @@ export class PlayScene extends CombatScene<
       this.laneTrafficSpawnedThisWave = 0;
       return;
     }
-    const cfg = loadEnemyConfig('lane-traffic');
-    this.pendingLaneTrafficSpawns = computeLaneTrafficSpawns({
-      gameWidth: GAME_WIDTH,
-      gameHeight: GAME_HEIGHT,
-      waveTimeLimitSeconds: WAVE_TIME_LIMIT_SECONDS,
-      laneCount: cfg.laneCount ?? LANE_TRAFFIC_DEFAULT_LANE_COUNT,
-      perLaneCount: cfg.count,
-      spacing: cfg.spacingX,
-      laneSpacing: cfg.laneSpacing ?? LANE_TRAFFIC_DEFAULT_LANE_SPACING,
-      speed: cfg.driftSpeed,
-      rng: this.rng,
-    });
+    this.pendingLaneTrafficSpawns = planLaneTrafficWaveSpawns(this.rng);
     this.laneTrafficSpawnedThisWave = 0;
   }
 
@@ -2330,13 +2414,12 @@ export class PlayScene extends CombatScene<
       return;
     }
     const elapsed = WAVE_TIME_LIMIT_SECONDS - this.waveTimer;
-    while (this.laneTrafficSpawnedThisWave < this.pendingLaneTrafficSpawns.length) {
-      const event =
-        this.pendingLaneTrafficSpawns[this.laneTrafficSpawnedThisWave];
-      if (elapsed + 1e-9 < event.timeSeconds) break;
-      this._spawnScheduledLaneTraffic(event);
-      this.laneTrafficSpawnedThisWave += 1;
-    }
+    this.laneTrafficSpawnedThisWave = releaseDueSpawns(
+      this.pendingLaneTrafficSpawns,
+      this.laneTrafficSpawnedThisWave,
+      elapsed,
+      (event) => this._spawnScheduledLaneTraffic(event),
+    );
   }
 
   /**
@@ -2416,6 +2499,15 @@ export class PlayScene extends CombatScene<
       this.minerals,
     );
 
+    // The formation-positioned enemies of this frame — the shared
+    // post-motion wrap runs over exactly these bodies once the positioning
+    // pass (and any re-anchor glide) has finished. Self-moving entities
+    // (hazards, orbital strikes, roaming seekers) keep their own existing
+    // four-edge wrap and are deliberately not re-wrapped here: an
+    // `enterFromOffscreen` asteroid must stay outside the viewport until it
+    // has drifted in (AH-0MUDYS2SZ004H123), which a second seam would undo.
+    const positioned: WrapAwareBody[] = [];
+
     for (const s of this.spawned) {
       if (!s.entity.alive) continue;
       // Non-blocking world hazards (Asteroid, Frogger lane traffic) advance
@@ -2457,64 +2549,53 @@ export class PlayScene extends CombatScene<
         s.march && this.marchState ? this.marchState.x : s.startX + this.driftX;
       const baseY = s.march && this.marchState ? this.marchState.y : s.startY;
       s.entity.applyFormationPosition(
-        baseX + (isDiver ? this.diverAnchorX : 0),
-        baseY + (isDiver ? this.diverAnchorY : 0),
+        baseX + (isDiver ? this.reanchor.anchorX : 0),
+        baseY + (isDiver ? this.reanchor.anchorY : 0),
         dt,
         s.spacingX,
         s.spacingY,
       );
+      positioned.push(s.entity);
     }
 
-    // If a re-anchor fired (now or on an earlier frame), ease all living
-    // entities from their old positions to the live (drifting) slot
-    // (AH-0MUL15N63003PUDB). A no-op when no glide is active.
-    if (reanchorApplied || this.glide.active) {
-      this.glide.update(dt);
-    }
+    // If a re-anchor fired (now or on an earlier frame), ease the Divers from
+    // their old positions to the live (drifting) slot (AH-0MUL15N63003PUDB).
+    // The shared controller owns the rule (D2, docs/GYM_PARITY.md).
+    this.reanchor.afterPositioning(dt, reanchorApplied);
+
+    // Shared post-motion edge wrap (AH-0MVKXBWDY008R0YH, parent
+    // AH-0MV9G3DZ9003P7P8 AC3): the one seam the game and every gym run.
+    // Wrap-aware enemies cross the seam to the opposite edge (position only —
+    // velocity/heading preserved); `march` and `centipede` carry
+    // `wrapAware: false` and keep their bounded, wall-respecting behaviour.
+    applyPostMotionWrapAll(positioned, PLAYFIELD_WORLD);
   }
 
   /**
    * Consumes any pending enemy re-anchor requests and shifts the Diver-group
-   * anchor so the requesting Diver's slot lands on its attack end (shared rule
-   * in `computeFormationReanchorDelta`). The most recent request wins when
-   * Divers are desynchronised (documented assumption). Only the Divers move:
-   * every other enemy stays where it is (producer review,
-   * AH-0MUL15N63003PUDB).
+   * anchor so the requesting Diver's slot lands on its attack end. The rule is
+   * the shared `FormationReanchorController` (D2, docs/GYM_PARITY.md) — the
+   * most recent request wins when Divers are desynchronised, and only the
+   * Divers glide to their new slots. Every other enemy stays where it is
+   * (producer review, AH-0MUL15N63003PUDB).
    *
    * @returns `true` if a re-anchor was applied (and the glide was begun),
    *   `false` otherwise.
    */
   private _applyFormationReanchor(): boolean {
-    let latest: { request: FormationReanchorRequest; spawn: SpawnedEnemy } | null = null;
-    for (const spawn of this.spawned) {
-      const request = spawn.entity.consumeFormationReanchor?.();
-      if (request) latest = { request, spawn };
-    }
-    if (!latest) return false;
-
-    const { request, spawn } = latest;
-    // Re-anchor the Diver group only: the delta moves the Diver origin so the
-    // requester's slot lands on the attack end. Every other enemy is left
-    // exactly where it is (producer review, AH-0MUL15N63003PUDB).
-    const { dx, dy } = computeFormationReanchorDelta(
-      request,
-      spawn.startX + this.driftX + this.diverAnchorX,
-      spawn.startY + this.diverAnchorY,
-      spawn.spacingX,
-      spawn.spacingY,
-    );
-    this.diverAnchorX += dx;
-    this.diverAnchorY += dy;
-
-    // Only the Divers glide to their new slots; non-Divers did not move this
-    // frame, so they are not tracked by the glide.
-    const glideTargets = this.spawned
+    const candidates = this.spawned
       .filter(
-        (s) => s.entity.alive && s.entity.consumeFormationReanchor != null,
+        (spawn) =>
+          spawn.entity.alive && spawn.entity.consumeFormationReanchor != null,
       )
-      .map((s) => s.entity);
-    this.glide.begin(glideTargets);
-    return true;
+      .map((spawn) => ({
+        entity: spawn.entity as unknown as FormationReanchorCandidate['entity'],
+        originX: spawn.startX + this.driftX,
+        originY: spawn.startY,
+        spacingX: spawn.spacingX,
+        spacingY: spawn.spacingY,
+      }));
+    return this.reanchor.apply(candidates);
   }
 
   /**
@@ -2694,6 +2775,11 @@ export class PlayScene extends CombatScene<
    * @param options — dev/test overrides: `initialHp` / `initialPhase` tune the
    *   starting health/phase, and `spawnMinions: false` skips the Phase-1 minion
    *   wave (used by the dev boss scenario so the fight is deterministic).
+   *
+   * A capture configuration's `bossHitsRemaining`
+   * (AH-0MVTNTHE0008UT2C) is the `initialHp` default, so any spawn path — the
+   * normal encounter or a scripted teaser beat — previews the boss close to
+   * death without changing the entity's total hit pool.
    */
   protected spawnBoss(
     options: {
@@ -2707,7 +2793,7 @@ export class PlayScene extends CombatScene<
       y: GAME_HEIGHT / 2 - 80,
       formationOffset: { row: 0, col: 0 },
       rng: this.rng,
-      initialHp: options.initialHp,
+      initialHp: options.initialHp ?? this.sceneSetup?.bossHitsRemaining,
       initialPhase: options.initialPhase,
       // The final boss strengthens with the player's permanent upgrades
       // exactly like the mini-bosses (AH-0MVH87A3L004VOLD). Dev scenarios
@@ -2915,6 +3001,12 @@ export class PlayScene extends CombatScene<
       // linger as a dark rectangle through the victory celebration
       // (AH-0MVH85XXZ008INE2).
       boss.getHealthBarGraphics().setVisible(false);
+      // The run is over: stop the ship's auto-fire from the next tick so it
+      // spawns no bullets, muzzle flashes or shoot cues under the victory
+      // celebration (AH-0MVCB6LBE007I6R8, AC1). Shots already in flight keep
+      // flying (AC3); the beat clock keeps advancing (AC4); the celebration and
+      // the delayed `GameOverScene` transition are untouched (AC7).
+      this.runFinished = true;
       this._triggerVictoryCelebration(deathX, deathY);
       this._finishRunWithPurpose(true);
       return;
@@ -2933,17 +3025,35 @@ export class PlayScene extends CombatScene<
    * Handles one player hit on the active level's mini-boss (epic
    * AH-0MVCC8XSS007P01Z, AH-0MVCRBISU006NUN5). The shared `takeDamage()`
    * contract drives phases/patterns; on the lethal blow the encounter is
-   * finalised exactly once:
+   * finalised exactly once — through the shared mini-boss death sweep
+   * (parent AH-0MVOFGB6K003YD0Z, AH-0MVROELN600410GP):
    *
-   * 1. the reward and checkpoint hooks fire (capturing the level just
-   *    completed, before the run state advances) — AC3;
-   * 2. the registered gating spawn is replayed through the shared wave state
-   *    machine, which advances the level (or triggers the final boss on the
-   *    final level) — AC2/AC3.
+   * 1. the sweep targets are captured before anything is torn down (every
+   *    remaining wave-gating escort plus the mini-boss's live minions — the
+   *    lethal blow clears the minions inside `takeDamage()`); hazards
+   *    (`isNonBlockingHazard`) are never swept — AC1;
+   * 2. the reward/checkpoint hooks fire (capturing the level just completed,
+   *    before the run state advances) while the staggered cascade plays out;
+   *    the reward OVERLAY itself waits for the sweep's completion so its
+   *    pause cannot freeze a burst mid-animation — AC3;
+   * 3. after the sweep, the registered gating spawn is replayed through the
+   *    shared wave state machine, which advances the level (or triggers the
+   *    final boss on the final level) exactly once — AC4.
    */
   private _damageMiniBoss(hitX?: number, hitY?: number): void {
     const miniBoss = this.miniBoss;
     if (!miniBoss || !miniBoss.alive) return;
+
+    // Capture the sweep inputs on this frame, before anything moves or is
+    // destroyed: the death position the anchored bursts cluster around, and
+    // the live minions — `MiniBoss.takeDamage()` clears them on the lethal
+    // blow (`_clearMinions`), so the snapshot must be taken before it
+    // (parent AC1).
+    const deathX = miniBoss.x;
+    const deathY = miniBoss.y;
+    const minionTargets: MiniBossSweepTarget[] = miniBoss
+      .getMinions()
+      .map((minion) => this._sweepTargetForEntity(minion.archetype, minion));
 
     const result = miniBoss.takeDamage(hitX, hitY);
     if (!result.destroyed) return;
@@ -2954,28 +3064,107 @@ export class PlayScene extends CombatScene<
       miniBossName: miniBoss.resolvedConfig.name,
       isFinalLevel: this.waveManager.isFinalLevel,
     };
-    // Fully tear the encounter down. `takeDamage()` only fades the body and
-    // darkens the health bar; the entity's scene-level Graphics (the health
-    // bar and the telegraph/pulse-wave ring) live outside the container and
-    // would otherwise remain frozen on screen after the level advances
-    // (AH-0MVH85XXZ008INE2). `destroy()` removes them (and any minions).
+
+    // The wave-gating scope of the sweep (parent AC1): every remaining live
+    // escort plus the captured minions. The shared splitter drops the
+    // non-blocking hazards (asteroid, lane traffic), which survive.
+    const sweptSpawns = this.spawned.filter(
+      (s) => s.entity.alive && !isNonBlockingHazard(s.enemyKey),
+    );
+    const targets = collectSweepTargets(
+      sweptSpawns.map((s) => this._sweepTargetForEntity(s.enemyKey, s.entity)),
+      minionTargets,
+    );
+
+    // Fully tear the encounter down on the defeat frame. Swept escorts are
+    // removed cosmetically (parent AC4 — no score, no drops, no kill
+    // telemetry) and never route through `_onEnemyKilled`: `destroySilently()`
+    // is the shared "removed from play, no reward" seam (marks the entity dead
+    // so nothing still treats it as live) and the staggered burst visuals come
+    // from the shared sweep, so the entity must not also play its own
+    // explosion. `destroy(true)` then releases the entity's scene-level
+    // graphics. `takeDamage()` only fades the boss body and darkens the health
+    // bar; `destroy()` removes the scene-level Graphics (health bar,
+    // telegraph/pulse-wave ring) that would otherwise remain frozen on screen
+    // after the level advances (AH-0MVH85XXZ008INE2).
+    for (const s of sweptSpawns) {
+      s.entity.destroySilently();
+      s.entity.destroy(true);
+    }
+    if (sweptSpawns.length > 0) {
+      this.spawned = this.spawned.filter((s) => !sweptSpawns.includes(s));
+    }
     miniBoss.destroy();
     this.miniBoss = null;
+
+    // Fire the reward and checkpoint hooks (capturing the level just
+    // completed, before the run state advances) — AC3. The reward OVERLAY is
+    // deferred to the sweep's completion (see `_finaliseMiniBossDefeat`), so
+    // its `setPaused(true)` can never freeze the burst tweens mid-animation.
     this._fireMiniBossDefeatHooks(context);
 
-    // The mini-boss was registered as a gating dynamic spawn when it spawned,
-    // so this single destruction closes its encounter and advances the level
-    // (or triggers the final boss) through the ordinary wave path.
+    // Play the shared death sweep: the staggered cascade begins on this
+    // frame, and `onComplete` (real tween completion, exactly once) is what
+    // finalises the encounter — the reward overlay and the single wave/level
+    // advance both happen there, never mid-display.
+    this.miniBossSweepTargets = targets;
+    this.miniBossSweepHandle = spawnMiniBossDeathSweep(
+      this,
+      {
+        targets,
+        deathX,
+        deathY,
+        bounds: { x: 0, y: 0, width: GAME_WIDTH, height: GAME_HEIGHT },
+        seed: this.getRunSeed(),
+      },
+      {
+        onComplete: () => {
+          // The run can end while the sweep animates (a bullet already in
+          // flight can finish the player): never finalise a stopped scene.
+          if (!this.scene.isActive()) return;
+          this._finaliseMiniBossDefeat(context, sweptSpawns.length);
+        },
+      },
+    );
+  }
+
+  /**
+   * Finalises the mini-boss encounter once the death sweep has finished
+   * animating (parent AC3/AC4). Runs from the sweep executor's `onComplete` —
+   * never on the defeat frame, and never twice (the executor fires it exactly
+   * once): opens the reward overlay, then advances wave/level accounting
+   * exactly once.
+   */
+  private _finaliseMiniBossDefeat(
+    context: MiniBossDefeatContext,
+    sweptEscortCount: number,
+  ): void {
+    // Reward loop (AH-0MVCRBNO6003E1CH AC1): a defeat offers exactly ONE
+    // upgrade-or-unlock choice through the shared choice overlay, opened only
+    // now that every burst has finished animating. Off while a choice is
+    // already open; the `miniBossRewardOpen` latch inside also guarantees a
+    // single overlay per defeat.
+    if (!this.miniBossRewardOpen) this.openMiniBossReward(context);
+
+    // Wave accounting advances exactly once, after the sweep (parent AC4).
+    // The swept escorts left the field with the boss, so their still-counted
+    // wave slots are cleared through the shared "removed without a
+    // destruction event" seam; the mini-boss's own destruction then replays
+    // through the ordinary wave path exactly as before.
+    if (sweptEscortCount > 0) {
+      this.waveManager.unregisterDynamicSpawn(sweptEscortCount);
+    }
     let event = this.waveManager.onEnemyDestroyed();
 
     // Defeat reconciliation (AC2 — the level completes on the mini-boss
     // defeat). The wave-timeout carry-over path can leave the manager's alive
     // count above zero for enemies that are no longer on the field; without
     // this the mini-boss encounter — the one wave that cannot be timed out —
-    // would stall forever. When the field is empty, the mini-boss defeat is
+    // would stall forever. When no wave-gating enemy is left (hazards such as
+    // asteroids / lane traffic never gate the wave), the mini-boss defeat is
     // the authoritative gate, so clear the stale residual through the shared
     // "removed without a destruction event" seam and replay the clear once.
-    if (this.waveManager.miniBossActive && this.getAliveCount() === 0) {
+    if (this.waveManager.miniBossActive && this._waveGatingAliveCount() === 0) {
       this.waveManager.unregisterDynamicSpawn(this.waveManager.enemiesAlive);
       event = this.waveManager.onEnemyDestroyed();
     }
@@ -2983,10 +3172,31 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Captures one sweep target from a live entity: its archetype key, current
+   * position, and the archetype config's size/colour for the burst geometry.
+   */
+  private _sweepTargetForEntity(
+    key: string,
+    entity: EnemyEntity,
+  ): MiniBossSweepTarget {
+    const cfg = loadEnemyConfig(key);
+    return { key, x: entity.x, y: entity.y, size: cfg.size, color: cfg.color };
+  }
+
+  /** Live wave-gating enemies on the field (non-blocking hazards excluded). */
+  private _waveGatingAliveCount(): number {
+    return this.spawned.filter(
+      (s) => s.entity.alive && !isNonBlockingHazard(s.enemyKey),
+    ).length;
+  }
+
+  /**
    * Fires the reward then checkpoint hooks exactly once for one mini-boss
-   * defeat (AC3). Both are optional — guarded while no consumer is installed,
-   * so the gameplay path is unchanged until the reward/checkpoint features
-   * land.
+   * defeat (AC3), capturing the level just completed before the run state
+   * advances. Both are optional — guarded while no consumer is installed, so
+   * the gameplay path is unchanged until the reward/checkpoint features
+   * land. The reward OVERLAY is opened by `_finaliseMiniBossDefeat` once the
+   * death sweep has finished (AH-0MVROELN600410GP).
    */
   private _fireMiniBossDefeatHooks(context: MiniBossDefeatContext): void {
     this.miniBossDefeats += 1;
@@ -2994,10 +3204,6 @@ export class PlayScene extends CombatScene<
     this._saveCheckpoint(context);
     this.miniBossRewardHook?.(context);
     this.miniBossCheckpointHook?.(context);
-    // Reward loop (AH-0MVCRBNO6003E1CH AC1): a defeat offers exactly ONE
-    // upgrade-or-unlock choice through the shared choice overlay. Off in the
-    // headless/dev scenarios and while a choice is already open.
-    if (!this.miniBossRewardOpen) this.openMiniBossReward(context);
   }
 
   /**
@@ -3016,12 +3222,37 @@ export class PlayScene extends CombatScene<
     const owned: ChoiceOption[] = buildUpgradeOptions({
       weaponLevels: this.player?.getWeaponLevels() ?? [],
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      // The mini-boss reward reads the same six-slot view as the hold-full
+      // choice (parent AH-0MVLIJT3M005HPHF; temporary stacks hold a slot).
+      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
     // Option B — unlock one weapon still in the initially-locked pool.
     const unlocks: ChoiceOption[] = lockedWeaponIds(
       this.miniBossUnlockState,
     ).map((weaponId) => toChoiceOption(weaponId as DropId));
-    const options = [...owned, ...unlocks];
+    // Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4). The unlock half is a
+    // base-entry offer built outside `buildChoiceCandidates`, so it must consult
+    // the shared pool itself: at six held kinds a mini-boss unlock of a
+    // brand-new weapon kind would be a seventh slot — the path the producer
+    // reported. Only an unlock for a kind held *temporarily* survives (taking
+    // it makes it permanent without adding a kind); upgrade options name kinds
+    // already held permanently, so they always survive. Below the cap the gate
+    // is inert and the offer is unchanged.
+    const slotState = resolvePlayerSlotState(this.player);
+    const candidates = [...owned, ...unlocks];
+    const admissible = filterOptionsWithinSlotPool(candidates, slotState);
+    // The overlay pauses play, so it must never open with nothing to pick — an
+    // empty offer would stall the run. At a full pool the held kinds themselves
+    // are always admissible (taking one makes a temporarily-held kind
+    // permanent), so fall back to those rather than re-admitting a seventh
+    // kind. Below the cap the unfiltered list is already admissible.
+    const options =
+      admissible.length > 0
+        ? admissible
+        : slotState.isFull
+          ? this._heldKindRewardOptions(slotState)
+          : candidates;
     this.miniBossRewardOptions = options;
     this.miniBossRewardOpen = true;
     this.mineralChoiceOpen = true;
@@ -3050,6 +3281,23 @@ export class PlayScene extends CombatScene<
       });
     }
     return [...this.miniBossRewardOptions];
+  }
+
+  /**
+   * The last-resort mini-boss reward offer: base picks of the kinds already in
+   * the slots.
+   *
+   * Reached only at a full pool when the ordinary offer list is empty (no
+   * permanent holdings to upgrade and no temporarily-held locked weapon to
+   * unlock) — the overlay pauses play, so an empty list would soft-lock the
+   * run. Taking one of these makes a temporarily-held kind permanent, which
+   * adds no new kind, so the cap still holds. `reset` is excluded by
+   * construction through {@link CHOICE_POOL}.
+   */
+  private _heldKindRewardOptions(state: PowerUpSlotState): ChoiceOption[] {
+    return [...state.heldIds]
+      .filter((id) => (CHOICE_POOL as readonly string[]).includes(id))
+      .map((id) => toChoiceOption(id));
   }
 
   /**
@@ -3100,7 +3348,9 @@ export class PlayScene extends CombatScene<
    * Writes the run checkpoint after a mini-boss defeat (AC2). The saved level
    * is the level the run **resumes** at — the one after the defeated
    * mini-boss (capped at the final level), at wave 1 — so Continue always
-   * restarts cleanly at the beginning of a level.
+   * restarts cleanly at the beginning of a level. The **live** hold capacity
+   * is persisted alongside the minerals, so Continue keeps the capacity
+   * progression the run had earned (schema v2, AH-0MVT1DYO5004UC4P).
    */
   private _saveCheckpoint(context: MiniBossDefeatContext): void {
     const resumeLevel = Math.min(context.level + 1, MAX_LEVEL);
@@ -3111,6 +3361,7 @@ export class PlayScene extends CombatScene<
       lives: this.gameState.lives,
       score: this.gameState.score,
       minerals: this.gameState.minerals,
+      mineralHoldCapacity: this.gameState.mineralCapacity,
       weaponLevels: this.player?.getWeaponLevels() ?? [],
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
       unlockedWeapons: this.getUnlockedWeapons(),
@@ -3125,26 +3376,56 @@ export class PlayScene extends CombatScene<
    * the run seed (reproducibility/leaderboard validity), permanent weapon and
    * power-up levels and the mini-boss unlock state. The WaveManager has
    * already started at the checkpoint level.
+   *
+   * The permanent grants are **replayed through the one shared grant seam**
+   * live play uses ({@link grantPermanentWeapon} / {@link grantPermanentPowerUp},
+   * the helpers behind `applyMineralChoiceReward`), so a resumed run ends up
+   * with both the ship's levels **and** the `EffectsRegistry` runtime state the
+   * HUD renders from and the permanent effects read (AH-0MVSHI07B003BZIP). One
+   * replay per persisted level therefore reproduces a live run's state exactly
+   * — no divergent copy, no second HUD data path.
+   *
+   * No gym implements checkpoint resume, so the gym↔game parity rule needs no
+   * gym counterpart for this path (the shared helpers themselves are already
+   * consumed by the game, every gym and the headless eval arena).
+   *
+   * The **resumed hold** keeps the capacity the run had earned: the
+   * checkpoint's hold capacity is applied first, then the saved mineral count
+   * is restored through the shared clamped seam (`GameState.restoreHold`), so
+   * an over-capacity count clamps into `[0, capacity]` and records no overflow
+   * — the hold can never resume over-capacity, the HUD never paints more than
+   * 100%, and the first hold-full choice after Continue needs a real fill, not
+   * the discarded saved surplus (AH-0MVT1DZRG000Q1US).
    */
   private _restoreCheckpoint(checkpoint: Checkpoint): void {
-    this.gameState.lives = checkpoint.lives;
     this.gameState.score = checkpoint.score;
-    this.gameState.minerals = checkpoint.minerals;
+    // Capacity first, then the clamped store: `restoreHold` applies the
+    // checkpoint's hold capacity and clamps the restored minerals into
+    // `[0, capacity]`, clearing any overflow (never over-capacity on resume).
+    this.gameState.restoreHold({
+      capacity: checkpoint.mineralHoldCapacity,
+      store: checkpoint.minerals,
+    });
     this.gameState.runSeed = checkpoint.runSeed;
     this.injectedRunSeed = checkpoint.runSeed;
-    this.effectsRegistry.setLives(checkpoint.lives);
     // Replay the permanent grants through the ordinary collection seam so the
-    // restored levels are identical to a run that earned them.
+    // restored registry state is identical to a run that earned them.
     for (const entry of checkpoint.weaponLevels) {
       for (let i = 0; i < entry.level; i += 1) {
-        this.player?.equipWeapon(entry.id, true);
+        grantPermanentWeapon(entry.id, this.effectsRegistry, this.player);
       }
     }
     for (const entry of checkpoint.powerUpLevels) {
       for (let i = 0; i < entry.level; i += 1) {
-        this.player?.collectPowerUp(entry.id, true);
+        grantPermanentPowerUp(entry.id, this.effectsRegistry);
       }
     }
+    // Lives are restored **after** the replay: `extra_life` grants raise the
+    // store's lives, and the checkpoint already reflects the lives the player
+    // had when it was written. Replaying must never inflate them, so the saved
+    // value is applied last and pushed into the store the HUD reads.
+    this.gameState.lives = checkpoint.lives;
+    this.effectsRegistry.setLives(checkpoint.lives);
     const unlocked = new Set<WeaponId>(this.miniBossUnlockState.unlockedWeapons);
     for (const weaponId of checkpoint.unlockedWeapons) unlocked.add(weaponId);
     this.miniBossUnlockState = { unlockedWeapons: unlocked };
@@ -3160,6 +3441,23 @@ export class PlayScene extends CombatScene<
   /** Whether the mini-boss reward overlay is open. */
   isMiniBossRewardOpen(): boolean {
     return this.miniBossRewardOpen;
+  }
+
+  /**
+   * Test/inspection seam: whether the mini-boss death sweep is still
+   * animating. The encounter — reward overlay plus the single wave/level
+   * advance — is finalised only once its last burst completes.
+   */
+  isMiniBossSweepActive(): boolean {
+    return this.miniBossSweepHandle !== null && !this.miniBossSweepHandle.complete;
+  }
+
+  /**
+   * Test/inspection seam: the targets captured for the current/last
+   * mini-boss death sweep (escorts plus live minions, hazards excluded).
+   */
+  getMiniBossSweepTargets(): readonly MiniBossSweepTarget[] {
+    return [...this.miniBossSweepTargets];
   }
 
   /** The weapons this run has unlocked through mini-boss rewards. */
@@ -3300,6 +3598,23 @@ export class PlayScene extends CombatScene<
     // Shared player-fire path: the metronomic hold-full ghost fire and live
     // fire play the same cue through the same switch (AH-0MV55O9R5005W6J0).
     playWeaponFireSound(weaponId);
+  }
+
+  /**
+   * Stops the ship firing once the run is won (AH-0MVCB6LBE007I6R8).
+   *
+   * Overrides the shared {@link CombatCoreScene.playerFireSuppressed} gate, so
+   * the tick after the Central AI boss dies spawns no new player bullets,
+   * muzzle flashes or shoot cues for the whole in-run victory hold
+   * (`VICTORY_TRANSITION_HOLD_MS`, AC1). Driven purely by the per-run
+   * {@link PlayScene.runFinished} flag, which is set in
+   * {@link PlayScene._damageBoss} and cleared on scene create/restart — so a
+   * new run fires normally (AC6) and a mini-boss defeat, a wave/level
+   * transition or the transition pause is unaffected (AC2). The shared beat
+   * clock keeps advancing while suppressed (AC4).
+   */
+  protected override playerFireSuppressed(): boolean {
+    return this.runFinished;
   }
 
   /**
@@ -4345,6 +4660,30 @@ export class PlayScene extends CombatScene<
    * Whether this run is the bot-driven demo/attract mode (AC1). Set when the
    * scene is started with `{ demo: true }` (or via `setDemoMode`).
    */
+  /**
+   * The dev-gated capture configuration this run will apply, or `null`
+   * (`AH-0MVTNTHE0008UT2C`). Reported by the teaser's verification tests.
+   */
+  getSceneSetup(): SceneSetupState | null {
+    return this.sceneSetup;
+  }
+
+  /**
+   * The hold-full reward a capture configuration forces, or `null` for the
+   * normal random choice (`AH-0MVTNTHE0008UT2C`).
+   */
+  getForcedMineralReward(): string | null {
+    return this.sceneSetup?.mineralReward ?? null;
+  }
+
+  /**
+   * The option a demo (bot) run auto-selects on the hold-full overlay
+   * (`AH-0MVTNTHE0008UT2C` exposes it for verification).
+   */
+  preferredDemoChoiceIndex(): number {
+    return this._preferredDemoChoiceIndex();
+  }
+
   isDemoMode(): boolean {
     return this.demoMode;
   }
@@ -4564,7 +4903,22 @@ export class PlayScene extends CombatScene<
       // Offer level-ups for power-ups the player already owns (parent
       // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      // Field pickups occupy a slot while they last, so the six-slot gate must
+      // see the temporary half of the run's holdings (parent AH-0MVLIJT3M005HPHF
+      // producer Q4a/Q6a: at full slots only offer items currently in the slots).
+      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
+    // A capture configuration forces the resolution (AH-0MVTNTHE0008UT2C):
+    // offering it first makes the demo auto-select deterministic, so a
+    // scripted beat's pay-off is the same every run.
+    const forcedReward = this.getForcedMineralReward();
+    if (forcedReward !== null) {
+      this.mineralChoiceOptions = [
+        toChoiceOption(forcedReward as DropId),
+        ...this.mineralChoiceOptions.filter((option) => option.id !== forcedReward),
+      ];
+    }
     this.mineralChoiceOpen = true;
     this.runTelemetry.holdFull(this.mineralChoiceOptions.map((o) => o.id));
     this.setPaused(true);
@@ -4612,6 +4966,8 @@ export class PlayScene extends CombatScene<
    * unaffected (AH-0MV03GXZQ00801T4 · AC1).
    */
   private _preferredDemoChoiceIndex(): number {
+    // A forced reward is the scripted pay-off: always take it.
+    if (this.getForcedMineralReward() !== null) return 0;
     if (this.gameState.lives >= MAX_LIVES) return 0;
     const index = this.mineralChoiceOptions.findIndex(
       (option) => option.id === EXTRA_LIFE_DROP_ID,

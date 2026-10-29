@@ -282,6 +282,21 @@ export const FORCE_FIELD_LINE_WIDTH = 2;
 export const FORCE_FIELD_FILL_ALPHA = 0.14;
 /** Force-bubble stroke alpha. */
 export const FORCE_FIELD_STROKE_ALPHA = 0.9;
+/**
+ * Force-bubble fill alpha while the field is active but its reflect budget is
+ * exhausted (`forceFieldRemaining() <= 0`). Deliberately fainter than
+ * {@link FORCE_FIELD_FILL_ALPHA} yet still visible, so a spent field reads
+ * "up but inert" — never "expired" (AH-0MVBKT2WO001AR14 Q1 = b: dim when
+ * spent).
+ */
+export const FORCE_FIELD_SPENT_FILL_ALPHA = 0.05;
+/**
+ * Force-bubble stroke alpha while the field is active but its reflect budget
+ * is exhausted. Deliberately fainter than {@link FORCE_FIELD_STROKE_ALPHA}
+ * yet still visible, so a spent field reads "up but inert" — never "expired"
+ * (AH-0MVBKT2WO001AR14 Q1 = b: dim when spent).
+ */
+export const FORCE_FIELD_SPENT_STROKE_ALPHA = 0.35;
 
 /**
  * Clears *graphics* and draws the shared Force Field reflect bubble around
@@ -290,11 +305,30 @@ export const FORCE_FIELD_STROKE_ALPHA = 0.9;
  * The bubble is a pulsing hexagonal boundary (the same radius the shared
  * combat core uses for reflection) with inward chevron "reflect" motifs, so
  * the player can read exactly which incoming shots will bounce. Its rim
- * pulses continuously and the fill brightens in the final second before it
- * expires, mirroring the shared Shield bubble treatment.
+ * pulses continuously and the fill brightens in the final second before a
+ * temporary window expires, mirroring the shared Shield bubble treatment.
  *
- * Cleared (never drawn) when there is no graphics, no player, or the field is
- * inactive, so an expired field always removes the bubble.
+ * **Permanence comes from the temporary-window accessor, never from the
+ * countdown.** A permanent (hold-full) field is stored with `remaining: 0`
+ * and `isForceFieldActive()` stays true for the whole run, so gating on
+ * `registry.remaining('force_field')` made the bubble vanish after the
+ * temporary window (AH-0MVRDMG0N000Y03Z AC1). `powerUpTemporaryRemaining`
+ * returns `undefined` for a permanent base with no active window and the
+ * window countdown otherwise; because it also returns `undefined` when the
+ * effect is absent, the `isForceFieldActive()` guard stays ahead of it.
+ *
+ * **Spent dim (AH-0MVBKT2WO001AR14 Q1 = b).** While the field is active but
+ * `forceFieldRemaining() <= 0` the bubble is drawn with the reduced
+ * {@link FORCE_FIELD_SPENT_STROKE_ALPHA}/{@link FORCE_FIELD_SPENT_FILL_ALPHA}
+ * baseline instead of vanishing. The rim, fill and three chevrons all stay,
+ * so a spent field still reads as up; it just reads as inert. A temporary
+ * window's final-second ending brighten is preserved on top of whichever
+ * baseline applies; a permanent-only field has no countdown, so it holds a
+ * steady (constant-phase) pulse with no ending brighten.
+ *
+ * Cleared (never drawn) when there is no graphics, no player, the field is
+ * inactive, or a temporary window has counted down to zero, so an expired
+ * field always removes the bubble.
  *
  * @param graphics — the scene-owned force-field graphics (may be null).
  * @param player — the ship position (may be null).
@@ -310,19 +344,39 @@ export function drawForceFieldBubble(
   graphics.clear();
   if (!player || !registry.isForceFieldActive()) return false;
 
-  const remaining = registry.remaining('force_field');
-  if (remaining === undefined || remaining <= 0) return false;
+  // `undefined` = permanent base with no temporary window (draw forever);
+  // a number = the temporary window's countdown (0 = just expired).
+  const tempRemaining = registry.powerUpTemporaryRemaining('force_field');
+  if (tempRemaining !== undefined && tempRemaining <= 0) return false;
+
+  // Spent (cannot reflect any more) dims rather than vanishes, for permanent
+  // and temporary fields alike (Q1 = b).
+  const spent = registry.forceFieldRemaining() <= 0;
+  const strokeBase = spent
+    ? FORCE_FIELD_SPENT_STROKE_ALPHA
+    : FORCE_FIELD_STROKE_ALPHA;
+  const fillBase = spent
+    ? FORCE_FIELD_SPENT_FILL_ALPHA
+    : FORCE_FIELD_FILL_ALPHA;
 
   const radius = registry.forceFieldRadius();
   const centerX = player.x;
   const centerY = player.y;
 
-  // Continuous rim pulse (never a steady ring).
-  const pulse = 0.5 + 0.5 * Math.cos(remaining * 12);
-  const strokeAlpha =
-    FORCE_FIELD_STROKE_ALPHA * (0.4 + 0.6 * pulse);
+  // Continuous rim pulse (never a steady ring), scaled from the current
+  // baseline so a spent field still pulses — faintly. A temporary window
+  // drives the phase from its countdown; a permanent-only field has no
+  // countdown, so it uses a constant phase (steady pulse) with no wind-down
+  // to read.
+  const phase = tempRemaining ?? 0;
+  const pulse = 0.5 + 0.5 * Math.cos(phase * 12);
+  const strokeAlpha = strokeBase * (0.4 + 0.6 * pulse);
+  // Final-second brighten applies only to a temporary window, and relative
+  // to its current baseline (dimmed when the field is spent).
   const fillAlpha =
-    remaining <= 1 ? FORCE_FIELD_FILL_ALPHA + (0.5 - FORCE_FIELD_FILL_ALPHA) * (1 - remaining) : FORCE_FIELD_FILL_ALPHA;
+    tempRemaining !== undefined && tempRemaining <= 1
+      ? fillBase + (0.5 - fillBase) * (1 - tempRemaining)
+      : fillBase;
 
   graphics.lineStyle(FORCE_FIELD_LINE_WIDTH, FORCE_FIELD_COLOR, strokeAlpha);
   // Hexagonal boundary (flat-top) — echoes the code-drawn drop icon.

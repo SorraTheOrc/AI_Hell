@@ -1,11 +1,19 @@
 /**
- * Docs guard for the shared six-slot cap (parent AH-0MVLIJT3M005HPHF, AC7;
- * docs item AH-0MVNT31C50065EE0).
+ * Docs guard for the shared six-slot cap (parent AH-0MVLIJT3M005HPHF, AC6;
+ * docs items AH-0MVNT31C50065EE0 and AH-0MVRCF584004SQFV).
  *
  * The cap and its per-entry exemption flag must be discoverable by producers
- * and agents, and the shared-pool consequence (a weapon-heavy build can take
- * the pool before any power-up reward) must be recorded as *chosen* semantics
- * so it is never mistaken for a bug. This guard fails if that documentation is
+ * and agents, and the two consequences that would otherwise look like bugs must
+ * be recorded as *chosen* semantics:
+ *
+ * - a **temporary (field) pickup occupies a slot while it lasts** and releases
+ *   it on expiry (producer Q4a), and
+ * - a **weapon-heavy build can take the pool before any power-up reward**
+ *   (shared pool, producer Q1 answer (c)).
+ *
+ * The guard also documents the blocked-collection cue (Q5b), the
+ * available-when-full entries never occupying a slot (Q7a), and the choice's
+ * "only what is in the slots" rule (Q6a). It fails if that documentation is
  * removed or weakened, and cross-checks the documented exemptions against the
  * live catalogue so the prose cannot silently drift from the code.
  *
@@ -33,8 +41,8 @@ const read = (file: string): string =>
 
 /** The GDD section that documents the cap (`§4.4` → before `§4.4.1`). */
 function slotsSection(gdd: string): string {
-  const start = gdd.indexOf('#### Permanent loadout slots');
-  expect(start, 'the GDD has a "Permanent loadout slots" subsection').toBeGreaterThan(-1);
+  const start = gdd.indexOf('#### Loadout slots');
+  expect(start, 'the GDD has a "Loadout slots" subsection').toBeGreaterThan(-1);
   const end = gdd.indexOf('#### 4.4.1', start);
   return gdd.slice(start, end === -1 ? undefined : end);
 }
@@ -47,15 +55,15 @@ function holdFullChoiceSection(gdd: string): string {
   return gdd.slice(start, end === -1 ? undefined : end);
 }
 
-/** The BALANCING section that records the cap (`### The six permanent loadout slots`). */
+/** The BALANCING section that records the cap (`### The six loadout slots`). */
 function balancingSection(balancing: string): string {
-  const start = balancing.indexOf('### The six permanent loadout slots');
-  expect(start, 'docs/BALANCING.md has a six permanent loadout slots section').toBeGreaterThan(-1);
+  const start = balancing.indexOf('### The six loadout slots');
+  expect(start, 'docs/BALANCING.md has a six loadout slots section').toBeGreaterThan(-1);
   const end = balancing.indexOf('\n### ', start + 1);
   return balancing.slice(start, end === -1 ? undefined : end);
 }
 
-describe('the six-slot cap and exemption flag are documented (AH-0MVNT31C50065EE0)', () => {
+describe('the six-slot cap and exemption flag are documented (AH-0MVLIJT3M005HPHF)', () => {
   const gdd = read(GDD_PATH);
   const balancing = read(BALANCING_PATH);
 
@@ -70,10 +78,10 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVNT31C50065EE
     const section = slotsSection(gdd);
     expect(section).toMatch(/shared/i);
     expect(section).toMatch(/power-up and weapon|weapon and power-up|power-up\*? and \*?weapon/i);
-    expect(section).toMatch(/first six\s+distinct kinds|six distinct/i);
+    expect(section).toMatch(/six distinct kinds|distinct held drop kind/i);
   });
 
-  it('the GDD records that slots are derived from the existing permanent-grant stores (no new counter)', () => {
+  it('the GDD records that slots are derived from the existing stores (no new counter)', () => {
     const section = slotsSection(gdd);
     expect(section).toMatch(/derived/i);
     expect(section).toContain('PowerUpLevelStore.getLevels()');
@@ -81,23 +89,33 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVNT31C50065EE
     expect(section).toMatch(/no second\s+slot\s+counter|no (second |new )?slot counter/i);
   });
 
-  it('the GDD records that field pickups never consume a slot', () => {
-    expect(slotsSection(gdd)).toMatch(/field pickups? never consume|never consumes? a slot/i);
+  // Producer Q4a (2026-10-27) — the rule changed from permanent-only to the
+  // union of permanent and temporary holdings.
+  it('the GDD records that a field pickup occupies a slot while it lasts and releases it on expiry', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/field pickup\*{0,2}s?\*{0,2} (occup|count|hold)/i);
+    expect(section).toMatch(/slot is \*\*released\*\*|released when the window expires|released when/i);
+    expect(section).toMatch(/expir/i);
+    // The temporary snapshot accessors are part of the derived view.
+    expect(section).toContain('getTempPowerUpIds()');
+    expect(section).toContain('getTempWeaponIds()');
   });
 
   it('the GDD records that the permanent cannon and reset are never counted', () => {
     const section = slotsSection(gdd);
     expect(section).toMatch(/cannon/i);
     expect(section).toMatch(/reset/i);
-    expect(section).toMatch(/never count|not counted|never granted/i);
+    expect(section).toMatch(/never count|not counted|never granted|slot-exempt/i);
   });
 
-  it('the GDD documents availableWhenSlotsFull as a per-entry catalogue flag defaulting to false', () => {
+  // Producer Q7a — the flag excludes an entry from the count, not just the gate.
+  it('the GDD documents availableWhenSlotsFull as a per-entry flag that never occupies a slot', () => {
     const section = slotsSection(gdd);
     expect(section).toContain('availableWhenSlotsFull');
     expect(section).toMatch(/default(s)? to `false`|default `false`|defaults to \*\*`false`\*\*|default \*\*`false`\*\*/);
     expect(section).toMatch(/per-entry|on the (power-up )?catalogue entry|PowerUpEntry/);
     expect(section).toMatch(/no `id === '…'`|data change|no special case/i);
+    expect(section).toMatch(/never occupies a slot|never occupy a slot/i);
   });
 
   it('the GDD names every catalogue entry that is exempt when the slots are full', () => {
@@ -112,14 +130,50 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVNT31C50065EE
     }
   });
 
-  it('the GDD §4.4.1 gates the hold-full choice at six filled slots', () => {
-    const section = holdFullChoiceSection(gdd);
-    expect(section).toMatch(/level-ups? of owned|owned (items?|kinds)/i);
-    expect(section).toMatch(/availableWhenSlotsFull/);
-    expect(section).toMatch(/seventh/i);
+  // Producer Q5b — a refused pickup must be visible, not silent.
+  it('the GDD documents the blocked collection and its distinct cue', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/not collectable|not-collectable|blocked/i);
+    expect(section).toContain('playPowerUpBlockedSound()');
+    expect(section).toMatch(/once per drop|stays on the field/i);
+    expect(section).toContain('collectOverlappingDrops');
+  });
+
+  // Producer Q6a — the choice offers only what is in the slots.
+  it('the GDD records that the hold-full choice offers only items currently in the slots', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/offers only what is in the slots|only items currently in the slots/i);
+    expect(section).toMatch(/level-ups? of permanently-owned|level-ups of owned/i);
     expect(section).toMatch(/mini-boss/i);
+
+    const choice = holdFullChoiceSection(gdd);
+    expect(choice).toMatch(/only items currently in the slots/i);
+    expect(choice).toMatch(/availableWhenSlotsFull/);
+    expect(choice).toMatch(/seventh/i);
     // The gate lives once in the shared builder, not in a scene.
-    expect(section).toContain('buildChoiceCandidates');
+    expect(choice).toContain('buildChoiceCandidates');
+    expect(choice).toMatch(/tempPowerUpIds/);
+  });
+
+  // Producer rejection 2026-10-29 ("we seem able to get 7 slots"): the leak was
+  // the mini-boss reward's unlock half, a base-entry offer that does not come
+  // through `buildChoiceCandidates`. The rule now applies to every offer
+  // surface, and the docs must say so.
+  it('the GDD records that the mini-boss unlock half is gated by the same pool', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/mini-boss/i);
+    expect(section).toContain('filterOptionsWithinSlotPool');
+    expect(section).toMatch(/unlock/i);
+    expect(section).toMatch(/seventh/i);
+    expect(section).toMatch(/falls back to\s+base picks|never open empty/i);
+  });
+
+  it('docs/BALANCING.md records that no reward screen can breach the cap', () => {
+    const section = balancingSection(balancing);
+    expect(section).toContain('filterOptionsWithinSlotPool');
+    expect(section).toMatch(/mini-boss/i);
+    expect(section).toMatch(/unlock/i);
+    expect(section).toMatch(/held\s+kinds/i);
   });
 
   it('the GDD records the parity note: the game and the gyms consume the same gate', () => {
@@ -140,13 +194,22 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVNT31C50065EE
     expect(section).toMatch(/demand/i);
   });
 
+  it('docs/BALANCING.md records the field-pickup churn and the blocked-pickup cue as intended', () => {
+    const section = balancingSection(balancing);
+    expect(section).toMatch(/field pickup/i);
+    expect(section).toMatch(/while (its timed window is active|it lasts)|while they last/i);
+    expect(section).toMatch(/releases? it on expiry|expiry/i);
+    expect(section).toMatch(/churn/i);
+    expect(section).toMatch(/not-collectable cue|not collectable cue/i);
+  });
+
   it('docs/BALANCING.md records the shared-pool starvation consequence as intended (Q1 answer (c))', () => {
     const section = balancingSection(balancing);
     expect(section).toMatch(/weapon-heavy|weapon-first|weapon build/i);
     expect(section).toMatch(/starv|occupy|consum(e|ing) the pool/i);
     expect(section).toMatch(/intended|chosen|by design|not a bug/i);
     expect(section).toMatch(/Q1/);
-    // The producer's answer: field pickups are excluded from the shared pool.
-    expect(section).toMatch(/\(c\)|answer \(c\)|field pickups? are excluded/i);
+    // The producer's answer: one shared pool across power-up and weapon kinds.
+    expect(section).toMatch(/\(c\)|answer \(c\)/);
   });
 });

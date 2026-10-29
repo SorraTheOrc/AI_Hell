@@ -109,6 +109,13 @@ export interface CapturerConfig {
   forceFieldHits?: number;
   health?: number;
   /** Injectable random source (defaults to `Math.random`). */
+  /**
+   * Whether this enemy is aware of the playfield seam (AH-0MV9G3DZ9003P7P8).
+   * Absent resolves to `true` (seam-awareness is the default); the classic
+   * arcade exclusions (`march`, `centipede`) carry an explicit `false` via
+   * the shared factory thread.
+   */
+  wrapAware?: boolean;
   rng?: () => number;
 }
 
@@ -150,6 +157,7 @@ export class Capturer extends BaseEnemy {
       shotProbability: 0,
       health: config.health,
       forceFieldHits: config.forceFieldHits,
+      wrapAware: config.wrapAware,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);

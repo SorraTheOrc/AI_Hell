@@ -16,6 +16,7 @@ import { BACK_TO_INDEX_LABEL, GYM_INDEX_KEY } from '../../utils/gymNavigation';
 import { GymIndex } from '../GymIndex';
 import { MenuScene } from '../MenuScene';
 import type { LevelDefinition, WaveDefinition } from '../../waves/Formations';
+import { LEVELS } from '../../waves/Formations';
 import { sequenceVariedWaves } from './GymCurveSequencer';
 import {
   GYM_LEVEL_DEFAULT_LABEL,
@@ -171,6 +172,70 @@ describe('GymLevel — generated level gym scene (AC3/AC4/AC5)', () => {
 
     expect(scene.isLevelComplete()).toBe(true);
     expect(scene.getWavesToPlayCount()).toBe(1);
+  });
+
+  // ── AC4 — formed level enemies cross the seam like the game (AH-0MVKXBZ5N007LKH4) ──
+
+  it('wraps a wrap-aware formed enemy across the seam while the non-aware march stays off-edge', async () => {
+    // Both groups spawn beyond the right edge: the only thing that can bring
+    // an enemy back on-screen is the shared post-motion wrap seam — parity
+    // with `PlayScene._moveEnemies`. `scout` is wrap-aware by default;
+    // `march` is the classic-arcade non-aware archetype (`wrapAware: false`).
+    const scene = await bootWith({
+      level: makeLevel('Wrap Seam Level', [
+        {
+          groups: [
+            {
+              enemyKey: 'scout',
+              formation: 'v',
+              count: 1,
+              spacingX: 26,
+              spacingY: 24,
+              startX: GAME_WIDTH + 40,
+              startY: 150,
+            },
+            {
+              enemyKey: 'march',
+              formation: 'v',
+              count: 1,
+              spacingX: 26,
+              spacingY: 24,
+              startX: GAME_WIDTH + 40,
+              startY: 300,
+            },
+          ],
+          shootEnabled: false,
+        },
+      ]),
+    });
+
+    const enemies = formationEnemies(scene) as unknown as Array<{
+      wrapAware: boolean;
+      x: number;
+      y: number;
+      alive: boolean;
+    }>;
+    const scout = enemies.find((enemy) => enemy.wrapAware);
+    const march = enemies.find((enemy) => !enemy.wrapAware);
+    expect(scout, 'a wrap-aware scout is present').toBeDefined();
+    expect(march, 'a non-aware march is present').toBeDefined();
+    expect(enemies.filter((enemy) => enemy.wrapAware)).toHaveLength(1);
+    expect(enemies.filter((enemy) => !enemy.wrapAware)).toHaveLength(1);
+
+    // Snap both enemies to their formation slots (off the right edge for
+    // both groups), then run one frame of the shared tick: the post-motion
+    // wrap must relocate the aware scout onto the arena and leave the
+    // non-aware march at its bounded slot.
+    scene.finishSpawnAnimations();
+    scene.tick(1 / 60);
+
+    expect(scout!.alive).toBe(true);
+    expect(march!.alive).toBe(true);
+    // The wrap-aware scout crossed the seam to the opposite (left) edge ...
+    expect(scout!.x, 'wrap-aware scout wraps into the arena').toBeGreaterThanOrEqual(0);
+    expect(scout!.x, 'wrap-aware scout wraps into the arena').toBeLessThan(GAME_WIDTH);
+    // ... while the classic non-aware march keeps its off-screen slot.
+    expect(march!.x, 'non-aware march is not wrapped').toBeGreaterThan(GAME_WIDTH);
   });
 
   it('AC3 — a generated level plays distinct wave compositions, not repeats', async () => {
@@ -596,7 +661,6 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
     expect(victim.alive).toBe(true);
 
     // A transiting enemy cannot fire.
-    victim.shootEnabled = true;
     scene.tick(0.1);
     expect(scene.getActiveEnemyBullets()).toHaveLength(0);
 
@@ -612,6 +676,61 @@ describe('GymLevel — wormhole emergence parity (AH-0MV8BSMXC0097KLW)', () => {
     scene.spawnPlayerBullet(victim.x, victim.y, 0, 0);
     scene.tick(0.016);
     expect(victim.alive).toBe(false);
+  });
+
+  it('hands the wave shootEnabled rule onto every spawned entity, like PlayScene (AH-0MVRMHSKH0066J9B AC2)', async () => {
+    // A firing launch: every enemy carries the wave's `true` rule — the flag
+    // flows from the wave/spawn descriptor, never hand-set by the test (the
+    // old workaround removed by AH-0MVRMHSKH0066J9B).
+    const firing = await bootWave(firingScoutWave(3));
+    for (const enemy of formationEnemies(firing)) {
+      expect(enemy.shootEnabled, 'firing wave hand-off').toBe(true);
+    }
+
+    // A quiet launch (Levels 1–3, GDD §2.4): the same seam propagates the
+    // wave's `false` rule instead of leaving the BaseEnemy default.
+    const quiet = await bootWave(scoutWave(3));
+    for (const enemy of formationEnemies(quiet)) {
+      expect(enemy.shootEnabled, 'quiet wave hand-off').toBe(false);
+    }
+  });
+
+  it('launches a real campaign march level firing and marching, not as a static line (AH-0MVRMHSKH0066J9B AC5)', async () => {
+    // The shipped campaign's march level (Level 6, wave 1: a `march` block of
+    // Invaders plus Scouts, `openFire`). Before this item a launched block
+    // rendered as a static line and its enemies were silently non-threatening;
+    // this pins the end-to-end behaviour the gym exists to preview.
+    const level = LEVELS[5];
+    booted = await bootScene([GymLevel]);
+    booted.game.scene.start('GymLevel', { level });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene('GymLevel') as GymLevel;
+    scene.setAsteroidSpawnerEnabled(false);
+
+    const enemies = formationEnemies(scene);
+    expect(enemies.length).toBeGreaterThan(0);
+    // The firing rule flows from the launched wave definition (Levels 4+).
+    expect(enemies.every((enemy) => enemy.shootEnabled)).toBe(true);
+
+    // The wave's march block is live and rides the shared march policy: its
+    // base steps once per `step / referenceSpeed` second, and the Invaders are
+    // positioned from it rather than from the global drift.
+    const before = scene.getMarchState();
+    expect(before, 'launched march wave has no march block').not.toBeNull();
+    scene.finishSpawnAnimations();
+    for (let frame = 0; frame < 90; frame += 1) scene.tick(1 / 60); // 1.5 s
+    const after = scene.getMarchState()!;
+    expect(
+      after.x !== before!.x || after.y !== before!.y,
+      'the launched march block stepped',
+    ).toBe(true);
+    const invader = enemies.find((enemy) => !enemy.wrapAware);
+    expect(invader, 'the launched wave has no march member').toBeDefined();
+    // The Invader's body sits on the block's live base + its column offset (the
+    // shared body wiggle adds up to ±2 px).
+    expect(
+      Math.abs(invader!.x - (after.x + invader!.offset.col * 26)),
+    ).toBeLessThanOrEqual(3);
   });
 
   it('shimmers each emerging enemy from the shared spawn path, and restores it when growth ends (AH-0MVD2N9MM0007NGZ parity)', async () => {
@@ -1063,5 +1182,132 @@ describe('GymLevel — seeded setup determinism (AH-0MVNW90FB003H3KM)', () => {
     const b = mineralPositions(await bootWith({ level: level(), seed: 2 }));
 
     expect(a).not.toEqual(b);
+  });
+});
+
+describe('GymLevel — arc setup fields (AH-0MVRMFOB4002LMZS)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="game-container"></div>';
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  async function bootWith(data: GymLevelData): Promise<GymLevel> {
+    booted = await bootScene([GymLevel]);
+    const manager = booted.game.scene;
+    manager.start('GymLevel', data);
+    await advanceGame(booted.game, 200);
+    return manager.getScene('GymLevel') as GymLevel;
+  }
+
+  const level = () => makeLevel('Arc Level', [scoutWave(1)]);
+
+  /**
+   * Makes the "empty hold" premise of the hold-full tests explicit.
+   *
+   * The scene seeds 50 minerals at start on the randomised `supplyRng`
+   * (`Math.random` when no setup seed is set), and the player may scoop some
+   * of them during the 200 ms deterministic boot. Clearing only `minerals`
+   * therefore leaves `MineralHold.store` non-zero, and a later exact fill
+   * overflows: `resolve()` carries the surplus back instead of resetting to 0
+   * (shared overflow semantics, GDD §4.5), so the assertion is layout-
+   * dependent and flakes run-to-run (AH-0MVST7XTT008AIYW, load-remediation
+   * epic AH-0MVSBEIVK003XAFB). Resetting both the field and the hold keeps
+   * the exact-fill premise deterministic without weakening any assertion.
+   */
+  function resetMineralHold(scene: GymLevel): void {
+    const internals = scene as unknown as {
+      minerals: unknown[];
+      mineralHold: { store: number };
+    };
+    internals.minerals.length = 0;
+    internals.mineralHold.store = 0;
+  }
+
+  it('starts each configured weapon at its permanent level', async () => {
+    const scene = await bootWith({
+      level: level(),
+      player: {
+        weapons: ['spread'],
+        timedWeapons: [],
+        weaponLevels: { rapid: 3, spread: 2 },
+      },
+    });
+
+    const player = scene.getPlayer()!;
+    // Level N == N permanent grants; `weapons` still contributes one grant.
+    expect(player.getWeaponLevel('rapid')).toBe(3);
+    expect(player.getWeaponLevel('spread')).toBe(3);
+    expect(player.hasWeapon('rapid')).toBe(true);
+  });
+
+  it('keeps the level-1 semantics of player.weapons when no levels are set', async () => {
+    const scene = await bootWith({
+      level: level(),
+      player: { weapons: ['spread'], timedWeapons: [] },
+    });
+
+    expect(scene.getPlayer()!.getWeaponLevel('spread')).toBe(1);
+  });
+
+  it('resolves a full hold to the forced mineralReward, not a random pick', async () => {
+    const scene = await bootWith({
+      level: level(),
+      player: { weapons: [], timedWeapons: [] },
+      mineralReward: 'mineral_scoop',
+    });
+
+    // The strategy is a spy: a forced reward must never consult it.
+    const strategy = vi.fn(() => [
+      { id: 'shield' as const, name: 'Shield', kind: 'powerup' as const },
+    ]);
+    scene.setMineralChoiceStrategy({ choose: strategy });
+
+    // Drop the seeded field (and any minerals scooped during boot) so the
+    // fill is exact, then collect to capacity.
+    resetMineralHold(scene);
+    const capacity = scene.getMineralCapacity();
+    const player = scene.getPlayer()!;
+    for (const mineral of scene.seedMinerals(capacity)) {
+      mineral.setPosition(player.x, player.y);
+    }
+    scene.tick(0.016);
+
+    // The forced reward landed through the shared reward-application path.
+    expect(player.getPowerUpLevel('mineral_scoop')).toBe(1);
+    expect(player.getPowerUpLevel('shield')).toBe(0);
+    expect(strategy).not.toHaveBeenCalled();
+    // The hold resolved (it is no longer full).
+    expect(scene.getMineralHold()).toBe(0);
+  });
+
+  it('still resolves a full hold randomly when no reward is forced', async () => {
+    const scene = await bootWith({
+      level: level(),
+      player: { weapons: [], timedWeapons: [] },
+    });
+
+    const strategy = vi.fn(() => [
+      { id: 'shield' as const, name: 'Shield', kind: 'powerup' as const },
+    ]);
+    scene.setMineralChoiceStrategy({ choose: strategy });
+
+    resetMineralHold(scene);
+    const player = scene.getPlayer()!;
+    for (const mineral of scene.seedMinerals(scene.getMineralCapacity())) {
+      mineral.setPosition(player.x, player.y);
+    }
+    scene.tick(0.016);
+
+    expect(strategy).toHaveBeenCalledTimes(1);
+    expect(player.getPowerUpLevel('shield')).toBe(1);
   });
 });

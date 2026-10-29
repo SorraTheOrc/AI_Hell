@@ -32,6 +32,12 @@
  *   (AH-0MV6MFDYG001E6PL).
  * - **Export** downloads every saved configuration as JSON for the gameplay
  *   recorders' `--bot-config` flag.
+ * - **Save to repo** (dev server only) writes the current configuration back
+ *   to the committed baseline `src/data/bot-tuning.json` through the
+ *   dev-only Vite middleware (`vite/plugins/botTuningPlugin.ts`), so a
+ *   designer does not have to Export → overwrite → commit by hand
+ *   (AH-0MVBJ0DUI009B6AM). Outside dev the control is disabled: a
+ *   production/static build can never mutate the shipped baseline.
  *
  * ## Divergence
  *
@@ -44,7 +50,12 @@
  * `PlayScene` runs) and the wave pressure signal are shared, so the bot sees
  * and reacts to minerals, power-ups, weapons, drifting asteroids and the wave
  * clock exactly as it does in the game (AH-0MV4D7LAD009XYR0,
- * AH-0MV9AWR7A0084XJ0).
+ * AH-0MV9AWR7A0084XJ0). The formation (entity) RNG is seeded from the same
+ * level seed the supply and hazard streams use, and is threaded into
+ * `createEnemyFromConfig` exactly as `PlayScene` threads its run RNG, so
+ * per-enemy randomness (wiggle phase, shot roll) is the game's randomness at
+ * the same seed and a launched wave fires on the same cadence
+ * (AH-0MVRMHSKH0066J9B).
  *
  * @module src/scenes/gym/GymBotTuning
  */
@@ -75,9 +86,11 @@ import {
   listBotTuningNames,
   saveBotTuningAs,
   saveBotTuningCurrent,
+  saveBotTuningToRepo,
   selectBotTuning,
   serialiseBotTuningState,
 } from '../../core/botTuningStore';
+import { BOT_TUNING_FILE_PATH } from '../../core/botTuningSchema';
 import { normaliseSeed, randomSeed, createSeededRng } from '../../core/rng';
 import { makeCollapsible } from '../../utils/gymPanel';
 import { attachTooltip } from '../../utils/gymTooltip';
@@ -106,6 +119,8 @@ export const BOT_TUNING_NEW_LEVEL_ID = 'gym-bot-tuning-new-level';
 export const BOT_TUNING_RESET_ID = 'gym-bot-tuning-reset';
 /** DOM id of the "Export" button (AH-0MV6MFDYG001E6PL). */
 export const BOT_TUNING_EXPORT_ID = 'gym-bot-tuning-export';
+/** DOM id of the dev-only "Save to repo" button (AH-0MVBJ0DUI009B6AM). */
+export const BOT_TUNING_SAVE_TO_REPO_ID = 'gym-bot-tuning-save-to-repo';
 /** DOM id of the status readout. */
 export const BOT_TUNING_STATUS_ID = 'gym-bot-tuning-status';
 /** Data attribute (value = field key) identifying a numeric slider. */
@@ -117,6 +132,15 @@ export const BOT_TUNING_TOGGLE_ATTR = 'data-bot-toggle';
 
 /** Seconds the "COMPLETE" state is held before a fresh random level starts. */
 export const BOT_TUNING_RESTART_DELAY_SECONDS = 1.2;
+
+/**
+ * True when the scene runs under the Vite dev server. Mirrors
+ * `configStore.isDev()`: the write-back affordance is enabled only where the
+ * dev-only middleware exists (AC3).
+ */
+function isDevMode(): boolean {
+  return import.meta.env.DEV === true;
+}
 
 /** Synthetic life counts for the bot's Extra-Life preference (gym has no lives). */
 export const BOT_TUNING_LIVES = 3;
@@ -179,6 +203,10 @@ export class GymBotTuning extends GymLevel {
     // hazard schedule is its own stream), so a seed reproduces the asteroid
     // plan as well (AH-0MV9AWR7A0084XJ0).
     this.hazardRng = createSeededRng(this.seed + 1);
+    // Seed the inherited formation (entity) RNG from the same seed so a seed
+    // reproduces per-enemy randomness exactly as a `PlayScene` run at the same
+    // seed does (AH-0MVRMHSKH0066J9B).
+    this.formationRng = createSeededRng(this.seed);
     this.tuningValues = coerceTuningValues(getCurrentBotTuningConfig().values);
     this.completionDwell = 0;
     const level = data?.level ?? generateRandomLevel({ seed: this.seed });
@@ -311,6 +339,9 @@ export class GymBotTuning extends GymLevel {
     // Re-seed the hazard stream for the new level so the asteroid schedule is
     // reproducible from the new seed (AH-0MV9AWR7A0084XJ0).
     this.hazardRng = createSeededRng(this.seed + 1);
+    // Re-seed the formation (entity) RNG for the new level so per-enemy
+    // randomness is reproducible from the new seed (AH-0MVRMHSKH0066J9B).
+    this.formationRng = createSeededRng(this.seed);
     const level = generateRandomLevel({ seed: this.seed });
     this.loadLevel(level);
     this.completionDwell = 0;
@@ -410,10 +441,37 @@ export class GymBotTuning extends GymLevel {
     );
     exportButton.addEventListener('click', () => this._onExport());
 
+    // Dev-only write-back: persists the current store state to the committed
+    // baseline so a designer does not have to Export → overwrite → commit
+    // (AH-0MVBJ0DUI009B6AM). Disabled outside the dev server — a production
+    // build can never mutate the shipped baseline (AC3).
+    const saveToRepo = document.createElement('button');
+    saveToRepo.id = BOT_TUNING_SAVE_TO_REPO_ID;
+    saveToRepo.type = 'button';
+    saveToRepo.textContent = 'Save to repo';
+    attachTooltip(
+      saveToRepo,
+      isDevMode()
+        ? `Write the current configuration to the committed baseline (${BOT_TUNING_FILE_PATH}). ` +
+            'Review and commit the change with Git.'
+        : 'Dev server only: a production build cannot write the committed baseline.',
+    );
+    saveToRepo.disabled = !isDevMode();
+    saveToRepo.addEventListener('click', () => this._onSaveToRepo());
+
     const status = document.createElement('span');
     status.id = BOT_TUNING_STATUS_ID;
 
-    row.append(save, nameInput, saveAs, newLevel, reset, exportButton, status);
+    row.append(
+      save,
+      nameInput,
+      saveAs,
+      newLevel,
+      reset,
+      exportButton,
+      saveToRepo,
+      status,
+    );
     return row;
   }
 
@@ -606,6 +664,27 @@ export class GymBotTuning extends GymLevel {
     } catch (error) {
       this._updateStatus(`Export failed: ${String(error)}`);
     }
+  }
+
+  /**
+   * Persists the current configuration to the committed baseline through the
+   * dev-only write-back endpoint (AH-0MVBJ0DUI009B6AM). The status readout
+   * mirrors the CSV gym's `saveShipConfig` reporting: a plain-language success
+   * line, or the failure reason the middleware/store returned.
+   */
+  private _onSaveToRepo(): void {
+    void saveBotTuningToRepo().then(
+      (result) => {
+        this._updateStatus(
+          result.ok
+            ? `Saved to ${BOT_TUNING_FILE_PATH}`
+            : `Save to repo failed: ${result.reason ?? 'unknown error'}`,
+        );
+      },
+      (error: unknown) => {
+        this._updateStatus(`Save to repo failed: ${String(error)}`);
+      },
+    );
   }
 
   /** Updates the panel's status readout. */

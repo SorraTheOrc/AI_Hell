@@ -19,7 +19,11 @@
  */
 
 import { GAME_WIDTH, GAME_HEIGHT } from './constants';
-import { DEFAULT_ENEMY_CONFIGS, DEFAULT_CONFIG } from './configDefaults';
+import {
+  DEFAULT_ENEMY_CONFIGS,
+  DEFAULT_CONFIG,
+  resolveWrapAwareDefault,
+} from './configDefaults';
 import type {
   DifficultyCurveRow,
   DifficultyGeneration,
@@ -389,6 +393,11 @@ function genericEnemyDefault(key: string): EnemyConfig {
     forceFieldStartLevel: 0,
     forceFieldStartHits: 1,
     forceFieldMaxHits: 1,
+    // Seam-awareness (AH-0MV9G3DZ9003P7P8): resolved from the seed-default
+    // exclusion list — `centipede` (no seed/CSV row) resolves `false`; any
+    // genuinely new archetype is wrap-aware by default. Single source of
+    // truth; no key list ever duplicated elsewhere.
+    wrapAware: resolveWrapAwareDefault(key),
   };
 }
 

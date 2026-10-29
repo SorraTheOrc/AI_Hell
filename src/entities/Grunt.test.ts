@@ -130,15 +130,27 @@ describe('Grunt entity', () => {
     g.destroy(true);
   });
 
-  it('stays inside the play area (spawns are reachable)', async () => {
+  it('clamps a non-aware grunt inside the play area (wrapAware: false)', async () => {
     const s = await scene();
-    const g = make(s, { x: 5, y: 5, heading: Math.PI });
+    const g = make(s, { x: 5, y: 5, heading: Math.PI, wrapAware: false });
     g.setAimTarget(0, 0);
     for (let i = 0; i < 200; i++) g.applyFormationPosition(0, 0, 0.1, 0, 0);
     expect(g.x).toBeGreaterThanOrEqual(GRUNT_SIZE / 2);
     expect(g.x).toBeLessThanOrEqual(GAME_WIDTH - GRUNT_SIZE / 2);
     expect(g.y).toBeGreaterThanOrEqual(GRUNT_SIZE / 2);
     expect(g.y).toBeLessThanOrEqual(GAME_HEIGHT - GRUNT_SIZE / 2);
+    g.destroy(true);
+  });
+
+  it('lets a wrap-aware grunt leave the arena box for the shared seam', async () => {
+    const s = await scene();
+    // The horde is wrap-aware by default: no arena clamp, so the scene's
+    // shared post-motion wrap is the single thing that bounds it.
+    const g = make(s, { x: 5, y: 5, heading: Math.PI });
+    expect(g.wrapAware).toBe(true);
+    g.setAimTarget(-10_000, 5);
+    for (let i = 0; i < 200; i++) g.applyFormationPosition(0, 0, 0.1, 0, 0);
+    expect(g.x).toBeLessThan(0);
     g.destroy(true);
   });
 

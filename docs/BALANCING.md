@@ -229,6 +229,13 @@ while handing out proportionally less supply. The endpoints (1→2× counts,
 0.18→0.05 drop chance) are the tuning contract from the parent work item; the
 values are data, so a future tuning change edits `GameRules` and re-runs this
 evidence.
+- **Spawn parity for tuning.** A launched level also spawns, transits, marches
+and fires through the same shared seams as the shipped game: the wormhole
+destination rule in `src/scenes/core/spawnTransit.ts`, the `shootEnabled`
+hand-off and the shared march block (§5.1 of
+[`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`](./ENEMY_DESIGN_AND_IMPLEMENTATION.md)).
+A balance pass recorded through `GymLevel` / `GymBotTuning` therefore measures
+shipped behaviour, not a gym-only approximation.
 - **Documented divergence — formation gyms.** `GymFormationScene` and its
 scenes (`GymBoss`, `GymCentipede`, `GymFodderEnemies`, …) have **no
 campaign-level input**, so they keep their scene-specific flat
@@ -236,54 +243,77 @@ campaign-level input**, so they keep their scene-specific flat
 `GymBotTuning`) adopt the curves; the reason is recorded in the `GymLevel`
 scene header and in the parent work item.
 
-### The six permanent loadout slots — the demand-side counterpart (parent AH-0MVLIJT3M005HPHF)
+### The six loadout slots — the demand-side counterpart (parent AH-0MVLIJT3M005HPHF)
 
 The level-scaling curves above reduce the **supply** of power-ups as the
 campaign rises (AH-0MVHT1M6O003PU7P); the six-slot cap is their **demand-side**
-counterpart. It bounds how many *distinct permanent kinds* one run can own, so
-the late-game ship stays strong but bounded no matter how generous the drop
-rolls are. The two levers are complementary, not redundant: supply shapes how
-often a reward arrives, the cap shapes what a run can become.
+counterpart. It bounds how many *distinct kinds* one run can hold at once —
+permanently **or** by an active field pickup — so the late-game ship stays
+strong but bounded no matter how generous the drop rolls are. The two levers
+are complementary, not redundant: supply shapes how often a reward arrives, the
+cap shapes what a run can become.
 
 - **Cap and pool.** `POWER_UP_SLOT_CAP = 6`
   ([`src/core/constants.ts`](../src/core/constants.ts)) is a single named
-  constant. The six slots are **one pool shared** by power-up and weapon kinds:
-  the first six distinct kinds taken as a permanent reward (hold-full choice or
-  mini-boss reward) define the build for the rest of the run. Occupancy is
-  **derived** from the existing permanent-grant stores
-  (`PowerUpLevelStore.getLevels()` + `Player.getWeaponLevels()`) — there is no
-  second counter and no new persisted state.
-- **Eligibility only, not weights.** The cap gates *which* ids may be drawn or
-  offered once the pool is **full**; it never retunes a weight. Below the cap
-  every id remains eligible with its existing weight, so `powerUpWeights` /
-  `weaponWeights` keep their meaning and the pre-cap distribution is unchanged
-  — which is why the existing level-scaling baselines stay valid.
-- **Exemptions are data.** An entry that may still appear when the pool is full
-  carries `availableWhenSlotsFull` on its power-up catalogue entry (default
-  `false`). **Extra Life** and **Mystery UFO** are exempt today; adding or
-  removing an exemption is a catalogue edit, and a re-baseline of the affected
-  batches is the only harness work needed.
-- **Shared-pool starvation is intended semantics (producer Q1 answer (c)).**
-  Because weapons and power-ups share the six slots, a **weapon-heavy build can
-  occupy the pool before any power-up reward is taken** — a player who keeps
+  constant. The six slots are **one pool shared** by power-up and weapon kinds.
+  Occupancy is **derived** from the existing run-scoped stores
+  (`PowerUpLevelStore.getLevels()` + `getTempPowerUpIds()`,
+  `Player.getWeaponLevels()` + `getTempWeaponIds()`) — there is no second
+  counter and no new persisted state.
+- **Field pickups count while they last (producer Q4a).** A temporary field
+  pickup occupies one of the six slots for as long as its timed window is
+  active and releases it on expiry, so the cap bounds *simultaneously held
+  breadth* rather than a permanent-only loadout. Churn is accepted as intended:
+  a run whose six slots were filled by field pickups can see new kinds spawn
+  again once those windows expire. Run restart empties the pool.
+- **Blocked pickups are visible (producer Q5b).** At the cap a drop that cannot
+  be taken stays on the field, applies nothing and plays the distinct
+  not-collectable cue once, so a full pool never silently swallows a pickup the
+  player is chasing.
+- **Eligibility only, not weights.** The cap gates *which* ids may be drawn,
+  collected or offered once the pool is **full**; it never retunes a weight.
+  Below the cap every id remains eligible with its existing weight, so
+  `powerUpWeights` / `weaponWeights` keep their meaning and the pre-cap
+  distribution is unchanged — which is why the existing level-scaling baselines
+  stay valid.
+- **Exemptions are data and never occupy a slot (producer Q7a).** An entry that
+  may still appear when the pool is full carries `availableWhenSlotsFull` on its
+  power-up catalogue entry (default `false`). **Extra Life** and **Mystery UFO**
+  are exempt today; the flag also excludes them from the count, so taking an
+  exempt reward can never push a run past six. Adding or removing an exemption
+  is a catalogue edit, and a re-baseline of the affected batches is the only
+  harness work needed. The `reset` utility is likewise slot-exempt (it can never
+  hold a level).
+- **Shared-pool starvation is intended semantics (producer Q1 answer (c),
+  reaffirmed by the Q4/Q7 answers of 2026-10-27).** Because weapons and
+  power-ups share the six slots (permanent or temporary), a **weapon-heavy build
+  can occupy the pool before any power-up reward is taken** — a player who keeps
   choosing weapon unlocks and level-ups may reach the cap with no permanent
-  Shield, Phase Shift or Magnet. This is the producer's **chosen** rule (Q1,
-  answer **(c)**: one shared pool, field pickups excluded), **not a bug**: the
-  shared pool is what gives each run a coherent build identity, and the exempt
-  entries plus the owned level-ups keep the choice useful when the pool fills.
-  A future change that splits the pool per family (or reserves slots) would be a
-  design change with new evidence, not a fix.
+  Shield, Phase Shift or Magnet. This is the producer's **chosen** rule, **not a
+  bug**: the shared pool is what gives each run a coherent build identity, and
+  the exempt entries plus the owned level-ups keep the choice useful when the
+  pool fills. A future change that splits the pool per family (or reserves
+  slots) would be a design change with new evidence, not a fix.
 - **Same rule in the game and the gyms.** The cap lives once in
   [`src/powerups/slots.ts`](../src/powerups/slots.ts) and is consumed by the
-  shared drop draw (`drawNextDrop`, `src/scenes/core/dropLayer.ts`) and the
-  hold-full choice builder (`buildChoiceCandidates`,
-  `src/powerups/choice.ts`), so `PlayScene` and every gym behave identically
-  (gym↔game parity) and a gym run is a valid place to observe the rule.
+  shared drop draw (`drawNextDrop`, `src/scenes/core/dropLayer.ts`), the shared
+  collection gate (`CombatCoreScene`), the hold-full choice builder
+  (`buildChoiceCandidates`, `src/powerups/choice.ts`) and every other offer
+  surface (`filterOptionsWithinSlotPool` — the mini-boss reward's unlock half),
+  so `PlayScene` and every gym behave identically (gym↔game parity) and a gym
+  run is a valid place to observe the rule.
+- **No reward screen can breach the cap.** The mini-boss reward (§4.4.4) used to
+  offer an unlock of any still-locked weapon, a brand-new kind that bypassed the
+  pool; unlocks now pass through the same eligibility predicate as the drop draw
+  and the choice, so the six slots bound every acquisition path (drop, field
+  pickup, hold-full choice, mini-boss upgrade and mini-boss unlock). A gated
+  reward that would offer nothing falls back to base picks of the held kinds, so
+  the rule can never stall a paused overlay.
 - **Evidence scope.** Existing bot/batch evidence was recorded before the cap,
-  so a late-game campaign run now sees a different permanent loadout. Re-running
-  and re-recording the bot batches is **out of scope** for the cap work item;
-  it becomes a linked follow-up only if a gate fails. Recorded user stories and
-  the producer decision live on the parent work item (AH-0MVLIJT3M005HPHF).
+  so a late-game campaign run now sees a different loadout. Re-running and
+  re-recording the bot batches is **out of scope** for the cap work item; it
+  becomes a linked follow-up only if a gate fails. Recorded user stories and the
+  producer decisions live on the parent work item (AH-0MVLIJT3M005HPHF).
 
 ### Evidence: same-seed baseline vs post-change batches
 
@@ -522,6 +552,30 @@ telemetry/consent configuration changes and no PII in the artifact — only
 schema fields (numeric statistics, seeds, archetype/upgrade keys and record
 hashes).
 
+### Intended experience and periodic validation (AH-0MV7WVHU0000U775)
+
+A `BalanceReport` records what the game **did**; the intended experience says
+what it is **supposed to do**. The committed targets artifact
+[`src/data/experience-targets.json`](../src/data/experience-targets.json)
+records a target band (centre + tolerance) for the key metrics, derived from a
+recorded bot batch — the chosen source of intended experience. A bot report or
+a recorded human session is then checked against those bands:
+
+```bash
+# human session (npm run record writes balance-stats.json beside the recording)
+npm run validate-experience -- recordings/balance-stats.json
+
+# fresh bot batch (catches a drift in the baseline itself)
+npm run validate-experience -- eval-output/balance-report.json --json
+```
+
+A band is `max(2 × baseline stdDev, 10 % of |centre|, 0.5)` wide; the exact
+rule is recorded in the artifact. The command writes a versioned
+`experience-validation.json` and a Markdown `experience-validation.md` under
+`--out` (default `experience-out/`) and **exits non-zero on drift**. The full
+workflow, the report shape, scheduling and tolerance-tuning guidance are in
+[`docs/EXPERIENCE_VALIDATION.md`](./EXPERIENCE_VALIDATION.md).
+
 ## Config-driven simulation
 
 The batch consumes the **real balance data** through the shared config
@@ -708,6 +762,11 @@ pixel-accurate, full-stack verification use the browser capture path
   parsing and pure CLI-core behaviour, plus the tune-loop comparison core
   (`runBalanceBatch`, `buildTuneComparisonArtifacts`) and `--tune`/`--set`
   flag parsing (AH-0MVBNITA0005VQGN).
+- `src/ai/eval/experienceTargets.test.ts` — the intended-experience targets
+  schema, the pure comparator (in-band / above / below / missing / empty) and
+  the validation report's determinism.
+- `scripts/validate-experience.test.ts` — the validation CLI shell: artifacts,
+  exit codes, source labelling and byte-stable output.
 - `src/ai/eval/tune.test.ts` — the versioned before/after comparison and the
   same-sweep guard (determinism, empty deltas, threshold classification).
 - `src/utils/csvEdit.test.ts` and `scripts/csvEdit-shell.test.ts` — the
@@ -810,5 +869,7 @@ chunks byte-identical to the in-memory `runs.jsonl` artifact).
 
 - Epic: **Automated Balancing** (AH-0MV1DLUZ8009OCJW).
 - Same-seed evaluation harness: [`docs/EVALUATION.md`](./EVALUATION.md).
+- Periodic human-experience validation
+  (AH-0MV7WVHU0000U775): [`docs/EXPERIENCE_VALIDATION.md`](./EXPERIENCE_VALIDATION.md).
 - Telemetry schema: [`docs/TELEMETRY.md`](./TELEMETRY.md).
 - Config source of truth: `src/data/*.csv` + `src/core/configStore.ts`.

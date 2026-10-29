@@ -14,7 +14,11 @@ import { POWER_UP_DROP_SIZE } from '../../core/constants';
 import { DEFAULT_RULES } from '../../core/rules';
 import { PowerUp, PowerUpState } from '../../powerups/PowerUp';
 import { WeightedRandomSpawner } from '../../powerups/spawner';
-import { resolveSlotState, type PowerUpSlotState } from '../../powerups/slots';
+import {
+  isWithinSlotPool,
+  resolveSlotState,
+  type PowerUpSlotState,
+} from '../../powerups/slots';
 import {
   POWER_UP_CATALOGUE,
   WEAPON_DROP_IDS,
@@ -191,6 +195,138 @@ describe('dropLayer — collectOverlappingDrops (AC1)', () => {
     const onCollect = vi.fn();
     expect(collectOverlappingDrops([drop], null, onCollect)).toEqual([drop]);
     expect(onCollect).not.toHaveBeenCalled();
+  });
+});
+
+// ── Six-slot collection gate (parent AH-0MVLIJT3M005HPHF AC8) ───────
+//
+// At six filled slots a drop whose kind is neither held (permanently or
+// temporarily), exempt, nor the slot-exempt `reset` utility cannot be taken:
+// it stays on the field and the caller is told, so it can play the
+// not-collectable cue. The gate is a predicate, so a slot freeing later makes
+// the very same drop collectable again.
+
+describe('dropLayer — collectOverlappingDrops six-slot gate (AC8)', () => {
+  const hull = 10;
+  const fullScale = 1;
+  const boundary = hull + dropCollectRadius(POWER_UP_DROP_SIZE, fullScale);
+
+  /** A full pool: four permanent power-ups and two permanent weapons. */
+  const fullState = resolveSlotState(
+    [
+      { id: 'shield', level: 1 },
+      { id: 'bomb', level: 1 },
+      { id: 'speed_boost', level: 1 },
+      { id: 'phase_shift', level: 1 },
+    ],
+    [
+      { id: 'spread', level: 1 },
+      { id: 'dual', level: 1 },
+    ],
+  );
+
+  /** The production gate: the shared helper's pool predicate. */
+  const gateFor = (dropId: DropId) => ({
+    canCollect: () => isWithinSlotPool(dropId, fullState),
+  });
+
+  it('keeps an ineligible drop on the field and reports it as blocked', () => {
+    const { drop, powerUp } = makeDrop({ x: boundary - 1, y: 0, scale: fullScale });
+    const gatedDrop = { ...drop, dropId: 'teleport' as DropId };
+    const onCollect = vi.fn();
+    const onBlocked = vi.fn();
+
+    const kept = collectOverlappingDrops([gatedDrop], { x: 0, y: 0 }, onCollect, undefined, {
+      ...gateFor(gatedDrop.dropId),
+      onBlocked,
+    });
+
+    // Not collected: no effect, the drop survives, and the caller is told.
+    expect(onCollect).not.toHaveBeenCalled();
+    expect(onBlocked).toHaveBeenCalledTimes(1);
+    expect(onBlocked).toHaveBeenCalledWith(gatedDrop);
+    expect(kept).toEqual([gatedDrop]);
+    expect(powerUp.state).not.toBe(PowerUpState.DESPAWNED);
+  });
+
+  it('collects a held kind at the cap', () => {
+    const { drop } = makeDrop({ x: boundary - 1, y: 0, scale: fullScale });
+    const gatedDrop = { ...drop, dropId: 'shield' as DropId };
+    const onCollect = vi.fn();
+    const onBlocked = vi.fn();
+
+    const kept = collectOverlappingDrops([gatedDrop], { x: 0, y: 0 }, onCollect, undefined, {
+      ...gateFor(gatedDrop.dropId),
+      onBlocked,
+    });
+
+    expect(onCollect).toHaveBeenCalledTimes(1);
+    expect(onBlocked).not.toHaveBeenCalled();
+    expect(kept).toEqual([]);
+  });
+
+  it('collects an available-when-full entry and the slot-exempt reset at the cap', () => {
+    for (const dropId of ['extra_life', 'mystery_ufo', 'reset'] as DropId[]) {
+      const { drop } = makeDrop({ x: boundary - 1, y: 0, scale: fullScale });
+      const gatedDrop = { ...drop, dropId };
+      const onCollect = vi.fn();
+
+      collectOverlappingDrops([gatedDrop], { x: 0, y: 0 }, onCollect, undefined, gateFor(gatedDrop.dropId));
+
+      expect(onCollect, `${dropId} must stay collectable at the cap`).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('collects everything while the pool has a free slot', () => {
+    const { drop } = makeDrop({ x: boundary - 1, y: 0, scale: fullScale });
+    const gatedDrop = { ...drop, dropId: 'teleport' as DropId };
+    const onCollect = vi.fn();
+    const fiveSlots = resolveSlotState(
+      [
+        { id: 'shield', level: 1 },
+        { id: 'bomb', level: 1 },
+        { id: 'speed_boost', level: 1 },
+        { id: 'phase_shift', level: 1 },
+      ],
+      [{ id: 'spread', level: 1 }],
+    );
+    expect(fiveSlots.isFull).toBe(false);
+
+    collectOverlappingDrops([gatedDrop], { x: 0, y: 0 }, onCollect, undefined, {
+      canCollect: () => isWithinSlotPool(gatedDrop.dropId, fiveSlots),
+    });
+
+    expect(onCollect).toHaveBeenCalledTimes(1);
+  });
+
+  it('the same drop becomes collectable once a slot frees', () => {
+    const { drop } = makeDrop({ x: boundary - 1, y: 0, scale: fullScale });
+    const gatedDrop = { ...drop, dropId: 'teleport' as DropId };
+    const onBlocked = vi.fn();
+
+    // Full: refused.
+    const refused = collectOverlappingDrops([gatedDrop], { x: 0, y: 0 }, vi.fn(), undefined, {
+      ...gateFor(gatedDrop.dropId),
+      onBlocked,
+    });
+    expect(refused).toEqual([gatedDrop]);
+    expect(onBlocked).toHaveBeenCalledTimes(1);
+
+    // A temporary window expired, freeing a slot — the same drop is taken.
+    const freedState = resolveSlotState(
+      [
+        { id: 'shield', level: 1 },
+        { id: 'bomb', level: 1 },
+        { id: 'speed_boost', level: 1 },
+        { id: 'phase_shift', level: 1 },
+      ],
+      [{ id: 'spread', level: 1 }],
+    );
+    const onCollect = vi.fn();
+    collectOverlappingDrops([gatedDrop], { x: 0, y: 0 }, onCollect, undefined, {
+      canCollect: () => isWithinSlotPool(gatedDrop.dropId, freedState),
+    });
+    expect(onCollect).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -408,7 +544,8 @@ describe('dropLayer — drawNextDrop at six filled slots (AC2, spawn gating)', (
     const state = fullSlotState();
     expect(state.isFull).toBe(true);
 
-    const eligible = new Set<DropId>([...state.ownedIds, ...EXEMPT_WHEN_FULL]);
+    // Held kinds plus the exempt entries plus the slot-exempt reset utility.
+    const eligible = new Set<DropId>([...state.heldIds, ...EXEMPT_WHEN_FULL, 'reset']);
     const spawner = buildDefaultWeightedSpawner(2026);
 
     const draws = Array.from({ length: 5000 }, () => gatedDropLayer.drawNextDrop(spawner, state));
@@ -438,7 +575,8 @@ describe('dropLayer — drawNextDrop at six filled slots (AC2, spawn gating)', (
 
   it('still yields an eligible id when every weight is zeroed (not the exclusion mechanism)', () => {
     const state = fullSlotState();
-    const eligible = new Set<DropId>([...state.ownedIds, ...EXEMPT_WHEN_FULL]);
+    // Held kinds plus the exempt entries plus the slot-exempt reset utility.
+    const eligible = new Set<DropId>([...state.heldIds, ...EXEMPT_WHEN_FULL, 'reset']);
 
     const build = () => {
       const spawner = buildDefaultWeightedSpawner(11);

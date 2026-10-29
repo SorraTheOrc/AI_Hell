@@ -13,7 +13,9 @@
  * owns:
  *
  * - the per-frame steering (move toward the resolved target at a bounded
- *   pursuit speed, clamped to the arena), and
+ *   pursuit speed; clamped to the arena only when the archetype is not
+ *   wrap-aware — a wrap-aware ghost crosses the seam via the shared
+ *   post-motion wrap), and
  * - the live player context (position + derived velocity) fed by the
  *   scene's `setAimTarget` seam.
  *
@@ -106,6 +108,13 @@ export interface GhostConfig {
   /** Initial `wander` heading (radians); when absent a seeded draw is used. */
   wanderAngle?: number;
   /** Injectable random source (defaults to `Math.random`). */
+  /**
+   * Whether this enemy is aware of the playfield seam (AH-0MV9G3DZ9003P7P8).
+   * Absent resolves to `true` (seam-awareness is the default); the classic
+   * arcade exclusions (`march`, `centipede`) carry an explicit `false` via
+   * the shared factory thread.
+   */
+  wrapAware?: boolean;
   rng?: () => number;
 }
 
@@ -156,6 +165,7 @@ export class Ghost extends BaseEnemy {
       fireInterval: config.fireInterval,
       health: config.health,
       forceFieldHits: config.forceFieldHits,
+      wrapAware: config.wrapAware,
       rng: config.rng,
     };
     super(scene, config.x, config.y, baseConfig);
@@ -343,12 +353,21 @@ export class Ghost extends BaseEnemy {
     );
     const next = steerToward(this.x, this.y, target.x, target.y, this._speed, dt);
     this.setPosition(
-      this._clamp(next.x, this._size / 2, GAME_WIDTH - this._size / 2),
-      this._clamp(next.y, this._size / 2, GAME_HEIGHT - this._size / 2),
+      this._boundToArena(next.x, this._size / 2, GAME_WIDTH - this._size / 2),
+      this._boundToArena(next.y, this._size / 2, GAME_HEIGHT - this._size / 2),
     );
   }
 
-  private _clamp(value: number, lo: number, hi: number): number {
+  /**
+   * Bounds a coordinate inside the arena box, but only for non-aware
+   * archetypes. A wrap-aware enemy is bounded by the seam instead
+   * (AH-0MVKXBWDY008R0YH, parent AH-0MV9G3DZ9003P7P8 AC3): its position is
+   * returned untouched so the shared post-motion wrap in the scene loop can
+   * carry it across the edge. `march`/`centipede` and any other
+   * `wrapAware: false` caller keep the original clamped motion.
+   */
+  private _boundToArena(value: number, lo: number, hi: number): number {
+    if (this._wrapAware) return value;
     if (hi < lo) return lo;
     return Math.min(hi, Math.max(lo, value));
   }

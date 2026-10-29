@@ -32,6 +32,8 @@ import {
   spawnEnemyForceFieldBreakFlash,
   FORCE_FIELD_FILL_ALPHA,
   FORCE_FIELD_LINE_WIDTH,
+  FORCE_FIELD_SPENT_FILL_ALPHA,
+  FORCE_FIELD_SPENT_STROKE_ALPHA,
   FORCE_FIELD_STROKE_ALPHA,
   PHASE_GHOST_ALPHA,
   THORNS_AURA_COLOR,
@@ -140,18 +142,29 @@ function shieldAt(remaining: number, shielded = true): EffectsRegistry {
 }
 
 /**
- * Minimal registry stub reporting an active Force Field with a fixed reflect
- * window and radius, so the bubble visual can be driven deterministically.
+ * Minimal registry stub reporting an active Force Field with a fixed temporary
+ * window (`undefined` = permanent base with no window), radius and reflect
+ * budget, so the bubble visual can be driven deterministically.
+ *
+ * The temporary window is exposed through `powerUpTemporaryRemaining` (the
+ * gate the bubble must use). `remaining('force_field')` is deliberately `0`
+ * for a permanent-only field — the old draw gate — so a regression back to
+ * that gate fails the permanent-persistence tests (AH-0MVRDMG0N000Y03Z).
  */
 function forceFieldAt(
-  remaining: number,
+  tempRemaining: number | undefined,
   active = true,
   radius = SHIP_SIZE * 1.8,
+  budget = 3,
 ): EffectsRegistry {
   return {
     isForceFieldActive: () => active,
     forceFieldRadius: () => radius,
-    remaining: (id: string) => (id === 'force_field' ? remaining : undefined),
+    forceFieldRemaining: () => budget,
+    powerUpTemporaryRemaining: (id: string) =>
+      id === 'force_field' ? tempRemaining : undefined,
+    remaining: (id: string) =>
+      id === 'force_field' ? (tempRemaining ?? 0) : undefined,
   } as unknown as EffectsRegistry;
 }
 
@@ -401,7 +414,7 @@ describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF9
     expect(g.pathCommands).toBe(0);
   });
 
-  it('clears and draws nothing at expiry (remaining 0)', () => {
+  it('clears and draws nothing at temporary-window expiry (countdown 0)', () => {
     const g = new FakeGraphics();
     const drawn = drawForceFieldBubble(
       graphics(g),
@@ -410,6 +423,113 @@ describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF9
     );
     expect(drawn).toBe(false);
     expect(g.pathCommands).toBe(0);
+  });
+
+  it('pins the spent-state alphas: visible yet distinctly fainter than active', () => {
+    expect(FORCE_FIELD_SPENT_STROKE_ALPHA).toBeGreaterThan(0);
+    expect(FORCE_FIELD_SPENT_STROKE_ALPHA).toBeLessThan(FORCE_FIELD_STROKE_ALPHA);
+    expect(FORCE_FIELD_SPENT_FILL_ALPHA).toBeGreaterThan(0);
+    expect(FORCE_FIELD_SPENT_FILL_ALPHA).toBeLessThan(FORCE_FIELD_FILL_ALPHA);
+  });
+
+  it('draws a permanent-only field (no temporary window) every frame', () => {
+    const radius = SHIP_SIZE * 1.8;
+    const registry = forceFieldAt(undefined, true, radius);
+    const first = new FakeGraphics();
+    const second = new FakeGraphics();
+
+    expect(drawForceFieldBubble(graphics(first), { x: 10, y: 20 }, registry)).toBe(true);
+    expect(drawForceFieldBubble(graphics(second), { x: 10, y: 20 }, registry)).toBe(true);
+    expect(first.pathCommands).toBeGreaterThan(10);
+    expect(second.fillCircleCalls.some(([, , r]) => r === radius * 0.85)).toBe(true);
+    expect(second.fillStyleCalls[0]).toEqual([0x33ffcc, FORCE_FIELD_FILL_ALPHA]);
+  });
+
+  it('draws a spent permanent field dimmed and steady (no ending brighten)', () => {
+    const g = new FakeGraphics();
+    const drawn = drawForceFieldBubble(
+      graphics(g),
+      { x: 1, y: 2 },
+      forceFieldAt(undefined, true, SHIP_SIZE * 1.8, 0),
+    );
+
+    expect(drawn).toBe(true);
+    expect(g.cleared).toBe(1);
+    expect(g.lineStyleCalls[0]?.[2]).toBeCloseTo(FORCE_FIELD_SPENT_STROKE_ALPHA);
+    expect(g.fillStyleCalls[0]).toEqual([0x33ffcc, FORCE_FIELD_SPENT_FILL_ALPHA]);
+
+    // A permanent-only field has no countdown, so its pulse phase is constant:
+    // two draws are identical (never a last-second brighten).
+    const later = new FakeGraphics();
+    drawForceFieldBubble(
+      graphics(later),
+      { x: 1, y: 2 },
+      forceFieldAt(undefined, true, SHIP_SIZE * 1.8, 0),
+    );
+    expect(later.lineStyleCalls).toEqual(g.lineStyleCalls);
+    expect(later.fillStyleCalls).toEqual(g.fillStyleCalls);
+  });
+
+  it('dims a spent temporary field but keeps its final-second brighten on the spent baseline', () => {
+    const steady = new FakeGraphics();
+    drawForceFieldBubble(
+      graphics(steady),
+      { x: 1, y: 2 },
+      forceFieldAt(3, true, SHIP_SIZE * 1.8, 0),
+    );
+    const ending = new FakeGraphics();
+    drawForceFieldBubble(
+      graphics(ending),
+      { x: 1, y: 2 },
+      forceFieldAt(0.5, true, SHIP_SIZE * 1.8, 0),
+    );
+
+    expect(steady.fillStyleCalls[0]).toEqual([0x33ffcc, FORCE_FIELD_SPENT_FILL_ALPHA]);
+    expect(ending.fillStyleCalls[0][1]).toBeGreaterThan(FORCE_FIELD_SPENT_FILL_ALPHA);
+  });
+
+  it('keeps the active temporary-window brighten on the active baseline', () => {
+    const g = new FakeGraphics();
+    drawForceFieldBubble(
+      graphics(g),
+      { x: 1, y: 2 },
+      forceFieldAt(0.5, true, SHIP_SIZE * 1.8, 3),
+    );
+
+    expect(g.fillStyleCalls[0][0]).toBe(0x33ffcc);
+    expect(g.fillStyleCalls[0][1]).toBeGreaterThan(FORCE_FIELD_FILL_ALPHA);
+  });
+
+  it('keeps a real permanent field drawn after a temp window on top of it expires', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('force_field', true); // hold-full reward
+    registry.applyCollect('force_field'); // field pickup opens a temp window
+    expect(registry.powerUpTemporaryRemaining('force_field')).toBeGreaterThan(0);
+
+    // The window expires back to the permanent base: still active, but the
+    // temporary-window accessor reads `undefined` again (effects.test.ts pins
+    // the store side; this pins the draw gate on top of it).
+    registry.tick((registry.powerUpTemporaryRemaining('force_field') ?? 0) + 0.1);
+    expect(registry.isForceFieldActive()).toBe(true);
+    expect(registry.powerUpTemporaryRemaining('force_field')).toBeUndefined();
+
+    const g = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(g), { x: 1, y: 2 }, registry)).toBe(true);
+    expect(g.pathCommands).toBeGreaterThan(10);
+  });
+
+  it('dims a real permanent field once its reflect budget is spent', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('force_field', true);
+
+    let reflected = 0;
+    while (registry.tryConsumeForceFieldReflect()) reflected += 1;
+    expect(reflected).toBeGreaterThan(0);
+    expect(registry.forceFieldRemaining()).toBe(0);
+
+    const g = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(g), { x: 1, y: 2 }, registry)).toBe(true);
+    expect(g.fillStyleCalls[0]).toEqual([0x33ffcc, FORCE_FIELD_SPENT_FILL_ALPHA]);
   });
 
   it('is safe with no graphics or no player (and clears when only the player is missing)', () => {

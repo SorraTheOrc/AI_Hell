@@ -30,11 +30,13 @@ import { HELP_BUTTON_LABEL } from '../../utils/gymHelp';
 import { POWER_UP_DROP_SIZE } from '../../core/constants';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
 import * as effectsModule from '../../audio/effects';
+import * as aoeEffectModule from '../../vfx/aoeEffect';
 import * as explosionModule from '../../vfx/explosionParticles';
 import * as playerDeathJuiceModule from '../../vfx/playerDeathJuice';
 import * as collectAnimationModule from '../../powerups/collectAnimation';
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
+import { loadEnemyConfig } from '../../core/enemyConfig';
 
 /**
  * One Phaser game shell per file, rebooted into a fresh scene instance per
@@ -471,6 +473,9 @@ describe('GymPowerUpsCombat — Force Field reflector (AH-0MV1BIX1W006XF95)', ()
 
   it('the reflected bullet is a real player bullet that can damage enemies', async () => {
     const scene = await bootCombat();
+    // D4: threats are spawn-protected while they emerge; complete the shared
+    // emergence step so this test observes a fully-formed, hittable threat.
+    scene.finishSpawnAnimations();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
     scene.getEffectsRegistry().applyCollect('force_field');
@@ -1186,6 +1191,8 @@ describe('GymPowerUpsCombat — Thorn Field aura and absorb feedback (AH-0MVJ8YK
 
   it('fires the shared absorb burst and consumes a ram instead of taking the hit', async () => {
     const scene = await bootCombat();
+    // D4: complete the shared in-place spawn presentation before ramming.
+    scene.finishSpawnAnimations();
     const registry = scene.getEffectsRegistry();
     registry.applyCollect('thorns', true);
     const charges = registry.thornsRemaining();
@@ -1211,5 +1218,111 @@ describe('GymPowerUpsCombat — Thorn Field aura and absorb feedback (AH-0MVJ8YK
     expect(scene.getThornsAbsorbEffects()).toHaveLength(1);
     expect(registry.thornsRemaining()).toBe(charges - 1);
     expect(scene.getPlayerHitCount()).toBe(hitsBefore);
+  });
+});
+
+// ── Orbital Strike bolt observability (AH-0MVS2T0VQ00973W5) ──────────
+//
+// TEST-FIRST (AH-0MVS2SW8V007ZBJQ, parent AC5 gym↔game parity): the shared
+// strike path must spawn the new bolt VFX — and nothing else — in the gym.
+// Flipped from `it.fails` to `it` by the wiring item (AH-0MVS2T0VQ00973W5)
+// once `CombatScene.onOrbitalStrike` spawned the bolt instead of the
+// Smart Bomb's `spawnNovaRing`.
+
+/** Non-literal specifier so `tsc --noEmit` does not resolve the missing module. */
+const ORBITAL_STRIKE_MODULE = '../../vfx/orbitalStrike';
+
+/** The not-yet-existing bolt module surface this gym test pins. */
+interface BoltModuleContract {
+  spawnOrbitalStrike(
+    scene: Phaser.Scene,
+    x: number,
+    y: number,
+    options?: unknown,
+  ): { graphics: Phaser.GameObjects.Graphics };
+}
+
+describe('GymPowerUpsCombat — Orbital Strike bolt observability (AH-0MVS2T0VQ00973W5)', () => {
+  it('the shared strike path spawns the bolt VFX, not the Smart Bomb ring', async () => {
+    const scene = await bootCombat();
+    const player = scene.getPlayer()!;
+    player.setPosition(480, 270);
+
+    const boltModule = (await import(
+      ORBITAL_STRIKE_MODULE
+    )) as unknown as BoltModuleContract;
+    const boltSpy = vi.spyOn(boltModule, 'spawnOrbitalStrike');
+    const ringSpy = vi.spyOn(aoeEffectModule, 'spawnNovaRing');
+
+    scene.getEffectsRegistry().applyCollect('strike');
+    scene.tick(1 / 60); // the shared strike step resolves the bolt
+
+    // The gym's strike path invokes the shared bolt module exactly once…
+    expect(boltSpy).toHaveBeenCalledTimes(1);
+    const [targetScene, targetX, targetY] = boltSpy.mock.calls[0];
+    // …with the gym as the scene (no scene-specific copy) and an in-play
+    // target column.
+    expect(targetScene).toBe(scene);
+    expect(targetX).toBeGreaterThanOrEqual(0);
+    expect(targetX).toBeLessThanOrEqual(960);
+    expect(targetY).toBeGreaterThanOrEqual(0);
+    expect(targetY).toBeLessThanOrEqual(540);
+
+    // The spawned bolt is a real, live effect attached to the scene.
+    const handle = boltSpy.mock.results[0].value as {
+      graphics: Phaser.GameObjects.Graphics;
+    };
+    expect(handle.graphics).toBeInstanceOf(Phaser.GameObjects.Graphics);
+    expect(scene.children.list).toContain(handle.graphics);
+
+    // …and the Smart Bomb ring is NOT what the strike renders.
+    expect(ringSpy).not.toHaveBeenCalled();
+    boltSpy.mockRestore();
+    ringSpy.mockRestore();
+  });
+});
+
+// ── D4 parity: factory-built threats + shared spawn presentation ────────────
+// Matrix row `GymPowerUpsCombat` (docs/GYM_PARITY.md D4): the scout threat wave
+// used to bypass the shared enemy factory and spawn presentation. These pin the
+// two observable consequences: the active `scout` EnemyConfig reaches the
+// entity, and the threat grows from 1 px behind the shared spawn protection.
+describe('GymPowerUpsCombat — D4 parity: shared factory + spawn presentation', () => {
+  it('applies the active scout EnemyConfig to every threat (factory-built)', async () => {
+    // Tune the active config: a direct `new Scout` would ignore this entirely.
+    seedConfigStore(
+      [{ ...loadEnemyConfig('scout'), health: 2 }],
+      { ...DEFAULT_CONFIG, controlScheme: 'fourDirectional' },
+    );
+    const booted = await reuse.boot([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+
+    const scouts = scene.getScouts();
+    expect(scouts).toHaveLength(3);
+    for (const scout of scouts) expect(scout.health).toBe(2);
+  });
+
+  it('grows each threat from 1 px behind the shared spawn protection, in place', async () => {
+    const booted = await reuse.boot([GymPowerUpsCombat]);
+    const scene = booted.scene as GymPowerUpsCombat;
+
+    const scouts = scene.getScouts();
+    expect(scouts).toHaveLength(3);
+    for (const scout of scouts) {
+      expect(scout.isSpawning, 'threat spawn-protected on creation').toBe(true);
+      expect(scout.scaleX, 'threat starts at 1 px').toBeLessThan(0.1);
+    }
+
+    // The shared emergence step completes on the scene clock.
+    let guard = 0;
+    while (scouts[0].isSpawning && guard < 600) {
+      scene.tick(1 / 60);
+      guard += 1;
+    }
+    expect(scouts[0].isSpawning).toBe(false);
+    expect(scouts[0].scaleX).toBeCloseTo(1, 1);
+    // In place: the threat did not transit away from its formation position.
+    expect(scouts[0].x).toBeGreaterThan(0);
+    expect(scouts[0].y).toBeGreaterThan(0);
   });
 });

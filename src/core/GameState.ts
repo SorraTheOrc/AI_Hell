@@ -16,6 +16,7 @@
  */
 
 import { MineralHold } from './mineralHold';
+import type { MineralHoldRestoreOptions } from './mineralHold';
 import { POWER_UP_CATALOGUE } from '../powerups/types';
 
 // ── Game state enum ───────────────────────────────────────────────────
@@ -190,6 +191,26 @@ export class GameState {
    */
   resolveHold(): void {
     this._hold.resolve();
+  }
+
+  /**
+   * Restores the ship's hold from a checkpoint (Continue path), delegating to
+   * the shared hold model so the resume path never writes minerals around it.
+   *
+   * The optional capacity is applied first (the hold capacity earned at the
+   * checkpoint) and the optional store is then clamped into `[0, capacity]`
+   * with the recorded overflow cleared — so a restored hold is never
+   * over-capacity and the first hold-full choice after Continue needs a real
+   * collection, not the discarded saved surplus. The restored capacity does
+   * not re-base the run-scoped baseline: {@link startGame} still resets the
+   * progression to the first-hold capacity.
+   *
+   * @param options — capacity and/or store to restore; invalid values fall
+   *   back (an invalid capacity keeps the current capacity, a negative or
+   *   non-finite store restores as 0).
+   */
+  restoreHold(options: MineralHoldRestoreOptions = {}): void {
+    this._hold.restore(options);
   }
 
   /**

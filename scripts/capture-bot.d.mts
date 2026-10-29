@@ -18,6 +18,8 @@ export interface VideoClipProbe {
   nonBlackFraction?: number;
   uniqueColours?: number;
   motion?: number;
+  /** Recording's effective frame rate (`null`/absent = not judged). */
+  effectiveFps?: number | null;
 }
 
 export interface NonTrivialVerdict {
@@ -64,6 +66,13 @@ export function buildScriptedPlan(
   pattern?: readonly BotStep[],
 ): BotStep[];
 export function planDurationMs(plan: readonly BotStep[]): number;
+/**
+ * Lowest effective frame rate a recording may have and still count as a real
+ * take (AH-0MVTI3O650064IM7). Below it the capture page was starved, so game
+ * time barely advanced and scripted pay-offs cannot appear on camera.
+ */
+export const MIN_EFFECTIVE_FPS = 15;
+
 export function isNonTrivialClip(probe?: VideoClipProbe): NonTrivialVerdict;
 export function resolveCaptureMimeType(
   isSupported: (mimeType: string) => boolean,

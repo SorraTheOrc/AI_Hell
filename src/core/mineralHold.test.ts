@@ -178,4 +178,120 @@ describe('MineralHold', () => {
       expect(hold.store).toBeGreaterThanOrEqual(0);
     });
   });
+
+  /**
+   * Clamped restore seam (AH-0MVT1DXG4008GATG).
+   *
+   * Checkpoint resume must go through the shared hold model instead of
+   * writing raw counts around it: a restored hold can never be over-capacity,
+   * no phantom overflow may survive the restore (the bug behind the immediate
+   * second hold-full after Continue), and restoring a capacity must not
+   * re-base the first-hold baseline used by `reset()`.
+   */
+  describe('restore() (AH-0MVT1DXG4008GATG)', () => {
+    it('AC2 — clamps a store at or above capacity and records no overflow', () => {
+      const atCapacity = new MineralHold({ capacity: 5 });
+      atCapacity.restore({ store: 5 });
+      expect(atCapacity.store).toBe(5);
+      expect(atCapacity.overflow).toBe(0);
+      expect(atCapacity.isFull).toBe(true);
+
+      const overCapacity = new MineralHold({ capacity: 5 });
+      overCapacity.restore({ store: 20 });
+      expect(overCapacity.store).toBe(5);
+      expect(overCapacity.overflow).toBe(0);
+      expect(overCapacity.isFull).toBe(true);
+    });
+
+    it('AC2 — keeps a below-capacity store exactly and leaves the hold not full', () => {
+      const hold = new MineralHold({ capacity: 5 });
+      hold.restore({ store: 3 });
+      expect(hold.store).toBe(3);
+      expect(hold.overflow).toBe(0);
+      expect(hold.isFull).toBe(false);
+    });
+
+    it('AC1 — applies the restored capacity and clamps the store into it', () => {
+      const hold = new MineralHold();
+      expect(hold.capacity).toBe(5);
+
+      hold.restore({ store: 25, capacity: 20 });
+
+      expect(hold.capacity).toBe(20);
+      expect(hold.store).toBe(20);
+      expect(hold.overflow).toBe(0);
+    });
+
+    it('AC1 — clears previously recorded overflow so resolve() carries nothing', () => {
+      const hold = new MineralHold({ capacity: 5 });
+      hold.collect(8);
+      expect(hold.overflow).toBe(3);
+
+      hold.restore({ store: 2 });
+      expect(hold.overflow).toBe(0);
+
+      hold.resolve();
+      expect(hold.capacity).toBe(10);
+      expect(hold.store).toBe(0);
+    });
+
+    it('AC1 — does not re-base the first-hold baseline: reset() restores it', () => {
+      const hold = new MineralHold({ capacity: 5 });
+      hold.restore({ store: 12, capacity: 20 });
+      expect(hold.capacity).toBe(20);
+
+      hold.reset();
+
+      expect(hold.capacity).toBe(5);
+      expect(hold.store).toBe(0);
+      expect(hold.overflow).toBe(0);
+    });
+
+    it('AC4 — a negative or non-finite store restores as 0', () => {
+      const hold = new MineralHold({ capacity: 5 });
+
+      hold.restore({ store: -3 });
+      expect(hold.store).toBe(0);
+
+      hold.restore({ store: Number.NaN });
+      expect(hold.store).toBe(0);
+
+      hold.restore({ store: Number.POSITIVE_INFINITY });
+      expect(hold.store).toBe(0);
+
+      expect(hold.overflow).toBe(0);
+    });
+
+    it('AC4 — an invalid capacity keeps the existing capacity', () => {
+      for (const invalid of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const hold = new MineralHold({ capacity: 5 });
+        hold.restore({ store: 20, capacity: invalid });
+        expect(hold.capacity).toBe(5);
+        expect(hold.store).toBe(5);
+      }
+    });
+
+    it('AC4 — preserves the growth multiplier across a restore', () => {
+      const hold = new MineralHold({ capacity: 5, growthMultiplier: 3 });
+
+      hold.restore({ store: 9, capacity: 9 });
+
+      expect(hold.growthMultiplier).toBe(3);
+      hold.resolve();
+      expect(hold.capacity).toBe(27);
+    });
+
+    it('AC1 — an empty restore request only clears overflow and re-clamps the store', () => {
+      const hold = new MineralHold({ capacity: 5 });
+      hold.collect(9);
+      expect(hold.store).toBe(5);
+      expect(hold.overflow).toBe(4);
+
+      hold.restore({});
+
+      expect(hold.capacity).toBe(5);
+      expect(hold.store).toBe(5);
+      expect(hold.overflow).toBe(0);
+    });
+  });
 });

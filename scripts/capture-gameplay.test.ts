@@ -9,6 +9,17 @@
  * recording cannot run in the vitest suite: `src/test/setup.ts` stubs the
  * canvas, so there is nothing real to record).
  *
+ * ## Spawned-CLI tests and load
+ *
+ * The tests that spawn the real `capture-gameplay.mjs` CLI (the
+ * `--list-scenarios` and the bad-config fail-fast tests) declare an explicit
+ * per-test timeout (~60 s) instead of inheriting Vitest's 5 s default: under
+ * a saturated shared host, spawning the Vite-SSR loader alone can exceed the
+ * default, which used to surface as a misleading "Test timed out" flake
+ * (AH-0MVE112BV006EDSZ, AH-0MVE466JU001HR8T, AH-0MVSAPI66009T6PU — family
+ * of the load-remediation epic AH-0MVSBEIVK003XAFB). See
+ * `docs/dev/test-suite-timing.md` §Per-file timing budgets.
+ *
  * @vitest-environment node
  */
 
@@ -17,6 +28,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { cliSpawnEnv } from './cliChildEnv';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -32,6 +44,7 @@ import {
   CAPTURE_MIME_CANDIDATES,
   DEFAULT_CAPTURE_DURATION_MS,
   MOVE_KEYS,
+  MIN_EFFECTIVE_FPS,
   buildScriptedPlan,
   combineClipVerdict,
   evaluateAudioTrack,
@@ -86,6 +99,8 @@ import {
   BOT_TUNING_STORAGE_KEY,
   installBotTuningConfig,
   writeCaptureSeriesArtifacts,
+  explainMidRunFailure,
+  watchForMidRunNavigation,
 } from './capture-gameplay.mjs';
 import {
   ACTION_INTENSITY_SERIES_SCHEMA_VERSION as SERIES_SCHEMA_VERSION,
@@ -268,6 +283,37 @@ describe('isNonTrivialClip', () => {
     expect(verdict.reasons).toContain(
       'sampled frames are static (no motion)',
     );
+  });
+
+  it('rejects a starvation-level recording (effective fps below the floor)', () => {
+    // AH-0MVTI3O650064IM7: at ~5 fps Phaser's delta cap makes game time crawl,
+    // so scene windows contain almost no simulated time and scripted pay-offs
+    // cannot happen — the clip must not pass as a good take.
+    const verdict = isNonTrivialClip({ ...healthy, effectiveFps: 5.7 });
+    expect(verdict.nonTrivial).toBe(false);
+    expect(verdict.reasons).toContain(
+      `recording is stalled (5.7 fps < ${MIN_EFFECTIVE_FPS} fps): the page rendered too slowly to record the scene — re-record on an idle host`,
+    );
+  });
+
+  it('accepts a recording at or above the fps floor', () => {
+    expect(isNonTrivialClip({ ...healthy, effectiveFps: MIN_EFFECTIVE_FPS })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+    });
+    expect(isNonTrivialClip({ ...healthy, effectiveFps: 60 })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+    });
+  });
+
+  it('does not judge an unknown effective fps (older probe sources)', () => {
+    // Absent/unknown metrics must never invent a failure.
+    expect(isNonTrivialClip(healthy)).toEqual({ nonTrivial: true, reasons: [] });
+    expect(isNonTrivialClip({ ...healthy, effectiveFps: null })).toEqual({
+      nonTrivial: true,
+      reasons: [],
+    });
   });
 
   it('rejects a clip with almost no colour variety', () => {
@@ -2459,6 +2505,205 @@ describe('--all-scenarios batch capture (AH-0MV6JGQFK007MXGX)', () => {
   });
 });
 
+// ── Capture Vite isolation and mid-run reload diagnosis (AH-0MVTEKPM6003R5NW) ──
+
+describe('capture Vite isolation (AH-0MVTEKPM6003R5NW)', () => {
+  const silentReporter = { step() {}, progress() {}, done() {} };
+
+  function fakeSessionDeps(onServerOptions?: (options: any) => void) {
+    const fakeServer = {
+      listen: async () => {},
+      httpServer: { address: () => ({ port: 4321 }) },
+      waitForRequestsIdle: async () => {},
+      close: async () => {},
+    };
+    const fakeBrowser = {
+      newPage: async () => ({ close: async () => {} }),
+      close: async () => {},
+    };
+    return {
+      createViteServer: async (options: any) => {
+        if (onServerOptions) onServerOptions(options);
+        return fakeServer;
+      },
+      launchBrowser: async () => fakeBrowser,
+    };
+  }
+
+  const item = () => [
+    {
+      index: 1,
+      scenario: null,
+      outputPath: join(tmpdir(), 'capture-vite-isolation.webm'),
+    },
+  ];
+
+  it('gives the capture server a private per-run dependency cache (never the shared workspace cache)', async () => {
+    const seen: any[] = [];
+    const deps = fakeSessionDeps((options) => seen.push(options));
+
+    const runOnce = () =>
+      runCaptureSession({
+        items: item(),
+        options: {},
+        reporter: silentReporter,
+        ...deps,
+        captureOne: async ({ outputPath }) => ({
+          output: outputPath,
+          bytes: 1,
+          durationMs: 1,
+          nonTrivial: true,
+          reasons: [],
+          pageErrors: [],
+        }),
+      });
+
+    await runOnce();
+    await runOnce();
+
+    expect(seen).toHaveLength(2);
+    const [first, second] = seen;
+    // A per-run temp cache: nothing else in the environment can invalidate the
+    // running page's optimised deps (the shared `node_modules/.vite` cache is
+    // written by every Vite instance in every worktree).
+    for (const options of seen) {
+      expect(typeof options.cacheDir).toBe('string');
+      expect(options.cacheDir).not.toContain(join('node_modules', '.vite'));
+      expect(options.cacheDir.startsWith(tmpdir())).toBe(true);
+      // No HMR / file watching: a file change must never reload the page
+      // while the single MediaRecorder is running.
+      expect(options.server).toMatchObject({ hmr: false, watch: null });
+    }
+    expect(first.cacheDir).not.toBe(second.cacheDir);
+  });
+
+  it('removes its private cache directory after the run, and leaves a caller-supplied one alone', async () => {
+    let created: string | null = null;
+    const deps = fakeSessionDeps((options) => {
+      created = options.cacheDir;
+      mkdirSync(options.cacheDir, { recursive: true });
+      writeFileSync(join(options.cacheDir, 'marker'), 'x');
+    });
+    const captureOne = async ({ outputPath }: { outputPath: string }) => ({
+      output: outputPath,
+      bytes: 1,
+      durationMs: 1,
+      nonTrivial: true,
+      reasons: [],
+      pageErrors: [],
+    });
+
+    await runCaptureSession({
+      items: item(),
+      options: {},
+      reporter: silentReporter,
+      ...deps,
+      captureOne,
+    });
+    expect(created).not.toBeNull();
+    expect(existsSync(created as unknown as string)).toBe(false);
+
+    // A caller-specified cacheDir is honoured and never deleted.
+    const owned = mkdtempSync(join(tmpdir(), 'aihell-capture-cachedir-'));
+    try {
+      let specified: string | null = null;
+      await runCaptureSession({
+        items: item(),
+        options: { cacheDir: owned },
+        reporter: silentReporter,
+        ...fakeSessionDeps((options) => (specified = options.cacheDir)),
+        captureOne,
+      });
+      expect(specified).toBe(owned);
+      expect(existsSync(owned)).toBe(true);
+    } finally {
+      rmSync(owned, { recursive: true, force: true });
+    }
+  });
+
+  it('exposes a dependency-settle callback to the capture so the graph is warm before recording', async () => {
+    let settled = 0;
+    const fakeServer = {
+      listen: async () => {},
+      httpServer: { address: () => ({ port: 4321 }) },
+      waitForRequestsIdle: async () => {
+        settled += 1;
+      },
+      close: async () => {},
+    };
+    const fakeBrowser = {
+      newPage: async () => ({ close: async () => {} }),
+      close: async () => {},
+    };
+    let session: any = null;
+
+    await runCaptureSession({
+      items: item(),
+      options: {},
+      reporter: silentReporter,
+      createViteServer: async () => fakeServer,
+      launchBrowser: async () => fakeBrowser,
+      captureOne: async ({ outputPath, session: s }) => {
+        session = s;
+        return {
+          output: outputPath,
+          bytes: 1,
+          durationMs: 1,
+          nonTrivial: true,
+          reasons: [],
+          pageErrors: [],
+        };
+      },
+    });
+
+    expect(typeof session.waitForDeps).toBe('function');
+    await session.waitForDeps();
+    expect(settled).toBe(1);
+  });
+});
+
+describe('mid-run page navigation (AH-0MVTEKPM6003R5NW)', () => {
+  it('records main-frame navigations only', () => {
+    const handlers: Array<(frame: unknown) => void> = [];
+    const page = { on: (event: string, handler: (frame: unknown) => void) => {
+      if (event === 'framenavigated') handlers.push(handler);
+    } };
+
+    const navigations = watchForMidRunNavigation(page, () => 42);
+    expect(navigations).toEqual([]);
+
+    handlers[0]({ url: () => 'http://127.0.0.1:1/', mainFrame: () => null });
+    expect(navigations).toEqual([{ url: 'http://127.0.0.1:1/', atMs: 42 }]);
+  });
+
+  it('tolerates a page that cannot be watched', () => {
+    expect(watchForMidRunNavigation(null)).toEqual([]);
+    expect(watchForMidRunNavigation({})).toEqual([]);
+  });
+
+  it('turns a mid-recording reload into an actionable error instead of the opaque fade TypeError', () => {
+    const original = new TypeError("Cannot read properties of undefined (reading 'fadeTo')");
+    const explained = explainMidRunFailure(
+      original,
+      [{ url: 'http://127.0.0.1:43127/', atMs: 39_000 }],
+      { sceneCount: 7 },
+    );
+
+    expect(explained).not.toBe(original);
+    expect(explained.message).toContain('reloaded');
+    expect(explained.message).toContain('39.0s');
+    expect(explained.message).toContain('private');
+    expect(explained.message).toContain('Vite');
+    // The original failure stays visible as the cause.
+    expect(explained.message).toContain("reading 'fadeTo'");
+  });
+
+  it('leaves an unrelated failure untouched when the page never navigated', () => {
+    const original = new Error('codec exploded');
+    expect(explainMidRunFailure(original, [], { sceneCount: 7 })).toBe(original);
+  });
+});
+
 // ── Action-intensity series export (AH-0MVDV4DMY001Z7CU) ─────────────
 
 function actionSample(
@@ -2888,21 +3133,44 @@ describe('multi-scene capture arguments and config (AH-0MVFC70GT000B96J)', () =>
     expect((missingError as { code?: string }).code).toBe('missing-file');
   });
 
-  it('the spawned CLI fails fast and non-zero on a bad config without booting anything', () => {
-    // A missing config must exit 1 with an actionable message and must never
-    // reach the Vite/Chromium boot stage (that would exceed the bound).
-    const script = resolve(process.cwd(), 'scripts/capture-gameplay.mjs');
-    const result = spawnSync(
-      process.execPath,
-      [script, '--config', '/definitely/not/here.json'],
-      { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
-    );
+  it(
+    'the spawned CLI fails fast and non-zero on a bad config without booting anything',
+    // The real `main()` spawn must complete (exit 1) before vitest's default
+    // 5 s deadline — under a saturated shared host just spawning the Vite-SSR
+    // loader for capture-gameplay.mjs can exceed it (recorded 5889 ms,
+    // load flake AH-0MVSAPI66009T6PU; same family as the --list-scenarios
+    // spawn test above — AH-0MVE112BV006EDSZ / AH-0MVE466JU001HR8T — and the
+    // 5.5–6.5 s eval-AI tests, AH-0MVR8QM89004OQZQ). The 60 s bound mirrors
+    // the --list-scenarios spawn test; the child's own 30 s spawnSync time
+    // still keeps the fail-fast contract honest (exceeding it is a failure,
+    // not a pass).
+    { timeout: 60_000 },
+    () => {
+      // A missing config must exit 1 with an actionable message and must never
+      // reach the Vite/Chromium boot stage (that would exceed the bound).
+      const script = resolve(process.cwd(), 'scripts/capture-gameplay.mjs');
+      const result = spawnSync(
+        process.execPath,
+        [script, '--config', '/definitely/not/here.json'],
+        { encoding: 'utf8', timeout: 30_000, env: cliSpawnEnv() },
+      );
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toMatch(/scene config error/i);
-    expect(result.stderr).toContain('/definitely/not/here.json');
-    expect(result.stdout).not.toContain('Starting Vite');
-  });
+      // Surface a spawned-child failure (ENOENT / kill / 30 s ETIMEDOUT) as
+      // a clear message instead of a bare `status: null` expectation
+      // mismatch, so under host saturation this is trivially distinguishable
+      // from a real fail-fast contract break.
+      if (result.error) {
+        throw new Error(
+          `spawn failed: ${result.error.message}; status=${result.status}; stderr=${result.stderr}`,
+        );
+      }
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/scene config error/i);
+      expect(result.stderr).toContain('/definitely/not/here.json');
+      expect(result.stdout).not.toContain('Starting Vite');
+    },
+  );
 });
 
 describe('driveSceneSequence (AH-0MVFC70GT000B96J AC3)', () => {
@@ -4231,10 +4499,78 @@ describe('shared recording pipeline (AH-0MVNT2AFI00639N3)', () => {
   });
 });
 
+describe('driveSceneSequence forwards PlayScene launch data (AH-0MVTNTIPI002X5G6)', () => {
+  it('passes the bot flag, seed, campaign position, start position and setup', async () => {
+    const setup = {
+      player: { weapons: ['spread'], timedWeapons: [], weaponLevels: { rapid: 2 } },
+      powerUps: { magnet: 1 },
+      mineralReward: 'mineral_scoop',
+      bossHitsRemaining: 12,
+    };
+    const plan = buildScenePlan([
+      {
+        target: 'PlayScene',
+        playMs: 10,
+        captureMs: 10,
+        label: 'boss beat',
+        seed: 4242,
+        level: 10,
+        startWave: 10,
+        startBoss: true,
+        minWaves: 1,
+        maxCaptureMs: 10,
+        setup,
+      },
+    ]);
+    const calls: Array<{ key: string; data: unknown }> = [];
+
+    await driveSceneSequence({
+      plan,
+      startScene: async (key, data) => {
+        calls.push({ key, data });
+      },
+      fade: async () => {},
+      wait: async () => {},
+    });
+
+    expect(calls).toEqual([
+      {
+        key: 'PlayScene',
+        data: {
+          demo: true,
+          seed: 4242,
+          startLevel: 10,
+          startWave: 10,
+          startBoss: true,
+          setup,
+        },
+      },
+    ]);
+  });
+
+  it('omits an absent start position and setup (unchanged launch data)', async () => {
+    const plan = buildScenePlan([
+      { target: 'PlayScene', playMs: 10, captureMs: 10, label: null, seed: 5, level: 3 },
+    ]);
+    const calls: Array<{ data: unknown }> = [];
+
+    await driveSceneSequence({
+      plan,
+      startScene: async (_key, data) => {
+        calls.push({ data });
+      },
+      fade: async () => {},
+      wait: async () => {},
+    });
+
+    expect(calls[0].data).toEqual({ demo: true, seed: 5, startLevel: 3 });
+  });
+});
+
 describe('driveSceneSequence forwards scene setups (AH-0MVNW8UCZ004CY0R)', () => {
   const setup = {
     startWave: 1,
-    player: { weapons: ['spread'], timedWeapons: [] },
+    player: { weapons: ['spread'], timedWeapons: [], weaponLevels: {} },
     powerUps: {},
     seed: 7,
   };
