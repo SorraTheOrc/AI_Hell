@@ -1235,7 +1235,8 @@ interface ArcCaptureModule {
  *   its boss-capable target allow-list and its total-hit bounds. **Landed:**
  *   its markers below are back to `it`.
  * - **F4 (AH-0MVRMFRSO004H9JM)** — the seven-beat `examples/scenes.json`
- *   table pinned by {@link ARC_BEATS}.
+ *   table pinned by {@link ARC_BEATS}. **Landed:** its markers below are back
+ *   to `it`.
  *
  * ## Pinned arc table (F4 must match exactly)
  *
@@ -1377,7 +1378,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
 
   // ── AC5: the seven-beat arc table ─────────────────────────────────
 
-  it.fails('AC5 — pins the seven-beat arc: order, target, label, windows, seeds, loadouts and slots', () => {
+  it('AC5 — pins the seven-beat arc: order, target, label, windows, seeds, loadouts and slots', () => {
     const parsed = parseArc();
 
     expect(parsed).toHaveLength(ARC_BEATS.length);
@@ -1411,7 +1412,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     expect(totalMs).toBeLessThanOrEqual(85000);
   });
 
-  it.fails('AC5 — starts the mini-boss and boss close to death, within their hit pools', () => {
+  it('AC5 — starts the mini-boss and boss close to death, within their hit pools', () => {
     const parsed = parseArc();
     const miniBossBeat = parsed.find((scene) => scene.target === 'GymMiniBoss');
     const bossBeat = parsed.find((scene) => scene.target === 'GymBoss');
@@ -1429,7 +1430,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     }
   });
 
-  it.fails('AC5 — only the humble-origins beat forces its hold-full reward', () => {
+  it('AC5 — only the humble-origins beat forces its hold-full reward', () => {
     const parsed = parseArc();
     const humble = parsed[1];
 
@@ -1441,7 +1442,7 @@ describe('scripted-video arc setup fields (AH-0MVRMFMJP0070KTS, test-first)', ()
     ).toHaveLength(1);
   });
 
-  it.fails('AC5 — scene 6 reprises scene 4 with a different enemy mix and stronger guns', () => {
+  it('AC5 — scene 6 reprises scene 4 with a different enemy mix and stronger guns', () => {
     const parsed = parseArc();
     const escalation = parsed[3];
     const reprise = parsed[5];

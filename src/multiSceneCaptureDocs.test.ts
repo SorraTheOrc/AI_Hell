@@ -157,10 +157,10 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
     expect(level?.setup?.seed).toBe(42);
   });
 
-  // TEST-FIRST (AH-0MVRMFMJP0070KTS): F4 (AH-0MVRMFRSO004H9JM) replaces the
-  // generic showcase example with the seven-beat excitement-curve arc; F4 flips
-  // this `it.fails` back to `it` once the arc is in place.
-  it.fails('keeps examples/scenes.json the seven-beat arc and setup-bearing', () => {
+  // TEST-FIRST (AH-0MVRMFMJP0070KTS): F4 (AH-0MVRMFRSO004H9JM) replaced the
+  // generic showcase example with the seven-beat excitement-curve arc; the
+  // marker is back to `it`.
+  it('keeps examples/scenes.json the seven-beat arc and setup-bearing', () => {
     const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
     const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
     // The shipped example is the scripted-video arc: seven beats, every one
@@ -210,8 +210,8 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
 
   // TEST-FIRST (AH-0MVRMFMJP0070KTS): the arc is authored from gym targets
   // (the beats need `setup`), so the shipped example no longer carries a
-  // generated-level entry. F4 flips this `it.fails` back to `it`.
-  it.fails('ships no generated-level example entry (the arc is gym scenes)', () => {
+  // generated-level entry. F4 landed it, so the marker is back to `it`.
+  it('ships no generated-level example entry (the arc is gym scenes)', () => {
     const examplePath = path.resolve(process.cwd(), 'examples/scenes.json');
     const parsed = parseSceneConfig(fs.readFileSync(examplePath, 'utf8'));
     // The generated-level target stays supported and documented (pinned by
