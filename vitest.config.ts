@@ -51,6 +51,16 @@ import { classifyTestFiles, TEST_INCLUDE_GLOBS } from './vitest.projects';
  * declared at the root and the same explicit selection is used by
  * `npm run test:coverage`, so the per-file line thresholds still cover the
  * combined `unit` + `integration` run.
+ *
+ * ## Suite-write regression guard (AH-0MVS9TY0N0034LZT)
+ *
+ * Both the `unit` and `integration` projects register
+ * `src/test/trackedCsvGuard.globalSetup.ts`, which hash-snapshots the tracked
+ * config CSVs (`src/data/ship-config.csv`, `enemy-configs.csv`,
+ * `difficulty-curves.csv`) in the active checkout and the main checkout at
+ * suite start and fails the run if any of them changed by teardown — the
+ * suite must never write tracked repository data (parent
+ * AH-0MVKYQWSW0067F12).
  */
 const { unit, integration, e2e } = classifyTestFiles();
 
@@ -88,6 +98,7 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: unit,
+          globalSetup: ['src/test/trackedCsvGuard.globalSetup.ts'],
         },
       },
       {
@@ -104,6 +115,7 @@ export default defineConfig({
           environment: 'happy-dom',
           setupFiles: ['src/test/setup.ts'],
           include: integration,
+          globalSetup: ['src/test/trackedCsvGuard.globalSetup.ts'],
           server: {
             deps: {
               // Phaser ships a webpack ESM bundle that Node's native ESM
