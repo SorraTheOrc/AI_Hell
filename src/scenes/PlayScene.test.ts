@@ -7182,8 +7182,15 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
   async function bootMiniBossCampaign(
     levelCount = 2,
   ): Promise<PlayScene> {
+    // Disable the random asteroid spawner **before** the restart, like the
+    // other helpers in this file: an asteroid spawned during boot is a live
+    // body in `getEnemies()` and the Orbital Strike deliberately never
+    // targets one (`isOrbitalStrikeTarget`, AH-0MVU3341U001B40T), so leaving
+    // it on made "the nearest enemy" assertions depend on boot timing
+    // (AH-0MVU9IC7I002PPP9).
     const { booted: game, scene } = await bootSceneWithLevels(
       miniBossCampaign(levelCount),
+      { asteroidSpawner: false },
     );
     booted = game;
     scene.setAsteroidSpawnerEnabled(false);
