@@ -958,6 +958,38 @@ describe('Player ship entity', () => {
       expect(player.hasWeapon('dual')).toBe(true); // permanent, never expires
     });
 
+    // The reverse order (AH-0MVUGI3BF00423OO, F1): a hold-full reward landing
+    // while a field-pickup window is open must not strand the temporary stack.
+    // Both allowed end states (keep the window and let it expire, or clear the
+    // temporary component immediately) must revert to the permanent level.
+    // Authored red — `equipWeapon(id, true)` deletes the timer but leaves
+    // `_tempWeaponStacks`, so the level never reverts. The implementation item
+    // flips these `it.fails` cases to `it` (repo red-before/green-after
+    // convention, see `src/core/levelScaling.test.ts`).
+    for (const weaponId of ['spread', 'dual', 'rapid'] as const) {
+      it.fails(
+        `permanent grant mid-window reverts to the permanent level (${weaponId})`,
+        async () => {
+          const player = await freshPlayer();
+
+          // A field pickup opens the 10 s window and adds a temporary stack.
+          player.equipWeapon(weaponId);
+          expect(player.getTempWeaponStacks(weaponId)).toBe(1);
+
+          // A hold-full reward lands while the window is still open.
+          player.equipWeapon(weaponId, true);
+          const permanentLevel = player.getPermanentWeaponLevel(weaponId);
+          expect(permanentLevel).toBe(1);
+
+          player.tickWeaponTimers(WEAPON_TIMEOUT_MS + 1);
+
+          expect(player.getWeaponLevel(weaponId)).toBe(permanentLevel);
+          expect(player.getTempWeaponStacks(weaponId)).toBe(0);
+          expect(player.hasWeapon(weaponId)).toBe(true);
+        },
+      );
+    }
+
     it('getWeaponDef returns a level-resolved definition and never mutates the base (AC4)', async () => {
       const player = await freshPlayer();
       const base = WEAPON_CATALOGUE.rapid;
