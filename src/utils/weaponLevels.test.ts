@@ -864,6 +864,18 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
     expect(leveled.impactFx).toEqual(base.impactFx);
   });
 
+  test('the shard swarm visual/feel metadata carries through every level path unchanged (AH-0MVV0WMTE0007NGS)', () => {
+    const base = WEAPON_CATALOGUE.shard_swarm;
+    // `muzzleFlash` / `impactFx` are visual metadata, never upgrade values, so
+    // every level path must resolve them byte-for-byte: a levelled Shard Swarm
+    // still spawns its lime launch flash and lands its baked lime connect cue.
+    for (const level of [0, 1, 5, 10, 50, 100]) {
+      const leveled = resolveWeaponDefinition('shard_swarm', level);
+      expect(leveled.muzzleFlash, `level ${level}`).toEqual(base.muzzleFlash);
+      expect(leveled.impactFx, `level ${level}`).toEqual(base.impactFx);
+    }
+  });
+
   test('weapons without a base bounce budget never gain one (they keep wrapping)', () => {
     for (const id of WEAPON_IDS) {
       if (id === 'ricochet') continue;

@@ -21,6 +21,8 @@ import {
   type CombatDrop,
   type CombatEnemyBullet,
 } from './CombatCoreScene';
+import * as muzzleFlashModule from '../../vfx/muzzleFlash';
+import { BULLET_COLORS, WEAPON_CATALOGUE } from '../../utils/weapons';
 import { expectRangedClear } from '../../test/powerUpEffectFixtures';
 
 // These base tests exercise the fourDirectional input mapping; the app
@@ -510,6 +512,73 @@ describe('CombatCoreScene — shared base class', () => {
     expect(rapidBullet!.tail).toBeGreaterThan(0);
     expect(rapidBullet!.impactFx).toBeDefined();
     expect(rapidBullet!.impactFx?.cue).toBe('playRapidImpactSound');
+  });
+
+  // ── Shard Swarm launch cue (AH-0MVV0WMTE0007NGS) ─────────────────
+
+  it('AH-0MVV0WMTE0007NGS — a shard swarm shot spawns one lime muzzle flash at the muzzle through the shared core path', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('shard_swarm');
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.shard_swarm.muzzleFlash!;
+    const limeCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    // One launch flash per shard_swarm shot — a five-bullet fan is one shot,
+    // so the flash count matches the number of fired shots, not the bullets.
+    const shardBullets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.shard_swarm);
+    expect(shardBullets.length).toBeGreaterThan(0);
+    expect(limeCalls).toHaveLength(shardBullets.length / 5);
+    // The flash is anchored at the ship's muzzle with the declared lime spec.
+    expect(limeCalls[0][1]).toBeCloseTo(100, 5);
+    expect(limeCalls[0][2]).toBeCloseTo(100, 5);
+    expect(limeCalls[0][4]).toEqual({
+      color: spec.color,
+      radius: spec.radius,
+      duration: spec.duration,
+      registry: expect.anything(),
+    });
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  it('AH-0MVV0WMTE0007NGS — a weapon without muzzleFlash metadata spawns no launch flash', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('shard_swarm');
+
+    // The existing seam contract: `_autoFire` only spawns when the resolved
+    // definition declares `muzzleFlash`. Drive the same shard_swarm weapon
+    // with the launch spec removed to prove the shared core, not a
+    // per-weapon special case, decides.
+    const original = player.getWeaponDef.bind(player);
+    vi.spyOn(player, 'getWeaponDef').mockImplementation((id) => {
+      const def = original(id);
+      return id === 'shard_swarm' ? { ...def, muzzleFlash: undefined } : def;
+    });
+
+    scene.runAutoFire(10);
+
+    const limeCalls = flash.mock.calls.filter(
+      (call) =>
+        (call[4] as { color?: number }).color ===
+        BULLET_COLORS.shard_swarm,
+    );
+    expect(limeCalls).toHaveLength(0);
+    // The shards still fire — only the launch cue is absent.
+    expect(
+      scene
+        .getPlayerBullets()
+        .some((b) => b.color === BULLET_COLORS.shard_swarm),
+    ).toBe(true);
   });
 
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {

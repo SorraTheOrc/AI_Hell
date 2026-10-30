@@ -401,6 +401,22 @@
       ]
     },
     {
+      "cue": "playShardSwarmFireSound",
+      "recipe": "aihell-shard-swarm-fire",
+      "delivery": "baked",
+      "seeds": [
+        32279
+      ]
+    },
+    {
+      "cue": "playShardSwarmImpactSound",
+      "recipe": "aihell-shard-swarm-impact",
+      "delivery": "baked",
+      "seeds": [
+        32280
+      ]
+    },
+    {
       "cue": "playWaveLaserFireSound",
       "recipe": "aihell-wave-laser-fire",
       "delivery": "baked",

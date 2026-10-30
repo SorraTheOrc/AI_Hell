@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "a8f71c3d0f5888a6ccbf91594b30ea68a223baa06995c25866b7bcb1e1706913",
+  "inputs": "a6f900c2792a48611094fe4e4abfce0aa6a86af62adb0a322d70c0c27b020c30",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",
@@ -66,6 +66,8 @@
     "audio/sfx/aihell-ricochet-impact.32268.wav": "638ad6b7e002fa37fe7d4581f2985ab9cad23f3079a44d532b5e686f7906b656",
     "audio/sfx/aihell-scout-advance.32180.wav": "8e0f57dbb048d39024e435aafcb2ce216fc04c1138e9e4bcccde210ceb6be53a",
     "audio/sfx/aihell-scout-fire.32181.wav": "1b97c9cbd15b3a853311fb9385cbf16ad45f01b63fb5862894925c20ca090a2c",
+    "audio/sfx/aihell-shard-swarm-fire.32279.wav": "9380e05b11dae9c42868ef58b9145f805bdf6080208ef2385da28201f8ee69f2",
+    "audio/sfx/aihell-shard-swarm-impact.32280.wav": "885f2be04187ddd0b2f54b335826b05da0917c4e7168680a5fc3f421abb6a2ff",
     "audio/sfx/aihell-spread-fire.32211.wav": "5b8092fc74e3859fe2b450d1a8c62aba49db885b5065982562cf638d80447c29",
     "audio/sfx/aihell-spread-impact.32218.wav": "f39fd29ffa78126671960cec016f5664ccded6a64dc1029dc7ed0b2c5b2bc928",
     "audio/sfx/aihell-swarm-burst.32160.wav": "34a964144cfb98f8a9b6ec7930d6448ed01dd6a99bd15c83fce131c96b9d7988",

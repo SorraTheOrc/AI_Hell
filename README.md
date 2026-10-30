@@ -976,12 +976,19 @@ instead.
   Rear Guard, Broadside, Railgun, Shard Swarm and Heavy Slug) and **16
   power-ups**. Their feel packages are being filled in per weapon through the
   same shared seams the original 11 use (AH-0MVMJMCQK004BE9T); the **Railgun**
-  is complete — its fire routes through the single shared
-  `playWeaponFireSound` dispatcher to the baked `playRailgunFireSound`
+  and **Shard Swarm** are complete — the Railgun's fire routes through the single
+  shared `playWeaponFireSound` dispatcher to the baked `playRailgunFireSound`
   (`aihell-railgun-fire`), its launch spawns a sky-blue muzzle flash through the shared
   combat-core path (AH-0MVQ6C1YL003HU9K), and its tracer declares an `impactFx`
   so each pierced connect plays the baked `playRailgunImpactSound`
-  (`aihell-railgun-impact`) with a sky-blue flash (AH-0MVMIGVCE004VSNA).
+  (`aihell-railgun-impact`) with a sky-blue flash (AH-0MVMIGVCE004VSNA). The
+  Shard Swarm follows the same pattern: `playShardSwarmFireSound`
+  (`aihell-shard-swarm-fire`) is a tight multi-shard *chk* burst dispatched through
+  `playWeaponFireSound`, its five-shard fan launches from an 8 px lime muzzle flash
+  (0.12 s) spawned by the shared combat-core path, and its shards declare an
+  `impactFx` so each connect plays the baked `playShardSwarmImpactSound`
+  (`aihell-shard-swarm-impact`) with a lime flash instead of the generic
+  warm-white fallback (AH-0MVV0WMTE0007NGS).
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
   skeleton, so levels 1–10 are always present. A configured level overrides its
   static counterpart (and a configured level numbered beyond the static ten is

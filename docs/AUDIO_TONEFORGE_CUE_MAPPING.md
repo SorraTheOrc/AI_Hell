@@ -54,7 +54,7 @@ card-game oriented. Three cues are retired.
 | Disposition | Count | Notes |
 |-------------|-------|-------|
 | `existing-recipe` | 2 | Power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
-| `new-recipe` | 41 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, and the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA), plus the thruster hum |
+| `new-recipe` | 43 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA, and the Shard Swarm launch/hit pair since AH-0MVV0WMTE0007NGS), plus the thruster hum |
 | `new-recipe` (outside `effects.ts`) | 4 | `Boss.ts` inline cues using `blip()` — see the Boss.ts section |
 | `retired` | 3 | `playMajorExplosionSound`, `playTankDestructionSound`, `playWeaponChangeSound` |
 | control companion (in cue table) | 2 | `stopDiveSound`, `stopThrusterSound` — start/stop lifetime mapping |
@@ -119,6 +119,8 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playArcImpactSound` | Sharp electric crack — saw 2400→900→220 Hz + fast HP noise zipper, ~0.14 s | Player Arc bolt connects / chains | shared AOE chain seam in `CombatScene` (AH-0MV822CE7004MQ14) | new | `aihell-arc-impact` |
 | `playRailgunFireSound` | Heavy electromagnetic discharge — deep saw slam 220→90→55 Hz + fast square snap 1800→900 Hz + HP noise crack, ~0.2 s | Player Railgun fire (once per four beats) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`, incl. the hold-full metronome) | new | `aihell-railgun-fire` |
 | `playRailgunImpactSound` | Short metallic crack with a brief ring — saw 1400→500→240 Hz + 1760 Hz sine ring + HP noise tick, ~0.14 s | Player Railgun tracer connects (each pierced enemy) | shared impact seam in `CombatScene` (AH-0MVMIGVCE004VSNA) | new | `aihell-railgun-impact` |
+| `playShardSwarmFireSound` | Tight multi-shard *chk* burst — three HP noise ticks at 0 / 0.03 / 0.06 s + glassy triangle 2600→1700 Hz + brittle square 3400→2200 Hz edge, ~0.15 s | Player Shard Swarm fire (five-shard fan) | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`, incl. the hold-full metronome) | new | `aihell-shard-swarm-fire` |
+| `playShardSwarmImpactSound` | Bright glassy lime tink — triangle 2800→1900 Hz + 4200 Hz sine overtone + HP noise contact tick, ~0.10 s | Player Shard Swarm shard connects (any shard in the fan) | shared impact seam in `CombatScene` (AH-0MVV0WMTE0007NGS) | new | `aihell-shard-swarm-impact` |
 | `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz with a brief sustain, ~0.1 s | Player wave-laser fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-wave-laser-fire` |
 | `playWaveLaserImpactSound` | Sharp neon snap — saw 800→200 Hz + square click + BP noise crack, ~0.12 s | Player wave-laser hit (when the beam connects) | shared impact seam in `CombatScene` (AH-0MV822ACO007CEZF) | new | `aihell-wave-laser-impact` |
 | `playRicochetFireSound` | Bright springy ping — triangle 1400→500 Hz + square tick, ~0.1 s | Player ricochet fire | `PlayScene`, `GymWeapons`, `GymWeaponLeveling` (via `playWeaponFireSound`) | new | `aihell-ricochet-fire` |
@@ -282,6 +284,8 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-arc-impact` | `playArcImpactSound` | Sharp electric crack 2400→900→220 Hz + fast HP noise zipper | 32275 |
 | `aihell-railgun-fire` | `playRailgunFireSound` | Heavy electromagnetic discharge — deep saw slam 220→90→55 Hz + square snap 1800→900 Hz + HP noise crack, ~0.2 s (AH-0MVMIGVCE004VSNA) | 32277 |
 | `aihell-railgun-impact` | `playRailgunImpactSound` | Short metallic crack 1400→500→240 Hz + 1760 Hz sine ring + HP noise tick, ~0.14 s (AH-0MVMIGVCE004VSNA) | 32278 |
+| `aihell-shard-swarm-fire` | `playShardSwarmFireSound` | Tight multi-shard *chk* burst — three HP noise ticks 0 / 0.03 / 0.06 s + glassy triangle 2600→1700 Hz + brittle square 3400→2200 Hz edge, ~0.15 s (AH-0MVV0WMTE0007NGS) | 32279 |
+| `aihell-shard-swarm-impact` | `playShardSwarmImpactSound` | Bright glassy lime tink — triangle 2800→1900 Hz + 4200 Hz sine overtone + HP noise contact tick, ~0.10 s (AH-0MVV0WMTE0007NGS) | 32280 |
 | `aihell-wave-laser-fire` | `playWaveLaserFireSound` | High-energy square beam crack 1200→600 Hz, brief sustain, ~0.1 s | 32219 |
 | `aihell-wave-laser-impact` | `playWaveLaserImpactSound` | Sharp neon snap 800→200 Hz + square click + BP noise crack, ~0.12 s | 32231 |
 | `aihell-ricochet-fire` | `playRicochetFireSound` | Bright springy ping 1400→500 Hz + square tick, ~0.1 s | 32267 |

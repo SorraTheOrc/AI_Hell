@@ -44,6 +44,7 @@ import {
   WEAPON_NOVA_FIRE_RATE,
   WEAPON_MORTAR_FIRE_RATE,
   WEAPON_ARC_FIRE_RATE,
+  WEAPON_SHARD_SWARM_FIRE_RATE,
   WEAPON_CANNON_SUBDIVISION,
   WEAPON_SPREAD_SUBDIVISION,
   WEAPON_DUAL_SUBDIVISION,
@@ -1146,6 +1147,54 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
     // Symmetric about the heading.
     expect(offsetsDeg[0]).toBeCloseTo(-offsetsDeg[offsetsDeg.length - 1]);
     expect(offsetsDeg[1]).toBeCloseTo(-offsetsDeg[offsetsDeg.length - 2]);
+  });
+
+  test('Shard Swarm declares a lime launch flash sized for a five-shard burst (AH-0MVV0WMTE0007NGS)', () => {
+    const def = WEAPON_CATALOGUE.shard_swarm;
+    // The launch cue is colour-matched to the lime shards and a touch larger
+    // than the cannon's single-shot pop, so the fan reads as a burst without
+    // leaving the shipped 5–12 px / 0.07–0.16 s band.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.shard_swarm);
+    expect(def.muzzleFlash!.radius).toBe(8);
+    expect(def.muzzleFlash!.radius).toBeGreaterThan(
+      WEAPON_CATALOGUE.cannon.muzzleFlash!.radius,
+    );
+    expect(def.muzzleFlash!.radius).toBeLessThanOrEqual(12);
+    expect(def.muzzleFlash!.duration).toBeGreaterThanOrEqual(0.07);
+    expect(def.muzzleFlash!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('Shard Swarm declares lime impact feedback routed through its baked hit cue (AH-0MVV0WMTE0007NGS)', () => {
+    const def = WEAPON_CATALOGUE.shard_swarm;
+    // The connect is colour-matched to the lime shards and audible through the
+    // shared impact seam instead of the generic warm-white fallback flash.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.shard_swarm);
+    expect(def.impactFx!.cue).toBe('playShardSwarmImpactSound');
+    expect(def.impactFx!.radius).toBe(8);
+    // A five-shard volley connects in one frame: keep the flash short so the
+    // hits read as one lime impact (epic AC8 ceiling 0.16 s, brief ≤ 0.12 s).
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('the Shard Swarm feel package changes no behaviour or balance values (AH-0MVV0WMTE0007NGS)', () => {
+    const def = WEAPON_CATALOGUE.shard_swarm;
+    // The metadata-only package must leave the five-shard firing identity
+    // exactly as shipped.
+    expect(def.fireRateMs).toBe(WEAPON_SHARD_SWARM_FIRE_RATE);
+    expect(def.offsets).toEqual([
+      (-15 * Math.PI) / 180,
+      (-7.5 * Math.PI) / 180,
+      0,
+      (7.5 * Math.PI) / 180,
+      (15 * Math.PI) / 180,
+    ]);
+    expect(def.bulletColor).toBe(BULLET_COLORS.shard_swarm);
+    expect(def.bulletShape).toBe('shard');
+    expect(def.bulletShapeLength).toBe(1.6);
+    expect(def.bulletSize).toBe(0.72);
+    expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.shard_swarm);
   });
 
   test('Heavy Slug is the largest, slowest single round in the catalogue', () => {

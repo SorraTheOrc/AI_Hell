@@ -1377,6 +1377,30 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 1.2,
     bulletSize: 0.72,
     bulletLifetime: WEAPON_BULLET_LIFETIME.shard_swarm,
+    // Launch cue (AH-0MVV0WMTE0007NGS): a lime flash at the hull sized for a
+    // five-shard burst — a touch larger than the cannon's single-shot pop so
+    // the fan reads as a burst, and well inside the shipped 5–12 px /
+    // 0.07–0.16 s band. The shared combat-core muzzle-flash path spawns it
+    // from this metadata, so the game and every gym show the same launch cue
+    // with no per-scene code. Visual metadata only.
+    muzzleFlash: {
+      color: BULLET_COLORS.shard_swarm,
+      radius: 8,
+      duration: 0.12,
+    },
+    // Connect feedback (AH-0MVV0WMTE0007NGS): a lime impact flash plus the
+    // baked glassy shard hit cue, routed through the shared impact seam so a
+    // Shard Swarm connect no longer falls back to the generic warm-white flash
+    // with no hit sound. The short 0.12 s fade keeps a five-shard volley
+    // readable as one hit without adding a new throttle (the shipped per-cue
+    // voice limiter covers the audio side). Visual/feel metadata only —
+    // cadence, offsets, lifetime and bullet identity are unchanged.
+    impactFx: {
+      color: BULLET_COLORS.shard_swarm,
+      radius: 8,
+      duration: 0.12,
+      cue: 'playShardSwarmImpactSound',
+    },
   },
   heavy_slug: {
     id: 'heavy_slug',

@@ -172,6 +172,22 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playShardSwarmImpactSound resolves to the baked shard-swarm-impact asset (AH-0MVV0WMTE0007NGS)', () => {
+    effects.playShardSwarmImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-shard-swarm-impact.32280.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the shard swarm impact cue (AH-0MVV0WMTE0007NGS)', () => {
+    effects.playWeaponImpactCue('playShardSwarmImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-shard-swarm-impact.32280.wav',
+    );
+  });
+
   it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
     effects.playSpreadImpactSound();
     expect(recording.plays).toHaveLength(1);
@@ -490,6 +506,7 @@ describe('playWeaponFireSound — shared player-fire path', () => {
       ['cluster', 'playClusterFireSound'],
       ['options', 'playOptionsFireSound'],
       ['railgun', 'playRailgunFireSound'],
+      ['shard_swarm', 'playShardSwarmFireSound'],
     ];
     for (const [weaponId, cue] of cases) {
       recording.plays.length = 0;
@@ -551,6 +568,38 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     effects.playWeaponFireSound('railgun', { volume: 0.3 });
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('plays the baked shard swarm fire cue (AH-0MVV0WMTE0007NGS)', () => {
+    effects.playWeaponFireSound('shard_swarm');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-shard-swarm-fire.32279.wav',
+    );
+  });
+
+  it('routes the shard swarm metronome ghost fire at the reduced volume (AH-0MVV0WMTE0007NGS)', () => {
+    // The hold-full metronome resolves the identical asset as live fire and
+    // only scales the volume, so a five-shard weapon cannot drift between the
+    // two paths.
+    effects.playWeaponFireSound('shard_swarm', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-shard-swarm-fire.32279.wav',
+    );
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('the shard swarm cues are distinct assets from the cannon\u2019s (AH-0MVV0WMTE0007NGS)', () => {
+    // Distinctness is asserted through the public dispatch API: the Shard
+    // Swarm cannot alias the Cannon's fire thump or impact smack.
+    effects.playWeaponFireSound('cannon');
+    effects.playWeaponFireSound('shard_swarm');
+    effects.playWeaponImpactCue('playCannonImpactSound');
+    effects.playWeaponImpactCue('playShardSwarmImpactSound');
+    expect(recording.plays).toHaveLength(4);
+    expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
+    expect(recording.plays[3].url).not.toBe(recording.plays[2].url);
   });
 });
 

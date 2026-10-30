@@ -137,6 +137,8 @@ derived from the render seed).
 | `aihell-arc-fire.yaml` | `playArcFireSound` | Square zap 1400→500→1120 Hz + HP crackle | 32217 |
 | `aihell-railgun-fire.yaml` | `playRailgunFireSound` | Heavy electromagnetic discharge: saw slam 220→55 Hz + square snap + HP noise crack (AH-0MVMIGVCE004VSNA) | 32277 |
 | `aihell-railgun-impact.yaml` | `playRailgunImpactSound` | Short metallic crack 1400→240 Hz + brief 1760 Hz ring + HP noise tick, ~0.14 s (AH-0MVMIGVCE004VSNA) | 32278 |
+| `aihell-shard-swarm-fire.yaml` | `playShardSwarmFireSound` | Tight multi-shard chk burst: three HP noise ticks (0 / 0.03 / 0.06 s) + glassy triangle 2600→1700 Hz + brittle square edge (AH-0MVV0WMTE0007NGS) | 32279 |
+| `aihell-shard-swarm-impact.yaml` | `playShardSwarmImpactSound` | Bright glassy lime tink: triangle 2800→1900 Hz + 4200 Hz sine overtone + HP noise contact tick, ~0.10 s (AH-0MVV0WMTE0007NGS) | 32280 |
 | `aihell-pickup-spread.yaml` | `playSpreadPickupSound` | Triangle 500→1500→800 Hz | 32220 |
 | `aihell-pickup-dual.yaml` | `playDualPickupSound` | Two saw drops 1000→500 / 1200→700 Hz | 32221 |
 | `aihell-pickup-rapid.yaml` | `playRapidPickupSound` | Triangle rise 400→1600 Hz | 32222 |

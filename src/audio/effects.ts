@@ -545,6 +545,21 @@ export function playRailgunImpactSound(): void {
 }
 
 /**
+ * Bright glassy lime tink — a Shard Swarm shard connects
+ * (AH-0MVV0WMTE0007NGS). Plays through the shared impact seam
+ * (`CombatScene.resolveWeaponImpactFx`) alongside the lime impact flash, so
+ * the game and every gym connect identically instead of falling back to the
+ * generic warm-white flash with no hit cue. Kept to ~0.10 s so a five-shard
+ * volley connecting in one frame reads as a single shimmering lime hit — the
+ * shipped per-cue voice limiter (4 voices / 150 ms) bounds the overlap with no
+ * added throttle. Baked via the ToneForge pipeline
+ * (`aihell-shard-swarm-impact`, seed 32280).
+ */
+export function playShardSwarmImpactSound(): void {
+  playCue('playShardSwarmImpactSound');
+}
+
+/**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
  * their own baked hit cues; dispatched by {@link playWeaponImpactCue} from
@@ -562,6 +577,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playOptionsImpactSound,
   playArcImpactSound,
   playRailgunImpactSound,
+  playShardSwarmImpactSound,
 };
 
 /**
@@ -598,6 +614,20 @@ export function playRapidFireSound(): void {
  */
 export function playRailgunFireSound(): void {
   playCue('playRailgunFireSound');
+}
+
+/**
+ * Tight multi-shard *chk* burst — Shard Swarm fire (AH-0MVV0WMTE0007NGS).
+ * Three short high-passed noise ticks over a bright glassy triangle and a
+ * brittle square edge, so the five-shard fan leaving the hull reads as a
+ * percussive lime burst rather than a blunt cannon thump. Routed through the
+ * one shared player-fire dispatcher ({@link playWeaponFireSound}) so live
+ * fire, the reduced-volume hold-full metronome and every gym fire sound
+ * identical. Baked via the ToneForge pipeline (`aihell-shard-swarm-fire`,
+ * seed 32279).
+ */
+export function playShardSwarmFireSound(): void {
+  playCue('playShardSwarmFireSound');
 }
 
 /** Deep expanding thump + rising ring — Nova fire. */
@@ -746,6 +776,9 @@ export function playWeaponFireSound(
       break;
     case 'railgun':
       playCue('playRailgunFireSound', options);
+      break;
+    case 'shard_swarm':
+      playCue('playShardSwarmFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches

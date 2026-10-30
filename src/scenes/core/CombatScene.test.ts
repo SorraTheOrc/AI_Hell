@@ -1212,6 +1212,72 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
+  // ── Shard Swarm impact feedback (AH-0MVV0WMTE0007NGS) ─────────────
+
+  it('AH-0MVV0WMTE0007NGS — an auto-fired shard swarm bullet carries the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('shard_swarm');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.shard_swarm);
+    expect(shot).toBeDefined();
+    // Every shard in the five-way fan carries the declared lime impact
+    // feedback, so each connect routes through the shared seam with no
+    // per-scene code.
+    expect(shot!.impactFx).toEqual(WEAPON_CATALOGUE.shard_swarm.impactFx);
+  });
+
+  it('AH-0MVV0WMTE0007NGS — a shard swarm connect plays its baked hit cue and lime impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('shard_swarm');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    // Drive a real auto-fired shard into an enemy. Keep one bullet from the
+    // fan so the connect count is unambiguous; the five-in-one-frame case is
+    // bounded by the shipped cue voice limiter, not by a new throttle.
+    const bullets = scene.getPlayerBullets();
+    const shot = bullets.find(
+      (b) => b.color === BULLET_COLORS.shard_swarm,
+    );
+    expect(shot).toBeDefined();
+    for (let i = bullets.length - 1; i >= 0; i -= 1) {
+      if (bullets[i] !== shot) bullets.splice(i, 1);
+    }
+    const enemy = new ToughStubEnemy(scene, shot!.x, shot!.y, 10, 3);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    // The connect is audible through the Shard Swarm's baked cue and
+    // colour-matched to the lime shards — the generic warm-white 0xfff2a0
+    // fallback flash no longer applies to this weapon.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playShardSwarmImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.shard_swarm,
+        radius: WEAPON_CATALOGUE.shard_swarm.impactFx!.radius,
+        duration: WEAPON_CATALOGUE.shard_swarm.impactFx!.duration,
+      }),
+    );
+    expect(impact.mock.calls[0][3]).not.toMatchObject({ color: 0xfff2a0 });
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
   it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
     const scene = await boot();
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
