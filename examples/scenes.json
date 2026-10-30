@@ -97,6 +97,22 @@
       }
     },
     {
+      "target": "GymHangar",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family \u2014 hangar war payload (read-only hangar and ring view)",
+      "setup": {
+        "player": {
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {},
+        "seed": 8085
+      }
+    },
+    {
       "target": "GymLevel",
       "playMs": 2000,
       "captureMs": 10000,

@@ -104,6 +104,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     // — a single fodder row boots it.
     expect(scene.listedScenes.map((s) => s.label)).toEqual([
       'BotTuning',
+      'Hangar',
       'Level',
       'Minerals',
       'Player',
@@ -115,6 +116,7 @@ describe('GymIndex — gym entry scene (AC2-AC4)', () => {
     ]);
     expect(scene.listedScenes.map((s) => s.key)).toEqual([
       'GymBotTuning',
+      'GymHangar',
       'GymLevel',
       'GymMinerals',
       'GymPlayer',

@@ -179,6 +179,7 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
       'GymCentipede',
       'GymCurveSequencer',
       'GymFodderEnemies',
+      'GymHangar',
       'GymLevel',
       'GymMinerals',
       'GymMiniBoss',

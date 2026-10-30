@@ -1205,9 +1205,10 @@ capture framing), recorded with their reason in
 [`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8).
 
 **Every gym is representable in `examples/scenes.json`.** The shipped example
-carries one scripted entry for every gym scene — all 14, including the
+carries one scripted entry for every gym scene — all 15, including the
 parameterised `GymLevel`/`GymFodderEnemies`, the boss gyms (`GymBoss`,
-`GymMiniBoss`) and the curve editor. The seven-beat excitement-curve teaser
+`GymMiniBoss`), the curve editor and the read-only `GymHangar` payload
+view. The seven-beat excitement-curve teaser
 lives in its own file, `examples/teaserVideoScript.json`, and records the
 shipped game scene rather than a gym (AH-0MVTNTHTI0041QIF); the two files are
 kept separate so neither duplicates the other. `scripts/capture-scenes.test.ts`
@@ -1426,9 +1427,9 @@ Two config files ship with the repo, each with one purpose:
   pinned `seed` and a `playMs`/`captureMs` window, so its loadout and its
   on-camera pay-off are deterministic (AH-0MVTNTHTI0041QIF).
 - **`examples/scenes.json`** — the **gym showcase**: one scripted entry for
-  every gym scene under `src/scenes/gym/` (all 14, including the parameterised
-  `GymLevel`/`GymFodderEnemies`, the boss gyms and the curve editor), each
-  carrying a copy-paste `setup`.
+  every gym scene under `src/scenes/gym/` (all 15, including the parameterised
+  `GymLevel`/`GymFodderEnemies`, the boss gyms, the curve editor and the
+  read-only `GymHangar` payload view), each carrying a copy-paste `setup`.
 
 The teaser arc, in order:
 
@@ -1544,9 +1545,9 @@ examples/scenes.json`; `--json` reports each scene's timings and seeds
 (`Gym<Name>`), minus the two **parameterised** scenes that cannot start
 without a caller-supplied parameter:
 
-`GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymMinerals`,
-`GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`, `GymPowerUpsCombat`,
-`GymPowerUpsUtility`, `GymWeaponLeveling`, `GymWeapons`.
+`GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymHangar`,
+`GymMinerals`, `GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`,
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymWeaponLeveling`, `GymWeapons`.
 
 `GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
 setup) are **rejected** with `unsupported-target` when no setup is supplied;
