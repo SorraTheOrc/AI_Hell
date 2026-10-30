@@ -433,6 +433,22 @@
       ]
     },
     {
+      "cue": "playBroadsideFireSound",
+      "recipe": "aihell-broadside-fire",
+      "delivery": "baked",
+      "seeds": [
+        32283
+      ]
+    },
+    {
+      "cue": "playBroadsideImpactSound",
+      "recipe": "aihell-broadside-impact",
+      "delivery": "baked",
+      "seeds": [
+        32284
+      ]
+    },
+    {
       "cue": "playWaveLaserFireSound",
       "recipe": "aihell-wave-laser-fire",
       "delivery": "baked",

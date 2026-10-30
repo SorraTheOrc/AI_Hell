@@ -888,6 +888,26 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
     }
   });
 
+  test('the broadside visual/feel metadata survives level resolution while the pair grows (AH-0MVV0WNOX0078G9G)', () => {
+    const base = WEAPON_CATALOGUE.broadside;
+    // `muzzleFlash` / `impactFx` are visual metadata, never upgrade values, so
+    // every level path must resolve them byte-for-byte.
+    for (const level of [0, 1, 5, 10, 50, 100]) {
+      const leveled = resolveWeaponDefinition('broadside', level);
+      expect(leveled.muzzleFlash, `level ${level}`).toEqual(base.muzzleFlash);
+      expect(leveled.impactFx, `level ${level}`).toEqual(base.impactFx);
+    }
+    // The `projectileCount` upgrade widens the perpendicular pair into a wider
+    // fan (4/6 shots), but the launch and impact metadata are still one spec:
+    // the shared core spawns one flash per **shot input**, never one per
+    // projectile (pinned behaviourally in `CombatCoreScene.test.ts`).
+    const leveled = resolveWeaponDefinition('broadside', 50);
+    expect(leveled.offsets.length).toBeGreaterThan(base.offsets.length);
+    expect(leveled.offsets.length).toBeGreaterThanOrEqual(4);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+  });
+
   test('weapons without a base bounce budget never gain one (they keep wrapping)', () => {
     for (const id of WEAPON_IDS) {
       if (id === 'ricochet') continue;

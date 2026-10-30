@@ -616,6 +616,74 @@ describe('CombatCoreScene — shared base class', () => {
     expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
   });
 
+  // ── Broadside launch cue (AH-0MVV0WNOX0078G9G) ──────────────
+
+  it('AH-0MVV0WNOX0078G9G — a broadside shot spawns exactly one wide teal muzzle flash for the pair, not one per dart', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('broadside');
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.broadside.muzzleFlash!;
+    const tealCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    // The two-sided read comes from the pair of darts plus the baked cue and
+    // the wide radius — the shared `_autoFire` path spawns **one** flash per
+    // shot input, so the flash count is half the dart count (never one flash
+    // per dart).
+    const darts = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.broadside);
+    expect(darts.length).toBeGreaterThan(0);
+    expect(darts.length % 2).toBe(0);
+    expect(tealCalls).toHaveLength(darts.length / 2);
+    // The flash is anchored at the ship with the declared wide teal spec.
+    expect(tealCalls[0][1]).toBeCloseTo(100, 5);
+    expect(tealCalls[0][2]).toBeCloseTo(100, 5);
+    expect(spec.radius).toBeGreaterThan(WEAPON_CATALOGUE.cannon.muzzleFlash!.radius);
+    expect(tealCalls[0][4]).toEqual({
+      color: spec.color,
+      radius: spec.radius,
+      duration: spec.duration,
+      registry: expect.anything(),
+    });
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
+  it('AH-0MVV0WNOX0078G9G — a levelled broadside still spawns one flash per shot input when the pair grows to 4/6 darts', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    // Collect the Broadside three times so `projectileCount` widens the pair.
+    player.equipWeapon('broadside');
+    player.equipWeapon('broadside');
+    player.equipWeapon('broadside');
+    const resolved = player.getWeaponDef('broadside');
+    expect(resolved.offsets.length).toBeGreaterThan(2);
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.broadside.muzzleFlash!;
+    const tealCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    const darts = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.broadside);
+    const shots = darts.length / resolved.offsets.length;
+    expect(Number.isInteger(shots)).toBe(true);
+    expect(shots).toBeGreaterThan(0);
+    // One launch flash per shot **input**: the wider fan must not multiply the
+    // flash count (the same metadata survives level resolution — pinned in
+    // `weaponLevels.test.ts`).
+    expect(tealCalls).toHaveLength(shots);
+  });
+
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });

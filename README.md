@@ -983,7 +983,7 @@ instead.
   Rear Guard, Broadside, Railgun, Shard Swarm and Heavy Slug) and **16
   power-ups**. Their feel packages are being filled in per weapon through the
   same shared seams the original 11 use (AH-0MVMJMCQK004BE9T); the **Railgun**,
-  **Shard Swarm** and **Rear Guard** are complete — the Railgun's fire routes through the single
+  **Shard Swarm**, **Rear Guard** and **Broadside** are complete — the Railgun's fire routes through the single
   shared `playWeaponFireSound` dispatcher to the baked `playRailgunFireSound`
   (`aihell-railgun-fire`), its launch spawns a sky-blue muzzle flash through the shared
   combat-core path (AH-0MVQ6C1YL003HU9K), and its tracer declares an `impactFx`
@@ -1002,7 +1002,16 @@ instead.
   rose muzzle flash (0.11 s) spawned by the shared combat-core path, and its
   `impactFx` plays the baked `playRearGuardImpactSound`
   (`aihell-rear-guard-impact`) — a soft rose pop — with a rose flash instead of
-  the warm-white fallback (AH-0MVV0WN96007TU9J).
+  the warm-white fallback (AH-0MVV0WN96007TU9J). The Broadside completes the
+  package for the perpendicular teal dart pair: `playBroadsideFireSound`
+  (`aihell-broadside-fire`) is one baked cue carrying **two** opposing noise
+  sweeps 40 ms apart (rising for the left dart, falling for the right) over a
+  short teal-toned tail, so it reads as a wide two-sided launch rather than a
+  second Cannon; its pair launches from a wide 9 px teal muzzle flash (0.12 s)
+  spawned once per shot input by the shared combat-core path, and its `impactFx`
+  plays the baked `playBroadsideImpactSound` (`aihell-broadside-impact`) — a
+  short teal dart tick — with a teal flash instead of the warm-white fallback
+  (AH-0MVV0WNOX0078G9G).
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
   skeleton, so levels 1–10 are always present. A configured level overrides its
   static counterpart (and a configured level numbered beyond the static ten is

@@ -204,6 +204,22 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playBroadsideImpactSound resolves to the baked broadside-impact asset (AH-0MVV0WNOX0078G9G)', () => {
+    effects.playBroadsideImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-broadside-impact.32284.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the broadside impact cue (AH-0MVV0WNOX0078G9G)', () => {
+    effects.playWeaponImpactCue('playBroadsideImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-broadside-impact.32284.wav',
+    );
+  });
+
   it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
     effects.playSpreadImpactSound();
     expect(recording.plays).toHaveLength(1);
@@ -647,6 +663,44 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     effects.playWeaponFireSound('rear_guard');
     effects.playWeaponImpactCue('playCannonImpactSound');
     effects.playWeaponImpactCue('playRearGuardImpactSound');
+    expect(recording.plays).toHaveLength(4);
+    expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
+    expect(recording.plays[3].url).not.toBe(recording.plays[2].url);
+  });
+
+  it('plays the baked broadside fire cue (AH-0MVV0WNOX0078G9G)', () => {
+    effects.playWeaponFireSound('broadside');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-broadside-fire.32283.wav',
+    );
+  });
+
+  it('routes the broadside metronome ghost fire at the reduced volume (AH-0MVV0WNOX0078G9G)', () => {
+    // The hold-full metronome resolves the identical asset as live fire and
+    // only scales the volume, so the two-sided cue cannot drift between the two
+    // paths.
+    effects.playWeaponFireSound('broadside', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-broadside-fire.32283.wav',
+    );
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('a broadside shot plays the two-sided pair cue once, not once per dart (AH-0MVV0WNOX0078G9G)', () => {
+    // One shot fires two perpendicular darts but dispatches a **single** baked
+    // cue that already contains the pair — the seam must not double-dispatch
+    // (which is what would make it sound like two Cannons).
+    effects.playWeaponFireSound('broadside');
+    expect(recording.plays).toHaveLength(1);
+  });
+
+  it('the broadside cues are distinct assets from the cannon\u2019s (AH-0MVV0WNOX0078G9G)', () => {
+    effects.playWeaponFireSound('cannon');
+    effects.playWeaponFireSound('broadside');
+    effects.playWeaponImpactCue('playCannonImpactSound');
+    effects.playWeaponImpactCue('playBroadsideImpactSound');
     expect(recording.plays).toHaveLength(4);
     expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
     expect(recording.plays[3].url).not.toBe(recording.plays[2].url);

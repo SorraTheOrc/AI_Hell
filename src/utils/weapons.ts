@@ -1339,6 +1339,33 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 1.4,
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.broadside,
+    // Launch cue (AH-0MVV0WNOX0078G9G): a teal flash at the hull sized for the
+    // perpendicular pair — 9 px, wider than the Cannon's 7 px forward pop (and
+    // inside the shipped 5–12 px ceiling), so the launch reads as a wide
+    // two-sided gesture. The two-sided read comes from the baked fire cue's
+    // opposing sweeps plus this wide radius, not from a second spawn hook: the
+    // shared combat-core muzzle-flash path spawns exactly one flash per shot
+    // input from this metadata, so the game and every gym show the same launch
+    // cue with no per-scene code. Visual metadata only.
+    muzzleFlash: {
+      color: BULLET_COLORS.broadside,
+      radius: 9,
+      duration: 0.12,
+    },
+    // Connect feedback (AH-0MVV0WNOX0078G9G): a teal impact flash plus the
+    // baked short teal dart tick, routed through the shared impact seam so a
+    // Broadside connect no longer falls back to the generic warm-white flash
+    // with no hit sound. The short 0.12 s fade keeps a left/right pair
+    // connecting in the same frame readable as one hit without adding a new
+    // throttle (the shipped per-cue voice limiter covers the audio side).
+    // Visual/feel metadata only — the perpendicular offsets, cadence, lifetime
+    // and bullet identity are unchanged.
+    impactFx: {
+      color: BULLET_COLORS.broadside,
+      radius: 8,
+      duration: 0.12,
+      cue: 'playBroadsideImpactSound',
+    },
   },
   railgun: {
     id: 'railgun',

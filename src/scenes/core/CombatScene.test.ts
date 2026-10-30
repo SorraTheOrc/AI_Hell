@@ -1344,6 +1344,73 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
+  // ── Broadside impact feedback (AH-0MVV0WNOX0078G9G) ──────────────
+
+  it('AH-0MVV0WNOX0078G9G — auto-fired broadside darts carry the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('broadside');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    // Both perpendicular darts carry the declared teal impact feedback, so a
+    // connect on either side routes through the shared seam with no per-scene
+    // code.
+    const darts = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.broadside);
+    expect(darts).toHaveLength(2);
+    for (const dart of darts) {
+      expect(dart.impactFx).toEqual(WEAPON_CATALOGUE.broadside.impactFx);
+    }
+  });
+
+  it('AH-0MVV0WNOX0078G9G — a broadside connect plays its baked dart tick and teal impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('broadside');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.broadside);
+    expect(shot).toBeDefined();
+    // Keep one dart so the connect count is unambiguous — the other dart of
+    // the pair may spawn nearby and also overlap the stub enemy.
+    const darts = scene.getPlayerBullets();
+    for (let i = darts.length - 1; i >= 0; i -= 1) {
+      if (darts[i] !== shot) darts.splice(i, 1);
+    }
+    const enemy = new ToughStubEnemy(scene, shot!.x, shot!.y, 10, 3);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    // The connect is audible through the Broadside's baked dart tick and
+    // colour-matched to the teal dart — the generic warm-white 0xfff2a0
+    // fallback flash no longer applies to this weapon.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playBroadsideImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.broadside,
+        radius: WEAPON_CATALOGUE.broadside.impactFx!.radius,
+        duration: WEAPON_CATALOGUE.broadside.impactFx!.duration,
+      }),
+    );
+    expect(impact.mock.calls[0][3]).not.toMatchObject({ color: 0xfff2a0 });
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
   it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
     const scene = await boot();
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');

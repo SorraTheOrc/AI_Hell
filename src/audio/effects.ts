@@ -573,6 +573,20 @@ export function playRearGuardImpactSound(): void {
 }
 
 /**
+ * Short teal dart tick — a Broadside dart connects (AH-0MVV0WNOX0078G9G). Plays
+ * through the shared impact seam (`CombatScene.resolveWeaponImpactFx`)
+ * alongside the teal impact flash, so the game and every gym connect
+ * identically instead of falling back to the generic warm-white flash with no
+ * hit cue. Kept to ~0.10 s so a left/right pair connecting in the same frame
+ * reads as one crisp teal tick — the shipped per-cue voice limiter (4 voices /
+ * 150 ms) bounds the overlap with no added throttle. Baked via the ToneForge
+ * pipeline (`aihell-broadside-impact`, seed 32284).
+ */
+export function playBroadsideImpactSound(): void {
+  playCue('playBroadsideImpactSound');
+}
+
+/**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
  * their own baked hit cues; dispatched by {@link playWeaponImpactCue} from
@@ -592,6 +606,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playRailgunImpactSound,
   playShardSwarmImpactSound,
   playRearGuardImpactSound,
+  playBroadsideImpactSound,
 };
 
 /**
@@ -655,6 +670,23 @@ export function playShardSwarmFireSound(): void {
  */
 export function playRearGuardFireSound(): void {
   playCue('playRearGuardFireSound');
+}
+
+/**
+ * Wide two-sided swish — Broadside fire (AH-0MVV0WNOX0078G9G). The Broadside
+ * fires a perpendicular teal dart pair (one shot to each side, no forward
+ * shot), so one baked cue carries **two** short band-passed noise sweeps 40 ms
+ * apart — the first rising (left dart leaving) and the second falling (right
+ * dart leaving) — over a short glassy teal-toned tail. The opposing sweeps and
+ * the documented 35–50 ms inter-onset window make the pair audible on a mono
+ * speaker, so it reads as a wide two-sided launch rather than a second Cannon.
+ * Routed through the one shared player-fire dispatcher
+ * ({@link playWeaponFireSound}) so live fire, the reduced-volume hold-full
+ * metronome and every gym fire sound identical. Baked via the ToneForge
+ * pipeline (`aihell-broadside-fire`, seed 32283).
+ */
+export function playBroadsideFireSound(): void {
+  playCue('playBroadsideFireSound');
 }
 
 /** Deep expanding thump + rising ring — Nova fire. */
@@ -809,6 +841,9 @@ export function playWeaponFireSound(
       break;
     case 'rear_guard':
       playCue('playRearGuardFireSound', options);
+      break;
+    case 'broadside':
+      playCue('playBroadsideFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches

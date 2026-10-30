@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "5f4e73361a88b26d55f46bdee12832d60a8d0696215b1670f55766ccfd80cfd0",
+  "inputs": "90da0821e49d5a5370db8fae2b6603d915d4fe65a89e7e820ff81d7b6c355e97",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",
@@ -15,6 +15,8 @@
     "audio/sfx/aihell-boss-phase-cue.32242.wav": "9d474c44886b13fc28d11c27aff077e5c327768b9b44110737e1f879baa24179",
     "audio/sfx/aihell-boss-phase-transition.32202.wav": "b801b7e39784cfa9fa9609a0f7f5d894a0abb49124d57d62923f6b2d6dca603d",
     "audio/sfx/aihell-boss-spawn.32201.wav": "83ac67130aebab8d4f90e691a8adff5c88053c4a7c78407074673a57432f7dec",
+    "audio/sfx/aihell-broadside-fire.32283.wav": "6cce07a487d5a66b5a2a04a88e36ec41aa203b7e3d7a0644d4d58ca5323851ae",
+    "audio/sfx/aihell-broadside-impact.32284.wav": "3a7e5dfe081b1ec1b0534d2213d006d68ff20b19bea0a84f2a5844ee57c6a38d",
     "audio/sfx/aihell-bullet-destruction.32130.wav": "3dc0d42db7775d6c68bc876cac0567ab6a7748140dcf075b715190270461cdc1",
     "audio/sfx/aihell-cannon-fire.32210.wav": "737bdbe85cb87eb84fe8bd0af83d54fcdbe11028b7f10906aa53bb7860aa65be",
     "audio/sfx/aihell-cannon-impact.32209.wav": "cb15b77e1a75aa0840c7e02d613a43c02283dbbe753353c46f3cf6d6534264b7",

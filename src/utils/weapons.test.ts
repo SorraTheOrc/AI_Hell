@@ -46,6 +46,7 @@ import {
   WEAPON_ARC_FIRE_RATE,
   WEAPON_SHARD_SWARM_FIRE_RATE,
   WEAPON_REAR_GUARD_FIRE_RATE,
+  WEAPON_BROADSIDE_FIRE_RATE,
   WEAPON_CANNON_SUBDIVISION,
   WEAPON_SPREAD_SUBDIVISION,
   WEAPON_DUAL_SUBDIVISION,
@@ -1124,6 +1125,49 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
     expect(def.bulletTrail).toBe(1.6);
     expect(def.bulletSize).toBe(0.9);
     expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.rear_guard);
+  });
+
+  test('Broadside declares a wide teal launch flash for the perpendicular pair (AH-0MVV0WNOX0078G9G)', () => {
+    const def = WEAPON_CATALOGUE.broadside;
+    // The pair leaves the hull left and right, so the launch flash is wider
+    // than the Cannon's 7 px forward pop (and inside the 12 px ceiling); one
+    // flash per shot input is spawned by the shared combat-core path.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.broadside);
+    expect(def.muzzleFlash!.radius).toBe(9);
+    expect(def.muzzleFlash!.radius).toBeGreaterThan(
+      WEAPON_CATALOGUE.cannon.muzzleFlash!.radius,
+    );
+    expect(def.muzzleFlash!.radius).toBeLessThanOrEqual(12);
+    expect(def.muzzleFlash!.duration).toBeGreaterThan(0);
+    expect(def.muzzleFlash!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('Broadside declares teal impact feedback routed through its baked dart tick (AH-0MVV0WNOX0078G9G)', () => {
+    const def = WEAPON_CATALOGUE.broadside;
+    // The connect is colour-matched to the teal dart and audible through the
+    // shared impact seam instead of the generic warm-white fallback flash.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.broadside);
+    expect(def.impactFx!.cue).toBe('playBroadsideImpactSound');
+    expect(def.impactFx!.radius).toBe(8);
+    expect(def.impactFx!.duration).toBeGreaterThan(0);
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('the Broadside feel package changes no behaviour or balance values (AH-0MVV0WNOX0078G9G)', () => {
+    const def = WEAPON_CATALOGUE.broadside;
+    // The metadata-only package must leave the perpendicular pair and the dart
+    // identity exactly as shipped — no forward shot is introduced.
+    expect(def.fireRateMs).toBe(WEAPON_BROADSIDE_FIRE_RATE);
+    expect(def.offsets).toEqual([(-90 * Math.PI) / 180, (90 * Math.PI) / 180]);
+    expect(def.bulletColor).toBe(BULLET_COLORS.broadside);
+    expect(def.bulletShape).toBe('dart');
+    expect(def.bulletShapeLength).toBe(2.4);
+    expect(def.bulletThickness).toBe(1.4);
+    expect(def.bulletTrail).toBe(1.4);
+    expect(def.bulletSize).toBe(0.9);
+    expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.broadside);
   });
 
   test('Broadside fires one bullet to each side and none forward', () => {
