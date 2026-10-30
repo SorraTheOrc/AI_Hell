@@ -40,6 +40,7 @@ import {
   resolveActiveLoadout,
 } from '../../core/hangarWar/hangarEconomy';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
+import { hexAggressionLevel } from '../../core/hangarWar/hexDifficulty';
 import { normaliseSeed } from '../../core/rng';
 import {
   HANGAR_CATALOGUE,
@@ -126,14 +127,15 @@ function clampInt(value: number, min: number, max: number): number {
  * introduced.
  *
  * Total: negative, fractional and non-finite values resolve to level 1 or
- * clamp at the campaign bounds, never throwing.
+ * clamp at the campaign bounds, never throwing. Delegates to the ring model's
+ * {@link hexAggressionLevel}, so the map, the ring and a deployment all select
+ * a difficulty the same way (one mapping, no second difficulty system).
  *
  * @param aggression — the target hex's aggression.
  * @returns a 1-based campaign level in `[1, MAX_LEVEL]`.
  */
 export function deploymentLevelForAggression(aggression: number): number {
-  const points = toCount(aggression);
-  return clampInt(MIN_LEVEL + points, MIN_LEVEL, MAX_LEVEL);
+  return hexAggressionLevel(aggression, MAX_LEVEL);
 }
 
 /**

@@ -1,0 +1,23 @@
+# Hex ring 1 seed data (AH-0MVUXC9KG008G80Y, Build Candidate D — Hangar War).
+# One row per hex of the first ring (6 hexes, `6 × n` rule). This file mirrors
+# `HEX_RING_DEFINITIONS` in `src/data/hexRingDefinitions.ts`; the parity test in
+# `src/data/hexRingDefinitions.test.ts` fails if the two drift.
+#
+# Columns:
+#   id              — stable hex id (also the persisted HexState.id).
+#   q, r            — axial coordinates relative to the hangar at (0, 0).
+#   ringIndex       — ring membership (must equal the cube distance from 0, 0).
+#   boss            — identity of the boss holding the hex.
+#   strengths       — what the boss is strong against, `|`-separated.
+#   weaknesses      — what the boss is weak against (the strategy signal).
+#   grants          — weapon or upgrade id granted once the boss is beaten.
+#   weaponHex       — true for the single hex granting the ring's new weapon;
+#                     that hex must be the ring's highest baseAggression.
+#   baseAggression  — frontier aggression before any tick.
+id,q,r,ringIndex,boss,strengths,weaknesses,grants,weaponHex,baseAggression
+hex-r1-1,1,0,1,the-dawnbreaker,cannon|dual,nova|arc,hull-2,false,2
+hex-r1-2,1,-1,1,shroud-merchant,spread,waveLaser,extra-life,false,1
+hex-r1-3,0,-1,1,iron-crusher,rapid,mortar,rapid,false,3
+hex-r1-4,-1,0,1,ember-reaver,cannon,ricochet,ricochet,false,2
+hex-r1-5,-1,1,1,the-hollow-judge,nova,waveLaser,core-bank,false,4
+hex-r1-6,0,1,1,maw-of-ashes,mortar|arc,spread|dual,waveLaser,true,6
