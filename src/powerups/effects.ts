@@ -558,14 +558,19 @@ export class EffectsRegistry {
    *   the store (hybrid preserved).
    *
    * **Every field pickup also gets a temporary level window.** For the timed
-   * kinds above the window *is* the effect window; the seven instant kinds
-   * (`bomb`, `smart_bomb`, `strike`, `phase_shift`, `teleport`,
-   * `extra_life`, `mystery_ufo`) open a separate per-upgrade **level window**
-   * sized by `resolveTemporaryWindow` (AH-0MVUGI448000GNMJ). The one-shot or
-   * consumable grant lands immediately; the window only makes the temporary
+   * kinds above the window *is* the effect window (its level-resolved
+   * duration); the seven instant kinds (`bomb`, `smart_bomb`, `strike`,
+   * `phase_shift`, `teleport`, `extra_life`, `mystery_ufo`) open a separate
+   * per-upgrade **level window** sized by `resolveTemporaryWindow`
+   * (AH-0MVUGI448000GNMJ; parent AH-0MVSTKGC3003OMAC). The declared instant
+   * TTLs are catalogue data — Bomb / Smart Bomb / Orbital Strike **10 s**,
+   * Phase Shift / Teleport / Mystery UFO **15 s**, Extra Life **10 s** — so no
+   * kind is exempt from expiry and retuning one is a data edit. The one-shot
+   * or consumable grant lands immediately; the window only makes the temporary
    * level revert to the permanent level (or to unowned) at its TTL, through
-   * the existing `clearTemporary` expiry path. A hold-full grant opens no
-   * window and never resurrects one.
+   * the existing `clearTemporary` expiry path, and a granted consumable is
+   * never clawed back. A hold-full grant opens no window and never resurrects
+   * one.
    *
    * @param id — the collected power-up.
    * @param permanent — when true, timed effects never expire for the run
@@ -772,11 +777,15 @@ export class EffectsRegistry {
 
   /**
    * Opens (or refreshes) the per-upgrade **temporary level window** a field
-   * pickup of an instant kind grants (AH-0MVUGI448000GNMJ).
+   * pickup of an instant kind grants (AH-0MVUGI448000GNMJ; parent
+   * AH-0MVSTKGC3003OMAC).
    *
    * The window is sized by the shared `resolveTemporaryWindow` resolver at
    * the effective upgrade level the pickup lands at, so the TTL is
-   * per-upgrade data rather than a global constant. Re-collecting during an
+   * per-upgrade data rather than a global constant — catalogue data for the
+   * instant kinds (Bomb / Smart Bomb / Orbital Strike 10 s, Phase Shift /
+   * Teleport / Mystery UFO 15 s, Extra Life 10 s) and the level-resolved
+   * effect duration for the timed kinds. Re-collecting during an
    * open window refreshes it to the full TTL — one timer per kind, never
    * additive (AC5).
    *

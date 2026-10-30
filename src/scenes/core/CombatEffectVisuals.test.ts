@@ -432,7 +432,7 @@ describe('CombatEffectVisuals — Force Field reflect bubble (AH-0MV1BIX1W006XF9
     expect(FORCE_FIELD_SPENT_FILL_ALPHA).toBeLessThan(FORCE_FIELD_FILL_ALPHA);
   });
 
-  it('draws a permanent-only field (no temporary window) every frame', () => {
+  it('draws a permanent-only field every frame', () => {
     const radius = SHIP_SIZE * 1.8;
     const registry = forceFieldAt(undefined, true, radius);
     const first = new FakeGraphics();

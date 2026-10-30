@@ -315,6 +315,48 @@ cap shapes what a run can become.
   becomes a linked follow-up only if a gate fails. Recorded user stories and the
   producer decisions live on the parent work item (AH-0MVLIJT3M005HPHF).
 
+### Per-upgrade temporary TTLs — how long a field pickup lasts
+
+A field pickup is a **temporary** level (GDD §4.4.3): it reverts when its own
+temporary window expires. The window length (TTL) is **balance data**, a
+property of the upgrade item rather than one global constant, resolved by the
+single `resolveTemporaryWindow` helper in
+[`src/powerups/powerUpLevels.ts`](../src/powerups/powerUpLevels.ts). Two
+families share the rule:
+
+- **Timed kinds** keep their existing level-resolved effect duration as the
+  TTL, so the window levels up with the effect (Shield 15 s → 30 s, Force
+  Field 8 s → 18 s, Frenzy 8 s → 16 s, …). Nothing to tune separately.
+- **Instant kinds** declare a per-entry TTL in the catalogue
+  ([`src/powerups/types.ts`](../src/powerups/types.ts),
+  `PowerUpEntry.temporaryWindow`). Retuning one of these is a **data edit** —
+  no code change is needed:
+
+| Instant kind | TTL (s) | Rationale |
+|---|---:|---|
+| Bomb | 10 | Mirrors the established 10 s weapon window (`WEAPON_TIMEOUT_MS`). |
+| Smart Bomb | 10 | As Bomb — a one-shot screen pulse with the weapon-style window. |
+| Orbital Strike | 10 | As Bomb — a one-shot bolt with the weapon-style window. |
+| Phase Shift | 15 | Defensive kind: the shield-style 15 s window. |
+| Teleport | 15 | Defensive kind: the shield-style 15 s window. |
+| Extra Life | 10 | Weapon-style 10 s window; the **life itself is kept** when the level reverts. |
+| Mystery UFO | 15 | Spans a full 5–8 s drone sortie, so the granted drone outlives its window. |
+
+Weapons obey the same rule with their own 10 s TTL, surfaced as
+`resolveWeaponTemporaryWindow`. The values are deliberately short so a
+temporary level can never compound across a wave, and they are **not** scaled
+by the campaign-level supply curves above (those shape drop frequency, not
+window length).
+
+**Consumables are never clawed back.** Lives, Phase Shift charges and
+Teleport uses already granted by a temporary pickup survive the level revert
+and never carry a timer of their own (producer Q2 on AH-0MVSTKGC3003OMAC).
+Occupancy of a six-slot loadout still follows the window: the slot is released
+when the TTL expires (see the loadout subsection above).
+
+> The AH-0MUX802450085VZZ *"Resolved decision 4"* exception (instant kinds
+> had no window at all) is **superseded** by AH-0MVSTKGC3003OMAC.
+
 ### Evidence: same-seed baseline vs post-change batches
 
 Both batches use the **same seed set (1–100)**, the **competent** policy, 1800

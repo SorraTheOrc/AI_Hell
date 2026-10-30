@@ -47,23 +47,48 @@
  * (effective) and {@link PowerUpLevelStore.getPermanentUpgradeLevel}
  * (hold-full only) for the resolver.
  *
- * ## Temporary vs permanent (AH-0MUX802450085VZZ)
+ * ## Temporary vs permanent (AH-0MUX802450085VZZ) and the per-upgrade TTL
+ * rule (parent AH-0MVSTKGC3003OMAC)
  *
  * A **field pickup** (`collect(id)`) adds one *temporary* stack
  * (`tempStacks`); a **hold-full reward** (`collect(id, true)`) adds one
- * *permanent* grant (`permanentGrants`). The temporary stacks are tied to
- * the item's timed window and cleared by
- * {@link PowerUpLevelStore.clearTemporary} when that window expires; the
- * permanent grants never expire. An item is owned/active while
+ * *permanent* grant (`permanentGrants`). The temporary stacks are cleared by
+ * {@link PowerUpLevelStore.clearTemporary} when the pickup's temporary window
+ * expires; the permanent grants never expire. An item is owned/active while
  * `permanentGrants + tempStacks >= 1`. This split lives **only here** (and
  * in the `Player` weapon-level state) so the game and every gym share one
  * implementation (AC7).
  *
+ * **Every field pickup has a temporary window — no kind is exempt.** The
+ * window length (the TTL) is a property of the *upgrade item*, never one
+ * global constant, and {@link resolveTemporaryWindow} is the single resolver:
+ *
+ * - **Timed kinds** (Shield, Speed Boost, Magnet, Mineral Scoop, Force Field,
+ *   Frenzy, Chrono Field, Thorn Field, Salvage) keep their **level-resolved
+ *   effect duration** as the TTL (e.g. Shield 15 s → 30 s, Force Field 8 s →
+ *   18 s), so the window is already per-upgrade and level-scaled.
+ * - **Instant kinds** (Bomb 10 s, Smart Bomb 10 s, Orbital Strike 10 s, Phase
+ *   Shift 15 s, Teleport 15 s, Extra Life 10 s, Mystery UFO 15 s) declare
+ *   their own TTL as catalogue data (`PowerUpEntry.temporaryWindow` in
+ *   `./types`), so retuning a window is a data edit with no code change.
+ * - **Weapons** use the same rule with their own TTL — the existing 10 s
+ *   `WEAPON_TIMEOUT_MS` window, surfaced as
+ *   {@link resolveWeaponTemporaryWindow}.
+ *
+ * The values are deliberately short so a temporary level can never compound
+ * across a wave: 10 s mirrors the established weapon window, the defensive
+ * kinds (Phase Shift/Teleport 15 s) mirror the shield-style window, and the
+ * Mystery UFO's 15 s spans a full 5–8 s drone sortie.
+ *
  * Unconsumed consumable grants (Phase Shift charges, Teleport teleports) persist across a
  * temporary-window expiry: clearing the temporary level never claws back an
  * already-granted charge/teleport (producer Resolved decision 1b).
- * Power-ups with no timed effect (Bomb/Phase Shift/Teleport/Extra Life) have no temporary window, so
- * their temporary stacks persist until run reset (Resolved decision 4).
+ *
+ * > **Superseded.** The AH-0MUX802450085VZZ *"Resolved decision 4"* exception
+ * > (instant kinds had no temporary window, so their temporary stacks
+ * > persisted until run reset) was **superseded** by AH-0MVSTKGC3003OMAC:
+ * > the exception above describes history only — no field pickup of any kind
+ * > now survives its TTL.
  *
  * ## Magnet/Mineral Scoop hybrid reconciliation
  *
@@ -1265,7 +1290,9 @@ function isPositiveFinite(value: number | undefined): value is number {
  *   Mineral Scoop attraction uses its catalogue `duration`). Behaviour is
  *   unchanged and a levelled kind keeps its level-scaled window.
  * - **Instant kinds** (no timed effect of their own) return the per-entry
- *   `temporaryWindow` TTL from {@link POWER_UP_CATALOGUE}.
+ *   `temporaryWindow` TTL from {@link POWER_UP_CATALOGUE}: Bomb 10 s, Smart
+ *   Bomb 10 s, Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra
+ *   Life 10 s and Mystery UFO 15 s.
  *
  * The catalogue is read at call time, so retuning a TTL is a pure data change.
  *

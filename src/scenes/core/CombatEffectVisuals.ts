@@ -344,8 +344,8 @@ export function drawForceFieldBubble(
   graphics.clear();
   if (!player || !registry.isForceFieldActive()) return false;
 
-  // `undefined` = permanent base with no temporary window (draw forever);
-  // a number = the temporary window's countdown (0 = just expired).
+  // `undefined` = permanent base (nothing to count down); a number = the
+  // temporary window's countdown (0 = just expired).
   const tempRemaining = registry.powerUpTemporaryRemaining('force_field');
   if (tempRemaining !== undefined && tempRemaining <= 0) return false;
 

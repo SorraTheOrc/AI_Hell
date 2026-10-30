@@ -761,7 +761,8 @@ describe('Force Field: timed bullet reflector (AH-0MV1BIX1W006XF95)', () => {
     reg.applyCollect('force_field', true);
     expect(reg.isForceFieldActive()).toBe(true);
 
-    // A permanent bubble has no temporary window, so ticking never expires it.
+    // A permanent bubble has nothing to count down, so ticking never expires
+    // it.
     reg.tick(1000);
     expect(reg.isForceFieldActive()).toBe(true);
     expect(reg.forceFieldRemaining()).toBe(
@@ -810,7 +811,7 @@ describe('Mystery UFO: run-scoped level contract (AH-0MV9G113S009B37I)', () => {
     expect(store.getEffectiveLevel('mystery_ufo')).toBe(1);
   });
 
-  it('leaves no timed window or stored timed-effect state', () => {
+  it('leaves no timed effect or stored effect state', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('mystery_ufo');
 
@@ -1543,7 +1544,8 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     reg.applyCollect('teleport');
     const teleports = reg.teleportStacks();
     expect(teleports).toBeGreaterThan(0);
-    // Teleport has no timed window; simulate an expiry of a (hypothetical) window.
+    // Simulate the level window expiring (exactly what the TTL does at
+    // expiry) and check the granted teleports are kept.
     store.clearTemporary('teleport');
     expect(store.getEffectiveLevel('teleport')).toBe(0);
     expect(reg.teleportStacks()).toBe(teleports); // not clawed back
@@ -1731,7 +1733,7 @@ describe('Thorn Field: automatic ram recharge (AH-0MVJ8YKR70096C6T)', () => {
     while (registry.thornsRemaining() > 0) registry.tryConsumeThornsRam();
     expect(registry.thornsRemaining()).toBe(0);
 
-    registry.tick(12 * 3); // no timed window to expire on a permanent grant
+    registry.tick(12 * 3); // a permanent grant has nothing to count down
     expect(registry.isActive('thorns')).toBe(true);
     expect(registry.thornsRemaining()).toBe(registry.thornsMaxAbsorbs());
   });

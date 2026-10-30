@@ -838,8 +838,17 @@ export class Player extends Phaser.GameObjects.Graphics {
    * @param weaponId — The weapon power-up to add ('spread' | 'dual' | 'rapid').
    * @param permanent — When true, the weapon is granted **permanently** for
    *   the current run (used by the hold-full choice) and never expires; when
-   *   false, the pickup adds a **temporary** stack tied to the weapon's 10 s
+   *   false, the pickup adds a **temporary** stack tied to the weapon's own
    *   timed window (AH-0MUX802450085VZZ).
+   *
+   * **Per-upgrade TTL rule (parent AH-0MVSTKGC3003OMAC).** Every field pickup
+   * — weapon or power-up — opens a temporary level window, and the window
+   * length is a property of the item, never one global constant. A weapon's
+   * TTL is its own 10 s window ({@link WEAPON_TIMEOUT_MS}, surfaced through
+   * `resolveWeaponTemporaryWindow` so a future weapon definition can declare
+   * its own); the power-ups resolve theirs through `resolveTemporaryWindow`
+   * (their level-resolved effect duration for the timed kinds, catalogue
+   * `temporaryWindow` data for the instant kinds). No kind is exempt.
    *
    * A field pickup's temporary level is cleared when the weapon times out
    * ({@link tickWeaponTimers}); a permanent grant survives the run. Only

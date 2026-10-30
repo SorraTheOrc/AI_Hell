@@ -505,10 +505,12 @@ export class HUD extends Phaser.GameObjects.Container {
         // (AH-0MV1BIX1W006XF95).
         return reg.isForceFieldActive();
       case 'mystery_ufo':
-        // The Mystery UFO is a visible collector drone with no timed window, so
-        // show its row for as long as the player owns it (any collection
-        // advanced its level); the row renders the effective level (drone
-        // lifetime/capacity/radius) and ∞ (AH-0MV9G113S009B37I).
+        // The Mystery UFO is a visible collector drone with no timed effect of
+        // its own, but a field pickup still opens its per-upgrade 15 s
+        // temporary-level window (§4.4.3), so show its row for as long as the
+        // player owns it (any collection advanced its level); the row renders
+        // the effective level (drone lifetime/capacity/radius) and the window
+        // countdown or ∞ (AH-0MV9G113S009B37I).
         return reg.powerUpLevel('mystery_ufo') > 0;
       case 'frenzy':
       case 'chrono':

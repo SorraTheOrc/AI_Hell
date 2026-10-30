@@ -158,7 +158,7 @@ function expectPermanentPlusFieldReverts(id: PowerUpId): void {
   expect(store.getEffectiveLevel(id)).toBe(permanentLevel);
   expect(store.getTempStacks(id)).toBe(0);
   expect(store.getPermanentLevel(id)).toBe(permanentLevel);
-  // The permanent base has no temporary window left to count down. (No
+  // The permanent base has nothing left to count down. (No
   // `isActive` assertion here: Magnet/Mineral Scoop permanence is a store
   // stack, not a timed effect, so their permanent base is not `active`.)
   expect(reg.powerUpTemporaryRemaining(id)).toBeUndefined();

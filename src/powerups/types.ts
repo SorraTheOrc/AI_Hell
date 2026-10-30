@@ -46,6 +46,21 @@
  *   (spilling its hold plus a 2 × level bonus); the player's own fire passes
  *   through. Deliberately rare (weight 3, rarer than the standard 4).
  *
+ * All of the above are additionally **levelled** and split into a permanent
+ * component (hold-full rewards only) and a temporary component (field
+ * pickups). **Every field pickup is temporary (parent AH-0MVSTKGC3003OMAC).**
+ * The temporary window (TTL) is a property of the item, never one global
+ * constant: the timed kinds keep their level-resolved effect duration, and
+ * every instant kind declares its own TTL as `temporaryWindow` below (Bomb /
+ * Smart Bomb / Orbital Strike 10 s, Phase Shift / Teleport 15 s, Extra Life
+ * 10 s, Mystery UFO 15 s). At the TTL the temporary level reverts to the
+ * permanent level (or the item becomes unowned); consumables already granted
+ * (lives, charges, teleports) are never clawed back. The former
+ * AH-0MUX802450085VZZ *"Resolved decision 4"* exception — instant kinds had no
+ * window at all — is **superseded** by AH-0MVSTKGC3003OMAC.
+ *
+ * ## Net-new power-ups
+ *
  * The five net-new power-ups (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC1Q0007JAV1)
  * extend the catalogue beyond the original 11:
  *
@@ -139,14 +154,22 @@ export interface PowerUpEntry {
    * effect of its own (parent AH-0MVSTKGC3003OMAC, Resolved decision 1;
    * AH-0MVUGI3Q4009MW6A).
    *
-   * A field pickup adds a temporary level component that reverts when this
-   * window expires. Timed kinds leave this `undefined`: their window is the
-   * level-resolved effect duration, so both cases are composed by the single
-   * `resolveTemporaryWindow` resolver in `./powerUpLevels`.
+   * **Every** field pickup opens a temporary level component that reverts when
+   * its window expires; no kind is exempt. Timed kinds leave this `undefined`:
+   * their window is the level-resolved effect duration instead, and the single
+   * `resolveTemporaryWindow` resolver in `./powerUpLevels` composes both cases
+   * (a stray `temporaryWindow` can therefore never flatten a level-scaled
+   * window). The declared instant-kind TTLs are Bomb 10 s, Smart Bomb 10 s,
+   * Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s and
+   * Mystery UFO 15 s.
    *
-   * **Balance tuning:** the values are data, deliberately short so a
-   * temporary level can never compound across a wave. Retune them here — no
-   * code change is needed for a new window length.
+   * **Balance tuning:** the values are data, deliberately short so a temporary
+   * level can never compound across a wave (10 s mirrors the established
+   * weapon window; the defensive kinds mirror the shield-style 15 s window).
+   * Retune them here — no code change is needed for a new window length.
+   *
+   * > The AH-0MUX802450085VZZ *"Resolved decision 4"* exception (instant kinds
+   * > had no window at all) is **superseded** by AH-0MVSTKGC3003OMAC.
    */
   temporaryWindow?: number;
   /** Maximum stack count for stackable effects (undefined for non-stackable). */
@@ -322,10 +345,11 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Orbital Strike',
     description:
       'A lightning bolt strikes the nearest enemy. A pickup fires one; the permanent reward strikes on a level-resolved interval.',
-    // A field pickup fires exactly one bolt — there is no timed window in
-    // play, so this catalogue `duration` is only the generic drop guardrail
+    // A field pickup fires exactly one bolt — the bolt itself has no timed
+    // effect, so this catalogue `duration` is only the generic drop guardrail
     // (the permanent cadence lives in `POWER_UP_LEVEL_SPECS.strike`, which is
-    // a whole-beat cadence on the shared 80 BPM grid: 6.75 s → 2.25 s).
+    // a whole-beat cadence on the shared 80 BPM grid: 6.75 s → 2.25 s). The
+    // field pickup's temporary *level* window is `temporaryWindow` below.
     duration: 30,
     // Balance tuning: 10 s weapon-style window for the temporary level a
     // field pickup grants — the `duration` above is *not* that window

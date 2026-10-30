@@ -240,15 +240,16 @@ describe('GymPowerUpLeveling', () => {
     const player = scene.getPlayer()!;
     const store = player.getPowerUpLevelStore();
 
-    // Mix field pickups (no timed window) and a permanent grant.
+    // Mix field pickups (each with its own per-upgrade TTL) and a permanent
+    // grant.
     player.collectPowerUp('teleport');
     player.collectPowerUp('extra_life');
     player.collectPowerUp('extra_life', true);
     expect(player.getPowerUpLevel('teleport')).toBe(1);
     expect(player.getPowerUpLevel('extra_life')).toBe(2);
 
-    // Advancing time (timed windows would expire) never resets the levels —
-    // only the run-restart seam does.
+    // Advancing a little time (well inside every TTL) never resets the levels
+    // — only the run-restart seam does.
     scene.tick(1000);
     expect(player.getPowerUpLevel('teleport')).toBe(1);
     expect(player.getPowerUpLevel('extra_life')).toBe(2);
