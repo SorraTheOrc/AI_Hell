@@ -2,13 +2,14 @@
  * GymHangar — the hangar-war gym scene
  * (AH-0MVUXC074005IGXZ, part of **Build Candidate D — Hangar War**).
  *
- * The hangar slice's parity surface: it boots a real scene and renders an
- * **injected** hangar-war payload (`HangarWarPayload`, `src/core/hangarWar/`)
- * read-only — banked salvage, the equipped fleet, ring progress and the queued
- * attacks. It deliberately contains **no economy, banking or resolver
- * behaviour**: those ship as pure modules exercised here, so the same code the
- * game uses is demonstrated in a gym without a second implementation
- * (AGENTS.md gym↔game parity; `docs/GYM_PARITY.md`).
+ * The hangar slice's parity surface: it boots a real scene and renders the
+ * **same hangar screen** the game's `HangarScene` renders
+ * (`src/scenes/hangarWar/hangarScreen.ts`) against an **injected** hangar-war
+ * payload (`HangarWarPayload`, `src/core/hangarWar/`), read-only: banked
+ * salvage, the unlock tree with its cost/owned/gated states and the
+ * hull/loadout selector. It deliberately contains **no economy, banking or
+ * resolver behaviour** and no purchase handlers, so every rule shown here runs
+ * the code the game runs (AGENTS.md gym↔game parity; `docs/GYM_PARITY.md`).
  *
  * The payload arrives as Phaser launch data (`{ payload }`) and defaults to the
  * deterministic sample fixture (`createSampleHangarWarPayload`) so the gym is
@@ -37,6 +38,13 @@ import {
   resolveSetupSeed,
   type SceneSetupState,
 } from '../core/sceneSetup';
+import {
+  buildHangarScreenModel,
+  renderHangarScreen,
+  type HangarScreenModel,
+  type HangarScreenRow,
+  type HangarScreenView,
+} from '../hangarWar/hangarScreen';
 
 /** Scene key (== class name, per the gym discovery convention). */
 export const GYM_HANGAR_SCENE_KEY = 'GymHangar';
@@ -99,6 +107,8 @@ export class GymHangar extends Phaser.Scene {
   );
   /** Capture setup supplied as scene-start data (documented no-op for player state). */
   private setup: SceneSetupState | null = null;
+  /** The rendered shared hangar screen (read-only, no handlers). */
+  private view: HangarScreenView | null = null;
 
   constructor() {
     super({ key: GYM_HANGAR_SCENE_KEY });
@@ -126,39 +136,38 @@ export class GymHangar extends Phaser.Scene {
     addBackToIndexButton(this);
     addBackToMenuOnEsc(this);
 
+    // The gym renders the *shipped* hangar screen model with no handlers, so
+    // it is read-only by construction: the rows, their order, their disabled
+    // states and the layout are the ones the game shows.
+    this.view = renderHangarScreen(
+      this,
+      buildHangarScreenModel(this.payload),
+      undefined,
+      { hint: GYM_HANGAR_HINT },
+    );
+
     this.add
-      .text(GAME_WIDTH / 2, 90, GYM_HANGAR_TITLE, {
+      .text(GAME_WIDTH / 2, GAME_HEIGHT - 32, GYM_HANGAR_TITLE, {
         fontFamily: 'monospace',
-        fontSize: '28px',
-        color: '#00ffff',
+        fontSize: '12px',
+        color: '#555555',
       })
-      .setOrigin(0.5);
-
-    hangarSummaryLines(this.payload).forEach((line, index) => {
-      this.add.text(80, 160 + index * 34, line, {
-        fontFamily: 'monospace',
-        fontSize: '16px',
-        color: '#00ff88',
-      });
-    });
-
-    this.add
-      .text(
-        GAME_WIDTH / 2,
-        GAME_HEIGHT - 16,
-        GYM_HANGAR_HINT,
-        {
-          fontFamily: 'monospace',
-          fontSize: '12px',
-          color: '#555555',
-        },
-      )
-      .setOrigin(0.5);
+      .setOrigin(0.5, 1);
   }
 
   /** The payload currently rendered (a detached copy of any injected data). */
   getPayload(): HangarWarPayload {
     return this.payload;
+  }
+
+  /** The shared screen model rendered (unlock tree + deployment selector). */
+  getModel(): HangarScreenModel {
+    return this.view?.model ?? buildHangarScreenModel(this.payload);
+  }
+
+  /** Every rendered row, in reading order (read-only: none is actionable). */
+  getRows(): readonly HangarScreenRow[] {
+    return this.view?.rows ?? [];
   }
 
   /** The summary lines rendered on screen, in display order. */

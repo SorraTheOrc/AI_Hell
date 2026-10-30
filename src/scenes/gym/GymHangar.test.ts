@@ -38,6 +38,7 @@ import {
   GYM_HANGAR_TITLE,
   GYM_HANGAR_DEFAULT_SEED,
 } from './GymHangar';
+import { buildHangarScreenModel } from '../hangarWar/hangarScreen';
 
 /** Deep, detached copy of a payload (so mutation by the scene is detectable). */
 function clonePayload(payload: HangarWarPayload): HangarWarPayload {
@@ -81,9 +82,25 @@ describe('GymHangar', () => {
     const lines = scene.getSummaryLines();
     expect(lines.some((line) => line.includes('240 minerals'))).toBe(true);
     expect(lines.some((line) => line.includes('hull-1'))).toBe(true);
-    expect(findTextStartingWith(scene, 'Banked salvage:').text).toContain(
-      '240 minerals',
-    );
+    // The shipped hangar screen model is what the gym renders.
+    expect(scene.getModel().salvageLine).toContain('240 minerals');
+    expect(scene.getModel().unlockRows.length).toBeGreaterThan(0);
+  });
+
+  it('renders the shipped hangar screen read-only (same rows, no handlers)', async () => {
+    const scene = await bootHangar({ payload: VALID_HANGAR_WAR_PAYLOAD });
+    const shipped = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
+
+    expect(scene.getModel()).toEqual(shipped);
+    expect(scene.getRows().map((row) => row.key)).toEqual([
+      ...shipped.unlockRows.map((row) => row.key),
+      ...shipped.hullOptions.map((option) => option.key),
+      ...shipped.weaponOptions.map((option) => option.key),
+      ...shipped.modifierOptions.map((option) => option.key),
+    ]);
+    // Read-only: no row is actionable, so none is interactive either.
+    expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
+    expect(scene.getRows().every((row) => row.text.input === null)).toBe(true);
   });
 
   it('renders the injected payload read-only (no purchase logic, no mutation)', async () => {
