@@ -14,8 +14,9 @@
  * the legacy alias), **line/beam** (`line`), **teardrop/streak**
  * (`teardrop`), **missile**, **ring**, **shell**, **heavy-shell** (the Tank's
  * large two-tone shell with a slow breathing glow, AH-0MV822DF60001EPA),
- * **shard** (the Diver's sharp splinter/arrowhead with a sweeping spine
- * glint, AH-0MV822D2U000LRFV), **jagged bolt** (`bolt`), **phaser-bolt**
+ * **shard** (the Diver's sharp splinter/arrowhead with a two-pass spine and
+ * a sweeping glint, AH-0MV822D2U000LRFV + strengthened for every consumer in
+ * AH-0MVV0WOKU001W2TU), **jagged bolt** (`bolt`), **phaser-bolt**
  * (the Phaser's crisply-edged hexagonal bolt with a bright velocity-aligned
  * core streak, AH-0MV822DRX009RYUB), **fleck** (the Swarm's tiny fast
  * cometary micro-shard, AH-0MV822E4T006F37Y), **dart** (the Raider's slim
@@ -520,19 +521,41 @@ function _heavyShell(
 }
 
 /**
+ * Lifts a packed RGB colour toward white by `weight` (0 = unchanged,
+ * 1 = pure white). Used by the shard's colour-tinted spine blade so the
+ * spine can be separated from the body fill **without** adding a metadata
+ * field — the strengthened drawing is the only thing that changes.
+ */
+function _towardWhite(color: number, weight: number): number {
+  const w = Math.max(0, Math.min(1, weight));
+  const channel = (shift: number): number => {
+    const c = (color >> shift) & 0xff;
+    return Math.round(c + (0xff - c) * w);
+  };
+  return (channel(16) << 16) | (channel(8) << 8) | channel(0);
+}
+
+/**
  * Sharp shard/splinter: the Diver's spread-burst identity
- * (AH-0MV822D2U000LRFV).
+ * (AH-0MV822D2U000LRFV), strengthened for **every** consumer
+ * (AH-0MVV0WOKU001W2TU — the player's `shard_swarm` bullets and the Diver's
+ * spread burst share this one primitive by producer decision Q1 = C).
  *
  * An elongated, razor-edged arrowhead echoing the Diver's dart body and
  * diving arc — a pointed tip flaring to narrow shoulders then tapering to a
- * pointed tail, with a **white-hot spine** running its length and a neon
- * rim in the Diver's own body colour. A bright **glint** sweeps up and down
- * the spine with the bullet's age (time-driven), so the shard reads as live
- * arc-energy rather than a static splinter — the sharp-shard silhouette is
+ * pointed tail, with a **two-pass spine** (a colour-tinted outer blade under
+ * a white-hot inner core) running its length and a neon rim in the owner's
+ * own body colour. A bright, enlarged **glint** sweeps up and down the spine
+ * with the bullet's age (time-driven), so the shard reads as live arc-energy
+ * rather than a static splinter — the sharp-shard silhouette is
  * deliberately the opposite of the Tank's fat ember shell. The glint is
  * redrawn each frame through the shared bullet lifecycle
  * (`shapeAnimates('shard')` → `createBullet` hands back a redraw hook), so
  * the shimmer is identical in the game and every gym.
+ *
+ * Drawing only: the metadata signature (`shape`, `color`, `length`,
+ * `rimColor`, `thickness`, `tail`) is untouched, so the catalogue-wide
+ * roster uniqueness guards stay green.
  */
 function _shard(
   graphics: Phaser.GameObjects.Graphics,
@@ -554,17 +577,30 @@ function _shard(
   graphics.lineTo(-half * 0.15, -w);
   graphics.closePath();
   graphics.fillPath();
-  // White-hot spine: the arc-energy core running the shard's length.
-  graphics.fillStyle(0xffffff, Math.min(1, alpha * 0.95));
+  // Two-pass spine (AH-0MVV0WOKU001W2TU): a colour-tinted outer blade first,
+  // then a white-hot inner core on top. The tint separates the spine from the
+  // body fill, so the core reads as a bright line against the neon field
+  // instead of the single translucent white triangle's washed-out smear.
+  graphics.fillStyle(_towardWhite(spec.color, 0.62), Math.min(1, alpha * 0.9));
   graphics.beginPath();
-  graphics.moveTo(half * 0.92, 0);
-  graphics.lineTo(-half * 0.22, r * 0.42);
-  graphics.lineTo(-half * 0.22, -r * 0.42);
+  graphics.moveTo(half * 0.96, 0);
+  graphics.lineTo(-half * 0.24, r * 0.56);
+  graphics.lineTo(-half * 0.24, -r * 0.56);
   graphics.closePath();
   graphics.fillPath();
-  // Neon rim around the razor edge so the shard pops against the field.
+  // White-hot core: the arc-energy line running the shard's length.
+  graphics.fillStyle(0xffffff, Math.min(1, alpha * 0.98));
+  graphics.beginPath();
+  graphics.moveTo(half * 0.9, 0);
+  graphics.lineTo(-half * 0.2, r * 0.3);
+  graphics.lineTo(-half * 0.2, -r * 0.3);
+  graphics.closePath();
+  graphics.fillPath();
+  // Neon rim around the razor edge so the shard pops against the field —
+  // strengthened to a 2 px stroke at 0.95 alpha (was 1.5 px / 0.9) so the
+  // outline holds its edge instead of dissolving into the field.
   if (rim !== undefined) {
-    graphics.lineStyle(1.5, rim, Math.min(1, alpha * 0.9));
+    graphics.lineStyle(2, rim, Math.min(1, alpha * 0.95));
     graphics.beginPath();
     graphics.moveTo(half, 0);
     graphics.lineTo(-half * 0.15, w);
@@ -578,16 +614,18 @@ function _shard(
   // Arc-energy glint: a bright mote sweeping tail→tip→tail along the spine
   // with the bullet's age (~1.4 Hz) — the shard shimmers as it flies its
   // diving arc, distinct from the pellet's fast pulse and the shell's slow
-  // breathe.
+  // breathe. The mote is larger and never dimmer than 0.55 alpha (was
+  // r × 0.3 / 0.3 minimum), so the shimmer stays legible at base radius
+  // while keeping the time-driven sweep unchanged.
   const t = spec.time ?? 0;
   const sweep = 0.5 + 0.5 * Math.sin(t * 9); // 0 (tail) → 0.5 → 1 (tip)
   const glintX = -half + sweep * (half * 2);
   graphics.fillStyle(
     0xffffff,
-    Math.min(1, alpha * (0.3 + 0.35 * Math.abs(Math.cos(t * 9)))),
+    Math.min(1, alpha * (0.55 + 0.4 * Math.abs(Math.cos(t * 9)))),
   );
   graphics.beginPath();
-  graphics.arc(glintX, 0, r * 0.3, 0, Math.PI * 2, false);
+  graphics.arc(glintX, 0, r * 0.42, 0, Math.PI * 2, false);
   graphics.fillPath();
 }
 
@@ -1244,11 +1282,14 @@ export const ENEMY_BULLET_VISUALS: Record<EnemyBulletArchetype, EnemyBulletVisua
   },
   // Diver spread burst (AH-0MV822D2U000LRFV): a sharp splinter/arrowhead
   // echoing the Diver's dart body and diving arc — `shard` primitive with a
-  // white-hot spine, a neon rim in the Diver's own body yellow, a sweeping
-  // time-driven spine glint and a short fading trail — with a pale-yellow
-  // launch pop at the diver's body per burst. The shot body keeps the
-  // established `DIVER_BULLET_COLOR`; identity is carried by shape + rim +
-  // feel, never a behaviour change.
+  // two-pass (tinted blade + white-hot core) spine, a neon rim in the
+  // Diver's own body yellow, a sweeping time-driven spine glint and a short
+  // fading trail — with a pale-yellow launch pop at the diver's body per
+  // burst. The shot body keeps the established `DIVER_BULLET_COLOR`; identity
+  // is carried by shape + rim + feel, never a behaviour change. The primitive
+  // is **shared** with the player's `shard_swarm` bullets by design
+  // (AH-0MVV0WOKU001W2TU, producer decision Q1 = C), so strengthening it
+  // strengthens both — the metadata here is unchanged.
   diver: {
     shape: 'shard',
     color: 0xffee88,

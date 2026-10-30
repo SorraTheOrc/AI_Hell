@@ -33,6 +33,7 @@ import {
   shapeAnimates,
   ENEMY_BULLET_IDENTITIES,
   DEFAULT_SHAPE_LENGTH,
+  type BulletVisualSpec,
 } from './bulletVisuals';
 
 let game: Phaser.Game | undefined;
@@ -91,6 +92,83 @@ function countOps(buf: number[], target: number): number {
     if (buf[i] === target) count += 1;
   }
   return count;
+}
+
+/**
+ * Walks the opcode stream, skipping each command's parameters (`ARC`'s opcode
+ * is 0, which also appears as a parameter value, so index arithmetic beats
+ * `lastIndexOf`).
+ */
+function walkOps(
+  buf: number[],
+  visit: (opcode: number, index: number) => void,
+): void {
+  for (let i = 0; i < buf.length; i += 1 + (CmdWidths[buf[i]] ?? 0)) {
+    visit(buf[i], i);
+  }
+}
+
+/** Every `FILL_STYLE` (colour + alpha) in draw order. */
+function fillStyles(buf: number[]): Array<{ color: number; alpha: number }> {
+  const styles: Array<{ color: number; alpha: number }> = [];
+  walkOps(buf, (opcode, i) => {
+    if (opcode === Cmd.FILL_STYLE) {
+      styles.push({ color: buf[i + 1], alpha: buf[i + 2] });
+    }
+  });
+  return styles;
+}
+
+/** Every `LINE_STYLE` (width + colour + alpha) in draw order. */
+function lineStyles(
+  buf: number[],
+): Array<{ width: number; color: number; alpha: number }> {
+  const styles: Array<{ width: number; color: number; alpha: number }> = [];
+  walkOps(buf, (opcode, i) => {
+    if (opcode === Cmd.LINE_STYLE) {
+      styles.push({ width: buf[i + 1], color: buf[i + 2], alpha: buf[i + 3] });
+    }
+  });
+  return styles;
+}
+
+/** Every filled `ARC` with the radius and the alpha of its fill style. */
+function filledArcs(
+  buf: number[],
+): Array<{ radius: number; alpha: number }> {
+  const arcs: Array<{ radius: number; alpha: number }> = [];
+  let alpha = 1;
+  walkOps(buf, (opcode, i) => {
+    if (opcode === Cmd.FILL_STYLE) alpha = buf[i + 2];
+    if (opcode === Cmd.ARC) arcs.push({ radius: buf[i + 3], alpha });
+  });
+  return arcs;
+}
+
+/** Sum of the RGB channels — a cheap "how bright is this colour" measure. */
+function brightness(color: number): number {
+  return ((color >> 16) & 0xff) + ((color >> 8) & 0xff) + (color & 0xff);
+}
+
+/**
+ * The opcode sequence with any stroked-path block (`LINE_STYLE` through
+ * `STROKE_PATH`) removed — i.e. the shape's filled geometry only.
+ */
+function filledOpcodeSequence(buf: number[]): number[] {
+  const ops: number[] = [];
+  let inStroke = false;
+  walkOps(buf, (opcode) => {
+    if (opcode === Cmd.LINE_STYLE) {
+      inStroke = true;
+      return;
+    }
+    if (inStroke) {
+      if (opcode === Cmd.STROKE_PATH) inStroke = false;
+      return;
+    }
+    ops.push(opcode);
+  });
+  return ops;
 }
 
 async function makeGraphics(): Promise<Phaser.GameObjects.Graphics> {
@@ -306,6 +384,115 @@ describe('drawBulletShape — every supported primitive emits its expected draw 
     expect(glintXs(start)).toHaveLength(1);
     expect(glintXs(tip)).toHaveLength(1);
     expect(Math.abs(glintXs(tip)[0] - glintXs(start)[0])).toBeGreaterThan(2);
+  });
+
+  it('the shard spine is two-pass: a colour-tinted blade under a white-hot core (AC1a, AH-0MVV0WOKU001W2TU)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs.shard);
+    const fills = fillStyles(g.commandBuffer as number[]);
+    // The fills in draw order: shard body, tinted outer blade, white-hot
+    // core, then the glint mote (an arc fill).
+    expect(fills).toHaveLength(4);
+    const [body, blade, core, glint] = fills;
+    expect(body.color).toBe(specs.shard.color);
+    // The outer blade is a *lighter tint of the shard's own colour* — not the
+    // raw body colour and not pure white — so the spine separates from the
+    // body fill instead of washing into it.
+    expect(blade.color).not.toBe(specs.shard.color);
+    expect(blade.color).not.toBe(0xffffff);
+    expect(brightness(blade.color)).toBeGreaterThan(brightness(specs.shard.color));
+    expect(brightness(blade.color)).toBeLessThan(brightness(0xffffff));
+    // The core on top of it is white-hot and near-opaque.
+    expect(core.color).toBe(0xffffff);
+    expect(core.alpha).toBeGreaterThanOrEqual(0.95);
+    expect(glint.color).toBe(0xffffff);
+  });
+
+  it('the shard rim stroke is thicker and stronger than the original 1.5 px / 0.9 alpha (AC1b, AH-0MVV0WOKU001W2TU)', async () => {
+    const g = await makeGraphics();
+    drawBulletShape(g, specs.shard);
+    const strokes = lineStyles(g.commandBuffer as number[]);
+    expect(strokes).toHaveLength(1);
+    const [rim] = strokes;
+    expect(rim.color).toBe(specs.shard.rimColor);
+    // The AC's floors are “≥ 1.5 px” / “≥ 0.9 alpha”; the strengthened draw
+    // must actually be thicker and not weaker than before.
+    expect(rim.width).toBeGreaterThan(1.5);
+    expect(rim.alpha).toBeGreaterThan(0.9);
+    expect(rim.alpha).toBeLessThanOrEqual(1);
+  });
+
+  it('the shard glint is larger and brighter at its dimmest (AC1c, AH-0MVV0WOKU001W2TU)', async () => {
+    const glintOf = async (time: number) => {
+      const g = await makeGraphics();
+      drawBulletShape(g, { ...specs.shard, time });
+      const arcs = filledArcs(g.commandBuffer as number[]);
+      // The glint is the shard's only arc.
+      expect(arcs).toHaveLength(1);
+      return arcs[0];
+    };
+    // |cos| = 1 at t = 0 (brightest of the sweep) and 0 a quarter cycle later
+    // (dimmest). The strengthened mote is r × 0.42 (was r × 0.3) and never
+    // dips below 0.55 alpha (was 0.3), so it stays legible at base radius.
+    const brightest = await glintOf(0);
+    const dimmest = await glintOf(Math.PI / 2 / 9);
+    expect(Math.max(0.1, specs.shard.radius) * 0.3).toBeLessThan(dimmest.radius);
+    expect(dimmest.alpha).toBeGreaterThan(0.3);
+    expect(brightest.alpha).toBeGreaterThan(dimmest.alpha);
+    expect(brightest.alpha).toBeLessThanOrEqual(1);
+  });
+
+  it('both shard consumers — the player Shard Swarm and the Diver enemy — draw the strengthened shared primitive (AC2, AH-0MVV0WOKU001W2TU)', async () => {
+    // The two resolution sites the game consumes: the player weapon catalogue
+    // and the enemy identity registry. Both must resolve the *same* `shard`
+    // primitive, with no consumer-specific override of its drawing.
+    const playerSpec = resolvePlayerBulletVisual(WEAPON_CATALOGUE.shard_swarm);
+    const diverSpec: BulletVisualSpec = {
+      ...resolveEnemyBulletVisual('diver'),
+      // Enemy entities size their own shots; the Diver's base radius is 3 px.
+      radius: 3,
+    };
+    expect(canonicalShape(playerSpec.shape)).toBe('shard');
+    expect(canonicalShape(diverSpec.shape)).toBe('shard');
+
+    const draw = async (spec: BulletVisualSpec): Promise<number[]> => {
+      const g = await makeGraphics();
+      drawBulletShape(g, spec);
+      return g.commandBuffer as number[];
+    };
+    const playerBuf = await draw(playerSpec);
+    const diverBuf = await draw(diverSpec);
+
+    for (const [label, buf, spec] of [
+      ['player shard_swarm', playerBuf, playerSpec],
+      ['diver enemy shard', diverBuf, diverSpec],
+    ] as const) {
+      const fills = fillStyles(buf);
+      // Two-pass spine: body, lighter tint of the body colour, white-hot core,
+      // then the glint — in both buffers.
+      expect(fills.length, `${label}: fills`).toBeGreaterThanOrEqual(4);
+      const blade = fills[1];
+      expect(blade.color, `${label}: tinted blade`).not.toBe(fills[0].color);
+      expect(blade.color, `${label}: tinted blade`).not.toBe(0xffffff);
+      expect(fills[2].color, `${label}: white core`).toBe(0xffffff);
+      const arcs = filledArcs(buf);
+      expect(arcs, `${label}: glint arcs`).toHaveLength(1);
+      expect(
+        arcs[0].radius,
+        `${label}: enlarged glint`,
+      ).toBeGreaterThan(Math.max(0.1, spec.radius) * 0.3);
+      expect(arcs[0].alpha, `${label}: glint minimum alpha`).toBeGreaterThan(0.3);
+    }
+
+    // The Diver declares a rim; the Shard Swarm does not (`bulletRim` is
+    // absent from the catalogue definition — the signature is unchanged). Once
+    // the stroked-path block is removed, both consumers emit the *identical*
+    // shared-primitive opcode sequence: one seam, no per-consumer copy.
+    expect(lineStyles(diverBuf)).toHaveLength(1);
+    expect(lineStyles(playerBuf)).toHaveLength(0);
+    expect(filledOpcodeSequence(playerBuf)).toEqual(
+      filledOpcodeSequence(diverBuf),
+    );
   });
 
   it('bolt renders a multi-segment jagged stroke (≥ 3 line segments)', async () => {

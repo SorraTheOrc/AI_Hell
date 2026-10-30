@@ -16,7 +16,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | ID | Name | Movement | Attack | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
 |----|------|----------|--------|-----|-----------|------------|---------------------|
 | E1 | Scout | `formation` | `projectile` | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium razor shard (`shard` primitive: high-contrast two-pass spine + sweeping glint), neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | `formation` | `projectile` | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | `formation` | `projectile` | §4.1 (L5) | Fixed orbital path, predictable firing cycles; group members take distinct, evenly spaced phases (`phase_i = i × 2π / N`) on one ring, and spawn from the wormhole straight onto the live orbital slot (AH-0MVEXVME1004SIIS) | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | `formation` | `projectile` | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
@@ -2719,7 +2719,7 @@ through the shared seam, so the game and every gym draw them identically
 | Identity | Family/pattern | Shape primitive | Fire VFX (launch pop) | Impact feel |
 |---|---|---|---|---|
 | Alien pellet | Scout / Space-Invaders March | `pellet` (pulsing rim) | green pop at scout | green flash + shared destruction cue |
-| Sharp shard | Diver spread burst | `shard` (spine glint) | one pale-yellow pop per burst | pale-yellow flash + shared destruction cue |
+| Sharp shard | Diver spread burst | `shard` (two-pass spine + sweeping glint) | one pale-yellow pop per burst | pale-yellow flash + shared destruction cue |
 | Heavy shell | Tank radial | `heavy-shell` (breathing glow) | one amber pop per burst | amber flash + shared destruction cue |
 | Crisp phaser bolt | Phaser radial | `phaser-bolt` (core streak) | one magenta pop per volley | red flash + shared destruction cue |
 | Cometary fleck | Swarm burst | `fleck` (comet tear) | cyan pop per member shot | cyan flash + shared destruction cue |
@@ -2759,20 +2759,29 @@ colour so the shared impact pass tints the flash when a shell connects or is
 intercepted. Visuals/feel only: firing logic, speed, interval, burst count
 and the direction-agnostic radial pattern are unchanged.
 
-**E2 Diver (diver family, AH-0MV822D2U000LRFV):** each spread-burst shot
-renders as a **sharp shard/splinter** — a dedicated `shard` seam primitive
-(razor arrowhead outline with a **white-hot spine**, a neon rim in the
-Diver's own body yellow and a short fading trail) whose bright **glint**
-sweeps up and down the spine with the shot's age (~1.4 Hz, redrawn each
-frame through the shared bullet lifecycle) — the shard echoes the Diver's
-dart body and dive arc, deliberately the opposite of the Tank's fat ember
-shell and the Scout's pulsing pod. The volley spawns **one pale-yellow
-launch pop** at the diver's body per burst (the burst is one fire event,
-matching its single fire cue — not N stacked pops), each shard flies
-nose-first along its own spread heading, and each shard carries its
-pale-yellow colour so the shared impact pass tints the flash when a shard
-connects or is intercepted. Visuals/feel only: firing logic, speed,
-interval, burst count and the spread pattern are unchanged.
+**E2 Diver (diver family, AH-0MV822D2U000LRFV; strengthened for every
+consumer in AH-0MVV0WOKU001W2TU):** each spread-burst shot renders as a
+**sharp shard/splinter** — a dedicated `shard` seam primitive (razor
+arrowhead outline carrying a **two-pass spine**: a colour-tinted outer blade
+under a **white-hot inner core**, a 2 px neon rim in the Diver's own body
+yellow and a short fading trail) whose bright **glint** — enlarged, and never
+dimmer than 0.55 alpha — sweeps up and down the spine with the shot's age
+(~1.4 Hz, redrawn each frame through the shared bullet lifecycle) — the
+shard echoes the Diver's dart body and dive arc, deliberately the opposite
+of the Tank's fat ember shell and the Scout's pulsing pod. The strengthened
+spine/rim/glint **read harder against the neon field** at base radius while
+keeping the shard's pale-yellow (`DIVER_BULLET_COLOR`, rim `0xffff00`)
+palette, and the restyle is **shared with the player's Shard Swarm bullets**
+by design (producer decision Q1 = C): both consumers draw this one unchanged
+primitive, so the primitive is strengthened once rather than copied per
+scene — the roster *signature* (shape, colour, length, rim, thickness, tail)
+of both is unchanged, and the Diver's firing behaviour is untouched. The
+volley spawns **one pale-yellow launch pop** at the diver's body per burst
+(the burst is one fire event, matching its single fire cue — not N stacked
+pops), each shard flies nose-first along its own spread heading, and each
+shard carries its pale-yellow colour so the shared impact pass tints the
+flash when a shard connects or is intercepted. Visuals/feel only: firing
+logic, speed, interval, burst count and the spread pattern are unchanged.
 
 **E4 Phaser (phaser family, AH-0MV822DRX009RYUB):** each radial shot renders
 as a **crisp-edged phaser bolt** — a dedicated `phaser-bolt` seam primitive
