@@ -602,8 +602,15 @@ reward overlay (§4.4.4) appears.
   clipped off-screen), where `n` is the number of swept wave-gating enemies —
   `n = 0` → 30 extras, `n = 30` → 0, `n > 30` → 0 (never negative) — **plus
   exactly 10** bursts clustered around the mini-boss's death position captured
-  at destruction. A sweep is therefore bounded at
-  `n + max(0, 30 − n) + 10 ≤ 40` bursts.
+  at destruction.
+- **Mini-boss finale.** On top of the anchored 10, the mini-boss itself gets a
+  **20-burst finale** clustered in and around its death position (a wider
+  `MINI_BOSS_SWEEP_FINALE_SPREAD_PX` radius, denser bursts), fired **in pairs
+  — two every 0.25 s** for ten pairs — so the boss's own death is the biggest
+  beat of the display rather than just another enemy popping. A sweep is
+  therefore bounded at
+  `n + max(0, 30 − n) + 10 + 20 ≤ 60` bursts and keeps animating for ~2.95 s
+  after the lethal hit.
 - **Cosmetic only.** Swept enemies are removed from play visually and award
   **no score, no mineral/power-up/Extra-Life drops and no kill telemetry** —
   they never route through the reward-bearing kill path. The mini-boss reward

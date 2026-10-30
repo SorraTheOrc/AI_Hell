@@ -216,7 +216,7 @@ function clearMiniBossWave(scene: PlayScene): void {
  * the explicit lifespan + stagger timer) — and both advance through the
  * Phaser game step, not through `scene.tick()`, so a deterministic
  * fixed-delta game-step walk is required. Bounded well above the sweep's
- * ~1 s maximum display window.
+ * ~3 s maximum display window (cascade + scatter + the 20-burst finale).
  */
 function finishMiniBossSweep(scene: PlayScene): void {
   stepGameUntil(

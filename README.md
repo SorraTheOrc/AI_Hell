@@ -956,10 +956,11 @@ instead.
   wave has no time limit and gates its level. Defeating a mini-boss plays a
   staggered **explosion sweep** first — every remaining wave-gating enemy
   (escorts plus the encounter's live minions; hazards survive) bursts, followed
-  by `max(0, 30 − n)` scattered bursts and 10 anchored on the death point, all
-  cosmetic: no score, drops or telemetry — and the reward screen opens only
-  once that display has finished animating (shared with the gym through
-  `src/scenes/core/miniBossDeathSweep.ts`; GDD §3.3.1). The defeat then grants
+  by `max(0, 30 − n)` scattered bursts and 10 anchored on the death point, and
+  the mini-boss itself gets a 20-burst finale fired in pairs (two every
+  0.25 s), all cosmetic: no score, drops or telemetry — and the reward screen
+  opens only once that display has finished animating (shared with the gym
+  through `src/scenes/core/miniBossDeathSweep.ts`; GDD §3.3.1). The defeat then grants
   **one** choice — upgrade an owned permanent weapon/power-up by one level, or
   unlock a weapon from the ~50%-locked pool (`src/powerups/unlocks.ts`) — and
   auto-writes a **checkpoint** (`ai_hell_checkpoint`) that the main menu's

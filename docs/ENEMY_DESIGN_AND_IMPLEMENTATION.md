@@ -1460,10 +1460,14 @@ covers it):
 - **Planner ⇒ executor.** The planner is pure and Phaser-free
   (`collectSweepTargets`, `planMiniBossDeathSweep`, `miniBossSweepExtras`) and
   emits `n` staggered enemy bursts, `max(0, 30 − n)` scattered bursts sampled
-  inside the inset playfield, and exactly 10 bursts anchored on the captured
-  death point (`n + max(0, 30 − n) + 10 ≤ 40` bursts); all randomness comes
-  from the run seed. The thin executor (`spawnMiniBossDeathSweep`) plays them
-  through the shared `spawnExplosionParticles` VFX.
+  inside the inset playfield, exactly 10 bursts anchored on the captured
+  death point, and a **20-burst finale** clustered in and around the death
+  point fired in pairs (two every 0.25 s, the producer-reviewed "make the
+  mini-boss more explosive" tweak) — `n + max(0, 30 − n) + 10 + 20 ≤ 60`
+  bursts; all randomness comes from the run seed. The thin executor
+  (`spawnMiniBossDeathSweep`) plays them through the shared
+  `spawnExplosionParticles` VFX and holds `onComplete` until the last finale
+  pair has finished animating.
 - **Completion is real animation time.** `spawnExplosionParticles` gained an
   optional `onComplete` seam; the executor completes when the last burst tween
   reports, with a `scene.time.delayedCall` watchdog at

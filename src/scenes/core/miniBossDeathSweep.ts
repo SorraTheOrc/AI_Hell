@@ -36,13 +36,19 @@
  *   playfield inset by the burst radius (no burst is clipped entirely
  *   off-screen);
  * - exactly `MINI_BOSS_SWEEP_ANCHORED_COUNT` (10) **anchored** bursts around
- *   the captured mini-boss death position.
+ *   the captured mini-boss death position;
+ * - `MINI_BOSS_SWEEP_FINALE_COUNT` (20) **finale** bursts clustered in and
+ *   around the death position, fired in pairs — two every
+ *   `MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS` (250 ms) — so the mini-boss's
+ *   own death reads as the biggest explosion on screen (producer review on
+ *   AH-0MVOFGB6K003YD0Z: "Cluster another 20 explosions in and around the
+ *   mini-boss, with 2 going off every 0.25 of a second").
  *
- * Total bursts `n + max(0, 30 - n) + 10`; for the realistic `n <= 30` case
- * that is `<= 40`, and above that the extras clamp to 0 so the sweep is one
- * enemy burst per target plus the 10 anchored bursts. Extras and anchored
- * bursts use a reduced particle count so the whole display stays inside the
- * particle budget.
+ * Total bursts `n + max(0, 30 - n) + 10 + 20`; for the realistic `n <= 30`
+ * case that is `<= 60`, and above that the extras clamp to 0 so the sweep is
+ * one enemy burst per target plus the 30 mini-boss bursts. Extras, anchored
+ * and finale bursts use a reduced particle count so the whole display stays
+ * inside the particle budget.
  */
 
 import {
@@ -81,6 +87,40 @@ export const MINI_BOSS_SWEEP_SCATTER_START_MS = 80;
 
 /** Delay (ms) before the first anchored burst starts. */
 export const MINI_BOSS_SWEEP_ANCHOR_START_MS = 60;
+
+/**
+ * Additional mini-boss **finale** bursts, on top of the anchored set.
+ * Producer review (AH-0MVOFGB6K003YD0Z): "Cluster another 20 explosions in
+ * and around the mini-boss, with 2 going off every 0.25 of a second."
+ */
+export const MINI_BOSS_SWEEP_FINALE_COUNT = 20;
+
+/** Finale cadence: bursts are scheduled in pairs (2 per interval). */
+export const MINI_BOSS_SWEEP_FINALE_PAIR_SIZE = 2;
+
+/** Interval (ms) between finale pairs — 2 bursts every 0.25 s. */
+export const MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS = 250;
+
+/**
+ * Delay (ms) before the first finale pair starts: the finale follows the
+ * anchored celebration rather than competing with it, so the display builds
+ * to the mini-boss's biggest burst at the end.
+ */
+export const MINI_BOSS_SWEEP_FINALE_START_MS =
+  MINI_BOSS_SWEEP_ANCHOR_START_MS + MINI_BOSS_SWEEP_ANCHOR_WINDOW_MS + 10;
+
+/**
+ * Radius (px) around the death point the finale pairs scatter within —
+ * wider than the anchored cluster so the bursts read as "in and around" the
+ * mini-boss.
+ */
+export const MINI_BOSS_SWEEP_FINALE_SPREAD_PX = 160;
+
+/** Particle count per finale burst (denser than anchored: the biggest hit). */
+export const MINI_BOSS_SWEEP_FINALE_PARTICLES = 20;
+
+/** Geometry scale for finale bursts (larger than anchored). */
+export const MINI_BOSS_SWEEP_FINALE_SCALE = 1.2;
 
 /** Particle count per swept-enemy burst (enemy-scale, modest). */
 export const MINI_BOSS_SWEEP_ENEMY_PARTICLES = 14;
@@ -142,7 +182,7 @@ export interface MiniBossSweepBounds {
 /** A planned burst (pure data — no Phaser objects). */
 export interface MiniBossSweepBurst {
   /** Which sweep part the burst belongs to. */
-  role: 'enemy' | 'scatter' | 'anchored';
+  role: 'enemy' | 'scatter' | 'anchored' | 'finale';
   /** Delay (ms) from sweep start before the burst animates. */
   delayMs: number;
   /** World X of the burst centre. */
@@ -187,6 +227,8 @@ export interface MiniBossSweepPlan {
   extras: number;
   /** Number of anchored bursts (always `MINI_BOSS_SWEEP_ANCHORED_COUNT`). */
   anchored: number;
+  /** Number of finale bursts (always `MINI_BOSS_SWEEP_FINALE_COUNT`). */
+  finale: number;
   /** Delay (ms) after which the last burst has finished animating. */
   completionDelayMs: number;
 }
@@ -275,6 +317,24 @@ function scatterPosition(
   return { x, y };
 }
 
+/**
+ * Staggers `count` bursts in groups of `pairSize`, one group every
+ * `intervalMs`, starting at `startMs` — the finale cadence (two bursts every
+ * 0.25 s), so each pair reads as one heavier beat in the display.
+ */
+function pairedDelays(
+  count: number,
+  pairSize: number,
+  startMs: number,
+  intervalMs: number,
+): number[] {
+  const safePairSize = Math.max(1, Math.floor(pairSize));
+  return Array.from(
+    { length: Math.max(0, count) },
+    (_unused, i) => startMs + Math.floor(i / safePairSize) * intervalMs,
+  );
+}
+
 /** Uniform sample inside a disk of `spread` around the anchor. */
 function anchoredPosition(
   deathX: number,
@@ -298,6 +358,10 @@ function anchoredPosition(
  *   inset by `MINI_BOSS_SWEEP_INSET_PX`.
  * - `anchored` bursts: exactly `MINI_BOSS_SWEEP_ANCHORED_COUNT` samples
  *   within `MINI_BOSS_SWEEP_ANCHOR_SPREAD_PX` of the death position.
+ * - `finale` bursts: exactly `MINI_BOSS_SWEEP_FINALE_COUNT` samples within
+ *   `MINI_BOSS_SWEEP_FINALE_SPREAD_PX` of the death position, scheduled in
+ *   pairs two every `MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS` after the
+ *   anchored window.
  *
  * `completionDelayMs` is the moment the last burst finishes (`delay +
  * lifespan` of the last-finishing burst), which is what the executor/
@@ -374,6 +438,35 @@ export function planMiniBossDeathSweep(
     });
   }
 
+  // Finale bursts — the mini-boss's own biggest explosion: 20 clustered
+  // bursts fired in pairs, two every 250 ms, starting once the anchored
+  // celebration has swept past the death point.
+  const finaleDelays = pairedDelays(
+    MINI_BOSS_SWEEP_FINALE_COUNT,
+    MINI_BOSS_SWEEP_FINALE_PAIR_SIZE,
+    MINI_BOSS_SWEEP_FINALE_START_MS,
+    MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS,
+  );
+  for (let i = 0; i < MINI_BOSS_SWEEP_FINALE_COUNT; i += 1) {
+    const { x, y } = anchoredPosition(
+      deathX,
+      deathY,
+      MINI_BOSS_SWEEP_FINALE_SPREAD_PX,
+      rng,
+    );
+    bursts.push({
+      role: 'finale',
+      delayMs: finaleDelays[i],
+      x,
+      y,
+      color: MINI_BOSS_SWEEP_PALETTE[Math.floor(rng() * MINI_BOSS_SWEEP_PALETTE.length)],
+      size: 18,
+      particleCount: MINI_BOSS_SWEEP_FINALE_PARTICLES,
+      scale: MINI_BOSS_SWEEP_FINALE_SCALE,
+      lifespanMs: MINI_BOSS_SWEEP_LIFESPAN_MS,
+    });
+  }
+
   const completionDelayMs = bursts.reduce(
     (latest, burst) => Math.max(latest, burst.delayMs + burst.lifespanMs),
     0,
@@ -384,6 +477,7 @@ export function planMiniBossDeathSweep(
     sweptCount: n,
     extras,
     anchored: MINI_BOSS_SWEEP_ANCHORED_COUNT,
+    finale: MINI_BOSS_SWEEP_FINALE_COUNT,
     completionDelayMs,
   };
 }

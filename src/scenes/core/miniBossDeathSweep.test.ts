@@ -21,21 +21,29 @@
  * - `MINI_BOSS_SWEEP_EXTRA_BASE = 30`, `MINI_BOSS_SWEEP_ANCHORED_COUNT = 10`,
  *   `MINI_BOSS_SWEEP_INSET_PX` (scatter inset) and
  *   `MINI_BOSS_SWEEP_ANCHOR_SPREAD_PX` (radius around the death point).
+ * - `MINI_BOSS_SWEEP_FINALE_COUNT = 20`, `MINI_BOSS_SWEEP_FINALE_PAIR_SIZE = 2`,
+ *   `MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS = 250` and
+ *   `MINI_BOSS_SWEEP_FINALE_SPREAD_PX` — the producer-reviewed "cluster
+ *   another 20 explosions in and around the mini-boss, 2 every 0.25 s".
  * - `miniBossSweepExtras(n)` — `Math.max(0, 30 - n)`; never negative, never
  *   throws, for any `n` (`0 → 30`, `1 → 29`, `29 → 1`, `30 → 0`, `40 → 0`).
  * - `collectSweepTargets(live, minions = [])` — the wave-gating scope split:
  *   keeps escorts and the mini-boss's live minions, drops every
  *   `isNonBlockingHazard` key (`asteroid`, `lane-traffic`), preserves order.
  * - `planMiniBossDeathSweep({ targets, deathX, deathY, bounds, seed })` —
- *   returns `{ bursts, sweptCount, extras, anchored, completionDelayMs }`
- *   where `sweptCount === targets.length`, `extras === miniBossSweepExtras(n)`,
- *   `anchored === 10` and `bursts.length === n + extras + 10 <= 40`. Bursts
+ *   returns `{ bursts, sweptCount, extras, anchored, finale,
+ *   completionDelayMs }` where `sweptCount === targets.length`,
+ *   `extras === miniBossSweepExtras(n)`, `anchored === 10`,
+ *   `finale === 20` and
+ *   `bursts.length === n + extras + 10 + 20 <= 60`. Bursts
  *   carry `{ role, delayMs, x, y, color, size, particleCount, scale,
- *   lifespanMs }` with `role` one of `'enemy' | 'scatter' | 'anchored'`:
- *   exactly one `enemy` burst per swept target, `extras` `scatter` bursts
- *   sampled inside `bounds` inset by the burst radius (so no burst is clipped
- *   entirely off-screen) and exactly 10 `anchored` bursts around
- *   `(deathX, deathY)`. Same seed ⇒ identical plan; no `Math.random()`.
+ *   lifespanMs }` with `role` one of
+ *   `'enemy' | 'scatter' | 'anchored' | 'finale'`: exactly one `enemy` burst
+ *   per swept target, `extras` `scatter` bursts sampled inside `bounds`
+ *   inset by the burst radius (so no burst is clipped entirely off-screen),
+ *   exactly 10 `anchored` bursts around `(deathX, deathY)` and exactly 20
+ *   `finale` bursts clustered around the death point, fired in pairs two
+ *   every 250 ms. Same seed ⇒ identical plan; no `Math.random()`.
  * - `spawnMiniBossDeathSweep(scene, input, options?)` — plays every planned
  *   burst through `spawnExplosionParticles` (honouring `delayMs` /
  *   `lifespanMs`) and returns `{ plan, explosions, complete, destroy }`.
@@ -83,7 +91,7 @@ interface SweepBounds {
 
 /** A planned burst (pure data — no Phaser objects). */
 interface SweepBurst {
-  role: 'enemy' | 'scatter' | 'anchored';
+  role: 'enemy' | 'scatter' | 'anchored' | 'finale';
   delayMs: number;
   x: number;
   y: number;
@@ -110,6 +118,7 @@ interface SweepPlan {
   sweptCount: number;
   extras: number;
   anchored: number;
+  finale: number;
   completionDelayMs: number;
 }
 
@@ -128,6 +137,12 @@ interface MiniBossDeathSweepContract {
   MINI_BOSS_SWEEP_INSET_PX: number;
   MINI_BOSS_SWEEP_ANCHOR_SPREAD_PX: number;
   MINI_BOSS_SWEEP_COMPLETION_MARGIN_MS: number;
+  MINI_BOSS_SWEEP_ANCHOR_START_MS: number;
+  MINI_BOSS_SWEEP_ANCHOR_WINDOW_MS: number;
+  MINI_BOSS_SWEEP_FINALE_COUNT: number;
+  MINI_BOSS_SWEEP_FINALE_PAIR_SIZE: number;
+  MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS: number;
+  MINI_BOSS_SWEEP_FINALE_SPREAD_PX: number;
   miniBossSweepExtras(sweptCount: number): number;
   collectSweepTargets(
     live: readonly SweepTarget[],
@@ -304,12 +319,18 @@ describe('mini-boss death sweep — extra-burst formula (AC2)', () => {
     expect(negative).toBeGreaterThanOrEqual(0);
   });
 
-  it('plans exactly 10 anchored bursts at the mini-boss death point for every n', async () => {
-    const { planMiniBossDeathSweep, MINI_BOSS_SWEEP_ANCHORED_COUNT } = await sweep();
+  it('plans exactly 10 anchored + 20 finale bursts at the mini-boss death point for every n', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_ANCHORED_COUNT,
+      MINI_BOSS_SWEEP_FINALE_COUNT,
+    } = await sweep();
     expect(MINI_BOSS_SWEEP_ANCHORED_COUNT).toBe(10);
+    expect(MINI_BOSS_SWEEP_FINALE_COUNT).toBe(20);
     for (const swept of [0, 1, 5, 29, 30, 40]) {
       const plan = planMiniBossDeathSweep(planInput(escorts(swept)));
       expect(burstsOfRole(plan, 'anchored').length, `n=${swept}`).toBe(10);
+      expect(burstsOfRole(plan, 'finale').length, `n=${swept}`).toBe(20);
       expect(burstsOfRole(plan, 'enemy').length, `n=${swept}`).toBe(swept);
       expect(burstsOfRole(plan, 'scatter').length, `n=${swept}`).toBe(
         Math.max(0, 30 - swept),
@@ -317,23 +338,25 @@ describe('mini-boss death sweep — extra-burst formula (AC2)', () => {
     }
   });
 
-  it('burns at most 40 bursts in total while the extras formula applies (n ≤ 30)', async () => {
+  it('burns at most 60 bursts in total while the extras formula applies (n ≤ 30)', async () => {
     const { planMiniBossDeathSweep } = await sweep();
     for (const swept of [0, 1, 10, 29, 30, 31, 40, 100]) {
       const plan = planMiniBossDeathSweep(planInput(escorts(swept)));
-      const expected = swept + Math.max(0, 30 - swept) + 10;
+      const expected = swept + Math.max(0, 30 - swept) + 10 + 20;
       expect(plan.bursts.length, `n=${swept}`).toBe(expected);
-      // The 40-burst particle budget belongs to the n ≤ 30 case, where the
-      // scattered extras fill the display up to 30 + the 10 anchored bursts.
-      // For n > 30 the extras clamp to 0, so the sweep is one enemy burst per
-      // target plus the 10 anchored bursts (it never adds extras on top).
+      // The 60-burst particle budget belongs to the n ≤ 30 case, where the
+      // scattered extras fill the display up to 30 + the 10 anchored + 20
+      // finale bursts. For n > 30 the extras clamp to 0, so the sweep is one
+      // enemy burst per target plus the 30 mini-boss bursts (it never adds
+      // extras on top).
       if (swept <= 30) {
-        expect(plan.bursts.length, `n=${swept}`).toBeLessThanOrEqual(40);
+        expect(plan.bursts.length, `n=${swept}`).toBeLessThanOrEqual(60);
       } else {
-        expect(plan.bursts.length, `n=${swept}`).toBe(swept + 10);
+        expect(plan.bursts.length, `n=${swept}`).toBe(swept + 30);
       }
       expect(plan.sweptCount, `n=${swept}`).toBe(swept);
       expect(plan.anchored, `n=${swept}`).toBe(10);
+      expect(plan.finale, `n=${swept}`).toBe(20);
       expect(plan.extras, `n=${swept}`).toBe(Math.max(0, 30 - swept));
     }
   });
@@ -492,6 +515,100 @@ describe('mini-boss death sweep — placement (AC2)', () => {
       expect(delays[i], `burst ${i}`).toBeGreaterThanOrEqual(delays[i - 1]);
     }
     expect(delays[delays.length - 1]).toBeGreaterThan(0);
+  });
+});
+
+// ── Producer review: the 20-burst mini-boss finale ────────────────
+
+describe('mini-boss death sweep — finale cluster (producer review)', () => {
+  it('adds exactly 20 finale bursts clustered in and around the mini-boss', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_FINALE_COUNT,
+      MINI_BOSS_SWEEP_FINALE_SPREAD_PX,
+    } = await sweep();
+    expect(MINI_BOSS_SWEEP_FINALE_COUNT).toBe(20);
+    expect(MINI_BOSS_SWEEP_FINALE_SPREAD_PX).toBeGreaterThan(0);
+
+    const plan = planMiniBossDeathSweep(planInput(escorts(2)));
+    const finale = burstsOfRole(plan, 'finale');
+    expect(finale).toHaveLength(20);
+
+    // "in and around the mini-boss": every finale burst sits within the
+    // finale spread of the captured death position, and at least one lands
+    // inside the tighter anchored radius ("in" as well as "around").
+    let inside = 0;
+    for (const burst of finale) {
+      const distance = Math.hypot(burst.x - DEATH_X, burst.y - DEATH_Y);
+      expect(distance).toBeLessThanOrEqual(MINI_BOSS_SWEEP_FINALE_SPREAD_PX);
+      if (distance < MINI_BOSS_SWEEP_FINALE_SPREAD_PX / 2) inside += 1;
+    }
+    expect(inside).toBeGreaterThan(0);
+  });
+
+  it('fires the finale in pairs, two bursts every 250 ms', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_FINALE_PAIR_SIZE,
+      MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS,
+    } = await sweep();
+    expect(MINI_BOSS_SWEEP_FINALE_PAIR_SIZE).toBe(2);
+    expect(MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS).toBe(250);
+
+    const plan = planMiniBossDeathSweep(planInput(escorts(1)));
+    const delays = burstsOfRole(plan, 'finale').map((burst) => burst.delayMs);
+    expect(delays).toHaveLength(20);
+
+    // Pairs share a delay; consecutive pairs are 250 ms apart.
+    const pairTimes = [...new Set(delays)];
+    expect(pairTimes).toHaveLength(10);
+    for (let i = 0; i < pairTimes.length; i += 1) {
+      const inPair = delays.filter((delay) => delay === pairTimes[i]);
+      expect(inPair, `pair ${i}`).toHaveLength(2);
+      if (i > 0) {
+        expect(pairTimes[i] - pairTimes[i - 1], `pair ${i} interval`).toBe(
+          MINI_BOSS_SWEEP_FINALE_PAIR_INTERVAL_MS,
+        );
+      }
+    }
+    // The finale keeps animating for over two seconds after the first pair
+    // (10 pairs × 250 ms), so the mini-boss death is the biggest beat on
+    // screen.
+    expect(pairTimes[pairTimes.length - 1] - pairTimes[0]).toBe(2250);
+  });
+
+  it('starts the finale after the anchored celebration, never on the defeat frame', async () => {
+    const {
+      planMiniBossDeathSweep,
+      MINI_BOSS_SWEEP_ANCHOR_START_MS,
+      MINI_BOSS_SWEEP_ANCHOR_WINDOW_MS,
+    } = await sweep();
+    const plan = planMiniBossDeathSweep(planInput(escorts(0)));
+    const anchored = burstsOfRole(plan, 'anchored');
+    const finale = burstsOfRole(plan, 'finale');
+
+    const anchoredEnd = Math.max(...anchored.map((burst) => burst.delayMs));
+    const firstFinale = Math.min(...finale.map((burst) => burst.delayMs));
+    expect(anchoredEnd).toBeLessThanOrEqual(
+      MINI_BOSS_SWEEP_ANCHOR_START_MS + MINI_BOSS_SWEEP_ANCHOR_WINDOW_MS,
+    );
+    expect(firstFinale).toBeGreaterThan(anchoredEnd);
+  });
+
+  it('keeps the reward overlay held until the final finale pair has finished', async () => {
+    const { planMiniBossDeathSweep } = await sweep();
+    const plan = planMiniBossDeathSweep(planInput(escorts(3)));
+    const finale = burstsOfRole(plan, 'finale');
+
+    const finaleEnd = Math.max(
+      ...finale.map((burst) => burst.delayMs + burst.lifespanMs),
+    );
+    // The completion delay is the last-finishing burst of the whole sweep,
+    // so the overlay cannot open while a finale pair is still animating.
+    expect(plan.completionDelayMs).toBe(finaleEnd);
+    expect(plan.completionDelayMs).toBeGreaterThan(
+      Math.max(...burstsOfRole(plan, 'anchored').map((b) => b.delayMs + b.lifespanMs)),
+    );
   });
 });
 
