@@ -532,6 +532,19 @@ export function playRapidImpactSound(): void {
 }
 
 /**
+ * Short metallic crack with a brief ring — a Railgun tracer connects
+ * (AH-0MVMIGVCE004VSNA). Plays through the shared impact seam
+ * (`CombatScene.resolveWeaponImpactFx`) alongside the sky-blue impact flash,
+ * so the game and every gym connect identically. Kept short (~0.14 s) so a
+ * five-target pierce chain reads as one crisp salvo rather than a
+ * machine-gun stutter. Baked via the ToneForge pipeline
+ * (`aihell-railgun-impact`, seed 32278).
+ */
+export function playRailgunImpactSound(): void {
+  playCue('playRailgunImpactSound');
+}
+
+/**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
  * their own baked hit cues; dispatched by {@link playWeaponImpactCue} from
@@ -548,6 +561,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playClusterImpactSound,
   playOptionsImpactSound,
   playArcImpactSound,
+  playRailgunImpactSound,
 };
 
 /**
@@ -572,6 +586,18 @@ export function playDualFireSound(): void {
 /** Tight staccato blip — Rapid fire. */
 export function playRapidFireSound(): void {
   playCue('playRapidFireSound');
+}
+
+/**
+ * Heavy electromagnetic discharge — Railgun fire (AH-0MVMIGVCE004VSNA). A deep
+ * sawtooth slam with a metallic snap and a high-pass noise crack, routed
+ * through the one shared player-fire dispatcher ({@link playWeaponFireSound})
+ * so live fire, the reduced-volume hold-full metronome and every gym fire
+ * sound identical. Baked via the ToneForge pipeline (`aihell-railgun-fire`,
+ * seed 32277).
+ */
+export function playRailgunFireSound(): void {
+  playCue('playRailgunFireSound');
 }
 
 /** Deep expanding thump + rising ring — Nova fire. */
@@ -717,6 +743,9 @@ export function playWeaponFireSound(
       break;
     case 'options':
       playCue('playOptionsFireSound', options);
+      break;
+    case 'railgun':
+      playCue('playRailgunFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches

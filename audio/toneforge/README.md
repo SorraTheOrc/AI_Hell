@@ -135,6 +135,8 @@ derived from the render seed).
 | `aihell-mortar-fire.yaml` | `playMortarFireSound` | Muffled triangle 220→90 Hz + barrel tick | 32215 |
 | `aihell-mortar-detonation.yaml` | `playMortarDetonationSound` | Heavy saw 180→40 Hz + LP noise wash | 32216 |
 | `aihell-arc-fire.yaml` | `playArcFireSound` | Square zap 1400→500→1120 Hz + HP crackle | 32217 |
+| `aihell-railgun-fire.yaml` | `playRailgunFireSound` | Heavy electromagnetic discharge: saw slam 220→55 Hz + square snap + HP noise crack (AH-0MVMIGVCE004VSNA) | 32277 |
+| `aihell-railgun-impact.yaml` | `playRailgunImpactSound` | Short metallic crack 1400→240 Hz + brief 1760 Hz ring + HP noise tick, ~0.14 s (AH-0MVMIGVCE004VSNA) | 32278 |
 | `aihell-pickup-spread.yaml` | `playSpreadPickupSound` | Triangle 500→1500→800 Hz | 32220 |
 | `aihell-pickup-dual.yaml` | `playDualPickupSound` | Two saw drops 1000→500 / 1200→700 Hz | 32221 |
 | `aihell-pickup-rapid.yaml` | `playRapidPickupSound` | Triangle rise 400→1600 Hz | 32222 |

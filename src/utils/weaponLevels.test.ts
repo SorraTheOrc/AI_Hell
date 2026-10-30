@@ -851,6 +851,18 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
     expect(resolveWeaponDefinition('ricochet', 100).bounce).toBe(cap);
   });
 
+  test('the railgun visual/feel metadata carries through level resolution unchanged (AH-0MVMIGVCE004VSNA)', () => {
+    const base = WEAPON_CATALOGUE.railgun;
+    const leveled = resolveWeaponDefinition('railgun', 50);
+    // The impact feedback is visual metadata, not an upgrade value — it must
+    // survive level resolution byte-for-byte so a levelled Railgun still
+    // lands its baked hit cue and its sky-blue flash.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletRim).toBe(base.bulletRim);
+    expect(leveled.bulletTrail).toBe(base.bulletTrail);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+  });
+
   test('weapons without a base bounce budget never gain one (they keep wrapping)', () => {
     for (const id of WEAPON_IDS) {
       if (id === 'ricochet') continue;

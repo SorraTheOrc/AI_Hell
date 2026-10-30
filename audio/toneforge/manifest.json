@@ -385,6 +385,22 @@
       ]
     },
     {
+      "cue": "playRailgunFireSound",
+      "recipe": "aihell-railgun-fire",
+      "delivery": "baked",
+      "seeds": [
+        32277
+      ]
+    },
+    {
+      "cue": "playRailgunImpactSound",
+      "recipe": "aihell-railgun-impact",
+      "delivery": "baked",
+      "seeds": [
+        32278
+      ]
+    },
+    {
       "cue": "playWaveLaserFireSound",
       "recipe": "aihell-wave-laser-fire",
       "delivery": "baked",

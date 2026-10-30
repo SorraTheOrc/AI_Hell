@@ -974,7 +974,13 @@ instead.
   (AH-0MVSHI07B003BZIP). The
   catalogue now ships **16 weapons** (the 5 net-new unlock-pool weapons are
   Rear Guard, Broadside, Railgun, Shard Swarm and Heavy Slug) and **16
-  power-ups**.
+  power-ups**. Their feel packages are being filled in per weapon through the
+  same shared seams the original 11 use (AH-0MVMJMCQK004BE9T); the **Railgun**
+  is complete — its fire routes through the single shared
+  `playWeaponFireSound` dispatcher to the baked `playRailgunFireSound`
+  (`aihell-railgun-fire`), and its tracer declares an `impactFx` so each
+  pierced connect plays the baked `playRailgunImpactSound`
+  (`aihell-railgun-impact`) with a sky-blue flash (AH-0MVMIGVCE004VSNA).
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
   skeleton, so levels 1–10 are always present. A configured level overrides its
   static counterpart (and a configured level numbered beyond the static ten is

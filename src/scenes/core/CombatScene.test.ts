@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
+import * as bulletImpactModule from '../../vfx/bulletImpact';
 import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import {
   FORCE_FIELD_COLOR,
@@ -24,6 +25,7 @@ import { isOnGrid } from '../../utils/beat';
 import {
   WEAPON_BULLET_LIFETIME,
   WEAPON_CATALOGUE,
+  BULLET_COLORS,
   OPTIONS_MAX_PODS,
   OPTIONS_ORBIT_RADIUS,
   OPTIONS_POD_BULLET_SPEED,
@@ -1133,6 +1135,51 @@ describe('CombatScene — shared combat core hook contract', () => {
 
     expect(enemy.alive).toBe(false);
     expect(cue).toHaveBeenCalledTimes(1);
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
+  // ── Railgun impact feedback (AH-0MVMIGVCE004VSNA) ────────────────
+
+  it('AH-0MVMIGVCE004VSNA — an auto-fired railgun bullet carries the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('railgun');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.railgun);
+    expect(shot).toBeDefined();
+    // The shared core copied the weapon's declared impact feedback onto the
+    // shot, so the connect routes through the shared seam with no per-scene
+    // code.
+    expect(shot!.impactFx).toEqual(WEAPON_CATALOGUE.railgun.impactFx);
+  });
+
+  it('AH-0MVMIGVCE004VSNA — a railgun connect plays its baked hit cue and sky-blue impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const enemy = new ToughStubEnemy(scene, 40, 40, 10, 3);
+    scene.entities.push(enemy);
+    const pb = scene.spawnPlayerBullet(40, 40, 0, 0);
+    pb.impactFx = { ...WEAPON_CATALOGUE.railgun.impactFx! };
+
+    scene.runCollisions();
+
+    // The connect is audible (baked hit cue) and colour-matched to the sky
+    // blue tracer instead of the generic warm-white fallback flash.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playRailgunImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({ color: BULLET_COLORS.railgun }),
+    );
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 

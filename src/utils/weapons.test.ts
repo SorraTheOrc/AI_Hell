@@ -1103,6 +1103,22 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
     );
   });
 
+  test('Railgun declares sky-blue impact feedback routed through its baked hit cue (AH-0MVMIGVCE004VSNA)', () => {
+    const def = WEAPON_CATALOGUE.railgun;
+    // The tracer's connect is colour-matched to its sky-blue silhouette and
+    // audible through the shared impact seam, instead of falling back to the
+    // generic warm-white flash with no hit cue.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.railgun);
+    expect(def.impactFx!.cue).toBe('playRailgunImpactSound');
+    // Sized to the heavy single shot: at least the cannon's impact flash, and
+    // no flash longer than the shipped 0.16 s ceiling (epic AC8).
+    expect(def.impactFx!.radius).toBeGreaterThanOrEqual(
+      WEAPON_CATALOGUE.cannon.impactFx!.radius,
+    );
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.16);
+  });
+
   test('Shard Swarm fires a symmetric five-way fan within ±15°', () => {
     const offsetsDeg = WEAPON_CATALOGUE.shard_swarm.offsets.map(
       (o) => (o * 180) / Math.PI,

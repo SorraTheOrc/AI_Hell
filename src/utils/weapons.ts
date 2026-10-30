@@ -1337,6 +1337,19 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     // Base damage budget greater than the wave laser's (2) — the rail's
     // identity is the deeper line-piercing shot.
     maxHitPoints: 5,
+    // Connect feedback (AH-0MVMIGVCE004VSNA): a sky-blue impact flash sized to
+    // the heavy tracer plus the newly baked railgun hit cue, routed through the
+    // shared impact seam so the game and every gym connect identically instead
+    // of falling back to the generic warm-white flash. Visual/feel metadata
+    // only — cadence, offsets, lifetime, speed and the pass-through budget are
+    // unchanged. The launch flash is deliberately not declared here (see Railgun
+    // launch muzzle-flash VFX, AH-0MVQ6C1YL003HU9K).
+    impactFx: {
+      color: BULLET_COLORS.railgun,
+      radius: 10,
+      duration: 0.16,
+      cue: 'playRailgunImpactSound',
+    },
   },
   shard_swarm: {
     id: 'shard_swarm',

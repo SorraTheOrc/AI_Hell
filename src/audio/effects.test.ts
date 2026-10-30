@@ -156,6 +156,22 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playRailgunImpactSound resolves to the baked railgun-impact asset (AH-0MVMIGVCE004VSNA)', () => {
+    effects.playRailgunImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-railgun-impact.32278.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the railgun impact cue (AH-0MVMIGVCE004VSNA)', () => {
+    effects.playWeaponImpactCue('playRailgunImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-railgun-impact.32278.wav',
+    );
+  });
+
   it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
     effects.playSpreadImpactSound();
     expect(recording.plays).toHaveLength(1);
@@ -473,6 +489,7 @@ describe('playWeaponFireSound — shared player-fire path', () => {
       ['ricochet', 'playRicochetFireSound'],
       ['cluster', 'playClusterFireSound'],
       ['options', 'playOptionsFireSound'],
+      ['railgun', 'playRailgunFireSound'],
     ];
     for (const [weaponId, cue] of cases) {
       recording.plays.length = 0;
@@ -520,6 +537,20 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     effects.playWeaponFireSound('options');
     expect(recording.plays).toHaveLength(1);
     expect(recording.plays[0].url).toBe('audio/sfx/aihell-options-fire.32271.wav');
+  });
+
+  it('plays the baked railgun fire cue (AH-0MVMIGVCE004VSNA)', () => {
+    effects.playWeaponFireSound('railgun');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-railgun-fire.32277.wav',
+    );
+  });
+
+  it('routes the railgun metronome ghost fire at the reduced volume', () => {
+    effects.playWeaponFireSound('railgun', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].volume).toBe(0.3);
   });
 });
 
