@@ -23,6 +23,7 @@ import {
   CHECKPOINT_STORAGE_KEY,
   CHECKPOINT_VERSION,
   hasCheckpoint,
+  saveCheckpoint,
 } from '../core/checkpointStore';
 import { GITHUB_REPO_URL, GITHUB_LOGO_TEXTURE_KEY, MenuScene, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
@@ -31,6 +32,7 @@ import { SettingsScene } from './SettingsScene';
 import { GameOverScene } from './GameOverScene';
 import { LeaderboardScene } from './LeaderboardScene';
 import { GymIndex } from './GymIndex';
+import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
 
 /** Finds an on-screen text by label. */
 function findText(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -148,6 +150,96 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
 
     expect(resume).not.toHaveBeenCalled();
     expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+  });
+});
+
+describe('MenuScene — Hangar War entry (AH-0MVUXC2DD003HN0I)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([MenuScene, PlayScene, HangarScene, GameOverScene, GymIndex]);
+    return booted!.scene as MenuScene;
+  }
+
+  it('AC1 — renders an interactive Hangar War control', async () => {
+    const scene = await bootMenu();
+    const entry = findText(scene, '🛠  Hangar War');
+    expect(entry.input?.enabled).toBe(true);
+  });
+
+  it('AC1 — clicking Hangar War opens the hangar screen', async () => {
+    const scene = await bootMenu();
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(false);
+
+    findText(scene, '🛠  Hangar War').emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+    expect(booted!.game.scene.isActive('MenuScene')).toBe(false);
+  });
+
+  it('AC4 — Enter on the focused Hangar War control opens the hangar screen', async () => {
+    const scene = await bootMenu();
+    scene.input.keyboard!.emit('keydown', {
+      key: 'Tab',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+    expect(scene.getFocusedLabel()).toBe('🛠  Hangar War');
+
+    scene.input.keyboard!.emit('keydown', {
+      key: 'Enter',
+      repeat: false,
+      preventDefault: () => {},
+    } as KeyboardEvent);
+    await advanceGame(booted!.game, 350);
+
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+  });
+
+  it('AC1/AC3 — Play Game still starts the arcade campaign and Continue still resumes it', async () => {
+    // An arcade checkpoint exists; opening the hangar must not clear it, and
+    // Play Game must keep its own shipped semantics (clears it on New Game).
+    saveCheckpoint({
+      version: CHECKPOINT_VERSION,
+      level: 4,
+      wave: 1,
+      lives: 2,
+      score: 9876,
+      minerals: 3,
+      mineralHoldCapacity: 5,
+      weaponLevels: [],
+      powerUpLevels: [],
+      unlockedWeapons: [],
+      runSeed: 4242,
+      savedAt: '2026-10-30T00:00:00.000Z',
+    });
+    const scene = await bootMenu();
+    expect(findText(scene, '⏵  Continue — Level 4')).toBeDefined();
+
+    findText(scene, '🛠  Hangar War').emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+    // Opening the hangar (and the deployment path it owns) leaves the arcade
+    // checkpoint intact, so Continue still belongs to the arcade run.
+    expect(hasCheckpoint()).toBe(true);
+
+    booted!.game.scene.getScene(HANGAR_SCENE_KEY).scene.start('MenuScene');
+    await advanceGame(booted!.game, 350);
+    const menu = booted!.game.scene.getScene('MenuScene') as MenuScene;
+    expect(findText(menu, '⏵  Continue — Level 4')).toBeDefined();
+
+    findText(menu, '▶  Play Game').emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+    expect(hasCheckpoint()).toBe(false);
+    const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.getWaveManager().level).toBe(1);
+    expect(play.isHangarWarRun()).toBe(false);
   });
 });
 
@@ -287,9 +379,12 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
     expect(play.style.stroke).toBeTruthy();
   });
 
-  it('AC2/AC5 — Tab cycles focus: Play → Watch Demo → Settings → Leaderboard → GitHub → Gym Index → Play (wrap)', async () => {
+  it('AC2/AC5 — Tab cycles focus: Play → Hangar War → Watch Demo → Settings → Leaderboard → GitHub → Gym Index → Play (wrap)', async () => {
     const scene = await bootMenu();
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+
+    pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedLabel()).toBe('🛠  Hangar War');
 
     pressKey(scene, { key: 'Tab' });
     expect(scene.getFocusedLabel()).toBe('👁  Watch Demo');
@@ -313,6 +408,9 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
   it('AC3 — ArrowDown cycles in the same order and wraps', async () => {
     const scene = await bootMenu();
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+
+    pressKey(scene, { key: 'ArrowDown' });
+    expect(scene.getFocusedLabel()).toBe('🛠  Hangar War');
 
     pressKey(scene, { key: 'ArrowDown' });
     expect(scene.getFocusedLabel()).toBe('👁  Watch Demo');
@@ -375,6 +473,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 
   it('AC5 — Enter on focused Settings opens SettingsScene', async () => {
     const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' }); // Hangar War
     pressKey(scene, { key: 'Tab' }); // Watch Demo
     pressKey(scene, { key: 'Tab' }); // Settings
     expect(scene.getFocusedLabel()).toBe('⚙  Settings');
@@ -388,6 +487,7 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 
   it('AC6 — Enter on focused Gym Scene Index opens GymIndex', async () => {
     const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
@@ -482,6 +582,7 @@ describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
 
   it('AC2 — keyboard: Tab to Leaderboard then Enter opens it', async () => {
     const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' }); // Hangar War
     pressKey(scene, { key: 'Tab' }); // Watch Demo
     pressKey(scene, { key: 'Tab' }); // Settings
     pressKey(scene, { key: 'Tab' }); // Leaderboard
@@ -549,6 +650,7 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
 
   it('AC2 — Enter on the focused Watch Demo control starts the demo', async () => {
     const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' }); // Hangar War
     pressKey(scene, { key: 'Tab' }); // Watch Demo
     expect(scene.getFocusedLabel()).toBe('👁  Watch Demo');
     pressKey(scene, { key: 'Enter' });
@@ -798,6 +900,7 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
 
   it('AC3 — GitHub sits between Leaderboard and Gym Scene Index in the Tab order', async () => {
     const scene = await bootMenu();
+    pressKey(scene, { key: 'Tab' }); // Hangar War
     pressKey(scene, { key: 'Tab' }); // Watch Demo
     pressKey(scene, { key: 'Tab' }); // Settings
     pressKey(scene, { key: 'Tab' }); // Leaderboard
@@ -814,6 +917,7 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
     const scene = await bootMenu();
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 
+    pressKey(scene, { key: 'Tab' }); // Hangar War
     pressKey(scene, { key: 'Tab' }); // Watch Demo
     pressKey(scene, { key: 'Tab' }); // Settings
     pressKey(scene, { key: 'Tab' }); // Leaderboard
@@ -834,6 +938,7 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
     const scene = await bootMenu();
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 
+    pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
     pressKey(scene, { key: 'Tab' });
@@ -933,14 +1038,14 @@ describe('MenuScene — version label (AH-0MUZM9053008YXOZ)', () => {
     // No input handlers, so it is never clickable.
     expect(version.input).toBeNull();
 
-    // Cycling focus visits the six controls and never the version label.
+    // Cycling focus visits the seven controls and never the version label.
     const focused = new Set<string>();
-    for (let i = 0; i < 6; i += 1) {
+    for (let i = 0; i < 7; i += 1) {
       pressKey(scene, { key: 'Tab' });
       focused.add(scene.getFocusedLabel());
     }
     expect(focused.has(GAME_VERSION)).toBe(false);
-    expect(focused.size).toBe(6);
+    expect(focused.size).toBe(7);
     // Wraps back to the default control, preserving keyboard parity (GDD §2.1).
     expect(scene.getFocusedLabel()).toBe('▶  Play Game');
   });
@@ -1075,6 +1180,7 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
     // (including the GitHub footer link), wrapping back to Continue.
     for (const expected of [
       '▶  Play Game',
+      '🛠  Hangar War',
       '👁  Watch Demo',
       '⚙  Settings',
       '🏆  Leaderboard',
@@ -1095,6 +1201,7 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
     // ArrowDown walks the whole menu forward and wraps back to Continue.
     for (const expected of [
       '▶  Play Game',
+      '🛠  Hangar War',
       '👁  Watch Demo',
       '⚙  Settings',
       '🏆  Leaderboard',

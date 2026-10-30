@@ -21,6 +21,14 @@
  * to the main menu. Disabled rows (owned, gated, unaffordable, last equipped
  * weapon) are muted and are neither interactive nor focusable.
  *
+ * The ▶ DEPLOY row (AH-0MVUXC2DD003HN0I) launches the **normal run** through
+ * this scene's one deployment path: {@link deploy} builds the pure deployment
+ * payload (`./hangarDeployment` — the hangar-resolved hull/loadout and the
+ * target hex's aggression-selected difficulty) and starts the shipped
+ * `PlayScene` with it. It never touches the arcade checkpoint: a hex
+ * deployment is a separate session that neither clears nor overwrites the
+ * arcade save.
+ *
  * The payload can be injected as launch data (`{ payload, storage }`) so tests
  * (and later the attract traversal) boot a deterministic war without touching
  * `localStorage`; production callers pass nothing and the versioned store is
@@ -52,6 +60,10 @@ import {
   type HangarScreenRow,
   type HangarScreenView,
 } from './hangarWar/hangarScreen';
+import {
+  buildHangarDeployment,
+  type HangarWarDeployment,
+} from './hangarWar/hangarDeployment';
 
 /** Scene key (matches the class name, per the scene convention). */
 export const HANGAR_SCENE_KEY = 'HangarScene';
@@ -137,6 +149,7 @@ export class HangarScene extends Phaser.Scene {
       onEquipHull: (hullId) => this.equipHull(hullId),
       onToggleWeapon: (weaponId) => this.toggleWeapon(weaponId),
       onToggleModifier: (modifierId) => this.toggleModifier(modifierId),
+      onDeploy: (hexId) => this.deploy(hexId),
     });
     const key = this.pendingFocusKey;
     this.pendingFocusKey = null;
@@ -195,6 +208,30 @@ export class HangarScene extends Phaser.Scene {
     }
     this.rebuildKeepingFocus(`modifier:${modifierId}`);
     return result.ok;
+  }
+
+  /**
+   * Launches a deployment of the current loadout (AH-0MVUXC2DD003HN0I).
+   *
+   * Builds the pure deployment payload and starts the shipped `PlayScene`
+   * with it — the same run code as Play Game, with only the hangar loadout and
+   * the hex-aggression difficulty as inputs. The arcade checkpoint is neither
+   * cleared nor written by this path.
+   *
+   * @param hexId — the hex to attack (defaults to the weakest unheld hex).
+   * @returns the deployment payload that was launched (test seam).
+   */
+  deploy(hexId?: string | null): HangarWarDeployment {
+    const deployment = buildHangarDeployment(this.payload, {
+      hexId: hexId ?? null,
+      catalogue: this.catalogue,
+    });
+    this.scene.start('PlayScene', {
+      demo: false,
+      resume: false,
+      hangarWar: deployment,
+    });
+    return deployment;
   }
 
   // ── Public query seams (keyboard/pointer tests use these) ───────

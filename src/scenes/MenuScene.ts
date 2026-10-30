@@ -4,6 +4,11 @@
  * The boot scene that greets the player with buttons:
  * - **Play Game** — starts a new game session at Level 1 and initializes
  *   the Phaser Audio context (Web Audio autoplay policy compliance, GDD §6.7).
+ * - **Hangar War** — opens the hangar screen (`HangarScene`), the additive
+ *   outer-loop entry of Build Candidate D (AH-0MVUXC2DD003HN0I). Play Game
+ *   keeps starting the shipped classic campaign and Continue keeps resuming
+ *   the arcade checkpoint; a hex deployment launched from the hangar is a
+ *   separate session that never touches that checkpoint.
  * - **Settings** — opens the shared settings screen (audio + controls)
  *   before starting a session (parent AH-0MU9LPZ0G0015292).
  * - **Gym Scene Index** — navigates to the existing `GymIndex` dev scene
@@ -285,12 +290,45 @@ export class MenuScene extends Phaser.Scene {
 
     this.controls.push({ label: '▶  Play Game', text: playButton });
 
+    // ── Hangar War button (outer-loop entry) ─────────────────────
+    // Opens the hangar screen (AH-0MVUXC2DD003HN0I, producer decision
+    // 2026-10-30 Q1 = a): the additive entry keeps Play Game on the shipped
+    // classic campaign and Continue on the arcade checkpoint, so adding the
+    // outer loop cannot put the shipped game at risk. The hangar screen owns
+    // the deployment path; this control only navigates.
+    const hangarWarButton = this.add.text(
+      GAME_WIDTH / 2,
+      265,
+      '🛠  Hangar War',
+      {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: MENU_TEXT_COLOR,
+        backgroundColor: '#111111',
+        padding: { x: 14, y: 7 },
+      },
+    ).setOrigin(0.5);
+    hangarWarButton.setInteractive({ useHandCursor: true });
+
+    hangarWarButton.on('pointerover', () => {
+      hangarWarButton.setStyle({ color: '#88ffff' });
+    });
+    hangarWarButton.on('pointerout', () => {
+      hangarWarButton.setStyle({ color: MENU_TEXT_COLOR });
+    });
+
+    hangarWarButton.on('pointerdown', () => {
+      this.scene.start('HangarScene');
+    });
+
+    this.controls.push({ label: '🛠  Hangar War', text: hangarWarButton });
+
     // ── Watch Demo button (attract/demo mode) ────────────────────
     // Starts the shipped bot-driven demo (AH-0MUX4966Z0009P9Q AC1/AC2).
     // Initialising the audio context on the gesture keeps GDD §6.7 intact.
     const demoButton = this.add.text(
       GAME_WIDTH / 2,
-      265,
+      310,
       '👁  Watch Demo',
       {
         fontFamily: 'monospace',
@@ -322,7 +360,7 @@ export class MenuScene extends Phaser.Scene {
     // context on the gesture keeps GDD §6.7 autoplay compliance intact.
     const settingsButton = this.add.text(
       GAME_WIDTH / 2,
-      315,
+      355,
       '⚙  Settings',
       {
         fontFamily: 'monospace',
@@ -352,7 +390,7 @@ export class MenuScene extends Phaser.Scene {
     // Opens the shared, full leaderboard view (AH-0MU9LJ52C00613RX).
     const leaderboardButton = this.add.text(
       GAME_WIDTH / 2,
-      365,
+      400,
       '🏆  Leaderboard',
       {
         fontFamily: 'monospace',
@@ -505,7 +543,8 @@ export class MenuScene extends Phaser.Scene {
     // Register controls in visual order; the first is focused by default.
     // Without a checkpoint that is Play Game; with a checkpoint the Continue
     // control was already registered above (AH-0MVSHH20J003YXDN), so it
-    // takes the default focus and Play Game follows it. The action callbacks
+    // takes the default focus and Play Game follows it. Hangar War follows
+    // Play Game (AH-0MVUXC2DD003HN0I). The action callbacks
     // mirror the pointerdown handlers so activation behaves identically for
     // keyboard and pointer input. The shared FocusManager owns Tab / arrow
     // cycling and Enter / Space activation — the scene contains no ad-hoc
@@ -515,6 +554,9 @@ export class MenuScene extends Phaser.Scene {
       // Explicit non-demo payload (see the pointerdown handler above) so a
       // normal start after a demo never inherits `{ demo: true }`.
       this.scene.start('PlayScene', { demo: false });
+    });
+    this.focusManager.register(hangarWarButton, () => {
+      this.scene.start('HangarScene');
     });
     this.focusManager.register(demoButton, () => {
       resumeAudioContext(this.sound);

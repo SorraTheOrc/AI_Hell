@@ -104,9 +104,11 @@ the game-over screen (the in-game pause menu follows the same model).
   **Enter** starts a run. When a resumable checkpoint exists, a **Continue**
   control is added above it, becomes the focused default instead, and
   pressing **Enter** resumes the saved run. **Tab**/arrows cycle in visual
-  order through *Continue* (when present) → *Play Game* → *Watch Demo* →
-  *Settings* → *Leaderboard* → *GitHub* → *Gym Scene Index (dev)*,
-  wrapping at both ends.
+  order through *Continue* (when present) → *Play Game* → *Hangar War* →
+  *Watch Demo* → *Settings* → *Leaderboard* → *GitHub* →
+  *Gym Scene Index (dev)*, wrapping at both ends. *Hangar War* opens the
+  hangar screen (a deployment launched there is a separate session from the
+  arcade run and its checkpoint).
 - **Game over (`GameOverScene`):** the initials field is focused by default
   and **A–Z** / **Backspace** edit it; **Tab**/arrows move focus to
   *Return to Menu*. **Enter** auto-submits when the initials are complete;
@@ -1530,10 +1532,17 @@ src/
 │   │                      `GymFormationScene`; the single-definition guard and the cross-scene
 │   │                      overflow test live in `mineralLayer.equivalence.test.ts`.
 │   ├── MenuScene.ts     — Main-menu boot scene (implemented): Play Game → PlayScene,
-│   │                      Continue (checkpoint resume) → PlayScene, Settings → SettingsScene
+│   │                      Hangar War → HangarScene, Continue (checkpoint resume) →
+│   │                      PlayScene, Settings → SettingsScene
 │   │                      (audio + controls, origin MenuScene), Gym Scene Index (dev) → GymIndex;
 │   │                      resumes Web Audio on click; FocusManager keyboard navigation
 │   │                      (default focus on Continue when a checkpoint exists, else Play Game)
+│   ├── HangarScene.ts   — Hangar screen (implemented, AH-0MVUXC1X6007KAG1): renders the
+│   │                      shared hangar-screen model (unlock tree + hull/starting-weapon/
+│   │                      modifier selector, read-only in GymHangar) and its ▶ DEPLOY row
+│   │                      launches PlayScene with the pure deployment payload — hangar
+│   │                      loadout + hex-aggression-selected campaign level, no arcade
+│   │                      checkpoint write (AH-0MVUXC2DD003HN0I)
 │   ├── PlayScene.ts     — Playable run (implemented): extends the shared `scenes/core/CombatScene`
 │   │                      base (which extends `CombatCoreScene`; implementing its hooks for
 │   │                      boss multi-hit, asteroid split (delegated to the shared

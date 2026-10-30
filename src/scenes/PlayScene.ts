@@ -26,6 +26,14 @@
  *
  * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`.
  *
+ * **Hangar-war deployments (AH-0MVUXC2DD003HN0I).** `init()` also accepts a
+ * `hangarWar` launch payload from the hangar screen. A deployment runs this
+ * **same** scene and shared core — only the loadout (hull lives/speed and
+ * starting weapons) and the hex-aggression-selected start level are inputs —
+ * so there is no divergent copy of the run. The two modes never share session
+ * state: a deployment writes no arcade checkpoint and clears none, while Play
+ * Game and Continue keep their existing untouched behaviour.
+ *
  * Determinism: `update()` delegates to the public `tick(dt)` step, which
  * tests call directly to drive collisions and transitions without real
  * frame timing (mirrors `GymFormationScene.tick`).
@@ -157,6 +165,12 @@ import {
   loadHangarWarPayload,
   saveHangarWarPayload,
 } from '../core/hangarWar/hangarWarStore';
+import {
+  applyHangarWarDeployment,
+  applyHullSpeedToShipConfig,
+  readHangarWarDeployment,
+  type HangarWarDeployment,
+} from './hangarWar/hangarDeployment';
 import { PowerUp } from '../powerups/PowerUp';
 import { EXTRA_LIFE_DROP_ID, getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
@@ -715,6 +729,14 @@ export class PlayScene extends CombatScene<
   /** Whether `create()` should resume from the persisted checkpoint. */
   private resumeFromCheckpoint = false;
 
+  /**
+   * The validated hangar-war deployment launch data, or `null` for the shipped
+   * arcade run (AH-0MVUXC2DD003HN0I). Present ⇒ the run carries the
+   * hangar-resolved loadout and the hex-aggression difficulty, and never
+   * writes or clears the arcade checkpoint.
+   */
+  private hangarWarDeployment: HangarWarDeployment | null = null;
+
   /** The checkpoint loaded in `init()`, applied once the run exists. */
   private pendingResumeCheckpoint: Checkpoint | null = null;
 
@@ -1010,6 +1032,14 @@ export class PlayScene extends CombatScene<
      * (AH-0MVTPP7SX000JTWJ). Ignored in production builds.
      */
     startBoss?: boolean;
+    /**
+     * Hangar-war deployment payload from the hangar screen
+     * (AH-0MVUXC2DD003HN0I): the hangar-resolved loadout plus the target hex's
+     * aggression-selected difficulty. Absent/`null` ⇒ the unchanged arcade
+     * run; present ⇒ a hex deployment that never touches the arcade
+     * checkpoint.
+     */
+    hangarWar?: HangarWarDeployment | null;
   }): void {
     this.demoMode = data?.demo === true;
     // Continue from the last checkpoint (AH-0MVCRBTNF000DK51). It is loaded
@@ -1021,6 +1051,16 @@ export class PlayScene extends CombatScene<
       : null;
     if (this.pendingResumeCheckpoint) {
       this.injectedRunSeed = this.pendingResumeCheckpoint.runSeed;
+    }
+    // A hangar-war deployment is a separate session (AH-0MVUXC2DD003HN0I): it
+    // never resumes the arcade checkpoint, and it seeds the run from the war's
+    // deterministic deployment seed. The two modes share run code, never
+    // session/checkpoint state.
+    this.hangarWarDeployment = readHangarWarDeployment(data?.hangarWar);
+    if (this.hangarWarDeployment) {
+      this.resumeFromCheckpoint = false;
+      this.pendingResumeCheckpoint = null;
+      this.injectedRunSeed = this.hangarWarDeployment.seed;
     }
     // The bot seam is inert outside demo mode; clear any name applied by a
     // previous demo so a normal (re)start never reports a stale config
@@ -1096,10 +1136,16 @@ export class PlayScene extends CombatScene<
     // own config/toggle-driven scheme.
     const shipConfig = loadShipConfig();
     const playerScheme = resolvePlayerControlScheme(loadStoredControlScheme(), shipConfig);
+    // A hangar-war deployment's hull scales the shared ship tuning at spawn
+    // (AH-0MVUXC2DD003HN0I); the per-frame Speed Boost multiplier composes on
+    // top of this base, so a slower hull stays slower with or without a boost.
+    const playerShipConfig = this.hangarWarDeployment
+      ? applyHullSpeedToShipConfig(shipConfig, this.hangarWarDeployment)
+      : shipConfig;
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT - 80,
-      config: { ...shipConfig, controlScheme: playerScheme },
+      config: { ...playerShipConfig, controlScheme: playerScheme },
     });
     this.add.existing(this.player);
     // Capture configuration (AH-0MVTNTHE0008UT2C): apply the dev-gated setup
@@ -1166,6 +1212,23 @@ export class PlayScene extends CombatScene<
     // Start the run.
     this.gameState.startGame();
     this.effectsRegistry.setLives(this.gameState.lives);
+    // Hangar-war deployment (AH-0MVUXC2DD003HN0I): apply the hull's run stats
+    // and the hangar-resolved starting loadout through the shared deployment
+    // applier, after the run defaults are in place (so the hull's lives are
+    // not overwritten by `startGame()`). The arcade run passes no deployment
+    // and is completely unchanged.
+    if (this.hangarWarDeployment) {
+      applyHangarWarDeployment(
+        {
+          getPlayer: () => this.player,
+          setStartingLives: (lives) => {
+            this.gameState.lives = lives;
+            this.effectsRegistry.setLives(lives);
+          },
+        },
+        this.hangarWarDeployment,
+      );
+    }
     // Hold capacity (first hold) and its growth multiplier come from the
     // game-rules config, so the game and every gym progress identically
     // (GDD §4.5, AH-0MUKC6IML0082ZR4).
@@ -1191,11 +1254,17 @@ export class PlayScene extends CombatScene<
     }
     // Checkpoint resume (AH-0MVCRBTNF000DK51): start at the saved level and
     // restore the run stats/permanent progress before the first wave spawns.
+    // A hangar deployment selects its level from the target hex's aggression
+    // (AH-0MVUXC2DD003HN0I) through the same shipped difficulty curves; it is
+    // honoured in production, unlike the dev-gated `startLevel` seam, because
+    // it is a shipped mode rather than a capture tool.
     const resume = this.pendingResumeCheckpoint;
     this.pendingResumeCheckpoint = null;
     this.resumeFromCheckpoint = false;
     this.waveManager.beginGame(
-      resume?.level ?? this.devStartLevel,
+      resume?.level
+        ?? this.hangarWarDeployment?.startLevel
+        ?? this.devStartLevel,
       resume ? 1 : this.devStartWave,
     );
     // Publish the live run position for a generated-level capture driver
@@ -3384,22 +3453,28 @@ export class PlayScene extends CombatScene<
    * progression the run had earned (schema v2, AH-0MVT1DYO5004UC4P).
    */
   private _saveCheckpoint(context: MiniBossDefeatContext): void {
-    const resumeLevel = Math.min(context.level + 1, MAX_LEVEL);
-    const checkpoint: Checkpoint = {
-      version: CHECKPOINT_VERSION,
-      level: resumeLevel,
-      wave: 1,
-      lives: this.gameState.lives,
-      score: this.gameState.score,
-      minerals: this.gameState.minerals,
-      mineralHoldCapacity: this.gameState.mineralCapacity,
-      weaponLevels: this.player?.getWeaponLevels() ?? [],
-      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
-      unlockedWeapons: this.getUnlockedWeapons(),
-      runSeed: this.getRunSeed(),
-      savedAt: new Date().toISOString(),
-    };
-    saveCheckpoint(checkpoint);
+    // A hangar-war deployment is a separate session (AH-0MVUXC2DD003HN0I): it
+    // must never write the arcade checkpoint, so Continue can only ever belong
+    // to the shipped arcade run. The checkpoint *moment* still banks salvage —
+    // that is the hangar economy both modes share (AH-0MVUXC118004B4OX).
+    if (!this.hangarWarDeployment) {
+      const resumeLevel = Math.min(context.level + 1, MAX_LEVEL);
+      const checkpoint: Checkpoint = {
+        version: CHECKPOINT_VERSION,
+        level: resumeLevel,
+        wave: 1,
+        lives: this.gameState.lives,
+        score: this.gameState.score,
+        minerals: this.gameState.minerals,
+        mineralHoldCapacity: this.gameState.mineralCapacity,
+        weaponLevels: this.player?.getWeaponLevels() ?? [],
+        powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+        unlockedWeapons: this.getUnlockedWeapons(),
+        runSeed: this.getRunSeed(),
+        savedAt: new Date().toISOString(),
+      };
+      saveCheckpoint(checkpoint);
+    }
     // The same checkpoint moment banks the run's salvage into the persistent
     // hangar economy (AH-0MVUXC118004B4OX): one shared seam for the arcade run
     // and a hex deployment, no divergent copy.
@@ -3477,6 +3552,26 @@ export class PlayScene extends CombatScene<
   /** The salvage the last lost run forfeited (end-of-run summary seam). */
   getForfeitedSalvage(): SalvageAmounts {
     return { ...this.forfeitedSalvage };
+  }
+
+  /**
+   * Whether this run is a hangar-war deployment rather than the shipped
+   * arcade run (AH-0MVUXC2DD003HN0I). Exposed so tests can pin the mode
+   * separation without reading private state.
+   */
+  isHangarWarRun(): boolean {
+    return this.hangarWarDeployment !== null;
+  }
+
+  /**
+   * The hangar-war deployment this run launched with, or `null` for the arcade
+   * run (AH-0MVUXC2DD003HN0I). A detached copy, so callers cannot mutate the
+   * run's launch data.
+   */
+  getHangarWarDeployment(): HangarWarDeployment | null {
+    return this.hangarWarDeployment === null
+      ? null
+      : { ...this.hangarWarDeployment };
   }
 
   /**

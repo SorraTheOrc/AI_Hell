@@ -31,6 +31,7 @@ import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
 import type { HangarEntry } from '../data/hangarCatalogue';
 import { HANGAR_CATALOGUE } from '../data/hangarCatalogue';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
+import { PlayScene } from './PlayScene';
 import {
   HANGAR_SCREEN_TITLE,
   buildHangarModifierOptions,
@@ -212,14 +213,33 @@ describe('hangar screen model (pure)', () => {
       'buy:cluster',
       'buy:hardened_plating',
       'hull:hull-2',
+      'deploy',
     ]);
   });
 
-  it('has an empty focus order when nothing can be activated', () => {
+  it('has only the deployment in the focus order when nothing can be activated', () => {
     const model = buildHangarScreenModel(BROKE_PAYLOAD);
-    expect(model.focusOrder).toEqual([]);
+    // A fleet can always deploy, even with nothing affordable.
+    expect(model.focusOrder).toEqual(['deploy']);
+    expect(model.deployRow.actionable).toBe(true);
     expect(model.unlockRows.every((row) => !row.actionable)).toBe(true);
     expect(model.modifierOptions).toEqual([]);
+  });
+
+  it('builds the deployment row from the pure deployment payload', () => {
+    const model = buildHangarScreenModel(VALID_HANGAR_WAR_PAYLOAD);
+    // hex-1 is held; the weakest *unheld* hex is hex-2 (aggression 3), which
+    // selects campaign level 4 through the shipped difficulty curves.
+    expect(model.deployRow).toMatchObject({
+      key: 'deploy',
+      hexId: 'hex-2',
+      aggression: 3,
+      startLevel: 4,
+      actionable: true,
+    });
+    expect(model.deployRow.label).toContain('hex hex-2');
+    expect(model.deployRow.label).toContain('aggression 3');
+    expect(model.deployRow.label).toContain('level 4');
   });
 
   it('lists owned modifiers in the deployment selector', () => {
@@ -235,8 +255,9 @@ describe('hangar screen model (pure)', () => {
         actionable: true,
       },
     ]);
-    // Nothing else is affordable, so the modifier is the only focusable row.
-    expect(model.focusOrder).toEqual(['modifier:hardened_plating']);
+    // Nothing else is affordable, so the modifier and the deployment are the
+    // focusable rows (a deployment is always possible).
+    expect(model.focusOrder).toEqual(['modifier:hardened_plating', 'deploy']);
     // An unknown modifier id in the owned set is not presented as an option.
     expect(
       buildHangarModifierOptions({
@@ -407,6 +428,7 @@ describe('HangarScene', () => {
       'hull:hull-1',
       'hull:hull-2',
       'weapon:spread',
+      'deploy',
     ]);
     // Rendering is read-only: nothing is written to storage until a change.
     expect(storage.entries.size).toBe(0);
@@ -545,10 +567,10 @@ describe('HangarScene', () => {
     const storage = memoryStorage(BROKE_PAYLOAD);
     const scene = await bootHangar({ storage });
 
-    expect(scene.getFocusedKey()).toBeNull();
-    scene.activateFocused();
-    pressKey(scene, { key: 'Enter' });
+    // Only the deployment is focusable; no purchase/equip row can be reached.
+    expect(scene.getFocusedKey()).toBe('deploy');
     pressKey(scene, { key: 'Tab' });
+    expect(scene.getFocusedKey()).toBe('deploy');
 
     // An unaffordable row is neither focusable nor interactive.
     const ricochet = rowFor(scene, 'buy:ricochet');
@@ -560,8 +582,48 @@ describe('HangarScene', () => {
 
     expect(scene.getPayload()).toEqual(BROKE_PAYLOAD);
     expect(scene.getPayload().hangar.bankedMinerals).toBe(0);
+    // A refused/unavailable row never writes to storage (the deploy row writes
+    // nothing either, because it was never activated).
     expect(storage.entries.get(HANGAR_WAR_STORAGE_KEY)).toBe(
       JSON.stringify(BROKE_PAYLOAD),
     );
+  });
+
+  it('launches a deployment into the shipped PlayScene with the hangar payload', async () => {
+    booted = await bootScene([HangarScene, PlayScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: VALID_HANGAR_WAR_PAYLOAD,
+      storage: null,
+    });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+
+    const deployment = scene.deploy();
+    await advanceGame(booted.game, 350);
+
+    expect(booted.game.scene.isActive('PlayScene')).toBe(true);
+    const play = booted.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isHangarWarRun()).toBe(true);
+    expect(play.getHangarWarDeployment()).toEqual(deployment);
+    // hex-2 (unheld, aggression 3) selects campaign level 4.
+    expect(play.getWaveManager().level).toBe(4);
+  });
+
+  it('launches the deployment from the DEPLOY row on a pointer click', async () => {
+    booted = await bootScene([HangarScene, PlayScene]);
+    booted.game.scene.start(HANGAR_SCENE_KEY, {
+      payload: VALID_HANGAR_WAR_PAYLOAD,
+      storage: null,
+    });
+    await advanceGame(booted.game, 200);
+    const scene = booted.game.scene.getScene(HANGAR_SCENE_KEY) as HangarScene;
+
+    rowFor(scene, 'deploy').text.emit('pointerdown');
+    await advanceGame(booted.game, 350);
+
+    expect(booted.game.scene.isActive('PlayScene')).toBe(true);
+    const play = booted.game.scene.getScene('PlayScene') as PlayScene;
+    expect(play.isHangarWarRun()).toBe(true);
+    expect(play.getHangarWarDeployment()!.hexId).toBe('hex-2');
   });
 });

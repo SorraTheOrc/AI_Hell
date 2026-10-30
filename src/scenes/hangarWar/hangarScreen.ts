@@ -15,6 +15,11 @@
  *   decisions and applies them through the shared pure updaters
  *   ({@link purchaseHangarEntry}, {@link equipHangarHull},
  *   {@link toggleHangarWeapon}), which return a fresh payload.
+ * - **The deployment is a launch, not a loadout rule.** The ▶ DEPLOY row is
+ *   built from the same pure deployment payload builder the game's scene
+ *   hands to `PlayScene` (`./hangarDeployment`), so the hull, starting
+ *   weapons, modifiers and hex-aggression difficulty shown on the screen are
+ *   exactly the ones a deployment carries (AH-0MVUXC2DD003HN0I).
  * - **One screen code path.** {@link buildHangarScreenModel} and
  *   {@link renderHangarScreen} are used by the shipped `HangarScene` *and* by
  *   the `GymHangar` parity scene (which renders the same model read-only), so
@@ -53,6 +58,10 @@ import type {
   HangarWarPayload,
   HexRingState,
 } from '../../core/hangarWar/types';
+import {
+  buildHangarDeployment,
+  type HangarWarDeployment,
+} from './hangarDeployment';
 import { FocusManager } from '../../utils/focusManager';
 
 /** Title rendered by the hangar screen (asserted by tests). */
@@ -135,6 +144,26 @@ export interface HangarModifierOption {
   actionable: boolean;
 }
 
+/**
+ * The primary deployment action row, built from the pure deployment payload
+ * (AH-0MVUXC2DD003HN0I). It is always actionable: a fleet can always deploy,
+ * even with the minimal starting kit and an empty ring.
+ */
+export interface HangarDeployRow {
+  /** Row key (`deploy`). */
+  key: 'deploy';
+  /** The hex this deployment attacks, or `null` while the ring is empty. */
+  hexId: string | null;
+  /** The target hex's aggression (the difficulty input). */
+  aggression: number;
+  /** The campaign level the aggression selected. */
+  startLevel: number;
+  /** Full row text as rendered. */
+  label: string;
+  /** Always true: a deployment can always be launched. */
+  actionable: boolean;
+}
+
 /** The complete rendered state of the hangar screen (pure data). */
 export interface HangarScreenModel {
   /** Screen title. */
@@ -151,6 +180,8 @@ export interface HangarScreenModel {
   weaponOptions: HangarWeaponOption[];
   /** Permanent-modifier selector rows, in owned order. */
   modifierOptions: HangarModifierOption[];
+  /** The ▶ DEPLOY row (the deployment this loadout launches). */
+  deployRow: HangarDeployRow;
   /**
    * Keys of the rows that can be activated, in reading order — exactly the
    * rows registered with the shared `FocusManager` (disabled rows are never
@@ -337,6 +368,33 @@ export function buildHangarModifierOptions(
   return options;
 }
 
+/**
+ * Builds the ▶ DEPLOY row from the pure deployment payload (pure).
+ *
+ * The label states the target and the difficulty it selects — the same
+ * `startLevel` the run will actually begin at — so the player can read the
+ * hex-aggression difficulty before committing to the deployment.
+ */
+export function buildHangarDeployRow(
+  payload: HangarWarPayload,
+  catalogue: readonly HangarEntry[] = HANGAR_CATALOGUE,
+): HangarDeployRow {
+  const deployment: HangarWarDeployment = buildHangarDeployment(payload, {
+    catalogue,
+  });
+  const target = deployment.hexId === null ? 'no hex' : `hex ${deployment.hexId}`;
+  return {
+    key: 'deploy',
+    hexId: deployment.hexId,
+    aggression: deployment.aggression,
+    startLevel: deployment.startLevel,
+    label:
+      `▶ DEPLOY — ${target} · aggression ${deployment.aggression}`
+      + ` · level ${deployment.startLevel}`,
+    actionable: true,
+  };
+}
+
 /** The ring progress line (`Ring 1 — 2/6 hexes held`). */
 export function formatRingLine(ring: HexRingState): string {
   const held = ring.hexes.filter((hex) => hex.held).length;
@@ -368,11 +426,13 @@ export function buildHangarScreenModel(
   const hullOptions = buildHangarHullOptions(payload, catalogue);
   const weaponOptions = buildHangarWeaponOptions(payload, catalogue);
   const modifierOptions = buildHangarModifierOptions(payload, catalogue);
+  const deployRow = buildHangarDeployRow(payload, catalogue);
   const focusOrder = [
     ...unlockRows.filter((row) => row.actionable),
     ...hullOptions.filter((row) => row.actionable),
     ...weaponOptions.filter((row) => row.actionable),
     ...modifierOptions.filter((row) => row.actionable),
+    deployRow,
   ].map((row) => row.key);
   return {
     title: HANGAR_SCREEN_TITLE,
@@ -382,6 +442,7 @@ export function buildHangarScreenModel(
     hullOptions,
     weaponOptions,
     modifierOptions,
+    deployRow,
     focusOrder,
   };
 }
@@ -537,6 +598,8 @@ export interface HangarScreenHandlers {
   onToggleWeapon(weaponId: string): void;
   /** Toggle an owned permanent modifier on the loadout. */
   onToggleModifier(modifierId: string): void;
+  /** Launch a deployment at `hexId` (the ▶ DEPLOY row). */
+  onDeploy(hexId: string | null): void;
 }
 
 /** One rendered row, exposed for tests and screen queries. */
@@ -762,6 +825,18 @@ export function renderHangarScreen(
         : undefined,
     );
   });
+
+  // ── Deploy (bottom, the screen's primary action) ─────────────
+  addRow(
+    LEFT_X,
+    GAME_HEIGHT - 52,
+    model.deployRow.key,
+    model.deployRow.label,
+    model.deployRow.actionable,
+    handlers?.onDeploy
+      ? () => handlers.onDeploy!(model.deployRow.hexId)
+      : undefined,
+  );
 
   objects.push(
     scene.add

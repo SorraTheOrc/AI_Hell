@@ -97,6 +97,7 @@ describe('GymHangar', () => {
       ...shipped.hullOptions.map((option) => option.key),
       ...shipped.weaponOptions.map((option) => option.key),
       ...shipped.modifierOptions.map((option) => option.key),
+      shipped.deployRow.key,
     ]);
     // Read-only: no row is actionable, so none is interactive either.
     expect(scene.getRows().every((row) => !row.actionable)).toBe(true);
