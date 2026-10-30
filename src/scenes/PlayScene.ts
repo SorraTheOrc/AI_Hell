@@ -143,6 +143,20 @@ import {
   saveCheckpoint,
   type Checkpoint,
 } from '../core/checkpointStore';
+import {
+  bankSalvage,
+  bankedSalvageFromHangar,
+  forfeitUnbankedSalvage,
+  runSalvageFromRun,
+  type BankedSalvage,
+  type RunSalvage,
+  type SalvageAmounts,
+} from '../core/hangarWar/salvageBanking';
+import {
+  createDefaultPayload,
+  loadHangarWarPayload,
+  saveHangarWarPayload,
+} from '../core/hangarWar/hangarWarStore';
 import { PowerUp } from '../powerups/PowerUp';
 import { EXTRA_LIFE_DROP_ID, getPowerUpById, isWeaponDrop, type DropId, type PowerUpId } from '../powerups/types';
 import { drawPowerUpDrop, drawWeaponDrop } from '../powerups/icons';
@@ -703,6 +717,21 @@ export class PlayScene extends CombatScene<
 
   /** The checkpoint loaded in `init()`, applied once the run exists. */
   private pendingResumeCheckpoint: Checkpoint | null = null;
+
+  /**
+   * Salvage banking for the current run (AH-0MVUXC118004B4OX): the persistent
+   * balance plus this run's idempotence watermark. `null` until the first bank
+   * (or a resume aligned with its checkpoint), so the first bank is seeded from
+   * the stored hangar balance rather than assuming a fresh campaign.
+   */
+  private salvageBank: BankedSalvage | null = null;
+
+  /**
+   * Salvage the last lost run forfeited — what it earned after its last bank
+   * (AH-0MVUXC118004B4OX AC2). The persistent balance is never reduced; this is
+   * the end-of-run summary seam.
+   */
+  private forfeitedSalvage: SalvageAmounts = { minerals: 0, cores: 0 };
 
   /** The options offered by the open mini-boss reward overlay. */
   private miniBossRewardOptions: ChoiceOption[] = [];
@@ -1288,6 +1317,8 @@ export class PlayScene extends CombatScene<
     this.miniBossRewardOptions = [];
     this.miniBossSweepHandle = null;
     this.miniBossSweepTargets = [];
+    this.salvageBank = null;
+    this.forfeitedSalvage = { minerals: 0, cores: 0 };
     this.driftX = 0;
     this.driftDir = 1;
     this.reanchor.reset();
@@ -3369,6 +3400,83 @@ export class PlayScene extends CombatScene<
       savedAt: new Date().toISOString(),
     };
     saveCheckpoint(checkpoint);
+    // The same checkpoint moment banks the run's salvage into the persistent
+    // hangar economy (AH-0MVUXC118004B4OX): one shared seam for the arcade run
+    // and a hex deployment, no divergent copy.
+    this._bankSalvageAtCheckpoint(context);
+  }
+
+  /**
+   * The run's stable salvage-banking identity (AH-0MVUXC118004B4OX). The run
+   * seed uniquely names a run, so a fresh run banks afresh while a resumed run
+   * keeps the same identity.
+   */
+  private _salvageRunId(): string {
+    return `run-${this.getRunSeed()}`;
+  }
+
+  /** The run's cumulative salvage snapshot at one checkpoint moment. */
+  private _salvageSnapshot(checkpointId: string): RunSalvage {
+    return runSalvageFromRun({
+      runId: this._salvageRunId(),
+      checkpointId,
+      // The run economy is untouched: banking copies the held minerals and the
+      // cores the run's mini-boss defeats have earned, never withdraws them.
+      minerals: this.gameState.minerals,
+      cores: this.miniBossDefeats,
+    });
+  }
+
+  /**
+   * Banks the run's salvage at the checkpoint that was just written
+   * (AH-0MVUXC118004B4OX AC1). Adds only what this run earned since its last
+   * bank, so reaching a checkpoint twice can never double-count, and persists
+   * the balance through the versioned hangar-war store.
+   */
+  private _bankSalvageAtCheckpoint(context: MiniBossDefeatContext): void {
+    const payload =
+      loadHangarWarPayload() ?? createDefaultPayload(this.getRunSeed());
+    const bank = this.salvageBank ?? bankedSalvageFromHangar(payload.hangar);
+    const next = bankSalvage(
+      bank,
+      this._salvageSnapshot(`checkpoint-${context.level}-${this.miniBossDefeats}`),
+    );
+    this.salvageBank = next;
+    if (next.minerals === bank.minerals && next.cores === bank.cores) return;
+    payload.hangar.bankedMinerals = next.minerals;
+    payload.hangar.bankedCores = next.cores;
+    saveHangarWarPayload(payload);
+  }
+
+  /**
+   * Settles a lost run (AH-0MVUXC118004B4OX AC2): the run forfeits only the
+   * salvage it earned after its last bank, and the persistent balance (and the
+   * ring it lives beside) is left untouched. Recorded for the end-of-run
+   * summary; nothing is written.
+   */
+  private _forfeitUnbankedSalvage(): void {
+    const payload =
+      loadHangarWarPayload() ?? createDefaultPayload(this.getRunSeed());
+    const bank = this.salvageBank ?? bankedSalvageFromHangar(payload.hangar);
+    const outcome = forfeitUnbankedSalvage(
+      bank,
+      this._salvageSnapshot('run-end'),
+    );
+    this.salvageBank = outcome.banked;
+    this.forfeitedSalvage = outcome.forfeited;
+  }
+
+  /** The banked salvage balance the current run has produced (test/UI seam). */
+  getBankedSalvage(): SalvageAmounts {
+    return {
+      minerals: this.salvageBank?.minerals ?? 0,
+      cores: this.salvageBank?.cores ?? 0,
+    };
+  }
+
+  /** The salvage the last lost run forfeited (end-of-run summary seam). */
+  getForfeitedSalvage(): SalvageAmounts {
+    return { ...this.forfeitedSalvage };
   }
 
   /**
@@ -3429,6 +3537,21 @@ export class PlayScene extends CombatScene<
     const unlocked = new Set<WeaponId>(this.miniBossUnlockState.unlockedWeapons);
     for (const weaponId of checkpoint.unlockedWeapons) unlocked.add(weaponId);
     this.miniBossUnlockState = { unlockedWeapons: unlocked };
+    // A resumed run must not re-bank the salvage its checkpoint already
+    // extracted before the previous death: align the run's watermark with the
+    // restored snapshot so only salvage earned from here on is banked
+    // (AH-0MVUXC118004B4OX AC2). A legacy save with no hangar payload yet is
+    // left as a fresh run, so its restored salvage still banks normally.
+    const payload = loadHangarWarPayload();
+    if (payload) {
+      this.salvageBank = {
+        minerals: payload.hangar.bankedMinerals,
+        cores: payload.hangar.bankedCores,
+        runId: this._salvageRunId(),
+        bankedThisRun: { minerals: checkpoint.minerals, cores: 0 },
+        lastCheckpointId: null,
+      };
+    }
     this._syncMineralHud();
     this._refreshHudText();
   }
@@ -4420,6 +4543,9 @@ export class PlayScene extends CombatScene<
   }
 
   private _finishRun(won: boolean): void {
+    // A lost run forfeits only its unbanked salvage; the hangar balance and the
+    // ring survive the game over (AH-0MVUXC118004B4OX AC2).
+    if (!won) this._forfeitUnbankedSalvage();
     // Run end (win/lose) is a discrete telemetry event (AH-0MUY08VVQ007HSSH).
     this.runTelemetry.runEnd(won, this.gameState.score);
     // Dev-gated end-of-run signal (AH-0MUXZ4BXK001QCEK), emitted *before* the

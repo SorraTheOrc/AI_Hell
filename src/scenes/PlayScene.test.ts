@@ -113,6 +113,11 @@ import {
 } from '../powerups/unlocks';
 import { CHECKPOINT_STORAGE_KEY, loadCheckpoint } from '../core/checkpointStore';
 import {
+  HANGAR_WAR_STORAGE_KEY,
+  loadHangarWarPayload,
+} from '../core/hangarWar/hangarWarStore';
+import { VALID_HANGAR_WAR_PAYLOAD } from '../core/hangarWar/fixtures';
+import {
   POWER_UP_CATALOGUE,
   type DropId,
   type PowerUpId,
@@ -7532,6 +7537,67 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(saved!.mineralHoldCapacity).toBe(20);
     expect(saved!.runSeed).toBe(scene.getRunSeed());
     expect(saved!.weaponLevels.some((entry) => entry.id === 'spread')).toBe(true);
+  });
+
+  it('AH-0MVUXC118004B4OX AC1 — each checkpoint banks only the salvage earned since the previous one', async () => {
+    localStorage.removeItem(HANGAR_WAR_STORAGE_KEY);
+    const scene = await bootMiniBossCampaign();
+    // A roomy hold keeps the walk free of hold-full pauses, so the minerals
+    // asserted here are exactly the ones the checkpoint sees.
+    scene.getGameState().mineralCapacity = 20;
+    advanceToMiniBoss(scene);
+    scene.getGameState().minerals = 5;
+
+    killMiniBoss(scene);
+
+    // The first checkpoint banks the run's held minerals and its mini-boss core.
+    const first = loadHangarWarPayload();
+    expect(first).not.toBeNull();
+    expect(first!.hangar.bankedMinerals).toBe(5);
+    expect(first!.hangar.bankedCores).toBe(1);
+
+    // Earning two more minerals before the next checkpoint banks only those
+    // two (the balance becomes 7, never 5 + 7), and the second core.
+    advanceToMiniBoss(scene);
+    scene.getGameState().minerals = 7;
+    killMiniBoss(scene);
+
+    const second = loadHangarWarPayload();
+    expect(second!.hangar.bankedMinerals).toBe(7);
+    expect(second!.hangar.bankedCores).toBe(2);
+    expect(scene.getBankedSalvage()).toEqual({ minerals: 7, cores: 2 });
+  });
+
+  it('AH-0MVUXC118004B4OX AC2 — a game over forfeits only the unbanked salvage and keeps the hangar and ring', async () => {
+    // A pre-existing save with a partial ring proves the game over can neither
+    // reduce the balance nor drop the ring state.
+    localStorage.setItem(
+      HANGAR_WAR_STORAGE_KEY,
+      JSON.stringify(VALID_HANGAR_WAR_PAYLOAD),
+    );
+    const scene = await bootMiniBossCampaign();
+    scene.getGameState().mineralCapacity = 20;
+    advanceToMiniBoss(scene);
+    scene.getGameState().minerals = 4;
+    const bankedMinerals = VALID_HANGAR_WAR_PAYLOAD.hangar.bankedMinerals;
+    const bankedCores = VALID_HANGAR_WAR_PAYLOAD.hangar.bankedCores;
+
+    killMiniBoss(scene);
+    expect(loadHangarWarPayload()!.hangar.bankedMinerals).toBe(
+      bankedMinerals + 4,
+    );
+    expect(loadHangarWarPayload()!.hangar.bankedCores).toBe(bankedCores + 1);
+
+    // Three minerals (and no core) earned after the bank are forfeit when the
+    // run dies before another checkpoint — the banked balance is untouched.
+    scene.getGameState().minerals = 7;
+    (scene as unknown as { _finishRun(won: boolean): void })._finishRun(false);
+
+    const afterDeath = loadHangarWarPayload();
+    expect(afterDeath!.hangar.bankedMinerals).toBe(bankedMinerals + 4);
+    expect(afterDeath!.hangar.bankedCores).toBe(bankedCores + 1);
+    expect(afterDeath!.ring).toEqual(VALID_HANGAR_WAR_PAYLOAD.ring);
+    expect(scene.getForfeitedSalvage()).toEqual({ minerals: 3, cores: 0 });
   });
 
   it('AH-0MVH85XXZ008INE2 — a defeated mini-boss leaves no graphics behind', async () => {
