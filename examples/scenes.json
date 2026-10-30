@@ -113,6 +113,22 @@
       }
     },
     {
+      "target": "GymHexWar",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family \u2014 hex war ring harness (read-only ring and frontier ticks)",
+      "setup": {
+        "player": {
+          "weapons": [
+            "cannon"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {},
+        "seed": 8086
+      }
+    },
+    {
       "target": "GymLevel",
       "playMs": 2000,
       "captureMs": 10000,

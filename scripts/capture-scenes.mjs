@@ -58,6 +58,7 @@ export const WATCHABLE_GYM_SCENE_KEYS = Object.freeze([
   'GymCentipede',
   'GymCurveSequencer',
   'GymHangar',
+  'GymHexWar',
   'GymMinerals',
   'GymMiniBoss',
   'GymPlayer',

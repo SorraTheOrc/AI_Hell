@@ -220,7 +220,7 @@ describe('docs/GYM_PARITY.md records every gym scene (AH-0MVRMHUOG005P38A)', () 
   const matrix = fs.readFileSync(GYM_PARITY_MATRIX, 'utf8');
   const sceneKeys = gymSceneKeys(GYM_SCENE_DIR);
 
-  it('audits the 15 production gym scenes (AC1)', () => {
+  it('audits the 16 production gym scenes (AC1)', () => {
     expect(sceneKeys).toEqual([
       'GymBoss',
       'GymBotTuning',
@@ -228,6 +228,7 @@ describe('docs/GYM_PARITY.md records every gym scene (AH-0MVRMHUOG005P38A)', () 
       'GymCurveSequencer',
       'GymFodderEnemies',
       'GymHangar',
+      'GymHexWar',
       'GymLevel',
       'GymMinerals',
       'GymMiniBoss',
