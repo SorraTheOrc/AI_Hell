@@ -11,6 +11,10 @@
  * - AC5: every power-up has at least one meaningful level axis.
  * - AC6: the ownership/level contract for the hold-full choice.
  * - AC7: these tests.
+ *
+ * Also covers the consumable-persistence half of the temporary-revert
+ * contract: a temporary level reverts while the lives / Phase Shift charges /
+ * Teleport uses it already granted survive (AH-0MVUGI4WG008HU3M AC1).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -794,21 +798,67 @@ describe('PowerUpLevelStore — temporary/permanent split (F1 contract)', () => 
     expect(store.getPermanentLevel('magnet')).toBe(1);
   });
 
-  it('persists unconsumed consumable grants across clearTemporary (Resolved decision 1b)', () => {
-    const store = new PowerUpLevelStore();
-    store.collect('teleport');
-    const teleports = store.teleportStacks();
-    expect(teleports).toBeGreaterThan(0);
-    store.clearTemporary('teleport');
-    expect(store.getEffectiveLevel('teleport')).toBe(0);
-    expect(store.teleportStacks()).toBe(teleports); // not clawed back
+  // ── Consumables persist across a temporary-level revert
+  //    (AH-0MVUGI4WG008HU3M AC1, parent Resolved decision 2) ────────────
+  //
+  // A consumable grant is a *resource* (lives / charges / stored uses), not a
+  // level: reverting the temporary level must never claw the resource back,
+  // and the resource itself carries no timer. Driven as a table over all
+  // three consumable kinds so a future kind cannot be missed.
+  const CONSUMABLES: ReadonlyArray<{
+    id: PowerUpId;
+    resource: (store: PowerUpLevelStore) => number;
+  }> = [
+    { id: 'extra_life', resource: (store) => store.lives() },
+    { id: 'phase_shift', resource: (store) => store.phaseCharges() },
+    { id: 'teleport', resource: (store) => store.teleportStacks() },
+  ];
 
+  for (const { id, resource } of CONSUMABLES) {
+    it(`${id}: clearTemporary reverts the level but keeps the granted resource`, () => {
+      const store = new PowerUpLevelStore();
+      const before = resource(store);
+      store.collect(id);
+      const granted = resource(store);
+      expect(granted).toBeGreaterThan(before);
+      expect(store.getEffectiveLevel(id)).toBe(1);
+
+      store.clearTemporary(id);
+
+      // Only the level reverts…
+      expect(store.getEffectiveLevel(id)).toBe(0);
+      expect(store.getTempStacks(id)).toBe(0);
+      expect(store.getTempPowerUpIds()).not.toContain(id);
+      // …the already-granted resource is never clawed back.
+      expect(resource(store)).toBe(granted);
+    });
+
+    it(`${id}: a long recharge tick never consumes the granted resource`, () => {
+      const store = new PowerUpLevelStore();
+      store.collect(id);
+      const granted = resource(store);
+
+      // An hour of run time — far beyond any window — must neither expire nor
+      // auto-consume a consumable (consumables never carry a timer).
+      store.tickRecharge(3600);
+
+      expect(resource(store)).toBe(granted);
+    });
+  }
+
+  it('phase_shift: the recharge pool stays intact after the level reverts', () => {
+    const store = new PowerUpLevelStore();
     store.collect('phase_shift');
-    const charges = store.phaseCharges();
-    expect(charges).toBeGreaterThan(0);
+    expect(store.consumePhaseCharge()).toBe(true);
+    expect(store.phaseCharges()).toBe(0);
+
     store.clearTemporary('phase_shift');
     expect(store.getEffectiveLevel('phase_shift')).toBe(0);
-    expect(store.phaseCharges()).toBe(charges);
+
+    // The in-flight recharge timer survives the level revert and still
+    // returns the spent charge to the pool.
+    store.tickRecharge(store.phaseRechargeTime());
+    expect(store.phaseCharges()).toBe(1);
   });
 
   it('reset clears both the permanent and temporary level state', () => {

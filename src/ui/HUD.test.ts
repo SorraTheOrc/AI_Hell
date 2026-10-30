@@ -902,6 +902,97 @@ describe('HUD Mystery UFO row (AH-0MV1BIXFO006Z1I7)', () => {
   });
 });
 
+describe('HUD temporary window on the newly windowed kinds (AH-0MVUGI4WG008HU3M AC3)', () => {
+  /**
+   * The one-shot kinds that show a row only while permanently owned. A field
+   * pickup on top of the permanent base opens a temporary level window, so the
+   * row must read a live countdown and then settle back to `∞`; a field-only
+   * pickup must still leave no row (the parent's row-visibility rule).
+   */
+  const PERMANENT_ROW_KINDS = ['bomb', 'smart_bomb', 'strike'] as const;
+
+  /** Parses the whole-second countdown out of a `Ns` value column. */
+  function countdownSeconds(value: string): number {
+    expect(value).toMatch(/^\d+s$/);
+    return Number.parseInt(value, 10);
+  }
+
+  for (const id of PERMANENT_ROW_KINDS) {
+    it(`${id}: a permanent row counts down during a field window, then reads ∞`, async () => {
+      const reg = new EffectsRegistry();
+      reg.applyCollect(id, true); // permanent base → row, ∞
+      reg.applyCollect(id, false); // field pickup → temporary level window
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      const during = hud.getRows().find((r) => r.id === id)!;
+      expect(during).toBeDefined();
+      expect(during.temporary).toBe(true);
+      const opened = countdownSeconds(during.value);
+      expect(opened).toBeGreaterThan(0);
+
+      // The countdown is live, not a frozen snapshot.
+      reg.tick(1);
+      hud.refresh();
+      const ticked = hud.getRows().find((r) => r.id === id)!;
+      expect(countdownSeconds(ticked.value)).toBe(opened - 1);
+
+      // Expiry reverts the temporary level: the permanent base keeps the row
+      // and the value settles on ∞.
+      reg.tick(reg.powerUpTemporaryRemaining(id)! + 0.1);
+      hud.refresh();
+      const settled = hud.getRows().find((r) => r.id === id)!;
+      expect(settled.temporary).toBe(false);
+      expect(settled.value).toBe(PERMANENT_VALUE);
+      destroy(game);
+    });
+
+    it(`${id}: a field-only pickup opens a window but leaves no row`, async () => {
+      const reg = new EffectsRegistry();
+      reg.applyCollect(id, false);
+      expect(reg.powerUpTemporaryRemaining(id)).toBeGreaterThan(0);
+
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      expect(hud.getRows().some((r) => r.id === id)).toBe(false);
+      destroy(game);
+    });
+  }
+
+  // Teleport's row is kept visible by the stored-use pool, so a field-only
+  // pickup counts down and then settles on `∞` even though the level reverted
+  // to zero — the consumable itself persists (AC1 + AC3 together).
+  it('teleport: the row counts down during the field window, then reads ∞', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport', false); // field pickup: temp level + 1 stored use
+    expect(reg.teleportStacks()).toBeGreaterThan(0);
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const during = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(during.temporary).toBe(true);
+    const opened = countdownSeconds(during.value);
+
+    reg.tick(1);
+    hud.refresh();
+    const teleportValue = () =>
+      hud.getRows().find((r) => r.id === 'teleport')!.value;
+    expect(countdownSeconds(teleportValue())).toBe(opened - 1);
+
+    reg.tick(reg.powerUpTemporaryRemaining('teleport')! + 0.1);
+    hud.refresh();
+    const settled = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(settled.temporary).toBe(false);
+    expect(settled.value).toBe(PERMANENT_VALUE);
+    // The level reverted but the stored use survived, so the row remains.
+    expect(reg.powerUpLevel('teleport')).toBe(0);
+    expect(reg.teleportStacks()).toBeGreaterThan(0);
+    destroy(game);
+  });
+});
+
 describe('HUD lives list layout (AH-0MU7JTFY1006QA8I)', () => {
   /** Rendered HUD texts, in container iteration order. */
   function hudTextObjects(hud: HUD): Phaser.GameObjects.Text[] {

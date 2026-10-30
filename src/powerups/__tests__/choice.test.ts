@@ -23,7 +23,10 @@ import {
 } from '../choice';
 import { SLOTS_FULL_EXEMPT_IDS } from '../slots';
 import { summariseWeaponLevelChange } from '../../utils/weaponLevels';
-import { summarisePowerUpLevelChange } from '../powerUpLevels';
+import {
+  PowerUpLevelStore,
+  summarisePowerUpLevelChange,
+} from '../powerUpLevels';
 import { buildUpgradeOptions } from '../unlocks';
 import { getHelpDescription } from '../../utils/gymHelp';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
@@ -420,6 +423,56 @@ describe('power-up choice strategy', () => {
       expect(p3.kind).toBe('power-up-level');
       expect(p3.level).toBe(2);
       expect(p3.isNew).toBeUndefined();
+    });
+
+    // AH-0MVUGI4WG008HU3M AC2: a temporary (field-pickup) level on top of a
+    // permanent one must never inflate the offer, flip it back to `★ New`, or
+    // change its delta — before, during and after the window.
+    it('prices the permanent level only across a temporary window on the same kind', () => {
+      const store = new PowerUpLevelStore();
+      store.collect('shield', true); // permanent level 1
+
+      const context = (): ChoiceContext => ({
+        weaponLevels: [],
+        powerUpLevels: store.getLevels(),
+        tempPowerUpIds: store.getTempPowerUpIds(),
+      });
+
+      const shieldOffer = () => {
+        const candidates = buildChoiceCandidates(CHOICE_POOL, context());
+        const offers = candidates.filter((o) => o.id === 'shield');
+        // Exactly one offer for the kind — never a base entry beside it.
+        expect(offers).toHaveLength(1);
+        return offers[0];
+      };
+
+      const before = shieldOffer();
+      expect(before.kind).toBe('power-up-level');
+      expect(before.level).toBe(2);
+      expect(before.isNew).toBeUndefined();
+
+      // A field pickup raises the *effective* level to 2; the offer must stay
+      // priced on the permanent level 1 → 2 (no temporary inflation).
+      store.collect('shield');
+      expect(store.getEffectiveLevel('shield')).toBe(2);
+      const during = shieldOffer();
+      expect(during.kind).toBe('power-up-level');
+      expect(during.level).toBe(2);
+      expect(during.isNew).toBeUndefined();
+      expect(during.changeSummary).toBe(before.changeSummary);
+      expect(during.changeSummary).toBe(
+        summarisePowerUpLevelChange('shield', 1, 2),
+      );
+
+      // After expiry the offer is identical again — no `★ New` regression for
+      // an item the player still permanently owns.
+      store.clearTemporary('shield');
+      expect(store.getEffectiveLevel('shield')).toBe(1);
+      const after = shieldOffer();
+      expect(after.kind).toBe('power-up-level');
+      expect(after.level).toBe(2);
+      expect(after.isNew).toBeUndefined();
+      expect(after.changeSummary).toBe(before.changeSummary);
     });
   });
 

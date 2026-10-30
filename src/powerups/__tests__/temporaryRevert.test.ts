@@ -37,6 +37,11 @@
  * regression turns the suite red instead of silently passing an expected
  * failure.
  *
+ * AH-0MVUGI4WG008HU3M (parent AC4/AC6) extends the table with the two
+ * consequences that must follow the expiry: the already-granted consumable
+ * resources survive it (AC1) and the six-slot occupancy is released for every
+ * kind (AC4).
+ *
  * @module powerups/__tests__/temporaryRevert
  */
 
@@ -52,6 +57,7 @@ import {
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
 } from '../powerUpLevels';
+import { SLOTS_FULL_EXEMPT_IDS, resolveSlotState } from '../slots';
 import type { PowerUpId } from '../types';
 
 /** Extra seconds past a window so the expiry tick is unambiguous. */
@@ -221,6 +227,119 @@ function expectPermanentGrantMidWindowReverts(id: PowerUpId): void {
 }
 
 // ── The contract table ──────────────────────────────────────────────
+
+// ── Consumables persist across the real window expiry
+//    (AH-0MVUGI4WG008HU3M AC1, parent Resolved decision 2) ────────────
+//
+// Driven through the registry's real expiry path (`tick`), not a manual
+// `clearTemporary`: a consumable is a resource, so reverting the level must
+// leave lives / charges / stored teleports untouched, and a long run must
+// never expire or auto-consume them.
+
+describe('consumables survive the temporary-level expiry (AH-0MVUGI4WG008HU3M AC1)', () => {
+  const CONSUMABLES: ReadonlyArray<{
+    id: PowerUpId;
+    resource: (store: PowerUpLevelStore) => number;
+  }> = [
+    { id: 'extra_life', resource: (store) => store.lives() },
+    { id: 'phase_shift', resource: (store) => store.phaseCharges() },
+    { id: 'teleport', resource: (store) => store.teleportStacks() },
+  ];
+
+  for (const { id, resource } of CONSUMABLES) {
+    it(`${id}: the level reverts at its window, the granted resource stays`, () => {
+      const store = new PowerUpLevelStore();
+      const reg = new EffectsRegistry(store);
+
+      reg.applyCollect(id, false);
+      const granted = resource(store);
+      expect(granted).toBeGreaterThan(0);
+      expect(store.getEffectiveLevel(id)).toBe(1);
+
+      reg.tick(expiryTick(id, 0));
+
+      expect(store.getEffectiveLevel(id)).toBe(0);
+      expect(store.getTempStacks(id)).toBe(0);
+      expect(resource(store)).toBe(granted);
+
+      // Ten more minutes of run time never consumes an unconsumed
+      // consumable: only the level had a timer, the resource never does.
+      reg.tick(600);
+      expect(resource(store)).toBe(granted);
+    });
+  }
+});
+
+// ── Slot accounting follows the expiry (AH-0MVUGI4WG008HU3M AC4) ────
+//
+// The six-slot occupancy is derived from `getLevels()` + `getTempPowerUpIds()`,
+// so a temporary stack must stop occupying a slot when its own window expires
+// — for *every* kind, including the seven instant kinds that had no window
+// before AH-0MVUGI448000GNMJ. A permanently-owned kind keeps its slot.
+
+describe('slot accounting follows the temporary window (AH-0MVUGI4WG008HU3M AC4)', () => {
+  /** The run's derived slot state straight from the shared store snapshots. */
+  function slotState(store: PowerUpLevelStore) {
+    return resolveSlotState(
+      store.getLevels(),
+      [],
+      store.getTempPowerUpIds(),
+    );
+  }
+
+  for (const id of POWER_UP_LEVEL_IDS) {
+    it(`${id}: a field-only pickup releases its slot at expiry`, () => {
+      const store = new PowerUpLevelStore();
+      const reg = new EffectsRegistry(store);
+
+      const baseline = slotState(store);
+      expect(baseline.used).toBe(0);
+
+      reg.applyCollect(id, false);
+
+      const held = slotState(store);
+      expect(store.getTempPowerUpIds()).toContain(id);
+      expect(held.heldIds.has(id)).toBe(true);
+      // Exempt kinds are held but never *counted* (producer Q7a), so only the
+      // counted kinds must raise `used` by one.
+      const counted = !SLOTS_FULL_EXEMPT_IDS.includes(id);
+      expect(held.used).toBe(counted ? 1 : 0);
+
+      // The window the field pickup opened at effective level 1 → upgrade 0.
+      reg.tick(expiryTick(id, 0));
+
+      const released = slotState(store);
+      expect(store.getTempPowerUpIds()).not.toContain(id);
+      expect(released.heldIds.has(id)).toBe(false);
+      expect(released.used).toBe(baseline.used);
+      expect(released.free).toBe(baseline.free);
+    });
+  }
+
+  const PERMANENT_CONTROLS: readonly PowerUpId[] = ['shield', 'bomb'];
+
+  for (const id of PERMANENT_CONTROLS) {
+    it(`${id}: a permanently-owned kind keeps its slot after the window expires`, () => {
+      const store = new PowerUpLevelStore();
+      const reg = new EffectsRegistry(store);
+
+      reg.applyCollect(id, true); // permanent grant owns the slot
+      reg.applyCollect(id, false); // field pickup on top: same slot
+
+      expect(slotState(store).used).toBe(1);
+
+      // The field pickup opened at effective level 2 → upgrade level 1.
+      reg.tick(expiryTick(id, 1));
+
+      const settled = slotState(store);
+      expect(store.getTempPowerUpIds()).not.toContain(id);
+      expect(store.getPermanentLevel(id)).toBe(1);
+      expect(settled.ownedIds.has(id)).toBe(true);
+      expect(settled.heldIds.has(id)).toBe(true);
+      expect(settled.used).toBe(1);
+    });
+  }
+});
 
 describe('temporary-revert contract (AH-0MVUGI3BF00423OO, F1)', () => {
   it('states a window for every POWER_UP_LEVEL_IDS kind and nothing else', () => {
