@@ -1119,6 +1119,21 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
     expect(def.impactFx!.duration).toBeLessThanOrEqual(0.16);
   });
 
+  test('Railgun declares a heavy sky-blue launch flash between the cannon and the wave laser (AH-0MVQ6C1YL003HU9K)', () => {
+    const def = WEAPON_CATALOGUE.railgun;
+    // The launch cue completes the Railgun's feel package: a sky-blue flash at
+    // the hull sized for a heavy single shot — bigger than the cannon's pop,
+    // smaller than the wave laser's wide flare.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.railgun);
+    const cannon = WEAPON_CATALOGUE.cannon.muzzleFlash!;
+    const waveLaser = WEAPON_CATALOGUE.wave_laser.muzzleFlash!;
+    expect(def.muzzleFlash!.radius).toBeGreaterThan(cannon.radius);
+    expect(def.muzzleFlash!.radius).toBeLessThan(waveLaser.radius);
+    expect(def.muzzleFlash!.duration).toBeGreaterThan(cannon.duration);
+    expect(def.muzzleFlash!.duration).toBeLessThan(waveLaser.duration);
+  });
+
   test('Shard Swarm fires a symmetric five-way fan within ±15°', () => {
     const offsetsDeg = WEAPON_CATALOGUE.shard_swarm.offsets.map(
       (o) => (o * 180) / Math.PI,

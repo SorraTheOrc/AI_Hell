@@ -978,8 +978,9 @@ instead.
   same shared seams the original 11 use (AH-0MVMJMCQK004BE9T); the **Railgun**
   is complete — its fire routes through the single shared
   `playWeaponFireSound` dispatcher to the baked `playRailgunFireSound`
-  (`aihell-railgun-fire`), and its tracer declares an `impactFx` so each
-  pierced connect plays the baked `playRailgunImpactSound`
+  (`aihell-railgun-fire`), its launch spawns a sky-blue muzzle flash through the shared
+  combat-core path (AH-0MVQ6C1YL003HU9K), and its tracer declares an `impactFx`
+  so each pierced connect plays the baked `playRailgunImpactSound`
   (`aihell-railgun-impact`) with a sky-blue flash (AH-0MVMIGVCE004VSNA).
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
   skeleton, so levels 1–10 are always present. A configured level overrides its

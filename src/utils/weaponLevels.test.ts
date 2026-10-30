@@ -860,6 +860,7 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
     expect(leveled.bulletShape).toBe(base.bulletShape);
     expect(leveled.bulletRim).toBe(base.bulletRim);
     expect(leveled.bulletTrail).toBe(base.bulletTrail);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
     expect(leveled.impactFx).toEqual(base.impactFx);
   });
 

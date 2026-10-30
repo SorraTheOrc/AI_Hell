@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 
 import * as effectsModule from '../../audio/effects';
 import * as bulletImpactModule from '../../vfx/bulletImpact';
+import * as muzzleFlashModule from '../../vfx/muzzleFlash';
 import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import {
   FORCE_FIELD_COLOR,
@@ -1157,6 +1158,34 @@ describe('CombatScene — shared combat core hook contract', () => {
     // shot, so the connect routes through the shared seam with no per-scene
     // code.
     expect(shot!.impactFx).toEqual(WEAPON_CATALOGUE.railgun.impactFx);
+  });
+
+  it('AH-0MVQ6C1YL003HU9K — an auto-fired railgun spawns its launch flash through the shared core path', async () => {
+    const scene = await boot();
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('railgun');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    // `_autoFire` spawns the muzzle flash from the weapon's `muzzleFlash`
+    // metadata through the one shared spawn path, so the game, GymWeapons and
+    // GymWeaponLeveling all show the identical sky-blue launch cue with no
+    // per-scene code.
+    expect(flash).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.railgun,
+        radius: WEAPON_CATALOGUE.railgun.muzzleFlash!.radius,
+        duration: WEAPON_CATALOGUE.railgun.muzzleFlash!.duration,
+      }),
+    );
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
   });
 
   it('AH-0MVMIGVCE004VSNA — a railgun connect plays its baked hit cue and sky-blue impact flash', async () => {
