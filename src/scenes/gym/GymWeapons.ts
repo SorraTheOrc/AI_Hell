@@ -356,6 +356,15 @@ export class GymWeapons extends CombatScene<
     // Advance the absorb VFX for collected drops (cosmetic only).
     this._updateCollectAnimations(dt);
 
+    // ── Shared effect/weapon timers ────────────────────────────────
+    // Advance the same `EffectsRegistry` every other gameplay scene ticks:
+    // the registry's weapon rows (and any power-up window) expire on the one
+    // shared `tick` path, exactly as in `PlayScene`. The ship's own weapon
+    // timers are advanced by `_tickPlayer`; this only keeps the registry
+    // state that the HUD/readouts consume in step with it (gym↔game parity,
+    // AH-0MVUGI5AS0084I1H).
+    this.effectsRegistry.tick(dt);
+
     // Respawn the practice targets a short delay after the AOE weapons
     // have cleared them, so every AOE weapon can be demonstrated again
     // (F6 AC3).

@@ -24,6 +24,7 @@ import {
   POWER_UP_LEVEL_SPECS,
   resolvePowerUpAtLevel,
 } from '../../powerups/powerUpLevels';
+import { grantPermanentPowerUp } from '../../powerups/choiceReward';
 import { getPowerUpById, type PowerUpId } from '../../powerups/types';
 
 // Boots a fresh Phaser game per scene (slow under parallel load) — give the
@@ -125,6 +126,51 @@ describe('GymPowerUpLeveling', () => {
     // Permanent: a temporary-window expiry never claws the grant back.
     store.clearTemporary(freshId);
     expect(player.getPowerUpLevel(freshId)).toBe(2);
+  });
+
+  it('AC1 — a field pickup of an instant and a timed kind on a permanent base reverts through the scene tick', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    const store = player.getPowerUpLevelStore();
+    const registry = scene.getEffectsRegistry();
+
+    const windows: Array<{ id: PowerUpId; remaining: number }> = [];
+
+    // One instant kind (`bomb`, no timed effect of its own) and one timed
+    // kind (`shield`) land on an existing permanent base. Both then take a
+    // field pickup through the shared drop path, collected by the scene tick.
+    for (const id of ['bomb', 'shield'] as PowerUpId[]) {
+      // Hold-full reward → permanent base, through the shared grant seam.
+      grantPermanentPowerUp(id, registry);
+      expect(store.getPermanentLevel(id), `${id} permanent base`).toBe(1);
+
+      scene.spawnDrop(id, player.x, player.y);
+      scene.tick(0.1);
+
+      expect(store.getTempStacks(id), `${id} temporary stack`).toBe(1);
+      expect(player.getPowerUpLevel(id), `${id} raised`).toBe(2);
+
+      const remaining = registry.powerUpTemporaryRemaining(id);
+      expect(remaining, `${id} window open`).toBeGreaterThan(0);
+      windows.push({ id, remaining: remaining! });
+    }
+
+    // Expire both windows through the same scene tick — never the registry
+    // API directly — so the assertion covers the real per-frame consumer.
+    scene.tick(Math.max(...windows.map((w) => w.remaining)) + 0.5);
+
+    for (const { id } of windows) {
+      expect(store.getTempStacks(id), `${id} temporary cleared`).toBe(0);
+      expect(player.getPowerUpLevel(id), `${id} reverted`).toBe(1);
+      expect(store.getPermanentLevel(id), `${id} permanent retained`).toBe(1);
+      expect(
+        registry.powerUpTemporaryRemaining(id),
+        `${id} window closed`,
+      ).toBeUndefined();
+    }
+
+    // The timed base survives the window; only the temporary level reverted.
+    expect(registry.isActive('shield')).toBe(true);
   });
 
   it('AC3/AC4 — the readout matches the shared resolver at base / first upgrade / mid / cap', async () => {
