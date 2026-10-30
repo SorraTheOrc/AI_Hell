@@ -29,12 +29,13 @@
  *
  * ## Red-before/green-after
  *
- * The seven instant kinds are authored at their pre-fix state using Vitest's
+ * The seven instant kinds were authored at their pre-fix state using Vitest's
  * `it.fails` (the repo's red-before/green-after convention, see
- * `src/core/levelScaling.test.ts`): the recorded red run lives on the work
- * item, and the implementation item flips these to `it` once the per-upgrade
- * TTL lands. A leftover `it.fails` fails the suite, so the flip is
- * deliberate.
+ * `src/core/levelScaling.test.ts`): the recorded red run lives on
+ * AH-0MVUGI3BF00423OO, and AH-0MVUGI448000GNMJ flipped them to `it` when the
+ * per-upgrade TTL windows landed. They are plain `it` cases now, so a
+ * regression turns the suite red instead of silently passing an expected
+ * failure.
  *
  * @module powerups/__tests__/temporaryRevert
  */
@@ -124,15 +125,9 @@ function expiryTick(id: PowerUpId, windowUpgradeLevel: number): number {
   return KIND_WINDOWS[id].seconds(windowUpgradeLevel) + PAST_WINDOW;
 }
 
-/** Runs `body` under `it` for timed kinds and `it.fails` for the red kinds. */
+/** Runs `body` under `it` for every kind (flipped from red once F3 landed). */
 function contractTest(id: PowerUpId, name: string, body: () => void): void {
-  if (KIND_WINDOWS[id].timed) {
-    it(`${id}: ${name}`, body);
-  } else {
-    // Authored red: the instant kinds have no temporary window on the
-    // pre-fix tree. Flip to `it` in the implementation item.
-    it.fails(`${id}: ${name}`, body);
-  }
+  it(`${id}: ${name}`, body);
 }
 
 // ── Case 1 — permanent grant + field pickup ─────────────────────────

@@ -379,7 +379,7 @@ describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
 });
 
 describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', () => {
-  it('shows a finite charge count in the label and ∞ when no phase is active', async () => {
+  it('shows a finite charge count in the label and a countdown while the pickup window is open', async () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift'); // level 1 → +1 charge
     reg.applyCollect('phase_shift'); // level 2 → +2 (level-derived grant)
@@ -388,7 +388,18 @@ describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', (
 
     const row = hud.getRows().find((r) => r.id === 'phase_shift')!;
     expect(row.label).toBe(`Phase Shift Lvl 2 ×${reg.phaseCharges()}`);
-    expect(row.value).toBe(PERMANENT_VALUE);
+    // A field pickup now opens a temporary level window, so the value is a
+    // countdown — not the infinity glyph (AH-0MVUGI448000GNMJ).
+    expect(row.temporary).toBe(true);
+    expect(row.value).toMatch(/s$/);
+
+    // Once the window expires the level is settled for the run and the value
+    // reverts to ∞, with the charge count still shown.
+    reg.tick(reg.powerUpTemporaryRemaining('phase_shift')! + 0.1);
+    hud.refresh();
+    const settled = hud.getRows().find((r) => r.id === 'phase_shift')!;
+    expect(settled.temporary).toBe(false);
+    expect(settled.value).toBe(PERMANENT_VALUE);
     destroy(game);
   });
 
@@ -859,7 +870,7 @@ describe('HUD AC5: reacts to registry changes', () => {
   });
 });
 describe('HUD Mystery UFO row (AH-0MV1BIXFO006Z1I7)', () => {
-  it('renders the catalogue row with the effective level once owned, independent of timed state', async () => {
+  it('renders a countdown while a field-pickup window is open and ∞ once settled', async () => {
     const reg = new EffectsRegistry();
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
@@ -871,9 +882,22 @@ describe('HUD Mystery UFO row (AH-0MV1BIXFO006Z1I7)', () => {
     expect(row).toBeDefined();
     expect(row.name).toBe('Mystery UFO');
     expect(row.label).toBe('Mystery UFO Lvl 1');
-    // No timed window → the row shows the infinity glyph, not a countdown.
-    expect(row.value).toBe(PERMANENT_VALUE);
-    expect(row.temporary).toBe(false);
+    // A field pickup now opens a temporary level window → countdown, not the
+    // infinity glyph (AH-0MVUGI448000GNMJ).
+    expect(row.temporary).toBe(true);
+    expect(row.value).toMatch(/s$/);
+
+    // Expiry clears the temporary level, so a field-only row disappears.
+    reg.tick(reg.powerUpTemporaryRemaining('mystery_ufo')! + 0.1);
+    hud.refresh();
+    expect(hud.getRows().some((r) => r.id === 'mystery_ufo')).toBe(false);
+
+    // A hold-full reward is permanent and opens no window → ∞.
+    reg.applyCollect('mystery_ufo', true);
+    hud.refresh();
+    const permanent = hud.getRows().find((r) => r.id === 'mystery_ufo')!;
+    expect(permanent.temporary).toBe(false);
+    expect(permanent.value).toBe(PERMANENT_VALUE);
     destroy(game);
   });
 });

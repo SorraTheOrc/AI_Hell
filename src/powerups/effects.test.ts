@@ -16,6 +16,7 @@ import {
   POWER_UP_LIVES_START,
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
+  resolveTemporaryWindow,
 } from './powerUpLevels';
 import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
 import { beatPeriodMs } from '../utils/beat';
@@ -1941,5 +1942,182 @@ describe('Orbital Strike next-bolt countdown accessor (AH-0MVS2T40T006QL7H)', ()
       }
       if (reg.updateStrike(0.25)) reg.resolveStrike();
     }
+  });
+});
+
+// ── Instant-kind temporary windows (AH-0MVUGI448000GNMJ) ─────────────
+
+describe('instant-kind temporary windows (AH-0MVUGI448000GNMJ)', () => {
+  /** The seven kinds with no timed effect of their own. */
+  const INSTANT_KINDS: PowerUpId[] = [
+    'bomb',
+    'smart_bomb',
+    'strike',
+    'phase_shift',
+    'teleport',
+    'extra_life',
+    'mystery_ufo',
+  ];
+
+  it('opens a per-upgrade level window for every instant kind and reverts at it', () => {
+    for (const id of INSTANT_KINDS) {
+      const store = new PowerUpLevelStore();
+      const reg = new EffectsRegistry(store);
+
+      reg.applyCollect(id);
+
+      const window = resolveTemporaryWindow(id, store.getUpgradeLevel(id));
+      expect(window).toBe(POWER_UP_CATALOGUE[id].temporaryWindow);
+      expect(reg.powerUpTemporaryRemaining(id)).toBeCloseTo(window, 10);
+      // A level window is not a timed gameplay effect: no effect row and no
+      // timed remaining value (the HUD countdown comes from the level API).
+      expect(reg.isActive(id)).toBe(false);
+      expect(reg.remaining(id)).toBeUndefined();
+      expect(
+        reg
+          .activeEffects()
+          .some((e) => e.id === id && e.remaining !== undefined),
+      ).toBe(false);
+
+      reg.tick(window + 0.1);
+
+      expect(reg.powerUpTemporaryRemaining(id)).toBeUndefined();
+      expect(store.getTempStacks(id)).toBe(0);
+      expect(store.getEffectiveLevel(id)).toBe(0);
+    }
+  });
+
+  it('a permanent grant opens no level window and never silently expires (AC2)', () => {
+    for (const id of INSTANT_KINDS) {
+      const reg = new EffectsRegistry();
+      reg.applyCollect(id, true);
+
+      expect(reg.powerUpTemporaryRemaining(id)).toBeUndefined();
+      expect(reg.powerUpLevel(id)).toBe(1);
+
+      reg.tick(600);
+
+      expect(reg.powerUpTemporaryRemaining(id)).toBeUndefined();
+      expect(reg.powerUpLevel(id)).toBe(1);
+    }
+  });
+
+  it('preserves every one-shot and immediate consumable grant (AC3)', () => {
+    const bomb = new EffectsRegistry();
+    bomb.applyCollect('bomb');
+    expect(bomb.updateBomb(0.016)).toBe(true);
+    expect(bomb.updateBomb(100)).toBe(false);
+
+    const smart = new EffectsRegistry();
+    smart.applyCollect('smart_bomb');
+    expect(smart.updateSmartBomb(0.016)).toBe(true);
+    expect(smart.updateSmartBomb(100)).toBe(false);
+
+    const strike = new EffectsRegistry();
+    strike.applyCollect('strike');
+    expect(strike.updateStrike(0.016)).toBe(true);
+    strike.resolveStrike();
+    expect(strike.updateStrike(100)).toBe(false);
+
+    const ufo = new EffectsRegistry();
+    ufo.applyCollect('mystery_ufo');
+    expect(ufo.consumeMysteryUfoSpawns()).toBe(1);
+    expect(ufo.consumeMysteryUfoSpawns()).toBe(0);
+
+    const phase = new EffectsRegistry();
+    phase.applyCollect('phase_shift');
+    expect(phase.phaseCharges()).toBe(1);
+
+    const teleport = new EffectsRegistry();
+    teleport.applyCollect('teleport');
+    expect(teleport.teleportStacks()).toBe(1);
+
+    const life = new EffectsRegistry();
+    life.applyCollect('extra_life');
+    expect(life.lives()).toBe(P8_LIVES_START + 1);
+  });
+
+  it('a phase-shift level window never makes the ship intangible', () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('phase_shift');
+
+    expect(reg.isPhased).toBe(false);
+    expect(reg.isHitImmune).toBe(false);
+    expect(reg.powerUpTemporaryRemaining('phase_shift')).toBeGreaterThan(0);
+
+    // The activation is a separate, much shorter timer.
+    expect(reg.updateDanger(true, 0.016)).toBe('phase_shift');
+    expect(reg.isPhased).toBe(true);
+    reg.tick(PHASE_DURATION + 0.01);
+    expect(reg.isPhased).toBe(false);
+    expect(reg.powerUpTemporaryRemaining('phase_shift')).toBeGreaterThan(0);
+  });
+
+  it('refreshes an open window to the full TTL instead of stacking timers (AC5)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    reg.applyCollect('bomb');
+    const ttl = reg.powerUpTemporaryRemaining('bomb')!;
+    reg.tick(ttl - 2);
+    expect(reg.powerUpTemporaryRemaining('bomb')).toBeCloseTo(2, 10);
+
+    reg.applyCollect('bomb');
+    // The level stacks, but there is still exactly one timer, refreshed.
+    expect(store.getTempStacks('bomb')).toBe(2);
+    expect(reg.powerUpTemporaryRemaining('bomb')).toBeCloseTo(ttl, 10);
+
+    reg.tick(ttl + 0.1);
+    expect(store.getTempStacks('bomb')).toBe(0);
+  });
+
+  it('latches a strike bolt with its decision-time damage (AC4)', () => {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+
+    reg.applyCollect('strike', true); // permanent → upgrade level 0
+    const permanentDamage = reg.strikeDamage();
+    reg.applyCollect('strike'); // field pickup → upgrade level 1
+    const pickupDamage = reg.strikeDamage();
+    expect(pickupDamage).toBeGreaterThan(permanentDamage);
+
+    // Decide (latch) the bolt with nobody to land it on…
+    expect(reg.updateStrike(0.016)).toBe(true);
+    const window = reg.powerUpTemporaryRemaining('strike')!;
+    // …let the temporary level revert while it waits…
+    reg.tick(window + 0.1);
+    expect(store.getEffectiveLevel('strike')).toBe(1);
+
+    // …and the already-decided bolt keeps its pickup-time damage.
+    expect(reg.strikeDamage()).toBe(pickupDamage);
+
+    reg.resolveStrike();
+    expect(reg.strikeDamage()).toBe(permanentDamage);
+  });
+
+  it('keeps a queued bomb/smart-bomb pulse priced at decision time (AC4)', () => {
+    const bombStore = new PowerUpLevelStore();
+    const bomb = new EffectsRegistry(bombStore);
+    bomb.applyCollect('bomb', true);
+    bomb.applyCollect('bomb');
+    const pickupRange = bomb.bombPulseRange();
+    const bombWindow = bomb.powerUpTemporaryRemaining('bomb')!;
+    bomb.tick(bombWindow + 0.1);
+    expect(bombStore.getEffectiveLevel('bomb')).toBe(1);
+    expect(bomb.bombPulseRange()).toBe(pickupRange);
+    expect(bomb.updateBomb(0.016)).toBe(true);
+    expect(bomb.bombPulseRange()).toBe(pickupRange);
+
+    const smartStore = new PowerUpLevelStore();
+    const smart = new EffectsRegistry(smartStore);
+    smart.applyCollect('smart_bomb', true);
+    smart.applyCollect('smart_bomb');
+    const pickupAoe = smart.smartBombPulseAoe();
+    const smartWindow = smart.powerUpTemporaryRemaining('smart_bomb')!;
+    smart.tick(smartWindow + 0.1);
+    expect(smartStore.getEffectiveLevel('smart_bomb')).toBe(1);
+    expect(smart.smartBombPulseAoe()).toEqual(pickupAoe);
+    expect(smart.updateSmartBomb(0.016)).toBe(true);
+    expect(smart.smartBombPulseAoe()).toEqual(pickupAoe);
   });
 });

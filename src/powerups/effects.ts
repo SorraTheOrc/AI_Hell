@@ -94,6 +94,7 @@ import {
   POWER_UP_CHARGE_CAP,
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
+  resolveTemporaryWindow,
   type PowerUpLevelStats,
 } from './powerUpLevels';
 import type { AoEDescriptor, WeaponId } from '../utils/weapons';
@@ -288,11 +289,24 @@ interface TimedEffectState {
   /**
    * True while a field-pickup temporary window is active for this effect.
    * Its expiry clears the store's temporary stacks for the id (the permanent
-   * base, if any, stays active). Left false for non-collection timed effects
-   * such as the Teleport-arrival phase, whose expiry must not clear temporary
-   * stacks (Resolved decision 4).
+   * base, if any, stays active). Left false for effect timers that do not own
+   * a field-pickup window (e.g. the Phase Shift activation, which is timed
+   * separately in `_phaseRemaining`).
    */
   tempWindow?: boolean;
+  /**
+   * True when this entry times a **temporary level window only** — an
+   * instant kind (`bomb`, `smart_bomb`, `strike`, `phase_shift`,
+   * `teleport`, `extra_life`, `mystery_ufo`) whose gameplay effect is a
+   * one-shot/consumable rather than a timed effect (AH-0MVUGI448000GNMJ).
+   *
+   * A level window must not surface as an active effect (`isActive`,
+   * `activeEffects`, `remaining`): it only makes the store's temporary
+   * level revert on expiry through the existing `_expireTimedEffect` path.
+   * Phase Shift keeps its actual phase activation in a separate timer
+   * (`_phaseRemaining`) so the window never makes the ship intangible.
+   */
+  levelWindow?: boolean;
 }
 
 /**
@@ -337,6 +351,19 @@ export class EffectsRegistry {
    */
   private _shieldRemaining = 0;
 
+  // ── Phase Shift activation timer (AH-0MVUGI448000GNMJ) ────────────
+  /**
+   * Seconds remaining on an active Phase Shift phase (auto-activated or
+   * granted on a Teleport arrival). Kept separate from the `_timed` map so a
+   * field pickup's per-upgrade **level window** can expire independently of
+   * the 1.5 s activation — sharing one countdown would either make the ship
+   * intangible for the whole window or clobber the window on activation.
+   * Zero when not phased.
+   */
+  private _phaseRemaining = 0;
+  /** Full duration of the current phase (HUD/`activeEffects` reporting). */
+  private _phaseDuration = 0;
+
   // ── Bomb bomb pulse state (AH-0MUVM9RAO004Y3LB) ────────────────────
   /**
    * True when a hold-full Bomb granted a permanent bomb for the run: it never
@@ -352,6 +379,15 @@ export class EffectsRegistry {
    * stores no other persistent state (AC1).
    */
   private _bombPulsePending = false;
+  /**
+   * Clear radius (px) captured when a pulse is **decided** — at the field
+   * pickup that queues it, or at the permanent interval tick
+   * (AH-0MVUGI448000GNMJ AC4). A temporary level window may expire between
+   * the decision and the frame the pulse fires; the pulse must keep its
+   * decision-time stats rather than re-reading a reverted store. Cleared on
+   * the next pulse-free advance.
+   */
+  private _bombPulseRange: number | null = null;
 
   // ── Smart Bomb pulse state (AH-0MV1BIWP9003EHRQ) ─────────────────────
   /**
@@ -368,6 +404,13 @@ export class EffectsRegistry {
    * stores no other persistent state (mirrors the Bomb).
    */
   private _smartBombPulsePending = false;
+  /**
+   * AOE descriptor captured when a pulse is **decided** (pickup or permanent
+   * interval tick), mirroring {@link _bombPulseRange} so a reverted temporary
+   * level can never re-price an already-decided screen pulse
+   * (AH-0MVUGI448000GNMJ AC4). Cleared on the next pulse-free advance.
+   */
+  private _smartBombPulseAoe: AoEDescriptor | null = null;
 
   // ── Force Field reflect state (AH-0MV1BIX1W006XF95) ──────────────────
   /**
@@ -433,6 +476,14 @@ export class EffectsRegistry {
    * Cleared by {@link resolveStrike} or {@link reset}.
    */
   private _strikeLatched = false;
+  /**
+   * Damage resolved when the currently latched bolt was **decided**
+   * (AH-0MVUGI448000GNMJ AC4). A temporary level window may expire while the
+   * bolt waits for a live target, so `strikeDamage()` returns this captured
+   * value instead of re-reading the (reverted) level store. Null when no
+   * bolt is latched.
+   */
+  private _strikeLatchedDamage: number | null = null;
 
   // ── Single run-scoped level store (AC1) ──────────────────────────
   /** Private fallback store for standalone use/tests (no scene wiring). */
@@ -500,11 +551,21 @@ export class EffectsRegistry {
    * - phase_shift: stores the level-resolved `phaseCharges` (or marks the
    *   permanent reward); the phase itself is applied later by the shared
    *   combat core via `updateDanger`.
-   * - teleport: the store grants the level-resolved stored teleport uses. No timer.
+   * - teleport: the store grants the level-resolved stored teleport uses.
    * - extra_life: the store grants the level-resolved lives, clamped to the cap.
    * - magnet/mineral_scoop: a field pickup (no flag) starts the timed
    *   refresh-only attraction; the hold-full reward adds a permanent stack via
    *   the store (hybrid preserved).
+   *
+   * **Every field pickup also gets a temporary level window.** For the timed
+   * kinds above the window *is* the effect window; the seven instant kinds
+   * (`bomb`, `smart_bomb`, `strike`, `phase_shift`, `teleport`,
+   * `extra_life`, `mystery_ufo`) open a separate per-upgrade **level window**
+   * sized by `resolveTemporaryWindow` (AH-0MVUGI448000GNMJ). The one-shot or
+   * consumable grant lands immediately; the window only makes the temporary
+   * level revert to the permanent level (or to unowned) at its TTL, through
+   * the existing `clearTemporary` expiry path. A hold-full grant opens no
+   * window and never resurrects one.
    *
    * @param id — the collected power-up.
    * @param permanent — when true, timed effects never expire for the run
@@ -564,21 +625,32 @@ export class EffectsRegistry {
       case 'bomb':
         // bomb: a field pickup queues one ranged explosion; the hold-full
         // reward additionally makes it permanent and pulses immediately
-        // (AH-0MUVM9RAO004Y3LB).
+        // (AH-0MUVM9RAO004Y3LB). The field pickup also opens its per-upgrade
+        // level window and snapshots the pulse range at decision time so a
+        // reverted level can never re-price the queued pulse
+        // (AH-0MVUGI448000GNMJ).
         this._bombPulsePending = true;
         if (permanent) {
           this._bombPermanent = true;
           this._bombPulseTimer = this.bombInterval();
+        } else {
+          this._bombPulseRange = this.bombRange();
+          this._openInstantWindow(id);
         }
         break;
       case 'smart_bomb':
         // smart_bomb: a field pickup queues one ship-centred pulse; the
         // hold-full reward additionally makes it permanent and pulses
-        // immediately (mirrors the Bomb; AH-0MV1BIWP9003EHRQ).
+        // immediately (mirrors the Bomb; AH-0MV1BIWP9003EHRQ). The field
+        // pickup opens its level window and snapshots the pulse AOE
+        // (AH-0MVUGI448000GNMJ).
         this._smartBombPulsePending = true;
         if (permanent) {
           this._smartBombPermanent = true;
           this._smartBombPulseTimer = this.smartBombInterval();
+        } else {
+          this._smartBombPulseAoe = this.smartBombAoe();
+          this._openInstantWindow(id);
         }
         break;
       case 'force_field':
@@ -600,11 +672,14 @@ export class EffectsRegistry {
       case 'mystery_ufo':
         // mystery_ufo: a visible collector drone (Space Invaders homage,
         // AH-0MV1BIXFO006Z1I7 → AH-0MV9G113S009B37I). A field pickup queues
-        // exactly one drone spawn for the shared scene pass; a full-hull
-        // permanent reward owns the periodic auto-spawn through the level
-        // store's permanent grant. There is no instant mineral or score
-        // burst any more.
-        if (!permanent) this._mysteryUfoPendingSpawns += 1;
+        // exactly one drone spawn for the shared scene pass and opens its
+        // per-upgrade level window; a full-hull permanent reward owns the
+        // periodic auto-spawn through the level store's permanent grant.
+        // There is no instant mineral or score burst any more.
+        if (!permanent) {
+          this._mysteryUfoPendingSpawns += 1;
+          this._openInstantWindow(id);
+        }
         break;
       case 'frenzy':
         // frenzy: a timed damage amplifier. No registry-local consumable
@@ -659,18 +734,59 @@ export class EffectsRegistry {
       case 'strike':
         // strike: a field pickup queues one immediate bolt; the hold-full
         // reward makes it permanent and pulses on the resolved interval
-        // (mirrors the Bomb/Smart Bomb; AH-0MVCRC1Q0007JAV1).
+        // (mirrors the Bomb/Smart Bomb; AH-0MVCRC1Q0007JAV1). The field
+        // pickup also opens its per-upgrade level window
+        // (AH-0MVUGI448000GNMJ); the bolt's damage is snapshotted when the
+        // bolt is latched.
         this._strikePulsePending = true;
         if (permanent) {
           this._strikePermanent = true;
           this._strikePulseTimer = this.strikeInterval();
+        } else {
+          this._openInstantWindow(id);
         }
         break;
+      case 'phase_shift':
+      case 'teleport':
+      case 'extra_life':
+        // Consumable/one-shot kinds: the level store owns the charge/stack/
+        // life grant (never deferred to the window), and the field pickup
+        // still opens its per-upgrade level window so the temporary level
+        // reverts (AH-0MVUGI448000GNMJ). Phase Shift's actual phase
+        // activation is a separate timer (`_phaseRemaining`), so the window
+        // never makes the ship intangible. A hold-full grant opens no window.
+        if (!permanent) this._openInstantWindow(id);
+        break;
       default:
-        // Phase Shift phase, Teleport teleport, Extra Life life: no registry-local timed state —
-        // the level store owns charges/stacks/lives.
+        // Every POWER_UP_LEVEL_IDS kind is handled above; the default keeps
+        // the switch exhaustive if a future kind is added.
         break;
     }
+  }
+
+  /**
+   * Opens (or refreshes) the per-upgrade **temporary level window** a field
+   * pickup of an instant kind grants (AH-0MVUGI448000GNMJ).
+   *
+   * The window is sized by the shared `resolveTemporaryWindow` resolver at
+   * the effective upgrade level the pickup lands at, so the TTL is
+   * per-upgrade data rather than a global constant. Re-collecting during an
+   * open window refreshes it to the full TTL — one timer per kind, never
+   * additive (AC5).
+   *
+   * The entry is a *level window only*: it never surfaces as an active timed
+   * effect (`isActive`/`activeEffects`/`remaining`) and never activates the
+   * kind's gameplay effect; its sole job is to clear the store's temporary
+   * stack when it expires through the existing `_expireTimedEffect` path. A
+   * hold-full grant must never call this: it opens no window and never
+   * resurrects an expired one (AC2).
+   */
+  private _openInstantWindow(id: PowerUpId): void {
+    const window = resolveTemporaryWindow(
+      id,
+      this._levelStore.getUpgradeLevel(id),
+    );
+    this._startOrRefreshTimed(id, id, window, false, true);
   }
 
   /** Starts a timed effect or refreshes it to the (possibly new) duration. */
@@ -679,6 +795,7 @@ export class EffectsRegistry {
     type: PowerUpId,
     duration: number,
     permanent: boolean,
+    levelWindowOnly = false,
   ): void {
     const existing = this._timed.get(id);
     if (existing) {
@@ -695,6 +812,7 @@ export class EffectsRegistry {
         existing.tempWindow = true;
         existing.remaining = duration;
       }
+      if (levelWindowOnly) existing.levelWindow = true;
     } else {
       this._timed.set(id, {
         id,
@@ -702,6 +820,7 @@ export class EffectsRegistry {
         duration,
         remaining: permanent ? 0 : duration,
         ...(permanent ? { permanent: true } : { tempWindow: true }),
+        ...(levelWindowOnly ? { levelWindow: true } : {}),
       });
     }
   }
@@ -731,6 +850,11 @@ export class EffectsRegistry {
     // identically (AH-0MV82I8IL0012RXY AC1/AC5). The store ignores
     // non-positive/non-finite `dt`.
     this._levelStore.tickRecharge(dt);
+    // Advance the Phase Shift activation timer. It is deliberately separate
+    // from the `_timed` level window: the 1.5 s phase must expire long before
+    // a field pickup's 15 s level window, and its expiry starts the shared
+    // re-arm cooldown (existing behaviour, unchanged).
+    this._advancePhase(dt);
     // Advance the Thorn Field recharge clock on the same shared tick path so
     // a permanent (hold-full) field keeps re-arming for the whole run and a
     // field-pickup window re-arms while it is open (AH-0MVJ8YKR70096C6T).
@@ -771,12 +895,6 @@ export class EffectsRegistry {
     effect.remaining = 0;
     if (effect.permanent) return;
     this._timed.delete(id);
-    // Start the shared re-arm cooldown the moment an auto-triggered phase
-    // expires (Q2) — this covers both a Phase Shift activation and the Phase
-    // Shift granted on a Teleport arrival (AC5).
-    if (id === 'phase_shift') {
-      this._rearmCooldown = PHASE_REARM_COOLDOWN;
-    }
     // The shield's remaining absorptions end with its bubble; the temporary
     // level is cleared above and the permanent level persists (AC3).
     if (id === 'shield') {
@@ -795,9 +913,25 @@ export class EffectsRegistry {
     }
   }
 
+  /**
+   * Advances the Phase Shift activation timer by `dt` seconds. When the
+   * phase expires the shared re-arm cooldown starts (Q2/Q3) — covering both
+   * an auto-activated Phase Shift and the Phase Shift granted on a Teleport
+   * arrival (AC5). The level window is a separate entry/timer and is never
+   * touched here.
+   */
+  private _advancePhase(dt: number): void {
+    if (this._phaseRemaining <= 0) return;
+    this._phaseRemaining = Math.max(0, this._phaseRemaining - dt);
+    if (this._phaseRemaining > 0) return;
+    this._phaseDuration = 0;
+    this._rearmCooldown = PHASE_REARM_COOLDOWN;
+  }
+
   /** Whether the given timed effect is currently active. */
   isActive(id: PowerUpId): boolean {
-    return this._timed.has(id);
+    const effect = this._timed.get(id);
+    return effect !== undefined && effect.levelWindow !== true;
   }
 
   /** Whether the ship is shielded (Shield active). */
@@ -807,12 +941,12 @@ export class EffectsRegistry {
 
   /** Whether the ship is in phase shift (Phase Shift active) — intangibility. */
   get isPhased(): boolean {
-    return this._timed.has('phase_shift');
+    return this._phaseRemaining > 0;
   }
 
   /** Whether the ship is hit-immune (shield OR phase active). */
   get isHitImmune(): boolean {
-    return this._timed.has('shield') || this._timed.has('phase_shift');
+    return this._timed.has('shield') || this.isPhased;
   }
 
   /**
@@ -942,6 +1076,18 @@ export class EffectsRegistry {
   }
 
   /**
+   * The clear radius the **currently decided** Bomb pulse will use: the
+   * radius captured when the pulse was decided (pickup or permanent interval
+   * tick), falling back to the live value when no pulse is in flight
+   * (AH-0MVUGI448000GNMJ AC4). The shared combat core reads this after
+   * {@link updateBomb} reports a pulse, so a temporary level window that
+   * expires before the pulse fires can never re-price it.
+   */
+  bombPulseRange(): number {
+    return this._bombPulseRange ?? this.bombRange();
+  }
+
+  /**
    * The resolved Bomb pulse interval in seconds (`1 / bombFrequency`). The
    * model stores a monotonic pulses/second rate; the effect inverts it.
    */
@@ -968,17 +1114,26 @@ export class EffectsRegistry {
   updateBomb(dt: number): boolean {
     if (this._bombPulsePending) {
       this._bombPulsePending = false;
+      // A queued pulse keeps its pickup-time radius; a permanent grant that
+      // queued it falls back to the level resolved now.
+      this._bombPulseRange ??= this.bombRange();
       if (this._bombPermanent) {
         this._bombPulseTimer = this.bombInterval();
       }
       return true;
     }
-    if (!this._bombPermanent) return false;
+    if (!this._bombPermanent) {
+      // The pulse is resolved; the next request resolves its own stats.
+      this._bombPulseRange = null;
+      return false;
+    }
     this._bombPulseTimer -= dt;
     if (this._bombPulseTimer <= 0) {
       this._bombPulseTimer = this.bombInterval();
+      this._bombPulseRange = this.bombRange();
       return true;
     }
+    this._bombPulseRange = null;
     return false;
   }
 
@@ -1038,6 +1193,17 @@ export class EffectsRegistry {
   }
 
   /**
+   * The AOE descriptor of the **currently decided** Smart Bomb pulse: the
+   * descriptor captured when the pulse was decided (pickup or permanent
+   * interval tick), falling back to the live value when no pulse is in
+   * flight (AH-0MVUGI448000GNMJ AC4). The shared combat core reads this after
+   * {@link updateSmartBomb} reports a pulse.
+   */
+  smartBombPulseAoe(): AoEDescriptor {
+    return this._smartBombPulseAoe ?? this.smartBombAoe();
+  }
+
+  /**
    * Advances the Smart Bomb pulse state by `dt` and reports whether a pulse
    * is due this frame.
    *
@@ -1055,17 +1221,25 @@ export class EffectsRegistry {
   updateSmartBomb(dt: number): boolean {
     if (this._smartBombPulsePending) {
       this._smartBombPulsePending = false;
+      // A queued pulse keeps its pickup-time AOE; a permanent grant that
+      // queued it falls back to the level resolved now.
+      this._smartBombPulseAoe ??= this.smartBombAoe();
       if (this._smartBombPermanent) {
         this._smartBombPulseTimer = this.smartBombInterval();
       }
       return true;
     }
-    if (!this._smartBombPermanent) return false;
+    if (!this._smartBombPermanent) {
+      this._smartBombPulseAoe = null;
+      return false;
+    }
     this._smartBombPulseTimer -= dt;
     if (this._smartBombPulseTimer <= 0) {
       this._smartBombPulseTimer = this.smartBombInterval();
+      this._smartBombPulseAoe = this.smartBombAoe();
       return true;
     }
+    this._smartBombPulseAoe = null;
     return false;
   }
 
@@ -1237,10 +1411,21 @@ export class EffectsRegistry {
 
   /**
    * The level-resolved damage the Orbital Strike bolt deals (whole hits,
-   * minimum 1). The shared strike seam resolves this at the nearest enemy.
+   * minimum 1). While a bolt is latched this is the damage resolved **when
+   * the bolt was decided**, so a temporary level window that expires while
+   * the bolt waits for a target can never weaken or re-price it
+   * (AH-0MVUGI448000GNMJ AC4). With no bolt latched it resolves live.
    */
   strikeDamage(): number {
-    return Math.max(1, Math.floor(this._levelStore.stats('strike').strikeDamage ?? 1));
+    return this._strikeLatchedDamage ?? this._resolveStrikeDamage();
+  }
+
+  /** Live (current-level) Orbital Strike damage. */
+  private _resolveStrikeDamage(): number {
+    return Math.max(
+      1,
+      Math.floor(this._levelStore.stats('strike').strikeDamage ?? 1),
+    );
   }
 
   /**
@@ -1273,6 +1458,8 @@ export class EffectsRegistry {
     if (this._strikePulsePending) {
       this._strikePulsePending = false;
       this._strikeLatched = true;
+      // Resolve once, at decision time (AC4).
+      this._strikeLatchedDamage = this._resolveStrikeDamage();
       if (this._strikePermanent) {
         this._strikePulseTimer = this.strikeInterval();
       }
@@ -1283,6 +1470,7 @@ export class EffectsRegistry {
     if (this._strikePulseTimer <= 0) {
       this._strikePulseTimer = this.strikeInterval();
       this._strikeLatched = true;
+      this._strikeLatchedDamage = this._resolveStrikeDamage();
       return true;
     }
     return false;
@@ -1300,6 +1488,7 @@ export class EffectsRegistry {
    */
   resolveStrike(): void {
     this._strikeLatched = false;
+    this._strikeLatchedDamage = null;
   }
 
   /**
@@ -1342,18 +1531,11 @@ export class EffectsRegistry {
 
   /** (Re)activates the Phase Shift timed effect at `duration` seconds. */
   private _activatePhase(duration: number): void {
-    const existing = this._timed.get('phase_shift');
-    if (existing) {
-      existing.duration = duration;
-      existing.remaining = duration;
-    } else {
-      this._timed.set('phase_shift', {
-        id: 'phase_shift' as PowerUpId,
-        type: 'phase_shift',
-        duration,
-        remaining: duration,
-      });
-    }
+    // Refresh, never additive. A field pickup's level window lives in the
+    // `_timed` map and is deliberately untouched by an activation, so the
+    // phase cannot shorten or extend the temporary level's TTL.
+    this._phaseDuration = duration;
+    this._phaseRemaining = duration;
   }
 
   /**
@@ -1385,7 +1567,7 @@ export class EffectsRegistry {
       this._dangerCleared = true;
       return null;
     }
-    if (this._timed.has('phase_shift')) return null;
+    if (this.isPhased) return null;
     if (!this._dangerCleared) return null;
     if (this._rearmCooldown > 0) return null;
 
@@ -1469,9 +1651,21 @@ export class EffectsRegistry {
     return true;
   }
 
-  /** Remaining seconds for a timed effect, or undefined when inactive. */
+  /**
+   * Remaining seconds for a timed effect, or undefined when inactive.
+   *
+   * An instant kind's temporary **level window** is not an effect and is
+   * reported through {@link powerUpTemporaryRemaining} instead, so it never
+   * shows up here (AH-0MVUGI448000GNMJ). Phase Shift's activation timer is
+   * separate from its level window and is reported here while phased.
+   */
   remaining(id: PowerUpId): number | undefined {
-    return this._timed.get(id)?.remaining;
+    if (id === 'phase_shift') {
+      return this._phaseRemaining > 0 ? this._phaseRemaining : undefined;
+    }
+    const effect = this._timed.get(id);
+    if (!effect || effect.levelWindow) return undefined;
+    return effect.remaining;
   }
 
   /**
@@ -1646,6 +1840,10 @@ export class EffectsRegistry {
   activeEffects(): ActiveEffect[] {
     const result: ActiveEffect[] = [];
     for (const effect of this._timed.values()) {
+      // A level window only times the temporary level of an instant kind; it
+      // is not an active effect and must not render a row
+      // (AH-0MVUGI448000GNMJ).
+      if (effect.levelWindow) continue;
       // Shield carries its remaining absorptions so the HUD renders `Shield xN`
       // and updates as hits are absorbed (AC6).
       const stacks =
@@ -1669,6 +1867,16 @@ export class EffectsRegistry {
         duration: effect.duration,
         remaining,
         ...(stacks !== undefined ? { stacks } : {}),
+      });
+    }
+    // An active Phase Shift phase (auto- or Teleport-granted) renders its own
+    // row; its level window is not surfaced (see above).
+    if (this._phaseRemaining > 0) {
+      result.push({
+        id: 'phase_shift' as PowerUpId,
+        type: 'phase_shift',
+        duration: this._phaseDuration,
+        remaining: this._phaseRemaining,
       });
     }
     // Magnet permanent upgrades render as a stack row; the timed field pickup
@@ -1764,12 +1972,16 @@ export class EffectsRegistry {
     this._dangerCleared = true;
     this._rearmCooldown = 0;
     this._shieldRemaining = 0;
+    this._phaseRemaining = 0;
+    this._phaseDuration = 0;
     this._bombPermanent = false;
     this._bombPulseTimer = 0;
     this._bombPulsePending = false;
+    this._bombPulseRange = null;
     this._smartBombPermanent = false;
     this._smartBombPulseTimer = 0;
     this._smartBombPulsePending = false;
+    this._smartBombPulseAoe = null;
     this._forceFieldRemaining = 0;
     this._mysteryUfoPendingSpawns = 0;
     this._thornsRemaining = 0;
@@ -1780,6 +1992,7 @@ export class EffectsRegistry {
     // A latched (retained) bolt never survives into a fresh run
     // (AH-0MVS2T2DJ0069C0Y).
     this._strikeLatched = false;
+    this._strikeLatchedDamage = null;
     this._levelStore.reset();
   }
 }

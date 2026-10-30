@@ -1708,7 +1708,7 @@ export class CombatCoreScene<
     if (!registry.updateBomb(dt)) return;
     const player = this.getPlayer();
     if (!player) return;
-    const range = registry.bombRange();
+    const range = registry.bombPulseRange();
     this._clearEnemyBulletsInRange(player.x, player.y, range);
     this._spawnBombPulse(player.x, player.y, range);
   }
@@ -1742,7 +1742,7 @@ export class CombatCoreScene<
     if (!registry.updateSmartBomb(dt)) return;
     const player = this.getPlayer();
     if (!player) return;
-    this.onSmartBombPulse(registry.smartBombAoe(), player.x, player.y);
+    this.onSmartBombPulse(registry.smartBombPulseAoe(), player.x, player.y);
   }
 
   /**

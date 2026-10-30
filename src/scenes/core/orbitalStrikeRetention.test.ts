@@ -421,3 +421,49 @@ describe('Orbital Strike cadence is evidence-backed end-to-end (AH-0MVU3341U001B
     }
   });
 });
+
+describe('Orbital Strike keeps its decision-time damage (AH-0MVUGI448000GNMJ)', () => {
+  let booted: BootedGame | null = null;
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+  });
+
+  async function boot(): Promise<OrbitalRetentionScene> {
+    booted = await bootScene([OrbitalRetentionScene]);
+    return booted.scene as OrbitalRetentionScene;
+  }
+
+  it('lands a latched bolt for its pickup-time damage after its window expires', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 480, y: 270 });
+
+    // Permanently owned strike (upgrade level 0) plus a field pickup
+    // (upgrade level 1): the pickup-time bolt is worth more than the
+    // reverted level.
+    scene.effects.applyCollect('strike', true);
+    scene.effects.applyCollect('strike');
+    const pickupDamage = scene.effects.strikeDamage();
+
+    // No live enemy: the bolt is latched, not wasted.
+    scene.runStrikeFrames(1);
+    expect(scene.entities).toHaveLength(0);
+
+    // The temporary level window EXPIRES while the bolt is still waiting.
+    scene.effects.tick(11);
+    expect(scene.effects.powerUpLevel('strike')).toBe(1);
+    expect(scene.effects.strikeDamage()).toBe(pickupDamage);
+
+    // A target appears: the bolt lands for its decision-time damage.
+    const target = scene.addEnemy(player.x + 60, player.y);
+    scene.runStrikeFrames(1);
+    expect(target.hits).toBe(pickupDamage);
+
+    // The next (permanent-cadence) bolt uses the reverted level.
+    const interval = scene.effects.strikeInterval();
+    const before = target.hits;
+    scene.runStrikeFrames(interval + 0.5, 0.1);
+    expect(target.hits - before).toBe(scene.effects.strikeDamage());
+  });
+});
