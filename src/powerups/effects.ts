@@ -575,6 +575,12 @@ export class EffectsRegistry {
     const store = this._levelStore;
     // The single mutation point: every collection (field or hold-full)
     // advances the level exactly once and derives the grants (AC1/AC3).
+    // Only a **field** pickup opens a temporary window (`_applyTimedEffect`),
+    // and every kind resolves one through `resolveTemporaryWindow` (which
+    // throws when a kind declares no TTL), so this is the only writer that
+    // can pair a temporary stack with its expiry. A permanent grant therefore
+    // never strands a stack: it leaves any open window alone and the window's
+    // expiry clears the temporary component (AC3/AC4, AH-0MVUGI4IC006PUS5).
     store.collect(id, permanent);
     this._applyTimedEffect(id, permanent, store.stats(id));
   }
@@ -1793,6 +1799,14 @@ export class EffectsRegistry {
    * already active. Returns true when freshly equipped, false when
    * already active (refreshed).
    *
+   * **A permanent grant never strands a temporary window (AC3,
+   * AH-0MVUGI4IC006PUS5).** A permanent weapon has no window at all (`∞` in
+   * the HUD), and `Player.equipWeapon(id, true)` clears the weapon's
+   * temporary level at grant time, so this registry mirrors that strategy:
+   * an open field-pickup window is **closed** when the weapon becomes
+   * permanent instead of counting down to zero. The weapon stays active for
+   * the run and its row immediately reads `∞`.
+   *
    * @param weaponId — the collected weapon.
    * @param permanent — when true, the weapon never expires for the run
    *   (used by the hold-full choice).
@@ -1801,10 +1815,12 @@ export class EffectsRegistry {
     const existing = this._weapons.get(weaponId);
     if (existing) {
       if (permanent) {
-        // A hold-full reward makes the base permanent; an already-active
-        // field window keeps counting down on its own schedule, so the HUD
-        // still shows a timer until it expires (mirrors power-ups, AC2).
+        // A hold-full reward makes the weapon permanent; the temporary window
+        // (and the temporary level it carried in `Player`) is closed at grant
+        // time, so no countdown survives on a permanent weapon (AC3).
         existing.permanent = true;
+        existing.tempWindow = false;
+        existing.remaining = existing.duration;
         return false; // already active, upgraded to permanent
       }
       // A field pickup (re)opens the temporary window (AC1).

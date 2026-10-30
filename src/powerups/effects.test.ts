@@ -1620,6 +1620,26 @@ describe('HUD level and temporary-window accessors (AH-0MUX802450085VZZ)', () =>
     expect(reg.activeWeapons()[0].tempWindow).toBeFalsy();
     expect(reg.activeWeapons()[0].permanent).toBe(true);
   });
+
+  it('a permanent grant mid-window closes the field window immediately (AC3)', () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('dual'); // field pickup: open 10 s window
+    expect(reg.activeWeapons()[0].tempWindow).toBe(true);
+
+    reg.applyWeapon('dual', true); // hold-full reward lands mid-window
+
+    // The weapon strategy is immediate clear: a permanent weapon has no
+    // window, so the row reads ∞ straight away and ticking cannot strand a
+    // countdown (AH-0MVUGI4IC006PUS5).
+    const weapon = reg.activeWeapons()[0];
+    expect(weapon.permanent).toBe(true);
+    expect(weapon.tempWindow).toBeFalsy();
+    expect(reg.hasWeapon('dual')).toBe(true);
+
+    reg.tick(10.1);
+    expect(reg.hasWeapon('dual')).toBe(true);
+    expect(reg.activeWeapons()[0].tempWindow).toBeFalsy();
+  });
 });
 
 describe('unified PowerUpId dispatch (F3)', () => {

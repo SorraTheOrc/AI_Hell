@@ -82,14 +82,17 @@ describe('PlayScene weapon leveling (AH-0MUPMPCB2009J54J)', () => {
     expect(player.getWeaponLevel('rapid')).toBe(1);
   });
 
-  it('a permanent hold-full choice levels an owned weapon for the run', async () => {
+  it('a permanent hold-full choice levels a permanently-owned weapon for the run', async () => {
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
 
-    // Own spread at level 1.
+    // Permanently own spread at level 1, then take a field pickup so a
+    // temporary window is open at choice time (permanent 1 + temporary 1).
+    player.equipWeapon('spread', true);
     scene.spawnPowerUpDrop('spread', player.x, player.y);
     scene.tick(0.016);
-    expect(player.getWeaponLevel('spread')).toBe(1);
+    expect(player.getWeaponLevel('spread')).toBe(2);
+    expect(player.getTempWeaponStacks('spread')).toBe(1);
 
     // Offer a permanent level-up and choose it.
     scene.setMineralChoiceStrategy(
@@ -100,13 +103,20 @@ describe('PlayScene weapon leveling (AH-0MUPMPCB2009J54J)', () => {
     scene.openMineralChoice();
     scene.selectMineralChoice(0);
 
+    // The grant raises the permanent level and clears the temporary stack at
+    // grant time (AC3, AH-0MVUGI4IC006PUS5), so the effective level settles
+    // on the permanent level rather than keeping a free extra level.
+    expect(player.getPermanentWeaponLevel('spread')).toBe(2);
+    expect(player.getTempWeaponStacks('spread')).toBe(0);
     expect(player.getWeaponLevel('spread')).toBe(2);
     expect(player.getWeaponDef('spread')).toEqual(
       resolveWeaponDefinition('spread', 1),
     );
-    // Permanent — it never times out.
+    // Permanent — it never times out and the level cannot drift.
     player.tickWeaponTimers(120_000);
     expect(player.hasWeapon('spread')).toBe(true);
+    expect(player.getWeaponLevel('spread')).toBe(2);
+    expect(player.getTempWeaponStacks('spread')).toBe(0);
   });
 
   it('a default-strategy hold-full draw never offers two options for the same item (AC1/AC4)', async () => {

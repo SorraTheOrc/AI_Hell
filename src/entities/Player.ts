@@ -844,6 +844,15 @@ export class Player extends Phaser.GameObjects.Graphics {
    * A field pickup's temporary level is cleared when the weapon times out
    * ({@link tickWeaponTimers}); a permanent grant survives the run. Only
    * {@link resetWeaponLevels} clears the permanent level, on run restart.
+   *
+   * **A permanent grant never strands a temporary stack (AC3,
+   * AH-0MVUGI4IC006PUS5).** The weapon's temporary window is carried by
+   * `_weaponTimers`; a permanent weapon has no window at all (`∞` in the
+   * HUD), so the permanent branch **clears the weapon's temporary stacks at
+   * grant time** — the immediate-clear strategy, not keep-the-window. The
+   * effective level is unchanged by the clear (the grant itself already
+   * raised the permanent component by one), and the level can no longer sit
+   * one stack above the permanent grant for the rest of the run.
    */
   equipWeapon(weaponId: WeaponId, permanent = false): void {
     if (!isTimedWeapon(weaponId)) {
@@ -852,18 +861,22 @@ export class Player extends Phaser.GameObjects.Graphics {
     if (!WEAPON_CATALOGUE[weaponId]) {
       return;
     }
+    // Defence in depth: a temporary stack is only valid while the window that
+    // expires it exists, so drop any orphan before this collection.
+    this._reconcileTemporaryWeaponStacks();
     if (permanent) {
       // A hold-full reward raises the **permanent** level for the run: the
-      // weapon is active forever with no countdown (AC2). It never touches
-      // the temporary stacks.
+      // weapon is active forever with no countdown (AC2). The permanent
+      // grant also **clears the temporary stacks** (AC3): keeping them would
+      // make a still-open field pickup permanent, because this branch stops
+      // the only timer that could expire it. The effective level is
+      // unchanged — permanent +1, temporary −1.
       this._permanentWeaponGrants.set(
         weaponId,
         this.getPermanentWeaponLevel(weaponId) + 1,
       );
       this._permanentWeapons.add(weaponId);
-      this._weaponTimers.delete(weaponId);
-      this._weaponNextShot.delete(weaponId);
-      this._weaponLastShot.delete(weaponId);
+      this._clearTemporaryWeaponStacks(weaponId);
       this._primaryWeapon = weaponId;
       this._readyFire(weaponId);
       return;
@@ -871,13 +884,52 @@ export class Player extends Phaser.GameObjects.Graphics {
     // A field pickup raises the **temporary** level only, tied to the
     // weapon's fresh independent 10 s countdown (AC1/AC2). When the window
     // expires the stack is cleared (see {@link tickWeaponTimers}).
+    this._addTemporaryWeaponStack(weaponId);
+    this._primaryWeapon = weaponId;
+    this._readyFire(weaponId);
+  }
+
+  /**
+   * The **single writer** of a temporary weapon level (AC3,
+   * AH-0MVUGI4IC006PUS5): a temporary stack is always added together with the
+   * 10 s window that will expire it, so no collection path can create one
+   * without a window.
+   */
+  private _addTemporaryWeaponStack(weaponId: WeaponId): void {
     this._tempWeaponStacks.set(
       weaponId,
       this.getTempWeaponStacks(weaponId) + 1,
     );
     this._weaponTimers.set(weaponId, WEAPON_TIMEOUT_MS);
-    this._primaryWeapon = weaponId;
-    this._readyFire(weaponId);
+  }
+
+  /**
+   * Clears a weapon's temporary level **and** the window that tracks it —
+   * the permanent-grant strategy (AC3). Leaving either behind would make a
+   * field pickup permanent (a stack with no window never expires) or leave a
+   * stray countdown on a permanent weapon (a window with no stack).
+   */
+  private _clearTemporaryWeaponStacks(weaponId: WeaponId): void {
+    this._tempWeaponStacks.delete(weaponId);
+    this._weaponTimers.delete(weaponId);
+    this._weaponNextShot.delete(weaponId);
+    this._weaponLastShot.delete(weaponId);
+  }
+
+  /**
+   * Defensive guard for the temporary-level invariant (AC3): every temporary
+   * weapon stack must have an open window to expire it. A future third write
+   * path that adds a stack without a timer would otherwise make the field
+   * pickup permanent for the rest of the run, so any such orphan is dropped
+   * here instead. Called from {@link equipWeapon} and
+   * {@link tickWeaponTimers}; never a new counter, just a reconciliation of
+   * the two existing maps.
+   */
+  private _reconcileTemporaryWeaponStacks(): void {
+    for (const id of [...this._tempWeaponStacks.keys()]) {
+      if (this._weaponTimers.has(id)) continue;
+      this._tempWeaponStacks.delete(id);
+    }
   }
 
   /**
@@ -1076,6 +1128,9 @@ export class Player extends Phaser.GameObjects.Graphics {
    * @param dtMs — Delta time in milliseconds.
    */
   tickWeaponTimers(dtMs: number): void {
+    // The guard runs before the early return so an orphaned stack is dropped
+    // even when no window is left to tick (AC3, AH-0MVUGI4IC006PUS5).
+    this._reconcileTemporaryWeaponStacks();
     if (dtMs <= 0 || this._weaponTimers.size === 0) return;
     for (const [id, remaining] of [...this._weaponTimers]) {
       const next = remaining - dtMs;

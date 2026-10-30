@@ -759,6 +759,31 @@ describe('PowerUpLevelStore — temporary/permanent split (F1 contract)', () => 
     expect(store.getPermanentLevel('shield')).toBe(0);
   });
 
+  // AC3/AC5 (AH-0MVUGI4IC006PUS5): the store never strands a temporary
+  // component. A permanent grant adds only to the permanent component; the
+  // field-pickup window (owned by `EffectsRegistry`) keeps its own expiry and
+  // is the only thing that removes the temporary stack.
+  it('a permanent grant mid-window never touches the temporary stack', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('bomb'); // field pickup: temp 1, window owned by the registry
+    expect(store.getTempStacks('bomb')).toBe(1);
+
+    store.collect('bomb', true); // hold-full reward lands mid-window
+
+    expect(store.getPermanentLevel('bomb')).toBe(1);
+    expect(store.getTempStacks('bomb')).toBe(1);
+    expect(store.getEffectiveLevel('bomb')).toBe(2);
+
+    // The window's expiry is the settle point: temporary 0, permanent 1.
+    store.clearTemporary('bomb');
+    expect(store.getTempStacks('bomb')).toBe(0);
+    expect(store.getEffectiveLevel('bomb')).toBe(1);
+    expect(store.getPermanentLevel('bomb')).toBe(1);
+    // No new counter/map/timer was introduced to make this work: the same two
+    // components the store already had are the whole model.
+    expect(store.getPermanentUpgradeLevel('bomb')).toBe(0);
+  });
+
   it('reports the permanent level only to the hold-full choice', () => {
     const store = new PowerUpLevelStore();
     store.collect('magnet'); // field-only: never permanently owned

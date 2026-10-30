@@ -1465,6 +1465,16 @@ export class PowerUpLevelStore {
    * `permanent` (hold-full) rewards, the permanent-grant count. Extra Life also adds
    * the level-derived lives (clamped to the level-derived cap).
    *
+   * **Temporary-stack contract (AC3/AC5, AH-0MVUGI4IC006PUS5).** A field
+   * pickup (`permanent: false`) adds a temporary stack that is only valid
+   * together with the **field-pickup window** the `EffectsRegistry` opens for
+   * it; that window's expiry is the only thing that removes the stack
+   * ({@link clearTemporary}). A `permanent: true` grant therefore **never
+   * touches `_tempStacks`** and never cancels or re-opens an open window: an
+   * active window keeps its own schedule and expires, so a permanent grant
+   * landing mid-window settles on the permanent level instead of stranding
+   * the temporary component. No second counter, map or timer is involved.
+   *
    * @param id - The collected power-up.
    * @param permanent - True for a hold-full permanent reward.
    * @returns The new collection level.

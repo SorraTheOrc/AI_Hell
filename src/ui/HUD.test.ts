@@ -1044,6 +1044,32 @@ describe('HUD weapon rows (AH-0MU3VOQKH005YOBH)', () => {
     expect(hudTexts(hud)).toContain(PERMANENT_VALUE);
     destroy(game);
   });
+
+  it('a permanent grant mid-window reads ∞ immediately (AC3)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread'); // field pickup: countdown
+    let level = 1;
+    const { game, hud } = await bootWithHUD(reg, {
+      getWeaponLevel: () => level,
+    });
+    hud.refresh();
+    expect(hudTexts(hud)).toContain('10s');
+
+    // The hold-full reward lands while the 10 s window is still open. The
+    // weapon strategy clears the temporary component at grant time, so the
+    // level settles on the permanent grant and the row shows ∞ with no
+    // countdown left behind (AH-0MVUGI4IC006PUS5).
+    reg.applyWeapon('spread', true);
+    hud.refresh();
+    expect(hudTexts(hud)).toContain('Weapon: spread Lvl 1');
+    expect(hudTexts(hud)).toContain(PERMANENT_VALUE);
+    expect(hudTexts(hud).filter((t) => t === '10s')).toHaveLength(0);
+
+    reg.tick(10.1);
+    hud.refresh();
+    expect(hudTexts(hud)).toContain(PERMANENT_VALUE);
+    destroy(game);
+  });
 });
 
 describe('HUD weapon level readout (parent AH-0MUPMPCB2009J54J)', () => {

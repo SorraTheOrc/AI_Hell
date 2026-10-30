@@ -204,6 +204,13 @@ function expectPermanentGrantMidWindowReverts(id: PowerUpId): void {
   const permanentLevel = store.getPermanentLevel(id);
   expect(permanentLevel).toBe(1);
 
+  // AC4 — the chosen power-up strategy is explicit: the permanent grant
+  // **keeps** the open window (it never cancels its expiry), so the temporary
+  // level is still there and still counting down immediately after the grant.
+  expect(store.getTempStacks(id)).toBe(1);
+  expect(store.getEffectiveLevel(id)).toBe(permanentLevel + 1);
+  expect(reg.powerUpTemporaryRemaining(id)).toBeGreaterThan(0);
+
   // The window was opened by the field pickup at level 1 → upgrade level 0.
   reg.tick(expiryTick(id, 0));
 
