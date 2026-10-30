@@ -908,6 +908,21 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
     expect(leveled.impactFx).toEqual(base.impactFx);
   });
 
+  test('the heavy_slug visual/feel metadata survives level resolution unchanged (AH-0MVV0WO4M001KEDG)', () => {
+    const base = WEAPON_CATALOGUE.heavy_slug;
+    // `muzzleFlash` / `impactFx` are visual metadata, never upgrade values, so
+    // every level path must resolve them byte-for-byte. (The level path may
+    // widen the single forward shot into a small fan via `projectileCount`, but
+    // the launch/impact metadata must stay one spec — the shared core spawns one
+    // flash per shot input, pinned behaviourally in `CombatCoreScene.test.ts`.)
+    for (const level of [0, 1, 5, 10, 50, 100]) {
+      const leveled = resolveWeaponDefinition('heavy_slug', level);
+      expect(leveled.muzzleFlash, `level ${level}`).toEqual(base.muzzleFlash);
+      expect(leveled.impactFx, `level ${level}`).toEqual(base.impactFx);
+      expect(leveled.offsets.length, `level ${level}`).toBeGreaterThanOrEqual(1);
+    }
+  });
+
   test('weapons without a base bounce budget never gain one (they keep wrapping)', () => {
     for (const id of WEAPON_IDS) {
       if (id === 'ricochet') continue;

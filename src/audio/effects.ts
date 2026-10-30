@@ -587,6 +587,20 @@ export function playBroadsideImpactSound(): void {
 }
 
 /**
+ * Dull red thud with debris — a Heavy Slug connects (AH-0MVV0WO4M001KEDG).
+ * Plays through the shared impact seam (`CombatScene.resolveWeaponImpactFx`)
+ * alongside the deep-red impact flash, so the game and every gym connect
+ * identically instead of falling back to the generic warm-white flash with no
+ * hit cue. Kept to ~0.15 s (inside the 0.16 s ceiling) so the slow single
+ * round reads as one heavy impact. Deliberately duller and lower than the
+ * Mortar's bright dry shell crack, so the two heaviest weapons never alias
+ * (`aihell-heavy-slug-impact`, seed 32286) — see the recipe comment.
+ */
+export function playHeavySlugImpactSound(): void {
+  playCue('playHeavySlugImpactSound');
+}
+
+/**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
  * their own baked hit cues; dispatched by {@link playWeaponImpactCue} from
@@ -607,6 +621,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playShardSwarmImpactSound,
   playRearGuardImpactSound,
   playBroadsideImpactSound,
+  playHeavySlugImpactSound,
 };
 
 /**
@@ -687,6 +702,23 @@ export function playRearGuardFireSound(): void {
  */
 export function playBroadsideFireSound(): void {
   playCue('playBroadsideFireSound');
+}
+
+/**
+ * The heaviest single shot in the game — Heavy Slug fire
+ * (AH-0MVV0WO4M001KEDG). One low 110 → 55 Hz saw boom with a metallic square
+ * clank transient and the longest decay of the packaged weapons (~0.26 s),
+ * so firing the huge slow deep-red shell reads as an event on its own.
+ * Routed through the one shared player-fire dispatcher
+ * ({@link playWeaponFireSound}) so live fire, the reduced-volume hold-full
+ * metronome and every gym fire sound identical. Must **never alias the Mortar
+ * detonation**: this cue differentiates with the metallic clank transient, a
+ * shorter sustain than the 0.32 s detonation boom and a different thump
+ * contour — documented in the recipe comment (`aihell-heavy-slug-fire`, seed
+ * 32285).
+ */
+export function playHeavySlugFireSound(): void {
+  playCue('playHeavySlugFireSound');
 }
 
 /** Deep expanding thump + rising ring — Nova fire. */
@@ -844,6 +876,9 @@ export function playWeaponFireSound(
       break;
     case 'broadside':
       playCue('playBroadsideFireSound', options);
+      break;
+    case 'heavy_slug':
+      playCue('playHeavySlugFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches

@@ -449,6 +449,22 @@
       ]
     },
     {
+      "cue": "playHeavySlugFireSound",
+      "recipe": "aihell-heavy-slug-fire",
+      "delivery": "baked",
+      "seeds": [
+        32285
+      ]
+    },
+    {
+      "cue": "playHeavySlugImpactSound",
+      "recipe": "aihell-heavy-slug-impact",
+      "delivery": "baked",
+      "seeds": [
+        32286
+      ]
+    },
+    {
       "cue": "playWaveLaserFireSound",
       "recipe": "aihell-wave-laser-fire",
       "delivery": "baked",

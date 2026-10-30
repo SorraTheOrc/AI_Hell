@@ -47,6 +47,7 @@ import {
   WEAPON_SHARD_SWARM_FIRE_RATE,
   WEAPON_REAR_GUARD_FIRE_RATE,
   WEAPON_BROADSIDE_FIRE_RATE,
+  WEAPON_HEAVY_SLUG_FIRE_RATE,
   WEAPON_CANNON_SUBDIVISION,
   WEAPON_SPREAD_SUBDIVISION,
   WEAPON_DUAL_SUBDIVISION,
@@ -1284,6 +1285,59 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
     expect(def.bulletShapeLength).toBe(1.6);
     expect(def.bulletSize).toBe(0.72);
     expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.shard_swarm);
+  });
+
+  test('Heavy Slug declares the largest deep-red launch flash in the catalogue (AH-0MVV0WO4M001KEDG)', () => {
+    const def = WEAPON_CATALOGUE.heavy_slug;
+    // One huge slow round needs the heaviest launch cue: the largest flash of
+    // the set, at the shipped 12 px ceiling (epic AC8 — no value above the
+    // budget). A documented tie with the Wave Laser's 12 px flare is
+    // acceptable and is pinned explicitly below.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.heavy_slug);
+    expect(def.muzzleFlash!.radius).toBe(12);
+    expect(def.muzzleFlash!.duration).toBe(0.16);
+    const others = Object.entries(WEAPON_CATALOGUE).filter(
+      ([id, w]) => id !== 'heavy_slug' && w.muzzleFlash,
+    );
+    for (const [id, w] of others) {
+      expect(w.muzzleFlash!.radius, id).toBeLessThanOrEqual(
+        def.muzzleFlash!.radius,
+      );
+    }
+    // The documented tie: the Wave Laser is also at the 12 px ceiling.
+    expect(WEAPON_CATALOGUE.wave_laser.muzzleFlash!.radius).toBe(12);
+    expect(def.muzzleFlash!.radius).toBeLessThanOrEqual(12);
+    expect(def.muzzleFlash!.duration).toBeLessThanOrEqual(0.16);
+  });
+
+  test('Heavy Slug declares deep-red impact feedback routed through its baked thud (AH-0MVV0WO4M001KEDG)', () => {
+    const def = WEAPON_CATALOGUE.heavy_slug;
+    // The connect is colour-matched to the deep-red shell and audible through
+    // the shared impact seam instead of the generic warm-white fallback flash.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.heavy_slug);
+    expect(def.impactFx!.cue).toBe('playHeavySlugImpactSound');
+    // The largest impact radius of the set, at the 12 px ceiling.
+    expect(def.impactFx!.radius).toBe(12);
+    expect(def.impactFx!.radius).toBeLessThanOrEqual(12);
+    expect(def.impactFx!.duration).toBe(0.16);
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.16);
+  });
+
+  test('the Heavy Slug feel package changes no behaviour or balance values (AH-0MVV0WO4M001KEDG)', () => {
+    const def = WEAPON_CATALOGUE.heavy_slug;
+    // The metadata-only package must leave the single huge shell exactly as
+    // shipped — cadence, offsets, colour, silhouette and lifetime unchanged.
+    expect(def.fireRateMs).toBe(WEAPON_HEAVY_SLUG_FIRE_RATE);
+    expect(def.offsets).toEqual([0]);
+    expect(def.bulletColor).toBe(BULLET_COLORS.heavy_slug);
+    expect(def.bulletShape).toBe('heavy-shell');
+    expect(def.bulletThickness).toBe(3);
+    expect(def.bulletRim).toBe(0xffb0b0);
+    expect(def.bulletTrail).toBe(2.4);
+    expect(def.bulletSize).toBe(1.7);
+    expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.heavy_slug);
   });
 
   test('Heavy Slug is the largest, slowest single round in the catalogue', () => {

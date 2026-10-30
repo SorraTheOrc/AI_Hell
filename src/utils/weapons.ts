@@ -1467,6 +1467,30 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 2.4,
     bulletSize: 1.7,
     bulletLifetime: WEAPON_BULLET_LIFETIME.heavy_slug,
+    // Launch cue (AH-0MVV0WO4M001KEDG): the heaviest flash of the set — deep
+    // red at the 12 px shipped ceiling (a documented tie with the Wave Laser's
+    // 12 px flare; every other weapon is strictly smaller), 0.16 s fade. One
+    // flash per shot input via the shared combat-core muzzle-flash path, so
+    // the game and every gym show the same launch cue with no per-scene code.
+    // Visual metadata only — cadence, offsets, lifetime and bullet identity
+    // are unchanged.
+    muzzleFlash: {
+      color: BULLET_COLORS.heavy_slug,
+      radius: 12,
+      duration: 0.16,
+    },
+    // Connect feedback (AH-0MVV0WO4M001KEDG): a deep-red impact flash plus
+    // the baked dull thud cue, routed through the shared impact seam so a
+    // Heavy Slug connect no longer falls back to the generic warm-white flash
+    // with no hit sound. The largest impact radius of the set, at the 12 px
+    // ceiling with a 0.16 s fade (epic AC8 — at, never above, the budget).
+    // Visual/feel metadata only — the shell's behaviour is unchanged.
+    impactFx: {
+      color: BULLET_COLORS.heavy_slug,
+      radius: 12,
+      duration: 0.16,
+      cue: 'playHeavySlugImpactSound',
+    },
   },
 };
 

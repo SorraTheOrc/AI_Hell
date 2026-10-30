@@ -684,6 +684,51 @@ describe('CombatCoreScene — shared base class', () => {
     expect(tealCalls).toHaveLength(shots);
   });
 
+  // ── Heavy Slug launch cue (AH-0MVV0WO4M001KEDG) ──────────────
+
+  it('AH-0MVV0WO4M001KEDG — a heavy slug shot spawns exactly one deep-red muzzle flash, the largest of the set', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('heavy_slug');
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.heavy_slug.muzzleFlash!;
+    const redCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    // The launch flash is spawned once per **shot input** from the metadata —
+    // never once per projectile — so when `projectileCount` widens the shot
+    // into a small fan the flash count stays at one per shot.
+    const resolved = player.getWeaponDef('heavy_slug');
+    const slugs = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.heavy_slug);
+    const shots = slugs.length / resolved.offsets.length;
+    expect(Number.isInteger(shots)).toBe(true);
+    expect(shots).toBeGreaterThan(0);
+    expect(redCalls).toHaveLength(shots);
+    // The flash is anchored at the ship with the declared deep-red spec.
+    expect(redCalls[0][1]).toBeCloseTo(100, 5);
+    expect(redCalls[0][2]).toBeCloseTo(100, 5);
+    expect(redCalls[0][4]).toEqual({
+      color: spec.color,
+      radius: spec.radius,
+      duration: spec.duration,
+      registry: expect.anything(),
+    });
+    // The launch flash is the largest of the set (a documented tie with the
+    // Wave Laser at the 12 px shipped ceiling).
+    expect(spec.radius).toBe(12);
+    expect(spec.radius).toBeGreaterThanOrEqual(
+      WEAPON_CATALOGUE.wave_laser.muzzleFlash!.radius,
+    );
+    expect(spec.duration).toBeLessThanOrEqual(0.16);
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });

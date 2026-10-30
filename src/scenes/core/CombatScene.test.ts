@@ -1411,6 +1411,72 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
+  // ── Heavy Slug impact feedback (AH-0MVV0WO4M001KEDG) ──────────────
+
+  it('AH-0MVV0WO4M001KEDG — auto-fired heavy slugs carry the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('heavy_slug');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    // The single forward shell carries the declared deep-red impact feedback,
+    // so a connect routes through the shared seam with no per-scene code.
+    const slugs = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.heavy_slug);
+    expect(slugs.length).toBeGreaterThan(0);
+    for (const slug of slugs) {
+      expect(slug.impactFx).toEqual(WEAPON_CATALOGUE.heavy_slug.impactFx);
+    }
+  });
+
+  it('AH-0MVV0WO4M001KEDG — a heavy slug connect plays its baked thud and deep-red impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('heavy_slug');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.heavy_slug);
+    expect(shot).toBeDefined();
+    // Keep one slug so the connect count is unambiguous — the cannon may also
+    // have spawned a bullet nearby.
+    const slugs = scene.getPlayerBullets();
+    for (let i = slugs.length - 1; i >= 0; i -= 1) {
+      if (slugs[i] !== shot) slugs.splice(i, 1);
+    }
+    const enemy = new ToughStubEnemy(scene, shot!.x, shot!.y, 10, 3);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    // The connect is audible through the Heavy Slug's baked thud and
+    // colour-matched to the deep-red shell — the generic warm-white 0xfff2a0
+    // fallback flash no longer applies to this weapon.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playHeavySlugImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.heavy_slug,
+        radius: WEAPON_CATALOGUE.heavy_slug.impactFx!.radius,
+        duration: WEAPON_CATALOGUE.heavy_slug.impactFx!.duration,
+      }),
+    );
+    expect(impact.mock.calls[0][3]).not.toMatchObject({ color: 0xfff2a0 });
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
   it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
     const scene = await boot();
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');

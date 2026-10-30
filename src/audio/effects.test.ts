@@ -220,6 +220,22 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playHeavySlugImpactSound resolves to the baked heavy-slug-impact asset (AH-0MVV0WO4M001KEDG)', () => {
+    effects.playHeavySlugImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-heavy-slug-impact.32286.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the heavy slug impact cue (AH-0MVV0WO4M001KEDG)', () => {
+    effects.playWeaponImpactCue('playHeavySlugImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-heavy-slug-impact.32286.wav',
+    );
+  });
+
   it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
     effects.playSpreadImpactSound();
     expect(recording.plays).toHaveLength(1);
@@ -701,6 +717,47 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     effects.playWeaponFireSound('broadside');
     effects.playWeaponImpactCue('playCannonImpactSound');
     effects.playWeaponImpactCue('playBroadsideImpactSound');
+    expect(recording.plays).toHaveLength(4);
+    expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
+    expect(recording.plays[3].url).not.toBe(recording.plays[2].url);
+  });
+
+  it('plays the baked heavy slug fire cue (AH-0MVV0WO4M001KEDG)', () => {
+    effects.playWeaponFireSound('heavy_slug');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-heavy-slug-fire.32285.wav',
+    );
+  });
+
+  it('routes the heavy slug metronome ghost fire at the reduced volume (AH-0MVV0WO4M001KEDG)', () => {
+    // The hold-full metronome resolves the identical asset as live fire and
+    // only scales the volume, so the heaviest cue cannot drift between the two
+    // paths.
+    effects.playWeaponFireSound('heavy_slug', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-heavy-slug-fire.32285.wav',
+    );
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('a heavy slug shot dispatches its single-shot cue exactly once (AH-0MVV0WO4M001KEDG)', () => {
+    // One shot fires one huge shell — the seam must dispatch the baked cue
+    // once per shot, never once per sub-projectile.
+    effects.playWeaponFireSound('heavy_slug');
+    expect(recording.plays).toHaveLength(1);
+  });
+
+  it('the heavy slug cues are distinct assets from the mortar\u2019s (AH-0MVV0WO4M001KEDG)', () => {
+    // The heaviest launch must not alias the Mortar's detonation/impact: the
+    // baked assets are separate, so a player hears which weapon fired. The
+    // Mortar impact cue is compared through its direct export (it is an AOE
+    // weapon and so deliberately absent from `PLAYER_WEAPON_IMPACT_CUES`).
+    effects.playWeaponFireSound('heavy_slug');
+    effects.playWeaponFireSound('mortar');
+    effects.playHeavySlugImpactSound();
+    effects.playMortarImpactSound();
     expect(recording.plays).toHaveLength(4);
     expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
     expect(recording.plays[3].url).not.toBe(recording.plays[2].url);

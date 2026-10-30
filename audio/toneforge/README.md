@@ -143,6 +143,8 @@ derived from the render seed).
 | `aihell-rear-guard-impact.yaml` | `playRearGuardImpactSound` | Soft rose pop: rounded triangle 380→190 Hz + quiet 760 Hz sine + 700 Hz LP noise contact tick, no square click, ~0.12 s (AH-0MVV0WN96007TU9J) | 32282 |
 | `aihell-broadside-fire.yaml` | `playBroadsideFireSound` | Wide two-sided swish: two band-passed noise sweeps 40 ms apart (900→3200 Hz rising then 3200→900 Hz falling) + glassy teal-toned triangle tail 1800→1200 Hz, ~0.16 s (AH-0MVV0WNOX0078G9G) | 32283 |
 | `aihell-broadside-impact.yaml` | `playBroadsideImpactSound` | Short teal dart tick: triangle 2400→1600 Hz + quiet 3600 Hz sine + 3000 Hz HP noise contact tick, no square click, ~0.10 s (AH-0MVV0WNOX0078G9G) | 32284 |
+| `aihell-heavy-slug-fire.yaml` | `playHeavySlugFireSound` | Heaviest single shot: low saw boom 110→55 Hz + metallic square clank 1800→900 Hz + 60→40 Hz sine sub + LP noise air, ~0.26 s — deepest fundamental and longest decay of the packaged weapons; never aliases the aihell-mortar-detonation 0.32 s boom (metallic clank + shorter sustain) (AH-0MVV0WO4M001KEDG) | 32285 |
+| `aihell-heavy-slug-impact.yaml` | `playHeavySlugImpactSound` | Dull red thud: low triangle 220→60 Hz + quiet 110 Hz sine + 700 Hz LP noise debris burst, no square edge, ~0.15 s — duller/lower than the aihell-mortar-impact dry crack (AH-0MVV0WO4M001KEDG) | 32286 |
 | `aihell-pickup-spread.yaml` | `playSpreadPickupSound` | Triangle 500→1500→800 Hz | 32220 |
 | `aihell-pickup-dual.yaml` | `playDualPickupSound` | Two saw drops 1000→500 / 1200→700 Hz | 32221 |
 | `aihell-pickup-rapid.yaml` | `playRapidPickupSound` | Triangle rise 400→1600 Hz | 32222 |
