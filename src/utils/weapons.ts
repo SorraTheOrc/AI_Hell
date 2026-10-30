@@ -1298,6 +1298,30 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 1.6,
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.rear_guard,
+    // Launch cue (AH-0MVV0WN96007TU9J): a compact rose flash at the hull. The
+    // Rear Guard is a single rearward pellet, so its launch pop stays smaller
+    // and shorter than the Cannon's 7 px / 0.12 s forward flash — it reads as
+    // a muted push behind the ship rather than a second forward shot. Spawned
+    // by the shared combat-core muzzle-flash path from this metadata, so the
+    // game and every gym show the same launch cue with no per-scene code.
+    // Visual metadata only.
+    muzzleFlash: {
+      color: BULLET_COLORS.rear_guard,
+      radius: 6,
+      duration: 0.11,
+    },
+    // Connect feedback (AH-0MVV0WN96007TU9J): a rose impact flash plus the
+    // baked soft rose pop, routed through the shared impact seam so a Rear
+    // Guard connect no longer falls back to the generic warm-white flash with
+    // no hit sound. Shorter and softer than the Cannon's 9 px / 0.16 s crack,
+    // matching the single compact pellet. Visual/feel metadata only — the
+    // rearward offset, cadence, lifetime and bullet identity are unchanged.
+    impactFx: {
+      color: BULLET_COLORS.rear_guard,
+      radius: 8,
+      duration: 0.13,
+      cue: 'playRearGuardImpactSound',
+    },
   },
   broadside: {
     id: 'broadside',

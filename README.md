@@ -975,8 +975,8 @@ instead.
   catalogue now ships **16 weapons** (the 5 net-new unlock-pool weapons are
   Rear Guard, Broadside, Railgun, Shard Swarm and Heavy Slug) and **16
   power-ups**. Their feel packages are being filled in per weapon through the
-  same shared seams the original 11 use (AH-0MVMJMCQK004BE9T); the **Railgun**
-  and **Shard Swarm** are complete — the Railgun's fire routes through the single
+  same shared seams the original 11 use (AH-0MVMJMCQK004BE9T); the **Railgun**,
+  **Shard Swarm** and **Rear Guard** are complete — the Railgun's fire routes through the single
   shared `playWeaponFireSound` dispatcher to the baked `playRailgunFireSound`
   (`aihell-railgun-fire`), its launch spawns a sky-blue muzzle flash through the shared
   combat-core path (AH-0MVQ6C1YL003HU9K), and its tracer declares an `impactFx`
@@ -988,7 +988,14 @@ instead.
   (0.12 s) spawned by the shared combat-core path, and its shards declare an
   `impactFx` so each connect plays the baked `playShardSwarmImpactSound`
   (`aihell-shard-swarm-impact`) with a lime flash instead of the generic
-  warm-white fallback (AH-0MVV0WMTE0007NGS).
+  warm-white fallback (AH-0MVV0WMTE0007NGS). The Rear Guard completes the same
+  pattern for the catalogue's only rearward weapon: `playRearGuardFireSound`
+  (`aihell-rear-guard-fire`) is a muted, low-passed rearward *thup* dispatched
+  through `playWeaponFireSound`, its single pellet launches from a compact 6 px
+  rose muzzle flash (0.11 s) spawned by the shared combat-core path, and its
+  `impactFx` plays the baked `playRearGuardImpactSound`
+  (`aihell-rear-guard-impact`) — a soft rose pop — with a rose flash instead of
+  the warm-white fallback (AH-0MVV0WN96007TU9J).
 - **Mixed campaigns:** the merged campaign starts from the static `LEVELS`
   skeleton, so levels 1–10 are always present. A configured level overrides its
   static counterpart (and a configured level numbered beyond the static ten is

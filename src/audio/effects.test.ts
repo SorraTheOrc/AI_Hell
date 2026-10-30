@@ -188,6 +188,22 @@ describe('cue → baked asset mapping', () => {
     );
   });
 
+  it('playRearGuardImpactSound resolves to the baked rear-guard-impact asset (AH-0MVV0WN96007TU9J)', () => {
+    effects.playRearGuardImpactSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rear-guard-impact.32282.wav',
+    );
+  });
+
+  it('playWeaponImpactCue dispatches the rear guard impact cue (AH-0MVV0WN96007TU9J)', () => {
+    effects.playWeaponImpactCue('playRearGuardImpactSound');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rear-guard-impact.32282.wav',
+    );
+  });
+
   it('playSpreadImpactSound resolves to the baked spread-impact asset (AH-0MV8229B9009DQGA)', () => {
     effects.playSpreadImpactSound();
     expect(recording.plays).toHaveLength(1);
@@ -507,6 +523,7 @@ describe('playWeaponFireSound — shared player-fire path', () => {
       ['options', 'playOptionsFireSound'],
       ['railgun', 'playRailgunFireSound'],
       ['shard_swarm', 'playShardSwarmFireSound'],
+      ['rear_guard', 'playRearGuardFireSound'],
     ];
     for (const [weaponId, cue] of cases) {
       recording.plays.length = 0;
@@ -597,6 +614,39 @@ describe('playWeaponFireSound — shared player-fire path', () => {
     effects.playWeaponFireSound('shard_swarm');
     effects.playWeaponImpactCue('playCannonImpactSound');
     effects.playWeaponImpactCue('playShardSwarmImpactSound');
+    expect(recording.plays).toHaveLength(4);
+    expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
+    expect(recording.plays[3].url).not.toBe(recording.plays[2].url);
+  });
+
+  it('plays the baked rear guard fire cue (AH-0MVV0WN96007TU9J)', () => {
+    effects.playWeaponFireSound('rear_guard');
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rear-guard-fire.32281.wav',
+    );
+  });
+
+  it('routes the rear guard metronome ghost fire at the reduced volume (AH-0MVV0WN96007TU9J)', () => {
+    // The hold-full metronome resolves the identical asset as live fire and
+    // only scales the volume, so the rearward cue cannot drift between the two
+    // paths.
+    effects.playWeaponFireSound('rear_guard', { volume: 0.3 });
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      'audio/sfx/aihell-rear-guard-fire.32281.wav',
+    );
+    expect(recording.plays[0].volume).toBe(0.3);
+  });
+
+  it('the rear guard cues are distinct assets from the cannon\u2019s (AH-0MVV0WN96007TU9J)', () => {
+    // Distinctness is asserted through the public dispatch API: the Rear Guard
+    // cannot alias the Cannon's forward fire thump or impact crack, so the
+    // backward shot stays identifiable by ear.
+    effects.playWeaponFireSound('cannon');
+    effects.playWeaponFireSound('rear_guard');
+    effects.playWeaponImpactCue('playCannonImpactSound');
+    effects.playWeaponImpactCue('playRearGuardImpactSound');
     expect(recording.plays).toHaveLength(4);
     expect(recording.plays[1].url).not.toBe(recording.plays[0].url);
     expect(recording.plays[3].url).not.toBe(recording.plays[2].url);

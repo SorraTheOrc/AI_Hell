@@ -581,6 +581,41 @@ describe('CombatCoreScene — shared base class', () => {
     ).toBe(true);
   });
 
+  // ── Rear Guard launch cue (AH-0MVV0WN96007TU9J) ──────────────────
+
+  it('AH-0MVV0WN96007TU9J — a rear guard shot spawns one compact rose muzzle flash at the muzzle through the shared core path', async () => {
+    const scene = await boot<StubCoreScene>(StubCoreScene);
+    const flash = vi.spyOn(muzzleFlashModule, 'spawnMuzzleFlash');
+    flash.mockClear();
+    const player = scene.addPlayer({ x: 100, y: 100 });
+    player.equipWeapon('rear_guard');
+
+    scene.runAutoFire(10);
+
+    const spec = WEAPON_CATALOGUE.rear_guard.muzzleFlash!;
+    const roseCalls = flash.mock.calls.filter(
+      (call) => (call[4] as { color?: number }).color === spec.color,
+    );
+    // The Rear Guard fires one pellet per shot, so the launch flash count
+    // matches the fired pellets exactly — no flash is emitted for the
+    // backward direction beyond the shared `_autoFire` path.
+    const pellets = scene
+      .getPlayerBullets()
+      .filter((b) => b.color === BULLET_COLORS.rear_guard);
+    expect(pellets.length).toBeGreaterThan(0);
+    expect(roseCalls).toHaveLength(pellets.length);
+    // The flash is anchored at the ship with the declared compact rose spec.
+    expect(roseCalls[0][1]).toBeCloseTo(100, 5);
+    expect(roseCalls[0][2]).toBeCloseTo(100, 5);
+    expect(roseCalls[0][4]).toEqual({
+      color: spec.color,
+      radius: spec.radius,
+      duration: spec.duration,
+      registry: expect.anything(),
+    });
+    expect(scene.getFireFxEffects().length).toBeGreaterThan(0);
+  });
+
   it('AC1/AC2 — _autoFire uses the level-resolved projectiles and bullet size', async () => {
     const scene = await boot<StubCoreScene>(StubCoreScene);
     const player = scene.addPlayer({ x: 100, y: 100 });

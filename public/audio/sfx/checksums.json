@@ -2,7 +2,7 @@
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
   "seedBlock": "32100-32199",
-  "inputs": "a6f900c2792a48611094fe4e4abfce0aa6a86af62adb0a322d70c0c27b020c30",
+  "inputs": "5f4e73361a88b26d55f46bdee12832d60a8d0696215b1670f55766ccfd80cfd0",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",
@@ -62,6 +62,8 @@
     "audio/sfx/aihell-railgun-impact.32278.wav": "62046e7b58a63b6e22de7c39a42c4704143490261bc6a54b2beeb5a606aecae2",
     "audio/sfx/aihell-rapid-fire.32213.wav": "ac8572b3d2c48ff94b07bf1db933ad93bad5bbfaf2e827f22bd1244d45314069",
     "audio/sfx/aihell-rapid-impact.32266.wav": "6c33fd00a4ae8a778250122392690946a184bd0f211c0b56733e3cb06e727531",
+    "audio/sfx/aihell-rear-guard-fire.32281.wav": "2b3341e695f740455a91658cebeb45515a11ef346767a03b1126c3dd8369a31d",
+    "audio/sfx/aihell-rear-guard-impact.32282.wav": "ec8f0f3d0d090de64a441ef345681588f2573937dfde4f2d0d9bdd0d24e62be5",
     "audio/sfx/aihell-ricochet-fire.32267.wav": "41fd2f24f863fd87daf8a9e1f8621fdc00837b28607c89b044eaf0dca49ee0d9",
     "audio/sfx/aihell-ricochet-impact.32268.wav": "638ad6b7e002fa37fe7d4581f2985ab9cad23f3079a44d532b5e686f7906b656",
     "audio/sfx/aihell-scout-advance.32180.wav": "8e0f57dbb048d39024e435aafcb2ce216fc04c1138e9e4bcccde210ceb6be53a",

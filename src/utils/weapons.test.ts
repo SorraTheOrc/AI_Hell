@@ -45,6 +45,7 @@ import {
   WEAPON_MORTAR_FIRE_RATE,
   WEAPON_ARC_FIRE_RATE,
   WEAPON_SHARD_SWARM_FIRE_RATE,
+  WEAPON_REAR_GUARD_FIRE_RATE,
   WEAPON_CANNON_SUBDIVISION,
   WEAPON_SPREAD_SUBDIVISION,
   WEAPON_DUAL_SUBDIVISION,
@@ -1079,6 +1080,50 @@ describe('net-new unlock-pool weapons (AH-0MVCRC52P001YIPW)', () => {
     const bullets = createBulletsFromHeading(WEAPON_CATALOGUE.rear_guard, 0, 0, 0);
     expect(bullets).toHaveLength(1);
     expect(bullets[0].angleDeg).toBeCloseTo(180);
+  });
+
+  test('Rear Guard declares a compact rose launch flash behind the ship (AH-0MVV0WN96007TU9J)', () => {
+    const def = WEAPON_CATALOGUE.rear_guard;
+    // A single rearward pellet launches with a small rose pop, shorter and
+    // smaller than the Cannon's forward flash, so the backward shot reads as a
+    // muted push rather than a second forward weapon.
+    expect(def.muzzleFlash).toBeDefined();
+    expect(def.muzzleFlash!.color).toBe(BULLET_COLORS.rear_guard);
+    expect(def.muzzleFlash!.radius).toBe(6);
+    expect(def.muzzleFlash!.radius).toBeLessThan(
+      WEAPON_CATALOGUE.cannon.muzzleFlash!.radius,
+    );
+    expect(def.muzzleFlash!.duration).toBeGreaterThanOrEqual(0.1);
+    expect(def.muzzleFlash!.duration).toBeLessThanOrEqual(0.12);
+  });
+
+  test('Rear Guard declares rose impact feedback routed through its baked pop cue (AH-0MVV0WN96007TU9J)', () => {
+    const def = WEAPON_CATALOGUE.rear_guard;
+    // The connect is colour-matched to the rose pellet and audible through the
+    // shared impact seam instead of the generic warm-white fallback flash.
+    expect(def.impactFx).toBeDefined();
+    expect(def.impactFx!.color).toBe(BULLET_COLORS.rear_guard);
+    expect(def.impactFx!.cue).toBe('playRearGuardImpactSound');
+    expect(def.impactFx!.radius).toBe(8);
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(0.14);
+    // Softer than the Cannon's crack, matching the single compact pellet.
+    expect(def.impactFx!.duration).toBeLessThanOrEqual(
+      WEAPON_CATALOGUE.cannon.impactFx!.duration,
+    );
+  });
+
+  test('the Rear Guard feel package changes no behaviour or balance values (AH-0MVV0WN96007TU9J)', () => {
+    const def = WEAPON_CATALOGUE.rear_guard;
+    // The metadata-only package must leave the only rearward firing identity
+    // exactly as shipped.
+    expect(def.fireRateMs).toBe(WEAPON_REAR_GUARD_FIRE_RATE);
+    expect(def.offsets).toEqual([Math.PI]);
+    expect(def.bulletColor).toBe(BULLET_COLORS.rear_guard);
+    expect(def.bulletShape).toBe('pellet');
+    expect(def.bulletRim).toBe(0xffd0e0);
+    expect(def.bulletTrail).toBe(1.6);
+    expect(def.bulletSize).toBe(0.9);
+    expect(def.bulletLifetime).toBe(WEAPON_BULLET_LIFETIME.rear_guard);
   });
 
   test('Broadside fires one bullet to each side and none forward', () => {

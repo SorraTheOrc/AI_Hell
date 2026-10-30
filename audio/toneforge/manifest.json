@@ -417,6 +417,22 @@
       ]
     },
     {
+      "cue": "playRearGuardFireSound",
+      "recipe": "aihell-rear-guard-fire",
+      "delivery": "baked",
+      "seeds": [
+        32281
+      ]
+    },
+    {
+      "cue": "playRearGuardImpactSound",
+      "recipe": "aihell-rear-guard-impact",
+      "delivery": "baked",
+      "seeds": [
+        32282
+      ]
+    },
+    {
       "cue": "playWaveLaserFireSound",
       "recipe": "aihell-wave-laser-fire",
       "delivery": "baked",

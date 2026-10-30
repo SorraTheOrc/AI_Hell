@@ -560,6 +560,19 @@ export function playShardSwarmImpactSound(): void {
 }
 
 /**
+ * Soft rose pop — a Rear Guard pellet connects (AH-0MVV0WN96007TU9J). Plays
+ * through the shared impact seam (`CombatScene.resolveWeaponImpactFx`)
+ * alongside the rose impact flash, so the game and every gym connect
+ * identically instead of falling back to the generic warm-white flash with no
+ * hit cue. Kept to ~0.12 s and deliberately softer than the Cannon's crack,
+ * because the Rear Guard is a single compact rearward shot. Baked via the
+ * ToneForge pipeline (`aihell-rear-guard-impact`, seed 32282).
+ */
+export function playRearGuardImpactSound(): void {
+  playCue('playRearGuardImpactSound');
+}
+
+/**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
  * their own baked hit cues; dispatched by {@link playWeaponImpactCue} from
@@ -578,6 +591,7 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playArcImpactSound,
   playRailgunImpactSound,
   playShardSwarmImpactSound,
+  playRearGuardImpactSound,
 };
 
 /**
@@ -628,6 +642,19 @@ export function playRailgunFireSound(): void {
  */
 export function playShardSwarmFireSound(): void {
   playCue('playShardSwarmFireSound');
+}
+
+/**
+ * Muted rearward *thup* — Rear Guard fire (AH-0MVV0WN96007TU9J). A low-passed
+ * sawtooth body with no square click, darker and more muffled than the
+ * Cannon's forward thump so the backward shot is identifiable by ear. Routed
+ * through the one shared player-fire dispatcher ({@link playWeaponFireSound})
+ * so live fire, the reduced-volume hold-full metronome and every gym fire
+ * sound identical. Baked via the ToneForge pipeline
+ * (`aihell-rear-guard-fire`, seed 32281).
+ */
+export function playRearGuardFireSound(): void {
+  playCue('playRearGuardFireSound');
 }
 
 /** Deep expanding thump + rising ring — Nova fire. */
@@ -779,6 +806,9 @@ export function playWeaponFireSound(
       break;
     case 'shard_swarm':
       playCue('playShardSwarmFireSound', options);
+      break;
+    case 'rear_guard':
+      playCue('playRearGuardFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches

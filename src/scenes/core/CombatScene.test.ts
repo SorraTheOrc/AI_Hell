@@ -1278,6 +1278,72 @@ describe('CombatScene — shared combat core hook contract', () => {
     expect(scene.getBulletImpactEffects()).toHaveLength(1);
   });
 
+  // ── Rear Guard impact feedback (AH-0MVV0WN96007TU9J) ──────────────
+
+  it('AH-0MVV0WN96007TU9J — an auto-fired rear guard pellet carries the catalogue impact metadata', async () => {
+    const scene = await boot();
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('rear_guard');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+
+    scene.runAutoFire(2);
+
+    // The Rear Guard fires backwards, so the pellet sits behind the ship —
+    // located by its rose colour, not a direction assumption.
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.rear_guard);
+    expect(shot).toBeDefined();
+    // The pellet carries the declared rose impact feedback, so its connect
+    // routes through the shared seam with no per-scene code.
+    expect(shot!.impactFx).toEqual(WEAPON_CATALOGUE.rear_guard.impactFx);
+  });
+
+  it('AH-0MVV0WN96007TU9J — a rear guard connect plays its baked pop cue and rose impact flash', async () => {
+    const scene = await boot();
+    const cue = vi.spyOn(effectsModule, 'playWeaponImpactCue');
+    const impact = vi.spyOn(bulletImpactModule, 'spawnBulletImpact');
+    const player = scene.addPlayer({ x: 50, y: 50 });
+    player.equipWeapon('rear_guard');
+    player.setInput({ up: false, down: false, left: false, right: true });
+    player.physicsTick(0.1, scene.scale.width, scene.scale.height);
+    scene.runAutoFire(2);
+
+    const shot = scene
+      .getPlayerBullets()
+      .find((b) => b.color === BULLET_COLORS.rear_guard);
+    expect(shot).toBeDefined();
+    // Keep one pellet so the connect count is unambiguous — comparable shots
+    // may spawn at the same place and also overlap the stub enemy.
+    const pellets = scene.getPlayerBullets();
+    for (let i = pellets.length - 1; i >= 0; i -= 1) {
+      if (pellets[i] !== shot) pellets.splice(i, 1);
+    }
+    const enemy = new ToughStubEnemy(scene, shot!.x, shot!.y, 10, 3);
+    scene.entities.push(enemy);
+
+    scene.runCollisions();
+
+    // The connect is audible through the Rear Guard's baked pop cue and
+    // colour-matched to the rose pellet — the generic warm-white 0xfff2a0
+    // fallback flash no longer applies to this weapon.
+    expect(cue).toHaveBeenCalledTimes(1);
+    expect(cue).toHaveBeenCalledWith('playRearGuardImpactSound');
+    expect(impact).toHaveBeenCalledWith(
+      scene,
+      expect.any(Number),
+      expect.any(Number),
+      expect.objectContaining({
+        color: BULLET_COLORS.rear_guard,
+        radius: WEAPON_CATALOGUE.rear_guard.impactFx!.radius,
+        duration: WEAPON_CATALOGUE.rear_guard.impactFx!.duration,
+      }),
+    );
+    expect(impact.mock.calls[0][3]).not.toMatchObject({ color: 0xfff2a0 });
+    expect(scene.getBulletImpactEffects()).toHaveLength(1);
+  });
+
   it('F2 — the killing blow finalises exactly once (destruction audio + onEnemyDestroyed)', async () => {
     const scene = await boot();
     const destroySound = vi.spyOn(effectsModule, 'playDestructionSound');
