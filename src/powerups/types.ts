@@ -134,6 +134,21 @@ export interface PowerUpEntry {
   description: string;
   /** Duration in seconds for timed effects (undefined for permanent). */
   duration?: number;
+  /**
+   * Field-pickup temporary-window TTL in **seconds** for a kind with no timed
+   * effect of its own (parent AH-0MVSTKGC3003OMAC, Resolved decision 1;
+   * AH-0MVUGI3Q4009MW6A).
+   *
+   * A field pickup adds a temporary level component that reverts when this
+   * window expires. Timed kinds leave this `undefined`: their window is the
+   * level-resolved effect duration, so both cases are composed by the single
+   * `resolveTemporaryWindow` resolver in `./powerUpLevels`.
+   *
+   * **Balance tuning:** the values are data, deliberately short so a
+   * temporary level can never compound across a wave. Retune them here — no
+   * code change is needed for a new window length.
+   */
+  temporaryWindow?: number;
   /** Maximum stack count for stackable effects (undefined for non-stackable). */
   maxStacks?: number;
   /** Initial life count when the life counter starts. */
@@ -177,6 +192,10 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Bomb',
     description:
       'Clears enemy bullets in a radius around the ship; a field pickup fires once, a hold-full reward pulses.',
+    // Balance tuning: mirrors the established 10 s weapon window. The field
+    // pickup's temporary level reverts after this window
+    // (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 10,
   },
   speed_boost: {
     id: 'speed_boost',
@@ -191,12 +210,18 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
       'Stores auto-activation charges (up to 3, recharging); triggers a 1.5 s pass-through when 3+ threats close within 40 px. The hold-full reward adds one charge to the pool.',
     // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
     duration: 1.5,
+    // Balance tuning: the defensive kinds use the shield-style 15 s window
+    // for the temporary level a field pickup grants (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 15,
   },
   teleport: {
     id: 'teleport',
     name: 'Teleport',
     description:
       'Stores up to 3 uses; when the ship is in danger, one is spent automatically to warp to the nearest safe spot and grant a short Phase Shift on arrival. Teleporting can be disorienting — keep your wits about you.',
+    // Balance tuning: defensive kind, so the temporary level uses the same
+    // 15 s window as Phase Shift / Shield (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 15,
   },
   extra_life: {
     id: 'extra_life',
@@ -204,6 +229,9 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     description: '+1 life immediately (starts at 3, capped at 5).',
     livesStart: 3,
     livesMax: 5,
+    // Balance tuning: the temporary level a field pickup grants reverts
+    // after the 10 s weapon-style window (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 10,
     // Exempt: an extra life never opens a seventh permanent effect kind, so
     // it stays available once the six slots are full (Q3 answer (a)).
     availableWhenSlotsFull: true,
@@ -229,6 +257,9 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Smart Bomb',
     description:
       'Fires a screen-wide pulse that damages every enemy once and clears every enemy bullet; a field pickup fires once, a hold-full reward pulses.',
+    // Balance tuning: 10 s weapon-style window for the temporary level a
+    // field pickup grants (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 10,
   },
   force_field: {
     id: 'force_field',
@@ -253,6 +284,10 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // Exempt: the producer explicitly included Mystery UFO in the
     // available-when-full set (Q3 answer (a)).
     availableWhenSlotsFull: true,
+    // Balance tuning: 15 s spans a full 5–8 s drone sortie, so a field
+    // pickup's temporary level survives the drone it grants before reverting
+    // (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 15,
   },
   frenzy: {
     id: 'frenzy',
@@ -292,6 +327,10 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // (the permanent cadence lives in `POWER_UP_LEVEL_SPECS.strike`, which is
     // a whole-beat cadence on the shared 80 BPM grid: 6.75 s → 2.25 s).
     duration: 30,
+    // Balance tuning: 10 s weapon-style window for the temporary level a
+    // field pickup grants — the `duration` above is *not* that window
+    // (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 10,
   },
 };
 

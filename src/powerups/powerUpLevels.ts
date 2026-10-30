@@ -100,7 +100,7 @@
  * Pure and deterministic: no scene, DOM, Phaser or storage coupling.
  */
 
-import { PowerUpId, getPowerUpById } from './types';
+import { POWER_UP_CATALOGUE, PowerUpId, getPowerUpById } from './types';
 import {
   curveValue,
   formatDelta,
@@ -117,6 +117,7 @@ import {
   STRIKE_INTERVAL_BEATS_BASE,
   STRIKE_INTERVAL_BEATS_FLOOR,
   STRIKE_INTERVAL_BEATS_PER_LEVEL,
+  WEAPON_TIMEOUT_MS,
 } from '../core/constants';
 import { DEFAULT_BPM, beatPeriodMs } from '../utils/beat';
 
@@ -1214,6 +1215,139 @@ export function resolvePowerUpAtLevel(
     bucket.thornsRechargeRate = 1 / thornsRecharge;
   }
   return stats;
+}
+
+// ── Temporary-window (field-pickup TTL) resolver ─────────────────────
+
+/**
+ * The level-resolved variable that carries each timed kind's effect
+ * duration — the window a field pickup opens today, exactly as
+ * `EffectsRegistry._applyTimedEffect` reads it.
+ *
+ * Magnet and Mineral Scoop are deliberately absent: their attraction window
+ * is not a levelled axis, so it resolves from the catalogue `duration` (see
+ * {@link NON_LEVELLED_TIMED_WINDOW_IDS}).
+ */
+const TIMED_WINDOW_VARIABLES: Partial<Record<PowerUpId, PowerUpLevelVariable>> = {
+  shield: 'shieldDuration',
+  speed_boost: 'speedDuration',
+  force_field: 'forceFieldDuration',
+  frenzy: 'frenzyDuration',
+  chrono: 'chronoDuration',
+  thorns: 'thornsDuration',
+  salvage: 'salvageDuration',
+};
+
+/**
+ * Timed kinds whose window is a fixed catalogue `duration` rather than a
+ * levelled variable (the Magnet / Mineral Scoop attraction window).
+ */
+const NON_LEVELLED_TIMED_WINDOW_IDS: readonly PowerUpId[] = [
+  'magnet',
+  'mineral_scoop',
+];
+
+/** True when `value` is a usable window length (finite and strictly positive). */
+function isPositiveFinite(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * Resolves the **temporary window (TTL, seconds)** a field pickup of
+ * `powerUpId` opens on top of the permanent level (parent AH-0MVSTKGC3003OMAC,
+ * Resolved decision 1; AH-0MVUGI3Q4009MW6A).
+ *
+ * The window is a property of the **upgrade**, never a single global
+ * constant:
+ *
+ * - **Timed kinds** resolve their existing level-scaled effect duration
+ *   (`shieldDuration`, `speedDuration`, `forceFieldDuration`, …; the Magnet /
+ *   Mineral Scoop attraction uses its catalogue `duration`). Behaviour is
+ *   unchanged and a levelled kind keeps its level-scaled window.
+ * - **Instant kinds** (no timed effect of their own) return the per-entry
+ *   `temporaryWindow` TTL from {@link POWER_UP_CATALOGUE}.
+ *
+ * The catalogue is read at call time, so retuning a TTL is a pure data change.
+ *
+ * @param powerUpId - The power-up whose field-pickup window is required.
+ * @param upgradeLevel - The upgrade level the window opens at (`0` = first
+ *   collection). Only the timed kinds use it; instant TTLs are level-free.
+ * @returns The window length in seconds (always finite and positive).
+ * @throws Error when the kind declares no usable window at all, so a new
+ *   instant kind that forgets its TTL fails loudly instead of silently
+ *   reverting immediately.
+ */
+export function resolveTemporaryWindow(
+  powerUpId: PowerUpId,
+  upgradeLevel = 0,
+): number {
+  getPowerUpById(powerUpId); // validate the id (throws for unknown power-ups)
+  const entry = POWER_UP_CATALOGUE[powerUpId];
+
+  // Timed kinds keep their level-resolved effect duration — checked first so
+  // a stray `temporaryWindow` can never flatten a level-scaled window.
+  const timedVariable = TIMED_WINDOW_VARIABLES[powerUpId];
+  if (timedVariable) {
+    const stats = resolvePowerUpAtLevel(
+      powerUpId,
+      upgradeLevel,
+    ) as unknown as Record<string, number | undefined>;
+    const levelWindow = stats[timedVariable];
+    if (isPositiveFinite(levelWindow)) return levelWindow;
+  }
+
+  // Instant kinds declare their own TTL in the catalogue (balance data).
+  const declared = entry.temporaryWindow;
+  if (isPositiveFinite(declared)) return declared;
+  if (declared !== undefined) {
+    throw new Error(
+      `Power-up "${powerUpId}" declares an invalid temporary TTL ` +
+        `(${String(declared)}); expected a finite positive number of seconds.`,
+    );
+  }
+
+  // Non-levelled timed kinds (Magnet / Mineral Scoop attraction window).
+  if (NON_LEVELLED_TIMED_WINDOW_IDS.includes(powerUpId)) {
+    if (isPositiveFinite(entry.duration)) return entry.duration;
+  }
+
+  throw new Error(
+    `Power-up "${powerUpId}" declares no temporary TTL: add a ` +
+      '`temporaryWindow` to its catalogue entry (or a timed window ' +
+      'variable) so a field pickup can revert.',
+  );
+}
+
+/**
+ * Default temporary window (seconds) of a field-pickup weapon — the existing
+ * {@link WEAPON_TIMEOUT_MS} 10 s countdown, surfaced through the same
+ * resolver shape as the power-up TTL so a future weapon definition can
+ * declare its own window (AH-0MVUGI3Q4009MW6A). No behaviour change: the
+ * `Player` weapon timers still use {@link WEAPON_TIMEOUT_MS}.
+ */
+export const DEFAULT_WEAPON_TEMPORARY_WINDOW = WEAPON_TIMEOUT_MS / 1000;
+
+/**
+ * Resolves the temporary window (seconds) a field-pickup weapon opens.
+ *
+ * @param definition - Optional weapon definition; when it declares a
+ *   `temporaryWindow` that value wins over the {@link WEAPON_TIMEOUT_MS}
+ *   default.
+ * @returns The window length in seconds (always finite and positive).
+ * @throws Error when a declared window is not a finite positive number.
+ */
+export function resolveWeaponTemporaryWindow(
+  definition?: { temporaryWindow?: number },
+): number {
+  const declared = definition?.temporaryWindow;
+  if (declared === undefined) return DEFAULT_WEAPON_TEMPORARY_WINDOW;
+  if (!isPositiveFinite(declared)) {
+    throw new Error(
+      `Weapon temporary TTL must be a finite positive number of seconds, ` +
+        `got ${String(declared)}.`,
+    );
+  }
+  return declared;
 }
 
 // ── Upgrade-change summariser ───────────────────────────────────────

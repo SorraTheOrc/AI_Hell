@@ -218,6 +218,12 @@ export const WEAPON_COLLECTION_THRESHOLD = POWER_UP_COLLECTION_THRESHOLD;
  * after collection before it times out and stops firing (GDD §4.4).
  * 10 000 ms = 10 s, from the moment of collection, per weapon. The
  * permanent cannon has no timer and never expires.
+ *
+ * This is the **default** field-pickup weapon temporary window; it is
+ * surfaced through `resolveWeaponTemporaryWindow` in
+ * `src/powerups/powerUpLevels.ts` (alongside the power-up per-upgrade TTL
+ * resolver) so a future weapon definition can declare its own window
+ * (AH-0MVUGI3Q4009MW6A). The value itself is unchanged.
  */
 export const WEAPON_TIMEOUT_MS = 10000;
 
