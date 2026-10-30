@@ -14,6 +14,36 @@ concurrently, and each run spawns fork workers over the shared
 meaningless** — the epic's AC3/AC5 comparisons are only valid when taken
 under the same (ideally idle) load and recorded alongside the numbers.
 
+## Run verification suites in an isolated worktree, never in the shared main checkout
+
+A full-suite result is only trustworthy if the checkout did **not** move while
+the suite ran. The shared main checkout *does* move: another session's
+`implement.py finish` fast-forwards its local `dev` ref (and working tree)
+straight after that session pushes. A run that spans such a fast-forward loads
+the post-change test file against the pre-change source module (or the reverse)
+and can report failures against a commit that never existed.
+
+Observed (AH-0MVVE2QFP002HSUD, 2026-10-30): a `--scope full` run started in the
+main checkout at `147f4991` (19:47:49Z) and was fast-forwarded to `40314aeb`
+mid-run. It reported 4 failures in `src/utils/bulletVisuals.test.ts` — the
+strengthened-shard assertions added by `40314aeb` run against the pre-change
+`bulletVisuals.ts` — and minted the critical `test-failure` item
+AH-0MVVE2QFP002HSUD. Re-running the same suite in a clean worktree at
+`40314aeb` was green (355 files / 8,191 tests).
+
+Framework-side detection of this mixed state (`state_changed_during_run`,
+never cached, never triaged) is tracked in `SA-0MVL2NH1G0094FA2` (from
+AH-0MVSRO0MM004T450). Until that ships in the installed skill tree, the
+operational rule is:
+
+- Run verification suites (any run whose result you will trust or cache) from
+the work item's worktree under `.worklog/worktrees/`, not from the shared main
+checkout.
+- Treat a red result whose failing test file is newer than the source it
+exercises — or whose run started and finished on different commits — as a
+**mixed-state** artefact, not a defect: re-run from a clean worktree before
+triaging or filing a `test-failure` item.
+
 ## Current state (post-split, deterministic boot default)
 
 Since child AH-0MVF6XQIC005RY3P the harness boots **deterministically by

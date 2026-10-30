@@ -468,6 +468,12 @@ project-membership guard (`src/test/projectMembership.test.ts`) fails loudly if
 a test file is selected by no project or by both, and asserts each project's
 `include` list matches the classifier exactly.
 
+Run verification suites from the work item's worktree, never from the shared
+main checkout: another session's `implement.py finish` fast-forwards it
+mid-run and can produce a red result for a commit that never existed
+(AH-0MVVE2QFP002HSUD; see
+[docs/dev/test-suite-timing.md](docs/dev/test-suite-timing.md#run-verification-suites-in-an-isolated-worktree-never-in-the-shared-main-checkout)).
+
 Project test types are registered in
 `.pi/skills_extensions/test/extension.json` — the supported project-local
 mechanism for typed runs (see the test skill's "Typed runs" contract). The
