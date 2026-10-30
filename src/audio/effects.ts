@@ -606,8 +606,14 @@ export function playHeavySlugImpactSound(): void {
  * their own baked hit cues; dispatched by {@link playWeaponImpactCue} from
  * the shared impact seam. The registry lives here (not in a scene) so the
  * audio knowledge stays in the audio layer.
+ *
+ * Exported so the catalogue-wide feel guard
+ * (`src/utils/weaponFeelRoster.test.ts`, AH-0MVV0WMD8007LOVT AC5) can assert
+ * membership without duplicating the list. The AOE family (`nova`, `mortar`)
+ * is deliberately absent: it has no per-shot `impactFx` and its connect cues
+ * are played by the shared AOE seam instead.
  */
-const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
+export const PLAYER_WEAPON_IMPACT_CUES: Readonly<Record<string, () => void>> = {
   playCannonImpactSound,
   playRicochetImpactSound,
   playSpreadImpactSound,
@@ -623,6 +629,16 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playBroadsideImpactSound,
   playHeavySlugImpactSound,
 };
+
+/**
+ * Whether `cue` is a registered per-weapon impact cue — the predicate the
+ * catalogue-wide feel guard uses to verify a weapon's `impactFx` resolves
+ * without duplicating {@link PLAYER_WEAPON_IMPACT_CUES}
+ * (AH-0MVV0WMD8007LOVT AC5).
+ */
+export function isPlayerWeaponImpactCue(cue: string): boolean {
+  return Object.prototype.hasOwnProperty.call(PLAYER_WEAPON_IMPACT_CUES, cue);
+}
 
 /**
  * Plays the baked impact cue named by a weapon's `impactFx` metadata.

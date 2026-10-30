@@ -556,6 +556,8 @@ describe('playWeaponFireSound — shared player-fire path', () => {
       ['railgun', 'playRailgunFireSound'],
       ['shard_swarm', 'playShardSwarmFireSound'],
       ['rear_guard', 'playRearGuardFireSound'],
+      ['broadside', 'playBroadsideFireSound'],
+      ['heavy_slug', 'playHeavySlugFireSound'],
     ];
     for (const [weaponId, cue] of cases) {
       recording.plays.length = 0;
