@@ -1786,6 +1786,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | `ai_hell_settings` | `sfxVolume` (0.0–1.0), `sfxMuted` (SFX mute toggle), `bindings` (remappable key controls: movement, pause toggle), `shareTelemetryDev` (dev-build only), `controlScheme` (per-player ship control scheme: `asteroids` (default) or `fourDirectional`; a missing, non-string or out-of-union value falls back to `asteroids`; overrides the `ship-config.csv` `controlScheme` for the player and applies to the running game on resume from the in-game Settings and to every subsequent run — see §2.2). Edited in SettingsScene (reachable from the main menu and the pause menu); defaults restored via **Reset to defaults** |
 | `ai_hell_checkpoint` | **Run checkpoint** (AH-0MVCRBTNF000DK51): auto-written after every mini-boss defeat. Stores the resume level (the level after the defeated mini-boss) and wave 1, plus lives, score, minerals, the **ship's hold capacity** the run had earned, permanent weapon/power-up levels, unlocked weapons and the run seed. The main menu shows **Continue — Level N** only when a usable checkpoint exists; resuming starts that level at wave 1 with the saved stats and RNG seed and **replays every stored permanent grant through the same shared grant seam live play uses** (AH-0MVSHI07B003BZIP), so the HUD upgrade list and the permanent effect state (shield armed with its absorption budget, permanent Bomb/Smart Bomb/Strike pulses, permanently-open Frenzy/Chrono/Force Field/Thorns windows, capped Phase Shift/Teleport charge pools, Magnet/Mineral Scoop stacks) match a live run that earned the same upgrades — the restored lives are never inflated by the Extra Life replay. Temporary field-pickup windows are intentionally **not** persisted and never re-open on resume. **The hold is restored through the shared hold model** (schema **v2**, AH-0MVT1DYO5004UC4P / AH-0MVT1DZRG000Q1US): Continue applies the persisted capacity first, then clamps the saved mineral count into `[0, capacity]` and clears overflow, so a resumed hold is never over-capacity and the next hold-full choice needs a real collection. A **legacy v1** payload has no capacity field and resumes at the first-hold capacity (its over-capacity minerals are still clamped); migration is decided by field presence, so the schema version itself is informational. **Play Game (New Game)** clears it. Corrupt/invalid payloads load as "no checkpoint" (defensive parse, same fallback discipline as the leaderboard) |
 | `ai_hell_lastSession` | Last played score (optional, for "continue" if added later) |
+| `ai_hell_hangar_war` | **Hangar-war payload** (AH-0MVUXC0M5007LCGV, §8.1): one versioned payload (version `1`) holding the persistent hangar (banked minerals and mini-boss cores, owned hulls/starting weapons/modifiers, the active hull and loadout) **and** the hex ring (ring index, per-hex state and queued attacks) plus the war seed and best score. One key so a defence result can never be written without the hangar state it depends on and a partial ring is never discarded. Defensive parse follows §6.6: an unidentifiable or explicitly unknown-version payload loads as "no save", a usable shape is salvaged field by field, and **migration is decided by field presence** — a hangar-only (pre-ring) save loads as hangar-at-last-valid-state with an empty ring and is stamped with the current version. Slow/failed reads and writes degrade silently and never crash the hangar screen; the store is injectable, so a future backend can replace `localStorage` behind the same `HangarWarStorage` interface |
 
 **Migration note**: If the project later adds online leaderboards, the local storage layer should be abstracted behind an interface so it can be swapped for an API backend.
 
@@ -2179,10 +2180,127 @@ points or extra upgrade bays), **upgraded bots** with special skills that are mo
 effective against certain enemy or boss types, per-hex personalities, contracts
 and ring landmarks — each judged on whether it adds a choice rather than a chore.
 
-This section records the **decision and the design intent only**: it is not a
-playable specification, and no candidate's gameplay, persistence-schema or scene
-implementation is specified here. The specification and implementation land
-through AH-0MVU3VNJI00066YE.
+This section began as the **decision and the design intent** for Candidate D. The
+first phase — the **hangar slice**, Candidate B's MVP — is now **shipped** and
+specified in §8.1; the ring specification is added later by phase B (B8). The
+implementation and its verification are tracked by **AH-0MVU3VNJI00066YE**
+(hangar slice first, then the first hex ring).
+
+### 8.1 Hangar slice (phase A — shipped)
+
+The hangar slice is a **complete outer loop on its own**: "take a hex, leave a
+bot, buy a hull, retake what the AI stole" already stands without the ring, so
+if the ring disappoints in play the slice (a strict superset of Candidate B)
+still ships (`OUTER_LOOP_CANDIDATES.md` *Minimal first slice* and
+*Recommendation*). It is a vertical slice through code, tests and docs, not a
+horizontal layer: every rule below is exercised by
+`src/scenes/hangarWar/hangarSlice.integration.test.ts` (the phase-A end-to-end
+gate) and by the module suites beside each implementation file.
+
+#### Entry surface and mode separation
+
+The main menu gains an **additive `🛠 Hangar War` entry** (AH-0MVUXC2DD003HN0I):
+**`▶ Play Game` still starts the shipped classic 10-level campaign** exactly as
+before, and **`Continue — Level N` still resumes the arcade run checkpoint**.
+`Hangar War` opens `HangarScene`, whose `▶ DEPLOY` row starts the **same**
+`PlayScene` with a tagged `hangarWar` launch payload — the hangar-resolved hull
+(lives and speed), starting weapons and permanent modifiers, the target hex's
+aggression-selected campaign level (aggression `0` is the shipped opening
+level) and a deterministic seed derived from the war seed. The two modes share
+the run code (`PlayScene` + `src/scenes/core/`) and differ **only** in that
+launch data.
+
+Mode separation is enforced at the persistence boundary: a deployment **writes
+no arcade checkpoint and clears none**, so `Continue` can only ever belong to
+the arcade run; an arcade run is never a hangar deployment (only a payload
+tagged `kind: 'hangar-war'` is applied, and malformed/absent launch data falls
+back to the unchanged arcade path). The checkpoint *moment* still banks salvage
+— that is the hangar economy both modes share.
+
+#### Hangar economy and unlock tree
+
+The **fleet** starts minimal — one basic hull (`hull-1`, 3 lives), one starting
+weapon (`spread`) and no modifiers — while a **run** keeps the shipped middle
+loop in full (the six shared loadout slots plus the slot-free **Extra Life**
+and **Mystery UFO**). Scarcity lives in what the hangar owns between
+deployments, never in stripping the run.
+
+The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
+(`src/core/hangarWar/hangarEconomy.ts`):
+
+| Entry | Kind | Price (minerals / cores) | Effect |
+|---|---|---|---|
+| `hull-1` Scrap Hull | hull | 0 / 0 (starter) | 3 lives, speed ×1.0, defence 2 |
+| `hull-2` Bulwark Hull | hull | 220 / 3 | 4 lives, speed ×0.85, defence 14 |
+| `spread` Spread Cannon | weapon | 0 / 0 (starter) | `spread` starting weapon |
+| `wave_laser` Wave Laser | weapon | 120 / 1 | `wave_laser` starting weapon |
+| `ricochet` Ricochet | weapon | 90 / 2 | `ricochet` starting weapon |
+| `cluster` Cluster Missile | weapon | 160 / 1 | `cluster` starting weapon |
+| `hardened_plating` Hardened Plating | modifier | 80 / 1 | +1 starting life per deployment |
+
+Every phase-A entry is available at ring 1 (`minRing: 1`); ring gating is the
+field phase B's ring content uses. A purchase needs **both** currencies at
+once, ownership is tracked per kind (hulls / starting weapons / modifiers), and
+precedence for a refused purchase is `owned` → `gated` → `unaffordable`. The
+hangar screen's deployment selector equips an owned hull and toggles owned
+starting weapons (never below one) and modifiers; resolution drops unknown or
+unowned ids, so a corrupt save can never deploy an unowned ship or an unarmed
+loadout. The attract bot's "cheapest useful unlock" rule (`purchaseWeight`,
+catalogue order as the deterministic tie-break) also lives here, and the
+defender-rating formula (`baseDefence + 3×armour + 2×firepower + 2×systems`)
+is defined once so phase B's defence resolver has no second source of truth.
+
+#### Salvage banking at the existing checkpoint moments
+
+Banking is the persistent echo of the shipped in-run mineral economy, and it
+applies to **both** modes through one seam (AH-0MVUXC118004B4OX):
+
+- **When:** the run's existing checkpoint moments — mini-boss defeats. Each one
+  snapshots the run's **cumulative** held minerals and the **mini-boss cores**
+  the run has earned (one per defeated mini-boss). Banking is a copy, never a
+  withdrawal: the run economy is untouched.
+- **How much:** only the increase over what this run has already banked (a
+  per-run watermark), so replaying a checkpoint never double-counts and
+  spending minerals in-run never lowers the persistent balance.
+- **Death:** a lost run forfeits **only** the salvage earned since its last
+  bank; the persistent balance and the ring survive. The forfeited amount is
+  reported for the end-of-run summary, and nothing is written at death.
+
+The banked balance itself is written through the versioned hangar-war store, so
+a defence result can never be persisted without the hangar state it depends on.
+
+#### Persistence: the `ai_hell_hangar_war` key and its migration
+
+The slice adds a **fifth** `localStorage` key, `ai_hell_hangar_war`, under the
+§6.6 save-data rules (no backend, injectable store, defensive parse). It holds
+**one** versioned payload for the hangar **and** the ring (version `1`), so the
+two outer-loop axes cannot be split across keys and a partial ring is never
+discarded.
+
+- **Defensive parse:** unparseable JSON, a non-object, a payload with no usable
+  `hangar`, or an explicit **unknown version** loads as `null`; loading never
+deletes or rewrites the stored bytes. A usable shape is salvaged field by
+  field (wrong-typed values fall back to safe defaults, unusable hexes are
+  dropped, the rest kept), and the active hull is always one the fleet owns.
+- **Migration note:** migration is decided by **field presence**, not by the
+  number. A hangar-only save written before the ring existed (no
+  `ring`/`pendingAttacks`) loads as "hangar at its last valid state, empty
+  ring", keeps the hangar/seed/score/ownership and is stamped with the current
+  version. A missing `version` is treated the same way (pre-versioning); an
+  explicit *different* version is the `null` case above, so bump it only for an
+  incompatible shape change and add the old → new mapping.
+
+#### What phase A proves, and what it defers
+
+The verified cycle is **deploy → bank at a checkpoint → lose the run (only
+unbanked salvage lost) → buy an unlock → deploy again with the new
+hull/loadout**, against an injected storage. Deferred to **phase B** (the first
+ring, B1–B8 of AH-0MVU3VNJI00066YE): the hex-grid map, ring generation (ring 2
+at 12 hexes), the capture cycle and boss-granted discovery, the algorithmic
+defence resolver and frontier tick, the defence report, ring timing/playstyle
+validation, and the ring specification document. The ring's massed
+counter-attack on the hangar and the hangar-falls lose state are deferred
+further (AH-0MVUVL2O2006W4QK).
 
 ---
 

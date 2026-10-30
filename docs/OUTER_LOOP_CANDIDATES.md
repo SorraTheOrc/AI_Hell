@@ -3,7 +3,7 @@
 > **Work item:** AH-0MVTE4EOS008RMQ7 — Add Candidate D (Hangar War) and the discovery-progression rules
 > **Parent:** AH-0MVNSSY9L001P1CC — We need an outer loop
 > **Slices (complete):** AH-0MVRNIWHG0099ZS3 (framing + guard), AH-0MVRNJ0SL000RNHR (candidates + comparison), AH-0MVRNJ6BB009IGZX (cross-links + verification)
-> **Status:** **Design only, not scheduled — the producer chose Candidate D (2026-10-29).** Build-out: AH-0MVU3VNJI00066YE
+> **Status:** **Candidate D chosen (2026-10-29); phase A — the hangar slice, Candidate B's MVP — is shipped and specified in GDD §8.1; phase B (the first hex ring) is in build.** Build-out: AH-0MVU3VNJI00066YE
 
 This document is the decision-ready catalogue of candidate **outer loops** for
 AI_Hell. Four candidates are written up on the same footing. The producer
