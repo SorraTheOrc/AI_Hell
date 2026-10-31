@@ -70,6 +70,7 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
     tuneAssignment: null,
     threshold: 10,
     keepEdit: false,
+    watchdog: 0,
     level: null,
     scaleLevels: true,
     forceFields: true,
@@ -150,6 +151,9 @@ export function parseEvaluateArgs(argv = process.argv.slice(2)) {
       case '--threshold':
         options.threshold = Number(next());
         break;
+      case '--watchdog':
+        options.watchdog = Number(next());
+        break;
       case '--keep-edit':
         options.keepEdit = true;
         break;
@@ -205,6 +209,10 @@ Options:
   --set <file> <a>     The declarative edit for --tune, e.g. --set enemy-configs.csv boss.health=6
   --threshold <pct>    Relative significance threshold for --tune (default 10 = ±10%%)
   --keep-edit          Keep the --set CSV edit after the tune run (default: restore)
+  --watchdog <secs>    Bounded-runtime guard for --tune (default 0 = off): aborts with exit 124
+                       when the run exceeds the budget, restoring the CSV. Checked between
+                       phases and on a timer; a blocking synchronous sweep that never yields
+                       cannot be interrupted (see docs/BALANCING.md).
   --games <count>      Games (seeds 1..count) in batch mode (default 100)
   --policies <a,b>     Comma-separated policies to sweep in batch mode
   --ticks <n>          Max ticks per run (default 18000 for a full-campaign batch,
@@ -360,6 +368,70 @@ export function ensureReadableTuneCsv(csvPath) {
 }
 
 /**
+ * Internal error thrown when the opt-in `--watchdog` deadline expires
+ * (AH-0MVSE1OPF008G1SB). Caught inside `executeTune` so the restore `finally`
+ * runs first and the run exits with code `124` instead of a killed-
+ * but-dirty worktree.
+ */
+export class TuneWatchdogError extends Error {
+  constructor(phase, elapsedMs) {
+    super(`tune watchdog expired after ${(elapsedMs / 1000).toFixed(1)} s during ${phase}`);
+    this.name = 'TuneWatchdogError';
+    this.phase = phase;
+    this.elapsedMs = elapsedMs;
+  }
+}
+
+/**
+ * The bounded-runtime guard for `--tune` (AH-0MVSE1OPF008G1SB).
+ *
+ * The deadline is checked at every phase boundary (around each sweep, the edit
+ * and the compare), and a timer records the expiry for stalls that yield to the
+ * event loop (e.g. the SSR config hydration `await`); the next boundary check
+ * then raises {@link TuneWatchdogError}. Accepted, documented limitation: a
+ * **blocking** synchronous sweep that never yields cannot be interrupted by a
+ * timer — the boundary check fires when it returns, and the per-run progress
+ * lines remain the primary signal for such a stall.
+ *
+ * `seconds <= 0` disables the guard entirely (the default).
+ *
+ * @param {number} seconds
+ * @param {{err: {write(s: string): void}}} io
+ * @returns {{check(phase: string): void, dispose(): void}}
+ */
+export function createTuneWatchdog(seconds, io) {
+  const startedAt = Date.now();
+  const budgetMs = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+  let currentPhase = 'preparing';
+  let timer = null;
+  if (budgetMs > 0) {
+    // Records the trip as soon as the event loop is free; the async stack is
+    // unwound at the next boundary check, which raises the error.
+    timer = setTimeout(() => {
+      currentPhase = `${currentPhase} (deadline exceeded)`;
+    }, budgetMs);
+  }
+  return {
+    /**
+     * Raises {@link TuneWatchdogError} when the budget has been consumed.
+     * @param {string} phase
+     */
+    check(phase) {
+      currentPhase = phase;
+      if (budgetMs > 0 && Date.now() - startedAt >= budgetMs) {
+        throw new TuneWatchdogError(currentPhase, Date.now() - startedAt);
+      }
+    },
+    dispose() {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
+/**
  * Opens the streaming `runs.jsonl` sink for a batch
  * (AH-0MVD1RPPP001XJKN AC2/AC3). The batch core hands each run's telemetry
  * to the sink and never retains it (see `executeEvaluation`'s
@@ -477,6 +549,7 @@ export async function restoreCsvFile(
 export async function executeTune(options, io) {
   const { server, core } = await loadCore();
   const csvPath = resolveTuneCsvPath(options);
+  const watchdog = createTuneWatchdog(options.watchdog ?? 0, io);
   const sweep = {
     ...options,
     batch: false,
@@ -485,14 +558,28 @@ export async function executeTune(options, io) {
     humanRecordingText: null,
     humanSeed: null,
   };
+  // Total runs for the progress lines (= seeds x resolved policies; an empty
+  // `--policies` falls back to the single `--policy` inside runBalanceBatch).
+  const totalRuns = sweep.seeds.length
+    * (sweep.policies.length > 0 ? sweep.policies.length : 1);
+  const progressFor = (phase) => {
+    let done = 0;
+    return (run) => {
+      done += 1;
+      io.err.write(`[tune] ${phase} ${done}/${totalRuns} seed=${run.seed} policy=${run.policy}\n`);
+    };
+  };
+  let attempt = null;
   try {
+    watchdog.check('hydrating the balance config');
     await core.hydrateBalanceConfig();
-    const baseline = core.runBalanceBatch(sweep);
+    watchdog.check('baseline sweep');
+    const baseline = core.runBalanceBatch(sweep, { onRun: progressFor('baseline') });
+    watchdog.check('baseline sweep');
 
     // Apply the single declarative edit and refresh the store so the re-run
     // reads the edited values through the shared loaders (never a divergent
     // copy). `attempt` carries the original text for the restore below.
-    let attempt = null;
     try {
       // Crash-safety (AH-0MVSE1A7O002PXAO): persist the pre-edit bytes beside
       // the CSV **before** the first edited byte is written. The `finally`
@@ -500,18 +587,24 @@ export async function executeTune(options, io) {
       // `finally` — the journal is what makes the edit recoverable then (the
       // next `--tune` invocation reconciles it in `main()`).
       writeJournal(csvPath, readFileSync(csvPath));
+      watchdog.check('applying the CSV edit');
       attempt = await applyCsvEditFile(
         csvPath,
         options.tuneAssignment,
         { applyCsvEdit: core.applyCsvEdit, parseEditSpec: core.parseEditSpec },
       );
+      io.err.write(`[tune] edit applied: ${attempt.fileName} ${attempt.spec.rowKey ?? ''}${attempt.spec.rowKey ? '.' : ''}${attempt.spec.field} ${attempt.previousValue} -> ${attempt.newValue}\n`);
       // The SSR config store reads the CSVs bundled at build/load time.
       // Invalidate the Vite module graph so the re-hydrate below re-reads
       // the just-edited CSV files (the re-run consumes the edited values
       // through the shared loaders — single source of truth, parent AC1).
       server.moduleGraph?.invalidateAll?.();
+      watchdog.check('rehydrating after the edit');
       await core.hydrateBalanceConfig();
-      const candidate = core.runBalanceBatch(sweep);
+      watchdog.check('candidate sweep');
+      const candidate = core.runBalanceBatch(sweep, { onRun: progressFor('candidate') });
+      watchdog.check('candidate sweep');
+      io.err.write('[tune] comparing baseline and candidate\n');
 
       const artifacts = core.buildTuneComparisonArtifacts({
         baseline,
@@ -541,6 +634,7 @@ export async function executeTune(options, io) {
       return 0;
     } finally {
       if (attempt) {
+        io.err.write('[tune] restoring the edited CSV\n');
         await restoreCsvFile(csvPath, attempt.originalText, options.keepEdit);
         // The restore succeeded (or `--keep-edit` kept the edit): the journal
         // has served its purpose. If the restore above throws, this line is
@@ -548,7 +642,17 @@ export async function executeTune(options, io) {
         clearJournal(csvPath);
       }
     }
+  } catch (error) {
+    if (error instanceof TuneWatchdogError) {
+      io.err.write(`${error.message}\n`);
+      io.err.write('tune watchdog: aborting with exit code 124 (the CSV has been restored)\n');
+      // exitCode (not exit()) so pending stderr drains and pipes cannot mask it.
+      process.exitCode = 124;
+      return 124;
+    }
+    throw error;
   } finally {
+    watchdog.dispose();
     await server.close();
   }
 }
@@ -564,6 +668,11 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
   if (options.tune) {
     if (!options.tuneFile || !options.tuneAssignment) {
       io.err.write('--tune requires --set <file> <assignment> (e.g. --set enemy-configs.csv boss.health=6)\n');
+      return 2;
+    }
+
+    if (!Number.isFinite(options.watchdog) || options.watchdog < 0) {
+      io.err.write('--watchdog expects a non-negative number of seconds (default 0 = off)\n');
       return 2;
     }
 

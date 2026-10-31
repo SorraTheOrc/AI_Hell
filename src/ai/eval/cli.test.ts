@@ -303,6 +303,26 @@ describe('runBalanceBatch (AH-0MVBNITA0005VQGN)', () => {
     expect(batch.report.schemaVersion).toBe(BALANCE_STATISTICS_SCHEMA_VERSION);
     expect(batch.aggregate.runs).toBe(2);
   });
+
+  it('forwards the shared per-run onRun hook to runBatch (AH-0MVSE1OPF008G1SB AC4)', () => {
+    seedEnemies(1);
+    const seen: Array<{ policy: string; seed: number }> = [];
+    const batch = runBalanceBatch(tuneOptions(), {
+      onRun: (run) => seen.push({ policy: run.policy, seed: run.seed }),
+    });
+    // One call per completed run, in the sweep's policy-then-seed order.
+    expect(seen).toEqual([
+      { policy: 'competent', seed: 1 },
+      { policy: 'competent', seed: 2 },
+    ]);
+    // The hook is observational only: the batch is byte-identical.
+    expect(batch.json).toBe(runBalanceBatch(tuneOptions()).json);
+  });
+
+  it('keeps the historic signature when no hooks are supplied (AC4)', () => {
+    seedEnemies(1);
+    expect(runBalanceBatch(tuneOptions(), null).json).toBe(runBalanceBatch(tuneOptions()).json);
+  });
 });
 
 describe('buildTuneComparisonArtifacts (AH-0MVBNITA0005VQGN)', () => {

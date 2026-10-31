@@ -182,6 +182,22 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     expect(doc).toContain('src/data/*.tune-journal');
   });
 
+  it('documents the per-run progress and the opt-in watchdog (AH-0MVSE1OPF008G1SB)', () => {
+    expect(doc).toContain('AH-0MVSE1OPF008G1SB');
+    expect(doc).toMatch(/Progress output and the runtime bound/);
+    expect(doc).toContain('[tune] baseline 1/2 seed=1 policy=competent');
+    // The guarantee: progress is on stderr, stdout parity is preserved.
+    expect(doc).toMatch(/reports its progress on \*\*stderr\*\*/);
+    expect(doc).toMatch(/stdout keeps exactly the report/);
+    // The flag surface and its default.
+    expect(doc).toContain('--watchdog <secs>');
+    expect(doc).toMatch(/default `0` = off/);
+    // The distinct exit code and the accepted limitation.
+    expect(doc).toContain('124');
+    expect(doc).toContain('tune watchdog expired after');
+    expect(doc).toMatch(/blocking\* synchronous sweep that never yields|cannot be interrupted/);
+  });
+
   it('is cross-linked from the README and EVALUATION.md flags', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
     const evaluation = fs.readFileSync(EVALUATION_PATH, 'utf8');

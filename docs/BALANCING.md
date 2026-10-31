@@ -745,9 +745,44 @@ artifact instead).
 | `--set <file> <assignment>` | The single declarative edit, e.g. `--set enemy-configs.csv boss.health=6` (`<rowKey>.<field>=<value>`, or `<field>=<value>` for single-row files such as `ship-config.csv`). | — |
 | `--threshold <pct>` | Relative significance threshold in percent. | `10` (±10 %) |
 | `--keep-edit` | Keep the CSV edit after the run instead of restoring it. | off (restore) |
+| `--watchdog <secs>` | Bounded-runtime guard: abort the run (exit `124`) once the budget is spent, restoring the CSV first. | `0` (off) |
 
 The batch sweep itself uses the usual flags (`--games`, `--policies`,
 `--ticks`, `--dt`, `--sample-every`, `--out`).
+
+### Progress output and the runtime bound (AH-0MVSE1OPF008G1SB)
+
+Every `--tune` run reports its progress on **stderr**, one line per completed
+run plus the phase transitions:
+
+```
+[tune] baseline 1/2 seed=1 policy=competent
+[tune] baseline 2/2 seed=2 policy=competent
+[tune] edit applied: enemy-configs.csv boss.health 1 -> 7
+[tune] candidate 1/2 seed=1 policy=competent
+[tune] candidate 2/2 seed=2 policy=competent
+[tune] comparing baseline and candidate
+[tune] restoring the edited CSV
+```
+
+stdout keeps exactly the report it printed before, so artifact/print parity and
+the determinism tests are unaffected. The lines come from the shared
+`runBatch` per-run hook (`runBalanceBatch(options, {onRun})`), not a second
+progress mechanism.
+
+`--watchdog <secs>` (default `0` = off) bounds the run. The deadline is checked
+at every phase boundary — hydrating the config, the baseline sweep, the edit,
+the re-hydrate, the candidate sweep — and a timer records an expiry reached
+while the run yields to the event loop. On expiry the CLI prints
+`tune watchdog expired after <n> s during <phase>`, restores the CSV (and clears
+the journal) and exits with code **`124`** — distinct from the fail-fast/usage
+code `2` — so a scripted caller can tell a bound-trip from a validation error.
+
+**Accepted limitation:** a *blocking* synchronous sweep that never yields to
+the event loop cannot be interrupted by a timer. Such a stall is caught when
+the sweep returns (the boundary check then trips), and the per-run progress
+lines are the primary signal while it runs. The known 2026-10-21 hang is
+removed by the fail-fast validation above rather than by the watchdog.
 
 ### Guards and guarantees
 

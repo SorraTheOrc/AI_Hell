@@ -28,6 +28,8 @@ export interface ParsedEvaluateArgs {
   tuneAssignment: string | null;
   threshold: number;
   keepEdit: boolean;
+  /** Opt-in `--tune` watchdog seconds, 0 = off (AH-0MVSE1OPF008G1SB). */
+  watchdog: number;
   /** Explicit campaign level (1–10) for per-level mode; null → seeded skirmish. */
   level: number | null;
   /** Level-scaling curves for per-level mode (true = curves at the level, false = level-1 baseline). */
@@ -103,6 +105,22 @@ export function restoreCsvFile(
   originalText: string,
   keepEdit?: boolean,
 ): Promise<{ action: 'restored' | 'kept-edited' }>;
+
+/** Raised when the opt-in `--watchdog` deadline expires (exit 124). */
+export class TuneWatchdogError extends Error {
+  phase: string;
+  elapsedMs: number;
+}
+
+/**
+ * Creates the opt-in `--tune` bounded-runtime guard. `check(phase)` raises
+ * {@link TuneWatchdogError} once the budget is consumed; `dispose()` clears the
+ * timer. `seconds <= 0` disables the guard.
+ */
+export function createTuneWatchdog(
+  seconds: number,
+  io: { err: { write(text: string): void } },
+): { check(phase: string): void; dispose(): void };
 
 export function parseEvaluateArgs(argv?: string[]): ParsedEvaluateArgs;
 export function resolveSeeds(options: {
