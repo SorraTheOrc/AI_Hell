@@ -4126,6 +4126,7 @@ const HOLDFULL_LAUNCHERS = [
   'src/scenes/PlayScene.ts',
   'src/scenes/gym/core/GymFormationScene.ts',
   'src/scenes/gym/GymWeaponLeveling.ts',
+  'src/scenes/gym/GymPowerUpLeveling.ts',
 ] as const;
 
 /** The shared hold-full pure helpers, each defined once in its module. */
@@ -4160,6 +4161,28 @@ describe('hold-full overlay metronome + countdown — gym↔game parity (AC5)', 
       expect(
         source.includes('onSelect: (index: number) => this.selectMineralChoice(index)'),
         `${file} passes the single selection contract`,
+      ).toBe(true);
+    }
+  });
+
+  it('every launcher supplies the top-left owned-permanents panel from the shared builder', () => {
+    // The panel's rows are built once, by the pure `buildOwnedLoadout`
+    // helper, and handed to the single shared overlay — never re-derived in a
+    // launcher or the scene (AH-0MVCRKAPL000L68Y · AC3/AC6).
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(
+        path.resolve(process.cwd(), file),
+        'utf8',
+      );
+      expect(
+        source.includes("import { buildOwnedLoadout } from"),
+        `${file} imports the shared owned-loadout builder`,
+      ).toBe(true);
+      expect(
+        source.includes(
+          'ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels)',
+        ),
+        `${file} passes the owned-permanents rows to the overlay`,
       ).toBe(true);
     }
   });

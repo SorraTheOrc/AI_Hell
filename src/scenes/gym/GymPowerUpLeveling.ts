@@ -91,6 +91,7 @@ import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
 import { buildChoiceCandidates, CHOICE_POOL } from '../../powerups/choice';
 import { applyMineralChoiceReward } from '../core/mineralLayer';
+import { buildOwnedLoadout } from '../../powerups/ownedLoadout';
 import type { DroneMineralSink } from '../core/combatDrone';
 
 /** Id of the level/stats readout panel (plain-DOM `.gym-panel`). */
@@ -453,13 +454,20 @@ export class GymPowerUpLeveling extends CombatScene<
   /** Opens the hold-full choice overlay. Public test seam. */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    // This gym's offer pool stays power-ups-only, but the top-left owned
+    // loadout panel always states the run's true permanent loadout, so the
+    // weapon snapshot is read as well — a read of the same permanent state,
+    // not new state (AH-0MVCRKAPL000L68Y, recorded plan default; producer did
+    // not overrule it).
+    const powerUpLevels = this.player?.getPowerUpLevels() ?? [];
+    const weaponLevels = this.player?.getWeaponLevels() ?? [];
     this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(
       3,
       undefined,
       {
         // Offer level-ups for power-ups the player permanently owns this run
         // (AH-0MUV5CLVO002ZHS9); a field-only item stays ★ New.
-        powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+        powerUpLevels,
         // Temporary (field-pickup) stacks hold a slot while they last, so the
         // shared six-slot gate sees the same state as the game (parent
         // AH-0MVLIJT3M005HPHF, gym↔game parity).
@@ -473,6 +481,10 @@ export class GymPowerUpLeveling extends CombatScene<
     this.fadeThrusterHumForHoldFull();
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Top-left permanent loadout panel: the run's true permanent weapons and
+      // power-ups, so it reads identically to the game and the other gyms
+      // (AH-0MVCRKAPL000L68Y · gym↔game parity).
+      ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels),
       // Reduced-volume ghost fire on the frozen beat grid, matching PlayScene
       // and the weapon-leveling gym (gym↔game parity).
       fireSchedule: buildHoldFullFireSchedule(this.player),

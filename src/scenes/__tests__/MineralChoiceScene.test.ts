@@ -20,6 +20,7 @@ import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
 import { advanceGame, bootScene, BootedGame } from '../../test/gameHarness';
 import { RecordingSfxProvider } from '../../test/audioTestDouble';
 import type { ChoiceOption } from '../../powerups/choice';
+import { buildOwnedLoadout, type OwnedLoadoutRow } from '../../powerups/ownedLoadout';
 import { MineralChoiceScene } from '../MineralChoiceScene';
 
 /** Minimal scene used as the boot target for isolated overlay tests. */
@@ -88,6 +89,79 @@ describe('MineralChoiceScene', () => {
     ) as MineralChoiceScene;
     expect(scene.getOptions().map((o) => o.id)).toEqual(['speed_boost', 'spread']);
     expect(scene.getOptionLabels()).toHaveLength(2);
+  });
+
+  describe('owned permanent loadout panel (AH-0MVCRKAPL000L68Y)', () => {
+    /** Boots the overlay with the supplied permanent loadout rows. */
+    async function bootWithOwned(
+      ownedUpgrades?: readonly OwnedLoadoutRow[],
+    ): Promise<MineralChoiceScene> {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', {
+        options: [{ id: 'spread', name: 'Spread Shot Lv.3', kind: 'weapon-level' }],
+        ...(ownedUpgrades === undefined ? {} : { ownedUpgrades }),
+      });
+      await advanceGame(booted.game, 50);
+      return booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+    }
+
+    it('renders one Lv.N row per permanently owned item in the top-left', async () => {
+      const rows = buildOwnedLoadout(
+        [{ id: 'shield', level: 3 }],
+        [
+          { id: 'spread', level: 2 },
+          { id: 'rapid', level: 1 },
+        ],
+      );
+      const scene = await bootWithOwned(rows);
+
+      expect(scene.getOwnedUpgradeLines()).toEqual([
+        'Spread Shot Lv.2',
+        'Rapid Fire Lv.1',
+        'Shield Lv.3',
+      ]);
+      const layout = scene.getOwnedUpgradePanelLayout()!;
+      expect(layout.heading).toBe('YOUR UPGRADES');
+      // Top-left of the playfield.
+      expect(layout.left).toBeLessThan(GAME_WIDTH / 4);
+      expect(layout.top).toBeLessThan(GAME_HEIGHT / 4);
+      // Never collides with the centred option column (AC5).
+      expect(layout.bottom).toBeLessThan(scene.getRowLayout()[0].top);
+    });
+
+    it('renders the "none yet" empty state when nothing is owned permanently', async () => {
+      const scene = await bootWithOwned([]);
+
+      expect(scene.getOwnedUpgradeLines()).toEqual([]);
+      expect(scene.getOwnedUpgradePanelLayout()?.heading).toBe(
+        'YOUR UPGRADES — none yet',
+      );
+    });
+
+    it('omits the panel entirely when the launcher supplies no loadout', async () => {
+      const scene = await bootWithOwned(undefined);
+
+      // Backward compatible: isolated callers that pass only `options` keep
+      // the pre-existing layout, with no panel and no empty-state heading.
+      expect(scene.getOwnedUpgradePanelLayout()).toBeNull();
+      expect(scene.getOwnedUpgradeLines()).toEqual([]);
+      expect(scene.getOptionLabels()).toHaveLength(1);
+    });
+
+    it('tears the panel down with the rest of the choice UI', async () => {
+      const scene = await bootWithOwned(
+        buildOwnedLoadout([], [{ id: 'spread', level: 2 }]),
+      );
+      expect(scene.getOwnedUpgradeLines()).toEqual(['Spread Shot Lv.2']);
+
+      scene.select(0);
+
+      expect(scene.getOwnedUpgradePanelLayout()).toBeNull();
+      expect(scene.getOwnedUpgradeLines()).toEqual([]);
+      expect(scene.isChoiceScreenVisible()).toBe(false);
+    });
   });
 
   describe('upgrade summary and New badge (AH-0MUU1GOAU007RFVR)', () => {

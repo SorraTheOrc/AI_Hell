@@ -198,6 +198,33 @@ describe('PlayScene mineral wiring', () => {
     expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
   });
 
+  it('the overlay lists the permanent loadout and ignores field pickups (AH-0MVCRKAPL000L68Y)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    // Permanent grants only: these are the run's real loadout.
+    player.equipWeapon('spread', true);
+    player.equipWeapon('spread', true); // permanent Lv.2
+    player.collectPowerUp('shield', true); // permanent Lv.1
+    // Field pickups are temporary: they must neither appear in the panel nor
+    // inflate a displayed permanent level.
+    player.equipWeapon('rapid'); // temporary only
+    player.collectPowerUp('bomb'); // temporary only
+    player.equipWeapon('spread'); // temporary stack on an owned weapon
+
+    scene.openMineralChoice();
+    await advanceGame(booted!.game, 80);
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+
+    // Weapons first, then power-ups; the temporary `rapid`/`bomb` are absent
+    // and `spread` shows its permanent level 2, not 3.
+    expect(overlay.getOwnedUpgradeLines()).toEqual([
+      'Spread Shot Lv.2',
+      'Shield Lv.1',
+    ]);
+  });
+
   it('a chosen power-up is applied permanently for the run', async () => {
     const scene = await bootPlay();
     scene.setMineralChoiceStrategy(

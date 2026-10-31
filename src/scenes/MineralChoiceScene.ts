@@ -34,6 +34,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { HOLD_FULL_FIRE_VOLUME_SCALE, loadRules } from '../core/rules';
 import { randomChoiceStrategy, type ChoiceOption, type ChoiceStrategy } from '../powerups/choice';
+import type { OwnedLoadoutRow } from '../powerups/ownedLoadout';
 import {
   CHOICE_DESCRIPTION_MAX_LINES,
   wrapChoiceDescription,
@@ -82,6 +83,24 @@ const CHOICE_DETAIL_LINE_HEIGHT = 17;
 const CHOICE_BLOCK_GAP = 6;
 /** Vertical gap (px) between consecutive option blocks. */
 const CHOICE_ROW_GAP = 18;
+/** Heading copy of the top-left owned-permanents panel. */
+const OWNED_PANEL_HEADING = 'YOUR UPGRADES';
+/** Top-left anchor (px) of the owned-permanents panel. */
+const OWNED_PANEL_X = 32;
+const OWNED_PANEL_TOP = 24;
+/** Neon-cyan colour of the owned-permanents rows. */
+const OWNED_PANEL_ROW_COLOR = '#00ffff';
+/**
+ * Fallback line heights (px) for the owned-panel layout when a headless
+ * harness cannot measure canvas font metrics (measured height is used in a
+ * real browser), matching the choice-row fallbacks above.
+ */
+const OWNED_PANEL_HEADING_LINE_HEIGHT = 24;
+const OWNED_PANEL_ROW_LINE_HEIGHT = 18;
+/** Vertical gap (px) between the panel heading and its first row. */
+const OWNED_PANEL_HEADING_GAP = 4;
+/** Vertical gap (px) between consecutive owned rows. */
+const OWNED_PANEL_ROW_GAP = 2;
 /** Neon-cyan colour of the large countdown numeral. */
 const COUNTDOWN_COLOR = '#00ffff';
 /** Vertical centre (px) of the large 3-2-1 countdown numeral. */
@@ -116,6 +135,20 @@ export interface ChoiceRowLayout {
   readonly bottom: number;
 }
 
+/**
+ * Rendered geometry and copy of the top-left owned-permanents panel: the
+ * `YOUR UPGRADES` heading (or its `none yet` empty state), one `Lv.N` row per
+ * permanently owned item, and the panel's vertical extent so tests can assert
+ * it clears the centred option column (AH-0MVCRKAPL000L68Y · AC5).
+ */
+export interface OwnedUpgradePanelLayout {
+  readonly heading: string;
+  readonly rows: readonly string[];
+  readonly left: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
 export class MineralChoiceScene extends Phaser.Scene {
   private options: ChoiceOption[] = [];
   private controls: Phaser.GameObjects.Text[] = [];
@@ -133,6 +166,17 @@ export class MineralChoiceScene extends Phaser.Scene {
   private backdrop: Phaser.GameObjects.Rectangle | null = null;
   /** The "HOLD FULL — CHOOSE A POWER-UP" heading (destroyed with the choice UI). */
   private heading: Phaser.GameObjects.Text | null = null;
+  /**
+   * The permanent loadout rows supplied by the launcher, or null when it
+   * supplied none (isolated scene tests) — then no panel is drawn.
+   */
+  private ownedUpgrades: readonly OwnedLoadoutRow[] | null = null;
+  /** The `YOUR UPGRADES` panel heading (destroyed with the choice UI). */
+  private ownedUpgradeHeading: Phaser.GameObjects.Text | null = null;
+  /** One row text object per owned permanent item (destroyed with the UI). */
+  private ownedUpgradeTexts: Phaser.GameObjects.Text[] = [];
+  /** Rendered panel geometry + copy, or null when no panel is on screen. */
+  private ownedUpgradeLayout: OwnedUpgradePanelLayout | null = null;
   /** The bound keydown listener (removed when the countdown starts). */
   private keydownHandler: ((event: KeyboardEvent) => void) | null = null;
   /** Optional generic selection handler supplied by the launcher. */
@@ -195,6 +239,11 @@ export class MineralChoiceScene extends Phaser.Scene {
    *   launch; when present the overlay plays each active weapon's fire cue
    *   on the beat grid at {@link HOLD_FULL_FIRE_VOLUME_SCALE} until a
    *   selection closes it (AH-0MV55O9R5005W6J0 · AC1/AC2).
+   * @param data.ownedUpgrades — the run's **permanent** weapons and power-ups
+   *   (see `powerups/ownedLoadout`), rendered top-left as the `YOUR UPGRADES`
+   *   panel. It must be built from the same permanent snapshots the offers are
+   *   priced from. Omitted by isolated tests → no panel; an empty array → the
+   *   `YOUR UPGRADES — none yet` empty state (AH-0MVCRKAPL000L68Y).
    */
   init(
     data: {
@@ -204,6 +253,7 @@ export class MineralChoiceScene extends Phaser.Scene {
       autoSelectMs?: number;
       autoSelectIndex?: number;
       fireSchedule?: HoldFullFireSchedule;
+      ownedUpgrades?: readonly OwnedLoadoutRow[];
     } = {},
   ): void {
     const strategy = data.strategy ?? randomChoiceStrategy;
@@ -219,6 +269,10 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.backdrop = null;
     this.heading = null;
     this.keydownHandler = null;
+    this.ownedUpgrades = data.ownedUpgrades ? [...data.ownedUpgrades] : null;
+    this.ownedUpgradeHeading = null;
+    this.ownedUpgradeTexts = [];
+    this.ownedUpgradeLayout = null;
   }
 
   create(): void {
@@ -242,6 +296,10 @@ export class MineralChoiceScene extends Phaser.Scene {
     // moment the countdown starts (AH-0MV722WJS0075UTZ).
     this.backdrop = backdrop;
     this.heading = heading;
+
+    // Top-left panel: the permanent loadout the player already owns, so a
+    // levelled offer can be judged against the build (AH-0MVCRKAPL000L68Y).
+    this._renderOwnedUpgradePanel();
 
     this.controls = [];
     this.details = [];
@@ -464,6 +522,27 @@ export class MineralChoiceScene extends Phaser.Scene {
     return [...this.options];
   }
 
+  /**
+   * The rendered `YOUR UPGRADES` panel rows (e.g.
+   * `["Spread Shot Lv.2", "Shield Lv.1"]`). Empty when the launcher supplied
+   * no loadout or the panel has been torn down (AH-0MVCRKAPL000L68Y · AC4).
+   */
+  getOwnedUpgradeLines(): string[] {
+    return this.ownedUpgradeLayout ? [...this.ownedUpgradeLayout.rows] : [];
+  }
+
+  /**
+   * Rendered copy and geometry of the owned-permanents panel, or null when no
+   * panel is on screen (no loadout supplied, or the choice UI has been torn
+   * down). Exposed so tests can assert the empty state and that the panel never
+   * collides with the centred option column (AH-0MVCRKAPL000L68Y · AC5/AC7).
+   */
+  getOwnedUpgradePanelLayout(): OwnedUpgradePanelLayout | null {
+    const layout = this.ownedUpgradeLayout;
+    if (layout === null) return null;
+    return { ...layout, rows: [...layout.rows] };
+  }
+
   /** The rendered option labels (e.g. `["1.  Shield", ...]`). */
   getOptionLabels(): string[] {
     return this.controls.map((control) => control.text);
@@ -519,6 +598,59 @@ export class MineralChoiceScene extends Phaser.Scene {
   }
 
   /**
+   * Renders the top-left `YOUR UPGRADES` panel from the permanent loadout the
+   * launcher supplied: one `Lv.N` row per owned weapon/power-up, in the
+   * deterministic order {@link buildOwnedLoadout} produces, or the
+   * `YOUR UPGRADES — none yet` empty state when the player owns nothing
+   * permanently. When the launcher supplies no loadout at all (isolated scene
+   * tests) no panel is drawn, so the overlay's existing layout is unchanged
+   * (AH-0MVCRKAPL000L68Y · AC5/backward compatibility).
+   */
+  private _renderOwnedUpgradePanel(): void {
+    const rows = this.ownedUpgrades;
+    if (rows === null) return;
+    const headingText =
+      rows.length === 0
+        ? `${OWNED_PANEL_HEADING} — none yet`
+        : OWNED_PANEL_HEADING;
+    const heading = this.add
+      .text(OWNED_PANEL_X, OWNED_PANEL_TOP, headingText, {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: CHOICE_HEADING_COLOR,
+      })
+      .setOrigin(0, 0);
+    this.ownedUpgradeHeading = heading;
+    this.ownedUpgradeTexts = [];
+    let bottom =
+      OWNED_PANEL_TOP +
+      Math.max(heading.height, OWNED_PANEL_HEADING_LINE_HEIGHT);
+    for (const row of rows) {
+      const rowTop =
+        bottom +
+        (this.ownedUpgradeTexts.length === 0
+          ? OWNED_PANEL_HEADING_GAP
+          : OWNED_PANEL_ROW_GAP);
+      const text = this.add
+        .text(OWNED_PANEL_X, rowTop, row.label, {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: OWNED_PANEL_ROW_COLOR,
+        })
+        .setOrigin(0, 0);
+      this.ownedUpgradeTexts.push(text);
+      bottom = rowTop + Math.max(text.height, OWNED_PANEL_ROW_LINE_HEIGHT);
+    }
+    this.ownedUpgradeLayout = {
+      heading: headingText,
+      rows: rows.map((row) => row.label),
+      left: OWNED_PANEL_X,
+      top: OWNED_PANEL_TOP,
+      bottom,
+    };
+  }
+
+  /**
    * Selects option `index`: records the choice, tears down the choice screen
    * and starts the beat-locked 3-2-1 countdown. The choice is applied through
    * the `onSelect` callback when the countdown completes (on the beat after
@@ -564,6 +696,13 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.descriptionCopy = [];
     this.renderedDescriptionLines = [];
     this.rows = [];
+    // The owned-permanents panel is part of the choice screen, so it goes with
+    // it; the next hold-full rebuilds it from current state (AC7).
+    this.ownedUpgradeHeading?.destroy();
+    this.ownedUpgradeHeading = null;
+    for (const item of this.ownedUpgradeTexts) item.destroy();
+    this.ownedUpgradeTexts = [];
+    this.ownedUpgradeLayout = null;
     if (this.keydownHandler !== null) {
       this.input.keyboard?.off('keydown', this.keydownHandler);
       this.keydownHandler = null;

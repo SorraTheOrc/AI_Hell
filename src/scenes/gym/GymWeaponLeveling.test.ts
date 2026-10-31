@@ -141,6 +141,25 @@ describe('GymWeaponLeveling', () => {
     expect(player.getWeaponLevel('spread')).toBe(2);
   });
 
+  it('the hold-full overlay lists the gym permanent loadout (AH-0MVCRKAPL000L68Y)', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('spread', true);
+    player.equipWeapon('spread', true); // permanent Lv.2
+    player.collectPowerUp('shield', true);
+
+    scene.openMineralChoice();
+    await advanceGame(booted!.game, 80);
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+
+    expect(overlay.getOwnedUpgradeLines()).toEqual([
+      'Spread Shot Lv.2',
+      'Shield Lv.1',
+    ]);
+  });
+
   it('AC1 — the choice is offered when the hold fills', async () => {
     const scene = await boot();
     const player = scene.getPlayer()!;

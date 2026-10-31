@@ -137,6 +137,7 @@ import {
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../powerups/choice';
+import { buildOwnedLoadout } from '../powerups/ownedLoadout';
 import {
   filterOptionsWithinSlotPool,
   resolvePlayerSlotState,
@@ -5247,13 +5248,18 @@ export class PlayScene extends CombatScene<
    */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    // The run's permanent snapshots, read once: the offer pool and the
+    // top-left owned-loadout panel must never disagree about what the player
+    // owns (AH-0MVCRKAPL000L68Y · AC2/AC3).
+    const weaponLevels = this.player?.getWeaponLevels() ?? [];
+    const powerUpLevels = this.player?.getPowerUpLevels() ?? [];
     this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, this.rng, {
       // Offer level-ups for weapons the player already owns (parent
       // AH-0MUPMPCB2009J54J); an unarmed player falls back to the base pool.
-      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      weaponLevels,
       // Offer level-ups for power-ups the player already owns (parent
       // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
-      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      powerUpLevels,
       // Field pickups occupy a slot while they last, so the six-slot gate must
       // see the temporary half of the run's holdings (parent AH-0MVLIJT3M005HPHF
       // producer Q4a/Q6a: at full slots only offer items currently in the slots).
@@ -5286,6 +5292,9 @@ export class PlayScene extends CombatScene<
       this.scene.launch('MineralChoiceScene', {
         origin: 'PlayScene',
         options: [...this.mineralChoiceOptions],
+        // Top-left permanent loadout panel, built from the same permanent
+        // snapshots the offers were priced from (AH-0MVCRKAPL000L68Y).
+        ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels),
         // Frozen player-fire schedule: the active player weapons + beat-grid
         // phase at the moment the overlay opens, so the reduced-volume ghost
         // fire continues on the same grid while paused (AH-0MV55O9R5005W6J0).

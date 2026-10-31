@@ -161,6 +161,7 @@ import {
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../../../powerups/choice';
+import { buildOwnedLoadout } from '../../../powerups/ownedLoadout';
 import { applySceneSetup, resolveSetupSeed, type SceneSetupState } from '../../core/sceneSetup';
 import { createSeededRng } from '../../../core/rng';
 import {
@@ -1449,13 +1450,17 @@ export class GymFormationScene<
    */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    // The run's permanent snapshots, read once: the offer pool and the
+    // top-left owned-loadout panel must never disagree (AH-0MVCRKAPL000L68Y).
+    const weaponLevels = this.player?.getWeaponLevels() ?? [];
+    const powerUpLevels = this.player?.getPowerUpLevels() ?? [];
     this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, undefined, {
       // Offer level-ups for weapons the player already owns (parent
       // AH-0MUPMPCB2009J54J); an unarmed player falls back to the base pool.
-      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      weaponLevels,
       // Offer level-ups for power-ups the player already owns (parent
       // AH-0MUV5CLVO002ZHS9); an unowned player falls back to the base pool.
-      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      powerUpLevels,
       // Temporary (field-pickup) stacks hold a slot too, so the gate in the
       // shared builder sees the identical state as the game (gym↔game parity,
       // parent AH-0MVLIJT3M005HPHF producer Q4a/Q6a).
@@ -1469,6 +1474,9 @@ export class GymFormationScene<
     this.fadeThrusterHumForHoldFull();
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Top-left permanent loadout panel, from the same permanent snapshots
+      // the offers were priced from (AH-0MVCRKAPL000L68Y · gym↔game parity).
+      ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels),
       // Frozen player-fire schedule so the reduced-volume ghost fire
       // continues on the same grid while paused — same payload as PlayScene
       // (AH-0MV55O9R5005W6J0 · gym↔game parity).

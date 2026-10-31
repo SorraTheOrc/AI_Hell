@@ -93,6 +93,29 @@ describe('GymPowerUpLeveling', () => {
     }
   });
 
+  it('the hold-full overlay lists the run permanent loadout, weapons included (AH-0MVCRKAPL000L68Y)', async () => {
+    const scene = await boot();
+    const player = scene.getPlayer()!;
+    // This gym's offer pool stays power-ups-only, but the owned-loadout panel
+    // reports the run's true permanent loadout — including weapons (recorded
+    // plan default; producer did not overrule it).
+    grantPermanentPowerUp('shield', scene.getEffectsRegistry());
+    player.equipWeapon('spread', true);
+    // A temporary field pickup never reaches the panel.
+    player.collectPowerUp('bomb');
+
+    scene.openMineralChoice();
+    await advanceGame(booted!.game, 80);
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+
+    expect(overlay.getOwnedUpgradeLines()).toEqual([
+      'Spread Shot Lv.1',
+      'Shield Lv.1',
+    ]);
+  });
+
   it('AC4 — the hold-full choice permanently levels an owned power-up', async () => {
     const scene = await boot();
     const player = scene.getPlayer()!;

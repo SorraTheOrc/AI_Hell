@@ -79,6 +79,7 @@ import {
   CHOICE_POOL,
 } from '../../powerups/choice';
 import { applyMineralChoiceReward } from '../core/mineralLayer';
+import { buildOwnedLoadout } from '../../powerups/ownedLoadout';
 
 /** The weapon-drop types this gym cycles (everything except Reset). */
 const LEVELING_DROP_ORDER: readonly WeaponDropId[] = [
@@ -390,10 +391,14 @@ export class GymWeaponLeveling extends CombatScene<
   /** Opens the hold-full choice overlay. Public test seam. */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    // The run's permanent snapshots, read once: the offer pool and the
+    // top-left owned-loadout panel must never disagree (AH-0MVCRKAPL000L68Y).
+    const weaponLevels = this.player?.getWeaponLevels() ?? [];
+    const powerUpLevels = this.player?.getPowerUpLevels() ?? [];
     this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(3, undefined, {
-      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      weaponLevels,
       // Offer level-ups for power-ups the player already owns (AH-0MUV5CLVO002ZHS9).
-      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      powerUpLevels,
       // Temporary stacks hold a slot; the shared gate must see them (parent
       // AH-0MVLIJT3M005HPHF, gym↔game parity).
       tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
@@ -406,6 +411,9 @@ export class GymWeaponLeveling extends CombatScene<
     this.fadeThrusterHumForHoldFull();
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Top-left permanent loadout panel, from the same permanent snapshots
+      // the offers were priced from (AH-0MVCRKAPL000L68Y · gym↔game parity).
+      ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels),
       // Reduced-volume ghost fire on the frozen beat grid, matching PlayScene
       // and the formation gym (AH-0MV55O9R5005W6J0 · gym↔game parity).
       fireSchedule: buildHoldFullFireSchedule(this.player),
