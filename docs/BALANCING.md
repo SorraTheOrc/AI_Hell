@@ -321,6 +321,12 @@ cap shapes what a run can become.
   none. The slot-counted rows therefore equal the model's `used` and never
   exceed `POWER_UP_SLOT_CAP`, and the same wiring (`combatHudOptions`) feeds
   `PlayScene` and every gym, so gym↔game parity holds for the display too.
+  The row classes worth knowing: an exempt entry (Mystery UFO,
+  `always available`) and a charge pool surviving its expired window
+  (`charges only`, including a Phase Shift row opened by a Teleport arrival)
+  hold **no** slot; Extra Life has **no** row (the lives counter carries it);
+  a temporary one-shot (Orbital Strike, Smart Bomb) holds a slot while its
+  window is open and therefore renders a countdown row.
 - **Capture/scripted setups and the checkpoint save are handled explicitly
   (AH-0MVVJS34M00551ES).** Two surfaces are worth naming because they look like
   cap breaches. (1) The capture/gym `setup` payload
@@ -334,6 +340,17 @@ cap shapes what a run can become.
   shared predicate, so `Continue` restores at most six counted kinds and exempt
   entries still come back; the replay itself restores a hand-written payload
   verbatim, by design (the resumed run must match the saved run exactly).
+- **How a "> six equipped" report is triaged (AH-0MVVF0POV001JNKX).** Because
+  rows are not slots, a report is classified from a recording, not a row count:
+  capture the run (a stock `npm run dev` auto-records to
+  `recordings/session-<timestamp>.jsonl`; or `npm run record -- --auto`, stopping
+  the recorder with Ctrl+C in its own terminal — closing the browser loses the
+  buffer, recorder defect **AH-0MVVH57LL00038WQ**), replay it against
+  `resolveSlotState(...)` (permanent kinds from the tick vector, temporary
+  holdings from the `pickup` events plus each kind's TTL) and classify every row
+  as slot-counted or not. A counted kind above six is a real gate bug on a named
+  acquisition surface; a `always available` / `charges only` row is the
+  documented presentation, not a seventh slot.
 - **Evidence scope.** Existing bot/batch evidence was recorded before the cap,
   so a late-game campaign run now sees a different loadout. Re-running and
   re-recording the bot batches is **out of scope** for the cap work item; it

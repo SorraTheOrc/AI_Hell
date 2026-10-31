@@ -1146,6 +1146,42 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   The state is wired once, through `combatHudOptions`
   ([`src/scenes/core/hudWiring.ts`](../src/scenes/core/hudWiring.ts)), so
   `PlayScene` and every gym show the identical budget.
+  Three row classes make the row/slot difference concrete:
+  - **exempt entries** — the Mystery UFO renders `always available` and never
+    occupies a slot; **Extra Life** has no row at all (the lives counter shows
+    it), so "row visible" and "slot held" are independent in both directions;
+  - **charge pools** — a Phase Shift / Teleport row kept alive by remaining
+    consumable charges after its temporary window expired renders
+    `charges only`, and a **Teleport arrival** can open a Phase Shift row for a
+    kind the player does not own: neither holds a slot;
+  - **temporary one-shots** (Orbital Strike, Smart Bomb) hold a slot while
+    their field-pickup window is open, so they render a row with a live
+    countdown and *are* part of the loadout — unlike the two classes above.
+
+- **Triaging a "more than six equipped" report (AH-0MVVF0POV001JNKX).** The
+  HUD can show more rows than slots by design (above), so a report is
+  classified from **evidence**, never from a row count:
+  1. **Capture the session.** A stock `npm run dev` records every dev run
+     automatically to `recordings/session-<timestamp>.jsonl`
+     ([`docs/TELEMETRY.md`](./TELEMETRY.md)); `npm run record -- --auto
+     --output recordings/<name>.jsonl` records a scripted run and
+     `--max-duration <ms>` bounds a manual one. Let the run end, or stop the
+     recorder with **Ctrl+C in its own terminal** — closing the browser instead
+     discards the in-memory buffer (recorder defect tracked by
+     **AH-0MVVH57LL00038WQ**).
+  2. **Replay it against the shared model.** Rebuild occupancy from the
+     recording — permanent kinds from the per-tick `weaponLevels` /
+     `powerUpLevels`, temporary holdings from the `pickup` events plus each
+     kind's per-upgrade TTL (`resolveTemporaryWindow`) — and evaluate
+     `resolveSlotState(...).used` for every tick.
+  3. **Classify each HUD row.** A row is slot-counted only when its kind is in
+     `heldIds` **and** not exempt; `always available` / `charges only` rows and
+     the kinds with no row (Extra Life, and a one-shot that already expired) are
+     expected presentation, not a breach.
+  4. **Only a counted kind above six is a bug**, and it names the acquisition
+     surface to test: the drop draw, field collection, the hold-full choice, the
+     mini-boss reward, checkpoint resume, or a capture setup (a documented
+     divergence, above).
 
 #### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
 
