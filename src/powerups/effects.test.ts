@@ -15,6 +15,7 @@ import {
 import {
   POWER_UP_LIVES_START,
   PowerUpLevelStore,
+  isConsumablePowerUpId,
   resolvePowerUpAtLevel,
   resolveTemporaryWindow,
 } from './powerUpLevels';
@@ -829,10 +830,13 @@ describe('Mystery UFO: run-scoped level contract (AH-0MV9G113S009B37I)', () => {
     expect(store.permanentGrants('mystery_ufo')).toBe(0);
     expect(store.getEffectiveLevel('mystery_ufo')).toBe(1);
 
-    // Hold-full reward → permanent grant, level stacks on top.
+    // Hold-full reward → one charge and ownership, never a level (parent
+    // AH-0MVTQMREN009DSFW AC1).
     reg.applyCollect('mystery_ufo', true);
-    expect(store.permanentGrants('mystery_ufo')).toBe(1);
-    expect(store.getEffectiveLevel('mystery_ufo')).toBe(2);
+    expect(store.permanentGrants('mystery_ufo')).toBe(0);
+    expect(store.isConsumableOwned('mystery_ufo')).toBe(true);
+    expect(store.consumableCharges('mystery_ufo')).toBe(1);
+    expect(store.getEffectiveLevel('mystery_ufo')).toBe(1);
   });
 
   it('reset() clears the run-scoped level', () => {
@@ -1510,31 +1514,37 @@ describe('temporary/permanent field-pickup contract (F1 worked examples)', () =>
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
 
-    // 1. Take Shield from a hold-full reward → lvl0, permanent, no timeout.
+    // 1. Take Shield from a hold-full reward → owned (one charge), no level
+    // and no endless window (parent AH-0MVTQMREN009DSFW AC1/AC3).
     reg.applyCollect('shield', true);
-    expect(store.getPermanentLevel('shield')).toBe(1);
-    expect(store.getEffectiveLevel('shield')).toBe(1);
-    reg.tick(1000); // permanent shield never expires
-    expect(reg.isShielded).toBe(true);
-    expect(store.getEffectiveLevel('shield')).toBe(1);
+    expect(store.getPermanentLevel('shield')).toBe(0);
+    expect(store.isConsumableOwned('shield')).toBe(true);
+    expect(store.consumableCharges('shield')).toBe(1);
+    expect(store.getEffectiveLevel('shield')).toBe(0);
+    reg.tick(1000);
+    expect(store.getEffectiveLevel('shield')).toBe(0);
 
     // 2. Pick up Shield in the field → lvl1 (temporary), for x s.
     reg.applyCollect('shield');
     expect(store.getTempStacks('shield')).toBe(1);
-    expect(store.getPermanentLevel('shield')).toBe(1);
-    expect(store.getEffectiveLevel('shield')).toBe(2);
+    expect(store.getPermanentLevel('shield')).toBe(0);
+    expect(store.getEffectiveLevel('shield')).toBe(1);
 
-    // 3. Expiry → back to lvl0 permanent (still active).
+    // 3. Expiry → back to the owned-but-unlevelled base (level 0) with its
+    // charge still banked (no clawback).
     reg.tick(1000);
     expect(store.getTempStacks('shield')).toBe(0);
-    expect(store.getPermanentLevel('shield')).toBe(1);
-    expect(store.getEffectiveLevel('shield')).toBe(1);
-    expect(reg.isShielded).toBe(true);
+    expect(store.getPermanentLevel('shield')).toBe(0);
+    expect(store.getEffectiveLevel('shield')).toBe(0);
+    expect(store.consumableCharges('shield')).toBe(1);
+    expect(store.isConsumableOwned('shield')).toBe(true);
 
-    // 4. Take Shield from another hold-full reward → lvl1, permanent.
+    // 4. A second hold-full reward adds another charge, never a level (the
+    // level-0 pool cap of 1 discards the excess).
     reg.applyCollect('shield', true);
-    expect(store.getPermanentLevel('shield')).toBe(2);
-    expect(store.getEffectiveLevel('shield')).toBe(2);
+    expect(store.getPermanentLevel('shield')).toBe(0);
+    expect(store.getEffectiveLevel('shield')).toBe(0);
+    expect(store.consumableCharges('shield')).toBe(1);
   });
 
   it('keeps stored P6 charges / P7 teleports after the window expires (AC9)', () => {
@@ -1740,7 +1750,10 @@ describe('Thorn Field: automatic ram recharge (AH-0MVJ8YKR70096C6T)', () => {
 
   it('a stronger level recharges faster (shorter interval, same cap)', () => {
     const { registry, store } = createEffectRegistry();
-    for (let i = 0; i < 6; i += 1) store.collect('thorns', true);
+    // The thrower is levelled directly (a hold-full reward of a consumable no
+    // longer levels it — parent AH-0MVTQMREN009DSFW AC1): level 6 → upgrade 5
+    // → 6 rams at the curve cap.
+    store.setPermanentLevel('thorns', 7);
     registry.applyCollect('thorns', true);
     expect(registry.thornsRechargeTime()).toBeLessThan(12);
     expect(registry.thornsMaxAbsorbs()).toBe(6);
@@ -2014,13 +2027,17 @@ describe('instant-kind temporary windows (AH-0MVUGI448000GNMJ)', () => {
       const reg = new EffectsRegistry();
       reg.applyCollect(id, true);
 
+      // A **consumable** hold-full reward adds a charge instead of a level
+      // (parent AH-0MVTQMREN009DSFW AC1), so only the non-consumable instant
+      // kinds gain a level here.
+      const levelAfterGrant = isConsumablePowerUpId(id) ? 0 : 1;
       expect(reg.powerUpTemporaryRemaining(id)).toBeUndefined();
-      expect(reg.powerUpLevel(id)).toBe(1);
+      expect(reg.powerUpLevel(id)).toBe(levelAfterGrant);
 
       reg.tick(600);
 
       expect(reg.powerUpTemporaryRemaining(id)).toBeUndefined();
-      expect(reg.powerUpLevel(id)).toBe(1);
+      expect(reg.powerUpLevel(id)).toBe(levelAfterGrant);
     }
   });
 

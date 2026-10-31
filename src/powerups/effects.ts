@@ -530,6 +530,15 @@ export class EffectsRegistry {
     this._storeResolver = resolver;
   }
 
+  /**
+   * The level store the registry currently consumes, exposed for read-only
+   * ownership checks (HUD/choice surfaces read the consumable owned flag, not
+   * just the level — parent AH-0MVTQMREN009DSFW AC1).
+   */
+  levelStore(): PowerUpLevelStore {
+    return this._levelStore;
+  }
+
   /** The level store the registry currently consumes. */
   private get _levelStore(): PowerUpLevelStore {
     return this._storeResolver?.() ?? this._store;
@@ -1045,7 +1054,14 @@ export class EffectsRegistry {
    * interval.
    */
   isMysteryUfoPermanent(): boolean {
-    return this._levelStore.permanentGrants('mystery_ufo') > 0;
+    // Ownership is the per-kind flag now that a hold-full reward of a
+    // consumable adds a charge instead of a level (parent AH-0MVTQMREN009DSFW
+    // AC1); the shipped permanent-grant count is kept as a fallback so a
+    // scripted setup that set a permanent level still reads as owned.
+    return (
+      this._levelStore.isConsumableOwned('mystery_ufo') ||
+      this._levelStore.permanentGrants('mystery_ufo') > 0
+    );
   }
 
   /**

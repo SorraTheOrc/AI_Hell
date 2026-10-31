@@ -1308,6 +1308,11 @@ describe('GymLevel — arc setup fields (AH-0MVRMFOB4002LMZS)', () => {
     scene.tick(0.016);
 
     expect(strategy).toHaveBeenCalledTimes(1);
-    expect(player.getPowerUpLevel('shield')).toBe(1);
+    // A consumable hold-full reward banks a charge and ownership but never
+    // raises the level (parent AH-0MVTQMREN009DSFW AC1).
+    expect(player.getPowerUpLevel('shield')).toBe(0);
+    const store = player.getPowerUpLevelStore();
+    expect(store.isConsumableOwned('shield')).toBe(true);
+    expect(store.consumableCharges('shield')).toBe(1);
   });
 });

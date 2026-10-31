@@ -19,7 +19,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { POWER_UP_CATALOGUE, type PowerUpId } from './types';
+import {
+  CONSUMABLE_POWER_UP_IDS,
+  POWER_UP_CATALOGUE,
+  type PowerUpId,
+} from './types';
 import { POWER_UP_LEVEL_SPECS } from './powerUpLevels';
 import {
   DEFERRED_POWER_UP_LEVEL_VARIABLES,
@@ -689,9 +693,10 @@ describe('PowerUpLevelStore (AC3 — stack/charge reconciliation)', () => {
     expect(store.phaseCharges()).toBe(0);
     // An empty pool blocks activation even though the reward is permanent.
     expect(store.consumePhaseCharge()).toBe(false);
-    // The spent charge recharges like any other.
+    // Both spent charges (one before, one after the hold-full reward) each
+    // carry a timer started at the same level, so one interval restores both.
     store.tickRecharge(store.phaseRechargeTime() + 1);
-    expect(store.phaseCharges()).toBe(1);
+    expect(store.phaseCharges()).toBe(2);
   });
 
   it('grants level-derived lives, clamped to the level-derived cap of 5', () => {
@@ -741,15 +746,20 @@ describe('PowerUpLevelStore — temporary/permanent split (F1 contract)', () => 
     const store = new PowerUpLevelStore();
     store.collect('shield');
     store.collect('shield');
+    // Shield is a **consumable**: a hold-full reward adds a charge and never a
+    // level (parent AH-0MVTQMREN009DSFW AC1), so the permanent base stays 0
+    // and the item is unowned-but-charged after the window reverts.
     store.collect('shield', true);
-    expect(store.getEffectiveLevel('shield')).toBe(3);
-    expect(store.getUpgradeLevel('shield')).toBe(2);
+    expect(store.getEffectiveLevel('shield')).toBe(2);
+    expect(store.getUpgradeLevel('shield')).toBe(1);
+    expect(store.consumableCharges('shield')).toBe(1);
+    expect(store.isConsumableOwned('shield')).toBe(true);
 
     store.clearTemporary('shield');
 
     expect(store.getTempStacks('shield')).toBe(0);
-    expect(store.getPermanentLevel('shield')).toBe(1);
-    expect(store.getEffectiveLevel('shield')).toBe(1);
+    expect(store.getPermanentLevel('shield')).toBe(0);
+    expect(store.getEffectiveLevel('shield')).toBe(0);
     expect(store.getUpgradeLevel('shield')).toBe(0);
     expect(store.getPermanentUpgradeLevel('shield')).toBe(0);
   });
@@ -1135,7 +1145,8 @@ describe('per-charge recharge engine and cap-3 (AH-0MV82I7HF009ZHPD — test-fir
       // t = baseTime+1: only the first charge has recharged.
       store.tickRecharge(a.baseTime / 2 + 1);
       expect(a.pool(store)).toBe(2);
-      // t = 1.5 × baseTime + 1: the second has recharged too.
+      // t = 1.5 × baseTime + 1: the second has recharged too (the shipped
+      // cap-3 pool ceiling is preserved for these two kinds, AC6).
       store.tickRecharge(a.baseTime / 2);
       expect(a.pool(store)).toBe(3);
     }
@@ -1170,16 +1181,17 @@ describe('per-charge recharge engine and cap-3 (AH-0MV82I7HF009ZHPD — test-fir
     }
   });
 
-  it('discards any collection or recharge that would exceed the cap of 3 (AC2)', () => {
+  it('discards any collection or recharge that would exceed the pool ceiling (AC2)', () => {
     const store = new PowerUpLevelStore();
-    // Two teleport pickups fill the pool to 3.
+    // Two teleport pickups fill the shipped cap-3 pool (unchanged, AC6).
     store.collect('teleport'); // +1 (level 0)
     store.collect('teleport'); // +2 (level 1) → 3
     expect(store.teleportStacks()).toBe(3);
+    expect(store.consumableChargeCap('teleport')).toBe(2);
     // Spend one: 2 available + 1 recharging.
     expect(store.consumeTeleport()).toBe(true);
     expect(store.teleportStacks()).toBe(2);
-    // Collecting into the full-ish pool is clamped to 3…
+    // Collecting into the full-ish pool is clamped to the ceiling…
     store.collect('teleport'); // +2 (level 2) → clamped
     expect(store.teleportStacks()).toBe(3);
     // …and the pending recharge lands on a full pool, so it is discarded too.
@@ -1198,25 +1210,28 @@ describe('per-charge recharge engine and cap-3 (AH-0MV82I7HF009ZHPD — test-fir
     expect(store.phaseCharges()).toBe(0);
     // An empty pool blocks activation even though the reward is permanent.
     expect(store.consumePhaseCharge()).toBe(false);
-    // The spent charge recharges like any other.
+    // The one spent charge recharges one interval later.
     store.tickRecharge(store.phaseRechargeTime() + 1);
     expect(store.phaseCharges()).toBe(1);
   });
 
-  it('mirrors Phase Shift for a hold-full Teleport: +1 charge, clamped at 3 (AC5)', () => {
+  it('mirrors Phase Shift for a hold-full Teleport: +1 charge, clamped at the level-derived cap (AC5)', () => {
     const store = new PowerUpLevelStore();
     expect(store.teleportStacks()).toBe(0);
     store.collect('teleport', true);
     expect(store.teleportStacks()).toBe(1); // exactly +1, not the level-derived stack grant
-    store.collect('teleport', true);
-    expect(store.teleportStacks()).toBe(2);
+    // A hold-full reward never raises the level (parent AC1), so the pool
+    // stays clamped at the **level-derived** cap — 1 charge at level 0
+    // (parent AC2/AC3) — instead of the shipped fixed ceiling of 3.
     for (let i = 0; i < 8; i++) store.collect('teleport', true);
-    expect(store.teleportStacks()).toBe(3); // clamped at the cap of 3
+    expect(store.teleportStacks()).toBe(1);
+    expect(store.getPermanentLevel('teleport')).toBe(0);
+    expect(store.getEffectiveLevel('teleport')).toBe(0);
     // Recharges normally like any other charge.
     expect(store.consumeTeleport()).toBe(true);
-    expect(store.teleportStacks()).toBe(2);
+    expect(store.teleportStacks()).toBe(0);
     store.tickRecharge(store.teleportRechargeTime() + 1);
-    expect(store.teleportStacks()).toBe(3);
+    expect(store.teleportStacks()).toBe(1);
   });
 
   it('reset clears the pending recharge timers (run restart, AC6)', () => {
@@ -1493,6 +1508,194 @@ describe('consumable charge axes (AH-0MVUXFDFN009QK84 AC3/AC4)', () => {
     // in the same summary path.
     expect(summarisePowerUpLevelChange('mystery_ufo', 0, 1)).toContain(
       'UFO charges',
+    );
+  });
+});
+
+// ── Shared consumable charge pool (AH-0MVUXH0T0001N3C2, F2) ─────────
+//
+// One pool serves every consumable: a charge buys one event, charges
+// regenerate on the level-derived interval and a hold-full reward adds a
+// charge instead of a level (parent AH-0MVTQMREN009DSFW, AC1–AC3).
+
+describe('PowerUpLevelStore — shared consumable charge pool (F2)', () => {
+  /** Every consumable with its level-0 cap and regeneration interval. */
+  const CONSUMABLES: ReadonlyArray<{
+    id: PowerUpId;
+    cap: number;
+    seconds: number;
+  }> = [
+    { id: 'shield', cap: 1, seconds: 45 },
+    { id: 'thorns', cap: 2, seconds: 12 },
+    { id: 'phase_shift', cap: 1, seconds: 30 },
+    { id: 'teleport', cap: 1, seconds: 15 },
+    { id: 'force_field', cap: 3, seconds: 45 },
+    { id: 'mystery_ufo', cap: 1, seconds: 30 },
+  ];
+
+  it('covers exactly the six catalogue consumables (parent AC1)', () => {
+    for (const { id } of CONSUMABLES) {
+      expect(CONSUMABLE_POWER_UP_IDS, id).toContain(id);
+    }
+    expect(CONSUMABLES).toHaveLength(CONSUMABLE_POWER_UP_IDS.length);
+  });
+
+  it('resolves every cap and interval from the catalogue at level 0 (AC3)', () => {
+    const store = new PowerUpLevelStore();
+    for (const { id, cap, seconds } of CONSUMABLES) {
+      expect(store.consumableChargeCap(id), id).toBe(cap);
+      expect(store.consumableRechargeTime(id), id).toBeCloseTo(seconds, 6);
+    }
+    // A non-consumable kind has no charge pool at all.
+    expect(store.consumableChargeCap('bomb')).toBe(0);
+    expect(store.consumableRechargeTime('bomb')).toBe(0);
+    expect(store.consumableCharges('bomb')).toBe(0);
+    expect(store.consumeConsumableCharge('bomb')).toBe(false);
+  });
+
+  it('moves cap and interval in the documented direction with level (AC3)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('shield');
+    store.collect('shield'); // level 2 → upgrade level 1
+    expect(store.consumableChargeCap('shield')).toBeGreaterThan(1);
+    expect(store.consumableRechargeTime('shield')).toBeLessThan(45);
+
+    store.collect('force_field');
+    store.collect('force_field');
+    expect(store.consumableChargeCap('force_field')).toBeGreaterThan(3);
+    expect(store.consumableRechargeTime('force_field')).toBeLessThan(45);
+
+    store.collect('mystery_ufo');
+    store.collect('mystery_ufo');
+    expect(store.consumableChargeCap('mystery_ufo')).toBeGreaterThan(1);
+  });
+
+  it('a permanent grant adds exactly one charge and never a level (AC1)', () => {
+    for (const { id } of CONSUMABLES) {
+      const store = new PowerUpLevelStore();
+      store.grantConsumableCharge(id, 0); // touch the pool without charging it
+      const beforeLevel = store.getPermanentLevel(id);
+      const beforeEffective = store.getEffectiveLevel(id);
+      const beforeCharges = store.consumableCharges(id);
+
+      store.collect(id, true);
+
+      expect(store.consumableCharges(id), id).toBe(beforeCharges + 1);
+      expect(store.getPermanentLevel(id), id).toBe(beforeLevel);
+      expect(store.getEffectiveLevel(id), id).toBe(beforeEffective);
+      expect(store.isConsumableOwned(id), id).toBe(true);
+    }
+  });
+
+  it('clamps a grant at the level-derived cap and never banks while full (AC2)', () => {
+    for (const { id, cap } of CONSUMABLES) {
+      const store = new PowerUpLevelStore();
+      for (let i = 0; i < 6; i++) store.collect(id, true);
+      expect(store.consumableCharges(id), id).toBe(cap);
+
+      // Spending one and immediately granting again cannot bank credit for
+      // the downtime: the grant fills the pool, it does not queue a charge.
+      expect(store.consumeConsumableCharge(id), id).toBe(true);
+      expect(store.grantConsumableCharge(id, 5), id).toBe(cap);
+      expect(store.grantConsumableCharge(id, 5), id).toBe(cap);
+    }
+  });
+
+  it('spends one charge, fails on an empty pool and recharges to the cap (AC4)', () => {
+    for (const { id, seconds } of CONSUMABLES) {
+      const store = new PowerUpLevelStore();
+      store.grantConsumableCharge(id, store.consumableChargeCap(id));
+      const cap = store.consumableChargeCap(id);
+
+      // Spend every charge; the pool empties and refuses further spends.
+      for (let i = 0; i < cap; i++) {
+        expect(store.consumeConsumableCharge(id), id).toBe(true);
+      }
+      expect(store.consumableCharges(id), id).toBe(0);
+      expect(store.consumeConsumableCharge(id), id).toBe(false);
+      expect(store.consumableRechargeRemaining(id), id).toBeCloseTo(
+        seconds,
+        6,
+      );
+
+      // The timer is level-derived and completes on the shared clock.
+      store.tickRecharge(seconds - 1);
+      expect(store.consumableCharges(id), id).toBe(0);
+      store.tickRecharge(2);
+      // Every spent charge had its own timer started at the same instant, so
+      // one interval restores the whole pool (clamped at the cap).
+      expect(store.consumableCharges(id), id).toBe(cap);
+      expect(store.consumableRechargeRemaining(id), id).toBe(0);
+      // The recharged charge is usable again.
+      expect(store.consumeConsumableCharge(id), id).toBe(true);
+    }
+  });
+
+  it('regenerates only on tickRecharge, frame-rate independently (AC5)', () => {
+    const oneBigTick = new PowerUpLevelStore();
+    const manySmallTicks = new PowerUpLevelStore();
+    for (const store of [oneBigTick, manySmallTicks]) {
+      store.collect('teleport');
+      expect(store.consumeConsumableCharge('teleport')).toBe(true);
+    }
+    // Nothing returns without a tick.
+    expect(oneBigTick.consumableCharges('teleport')).toBe(0);
+    oneBigTick.tickRecharge(15);
+    for (let i = 0; i < 150; i++) manySmallTicks.tickRecharge(0.1);
+    expect(oneBigTick.consumableCharges('teleport')).toBe(1);
+    expect(manySmallTicks.consumableCharges('teleport')).toBe(1);
+
+    // Non-finite and negative ticks are no-ops (never a free recharge).
+    oneBigTick.tickRecharge(Number.NaN);
+    oneBigTick.tickRecharge(-10);
+    expect(oneBigTick.consumableCharges('teleport')).toBe(1);
+  });
+
+  it('reset clears every pool, timer and ownership flag (AC5)', () => {
+    const store = new PowerUpLevelStore();
+    for (const { id } of CONSUMABLES) {
+      store.collect(id, true);
+      store.consumeConsumableCharge(id);
+    }
+    store.reset();
+    for (const { id } of CONSUMABLES) {
+      expect(store.consumableCharges(id), id).toBe(0);
+      expect(store.consumableRechargeRemaining(id), id).toBe(0);
+      expect(store.isConsumableOwned(id), id).toBe(false);
+    }
+    // A long tick after the reset cannot resurrect a cleared timer.
+    store.tickRecharge(3600);
+    for (const { id } of CONSUMABLES) {
+      expect(store.consumableCharges(id), id).toBe(0);
+    }
+  });
+
+  it('keeps the shipped Phase Shift / Teleport methods behaving as before (AC6)', () => {
+    const store = new PowerUpLevelStore();
+    store.collect('phase_shift');
+    expect(store.phaseCharges()).toBe(1);
+    expect(store.consumePhaseCharge()).toBe(true);
+    expect(store.phaseCharges()).toBe(0);
+    expect(store.consumePhaseCharge()).toBe(false);
+    store.tickRecharge(store.phaseRechargeTime() + 1);
+    expect(store.phaseCharges()).toBe(1);
+
+    store.collect('teleport');
+    store.collect('teleport'); // second pickup raises the level and the grant
+    const before = store.teleportStacks();
+    expect(before).toBeGreaterThan(1);
+    expect(store.consumeTeleport()).toBe(true);
+    expect(store.teleportStacks()).toBe(before - 1);
+    // The legacy accessors are thin delegates over the shared pool.
+    expect(store.phaseCharges()).toBe(store.consumableCharges('phase_shift'));
+    expect(store.teleportStacks()).toBe(store.consumableCharges('teleport'));
+    expect(store.phaseRechargeTime()).toBeCloseTo(
+      store.consumableRechargeTime('phase_shift'),
+      6,
+    );
+    expect(store.teleportRechargeTime()).toBeCloseTo(
+      store.consumableRechargeTime('teleport'),
+      6,
     );
   });
 });

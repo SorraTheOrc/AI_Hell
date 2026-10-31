@@ -114,12 +114,15 @@ describe('resolveSlotState (AC1 — one shared pool of six held kinds)', () => {
     const store = new PowerUpLevelStore();
 
     store.collect('shield', true); // hold-full reward: opens the slot
-    store.collect('shield', true); // hold-full reward: levels it up
+    store.collect('shield', true); // hold-full reward: adds a charge, no level
 
     const state = resolveSlotState(store.getLevels(), []);
 
-    // The store still reports one permanent kind, at level 2.
-    expect(store.getLevels()).toEqual([{ id: 'shield', level: 2 }]);
+    // A consumable hold-full reward never levels the kind (parent
+    // AH-0MVTQMREN009DSFW AC1): it stays the single owned slot at level 1
+    // snapshot while its charge pool fills.
+    expect(store.getLevels()).toEqual([{ id: 'shield', level: 1 }]);
+    expect(store.consumableCharges('shield')).toBe(1);
     expect(state.used).toBe(1);
     expect(state.free).toBe(5);
     expect(state.isFull).toBe(false);

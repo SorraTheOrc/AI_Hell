@@ -1231,8 +1231,15 @@ describe('Player ship entity', () => {
       player.collectPowerUp('shield', true);
       player.collectPowerUp('speed_boost', true);
 
-      expect(player.getPowerUpLevels()).toEqual([
-        { id: 'shield', level: 2 },
+      // Shield is a **consumable**: a hold-full reward banks a charge and owns
+      // the kind but never levels it (parent AH-0MVTQMREN009DSFW AC1), so it
+      // appears once at its base level while speed_boost levels normally.
+      // Order follows the store's snapshot (permanent levels first, then
+      // owned consumables), so compare as a set.
+      expect(
+        [...player.getPowerUpLevels()].sort((a, b) => a.id.localeCompare(b.id)),
+      ).toEqual([
+        { id: 'shield', level: 1 },
         { id: 'speed_boost', level: 1 },
       ]);
 
@@ -1255,11 +1262,15 @@ describe('Player ship entity', () => {
     it('resetPowerUpLevels clears both permanent and temporary levels (run restart)', async () => {
       const player = await freshPlayer();
       const store = player.getPowerUpLevelStore();
-      player.collectPowerUp('shield', true); // permanent grant
+      player.collectPowerUp('shield', true); // hold-full: owned + one charge
       player.collectPowerUp('shield'); // temporary stack
       player.collectPowerUp('phase_shift'); // temporary only
-      expect(store.getEffectiveLevel('shield')).toBe(2);
-      expect(store.getPermanentLevel('shield')).toBe(1);
+      // A consumable's hold-full reward never raises the level (parent
+      // AH-0MVTQMREN009DSFW AC1): the field pickup is the only level here.
+      expect(store.getEffectiveLevel('shield')).toBe(1);
+      expect(store.getPermanentLevel('shield')).toBe(0);
+      expect(store.isConsumableOwned('shield')).toBe(true);
+      expect(store.consumableCharges('shield')).toBe(1);
       expect(store.getTempStacks('shield')).toBe(1);
 
       player.resetPowerUpLevels();

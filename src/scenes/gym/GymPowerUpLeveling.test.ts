@@ -22,6 +22,7 @@ import { discoverGymScenes } from '../../utils/gymDiscovery';
 import {
   POWER_UP_LEVEL_IDS,
   POWER_UP_LEVEL_SPECS,
+  isConsumablePowerUpId,
   resolvePowerUpAtLevel,
 } from '../../powerups/powerUpLevels';
 import { grantPermanentPowerUp } from '../../powerups/choiceReward';
@@ -126,7 +127,11 @@ describe('GymPowerUpLeveling', () => {
     scene.tick(0.016);
     const first = scene.getMineralChoiceOptions();
     expect(first.length).toBeGreaterThan(0);
-    const fresh = first.find((o) => o.kind === 'powerup' && o.isNew);
+    // Pick a kind that still levels: a consumable hold-full reward adds a
+    // charge instead of a level (parent AH-0MVTQMREN009DSFW AC1).
+    const fresh = first.find(
+      (o) => o.kind === 'powerup' && o.isNew && !isConsumablePowerUpId(o.id as PowerUpId),
+    );
     expect(fresh).toBeDefined();
     const freshId = fresh!.id as PowerUpId;
     scene.selectMineralChoice(first.indexOf(fresh!));
@@ -165,13 +170,16 @@ describe('GymPowerUpLeveling', () => {
     for (const id of ['bomb', 'shield'] as PowerUpId[]) {
       // Hold-full reward → permanent base, through the shared grant seam.
       grantPermanentPowerUp(id, registry);
-      expect(store.getPermanentLevel(id), `${id} permanent base`).toBe(1);
+      // Shield is a consumable: the reward owns it and banks a charge, but
+      // never raises its level (parent AH-0MVTQMREN009DSFW AC1).
+      const base = isConsumablePowerUpId(id) ? 0 : 1;
+      expect(store.getPermanentLevel(id), `${id} permanent base`).toBe(base);
 
       scene.spawnDrop(id, player.x, player.y);
       scene.tick(0.1);
 
       expect(store.getTempStacks(id), `${id} temporary stack`).toBe(1);
-      expect(player.getPowerUpLevel(id), `${id} raised`).toBe(2);
+      expect(player.getPowerUpLevel(id), `${id} raised`).toBe(base + 1);
 
       const remaining = registry.powerUpTemporaryRemaining(id);
       expect(remaining, `${id} window open`).toBeGreaterThan(0);
@@ -183,17 +191,23 @@ describe('GymPowerUpLeveling', () => {
     scene.tick(Math.max(...windows.map((w) => w.remaining)) + 0.5);
 
     for (const { id } of windows) {
+      const base = isConsumablePowerUpId(id) ? 0 : 1;
       expect(store.getTempStacks(id), `${id} temporary cleared`).toBe(0);
-      expect(player.getPowerUpLevel(id), `${id} reverted`).toBe(1);
-      expect(store.getPermanentLevel(id), `${id} permanent retained`).toBe(1);
+      expect(player.getPowerUpLevel(id), `${id} reverted`).toBe(base);
+      expect(store.getPermanentLevel(id), `${id} permanent retained`).toBe(base);
       expect(
         registry.powerUpTemporaryRemaining(id),
         `${id} window closed`,
       ).toBeUndefined();
     }
 
-    // The timed base survives the window; only the temporary level reverted.
+    // The permanent shield effect window is unchanged in this slice (the
+    // charge-model rewiring of the effect path is AH-0MVUXH3X60078QR3), so the
+    // permanent base stays active; what changed here is the **store**: the
+    // kind is owned and holds one charge without being levelled.
     expect(registry.isActive('shield')).toBe(true);
+    expect(store.isConsumableOwned('shield')).toBe(true);
+    expect(store.consumableCharges('shield')).toBe(1);
   });
 
   it('AC3/AC4 — the readout matches the shared resolver at base / first upgrade / mid / cap', async () => {

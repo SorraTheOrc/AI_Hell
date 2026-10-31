@@ -1245,11 +1245,11 @@ describe('CombatCoreScene — collector-drone spawn wiring (AH-0MVBMQ04X0051002)
     scene.effects.applyCollect('mystery_ufo', true);
     const interval = scene.effects.mysteryUfoSpawnInterval();
     expect(scene.effects.isMysteryUfoPermanent()).toBe(true);
-    // 30 s at the curve base, descending 2 s per level: level 1 → 28 s.
+    // A consumable hold-full reward never levels the kind (parent AC1), so
+    // the permanent spawn interval resolves at the curve base: 30 s.
     expect(interval).toBe(
-      resolvePowerUpAtLevel('mystery_ufo', 1).mysteryUfoSpawnInterval,
+      resolvePowerUpAtLevel('mystery_ufo', 0).mysteryUfoSpawnInterval,
     );
-    expect(interval).toBeLessThan(30);
 
     // The first permanent spawn lands one interval after the reward. The
     // arming step runs on the first call and does not consume `dt`.

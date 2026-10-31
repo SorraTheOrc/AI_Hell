@@ -53,9 +53,14 @@
  * @module scenes/gym/spawnParity (AH-0MVRMHJZS001Z6CX)
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { advanceGame, bootScene, type BootedGame } from '../../test/gameHarness';
+
+// Two real Phaser scenes are booted per case; under host load the default 5 s
+// per-test timeout is not enough (observed 5.2–9.0 s at load ≈ 20), so the
+// parity sweep declares its own bound instead of flaking.
+vi.setConfig({ testTimeout: 30000 });
 import { GAME_HEIGHT, GAME_WIDTH } from '../../core/constants';
 import { DEFAULT_ENEMY_CONFIGS } from '../../core/enemyConfig';
 import { RULES_STORAGE_KEY } from '../../core/rules';

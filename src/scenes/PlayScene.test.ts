@@ -7963,8 +7963,11 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     const scene = await bootMiniBossCampaign();
     const player = scene.getPlayer()!;
     for (let i = 0; i < 4; i += 1) player.equipWeapon('railgun', true);
+    // Permanent upgrades raise the score. Shield is a **consumable**, so a
+    // hold-full reward adds a charge instead of a level (parent
+    // AH-0MVTQMREN009DSFW AC1) — use a levelling power-up for the 3 levels.
     for (let i = 0; i < 3; i += 1) {
-      scene.getEffectsRegistry().applyCollect('shield', true);
+      scene.getEffectsRegistry().applyCollect('speed_boost', true);
     }
     const score = scene.getPlayerPowerScore();
     expect(score).toBe(7);

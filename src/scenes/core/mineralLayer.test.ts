@@ -292,7 +292,10 @@ describe('applyMineralChoiceReward', () => {
 
     expect(applyCollect).toHaveBeenCalledWith('shield', true);
     expect(applyCollect).toHaveBeenCalledTimes(1);
-    expect(store.getLevel('shield')).toBe(1); // advanced exactly once
+    // A consumable's level reward is a **charge grant**, never a level
+    // (parent AH-0MVTQMREN009DSFW AC1).
+    expect(store.getLevel('shield')).toBe(0);
+    expect(store.consumableCharges('shield')).toBe(1);
     expect(player.equipWeapon).not.toHaveBeenCalled();
   });
 
@@ -338,6 +341,7 @@ describe('applyMineralChoiceReward', () => {
         strike: (r: EffectsRegistry) => r.isStrikePermanent(),
       } as const;
 
+      const CONSERVATIVE_CONSUMABLES = new Set(['thorns']);
       for (const id of NEW_POWER_UP_IDS) {
         const store = new PowerUpLevelStore();
         const registry = new EffectsRegistry(store);
@@ -349,8 +353,11 @@ describe('applyMineralChoiceReward', () => {
           player,
         );
 
-        // The run-scoped level advanced exactly once …
-        expect(store.getLevel(id), id).toBe(1);
+        // The run-scoped level advanced exactly once (a consumable gains a
+        // charge instead of a level, parent AH-0MVTQMREN009DSFW AC1) …
+        expect(store.getLevel(id), id).toBe(
+          CONSERVATIVE_CONSUMABLES.has(id) ? 0 : 1,
+        );
         // … and the permanent effect is live in the shared registry.
         expect(observable[id](registry), id).toBe(true);
         // Power-ups never touch the weapon path.

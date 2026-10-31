@@ -84,6 +84,8 @@ export interface SceneSetupPlayer {
   /** The run-scoped power-up level store. */
   getPowerUpLevelStore(): {
     collect(id: PowerUpId, permanent?: boolean): number;
+    /** Sets a level directly — a scripted setup is not a hold-full reward. */
+    setPermanentLevel?(id: PowerUpId, level: number): void;
   };
 }
 
@@ -286,8 +288,15 @@ export function applySceneSetup(
   const store = player.getPowerUpLevelStore();
   for (const [id, level] of Object.entries(setup.powerUps ?? {})) {
     if (!Number.isInteger(level) || level <= 0) continue;
-    for (let i = 0; i < level; i += 1) {
-      store.collect(id as PowerUpId, true);
+    // A scripted setup is not a hold-full reward: set the level directly so a
+    // **consumable** can start levelled (its cap/interval curves follow) even
+    // though a hold-full grant of a consumable only adds a charge
+    // (parent AH-0MVTQMREN009DSFW AC1).
+    if (typeof store.setPermanentLevel === 'function') {
+      store.setPermanentLevel(id as PowerUpId, level);
+    } else {
+      // Structural fallback for a fake store without the setter.
+      for (let i = 0; i < level; i += 1) store.collect(id as PowerUpId, true);
     }
   }
 }

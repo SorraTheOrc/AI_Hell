@@ -397,7 +397,13 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
   it('AC5 — replaying an over-granted charge pool stays within POWER_UP_CHARGE_CAP', async () => {
     const scene = await bootResumed();
     const registry = scene.getEffectsRegistry();
-    expect(registry.teleportStacks()).toBe(POWER_UP_CHARGE_CAP);
+    // A replayed pool is clamped at the kind's level-derived charge cap
+    // (parent AH-0MVTQMREN009DSFW AC2/AC3), which is itself within the
+    // shipped POWER_UP_CHARGE_CAP ceiling.
+    const store = scene.getPlayer()!.getPowerUpLevelStore();
+    expect(registry.teleportStacks()).toBe(
+      store.consumableChargeCap('teleport'),
+    );
     expect(registry.teleportStacks()).toBeLessThanOrEqual(POWER_UP_CHARGE_CAP);
     expect(registry.phaseCharges()).toBeLessThanOrEqual(POWER_UP_CHARGE_CAP);
     expect(registry.phaseCharges()).toBeGreaterThan(0);

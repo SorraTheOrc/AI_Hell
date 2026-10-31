@@ -150,7 +150,12 @@
  * Pure and deterministic: no scene, DOM, Phaser or storage coupling.
  */
 
-import { POWER_UP_CATALOGUE, PowerUpId, getPowerUpById } from './types';
+import {
+  CONSUMABLE_POWER_UP_IDS,
+  POWER_UP_CATALOGUE,
+  PowerUpId,
+  getPowerUpById,
+} from './types';
 import {
   curveValue,
   formatDelta,
@@ -1595,6 +1600,53 @@ export const POWER_UP_LIVES_START = 3;
 export const POWER_UP_CHARGE_CAP = 3;
 
 /**
+ * The catalogue axis that bounds each consumable's charge pool (parent
+ * AH-0MVTQMREN009DSFW, AC2/AC3). Where a kind already had a spendable budget
+ * axis, that axis **is** its charge cap; only Mystery UFO gained a new one.
+ */
+const CONSUMABLE_CHARGE_CAP_AXES: Record<
+  PowerUpId,
+  (stats: PowerUpLevelStats) => number
+> = {
+  shield: (stats) => stats.shieldAbsorptions ?? 0,
+  thorns: (stats) => stats.thornsAbsorbs ?? 0,
+  phase_shift: (stats) => stats.phaseCharges ?? 0,
+  teleport: (stats) => stats.teleportStacks ?? 0,
+  force_field: (stats) => stats.forceFieldReflects ?? 0,
+  mystery_ufo: (stats) => stats.mysteryUfoChargeCap ?? 0,
+} as Record<PowerUpId, (stats: PowerUpLevelStats) => number>;
+
+/**
+ * The catalogue axis that gives each consumable's **regeneration interval** in
+ * seconds (parent AH-0MVTQMREN009DSFW, AC2/AC3): the two new recharge curves
+ * for Shield and Force Field, the shipped per-kind recharge/interval axes for
+ * the rest, and the seconds inverse of the two shipped charges-per-second
+ * rates.
+ */
+const CONSUMABLE_RECHARGE_AXES: Record<
+  PowerUpId,
+  (stats: PowerUpLevelStats) => number
+> = {
+  shield: (stats) => stats.shieldRecharge ?? 0,
+  thorns: (stats) => stats.thornsRecharge ?? 0,
+  phase_shift: (stats) =>
+    stats.phaseRechargeRate ? 1 / stats.phaseRechargeRate : 0,
+  teleport: (stats) =>
+    stats.teleportRechargeRate ? 1 / stats.teleportRechargeRate : 0,
+  force_field: (stats) => stats.forceFieldRecharge ?? 0,
+  mystery_ufo: (stats) => stats.mysteryUfoSpawnInterval ?? 0,
+} as Record<PowerUpId, (stats: PowerUpLevelStats) => number>;
+
+/**
+ * Whether `id` is one of the catalogue's consumables (parent
+ * AH-0MVTQMREN009DSFW, producer decision 1). Reads the derived catalogue list,
+ * so the six-kind set is never spelled out a second time.
+ */
+export function isConsumablePowerUpId(id: PowerUpId): boolean {
+  return CONSUMABLE_POWER_UP_IDS.includes(id);
+}
+
+/**
  * The run-scoped power-up level model (AC2/AC3).
  *
  * Responsibilities:
@@ -1626,13 +1678,26 @@ export const POWER_UP_CHARGE_CAP = 3;
 export class PowerUpLevelStore {
   private _permanentGrants = new Map<PowerUpId, number>();
   private _tempStacks = new Map<PowerUpId, number>();
-  private _teleportStacks = 0;
-  private _phaseCharges = 0;
-  private _phasePermanent = false;
-  /** Remaining seconds of each Phase Shift charge currently recharging. */
-  private _phaseRechargeTimers: number[] = [];
-  /** Remaining seconds of each Teleport charge currently recharging. */
-  private _teleportRechargeTimers: number[] = [];
+  /**
+   * Available **charges** per consumable kind (parent AH-0MVTQMREN009DSFW).
+   *
+   * One pool serves all six consumables — the shipped Phase Shift / Teleport
+   * engine generalised, never a second counter — so the game and every gym
+   * share one model (§4.4.3). A kind absent from the map simply holds no
+   * charges.
+   */
+  private _charges = new Map<PowerUpId, number>();
+  /**
+   * Remaining seconds of each **in-flight recharge** per consumable kind: one
+   * entry per spent charge, advanced only by {@link tickRecharge}.
+   */
+  private _rechargeTimers = new Map<PowerUpId, number[]>();
+  /**
+   * Kinds a hold-full reward has made **owned** for the run. Ownership is a
+   * flag, never an endless supply: an owned consumable with an empty pool is
+   * still visible (greyed out) and still regenerating.
+   */
+  private _owned = new Set<PowerUpId>();
   private _lives: number;
   private readonly _livesStart: number;
 
@@ -1662,42 +1727,42 @@ export class PowerUpLevelStore {
    */
   collect(id: PowerUpId, permanent = false): number {
     getPowerUpById(id); // validate id (throws for unknown power-ups)
-    if (permanent) {
+    // **Consumables never level up from a hold-full reward** (parent AC1):
+    // the grant adds a charge instead, so the permanent-grant count (what
+    // `getPermanentLevel`, the hold-full pricing and every level consumer
+    // read) is left untouched and ownership is carried by the per-kind flag.
+    const consumable = isConsumablePowerUpId(id);
+    if (permanent && !consumable) {
       this._permanentGrants.set(id, this.permanentGrants(id) + 1);
-    } else {
+    } else if (!permanent) {
       this._tempStacks.set(id, this.getTempStacks(id) + 1);
     }
     const next = this.getEffectiveLevel(id);
 
     const stats = this.stats(id);
+    if (isConsumablePowerUpId(id)) {
+      if (permanent) {
+        // **Hold-full reward = one charge, never a level**
+        // (parent AC1). The permanent-grant count deliberately stays
+        // untouched, so `getPermanentLevel` / `getEffectiveLevel` do not
+        // move; the kind becomes *owned* through the flag and the grant is
+        // clamped at the level-derived cap (parent AC2).
+        this._owned.add(id);
+        this.grantConsumableCharge(id, 1);
+      } else if (id === 'phase_shift') {
+        // Field-pickup behaviour is unchanged in this slice (producer
+        // decision 2 / PD5): the level-derived count, clamped at the kind's
+        // level-derived charge cap (parent AC2/AC3).
+        this._addCharges(id, stats.phaseCharges ?? 0, this._poolCap(id));
+      } else if (id === 'teleport') {
+        this._addCharges(id, stats.teleportStacks ?? 0, this._poolCap(id));
+      }
+    }
     switch (id) {
       case 'phase_shift':
-        if (permanent) {
-          // The hold-full reward is a recharging pool: it marks ownership and
-          // adds exactly one charge (clamped at the cap), not an unlimited
-          // supply (AH-0MV82I7TX0009JMT AC4).
-          this._phasePermanent = true;
-          this._phaseCharges = Math.min(
-            this._phaseCharges + 1,
-            POWER_UP_CHARGE_CAP,
-          );
-        } else {
-          // A field pickup grants the level-derived count, clamped so the
-          // pool never exceeds the cap (AC2).
-          this._phaseCharges = Math.min(
-            this._phaseCharges + (stats.phaseCharges ?? 0),
-            POWER_UP_CHARGE_CAP,
-          );
-        }
-        break;
       case 'teleport':
-        // A hold-full reward grants exactly one teleport (mirroring Phase
-        // Shift); a field pickup grants the level-derived count. Both are
-        // clamped at the cap (AC2/AC5).
-        this._teleportStacks = Math.min(
-          this._teleportStacks + (permanent ? 1 : stats.teleportStacks ?? 0),
-          POWER_UP_CHARGE_CAP,
-        );
+        // Charges are granted above through the shared pool; the level bookkeeping
+        // is handled by the common paths.
         break;
       case 'extra_life':
         this._lives = Math.min(
@@ -1769,9 +1834,17 @@ export class PowerUpLevelStore {
    * a field-only item is omitted, so it is still offered as `★ New`.
    */
   getLevels(): Array<{ id: PowerUpId; level: number }> {
-    return [...this._permanentGrants.entries()]
-      .filter(([, level]) => level > 0)
-      .map(([id, level]) => ({ id, level }));
+    const rows = new Map<PowerUpId, number>();
+    for (const [id, level] of this._permanentGrants.entries()) {
+      if (level > 0) rows.set(id, level);
+    }
+    // A **consumable owned through a hold-full reward** holds level 0 (the
+    // grant never levels it, parent AC1) but is still permanently owned: it
+    // occupies a slot and must stay visible to the choice/loadout snapshots.
+    for (const id of this._owned) {
+      if (!rows.has(id)) rows.set(id, 1);
+    }
+    return [...rows.entries()].map(([id, level]) => ({ id, level }));
   }
 
   /**
@@ -1802,6 +1875,26 @@ export class PowerUpLevelStore {
     return this._permanentGrants.get(id) ?? 0;
   }
 
+  /**
+   * Sets `id`'s permanent level directly (scripted scene/gym setups,
+   * `GameSetup.powerUps`).
+   *
+   * Scripted setups configure a run's starting loadout — they are not a
+   * hold-full reward, so they must be able to raise a consumable's level (and
+   * hence its cap/interval curves) without going through
+   * {@link collect}`(id, true)`, which by design only adds a charge for a
+   * consumable (parent AH-0MVTQMREN009DSFW AC1).
+   */
+  setPermanentLevel(id: PowerUpId, level: number): void {
+    getPowerUpById(id);
+    const next = Math.max(0, Math.floor(level));
+    if (next <= 0) {
+      this._permanentGrants.delete(id);
+      return;
+    }
+    this._permanentGrants.set(id, next);
+  }
+
   /** Resolved stats for `id` at its current upgrade level. */
   stats(id: PowerUpId): PowerUpLevelStats {
     return resolvePowerUpAtLevel(id, this.getUpgradeLevel(id));
@@ -1830,7 +1923,7 @@ export class PowerUpLevelStore {
 
   /** Stored Teleport teleport uses (level-derived grants, minus consumes). */
   teleportStacks(): number {
-    return this._teleportStacks;
+    return this.consumableCharges('teleport');
   }
 
   /**
@@ -1841,10 +1934,7 @@ export class PowerUpLevelStore {
    * elapses (per-charge recharge model, AC1).
    */
   consumeTeleport(): boolean {
-    if (this._teleportStacks <= 0) return false;
-    this._teleportStacks -= 1;
-    this._teleportRechargeTimers.push(this.teleportRechargeTime());
-    return true;
+    return this.consumeConsumableCharge('teleport');
   }
 
   /**
@@ -1855,13 +1945,12 @@ export class PowerUpLevelStore {
    * recharge engine consumes when a teleport charge is spent.
    */
   teleportRechargeTime(): number {
-    const rate = this.stats('teleport').teleportRechargeRate ?? 0;
-    return rate > 0 ? 1 / rate : 0;
+    return this.consumableRechargeTime('teleport');
   }
 
   /** Stored Phase Shift auto-activation charges (level-derived grants, minus consumes). */
   phaseCharges(): number {
-    return this._phaseCharges;
+    return this.consumableCharges('phase_shift');
   }
 
   /**
@@ -1870,7 +1959,7 @@ export class PowerUpLevelStore {
    * charge (AH-0MV82I7TX0009JMT AC4).
    */
   isPhasePermanent(): boolean {
-    return this._phasePermanent;
+    return this.isConsumableOwned('phase_shift');
   }
 
   /**
@@ -1882,10 +1971,116 @@ export class PowerUpLevelStore {
    * an unlimited supply: an empty pool blocks activation.
    */
   consumePhaseCharge(): boolean {
-    if (this._phaseCharges <= 0) return false;
-    this._phaseCharges -= 1;
-    this._phaseRechargeTimers.push(this.phaseRechargeTime());
+    return this.consumeConsumableCharge('phase_shift');
+  }
+
+  // ── Shared consumable charge pool (parent AH-0MVTQMREN009DSFW) ──────
+  //
+  // One pool serves every consumable: Shield, Thorn Field, Phase Shift,
+  // Teleport, Force Field and Mystery UFO. A charge buys one event, charges
+  // regenerate on the level-derived interval, and the cap/interval are
+  // catalogue data — no scene, HUD or registry keeps a second counter.
+
+  /** Available charges of the consumable `id` (0 for a non-consumable). */
+  consumableCharges(id: PowerUpId): number {
+    return this._charges.get(id) ?? 0;
+  }
+
+  /**
+   * The ceiling used when charging a pool: the level-derived cap for the newly
+   * pooled consumables, and the shipped fixed ceiling of 3 for Phase Shift /
+   * Teleport whose cap-3 pool predates the per-kind axes (their behaviour is
+   * otherwise unchanged — AC6). Exposed so grants and recharges agree.
+   */
+  private _poolCap(id: PowerUpId): number {
+    if (id === 'phase_shift' || id === 'teleport') return POWER_UP_CHARGE_CAP;
+    return this.consumableChargeCap(id);
+  }
+
+  /**
+   * The **level-derived charge cap** of `id` — the catalogue axis that bounds
+   * its pool (parent AC2/AC3): `shieldAbsorptions`, `thornsAbsorbs`,
+   * `phaseCharges`, `teleportStacks`, `forceFieldReflects` or
+   * `mysteryUfoChargeCap`. Returns 0 for a non-consumable.
+   */
+  consumableChargeCap(id: PowerUpId): number {
+    if (!isConsumablePowerUpId(id)) return 0;
+    const stats = this.stats(id);
+    const cap = CONSUMABLE_CHARGE_CAP_AXES[id](stats);
+    return Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+  }
+
+  /**
+   * The **level-derived regeneration interval** of `id` in seconds — the
+   * catalogue axis that says how long one spent charge takes to come back
+   * (parent AC2/AC3): `shieldRecharge`, `thornsRecharge`, the seconds inverse
+   * of `phaseRechargeRate` / `teleportRechargeRate`, `forceFieldRecharge` or
+   * `mysteryUfoSpawnInterval`. Returns 0 for a non-consumable or a kind with
+   * no interval axis.
+   */
+  consumableRechargeTime(id: PowerUpId): number {
+    if (!isConsumablePowerUpId(id)) return 0;
+    const stats = this.stats(id);
+    const seconds = CONSUMABLE_RECHARGE_AXES[id](stats);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  }
+
+  /**
+   * Seconds until the next spent charge of `id` returns — the shortest
+   * in-flight recharge timer (0 when nothing is recharging). Drives the HUD
+   * regeneration countdown (parent AC4).
+   */
+  consumableRechargeRemaining(id: PowerUpId): number {
+    const timers = this._rechargeTimers.get(id);
+    if (!timers || timers.length === 0) return 0;
+    return Math.max(0, Math.min(...timers));
+  }
+
+  /** Whether a hold-full reward has made `id` permanently owned this run. */
+  isConsumableOwned(id: PowerUpId): boolean {
+    return this._owned.has(id);
+  }
+
+  /**
+   * Spends **exactly one** charge of `id`, returning `false` when its pool is
+   * empty. A spent charge starts its own recharge timer whose duration is the
+   * level-derived {@link consumableRechargeTime} **at the moment of
+   * consumption** (parent AC4); {@link tickRecharge} returns it to the pool.
+   */
+  consumeConsumableCharge(id: PowerUpId): boolean {
+    if (!isConsumablePowerUpId(id)) return false;
+    const pool = this.consumableCharges(id);
+    if (pool <= 0) return false;
+    this._charges.set(id, pool - 1);
+    const seconds = this.consumableRechargeTime(id);
+    if (seconds > 0) {
+      const timers = this._rechargeTimers.get(id) ?? [];
+      timers.push(seconds);
+      this._rechargeTimers.set(id, timers);
+    }
     return true;
+  }
+
+  /**
+   * Grants up to `count` charges of `id`, clamped at the level-derived cap
+   * (parent AC2). A grant landing on a full pool is discarded, so no charge is
+   * banked while the pool is full.
+   */
+  grantConsumableCharge(id: PowerUpId, count = 1): number {
+    if (!isConsumablePowerUpId(id)) return 0;
+    const cap = this.consumableChargeCap(id);
+    const pool = this.consumableCharges(id);
+    const next = Math.min(cap, pool + Math.max(0, Math.floor(count)));
+    this._charges.set(id, next);
+    return next;
+  }
+
+  /** Adds `count` charges of `id` clamped at `cap` (internal grant path). */
+  private _addCharges(id: PowerUpId, count: number, cap: number): number {
+    const pool = this.consumableCharges(id);
+    const next = Math.min(cap, pool + Math.max(0, count));
+    this._charges.set(id, next);
+    return next;
   }
 
   /**
@@ -1898,16 +2093,17 @@ export class PowerUpLevelStore {
   tickRecharge(dt: number): void {
     const safeDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
     if (safeDt <= 0) return;
-    this._phaseCharges = this._advanceRechargeTimers(
-      this._phaseRechargeTimers,
-      this._phaseCharges,
-      safeDt,
-    );
-    this._teleportStacks = this._advanceRechargeTimers(
-      this._teleportRechargeTimers,
-      this._teleportStacks,
-      safeDt,
-    );
+    for (const id of CONSUMABLE_POWER_UP_IDS) {
+      const timers = this._rechargeTimers.get(id);
+      if (!timers || timers.length === 0) continue;
+      const pool = this._advanceRechargeTimers(
+        timers,
+        this.consumableCharges(id),
+        safeDt,
+        this._poolCap(id),
+      );
+      this._charges.set(id, pool);
+    }
   }
 
   /**
@@ -1919,12 +2115,17 @@ export class PowerUpLevelStore {
     timers: number[],
     pool: number,
     dt: number,
+    cap: number = POWER_UP_CHARGE_CAP,
   ): number {
+    // A tolerance absorbs floating-point drift: 150 × 0.1 s of small ticks
+    // sums to slightly less than 15 s, and a spent charge must still return
+    // (frame-rate independence, parent AC5).
+    const EPSILON = 1e-9;
     for (let i = timers.length - 1; i >= 0; i--) {
       timers[i] -= dt;
-      if (timers[i] > 0) continue;
+      if (timers[i] > EPSILON) continue;
       timers.splice(i, 1);
-      pool = Math.min(pool + 1, POWER_UP_CHARGE_CAP);
+      pool = Math.min(pool + 1, cap);
     }
     return pool;
   }
@@ -1937,8 +2138,7 @@ export class PowerUpLevelStore {
    * recharge engine consumes when a Phase Shift charge is spent.
    */
   phaseRechargeTime(): number {
-    const rate = this.stats('phase_shift').phaseRechargeRate ?? 0;
-    return rate > 0 ? 1 / rate : 0;
+    return this.consumableRechargeTime('phase_shift');
   }
 
   /** Current lives (Extra Life model); starts at the configured start, capped. */
@@ -1966,11 +2166,9 @@ export class PowerUpLevelStore {
   reset(): void {
     this._permanentGrants.clear();
     this._tempStacks.clear();
-    this._teleportStacks = 0;
-    this._phaseCharges = 0;
-    this._phasePermanent = false;
-    this._phaseRechargeTimers = [];
-    this._teleportRechargeTimers = [];
+    this._charges.clear();
+    this._rechargeTimers.clear();
+    this._owned.clear();
     this._lives = this._livesStart;
   }
 }

@@ -592,7 +592,10 @@ export class HUD extends Phaser.GameObjects.Container {
       const heldByModel = state !== null && state.heldIds.has(id);
       if (!this._isPowerUpRowVisible(id) && !heldByModel) continue;
       const entry = getPowerUpById(id);
-      const level = reg.powerUpLevel(id);
+      // An owned consumable holds level 0 (a hold-full reward adds a charge,
+      // never a level — parent AH-0MVTQMREN009DSFW AC1); it is displayed at
+      // its base level 1 so the row still reads as a levelled item.
+      const level = Math.max(1, reg.powerUpLevel(id));
       const remaining = reg.powerUpTemporaryRemaining(id);
       const temporary = remaining !== undefined;
       const stacks = this._powerUpStacks(id);
@@ -677,8 +680,14 @@ export class HUD extends Phaser.GameObjects.Container {
         // temporary-level window (§4.4.3), so show its row for as long as the
         // player owns it (any collection advanced its level); the row renders
         // the effective level (drone lifetime/capacity/radius) and the window
-        // countdown or ∞ (AH-0MV9G113S009B37I).
-        return reg.powerUpLevel('mystery_ufo') > 0;
+        // countdown or ∞ (AH-0MV9G113S009B37I). A hold-full reward owns the
+        // kind without levelling it (parent AH-0MVTQMREN009DSFW AC1), so
+        // ownership also keeps the row visible.
+        return (
+          reg.powerUpLevel('mystery_ufo') > 0 ||
+          reg.levelStore().consumableCharges('mystery_ufo') > 0 ||
+          reg.isMysteryUfoPermanent()
+        );
       case 'frenzy':
       case 'chrono':
       case 'salvage':
@@ -763,6 +772,11 @@ export class HUD extends Phaser.GameObjects.Container {
    * (AH-0MV82I97Y007MB6M).
    */
   private _ownsChargePool(id: PowerUpId): boolean {
+    // A consumable hold-full reward never raises the level (parent
+    // AH-0MVTQMREN009DSFW AC1): ownership is the per-kind flag, so an owned
+    // kind stays visible (greyed) while its empty pool regenerates.
+    const store = this._registry!.levelStore?.();
+    if (store && store.isConsumableOwned(id)) return true;
     return this._registry!.powerUpLevel(id) > 0;
   }
 

@@ -58,6 +58,7 @@ import {
   resolvePowerUpAtLevel,
 } from '../powerUpLevels';
 import { SLOTS_FULL_EXEMPT_IDS, resolveSlotState } from '../slots';
+import { isConsumablePowerUpId } from '../powerUpLevels';
 import type { PowerUpId } from '../types';
 
 /** Extra seconds past a window so the expiry tick is unambiguous. */
@@ -146,7 +147,9 @@ function expectPermanentPlusFieldReverts(id: PowerUpId): void {
   // it must raise the effective level by exactly one, temporarily.
   reg.applyCollect(id, true);
   const permanentLevel = store.getPermanentLevel(id);
-  expect(permanentLevel).toBe(1);
+  // A hold-full reward of a consumable adds a charge, never a level (parent
+  // AH-0MVTQMREN009DSFW AC1); every other kind still levels permanently.
+  expect(permanentLevel).toBe(isConsumablePowerUpId(id) ? 0 : 1);
 
   reg.applyCollect(id, false);
   expect(store.getEffectiveLevel(id)).toBe(permanentLevel + 1);
@@ -208,7 +211,7 @@ function expectPermanentGrantMidWindowReverts(id: PowerUpId): void {
   // stale temporary stack.
   reg.applyCollect(id, true);
   const permanentLevel = store.getPermanentLevel(id);
-  expect(permanentLevel).toBe(1);
+  expect(permanentLevel).toBe(isConsumablePowerUpId(id) ? 0 : 1);
 
   // AC4 — the chosen power-up strategy is explicit: the permanent grant
   // **keeps** the open window (it never cancels its expiry), so the temporary
@@ -333,7 +336,12 @@ describe('slot accounting follows the temporary window (AH-0MVUGI4WG008HU3M AC4)
 
       const settled = slotState(store);
       expect(store.getTempPowerUpIds()).not.toContain(id);
-      expect(store.getPermanentLevel(id)).toBe(1);
+      // A consumable hold-full reward never raises the level (parent AC1), but
+      // the kind stays owned and keeps its slot through the owned flag.
+      expect(store.getPermanentLevel(id)).toBe(
+        isConsumablePowerUpId(id) ? 0 : 1,
+      );
+      expect(store.isConsumableOwned(id)).toBe(isConsumablePowerUpId(id));
       expect(settled.ownedIds.has(id)).toBe(true);
       expect(settled.heldIds.has(id)).toBe(true);
       expect(settled.used).toBe(1);

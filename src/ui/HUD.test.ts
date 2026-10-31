@@ -886,14 +886,14 @@ describe('HUD Mystery UFO row (AH-0MV1BIXFO006Z1I7)', () => {
     const reg = new EffectsRegistry();
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
-    expect(hud.getRows().some((r) => r.id === 'mystery_ufo')).toBe(false);
+    expect(hud.getRows().some((r) => r.id === 'mystery_ufo'), 'no row before pickup').toBe(false);
 
     reg.applyCollect('mystery_ufo');
     hud.refresh();
     const row = hud.getRows().find((r) => r.id === 'mystery_ufo')!;
-    expect(row).toBeDefined();
-    expect(row.name).toBe('Mystery UFO');
-    expect(row.label).toBe('Mystery UFO Lvl 1');
+    expect(row, 'row defined after pickup').toBeDefined();
+    expect(row.name, 'row name').toBe('Mystery UFO');
+    expect(row.label, 'row label').toBe('Mystery UFO Lvl 1');
     // A field pickup now opens a temporary level window → countdown, not the
     // infinity glyph (AH-0MVUGI448000GNMJ).
     expect(row.temporary).toBe(true);
@@ -902,14 +902,15 @@ describe('HUD Mystery UFO row (AH-0MV1BIXFO006Z1I7)', () => {
     // Expiry clears the temporary level, so a field-only row disappears.
     reg.tick(reg.powerUpTemporaryRemaining('mystery_ufo')! + 0.1);
     hud.refresh();
-    expect(hud.getRows().some((r) => r.id === 'mystery_ufo')).toBe(false);
+    expect(hud.getRows().some((r) => r.id === 'mystery_ufo'), 'row gone after expiry').toBe(false);
 
     // A hold-full reward is permanent and opens no window → ∞.
     reg.applyCollect('mystery_ufo', true);
     hud.refresh();
     const permanent = hud.getRows().find((r) => r.id === 'mystery_ufo')!;
-    expect(permanent.temporary).toBe(false);
-    expect(permanent.value).toBe(PERMANENT_VALUE);
+    expect(permanent, 'permanent row defined').toBeDefined();
+    expect(permanent.temporary, 'permanent row not temporary').toBe(false);
+    expect(permanent.value, 'permanent row value').toBe(PERMANENT_VALUE);
     destroy(game);
   });
 });

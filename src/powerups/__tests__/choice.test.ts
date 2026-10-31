@@ -454,7 +454,9 @@ describe('power-up choice strategy', () => {
       // A field pickup raises the *effective* level to 2; the offer must stay
       // priced on the permanent level 1 → 2 (no temporary inflation).
       store.collect('shield');
-      expect(store.getEffectiveLevel('shield')).toBe(2);
+      // A consumable hold-full reward adds a charge, never a level, so the
+      // field pickup's temporary stack is the only level (parent AC1).
+      expect(store.getEffectiveLevel('shield')).toBe(1);
       const during = shieldOffer();
       expect(during.kind).toBe('power-up-level');
       expect(during.level).toBe(2);
@@ -467,7 +469,7 @@ describe('power-up choice strategy', () => {
       // After expiry the offer is identical again — no `★ New` regression for
       // an item the player still permanently owns.
       store.clearTemporary('shield');
-      expect(store.getEffectiveLevel('shield')).toBe(1);
+      expect(store.getEffectiveLevel('shield')).toBe(0);
       const after = shieldOffer();
       expect(after.kind).toBe('power-up-level');
       expect(after.level).toBe(2);
