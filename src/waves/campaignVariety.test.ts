@@ -55,13 +55,20 @@
  * Every level of the ten is therefore pairwise distinct; the campaign-wide AC1
  * aggregate still waits for the classic-arcade/finale rework.
  *
+ * Post-finale state (AH-0MVSEFST20086D87): the Levels 6–10 re-mix restores the
+ * documented Level 7 tank dominance (the merged campaign had measured `diver`
+ * first because two generated curve waves at that level field a large
+ * diver/phased tail). With `tank` dominant again, **every** level now matches
+ * its `LEVEL_IDENTITY` entry, so the L7 AC3 assertion is activated and the
+ * campaign-wide AC1 aggregate is activated too — the whole 100-wave campaign
+ * is pairwise distinct, so the ledger has no remaining staged assertion.
+ *
  * Activation owners (from the parent plan):
  * - Levels 1 & 5 → AH-0MVSE6VIW009QG2E (pilot) — **done, activated here**
  * - Levels 2, 3, 4 → AH-0MVSE7F090010EG3 (onboarding rework) — **done,
  *   activated here**
- * - Levels 6–10 → AH-0MVSEFST20086D87 (classic-arcade/finale rework)
- * - Campaign AC1 aggregate → AH-0MVSEFST20086D87 (the last levels that make
- *   the whole campaign pairwise distinct).
+ * - Levels 6–10 and the campaign-wide AC1 aggregate → AH-0MVSEFST20086D87
+ *   (classic-arcade/finale rework) — **done, activated here**
  */
 
 import { describe, expect, it } from 'vitest';
@@ -310,8 +317,8 @@ describe('auditCampaignVariety — AC1–AC3 measurements', () => {
  * AC1 activation ledger — levels with no adjacent composition duplicate.
  * Levels 1 and 5 were activated by the pilot (AH-0MVSE6VIW009QG2E), Levels 2–4
  * by the onboarding rework (AH-0MVSE7F090010EG3) and Levels 6–10 were already
- * pairwise distinct at the baseline. Only the campaign-wide aggregate is still
- * staged (owned by the classic-arcade/finale rework).
+ * pairwise distinct at the baseline. The campaign-wide aggregate is activated
+ * by the finale rework (AH-0MVSEFST20086D87), so every level is live.
  */
 const ACTIVE_AC1_LEVELS: ReadonlySet<number> = new Set<number>([
   1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
@@ -329,19 +336,21 @@ const ACTIVE_AC2_LEVELS: ReadonlySet<number> = new Set<number>([
 
 /**
  * AC3 activation ledger — levels whose measured dominant archetype matches
- * `LEVEL_IDENTITY` and which contain its showcase archetypes. Level 7 is
- * currently diver-dominant rather than the documented tank-led identity, so it
- * stays skipped until the classic-arcade rework restores tank dominance.
+ * `LEVEL_IDENTITY` and which contain its showcase archetypes. Level 7 was
+ * diver-dominant at the baseline rather than the documented tank-led identity;
+ * the classic-arcade/finale rework (AH-0MVSEFST20086D87) restores tank
+ * dominance, so all ten levels are live.
  */
 const ACTIVE_AC3_LEVELS: ReadonlySet<number> = new Set<number>([
-  1, 2, 3, 4, 5, 6, 8, 9, 10,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
 ]);
 
 /**
- * Campaign-wide AC1 aggregate: red at this commit (17 duplicate pairs), so it
- * stays skipped until AH-0MVSEFST20086D87 lands the final distinctness fix.
+ * Campaign-wide AC1 aggregate: activated by AH-0MVSEFST20086D87 once the
+ * Levels 6–10 rework removed the last identity gap, so the whole 100-wave
+ * campaign is pairwise distinct.
  */
-const CAMPAIGN_AC1_ACTIVE = false;
+const CAMPAIGN_AC1_ACTIVE = true;
 
 /** Campaign-wide AC2 aggregate: green at this commit, so it runs now. */
 const CAMPAIGN_AC2_ACTIVE = true;
@@ -521,5 +530,76 @@ describe('authored onboarding levels (AH-0MVSE7F090010EG3)', () => {
     expect(authored.level).toBe(4);
     const [audit] = auditCampaignVariety([authored]).levels;
     expect(audit.distinctArchetypes).toEqual(['diver', 'swarm', 'tank']);
+  });
+});
+
+// ── Authored classic-arcade/finale rework guard (AH-0MVSEFST20086D87) ─
+
+describe('authored classic-arcade and finale levels (AH-0MVSEFST20086D87)', () => {
+  /** The authored Levels 6–10. */
+  const authoredClassic = LEVELS.filter((entry) => entry.level >= 6);
+
+  it('keeps Level 7 tank-led with its centipede and ghost showcase intact', () => {
+    // Level 7's documented identity is the segmented/pursuit showcase *around
+    // a Tank line* (LEVEL_IDENTITY[7]). The finale rework re-mixes the
+    // secondary escorts (the shipped campaign previously measured Diver
+    // first because two generated curve waves field a large diver tail); this
+    // pin keeps the authored data Tank-led with both showcase spawners in
+    // kind, and the wave-10 mini-boss unchanged.
+    const authored = LEVELS[6];
+    expect(authored.level).toBe(7);
+    expect(authored.waves[0].centipede).toBe(true);
+    expect(authored.waves.some((wave) => wave.ghosts === true)).toBe(true);
+    expect(authored.waves[9].miniBoss).toBe(true);
+
+    const [audit] = auditCampaignVariety([authored]).levels;
+    expect(audit.dominantArchetype).toBe('tank');
+    expect(audit.distinctArchetypes).toContain(CENTIPEDE_ENEMY_KEY);
+    for (const key of GHOST_ENEMY_KEYS) {
+      expect(audit.distinctArchetypes).toContain(key);
+    }
+  });
+
+  it('never fields the orbital-strike hazard as a wave group in Levels 6–10', () => {
+    // `orbital-strike` is a non-wave-accounted hazard delivered by the
+    // telegraphed strike plan. Adding it as a group would soft-lock wave
+    // clearance (parent AC6).
+    for (const level of authoredClassic) {
+      for (const wave of level.waves) {
+        expect(
+          wave.groups.map((waveGroup) => waveGroup.enemyKey),
+          `L${level.level} fields orbital-strike as a wave group`,
+        ).not.toContain('orbital-strike');
+      }
+    }
+  });
+
+  it('keeps spawner opt-in density bounded across Levels 6–10', () => {
+    // Variety is bought with new *combinations*, never by spraying the
+    // spawner opt-ins across every filler wave: each flag stays on at most two
+    // waves per level and no level opts into more than three flagged waves in
+    // total (parent AC5 — wave accounting and performance stay as designed).
+    const flags = [
+      'ghosts',
+      'centipede',
+      'horde',
+      'laneTraffic',
+    ] as const;
+    for (const level of authoredClassic) {
+      const flaggedWaves = level.waves.filter((wave) =>
+        flags.some((flag) => wave[flag] === true),
+      );
+      expect(
+        flaggedWaves.length,
+        `L${level.level} flags ${flaggedWaves.length} waves`,
+      ).toBeLessThanOrEqual(3);
+      for (const flag of flags) {
+        const count = level.waves.filter((wave) => wave[flag] === true).length;
+        expect(
+          count,
+          `L${level.level} opts into ${flag} on ${count} waves`,
+        ).toBeLessThanOrEqual(2);
+      }
+    }
   });
 });
