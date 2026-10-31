@@ -2242,8 +2242,10 @@ describe('boss encounter — game↔gym parity (AH-0MUZMTU3Y001Y8XZ)', () => {
  * AH-0MV9G3DZ9003P7P8, test item AH-0MVKXBXQX003S7K5 AC2/AC3).
  *
  * The seam maths (`aimVectorToTarget`, `wrappedAxisDelta`) and the shared
- * post-motion seam (`applyPostMotionWrapAll`) live once in the shared core and
- * are consumed by `PlayScene` and every gym. These tests drive the *scene*
+ * post-motion seam (`applyPostMotionWrapAll`) are each defined once
+ * (`wrappedAxisDelta` in the neutral `src/utils/wrapGeometry.ts`, the rest in
+ * the shared core) and are consumed by `PlayScene` and every gym. These tests
+ * drive the *scene*
  * paths — the game and a real gym fire the same aimed shot, and both scene
  * loops run the same post-motion wrap — so the equivalence claims are proven
  * end-to-end rather than inferred from the shared source.
@@ -2618,9 +2620,19 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   // wrapped-aim maths and the post-motion seam are each defined once and
   // consumed by `PlayScene` and every gym, so a scene that re-introduces a
   // copy fails the repo-wide duplicate-body guard.
-  ['wrappedAxisDelta', 'src/scenes/core/enemyTargeting.ts'],
+  //
+  // The wrap model itself was promoted to the neutral
+  // `src/utils/wrapGeometry.ts` (AH-0MVT2VT4W006QP9N) so the bot decision layer
+  // consumes the same implementation; `enemyTargeting`/`enemyWrap` only
+  // re-export it, so the canonical definer is now the neutral module.
+  ['wrappedAxisDelta', 'src/utils/wrapGeometry.ts'],
   ['aimVectorToTarget', 'src/scenes/core/enemyTargeting.ts'],
-  ['wrapPosition', 'src/scenes/core/enemyWrap.ts'],
+  ['wrapAxis', 'src/utils/wrapGeometry.ts'],
+  ['wrapPosition', 'src/utils/wrapGeometry.ts'],
+  ['wrappedDelta', 'src/utils/wrapGeometry.ts'],
+  ['wrappedDistance', 'src/utils/wrapGeometry.ts'],
+  ['wrappedBearing', 'src/utils/wrapGeometry.ts'],
+  ['chooseWrappedRoute', 'src/utils/wrapGeometry.ts'],
   ['applyPostMotionWrap', 'src/scenes/core/enemyWrap.ts'],
   ['applyPostMotionWrapAll', 'src/scenes/core/enemyWrap.ts'],
   // Enemy force-field resolver (epic AH-0MVJ8W4GE007OMNT AC4,

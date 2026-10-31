@@ -18,6 +18,11 @@
  *   path) consumed by the shared aimed-fire seam, `Scout.tryFireAimedBullet`
  *   (and therefore march and the Raider, which share that method).
  *
+ * The torus model itself (`WrapWorld`, `wrappedAxisDelta`) is defined once in
+ * the neutral `src/utils/wrapGeometry.ts` and re-exported here, so the bot
+ * decision layer and this enemy seam cannot drift onto two implementations
+ * (AH-0MVT2VT4W006QP9N).
+ *
  * The helpers are **pure**: no Phaser import, no scene dependency, no hidden
  * state. They only *push position data* — cadence, telegraph, dive and
  * bullet logic stay in the entities and the scenes. `updatePosition` is part
@@ -29,6 +34,14 @@
  */
 
 import type { Mineral } from '../../entities/Mineral';
+import { wrappedAxisDelta, type WrapWorld } from '../../utils/wrapGeometry';
+
+// The torus model (`WrapWorld`, `wrappedAxisDelta`, …) is defined once in the
+// neutral `src/utils/wrapGeometry.ts` (AH-0MVT2VT4W006QP9N), so the bot
+// decision layer and this enemy seam share one implementation. Re-exported
+// here so every existing consumer (`Scout.ts`, the equivalence suite, the docs
+// guard) keeps its import path.
+export { wrappedAxisDelta, type WrapWorld };
 
 /**
  * Minimal structural contract a scene entity must satisfy for the live
@@ -101,44 +114,6 @@ export function pushSeekTargets(
 }
 
 // ── Seam-aware aim maths ──────────────────────────────────────────────
-
-/**
- * The playfield dimensions of the four-edge wrap model. The enemy bullets
- * wrap on exactly this period (`GAME_WIDTH` × `GAME_HEIGHT`), so an aimed
- * shot that crosses the seam travels the same wrapped path the bullet will
- * follow.
- */
-export interface WrapWorld {
-  readonly width: number;
-  readonly height: number;
-}
-
-/**
- * The shortest signed delta from `from` to `to` on one wrapped axis of
- * length `size` (AH-0MVKXBTNJ003F1TC, parent AH-0MV9G3DZ9003P7P8).
- *
- * Positions are expected to lie within one wrap period (enemies and the
- * player are bounded by the playfield), so at most one period is added or
- * subtracted. A delta of exactly half the axis is a **tie** — both routes
- * are the same length — and the direct delta is kept, so the result never
- * flips arbitrarily at dead centre.
- *
- * A non-positive or non-finite `size` is treated as "no wrap model" and the
- * direct delta is returned unchanged (defensive; the game always passes the
- * playfield dimensions).
- */
-export function wrappedAxisDelta(
-  from: number,
-  to: number,
-  size: number,
-): number {
-  const direct = to - from;
-  if (!Number.isFinite(size) || size <= 0) return direct;
-  const half = size / 2;
-  if (direct > half) return direct - size;
-  if (direct < -half) return direct + size;
-  return direct;
-}
 
 /** The launch vector of an aimed shot. */
 export interface AimVector {

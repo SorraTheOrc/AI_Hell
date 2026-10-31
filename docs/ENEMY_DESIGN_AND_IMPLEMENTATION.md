@@ -668,6 +668,11 @@ pure helper `aimVectorToTarget` in `src/scenes/core/enemyTargeting.ts`:
 - A delta of exactly half the axis is a tie; the direct delta is kept, so the
   heading never flips arbitrarily at dead centre.
 
+The wrapped-axis maths itself lives **once** in the neutral
+`src/utils/wrapGeometry.ts`; `enemyTargeting` re-exports it, so the bot
+decision layer consumes the same implementation instead of a second seam copy
+(AH-0MVT2VT4W006QP9N).
+
 The bullet wrap model is **unchanged**: enemy bullets already wrap all four
 edges and expire by lifetime (AH-0MU960UTE001PTV0). Only the launch direction
 is computed here — radial and spread patterns stay direction-symmetric and are
@@ -686,7 +691,9 @@ that carries an enemy across a playfield edge:
 - The world is `PLAYFIELD_WORLD` (`GAME_WIDTH` × `GAME_HEIGHT`) — the same
   period the player ship, player bullets, asteroids and enemy bullets already
   wrap on — and the same `WrapWorld` the aim maths consumes, so there is one
-  wrap model in the codebase.
+  wrap model in the codebase. `wrapPosition`/`wrapAxis` are defined once in the
+  neutral `src/utils/wrapGeometry.ts` and re-exported here
+  (AH-0MVT2VT4W006QP9N).
 - The step is **position-only**: velocity, heading, rotation and every other
   state field are preserved (nothing is reflected), so a steering state
   machine (dive arcs, ghost pursuit, grunt homing, formation drift) stays
