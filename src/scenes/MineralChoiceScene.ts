@@ -12,11 +12,19 @@
  *
  * Each option renders as a three-part block: the option name, a description
  * area of up to two wrapped lines (from `ChoiceOption.description`, resolved
- * from the shared catalogues) and then the existing change summary / `★ New`
- * line, so an unfamiliar offer is self-explanatory (AH-0MV2N2591007UGPD,
+ * from the shared catalogues) and then the existing change-summary line, so
+ * an unfamiliar offer is self-explanatory (AH-0MV2N2591007UGPD,
  * AH-0MVBLBSG3002WHBI). The two-line description area keeps the longest
  * catalogue copy inside the 960 px playfield; copy that needs more than two
  * lines is ellipsised.
+ *
+ * An option the player does not yet own additionally carries a bold, glowing
+ * `★ New` marker that **leads its title line** (reading order `★ New` →
+ * `1.` → name) and pulses continuously, so a brand-new offer is unmistakable
+ * at a glance next to upgrades and the 3-2-1 countdown
+ * (AH-0MVCFH6I4000AWRI). The marker is a separate text object, so the
+ * option's label string and its centring are untouched, and the detail line
+ * carries the change summary only.
  *
  * The overlay deliberately knows nothing about its launcher (`PlayScene`,
  * `GymFormationScene`, …): the only selection contract is the `onSelect`
@@ -60,6 +68,31 @@ const CHOICE_DETAIL_COLOR = '#aaaaaa';
 const CHOICE_DESCRIPTION_COLOR = '#cccccc';
 /** Accent colour for the "New" badge. */
 const CHOICE_NEW_COLOR = '#ff8800';
+/** Marker text of the `New` badge (assumption A1: wording unchanged). */
+const CHOICE_NEW_BADGE_TEXT = '★ New';
+/** Font size (px) of the `New` marker — strictly larger than the 14 px detail text. */
+const CHOICE_NEW_FONT_SIZE = '18px';
+/** Light-amber outline colour of the `New` marker, for contrast on black. */
+const CHOICE_NEW_STROKE_COLOR = '#ffe9c4';
+/** Outline width (px) of the `New` marker glyphs. */
+const CHOICE_NEW_STROKE_THICKNESS = 3;
+/** Warm glow colour of the `New` marker (text shadow, assumption A2). */
+const CHOICE_NEW_GLOW_COLOR = '#ffcc66';
+/** Glow blur radius (px) of the `New` marker's text shadow. */
+const CHOICE_NEW_GLOW_BLUR = 12;
+/** Horizontal gap (px) between the `New` marker and the title it leads. */
+const CHOICE_NEW_GAP = 12;
+/** Fallback marker line height (px) when canvas metrics are unavailable. */
+const CHOICE_NEW_LINE_HEIGHT = 24;
+/** Peak scale of the marker pulse (amplitude stays well inside a row). */
+const CHOICE_NEW_PULSE_SCALE = 1.08;
+/** Trough alpha of the marker pulse — the marker stays legible throughout. */
+const CHOICE_NEW_PULSE_ALPHA = 0.75;
+/**
+ * Duration (ms) of one leg of the marker's yoyo pulse. A full cycle is twice
+ * this (~700 ms), inside the agreed 600–1200 ms period (AC3).
+ */
+const CHOICE_NEW_PULSE_DURATION_MS = 350;
 /** Fully opaque backdrop, blanking the screen behind the choice dialog. */
 const CHOICE_BACKDROP_ALPHA = 1.0;
 /** Top (px) of the first option row's name text. */
@@ -117,6 +150,20 @@ export interface ChoiceRowElementBounds {
 }
 
 /**
+ * The `★ New` marker of one option the player does not yet own: the marker
+ * text that leads the option's title line plus the continuous pulse tween
+ * that drives it (AH-0MVCFH6I4000AWRI · AC1/AC3/AC6).
+ */
+export interface ChoiceNewBadge {
+  /** Zero-based index of the option whose title line the marker leads. */
+  readonly index: number;
+  /** The bold, glowing `★ New` marker text. */
+  readonly label: Phaser.GameObjects.Text;
+  /** The looping yoyo pulse (scale + alpha) that also pulses the glow. */
+  readonly pulse: Phaser.Tweens.Tween;
+}
+
+/**
  * Rendered geometry of one option row: the documented non-overlapping
  * `name → description area → detail` block (AH-0MVBLBSG3002WHBI · AC2).
  * `description` carries the number of wrapped lines actually drawn; its
@@ -126,6 +173,12 @@ export interface ChoiceRowElementBounds {
 export interface ChoiceRowLayout {
   readonly index: number;
   readonly name: ChoiceRowElementBounds;
+  /**
+   * Bounds of the `★ New` marker leading the title line, or null when the
+   * option is not new. Its vertical centre matches the title line's, so the
+   * marker reads as part of the heading (AH-0MVCFH6I4000AWRI · AC1).
+   */
+  readonly marker: ChoiceRowElementBounds | null;
   readonly description:
     | (ChoiceRowElementBounds & { readonly lines: number })
     | null;
@@ -156,6 +209,8 @@ export class MineralChoiceScene extends Phaser.Scene {
   private details: Phaser.GameObjects.Text[] = [];
   /** Description text objects (one per option that carries a description). */
   private descriptions: Phaser.GameObjects.Text[] = [];
+  /** `★ New` markers and their pulse tweens (one per new option). */
+  private newBadges: ChoiceNewBadge[] = [];
   /** Catalogue copy for each description (unwrapped, see {@link getDescriptionLines}). */
   private descriptionCopy: string[] = [];
   /** Wrapped lines drawn for each description (see {@link getDescriptionRenderedLines}). */
@@ -304,6 +359,7 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.controls = [];
     this.details = [];
     this.descriptions = [];
+    this.newBadges = [];
     this.descriptionCopy = [];
     this.renderedDescriptionLines = [];
     this.rows = [];
@@ -331,6 +387,12 @@ export class MineralChoiceScene extends Phaser.Scene {
         top: cursorTop,
         bottom: cursorTop + nameHeight,
       };
+      // A brand-new offer leads its own title line with the emphasised
+      // `★ New` marker, so it cannot be mistaken for an upgrade
+      // (AH-0MVCFH6I4000AWRI · AC1).
+      const markerBounds = option.isNew
+        ? this._createNewBadge(index, nameBounds, nameHeight)
+        : null;
       cursorTop = nameBounds.bottom;
 
       // Description area: what the item actually does, resolved from the
@@ -378,21 +440,19 @@ export class MineralChoiceScene extends Phaser.Scene {
         cursorTop = descriptionBounds.bottom;
       }
 
-      // Detail line: change summary or "New" badge, beneath the description.
+      // Detail line: the change summary only. The `★ New` marker moved to the
+      // title line above, so repeating it here would duplicate the marker and
+      // fight the countdown for attention (AH-0MVCFH6I4000AWRI · AC5,
+      // producer Q2 = A; supersedes AH-0MUU1GOAU007RFVR · AC4).
       let detailBounds: ChoiceRowElementBounds | null = null;
-      let detailText = '';
-      if (option.isNew) {
-        detailText = '★ New';
-      } else if (option.changeSummary) {
-        detailText = option.changeSummary;
-      }
+      const detailText = option.changeSummary ?? '';
       if (detailText) {
         const detailTop = cursorTop + CHOICE_BLOCK_GAP;
         const detail = this.add
           .text(GAME_WIDTH / 2, detailTop, detailText, {
             fontFamily: 'monospace',
             fontSize: '14px',
-            color: option.isNew ? CHOICE_NEW_COLOR : CHOICE_DETAIL_COLOR,
+            color: CHOICE_DETAIL_COLOR,
           })
           .setOrigin(0.5, 0);
         const detailHeight = Math.max(
@@ -412,6 +472,7 @@ export class MineralChoiceScene extends Phaser.Scene {
       this.rows.push({
         index,
         name: nameBounds,
+        marker: markerBounds,
         description: descriptionBounds,
         detail: detailBounds,
         top: nameBounds.top,
@@ -421,6 +482,13 @@ export class MineralChoiceScene extends Phaser.Scene {
       // never collide with the following option (AC2).
       cursorTop += CHOICE_ROW_GAP;
     });
+
+    // Belt and braces for AC6: the tween manager also clears its tweens on
+    // shutdown, but stopping them here guarantees no pulse outlives the
+    // scene however it is closed.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () =>
+      this._teardownNewBadges(),
+    );
 
     // Number keys 1..n select the matching option. The handler is stored so
     // it can be removed when the countdown starts.
@@ -550,13 +618,23 @@ export class MineralChoiceScene extends Phaser.Scene {
 
   /**
    * The rendered detail lines beneath each option (e.g.
-   * `["+1 Projectiles", "★ New", ...]`).  Returns an empty array when no
-   * detail lines are present. The change-summary / `★ New` contract is
-   * unchanged; the description is a separate line (see
-   * {@link getDescriptionLines}).
+   * `["+1 Projectiles", ...]`). Returns an empty array when no detail lines
+   * are present. The detail line carries the change summary only — the
+   * `★ New` marker leads the title line instead (see
+   * {@link getNewBadges}; AH-0MVCFH6I4000AWRI · AC5).
    */
   getDetailLines(): string[] {
     return this.details.map((d) => d.text);
+  }
+
+  /**
+   * The emphasised `★ New` markers currently on screen, one per option the
+   * player does not yet own, each with its continuous pulse tween
+   * (AH-0MVCFH6I4000AWRI · AC1/AC3/AC6). Empty once the choice screen is torn
+   * down.
+   */
+  getNewBadges(): ChoiceNewBadge[] {
+    return this.newBadges.map((badge) => ({ ...badge }));
   }
 
   /**
@@ -592,6 +670,7 @@ export class MineralChoiceScene extends Phaser.Scene {
     return this.rows.map((row) => ({
       ...row,
       name: { ...row.name },
+      marker: row.marker ? { ...row.marker } : null,
       description: row.description ? { ...row.description } : null,
       detail: row.detail ? { ...row.detail } : null,
     }));
@@ -681,8 +760,91 @@ export class MineralChoiceScene extends Phaser.Scene {
     return option;
   }
 
+  /**
+   * Creates the emphasised `★ New` marker that leads the title line of a
+   * brand-new offer and starts its continuous pulse
+   * (AH-0MVCFH6I4000AWRI · AC1–AC4).
+   *
+   * The marker is right-anchored at `nameBounds.left - gap` and vertically
+   * centred on the title line, so the reading order is `★ New` → `1.` → name
+   * and the pulse grows leftwards, away from the title. The static text
+   * shadow (blur + warm colour) is the glow; because Phaser paints the shadow
+   * with the glyphs' own alpha, the alpha leg of the pulse animates the glow's
+   * intensity in step (AC4) without a per-frame canvas re-render.
+   *
+   * @returns the marker's rendered bounds, for {@link getRowLayout}.
+   */
+  private _createNewBadge(
+    index: number,
+    nameBounds: ChoiceRowElementBounds,
+    nameHeight: number,
+  ): ChoiceRowElementBounds {
+    const label = this.add
+      .text(
+        nameBounds.left - CHOICE_NEW_GAP,
+        nameBounds.top + nameHeight / 2,
+        CHOICE_NEW_BADGE_TEXT,
+        {
+          fontFamily: 'monospace',
+          fontSize: CHOICE_NEW_FONT_SIZE,
+          fontStyle: 'bold',
+          color: CHOICE_NEW_COLOR,
+          stroke: CHOICE_NEW_STROKE_COLOR,
+          strokeThickness: CHOICE_NEW_STROKE_THICKNESS,
+          shadow: {
+            offsetX: 0,
+            offsetY: 0,
+            color: CHOICE_NEW_GLOW_COLOR,
+            blur: CHOICE_NEW_GLOW_BLUR,
+            stroke: true,
+            fill: true,
+          },
+        },
+      )
+      .setOrigin(1, 0.5);
+
+    // One looping yoyo per marker: bounded scale + alpha, so the pulse stays
+    // inside the option row and never blocks selection or the countdown.
+    // Both legs state their `from` value explicitly, so every cycle starts at
+    // exactly 1.0 and the animation never inherits a stale transform.
+    const pulse = this.tweens.add({
+      targets: label,
+      scale: { from: 1, to: CHOICE_NEW_PULSE_SCALE },
+      alpha: { from: 1, to: CHOICE_NEW_PULSE_ALPHA },
+      duration: CHOICE_NEW_PULSE_DURATION_MS,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1,
+    });
+
+    this.newBadges.push({ index, label, pulse });
+
+    const width = Math.max(label.width, 1);
+    const height = Math.max(label.height, CHOICE_NEW_LINE_HEIGHT);
+    return {
+      left: label.x - width,
+      right: label.x,
+      top: label.y - height / 2,
+      bottom: label.y + height / 2,
+    };
+  }
+
+  /**
+   * Stops the marker motions and destroys the markers, so no tween outlives
+   * the choice screen or targets a destroyed text (AC6). Safe to call twice
+   * (the countdown teardown and the scene-shutdown hook both do).
+   */
+  private _teardownNewBadges(): void {
+    for (const badge of this.newBadges) {
+      badge.pulse.remove();
+      badge.label.destroy();
+    }
+    this.newBadges = [];
+  }
+
   /** Destroys the choice screen objects and unregisters the keydown listener. */
   private _teardownChoiceUi(): void {
+    this._teardownNewBadges();
     this.backdrop?.destroy();
     this.backdrop = null;
     this.heading?.destroy();

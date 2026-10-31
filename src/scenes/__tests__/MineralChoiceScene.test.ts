@@ -190,7 +190,7 @@ describe('MineralChoiceScene', () => {
       expect(scene.getOptionLabels()[0]).toContain('Spread Shot Lv.3');
     });
 
-    it('renders a "New" badge for options marked isNew', async () => {
+    it('renders a "New" badge for options marked isNew (now on the title line)', async () => {
       booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted.game.scene.start('MineralChoiceScene', {
         options: [
@@ -207,9 +207,13 @@ describe('MineralChoiceScene', () => {
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
       ) as MineralChoiceScene;
-      const details = scene.getDetailLines();
-      expect(details).toHaveLength(1);
-      expect(details[0]).toBe('\u2605 New');
+      // The marker is rendered (on the title line, see the emphasis suite
+      // below) and no longer repeated on the detail line
+      // (AH-0MVCFH6I4000AWRI · AC5).
+      const badges = scene.getNewBadges();
+      expect(badges).toHaveLength(1);
+      expect(badges[0].label.text).toBe('\u2605 New');
+      expect(scene.getDetailLines()).toHaveLength(0);
     });
 
     it('renders no detail line when neither changeSummary nor isNew is set', async () => {
@@ -252,7 +256,7 @@ describe('MineralChoiceScene', () => {
       // "New" takes priority over a summary when both are set.
     });
 
-    it('"New" badge takes display priority over changeSummary', async () => {
+    it('a New option keeps its change summary on the detail line', async () => {
       booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted.game.scene.start('MineralChoiceScene', {
         options: [
@@ -270,7 +274,11 @@ describe('MineralChoiceScene', () => {
       const scene = booted.game.scene.getScene(
         'MineralChoiceScene',
       ) as MineralChoiceScene;
-      expect(scene.getDetailLines()[0]).toBe('\u2605 New');
+      // The marker moved to the title line, so the detail line is free to
+      // carry the change summary instead of duplicating `New`
+      // (AH-0MVCFH6I4000AWRI · AC5, producer Q2 = A).
+      expect(scene.getDetailLines()).toEqual(['+1 Projectiles']);
+      expect(scene.getNewBadges()).toHaveLength(1);
     });
   });
 
@@ -304,7 +312,7 @@ describe('MineralChoiceScene', () => {
       expect(scene.getDetailLines()).toEqual(['+1 Projectiles']);
     });
 
-    it('AC2 — shows a New option\u2019s description above its \u2605 New badge', async () => {
+    it('AC2 — shows a New option\u2019s description beneath its title, with the marker on the title line', async () => {
       booted = await bootScene([HarnessScene, MineralChoiceScene]);
       booted.game.scene.start('MineralChoiceScene', {
         options: [
@@ -325,7 +333,10 @@ describe('MineralChoiceScene', () => {
       ) as MineralChoiceScene;
       expect(scene.getDescriptionLines()).toHaveLength(1);
       expect(scene.getDescriptionLines()[0]).toContain('expanding ring');
-      expect(scene.getDetailLines()).toEqual(['\u2605 New']);
+      // The marker leads the title line instead of trailing the block
+      // (AH-0MVCFH6I4000AWRI · AC1); the description block is unchanged.
+      expect(scene.getNewBadges()).toHaveLength(1);
+      expect(scene.getDetailLines()).toHaveLength(0);
     });
 
     it('AC6 — omits the description line when an option has none (no empty line)', async () => {
@@ -479,6 +490,7 @@ describe('MineralChoiceScene', () => {
             kind: 'weapon',
             description: 'AOE: an expanding ring around the ship.',
             isNew: true,
+            changeSummary: 'Permanent for this run',
           },
           {
             id: 'spread',
@@ -512,6 +524,218 @@ describe('MineralChoiceScene', () => {
         // Strictly separated: consecutive blocks never collide.
         expect(rows[i].top).toBeGreaterThan(rows[i - 1].bottom);
       }
+    });
+  });
+
+  describe('emphasised New marker (AH-0MVCFH6I4000AWRI)', () => {
+    /** Boots the overlay with `options` and returns the live scene. */
+    async function bootChoice(
+      options: ChoiceOption[],
+    ): Promise<MineralChoiceScene> {
+      booted = await bootScene([HarnessScene, MineralChoiceScene]);
+      booted.game.scene.start('MineralChoiceScene', { options });
+      await advanceGame(booted!.game, 50);
+      return booted.game.scene.getScene(
+        'MineralChoiceScene',
+      ) as MineralChoiceScene;
+    }
+
+    /** Scale/alpha samples over `ms` of simulated time (~60 fps steps). */
+    it('AC1 — leads the title line and is absent for owned options', async () => {
+      const scene = await bootChoice([
+        {
+          id: 'nova',
+          name: 'Nova',
+          kind: 'weapon',
+          isNew: true,
+          description: 'AOE: an expanding ring around the ship.',
+        },
+        {
+          id: 'spread',
+          name: 'Spread Shot Lv.3',
+          kind: 'weapon-level',
+          level: 3,
+          description: 'Three bullets in a widening fan.',
+          changeSummary: '+1 Projectiles',
+        },
+      ]);
+
+      const badges = scene.getNewBadges();
+      expect(badges).toHaveLength(1);
+      expect(badges[0].label.text).toBe('\u2605 New');
+
+      const [newRow, ownedRow] = scene.getRowLayout();
+      expect(newRow.marker).not.toBeNull();
+      // Reading order is marker -> number -> name: the marker ends at or
+      // before the title's left edge.
+      expect(newRow.marker!.right).toBeLessThanOrEqual(newRow.name.left);
+      expect(newRow.marker!.left).toBeLessThan(newRow.marker!.right);
+      // Same row, on the title line's vertical centre.
+      const markerMid = (newRow.marker!.top + newRow.marker!.bottom) / 2;
+      const titleMid = (newRow.name.top + newRow.name.bottom) / 2;
+      expect(Math.abs(markerMid - titleMid)).toBeLessThan(1);
+      // Inside its own row: never into the title or a neighbouring row.
+      expect(newRow.marker!.bottom).toBeLessThanOrEqual(newRow.bottom);
+      expect(newRow.marker!.top).toBeGreaterThanOrEqual(newRow.top);
+      // The marker is right-anchored, so the pulse grows away from the title:
+      // the gap is wider than the peak growth (< 8% of the marker's width).
+      const markerWidth = newRow.marker!.right - newRow.marker!.left;
+      const markerGap = newRow.name.left - newRow.marker!.right;
+      expect(markerGap).toBeGreaterThan(markerWidth * 0.08);
+
+      // The title text itself is unchanged (separate marker object, Q1 = A).
+      expect(scene.getOptionLabels()[0]).toBe('1.  Nova');
+      // An option the player already owns carries no marker.
+      expect(ownedRow.marker).toBeNull();
+    });
+
+    it('AC2/AC4 — bold, larger than the old 14 px detail text, outlined and glowing', async () => {
+      const scene = await bootChoice([
+        { id: 'nova', name: 'Nova', kind: 'weapon', isNew: true },
+      ]);
+      const { label } = scene.getNewBadges()[0];
+      const style = label.style;
+
+      expect(style.fontStyle).toBe('bold');
+      expect(Number.parseFloat(String(style.fontSize))).toBeGreaterThan(14);
+      // High-contrast treatment over the black backdrop: a visible outline
+      // and a soft glow (text shadow) so the marker reads from a distance.
+      expect(style.stroke).toBeTruthy();
+      expect(style.strokeThickness ?? 0).toBeGreaterThan(0);
+      expect(style.shadowColor).toBeTruthy();
+      expect(style.shadowBlur ?? 0).toBeGreaterThan(0);
+      // The agreed orange base colour is kept (assumption A2).
+      expect(style.color).toBe('#ff8800');
+    });
+
+    it('AC3/AC4 — pulses continuously inside the agreed scale/alpha bounds and period', async () => {
+      const scene = await bootChoice([
+        { id: 'nova', name: 'Nova', kind: 'weapon', isNew: true },
+      ]);
+      const badge = scene.getNewBadges()[0];
+      expect(badge.pulse.isPlaying()).toBe(true);
+
+      // Phaser's tween manager advances from the wall clock, which the
+      // deterministic harness must not depend on, so scrub the looping pulse
+      // with `seek` (absolute ms into the tween) and sample what it renders.
+      // `seek(0)` only re-initialises, so the window starts one step in.
+      const sampleAt = (ms: number) => {
+        badge.pulse.seek(ms);
+        return { scale: badge.label.scale, alpha: badge.label.alpha };
+      };
+
+      // A ~1.4 s window at 25 ms resolution covers two full cycles at the
+      // agreed ~700 ms period.
+      const samples: Array<{ t: number; scale: number; alpha: number }> = [];
+      for (let t = 25; t <= 1425; t += 25) {
+        samples.push({ t, ...sampleAt(t) });
+      }
+      const scales = samples.map((s) => s.scale);
+      const alphas = samples.map((s) => s.alpha);
+
+      // It genuinely animates rather than sitting still.
+      expect(Math.max(...scales)).toBeGreaterThan(Math.min(...scales) + 0.02);
+      expect(Math.max(...alphas)).toBeGreaterThan(Math.min(...alphas) + 0.05);
+
+      // Bounded (AC3): amplitude <= 1.15, alpha floor >= 0.6, alpha <= 1.
+      expect(Math.max(...scales)).toBeLessThanOrEqual(1.15);
+      expect(Math.min(...alphas)).toBeGreaterThanOrEqual(0.6);
+      expect(Math.max(...alphas)).toBeLessThanOrEqual(1);
+
+      // Period within 600-1200 ms: two successive near-peaks are one cycle
+      // apart. Near-peak runs are averaged so a flat plateau cannot hide a
+      // peak.
+      const nearPeak = 1.075;
+      const peakTimes: number[] = [];
+      let run: number[] = [];
+      for (const sample of samples) {
+        if (sample.scale >= nearPeak) {
+          run.push(sample.t);
+        } else if (run.length > 0) {
+          peakTimes.push(run.reduce((a, b) => a + b, 0) / run.length);
+          run = [];
+        }
+      }
+      if (run.length > 0) {
+        peakTimes.push(run.reduce((a, b) => a + b, 0) / run.length);
+      }
+      expect(peakTimes.length).toBeGreaterThanOrEqual(2);
+      const period = peakTimes[1] - peakTimes[0];
+      expect(period).toBeGreaterThanOrEqual(600);
+      expect(period).toBeLessThanOrEqual(1200);
+
+      // Still pulsing (not settled) long after the overlay opened: the loop
+      // repeats indefinitely and stays bounded on every later cycle.
+      const muchLater = sampleAt(6_000);
+      expect(muchLater.scale).toBeGreaterThanOrEqual(1);
+      expect(muchLater.scale).toBeLessThanOrEqual(1.15);
+      expect(muchLater.alpha).toBeGreaterThanOrEqual(0.6);
+      expect(muchLater.alpha).toBeLessThanOrEqual(1);
+    });
+
+    it('AC5 — the detail line no longer repeats \u2605 New', async () => {
+      const scene = await bootChoice([
+        {
+          id: 'nova',
+          name: 'Nova',
+          kind: 'weapon',
+          isNew: true,
+          description: 'AOE: an expanding ring around the ship.',
+        },
+        {
+          id: 'spread',
+          name: 'Spread Shot Lv.3',
+          kind: 'weapon-level',
+          level: 3,
+          changeSummary: '+1 Projectiles',
+        },
+      ]);
+
+      // Only the owned upgrade carries detail copy, and it is its change
+      // summary — never `\u2605 New`.
+      expect(scene.getDetailLines()).toEqual(['+1 Projectiles']);
+      expect(scene.getDetailLines().some((line) => line.includes('New'))).toBe(
+        false,
+      );
+      // The three-part block is intact: title -> description -> detail.
+      const [newRow, upgradeRow] = scene.getRowLayout();
+      expect(newRow.description).not.toBeNull();
+      expect(newRow.description!.top).toBeGreaterThanOrEqual(newRow.name.bottom);
+      expect(newRow.detail).toBeNull();
+      expect(upgradeRow.detail).not.toBeNull();
+      expect(upgradeRow.detail!.top).toBeGreaterThanOrEqual(
+        upgradeRow.name.bottom,
+      );
+    });
+
+    it('AC6 — stops the pulse and destroys the marker when the countdown starts', async () => {
+      const scene = await bootChoice([
+        { id: 'nova', name: 'Nova', kind: 'weapon', isNew: true },
+        { id: 'spread', name: 'Spread Shot', kind: 'weapon' },
+      ]);
+      const { label } = scene.getNewBadges()[0];
+      expect(scene.tweens.getTweensOf(label)).toHaveLength(1);
+
+      scene.select(0);
+
+      expect(scene.getNewBadges()).toHaveLength(0);
+      expect(scene.children.exists(label)).toBe(false);
+      // No tween is left targeting the destroyed marker text.
+      expect(scene.tweens.getTweensOf(label)).toHaveLength(0);
+    });
+
+    it('AC6 — leaves no orphaned pulse behind on scene shutdown', async () => {
+      const scene = await bootChoice([
+        { id: 'nova', name: 'Nova', kind: 'weapon', isNew: true },
+      ]);
+      const { label } = scene.getNewBadges()[0];
+      expect(scene.tweens.getTweensOf(label)).toHaveLength(1);
+
+      booted!.game.scene.stop('MineralChoiceScene');
+      await advanceGame(booted!.game, 50);
+
+      expect(label.active).toBe(false);
+      expect(scene.tweens.getTweensOf(label)).toHaveLength(0);
     });
   });
 
