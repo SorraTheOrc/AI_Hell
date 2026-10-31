@@ -128,6 +128,10 @@ import {
   type SpawnAnimatable,
 } from '../vfx/wormholeSpawn';
 import { spawnPlayerDeathJuice } from '../vfx/playerDeathJuice';
+import {
+  createBackgroundWarp,
+  type BackgroundWarp,
+} from '../vfx/backgroundWarp';
 import { getExplosionVfxCounts } from '../vfx/explosionParticles';
 import {
   ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS,
@@ -855,6 +859,16 @@ export class PlayScene extends CombatScene<
   private transitionTimer = 0;
 
   /**
+   * The in-flight level-change hyperspace warp (AH-0MVSEBW8L009O3JD), or
+   * null between/after transitions. Created at `_startTransition(true)` time
+   * for a level change, advanced from the scene's own tick (never wall-clock
+   * tweens) so it stays locked to the same 1.5 s schedule as the transition
+   * pause, and torn down on completion, shutdown or restart so a stop
+   * mid-warp leaves no display object or timer behind (AC5).
+   */
+  private backgroundWarp: BackgroundWarp | null = null;
+
+  /**
    * Registry for the in-run victory celebration display objects (the shared
    * `spawnVictoryJuice` layers). Cleared — with every leftover object
    * destroyed — on scene SHUTDOWN so a stop/restart leaks nothing.
@@ -1551,6 +1565,11 @@ export class PlayScene extends CombatScene<
     for (const effect of this.victoryEffects) effect.destroy();
     this.victoryEffects = [];
 
+    // Destroy a level-change warp still mid-flight at shutdown/restart so no
+    // container or stale handle leaks into the next run (AC5 —
+    // AH-0MVSEBW8L009O3JD).
+    this._destroyBackgroundWarp();
+
     // Clear glide state so a stop/restart starts fresh (AH-0MUL15N63003PUDB).
     this.reanchor.reset();
 
@@ -1593,6 +1612,10 @@ export class PlayScene extends CombatScene<
     const transitioning = this.transitionTimer > 0;
     if (transitioning) {
       this.transitionTimer = Math.max(0, this.transitionTimer - dt);
+      // The level-change warp advances from the scene's own tick so it stays
+      // locked to the transition pause's schedule (AC2 —
+      // AH-0MVSEBW8L009O3JD).
+      this._advanceBackgroundWarp(dt);
       // The transition banner is shown once at `_startTransition()`; its own
       // timer then governs how long it stays up, so it outlives the 1.5 s
       // pause and is no longer hidden when the transition completes
@@ -2790,9 +2813,7 @@ export class PlayScene extends CombatScene<
         this._startTransition();
         return;
       case 'levelCleared':
-        this.runTelemetry.levelCleared(this.waveManager.level);
-        this._announceLevel();
-        this._startTransition();
+        this._onLevelCleared();
         return;
       case 'bossTriggered':
         this.runTelemetry.bossTriggered();
@@ -2803,18 +2824,82 @@ export class PlayScene extends CombatScene<
     }
   }
 
-  /** Begins the brief pause before the next wave/level spawns. */
-  private _startTransition(): void {
+  /**
+   * Begins the brief pause before the next wave/level spawns.
+   *
+   * A level change (`levelChanged` true) additionally swaps the backdrop to
+   * the incoming level and starts the one-shot hyperspace warp; wave-cleared
+   * and boss transitions pass no flag, so they never swap or warp
+   * (AC1/AC4 — AH-0MVSEBW8L009O3JD). The WaveManager has already advanced
+   * the level by the time `'levelCleared'` arrives, so
+   * {@link WaveManager.level} names the incoming level during the transition.
+   */
+  private _startTransition(levelChanged = false): void {
     // Close any wormhole still open (e.g. a timeout/carry-over began
     // mid-spawn): the normal close tick is gated behind the non-transition
     // branch, so the close must happen at transition start (AC4 —
     // AH-0MV9KHLV8006GMX6).
     this._wormhole.close(this.wormholeEffects);
     this.transitionTimer = LEVEL_TRANSITION_SECONDS;
+    // Never stack a stale warp across transitions (a restart/re-entrant clear
+    // can leave a completed handle around; destroying it is idempotent).
+    this._destroyBackgroundWarp();
     // The time-limit is paused/hidden while the transition runs; the next
     // wave restarts a fresh countdown (AH-0MU7JTG9R002ZWA6).
     this._hideWaveTimer();
     this._updateTransitionBanner();
+    if (levelChanged) this._beginLevelChangeWarp();
+  }
+
+  /**
+   * Swaps the backdrop to the incoming level and starts the hyperspace warp
+   * for a level change (AH-0MVSEBW8L009O3JD AC1/AC2).
+   *
+   * `waveManager.level` was advanced before `'levelCleared'` arrived, so it
+   * already names the incoming level: the swap target is
+   * `backgroundForLevel(waveManager.level)` and the warp's deterministic
+   * geometry is seeded from `(incoming - 1, incoming)`.
+   */
+  private _beginLevelChangeWarp(): void {
+    const toLevel = this.waveManager.level;
+    this._setBackgroundLevel(toLevel);
+    this.backgroundWarp = createBackgroundWarp(this, {
+      fromLevel: toLevel - 1,
+      toLevel,
+    });
+  }
+
+  /**
+   * Advances the level-change warp from the scene's own tick so it finishes
+   * exactly when the transition pause does (both are driven by the same
+   * delta). A completed warp has already torn its container down; the handle
+   * is released here so no completed warp outlives its transition.
+   */
+  private _advanceBackgroundWarp(dt: number): void {
+    const warp = this.backgroundWarp;
+    if (warp === null) return;
+    warp.update(dt);
+    if (warp.isComplete()) this._destroyBackgroundWarp();
+  }
+
+  /** Destroys and releases the level-change warp; idempotent. */
+  private _destroyBackgroundWarp(): void {
+    this.backgroundWarp?.destroy();
+    this.backgroundWarp = null;
+  }
+
+  /**
+   * The single `'levelCleared'` handler (AH-0MVSEBW8L009O3JD AC1): records,
+   * announces and transitions exactly as both old paths did, plus the
+   * backdrop swap and warp. Called from the kill path
+   * ({@link _handleWaveEvent}) and the wave-timeout path
+   * ({@link _advanceAfterTimeout}) so a timeout-cleared level gets the same
+   * background/warp treatment with no duplicated logic between them.
+   */
+  private _onLevelCleared(): void {
+    this.runTelemetry.levelCleared(this.waveManager.level);
+    this._announceLevel();
+    this._startTransition(true);
   }
 
   /**
@@ -2914,6 +2999,10 @@ export class PlayScene extends CombatScene<
     // The banner is intentionally NOT hidden here: its own transient timer
     // (`_advanceBanner`) expires it so the announcement stays readable after
     // the next wave spawns (AH-0MV8BQ75V005QNZ1).
+    // Release the level-change warp handle — by this tick it has completed
+    // and torn its own container down (`_advanceBackgroundWarp`); the call
+    // is idempotent for any other path that reaches here (AH-0MVSEBW8L009O3JD).
+    this._destroyBackgroundWarp();
   }
 
   /**
@@ -4705,9 +4794,7 @@ export class PlayScene extends CombatScene<
         this._startTransition();
         return event;
       case 'levelCleared':
-        this.runTelemetry.levelCleared(wm.level);
-        this._announceLevel();
-        this._startTransition();
+        this._onLevelCleared();
         return event;
       case 'bossTriggered':
         this.runTelemetry.bossTriggered();
