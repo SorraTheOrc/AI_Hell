@@ -30,11 +30,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  statfsSync,
+  statSync,
   unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
-import { basename as pathBasename, resolve as resolvePath } from 'node:path';
+import { basename as pathBasename, dirname as pathDirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -244,6 +246,10 @@ Exit codes:
                        second (AH-0MVSE18XX006ZG5I). Diagnostics:
                          output directory not writable: <dir> (<ERRNO>)
                          tune CSV not readable: <path> (<ERRNO>)
+                       A pseudo-filesystem (procfs/sysfs/…) is refused before it
+                       is touched, because a mkdir there blocks for ever:
+                       output directory not writable: <dir> (unsupported
+                       filesystem type 0x<magic>)
 
 Crash safety:
   --tune journals the pre-edit CSV bytes to <csv>.tune-journal before editing
@@ -293,6 +299,68 @@ function describeFsError(error) {
 }
 
 /**
+ * Linux pseudo-filesystem magic numbers whose `mkdir`/`stat` can block or lie
+ * (AH-0MVWLQQKB0075A1U). A recursive `mkdir` under procfs in a container
+ * blocks indefinitely (measured: 60 s+ until an external kill), so the `--out`
+ * write probe must never call it. Values are the standard super-block magic
+ * numbers (see `man 2 statfs` and `linux/magic.h`).
+ */
+export const UNSUPPORTED_OUTPUT_FS_TYPES = Object.freeze({
+  procfs: 0x9fa0,
+  sysfs: 0x62656572,
+  debugfs: 0x64626720,
+  tracefs: 0x74726163,
+  cgroup: 0x27e0eb,
+  cgroup2: 0x63677270,
+  devpts: 0x1cd1,
+  securityfs: 0x73636673,
+  configfs: 0x62656570,
+  bpf: 0xca7baf3d,
+  nsfs: 0x6e736673,
+});
+
+/** Set of the magic numbers {@link isUnsupportedOutputFsType} rejects. */
+const UNSUPPORTED_FS_MAGIC = new Set(Object.values(UNSUPPORTED_OUTPUT_FS_TYPES));
+
+/**
+ * True when `type` is a known pseudo-filesystem the write probe must refuse
+ * before touching it. Exported for tests (`statfsSync` reports `.type`).
+ *
+ * @param {unknown} type
+ * @returns {boolean}
+ */
+export function isUnsupportedOutputFsType(type) {
+  return typeof type === 'number' && UNSUPPORTED_FS_MAGIC.has(type);
+}
+
+/**
+ * Filesystem type of the nearest **existing** ancestor of `dir`, or `null`
+ * when it cannot be resolved (fail-open — a normal filesystem is never
+ * affected by a `statfsSync` problem). Walking up the path means
+ * `/proc/nope/x` resolves against `/proc` (procfs) while a plain tmpdir
+ * resolves against tmpfs.
+ *
+ * @param {string} dir
+ * @returns {number | null}
+ */
+export function nearestExistingFsType(dir) {
+  if (typeof statfsSync !== 'function') return null;
+  let candidate = resolvePath(dir);
+  for (let depth = 0; depth < 128; depth += 1) {
+    try {
+      statSync(candidate);
+      return statfsSync(candidate).type;
+    } catch {
+      // Walk up toward the root; the loop terminates at the path root.
+    }
+    const parent = pathDirname(candidate);
+    if (parent === candidate) return null;
+    candidate = parent;
+  }
+  return null;
+}
+
+/**
  * Proves `dir` can be created (when missing) and written to, **before** the
  * SSR core boots or any sweep runs (AH-0MVSE18XX006ZG5I, parent
  * AH-0MVIKLOOJ0058Z9B).
@@ -304,13 +372,23 @@ function describeFsError(error) {
  *
  * `mkdirSync` alone is not enough: an **existing** read-only directory accepts
  * the `mkdir` (recursive, already exists) and only fails on the first write, so
- * the probe writes, fsyncs and unlinks a sentinel file. Never throws — the
- * caller renders `reason` verbatim.
+ * the probe writes, fsyncs and unlinks a sentinel file. And a **pseudo**
+ * filesystem (procfs/sysfs/…) blocks the `mkdir` itself for ever
+ * (AH-0MVWLQQKB0075A1U), so such targets are refused up front via
+ * {@link nearestExistingFsType} — never touched. Never throws — the caller
+ * renders `reason` verbatim.
  *
  * @param {string} dir
  * @returns {{ok: true} | {ok: false, reason: string}}
  */
 export function ensureWritableOutputDir(dir) {
+  const fsType = nearestExistingFsType(dir);
+  if (fsType !== null && isUnsupportedOutputFsType(fsType)) {
+    return {
+      ok: false,
+      reason: `${OUTPUT_DIR_NOT_WRITABLE}: ${dir} (unsupported filesystem type 0x${fsType.toString(16)})`,
+    };
+  }
   const probePath = resolveArtifactPath(dir, `.evaluate-write-probe-${process.pid}`);
   let fd = null;
   try {

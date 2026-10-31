@@ -55,6 +55,21 @@ export type InputProbeResult = { ok: true } | { ok: false; reason: string };
 /** Proves `--out` can be created/written before the SSR core boots. */
 export function ensureWritableOutputDir(dir: string): InputProbeResult;
 
+/**
+ * Linux pseudo-filesystem magic numbers the write probe refuses before
+ * touching them (a `mkdir` there blocks for ever) — AH-0MVWLQQKB0075A1U.
+ */
+export const UNSUPPORTED_OUTPUT_FS_TYPES: Readonly<Record<string, number>>;
+
+/** True when `type` is a pseudo-filesystem the probe must refuse. */
+export function isUnsupportedOutputFsType(type: unknown): boolean;
+
+/**
+ * Filesystem type of the nearest existing ancestor of `dir`, or `null` when it
+ * cannot be resolved (fail-open — normal filesystems are unaffected).
+ */
+export function nearestExistingFsType(dir: string): number | null;
+
 /** Resolves the `--tune` CSV target from the shell's own root. */
 export function resolveTuneCsvPath(options: { tuneFile?: string | null }): string;
 

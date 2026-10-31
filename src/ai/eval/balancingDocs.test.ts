@@ -170,6 +170,18 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     expect(doc).toMatch(/existing.*read-only\s+directory|read-only\s+directory/i);
   });
 
+  it('documents the pseudo-filesystem guard for --out (AH-0MVWLQQKB0075A1U)', () => {
+    expect(doc).toContain('AH-0MVWLQQKB0075A1U');
+    expect(doc).toMatch(/pseudo-filesystem/i);
+    expect(doc).toContain('unsupported filesystem type 0x');
+    expect(doc).toContain('procfs');
+    expect(doc).toContain('statfsSync');
+    // The documented negative probe must be named as the reason.
+    expect(doc).toContain('/proc/nope/x');
+    // Fail-open is part of the guarantee (no regression on normal filesystems).
+    expect(doc).toMatch(/fail-open/i);
+  });
+
   it('documents the crash-safe edit journal and its repair path (AH-0MVSE1A7O002PXAO)', () => {
     expect(doc).toContain('AH-0MVSE1A7O002PXAO');
     expect(doc).toMatch(/Crash-safe edit journal/);

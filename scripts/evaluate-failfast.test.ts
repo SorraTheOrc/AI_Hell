@@ -458,3 +458,90 @@ describe('--help documents the fail-fast validation (parent AC4)', () => {
     expect(usage).toMatch(/before the SSR core boots/);
   });
 });
+
+describe('pseudo-filesystem guard for --out (AH-0MVWLQQKB0075A1U)', () => {
+  /**
+   * A recursive `mkdir` under procfs blocks for ever in this environment
+   * (measured: 60 s+ until an external kill), so the probe must refuse such a
+   * target **without touching it**. These cases never call `mkdir` themselves:
+   * the unit cases read the filesystem type only, and the CLI case spawns a
+   * child with a hard timeout so a regression fails as a timeout instead of
+   * hanging this worker.
+   */
+  const fsProbe = evaluateModule as unknown as {
+    isUnsupportedOutputFsType?: (type: unknown) => boolean;
+    nearestExistingFsType?: (dir: string) => number | null;
+    UNSUPPORTED_OUTPUT_FS_TYPES?: Record<string, number>;
+  };
+
+  it('knows the pseudo-filesystem magic numbers it must refuse', () => {
+    const isUnsupported = fsProbe.isUnsupportedOutputFsType;
+    const types = fsProbe.UNSUPPORTED_OUTPUT_FS_TYPES;
+    if (!isUnsupported || !types) {
+      throw new Error('scripts/evaluate.mjs does not export the pseudo-filesystem guard yet');
+    }
+    expect(types.procfs).toBe(0x9fa0);
+    expect(types.sysfs).toBe(0x62656572);
+    expect(isUnsupported(types.procfs)).toBe(true);
+    expect(isUnsupported(types.sysfs)).toBe(true);
+    expect(isUnsupported(types.tracefs)).toBe(true);
+    // Fail-open: an unknown/absent type is never treated as unsupported.
+    for (const benign of [0xef53, 0x01021994, null, undefined, NaN, 'proc']) {
+      expect(isUnsupported(benign)).toBe(false);
+    }
+  });
+
+  it('resolves the filesystem type of the nearest existing ancestor', () => {
+    const nearest = fsProbe.nearestExistingFsType;
+    if (!nearest) {
+      throw new Error('scripts/evaluate.mjs does not export nearestExistingFsType yet');
+    }
+    // `/proc/nope/x` does not exist; its nearest existing ancestor is procfs.
+    expect(nearest('/proc/nope/x')).toBe(0x9fa0);
+    // A temp directory resolves to a real, writable filesystem.
+    const dir = mkdtempSync(join(tmpdir(), 'evaluate-failfast-fs-'));
+    try {
+      const type = nearest(join(dir, 'nested', 'artifacts'));
+      expect(type).not.toBeNull();
+      expect(fsProbe.isUnsupportedOutputFsType?.(type)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails the documented /proc/nope/x probe in under 2 s with a clear diagnostic', () => {
+    const before = md5(CSV);
+    const started = performance.now();
+    const result = spawnSync(
+      process.execPath,
+      [
+        CLI,
+        '--tune',
+        ...NOOP_SET,
+        '--games',
+        '2',
+        '--ticks',
+        '200',
+        '--out',
+        '/proc/nope/x',
+      ],
+      { encoding: 'utf8', timeout: 10_000, env: cliSpawnEnv() },
+    );
+    const elapsedMs = performance.now() - started;
+    const stderr = result.stderr ?? '';
+    // A hard kill (timeout) leaves `status` null — name it explicitly.
+    expect(result.signal, `child was killed (${result.signal}); stderr: ${stderr}`).toBeNull();
+    expect(result.status, stderr).toBe(2);
+    expect(stderr).toMatch(/output directory not writable/i);
+    expect(stderr).toMatch(/unsupported filesystem type 0x9fa0/i);
+    expect(elapsedMs).toBeLessThan(2_000);
+    // Nothing was swept and the CSV was never touched.
+    expect(md5(CSV)).toBe(before);
+  }, 30_000);
+
+  it('documents the pseudo-filesystem guard in --help', () => {
+    const usage = evaluateModule.EVALUATE_USAGE ?? '';
+    expect(usage).toContain('unsupported');
+    expect(usage).toMatch(/pseudo-filesystem/);
+  });
+});

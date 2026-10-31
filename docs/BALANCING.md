@@ -800,9 +800,19 @@ removed by the fail-fast validation above rather than by the watchdog.
 
   The write probe (not just a `mkdir`) is what catches an **existing** read-only
   directory, which accepts a recursive `mkdir` and only fails on the first
-  write. The late `mkdirSync` before the artifact writes remains as an
-  idempotent safety net. The measured pre-fix cost of the same invalid path was
-  4.31 s at 10 games × 2000 ticks and 11.82 s at 40 games × 2000 ticks.
+  write. A **pseudo-filesystem** target (procfs, sysfs, debugfs, tracefs,
+  cgroup/cgroup2, devpts, securityfs, configfs, bpf, nsfs) is refused *before*
+  it is touched, because a recursive `mkdir` there blocks for ever
+  (AH-0MVWLQQKB0075A1U): the probe reads the filesystem type of the nearest
+  existing ancestor with `statfsSync` and reports
+  `output directory not writable: <dir> (unsupported filesystem type 0x<magic>)`
+  — so the documented negative probe `--out /proc/nope/x` fails in ~0.3 s
+  instead of hanging. The guard is fail-open: when `statfsSync` is unavailable
+  or fails, the `mkdir` probe runs unchanged. The late `mkdirSync` before the
+  artifact writes remains as an idempotent safety net. The measured pre-fix
+  cost of the same invalid path was 4.31 s at 10 games × 2000 ticks and 11.82 s
+  at 40 games × 2000 ticks (and 166.6 minutes for `/proc/nope/x`, which blocked
+  the `mkdir` after both sweeps had already run).
 - **Crash-safe edit journal (AH-0MVSE1A7O002PXAO):** before the first edited
   byte is written, the pre-edit bytes are persisted to
   `src/data/<file>.tune-journal` (written to a sibling temp file, `fsync`ed and
