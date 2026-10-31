@@ -25,6 +25,7 @@ import { createServer, type Server } from 'node:http';
 import type { ViteDevServer } from 'vite';
 
 import { configCsvPlugin, CSV_API_PREFIX } from '../../vite/plugins/configCsvPlugin';
+import { installCsvFetchBridge } from '../test/csvFetchBridge';
 import { DEFAULT_ENEMY_CONFIGS, DEFAULT_CONFIG } from './configDefaults';
 import {
   loadConfigs,
@@ -40,7 +41,7 @@ import {
 
 const ENEMY_REL = 'src/data/enemy-configs.csv';
 const SHIP_REL = 'src/data/ship-config.csv';
-const nativeFetch = globalThis.fetch.bind(globalThis);
+
 
 function enemyCsv(scoutCount = 6): string {
   const header =
@@ -117,15 +118,23 @@ async function startPluginServer(root: string): Promise<string> {
   });
 }
 
-/** Route the store's relative fetches through the plugin server. */
+/**
+ * Route the store's relative fetches through the plugin server.
+ *
+ * The store issues **relative** `/api/csv/...` requests. In the happy-dom
+ * project those resolve against the browser origin (`http://localhost:3000`),
+ * so an un-mocked save could reach a stray dev server whose project root is
+ * another checkout (e.g. the main checkout while the suite runs from a
+ * worktree) — that is the leak behind AH-0MVKYQWSW0067F12. Every real save in
+ * this suite therefore installs the shared bridge from
+ * `src/test/csvFetchBridge.ts`, which pins the relative fetch to this suite's
+ * ephemeral temp-root server; the integration-project default guard refuses an
+ * un-bridged CSV fetch outright
+ * (AH-0MVS9UEHS009QH6J), and the store's test-mode guard
+ * (AH-0MVS9UAU8005SSQR) is the second line of defence.
+ */
 function installFetchBridge(baseUrl: string): void {
-  vi.stubGlobal(
-    'fetch',
-    (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? `${baseUrl}${input}` : input;
-      return nativeFetch(url, init);
-    },
-  );
+  installCsvFetchBridge(baseUrl);
 }
 
 beforeEach(() => {
@@ -260,8 +269,10 @@ describe('Gym Save As flow (AC3)', () => {
     installFetchBridge(baseUrl);
     await loadConfigs();
 
-    // Directly exercise the plugin's append mode (used by Save As).
-    const res = await nativeFetch(`${baseUrl}${CSV_API_PREFIX}${ENEMY_REL}?mode=append`, {
+    // Directly exercise the plugin's append mode (used by Save As). The
+    // absolute URL is pinned to this suite's temp server; the bridge keeps the
+    // CSV path (and query) intact and rewrites only the origin.
+    const res = await fetch(`${baseUrl}${CSV_API_PREFIX}${ENEMY_REL}?mode=append`, {
       method: 'PUT',
       headers: { 'Content-Type': 'text/csv' },
       body:
