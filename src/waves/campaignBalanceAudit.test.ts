@@ -223,7 +223,7 @@ describe('shipped campaign balance audit (AC1)', () => {
       expect(verdict.exempt).toBe(false);
       // R4 needs a predecessor in the same level, so a level's first wave is
       // audited against the balance rules R1–R3 only.
-      const waveNumber = Number(wave.id.split(':')[1]);
+      const waveNumber = Number((wave.id ?? '').split(':')[1]);
       expect(verdict.rules.map((r) => r.id)).toEqual(
         waveNumber > 1 ? ['R1', 'R2', 'R3', 'R4'] : ['R1', 'R2', 'R3'],
       );
@@ -468,7 +468,7 @@ describe('generated-wave sequential distinctness (R4, AH-0MVSE6XIO007BXYM)', () 
     for (const wave of generated) {
       // A level's first wave has no predecessor in that level, so R4 does not
       // apply and the audit keeps the R1–R3 shape for it.
-      if (Number(wave.id.split(':')[1]) === 1) continue;
+      if (Number((wave.id ?? '').split(':')[1]) === 1) continue;
       const r4 = wave.rules.find((rule) => rule.id === 'R4');
       expect(r4, `${wave.id} has no R4 verdict`).toBeDefined();
       expect(r4?.pass, `${wave.id}: ${r4?.message}`).toBe(true);
