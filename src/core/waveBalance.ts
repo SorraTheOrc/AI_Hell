@@ -1,10 +1,13 @@
 /**
  * Pure wave-balance rules (AH-0MV84TE7O006HI3R; parent AH-0MV29XQ0H009P9WP).
  *
- * A Phaser-free module pinning the wave-design balance rules R1–R3 as pure
- * functions over a wave's groups (resolved to behavioural classifications),
- * plus a pure audit validator that reuses the same functions (single source
- * of truth — parent Q1=c). The rules are the *contract* consumed by:
+ * A Phaser-free module pinning the wave-design balance rules R1–R3 plus the
+ * sequential-distinctness rule R4 as pure functions over a wave's groups
+ * (resolved to behavioural classifications), plus a pure audit validator that
+ * reuses the same functions (single source of truth — parent Q1=c). R4 is the
+ * shared composition signature: a wave may not repeat the archetype set of the
+ * immediately preceding wave in the same level, and R1–R3 take precedence over
+ * it (see {@link RULE_PRECEDENCE}).
  *
  * - the runtime auto-sequencer hard-constraint enforcement (F3,
  *   `src/core/difficultySequencer.ts`),
@@ -187,7 +190,20 @@ export const RANGED_SHARE_CAP = 1;
 
 // ── Rule results ──────────────────────────────────────────────────────
 
-export type RuleId = 'R1' | 'R2' | 'R3';
+export type RuleId = 'R1' | 'R2' | 'R3' | 'R4';
+
+/**
+ * Rule precedence, highest first (AH-0MVSE6XIO007BXYM).
+ *
+ * R1–R3 are the hard *balance* rules: a wave that would need to break one of
+ * them to achieve sequential distinctness keeps the balance-compliant
+ * composition instead. R4 (sequential distinctness) is therefore applied
+ * **after** R1–R3 enforcement, and only ever chooses between compositions
+ * that already satisfy R1–R3. When no distinct balance-compliant composition
+ * exists the best eligible composition is emitted (documented degenerate-input
+ * fallback), so distinctness never produces an empty or rule-breaking wave.
+ */
+export const RULE_PRECEDENCE: readonly RuleId[] = ['R1', 'R2', 'R3', 'R4'];
 
 /** Outcome of one rule check over one wave. */
 export interface RuleResult {
@@ -321,6 +337,96 @@ export function checkBoundedRangedMix(
   };
 }
 
+// ── R4 — sequential distinctness ──────────────────────────────────────
+
+/** Separator joining sorted archetype keys in a composition signature. */
+export const COMPOSITION_SIGNATURE_SEPARATOR = '+';
+
+/**
+ * R4 — the composition signature of an archetype-key list.
+ *
+ * This is the *single* definition of "the same enemies" shared by the
+ * sequencer's sequential-distinctness constraint and the campaign audit: the
+ * sorted, de-duplicated set of archetype keys (`scout+tank`). Count, spacing,
+ * group order and duplicate groups cannot manufacture variety, while adding an
+ * archetype always changes the signature (parent Q1 = a + explicit rule,
+ * AH-0MVI5XXOU00954EA).
+ *
+ * @param archetypeKeys — every archetype key the wave delivers, in any order.
+ * @returns the keys sorted, de-duplicated and joined by
+ *   {@link COMPOSITION_SIGNATURE_SEPARATOR}; the empty string for a wave that
+ *   delivers no archetype at all.
+ */
+export function compositionSignature(
+  archetypeKeys: readonly string[],
+): string {
+  return [...new Set(archetypeKeys)]
+    .sort()
+    .join(COMPOSITION_SIGNATURE_SEPARATOR);
+}
+
+/**
+ * R4 — the composition signature of a wave's groups (see
+ * {@link compositionSignature}).
+ *
+ * Generated (`curve` / `dynamic`) waves are composed from groups only, so this
+ * is the signature the sequencer compares wave-to-wave. The campaign audit
+ * additionally folds a wave's spawner opt-in flags into the key list before
+ * calling {@link compositionSignature}, so both paths share one definition.
+ */
+export function groupsComposition(
+  groups: readonly { enemyKey: string }[],
+): string {
+  return compositionSignature(groups.map((group) => group.enemyKey));
+}
+
+/**
+ * R4 — sequential distinctness: a wave must not repeat the composition of the
+ * immediately preceding wave in the same level.
+ *
+ * Adjacency is *within* a level (the campaign builder resets the previous
+ * composition per level), so a level's final wave is never compared with the
+ * next level's first wave. Two waves that deliver no archetype at all share
+ * the empty signature and therefore fail the rule like any other repeat.
+ *
+ * Scope: R4 binds on the **generated** path (`curve` / `dynamic` waves that go
+ * through the sequencer). Hand-authored `fixed` waves are exempt here because
+ * they are never sequenced — their adjacency is covered by the authored data
+ * and the campaign variety audit, not by this rule (AH-0MVSE6XIO007BXYM).
+ *
+ * @param groups — the wave's groups (or any archetype-keyed list).
+ * @param previousComposition — the previous wave's signature; `undefined`
+ *   means there is no predecessor in this level, so R4 does not apply.
+ */
+export function checkSequentialDistinctness(
+  groups: readonly { enemyKey: string }[],
+  previousComposition: string | undefined,
+): RuleResult {
+  if (previousComposition === undefined) {
+    return {
+      id: 'R4',
+      pass: true,
+      applicable: false,
+      message: 'No preceding wave in this level — R4 does not apply.',
+    };
+  }
+  const composition = groupsComposition(groups);
+  if (composition !== previousComposition) {
+    return {
+      id: 'R4',
+      pass: true,
+      applicable: true,
+      message: `Composition '${composition}' differs from the preceding wave's '${previousComposition}'.`,
+    };
+  }
+  return {
+    id: 'R4',
+    pass: false,
+    applicable: true,
+    message: `Composition '${composition}' repeats the immediately preceding wave.`,
+  };
+}
+
 // ── Audit validator ───────────────────────────────────────────────────
 
 /**
@@ -347,6 +453,14 @@ export interface BalancedWave {
    * checking them.
    */
   generation?: DifficultyGeneration;
+  /**
+   * Composition signature of the immediately preceding wave in the same
+   * level (see {@link compositionSignature}), or `undefined` for a level's
+   * first wave. When supplied, the audit evaluates R4 (sequential
+   * distinctness) for generated waves; omitted, R4 is not evaluated and the
+   * report keeps exactly the R1–R3 shape.
+   */
+  previousComposition?: string;
 }
 
 /** Per-wave audit result: overall pass/fail plus one {@link RuleResult} per rule. */
@@ -370,6 +484,8 @@ export interface BalanceAudit {
  * - `fixed` waves are exempt (reported with `exempt: true`, no rules).
  * - R1 is evaluated only when `isOpening` is set.
  * - R2 and R3 are always evaluated for generated waves.
+ * - R4 (sequential distinctness) is evaluated for generated waves when the
+ *   caller supplies the preceding wave's composition.
  */
 export function auditWave(wave: BalancedWave): WaveRuleAudit {
   if (wave.generation === 'fixed') {
@@ -391,6 +507,9 @@ export function auditWave(wave: BalancedWave): WaveRuleAudit {
         },
     checkNoAllChaser(wave.groups),
     checkBoundedRangedMix(wave.groups, wave.shootEnabled),
+    ...(wave.previousComposition !== undefined
+      ? [checkSequentialDistinctness(wave.groups, wave.previousComposition)]
+      : []),
   ];
   return {
     id: wave.id,

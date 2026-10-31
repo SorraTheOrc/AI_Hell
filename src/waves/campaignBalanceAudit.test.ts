@@ -47,6 +47,7 @@ import {
   type BalancedWave,
   type BalanceAudit,
 } from '../core/waveBalance';
+import { waveComposition } from './campaignVariety';
 import {
   CURVE_TARGET_TOLERANCE,
   sequenceVariedWaves,
@@ -114,6 +115,13 @@ function auditShippedCampaign(
       shootEnabled: wave.shootEnabled,
       isOpening: isOpeningWavePosition(row.level, row.wave),
       generation: row.generation ?? 'curve',
+      // R4 sequential distinctness (AH-0MVSE6XIO007BXYM): the immediately
+      // preceding built wave in the same level, using the shared composition
+      // signature (spawner opt-in flags included). Omitted for a level's
+      // first wave — a level boundary is not an adjacency.
+      ...(row.wave > 1
+        ? { previousComposition: waveComposition(level!.waves[row.wave - 2]) }
+        : {}),
     };
   });
   return { audit: auditWaves(waves), waves };
@@ -213,7 +221,12 @@ describe('shipped campaign balance audit (AC1)', () => {
         true,
       );
       expect(verdict.exempt).toBe(false);
-      expect(verdict.rules.map((r) => r.id)).toEqual(['R1', 'R2', 'R3']);
+      // R4 needs a predecessor in the same level, so a level's first wave is
+      // audited against the balance rules R1–R3 only.
+      const waveNumber = Number(wave.id.split(':')[1]);
+      expect(verdict.rules.map((r) => r.id)).toEqual(
+        waveNumber > 1 ? ['R1', 'R2', 'R3', 'R4'] : ['R1', 'R2', 'R3'],
+      );
     });
   });
 
@@ -422,6 +435,63 @@ describe('rule-enforcement target-error growth (AC4)', () => {
     // measurement would not exercise the R2/R3 repair at all.
     const measured = measureEnforcementError();
     expect(measured.some((wave) => wave.growth !== 0)).toBe(true);
+  });
+});
+
+// ── R4 — sequential distinctness of the generated path ───────────────
+
+describe('generated-wave sequential distinctness (R4, AH-0MVSE6XIO007BXYM)', () => {
+  it("never repeats the preceding built wave's composition on a generated wave", () => {
+    const campaign = buildDefaultCampaign();
+    const byLevel = new Map(campaign.map((level) => [level.level, level]));
+    const generated = generatedRows();
+    expect(generated.length).toBeGreaterThan(0);
+
+    for (const row of generated) {
+      // A level's first wave has no predecessor in that level.
+      if (row.wave === 1) continue;
+      const level = byLevel.get(row.level)!;
+      const wave = level.waves[row.wave - 1];
+      const previous = level.waves[row.wave - 2];
+      expect(
+        waveComposition(wave),
+        `L${row.level}W${row.wave} repeats L${row.level}W${row.wave - 1}`,
+      ).not.toBe(waveComposition(previous));
+    }
+  });
+
+  it('reports R4 as met for every generated wave that has a predecessor', () => {
+    const { audit } = auditShippedCampaign();
+    const generated = audit.waves.filter((wave) => !wave.exempt);
+    expect(generated.length).toBeGreaterThan(0);
+    let checked = 0;
+    for (const wave of generated) {
+      // A level's first wave has no predecessor in that level, so R4 does not
+      // apply and the audit keeps the R1–R3 shape for it.
+      if (Number(wave.id.split(':')[1]) === 1) continue;
+      const r4 = wave.rules.find((rule) => rule.id === 'R4');
+      expect(r4, `${wave.id} has no R4 verdict`).toBeDefined();
+      expect(r4?.pass, `${wave.id}: ${r4?.message}`).toBe(true);
+      expect(r4?.applicable).toBe(true);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it('holds at every seed (the constraint is a pure function of its inputs)', () => {
+    for (const seed of [0, 1, 2, 5]) {
+      const { audit } = auditShippedCampaign(seededCampaign(seed));
+      expect(audit.pass, `seed ${seed} violates a rule`).toBe(true);
+    }
+  });
+
+  it('leaves hand-authored fixed waves exempt from R4 by design', () => {
+    const { audit } = auditShippedCampaign();
+    const fixed = audit.waves.filter((wave) => wave.exempt);
+    expect(fixed.length).toBeGreaterThan(0);
+    for (const wave of fixed) {
+      expect(wave.rules).toHaveLength(0);
+    }
   });
 });
 

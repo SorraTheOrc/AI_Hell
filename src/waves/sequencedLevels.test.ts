@@ -13,7 +13,11 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 
 import { buildSequencedLevels, dynamicTarget } from './sequencedLevels';
 import { LEVELS, LEVEL_COUNT } from './Formations';
-import { auditCampaignVariety, waveArchetypes } from './campaignVariety';
+import {
+  auditCampaignVariety,
+  waveArchetypes,
+  waveComposition,
+} from './campaignVariety';
 import type { WaveDefinition } from './Formations';
 import { WaveManager } from './WaveManager';
 import { defaultCandidatePool, sequencer } from '../core/difficultySequencer';
@@ -1333,5 +1337,83 @@ describe('Shipped campaign archetype variety (AH-0MV2SGIX5005PFJT)', () => {
 
   it('is deterministic: the same campaign for every build', () => {
     expect(campaign()).toEqual(campaign());
+  });
+});
+
+// ── Sequential distinctness wiring (R4, AH-0MVSE6XIO007BXYM) ──────────
+
+describe('Sequential distinctness wiring (R4)', () => {
+  /** One level's rows with explicit per-wave generation modes. */
+  function rowsFor(
+    level: number,
+    levelName: string,
+    specs: Array<{ target: number; generation: DifficultyGeneration }>,
+  ): DifficultyCurveRow[] {
+    return specs.map((spec, i) => ({
+      level,
+      levelName,
+      wave: i + 1,
+      targetDifficulty: spec.target,
+      generation: spec.generation,
+    }));
+  }
+
+  it('hands each generated wave the composition of the immediately preceding built wave', () => {
+    const rows = rowsFor(3, 'The Core', [
+      { target: 13, generation: 'fixed' },
+      { target: 20, generation: 'curve' },
+      { target: 24, generation: 'curve' },
+    ]);
+    const spy = vi.fn(sequencer);
+    const levels = buildSequencedLevels(rows, undefined, { sequencer: spy });
+    const level = levels.find((entry) => entry.level === 3)!;
+
+    // Two generated waves: one per curve row.
+    expect(spy).toHaveBeenCalledTimes(2);
+    // The first avoids the authored fixed wave it follows…
+    expect(spy.mock.calls[0][2]).toMatchObject({
+      avoidCompositions: [waveComposition(LEVELS[2].waves[0])],
+    });
+    // …the second avoids the wave the builder just produced for wave 2.
+    expect(spy.mock.calls[1][2]).toMatchObject({
+      avoidCompositions: [waveComposition(level.waves[1])],
+    });
+    expect(level.waves[0]).toBe(LEVELS[2].waves[0]);
+  });
+
+  it('does not constrain a level-first wave (no predecessor in the level)', () => {
+    const rows = rowsFor(4, 'Firestorm', [{ target: 25, generation: 'curve' }]);
+    const spy = vi.fn(sequencer);
+    buildSequencedLevels(rows, undefined, { sequencer: spy });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const options = spy.mock.calls[0][2] as Record<string, unknown> | undefined;
+    expect(options?.avoidCompositions).toBeUndefined();
+  });
+
+  it('resets the predecessor per level: a level-first wave never avoids the previous level', () => {
+    const rows = [
+      ...rowsFor(3, 'The Core', [{ target: 20, generation: 'curve' }]),
+      ...rowsFor(4, 'Firestorm', [{ target: 22, generation: 'curve' }]),
+    ];
+    const spy = vi.fn(sequencer);
+    buildSequencedLevels(rows, undefined, { sequencer: spy });
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[0][2]).toMatchObject({});
+    const secondOptions = spy.mock.calls[1][2] as Record<string, unknown> | undefined;
+    expect(secondOptions?.avoidCompositions).toBeUndefined();
+  });
+
+  it('keeps consecutive generated waves compositionally distinct at their own targets', () => {
+    const rows = rowsFor(6, 'Invasion', [
+      { target: 77, generation: 'curve' },
+      { target: 77, generation: 'curve' },
+    ]);
+    const levels = buildSequencedLevels(rows, undefined, { seed: 0 });
+    const waves = levels.find((entry) => entry.level === 6)!.waves;
+
+    expect(waves).toHaveLength(2);
+    expect(waveComposition(waves[0])).not.toBe(waveComposition(waves[1]));
   });
 });

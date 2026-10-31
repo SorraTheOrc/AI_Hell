@@ -407,11 +407,12 @@ The agreed mapping for all 18 CSV archetypes:
 The `centipede` linked chain (AH-0MV01EJ92008ZZ86) is a dedicated entity, not
 a CSV row, so it carries no classification pair; it is a contact-only chaser.
 
-### 1.5 Wave balance rules R1–R3 (AH-0MV29XQ0H009P9WP)
+### 1.5 Wave balance rules R1–R4 (AH-0MV29XQ0H009P9WP, AH-0MVSE6XIO007BXYM)
 
 The classification in §1.4 is consumed by the **wave balance rules**, a pure,
 Phaser-free module (`src/core/waveBalance.ts`) that is the single source of
-truth for three hard design constraints. The runtime auto-sequencer (F3,
+truth for four hard design constraints (R1–R3 balance, R4 sequential
+distinctness). The runtime auto-sequencer (F3,
 `src/core/difficultySequencer.ts`) enforces the rules when composing generated
 (`curve` / `dynamic`) waves; the same rule functions are reused by a pure audit
 validator (F5) and by the classification-driven opening curation (F4,
@@ -433,6 +434,9 @@ sequenced and are exempt from the rules by design.
   ranged attackers (`attackClass` in `RANGED_ATTACK_CLASSES`); the share of
   ranged groups must stay strictly below `RANGED_SHARE_CAP`, so every firing
   wave includes at least one effective-*contact* group.
+- **R4 — sequential distinctness.** No two sequential waves inside a level may
+  share the same composition signature (`compositionSignature()`); see §1.5.4.
+  R1–R3 take precedence over R4 (`RULE_PRECEDENCE`).
 
 #### 1.5.2 Effective-attack semantics (R3)
 
@@ -458,8 +462,45 @@ restating their values.
 | `RANGED_SHARE_CAP` | The maximum ranged share of a firing wave (strict `<`), R3. | Lower it to force more contact groups (a tighter mix); raising it relaxes the rule. |
 | `DEFAULT_MOVEMENT_CLASS` | Fallback `movementClass` for unknown archetype keys. | Change to alter the classification fixture's fallback, not the rules. |
 | `deriveAttackClassFromShotPattern()` | Derives the fallback `attackClass` from a shot pattern (no-fire ⇒ contact). | Change to alter the fixture's attack-class fallback. |
+| `COMPOSITION_SIGNATURE_SEPARATOR` | Separator joining the sorted archetype keys of a composition signature (R4). | Change only if an external consumer parses the signature string. |
+| `compositionSignature()` / `groupsComposition()` | The single "same enemies" definition shared by the sequencer and the campaign audit (R4). | Change to redefine what counts as a composition repeat. |
+| `RULE_PRECEDENCE` | Documented rule precedence: the balance rules R1–R3 win over distinctness R4. | Change only with a producer decision; the sequencer's fallback follows it. |
 
-#### 1.5.4 Generator enforcement (F3)
+#### 1.5.4 R4 — sequential distinctness (AH-0MVSE6XIO007BXYM)
+
+R4 is the fourth rule: **no two sequential waves inside a level share the same
+enemy composition**. "Same enemies" is defined once, by
+`compositionSignature()` in `src/core/waveBalance.ts` — the sorted,
+de-duplicated archetype set (the spawner opt-in flags are folded in by
+`waveComposition()` for the campaign audit). Counts, spacing, group order and
+duplicate groups cannot make a repeat look distinct.
+
+- **Sequencer enforcement.** The campaign builder hands each generated
+  (`curve`/`dynamic`) wave the preceding built wave's composition through
+  `SequencerOptions.avoidCompositions`. When the error-minimising composition
+  is avoided, the sequencer deterministically rebuilds the wave from the
+  next-best eligible start candidate (ascending evaluated error, then
+  candidate-pool order) and accepts the first distinct composition.
+- **Fixed waves stay exempt.** A `fixed` wave is never passed to the
+  sequencer, so R4 never constrains it as the *produced* wave; it still acts
+  as the predecessor a generated wave must avoid. Fixed-wave adjacency is
+  covered by the authored data and the campaign variety audit.
+- **Precedence — the balance rules win.** Every R4 alternative is fully
+  R1–R3-enforced, so distinctness only ever chooses *between* balance-compliant
+  compositions (`RULE_PRECEDENCE` is `R1, R2, R3, R4`). If no distinct
+  compliant composition exists (a one-candidate pool, or no alternative), the
+  best eligible composition is emitted rather than an empty or rule-breaking
+  wave — the degenerate-input fallback is deliberate.
+- **Determinism.** The rule adds no randomness: the same (curve, candidate
+  pool, seed, predecessor composition) always yields the same wave, so the
+  seeded campaign stays reproducible. The constraint is measured like R1–R3 —
+  the campaign balance audit records per-wave enforcement cost, reports an R4
+  verdict per generated wave, and asserts every wave stays inside the sequencer
+  acceptance band. A wave that cannot satisfy R4 inside that band therefore
+  fails the audit visibly and is recorded as follow-up authoring work (an
+  authored `fixed` wave or a re-tuned target), never tolerated silently.
+
+#### 1.5.5 Generator enforcement (F3)
 
 The sequencer evaluates R2 and R3 **after** greedy composition, because its
 scorer has no intrinsic notion of the classification constraints. On a
@@ -478,7 +519,7 @@ classes through `SequencerOptions` / `SequencerRuleConstraints`; the sequencer
 consults the shared `OPENING_MOVEMENT_CLASSES` rather than re-implementing the
 rule.
 
-#### 1.5.5 Opening curation (F4)
+#### 1.5.6 Opening curation (F4)
 
 `src/waves/sequencedLevels.ts` derives the opening-wave candidate pool from R1
 (via `OPENING_MOVEMENT_CLASSES` and `classifyArchetype`) and then narrows it to
@@ -486,7 +527,7 @@ a curated sub-selection kept as data, because the opening target band is narrow
 and a full R1 pool would make openers degenerate. The curated band may narrow
 the R1 pool but never widen it.
 
-#### 1.5.6 Audit validator (F5)
+#### 1.5.7 Audit validator (F5)
 
 `auditWaves()` / `auditWave()` reuse the exact same rule functions to audit a
 list of waves, returning a per-wave, per-rule verdict plus a human-readable
@@ -496,7 +537,7 @@ built from `defaultDifficultyCurves()` through the validator and pins the
 per-wave target-difficulty error, so any rule, curve or pool change that moves
 the enforcement cost fails the test and forces a documentation update.
 
-#### 1.5.7 Enforcement cost on the shipped campaign
+#### 1.5.8 Enforcement cost on the shipped campaign
 
 Enforcement is free on most waves: for 13 of the 15 generated waves of the
 shipped campaign the rule-constrained composition matches the raw greedy
@@ -507,7 +548,7 @@ than growing it. The largest remaining per-wave error stays within the
 sequencer's default tolerance. The measured vector is pinned in
 `campaignBalanceAudit.test.ts`.
 
-#### 1.5.8 Design principles
+#### 1.5.9 Design principles
 
 - **Single source of truth.** Generator enforcement, opening curation and the
   audit validator all consume `src/core/waveBalance.ts`; no rule logic is

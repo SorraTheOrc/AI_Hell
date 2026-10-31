@@ -39,12 +39,13 @@ describe('Wave balance rules documentation (AH-0MV84U0Y2006KXE8)', () => {
   const gdd = read(GDD);
   const guide = read(ENEMY_GUIDE);
 
-  it('the enemy guide documents the R1–R3 balance section (AC6)', () => {
-    expect(guide).toContain('### 1.5 Wave balance rules R1–R3');
+  it('the enemy guide documents the R1–R4 balance section (AC6)', () => {
+    expect(guide).toContain('### 1.5 Wave balance rules R1–R4');
     for (const rule of [
       'R1 — opening-wave purity',
       'R2 — no all-chaser wave',
       'R3 — bounded ranged mix',
+      'R4 — sequential distinctness',
     ]) {
       expect(guide).toContain(rule);
     }
@@ -59,6 +60,9 @@ describe('Wave balance rules documentation (AH-0MV84U0Y2006KXE8)', () => {
       'RANGED_SHARE_CAP',
       'DEFAULT_MOVEMENT_CLASS',
       'deriveAttackClassFromShotPattern',
+      'COMPOSITION_SIGNATURE_SEPARATOR',
+      'compositionSignature()',
+      'RULE_PRECEDENCE',
     ]) {
       expect(guide).toContain(constant);
     }

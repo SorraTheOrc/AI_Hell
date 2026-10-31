@@ -29,6 +29,14 @@
  * Determinism contract: `curve` and `fixed` waves are independent of the
  * seed; `dynamic` waves are a pure function of (curve, candidate pool, seed).
  *
+ * Sequential distinctness (R4, AH-0MVSE6XIO007BXYM): a level's built waves are
+ * tracked in order and each generated wave is handed the immediately preceding
+ * wave's composition — including a preceding `fixed` wave's — through
+ * `SequencerOptions.avoidCompositions`. `fixed` waves are never passed to the
+ * sequencer, so they stay exempt on the generated path; their adjacency is
+ * covered by the authored data and the campaign variety audit. A level
+ * boundary is not an adjacency, so the tracker resets per level.
+ *
  * Fallback is per level: a level with an empty/malformed curve (or a
  * sequencer throw) keeps that level's static definition when one exists, and
  * is skipped otherwise. Whole-campaign fallback to static `LEVELS` only
@@ -67,6 +75,7 @@ import {
   type WaveDefinition,
   type WaveGroup,
 } from './Formations';
+import { waveComposition } from './campaignVariety';
 
 /** Level number at which enemies begin firing (GDD §2.5). */
 export const FIRST_FIRING_LEVEL = 4;
@@ -294,6 +303,13 @@ function openingCandidates(
  * (AH-0MV2SGIX5005PFJT): the sequencer reads and updates it in place so the
  * {@link MAX_ARCHETYPE_PER_LEVEL} cap spans the whole level rather than a
  * single wave.
+ *
+ * `previousComposition` is the preceding wave's composition signature in the
+ * same level (R4 sequential distinctness, AH-0MVSE6XIO007BXYM). It is passed
+ * to the sequencer as the avoided composition, so a generated wave can never
+ * repeat its predecessor's archetype set. `fixed` waves never reach here, so
+ * they stay exempt on the generated path (their adjacency is covered by the
+ * authored data and the campaign variety audit).
  */
 function buildSequencedWave(
   seq: SequencerFn,
@@ -302,12 +318,16 @@ function buildSequencedWave(
   candidates: CandidateGroup[],
   archetypeUsage: Map<string, number>,
   allowedMovementClasses?: readonly EnemyMovementClass[],
+  previousComposition?: string,
 ): WaveDefinition | null {
   if (!Number.isFinite(target)) return null;
   try {
     const result = seq([target], candidates, {
       defaultShootEnabled: shootEnabled,
       archetypeUsage,
+      ...(previousComposition !== undefined
+        ? { avoidCompositions: [previousComposition] }
+        : {}),
       ...(allowedMovementClasses
         ? { ruleConstraints: { allowedMovementClasses } }
         : {}),
@@ -346,6 +366,11 @@ function buildConfiguredLevel(
   // no archetype fills every wave (AH-0MV2SGIX5005PFJT). `fixed` waves bypass
   // the sequencer and therefore do not consume the cap.
   const archetypeUsage = new Map<string, number>();
+  // Previous wave's composition signature in this level (R4 sequential
+  // distinctness, AH-0MVSE6XIO007BXYM). Reset per level: a level's final wave
+  // is never compared with the next level's first wave, and a `fixed` wave
+  // becomes the predecessor of the generated wave that follows it.
+  let previousComposition: string | undefined;
 
   for (const row of levelRows) {
     const mode = generationOf(row);
@@ -354,6 +379,7 @@ function buildConfiguredLevel(
       const staticWave = staticLevel?.waves[row.wave - 1];
       if (staticWave) {
         waves.push(staticWave);
+        previousComposition = waveComposition(staticWave);
         continue;
       }
       // No static counterpart: fall back to `curve` for this wave so the run
@@ -400,9 +426,12 @@ function buildConfiguredLevel(
       // counterpart `continue` above, and the no-counterpart fallback is
       // generated as `curve`. So any wave at an opening position is guarded.
       isOpening ? OPENING_MOVEMENT_CLASSES : undefined,
+      previousComposition,
     );
     if (!wave) return null;
     waves.push(wave);
+    // The built wave is the next wave's predecessor (R4).
+    previousComposition = waveComposition(wave);
   }
 
   if (

@@ -28,14 +28,12 @@
  */
 
 import { formationSpawnCount } from '../utils/formations';
+import { compositionSignature } from '../core/waveBalance';
 import type { LevelDefinition, WaveDefinition } from './Formations';
 import { GHOST_ENEMY_KEYS } from './GhostSpawner';
 import { CENTIPEDE_ENEMY_KEY } from './CentipedeSpawner';
 import { GRUNT_ENEMY_KEY } from './HordeSpawner';
 import { LANE_TRAFFIC_ENEMY_KEY } from './LaneTrafficSpawner';
-
-/** Separator used by {@link waveComposition} between sorted archetype keys. */
-const COMPOSITION_SEPARATOR = '+';
 
 /**
  * The documented dominant identity of one level (GDD §3.2).
@@ -233,16 +231,16 @@ export function waveArchetypes(wave: WaveDefinition): string[] {
  * Sorted, de-duplicated archetype signature of a wave.
  *
  * This is the AC1 comparison unit: two waves have the "same enemies" exactly
- * when their signatures are equal. Count, spacing, group order and duplicate
- * groups therefore cannot manufacture variety, while adding an archetype (as
- * a group or a spawner opt-in flag) always changes the signature.
+ * when their signatures are equal. The signature is defined once in the
+ * shared rule module — `compositionSignature` in `src/core/waveBalance.ts` —
+ * so the sequencer's R4 constraint and this audit cannot drift.
  *
  * @param wave — the wave to fingerprint.
- * @returns archetype keys joined by `+` in ascending order; the empty string
- *   for a wave that delivers no archetype at all.
+ * @returns archetype keys in ascending order, de-duplicated and joined by the
+ *   shared separator; the empty string for a wave with no archetype.
  */
 export function waveComposition(wave: WaveDefinition): string {
-  return waveArchetypes(wave).join(COMPOSITION_SEPARATOR);
+  return compositionSignature(archetypeKeysInWave(wave));
 }
 
 /**

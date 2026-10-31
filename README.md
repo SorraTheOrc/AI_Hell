@@ -930,15 +930,18 @@ instead.
   the orbital Phaser, so the late game read as "all orbiting enemies". Authored
   `fixed` waves and the gyms bypass the sequencer and are unaffected; raise the
   constant (or pass `maxArchetypePerLevel: Infinity`) to relax/disable it.
-- **Wave balance rules (R1–R3, AH-0MV29XQ0H009P9WP):** generated
-  (`curve` / `dynamic`) waves obey three hard balance constraints enforced by
+- **Wave balance rules (R1–R4, AH-0MV29XQ0H009P9WP, AH-0MVSE6XIO007BXYM):**
+  generated (`curve` / `dynamic`) waves obey four hard constraints enforced by
   the sequencer: opening waves are formation/diver only (R1), no wave is
-  all-chaser (R2), and no *firing* wave is all-ranged (R3, judged on the wave's
-  effective attack so no-fire waves are compliant by construction). Rules win
-  over exact target match — a repaired wave may miss its target curve slightly
-  rather than violate a rule — and authored `fixed` waves are exempt. The
-  rules, their named tunable constants and the tuning guidance are documented
-  in the enemy guide §1.5, with the rule module in `src/core/waveBalance.ts`.
+  all-chaser (R2), no *firing* wave is all-ranged (R3, judged on the wave's
+  effective attack so no-fire waves are compliant by construction), and no
+  generated wave repeats the archetype composition of the wave before it in
+  the same level (R4, deterministic next-best fallback). The balance rules win
+  over both exact target match and distinctness — a repaired wave may miss its
+  target curve slightly rather than violate a rule — and authored `fixed`
+  waves stay exempt. The rules, their named tunable constants and the tuning
+  guidance are documented in the enemy guide §1.5, with the rule module in
+  `src/core/waveBalance.ts`.
 - **Toggle:** `sequencedWavesEnabled` in the `ai-hell-game-rules` localStorage
   record, default **true** (AH-0MUJSUTLA006Q8E1). Opt out in a dev run from the
   browser console:

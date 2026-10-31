@@ -30,6 +30,7 @@ import {
   classifyWaveGroups,
   checkNoAllChaser,
   checkBoundedRangedMix,
+  groupsComposition,
   CHASER_MOVEMENT_CLASS,
   type ArchetypeClassification,
 } from './waveBalance';
@@ -191,6 +192,26 @@ export interface SequencerOptions {
    * `movementClass` is in the array can be selected.
    */
   ruleConstraints?: SequencerRuleConstraints;
+  /**
+   * Composition signatures this wave must not reproduce (R4,
+   * AH-0MVSE6XIO007BXYM).
+   *
+   * Each entry is a signature produced by the shared rule module's
+   * `groupsComposition` / `compositionSignature` (`src/core/waveBalance.ts`) —
+   * the sorted, de-duplicated archetype set, so counts, spacing and group
+   * order cannot make a repeat look distinct. The campaign builder supplies
+   * the immediately preceding wave's composition for each sequenced wave in a
+   * level; the pure sequencer cannot know wave adjacency on its own.
+   *
+   * When the error-minimising composition is avoided the sequencer
+   * deterministically falls back to the next-best eligible start candidate, in
+   * ascending evaluated error then candidate-pool order. The fallback only
+   * ever considers R1–R3-compliant compositions (the balance rules win, see
+   * `RULE_PRECEDENCE`); when no distinct eligible composition exists it
+   * returns the best eligible composition rather than an empty wave. Absent or
+   * empty, no distinctness constraint is applied.
+   */
+  avoidCompositions?: readonly string[];
   /**
    * Whether the composed wave is validated and repaired against the hard
    * balance rules (R2 no-all-chaser, R3 bounded ranged mix) using the
@@ -769,6 +790,14 @@ function repairForRule(
  * exact target match: the sequencer returns the best error-minimising
  * composition within the rule-constrained candidate space.
  *
+ * **Sequential distinctness (R4, AH-0MVSE6XIO007BXYM).** When the caller
+ * supplies {@link SequencerOptions.avoidCompositions} — the campaign builder
+ * passes the preceding wave's composition — a wave that would repeat an avoided
+ * archetype set is rebuilt from the next-best eligible start candidate (in
+ * ascending evaluated error, then candidate-pool order). Each alternative is
+ * still fully R1–R3-enforced, so the balance rules win over distinctness; when
+ * no distinct eligible composition exists the best one is returned.
+ *
  * @param curve — the target difficulty curve (one score per wave).
  * @param candidates — the pool of enemy groups to choose from.
  * @param options — sequencer tuning options.
@@ -811,6 +840,10 @@ export function sequencer(
   // generated wave.
   const enforceRulesEnabled = options.enforceRules !== false;
   const maxGroups = options.maxGroupsPerWave ?? DEFAULT_MAX_GROUPS_PER_WAVE;
+  // R4 sequential-distinctness constraint (AH-0MVSE6XIO007BXYM). The caller
+  // owns wave adjacency: the campaign builder passes the preceding wave's
+  // composition. Empty/absent means the constraint is inert.
+  const avoidCompositions = new Set(options.avoidCompositions ?? []);
 
   // Validate candidates.
   for (const c of candidates) {
@@ -826,7 +859,13 @@ export function sequencer(
 
   for (let wi = 0; wi < curve.length; wi++) {
     const target = curve[wi];
-    let bestResult: { adjusted: AdjustedGroup; error: number } | null = null;
+    // Every evaluated candidate in selection-pool order, so the R4 fallback
+    // can deterministically try the next-best eligible start candidate.
+    const evaluations: Array<{
+      index: number;
+      adjusted: AdjustedGroup;
+      error: number;
+    }> = [];
 
     // Exclude archetypes already at the per-level cap (and, when R1 context
     // is supplied, archetypes outside the caller's allowed movement
@@ -840,7 +879,7 @@ export function sequencer(
     const selectionPool =
       allowedCandidates.length > 0 ? allowedCandidates : candidates;
 
-    for (const candidate of selectionPool) {
+    selectionPool.forEach((candidate, index) => {
       const result = evaluateCandidate(
         candidate,
         target,
@@ -848,10 +887,19 @@ export function sequencer(
         maxIterations,
         suppressFiring,
       );
-      if (!bestResult || result.error < bestResult.error) {
-        bestResult = result;
-      }
-    }
+      evaluations.push({ index, ...result });
+    });
+
+    // The error-minimising candidate; ties keep the earliest pool entry (the
+    // pre-R4 behaviour), so the campaign stays byte-identical when no
+    // avoided composition is supplied.
+    const bestResult = evaluations.reduce<
+      { index: number; adjusted: AdjustedGroup; error: number } | null
+    >(
+      (best, evaluation) =>
+        !best || evaluation.error < best.error ? evaluation : best,
+      null,
+    );
 
     // If no candidates were provided, create an empty wave.
     if (!bestResult) {
@@ -868,50 +916,94 @@ export function sequencer(
     // reach the target, add further groups until it does (or no improvement
     // remains). This is what lets targets above a single archetype's ceiling
     // be met with varied compositions (AH-0MUGXDVPH005TIZL).
-    const composed =
-      options.allowMultipleGroups === false
-        ? { groups: [bestResult.adjusted], total: bestResult.adjusted.score }
-        : composeWaveGroups(
-            bestResult.adjusted,
+    //
+    // A composed wave is a pure function of its start candidate, so R4 can
+    // rebuild it from an alternative start without touching any shared state.
+    const buildFromStart = (start: AdjustedGroup): {
+      groups: AdjustedGroup[];
+      shootEnabled: boolean;
+      total: number;
+    } => {
+      const composed =
+        options.allowMultipleGroups === false
+          ? { groups: [start], total: start.score }
+          : composeWaveGroups(
+              start,
+              target,
+              candidates,
+              tolerance,
+              maxIterations,
+              maxGroups,
+              suppressFiring,
+              (enemyKey) =>
+                isAllowed(enemyKey) && movementAllowed(enemyKey),
+            );
+
+      const shootEnabled =
+        options.defaultShootEnabled ??
+        composed.groups.some((group) =>
+          groupFires(group.enemyKey, group.count),
+        );
+
+      // Balance-rule enforcement (F3): validate the composed wave against R2 /
+      // R3 via the shared rule module and repair it in place when a rule is
+      // violated. Rules win over exact target match — enforcement may grow the
+      // error (recorded in `errors`). A single-group contract
+      // (`allowMultipleGroups: false`) is honoured by swapping rather than
+      // adding, so the wave count never grows past the caller's intent.
+      const enforcedGroups = enforceRulesEnabled
+        ? enforceRules(
+            composed.groups,
+            shootEnabled,
             target,
             candidates,
             tolerance,
             maxIterations,
-            maxGroups,
             suppressFiring,
-            (enemyKey) =>
-              isAllowed(enemyKey) && movementAllowed(enemyKey),
-          );
+            isAllowed,
+            movementAllowed,
+            maxGroups,
+            options.allowMultipleGroups !== false,
+          )
+        : composed.groups;
+      const total = enforcedGroups.reduce(
+        (sum, group) => sum + group.score,
+        0,
+      );
+      return { groups: enforcedGroups, shootEnabled, total };
+    };
 
-    const shootEnabled =
-      options.defaultShootEnabled ??
-      composed.groups.some((group) => groupFires(group.enemyKey, group.count));
+    const primary = buildFromStart(bestResult.adjusted);
+    let chosen = primary;
 
-    // Balance-rule enforcement (F3): validate the composed wave against R2 /
-    // R3 via the shared rule module and repair it in place when a rule is
-    // violated. Rules win over exact target match — enforcement may grow the
-    // error (recorded in `errors`). A single-group contract
-    // (`allowMultipleGroups: false`) is honoured by swapping rather than
-    // adding, so the wave count never grows past the caller's intent.
-    const enforcedGroups = enforceRulesEnabled
-      ? enforceRules(
-          composed.groups,
-          shootEnabled,
-          target,
-          candidates,
-          tolerance,
-          maxIterations,
-          suppressFiring,
-          isAllowed,
-          movementAllowed,
-          maxGroups,
-          options.allowMultipleGroups !== false,
-        )
-      : composed.groups;
-    const enforcedTotal = enforcedGroups.reduce(
-      (sum, group) => sum + group.score,
-      0,
-    );
+    // R4 — sequential distinctness (AH-0MVSE6XIO007BXYM). Only consulted when
+    // the caller supplied a predecessor composition and the error-minimising
+    // build repeats it. The next-best start candidate — ascending evaluated
+    // error, then selection-pool order — is tried until a distinct,
+    // balance-compliant build appears. Every attempt runs the same R1–R3
+    // enforcement, so distinctness never outranks a balance rule; when no
+    // alternative exists the best eligible composition is returned (never an
+    // empty wave, never a throw).
+    if (
+      avoidCompositions.size > 0 &&
+      avoidCompositions.has(groupsComposition(primary.groups))
+    ) {
+      const alternatives = evaluations
+        .slice()
+        .sort((a, b) => a.error - b.error || a.index - b.index)
+        .filter((evaluation) => evaluation.index !== bestResult.index);
+      for (const alternative of alternatives) {
+        const attempt = buildFromStart(alternative.adjusted);
+        if (!avoidCompositions.has(groupsComposition(attempt.groups))) {
+          chosen = attempt;
+          break;
+        }
+      }
+    }
+
+    const enforcedGroups = chosen.groups;
+    const enforcedTotal = chosen.total;
+    const shootEnabled = chosen.shootEnabled;
 
     // Record this wave against every archetype it used, so later waves in the
     // same level respect the cap.

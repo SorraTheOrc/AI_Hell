@@ -32,15 +32,19 @@ import {
   OPENING_WAVE_POSITIONS,
   RANGED_ATTACK_CLASSES,
   RANGED_SHARE_CAP,
+  RULE_PRECEDENCE,
   auditWave,
   auditWaves,
   checkBoundedRangedMix,
   checkNoAllChaser,
   checkOpeningPurity,
+  checkSequentialDistinctness,
   classifyArchetype,
   classifyGroup,
   classifyWaveGroups,
+  compositionSignature,
   deriveAttackClassFromShotPattern,
+  groupsComposition,
   isOpeningWavePosition,
   type BalancedWave,
   type ClassifiedGroup,
@@ -360,5 +364,87 @@ describe('opening wave positions', () => {
       [2, 1],
       [2, 2],
     ]);
+  });
+});
+
+// ── R4 — sequential distinctness (AH-0MVSE6XIO007BXYM) ───────────────
+
+describe('R4 — sequential distinctness', () => {
+  /** A non-firing wave group (classification is irrelevant to R4). */
+  const group = (enemyKey: string) => ({ enemyKey });
+
+  it('exposes the composition signature as the single "same enemies" definition', () => {
+    // Counts, spacing, order and duplicate groups cannot manufacture variety.
+    expect(compositionSignature(['tank', 'scout', 'scout'])).toBe('scout+tank');
+    expect(groupsComposition([group('tank'), group('scout'), group('scout')])).toBe(
+      'scout+tank',
+    );
+    expect(compositionSignature([])).toBe('');
+  });
+
+  it('passes when the composition differs from the preceding wave', () => {
+    const result = checkSequentialDistinctness([group('scout')], 'tank');
+    expect(result.id).toBe('R4');
+    expect(result.pass).toBe(true);
+    expect(result.applicable).toBe(true);
+    expect(result.message).toContain('scout');
+  });
+
+  it('fails when the composition repeats the preceding wave', () => {
+    // Same archetype set in a different order: still a repeat.
+    const result = checkSequentialDistinctness(
+      [group('tank'), group('scout')],
+      'scout+tank',
+    );
+    expect(result.pass).toBe(false);
+    expect(result.applicable).toBe(true);
+    expect(result.message).toContain('repeats');
+  });
+
+  it('does not apply to a level-first wave (no predecessor)', () => {
+    const result = checkSequentialDistinctness([group('scout')], undefined);
+    expect(result.pass).toBe(true);
+    expect(result.applicable).toBe(false);
+  });
+
+  it('treats two archetype-less waves as a repeat of the empty signature', () => {
+    expect(checkSequentialDistinctness([], '').pass).toBe(false);
+  });
+
+  it('documents the precedence: the balance rules win over distinctness', () => {
+    expect(RULE_PRECEDENCE).toEqual(['R1', 'R2', 'R3', 'R4']);
+  });
+
+  it('audits R4 for a generated wave when the predecessor composition is supplied', () => {
+    const groups = classifyWaveGroups([{ enemyKey: 'scout' }]);
+    const wave: BalancedWave = {
+      groups,
+      shootEnabled: false,
+      previousComposition: 'scout',
+    };
+    const audited = auditWave(wave);
+    expect(audited.rules.map((rule) => rule.id)).toEqual(['R1', 'R2', 'R3', 'R4']);
+    expect(audited.pass).toBe(false);
+    const r4 = audited.rules.find((rule) => rule.id === 'R4');
+    expect(r4?.pass).toBe(false);
+  });
+
+  it('keeps the R1–R3 report shape when no predecessor composition is supplied', () => {
+    const groups = classifyWaveGroups([{ enemyKey: 'scout' }]);
+    const audited = auditWave({ groups, shootEnabled: false });
+    expect(audited.rules.map((rule) => rule.id)).toEqual(['R1', 'R2', 'R3']);
+  });
+
+  it('never constrains a fixed wave, even when it repeats its predecessor (Q3=a)', () => {
+    const groups = classifyWaveGroups([{ enemyKey: 'scout' }]);
+    const audited = auditWave({
+      groups,
+      shootEnabled: false,
+      generation: 'fixed',
+      previousComposition: 'scout',
+    });
+    expect(audited.exempt).toBe(true);
+    expect(audited.pass).toBe(true);
+    expect(audited.rules).toHaveLength(0);
   });
 });
