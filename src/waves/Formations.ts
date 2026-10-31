@@ -9,9 +9,11 @@
  * GDD mapping (GDD §3.2):
  * - Level 1 — **Entry**: Scout-led V-formation waves with occasional
  *   secondary escorts (AH-0MVI5XXOU00954EA, Q2 = a).
- * - Level 2 — **Descent**: mixed single-enemy waves, tighter formations.
- * - Level 3 — **The Core**: dense mixed *pairs* of enemy types.
- * - Level 4 — **Firestorm**: enemies begin firing projectiles.
+ * - Level 2 — **Descent**: dive-led single-enemy waves that alternate with a
+ *   Swarm counter-rotation (AH-0MVI5XXOU00954EA, Q2 = a).
+ * - Level 3 — **The Core**: dense mixed *pairs* built around a Tank core.
+ * - Level 4 — **Firestorm**: enemies begin firing projectiles; a mixed
+ *   Diver/Tank/Swarm core.
  * - Level 5 — **Predictable Death**: fewer enemies, predictable patterns.
  * - Level 6 — **Invasion**: the classic-arcade roster debuts — a stepping
  *   Space-Invaders `march` plus the Galaga `capturer` tractor pull.
@@ -255,7 +257,16 @@ export const LEVELS: LevelDefinition[] = [
   {
     level: 2,
     name: 'Descent',
-    // Mixed single-enemy waves (Scouts, then Divers, then Swarms).
+    // Dive-led Descent (GDD §3.2), still the no-fire onboarding level.
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the dominant archetype, vary around
+    // it): Level 2 keeps its one-group-per-wave structure and its Diver
+    // identity, but the authored waves from wave 3 on alternate Dive and
+    // Swarm so no two adjacent waves share a composition (parent AC1). The
+    // Diver still outnumbers every other archetype across the level, so the
+    // level reads as the dive-led Descent; each wave's enemy count is
+    // unchanged, so the gentle density ramp (AH-0MVCYANT6003SG5C) is
+    // preserved and the two `dynamic` opening waves stay untouched.
     waves: [
       noFire(group('scout', 'v', 8)),
       noFire(group('diver', 'diver', 8, { spacingY: 28 })),
@@ -267,11 +278,11 @@ export const LEVELS: LevelDefinition[] = [
       // campaign invariant pins a distinct dominant movement style per
       // adjacent pair — L2's scout/dive character differs from L3's cores).
       noFire(group('diver', 'diver', 10, { spacingY: 28 })),
-      noFire(group('diver', 'diver', 12, { spacingY: 28 })),
       noFire(group('swarm', 'swarm', 12, { spacingX: 26, spacingY: 20 })),
-      noFire(group('diver', 'diver', 14, { spacingY: 28 })),
+      noFire(group('diver', 'diver', 12, { spacingY: 28 })),
       noFire(group('swarm', 'swarm', 14, { spacingX: 26, spacingY: 18 })),
-      noFire(group('diver', 'diver', 16, { spacingY: 28 })),
+      noFire(group('diver', 'diver', 14, { spacingY: 28 })),
+      noFire(group('swarm', 'swarm', 16, { spacingX: 26, spacingY: 16 })),
       {
         ...noFire(
           group('diver', 'diver', 20, { spacingY: 28 }),
@@ -286,6 +297,13 @@ export const LEVELS: LevelDefinition[] = [
     level: 3,
     name: 'The Core',
     // Dense mixed pairs — two archetypes spawn together per wave.
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the dominant archetype, vary around
+    // it): the Tank core stays the level's identity and the heaviest archetype
+    // in every wave, while the escort rotates through Scout, Swarm and Diver
+    // from wave to wave so no two adjacent waves share a composition (parent
+    // AC1). Every wave still spawns at least two alternate groups, so the
+    // "dense mixed pairs" structure (and the onboarding pin) is unchanged.
     waves: [
       noFire(
         group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
@@ -324,7 +342,7 @@ export const LEVELS: LevelDefinition[] = [
       ),
       noFire(
         group('tank', 'rect', 12, { spacingX: 46, spacingY: 40 }),
-        group('swarm', 'swarm', 12, { startX: START_X + 140, spacingX: 24 }),
+        group('scout', 'v', 6, { startX: START_X + 120, spacingX: 26 }),
       ),
       {
         ...noFire(
@@ -340,6 +358,15 @@ export const LEVELS: LevelDefinition[] = [
     level: 4,
     name: 'Firestorm',
     // Enemies begin firing projectiles (GDD §2.5).
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the documented identity, vary around
+    // it): Level 4's GDD identity is a deliberate mixed Firestorm core, so it
+    // keeps exactly its three showcase archetypes (Diver, Tank, Swarm) and no
+    // fourth archetype appears. The authored waves from wave 7 on rotate the
+    // pairings (Diver+Swarm, Tank+Diver) and close with a combined-arms wave
+    // that fields all three at once, so no two adjacent waves share a
+    // composition (parent AC1) while the firing escalation and the Tank+Swarm
+    // wave-10 mini-boss are unchanged.
     waves: [
       openFire(group('diver', 'diver', 6, { spacingY: 30 })),
       openFire(group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 })),
@@ -358,8 +385,9 @@ export const LEVELS: LevelDefinition[] = [
         group('diver', 'diver', 8, { spacingY: 30 }),
       ),
       openFire(
-        group('swarm', 'swarm', 14, { spacingX: 26, spacingY: 18 }),
-        group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
+        group('diver', 'diver', 6, { spacingY: 30 }),
+        group('tank', 'rect', 6, { spacingX: 50, spacingY: 44 }),
+        group('swarm', 'swarm', 8, { startX: START_X + 140, spacingX: 24 }),
       ),
       {
         ...openFire(

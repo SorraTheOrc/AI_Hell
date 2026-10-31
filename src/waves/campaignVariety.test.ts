@@ -48,9 +48,17 @@
  * distinct, so their AC1 assertions are activated and run unskipped. The
  * campaign-wide AC1 aggregate stays red until the remaining rework items land.
  *
+ * Post-onboarding state (AH-0MVSE7F090010EG3): re-mixing the authored Levels
+ * 2–4 waves removed the last four recorded duplicate pairs (L2 ×2 at W4/W5 and
+ * W9/W10, L3 ×1 at W9/W10, L4 ×1 at W9/W10; the L1 ×7 and L5 ×6 pairs were
+ * already fixed by the pilot), so Levels 2, 3 and 4 are activated here too.
+ * Every level of the ten is therefore pairwise distinct; the campaign-wide AC1
+ * aggregate still waits for the classic-arcade/finale rework.
+ *
  * Activation owners (from the parent plan):
  * - Levels 1 & 5 → AH-0MVSE6VIW009QG2E (pilot) — **done, activated here**
- * - Levels 2, 3, 4 → AH-0MVSE7F090010EG3 (onboarding rework)
+ * - Levels 2, 3, 4 → AH-0MVSE7F090010EG3 (onboarding rework) — **done,
+ *   activated here**
  * - Levels 6–10 → AH-0MVSEFST20086D87 (classic-arcade/finale rework)
  * - Campaign AC1 aggregate → AH-0MVSEFST20086D87 (the last levels that make
  *   the whole campaign pairwise distinct).
@@ -59,7 +67,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildSequencedLevels } from './sequencedLevels';
-import type { LevelDefinition, WaveDefinition, WaveGroup } from './Formations';
+import { LEVELS, type LevelDefinition, type WaveDefinition, type WaveGroup } from './Formations';
 import type { EnemyFormationKind } from '../utils/formations';
 import {
   LEVEL_IDENTITY,
@@ -300,13 +308,13 @@ describe('auditCampaignVariety — AC1–AC3 measurements', () => {
 
 /**
  * AC1 activation ledger — levels with no adjacent composition duplicate.
- * Levels 1 and 5 were activated by the pilot (AH-0MVSE6VIW009QG2E); Levels
- * 6–10 were already pairwise distinct at the baseline. Levels 2–4 still carry
- * the remaining recorded duplicate pairs and stay skipped until their
- * onboarding rework item lands.
+ * Levels 1 and 5 were activated by the pilot (AH-0MVSE6VIW009QG2E), Levels 2–4
+ * by the onboarding rework (AH-0MVSE7F090010EG3) and Levels 6–10 were already
+ * pairwise distinct at the baseline. Only the campaign-wide aggregate is still
+ * staged (owned by the classic-arcade/finale rework).
  */
 const ACTIVE_AC1_LEVELS: ReadonlySet<number> = new Set<number>([
-  1, 5, 6, 7, 8, 9, 10,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
 ]);
 
 /**
@@ -498,4 +506,20 @@ describe('campaign variety invariants (AC1–AC3)', () => {
       },
     );
   }
+});
+
+// ── Authored onboarding rework guard (AH-0MVSE7F090010EG3) ──────────
+
+describe('authored onboarding levels (AH-0MVSE7F090010EG3)', () => {
+  it('keeps Level 4 to its three showcase archetypes — no fourth-archetype explosion', () => {
+    // Level 4's documented identity is a deliberate Diver/Tank/Swarm mix
+    // (LEVEL_IDENTITY[4].showcase). The onboarding rework re-mixes its
+    // authored waves to break adjacent composition repeats; this pin keeps
+    // that re-mix inside the three-archetype budget, so variety is bought
+    // with new *combinations* rather than by widening the level's roster.
+    const authored = LEVELS[3];
+    expect(authored.level).toBe(4);
+    const [audit] = auditCampaignVariety([authored]).levels;
+    expect(audit.distinctArchetypes).toEqual(['diver', 'swarm', 'tank']);
+  });
 });
