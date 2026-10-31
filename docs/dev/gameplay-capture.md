@@ -473,6 +473,56 @@ Everything is gated behind `import.meta.env.DEV`: a production build ignores
 the query parameter (`resolveDevScenario` is never consulted), so the shipped
 bundle and normal runs are unchanged.
 
+### Promo scenario wave definitions
+
+A promo scenario (`kind: 'promo'`) pairs a curated bot-tuning preset with a
+**hand-authored promo level** (producer answer Q2 = c on AH-0MVI5XI73000ZVYA).
+The levels live in `scripts/promo-scenarios.mjs` — one entry per catalogue
+slot — and a registry entry references one by id through its `promoLevel`
+field. The module is plain ESM (no Node APIs, no DOM, one dependency-free
+schema import), so the capture CLI and the Vite game build import the same
+bytes, with types in `scripts/promo-scenarios.d.mts`.
+
+| `promoLevel` | Scene | Editorial categories |
+|---|---|---|
+| `promo-blitz-hook` | Dense opening hook (the catalogue opener) | weapons, enemies |
+| `promo-swarm-saturation` | Swarm wall, maximal shots and drops | weapons, pickups |
+| `promo-tank-wall` | Heavy rectangular phalanxes | weapons, pickups |
+| `promo-march-columns` | Space-Invaders `march` columns | enemies, weapons |
+| `promo-centipede-tunnel` | Centipede chain through a screen | enemies |
+| `promo-ghost-hunt` | Pac-Man pursuers between escorts | enemies |
+| `promo-horde-siege` | Robotron homing-horde rush | enemies, weapons |
+| `promo-lane-runner` | Frogger lane traffic over a fleet | enemies, pickups |
+| `promo-orbital-barrage` | Orbital Phasers plus strike arcs | weapons, enemies |
+| `promo-capture-cordon` | Tractor pull and attack runs | enemies |
+| `promo-boss-prelude` | Pressure waves then a mini-boss cordon | boss, enemies |
+| `promo-final-gauntlet` | Both spawner showcases then a double-raider mini-boss | weapons, pickups, enemies, boss |
+
+Promo waves are **content, not behaviour**: every group uses an archetype the
+shipped campaign already places as a wave group (`scout`, `diver`, `tank`,
+`phaser`, `swarm`, `march`, `capturer`, `raider`) with the shipped formation
+builders, and every spawner opt-in is one `WaveDefinition` already understands
+(`ghosts`, `centipede`, `horde`, `laneTraffic`, `miniBoss`). Nothing new is
+spawned, so the gym↔game parity rule and the duplicate-body guard are not
+triggered. Automatic hazards (asteroids, harvesters, orbital strikes) keep
+their shipped scene schedules.
+
+Waves are static, authored data; everything that varies per run (spawn
+positions inside a group's range, firing, drops) comes from the run RNG, so a
+promo run is a **pure function of the scenario's seed** — the same seed plans
+the same spawns. Every level declares `level: 1`: a promo scenario is a
+single-level injected campaign, and level 1 is the identity of the campaign
+count-scaling curve, so the authored counts are played as authored.
+
+The module validates itself as it loads (unknown archetype/formation/flag,
+empty category set, over-declared `single` group, or a level number other than
+1 all throw with the level, wave and group named), and
+`scripts/promo-scenarios.test.ts` additionally runs `WaveManager`'s
+own wave-group validation and the real spawn planner over every authored
+wave. The tests also pin the archetype/formation/flag whitelists to the
+shipped campaign data and assert every editorial category is evidenced by at
+least one level.
+
 ## Full-run capture (default)
 
 `npm run capture` records a **complete run**, not a fixed clip
@@ -2189,7 +2239,13 @@ full`) or `npm run build`.
 | `scripts/capture-scenes.test.ts` | Hermetic tests for config validation, the scene/fade plan, the payload, fade-sample verification and the watchable-scene registry |
 | `src/core/captureDirector.ts` | Dev-gated `window.__aiHellCaptureDirector` in-page scene director (key validation shared with the CLI, no navigation); inert in production |
 | `src/core/captureDirector.test.ts` | Unit tests for the director's key validation, discovery and dev gate |
-| `scripts/capture-series.mjs` | Pure §7.2 series serialiser + §7.5 join-anchor builder + telemetry extraction (shared with the action-intensity export) |
+| `scripts/capture-scenarios.mjs` | Shared dev-capture scenario registry (single source of truth for the game resolver and the capture CLI) |
+| `scripts/capture-scenarios.d.mts` | Types for the shared scenario registry |
+| `scripts/capture-scenario-schema.mjs` | Dependency-free enriched-entry schema and validation (kinds, promo metadata, editorial vocabulary) |
+| `scripts/capture-scenario-schema.d.mts` | Types for the enriched-entry schema |
+| `scripts/promo-scenarios.mjs` | Hand-authored promo wave definitions: 12 branded promo levels keyed by `promoLevel`, built only from shipped archetypes/flags; self-validating data module |
+| `scripts/promo-scenarios.d.mts` | Types for the promo wave definitions (`PromoLevelDefinition` extends `LevelDefinition`) |
+| `scripts/promo-scenarios.test.ts` | Hermetic tests: WaveManager validation over every promo wave, archetype/formation/flag whitelists pinned to shipped content, per-seed determinism, editorial-category coverage, bare-Node import, and the authoring validator |
 | `scripts/capture-series.d.mts` | Types for the series/anchor module |
 | `scripts/compile-promo.mjs` | Promo compiler + ffmpeg driver: edit plan from the recorded series, cut cadence, deliverable sizing, manifests, output validation and pace verification |
 | `scripts/compile-promo.d.mts` | Types for the promo compiler |
