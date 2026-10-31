@@ -26,10 +26,13 @@
  *
  * Creating an `Image` for a texture that is not registered would make Phaser
  * warn and draw its `__MISSING` placeholder, so {@link
- * BackgroundLayer.setLevel} checks `scene.textures.exists(key)` first. A level
- * whose texture arrives *later* (a loader finishing after the scene starts) is
- * picked up when the level is set again: while a photo is displayed an
- * unchanged level is a strict no-op, while a fallback retries the lookup.
+ * BackgroundLayer.setLevel} checks `scene.textures.exists(key)` first. While
+ * the level's texture is missing the layer asks the shared {@link
+ * loadBackgroundTextures} loader for it and keeps showing the solid fallback;
+ * when the JPEG finishes decoding the loader's completion callback re-applies
+ * the level and upgrades the fallback to the photo. Because the loader is
+ * reached from this module, `PlayScene` and every gym obtain their backdrop
+ * photos through the same code (AGENTS.md gym↔game parity rule).
  *
  * @module scenes/core/backgroundLayer
  */
@@ -46,6 +49,22 @@ import {
   GAME_HEIGHT,
   GAME_WIDTH,
 } from '../../core/constants';
+import {
+  loadBackgroundTextures,
+  type BackgroundTextureSource,
+} from './backgroundLoader';
+
+/**
+ * Per-layer overrides. Production callers omit this; the options exist so a
+ * test can drive the real load path with a data-URI source (no network).
+ */
+export interface BackgroundLayerOptions {
+  /**
+   * Overrides the texture source the loader fetches from. Omit it to load the
+   * bundled `assets/backgrounds/<key>.jpg` files.
+   */
+  resolveTextureSource?: BackgroundTextureSource;
+}
 
 /**
  * Handle to one scene's background layer — the entire lifecycle surface every
@@ -62,7 +81,8 @@ export interface BackgroundLayer {
   /**
    * Shows `level`'s background (`backgroundForLevel`) — idempotent: an
    * unchanged level with a displayed photo creates nothing and destroys
-   * nothing. A missing texture falls back to the solid colour.
+   * nothing. A missing texture shows the solid fallback **and** asks the
+   * shared loader for the photo, upgrading in place once it decodes.
    */
   setLevel(level: number): void;
   /** Removes every display object this layer created; safe to repeat. */
@@ -80,6 +100,7 @@ function fillOf(colour: string): number {
 class SharedBackgroundLayer implements BackgroundLayer {
   private readonly scene: Phaser.Scene;
   private readonly dimLayer: Phaser.GameObjects.Rectangle;
+  private readonly resolveTextureSource: BackgroundTextureSource | undefined;
   private photo: Phaser.GameObjects.Image | null = null;
   private fallback: Phaser.GameObjects.Rectangle | null = null;
   private key: string | null = null;
@@ -88,9 +109,11 @@ class SharedBackgroundLayer implements BackgroundLayer {
   constructor(
     scene: Phaser.Scene,
     dim: Phaser.GameObjects.Rectangle,
+    options: BackgroundLayerOptions = {},
   ) {
     this.scene = scene;
     this.dimLayer = dim;
+    this.resolveTextureSource = options.resolveTextureSource;
   }
 
   get image(): Phaser.GameObjects.Image | null {
@@ -132,6 +155,17 @@ class SharedBackgroundLayer implements BackgroundLayer {
     this.destroyPhoto();
     this.dimLayer.setVisible(false);
     this.ensureFallback();
+    // Ask for the photo without blocking: the fallback stays visible until the
+    // decode completes, then this level is re-applied and upgraded in place.
+    // The loader is idempotent per texture-manager lifetime, so a repeated
+    // setLevel for the same missing level never queues the file twice.
+    loadBackgroundTextures(this.scene, [key], {
+      resolveSource: this.resolveTextureSource,
+      onTextureReady: (loadedKey: string) => {
+        if (this.destroyed || this.key !== loadedKey) return;
+        this.setLevel(level);
+      },
+    });
   }
 
   destroy(): void {
@@ -174,10 +208,12 @@ class SharedBackgroundLayer implements BackgroundLayer {
  *
  * @param scene - The scene that owns the layer (and its display list).
  * @param level - 1-based campaign level (defaults to level 1).
+ * @param options - Optional texture-source override (tests use a data URI).
  */
 export function createBackgroundLayer(
   scene: Phaser.Scene,
   level = 1,
+  options: BackgroundLayerOptions = {},
 ): BackgroundLayer {
   const dim = scene.add
     .rectangle(
@@ -192,7 +228,7 @@ export function createBackgroundLayer(
     .setScrollFactor(0)
     .setDepth(BACKGROUND_DIM_DEPTH)
     .setVisible(false);
-  const layer = new SharedBackgroundLayer(scene, dim);
+  const layer = new SharedBackgroundLayer(scene, dim, options);
   layer.setLevel(level);
   return layer;
 }

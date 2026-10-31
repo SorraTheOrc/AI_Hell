@@ -1156,9 +1156,11 @@ export class PlayScene extends CombatScene<
 
     // Shared background layer (parent AH-0MVIB7PD50029ZY1): full-canvas photo
     // plus readability dim overlay, or the solid GAME_BACKGROUND_COLOR
-    // fallback when the level's texture is not loaded yet. The lifecycle lives
-    // once in the shared core; the level itself is applied below once the
-    // WaveManager knows the run's starting level.
+    // fallback while the level's bundled JPEG loads at runtime
+    // (AH-0MVVL4Q2E00934MS — the shared layer requests the texture without
+    // blocking this create()). The lifecycle lives once in the shared core;
+    // the level itself is applied below once the WaveManager knows the run's
+    // starting level.
     this._createBackground();
 
     // Player ship (auto-fire, weapons, effects).

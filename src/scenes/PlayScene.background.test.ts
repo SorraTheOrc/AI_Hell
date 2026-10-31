@@ -9,7 +9,7 @@
  * nothing leaks into the next run.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import {
@@ -89,6 +89,7 @@ describe('PlayScene — shared background layer', () => {
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
+    vi.restoreAllMocks();
     localStorage.clear();
     document.body.innerHTML = '';
   });
@@ -99,6 +100,11 @@ describe('PlayScene — shared background layer', () => {
   }
 
   it('boots and ticks with no background textures registered, showing the solid fallback', async () => {
+    // The runtime loader must never reach for the network during the
+    // deterministic test boot: suites supply textures through the shared
+    // fixtures, so this pins the "fallback until a fixture is registered"
+    // half of the load slice's contract (AH-0MVVL4Q2E00934MS AC5).
+    const warn = vi.spyOn(console, 'warn');
     const scene = await bootPlay();
     const layer = backgroundHost(scene).backgroundLayer;
 
@@ -113,10 +119,21 @@ describe('PlayScene — shared background layer', () => {
     expect(fallbacks[0].input).toBeNull();
     expect(layer!.dim.visible).toBe(false);
 
-    // A missing backdrop texture is expected (the loader ships separately):
-    // create() completed and the run keeps ticking.
+    // A missing backdrop texture is expected here (fixtures supply textures in
+    // tests; the shipped game loads the bundled JPEG at runtime): create()
+    // completed and the run keeps ticking.
     await expect(advanceGame(booted!.game, 300)).resolves.toBeUndefined();
     expect(scene.sys.isActive()).toBe(true);
+    // Nothing reached the loader (no queued/in-flight file) and no load
+    // failure was reported, so the deterministic boot stayed offline.
+    expect(scene.load.list.size).toBe(0);
+    expect(scene.load.inflight.size).toBe(0);
+    expect(scene.load.isLoading()).toBe(false);
+    expect(
+      warn.mock.calls.filter(([message]) =>
+        String(message).includes('[backgrounds]'),
+      ),
+    ).toEqual([]);
   });
 
   it('uses the shared layer at the started campaign level', async () => {

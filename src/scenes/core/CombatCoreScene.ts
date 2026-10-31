@@ -1824,8 +1824,11 @@ export class CombatCoreScene<
    * re-create destroys any layer left by a previous run.
    *
    * A missing texture is not an error: the layer shows
-   * `GAME_BACKGROUND_COLOR` until {@link CombatCoreScene._setBackgroundLevel}
-   * (or a later `setLevel`) finds the level's texture.
+   * `GAME_BACKGROUND_COLOR`, asks the shared `loadBackgroundTextures` loader
+   * for the level's bundled JPEG (non-blocking, so `create()` never waits on
+   * the decode), and upgrades to the photo once it arrives. Every scene that
+   * calls this hook — `PlayScene` and the gyms — therefore uses the same load
+   * path.
    *
    * @param level - 1-based campaign level to show (defaults to level 1).
    */
@@ -1838,8 +1841,11 @@ export class CombatCoreScene<
    * Shows `level`'s background through the shared layer.
    *
    * Idempotent for an unchanged level (no display-object churn), so a
-   * level-change or per-frame refresh can call it freely. A no-op when no
-   * layer exists or after teardown.
+   * level-change or per-frame refresh can call it freely. A level whose
+   * texture has not decoded yet shows the solid fallback and requests the
+   * photo through the shared loader (see
+   * {@link CombatCoreScene._createBackground}). A no-op when no layer exists
+   * or after teardown.
    *
    * @param level - 1-based campaign level (`1..LEVELS.length`).
    */
