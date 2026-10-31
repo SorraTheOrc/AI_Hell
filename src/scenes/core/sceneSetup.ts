@@ -24,10 +24,49 @@
  * `applySceneSetup` is intentionally total: an absent setup (or a scene with no
  * player) is a no-op, so a scene started without a setup keeps exactly its
  * pre-change behaviour.
+ *
+ * ## Slot-cap divergence — documented, not silent
+ *
+ * A planned capture loadout may pre-grant **more than six counted kinds**
+ * (`weapons` + `weaponLevels` + `powerUps`), which no organic play surface can
+ * do: the Oct 29 recordings start at tick 0 with seven permanently-granted
+ * kinds and zero pickups. Gating the applier would break the scripted video and
+ * gym beats that exist to show a full late-game ship, so this surface
+ * **intentionally diverges** from the cap (decision recorded on
+ * AH-0MVVJS34M00551ES AC3, docs in GDD §4.4 and `docs/BALANCING.md`).
+ *
+ * The divergence is contained by a guard instead of a gate:
+ * {@link resolveSceneSetupState} only returns a setup when the run-progress dev
+ * gate is on (`import.meta.env.DEV`, folded to `false` in a shipped build), and
+ * `PlayScene` applies a setup **only** through it — so the normal play path can
+ * never inherit a capture loadout, while the capture/gym path keeps its
+ * designed freedom. `applySceneSetup` itself never consults the slot pool.
  */
 
 import type { PowerUpId } from '../../powerups/types';
 import type { WeaponId } from '../../utils/weapons';
+
+/**
+ * Resolves the capture setup a scene is allowed to apply.
+ *
+ * The run-progress dev gate is the **only** thing that admits a setup: in a
+ * shipped build `devEnabled` folds to `false`, so a launch payload can never
+ * place a pre-granted (potentially over-cap) loadout into normal play. This is
+ * the guard that contains the documented slot-cap divergence of this module
+ * (AH-0MVVJS34M00551ES AC3) — see the module doc.
+ *
+ * @param setup - The raw `setup` field of a scene's launch data, if any.
+ * @param options.devEnabled - Whether the run-progress dev gate is on.
+ * @returns The setup to apply, or `null` when it must be ignored.
+ */
+export function resolveSceneSetupState(
+  setup: unknown,
+  options: { devEnabled: boolean },
+): SceneSetupState | null {
+  if (!options.devEnabled) return null;
+  if (!setup || typeof setup !== 'object') return null;
+  return setup as SceneSetupState;
+}
 
 /**
  * The narrow player surface a setup needs. Kept structural so the applier is

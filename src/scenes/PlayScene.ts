@@ -66,7 +66,11 @@ import {
 } from '../core/rules';
 import { buildHoldFullFireSchedule } from '../scenes/core/holdFullFire';
 import type { MineralChoiceScene } from './MineralChoiceScene';
-import { applySceneSetup, type SceneSetupState } from './core/sceneSetup';
+import {
+  applySceneSetup,
+  resolveSceneSetupState,
+  type SceneSetupState,
+} from './core/sceneSetup';
 import {
   playDestructionSound,
   playSpawnSound,
@@ -1109,9 +1113,11 @@ export class PlayScene extends CombatScene<
     if (data?.seed !== undefined) this.injectedRunSeed = normaliseSeed(data.seed);
     // Capture configuration is dev-gated exactly like `startLevel`: a shipped
     // build folds the gate to `false` and can never apply launch-data state.
-    this.sceneSetup = isRunProgressEnabled() && data?.setup
-      ? (data.setup as SceneSetupState)
-      : null;
+    // The one guard on the capture-setup slot-cap divergence: a setup is
+    // applied only behind the dev run-progress gate (AH-0MVVJS34M00551ES AC3).
+    this.sceneSetup = resolveSceneSetupState(data?.setup, {
+      devEnabled: isRunProgressEnabled(),
+    });
     // Start position is dev-gated exactly like `startLevel`: a shipped build
     // always begins the campaign at level 1, wave 1, before the boss.
     this.devStartWave = isRunProgressEnabled()

@@ -257,3 +257,45 @@ describe('the HUD slot budget and non-slot rows are documented (AH-0MVVJRRN10038
     expect(section).toContain('combatHudOptions');
   });
 });
+
+// ── Audited surfaces and their documented divergence (AH-0MVVJS34M00551ES) ──
+//
+// Every acquisition surface consults the shared pool. Two surfaces behave
+// differently *by decision*, and the reason must stay discoverable so a future
+// reader does not "fix" the divergence or, worse, assume the cap is broken:
+//
+// - capture/scripted setups may pre-grant more than six kinds (dev-gated off
+//   the normal play path), and
+// - a checkpoint is bounded on save (the replay restores a hand-written
+//   payload verbatim, for resumed-run parity).
+
+describe('the audited acquisition surfaces are documented (AH-0MVVJS34M00551ES)', () => {
+  const gdd = read(GDD_PATH);
+  const balancing = read(BALANCING_PATH);
+
+  it('the GDD records the capture-setup divergence and its dev-gate guard', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/capture|scripted/i);
+    expect(section).toMatch(/divergen/i);
+    expect(section).toContain('resolveSceneSetupState');
+    expect(section).toMatch(/dev gate|import\.meta\.env\.DEV/i);
+    expect(section).toMatch(/sceneSetup\.ts/);
+  });
+
+  it('the GDD records that a checkpoint never persists a seventh kind', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/checkpoint/i);
+    expect(section).toContain('saveCheckpoint');
+    expect(section).toContain('capCheckpointLoadout');
+    expect(section).toMatch(/exempt\s+entries?\s+(still\s+)?(survive|come back|restore)/i);
+  });
+
+  it('docs/BALANCING.md records both named surfaces and their reasons', () => {
+    const section = balancingSection(balancing);
+    expect(section).toMatch(/capture|scripted/i);
+    expect(section).toContain('resolveSceneSetupState');
+    expect(section).toContain('capCheckpointLoadout');
+    expect(section).toMatch(/checkpoint/i);
+    expect(section).toMatch(/deliberate|by design|intended/i);
+  });
+});

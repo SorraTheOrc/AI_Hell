@@ -1086,6 +1086,27 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   permanent pick for a kind held only temporarily (it already owns its slot) and
   the available-when-full entries — never a kind outside the slots, so a seventh
   kind can never be taken. Below the cap the gate is inert.
+- **Capture/scripted setups intentionally diverge (AH-0MVVJS34M00551ES).** The
+  capture/gym `setup` payload ([`src/scenes/core/sceneSetup.ts`](../src/scenes/core/sceneSetup.ts))
+  pre-grants `weapons` / `weaponLevels` / `powerUps` straight through
+  `Player.equipWeapon` / `PowerUpLevelStore.collect`, and it may name **more
+  than six counted kinds** — the 29 Oct recordings start at tick 0 with seven
+  permanently-granted kinds and zero pickups. That is a **deliberate**
+  divergence, not a bypass in play: the scripted video and gym beats exist to
+  show a full late-game ship, and gating the applier would change those shots.
+  It is contained instead of gated — a setup is applied **only** through
+  `resolveSceneSetupState` behind the run-progress dev gate
+  (`import.meta.env.DEV`, which folds to `false` in a shipped build), so normal
+  play can never inherit a capture loadout.
+- **A checkpoint never persists a seventh kind.** The checkpoint save seam
+  (`saveCheckpoint` → `capCheckpointLoadout`,
+  [`src/core/checkpointStore.ts`](../src/core/checkpointStore.ts)) bounds the
+  persisted permanent grants with the same shared predicate, so `Continue` can
+  never restore more counted kinds than the run could hold, while exempt
+  entries survive. The resume replay itself does **not** re-gate a payload: it
+  must reproduce the saved run exactly (HUD/effect parity,
+  AH-0MVSHI07B003BZIP), and a hand-written `localStorage` payload is not a play
+  surface.
 - **Every permanent-grant surface is gated, including the mini-boss unlock.**
   The mini-boss reward (§4.4.4) offers two option families, and only the
   **upgrade** half is built by `buildChoiceCandidates`. Its **unlock** half — a

@@ -321,6 +321,19 @@ cap shapes what a run can become.
   none. The slot-counted rows therefore equal the model's `used` and never
   exceed `POWER_UP_SLOT_CAP`, and the same wiring (`combatHudOptions`) feeds
   `PlayScene` and every gym, so gym↔game parity holds for the display too.
+- **Capture/scripted setups and the checkpoint save are handled explicitly
+  (AH-0MVVJS34M00551ES).** Two surfaces are worth naming because they look like
+  cap breaches. (1) The capture/gym `setup` payload
+  ([`src/scenes/core/sceneSetup.ts`](../src/scenes/core/sceneSetup.ts)) may
+  pre-grant **more than six counted kinds** — deliberate, because the scripted
+  video beats exist to show a full late-game ship; it is contained by the
+  run-progress dev gate (`resolveSceneSetupState`, folded off in a shipped
+  build) so normal play can never inherit it. (2) A checkpoint is bounded on
+  **save** (`capCheckpointLoadout` in
+  [`src/core/checkpointStore.ts`](../src/core/checkpointStore.ts)) through the
+  shared predicate, so `Continue` restores at most six counted kinds and exempt
+  entries still come back; the replay itself restores a hand-written payload
+  verbatim, by design (the resumed run must match the saved run exactly).
 - **Evidence scope.** Existing bot/batch evidence was recorded before the cap,
   so a late-game campaign run now sees a different loadout. Re-running and
   re-recording the bot batches is **out of scope** for the cap work item; it

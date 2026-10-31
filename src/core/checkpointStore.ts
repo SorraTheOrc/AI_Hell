@@ -22,7 +22,8 @@
 // Phaser/DOM), so the store gains one dependency and the default cannot drift
 // from the gameplay value (AH-0MVT1DYO5004UC4P).
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from './rules';
-import type { PowerUpId } from '../powerups/types';
+import { isWithinSlotPool, resolveSlotState } from '../powerups/slots';
+import type { DropId, PowerUpId } from '../powerups/types';
 import type { WeaponId } from '../utils/weapons';
 
 /** localStorage key for the run checkpoint. */
@@ -215,6 +216,49 @@ export function loadCheckpoint(
 }
 
 /**
+ * Bounds a checkpoint's permanent grants to the shared six-slot pool
+ * (AH-0MVVJS34M00551ES AC1, parent AH-0MVVF0POV001JNKX AC2).
+ *
+ * A checkpoint is written from a capped run, so in normal play every entry
+ * already fits and this is a no-op. It is the **save-side gate** that makes the
+ * resume surface safe: whatever a caller hands in — a legacy in-memory state, a
+ * bug-induced over-cap loadout, a migrated payload — the persisted payload
+ * never names more counted kinds than a run can hold, so `Continue` can never
+ * restore a seventh.
+ *
+ * Entries are admitted in payload order through the shared predicate
+ * ({@link isWithinSlotPool}), the same one the drop draw, collection gate and
+ * choice use:
+ *
+ * - a kind already admitted (or exempt / slot-exempt) is kept with **all** its
+ *   levels — levelling a held kind never opens a slot;
+ * - a kind that would take the pool past {@link POWER_UP_SLOT_CAP} is dropped
+ *   entirely (its levels would change the run's effects, so a partial keep is
+ *   not an option).
+ *
+ * The gate deliberately does **not** run on load: the replay must reproduce the
+ * saved run exactly for HUD/effect parity (AH-0MVSHI07B003BZIP), and a
+ * hand-written `localStorage` payload is not a play surface. The documented
+ * divergence is recorded in GDD §4.4 and `docs/BALANCING.md`.
+ *
+ * @param checkpoint - The checkpoint a caller wants to persist.
+ * @returns A copy whose permanent grants fit the six-slot pool.
+ */
+export function capCheckpointLoadout(checkpoint: Checkpoint): Checkpoint {
+  const weaponLevels: CheckpointWeaponLevel[] = [];
+  const powerUpLevels: CheckpointPowerUpLevel[] = [];
+  for (const entry of checkpoint.weaponLevels) {
+    const state = resolveSlotState(powerUpLevels, weaponLevels);
+    if (isWithinSlotPool(entry.id as DropId, state)) weaponLevels.push(entry);
+  }
+  for (const entry of checkpoint.powerUpLevels) {
+    const state = resolveSlotState(powerUpLevels, weaponLevels);
+    if (isWithinSlotPool(entry.id as DropId, state)) powerUpLevels.push(entry);
+  }
+  return { ...checkpoint, weaponLevels, powerUpLevels };
+}
+
+/**
  * Persists a checkpoint (overwriting any previous one).
  *
  * @param checkpoint - The checkpoint to store.
@@ -227,9 +271,12 @@ export function saveCheckpoint(
 ): boolean {
   if (!storage) return false;
   try {
+    // Save-side six-slot gate: the persisted payload can never name more
+    // counted kinds than a run may hold (AH-0MVVJS34M00551ES AC1).
+    const bounded = capCheckpointLoadout(checkpoint);
     storage.setItem(
       CHECKPOINT_STORAGE_KEY,
-      JSON.stringify({ ...checkpoint, version: CHECKPOINT_VERSION }),
+      JSON.stringify({ ...bounded, version: CHECKPOINT_VERSION }),
     );
     return true;
   } catch {
