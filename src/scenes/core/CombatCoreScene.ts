@@ -1814,6 +1814,40 @@ export class CombatCoreScene<
   protected backgroundLayer: BackgroundLayer | null = null;
 
   /**
+   * The campaign level whose shared backdrop this scene renders, or `null`
+   * when the scene renders no backdrop at all.
+   *
+   * A scene states *which* backdrop it shows in exactly one place, and its
+   * `create()` calls {@link CombatCoreScene._createSceneBackground} to act on
+   * it. `PlayScene` returns its starting campaign level and then follows the
+   * live run level through {@link CombatCoreScene._setBackgroundLevel}; the
+   * gyms inherit the gym family's single decision from
+   * `src/scenes/gym/core/gymBackground.ts` (fixed representative level, no
+   * warp) — so a gym cannot fork the backdrop without overriding this hook.
+   *
+   * Default: no backdrop (`null`).
+   */
+  protected backgroundLevel(): number | null {
+    return null;
+  }
+
+  /**
+   * Creates the shared background layer at {@link
+   * CombatCoreScene.backgroundLevel}, when the scene has one.
+   *
+   * The one creation seam every backdrop-rendering scene calls from
+   * `create()`: it delegates to {@link CombatCoreScene._createBackground}, so
+   * the game and every gym render through the *same* `createBackgroundLayer`
+   * implementation (AGENTS.md gym↔game parity rule). A no-op when
+   * {@link CombatCoreScene.backgroundLevel} returns `null`.
+   */
+  protected _createSceneBackground(): void {
+    const level = this.backgroundLevel();
+    if (level === null) return;
+    this._createBackground(level);
+  }
+
+  /**
    * Creates the shared background layer for this scene.
    *
    * The whole lifecycle (full-canvas photo, readability dim overlay, solid

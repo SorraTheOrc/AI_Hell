@@ -73,6 +73,7 @@
 import Phaser from 'phaser';
 
 import { CombatScene } from '../core/CombatScene';
+import { gymBackgroundLevel } from './core/gymBackground';
 import type { SceneSetupState } from '../core/sceneSetup';
 import { advanceWrappingBullets } from '../core/bulletLifecycle';
 import { WAVE_TIME_LIMIT_SECONDS } from '../core/waveTimeout';
@@ -213,10 +214,18 @@ export class GymPowerUpsCombat extends CombatScene<
     super({ key: 'GymPowerUpsCombat' });
   }
 
+  /** Gym family background decision: fixed representative level, no warp. */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(data?: SceneSetupState): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
+    // Shared background layer at the gym family's pinned level (see
+    // `core/gymBackground.ts`, AH-0MVSEC0J0004YNJC).
+    this._createSceneBackground();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,

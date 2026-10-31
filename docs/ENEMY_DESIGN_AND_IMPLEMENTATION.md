@@ -1741,6 +1741,26 @@ there is no per-scene layer copy to drift — and the cross-scene equivalence
 suite boots the game and each gym to prove identical outcomes while the ship is
 phased or an enemy is emerging.
 
+**Shared background layer, adopted by every combat gym
+(AH-0MVSEC0J0004YNJC).** The backdrop is a shipped gameplay object, so the
+gyms run the *same* code as `PlayScene`: `CombatCoreScene._createSceneBackground`
+→ `createBackgroundLayer` (`src/scenes/core/backgroundLayer.ts`) — full-canvas
+photo at `BACKGROUND_DEPTH`, readability dim overlay at `BACKGROUND_DIM_DEPTH`,
+both non-interactive and camera-fixed. `GymFormationScene` (inherited by every
+formation gym) and the direct `CombatScene`/`CombatCoreScene` gyms
+(`GymLevel`/`GymBotTuning`, `GymPlayer`, `GymWeapons`, `GymWeaponLeveling`,
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymPowerUpLeveling`) all override
+the one core hook `backgroundLevel()` with the gym family's single decision in
+[`src/scenes/gym/core/gymBackground.ts`](../src/scenes/gym/core/gymBackground.ts),
+so no gym owns background draw/swap code and the duplicate-body guard stays
+green. **Documented divergence:** a gym pins the representative level-1
+backdrop (`backgroundForLevel(1)`, so silhouettes are compared against a
+constant) and never swaps or warps it, because a gym has no campaign
+level-change flow — `GymLevel` previews a level's enemies but keeps the same
+constant backdrop. Pinned by
+[`src/scenes/gym/backgroundParity.test.ts`](../src/scenes/gym/backgroundParity.test.ts)
+and recorded in [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
+
 **Documented divergence — the Player gym's obstacle course.** `GymPlayer`
 spawns a deterministic set of indestructible obstacles
 (`src/entities/Obstacle.ts`) that the shipped `PlayScene` does not yet have.

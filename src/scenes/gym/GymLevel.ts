@@ -96,6 +96,7 @@
 import Phaser from 'phaser';
 
 import { CombatScene, type CombatDrop } from '../core/CombatScene';
+import { gymBackgroundLevel } from './core/gymBackground';
 import { pushAimTargets, pushSeekTargets } from '../core/enemyTargeting';
 import { advancePlayerBullets, advanceWrappingBullets } from '../core/bulletLifecycle';
 import {
@@ -863,8 +864,16 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
 
   // ── Scene creation ───────────────────────────────────────────────
 
+  /** Gym family background decision: fixed representative level, no warp. */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(): void {
     this.resetRunState();
+    // Shared background layer at the gym family's pinned level (see
+    // `core/gymBackground.ts`, AH-0MVSEC0J0004YNJC).
+    this._createSceneBackground();
     // `resetRunState()` zeroes the wave cursor; restore a setup's start wave
     // before the first wave is spawned so the captured window opens on it.
     if (this.pendingStartWaveIndex > 0 && this.wavesToPlay.length > 0) {

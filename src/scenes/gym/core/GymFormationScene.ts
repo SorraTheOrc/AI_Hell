@@ -175,6 +175,7 @@ import {
   updateSpawnEmergence,
   type SpawnAnimatable,
 } from '../../../vfx/wormholeSpawn';
+import { gymBackgroundLevel } from './gymBackground';
 
 /** Contract an enemy entity must satisfy to be driven by the base scene. */
 export interface FormationSceneEntity extends Phaser.GameObjects.GameObject {
@@ -700,10 +701,32 @@ export class GymFormationScene<
     if (seed !== null) this._sceneRng = createSeededRng(seed);
   }
 
+  /**
+   * The gym family's background level — inherited by every formation gym.
+   *
+   * Gyms adopt the game's shared backdrop but pin the representative level-1
+   * photo and never swap/warp it: the one documented decision for the whole
+   * family lives in `src/scenes/gym/core/gymBackground.ts` (slice
+   * AH-0MVSEC0J0004YNJC), so a formation gym has no background code of its
+   * own.
+   */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
-    this.resetRunState();    const { config } = this;
+    this.resetRunState();
+
+    // Shared background layer (parent AH-0MVIB7PD50029ZY1, slice
+    // AH-0MVSEC0J0004YNJC): the game's backdrop at the fixed representative
+    // level, through the same core seam `PlayScene` uses. Created before the
+    // player/formation so the backdrop sits behind everything; the layer's
+    // depth already guarantees that ordering.
+    this._createSceneBackground();
+
+    const { config } = this;
 
     // ── Player ship (optional per-scene opt-in) ────────────────────
     // The ship and its capture setup are created **before** the formation so

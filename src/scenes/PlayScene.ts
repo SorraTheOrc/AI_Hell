@@ -1195,8 +1195,9 @@ export class PlayScene extends CombatScene<
     // (AH-0MVVL4Q2E00934MS — the shared layer requests the texture without
     // blocking this create()). The lifecycle lives once in the shared core;
     // the level itself is applied below once the WaveManager knows the run's
-    // starting level.
-    this._createBackground();
+    // starting level. `_createSceneBackground()` reads the initial level from
+    // {@link PlayScene.backgroundLevel} — the same seam every gym uses.
+    this._createSceneBackground();
 
     // Player ship (auto-fire, weapons, effects).
     //
@@ -2849,6 +2850,20 @@ export class PlayScene extends CombatScene<
     this._hideWaveTimer();
     this._updateTransitionBanner();
     if (levelChanged) this._beginLevelChangeWarp();
+  }
+
+  /**
+   * The shipped game's starting backdrop level.
+   *
+   * A run opens on level 1 and {@link PlayScene._onLevelCleared} then follows
+   * the live campaign level through
+   * {@link CombatCoreScene._setBackgroundLevel} (plus the level-change warp),
+   * so this hook names only the *initial* level. Gyms override the same hook
+   * with their family's fixed representative level and never swap — the
+   * documented divergence in `src/scenes/gym/core/gymBackground.ts`.
+   */
+  protected override backgroundLevel(): number | null {
+    return 1;
   }
 
   /**
