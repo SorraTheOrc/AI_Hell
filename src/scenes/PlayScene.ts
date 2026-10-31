@@ -306,8 +306,8 @@ import {
   advanceWrappingBullets,
 } from './core/bulletLifecycle';
 import {
-  resolveMineralKillDrops,
-  scatterSalvageMineralDrops,
+  createMineralDeposit,
+  resolveMineralKillPayout,
 } from './core/mineralKillDrops';
 import {
   rollAsteroidExtraLife,
@@ -4184,7 +4184,7 @@ export class PlayScene extends CombatScene<
       this.minerals,
       this.player,
       absorbers,
-      () => this._collectMineral(),
+      (mineral) => this._collectMineral(mineral),
       { playerPhased: this.isPlayerPhased() && !transitioning },
     );
   }
@@ -4227,29 +4227,24 @@ export class PlayScene extends CombatScene<
     ) {
       this.spawnPowerUpDrop('extra_life', s.entity.x, s.entity.y);
     }
-    // Mineral drops (GDD §4.5): the shared kill-drop rule decides — a small
+    // Mineral drops (GDD §4.5): the shared kill-payout seam decides — a small
     // asteroid leaves one mineral at the site, large/medium asteroids do not
     // (their small split children do), and a non-asteroid enemy re-drops a
-    // fraction of the minerals it absorbed while alive.
-    this.minerals.push(
-      ...resolveMineralKillDrops(this, s.entity, this.rng),
-    );
+    // fraction of the minerals it absorbed. At the deposit threshold the
+    // wreck leaves a single red deposit worth `MINERAL_DEPOSIT_VALUE` instead
+    // of the whole scatter (AH-0MVJ79739008396I).
+    //
     // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
     // the wreck of a destroyed enemy ship (hazards excluded — they are not
-    // bounty targets). The shared seam renders them orange so the payout is
-    // visible against ordinary gold drops (AH-0MVJ72I8O0009T09).
-    const salvageBonus = this.effectsRegistry.salvageBonusMinerals();
-    if (salvageBonus > 0 && !isNonBlockingHazard(s.enemyKey)) {
-      this.minerals.push(
-        ...scatterSalvageMineralDrops(
-          this,
-          s.entity.x,
-          s.entity.y,
-          salvageBonus,
-          this.rng,
-        ),
-      );
-    }
+    // bounty targets). The bonus is folded into the deposit threshold and its
+    // orange scatter is suppressed when the deposit fires, so one wreck always
+    // produces exactly one payout shape (AH-0MVJ79739008396I).
+    const salvageBonus = isNonBlockingHazard(s.enemyKey)
+      ? 0
+      : this.effectsRegistry.salvageBonusMinerals();
+    this.minerals.push(
+      ...resolveMineralKillPayout(this, s.entity, salvageBonus, this.rng),
+    );
     // Non-blocking hazards (asteroids, lane traffic) are not wave-accounted
     // (AH-0MUJM746P000QAEO, AH-0MV01EPM40008N8T): destroying one must not
     // advance the wave. Only non-hazard enemy ships drive wave/level/boss
@@ -5163,6 +5158,18 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Spawns a red mineral **deposit** at (x, y) and registers it on the field.
+   * The deposit is worth `MINERAL_DEPOSIT_VALUE` (10) in a single pickup and
+   * is built through the shared `createMineralDeposit` seam, so its colour and
+   * value can never drift from the kill-drop rule (AH-0MVJ79739008396I).
+   */
+  spawnMineralDepositAt(x: number, y: number): Mineral {
+    const deposit = createMineralDeposit(this, x, y);
+    this.minerals.push(deposit);
+    return deposit;
+  }
+
+  /**
    * Spawns an asteroid of the given size tier at (x, y). Asteroids are NOT
    * registered with the WaveManager (AH-0MUJM746P000QAEO): they do not gate
    * wave completion and persist in the field across wave/level transitions.
@@ -5347,9 +5354,16 @@ export class PlayScene extends CombatScene<
     applyMineralChoiceReward(option, this.effectsRegistry, this.player);
   }
 
-  /** Collects a mineral: adds it to the hold and opens the choice when full. */
-  private _collectMineral(): void {
-    this.gameState.addMinerals(loadRules().mineralCollectAmount);
+  /**
+   * Collects a mineral: credits its **worth** to the hold and opens the choice
+   * when full. An ordinary dot is worth `mineralCollectAmount` (1); a red
+   * deposit is worth `MINERAL_DEPOSIT_VALUE` (10) and pays out in this single
+   * pickup (AH-0MVJ79739008396I).
+   *
+   * @param mineral — the collected mineral whose `value` is credited.
+   */
+  private _collectMineral(mineral: Mineral): void {
+    this.gameState.addMinerals(mineral.value);
     this.runTelemetry.mineralCollected(this.gameState.minerals);
     this._syncMineralHud();
     if (this.gameState.isHoldFull()) this.openMineralChoice();

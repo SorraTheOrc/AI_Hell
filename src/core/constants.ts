@@ -413,6 +413,38 @@ export const MINERAL_COLOR = 0xffdd44;
 export const MINERAL_SALVAGE_COLOR = 0xff7a2e;
 
 /**
+ * Red mineral **deposit** body colour (hex, AH-0MVJ79739008396I).
+ *
+ * A destroyed ship whose resolved re-drop count reaches
+ * {@link MINERAL_DEPOSIT_THRESHOLD} leaves a single red deposit instead of a
+ * scatter of gold dots: the deposit replaces the whole payout and is worth
+ * {@link MINERAL_DEPOSIT_VALUE} minerals. Red is otherwise unused by the
+ * mineral economy (gold `MINERAL_COLOR`, orange `MINERAL_SALVAGE_COLOR`), so a
+ * red dot uniquely means "one big payout".
+ */
+export const MINERAL_DEPOSIT_COLOR = 0xff1744;
+
+/**
+ * Resolved re-drop count at which a destroyed ship leaves one red
+ * {@link MINERAL_DEPOSIT_COLOR} deposit instead of individual gold minerals
+ * (AH-0MVJ79739008396I).
+ *
+ * The comparison uses the **post-bonus** resolved count —
+ * `mineralRedropCount(rng)` (absorbed minerals plus the random additive bonus,
+ * rounded) and, while the Salvage bounty window is active, its level-resolved
+ * bonus. At or above this threshold the single deposit replaces the **entire**
+ * payout, so any surplus is intentionally lost.
+ */
+export const MINERAL_DEPOSIT_THRESHOLD = 10;
+
+/**
+ * Minerals a single red deposit is worth when collected by the player or
+ * absorbed by an enemy (AH-0MVJ79739008396I). Fixed — deliberately not a
+ * `rules.ts` tunable, so the deposit needs no persisted-rules migration.
+ */
+export const MINERAL_DEPOSIT_VALUE = 10;
+
+/**
  * Render depth for mineral collectables — above regular gameplay
  * objects (body/graphics depth 1) but below UI elements.
  */

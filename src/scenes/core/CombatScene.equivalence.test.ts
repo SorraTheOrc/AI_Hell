@@ -537,6 +537,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
 
 describe('CombatScene — shared mineral kill-drop rule is defined once', () => {
   const KILL_DROP_HELPER = 'resolveMineralKillDrops';
+  const PAYOUT_HELPER = 'resolveMineralKillPayout';
   const SCATTER_HELPER = 'scatterMineralDrops';
   const SALVAGE_HELPER = 'scatterSalvageMineralDrops';
   const KILL_DROP_HELPER_FILE = 'src/scenes/core/mineralKillDrops.ts';
@@ -558,6 +559,20 @@ describe('CombatScene — shared mineral kill-drop rule is defined once', () => 
     expect(definers).toEqual([KILL_DROP_HELPER_FILE]);
   });
 
+  // The red-deposit payout seam (AH-0MVJ79739008396I): the threshold decision
+  // and the Salvage folding live in the same shared module, so a wreck pays
+  // out identically in the game and every formation gym.
+  it('defines the kill-payout seam exactly once, in the shared helper', () => {
+    const definers = productionSourceFiles()
+      .filter((file) =>
+        definesFunction(fs.readFileSync(file, 'utf8'), PAYOUT_HELPER),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+
+    expect(definers).toEqual([KILL_DROP_HELPER_FILE]);
+  });
+
   it('defines the scatter maths exactly once, in the Mineral entity module', () => {
     const definers = productionSourceFiles()
       .filter((file) =>
@@ -569,14 +584,14 @@ describe('CombatScene — shared mineral kill-drop rule is defined once', () => 
     expect(definers).toEqual([SCATTER_HELPER_FILE]);
   });
 
-  it('both the game and the gym consume the shared kill-drop rule', () => {
+  it('both the game and the gym consume the shared kill-payout seam', () => {
     for (const file of [
       'src/scenes/PlayScene.ts',
       'src/scenes/gym/core/GymFormationScene.ts',
     ]) {
       const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
-      expect(source, `${file} must call the shared rule`).toContain(
-        `${KILL_DROP_HELPER}(`,
+      expect(source, `${file} must call the shared payout seam`).toContain(
+        `${PAYOUT_HELPER}(`,
       );
     }
   });
@@ -595,16 +610,22 @@ describe('CombatScene — shared mineral kill-drop rule is defined once', () => 
     expect(definers).toEqual([KILL_DROP_HELPER_FILE]);
   });
 
-  it('both the game and the gym consume the shared salvage-drop seam', () => {
-    for (const file of [
-      'src/scenes/PlayScene.ts',
-      'src/scenes/gym/core/GymFormationScene.ts',
-    ]) {
-      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
-      expect(source, `${file} must call the shared salvage seam`).toContain(
-        `${SALVAGE_HELPER}(`,
-      );
-    }
+  it('the shared payout seam is the only consumer of the salvage-drop seam', () => {
+    // Folding Salvage into the deposit threshold (AH-0MVJ79739008396I) means
+    // no scene scatters the bounty itself: the shared seam decides whether the
+    // wreck pays orange dots or one red deposit.
+    const consumers = productionSourceFiles()
+      .filter((file) => {
+        const source = fs.readFileSync(file, 'utf8');
+        return (
+          path.relative(process.cwd(), file) !== KILL_DROP_HELPER_FILE &&
+          source.includes(`${SALVAGE_HELPER}(`)
+        );
+      })
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+
+    expect(consumers).toEqual([]);
   });
 });
 

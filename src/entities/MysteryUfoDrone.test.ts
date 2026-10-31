@@ -17,7 +17,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { resolvePowerUpAtLevel } from '../powerups/powerUpLevels';
-import { SHIP_COLOR, SHIP_SIZE } from '../core/constants';
+import {
+  MINERAL_DEPOSIT_COLOR,
+  MINERAL_DEPOSIT_VALUE,
+  SHIP_COLOR,
+  SHIP_SIZE,
+} from '../core/constants';
 import { bootScene, BootedGame } from '../test/gameHarness';
 import { Mineral } from './Mineral';
 import {
@@ -60,6 +65,16 @@ function levelZeroConfig(
 
 function makeMineral(scene: Phaser.Scene, x: number, y: number): Mineral {
   return new Mineral(scene, { x, y });
+}
+
+/** A red deposit worth `MINERAL_DEPOSIT_VALUE` (AH-0MVJ79739008396I). */
+function makeDeposit(scene: Phaser.Scene, x: number, y: number): Mineral {
+  return new Mineral(scene, {
+    x,
+    y,
+    color: MINERAL_DEPOSIT_COLOR,
+    value: MINERAL_DEPOSIT_VALUE,
+  });
 }
 
 describe('MysteryUfoDrone collector entity', () => {
@@ -246,6 +261,50 @@ describe('MysteryUfoDrone collector entity', () => {
     expect(drone.droneState).toBe('seek');
     expect(mineral.alive).toBe(true);
     expect(mineral.visible).toBe(true);
+  });
+
+  // ── Red deposits: overflow is lost (AH-0MVJ79739008396I) ────────
+
+  it('credits a deposit only up to the remaining capacity and destroys the surplus', async () => {
+    const scene = await boot();
+    const drone = makeDrone(scene); // capacity 10, collector radius 20
+    // Four ordinary dots (hold 4) then a 10-value deposit: only 6 fit.
+    const ordinary = [
+      makeMineral(scene, 110, 100),
+      makeMineral(scene, 90, 100),
+      makeMineral(scene, 100, 110),
+      makeMineral(scene, 100, 90),
+    ];
+    const deposit = makeDeposit(scene, 105, 100);
+    drone.setSeekTargets([...ordinary, deposit]);
+
+    drone.updatePosition(0.01);
+
+    // Hold grows by at most the free space — the surplus 4 is destroyed with
+    // the deposit, never paid into the hold.
+    expect(drone.heldMinerals).toBe(10);
+    expect(drone.isFull).toBe(true);
+    // The deposit is off the field: the surplus is not left behind either.
+    expect(deposit.alive).toBe(false);
+    expect(deposit.visible).toBe(false);
+  });
+
+  it('a deposit that exactly fills the hold credits exactly its value (no doubling)', async () => {
+    const scene = await boot();
+    const payouts: number[] = [];
+    const drone = makeDrone(scene, {
+      onPayout: (minerals) => payouts.push(minerals),
+    });
+    const deposit = makeDeposit(scene, 110, 100);
+    drone.setSeekTargets([deposit]);
+
+    drone.updatePosition(0.01); // vacuum the deposit → hold 10 (not 20)
+    expect(drone.heldMinerals).toBe(MINERAL_DEPOSIT_VALUE);
+    expect(deposit.alive).toBe(false);
+
+    drone.updatePosition(0.01); // home at the spawn point → payout
+
+    expect(payouts).toEqual([MINERAL_DEPOSIT_VALUE]);
   });
 
   // ── Return and payout ────────────────────────────────────────────

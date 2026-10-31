@@ -15,6 +15,9 @@ import Phaser from 'phaser';
 import { bootScene, BootedGame } from '../../test/gameHarness';
 import {
   MINERAL_COLOR,
+  MINERAL_DEPOSIT_COLOR,
+  MINERAL_DEPOSIT_THRESHOLD,
+  MINERAL_DEPOSIT_VALUE,
   MINERAL_DEPTH,
   MINERAL_SALVAGE_COLOR,
   MINERAL_SIZE,
@@ -98,6 +101,26 @@ describe('Mineral constants', () => {
     expect(hue).toBeLessThan(30); // red-orange, not gold/amber
   });
 
+  it('defines the red deposit constants beside MINERAL_COLOR (AH-0MVJ79739008396I)', () => {
+    // Threshold and value are fixed constants — no `rules.ts` tunable.
+    expect(MINERAL_DEPOSIT_THRESHOLD).toBe(10);
+    expect(MINERAL_DEPOSIT_VALUE).toBe(10);
+
+    // The deposit colour is a distinct red: red dominant, hue near 0°, and
+    // clearly different from both gold (~48°) and Salvage orange (~22°).
+    expect(typeof MINERAL_DEPOSIT_COLOR).toBe('number');
+    expect(MINERAL_DEPOSIT_COLOR).not.toBe(MINERAL_COLOR);
+    expect(MINERAL_DEPOSIT_COLOR).not.toBe(MINERAL_SALVAGE_COLOR);
+
+    const r = (MINERAL_DEPOSIT_COLOR >> 16) & 0xff;
+    const g = (MINERAL_DEPOSIT_COLOR >> 8) & 0xff;
+    const b = MINERAL_DEPOSIT_COLOR & 0xff;
+    expect(r).toBeGreaterThan(g);
+    expect(r).toBeGreaterThan(b);
+    const hue = hueDegrees(r, g, b);
+    expect(hue < 20 || hue > 340).toBe(true);
+  });
+
   it('defines MINERAL_DEPTH above regular gameplay objects', () => {
     expect(typeof MINERAL_DEPTH).toBe('number');
     expect(MINERAL_DEPTH).toBeGreaterThan(1); // above body/explode depth
@@ -160,6 +183,28 @@ describe('Mineral entity lifecycle', () => {
     booted = await bootScene([HarnessScene]);
     const mineral = makeMineral(booted.scene, 400, 200);
     expect(mineral.color).toBe(MINERAL_COLOR);
+  });
+
+  it('is worth the mineralCollectAmount rule by default (an ordinary dot)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const mineral = makeMineral(booted.scene, 400, 200);
+    // `mineralCollectAmount` defaults to 1, so an ordinary dot is unchanged.
+    expect(mineral.value).toBe(1);
+  });
+
+  it('accepts a value override and renders the deposit colour (AH-0MVJ79739008396I)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const deposit = new Mineral(booted.scene, {
+      x: 400,
+      y: 200,
+      color: MINERAL_DEPOSIT_COLOR,
+      value: MINERAL_DEPOSIT_VALUE,
+    });
+
+    // The single pickup is worth 10 minerals, and the body is drawn red.
+    expect(deposit.value).toBe(MINERAL_DEPOSIT_VALUE);
+    expect(deposit.color).toBe(MINERAL_DEPOSIT_COLOR);
+    expect(fillColours(deposit)).toEqual([MINERAL_DEPOSIT_COLOR]);
   });
 
   it('persists until collected (no drift or despawn)', async () => {

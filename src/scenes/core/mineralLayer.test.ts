@@ -17,11 +17,12 @@ import type { ChoiceOption } from '../../powerups/choice';
 import { applyMineralChoiceReward, collectMinerals } from './mineralLayer';
 
 /** Structural fake of a `Mineral` — the routine only calls these members. */
-function fakeMineral(x: number, y: number, alive = true) {
+function fakeMineral(x: number, y: number, alive = true, value = 1) {
   return {
     x,
     y,
     alive,
+    value,
     handleOverlap: vi.fn(),
     destroy: vi.fn(),
   };
@@ -150,6 +151,52 @@ describe('collectMinerals', () => {
     expect(kept).toHaveLength(0);
     expect(onPlayerCollected).toHaveBeenCalledOnce();
     expect(mineral.handleOverlap).toHaveBeenCalledWith('player');
+  });
+
+  // ── Valued collection: red deposits (AH-0MVJ79739008396I) ───────
+
+  it('credits a deposit\'s full worth to the absorbing enemy (10, not 1)', () => {
+    const deposit = fakeMineral(50, 50, true, 10);
+    const enemy = fakeEnemy(50, 50);
+
+    const kept = collectMinerals(
+      asMinerals([deposit]),
+      { x: 900, y: 900 },
+      [enemy],
+      vi.fn(),
+    );
+
+    expect(kept).toHaveLength(0);
+    // Absorbing one deposit is worth ten single-mineral absorptions, so the
+    // enemy's own later re-drop resolves at the deposit threshold.
+    expect(enemy.collectMineral).toHaveBeenCalledWith(10);
+    expect(deposit.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('credits an ordinary mineral as worth 1', () => {
+    const mineral = fakeMineral(50, 50);
+    const enemy = fakeEnemy(50, 50);
+
+    collectMinerals(asMinerals([mineral]), { x: 900, y: 900 }, [enemy], vi.fn());
+
+    expect(enemy.collectMineral).toHaveBeenCalledWith(1);
+  });
+
+  it('hands the collected mineral (and so its worth) to the player pickup callback', () => {
+    const deposit = fakeMineral(100, 100, true, 10);
+    const onPlayerCollected = vi.fn();
+
+    const kept = collectMinerals(
+      asMinerals([deposit]),
+      { x: 100, y: 100 },
+      [],
+      onPlayerCollected,
+    );
+
+    expect(kept).toHaveLength(0);
+    expect(onPlayerCollected).toHaveBeenCalledOnce();
+    // The scene credits `mineral.value`, so a deposit pays 10 in one pickup.
+    expect(onPlayerCollected.mock.calls[0][0].value).toBe(10);
   });
 
   it('still lets enemies absorb minerals while the player is phased', () => {

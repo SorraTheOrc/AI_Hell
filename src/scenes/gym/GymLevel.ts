@@ -1643,7 +1643,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
         this.minerals,
         this.getPlayer(),
         absorbers,
-        () => this._collectMineral(),
+        (mineral) => this._collectMineral(mineral),
         { playerPhased: this.isPlayerPhased() },
       );
     }
@@ -1660,9 +1660,13 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this._syncMineralHud();
   }
 
-  /** Collects a mineral into the shared hold, resolving it when full. */
-  private _collectMineral(): void {
-    this.mineralHold.collect();
+  /**
+   * Collects a mineral into the shared hold, crediting its **worth** (1 for an
+   * ordinary dot, `MINERAL_DEPOSIT_VALUE` = 10 for a red deposit —
+   * AH-0MVJ79739008396I), and resolves it when full.
+   */
+  private _collectMineral(mineral: Mineral): void {
+    this.mineralHold.collect(mineral.value);
     if (this.mineralHold.isFull) this._resolveMineralHold();
   }
 

@@ -15,6 +15,9 @@ import {
   GAME_HEIGHT,
   GAME_WIDTH,
   MINERAL_COLOR,
+  MINERAL_DEPOSIT_COLOR,
+  MINERAL_DEPOSIT_THRESHOLD,
+  MINERAL_DEPOSIT_VALUE,
   MINERAL_REDROP_SCATTER_RADIUS,
   MINERAL_SALVAGE_COLOR,
   POWER_UP_DROP_MIN_SEPARATION,
@@ -7885,6 +7888,40 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
         MINERAL_REDROP_SCATTER_RADIUS,
       );
     }
+  });
+
+  it('AH-0MVJ79739008396I AC7 — the Salvage bonus folds into one red deposit and suppresses the orange scatter', async () => {
+    const scene = await bootMiniBossCampaign();
+    const registry = scene.getEffectsRegistry();
+    scene.finishSpawnAnimations();
+    const enemies = scene.getEnemies().filter((e) => e.alive);
+
+    // Level Salvage up (permanent, so the window never expires mid-test).
+    for (let i = 0; i < 8; i += 1) registry.applyCollect('salvage', true);
+    const bonus = registry.salvageBonusMinerals();
+    expect(bonus).toBeGreaterThan(0);
+
+    // The wreck's own tally only reaches the threshold with the bounty's help.
+    const target = enemies[0];
+    for (let i = 0; i < MINERAL_DEPOSIT_THRESHOLD - bonus; i += 1)
+      target.collectMineral();
+    // rng() = 0 ⇒ the resolved count is exactly tally + bounty = threshold.
+    scene.setRng(() => 0);
+
+    const before = scene.getMinerals().length;
+    scene.spawnPlayerBullet(target.x, target.y, 0, 0);
+    scene.tick(0);
+    const drops = scene.getMinerals().slice(before);
+
+    // One wreck, one payout shape: a single red deposit at the wreck.
+    expect(drops).toHaveLength(1);
+    expect(drops[0].color).toBe(MINERAL_DEPOSIT_COLOR);
+    expect(drops[0].value).toBe(MINERAL_DEPOSIT_VALUE);
+    expect(drops[0].x).toBe(target.x);
+    expect(drops[0].y).toBe(target.y);
+    // The orange bounty scatter is suppressed alongside the deposit.
+    expect(drops.some((m) => m.color === MINERAL_SALVAGE_COLOR)).toBe(false);
+    expect(drops.some((m) => m.color === MINERAL_COLOR)).toBe(false);
   });
 
   it('AH-0MVH80ZJ7009W18Z — Orbital Strike damages the nearest enemy on pickup', async () => {

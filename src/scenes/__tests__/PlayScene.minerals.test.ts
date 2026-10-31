@@ -18,6 +18,10 @@ import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
 import { Asteroid } from '../../entities/Asteroid';
+import {
+  MINERAL_DEPOSIT_COLOR,
+  MINERAL_DEPOSIT_VALUE,
+} from '../../core/constants';
 import * as mineralLayer from '../core/mineralLayer';
 import * as mineralScoop from '../../powerups/mineralScoop';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
@@ -63,6 +67,45 @@ describe('PlayScene mineral wiring', () => {
 
     expect(scene.getMinerals()).toHaveLength(0);
     expect(scene.getGameState().minerals).toBe(before + 1);
+  });
+
+  it('collects a red deposit for exactly 10 minerals in a single pickup (AH-0MVJ79739008396I)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const gs = scene.getGameState();
+    // Keep the hold from filling, so the pickup does not pause the run.
+    gs.mineralCapacity = 100;
+    const before = gs.minerals;
+
+    const addSpy = vi.spyOn(gs, 'addMinerals');
+    const hud = scene.getHUD()!;
+    const hudSpy = vi.spyOn(hud, 'setMineralStore');
+
+    scene.spawnMineralDepositAt(player.x, player.y);
+    scene.tick(0.016);
+
+    // One pickup, worth `MINERAL_DEPOSIT_VALUE` — not one per dot.
+    expect(scene.getMinerals()).toHaveLength(0);
+    expect(gs.minerals).toBe(before + MINERAL_DEPOSIT_VALUE);
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(addSpy).toHaveBeenCalledWith(MINERAL_DEPOSIT_VALUE);
+    // …and exactly one HUD refresh for that pickup.
+    expect(hudSpy).toHaveBeenCalledTimes(1);
+    expect(hud.getMineralStoreValue().minerals).toBe(gs.minerals);
+  });
+
+  it('a live deposit is red and worth 10 (AH-0MVJ79739008396I)', async () => {
+    const scene = await bootPlay();
+    const deposit = scene.spawnMineralDepositAt(20, 20);
+
+    expect(deposit.color).toBe(MINERAL_DEPOSIT_COLOR);
+    expect(deposit.value).toBe(MINERAL_DEPOSIT_VALUE);
+    // It is an ordinary mineral for every other rule: stationary, on the
+    // field, and not destroyed by a bullet.
+    expect(deposit.alive).toBe(true);
+    scene.spawnPlayerBullet(deposit.x, deposit.y, 0, 0);
+    scene.tick(0.016);
+    expect(deposit.alive).toBe(true);
   });
 
   it('a Mystery UFO pickup spawns one visible collector drone and no instant bounty (AH-0MV9G113S009B37I)', async () => {

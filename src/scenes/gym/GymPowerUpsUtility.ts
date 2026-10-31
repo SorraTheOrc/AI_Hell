@@ -54,7 +54,6 @@ import { Mineral } from '../../entities/Mineral';
 import { collectMinerals } from '../core/mineralLayer';
 import type { DroneMineralSink } from '../core/combatDrone';
 import { MineralHold } from '../../core/mineralHold';
-import { loadRules } from '../../core/rules';
 import { HUD } from '../../ui/HUD';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
@@ -289,7 +288,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
         this.minerals,
         this.player,
         [],
-        () => this._collectGymMineral(),
+        (mineral) => this._collectGymMineral(mineral),
         { playerPhased: this.isPlayerPhased() },
       );
     }
@@ -344,8 +343,13 @@ export class GymPowerUpsUtility extends CombatCoreScene<
    * {@link MineralHold} so the hold progression matches the game. The gym does
    * not open the hold-full choice; the bar demonstrates the shared hold.
    */
-  private _collectGymMineral(): void {
-    this.mineralHold.collect(loadRules().mineralCollectAmount);
+  /**
+   * Collects a mineral into the shared hold, crediting its **worth** (1 for an
+   * ordinary dot, `MINERAL_DEPOSIT_VALUE` = 10 for a red deposit —
+   * AH-0MVJ79739008396I).
+   */
+  private _collectGymMineral(mineral: Mineral): void {
+    this.mineralHold.collect(mineral.value);
     this._syncMineralHud();
   }
 

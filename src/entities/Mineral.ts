@@ -11,6 +11,13 @@
  * visible on the field (AH-0MVJ72I8O0009T09). The colour is cosmetic — a
  * salvage mineral is still worth exactly one mineral.
  *
+ * A mineral also carries a **value**: the minerals it is worth when collected
+ * by the player or absorbed by an enemy. An ordinary dot is worth one
+ * ({@link Mineral.value} defaults to the `mineralCollectAmount` rule); a red
+ * **deposit** left by a wreck that resolved ≥ {@link MINERAL_DEPOSIT_THRESHOLD}
+ * minerals is worth {@link MINERAL_DEPOSIT_VALUE} in a single pickup
+ * (AH-0MVJ79739008396I).
+ *
  * The mineral is itself a `Phaser.GameObjects.Graphics` — it draws its gold
  * dot directly, so a single display-list object represents the collectable
  * (mirroring the Player ship, which is also a Graphics). `bodyGraphics` is
@@ -28,6 +35,7 @@ import {
   MINERAL_REDROP_SCATTER_RADIUS,
   MINERAL_SIZE,
 } from '../core/constants';
+import { loadRules } from '../core/rules';
 
 /**
  * Configuration for creating a mineral collectable.
@@ -45,6 +53,14 @@ export interface MineralConfig {
    * (AH-0MVJ72I8O0009T09); every existing caller keeps the gold default.
    */
   color?: number;
+  /**
+   * Minerals this collectable is worth when collected by the player or
+   * absorbed by an enemy. Defaults to the `mineralCollectAmount` rule (1) so
+   * an ordinary dot is unchanged; a red **deposit** passes
+   * {@link MINERAL_DEPOSIT_VALUE} (10) and pays out in a single pickup
+   * (AH-0MVJ79739008396I).
+   */
+  value?: number;
 }
 
 /**
@@ -70,6 +86,14 @@ export class Mineral extends Phaser.GameObjects.Graphics {
   readonly color: number;
 
   /**
+   * Minerals this collectable is worth: `mineralCollectAmount` (1) for an
+   * ordinary dot, {@link MINERAL_DEPOSIT_VALUE} (10) for a red deposit
+   * (AH-0MVJ79739008396I). The player pickup and enemy absorption both credit
+   * exactly this value, so a deposit pays out in a single collection.
+   */
+  readonly value: number;
+
+  /**
    * Create a mineral collectable at the given position.
    *
    * @param scene — Phaser scene
@@ -81,6 +105,7 @@ export class Mineral extends Phaser.GameObjects.Graphics {
 
     this._onCollect = config.onCollect;
     this.color = config.color ?? MINERAL_COLOR;
+    this.value = config.value ?? loadRules().mineralCollectAmount;
 
     // Render above regular gameplay graphics (depth 1) but below UI.
     this.setDepth(MINERAL_DEPTH);

@@ -22,10 +22,11 @@
  *
  * **Shared mineral kill-drop rule:** the gym's mineral layer seeds and
  * collects minerals, and its destruction paths (`onEnemyDestroyed` and the
- * EXPLODE button) call the shared `resolveMineralKillDrops` rule from
+ * EXPLODE button) call the shared `resolveMineralKillPayout` seam from
  * `src/scenes/core/mineralKillDrops.ts` — the *same code* the game runs —
- * so a small asteroid drops one mineral and a non-asteroid enemy re-drops a
- * fraction of the minerals it absorbed, exactly as in `PlayScene`.
+ * so a small asteroid drops one mineral, a non-asteroid enemy re-drops a
+ * fraction of the minerals it absorbed and a wreck resolving ≥ 10 leaves one
+ * red deposit worth 10 (AH-0MVJ79739008396I), exactly as in `PlayScene`.
  *
  * **Shared power-up drop layer:** the opt-in power-up layer runs the same
  * lifecycle, collection gate, Magnet magnet and per-type pickup cues as the
@@ -140,8 +141,7 @@ import {
   advanceWrappingBullets,
 } from '../../core/bulletLifecycle';
 import {
-  resolveMineralKillDrops,
-  scatterSalvageMineralDrops,
+  resolveMineralKillPayout,
   type MineralKillDropEntity,
 } from '../../core/mineralKillDrops';
 import {
@@ -1416,14 +1416,18 @@ export class GymFormationScene<
       this.minerals,
       this.player,
       absorbers,
-      () => this._collectMineral(),
+      (mineral) => this._collectMineral(mineral),
       { playerPhased: this.isPlayerPhased() },
     );
   }
 
-  /** Collects a mineral into the shared hold; opens the choice when full. */
-  private _collectMineral(): void {
-    this.mineralHoldModel.collect();
+  /**
+   * Collects a mineral into the shared hold, crediting its **worth** (an
+   * ordinary dot is 1; a red deposit is `MINERAL_DEPOSIT_VALUE` = 10, paid in
+   * one pickup — AH-0MVJ79739008396I); opens the choice when full.
+   */
+  private _collectMineral(mineral: Mineral): void {
+    this.mineralHoldModel.collect(mineral.value);
     this._syncMineralHud();
     if (this.mineralHoldModel.isFull) this.openMineralChoice();
   }
@@ -1986,32 +1990,28 @@ export class GymFormationScene<
   }
 
   /**
-   * Applies the shared mineral kill-drop rule to a destroyed entity and adds
+   * Applies the shared mineral kill-payout rule to a destroyed entity and adds
    * the resulting minerals to this gym's live mineral field.
+   *
+   * The Salvage bounty (AH-0MVH80ZJ7009W18Z) is folded into the same seam: an
+   * active bounty counts toward the red-deposit threshold and its orange
+   * scatter is suppressed when the deposit fires (AH-0MVJ79739008396I).
+   * Asteroids are not bounty targets.
    */
   private _dropMineralsForKill(entity: TEntity): void {
-    const drops = resolveMineralKillDrops(
+    const isAsteroid =
+      typeof (entity as unknown as { getSizeTier?: unknown }).getSizeTier ===
+      'function';
+    const salvageBonus = isAsteroid
+      ? 0
+      : this.getEffectsRegistry().salvageBonusMinerals();
+    const drops = resolveMineralKillPayout(
       this,
       entity as unknown as MineralKillDropEntity,
+      salvageBonus,
       this._sceneRng,
     );
     if (drops.length > 0) this.minerals.push(...drops);
-    // Salvage (AH-0MVH80ZJ7009W18Z): an active bounty adds extra minerals at
-    // the wreck of a destroyed enemy ship (asteroids are not bounty targets).
-    // The shared seam renders them orange so the payout is visible against
-    // ordinary gold drops (AH-0MVJ72I8O0009T09) — identical to the game.
-    const salvageBonus = this.getEffectsRegistry().salvageBonusMinerals();
-    if (salvageBonus > 0 && typeof (entity as unknown as { getSizeTier?: unknown }).getSizeTier !== 'function') {
-      this.minerals.push(
-        ...scatterSalvageMineralDrops(
-          this,
-          entity.x,
-          entity.y,
-          salvageBonus,
-          this._sceneRng,
-        ),
-      );
-    }
   }
 
   /** Advances player bullets and removes those whose lifetime has elapsed. */

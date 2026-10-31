@@ -9,7 +9,10 @@
  * 1. **SEEK** — steer toward the nearest live mineral (via the shared
  *    `setSeekTargets` seam, mirroring the {@link Harvester} seeker).
  * 2. **COLLECT** — vacuum any mineral whose centre enters the collector
- *    radius into the hold.
+ *    radius into the hold, crediting its worth (`mineral.value`) up to the
+ *    remaining capacity — a red deposit worth 10 is therefore clipped by the
+ *    free space left in the hold and any surplus is destroyed with it
+ *    (AH-0MVJ79739008396I).
  * 3. **RETURN** — fly home once the hold reaches capacity **or** the
  *    lifetime expires (whichever comes first).
  * 4. **PAYOUT** — on arrival, pay the exactly-held minerals into the sink;
@@ -481,8 +484,14 @@ export class MysteryUfoDrone extends Phaser.GameObjects.Graphics {
 
   /**
    * Collect every live, supplied mineral whose centre is inside the collector
-   * radius, up to the remaining capacity. Collected minerals are removed from
-   * the field (marked dead + hidden) and counted in {@link MysteryUfoDrone._heldMinerals}.
+   * radius, crediting each one's **worth** up to the remaining capacity.
+   *
+   * The hold grows by `min(mineral.value, capacity − held)`, so an ordinary
+   * dot adds 1 and a red deposit worth {@link MINERAL_DEPOSIT_VALUE} adds at
+   * most the free space left in the hold (AH-0MVJ79739008396I). A deposit
+   * that does not fit is still removed from the field — the surplus is
+   * destroyed with it, never left behind, never paid into the hold and never
+   * credited elsewhere. Collected minerals are marked dead + hidden.
    *
    * @returns the number of minerals collected this tick (`> 0` ⇒ state `'collect'`).
    */
@@ -490,14 +499,16 @@ export class MysteryUfoDrone extends Phaser.GameObjects.Graphics {
     let collected = 0;
     for (const mineral of this._targets) {
       if (!mineral.alive) continue;
-      if (this._heldMinerals >= this._capacity) break;
+      const remaining = this._capacity - this._heldMinerals;
+      if (remaining <= 0) break;
       const r = this._collectorRadius;
       if (Math.hypot(mineral.x - this.x, mineral.y - this.y) <= r) {
         // Remove from the field without firing the player/absorb callbacks —
         // the shared pass reconciles the field and owns absorb VFX.
         mineral.alive = false;
         mineral.setVisible(false);
-        this._heldMinerals += 1;
+        // Credit at most the free space: a deposit's surplus is lost.
+        this._heldMinerals += Math.min(mineral.value, remaining);
         collected += 1;
       }
     }

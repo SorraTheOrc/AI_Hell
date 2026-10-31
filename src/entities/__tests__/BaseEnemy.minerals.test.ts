@@ -74,6 +74,20 @@ describe('BaseEnemy mineral accounting', () => {
     expect(enemy.mineralCount).toBe(3);
   });
 
+  it('collectMineral(value) tallies the absorbed mineral\'s worth (AH-0MVJ79739008396I)', async () => {
+    booted = await bootScene([HarnessScene]);
+    const enemy = makeEnemy(booted.scene);
+
+    // A red deposit is worth 10, so absorbing one equals ten ordinary dots —
+    // and the enemy's own later re-drop therefore resolves at the threshold.
+    enemy.collectMineral(10);
+    expect(enemy.mineralCount).toBe(10);
+    expect(enemy.mineralRedropCount(() => 0)).toBe(10);
+
+    enemy.collectMineral();
+    expect(enemy.mineralCount).toBe(11);
+  });
+
   it('mineralRedropCount at rng extremes when no minerals were collected', async () => {
     booted = await bootScene([HarnessScene]);
     const enemy = makeEnemy(booted.scene);
