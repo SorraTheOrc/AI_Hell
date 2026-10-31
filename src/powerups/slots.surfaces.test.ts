@@ -51,7 +51,7 @@ import { MenuScene } from '../scenes/MenuScene';
 import { MineralChoiceScene } from '../scenes/MineralChoiceScene';
 import { PlayScene } from '../scenes/PlayScene';
 import { resolveSceneSetupState } from '../scenes/core/sceneSetup';
-import { buildDefaultDropSpawner } from '../scenes/core/dropLayer';
+import { buildDefaultDropSpawner, drawNextDrop } from '../scenes/core/dropLayer';
 import { lockedWeaponIds, initialUnlockState } from './unlocks';
 import {
   CHOICE_POOL,
@@ -211,7 +211,8 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
     );
 
     for (let i = 0; i < 2000; i += 1) {
-      const id = spawner.next();
+      // The gated draw seam the scenes consume, not the raw source.
+      const id = drawNextDrop(spawner, state);
       // Every draw is admissible for the current (full) pool.
       expect(isWithinSlotPool(id, state), `${id} drawn while gated out`).toBe(
         true,
@@ -367,7 +368,15 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
       'extra_life',
     );
     expect(bounded.weaponLevels).toHaveLength(2);
-    expect(bounded.powerUpLevels).toHaveLength(4);
+    // Four counted power-ups fill the pool, then the exempt Extra Life is
+    // still admitted (it never occupies a slot, producer Q7a).
+    expect(bounded.powerUpLevels.map((entry) => entry.id)).toEqual([
+      'shield',
+      'bomb',
+      'magnet',
+      'speed_boost',
+      'extra_life',
+    ]);
     // Everything else in the checkpoint is preserved untouched.
     expect(bounded.score).toBe(OVER_CAP_CHECKPOINT.score);
     expect(bounded.runSeed).toBe(OVER_CAP_CHECKPOINT.runSeed);
