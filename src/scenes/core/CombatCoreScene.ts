@@ -103,6 +103,7 @@ import {
 import type { WasdKeysLike } from '../../utils/input';
 import { createSeededRng } from '../../core/rng';
 import { EffectsRegistry } from '../../powerups/effects';
+import { stopMysteryUfoWarbleSound } from '../../audio/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import {
   spawnCollectAnimation,
@@ -1927,8 +1928,16 @@ export class CombatCoreScene<
    * camera-filter driver: a plain `phaseShiftEffects` sweep cannot reach the
    * WebGL filter controllers, so without this a stop/restart would keep the
    * phase distortion (AH-0MVNTY0700053T9E).
+   *
+   * Collector drones are torn down here too, so a scene shutdown while one is
+   * mid-sortie releases its looping warble and leaves no drone behind
+   * (AH-0MVSAJR6W001CE8M). Every game and gym inherits this through the shared
+   * core, so the teardown terminal cannot drift.
    */
   protected teardownRunState(): void {
+    for (const drone of this.drones) drone.destroy();
+    this.drones = [];
+    stopMysteryUfoWarbleSound();
     for (const bullet of this.playerBullets) bullet.destroy();
     this.playerBullets = [];
     for (const effect of this.playerExplosions) effect.destroy();

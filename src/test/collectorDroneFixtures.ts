@@ -387,8 +387,8 @@ const UFO_EVENT_NAME_BY_CUE: Readonly<Record<string, UfoFeedbackEventName>> = {
  * the warble and terminal-feedback slices assert one canonical sequence.
  *
  * The warble starts at spawn, stops when the return leg begins, and the reward
- * fanfare lands with the pay-in. Not asserted until those slices land —
- * today's baseline is no feedback at all.
+ * fanfare lands with the pay-in. The warble slice asserts the start/stop
+ * prefix; the terminal-feedback slice adds `reward`.
  */
 export const UFO_PAYOUT_CUE_SEQUENCE: readonly UfoFeedbackEventName[] = [
   'warble-start',
@@ -397,11 +397,26 @@ export const UFO_PAYOUT_CUE_SEQUENCE: readonly UfoFeedbackEventName[] = [
 ];
 
 /**
+ * The sortie-long warble's own sequence (AH-0MVSAJR6W001CE8M): the warble
+ * starts once at spawn and stops on every terminal path — return-leg begin,
+ * payout, destruction and teardown — with no other cue involved.
+ *
+ * This is the prefix of both {@link UFO_PAYOUT_CUE_SEQUENCE} and
+ * {@link UFO_DESTRUCTION_CUE_SEQUENCE}; the terminal one-shots (`reward`,
+ * `destroy`, `tinkle`) belong to the terminal-feedback slice.
+ */
+export const UFO_WARBLE_ONLY_SEQUENCE: readonly UfoFeedbackEventName[] = [
+  'warble-start',
+  'warble-stop',
+];
+
+/**
  * The target cue order for an enemy-destroyed sortie, documented here so the
  * warble and terminal-feedback slices assert one canonical sequence.
  *
  * The warble starts at spawn, stops as the drone dies, then the explosion cue
- * and the mineral tinkle fire with the spill.
+ * and the mineral tinkle fire with the spill. The warble slice asserts the
+ * start/stop prefix; the terminal-feedback slice adds `destroy` and `tinkle`.
  */
 export const UFO_DESTRUCTION_CUE_SEQUENCE: readonly UfoFeedbackEventName[] = [
   'warble-start',
@@ -588,6 +603,10 @@ const ONE_SHOT_CUES = ['reward', 'destroy', 'tinkle'] as const;
  * the warble starts before it stops and never twice, one-shots fire at most
  * once), then asserts the exact cue sequence and VFX counts against
  * `expectation` — whose defaults are the documented silent baseline.
+ *
+ * The stop-on-all-terminals contract: a lifecycle that starts the warble must
+ * also stop it, exactly once, after the start. Every terminal path (return-leg
+ * begin, payout, destruction, teardown) therefore cannot leak the loop.
  */
 function expectUfoFeedbackSequence(
   label: string,
@@ -618,6 +637,12 @@ function expectUfoFeedbackSequence(
   if (cues.filter((name) => name === 'warble-stop').length > 1) {
     throw new Error(`${label}: warble stopped more than once (${sequence})`);
   }
+  // Stop-on-all-terminals: a lifecycle that started the warble must end it.
+  if (startIndex !== -1 && stopIndex === -1) {
+    throw new Error(
+      `${label}: warble started but never stopped on its terminal path (${sequence})`,
+    );
+  }
   for (const oneShot of ONE_SHOT_CUES) {
     if (cues.filter((name) => name === oneShot).length > 1) {
       throw new Error(`${label}: '${oneShot}' fired more than once (${sequence})`);
@@ -638,7 +663,7 @@ function expectUfoFeedbackSequence(
  * → payout).
  *
  * Pass the expectation once the feel slices land; with no expectation it
- * pins today's silent baseline (no cue, no VFX).
+ * pins the documented silent baseline (no cue, no VFX).
  */
 export function expectUfoPayoutLifecycle(
   feedback: UfoLifecycleFeedback,
@@ -656,7 +681,7 @@ export function expectUfoPayoutLifecycle(
  * Asserts the feedback of one **enemy-destroyed sortie** (spawn → destroyed).
  *
  * Pass the expectation once the feel slices land; with no expectation it
- * pins today's silent baseline (no cue, no VFX).
+ * pins the documented silent baseline (no cue, no VFX).
  */
 export function expectUfoDestructionLifecycle(
   feedback: UfoLifecycleFeedback,

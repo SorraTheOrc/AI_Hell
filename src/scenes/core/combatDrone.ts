@@ -11,14 +11,19 @@
  * Responsibilities owned here exactly once:
  *
  * - {@link spawnDrone} — the only way a drone enters a scene; it wires the
- *   drone's pay-in to the caller-supplied hold sink.
+ *   drone's pay-in to the caller-supplied hold sink and starts the sortie-long
+ *   Mystery UFO warble exactly once.
  * - {@link tickDrones} — the seek → collect → return → payout pass: pushes the
  *   live mineral field into each drone, tracks the live player as home, ticks
- *   motion and removes drones that have paid out (or been destroyed).
+ *   motion and removes drones that have paid out (or been destroyed). It also
+ *   releases the warble as soon as a drone's return leg begins (the seek and
+ *   collect phases are the only ones the warble scores), so the loop never
+ *   leaks past a terminal.
  * - {@link hitDrone} — the destruction contract: only **enemy** ordnance or an
- *   enemy body destroys a drone (the player's own fire passes through), and a
+ *   enemy body destroys a drone (the player's own fire passes through), a
  *   destroyed drone spills its held minerals **plus** a `2 × level` bonus at
- *   the crash site as collectable field deposits.
+ *   the crash site as collectable field deposits, and the warble stops as the
+ *   drone dies.
  *
  * The module is deliberately scene-agnostic: it operates on the structural
  * drone/mineral/sink shapes so unit tests never need a real combat scene, and
@@ -29,6 +34,10 @@
 
 import type Phaser from 'phaser';
 
+import {
+  playMysteryUfoWarbleSound,
+  stopMysteryUfoWarbleSound,
+} from '../../audio/effects';
 import { scatterMineralDrops } from '../../entities/Mineral';
 import type { Mineral } from '../../entities/Mineral';
 import {
@@ -84,7 +93,9 @@ export type DroneHitCause = 'enemy-bullet' | 'enemy-body' | 'player-bullet';
  *
  * This is the single spawn path for the reward: the drone's payout callback
  * is created here (not by callers), so the minerals it ferries reach the hold
- * exactly once and the same code runs in the game and every gym.
+ * exactly once and the same code runs in the game and every gym. It is also
+ * the single start point for the sortie-long warble, which
+ * {@link tickDrones}/{@link hitDrone} release on every terminal path.
  *
  * @param scene — scene that owns the drone's display object.
  * @param config — resolved level tuning (lifetime, capacity, collectorRadius)
@@ -106,6 +117,9 @@ export function spawnDrone(
     },
   });
   drones.push(drone);
+  // Start the warble exactly once per sortie. The wrapper shares one looping
+  // voice, so a re-entered spawn can never stack a second warble.
+  playMysteryUfoWarbleSound();
   return drone;
 }
 
@@ -122,6 +136,13 @@ export function spawnDrone(
  * Feeding the field every tick is what makes a drone seek the nearest live
  * mineral (and clear its target and hold station on an empty field).
  *
+ * The pass also owns the warble's non-destruction terminals: the moment a
+ * drone's phase transitions out of seek/collect into `return`, and whenever a
+ * drone is removed dead (paid out, or destroyed on an earlier step), the
+ * looping voice is released. Destruction while still collecting is stopped by
+ * {@link hitDrone}. Every path is therefore covered, and repeated ticks can
+ * never double-start or mismatch the loop.
+ *
  * @param drones — the scene's current drones.
  * @param ctx — live mineral field, player position and frame delta.
  * @returns the drones still active after this tick.
@@ -133,13 +154,21 @@ export function tickDrones(
   const kept: MysteryUfoDrone[] = [];
   for (const drone of drones) {
     if (!drone.alive) {
-      // Paid out or destroyed on a previous step — remove the display object.
+      // Paid out or destroyed on a previous step — remove the display object
+      // and make sure no warble outlives it.
+      stopMysteryUfoWarbleSound();
       drone.destroy();
       continue;
     }
     drone.setSeekTargets(ctx.minerals);
     if (ctx.player) drone.setHomeTarget(ctx.player.x, ctx.player.y);
+    const previousState = drone.droneState;
     drone.updatePosition(ctx.dt);
+    // Return-leg begin is the first terminal: the warble only scores the
+    // seek and collect phases, so release it on the phase transition.
+    const beganReturn =
+      previousState !== 'return' && drone.droneState === 'return';
+    if (beganReturn || !drone.alive) stopMysteryUfoWarbleSound();
     if (drone.alive) {
       kept.push(drone);
     } else {
@@ -165,7 +194,7 @@ export function destroyedDroneDropCount(
 
 /**
  * Applies a hit to a drone and, when it destroys the drone, scatters the spill
- * as collectable minerals at the crash site.
+ * as collectable minerals at the crash site and releases the sortie warble.
  *
  * Only `'enemy-bullet'` and `'enemy-body'` can destroy a drone; a
  * `'player-bullet'` hit is a no-op (the player's own fire passes through) and
@@ -194,6 +223,9 @@ export function hitDrone(
         ? drone.onEnemyBody()
         : drone.onPlayerBullet();
   if (!destroyed) return [];
+  // Destruction is a terminal: release the warble before the spill so the
+  // crash feedback (later slice) lands on a silent, non-leaking loop.
+  stopMysteryUfoWarbleSound();
   return scatterMineralDrops(
     scene,
     drone.x,

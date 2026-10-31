@@ -3,6 +3,10 @@ import Phaser from 'phaser';
 
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import {
+  installUfoCueRecorder,
+  type UfoCueRecorder,
+} from '../../test/collectorDroneFixtures';
+import {
   PLAYER_BULLET_RADIUS,
   PLAYER_BULLET_SPEED,
   PLAYER_RESPAWN_INVULNERABLE,
@@ -1276,6 +1280,30 @@ describe('CombatCoreScene — collector-drone spawn wiring (AH-0MVBMQ04X0051002)
     scene.addPlayer({ x: 320, y: 240 });
     scene.runUpdateDroneSpawning(1 / 60);
     expect(scene.getDrones()).toHaveLength(1);
+  });
+
+  // The warble's teardown terminal lives in the shared core teardown (every
+  // game and gym inherits it) — a scene shutdown must never leak the loop.
+  it('scene teardown stops the sortie warble and clears the drone list', async () => {
+    const recorder: UfoCueRecorder = installUfoCueRecorder();
+    try {
+      const scene = await bootDroneScene();
+      scene.addPlayer({ x: 320, y: 240 });
+      scene.effects.applyCollect('mystery_ufo');
+      scene.runUpdateDroneSpawning(1 / 60);
+      expect(scene.getDrones()).toHaveLength(1);
+      expect(recorder.ufoEventNames()).toEqual(['warble-start']);
+
+      scene.runTeardownRunState();
+
+      expect(recorder.ufoEventNames()).toEqual([
+        'warble-start',
+        'warble-stop',
+      ]);
+      expect(scene.getDrones()).toHaveLength(0);
+    } finally {
+      recorder.dispose();
+    }
   });
 });
 
