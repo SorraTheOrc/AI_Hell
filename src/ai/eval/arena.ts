@@ -144,7 +144,11 @@ import { enemyForceFieldHits } from '../../core/enemyForceField';
 import { DEFAULT_RULES } from '../../core/rules';
 import { defaultCandidatePool } from '../../core/difficultySequencer';
 import { isNonBlockingHazard } from '../../scenes/core/waveTimeout';
-import { getLevelDefinition, type WaveDefinition } from '../../waves/Formations';
+import {
+  getLevelDefinition,
+  type LevelDefinition,
+  type WaveDefinition,
+} from '../../waves/Formations';
 import { WaveManager, type WaveEvent } from '../../waves/WaveManager';
 import { buildSequencedLevels } from '../../waves/sequencedLevels';
 import { GHOST_ENEMY_KEYS } from '../../waves/GhostSpawner';
@@ -177,6 +181,7 @@ import { BotInputGovernor } from '../botHumanLike';
 import {
   DEFAULT_ARENA_SPAWNS,
   EVAL_TELEMETRY_SCHEMA_VERSION,
+  type ArenaBalanceConfig,
   type ArenaConfig,
   type ArenaInput,
   type ArenaRunResult,
@@ -374,6 +379,62 @@ function enemiesByKey(enemies: readonly EnemyConfig[]): Map<string, EnemyConfig>
   const map = new Map<string, EnemyConfig>();
   for (const enemy of enemies) map.set(enemy.key, enemy);
   return map;
+}
+
+/**
+ * Builds the shipped campaign the arena plays in **full-campaign mode**.
+ *
+ * The campaign is `buildSequencedLevels` over the resolved difficulty curves
+ * (honouring every wave's `fixed`/`curve`/`dynamic` generation mode), seeded
+ * with the run seed so `dynamic` waves regenerate per run, then the shared
+ * level-scaling seam applied **exactly once** — the same build
+ * `PlayScene.resolveCampaignLevels` runs.
+ *
+ * Exported so a consumer that plays a **slice** of the campaign (the ring
+ * timing harness deploys at a hex's aggression-selected level, exactly as
+ * `PlayScene.beginGame(startLevel)` does) builds the same campaign instead of
+ * copying the construction. Passing the slice through
+ * {@link ArenaConfig.campaignLevels} keeps the arena's wave/level progression
+ * on the shared {@link WaveManager}.
+ *
+ * @param seed — the run seed (drives `dynamic` wave generation).
+ * @param balance — the resolved balance config (difficulty curves).
+ * @returns the shipped campaign, levels in order.
+ */
+export function buildArenaCampaign(
+  seed: number,
+  balance: ArenaBalanceConfig,
+): LevelDefinition[] {
+  return scaleCampaignLevelCounts(
+    buildSequencedLevels(
+      [...balance.difficultyCurves],
+      defaultCandidatePool(),
+      { seed },
+    ),
+    DEFAULT_RULES,
+  );
+}
+
+/**
+ * The campaign a deployment plays: the shipped campaign from `startLevel` to
+ * its end.
+ *
+ * A hangar deployment starts the classic run at the target hex's
+ * aggression-selected level and plays on (`PlayScene.beginGame(startLevel)`),
+ * so a deployment's arena counterpart is the campaign **slice** from that
+ * level. The slice keeps every level's original `level` number, so the shared
+ * `WaveManager` reports the same levels as the full campaign.
+ *
+ * @param campaign — the shipped campaign (see {@link buildArenaCampaign}).
+ * @param startLevel — the 1-based campaign level to start at.
+ * @returns the campaign from `startLevel` on (empty only for an empty input).
+ */
+export function campaignFromLevel(
+  campaign: readonly LevelDefinition[],
+  startLevel: number,
+): LevelDefinition[] {
+  const index = campaign.findIndex((level) => level.level >= startLevel);
+  return index < 0 ? [...campaign] : campaign.slice(index);
 }
 
 /** Ticks between fire volleys for a config fire interval (ms). */
@@ -743,14 +804,7 @@ export function runArena(policy: BotPolicy, config: ArenaConfig): ArenaRunResult
     ? new WaveManager(
         config.campaignLevels && config.campaignLevels.length > 0
           ? [...config.campaignLevels]
-          : scaleCampaignLevelCounts(
-              buildSequencedLevels(
-                [...balance.difficultyCurves],
-                defaultCandidatePool(),
-                { seed: config.seed },
-              ),
-              DEFAULT_RULES,
-            ),
+          : buildArenaCampaign(config.seed, balance),
       )
     : null;
   // A dedicated seeded stream for campaign formation/spawner positioning
