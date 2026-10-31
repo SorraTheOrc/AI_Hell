@@ -38,6 +38,27 @@ export interface ParsedEvaluateArgs {
 
 export const EVALUATE_USAGE: string;
 
+/** Diagnostic prefix for an unwritable `--out` directory (AH-0MVSE18XX006ZG5I). */
+export const OUTPUT_DIR_NOT_WRITABLE: string;
+
+/** Diagnostic prefix for an unreadable `--tune` CSV target (AH-0MVSE18XX006ZG5I). */
+export const TUNE_CSV_NOT_READABLE: string;
+
+/**
+ * Result of the up-front writeability probe for `--out`: `{ok: true}` or a
+ * `reason` carrying the diagnostic and the underlying errno. Never throws.
+ */
+export type InputProbeResult = { ok: true } | { ok: false; reason: string };
+
+/** Proves `--out` can be created/written before the SSR core boots. */
+export function ensureWritableOutputDir(dir: string): InputProbeResult;
+
+/** Resolves the `--tune` CSV target from the shell's own root. */
+export function resolveTuneCsvPath(options: { tuneFile?: string | null }): string;
+
+/** Proves the `--tune` CSV target is readable before the baseline sweep. */
+export function ensureReadableTuneCsv(csvPath: string): InputProbeResult;
+
 /** Pure CSV-edit surface re-exported by the SSR-loaded eval core. */
 export interface CsvEditOutcome {
   csv: string;

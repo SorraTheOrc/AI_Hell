@@ -67,9 +67,23 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { cliSpawnEnv } from './cliChildEnv';
+
+/**
+ * Ordering proof for the fail-fast gate (parent AC1/AC2): `main()` must reject
+ * an invalid input **before** `loadCore()` boots Vite SSR. `loadCore()`
+ * dynamically imports `vite`, so mocking it records — and refuses — any boot
+ * attempt without starting a real Vite server.
+ */
+const viteState = vi.hoisted(() => ({ bootAttempts: 0 }));
+vi.mock('vite', () => ({
+  createServer: () => {
+    viteState.bootAttempts += 1;
+    throw new Error('SSR core boot attempted before the fail-fast probe');
+  },
+}));
 
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../..');
 const CLI = resolve(REPO_ROOT, 'scripts/evaluate.mjs');
@@ -137,6 +151,13 @@ type Probe = (dir: string) => ProbeResult | Promise<ProbeResult>;
  */
 const evaluateModule = (await import('./evaluate.mjs')) as unknown as {
   ensureWritableOutputDir?: Probe;
+  ensureReadableTuneCsv?: (csvPath: string) => ProbeResult;
+  resolveTuneCsvPath?: (options: { tuneFile?: string | null }) => string;
+  EVALUATE_USAGE?: string;
+  main?: (
+    argv: string[],
+    io: { out: { write(text: string): void }; err: { write(text: string): void } },
+  ) => Promise<number>;
 };
 
 const probe = evaluateModule.ensureWritableOutputDir;
@@ -301,4 +322,139 @@ describe('CLI fail-fast on an unwritable --out (parent AC1)', () => {
     },
     300_000,
   );
+});
+
+/** Captures `main()`'s two output streams without touching the real ones. */
+function captureIo(): {
+  io: { out: { write(text: string): void }; err: { write(text: string): void } };
+  out: string[];
+  err: string[];
+} {
+  const out: string[] = [];
+  const err: string[] = [];
+  return {
+    io: {
+      out: { write: (text: string) => out.push(text) },
+      err: { write: (text: string) => err.push(text) },
+    },
+    out,
+    err,
+  };
+}
+
+/** Runs the real `main()` in-process so the mocked `vite` boot is observable. */
+async function runMainInProcess(
+  argv: string[],
+): Promise<{ code: number; out: string; err: string; bootAttempts: number }> {
+  const { io, out, err } = captureIo();
+  const main = evaluateModule.main;
+  if (!main) {
+    throw new Error('scripts/evaluate.mjs does not export main()');
+  }
+  const before = viteState.bootAttempts;
+  const code = await main(argv, io);
+  return {
+    code,
+    out: out.join(''),
+    err: err.join(''),
+    bootAttempts: viteState.bootAttempts - before,
+  };
+}
+
+describe('fail-fast validation precedes the SSR core boot (parent AC1/AC2)', () => {
+  eaccesIt('rejects an unwritable --out with exit 2 and boots no SSR core', async () => {
+    const dir = makeReadOnlyDir();
+    try {
+      const before = md5(CSV);
+      const run = await runMainInProcess([
+        '--tune',
+        ...NOOP_SET,
+        '--games',
+        '10',
+        '--ticks',
+        '2000',
+        '--out',
+        join(dir, 'artifacts'),
+      ]);
+      expect(run.code).toBe(2);
+      expect(run.err).toMatch(/output directory not writable/i);
+      expect(run.err).toMatch(/EACCES|permission denied/i);
+      // No sweep can have run: the core never booted and the CSV is untouched.
+      expect(run.bootAttempts).toBe(0);
+      expect(md5(CSV)).toBe(before);
+    } finally {
+      removeReadOnlyDir(dir);
+    }
+  });
+
+  it('rejects an unreadable --tune CSV before the baseline sweep (parent AC1)', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'evaluate-failfast-csv-'));
+    try {
+      const run = await runMainInProcess([
+        '--tune',
+        '--set',
+        'no-such-balance-file.csv',
+        'boss.health=7',
+        '--games',
+        '2',
+        '--ticks',
+        '200',
+        '--out',
+        outDir,
+      ]);
+      expect(run.code).toBe(2);
+      expect(run.err).toMatch(/tune CSV not readable/i);
+      expect(run.err).toMatch(/ENOENT|no such file/i);
+      expect(run.err).toContain('no-such-balance-file.csv');
+      expect(run.bootAttempts).toBe(0);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+
+  it('the mocked boot is observable, so the zero-boot assertions are meaningful (control)', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'evaluate-failfast-ctrl-'));
+    try {
+      // Valid inputs reach `loadCore()`, which the mock refuses — proving the
+      // probe above really would have counted a boot.
+      await expect(
+        runMainInProcess(['--games', '1', '--ticks', '1', '--out', outDir]),
+      ).rejects.toThrow(/SSR core boot attempted/);
+      expect(viteState.bootAttempts).toBeGreaterThan(0);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('tune CSV probe (parent AC3)', () => {
+  it('accepts the shipped balance CSV and reports a missing one with its errno', () => {
+    const readProbe = evaluateModule.ensureReadableTuneCsv;
+    if (!readProbe) {
+      throw new Error('scripts/evaluate.mjs does not export ensureReadableTuneCsv yet');
+    }
+    expect(readProbe(CSV)).toEqual({ ok: true });
+    const missing = readProbe(join(tmpdir(), 'evaluate-failfast-does-not-exist.csv'));
+    expect(missing.ok).toBe(false);
+    expect((missing as { reason: string }).reason).toMatch(/tune CSV not readable/i);
+    expect((missing as { reason: string }).reason).toMatch(/ENOENT|no such file/i);
+  });
+
+  it('resolves the CSV target from the repository root, not the caller cwd', () => {
+    const resolveTuneCsvPath = evaluateModule.resolveTuneCsvPath;
+    if (!resolveTuneCsvPath) {
+      throw new Error('scripts/evaluate.mjs does not export resolveTuneCsvPath yet');
+    }
+    expect(resolveTuneCsvPath({ tuneFile: 'enemy-configs.csv' })).toBe(CSV);
+  });
+});
+
+describe('--help documents the fail-fast validation (parent AC4)', () => {
+  it('names both diagnostics and the exit code they use', () => {
+    const usage = evaluateModule.EVALUATE_USAGE ?? '';
+    expect(usage).toContain('output directory not writable');
+    expect(usage).toContain('tune CSV not readable');
+    expect(usage).toMatch(/Exit codes:/);
+    expect(usage).toMatch(/before the SSR core boots/);
+  });
 });

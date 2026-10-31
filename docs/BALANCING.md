@@ -734,6 +734,23 @@ The batch sweep itself uses the usual flags (`--games`, `--policies`,
 
 ### Guards and guarantees
 
+- **Fail-fast input validation (AH-0MVSE18XX006ZG5I):** before the SSR core
+  boots or any sweep runs, `--out` is probed by creating the directory (when
+  missing) and writing, fsyncing and unlinking a sentinel file, and the
+  `--tune` CSV target is probed with a read. An invalid path therefore fails in
+  well under a second with exit code `2` instead of after a full baseline and
+  candidate sweep:
+
+  ```
+  output directory not writable: <dir> (<ERRNO>)   # e.g. EACCES, ENOTDIR, EROFS
+  tune CSV not readable: <path> (<ERRNO>)          # e.g. ENOENT
+  ```
+
+  The write probe (not just a `mkdir`) is what catches an **existing** read-only
+  directory, which accepts a recursive `mkdir` and only fails on the first
+  write. The late `mkdirSync` before the artifact writes remains as an
+  idempotent safety net. The measured pre-fix cost of the same invalid path was
+  4.31 s at 10 games × 2000 ticks and 11.82 s at 40 games × 2000 ticks.
 - **Same-sweep guard:** the comparison refuses to diff two batches whose
   sweep configuration (`policies`, `seeds`, `ticks`, `dt`,
   `sampleEveryTicks`) differs — refused **before** any delta is computed.

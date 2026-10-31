@@ -158,6 +158,18 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     expect(doc).toMatch(/checkout hygiene|Checkout hygiene/);
   });
 
+  it('documents the fail-fast input validation and its exit code (AH-0MVSE18XX006ZG5I)', () => {
+    expect(doc).toContain('AH-0MVSE18XX006ZG5I');
+    expect(doc).toMatch(/Fail-fast input validation/);
+    expect(doc).toContain('output directory not writable');
+    expect(doc).toContain('tune CSV not readable');
+    // The guarantee that makes it fail *fast*: before the core boots or a sweep runs.
+    expect(doc).toMatch(/before the SSR core\s+boots or any sweep runs/);
+    expect(doc).toMatch(/exit code `2`/);
+    // The reason a plain mkdir is insufficient is part of the contract.
+    expect(doc).toMatch(/existing.*read-only\s+directory|read-only\s+directory/i);
+  });
+
   it('is cross-linked from the README and EVALUATION.md flags', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
     const evaluation = fs.readFileSync(EVALUATION_PATH, 'utf8');

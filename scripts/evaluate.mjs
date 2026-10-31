@@ -24,7 +24,16 @@
  *   node scripts/evaluate.mjs --help
  */
 
-import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { basename as pathBasename, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -210,6 +219,16 @@ Options:
   --video              Also emit the side-by-side capture plan (AC4)
   --json               Print the machine-readable report instead of text
   --help               Show this help
+
+Exit codes:
+  0                    Success.
+  1                    Unexpected runtime error.
+  2                    Usage error, or the fail-fast input validation failed.
+                       The validation runs before the SSR core boots and before
+                       any sweep, so an invalid path fails in well under a
+                       second (AH-0MVSE18XX006ZG5I). Diagnostics:
+                         output directory not writable: <dir> (<ERRNO>)
+                         tune CSV not readable: <path> (<ERRNO>)
 `;
 
 /** Resolves the seeds list from parsed options. */export function resolveSeeds(options) {
@@ -228,6 +247,102 @@ Options:
 /** Joins an output directory and an artifact name. */
 export function resolveArtifactPath(dir, name) {
   return dir.endsWith('/') ? `${dir}${name}` : `${dir}/${name}`;
+}
+
+/** Diagnostic prefix for an unwritable `--out` directory. */
+export const OUTPUT_DIR_NOT_WRITABLE = 'output directory not writable';
+
+/** Diagnostic prefix for an unreadable `--tune` CSV target. */
+export const TUNE_CSV_NOT_READABLE = 'tune CSV not readable';
+
+/**
+ * Formats a filesystem error for the fail-fast diagnostics: the errno code
+ * when Node supplies one (`EACCES`, `ENOTDIR`, …), the message otherwise, so a
+ * consumer always sees an actionable cause rather than a bare sentence.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+function describeFsError(error) {
+  if (error && typeof error === 'object' && typeof (/** @type {{code?: unknown}} */ (error)).code === 'string') {
+    return /** @type {{code: string}} */ (error).code;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Proves `dir` can be created (when missing) and written to, **before** the
+ * SSR core boots or any sweep runs (AH-0MVSE18XX006ZG5I, parent
+ * AH-0MVIKLOOJ0058Z9B).
+ *
+ * The 2026-10-21 negative probe (`--out /proc/nope/x`) ran both sweeps and
+ * then stalled for 166.6 minutes because the output directory was only touched
+ * at artifact-write time; this probe makes an invalid `--out` cost
+ * milliseconds instead.
+ *
+ * `mkdirSync` alone is not enough: an **existing** read-only directory accepts
+ * the `mkdir` (recursive, already exists) and only fails on the first write, so
+ * the probe writes, fsyncs and unlinks a sentinel file. Never throws — the
+ * caller renders `reason` verbatim.
+ *
+ * @param {string} dir
+ * @returns {{ok: true} | {ok: false, reason: string}}
+ */
+export function ensureWritableOutputDir(dir) {
+  const probePath = resolveArtifactPath(dir, `.evaluate-write-probe-${process.pid}`);
+  let fd = null;
+  try {
+    mkdirSync(dir, { recursive: true });
+    fd = openSync(probePath, 'w');
+    writeSync(fd, 'write-probe');
+    fsyncSync(fd);
+  } catch (error) {
+    return { ok: false, reason: `${OUTPUT_DIR_NOT_WRITABLE}: ${dir} (${describeFsError(error)})` };
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // best effort — the probe verdict is already decided
+      }
+      try {
+        unlinkSync(probePath);
+      } catch {
+        // best effort — a leftover sentinel must not mask the verdict
+      }
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Resolves the `--tune` CSV target from the shell's own root, so the fail-fast
+ * validation and `executeTune` can never disagree about which file is edited.
+ *
+ * @param {{tuneFile?: string | null}} options
+ * @returns {string}
+ */
+export function resolveTuneCsvPath(options) {
+  const root = resolvePath(import.meta.dirname, '..');
+  return resolvePath(root, 'src/data', options.tuneFile ?? '');
+}
+
+/**
+ * Proves the `--tune` CSV target is readable **before** the baseline sweep
+ * (AH-0MVSE18XX006ZG5I). Without it a missing/unreadable CSV only surfaces
+ * after the baseline batch has already run, and a `--set` edit would then be
+ * applied to a file the shell could not read. Never throws.
+ *
+ * @param {string} csvPath
+ * @returns {{ok: true} | {ok: false, reason: string}}
+ */
+export function ensureReadableTuneCsv(csvPath) {
+  try {
+    readFileSync(csvPath);
+  } catch (error) {
+    return { ok: false, reason: `${TUNE_CSV_NOT_READABLE}: ${csvPath} (${describeFsError(error)})` };
+  }
+  return { ok: true };
 }
 
 /**
@@ -347,8 +462,7 @@ export async function restoreCsvFile(
  */
 export async function executeTune(options, io) {
   const { server, core } = await loadCore();
-  const root = resolvePath(import.meta.dirname, '..');
-  const csvPath = resolvePath(root, 'src/data', options.tuneFile);
+  const csvPath = resolveTuneCsvPath(options);
   const sweep = {
     ...options,
     batch: false,
@@ -426,6 +540,24 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
   if (options.tune) {
     if (!options.tuneFile || !options.tuneAssignment) {
       io.err.write('--tune requires --set <file> <assignment> (e.g. --set enemy-configs.csv boss.health=6)\n');
+      return 2;
+    }
+  }
+
+  // Fail-fast input validation (AH-0MVSE18XX006ZG5I, parent
+  // AH-0MVIKLOOJ0058Z9B): both probes run **before** `loadCore()` boots Vite
+  // SSR and before any baseline/candidate sweep, so an invalid path exits 2 in
+  // well under a second instead of after a full sweep (measured pre-fix:
+  // 4.31 s at 10 games x 2000 ticks, 11.82 s at 40 games x 2000 ticks).
+  const outputProbe = ensureWritableOutputDir(options.outputDir);
+  if (!outputProbe.ok) {
+    io.err.write(`${outputProbe.reason}\n`);
+    return 2;
+  }
+  if (options.tune) {
+    const csvProbe = ensureReadableTuneCsv(resolveTuneCsvPath(options));
+    if (!csvProbe.ok) {
+      io.err.write(`${csvProbe.reason}\n`);
       return 2;
     }
     return await executeTune(options, io);
