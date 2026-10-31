@@ -470,13 +470,6 @@ export const VICTORY_TRANSITION_HOLD_MS = ENDOFRUN_VICTORY_FIREWORKS_DURATION_MS
  */
 export const VICTORY_FIREWORK_DEPTH = 300;
 
-/**
- * Background depth for the play scene. Set well below the juice layers
- * (negative −10…−7) so the in-run celebration renders above the playfield
- * backdrop instead of behind it (mirrors `GameOverScene`'s −100 background).
- */
-const PLAYSCENE_BACKGROUND_DEPTH = -1000;
-
 /** Neon-cyan level/score text colour. */
 const HUD_TEXT_COLOR = '#00ffff';
 
@@ -1154,10 +1147,12 @@ export class PlayScene extends CombatScene<
     // injected one. Records the run header + `run_start` event.
     this._initTelemetry();
 
-    this.add
-      .rectangle(0, 0, GAME_WIDTH, GAME_HEIGHT, 0x000000)
-      .setOrigin(0)
-      .setDepth(PLAYSCENE_BACKGROUND_DEPTH);
+    // Shared background layer (parent AH-0MVIB7PD50029ZY1): full-canvas photo
+    // plus readability dim overlay, or the solid GAME_BACKGROUND_COLOR
+    // fallback when the level's texture is not loaded yet. The lifecycle lives
+    // once in the shared core; the level itself is applied below once the
+    // WaveManager knows the run's starting level.
+    this._createBackground();
 
     // Player ship (auto-fire, weapons, effects).
     //
@@ -1305,6 +1300,10 @@ export class PlayScene extends CombatScene<
     // Publish the live run position for a generated-level capture driver
     // (AH-0MVE01EY0008QEVX AC3); dev builds only.
     this._publishRunProgress(false);
+    // The backdrop follows the run's actual starting level (a checkpoint
+    // resume or a hangar deployment can start above level 1). Idempotent for
+    // level 1, where the layer already shows that background.
+    this._setBackgroundLevel(this.waveManager.level);
     if (resume) this._restoreCheckpoint(resume);
     // The campaign labels need the started WaveManager (level/wave counts).
     this._refreshHudText();

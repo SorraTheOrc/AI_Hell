@@ -15,6 +15,40 @@ export const GAME_WIDTH = 960;
 export const GAME_HEIGHT = 540;
 export const GAME_BACKGROUND_COLOR = '#000000';
 
+// ── Shared background layer (parent AH-0MVIB7PD50029ZY1) ────────────
+
+/**
+ * Render depth of the full-canvas background (photo or solid fallback).
+ *
+ * Well below the gameplay layer (depth 0) and the juice layers (−10…−7) so the
+ * neon vector art, every bullet and the player always draw on top of the
+ * backdrop (parent AC1/AC4).
+ */
+export const BACKGROUND_DEPTH = -1000;
+
+/**
+ * Render depth of the readability dim overlay: above the photo
+ * ({@link BACKGROUND_DEPTH}) and below the juice layers (−10) and gameplay
+ * (0), so the dimming never covers enemies, bullets or the ship.
+ */
+export const BACKGROUND_DIM_DEPTH = -950;
+
+/** Alpha of the readability dim overlay drawn over the background photo. */
+export const BACKGROUND_DIM_ALPHA = 0.45;
+
+/** Colour of the readability dim overlay (`#rrggbb`). */
+export const BACKGROUND_DIM_COLOR = '#000000';
+
+/**
+ * Solid colour drawn when a level's background texture is unavailable (null
+ * = no solid fallback; the scene's configured background shows through).
+ *
+ * Deliberately the same constant the game config uses, so a scene that has no
+ * photo shows exactly the background colour it always had.
+ */
+export const BACKGROUND_FALLBACK_COLOR: string | null =
+  GAME_BACKGROUND_COLOR;
+
 // ── Movement Physics (GDD §2.2) — default values ───────────────────
 // `config.ts` derives `DEFAULT_CONFIG` from these literals (kept here as a
 // leaf module so the CSV-backed config store can import the config modules

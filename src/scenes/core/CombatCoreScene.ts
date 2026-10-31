@@ -143,6 +143,10 @@ import {
   type SceneSetupState,
 } from './sceneSetup';
 import {
+  createBackgroundLayer,
+  type BackgroundLayer,
+} from './backgroundLayer';
+import {
   applyMineralScoop,
   type MovableMineral,
 } from '../../powerups/mineralScoop';
@@ -1802,6 +1806,47 @@ export class CombatCoreScene<
   // ── Run lifecycle (restart / teardown parity, gap 10) ─────────────
 
   /**
+   * The shared background layer for the current run, or `null` before
+   * {@link CombatCoreScene._createBackground} runs and after teardown
+   * (parent AH-0MVIB7PD50029ZY1, slice AH-0MVSEB7SA004B26C).
+   */
+  protected backgroundLayer: BackgroundLayer | null = null;
+
+  /**
+   * Creates the shared background layer for this scene.
+   *
+   * The whole lifecycle (full-canvas photo, readability dim overlay, solid
+   * fallback when the texture is absent) lives in
+   * {@link createBackgroundLayer}; scenes call this from `create()` and must
+   * not draw their own backdrop (AGENTS.md gym↔game parity rule). Teardown is
+   * automatic through {@link CombatCoreScene.teardownRunState}, and a
+   * re-create destroys any layer left by a previous run.
+   *
+   * A missing texture is not an error: the layer shows
+   * `GAME_BACKGROUND_COLOR` until {@link CombatCoreScene._setBackgroundLevel}
+   * (or a later `setLevel`) finds the level's texture.
+   *
+   * @param level - 1-based campaign level to show (defaults to level 1).
+   */
+  protected _createBackground(level = 1): void {
+    this.backgroundLayer?.destroy();
+    this.backgroundLayer = createBackgroundLayer(this, level);
+  }
+
+  /**
+   * Shows `level`'s background through the shared layer.
+   *
+   * Idempotent for an unchanged level (no display-object churn), so a
+   * level-change or per-frame refresh can call it freely. A no-op when no
+   * layer exists or after teardown.
+   *
+   * @param level - 1-based campaign level (`1..LEVELS.length`).
+   */
+  protected _setBackgroundLevel(level: number): void {
+    this.backgroundLayer?.setLevel(level);
+  }
+
+  /**
    * Resets the shared per-run state so a stop/restart of the *same*
    * scene instance starts from a clean slate — the gym/game counterpart
    * of `PlayScene._resetRunState()` (AH-0MUII3FYN0072QRT, gap 10).
@@ -1906,6 +1951,11 @@ export class CombatCoreScene<
     this._pendingSplitWarheads.length = 0;
     this.optionsPodGraphics?.destroy();
     this.optionsPodGraphics = null;
+    // Destroy the shared background layer so no display object survives into
+    // the next run (parent AH-0MVIB7PD50029ZY1, slice AH-0MVSEB7SA004B26C).
+    // Doing it here means every subclass gets the teardown for free.
+    this.backgroundLayer?.destroy();
+    this.backgroundLayer = null;
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();
