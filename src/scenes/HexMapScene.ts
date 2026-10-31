@@ -46,6 +46,10 @@ import {
   type HexMapModel,
 } from '../core/hangarWar/hexIntel';
 import { HEX_RING_DEFINITIONS } from '../data/hexRingDefinitions';
+import {
+  decideMapAction,
+  HANGAR_WAR_TRAVERSAL_DWELL_MS,
+} from '../ai/hangarWarTraversal';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 import { HANGAR_SCENE_KEY } from './HangarScene';
 import {
@@ -75,6 +79,14 @@ export interface HexMapSceneData {
   storage?: HangarWarStorage | null;
   /** Authored ring definitions to render (defaults to the shipped table). */
   definitions?: readonly HexRingDefinition[];
+  /**
+   * Bot-driven attract traversal (AH-0MVUXCBBK004EJIP): the pure
+   * `decideMapAction` picks the weakest adjacent hex and deploys, so the demo
+   * never stalls on the map.
+   */
+  demo?: boolean;
+  /** Demo dwell override in milliseconds (tests use a short one). */
+  demoDwellMs?: number;
 }
 
 /**
@@ -93,6 +105,15 @@ export class HexMapScene extends Phaser.Scene {
   /** The rendered map (rebuilt after every change). */
   private view: HexMapView | null = null;
 
+  /** Whether the attract traversal is driving this screen. */
+  private demo = false;
+
+  /** Demo dwell override (production uses the shared traversal dwell). */
+  private demoDwellMs?: number;
+
+  /** The demo auto-advance timer, cleared on shutdown. */
+  private demoTimer: Phaser.Time.TimerEvent | null = null;
+
   constructor() {
     super(HEX_MAP_SCENE_KEY);
   }
@@ -100,6 +121,8 @@ export class HexMapScene extends Phaser.Scene {
   init(data?: HexMapSceneData | null): void {
     this.storage = data?.storage;
     this.definitions = data?.definitions ?? HEX_RING_DEFINITIONS;
+    this.demo = data?.demo === true;
+    this.demoDwellMs = data?.demoDwellMs;
     const injected = data?.payload;
     const loaded = injected ?? this.loadPayload();
     // A fresh war (or a save written before the ring model landed) has an empty
@@ -118,6 +141,7 @@ export class HexMapScene extends Phaser.Scene {
   create(): void {
     this.build();
     addBackToMenuOnEsc(this);
+    if (this.demo) this.scheduleDemoAdvance();
   }
 
   /** Loads the stored payload, or a fresh default war when there is none. */
@@ -131,7 +155,9 @@ export class HexMapScene extends Phaser.Scene {
 
   /** Persists the materialised ring (a fresh war's first write). */
   private persist(): void {
-    if (this.storage === null) return;
+    // A demo run is a demonstration, not progress: it never overwrites the
+    // player's war.
+    if (this.demo || this.storage === null) return;
     if (this.storage === undefined) {
       saveHangarWarPayload(this.payload);
     } else {
@@ -164,8 +190,13 @@ export class HexMapScene extends Phaser.Scene {
    */
   deploy(hexId: string): HangarWarDeployment {
     const deployment = buildHangarDeployment(this.payload, { hexId });
+    // The deployment carries this map's payload, so the run resolves its
+    // capture and its between-sortie tick against exactly the war on screen —
+    // including a payload injected by a test or the attract traversal, which
+    // the versioned store never sees.
     this.scene.start('PlayScene', {
-      demo: false,
+      demo: this.demo,
+      demoDwellMs: this.demoDwellMs,
       resume: false,
       hangarWar: deployment,
     });
@@ -180,7 +211,38 @@ export class HexMapScene extends Phaser.Scene {
     this.scene.start(HANGAR_SCENE_KEY, {
       payload: this.payload,
       storage: this.storage,
+      demo: this.demo,
+      demoDwellMs: this.demoDwellMs,
     });
+  }
+
+  /**
+   * Schedules the attract traversal's single step on the map.
+   *
+   * The decision is the pure, tested `decideMapAction` (the weakest adjacent
+   * unheld hex, or the hangar once the ring is secured); the scene only owns
+   * the dwell that applies it, so the map never stalls in demo mode.
+   */
+  private scheduleDemoAdvance(): void {
+    this.demoTimer?.remove(false);
+    const dwell = this.demoDwellMs ?? HANGAR_WAR_TRAVERSAL_DWELL_MS;
+    this.demoTimer = this.time.delayedCall(dwell, () => {
+      if (!this.sys.isActive()) return;
+      const action = decideMapAction(this.payload, {
+        definitions: this.definitions,
+      });
+      if (action.kind === 'deploy' && action.hexId !== null) {
+        this.deploy(action.hexId);
+        return;
+      }
+      // A secured ring has nothing left to attack: skip to the hangar.
+      this.openHangar();
+    });
+  }
+
+  /** Whether the attract traversal is driving this screen (test seam). */
+  isDemo(): boolean {
+    return this.demo;
   }
 
   // ── Public query seams (keyboard/pointer tests use these) ───────

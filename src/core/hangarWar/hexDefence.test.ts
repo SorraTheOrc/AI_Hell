@@ -31,6 +31,7 @@ import {
   advanceClock,
   attackingNeighbour,
   createFrontierClock,
+  frontierClockFor,
   resolveDefence,
   runFrontierTick,
   type FrontierTuning,
@@ -575,5 +576,48 @@ describe('a secured ring (deferred hangar assault, Q2 = a)', () => {
     expect(ringTwo.ringIndex).toBe(2);
     expect(ringTwo.hexes).toHaveLength(12);
     expect(ringTwo.hexes.every((hex) => !hex.held)).toBe(true);
+  });
+});
+
+describe('frontier tick integration (AH-0MVUXCBBK004EJIP)', () => {
+  it('advances the payload\'s own frontier clock position on every tick', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 0);
+    const payload = payloadWith(hexes);
+    expect(payload.frontierTick).toBeUndefined();
+
+    const first = runFrontierTick(payload, { tuning: ALWAYS_ATTACK });
+    expect(first.payload.frontierTick).toBe(1);
+    // The payload's clock position always matches the returned clock, so a
+    // caller can resume from the persisted payload alone.
+    expect(frontierClockFor(first.payload)).toEqual(first.clock);
+
+    const second = runFrontierTick(first.payload, {
+      clock: frontierClockFor(first.payload),
+      tuning: ALWAYS_ATTACK,
+    });
+    expect(second.record.tick).toBe(1);
+    expect(second.payload.frontierTick).toBe(2);
+    expect(frontierClockFor(second.payload)).toEqual(second.clock);
+  });
+
+  it('reads an absent frontier tick as the start of the war', () => {
+    const payload = payloadWith(ringOne());
+    expect(payload.frontierTick).toBeUndefined();
+    expect(frontierClockFor(payload)).toEqual({
+      seed: payload.seed,
+      tick: 0,
+    });
+  });
+
+  it('resumes the stored position after a save round-trip', () => {
+    const hexes = ringOne();
+    hold(hexes, RING_ONE_IDS[0], 0);
+    const ticked = runFrontierTick(payloadWith(hexes), {
+      tuning: ALWAYS_ATTACK,
+    });
+    const stored = JSON.parse(JSON.stringify(ticked.payload)) as HangarWarPayload;
+    expect(stored.frontierTick).toBe(1);
+    expect(frontierClockFor(stored)).toEqual(ticked.clock);
   });
 });

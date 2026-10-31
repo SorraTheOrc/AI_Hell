@@ -24,7 +24,11 @@
  * the shared `CombatCoreScene._updateP4Bomb` path. This scene supplies only
  * the kill-chance spawn *source* (AH-0MUII3CXX0023H24, gap 4).
  *
- * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`.
+ * Flow: `MenuScene → PlayScene → GameOverScene → MenuScene`. A **hangar-war
+ * deployment** (AH-0MVUXCBBK004EJIP) ends in `DefenceReportScene` instead:
+ * the run's between-sortie frontier tick is resolved and its record is the
+ * report's content, so the player sees the numbers behind every hold and fall
+ * before returning to the map. The arcade run is unchanged.
  *
  * **Hangar-war deployments (AH-0MVUXC2DD003HN0I).** `init()` also accepts a
  * `hangarWar` launch payload from the hangar screen. A deployment runs this
@@ -174,6 +178,13 @@ import {
   buildHexBossProfile,
   type HexBossProfile,
 } from '../core/hangarWar/hexBoss';
+import {
+  frontierClockFor,
+  runFrontierTick,
+  type FrontierTickResult,
+} from '../core/hangarWar/hexDefence';
+import type { HangarWarPayload } from '../core/hangarWar/types';
+import { DEFENCE_REPORT_SCENE_KEY } from './DefenceReportScene';
 import {
   HEX_RING_DEFINITIONS,
   findHexRingDefinition,
@@ -758,6 +769,16 @@ export class PlayScene extends CombatScene<
   private hangarWarDeployment: HangarWarDeployment | null = null;
 
   /**
+   * This run's working hangar-war payload (AH-0MVUXCBBK004EJIP).
+   *
+   * Seeded from the deployment's carried payload (the war the map showed) and
+   * advanced in place by the capture cycle and the between-sortie tick, so the
+   * two resolutions always build on each other instead of each re-reading a
+   * stale copy. `null` until first needed.
+   */
+  private hangarWarState: HangarWarPayload | null = null;
+
+  /**
    * The hex boss variant this deployment's final encounter runs with
    * (AH-0MVUXCAW0001VUM6), or `null` for the shipped arcade run. A **variant**
    * on the shared boss path (colour/demonstrated-weapon/hit pool), never a
@@ -1091,6 +1112,8 @@ export class PlayScene extends CombatScene<
     // deterministic deployment seed. The two modes share run code, never
     // session/checkpoint state.
     this.hangarWarDeployment = readHangarWarDeployment(data?.hangarWar);
+    // A fresh run starts from its own carried payload (never a previous run's).
+    this.hangarWarState = null;
     this.hexBossProfile = this.hangarWarDeployment?.hexId
       ? buildHexBossProfile(
           {
@@ -3588,8 +3611,7 @@ export class PlayScene extends CombatScene<
    * the balance through the versioned hangar-war store.
    */
   private _bankSalvageAtCheckpoint(context: MiniBossDefeatContext): void {
-    const payload =
-      loadHangarWarPayload() ?? createDefaultPayload(this.getRunSeed());
+    const payload = this._hangarWarPayload();
     const bank = this.salvageBank ?? bankedSalvageFromHangar(payload.hangar);
     const next = bankSalvage(
       bank,
@@ -3599,7 +3621,7 @@ export class PlayScene extends CombatScene<
     if (next.minerals === bank.minerals && next.cores === bank.cores) return;
     payload.hangar.bankedMinerals = next.minerals;
     payload.hangar.bankedCores = next.cores;
-    saveHangarWarPayload(payload);
+    this._saveHangarWarPayload(payload);
   }
 
   /**
@@ -3616,8 +3638,7 @@ export class PlayScene extends CombatScene<
   private _resolveHangarWarCapture(): void {
     const deployment = this.hangarWarDeployment;
     if (!deployment || !deployment.hexId) return;
-    const payload =
-      loadHangarWarPayload() ?? createDefaultPayload(this.getRunSeed());
+    const payload = this._hangarWarPayload();
     const result = resolveHexCapture(payload, {
       hexId: deployment.hexId,
       defenderHullId: deployment.hullId,
@@ -3629,7 +3650,7 @@ export class PlayScene extends CombatScene<
     this.salvageBank = result.banked;
     // A victorious deployment always extracts its salvage, so the payload is
     // written even when the hex itself could not be held (defender refused).
-    saveHangarWarPayload(result.payload);
+    this._saveHangarWarPayload(result.payload);
   }
 
   /**
@@ -3642,14 +3663,66 @@ export class PlayScene extends CombatScene<
    * (AH-0MVUXCAW0001VUM6) so the win and loss rules live in one module.
    */
   private _forfeitUnbankedSalvage(): void {
-    const payload =
-      loadHangarWarPayload() ?? createDefaultPayload(this.getRunSeed());
+    const payload = this._hangarWarPayload();
     const outcome = resolveDeploymentDefeat(payload, {
       salvage: this._salvageSnapshot('run-end'),
       banked: this.salvageBank ?? bankedSalvageFromHangar(payload.hangar),
     });
     this.salvageBank = outcome.banked;
     this.forfeitedSalvage = outcome.forfeited;
+  }
+
+  /**
+   * This run's working hangar-war payload (AH-0MVUXCBBK004EJIP).
+   *
+   * Resolution order: the deployment's **carried** payload (the war the map
+   * showed, which a test or the attract traversal may have injected) → the
+   * versioned store → a fresh war seeded from the run. Cached, so the capture
+   * cycle and the between-sortie tick build on each other rather than each
+   * re-reading a stale copy.
+   */
+  private _hangarWarPayload(): HangarWarPayload {
+    if (this.hangarWarState === null) {
+      this.hangarWarState =
+        this.hangarWarDeployment?.payload
+        ?? loadHangarWarPayload()
+        ?? createDefaultPayload(this.getRunSeed());
+    }
+    return this.hangarWarState;
+  }
+
+  /**
+   * Caches the run's next war payload and persists it through the versioned
+   * store — except in demo mode, where a demonstration must never overwrite the
+   * player's war (the same rule that keeps a demo run off the leaderboard).
+   */
+  private _saveHangarWarPayload(payload: HangarWarPayload): void {
+    this.hangarWarState = payload;
+    if (this.demoMode) return;
+    saveHangarWarPayload(payload);
+  }
+
+  /**
+   * Runs the **between-sortie frontier tick** (AH-0MVUXCBBK004EJIP).
+   *
+   * This is the "between runs" moment the design names: one tick raises border
+   * aggression and lets the AI attack a held hex, resolved purely from stored
+   * numbers. The tick's record is what the defence report renders, and the
+   * advanced payload is persisted (outside demo mode) so the next run starts
+   * from the risen frontier. The arcade run is a no-op.
+   *
+   * @returns the tick's payload/clock/record, or `null` for the arcade run.
+   */
+  private _resolveBetweenSortieTick(): FrontierTickResult | null {
+    if (!this.hangarWarDeployment) return null;
+    const payload = this._hangarWarPayload();
+    const result = runFrontierTick(payload, {
+      // The payload carries its own frontier position, so a tick always resumes
+      // this war's clock.
+      clock: frontierClockFor(payload),
+    });
+    this._saveHangarWarPayload(result.payload);
+    return result;
   }
 
   /** The banked salvage balance the current run has produced (test/UI seam). */
@@ -4783,6 +4856,29 @@ export class PlayScene extends CombatScene<
     // Fire-and-forget: the flush + POST must never block or crash run end, so
     // the scene transitions below happen regardless of its outcome.
     void this.flushAndUploadDevTelemetry();
+    if (this.hangarWarDeployment) {
+      // A hex deployment ends in the **between-sortie defence report**
+      // (AH-0MVUXCBBK004EJIP): run the frontier tick — one tick of risen
+      // aggression and a purely algorithmic attack — and hand its record to the
+      // report, which renders the numbers that produced every hold and fall.
+      // There is no defence battle to fly or watch, so this transition can never
+      // stall the demo.
+      const tick = this._resolveBetweenSortieTick();
+      const wasDemo = this.demoMode;
+      if (wasDemo) {
+        this.demoMode = false;
+        this._disableDemoTakeOver();
+      }
+      this.scene.start(DEFENCE_REPORT_SCENE_KEY, {
+        payload: tick?.payload ?? this._hangarWarPayload(),
+        record: tick?.record,
+        won,
+        score: this.gameState.score,
+        demo: wasDemo,
+        demoDwellMs: this.demoDwellMs,
+      });
+      return;
+    }
     if (this.demoMode) {
       // Non-scoring demo (AC2): start the shared GameOverScene in demo mode so
       // it renders VICTORY/DEFEAT + final score without leaderboard

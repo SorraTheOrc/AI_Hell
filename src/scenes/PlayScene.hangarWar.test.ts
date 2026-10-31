@@ -199,8 +199,11 @@ describe('PlayScene — hangar-war deployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(loadCheckpoint()).toEqual(ARCADE_CHECKPOINT);
 
     // The checkpoint moment still banks the deployment's salvage: the hangar
-    // economy is the one seam both modes share.
-    expect(loadHangarWarPayload()!.hangar.bankedMinerals).toBe(4);
+    // economy is the one seam both modes share. The bank is the fleet's
+    // existing balance plus this run's minerals, not the run's minerals alone.
+    expect(loadHangarWarPayload()!.hangar.bankedMinerals).toBe(
+      VALID_HANGAR_WAR_PAYLOAD.hangar.bankedMinerals + 4,
+    );
 
     scene.scene.start('MenuScene');
     await advanceGame(scene.game, 200);

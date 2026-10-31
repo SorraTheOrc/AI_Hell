@@ -119,4 +119,14 @@ export interface HangarWarPayload {
   pendingAttacks: PendingAttack[];
   /** Best score recorded across deployments. */
   bestScore: number;
+  /**
+   * Frontier ticks elapsed — the aggression clock's position, advanced by one
+   * on every between-sortie tick (AH-0MVUXCBBK004EJIP).
+   *
+   * **Additive and optional on purpose:** a save written before the
+   * between-sortie tick landed has no such field, and absence reads as `0`
+   * (`frontierClockFor` in `./hexDefence`), so the parser migrates it by field
+   * presence without a schema version bump.
+   */
+  frontierTick?: number;
 }

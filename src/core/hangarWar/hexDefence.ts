@@ -96,10 +96,15 @@
  *
  * The transition is **pure**: the input payload is never mutated (the returned
  * payload is a detached copy), which is what lets the gym, the map and the
- * report share one implementation (AGENTS.md gym↔game parity). The generated
- * `GymHexWar` harness keeps its own deterministic stand-in
- * (`./fakeFrontierClock`) until the defence report (B6) renders this record;
- * neither the scene nor the harness owns a defence rule.
+ * report share one implementation (AGENTS.md gym↔game parity). The defence
+ * report (AH-0MVUXCBBK004EJIP) renders this record — `buildDefenceReport` in
+ * `./defenceReport` copies every number straight out of it, so no scene
+ * re-derives a figure. The returned payload also advances the war's own
+ * `frontierTick` ({@link frontierClockFor}), so a between-sortie tick resumed
+ * from the persisted payload always continues this war's clock. The
+ * `GymHexWar` harness keeps its deterministic control-surface stand-in
+ * (`./fakeFrontierClock`) for its `take hex → leave bot → tick` surface, but
+ * renders its report view from **this** resolver's record.
  *
  * @module src/core/hangarWar/hexDefence
  */
@@ -343,6 +348,22 @@ export function advanceClock(clock: FrontierClock, ticks = 1): FrontierClock {
 }
 
 /**
+ * The clock the payload's own frontier position names.
+ *
+ * The payload carries `frontierTick` (advanced by {@link runFrontierTick}), so a
+ * caller never has to thread a clock through scene transitions: a tick applied
+ * to a freshly loaded payload always resumes the war's own clock. A save
+ * written before the between-sortie tick landed has no `frontierTick` and
+ * reads as tick `0`, and the clock's seed is the payload's stored war seed.
+ *
+ * @param payload — the war payload (read only).
+ * @returns the clock the payload is currently at.
+ */
+export function frontierClockFor(payload: HangarWarPayload): FrontierClock {
+  return createFrontierClock(payload.seed, payload.frontierTick ?? 0);
+}
+
+/**
  * The unheld neighbouring hex an attack on `hex` would be launched from.
  *
  * The frontier presses from the most aggressive unheld neighbour (the hardest
@@ -577,6 +598,12 @@ export function runFrontierTick(
       }
     }
   }
+
+  // The tick advances the payload's own frontier clock position, so the next
+  // between-sortie tick resumes this war's clock without a caller threading one
+  // through the scenes (AH-0MVUXCBBK004EJIP). `frontierClockFor(next)` therefore
+  // returns exactly the returned `clock`.
+  next.frontierTick = clock.tick + 1;
 
   return {
     payload: next,

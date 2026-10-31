@@ -215,6 +215,17 @@ describe('buildHangarDeployment (AH-0MVUXC2DD003HN0I)', () => {
     buildHangarDeployment(payload);
     expect(JSON.stringify(payload)).toBe(before);
   });
+
+  it('carries a detached copy of the war it was launched from', () => {
+    // AH-0MVUXCBBK004EJIP: the run resolves its capture and its between-sortie
+    // tick against exactly the war the map showed — including an injected
+    // payload the versioned store never sees.
+    const payload = fieldedPayload();
+    const deployment = buildHangarDeployment(payload);
+    expect(deployment.payload).toEqual(payload);
+    expect(deployment.payload).not.toBe(payload);
+    expect(readHangarWarDeployment(deployment)!.payload).toEqual(payload);
+  });
 });
 
 describe('readHangarWarDeployment (AH-0MVUXC2DD003HN0I)', () => {
@@ -243,6 +254,19 @@ describe('readHangarWarDeployment (AH-0MVUXC2DD003HN0I)', () => {
       hexId: 'hex-hard',
     });
     expect(readHangarWarDeployment(deployment)).toEqual(deployment);
+  });
+
+  it('drops an unusable carried payload instead of rejecting the deployment', () => {
+    const read = readHangarWarDeployment({
+      kind: HANGAR_WAR_DEPLOYMENT_KIND,
+      startLevel: 1,
+      // An incompatible schema marker: the store's parser rejects it whole, so
+      // the deployment simply carries no payload and the run falls back to the
+      // stored war.
+      payload: { version: 99, hangar: {} },
+    });
+    expect(read).not.toBeNull();
+    expect(read!.payload).toBeUndefined();
   });
 
   it('normalises out-of-range and wrong-typed fields', () => {

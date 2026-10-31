@@ -54,6 +54,7 @@ import {
   type TelemetryEnv,
 } from '../telemetry';
 import { LEVEL_COUNT } from '../waves/Formations';
+import { HEX_MAP_SCENE_KEY } from './HexMapScene';
 
 /** Neon-cyan colour for menu text (GDD §7.1 art direction). */
 const MENU_TEXT_COLOR = '#00ffff';
@@ -169,6 +170,18 @@ export class MenuScene extends Phaser.Scene {
    * preserved across input resets, so a configured value sticks.
    */
   private attractTimeoutMs = ATTRACT_IDLE_TIMEOUT_MS;
+
+  /**
+   * How many idle-attract demos this menu instance has started
+   * (AH-0MVUXCBBK004EJIP).
+   *
+   * The attract cycle alternates: the first demo is the shipped arcade run, the
+   * next is the Hangar War traversal (map → deployment → defence report → map →
+   * hangar), so every new screen is demonstrated without a player present. The
+   * counter lives on the scene instance, which Phaser reuses across menu
+   * re-entry, so the cycle continues instead of restarting.
+   */
+  private demoCycleIndex = 0;
 
   /**
    * Rendered official GitHub mark next to the footer link, or null until the
@@ -634,6 +647,25 @@ export class MenuScene extends Phaser.Scene {
   }
 
   /**
+   * Starts the bot-driven **Hangar War** attract traversal
+   * (AH-0MVUXCBBK004EJIP).
+   *
+   * Enters the outer loop at its hub — the hex map — with `{ demo: true }`, so
+   * every Hangar War screen applies its pure traversal decision
+   * (`src/ai/hangarWarTraversal.ts`) and advances itself: the map deploys at the
+   * weakest adjacent hex, the finished deployment's defence report auto-continues
+   * to the map, and the hangar buys the cheapest useful unlock and deploys.
+   * Nothing here starts a defence battle, because a defence is resolved
+   * algorithmically before its report renders.
+   *
+   * `demoDwellMs` optionally overrides the per-screen dwell forwarded to the
+   * traversal screens (tests drive a short one instead of waiting in real time).
+   */
+  startHangarWarDemo(demoDwellMs?: number): void {
+    this.scene.start(HEX_MAP_SCENE_KEY, { demo: true, demoDwellMs });
+  }
+
+  /**
    * (Re)schedules the idle-attract timer (AC1/AC4). Called on create and on
    * any input so the countdown restarts; the default timeout is the
    * single-source {@link ATTRACT_IDLE_TIMEOUT_MS}. Exposed so tests can drive
@@ -644,7 +676,15 @@ export class MenuScene extends Phaser.Scene {
     this.attractTimer?.remove(false);
     this.attractTimer = this.time.delayedCall(timeoutMs, () => {
       // Guard: only start while this menu is still the active scene (AC4).
-      if (this.sys.isActive()) this.startDemo();
+      if (!this.sys.isActive()) return;
+      // Alternate the shipped arcade demo with the Hangar War traversal, so a
+      // full attract cycle demonstrates every new screen (AH-0MVUXCBBK004EJIP).
+      this.demoCycleIndex += 1;
+      if (this.demoCycleIndex % 2 === 0) {
+        this.startHangarWarDemo();
+        return;
+      }
+      this.startDemo();
     });
   }
 }

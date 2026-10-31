@@ -292,7 +292,7 @@ export function parseHangarWarPayload(raw: unknown): HangarWarPayload | null {
   const hangar = parseHangar(raw.hangar);
   if (hangar === null) return null;
 
-  return {
+  const payload: HangarWarPayload = {
     version: HANGAR_WAR_VERSION,
     seed:
       typeof raw.seed === 'number' && Number.isFinite(raw.seed)
@@ -303,6 +303,18 @@ export function parseHangarWarPayload(raw: unknown): HangarWarPayload | null {
     pendingAttacks: parsePendingAttacks(raw.pendingAttacks),
     bestScore: toNonNegativeInteger(raw.bestScore),
   };
+
+  // The frontier clock's position (AH-0MVUXCBBK004EJIP) is an **additive**
+  // field: a save written before the between-sortie tick landed simply has no
+  // `frontierTick`, so it is omitted here (rather than defaulted) and absence
+  // reads as tick `0`. That keeps field-presence migration exact and needs no
+  // schema version bump.
+  const frontierTick = toInteger(raw.frontierTick);
+  if (frontierTick !== null && frontierTick >= 0) {
+    payload.frontierTick = frontierTick;
+  }
+
+  return payload;
 }
 
 /**
@@ -335,6 +347,8 @@ export function createDefaultPayload(seed: number = 0): HangarWarPayload {
     ring: { ringIndex: DEFAULT_RING_INDEX, hexes: [] },
     pendingAttacks: [],
     bestScore: 0,
+    // A fresh war has not been ticked yet (AH-0MVUXCBBK004EJIP).
+    frontierTick: 0,
   };
 }
 

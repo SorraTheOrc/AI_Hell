@@ -34,6 +34,7 @@
 
 import { DEFAULT_LIVES, MAX_LIVES, MAX_LEVEL, MIN_LEVEL } from '../../core/GameState';
 import type { ShipConfig } from '../../core/configTypes';
+import { parseHangarWarPayload } from '../../core/hangarWar/hangarWarStore';
 import {
   findHangarEntry,
   resolveActiveHull,
@@ -87,6 +88,16 @@ export interface HangarWarDeployment {
   readonly startingWeapons: readonly WeaponId[];
   /** Permanent modifier ids applied to this deployment. */
   readonly modifiers: readonly string[];
+  /**
+   * The war payload the deployment was launched from (AH-0MVUXCBBK004EJIP).
+   *
+   * Carried so the run's between-sortie resolution (the capture cycle and the
+   * frontier tick) works on **exactly** the war the map showed — including a
+   * payload injected by a test, a capture or the attract traversal, which the
+   * versioned store never sees. Optional: a deployment without it falls back to
+   * the stored payload, so launch data from an older build still runs.
+   */
+  readonly payload?: HangarWarPayload;
 }
 
 /** Options for {@link buildHangarDeployment}. */
@@ -251,6 +262,9 @@ export function buildHangarDeployment(
     speedMultiplier: hull?.runStats.speedMultiplier ?? 1,
     startingWeapons: resolveStartingWeapons(loadout.startingWeapons, catalogue),
     modifiers: [...loadout.modifiers],
+    // A detached copy: the run resolves captures/ticks against this war, and a
+    // caller must never see its own payload mutated by a deployment.
+    payload: JSON.parse(JSON.stringify(payload)) as HangarWarPayload,
   };
 }
 
@@ -309,6 +323,10 @@ export function readHangarWarDeployment(
     speedMultiplier: speed,
     startingWeapons: toStringList(raw.startingWeapons) as WeaponId[],
     modifiers: toStringList(raw.modifiers),
+    // The carried war payload is parsed with the store's own defensive parser,
+    // so a corrupt one degrades to "no payload" (the run then falls back to the
+    // stored war) rather than rejecting an otherwise usable deployment.
+    payload: parseHangarWarPayload(raw.payload) ?? undefined,
   };
 }
 

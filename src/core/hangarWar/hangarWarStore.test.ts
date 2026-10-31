@@ -98,6 +98,7 @@ describe('hangar-war store surface (AH-0MVUXC0M5007LCGV)', () => {
       ring: { ringIndex: DEFAULT_RING_INDEX, hexes: [] },
       pendingAttacks: [],
       bestScore: 0,
+      frontierTick: 0,
     });
   });
 
@@ -635,6 +636,51 @@ describe('hangar-war store shape gate (loads as null)', () => {
     expect(parsed?.version).toBe(HANGAR_WAR_VERSION);
     expect(parsed?.hangar).toEqual(HANGAR_ONLY_PAYLOAD.hangar);
     expect(parsed?.ring).toEqual({ ringIndex: DEFAULT_RING_INDEX, hexes: [] });
+  });
+});
+
+describe('hangar-war store frontier clock field (AH-0MVUXCBBK004EJIP)', () => {
+  it('round-trips the frontier tick the between-sortie tick advanced', () => {
+    const storage = storageWithRaw(
+      serialisePayload({ ...VALID_HANGAR_WAR_PAYLOAD, frontierTick: 7 }),
+    );
+    const loaded = loadHangarWarPayload(storage);
+    expect(loaded?.frontierTick).toBe(7);
+
+    saveHangarWarPayload(loaded!, storage);
+    expect(loadHangarWarPayload(storage)?.frontierTick).toBe(7);
+  });
+
+  it('omits the field for a save written before the tick existed (field presence)', () => {
+    // The additive field must not appear out of nowhere: an old save loads
+    // exactly as it was written, and absence reads as tick 0 in the resolver.
+    const loaded = parseHangarWarPayload({
+      ...VALID_HANGAR_WAR_PAYLOAD,
+    });
+    expect(loaded).not.toBeNull();
+    expect('frontierTick' in loaded!).toBe(false);
+  });
+
+  it('salvages an unusable frontier tick instead of rejecting the save', () => {
+    const negative = parseHangarWarPayload({
+      ...VALID_HANGAR_WAR_PAYLOAD,
+      frontierTick: -4,
+    });
+    expect(negative).not.toBeNull();
+    expect('frontierTick' in negative!).toBe(false);
+
+    const fractional = parseHangarWarPayload({
+      ...VALID_HANGAR_WAR_PAYLOAD,
+      frontierTick: 3.9,
+    });
+    expect(fractional?.frontierTick).toBe(3);
+
+    const wrongType = parseHangarWarPayload({
+      ...VALID_HANGAR_WAR_PAYLOAD,
+      frontierTick: 'many',
+    });
+    expect(wrongType).not.toBeNull();
+    expect('frontierTick' in wrongType!).toBe(false);
   });
 });
 

@@ -48,6 +48,11 @@ import {
   HANGAR_CATALOGUE,
   type HangarEntry,
 } from '../data/hangarCatalogue';
+import {
+  decideHangarAction,
+  HANGAR_WAR_TRAVERSAL_DWELL_MS,
+  HANGAR_WAR_TRAVERSAL_MAX_ACTIONS,
+} from '../ai/hangarWarTraversal';
 import { addBackToMenuOnEsc } from '../utils/gymNavigation';
 import {
   buildHangarScreenModel,
@@ -82,6 +87,14 @@ export interface HangarSceneData {
   storage?: HangarWarStorage | null;
   /** Unlock tree to render (defaults to the shipped catalogue). */
   catalogue?: readonly HangarEntry[];
+  /**
+   * Bot-driven attract traversal (AH-0MVUXCBBK004EJIP): the pure
+   * `decideHangarAction` buys the cheapest useful unlock (seeded tie-break) and
+   * then deploys, so the demo never stalls in the hangar.
+   */
+  demo?: boolean;
+  /** Demo dwell override in milliseconds (tests use a short one). */
+  demoDwellMs?: number;
 }
 
 /**
@@ -103,6 +116,18 @@ export class HangarScene extends Phaser.Scene {
   /** Row key to restore focus to after a rebuild, or `null`. */
   private pendingFocusKey: string | null = null;
 
+  /** Whether the attract traversal is driving this screen. */
+  private demo = false;
+
+  /** Demo dwell override (production uses the shared traversal dwell). */
+  private demoDwellMs?: number;
+
+  /** The demo action timer, cleared on shutdown. */
+  private demoTimer: Phaser.Time.TimerEvent | null = null;
+
+  /** Demo actions applied so far (bounded by the shared safety cap). */
+  private demoActions = 0;
+
   constructor() {
     super(HANGAR_SCENE_KEY);
   }
@@ -110,6 +135,9 @@ export class HangarScene extends Phaser.Scene {
   init(data?: HangarSceneData | null): void {
     this.storage = data?.storage;
     this.catalogue = data?.catalogue ?? HANGAR_CATALOGUE;
+    this.demo = data?.demo === true;
+    this.demoDwellMs = data?.demoDwellMs;
+    this.demoActions = 0;
     const injected = data?.payload;
     this.payload = injected ?? this.loadPayload();
   }
@@ -117,6 +145,7 @@ export class HangarScene extends Phaser.Scene {
   create(): void {
     this.build();
     addBackToMenuOnEsc(this);
+    if (this.demo) this.scheduleDemoAdvance();
   }
 
   /** Loads the stored payload, or a fresh default war when there is none. */
@@ -130,6 +159,9 @@ export class HangarScene extends Phaser.Scene {
 
   /** Persists the current payload through the versioned store. */
   private persist(): void {
+    // A demo run is a demonstration, not progress: it never overwrites the
+    // player's war (the same rule that keeps a demo off the leaderboard).
+    if (this.demo) return;
     if (this.storage === undefined) {
       saveHangarWarPayload(this.payload);
     } else {
@@ -227,11 +259,50 @@ export class HangarScene extends Phaser.Scene {
       catalogue: this.catalogue,
     });
     this.scene.start('PlayScene', {
-      demo: false,
+      demo: this.demo,
+      demoDwellMs: this.demoDwellMs,
       resume: false,
       hangarWar: deployment,
     });
     return deployment;
+  }
+
+  /**
+   * Schedules the attract traversal's next step in the hangar.
+   *
+   * The decision is the pure, tested `decideHangarAction` (the cheapest useful
+   * unlock with a seeded tie-break, then the deployment), so the scene owns no
+   * shopping rule. Buying rebuilds the screen and reschedules; the catalogue is
+   * finite and every purchase is bounded by
+   * {@link HANGAR_WAR_TRAVERSAL_MAX_ACTIONS}, so the bot always reaches the
+   * deployment.
+   */
+  private scheduleDemoAdvance(): void {
+    this.demoTimer?.remove(false);
+    const dwell = this.demoDwellMs ?? HANGAR_WAR_TRAVERSAL_DWELL_MS;
+    this.demoTimer = this.time.delayedCall(dwell, () => {
+      if (!this.sys.isActive()) return;
+      if (this.demoActions >= HANGAR_WAR_TRAVERSAL_MAX_ACTIONS) {
+        // Safety bound reached (a refused purchase loop): deploy and leave.
+        this.deploy();
+        return;
+      }
+      this.demoActions += 1;
+      const action = decideHangarAction(this.payload, {
+        catalogue: this.catalogue,
+      });
+      if (action.kind === 'buy') {
+        this.buy(action.entryId);
+        this.scheduleDemoAdvance();
+        return;
+      }
+      this.deploy();
+    });
+  }
+
+  /** Whether the attract traversal is driving this screen (test seam). */
+  isDemo(): boolean {
+    return this.demo;
   }
 
   // ── Public query seams (keyboard/pointer tests use these) ───────

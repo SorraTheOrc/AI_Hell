@@ -29,9 +29,15 @@ import { discoverGymScenes } from '../../utils/gymDiscovery';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
 import { RING_1_HEX_FIXTURES } from '../../core/hangarWar/__fixtures__/ringFixtures';
 import {
+  frontierClockFor,
+  runFrontierTick,
+} from '../../core/hangarWar/hexDefence';
+import { DEFENCE_REPORT_TITLE } from '../../core/hangarWar/defenceReport';
+import {
   GymHexWar,
   GYM_HEX_WAR_DEFAULT_SEED,
   GYM_HEX_WAR_HINT,
+  GYM_HEX_WAR_REPORT_HINT,
   GYM_HEX_WAR_SCENE_KEY,
   GYM_HEX_WAR_TITLE,
   type GymTickResult,
@@ -271,6 +277,82 @@ describe('GymHexWar', () => {
     expect(
       scene.getMapModel()!.hexes.find((hex) => hex.id === 'hex-r1-2')!.held,
     ).toBe(true);
+  });
+
+  it('renders the shipped defence report from the shipped resolver record', async () => {
+    // A held hex with an unheld neighbour: a real attack is possible, so the
+    // report exercises the resolver rather than only the quiet path.
+    const ring = RING_1_HEX_FIXTURES;
+    const held = ring[0];
+    const neighbour = ring[1];
+    const payload: HangarWarPayload = {
+      ...oneHexPayload({
+        ...UNHELD_HEX,
+        id: held.id,
+        q: held.q,
+        r: held.r,
+        held: true,
+        aggression: 0,
+        defender: { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 },
+      }),
+      ring: {
+        ringIndex: 1,
+        hexes: [
+          {
+            ...UNHELD_HEX,
+            id: held.id,
+            q: held.q,
+            r: held.r,
+            held: true,
+            aggression: 0,
+            defender: { hullId: 'hull-1', defenceRating: 1, bankedMinerals: 0 },
+          },
+          {
+            ...UNHELD_HEX,
+            id: neighbour.id,
+            q: neighbour.q,
+            r: neighbour.r,
+            held: false,
+            aggression: 3,
+          },
+        ],
+      },
+    };
+    const scene = await bootHexWar({ payload });
+    scene.showDefenceReport();
+    await advanceGame(booted!.game, 100);
+
+    expect(scene.getView()).toBe('report');
+    findTextStartingWith(scene, DEFENCE_REPORT_TITLE);
+    findTextStartingWith(scene, GYM_HEX_WAR_REPORT_HINT);
+
+    // The report is the shipped model over the shipped tick's record — the same
+    // code path the game's DefenceReportScene renders.
+    const tick = runFrontierTick(payload, { clock: frontierClockFor(payload) });
+    const model = scene.getDefenceReport();
+    expect(model.rows.map((row) => row.hexId)).toEqual(
+      tick.record.attacks.map((attack) => attack.hexId),
+    );
+    for (const row of model.rows) {
+      const resolved = tick.record.attacks.find(
+        (attack) => attack.hexId === row.hexId,
+      )!;
+      expect(row.attackingForce).toBe(resolved.attackingForce);
+      expect(row.aggression).toBe(resolved.aggression);
+      expect(row.defenderRating).toBe(resolved.defenderRating);
+      expect(row.attackStrength).toBe(resolved.attackStrength);
+      expect(row.margin).toBe(resolved.margin);
+      expect(row.outcome).toBe(resolved.outcome);
+    }
+    // Read-only by construction: the gym has no handlers, so nothing activates.
+    expect(scene.getReportRows().length).toBeGreaterThan(0);
+    expect(scene.getReportRows().every((row) => !row.actionable)).toBe(true);
+    expect(scene.getDefenceReport().noBattleLine).toContain('no battle was simulated');
+
+    // The control surface switches back to the shared map view.
+    scene.showMap();
+    expect(scene.getView()).toBe('map');
+    expect(scene.getMapModel()).not.toBeNull();
   });
 
   it('is discovered by the gym index as "HexWar"', () => {
