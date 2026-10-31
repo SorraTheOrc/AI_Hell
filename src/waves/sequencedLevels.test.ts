@@ -13,6 +13,7 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 
 import { buildSequencedLevels, dynamicTarget } from './sequencedLevels';
 import { LEVELS, LEVEL_COUNT } from './Formations';
+import { auditCampaignVariety, waveArchetypes } from './campaignVariety';
 import type { WaveDefinition } from './Formations';
 import { WaveManager } from './WaveManager';
 import { defaultCandidatePool, sequencer } from '../core/difficultySequencer';
@@ -423,11 +424,16 @@ describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
   });
 
   it('preserves an authored fixed wave containing the orbital Phaser verbatim', () => {
-    // Static level 5 is ten orbital Phaser waves (the expanded campaign
-    // AH-0MVCYANT6003SG5C fills the level out while keeping its phaser-only
-    // identity). A `fixed` selection must return the static wave byte-for-byte
-    // — the per-level archetype cap only constrains generated (curve/dynamic)
-    // waves, so the orbital Phaser stays authorable (AH-0MV2SGIX5005PFJT).
+    // Static Level 5 keeps its documented Phaser-dominant "Predictable Death"
+    // identity (GDD §3.2), but Q2 = a on the parent item
+    // (AH-0MVI5XXOU00954EA) relaxes its composition from phaser-only to
+    // phaser-dominant, so the variety rework may add secondary archetypes
+    // around it. This pin therefore asserts dominance (Phaser in the majority
+    // of waves and heaviest by spawned weight) instead of purity, while still
+    // proving that a `fixed` selection returns the authored static wave
+    // byte-for-byte — the per-level archetype cap only constrains generated
+    // (curve/dynamic) waves, so the orbital Phaser stays authorable
+    // (AH-0MV2SGIX5005PFJT).
     const spy = vi.fn(sequencer);
     const rows = modeRows(5, 'Predictable Death', Array.from({ length: 10 }, (_, i) =>
       ({ target: 43.5 + i, generation: 'fixed' as const }),
@@ -436,9 +442,28 @@ describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
     const level5 = levelOf(levels, 5);
 
     expect(level5).toBe(LEVELS[4]);
+
+    // Phaser dominance: present in the majority of waves and the level's
+    // heaviest archetype. Secondary archetypes may appear around it.
+    const phaserWaves = level5.waves.filter((wave) =>
+      waveArchetypes(wave).includes('phaser'),
+    );
     expect(
-      level5.waves.every((wave) =>
-        wave.groups.some((group) => group.formation === 'orbital'),
+      phaserWaves.length,
+      'Level 5 waves containing the Phaser',
+    ).toBeGreaterThan(level5.waves.length / 2);
+    const [audit] = auditCampaignVariety([level5]).levels;
+    expect(audit.dominantArchetype, 'Level 5 dominant archetype').toBe(
+      'phaser',
+    );
+
+    // At least one authored wave still contains the orbital Phaser verbatim.
+    expect(
+      level5.waves.some((wave) =>
+        wave.groups.some(
+          (group) =>
+            group.enemyKey === 'phaser' && group.formation === 'orbital',
+        ),
       ),
     ).toBe(true);
     // Fixed waves are never passed to the sequencer.

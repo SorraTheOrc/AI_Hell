@@ -214,6 +214,22 @@ function archetypeKeysInWave(wave: WaveDefinition): string[] {
 }
 
 /**
+ * Sorted, de-duplicated archetype keys a wave delivers.
+ *
+ * This is the per-wave presence unit behind {@link waveComposition}: a test
+ * asserting that an archetype appears in every wave (the identity-preserving
+ * replacement for a single-type purity pin, parent Q2 = a) reads the list
+ * directly instead of reimplementing the group/flag traversal.
+ *
+ * @param wave — the wave to inspect.
+ * @returns archetype keys in ascending order (duplicates removed); an empty
+ *   array for a wave that delivers no archetype at all.
+ */
+export function waveArchetypes(wave: WaveDefinition): string[] {
+  return [...new Set(archetypeKeysInWave(wave))].sort();
+}
+
+/**
  * Sorted, de-duplicated archetype signature of a wave.
  *
  * This is the AC1 comparison unit: two waves have the "same enemies" exactly
@@ -226,9 +242,7 @@ function archetypeKeysInWave(wave: WaveDefinition): string[] {
  *   for a wave that delivers no archetype at all.
  */
 export function waveComposition(wave: WaveDefinition): string {
-  return [...new Set(archetypeKeysInWave(wave))]
-    .sort()
-    .join(COMPOSITION_SEPARATOR);
+  return waveArchetypes(wave).join(COMPOSITION_SEPARATOR);
 }
 
 /**
