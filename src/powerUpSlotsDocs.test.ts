@@ -213,3 +213,47 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVLIJT3M005HPH
     expect(section).toMatch(/\(c\)|answer \(c\)/);
   });
 });
+
+// ── HUD presentation of the cap (AH-0MVVJRRN10038VFR) ─────────────────
+//
+// The cap is only legible if the player can tell a *slot* from a *row*: the
+// HUD list can legitimately show an exempt entry (always available) or a
+// charge pool that outlives its window (charges only). The docs must state how
+// the budget and the non-slot rows are presented, and where the state comes
+// from, so this presentation cannot silently drift from the code.
+
+describe('the HUD slot budget and non-slot rows are documented (AH-0MVVJRRN10038VFR)', () => {
+  const gdd = read(GDD_PATH);
+  const balancing = read(BALANCING_PATH);
+
+  it('the GDD states that the HUD row list is not the loadout', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/row(s)? (is|are)\s+\*{0,2}not\*{0,2}\s+(the )?loadout|HUD[^.]*not\*{0,2} the loadout/i);
+    expect(section).toContain('Loadout n/6');
+  });
+
+  it('the GDD names the non-slot row classes and their markers', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/always available/i);
+    expect(section).toMatch(/charges only/i);
+    expect(section).toMatch(/Mystery UFO/);
+    expect(section).toMatch(/Phase Shift/);
+  });
+
+  it('the GDD records the shared HUD wiring and the row/slot agreement', () => {
+    const section = slotsSection(gdd);
+    expect(section).toContain('resolvePlayerSlotState');
+    expect(section).toContain('combatHudOptions');
+    expect(section).toMatch(/src\/ui\/HUD\.ts/);
+    expect(section).toMatch(/POWER_UP_SLOT_CAP/);
+  });
+
+  it('docs/BALANCING.md records the presented budget and the marked non-slot rows', () => {
+    const section = balancingSection(balancing);
+    expect(section).toContain('Loadout n/6');
+    expect(section).toMatch(/always available/i);
+    expect(section).toMatch(/charges only/i);
+    expect(section).toContain('resolvePlayerSlotState');
+    expect(section).toContain('combatHudOptions');
+  });
+});

@@ -71,6 +71,7 @@ import { RoundRobinSpawner } from '../../powerups/spawner';
 import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 import { Mineral } from '../../entities/Mineral';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { MineralHold } from '../../core/mineralHold';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
 import {
@@ -208,11 +209,14 @@ export class GymWeaponLeveling extends CombatScene<
       'W,A,S,D',
     ) as WasdKeysLike | undefined;
 
-    // HUD with the per-weapon level readout wired to the live player.
-    this.hud = new HUD(this, this.effectsRegistry, {
-      showLives: false,
-      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
-    });
+    // HUD with the per-weapon level readout and the six-slot budget wired to
+    // the live player through the one shared wiring
+    // (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: false }),
+    );
     this.hud.setMineralStore(this.hold.store, this.hold.capacity);
 
     this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 18, GYM_WEAPON_LEVELING_HINT, {

@@ -71,6 +71,7 @@ import {
 } from '../../powerups/powerUpLevels';
 import { Mineral } from '../../entities/Mineral';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { MineralHold } from '../../core/mineralHold';
 import { buildHoldFullFireSchedule } from '../core/holdFullFire';
 import type { MineralChoiceScene } from '../MineralChoiceScene';
@@ -254,7 +255,11 @@ export class GymPowerUpLeveling extends CombatScene<
 
     // Shared HUD: one merged row per owned/active power-up showing its
     // effective level (permanent + temporary) from the shared registry.
-    this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: false }),
+    );
     this.hud.setMineralStore(this.hold.store, this.hold.capacity);
 
     this.add.text(

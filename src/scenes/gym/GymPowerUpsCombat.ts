@@ -101,6 +101,7 @@ import {
 } from '../core/spawnTransit';
 import { fireForEnemy } from '../../entities/enemyFire';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
@@ -246,7 +247,11 @@ export class GymPowerUpsCombat extends CombatScene<
     });
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
-    this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: false }),
+    );
 
     // Tear down all scene-owned objects on shutdown so a stop/restart of
     // the same instance leaks nothing (AH-0MUII3FYN0072QRT, gap 10).

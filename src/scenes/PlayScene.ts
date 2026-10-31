@@ -192,6 +192,7 @@ import {
 } from '../powerups/collectAnimation';
 import { type PowerUpSpawner } from '../powerups/spawner';
 import { HUD } from '../ui/HUD';
+import { combatHudOptions } from './core/hudWiring';
 import { type WeaponId } from '../utils/weapons';
 import type { WasdKeysLike } from '../utils/input';
 import type { ControlInput } from '../utils/movementModel';
@@ -1205,11 +1206,14 @@ export class PlayScene extends CombatScene<
     this.thornsAura.setDepth(52);
 
     // HUD (lives counter + active effects).
-    this.hud = new HUD(this, this.effectsRegistry, {
-      showLives: true,
-      // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
-      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
-    });
+    // Weapon levels and the six-slot state come from the one shared HUD
+    // wiring, so the game and every gym present the same loadout budget
+    // (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: true }),
+    );
 
     this._buildHudText();
 

@@ -1109,6 +1109,20 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   [`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`](./ENEMY_DESIGN_AND_IMPLEMENTATION.md)
   §5.1). Below the cap the gate is inert, so spawning, collection and choice
   behaviour are unchanged.
+- **The HUD presents the budget, not just rows (AH-0MVVJRRN10038VFR).** The
+  HUD row list is **not** the loadout: a row is a display entry, while a slot
+  is a distinct held kind the model counts. The HUD therefore renders an explicit
+  **`Loadout n/6`** budget read-out derived only from
+  `resolvePlayerSlotState(player)` ([`src/ui/HUD.ts`](../src/ui/HUD.ts)), and
+  marks the rows that hold **no** slot — exempt entries such as the Mystery UFO
+  as `always available`, and a Phase Shift / Teleport row kept alive by
+  remaining consumable charges after its temporary window expired as
+  `charges only`. Every slot-held kind gets a row, including a temporary
+  one-shot (Orbital Strike, Smart Bomb) that the pre-cap visibility rules hid,
+  so the slot-counted rows equal `used` and never exceed `POWER_UP_SLOT_CAP`.
+  The state is wired once, through `combatHudOptions`
+  ([`src/scenes/core/hudWiring.ts`](../src/scenes/core/hudWiring.ts)), so
+  `PlayScene` and every gym show the identical budget.
 
 #### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
 

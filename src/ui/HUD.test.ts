@@ -7,6 +7,9 @@ import {
   HUD_DEPTH,
   HUD_ROW_HEIGHT,
   PERMANENT_VALUE,
+  SLOT_BUDGET_NAME,
+  SLOT_MARKER_ALWAYS_AVAILABLE,
+  SLOT_MARKER_CHARGES_ONLY,
   buildHUDLabel,
   formatHUDValue,
   type HUDEntry,
@@ -18,10 +21,7 @@ import {
   resolvePowerUpAtLevel,
 } from '../powerups/powerUpLevels';
 import { POWER_UP_SLOT_CAP } from '../core/constants';
-import {
-  resolvePlayerSlotState,
-  type PowerUpSlotState,
-} from '../powerups/slots';
+import { resolvePlayerSlotState } from '../powerups/slots';
 import {
   SIX_SLOT_LOADOUT_IDS,
   buildSixSlotLoadout,
@@ -1245,30 +1245,16 @@ describe('HUD weapon level readout (parent AH-0MUPMPCB2009J54J)', () => {
 //   (power-up **and** weapon) with its slot classification, so a non-slot row
 //   can be marked rather than silently counted as equipped.
 //
-// `it.fails` pins the expected failures while F2 is unimplemented; F2 flips
-// each one to a plain `it(...)` as its implementation lands (the established
-// convention — see `HUD grey-out … AH-0MV82I8VA008LX0R` above).
-
-/** The HUD slot-model seam F2 adds (read by name while it does not exist). */
-interface SlotAwareHUD {
-  getLoadoutRows?(): Array<{
-    id: string;
-    label: string;
-    slotCounted: boolean;
-  }>;
-  getSlotBudget?(): { used: number; cap: number };
-}
-
-/** The HUD options the slot seam adds to the existing options. */
-type SlotAwareOptions = HUDOptions & {
-  getSlotState?: () => PowerUpSlotState | null;
-};
+// F2 (AH-0MVVJRRN10038VFR) landed the seam, so every case below is a plain
+// `it(...)` — the `it.fails` pins that drove the test-first implementation have
+// been flipped (the established convention — see `HUD grey-out …
+// AH-0MV82I8VA008LX0R` above).
 
 /** Boots a HUD over one committed loadout with the live slot-state seam. */
 async function bootHudForLoadout(id: SixSlotLoadoutId) {
   const { game, scene } = await bootScene([BareScene]);
   const loadout = buildSixSlotLoadout(scene, id);
-  const options: SlotAwareOptions = {
+  const options: HUDOptions = {
     // The scene-supplied seam: the HUD never counts slots itself.
     getSlotState: () => resolvePlayerSlotState(loadout.player),
   };
@@ -1319,34 +1305,32 @@ describe('HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49)', () => {
     expect(counted).not.toContain('mystery_ufo');
   });
 
-  it.fails(
-    'tick 4540 fixture: the slot-counted rows match the six held slots (five rows today)',
-    async () => {
-      const { game, hud, loadout } = await bootHudForLoadout(
-        'six-slots-five-rows',
-      );
-      const state = resolvePlayerSlotState(loadout.player);
-      const counted = renderedRowIds(hud, loadout.registry).filter((rowId) =>
-        isSlotCountedKind(rowId, state),
-      );
-      destroy(game);
+  it('tick 4540 fixture: the slot-counted rows match the six held slots', async () => {
+    const { game, hud, loadout } = await bootHudForLoadout(
+      'six-slots-five-rows',
+    );
+    const state = resolvePlayerSlotState(loadout.player);
+    const rowIds = renderedRowIds(hud, loadout.registry);
+    const counted = rowIds.filter((rowId) => isSlotCountedKind(rowId, state));
+    destroy(game);
 
-      // Six slot-counted kinds are held (mineral_scoop, strike, heavy_slug,
-      // mortar, rapid, shard_swarm) but the temporary Strike renders no row,
-      // so today `counted` is five: the display under-reports the loadout.
-      expect(state.used).toBe(POWER_UP_SLOT_CAP);
-      expect(counted).toHaveLength(state.used);
-    },
-  );
+    // Six slot-counted kinds are held (mineral_scoop, strike, heavy_slug,
+    // mortar, rapid, shard_swarm). The temporary Strike used to render no row
+    // (5 rows for 6 slots); every slot-held kind now gets a row, so the list
+    // agrees with the model instead of under-reporting it.
+    expect(state.used).toBe(POWER_UP_SLOT_CAP);
+    expect(rowIds).toContain('strike');
+    expect(counted).toHaveLength(state.used);
+    expect(counted.length).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+  });
 
-  it.fails(
-    'tick 5899 fixture: seven rendered rows classify as five slot rows and two non-slot rows',
-    async () => {
+  it('tick 5899 fixture: seven rendered rows classify as five slot rows and two non-slot rows', async () => {
+    {
       const { game, hud, loadout } = await bootHudForLoadout(
         'seven-rows-five-slots',
       );
       const state = resolvePlayerSlotState(loadout.player);
-      const rows = (hud as unknown as SlotAwareHUD).getLoadoutRows?.() ?? [];
+      const rows = hud.getLoadoutRows();
       destroy(game);
 
       // The seven rows the recording showed at tick 5899 (the slot budget
@@ -1379,23 +1363,96 @@ describe('HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49)', () => {
       ]);
       expect(state.heldIds.has('extra_life')).toBe(true);
       expect(rows.map((row) => row.id)).not.toContain('extra_life');
-    },
-  );
+    }
+  });
 
-  it.fails(
-    'exposes the shared slot budget (used/cap) for every fixture loadout',
-    async () => {
-      for (const id of SIX_SLOT_LOADOUT_IDS) {
-        const { game, hud, loadout } = await bootHudForLoadout(id);
-        const state = resolvePlayerSlotState(loadout.player);
-        const budget = (hud as unknown as SlotAwareHUD).getSlotBudget?.();
-        destroy(game);
+  it('exposes the shared slot budget (used/cap) for every fixture loadout', async () => {
+    for (const id of SIX_SLOT_LOADOUT_IDS) {
+      const { game, hud, loadout } = await bootHudForLoadout(id);
+      const state = resolvePlayerSlotState(loadout.player);
+      const budget = hud.getSlotBudget();
+      destroy(game);
 
-        expect(budget).toBeDefined();
-        expect(budget!.used).toBe(state.used);
-        expect(budget!.cap).toBe(POWER_UP_SLOT_CAP);
-        expect(budget!.used).toBeLessThanOrEqual(budget!.cap);
-      }
-    },
-  );
+      expect(budget.used).toBe(state.used);
+      expect(budget.cap).toBe(POWER_UP_SLOT_CAP);
+      expect(budget.used).toBeLessThanOrEqual(budget.cap);
+    }
+  });
+
+  it('renders the slot budget read-out with the rows', async () => {
+    const { game, hud, loadout } = await bootHudForLoadout(
+      'seven-rows-five-slots',
+    );
+    const state = resolvePlayerSlotState(loadout.player);
+    const label = hud.getSlotBudgetLabel();
+    const texts = hudTexts(hud);
+    destroy(game);
+
+    expect(label).toBe(`Loadout ${state.used}/${POWER_UP_SLOT_CAP}`);
+    expect(texts).toContain(`Loadout ${state.used}/${POWER_UP_SLOT_CAP}`);
+  });
+
+  it('renders the budget as its own visible read-out object', async () => {
+    const { game, hud } = await bootHudForLoadout('seven-rows-five-slots');
+    const budgetText = hudChildren(hud).find(
+      (child) =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.name === SLOT_BUDGET_NAME,
+    ) as Phaser.GameObjects.Text | undefined;
+    destroy(game);
+
+    expect(budgetText).toBeDefined();
+    expect(budgetText!.visible).toBe(true);
+    expect(budgetText!.text).toBe(hud.getSlotBudgetLabel());
+  });
+
+  it('marks every non-slot row and leaves slot-counted rows unmarked', async () => {
+    const { game, hud } = await bootHudForLoadout('seven-rows-five-slots');
+    const rows = hud.getLoadoutRows();
+    const texts = hudTexts(hud);
+    destroy(game);
+
+    const markerOf = (id: string) =>
+      rows.find((row) => row.id === id)?.marker;
+
+    // The exempt Mystery UFO is always available, never a slot holder (Q7a).
+    expect(markerOf('mystery_ufo')).toBe(SLOT_MARKER_ALWAYS_AVAILABLE);
+    // The Phase Shift row survives its expired window on charges alone.
+    expect(markerOf('phase_shift')).toBe(SLOT_MARKER_CHARGES_ONLY);
+    // Slot-counted kinds carry no marker: they are the loadout.
+    for (const row of rows.filter((candidate) => candidate.slotCounted)) {
+      expect(row.marker).toBeUndefined();
+    }
+    // The markers are actually rendered, not only present in the model.
+    expect(texts).toContain(SLOT_MARKER_ALWAYS_AVAILABLE);
+    expect(texts).toContain(SLOT_MARKER_CHARGES_ONLY);
+  });
+
+  it('is inert without a slot-state provider (standalone HUD unchanged)', async () => {
+    const { game, scene } = await bootScene([BareScene]);
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('strike');
+    const hud = new HUD(scene, reg);
+    hud.refresh();
+    const budget = hud.getSlotBudget();
+    const label = hud.getSlotBudgetLabel();
+    const texts = hudTexts(hud);
+    const rows = hud.getRows();
+    destroy(game);
+
+    expect(budget).toEqual({ used: 0, cap: POWER_UP_SLOT_CAP });
+    expect(label).toBe('');
+    expect(texts.some((text) => text.startsWith('Loadout '))).toBe(false);
+    // The reserved read-out object stays inert (invisible, empty).
+    const budgetText = hudChildren(hud).find(
+      (child) =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.name === SLOT_BUDGET_NAME,
+    ) as Phaser.GameObjects.Text | undefined;
+    expect(budgetText?.visible ?? false).toBe(false);
+    // The pre-existing visibility rules are untouched: a temporary one-shot
+    // still renders no row when the HUD is not slot-aware.
+    expect(rows.map((row) => row.id)).not.toContain('strike');
+  });
 });

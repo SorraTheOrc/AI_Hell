@@ -134,6 +134,7 @@ import {
   type WeaponDropId,
 } from '../../../powerups/types';
 import { HUD } from '../../../ui/HUD';
+import { combatHudOptions } from '../../core/hudWiring';
 import { Mineral } from '../../../entities/Mineral';
 import { Asteroid } from '../../../entities/Asteroid';
 import {
@@ -160,7 +161,6 @@ import {
   type ChoiceOption,
   type ChoiceStrategy,
 } from '../../../powerups/choice';
-import { type WeaponId } from '../../../utils/weapons';
 import { applySceneSetup, resolveSetupSeed, type SceneSetupState } from '../../core/sceneSetup';
 import { createSeededRng } from '../../../core/rng';
 import {
@@ -1002,11 +1002,13 @@ export class GymFormationScene<
     // so it is already clean here; only the standalone HUD is rebuilt per
     // scene start (lives visible so Extra Life is observable). Sharing the one
     // reset path stops the registry drifting on restart (gap 10).
-    this.hud = new HUD(this, this.effectsRegistry, {
-      showLives: true,
-      // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
-      getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
-    });
+    // Weapon levels and the six-slot state come from the one shared HUD
+    // wiring (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: true }),
+    );
 
     // One drop on screen immediately so the layer is observable at boot.
     this._spawnPowerUpDrop();
@@ -1385,11 +1387,11 @@ export class GymFormationScene<
     this.mineralChoiceOptions = [];
     this.mineralsSeeded = 0;
     if (!this.hud) {
-      this.hud = new HUD(this, this.effectsRegistry, {
-        showLives: false,
-        // Show each weapon's run-scoped level (parent AH-0MUPMPCB2009J54J).
-        getWeaponLevel: (id) => this.player?.getWeaponLevel(id as WeaponId) ?? 0,
-      });
+      this.hud = new HUD(
+        this,
+        this.effectsRegistry,
+        combatHudOptions(() => this.player, { showLives: false }),
+      );
     }
     this._syncMineralHud();
     this.seedMinerals(100);

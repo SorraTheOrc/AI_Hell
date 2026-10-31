@@ -151,9 +151,9 @@ import { LEVELS } from '../../waves/Formations';
 import { playSpawnSound } from '../../audio/effects';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import type { WasdKeysLike } from '../../utils/input';
-import type { WeaponId } from '../../utils/weapons';
 import { EffectsRegistry } from '../../powerups/effects';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { Mineral } from '../../entities/Mineral';
 import { Asteroid } from '../../entities/Asteroid';
 import { Centipede } from '../../entities/Centipede';
@@ -1525,11 +1525,13 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.dropSpawnTimer = this.dropSpawnInterval;
     this.asteroidExtraLifeDropChance = rules.asteroidExtraLifeDropChance;
 
-    this.hud = new HUD(this, this.getEffectsRegistry(), {
-      showLives: true,
-      getWeaponLevel: (id) =>
-        this.getPlayer()?.getWeaponLevel(id as WeaponId) ?? 0,
-    });
+    // Weapon levels and the six-slot state come from the one shared HUD
+    // wiring (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.getEffectsRegistry(),
+      combatHudOptions(() => this.getPlayer(), { showLives: true }),
+    );
 
     this.seedMinerals(GYM_LEVEL_MINERAL_SEED_COUNT);
     this._syncMineralHud();

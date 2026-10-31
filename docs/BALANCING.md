@@ -309,6 +309,18 @@ cap shapes what a run can become.
   pickup, hold-full choice, mini-boss upgrade and mini-boss unlock). A gated
   reward that would offer nothing falls back to base picks of the held kinds, so
   the rule can never stall a paused overlay.
+- **What the player sees: a slot budget and marked non-slot rows
+  (AH-0MVVJRRN10038VFR).** The HUD upgrade list is a *display* list, not the
+  loadout, so it can legitimately show rows that hold no slot: an exempt entry
+  (Mystery UFO — `always available`) and a Phase Shift / Teleport row that
+  survives on remaining charges after its temporary window expired
+  (`charges only`). To keep the cap legible the HUD renders an explicit
+  **`Loadout n/6`** budget from the shared model
+  (`resolvePlayerSlotState(player)`), marks those non-slot rows, and gives every
+  slot-held kind a row — including a temporary one-shot that previously showed
+  none. The slot-counted rows therefore equal the model's `used` and never
+  exceed `POWER_UP_SLOT_CAP`, and the same wiring (`combatHudOptions`) feeds
+  `PlayScene` and every gym, so gym↔game parity holds for the display too.
 - **Evidence scope.** Existing bot/batch evidence was recorded before the cap,
   so a late-game campaign run now sees a different loadout. Re-running and
   re-recording the bot batches is **out of scope** for the cap work item; it

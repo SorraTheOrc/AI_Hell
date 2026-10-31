@@ -28,6 +28,23 @@
  * recharging pool is always legible (AH-0MV82I97Y007MB6M). A power-up the
  * player has never owned is still hidden.
  *
+ * ## Slot budget and non-slot rows (AH-0MVVJRRN10038VFR)
+ *
+ * The row list is **not** the loadout: the six-slot model
+ * (`powerups/slots.ts`) counts distinct kinds a run holds, while a row is a
+ * display entry — and two row classes never hold a slot (exempt entries such
+ * as the Mystery UFO, and Phase Shift / Teleport charge pools that outlive a
+ * temporary window). When a scene supplies `HUDOptions.getSlotState`
+ * (`resolvePlayerSlotState(player)`, wired once through
+ * `scenes/core/hudWiring.ts`), the HUD:
+ *
+ * - renders an explicit `Loadout n/6` budget read-out;
+ * - marks every non-slot row (`always available` / `charges only`); and
+ * - renders a row for every slot-held kind, including a temporary one-shot
+ *   (Orbital Strike, Smart Bomb) whose pre-existing rule hid it.
+ *
+ * Without a provider (standalone use) the HUD behaves exactly as before.
+ *
  * Contains NO gym-specific imports or logic — it depends only on the
  * engine-agnostic power-up modules (`powerups/effects.ts`, `powerups/types.ts`,
  * `powerups/powerUpLevels.ts`, `powerups/icons.ts`), so any scene can
@@ -49,7 +66,11 @@ import {
   POWER_UP_GREY_COLOUR_CSS,
 } from '../powerups/icons';
 import type { WeaponDropIconId } from '../powerups/icons';
-import { HUD_DEPTH } from '../core/constants';
+import { HUD_DEPTH, POWER_UP_SLOT_CAP } from '../core/constants';
+import {
+  isSlotCountedHeldKind,
+  type PowerUpSlotState,
+} from '../powerups/slots';
 
 // Re-export for consumers wiring depth at construction.
 export { HUD_DEPTH };
@@ -72,6 +93,24 @@ const LIVES_GAP = 4;
 const ICON_X = 10;
 const NAME_X = 24;
 const VALUE_X = 160;
+/**
+ * Horizontal offset of the non-slot marker column. Sits right of the value
+ * column so a marker never shifts a row's label or value (the existing
+ * `∞`/countdown contract) — the marker is additional information.
+ */
+const MARKER_X = 210;
+
+/** Name of the slot-budget read-out Text object (test/debug access). */
+export const SLOT_BUDGET_NAME = 'hud-slot-budget';
+
+/** Marker on a row whose kind never consumes a slot because it is exempt. */
+export const SLOT_MARKER_ALWAYS_AVAILABLE = 'always available';
+
+/**
+ * Marker on a row kept visible by remaining consumable charges after its
+ * temporary level window expired — the row is a charge pool, not a slot.
+ */
+export const SLOT_MARKER_CHARGES_ONLY = 'charges only';
 
 /**
  * Mineral hold bar geometry (px). The bar keeps a fixed length at all
@@ -139,6 +178,19 @@ export interface HUDEntry {
    * non-charge rows.
    */
   greyed: boolean;
+  /**
+   * True when the row's kind holds one of the six loadout slots, derived from
+   * the shared slot model (`resolvePlayerSlotState`) — never counted in the
+   * HUD. `true` when no slot-state provider is wired (standalone use), so the
+   * pre-existing "every rendered row is equipped" reading is preserved.
+   */
+  slotCounted?: boolean;
+  /**
+   * Non-slot marker rendered to the right of the row when the kind holds no
+   * slot (an exempt entry, or a charge pool outliving its window). Absent on
+   * slot-counted rows (AH-0MVVJRRN10038VFR).
+   */
+  marker?: string;
 }
 
 /**
@@ -191,6 +243,15 @@ export interface HUDOptions {
    * falls back to 0 (standalone use).
    */
   getWeaponLevel?: (weaponId: string) => number;
+  /**
+   * Reads the live six-slot state — `resolvePlayerSlotState(player)`, the one
+   * shared seam (game and every gym). When provided, the HUD renders the slot
+   * budget (`Loadout n/6`), marks rows that hold no slot, and renders a row for
+   * every slot-held kind (including a temporary one-shot that previously had
+   * none) so the displayed loadout agrees with the model
+   * (AH-0MVVJRRN10038VFR). Without a provider the HUD is unchanged.
+   */
+  getSlotState?: () => PowerUpSlotState | null;
 }
 
 export class HUD extends Phaser.GameObjects.Container {
@@ -200,8 +261,12 @@ export class HUD extends Phaser.GameObjects.Container {
   private _rows: HUDEntry[] = [];
   private _rowObjects: Phaser.GameObjects.GameObject[] = [];
   private _iconGraphics: Phaser.GameObjects.Graphics;
+  private _budgetLabel: Phaser.GameObjects.Text;
   private _showLives: boolean;
   private _getWeaponLevel?: (weaponId: string) => number;
+  private _getSlotState?: () => PowerUpSlotState | null;
+  /** Weapon rows rendered this frame (id + label), for the loadout read-out. */
+  private _weaponRows: Array<{ id: string; label: string }> = [];
   private _minerals = 0;
   private _mineralCapacity = 0;
 
@@ -212,6 +277,7 @@ export class HUD extends Phaser.GameObjects.Container {
 
     this._showLives = options?.showLives ?? true;
     this._getWeaponLevel = options?.getWeaponLevel;
+    this._getSlotState = options?.getSlotState;
 
     this._iconGraphics = new Phaser.GameObjects.Graphics(scene);
     this._livesLabel = new Phaser.GameObjects.Text(
@@ -225,7 +291,21 @@ export class HUD extends Phaser.GameObjects.Container {
     this._mineralBar = new Phaser.GameObjects.Graphics(scene);
     this._mineralBar.name = MINERAL_BAR_NAME;
     this._mineralBar.setVisible(false);
-    this.add([this._iconGraphics, this._livesLabel, this._mineralBar]);
+    this._budgetLabel = new Phaser.GameObjects.Text(
+      scene,
+      ICON_X,
+      ROW_HEIGHT * 0.25,
+      '',
+      TEXT_STYLE,
+    );
+    this._budgetLabel.name = SLOT_BUDGET_NAME;
+    this._budgetLabel.setVisible(false);
+    this.add([
+      this._iconGraphics,
+      this._livesLabel,
+      this._mineralBar,
+      this._budgetLabel,
+    ]);
 
     this._registry = registry;
     if (registry) {
@@ -285,6 +365,8 @@ export class HUD extends Phaser.GameObjects.Container {
     }
     this._rowObjects = [];
     this._rows = [];
+    this._weaponRows = [];
+    this._drawSlotBudget();
 
     if (this._registry) {
       let row = 0;
@@ -331,7 +413,49 @@ export class HUD extends Phaser.GameObjects.Container {
   private _rowY(row: number): number {
     const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
     const mineralOffset = this._mineralCapacity > 0 ? ROW_HEIGHT : 0;
-    return livesOffset + mineralOffset + row * ROW_HEIGHT;
+    return (
+      livesOffset +
+      mineralOffset +
+      this._budgetOffset() +
+      row * ROW_HEIGHT
+    );
+  }
+
+  /**
+   * Extra offset reserved for the slot-budget read-out. A wired slot-state
+   * provider (every game/gym scene) reserves the row so the budget never
+   * shifts as the ship spawns; a standalone HUD without one keeps its exact
+   * pre-existing layout (AH-0MVVJRRN10038VFR AC4).
+   */
+  private _budgetOffset(): number {
+    return this._getSlotState ? ROW_HEIGHT : 0;
+  }
+
+  /** The live slot state, or `null` when unwired / no player yet. */
+  private _slotState(): PowerUpSlotState | null {
+    return this._getSlotState?.() ?? null;
+  }
+
+  /**
+   * Draws the `Loadout n/6` slot-budget read-out from the shared model.
+   * Inert (invisible, empty) when no provider is wired or no player exists
+   * yet, so a scene before the ship spawns never shows a false occupancy.
+   */
+  private _drawSlotBudget(): void {
+    const state = this._slotState();
+    if (!state) {
+      this._budgetLabel.setText('');
+      this._budgetLabel.setVisible(false);
+      return;
+    }
+    const livesOffset = this._showLives ? ROW_HEIGHT + LIVES_GAP : 0;
+    const mineralOffset = this._mineralCapacity > 0 ? ROW_HEIGHT : 0;
+    this._budgetLabel.setPosition(
+      ICON_X,
+      livesOffset + mineralOffset + ROW_HEIGHT * 0.25,
+    );
+    this._budgetLabel.setText(`Loadout ${state.used}/${POWER_UP_SLOT_CAP}`);
+    this._budgetLabel.setVisible(true);
   }
 
   /**
@@ -427,6 +551,21 @@ export class HUD extends Phaser.GameObjects.Container {
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
     this._rows.push(entry);
+
+    // Non-slot marker: tells the player the row is not one of the six
+    // loadout slots (exempt entry / charge pool) without changing the label
+    // or value the rest of the HUD contract pins.
+    if (entry.marker) {
+      const marker = new Phaser.GameObjects.Text(
+        this.scene,
+        MARKER_X,
+        y + ROW_HEIGHT * 0.25,
+        entry.marker,
+        { ...TEXT_STYLE, color: POWER_UP_GREY_COLOUR_CSS },
+      );
+      this.add(marker);
+      this._rowObjects.push(marker);
+    }
   }
 
   // ── Power-up row model ────────────────────────────────────────────
@@ -443,9 +582,15 @@ export class HUD extends Phaser.GameObjects.Container {
     const reg = this._registry;
     if (!reg) return [];
     const rows: HUDEntry[] = [];
+    const state = this._slotState();
     for (const id of POWER_UP_LEVEL_IDS) {
       if (id === 'extra_life') continue; // lives are shown by the dedicated counter
-      if (!this._isPowerUpRowVisible(id)) continue;
+      // A kind that holds a slot always gets a row, even when the
+      // pre-existing visibility rule hides it (a temporary one-shot such as
+      // Orbital Strike): otherwise the list would under-report the loadout
+      // (tick 4540 of the RCA recording).
+      const heldByModel = state !== null && state.heldIds.has(id);
+      if (!this._isPowerUpRowVisible(id) && !heldByModel) continue;
       const entry = getPowerUpById(id);
       const level = reg.powerUpLevel(id);
       const remaining = reg.powerUpTemporaryRemaining(id);
@@ -453,6 +598,7 @@ export class HUD extends Phaser.GameObjects.Container {
       const stacks = this._powerUpStacks(id);
       const recharge = this._powerUpRecharge(id);
       const greyed = this._isPowerUpGreyed(id);
+      const marker = state ? this._slotMarker(id, state) : undefined;
       rows.push({
         id,
         name: entry.name,
@@ -462,11 +608,32 @@ export class HUD extends Phaser.GameObjects.Container {
         level,
         temporary,
         greyed,
+        slotCounted: state ? isSlotCountedHeldKind(id, state) : true,
         ...(stacks !== undefined ? { stacks } : {}),
         ...(recharge !== undefined ? { recharge } : {}),
+        ...(marker !== undefined ? { marker } : {}),
       });
     }
     return rows;
+  }
+
+  /**
+   * The non-slot marker for a rendered row, or `undefined` when the kind
+   * holds a slot. Derived from the shared model, never from row knowledge:
+   *
+   * - exempt entries (`availableWhenSlotsFull`) → "always available";
+   * - anything else held-only by a consumable pool (a Phase Shift / Teleport
+   *   row kept alive by remaining charges after its window expired) →
+   *   "charges only".
+   */
+  private _slotMarker(
+    id: PowerUpId,
+    state: PowerUpSlotState,
+  ): string | undefined {
+    if (isSlotCountedHeldKind(id, state)) return undefined;
+    return getPowerUpById(id).availableWhenSlotsFull === true
+      ? SLOT_MARKER_ALWAYS_AVAILABLE
+      : SLOT_MARKER_CHARGES_ONLY;
   }
 
   /** Whether a power-up currently warrants a row (pre-existing rules). */
@@ -623,6 +790,48 @@ export class HUD extends Phaser.GameObjects.Container {
     return [...this._rows];
   }
 
+  /**
+   * The slot budget the HUD displays, from the shared model only: `used` is
+   * `resolvePlayerSlotState(...).used` and `cap` is `POWER_UP_SLOT_CAP`.
+   * Inert (`0/6`) when no provider is wired or no player exists yet.
+   */
+  getSlotBudget(): { used: number; cap: number } {
+    const state = this._slotState();
+    return { used: state?.used ?? 0, cap: POWER_UP_SLOT_CAP };
+  }
+
+  /** Rendered slot-budget text (e.g. `Loadout 5/6`), empty when inert. */
+  getSlotBudgetLabel(): string {
+    return this._budgetLabel.text;
+  }
+
+  /**
+   * Every rendered loadout row (power-ups **and** weapons) with its slot
+   * classification, so a non-slot row is marked rather than silently counted
+   * as equipped (AH-0MVVJRRN10038VFR AC2).
+   */
+  getLoadoutRows(): Array<{
+    id: string;
+    label: string;
+    slotCounted: boolean;
+    marker?: string;
+  }> {
+    const state = this._slotState();
+    return [
+      ...this._rows.map((row) => ({
+        id: row.id,
+        label: row.label,
+        slotCounted: row.slotCounted ?? true,
+        ...(row.marker !== undefined ? { marker: row.marker } : {}),
+      })),
+      ...this._weaponRows.map((row) => ({
+        id: row.id,
+        label: row.label,
+        slotCounted: state ? isSlotCountedHeldKind(row.id, state) : true,
+      })),
+    ];
+  }
+
   /** Current lives value from the registry (0 when unattached). */
   getLivesValue(): number {
     return this._registry?.lives() ?? 0;
@@ -675,5 +884,6 @@ export class HUD extends Phaser.GameObjects.Container {
 
     this.add([icon, name, value]);
     this._rowObjects.push(icon, name, value);
+    this._weaponRows.push({ id: weapon.weaponId, label });
   }
 }

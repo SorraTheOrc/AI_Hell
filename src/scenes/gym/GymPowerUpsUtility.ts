@@ -55,6 +55,7 @@ import { collectMinerals } from '../core/mineralLayer';
 import type { DroneMineralSink } from '../core/combatDrone';
 import { MineralHold } from '../../core/mineralHold';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
@@ -179,8 +180,14 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
 
-    // Standalone HUD — attaches to this scene, renders above gameplay.
-    this.hud = new HUD(this, this.effectsRegistry);
+    // Standalone HUD — attaches to this scene, renders above gameplay. One
+    // shared wiring supplies the weapon levels and the six-slot budget
+    // (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player),
+    );
     // Show the shared mineral hold bar so the Mystery UFO collector drone and
     // mineral pickups are observable here (AH-0MV9G113S009B37I).
     this._syncMineralHud();
