@@ -1753,7 +1753,9 @@ formation gym) and the direct `CombatScene`/`CombatCoreScene` gyms
 the one core hook `backgroundLevel()` with the gym family's single decision in
 [`src/scenes/gym/core/gymBackground.ts`](../src/scenes/gym/core/gymBackground.ts),
 so no gym owns background draw/swap code and the duplicate-body guard stays
-green. **Documented divergence:** a gym pins the representative level-1
+green. The family's single opt-in/opt-out is `GYM_BACKGROUNDS_ENABLED` in that
+module, so the backdrop is removed or restored in every gym at once — never
+per scene. **Documented divergence:** a gym pins the representative level-1
 backdrop (`backgroundForLevel(1)`, so silhouettes are compared against a
 constant) and never swaps or warps it, because a gym has no campaign
 level-change flow — `GymLevel` previews a level's enemies but keeps the same

@@ -538,6 +538,35 @@ the report shape, the scheduling recipe and the tolerance-tuning guidance are in
 > (`rgba(0, 0, 0, 0.6)`, `BANNER_BACKGROUND_ALPHA`), letting the player see
 > the field behind the announcement while keeping the white label legible.
 
+#### Level backgrounds (parent AH-0MVIB7PD50029ZY1)
+
+Every campaign level renders its own NASA space photograph behind the neon
+gameplay. The mapping is **deterministic** — the same level always shows the
+same photo, so tests, demo captures and recorded videos stay stable — and is
+defined once in `src/data/backgrounds.ts` (`LEVEL_BACKGROUND_MANIFEST`, derived
+from `LEVELS`). The backdrop changes exactly on a **level change**, never per
+wave, and the boss entry keeps the final level's background.
+
+| Level | Theme | Background texture key | NASA photo |
+|-------|-------|------------------------|------------|
+| 1 | Entry | `background-earthrise` | Earthrise |
+| 2 | Descent | `background-milky-way` | The Milky Way Center Aglow with Dust |
+| 3 | The Core | `background-sun-corona` | SDO Spots Extra Energy in the Sun's Corona |
+| 4 | Firestorm | `background-orion-nebula` | Orion Nebula and Bow Shock |
+| 5 | Predictable Death | `background-horsehead-nebula` | Horsehead Nebula |
+| 6 | Invasion | `background-tarantula-nebula` | A New View of the Tarantula Nebula |
+| 7 | Segmented Assault | `background-veil-nebula` | An Audience Favorite Nebula |
+| 8 | Gridlock | `background-andromeda-galaxy` | Andromeda Galaxy |
+| 9 | Orbital Siege | `background-ring-nebula` | Hubble reveals the Ring Nebula's true shape |
+| 10 | The Gauntlet | `background-whirlpool-galaxy` | Whirlpool Galaxy |
+
+The pool is larger than the campaign (20 photos): surplus keys are spares and
+alternates for future levels and capture-pipeline variety. The photos are
+bundled repo assets (**never fetched at runtime**), and every one is attributed
+with its NASA title, asset id, source URL and licence in
+[`public/assets/backgrounds/ATTRIBUTION.md`](../public/assets/backgrounds/ATTRIBUTION.md).
+See §7.1 for the rendering, dimming and readability rules.
+
 ---
 
 ### 3.3 Mini-Boss Designs (wave 10 of every level)
@@ -1885,7 +1914,7 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 
 | Color | Hex | Usage |
 |-------|-----|-------|
-| Background | `#0a0a0a` (near-black) | Screen background |
+| Background | `#000000` (`GAME_BACKGROUND_COLOR`) | Solid fallback behind the level's NASA backdrop photo (below) |
 | Player | `#00ffff` (cyan) | Player ship, player bullets |
 | Enemy E1 | `#00ff00` (green) | Scout |
 | Enemy E2 | `#ffff00` (yellow) | Diver |
@@ -1897,6 +1926,12 @@ All persistence uses browser `localStorage` (or the Tauri/Electron equivalent):
 | UI text | `#00ffff` (cyan) | HUD, menus |
 
 > **Pause menu & settings** — the in-game pause menu (`PauseScene`) and the settings screen (`SettingsScene`) render as full-screen replacement scenes in the same neon palette: cyan text on a near-black background, with the focused keyboard control highlighted in white (GDD §7.1).
+
+> **Level backgrounds (parent AH-0MVIB7PD50029ZY1).** Each campaign level draws its NASA space photograph as a full-canvas image layer at depth **-1000** (`BACKGROUND_DEPTH`, §3.2 lists the level→photo mapping), beneath everything else, with a **45 %** black dim overlay (`BACKGROUND_DIM_ALPHA` 0.45) at depth **-950** (`BACKGROUND_DIM_DEPTH`) between the photo and the gameplay. Both layers are camera-fixed (`scrollFactor(0)`) and **non-interactive** — no hit area is ever attached, so the backdrop can never intercept keyboard or pointer input — and the dim overlay sits below the juice layers (-10) and gameplay (0), so it never covers enemies, bullets or the ship. When a level's photo is unavailable the layer draws the solid `GAME_BACKGROUND_COLOR` (`#000000`) fallback, which is exactly the background colour the game always had. The whole lifecycle (create, dim, swap, destroy) lives once in the shared core (`src/scenes/core/backgroundLayer.ts`) and is consumed by `PlayScene` and every combat gym (enemy guide §5.1).
+>
+> A level change plays the **hyperspace warp** (`src/vfx/backgroundWarp.ts`) while the backdrop swaps: converging streaks, a radial scale distortion and a brief white flash. The effect is deterministic (seeded from the level pair), time-boxed to exactly `LEVEL_TRANSITION_SECONDS` = **1.5 s** so it finishes when the incoming level becomes playable and never outlives the existing transition pause, and it never blocks input or wave progression. A wave clear and the boss entry do not swap the backdrop, so they never warp.
+>
+> **Readability still holds.** The dim overlay desaturates the photo beneath the neon vector art, so the §7.2 aesthetic and the **2.5×** bullet-size rule (§4.4.2) still apply: bullets stay legible against the backdrop exactly as they did against solid black. Attribution and licence for every photo live in [`public/assets/backgrounds/ATTRIBUTION.md`](../public/assets/backgrounds/ATTRIBUTION.md); the photos are **NASA public domain** (US Government works) and NASA's media usage guidelines apply — <https://www.nasa.gov/nasa-brand-center/images-and-media/>.
 
 ### 7.2 Visual Style
 
