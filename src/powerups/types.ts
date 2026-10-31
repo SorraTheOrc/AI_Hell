@@ -59,6 +59,25 @@
  * AH-0MUX802450085VZZ *"Resolved decision 4"* exception — instant kinds had no
  * window at all — is **superseded** by AH-0MVSTKGC3003OMAC.
  *
+ * ## Consumables (parent AH-0MVTQMREN009DSFW)
+ *
+ * Six kinds are **consumables** — a charge pool of one-event uses rather than
+ * an endless aura: Shield, Thorn Field, Phase Shift, Teleport, Force Field and
+ * Mystery UFO (producer decision 1). The set is catalogue data: the
+ * `consumable` flag on the entry is the single source of truth and
+ * {@link CONSUMABLE_POWER_UP_IDS} is derived from it, so downstream code never
+ * needs an `id === …` special case.
+ *
+ * A consumable's charge model is:
+ *
+ * - **one charge buys one event** — one absorbed hit (Shield), one free ram
+ *   (Thorn Field), one reflected bullet (Force Field), one auto-activation
+ *   (Phase Shift), one warp (Teleport), one drone spawn (Mystery UFO);
+ * - **charges regenerate** on a level-derived interval (the per-kind recharge
+ *   axes in `./powerUpLevels`, 45 s at level 0 for Shield and Force Field);
+ * - **a hold-full reward adds a charge**, never a level, clamped at the pool's
+ *   level-derived cap.
+ *
  * ## Net-new power-ups
  *
  * The five net-new power-ups (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC1Q0007JAV1)
@@ -179,6 +198,21 @@ export interface PowerUpEntry {
   /** Maximum life count. */
   livesMax?: number;
   /**
+   * Whether this entry is a **consumable** (parent AH-0MVTQMREN009DSFW,
+   * producer decision 1).
+   *
+   * **Defaults to `false`** — an absent flag means the entry is not a
+   * consumable, so a newly added catalogue entry is not one unless it opts in.
+   * The six consumables are Shield, Thorn Field, Phase Shift, Teleport, Force
+   * Field and Mystery UFO; {@link CONSUMABLE_POWER_UP_IDS} is derived from this
+   * flag, so nothing downstream spells the set out again.
+   *
+   * A consumable holds a **charge pool**: one charge buys one event, charges
+   * regenerate on a level-derived interval, and a hold-full reward adds a
+   * charge rather than a level.
+   */
+  consumable?: boolean;
+  /**
    * Whether this entry remains drawable/offerable once all
    * `POWER_UP_SLOT_CAP` permanent slots are occupied (parent
    * AH-0MVLIJT3M005HPHF, AC5).
@@ -207,8 +241,13 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   shield: {
     id: 'shield',
     name: 'Shield',
-    description: 'Absorbs one hit behind a protective bubble around the ship.',
+    description:
+      'One charge absorbs one hit. Charges regenerate on a level-derived timer, and a hold-full reward adds one charge rather than a level.',
     duration: 15,
+    // Charge model: one absorbed hit per charge, regenerating on the
+    // level-derived `shieldRecharge` interval (45 s at level 0), capped by
+    // `shieldAbsorptions` (AH-0MVTQMREN009DSFW).
+    consumable: true,
   },
   bomb: {
     id: 'bomb',
@@ -230,21 +269,28 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'phase_shift',
     name: 'Phase Shift',
     description:
-      'Stores auto-activation charges (up to 3, recharging); triggers a 1.5 s pass-through when 3+ threats close within 40 px. The hold-full reward adds one charge to the pool.',
+      'Stores up to 3 auto-activation charges that regenerate on a level-derived timer; one charge phases you past danger. A hold-full reward adds a charge, not a level.',
     // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
     duration: 1.5,
     // Balance tuning: the defensive kinds use the shield-style 15 s window
     // for the temporary level a field pickup grants (AH-0MVUGI3Q4009MW6A).
     temporaryWindow: 15,
+    // Charge model: one charge per auto-activation, regenerating on the
+    // level-derived `phaseRechargeRate` interval (30 s → 10 s)
+    // (AH-0MVTQMREN009DSFW).
+    consumable: true,
   },
   teleport: {
     id: 'teleport',
     name: 'Teleport',
     description:
-      'Stores up to 3 uses; when the ship is in danger, one is spent automatically to warp to the nearest safe spot and grant a short Phase Shift on arrival. Teleporting can be disorienting — keep your wits about you.',
+      'Stores up to 3 warps that regenerate on a level-derived timer; in danger one is spent automatically to warp you to safety. Teleporting can be disorienting. A hold-full reward adds a charge, not a level.',
     // Balance tuning: defensive kind, so the temporary level uses the same
     // 15 s window as Phase Shift / Shield (AH-0MVUGI3Q4009MW6A).
     temporaryWindow: 15,
+    // Charge model: one warp per charge, regenerating on the level-derived
+    // `teleportRechargeRate` interval (15 s → 5 s) (AH-0MVTQMREN009DSFW).
+    consumable: true,
   },
   extra_life: {
     id: 'extra_life',
@@ -288,17 +334,19 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'force_field',
     name: 'Force Field',
     description:
-      'Reflects enemy bullets back at their source; the field returns a limited number of shots before it stops reflecting.',
+      'One charge reflects one enemy bullet. Charges regenerate on a level-derived timer, and a hold-full reward adds one charge rather than a level.',
     // Base bubble window (s); the level curve extends it (cap 18 s).
     duration: 8,
+    // Charge model: one reflected bullet per charge, regenerating on the
+    // level-derived `forceFieldRecharge` interval (45 s at level 0), capped by
+    // `forceFieldReflects` (AH-0MVTQMREN009DSFW).
+    consumable: true,
   },
   mystery_ufo: {
     id: 'mystery_ufo',
     name: 'Mystery UFO',
     description:
-      'A rare Space Invaders-inspired collector drone: a small copy of your ' +
-      'ship seeks out minerals, hoovers them up and brings them home. Each ' +
-      'pickup levels it up, so the next drone flies longer and carries more.',
+      'A rare collector drone hoovers up minerals and carries them home. One charge spawns one drone; charges regenerate on a level-derived timer, and a hold-full reward adds a charge, not a level.',
     // Not timed and no stored consumable state: a field pickup spawns exactly
     // one drone through the shared core pass, and a full-hull reward keeps a
     // drone respawning on the level-resolved interval (AH-0MV9G113S009B37I).
@@ -311,6 +359,11 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // pickup's temporary level survives the drone it grants before reverting
     // (AH-0MVUGI3Q4009MW6A).
     temporaryWindow: 15,
+    // Charge model: one drone spawn per charge, regenerating on the
+    // level-derived `mysteryUfoSpawnInterval` (30 s → 12 s), with the pool
+    // capped by `mysteryUfoChargeCap` (1 at level 0)
+    // (AH-0MVTQMREN009DSFW).
+    consumable: true,
   },
   frenzy: {
     id: 'frenzy',
@@ -330,8 +383,12 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'thorns',
     name: 'Thorn Field',
     description:
-      'Ramming an enemy destroys it without costing a life, for a limited number of rams.',
+      'One charge rams one enemy for free. Charges regenerate on a level-derived timer, and a hold-full reward adds one charge rather than a level.',
     duration: 8,
+    // Charge model: one free ram per charge, regenerating on the level-derived
+    // `thornsRecharge` interval (12 s → 5 s), capped by `thornsAbsorbs`
+    // (AH-0MVTQMREN009DSFW).
+    consumable: true,
   },
   salvage: {
     id: 'salvage',
@@ -376,6 +433,25 @@ export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = [
   'thorns',
   'strike',
 ] as const;
+
+/**
+ * The **consumable** power-up set, derived from the catalogue's `consumable`
+ * flag in catalogue order (parent AH-0MVTQMREN009DSFW).
+ *
+ * Shield, Thorn Field, Phase Shift, Teleport, Force Field and Mystery UFO
+ * hold a charge pool of one-event uses: one charge buys one event, charges
+ * regenerate on a level-derived interval, and a hold-full reward adds a charge
+ * rather than a level.
+ *
+ * Derived at module load from {@link POWER_UP_CATALOGUE}, so this export can
+ * never drift from the entries and is the only place the set is spelled out.
+ * Downstream code reads this array (or the flag) — never an `id === …` list.
+ */
+export const CONSUMABLE_POWER_UP_IDS: readonly PowerUpId[] = (
+  Object.values(POWER_UP_CATALOGUE) as PowerUpEntry[]
+)
+  .filter((entry) => entry.consumable === true)
+  .map((entry) => entry.id);
 
 /**
  * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full

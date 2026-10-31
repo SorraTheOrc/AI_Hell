@@ -1294,3 +1294,205 @@ describe('Thorn Field recharge axis (AH-0MVJ8YKR70096C6T)', () => {
     );
   });
 });
+
+// ── Consumable charge axes (AH-0MVUXFDFN009QK84, F1) ─────────────────
+//
+// The six consumables (parent AH-0MVTQMREN009DSFW, producer decision 1) get
+// their charge model from the catalogue: one charge buys one event, charges
+// regenerate on a level-derived interval, and the pool's cap is a level axis.
+// Three axes are new here — the two recharge intervals and the Mystery UFO
+// charge cap — while every shipped axis (Shield duration/absorptions, Force
+// Field duration/reflects, Thorn recharge, the Phase Shift/Teleport pools)
+// stays exactly as it is. No effect path consumes the new axes yet: this slice
+// only publishes the data.
+
+describe('consumable charge axes (AH-0MVUXFDFN009QK84 AC3/AC4)', () => {
+  /** Resolves a stat by variable name (decoupled from the typed stats fields). */
+  function stat(id: PowerUpId, variable: string, level: number): number {
+    const value = (
+      resolvePowerUpAtLevel(id, level) as unknown as Record<
+        string,
+        number | undefined
+      >
+    )[variable];
+    if (value === undefined) {
+      throw new Error(`${id} has no ${variable} stat at level ${level}`);
+    }
+    return value;
+  }
+
+  const RECHARGE_AXES = [
+    {
+      id: 'shield' as PowerUpId,
+      variable: 'shieldRecharge',
+      rateVariable: 'shieldRechargeRate',
+      label: 'Shield recharge',
+    },
+    {
+      id: 'force_field' as PowerUpId,
+      variable: 'forceFieldRecharge',
+      rateVariable: 'forceFieldRechargeRate',
+      label: 'Field recharge',
+    },
+  ] as const;
+
+  it('registers the recharge intervals as descending linear-clamped axes at 45 s on level 0', () => {
+    for (const { id, variable, label } of RECHARGE_AXES) {
+      const spec = POWER_UP_LEVEL_SPECS[id].find(
+        (s) => s.variable === variable,
+      );
+      expect(spec, `${id}.${variable} spec missing`).toBeDefined();
+      expect(spec!.curve).toBe('linear-clamped');
+      expect(spec!.base).toBe(45);
+      expect(spec!.cap).toBe(20);
+      expect(spec!.k).toBe(-5);
+      expect(spec!.discrete).toBe(true);
+      expect(spec!.label).toBe(label);
+      expect(spec!.rationale.length).toBeGreaterThan(0);
+
+      // max(20, 45 − 5 × level): 45 s at level 0, shortening with level and
+      // floored at 20 s.
+      expect(stat(id, variable, 0)).toBe(45);
+      expect(stat(id, variable, 1)).toBe(40);
+      expect(stat(id, variable, 5)).toBe(20);
+      expect(stat(id, variable, 1_000_000)).toBe(20);
+
+      // Monotonic (never longer) and never below the floor.
+      let previous = stat(id, variable, 0);
+      for (let level = 1; level <= 40; level++) {
+        const current = stat(id, variable, level);
+        expect(current).toBeLessThanOrEqual(previous);
+        expect(current).toBeGreaterThanOrEqual(20);
+        previous = current;
+      }
+      expect(previous).toBe(20);
+    }
+  });
+
+  it('surfaces a derived charges-per-second rate that never decreases across levels', () => {
+    for (const { id, variable, rateVariable } of RECHARGE_AXES) {
+      let previousRate = 0;
+      for (let level = 0; level <= 20; level++) {
+        const interval = stat(id, variable, level);
+        const rate = stat(id, rateVariable, level);
+        expect(rate).toBeCloseTo(1 / interval, 12);
+        expect(rate).toBeGreaterThanOrEqual(previousRate);
+        previousRate = rate;
+      }
+      // 45 s at level 0 → 1/45 charges per second.
+      expect(stat(id, rateVariable, 0)).toBeCloseTo(1 / 45, 12);
+    }
+  });
+
+  it('resolves the Mystery UFO charge cap as 1 at level 0 and ascending', () => {
+    const spec = POWER_UP_LEVEL_SPECS.mystery_ufo.find(
+      (s) => s.variable === 'mysteryUfoChargeCap',
+    );
+    expect(spec).toBeDefined();
+    expect(spec!.curve).toBe('exponential-saturation');
+    expect(spec!.base).toBe(1);
+    expect(spec!.cap).toBe(3);
+    expect(spec!.k).toBe(0.5);
+    expect(spec!.discrete).toBe(true);
+    expect(spec!.rationale.length).toBeGreaterThan(0);
+
+    // One charge at level 0, the second at the first upgrade, capped at 3.
+    expect(stat('mystery_ufo', 'mysteryUfoChargeCap', 0)).toBe(1);
+    expect(stat('mystery_ufo', 'mysteryUfoChargeCap', 1)).toBe(2);
+    expect(stat('mystery_ufo', 'mysteryUfoChargeCap', 1_000_000)).toBe(3);
+
+    // Ascending (a higher level never holds fewer charges) and capped.
+    let previous = stat('mystery_ufo', 'mysteryUfoChargeCap', 0);
+    for (let level = 1; level <= 40; level++) {
+      const current = stat('mystery_ufo', 'mysteryUfoChargeCap', level);
+      expect(current).toBeGreaterThanOrEqual(previous);
+      expect(current).toBeLessThanOrEqual(3);
+      previous = current;
+    }
+  });
+
+  it('registers the three axes in POWER_UP_LEVEL_VARIABLES in catalogue order', () => {
+    const variables = POWER_UP_LEVEL_VARIABLES as readonly string[];
+    const shieldRecharge = variables.indexOf('shieldRecharge');
+    const forceFieldRecharge = variables.indexOf('forceFieldRecharge');
+    const ufoChargeCap = variables.indexOf('mysteryUfoChargeCap');
+
+    for (const [name, index] of [
+      ['shieldRecharge', shieldRecharge],
+      ['forceFieldRecharge', forceFieldRecharge],
+      ['mysteryUfoChargeCap', ufoChargeCap],
+    ] as const) {
+      expect(index, `${name} is not registered`).toBeGreaterThanOrEqual(0);
+    }
+
+    // Each axis sits inside its own power-up's bucket: after that kind's
+    // shipped variables and before the next kind's first variable.
+    expect(shieldRecharge).toBeGreaterThan(variables.indexOf('shieldAbsorptions'));
+    expect(shieldRecharge).toBeLessThan(variables.indexOf('bombRange'));
+    expect(forceFieldRecharge).toBeGreaterThan(
+      variables.indexOf('forceFieldReflects'),
+    );
+    expect(forceFieldRecharge).toBeLessThan(
+      variables.indexOf('mysteryUfoLifetime'),
+    );
+    expect(ufoChargeCap).toBeGreaterThan(variables.indexOf('mysteryUfoRadius'));
+    expect(ufoChargeCap).toBeLessThan(variables.indexOf('frenzyBonusHits'));
+
+    // …and the buckets themselves are in catalogue order.
+    expect(shieldRecharge).toBeLessThan(forceFieldRecharge);
+    expect(forceFieldRecharge).toBeLessThan(ufoChargeCap);
+
+    for (const [id, variable] of [
+      ['shield', 'shieldRecharge'],
+      ['force_field', 'forceFieldRecharge'],
+      ['mystery_ufo', 'mysteryUfoChargeCap'],
+    ] as const) {
+      expect(
+        POWER_UP_LEVEL_SPECS[id].some((s) => s.variable === variable),
+        `${id}.${variable} spec missing`,
+      ).toBe(true);
+    }
+  });
+
+  it('leaves every shipped consumable value unchanged (no rebalance by stealth)', () => {
+    const shield = resolvePowerUpAtLevel('shield', 0);
+    expect(shield.shieldDuration).toBe(15);
+    expect(shield.shieldAbsorptions).toBe(1);
+
+    const forceField = resolvePowerUpAtLevel('force_field', 0);
+    expect(forceField.forceFieldDuration).toBe(8);
+    expect(forceField.forceFieldReflects).toBe(3);
+
+    const ufo = resolvePowerUpAtLevel('mystery_ufo', 0);
+    expect(ufo.mysteryUfoLifetime).toBe(5);
+    expect(ufo.mysteryUfoCapacity).toBe(10);
+    expect(ufo.mysteryUfoRadius).toBe(20);
+    expect(ufo.mysteryUfoSpawnInterval).toBe(30);
+
+    const thorns = resolvePowerUpAtLevel('thorns', 0);
+    expect(thorns.thornsAbsorbs).toBe(2);
+    expect(thorns.thornsRecharge).toBe(12);
+
+    // The Phase Shift / Teleport pools keep their shipped curves (30 s → 10 s
+    // and 15 s → 5 s), untouched by the new interval axes.
+    const store = new PowerUpLevelStore();
+    expect(store.phaseRechargeTime()).toBeCloseTo(30, 6);
+    expect(store.teleportRechargeTime()).toBeCloseTo(15, 6);
+  });
+
+  it('names the new interval axes in the hold-full change summary', () => {
+    // The summariser lists every spec whose value moves, so the new axes show
+    // up beside the shipped ones.
+    expect(summarisePowerUpLevelChange('shield', 0, 1)).toContain(
+      'Shield recharge',
+    );
+    expect(summarisePowerUpLevelChange('force_field', 0, 1)).toContain(
+      'Field recharge',
+    );
+    // The Mystery UFO cap rises at the first upgrade; its axis is registered
+    // in the same summary path.
+    expect(summarisePowerUpLevelChange('mystery_ufo', 0, 1)).toContain(
+      'UFO charges',
+    );
+  });
+});

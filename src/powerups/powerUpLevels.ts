@@ -25,6 +25,31 @@
  *   **derived from this model** rather than tracked by a second, independent
  *   counter (AC3).
  *
+ * ## Consumable charge axes (parent AH-0MVTQMREN009DSFW)
+ *
+ * The six **consumables** (flagged in `./types`; producer decision 1) model a
+ * permanent grant as a **charge pool**: one charge buys one event, charges
+ * regenerate on a level-derived interval, and a hold-full reward adds a charge
+ * rather than a level. Every cap and interval is catalogue data here, so no
+ * store, HUD or scene needs a magic number or an `id === …` special case:
+ *
+ * - **Shield** — cap `shieldAbsorptions` (1 → 3) and **new** recharge
+ *   `shieldRecharge` (`max(20, 45 − 5×level)` s, i.e. 45 s at level 0);
+ * - **Thorn Field** — cap `thornsAbsorbs` (2 → 6) and the shipped recharge
+ *   `thornsRecharge` (12 s → 5 s);
+ * - **Phase Shift** — cap 3 (`POWER_UP_CHARGE_CAP`) and the shipped
+ *   `phaseRechargeRate` (30 s → 10 s);
+ * - **Teleport** — cap 3 and the shipped `teleportRechargeRate` (15 s → 5 s);
+ * - **Force Field** — cap `forceFieldReflects` (3 → 10) and **new** recharge
+ *   `forceFieldRecharge` (`max(20, 45 − 5×level)` s, i.e. 45 s at level 0);
+ * - **Mystery UFO** — **new** cap `mysteryUfoChargeCap` (1 at level 0, 3 at the
+ *   cap) and the shipped `mysteryUfoSpawnInterval` (30 s → 12 s).
+ *
+ * Each descending interval axis carries a derived `*RechargeRate` companion
+ * (`1 / interval`, charges per second) so the model's monotonic
+ * non-decreasing rate contract holds while the stored intervals shorten. These
+ * axes are published here only — this slice adds no effect-path behaviour.
+ *
  * Phase Shift and Teleport are **recharging pools** (AH-0MV82I7TX0009JMT):
  * each consumed charge starts its own recharge timer whose duration is the
  * level-derived recharge time at the moment of consumption (see
@@ -169,6 +194,11 @@ export type PowerUpLevelVariable =
   | 'shieldDuration'
   /** Shield — hits absorbed before the bubble pops. */
   | 'shieldAbsorptions'
+  /**
+   * Shield — seconds to regenerate one spent charge (descends; the derived
+   * charges/second axis is its monotonic inverse).
+   */
+  | 'shieldRecharge'
   /** Bomb — clear radius in pixels. */
   | 'bombRange'
   /** Bomb — permanent pulse rate in pulses per second. */
@@ -207,6 +237,11 @@ export type PowerUpLevelVariable =
   | 'forceFieldDuration'
   /** Force Field — bullets the field reflects before it stops. */
   | 'forceFieldReflects'
+  /**
+   * Force Field — seconds to regenerate one spent reflect charge (descends;
+   * the derived charges/second axis is its monotonic inverse).
+   */
+  | 'forceFieldRecharge'
   /** Mystery UFO — collector-drone lifetime in seconds. */
   | 'mysteryUfoLifetime'
   /** Mystery UFO — minerals one collector drone can carry before returning. */
@@ -215,6 +250,8 @@ export type PowerUpLevelVariable =
   | 'mysteryUfoRadius'
   /** Mystery UFO — seconds between permanent collector-drone spawns (descends). */
   | 'mysteryUfoSpawnInterval'
+  /** Mystery UFO — drone charges one pool holds (ascends). */
+  | 'mysteryUfoChargeCap'
   /** Frenzy — bonus damage hits each player bullet applies. */
   | 'frenzyBonusHits'
   /** Frenzy — timed window during which bullets deal bonus hits. */
@@ -244,6 +281,7 @@ export type PowerUpLevelVariable =
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'shieldDuration',
   'shieldAbsorptions',
+  'shieldRecharge',
   'bombRange',
   'bombFrequency',
   'speedMultiplier',
@@ -263,10 +301,12 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'smartBombInterval',
   'forceFieldDuration',
   'forceFieldReflects',
+  'forceFieldRecharge',
   'mysteryUfoLifetime',
   'mysteryUfoCapacity',
   'mysteryUfoRadius',
   'mysteryUfoSpawnInterval',
+  'mysteryUfoChargeCap',
   'frenzyBonusHits',
   'frenzyDuration',
   'chronoSlowFactor',
@@ -364,6 +404,31 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'Absorbing more than one hit is very strong, so the cap is small ' +
         '(3) and k=0.5 grants the second hit promptly at the first upgrade, ' +
         'then flattens — a clear early payoff with no runaway durability.',
+    },
+    {
+      variable: 'shieldRecharge',
+      powerUpId: 'shield',
+      label: 'Shield recharge',
+      unit: 's',
+      description: 'Seconds to regenerate one spent Shield charge.',
+      curve: 'linear-clamped',
+      // Descending interval: max(20, 45 − 5×level) s — 45 s on the first
+      // grant, five seconds sooner per further level, floored at 20 s (the
+      // original report's 45 s recharge, producer decision 3). The derived
+      // charges/second inverse stays monotonic non-decreasing.
+      base: 45,
+      cap: 20,
+      k: -5,
+      discrete: true,
+      rationale:
+        'A permanent Shield is a charge pool, not an endless bubble: one ' +
+        'charge absorbs one hit and comes back on this timer (parent ' +
+        'AH-0MVTQMREN009DSFW). Forty-five seconds at level 0 keeps a free ' +
+        'absorbed hit genuinely scarce — the producer\'s headline figure — ' +
+        'while the 20 s floor caps how fast a levelled pool refills, so a ' +
+        'fully levelled Shield never becomes near-permanent cover. Stored as ' +
+        'a descending interval in whole seconds (mirroring `thornsRecharge`) ' +
+        'so the derived rate `1 / interval` stays monotonic non-decreasing.',
     },
   ],
 
@@ -773,6 +838,30 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'model\'s rate-axis contract. Discrete so the timer uses whole ' +
         'seconds.',
     },
+    {
+      variable: 'mysteryUfoChargeCap',
+      powerUpId: 'mystery_ufo',
+      label: 'UFO charges',
+      unit: '',
+      description: 'Drone charges one Mystery UFO pool can hold.',
+      curve: 'exponential-saturation',
+      // Ascending discrete cap: 1 at level 0, gaining the second charge at
+      // the first upgrade. Mirrors `shieldAbsorptions` / `phaseCharges`
+      // (k=0.5, cap 3) so every charge pool behaves the same way.
+      base: 1,
+      cap: 3,
+      k: 0.5,
+      discrete: true,
+      rationale:
+        'A permanent Mystery UFO becomes a charge pool: one charge spawns ' +
+        'one collector drone and a consumed charge comes back on the ' +
+        'level-derived `mysteryUfoSpawnInterval` (parent ' +
+        'AH-0MVTQMREN009DSFW). The level-0 pool holds exactly one charge — ' +
+        'the producer\'s headline figure — so the drone is a periodic treat ' +
+        'rather than a swarm; k=0.5 grants a second charge at the first ' +
+        'upgrade and the cap of 3 mirrors the other charge pools, keeping a ' +
+        'levelled drone bounded.',
+    },
   ],
 
   // Force Field — Gradius-inspired timed bullet reflector (AH-0MV1BIX1W006XF95).
@@ -812,6 +901,31 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'reflection at the first upgrade. Once the budget is spent the bubble ' +
         'keeps counting down but no longer reflects, so it can never become ' +
         'infinite offence.',
+    },
+    {
+      variable: 'forceFieldRecharge',
+      powerUpId: 'force_field',
+      label: 'Field recharge',
+      unit: 's',
+      description: 'Seconds to regenerate one spent Force Field reflect.',
+      curve: 'linear-clamped',
+      // Descending interval: max(20, 45 − 5×level) s — mirrors
+      // `shieldRecharge`: 45 s on the first grant, five seconds sooner per
+      // further level, floored at 20 s. The derived charges/second inverse
+      // stays monotonic non-decreasing.
+      base: 45,
+      cap: 20,
+      k: -5,
+      discrete: true,
+      rationale:
+        'A permanent Force Field becomes a charge pool: one charge reflects ' +
+        'one enemy bullet and the reflect budget (`forceFieldReflects`) is ' +
+        'the pool cap (parent AH-0MVTQMREN009DSFW). A 45 s recharge keeps ' +
+        'free reflection an occasional windfall rather than a steady ' +
+        'offence stream, and it shortens by level to a 20 s floor so a ' +
+        'levelled pool still rewards investment. Stored as a descending ' +
+        'interval in whole seconds (mirroring `thornsRecharge`) so the ' +
+        'derived rate `1 / interval` stays monotonic non-decreasing.',
     },
   ],
 
@@ -1087,6 +1201,18 @@ export interface PowerUpLevelStats {
   shieldDuration?: number;
   /** Shield — hits the shield absorbs. */
   shieldAbsorptions?: number;
+  /**
+   * Shield — seconds to regenerate one spent charge (descending:
+   * `max(20, 45 − 5×level)`).
+   */
+  shieldRecharge?: number;
+  /**
+   * Shield — charge regeneration rate in charges per second. **Derived** from
+   * {@link shieldRecharge} (`1 / interval`) so the rate axis stays monotonic
+   * non-decreasing while the stored interval descends (mirrors
+   * {@link thornsRechargeRate}).
+   */
+  shieldRechargeRate?: number;
   /** Bomb — clear radius in pixels. */
   bombRange?: number;
   /** Bomb — permanent pulse rate in pulses per second. */
@@ -1134,6 +1260,17 @@ export interface PowerUpLevelStats {
   forceFieldDuration?: number;
   /** Force Field — bullets the field reflects before it stops. */
   forceFieldReflects?: number;
+  /**
+   * Force Field — seconds to regenerate one spent reflect charge
+   * (descending: `max(20, 45 − 5×level)`).
+   */
+  forceFieldRecharge?: number;
+  /**
+   * Force Field — reflect regeneration rate in charges per second. **Derived**
+   * from {@link forceFieldRecharge} (`1 / interval`) so the rate axis stays
+   * monotonic non-decreasing while the stored interval descends.
+   */
+  forceFieldRechargeRate?: number;
   /** Mystery UFO — collector-drone lifetime in seconds. */
   mysteryUfoLifetime?: number;
   /** Mystery UFO — minerals one collector drone can carry before returning. */
@@ -1145,6 +1282,11 @@ export interface PowerUpLevelStats {
    * (descending: `max(12, 30 − 2×level)`).
    */
   mysteryUfoSpawnInterval?: number;
+  /**
+   * Mystery UFO — drone charges one pool holds (1 at level 0, ascending and
+   * capped at 3).
+   */
+  mysteryUfoChargeCap?: number;
   /** Frenzy — bonus damage hits each player bullet applies while active. */
   frenzyBonusHits?: number;
   /** Frenzy — timed window duration in seconds. */
@@ -1238,6 +1380,18 @@ export function resolvePowerUpAtLevel(
   const thornsRecharge = bucket.thornsRecharge;
   if (Number.isFinite(thornsRecharge) && thornsRecharge > 0) {
     bucket.thornsRechargeRate = 1 / thornsRecharge;
+  }
+  // The two consumable recharge intervals (Shield, Force Field) carry the
+  // same derived rate companion as the Thorn Field (parent
+  // AH-0MVTQMREN009DSFW): stored descending, rate monotonic non-decreasing.
+  for (const [intervalVariable, rateVariable] of [
+    ['shieldRecharge', 'shieldRechargeRate'],
+    ['forceFieldRecharge', 'forceFieldRechargeRate'],
+  ] as const) {
+    const rechargeInterval = bucket[intervalVariable];
+    if (Number.isFinite(rechargeInterval) && rechargeInterval > 0) {
+      bucket[rateVariable] = 1 / rechargeInterval;
+    }
   }
   return stats;
 }

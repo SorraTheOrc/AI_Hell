@@ -25,7 +25,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { POWER_UP_CATALOGUE, type PowerUpEntry, type PowerUpId } from './types';
+import {
+  CONSUMABLE_POWER_UP_IDS,
+  POWER_UP_CATALOGUE,
+  WEAPON_DROP_IDS,
+  type PowerUpEntry,
+  type PowerUpId,
+} from './types';
 import {
   DEFAULT_WEAPON_TEMPORARY_WINDOW,
   POWER_UP_LEVEL_IDS,
@@ -34,6 +40,10 @@ import {
   resolveWeaponTemporaryWindow,
 } from './powerUpLevels';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
+import {
+  CHOICE_DESCRIPTION_MAX_LINES,
+  wrapChoiceDescription,
+} from '../scenes/core/choiceDescriptionWrap';
 
 /** The dropped ids allowed to spawn / be offered while all six slots are full. */
 const EXEMPT_IDS: readonly PowerUpId[] = ['extra_life', 'mystery_ufo'];
@@ -43,6 +53,19 @@ const CATALOGUE_IDS = Object.keys(POWER_UP_CATALOGUE) as PowerUpId[];
 
 /** Extended view of an entry once the exemption flag exists. */
 type ExemptibleEntry = PowerUpEntry & { availableWhenSlotsFull?: boolean };
+
+/**
+ * Extended view of an entry once the consumable flag exists.
+ *
+ * Read structurally (`=== true`) like the exemption helper above so this file
+ * type-checks against the catalogue before the flag is declared, and so a
+ * stray non-boolean value cannot silently make an entry a consumable.
+ */
+type ConsumableEntry = PowerUpEntry & { consumable?: boolean };
+
+function isConsumable(entry: PowerUpEntry): boolean {
+  return (entry as ConsumableEntry).consumable === true;
+}
 
 /**
  * Reads the exemption flag with its documented default (`false`).
@@ -88,6 +111,100 @@ describe('POWER_UP_CATALOGUE.availableWhenSlotsFull (AC5 — data-driven exempti
     // Opting in is a pure data change on the entry, with no code edit.
     const optedIn: ExemptibleEntry = { ...added, availableWhenSlotsFull: true };
     expect(isExemptWhenFull(optedIn)).toBe(true);
+  });
+});
+
+// ── Consumable catalogue flag (AH-0MVUXFDFN009QK84, F1) ────────────
+
+/**
+ * The agreed consumable set — the five spendable-budget kinds plus Mystery
+ * UFO (parent AH-0MVTQMREN009DSFW, producer decision 1) — **in catalogue
+ * order**.
+ *
+ * This is the *expected data* for the assertions below; the implementation
+ * derives `CONSUMABLE_POWER_UP_IDS` from the catalogue flags, so the tests
+ * prove that data and derivation agree instead of restating a hand-maintained
+ * list in production code.
+ */
+const EXPECTED_CONSUMABLES: readonly PowerUpId[] = [
+  'shield',
+  'phase_shift',
+  'teleport',
+  'force_field',
+  'mystery_ufo',
+  'thorns',
+];
+
+describe('POWER_UP_CATALOGUE.consumable (AH-0MVUXFDFN009QK84 AC1/AC2)', () => {
+  it('marks exactly the six agreed kinds as consumables', () => {
+    // Guard the guard: a table of six is what "exactly the six" means.
+    expect(EXPECTED_CONSUMABLES).toHaveLength(6);
+
+    for (const id of CATALOGUE_IDS) {
+      expect(isConsumable(POWER_UP_CATALOGUE[id]), id).toBe(
+        EXPECTED_CONSUMABLES.includes(id),
+      );
+    }
+  });
+
+  it('derives CONSUMABLE_POWER_UP_IDS from the catalogue, in catalogue order', () => {
+    // The derived export is the only place the set is spelled out, so it must
+    // equal the catalogue's own filtered order — never a second list.
+    const derivedFromFlags = CATALOGUE_IDS.filter((id) =>
+      isConsumable(POWER_UP_CATALOGUE[id]),
+    );
+    expect(CONSUMABLE_POWER_UP_IDS).toEqual(derivedFromFlags);
+    expect(CONSUMABLE_POWER_UP_IDS).toEqual(EXPECTED_CONSUMABLES);
+  });
+
+  it('fails if the catalogue flags and the derived list ever disagree', () => {
+    // Membership must be the flag's exact meaning, entry by entry: an entry
+    // that gains or loses `consumable: true` shows up immediately.
+    for (const id of CATALOGUE_IDS) {
+      expect(CONSUMABLE_POWER_UP_IDS.includes(id), id).toBe(
+        isConsumable(POWER_UP_CATALOGUE[id]),
+      );
+    }
+  });
+
+  it('keeps every weapon drop out of the consumable set', () => {
+    for (const id of WEAPON_DROP_IDS) {
+      expect(
+        (CONSUMABLE_POWER_UP_IDS as readonly string[]).includes(id),
+        id,
+      ).toBe(false);
+    }
+  });
+});
+
+describe('consumable catalogue copy states the charge model (AC5)', () => {
+  it('describes one charge per event, level-derived regeneration and a charge-granting hold-full reward', () => {
+    for (const id of CONSUMABLE_POWER_UP_IDS) {
+      const description = POWER_UP_CATALOGUE[id].description;
+      // One charge buys one event…
+      expect(description, id).toMatch(/charge/i);
+      // …charges come back on a level-derived interval…
+      expect(description, id).toMatch(/level-derived/i);
+      expect(description, id).toMatch(/regenerat|recharge/i);
+      // …and a hold-full reward adds a charge, not a level.
+      expect(description, id).toMatch(/hold-full/i);
+      expect(description, id).toMatch(/not a level|rather than a level/i);
+    }
+  });
+
+  it('keeps every catalogue description inside the two-line hold-full area', () => {
+    // The hold-full overlay and the gym help render the catalogue copy in a
+    // two-line box; copy that overflows is silently ellipsised, so the charge
+    // wording above must not push any entry past the budget.
+    for (const id of CATALOGUE_IDS) {
+      const wrapped = wrapChoiceDescription(
+        POWER_UP_CATALOGUE[id].description,
+      );
+      expect(wrapped.truncated, id).toBe(false);
+      expect(wrapped.lines.length, id).toBeLessThanOrEqual(
+        CHOICE_DESCRIPTION_MAX_LINES,
+      );
+    }
   });
 });
 

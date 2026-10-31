@@ -1241,7 +1241,7 @@ Power-ups are **constantly upgradable**, exactly like weapons: every power-up ca
 
 | Power-up | Level variables (base → cap, k) |
 |----------|----------------------------------|
-| **Shield** | Shield time (15 s → 30 s, k=0.12); Shield hits (1 → 3, k=0.5) |
+| **Shield** | Shield time (15 s → 30 s, k=0.12); Shield hits (1 → 3, k=0.5); Shield recharge (45 s → 20 s, −5 s/level; charges per second `1 / interval`) |
 | **Bomb** | Bomb range (120 px → 320 px, k=0.3); Bomb rate (0.33/s → 1/s, k=0.35) |
 | **Speed Boost** | Speed boost (1.5× → 2.5×, k=0.2); Boost time (10 s → 20 s, k=0.12) |
 | **Phase Shift** | Phase time (1.5 s → 3 s, k=0.2); Phase charges (1 → 3, k=0.5); Phase recharge (1/30 → 1/10 charges/s ≈ 30 s → 10 s, k=0.3) |
@@ -1250,8 +1250,8 @@ Power-ups are **constantly upgradable**, exactly like weapons: every power-up ca
 | **Magnet** | Magnet stacks (1 → 5, k=0.35) |
 | **Mineral Scoop** | Scoop stacks (1 → 5, k=0.35) |
 | **Smart Bomb** | Pulse radius (200 px → 400 px, +2 %/level); Pulse damage (1 → 3, k=0.3); Pulse interval (30 s → 10 s, −2 s/level, permanent only) |
-| **Force Field** | Field time (8 s → 18 s, k=0.15); Field reflects (3 → 10, k=0.25) |
-| **Mystery UFO** | Drone lifetime (5 s → 8 s, k=0.3); Drone capacity (10 → 20, k=0.3); Collector radius (20 px → 40 px, k=0.3); Spawn interval (30 s → 12 s, −2 s/level, permanent only) |
+| **Force Field** | Field time (8 s → 18 s, k=0.15); Field reflects (3 → 10, k=0.25); Field recharge (45 s → 20 s, −5 s/level; charges per second `1 / interval`) |
+| **Mystery UFO** | Drone lifetime (5 s → 8 s, k=0.3); Drone capacity (10 → 20, k=0.3); Collector radius (20 px → 40 px, k=0.3); Spawn interval (30 s → 12 s, −2 s/level, permanent only); UFO charges (1 → 3, k=0.5) |
 | **Frenzy** | Frenzy bonus (1 → 3 extra hits, k=0.5); Frenzy time (8 s → 16 s, k=0.12) |
 | **Chrono Field** | Chrono slow (0.5 → 0.75 speed removed, k=0.25); Chrono time (5 s → 12 s, k=0.12) |
 | **Thorn Field** | Thorn rams (2 → 6 absorbs, k=0.35); Thorn time (8 s → 16 s, k=0.12); Thorn recharge (12 s → 5 s, −1 s/level) |
