@@ -483,6 +483,18 @@ e2e`); `full` falls back to the `npm --silent test` suite command. Each
 non-`full` type writes its own cache key, so `/skill:test --type unit` can
 never masquerade as full-suite evidence.
 
+**Committed fixtures live next to the harness.** Reusable test data is
+committed under `src/test/` and never read from the gitignored `recordings/`,
+so a reproduction survives a clean clone. `src/test/powerUpEffectFixtures.ts`
+owns the Shield/Bomb effect-path doubles, and
+`src/test/sixSlotLoadoutFixtures.ts` rebuilds the three six-slot loadouts from
+the RCA of AH-0MVVF0POV001JNKX (ticks 4540 and 5899 of the recorded run, plus
+an ordinary below-cap mix) through the real `PowerUpLevelStore`,
+`EffectsRegistry` and `Player.equipWeapon` seams; the HUD ↔ slot-model
+agreement tests in `src/ui/HUD.test.ts` replay them (AH-0MVVJRFDV007OI49).
+Fixtures are *states*, not expectations — the tests derive every expected
+number from `resolveSlotState`/`POWER_UP_SLOT_CAP`.
+
 #### Test execution and timing expectations
 
 | Goal | Sanctioned command | Cache key |

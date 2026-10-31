@@ -17,6 +17,18 @@ import {
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
 } from '../powerups/powerUpLevels';
+import { POWER_UP_SLOT_CAP } from '../core/constants';
+import {
+  resolvePlayerSlotState,
+  type PowerUpSlotState,
+} from '../powerups/slots';
+import {
+  SIX_SLOT_LOADOUT_IDS,
+  buildSixSlotLoadout,
+  isSlotCountedKind,
+  slotCountedKinds,
+  type SixSlotLoadoutId,
+} from '../test/sixSlotLoadoutFixtures';
 
 
 /**
@@ -1209,4 +1221,181 @@ describe('HUD weapon level readout (parent AH-0MUPMPCB2009J54J)', () => {
     expect(hudTexts(hud)).toContain('Weapon: rapid Lvl 0');
     destroy(game);
   });
+});
+
+// ── HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49) ──────────────────
+//
+// **TEST-FIRST contract for child F2 (AH-0MVVJRRN10038VFR).** The RCA
+// (parent AH-0MVVF0POV001JNKX) established that the cap is enforced but the
+// HUD renders rows per `EffectsRegistry` visibility, never per slot: a held
+// temporary Strike shows no row (tick 4540 → 5 rows for 6 slots) and a
+// slot-exempt Mystery UFO plus a residual Phase Shift charge pool add rows
+// that hold no slot (tick 5899 → 7 rows for 5 slots).
+//
+// The fixtures in `src/test/sixSlotLoadoutFixtures.ts` replay those two
+// recorded states plus an ordinary below-cap loadout through the real shared
+// seams. This block pins the seam F2 implements — read by name until it
+// exists, per the repository's test-first convention (see the grey-out and
+// Orbital Strike suites above):
+//
+// - `HUDOptions.getSlotState?: () => PowerUpSlotState | null` — the one seam
+//   the shared scene layer supplies (game and every gym alike);
+// - `HUD.getSlotBudget(): { used, cap }` — the slot read-out;
+// - `HUD.getLoadoutRows(): { id, label, slotCounted }[]` — every rendered row
+//   (power-up **and** weapon) with its slot classification, so a non-slot row
+//   can be marked rather than silently counted as equipped.
+//
+// `it.fails` pins the expected failures while F2 is unimplemented; F2 flips
+// each one to a plain `it(...)` as its implementation lands (the established
+// convention — see `HUD grey-out … AH-0MV82I8VA008LX0R` above).
+
+/** The HUD slot-model seam F2 adds (read by name while it does not exist). */
+interface SlotAwareHUD {
+  getLoadoutRows?(): Array<{
+    id: string;
+    label: string;
+    slotCounted: boolean;
+  }>;
+  getSlotBudget?(): { used: number; cap: number };
+}
+
+/** The HUD options the slot seam adds to the existing options. */
+type SlotAwareOptions = HUDOptions & {
+  getSlotState?: () => PowerUpSlotState | null;
+};
+
+/** Boots a HUD over one committed loadout with the live slot-state seam. */
+async function bootHudForLoadout(id: SixSlotLoadoutId) {
+  const { game, scene } = await bootScene([BareScene]);
+  const loadout = buildSixSlotLoadout(scene, id);
+  const options: SlotAwareOptions = {
+    // The scene-supplied seam: the HUD never counts slots itself.
+    getSlotState: () => resolvePlayerSlotState(loadout.player),
+  };
+  const hud = new HUD(scene, loadout.registry, options);
+  hud.refresh();
+  return { game, hud, loadout };
+}
+
+/** Asserts every active weapon really has a rendered row (not just a model entry). */
+function expectWeaponRowsRendered(hud: HUD, registry: EffectsRegistry): void {
+  const texts = hudTexts(hud);
+  for (const weapon of registry.activeWeapons()) {
+    expect(
+      texts.some((text) => text.startsWith(`Weapon: ${weapon.weaponId} `)),
+    ).toBe(true);
+  }
+}
+
+/**
+ * Ids of every row the HUD renders today: power-up rows (`getRows()`) plus the
+ * active weapon rows it draws after them. An independent projection of the
+ * rendered loadout, so the counting assertion cannot agree with the HUD by
+ * construction.
+ */
+function renderedRowIds(hud: HUD, registry: EffectsRegistry): string[] {
+  expectWeaponRowsRendered(hud, registry);
+  return [
+    ...hud.getRows().map((row) => row.id),
+    ...registry.activeWeapons().map((weapon) => weapon.weaponId),
+  ];
+}
+
+describe('HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49)', () => {
+  it('below-cap mixed loadout: slot-counted rows equal the model and stay under the cap', async () => {
+    const { game, hud, loadout } = await bootHudForLoadout('below-cap-mixed');
+    const state = resolvePlayerSlotState(loadout.player);
+    const rowIds = renderedRowIds(hud, loadout.registry);
+    destroy(game);
+
+    const counted = rowIds.filter((rowId) =>
+      isSlotCountedKind(rowId, state),
+    );
+    expect(state.used).toBe(4);
+    expect(counted).toHaveLength(state.used);
+    expect(counted.length).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+    // The exempt Mystery UFO row is rendered, but it never counts (Q7a).
+    expect(rowIds).toContain('mystery_ufo');
+    expect(counted).not.toContain('mystery_ufo');
+  });
+
+  it.fails(
+    'tick 4540 fixture: the slot-counted rows match the six held slots (five rows today)',
+    async () => {
+      const { game, hud, loadout } = await bootHudForLoadout(
+        'six-slots-five-rows',
+      );
+      const state = resolvePlayerSlotState(loadout.player);
+      const counted = renderedRowIds(hud, loadout.registry).filter((rowId) =>
+        isSlotCountedKind(rowId, state),
+      );
+      destroy(game);
+
+      // Six slot-counted kinds are held (mineral_scoop, strike, heavy_slug,
+      // mortar, rapid, shard_swarm) but the temporary Strike renders no row,
+      // so today `counted` is five: the display under-reports the loadout.
+      expect(state.used).toBe(POWER_UP_SLOT_CAP);
+      expect(counted).toHaveLength(state.used);
+    },
+  );
+
+  it.fails(
+    'tick 5899 fixture: seven rendered rows classify as five slot rows and two non-slot rows',
+    async () => {
+      const { game, hud, loadout } = await bootHudForLoadout(
+        'seven-rows-five-slots',
+      );
+      const state = resolvePlayerSlotState(loadout.player);
+      const rows = (hud as unknown as SlotAwareHUD).getLoadoutRows?.() ?? [];
+      destroy(game);
+
+      // The seven rows the recording showed at tick 5899 (the slot budget
+      // read-out is not a loadout row).
+      expect(rows.map((row) => row.id).sort()).toEqual(
+        [
+          'heavy_slug',
+          'mortar',
+          'mystery_ufo',
+          'phase_shift',
+          'rear_guard',
+          'salvage',
+          'spread',
+        ].sort(),
+      );
+      const counted = rows
+        .filter((row) => row.slotCounted)
+        .map((row) => row.id)
+        .sort();
+      expect(counted).toEqual(slotCountedKinds(state));
+      expect(counted).toHaveLength(state.used);
+      expect(counted.length).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+
+      // Non-slot rows are excluded whatever their reason: the exempt Mystery
+      // UFO, the residual Phase Shift charge pool, and the exempt Extra Life,
+      // which is held but has no row at all.
+      expect(rows.filter((row) => !row.slotCounted).map((row) => row.id).sort()).toEqual([
+        'mystery_ufo',
+        'phase_shift',
+      ]);
+      expect(state.heldIds.has('extra_life')).toBe(true);
+      expect(rows.map((row) => row.id)).not.toContain('extra_life');
+    },
+  );
+
+  it.fails(
+    'exposes the shared slot budget (used/cap) for every fixture loadout',
+    async () => {
+      for (const id of SIX_SLOT_LOADOUT_IDS) {
+        const { game, hud, loadout } = await bootHudForLoadout(id);
+        const state = resolvePlayerSlotState(loadout.player);
+        const budget = (hud as unknown as SlotAwareHUD).getSlotBudget?.();
+        destroy(game);
+
+        expect(budget).toBeDefined();
+        expect(budget!.used).toBe(state.used);
+        expect(budget!.cap).toBe(POWER_UP_SLOT_CAP);
+        expect(budget!.used).toBeLessThanOrEqual(budget!.cap);
+      }
+    },
+  );
 });

@@ -24,6 +24,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { POWER_UP_SLOT_CAP } from '../core/constants';
 import { POWER_UP_CATALOGUE, type DropId, type PowerUpId } from './types';
 import { PowerUpLevelStore } from './powerUpLevels';
 import { CHOICE_POOL } from './choice';
@@ -416,5 +417,76 @@ describe('filterOptionsWithinSlotPool — every offer path obeys the cap (AC4)',
     expect(JSON.stringify(input)).toBe(snapshot);
     expect(filtered).not.toBe(input);
     expect(filterOptionsWithinSlotPool([], state)).toEqual([]);
+  });
+});
+
+// ── AC4 — mixed-loadout invariant (AH-0MVVJRFDV007OI49) ─────────────
+//
+// The HUD agreement tests replay committed loadouts
+// (`src/test/sixSlotLoadoutFixtures.ts`), including a temporary Strike and an
+// exempt entry. These cases pin the model half of that contract without
+// Phaser: whatever the mix, a reachable loadout can never report more than
+// `POWER_UP_SLOT_CAP` counted kinds, and `free` is always the clamped
+// remainder the HUD slot budget will display.
+
+describe('mixed-loadout invariant (AC4)', () => {
+  it('counts a mixed permanent + temporary loadout with exempt entries at exactly six', () => {
+    const state = resolveSlotState(
+      // Two counted power-ups plus the two exempt catalogue entries.
+      ownedPowerUps('magnet', 'mineral_scoop', 'mystery_ufo', 'extra_life'),
+      // Two counted permanent weapons.
+      ownedWeapons('mortar', 'spread'),
+      // An active temporary Strike holds a slot while its window is open (Q4a).
+      ['strike'],
+      // A temporary weapon stack holds one too (Q4a).
+      ['rear_guard'],
+    );
+
+    expect(state.used).toBe(POWER_UP_SLOT_CAP);
+    expect(state.used).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+    expect(state.free).toBe(POWER_UP_SLOT_CAP - state.used);
+    expect(state.free).toBe(0);
+    expect(state.isFull).toBe(true);
+
+    // Exempt entries are held yet never counted (Q7a): Extra Life has no HUD
+    // row at all, so occupancy must not depend on being displayed.
+    expect(state.heldIds.has('mystery_ufo')).toBe(true);
+    expect(state.heldIds.has('extra_life')).toBe(true);
+    // The temporary kinds do count while their windows are open.
+    expect(state.heldIds.has('strike')).toBe(true);
+    expect(state.heldIds.has('rear_guard')).toBe(true);
+  });
+
+  it('reports free = cap - used below the cap (the budget the HUD displays)', () => {
+    const state = resolveSlotState(
+      ownedPowerUps('magnet', 'mystery_ufo'),
+      ownedWeapons('spread'),
+      ['speed_boost'],
+      ['rapid'],
+    );
+
+    expect(state.used).toBe(4);
+    expect(state.free).toBe(POWER_UP_SLOT_CAP - state.used);
+    expect(state.isFull).toBe(false);
+  });
+
+  it('clamps free at zero when a snapshot reports more counted kinds than the cap', () => {
+    // A snapshot no acquisition surface can produce (the gates only admit a
+    // sixth kind into an empty slot), pinned so the remainder can never go
+    // negative and the HUD budget can never render a negative free count.
+    const state = resolveSlotState(
+      ownedPowerUps(
+        'shield',
+        'bomb',
+        'speed_boost',
+        'phase_shift',
+        'magnet',
+      ),
+      ownedWeapons('spread', 'dual'),
+    );
+
+    expect(state.used).toBe(POWER_UP_SLOT_CAP + 1);
+    expect(state.free).toBe(0);
+    expect(state.free).toBeGreaterThanOrEqual(0);
   });
 });
