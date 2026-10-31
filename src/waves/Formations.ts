@@ -7,7 +7,8 @@
  * spawning are driven by `WaveManager` (`./WaveManager.ts`).
  *
  * GDD mapping (GDD §3.2):
- * - Level 1 — **Entry**: single enemy type, simple V-formation waves.
+ * - Level 1 — **Entry**: Scout-led V-formation waves with occasional
+ *   secondary escorts (AH-0MVI5XXOU00954EA, Q2 = a).
  * - Level 2 — **Descent**: mixed single-enemy waves, tighter formations.
  * - Level 3 — **The Core**: dense mixed *pairs* of enemy types.
  * - Level 4 — **Firestorm**: enemies begin firing projectiles.
@@ -200,31 +201,53 @@ export const LEVELS: LevelDefinition[] = [
   {
     level: 1,
     name: 'Entry',
-    // Single enemy type (Scouts), simple movement — no enemy fire.
+    // Scout-led Entry (GDD §3.2), still the no-fire onboarding level.
     // Asteroids now come from the random spawner (GDD §4.1 — E6 Asteroid):
     // a non-firing rock that drifts in from a random offscreen edge,
     // wraps, and splits into two smaller rocks when shot.
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the dominant archetype, vary around
+    // it): Level 1 stays Scout-dominant, but the campaign must never field the
+    // same enemy composition on two adjacent waves, so a small Tank escort
+    // joins every other Scout wave from wave 4 on. The escorts are heavily
+    // outnumbered by the Scouts (and the Tank is the slowest archetype), so the
+    // level still reads as "Entry"; each wave's total enemy count is unchanged,
+    // so the gentle density ramp (AH-0MVCYANT6003SG5C) is preserved and the
+    // opening waves the onboarding pins depend on are untouched.
     waves: [
       noFire(
         group('scout', 'v', 6, { spacingX: 28, spacingY: 22 }),
       ),
       noFire(group('scout', 'v', 8, { spacingX: 34, spacingY: 24 })),
       // Expanded campaign (AH-0MVCYANT6003SG5C): gentle scout escalation
-      // fills the 10-wave grid before the wave-10 mini-boss.
+      // fills the 10-wave grid before the wave-10 mini-boss. From wave 4 on
+      // the authored waves alternate Scout-only and Scout-plus-Tank so no two
+      // adjacent waves share a composition (parent AC1).
       noFire(group('scout', 'v', 8, { spacingX: 30, spacingY: 20 })),
-      noFire(group('scout', 'v', 10, { spacingX: 30, spacingY: 20 })),
+      noFire(
+        group('scout', 'v', 9, { spacingX: 30, spacingY: 20 }),
+        group('tank', 'rect', 1, { startX: START_X + 140, spacingX: 52 }),
+      ),
       noFire(group('scout', 'v', 10, { spacingX: 28, spacingY: 18 })),
-      noFire(group('scout', 'v', 12, { spacingX: 28, spacingY: 18 })),
+      noFire(
+        group('scout', 'v', 11, { spacingX: 28, spacingY: 18 }),
+        group('tank', 'rect', 1, { startX: START_X + 140, spacingX: 52 }),
+      ),
       noFire(group('scout', 'v', 12, { spacingX: 26, spacingY: 16 })),
-      noFire(group('scout', 'v', 14, { spacingX: 26, spacingY: 16 })),
-      noFire(group('scout', 'v', 16, { spacingX: 26, spacingY: 14 })),
+      noFire(
+        group('scout', 'v', 13, { spacingX: 26, spacingY: 16 }),
+        group('tank', 'rect', 1, { startX: START_X + 140, spacingX: 52 }),
+      ),
+      noFire(group('scout', 'v', 14, { spacingX: 26, spacingY: 14 })),
       {
         ...noFire(
-          group('scout', 'v', 24, { spacingX: 26, spacingY: 12 }),
+          group('scout', 'v', 22, { spacingX: 26, spacingY: 12 }),
+          group('tank', 'rect', 2, { startX: START_X + 140, spacingX: 52 }),
         ),
         // The wave-10 mini-boss of the expanded campaign. Level 1 keeps its
-        // scout-only identity (the onboarding test pins Scout V-formations):
-        // the "mini-boss" is a dense scout phalanx that closes the level.
+        // Scout-led identity (the onboarding test pins Scout V-formations):
+        // the "mini-boss" is a dense scout phalanx with a Tank escort that
+        // closes the level.
         miniBoss: true,
       },
     ],
@@ -351,23 +374,41 @@ export const LEVELS: LevelDefinition[] = [
   {
     level: 5,
     name: 'Predictable Death',
-    // Fewer enemies, structured memorisable patterns: Phasers only.
+    // Fewer enemies, structured memorisable patterns: the orbital Phaser
+    // crosshair grid still leads the level (GDD §3.2).
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the dominant archetype, vary around
+    // it): Level 5 stays Phaser-dominant, but every other authored wave adds a
+    // small Tank or Diver escort so no two adjacent waves share a composition
+    // (parent AC1) while the memorisable crosshair-grid feel is preserved. The
+    // escorts stay far lighter than the Phaser grid, so the level remains the
+    // sparse pattern-testing encounter.
     waves: [
       openFire(group('phaser', 'orbital', 4, { spacingX: 84, spacingY: 84 })),
       openFire(group('phaser', 'orbital', 5, { spacingX: 80, spacingY: 80 })),
       // Expanded campaign (AH-0MVCYANT6003SG5C): the crosshair grid deepens
-      // to fill out the 10-wave encounter.
+      // to fill out the 10-wave encounter. From wave 3 on the authored waves
+      // alternate Phaser-only and Phaser-plus-escort.
       openFire(group('phaser', 'orbital', 5, { spacingX: 78, spacingY: 78 })),
-      openFire(group('phaser', 'orbital', 6, { spacingX: 78, spacingY: 78 })),
+      openFire(
+        group('phaser', 'orbital', 6, { spacingX: 78, spacingY: 78 }),
+        group('tank', 'rect', 3, { startX: START_X + 160, spacingX: 52 }),
+      ),
       openFire(group('phaser', 'orbital', 6, { spacingX: 76, spacingY: 76 })),
-      openFire(group('phaser', 'orbital', 7, { spacingX: 76, spacingY: 76 })),
+      openFire(
+        group('phaser', 'orbital', 7, { spacingX: 76, spacingY: 76 }),
+        group('diver', 'diver', 3, { spacingY: 28 }),
+      ),
       openFire(group('phaser', 'orbital', 7, { spacingX: 74, spacingY: 74 })),
-      openFire(group('phaser', 'orbital', 8, { spacingX: 74, spacingY: 74 })),
+      openFire(
+        group('phaser', 'orbital', 8, { spacingX: 74, spacingY: 74 }),
+        group('tank', 'rect', 4, { startX: START_X + 160, spacingX: 52 }),
+      ),
       openFire(group('phaser', 'orbital', 8, { spacingX: 72, spacingY: 72 })),
       {
         ...openFire(
           group('phaser', 'orbital', 10, { spacingX: 72, spacingY: 72 }),
-          group('tank', 'rect', 6, { startX: START_X + 160, spacingX: 52 }),
+          group('tank', 'rect', 5, { startX: START_X + 160, spacingX: 52 }),
         ),
         // Wave-10 mini-boss: a phalanx of phasers anchored by tanks.
         miniBoss: true,

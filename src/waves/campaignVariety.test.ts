@@ -44,8 +44,12 @@
  *   rather than the documented tank-led "Segmented Assault" identity — the
  *   classic-arcade rework item restores it.
  *
+ * Post-pilot state (AH-0MVSE6VIW009QG2E): Levels 1 and 5 are now pairwise
+ * distinct, so their AC1 assertions are activated and run unskipped. The
+ * campaign-wide AC1 aggregate stays red until the remaining rework items land.
+ *
  * Activation owners (from the parent plan):
- * - Levels 1 & 5 → AH-0MVSE6VIW009QG2E (pilot)
+ * - Levels 1 & 5 → AH-0MVSE6VIW009QG2E (pilot) — **done, activated here**
  * - Levels 2, 3, 4 → AH-0MVSE7F090010EG3 (onboarding rework)
  * - Levels 6–10 → AH-0MVSEFST20086D87 (classic-arcade/finale rework)
  * - Campaign AC1 aggregate → AH-0MVSEFST20086D87 (the last levels that make
@@ -296,12 +300,13 @@ describe('auditCampaignVariety — AC1–AC3 measurements', () => {
 
 /**
  * AC1 activation ledger — levels with no adjacent composition duplicate.
- * Measured at this commit: Levels 6–10 are already pairwise distinct; Levels
- * 1–5 carry the 17 recorded duplicate pairs and stay skipped until their
- * rework item lands.
+ * Levels 1 and 5 were activated by the pilot (AH-0MVSE6VIW009QG2E); Levels
+ * 6–10 were already pairwise distinct at the baseline. Levels 2–4 still carry
+ * the remaining recorded duplicate pairs and stay skipped until their
+ * onboarding rework item lands.
  */
 const ACTIVE_AC1_LEVELS: ReadonlySet<number> = new Set<number>([
-  6, 7, 8, 9, 10,
+  1, 5, 6, 7, 8, 9, 10,
 ]);
 
 /**
