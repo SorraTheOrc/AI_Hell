@@ -34,6 +34,11 @@ recordings/
 # by `npm run evaluate`, never committed.
 eval-output/
 
+# Crash-safety journal for the `--tune` CSV edit (AH-0MVSE1A7O002PXAO):
+# written beside the balance CSV before the first edited byte and removed
+# after the restore, so a hard-killed run never shows up as a worktree change.
+src/data/*.tune-journal
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

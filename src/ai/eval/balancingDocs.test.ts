@@ -170,6 +170,18 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     expect(doc).toMatch(/existing.*read-only\s+directory|read-only\s+directory/i);
   });
 
+  it('documents the crash-safe edit journal and its repair path (AH-0MVSE1A7O002PXAO)', () => {
+    expect(doc).toContain('AH-0MVSE1A7O002PXAO');
+    expect(doc).toMatch(/Crash-safe edit journal/);
+    expect(doc).toContain('.tune-journal');
+    // The automatic recovery path (next invocation) and the manual one.
+    expect(doc).toMatch(/reconciles a stale journal/);
+    expect(doc).toContain('jq -r .originalBase64');
+    expect(doc).toContain('base64 -d');
+    // Git-ignored, so a crashed run leaves no worktree change.
+    expect(doc).toContain('src/data/*.tune-journal');
+  });
+
   it('is cross-linked from the README and EVALUATION.md flags', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
     const evaluation = fs.readFileSync(EVALUATION_PATH, 'utf8');

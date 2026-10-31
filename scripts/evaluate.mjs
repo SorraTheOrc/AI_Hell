@@ -37,6 +37,13 @@ import {
 import { basename as pathBasename, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  clearJournal,
+  journalPathFor,
+  reconcileJournal,
+  writeJournal,
+} from './csvEditJournal.mjs';
+
 /** Parses `process.argv`-style flags into a plain options object. */
 export function parseEvaluateArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -229,6 +236,13 @@ Exit codes:
                        second (AH-0MVSE18XX006ZG5I). Diagnostics:
                          output directory not writable: <dir> (<ERRNO>)
                          tune CSV not readable: <path> (<ERRNO>)
+
+Crash safety:
+  --tune journals the pre-edit CSV bytes to <csv>.tune-journal before editing
+  and removes it after the restore, so a hard kill (SIGKILL/OOM) cannot leave
+  the balance CSV edited: the next --tune invocation restores it first and
+  prints a warning. Manual repair: jq -r .originalBase64 <csv>.tune-journal |
+  base64 -d > <csv> (see docs/BALANCING.md).
 `;
 
 /** Resolves the seeds list from parsed options. */export function resolveSeeds(options) {
@@ -480,6 +494,12 @@ export async function executeTune(options, io) {
     // copy). `attempt` carries the original text for the restore below.
     let attempt = null;
     try {
+      // Crash-safety (AH-0MVSE1A7O002PXAO): persist the pre-edit bytes beside
+      // the CSV **before** the first edited byte is written. The `finally`
+      // below restores from memory on the normal paths, but a SIGKILL runs no
+      // `finally` — the journal is what makes the edit recoverable then (the
+      // next `--tune` invocation reconciles it in `main()`).
+      writeJournal(csvPath, readFileSync(csvPath));
       attempt = await applyCsvEditFile(
         csvPath,
         options.tuneAssignment,
@@ -522,6 +542,10 @@ export async function executeTune(options, io) {
     } finally {
       if (attempt) {
         await restoreCsvFile(csvPath, attempt.originalText, options.keepEdit);
+        // The restore succeeded (or `--keep-edit` kept the edit): the journal
+        // has served its purpose. If the restore above throws, this line is
+        // never reached and the journal is deliberately kept for recovery.
+        clearJournal(csvPath);
       }
     }
   } finally {
@@ -540,6 +564,27 @@ export async function main(argv, io = { out: process.stdout, err: process.stderr
   if (options.tune) {
     if (!options.tuneFile || !options.tuneAssignment) {
       io.err.write('--tune requires --set <file> <assignment> (e.g. --set enemy-configs.csv boss.health=6)\n');
+      return 2;
+    }
+
+    // Reconcile a journal left by a hard-killed run **before** anything else
+    // (AH-0MVSE1A7O002PXAO): a SIGKILL runs no `finally`, so the CSV can still
+    // carry the previous run's edit. Restoring it here means the normal
+    // recovery needs no manual step.
+    const tuneCsvPath = resolveTuneCsvPath(options);
+    try {
+      const reconciled = reconcileJournal(tuneCsvPath);
+      if (reconciled.action === 'restored') {
+        io.err.write(
+          `warning: restored ${tuneCsvPath} from a stale tune journal `
+            + `(${journalPathFor(tuneCsvPath)}) — a previous --tune run was killed before it could restore\n`,
+        );
+      }
+    } catch (error) {
+      io.err.write(
+        `tune journal not reconcilable: ${journalPathFor(tuneCsvPath)} (${describeFsError(error)}) — `
+          + 'repair manually: jq -r .originalBase64 <journal> | base64 -d > <csv> (see docs/BALANCING.md)\n',
+      );
       return 2;
     }
   }

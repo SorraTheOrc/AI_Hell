@@ -751,6 +751,31 @@ The batch sweep itself uses the usual flags (`--games`, `--policies`,
   write. The late `mkdirSync` before the artifact writes remains as an
   idempotent safety net. The measured pre-fix cost of the same invalid path was
   4.31 s at 10 games × 2000 ticks and 11.82 s at 40 games × 2000 ticks.
+- **Crash-safe edit journal (AH-0MVSE1A7O002PXAO):** before the first edited
+  byte is written, the pre-edit bytes are persisted to
+  `src/data/<file>.tune-journal` (written to a sibling temp file, `fsync`ed and
+  atomically renamed, so a kill at any moment leaves either no journal or a
+  complete one). The journal is removed after a successful restore, and with
+  `--keep-edit` it is removed **without** restoring. It is git-ignored
+  (`src/data/*.tune-journal`), so a crashed run leaves no worktree change.
+
+  A `SIGKILL` (OOM, an external timeout kill) runs no `finally`, so the
+  in-memory restore cannot help — the journal is what makes the edit
+  recoverable. The **next** `--tune` invocation reconciles a stale journal for
+  its CSV target *before* validating anything, prints
+  `warning: restored <csv> from a stale tune journal (…)` and continues, so the
+  normal recovery needs no manual step.
+
+  If the CLI is never run again, or the journal is unreadable (the CLI then
+  refuses to run with `tune journal not reconcilable: …` and exit code `2`),
+  restore it without Node:
+
+  ```bash
+  jq -r .originalBase64 src/data/enemy-configs.csv.tune-journal \
+    | base64 -d > src/data/enemy-configs.csv
+  rm src/data/enemy-configs.csv.tune-journal
+  git diff --exit-code src/data/enemy-configs.csv   # empty == restored exactly
+  ```
 - **Same-sweep guard:** the comparison refuses to diff two batches whose
   sweep configuration (`policies`, `seeds`, `ticks`, `dt`,
   `sampleEveryTicks`) differs — refused **before** any delta is computed.
