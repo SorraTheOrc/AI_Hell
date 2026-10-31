@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CUE_MANIFEST,
+  CONTROL_CUES,
   allSfxAssetUrls,
   assetUrlFor,
   cueAssetUrl,
@@ -56,6 +57,68 @@ describe('cueManifest — asset resolution', () => {
     expect(urls).toContain('audio/sfx/card-token-earn.1.wav');
     // Every baked manifest variant is present.
     for (const entry of CUE_MANIFEST) {
+      for (const seed of entry.seeds) {
+        expect(urls).toContain(`audio/sfx/${entry.recipe}.${seed}.wav`);
+      }
+    }
+  });
+});
+
+// ── Mystery UFO feel cues (AH-0MVSAJMLL00835T8) ─────────────────────
+//
+// The UFO feel slices consume four baked cues plus the warble's stop control
+// companion. Pin the mapping here so the bake cannot land a cue that aliases
+// another recipe/seed or a warble without its lifetime companion.
+
+describe('cueManifest — Mystery UFO feel cues (AH-0MVSAJMLL00835T8)', () => {
+  const FEEL_CUES = [
+    { cue: 'playMysteryUfoWarbleSound', recipe: 'aihell-mystery-ufo-warble' },
+    { cue: 'playMysteryUfoRewardSound', recipe: 'aihell-mystery-ufo-reward' },
+    { cue: 'playMysteryUfoDestroySound', recipe: 'aihell-mystery-ufo-destroy' },
+    { cue: 'playMineralTinkleSound', recipe: 'aihell-mineral-tinkle' },
+  ] as const;
+
+  it('maps the four feel cues to their own baked recipe and seed', () => {
+    const seenSeeds = new Set<number>();
+    for (const expected of FEEL_CUES) {
+      const entry = getCueAsset(expected.cue);
+      expect(entry, `${expected.cue} is missing from CUE_MANIFEST`).toBeDefined();
+      expect(entry!.delivery).toBe('baked');
+      expect(entry!.recipe).toBe(expected.recipe);
+      expect(entry!.seeds).toHaveLength(1);
+
+      const seed = entry!.seeds[0];
+      // Seeds stay inside the game-specific reservation block.
+      expect(seed).toBeGreaterThanOrEqual(32100);
+      expect(seed).toBeLessThanOrEqual(32299);
+      expect(seenSeeds.has(seed), `seed ${seed} is reused`).toBe(false);
+      seenSeeds.add(seed);
+
+      expect(cueAssetUrl(expected.cue)).toBe(
+        `audio/sfx/${expected.recipe}.${seed}.wav`,
+      );
+    }
+  });
+
+  it('gives every feel cue a distinct recipe and asset (no silent aliasing)', () => {
+    const recipes = FEEL_CUES.map(
+      (expected) => getCueAsset(expected.cue)!.recipe,
+    );
+    expect(new Set(recipes).size).toBe(FEEL_CUES.length);
+    const urls = FEEL_CUES.map((expected) => cueAssetUrl(expected.cue));
+    expect(new Set(urls).size).toBe(FEEL_CUES.length);
+  });
+
+  it('lists the warble stop companion as a control cue', () => {
+    expect(CONTROL_CUES).toContain('stopMysteryUfoWarbleSound');
+    // The companion owns no asset of its own: it releases the start cue.
+    expect(getCueAsset('stopMysteryUfoWarbleSound')).toBeUndefined();
+  });
+
+  it('the preloader fetches every feel-cue asset', () => {
+    const urls = allSfxAssetUrls();
+    for (const expected of FEEL_CUES) {
+      const entry = getCueAsset(expected.cue)!;
       for (const seed of entry.seeds) {
         expect(urls).toContain(`audio/sfx/${entry.recipe}.${seed}.wav`);
       }

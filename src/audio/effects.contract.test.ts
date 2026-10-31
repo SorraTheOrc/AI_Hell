@@ -359,6 +359,50 @@ describe('contract — dedicated orbital-strike cue (AH-0MVS2SZBY004HJ2D)', () =
   });
 });
 
+// ── Mystery UFO feel cues (AH-0MVSAJMLL00835T8) ──────────────────────
+//
+// The UFO feel slices (warble lifecycle, terminal feedback) call these
+// wrappers through the shared playback layer. The bake must deliver them as
+// baked ToneForge cues with the warble as a start/stop continuous pair, and
+// every one must stay a safe no-op headless.
+
+describe('contract — Mystery UFO feel cue bake (AH-0MVSAJMLL00835T8)', () => {
+  const FEEL_CUES = [
+    'playMysteryUfoWarbleSound',
+    'playMysteryUfoRewardSound',
+    'playMysteryUfoDestroySound',
+    'playMineralTinkleSound',
+  ] as const;
+
+  it('every feel cue is a callable, baked, manifested cue', () => {
+    for (const cue of FEEL_CUES) {
+      expect(resolveCue(cue), `${cue} is not callable`).toBeTypeOf('function');
+      const entry = getCueAsset(cue);
+      expect(entry, `${cue} is missing from CUE_MANIFEST`).toBeDefined();
+      expect(entry!.delivery, `${cue} must be a baked delivery`).toBe('baked');
+    }
+  });
+
+  it('the warble ships with its stop control companion', () => {
+    expect(CONTROL_CUES).toContain('stopMysteryUfoWarbleSound');
+    expect(resolveCue('stopMysteryUfoWarbleSound')).toBeTypeOf('function');
+  });
+
+  it('the feel cues never throw without an AudioContext', () => {
+    for (const cue of [...FEEL_CUES, 'stopMysteryUfoWarbleSound'] as const) {
+      expect(() => invokeCue(cue), `${cue} threw headlessly`).not.toThrow();
+    }
+  });
+
+  it('the feel cues play through the single shared context and master gain', () => {
+    installRecordingContext();
+    for (const cue of FEEL_CUES) invokeCue(cue);
+    invokeCue('stopMysteryUfoWarbleSound');
+    expect(RecordingAudioContext.instances).toHaveLength(1);
+    expect(masterGain()).toBeDefined();
+  });
+});
+
 // ── Dedicated Force Field reflect cue (AH-0MVRDMMYO002SC5V) ───────────
 //
 // Producer decision Q2 = c (parent AH-0MVBKT2WO001AR14): a reflection

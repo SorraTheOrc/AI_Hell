@@ -429,6 +429,76 @@ export function playDiverDestructionSound(): void {
   playExplosionCue('playDiverDestructionSound');
 }
 
+// ── Mystery UFO feel cues (AH-0MVSAJMLL00835T8) ────────────────────
+//
+// The Mystery UFO collector drone's juice runs through the same baked-asset
+// pipeline as every other cue. Only the wrappers ship here; the feel slices
+// (warble lifecycle, terminal reward/destruction feedback) call them from the
+// shared core. The warble is a **looping** continuous cue with a stop
+// companion, mirroring `playDiveSound`/`stopDiveSound`.
+
+/** Shared looping UFO warble voice. Concurrent calls reuse one playback. */
+let mysteryUfoWarbleSound: SfxSoundHandle | null = null;
+
+/**
+ * Starts (or shares) the looping "woo-woo-woo" Mystery UFO warble.
+ *
+ * The baked asset is looped for the whole sortie (seek + collect), so the
+ * caller starts it once at spawn and releases it with
+ * {@link stopMysteryUfoWarbleSound} on every terminal path (return, payout,
+ * destruction, teardown). Repeated calls are a safe no-op that keeps the one
+ * voice, so a re-entered tick cannot stack warbles.
+ */
+export function playMysteryUfoWarbleSound(): void {
+  if (mysteryUfoWarbleSound !== null) return;
+  mysteryUfoWarbleSound = playCue('playMysteryUfoWarbleSound', { loop: true });
+}
+
+/**
+ * Releases the looping Mystery UFO warble. Safe no-op when none is active.
+ * Control companion to {@link playMysteryUfoWarbleSound}; listed in the
+ * manifest's `controlCues` so it owns no asset of its own.
+ */
+export function stopMysteryUfoWarbleSound(): void {
+  if (mysteryUfoWarbleSound === null) return;
+  mysteryUfoWarbleSound.stop();
+  mysteryUfoWarbleSound = null;
+}
+
+/** For tests: the active warble state, or null when not playing. */
+export function _getMysteryUfoWarbleSoundStateForTests(): {
+  active: boolean;
+} | null {
+  return mysteryUfoWarbleSound === null ? null : { active: true };
+}
+
+/**
+ * Reward fanfare — plays on arrival at the player, synchronised with the hold
+ * pay-in. Immediate (not beat-quantised): it is payout feedback, not a combat
+ * accent.
+ */
+export function playMysteryUfoRewardSound(): void {
+  playCue('playMysteryUfoRewardSound');
+}
+
+/**
+ * Explosion cue for the drone's destruction, fired with the crash-site
+ * particle VFX. Immediate so it stays in sync with the mineral tinkle and the
+ * spill it accompanies.
+ */
+export function playMysteryUfoDestroySound(): void {
+  playCue('playMysteryUfoDestroySound');
+}
+
+/**
+ * Mineral "tinkle" — fired in sync with the spilled resource drops when the
+ * drone is destroyed. Immediate so it lands with the spill and the
+ * destruction cue.
+ */
+export function playMineralTinkleSound(): void {
+  playCue('playMineralTinkleSound');
+}
+
 /** Deep resonant boom — Boss fire cue. */
 export function playBossFireSound(): void {
   playCue('playBossFireSound');
@@ -1142,6 +1212,7 @@ export function _resetAudioContextForTests(): void {
   webAudioSfxProvider.reset();
   resetThrusterHumForTests();
   diveSound = null;
+  mysteryUfoWarbleSound = null;
   accentClock = null;
   accentTickMs = null;
   accentCount = 0;

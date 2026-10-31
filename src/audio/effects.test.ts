@@ -22,6 +22,7 @@ import {
   CUE_MANIFEST,
   RETIRED_CUES,
   assetUrlFor,
+  cueAssetUrl,
   type CueManifestEntry,
 } from './cueManifest';
 import {
@@ -783,6 +784,56 @@ describe('sustained dive sound', () => {
   it('stopDiveSound is a safe no-op when nothing plays', () => {
     expect(() => effects.stopDiveSound()).not.toThrow();
     expect(recording.stops).toBe(0);
+  });
+});
+
+// ── 4b. Mystery UFO feel cues (AH-0MVSAJMLL00835T8) ────────────────
+//
+// The UFO feel slices consume these four baked cues plus the warble's stop
+// control companion. This slice only ships the wrappers, so the assertions
+// pin the delivery contract: the warble is a single shared **looping** voice
+// with a stop companion, and the three one-shots play their own asset
+// immediately (they are fired in sync with VFX/spill, never beat-delayed).
+
+describe('Mystery UFO feel cues', () => {
+  it('the warble shares one looping voice and stops cleanly', () => {
+    effects.playMysteryUfoWarbleSound();
+    effects.playMysteryUfoWarbleSound();
+    expect(recording.plays).toHaveLength(1);
+    expect(recording.plays[0].url).toBe(
+      cueAssetUrl('playMysteryUfoWarbleSound'),
+    );
+    expect(recording.plays[0].loop).toBe(true);
+    expect(effects._getMysteryUfoWarbleSoundStateForTests()).not.toBeNull();
+
+    effects.stopMysteryUfoWarbleSound();
+    expect(recording.stops).toBe(1);
+    expect(effects._getMysteryUfoWarbleSoundStateForTests()).toBeNull();
+  });
+
+  it('stopMysteryUfoWarbleSound is a safe no-op when nothing plays', () => {
+    expect(() => effects.stopMysteryUfoWarbleSound()).not.toThrow();
+    expect(recording.stops).toBe(0);
+  });
+
+  it('clearing the audio layer releases the active warble voice', () => {
+    effects.playMysteryUfoWarbleSound();
+    effects._resetAudioContextForTests();
+    expect(effects._getMysteryUfoWarbleSoundStateForTests()).toBeNull();
+  });
+
+  it('the reward, destroy and tinkle cues play their own asset immediately', () => {
+    effects.playMysteryUfoRewardSound();
+    effects.playMysteryUfoDestroySound();
+    effects.playMineralTinkleSound();
+
+    expect(recording.plays.map((play) => play.url)).toEqual([
+      cueAssetUrl('playMysteryUfoRewardSound'),
+      cueAssetUrl('playMysteryUfoDestroySound'),
+      cueAssetUrl('playMineralTinkleSound'),
+    ]);
+    expect(recording.plays.every((play) => play.delay === 0)).toBe(true);
+    expect(recording.plays.every((play) => play.loop === false)).toBe(true);
   });
 });
 

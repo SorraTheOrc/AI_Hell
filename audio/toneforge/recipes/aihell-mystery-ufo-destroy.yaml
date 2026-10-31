@@ -1,0 +1,103 @@
+# AI Hell cue: aihell-mystery-ufo-destroy — Mystery UFO destruction — deep saw fall A3 → A1 with a low-passed noise blast and a sine sub thump, ~0.55 s.
+# Fires with the explosion particle VFX at the crash site; the mineral
+# "tinkle" (aihell-mineral-tinkle) plays alongside it with the spilled drops.
+version: "0.1"
+meta:
+  name: aihell-mystery-ufo-destroy
+  description: Mystery UFO destruction — deep saw fall A3 → A1 with a low-passed noise blast and a sine sub thump, ~0.55 s.
+  category: AIHell
+  tags:
+    - mystery-ufo
+    - ufo
+    - destruction
+    - player
+  duration: 0.55
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: sawtooth
+      frequency: 220
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 220
+        - kind: exponentialRamp
+          time: 0.45
+          value: 55
+  f0:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 1200
+      Q: 0.7
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.5
+      sustain: 0
+      release: 0.05
+  g0:
+    kind: gain
+    params:
+      gain: 0.16
+  v1:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f1:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 1400
+      Q: 0.8
+  e1:
+    kind: envelope
+    params:
+      attack: 0.002
+      decay: 0.35
+      sustain: 0
+      release: 0.1
+  g1:
+    kind: gain
+    params:
+      gain: 0.16
+  v2:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 110
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 110
+        - kind: exponentialRamp
+          time: 0.4
+          value: 55
+  e2:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.4
+      sustain: 0
+      release: 0.08
+  g2:
+    kind: gain
+    params:
+      gain: 0.12
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, f0, e0, g0, mix]
+  - chain: [v1, f1, e1, g1, mix]
+  - chain: [v2, e2, g2, mix]
+  - from: mix
+    to: out

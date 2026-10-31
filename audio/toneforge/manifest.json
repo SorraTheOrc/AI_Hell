@@ -13,7 +13,8 @@
   ],
   "controlCues": [
     "stopDiveSound",
-    "stopThrusterSound"
+    "stopThrusterSound",
+    "stopMysteryUfoWarbleSound"
   ],
   "cues": [
     {
@@ -643,6 +644,38 @@
       "delivery": "baked",
       "seeds": [
         32264
+      ]
+    },
+    {
+      "cue": "playMysteryUfoWarbleSound",
+      "recipe": "aihell-mystery-ufo-warble",
+      "delivery": "baked",
+      "seeds": [
+        32287
+      ]
+    },
+    {
+      "cue": "playMysteryUfoRewardSound",
+      "recipe": "aihell-mystery-ufo-reward",
+      "delivery": "baked",
+      "seeds": [
+        32288
+      ]
+    },
+    {
+      "cue": "playMysteryUfoDestroySound",
+      "recipe": "aihell-mystery-ufo-destroy",
+      "delivery": "baked",
+      "seeds": [
+        32289
+      ]
+    },
+    {
+      "cue": "playMineralTinkleSound",
+      "recipe": "aihell-mineral-tinkle",
+      "delivery": "baked",
+      "seeds": [
+        32290
       ]
     },
     {

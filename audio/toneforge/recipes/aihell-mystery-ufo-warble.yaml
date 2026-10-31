@@ -1,0 +1,73 @@
+# AI Hell cue: aihell-mystery-ufo-warble — Mystery UFO warble — loopable "woo-woo-woo" square siren sweeping a four-note A-minor phrase, ~2.4 s.
+# The classic Space Invaders mystery-ship homage: a square wave glides down
+# A5 → F5 → D5 → B4 and back up over 2.4 s, so the whole loop is one
+# continuous "woo-woo" siren. Played as a looping continuous cue (start at
+# spawn, stop on return/payout/destruction) by the shared playback layer.
+version: "0.1"
+meta:
+  name: aihell-mystery-ufo-warble
+  description: Mystery UFO warble — loopable "woo-woo-woo" square siren sweeping a four-note A-minor phrase, ~2.4 s.
+  category: AIHell
+  tags:
+    - mystery-ufo
+    - ufo
+    - warble
+    - loop
+    - player
+  duration: 2.4
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: square
+      frequency: 880
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 880
+        - kind: exponentialRamp
+          time: 0.4
+          value: 698.46
+        - kind: exponentialRamp
+          time: 0.8
+          value: 587.33
+        - kind: exponentialRamp
+          time: 1.2
+          value: 493.88
+        - kind: exponentialRamp
+          time: 1.6
+          value: 587.33
+        - kind: exponentialRamp
+          time: 2.0
+          value: 698.46
+        - kind: exponentialRamp
+          time: 2.4
+          value: 880
+  f0:
+    kind: biquadFilter
+    params:
+      type: lowpass
+      frequency: 2200
+      Q: 0.9
+  e0:
+    kind: envelope
+    params:
+      attack: 0.01
+      decay: 0
+      sustain: 1
+      release: 0.07
+  g0:
+    kind: gain
+    params:
+      gain: 0.055
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, f0, e0, g0, mix]
+  - from: mix
+    to: out

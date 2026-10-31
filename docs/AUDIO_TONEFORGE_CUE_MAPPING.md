@@ -54,14 +54,14 @@ card-game oriented. Three cues are retired.
 | Disposition | Count | Notes |
 |-------------|-------|-------|
 | `existing-recipe` | 2 | Power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
-| `new-recipe` | 71 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA, the Shard Swarm launch/hit pair since AH-0MVV0WMTE0007NGS, the Rear Guard launch/hit pair since AH-0MVV0WN96007TU9J, the Broadside launch/hit pair since AH-0MVV0WNOX0078G9G, and the Heavy Slug launch/hit pair since AH-0MVV0WO4M001KEDG), plus the thruster hum |
+| `new-recipe` | 75 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA, the Shard Swarm launch/hit pair since AH-0MVV0WMTE0007NGS, the Rear Guard launch/hit pair since AH-0MVV0WN96007TU9J, the Broadside launch/hit pair since AH-0MVV0WNOX0078G9G, the Heavy Slug launch/hit pair since AH-0MVV0WO4M001KEDG, and the four Mystery UFO feel cues since AH-0MVSAJMLL00835T8), plus the thruster hum |
 | `new-recipe` (outside `effects.ts`) | 4 | `Boss.ts` inline cues using `blip()` — see the Boss.ts section |
 | `retired` | 3 | `playMajorExplosionSound`, `playTankDestructionSound`, `playWeaponChangeSound` |
-| control companion (in cue table) | 2 | `stopDiveSound`, `stopThrusterSound` — start/stop lifetime mapping |
+| control companion (in cue table) | 3 | `stopDiveSound`, `stopThrusterSound`, `stopMysteryUfoWarbleSound` — start/stop lifetime mapping |
 
 > **Count reconciliation (AH-0MVV0WP0P004YNJU).** The cue-to-recipe table has
-> **78 rows**, and the summary above partitions them exactly:
-> 71 `new` + 3 `retired` + 2 `existing` + 2 control = **78**. The count is of
+> **83 rows**, and the summary above partitions them exactly:
+> 75 `new` + 3 `retired` + 2 `existing` + 3 control = **83**. The count is of
 > distinct cue rows in that table (one row per cue), so it can be re-derived
 > mechanically; the four `Boss.ts` inline cues are counted separately in the
 > `new-recipe` (outside `effects.ts`) row because they live in their own table.
@@ -159,6 +159,11 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | `playVolumeFeedback` | Player hull-breach cue at selected gain, pitch unchanged | Settings volume feedback | `SettingsScene` | **existing** | `aihell-player-hull-breach` (gain-scaled) |
 | `updateThrusterSound` | Continuous: triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz, thrust-scaled (≤ 0.05) with an amplitude tremolo + counter-phase filter sweep on the shared beat clock's cannon cadence (2 subdivisions/beat) while thrusting; optional side profile (50% gain, both pitched oscillators one semitone up) selected when a side engine fires | Thruster hum (held thrust) | `Player`, `movementModel`, `utils/thrusterProfile` | new | `aihell-thruster-hum` (runtime shim delivery) |
 | `stopThrusterSound` | Stops/releases the thruster hum nodes | Thruster hum | `Player` | control | (companion to `aihell-thruster-hum`) |
+| `playMysteryUfoWarbleSound` | Loopable square siren sweeping A5→F5→D5→B4 and back, ~2.4 s; looped for the whole sortie | Mystery UFO warble (seek + collect) | shared-core UFO feel seam (consumed by the UFO feel slices of AH-0MVI4J8R4002WTT6) | new | `aihell-mystery-ufo-warble` |
+| `stopMysteryUfoWarbleSound` | Stops/releases the shared warble voice | Mystery UFO warble | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | control | (companion to `aihell-mystery-ufo-warble`) |
+| `playMysteryUfoRewardSound` | Rising A-minor arpeggio A4→E5→A5 + sine sparkle, ~0.9 s | Mystery UFO payout fanfare | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mystery-ufo-reward` |
+| `playMysteryUfoDestroySound` | Deep saw fall A3→A1 + low-passed noise blast + sine sub thump, ~0.55 s | Mystery UFO destruction explosion | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mystery-ufo-destroy` |
+| `playMineralTinkleSound` | Bright E7→A6 triangle chime + sine shimmer + noise tick, ~0.2 s | Dropped-mineral tinkle | shared-core UFO feel seam (AH-0MVI4J8R4002WTT6) | new | `aihell-mineral-tinkle` |
 
 ### Beat-synced explosion accents (AH-0MV01HNLU008S5E3)
 
@@ -223,6 +228,22 @@ cues it identifies as enemy-family. The recipe is therefore tagged `player`/`for
 (no enemy tag) and has **no `AMPLITUDE_TIERS` key** — registering one would be inert (the guard never
 reads a non-enemy cue's tier) while implying the guard covers it. The 0.055 target is documented in
 the recipe header and this row; the rendered asset is verified byte-for-byte by `build-audio --verify`.
+
+**Mystery UFO feel cues outside the enemy guard (AH-0MVSAJMLL00835T8).** The
+four UFO feel cues (`aihell-mystery-ufo-warble`, `aihell-mystery-ufo-reward`,
+`aihell-mystery-ufo-destroy`, `aihell-mineral-tinkle`) are **player** feedback:
+the Mystery UFO is the player's collector reward drone, not an enemy. Their
+recipes are therefore tagged `mystery-ufo`/`ufo`/`player` (and
+`destroy`/`tinkle` where relevant) with **no enemy tag**, so
+`scripts/audio-balance-guard.mjs` — which only analyses the enemy family — does
+not assign them a tier. The rendered levels instead follow the parent item's
+budget (≤ ~0.2 peak per layer; the layered destruction sums higher, like every
+other destruction cue): warble RMS 0.055 / peak 0.078, reward 0.039 / 0.202,
+destruction 0.098 / 0.356, tinkle 0.041 / 0.198. The warble is a **looping**
+continuous cue delivered by `playMysteryUfoWarbleSound` /
+`stopMysteryUfoWarbleSound` (control companion in the manifest `controlCues`),
+so its start/stop lifetime is covered by the effects-contract suite like the
+dive and thruster continuous cues.
 
 ### A-minor scale conformance (AC3 — AH-0MVCRR203005HKVZ)
 
@@ -333,6 +354,10 @@ AH-0MVCRR203005HKVZ)** the multi-seed jitter ranges were re-derived as
 | `aihell-countdown-tick` | `playCountdownTickSound` | Bright square blip 1046→784 Hz (C6→G5), ~0.12 s — one beat of the 3-2-1 restart countdown (AH-0MV55OA93008OUL1) | 32264 |
 | `aihell-defeat-sting` | `playDefeatStingSound` | Descending five-note line + sinking drone + LP tail | 32241 |
 | `aihell-thruster-hum` | `updateThrusterSound` | Continuous triangle 60 Hz + sine 35 Hz + BP noise 700–1100 Hz (runtime shim delivery, not baked); side profile halves the gain and shifts both pitched oscillators up one semitone when a side engine fires | — |
+| `aihell-mystery-ufo-warble` | `playMysteryUfoWarbleSound` | Loopable square siren gliding A5→F5→D5→B4 and back up, 2.4 s; low-passed (2.2 kHz) for a soft arcade warble (AH-0MVSAJMLL00835T8) | 32287 |
+| `aihell-mystery-ufo-reward` | `playMysteryUfoRewardSound` | Rising A-minor arpeggio A4 (0 s) → E5 (0.16 s) → A5 (0.32 s), triangle voices + 1760 Hz sine sparkle, ~0.9 s (AH-0MVSAJMLL00835T8) | 32288 |
+| `aihell-mystery-ufo-destroy` | `playMysteryUfoDestroySound` | Deep saw fall A3→A1 + low-passed noise blast + 110→55 Hz sine sub thump, ~0.55 s (AH-0MVSAJMLL00835T8) | 32289 |
+| `aihell-mineral-tinkle` | `playMineralTinkleSound` | Bright E7→A6 triangle chime + 3520 Hz sine shimmer + high-passed noise tick, ~0.2 s (AH-0MVSAJMLL00835T8) | 32290 |
 
 ### New recipes outside `effects.ts` (Boss.ts surface)
 
