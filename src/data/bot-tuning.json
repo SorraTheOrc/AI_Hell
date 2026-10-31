@@ -69,6 +69,77 @@
           "allowDown": false
         }
       }
+    },
+    {
+      "name": "aggressive-hunter",
+      "values": {
+        "competent": {
+          "enemyBase": 17,
+          "enemySeekRange": 1500,
+          "enemyWavePressurePort": 5,
+          "engagementRange": 70,
+          "mineralBase": 3,
+          "asteroidBase": 0.5
+        },
+        "human": {
+          "reactionTimeMs": 200
+        }
+      }
+    },
+    {
+      "name": "cautious-collector",
+      "values": {
+        "competent": {
+          "mineralBase": 8,
+          "powerUpBase": 8,
+          "mineralSeekRange": 600,
+          "powerUpSeekRange": 1300,
+          "lifeSeekRange": 1500,
+          "dangerMargin": 140,
+          "threatRadius": 110,
+          "enemyBase": 10,
+          "enemySeekRange": 1000,
+          "survivalUrgencyHorizon": 1.3
+        },
+        "human": {}
+      }
+    },
+    {
+      "name": "evasive",
+      "values": {
+        "competent": {
+          "survivalBase": 20,
+          "survivalUrgencyPort": 14,
+          "dangerMargin": 170,
+          "threatRadius": 130,
+          "wallMargin": 60,
+          "reverseRetreatRange": 200,
+          "hazardPredictionHorizon": 2.8,
+          "enemyBase": 10,
+          "enemyWavePressurePort": 2
+        },
+        "human": {}
+      }
+    },
+    {
+      "name": "glass-cannon",
+      "values": {
+        "competent": {
+          "enemyBase": 19,
+          "enemyWavePressurePort": 5,
+          "engagementRange": 55,
+          "clearanceWeight": 0.4,
+          "dangerMargin": 50,
+          "survivalBase": 8,
+          "survivalUrgencyPort": 5,
+          "aimLeadIterations": 8,
+          "aimLeadAlignSeconds": 0.2
+        },
+        "human": {
+          "maxAimErrorRad": 0.02,
+          "reactionTimeMs": 170
+        }
+      }
     }
   ]
 }

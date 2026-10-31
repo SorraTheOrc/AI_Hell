@@ -483,6 +483,17 @@ field. The module is plain ESM (no Node APIs, no DOM, one dependency-free
 schema import), so the capture CLI and the Vite game build import the same
 bytes, with types in `scripts/promo-scenarios.d.mts`.
 
+The bot's personality comes from the curated presets in
+`src/data/bot-tuning.json` (`aggressive-hunter`, `cautious-collector`,
+`evasive`, `glass-cannon`, plus the shipped `Default`), selected **by name**
+through the entry's `preset` field. Each preset is a sparse override map the
+store completes with `coerceTuningValues`, and the catalogue and its intents
+are documented in
+[BOT_FRAMEWORK](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym).
+A hermetic test (`src/data/bot-tuning.test.ts`) asserts every preset a
+registered scenario names exists in the bundled state, so a typo fails the
+suite rather than silently flying `Default`.
+
 | `promoLevel` | Scene | Editorial categories |
 |---|---|---|
 | `promo-blitz-hook` | Dense opening hook (the catalogue opener) | weapons, enemies |
@@ -621,8 +632,12 @@ store Export plus a trailing newline):
   (see [BOT_FRAMEWORK.md §12](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym)),
   then commit.
 
-The file is byte-equivalent to the gym's Export output, so it is safe to
-overwrite it wholesale with an Export download.
+The file is semantically equivalent to the gym's Export output, so it is safe
+to overwrite it wholesale with an Export download. Export writes every
+configuration fully coerced, while the committed curated presets are authored
+as **sparse overrides** completed by `coerceTuningValues`; after an Export
+round-trip, re-sparsify the presets (keep only the keys that differ from
+`Default`) so the catalogue stays readable (AH-0MVSDM5T1007KBB8).
 
 Because the committed file originally equalled the built-in factory `Default`,
 an un-wired build looked identical to a wired one — a test that compares the
