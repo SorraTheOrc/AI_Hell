@@ -1,8 +1,8 @@
 {
   "version": 1,
   "manifest": "audio/toneforge/manifest.json",
-  "seedBlock": "32100-32199",
-  "inputs": "dbca8888264dbf9453948bad7c4401b0ee12ff8366020556f3597d748e22ef72",
+  "seedBlock": "32100-32299",
+  "inputs": "66921a816a8de453d7173ec6c406882c4b11e6b8cad68bc17b77d4b70b7a78f1",
   "assets": {
     "audio/sfx/aihell-arc-fire.32217.wav": "05b7b3d054638bcf7772db4863e0428e1ab79fdc273b1f383bd0dea7a5e4b283",
     "audio/sfx/aihell-arc-impact.32275.wav": "c3cb05da9d095dc7c6528f2f682f6ad4610c1ab5931f8babad4955c762d57160",

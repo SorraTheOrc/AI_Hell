@@ -54,10 +54,17 @@ card-game oriented. Three cues are retired.
 | Disposition | Count | Notes |
 |-------------|-------|-------|
 | `existing-recipe` | 2 | Power-up collect chime (`card-token-earn`), volume-feedback (reuses the `aihell-player-hull-breach` recipe) |
-| `new-recipe` | 49 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA, the Shard Swarm launch/hit pair since AH-0MVV0WMTE0007NGS, the Rear Guard launch/hit pair since AH-0MVV0WN96007TU9J, the Broadside launch/hit pair since AH-0MVV0WNOX0078G9G, and the Heavy Slug launch/hit pair since AH-0MVV0WO4M001KEDG), plus the thruster hum |
+| `new-recipe` | 71 | Game-specific cues in `effects.ts` (incl. scout fire `aihell-scout-fire` since AC4, the Orbital Strike impact `aihell-orbital-strike` since AH-0MVS2SZBY004HJ2D, the Railgun launch/hit pair since AH-0MVMIGVCE004VSNA, the Shard Swarm launch/hit pair since AH-0MVV0WMTE0007NGS, the Rear Guard launch/hit pair since AH-0MVV0WN96007TU9J, the Broadside launch/hit pair since AH-0MVV0WNOX0078G9G, and the Heavy Slug launch/hit pair since AH-0MVV0WO4M001KEDG), plus the thruster hum |
 | `new-recipe` (outside `effects.ts`) | 4 | `Boss.ts` inline cues using `blip()` — see the Boss.ts section |
 | `retired` | 3 | `playMajorExplosionSound`, `playTankDestructionSound`, `playWeaponChangeSound` |
 | control companion (in cue table) | 2 | `stopDiveSound`, `stopThrusterSound` — start/stop lifetime mapping |
+
+> **Count reconciliation (AH-0MVV0WP0P004YNJU).** The cue-to-recipe table has
+> **78 rows**, and the summary above partitions them exactly:
+> 71 `new` + 3 `retired` + 2 `existing` + 2 control = **78**. The count is of
+> distinct cue rows in that table (one row per cue), so it can be re-derived
+> mechanically; the four `Boss.ts` inline cues are counted separately in the
+> `new-recipe` (outside `effects.ts`) row because they live in their own table.
 
 > `blip`, `explosionPitchFactor`, `setSfxVolume`, `setSfxMuted`,
 > `getAudioContext` and the test accessors are **not cues** and are handled in
@@ -239,8 +246,12 @@ as part of `npm run build-audio:verify` (AC5).
 
 ## New recipes to author (input to AH-0MUTYV8480019Z51)
 
-Seed block **32100–32199** is reserved for game-specific recipes to keep them
-clear of ToneForge's existing card/impact seeds. One-shots are rendered at a
+Seed block **32100–32299** is reserved for game-specific recipes to keep them
+clear of ToneForge's existing card/impact seeds. (The block was originally
+declared as `32100–32199`; live game seeds now run to **32286** — the end of the
+net-new unlock-pool weapon packages — so the reservation was widened to cover
+them, matching `manifest.json`'s `seedBlock` field. No shipped seed was
+renumbered.) One-shots are rendered at a
 single seed; cues whose original character used per-invocation jitter
 (`EXPLOSION_PITCH_JITTER` ±15 %) are baked as a **3-variant seed range** so
 repeated kills still vary. Under **A-minor scale conformance (AC3,

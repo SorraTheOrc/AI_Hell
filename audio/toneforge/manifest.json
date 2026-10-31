@@ -4,7 +4,7 @@
   "recipeDirectory": "recipes",
   "outputDirectory": "public/audio/sfx",
   "checksumsFile": "public/audio/sfx/checksums.json",
-  "seedBlock": "32100-32199",
+  "seedBlock": "32100-32299",
   "defaultExistingRecipeSeed": 1,
   "retiredCues": [
     "playMajorExplosionSound",

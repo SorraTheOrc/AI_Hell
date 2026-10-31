@@ -99,7 +99,12 @@ ToneForge module is imported into the browser entry graph.
 
 ## Recipes
 
-Seed block **32100–32199** is reserved for game-specific recipes. One-shots use
+Seed block **32100–32299** is reserved for game-specific recipes (widened from
+`32100–32199` once the net-new unlock-pool weapon seeds reached 32286; no shipped
+seed was renumbered, and `manifest.json`'s `seedBlock` records the same range).
+New recipes take the **next free seed above the current manifest maximum** and
+reserve a contiguous pair up front, so two items authoring cues in parallel cannot
+collide. One-shots use
 a single seed; cues whose original character used per-invocation pitch jitter
 (`EXPLOSION_PITCH_JITTER` ±15 %) use a **seed range** so repeated kills still
 vary (the recipe declares `startFreq`/`endFreq` parameters whose values are

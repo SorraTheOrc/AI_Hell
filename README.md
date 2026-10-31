@@ -993,9 +993,10 @@ instead.
   (AH-0MVSHI07B003BZIP). The
   catalogue now ships **16 weapons** (the 5 net-new unlock-pool weapons are
   Rear Guard, Broadside, Railgun, Shard Swarm and Heavy Slug) and **16
-  power-ups**. Their feel packages are being filled in per weapon through the
-  same shared seams the original 11 use (AH-0MVMJMCQK004BE9T); the **Railgun**,
-  **Shard Swarm**, **Rear Guard**, **Broadside** and **Heavy Slug** are complete — the Railgun's fire routes through the single
+  power-ups**. Every one of the five unlock-pool weapons now carries the same
+  fire-cue + launch-flash + impact-feedback package the original 11 use, built
+  through the same shared seams and guarded catalogue-wide so a weapon can no
+  longer ship silent (AH-0MVMJMCQK004BE9T). The Railgun's fire routes through the single
   shared `playWeaponFireSound` dispatcher to the baked `playRailgunFireSound`
   (`aihell-railgun-fire`), its launch spawns a sky-blue muzzle flash through the shared
   combat-core path (AH-0MVQ6C1YL003HU9K), and its tracer declares an `impactFx`
