@@ -49,6 +49,34 @@ export const BACKGROUND_DIM_COLOR = '#000000';
 export const BACKGROUND_FALLBACK_COLOR: string | null =
   GAME_BACKGROUND_COLOR;
 
+/**
+ * Render depth of the hyperspace warp transition layers
+ * (parent AH-0MVIB7PD50029ZY1, slice AH-0MVSEBCNC005G7XW).
+ *
+ * Above the background photo ({@link BACKGROUND_DEPTH}) and its dim overlay
+ * ({@link BACKGROUND_DIM_DEPTH}) but below the juice layers (−10) and gameplay
+ * (0): the converging streaks, the distortion rings and the white flash read as
+ * part of the backdrop, so enemies, bullets and the ship always stay legible on
+ * top of the warp.
+ */
+export const BACKGROUND_WARP_DEPTH = -900;
+
+// ── Level transitions ───────────────────────────────────────────────
+
+/**
+ * Seconds between a wave/level wipe and the next spawn (GDD §3 — level
+ * structure).
+ *
+ * This is the single source of truth: `PlayScene` re-exports it for its
+ * existing importers, and VFX modules derive their own durations from it (the
+ * hyperspace warp, `src/vfx/backgroundWarp.ts`, is exactly
+ * `LEVEL_TRANSITION_SECONDS` long) so the effect can never outlive the
+ * transition pause. It lives here rather than in `PlayScene` because scenes
+ * import VFX modules, so a VFX module importing `PlayScene` would create an
+ * import cycle (AH-0MVSEBCNC005G7XW AC1).
+ */
+export const LEVEL_TRANSITION_SECONDS = 1.5;
+
 // ── Movement Physics (GDD §2.2) — default values ───────────────────
 // `config.ts` derives `DEFAULT_CONFIG` from these literals (kept here as a
 // leaf module so the CSV-backed config store can import the config modules

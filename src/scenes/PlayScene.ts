@@ -44,6 +44,7 @@ import Phaser from 'phaser';
 import {
   GAME_HEIGHT,
   GAME_WIDTH,
+  LEVEL_TRANSITION_SECONDS,
   PLAYER_BULLET_RADIUS,
   PLAYER_HIT_SCALE_PEAK,
   PLAYER_HIT_SCALE_PULSE_DURATION,
@@ -422,8 +423,16 @@ export const BOSS_PHASE_SCORES: Record<number, number> = {
 
 // ── Tuning constants ────────────────────────────────────────────────
 
-/** Seconds between a wave/level wipe and the next spawn. */
-export const LEVEL_TRANSITION_SECONDS = 1.5;
+/**
+ * Seconds between a wave/level wipe and the next spawn.
+ *
+ * Relocated to `src/core/constants.ts` (AH-0MVSEBCNC005G7XW) and re-exported
+ * here unchanged so every existing importer keeps compiling untouched. It
+ * moved so VFX modules — which `PlayScene` imports, and which therefore must
+ * never import this scene — can derive their durations from the same single
+ * source; `src/vfx/backgroundWarp.ts` is exactly this long.
+ */
+export { LEVEL_TRANSITION_SECONDS };
 
 /**
  * Seconds a level/wave announcement banner stays on screen before it
