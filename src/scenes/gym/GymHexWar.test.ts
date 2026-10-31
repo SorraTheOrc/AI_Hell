@@ -237,6 +237,42 @@ describe('GymHexWar', () => {
     expect(scene.getPayload().ring.hexes[0].defender).toBeNull();
   });
 
+  it('renders the shipped hex-map intel through the shared map renderer', async () => {
+    const scene = await bootHexWar();
+    const model = scene.getMapModel();
+    const fixture = RING_1_HEX_FIXTURES.find((entry) => entry.id === 'hex-r1-2')!;
+
+    expect(model).not.toBeNull();
+    expect(model!.hexes.map((hex) => hex.id)).toEqual(
+      RING_1_HEX_FIXTURES.map((entry) => entry.id),
+    );
+    // Every published intel field is on the tile, not just the summary strings.
+    for (const intel of model!.hexes) {
+      const row = scene.getMapRows().find((entry) => entry.key === `hex:${intel.id}`);
+      expect(row, `no map tile for ${intel.id}`).toBeDefined();
+      expect(row!.label).toContain(intel.boss!);
+      expect(row!.label).toContain(`W:${intel.weaknesses.join(',')}`);
+      expect(row!.label).toContain(`→${intel.grants}`);
+      expect(row!.label).toContain(`AGG ${intel.aggression}`);
+    }
+    // The gym's render is read-only by construction.
+    expect(scene.getMapRows().every((row) => !row.actionable)).toBe(true);
+    expect(
+      scene.children.list.some(
+        (child) =>
+          child instanceof Phaser.GameObjects.Text &&
+          child.text.includes(fixture.boss) &&
+          child.text.includes(`→${fixture.grants}`),
+      ),
+    ).toBe(true);
+
+    // The control surface re-renders the same shared model.
+    scene.takeHex('hex-r1-2');
+    expect(
+      scene.getMapModel()!.hexes.find((hex) => hex.id === 'hex-r1-2')!.held,
+    ).toBe(true);
+  });
+
   it('is discovered by the gym index as "HexWar"', () => {
     const entries = discoverGymScenes({
       '/src/scenes/gym/GymHexWar.ts': { GymHexWar },

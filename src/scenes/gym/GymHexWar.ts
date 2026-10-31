@@ -8,17 +8,20 @@
  * `take hex → leave bot → AI attacks → hex holds or falls` is exercised end to
  * end without a browser boot").
  *
- * This scene is the **ring half's parity surface**: it boots a real scene,
- * renders an **injected** hangar-war ring payload read-only (the known-ahead
- * intel — held/lost, aggression, the hex's boss and its weaknesses and grant —
- * joined from the ring fixtures), and exposes the `take hex → leave bot → tick`
- * control surface. It contains **no resolver logic**: the tick transition is
- * delegated to the deterministic harness double
- * (`src/core/hangarWar/fakeFrontierClock.ts`), which the shipped resolver and
- * frontier clock (B3, `src/core/hangarWar/hexDefence.ts`) replace. Because the
- * scene itself only wires payload bookkeeping, a future gameplay object runs
- * the same shipped code in the gym as in the game (AGENTS.md gym↔game parity;
- * `docs/GYM_PARITY.md`).
+ * This scene is the **ring half's parity surface**: it boots a real scene and
+ * renders the **same hex-map screen** the game's `HexMapScene` renders
+ * (`src/scenes/hangarWar/hexMap.ts` over the pure intel model
+ * `src/core/hangarWar/hexIntel.ts`) against an **injected** hangar-war ring
+ * payload, read-only: the hangar at the centre, the ring around it and every
+ * hex's known-ahead intel — held/lost, aggression, the hex's boss and its
+ * strengths/weaknesses and grant, its defender and any queued attack. It also
+ * exposes the `take hex → leave bot → tick` control surface. It contains **no
+ * resolver logic**: the tick transition is delegated to the deterministic
+ * harness double (`src/core/hangarWar/fakeFrontierClock.ts`), which the
+ * shipped resolver and frontier clock (B3, `src/core/hangarWar/hexDefence.ts`)
+ * replace. Because the scene itself only wires payload bookkeeping and the
+ * shared map renderer, a future gameplay object runs the same shipped code in
+ * the gym as in the game (AGENTS.md gym↔game parity; `docs/GYM_PARITY.md`).
  *
  * The payload arrives as Phaser launch data (`{ payload }`) and defaults to the
  * deterministic sample built from the ring fixtures, so the harness is useful on
@@ -48,7 +51,12 @@ import {
   createFakeFrontierClock,
   type FakeFrontierClock,
 } from '../../core/hangarWar/fakeFrontierClock';
+import {
+  buildHexMapModel,
+  type HexMapModel,
+} from '../../core/hangarWar/hexIntel';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
+import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
 import {
   addBackToIndexButton,
   addBackToMenuOnEsc,
@@ -58,6 +66,11 @@ import {
   resolveSetupSeed,
   type SceneSetupState,
 } from '../core/sceneSetup';
+import {
+  renderHexMap,
+  type HexMapRow,
+  type HexMapView,
+} from '../hangarWar/hexMap';
 
 /** Scene key (== class name, per the gym discovery convention). */
 export const GYM_HEX_WAR_SCENE_KEY = 'GymHexWar';
@@ -208,8 +221,8 @@ export class GymHexWar extends Phaser.Scene {
   );
   /** Capture setup supplied as scene-start data (documented no-op for player state). */
   private setup: SceneSetupState | null = null;
-  /** Rendered summary line text objects (rebuilt when the surface changes). */
-  private lineTexts: Phaser.GameObjects.Text[] = [];
+  /** The shared map render (rebuilt when the control surface changes it). */
+  private view: HexMapView | null = null;
 
   constructor() {
     super({ key: GYM_HEX_WAR_SCENE_KEY });
@@ -240,7 +253,7 @@ export class GymHexWar extends Phaser.Scene {
     addBackToIndexButton(this);
     addBackToMenuOnEsc(this);
 
-    this.renderLines();
+    this.renderMap();
 
     this.add
       .text(40, GAME_HEIGHT - 48, GYM_HEX_WAR_HINT, {
@@ -261,27 +274,19 @@ export class GymHexWar extends Phaser.Scene {
 
   // ── Rendering ─────────────────────────────────────────────────────
 
-  /** Rebuilds the on-screen summary lines after a control-surface action. */
-  private renderLines(): void {
-    for (const text of this.lineTexts) text.destroy();
-    this.lineTexts = [];
-
-    const summary = this.getSummaryLines();
-    const startY = 120;
-    const rowGap = 24;
-    summary.forEach((line, index) => {
-      const text = this.add.text(40, startY + index * rowGap, line, {
-        fontFamily: 'monospace',
-        fontSize: index === 0 ? '14px' : '12px',
-        color:
-          index === 0
-            ? '#00ffff'
-            : line.startsWith('[HELD]')
-              ? '#00ff00'
-              : '#ff6666',
-      });
-      this.lineTexts.push(text);
+  /**
+   * Rebuilds the shared hex-map view after a control-surface action.
+   *
+   * The map is rendered with **no handlers**, so every row is reported
+   * non-actionable and the gym stays read-only by construction — the same
+   * model and renderer the game's `HexMapScene` uses (gym↔game parity).
+   */
+  private renderMap(): void {
+    this.view?.destroy();
+    const model = buildHexMapModel(this.payload, {
+      definitions: hexRingDefinitionsFor(this.payload.ring.ringIndex),
     });
+    this.view = renderHexMap(this, model);
   }
 
   // ── Control surface ───────────────────────────────────────────────
@@ -301,7 +306,17 @@ export class GymHexWar extends Phaser.Scene {
     return this.clock;
   }
 
-  /** The summary lines rendered on screen, in display order. */
+  /** The rendered map model (the shared intel view). */
+  getMapModel(): HexMapModel | null {
+    return this.view?.model ?? null;
+  }
+
+  /** Every rendered map row (read-only: none is actionable in the gym). */
+  getMapRows(): readonly HexMapRow[] {
+    return this.view?.rows ?? [];
+  }
+
+  /** The summary lines the harness publishes (the ring's read-only summary). */
   getSummaryLines(): string[] {
     return hexWarSummaryLines(this.payload, this.fixtures, this.clock);
   }
@@ -309,7 +324,7 @@ export class GymHexWar extends Phaser.Scene {
   /** Takes `hexId` into the player's hands (control surface: take hex). */
   takeHex(hexId: string): void {
     this.payload = takeHexOnPayload(this.payload, hexId);
-    this.renderLines();
+    this.renderMap();
   }
 
   /** Leaves a bot defending `hexId` (control surface: leave bot). */
@@ -320,7 +335,7 @@ export class GymHexWar extends Phaser.Scene {
       hullId,
       defenceRating,
     );
-    this.renderLines();
+    this.renderMap();
   }
 
   /**
@@ -350,7 +365,7 @@ export class GymHexWar extends Phaser.Scene {
       });
     }
 
-    this.renderLines();
+    this.renderMap();
     return results;
   }
 }
