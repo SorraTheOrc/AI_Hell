@@ -16,6 +16,32 @@
  *   shared drop path can collect, so pickup tests drive the same seam the
  *   game and every gym use.
  *
+ * ## UFO feel verification seams (AH-0MVSAJJ8F000ZD5Q)
+ *
+ * The feel slices of parent AH-0MVI4J8R4002WTT6 are verified through the
+ * seams below, laid down before any behaviour lands:
+ *
+ * - {@link installUfoCueRecorder} / {@link UfoCueRecorder} records every cue
+ *   dispatch — warble start/stop, reward, destroy and mineral tinkle included
+ *   — in call order, through an injected recording playback provider. No
+ *   `AudioContext` is ever constructed. The recorder observes the **shared
+ *   cue-dispatch path** (`src/audio/effects.ts` → cue manifest → provider),
+ *   so it starts recording the UFO cues the moment the ToneForge bake
+ *   (AH-0MVSAJMLL00835T8) adds them to the manifest; no `vi.mock` of wrappers
+ *   that do not exist yet is needed.
+ * - {@link getDroneVfxCounts} / {@link resetDroneVfxCounts} (re-exported from
+ *   `src/vfx/droneVfxCounts.ts`) expose the per-moment saucer VFX spawn
+ *   counters — launch poof, collect sparkle, return trail and destruction —
+ *   following the `getExplosionVfxCounts` / `resetExplosionVfxCounts`
+ *   pattern, so a test can reset them between cases.
+ * - {@link expectUfoPayoutLifecycle} / {@link expectUfoDestructionLifecycle}
+ *   assert one drone's lifecycle feedback (payout success, enemy destruction).
+ *   Their default expectation is today's **zero-feedback baseline** — the
+ *   drone is silent and spawns no VFX — and later slices extend the helper
+ *   call with {@link UFO_PAYOUT_CUE_SEQUENCE} /
+ *   {@link UFO_DESTRUCTION_CUE_SEQUENCE} plus VFX counts via
+ *   {@link UfoLifecycleExpectation}.
+ *
  * ## Test matrix (parent ACs of AH-0MV9G113S009B37I → verifying test)
  *
  * | Parent AC | Behaviour pinned | Verifying test | Lands in |
@@ -38,6 +64,7 @@
  */
 
 import Phaser from 'phaser';
+import { expect } from 'vitest';
 
 import {
   GAME_HEIGHT,
@@ -50,6 +77,32 @@ import { Mineral } from '../entities/Mineral';
 import { PowerUp } from '../powerups/PowerUp';
 import { drawPowerUpDrop } from '../powerups/icons';
 import { bootScene } from './gameHarness';
+import { RecordingSfxProvider } from './audioTestDouble';
+import { _resetAudioContextForTests, setSfxSoundProvider } from '../audio/effects';
+import {
+  CONTROL_CUES,
+  CUE_MANIFEST,
+  assetUrlFor,
+  bakedAssetFiles,
+} from '../audio/cueManifest';
+import type { SfxPlayOptions, SfxSoundHandle } from '../audio/sfxPlayback';
+import {
+  DRONE_VFX_MOMENTS,
+  getDroneVfxCounts,
+  recordDroneVfxSpawn,
+  resetDroneVfxCounts,
+  type DroneVfxCounts,
+} from '../vfx/droneVfxCounts';
+
+// The saucer VFX counters are production-owned (the VFX slice records into
+// them); the shared fixtures re-export them so tests have one import surface.
+export {
+  DRONE_VFX_MOMENTS,
+  getDroneVfxCounts,
+  recordDroneVfxSpawn,
+  resetDroneVfxCounts,
+};
+export type { DroneVfxCounts };
 
 // ── Seeded mineral-field builder ────────────────────────────────────
 
@@ -284,6 +337,337 @@ export function makeDropCollectible(
     drop.powerUp.advance(dt);
   }
   return drop;
+}
+
+// ── UFO feel cue recorder ───────────────────────────────────────────
+
+/**
+ * The UFO feel cue wrappers the recorder understands.
+ *
+ * These are the wrapper names the feel slices add to `src/audio/effects.ts`
+ * (AH-0MVSAJMLL00835T8); recording keys on the exported wrapper name resolved
+ * from the cue manifest, so the seam needs no import of a wrapper that does
+ * not exist yet.
+ */
+export const UFO_CUES = {
+  /** Continuous "woo-woo-woo" warble start. */
+  warble: 'playMysteryUfoWarbleSound',
+  /** Warble stop control companion (must be listed in the manifest `controlCues`). */
+  stopWarble: 'stopMysteryUfoWarbleSound',
+  /** Reward fanfare on payout. */
+  reward: 'playMysteryUfoRewardSound',
+  /** Destruction explosion cue. */
+  destroy: 'playMysteryUfoDestroySound',
+  /** Mineral "tinkle" in sync with the destruction spill. */
+  tinkle: 'playMineralTinkleSound',
+} as const;
+
+/** One UFO cue wrapper name (see {@link UFO_CUES}). */
+export type UfoCueWrapper = (typeof UFO_CUES)[keyof typeof UFO_CUES];
+
+/** The lifecycle feedback vocabulary the sequence helpers assert on. */
+export type UfoFeedbackEventName =
+  | 'warble-start'
+  | 'warble-stop'
+  | 'reward'
+  | 'destroy'
+  | 'tinkle';
+
+/** Cue-wrapper name → lifecycle feedback event name. */
+const UFO_EVENT_NAME_BY_CUE: Readonly<Record<string, UfoFeedbackEventName>> = {
+  [UFO_CUES.warble]: 'warble-start',
+  [UFO_CUES.stopWarble]: 'warble-stop',
+  [UFO_CUES.reward]: 'reward',
+  [UFO_CUES.destroy]: 'destroy',
+  [UFO_CUES.tinkle]: 'tinkle',
+};
+
+/**
+ * The target cue order for a successful sortie (payout), documented here so
+ * the warble and terminal-feedback slices assert one canonical sequence.
+ *
+ * The warble starts at spawn, stops when the return leg begins, and the reward
+ * fanfare lands with the pay-in. Not asserted until those slices land —
+ * today's baseline is no feedback at all.
+ */
+export const UFO_PAYOUT_CUE_SEQUENCE: readonly UfoFeedbackEventName[] = [
+  'warble-start',
+  'warble-stop',
+  'reward',
+];
+
+/**
+ * The target cue order for an enemy-destroyed sortie, documented here so the
+ * warble and terminal-feedback slices assert one canonical sequence.
+ *
+ * The warble starts at spawn, stops as the drone dies, then the explosion cue
+ * and the mineral tinkle fire with the spill.
+ */
+export const UFO_DESTRUCTION_CUE_SEQUENCE: readonly UfoFeedbackEventName[] = [
+  'warble-start',
+  'warble-stop',
+  'destroy',
+  'tinkle',
+];
+
+/**
+ * Cue-wrapper name for a baked asset URL: the inverse of the cue manifest,
+ * covering every baked seed variant. `undefined` for an unmapped URL (e.g. a
+ * runtime-shim voice, which never reaches a provider).
+ *
+ * A URL is only unambiguous when one cue owns the recipe; when several cues
+ * share a recipe (e.g. `playPlayerDestructionSound` / `playVolumeFeedback`)
+ * the last manifest entry wins. The four UFO cues each own their recipe, so
+ * their resolution is exact.
+ */
+const CUE_BY_ASSET_URL: ReadonlyMap<string, string> = (() => {
+  const byUrl = new Map<string, string>();
+  for (const entry of CUE_MANIFEST) {
+    const files = bakedAssetFiles(entry);
+    if (files.length === 0) {
+      byUrl.set(assetUrlFor(entry), entry.cue);
+      continue;
+    }
+    for (const file of files) byUrl.set(file, entry.cue);
+  }
+  return byUrl;
+})();
+
+/**
+ * The stop control companion for a continuous cue wrapper (`playDiveSound` →
+ * `stopDiveSound`), or `undefined` when the cue has no control companion.
+ */
+function controlCompanionFor(cue: string): string | undefined {
+  const companion = cue.replace(/^play/, 'stop');
+  return companion !== cue && CONTROL_CUES.includes(companion)
+    ? companion
+    : undefined;
+}
+
+/** A single cue dispatch observed by {@link UfoCueRecorder}. */
+export interface RecordedCueEvent {
+  /** 0-based dispatch order across the whole recorder log. */
+  readonly order: number;
+  /** Exported wrapper that produced the dispatch (raw URL when unmapped). */
+  readonly cue: string;
+  /** Baked asset URL dispatched through the playback provider. */
+  readonly url: string;
+  /** `play` = a wrapper started a cue; `stop` = a returned handle stopped. */
+  readonly kind: 'play' | 'stop';
+  /** Whether the wrapper asked the provider to loop the asset. */
+  readonly loop: boolean;
+}
+
+/**
+ * Recording playback provider for the UFO feel cues (and every other cue).
+ *
+ * Inject it with {@link installUfoCueRecorder} and assert on {@link events}:
+ * the log is ordered by dispatch, resolves each call to its cue wrapper through
+ * the manifest, and pairs a stopped handle back to the cue it started. It never
+ * constructs an `AudioContext` — it extends the shared
+ * {@link RecordingSfxProvider} double, so sound is a pure no-op.
+ */
+export class UfoCueRecorder extends RecordingSfxProvider {
+  /** Every recorded cue dispatch, in call order. */
+  readonly events: RecordedCueEvent[] = [];
+
+  override play(url: string, options: SfxPlayOptions = {}): SfxSoundHandle {
+    // Keep the shared double's own log (`plays`), then record the ordered
+    // cue-level event so start/stop pairing is observable.
+    const handle = super.play(url, options);
+    const cue = CUE_BY_ASSET_URL.get(url) ?? url;
+    const loop = options.loop ?? false;
+    this.events.push({
+      order: this.events.length,
+      cue,
+      url,
+      kind: 'play',
+      loop,
+    });
+    return {
+      stop: () => {
+        handle.stop();
+        this.events.push({
+          order: this.events.length,
+          cue: controlCompanionFor(cue) ?? cue,
+          url,
+          kind: 'stop',
+          loop,
+        });
+      },
+    };
+  }
+
+  /** Every UFO feel cue event (warble/reward/destroy/tinkle), in call order. */
+  ufoEvents(): RecordedCueEvent[] {
+    return this.events.filter(
+      (event) => UFO_EVENT_NAME_BY_CUE[event.cue] !== undefined,
+    );
+  }
+
+  /** The UFO feel event names, in dispatch order. */
+  ufoEventNames(): UfoFeedbackEventName[] {
+    return this.ufoEvents().map(
+      (event) => UFO_EVENT_NAME_BY_CUE[event.cue] as UfoFeedbackEventName,
+    );
+  }
+
+  /** Clears the recorded dispatches (counts and cue events). */
+  override reset(): void {
+    super.reset();
+    this.events.length = 0;
+  }
+
+  /**
+   * Uninstalls the recorder: restores the default playback provider and
+   * clears the shared cue-layer test state (voice limiter, continuous-cue
+   * handles). Safe to call more than once.
+   */
+  dispose(): void {
+    _resetAudioContextForTests();
+  }
+}
+
+/**
+ * Installs a fresh {@link UfoCueRecorder} as the shared playback provider and
+ * returns it. Pair with `recorder.dispose()` in `afterEach`.
+ *
+ * @returns The installed recorder.
+ */
+export function installUfoCueRecorder(): UfoCueRecorder {
+  // Start every case from clean cue-layer state: the limiter and any
+  // continuous-cue handle must not leak a previous test's playback into this
+  // one (`_resetAudioContextForTests` restores the default provider too).
+  _resetAudioContextForTests();
+  const recorder = new UfoCueRecorder();
+  setSfxSoundProvider(recorder);
+  return recorder;
+}
+
+// ── UFO lifecycle feedback + sequence assertions ────────────────────
+
+/** One drone lifecycle's observed feedback: cue events and VFX spawn counts. */
+export interface UfoLifecycleFeedback {
+  /** UFO feel events, in dispatch order. */
+  readonly cues: readonly UfoFeedbackEventName[];
+  /** Per-moment VFX spawn counts at capture time. */
+  readonly vfx: DroneVfxCounts;
+}
+
+/**
+ * Captures the current UFO feedback: the recorder's cue events plus a VFX
+ * count snapshot.
+ */
+export function captureUfoLifecycleFeedback(
+  recorder: UfoCueRecorder,
+): UfoLifecycleFeedback {
+  return { cues: recorder.ufoEventNames(), vfx: getDroneVfxCounts() };
+}
+
+/**
+ * What a lifecycle sequence is expected to observe.
+ *
+ * Omitted fields mean **today's zero-feedback baseline**: no cue and no VFX.
+ * A slice that adds feedback passes the observed expectation, e.g.
+ * `{ cues: UFO_PAYOUT_CUE_SEQUENCE, vfx: { returnTrail: 1 } }`.
+ */
+export interface UfoLifecycleExpectation {
+  /** Expected cues in dispatch order (default: none). */
+  readonly cues?: readonly UfoFeedbackEventName[];
+  /** Expected VFX spawn count per moment (default: every moment zero). */
+  readonly vfx?: Partial<DroneVfxCounts>;
+}
+
+/** The one-shot cues a single lifecycle may fire at most once. */
+const ONE_SHOT_CUES = ['reward', 'destroy', 'tinkle'] as const;
+
+/**
+ * Asserts one drone lifecycle's feedback.
+ *
+ * Always checks the structural invariants (only sequence-appropriate cues,
+ * the warble starts before it stops and never twice, one-shots fire at most
+ * once), then asserts the exact cue sequence and VFX counts against
+ * `expectation` — whose defaults are the documented silent baseline.
+ */
+function expectUfoFeedbackSequence(
+  label: string,
+  feedback: UfoLifecycleFeedback,
+  allowed: readonly UfoFeedbackEventName[],
+  expectation: UfoLifecycleExpectation,
+): void {
+  const { cues } = feedback;
+  const sequence = cues.length === 0 ? '(silent)' : cues.join(' → ');
+
+  for (const name of cues) {
+    if (!allowed.includes(name)) {
+      throw new Error(
+        `${label}: unexpected '${name}' feedback (${sequence}); ` +
+          `allowed events: ${allowed.join(', ')}`,
+      );
+    }
+  }
+
+  const startIndex = cues.indexOf('warble-start');
+  const stopIndex = cues.indexOf('warble-stop');
+  if (stopIndex !== -1 && (startIndex === -1 || stopIndex < startIndex)) {
+    throw new Error(`${label}: warble stopped before it started (${sequence})`);
+  }
+  if (cues.filter((name) => name === 'warble-start').length > 1) {
+    throw new Error(`${label}: warble started more than once (${sequence})`);
+  }
+  if (cues.filter((name) => name === 'warble-stop').length > 1) {
+    throw new Error(`${label}: warble stopped more than once (${sequence})`);
+  }
+  for (const oneShot of ONE_SHOT_CUES) {
+    if (cues.filter((name) => name === oneShot).length > 1) {
+      throw new Error(`${label}: '${oneShot}' fired more than once (${sequence})`);
+    }
+  }
+
+  expect(cues, `${label}: cue sequence`).toEqual([...(expectation.cues ?? [])]);
+
+  for (const moment of DRONE_VFX_MOMENTS) {
+    expect(feedback.vfx[moment], `${label}: ${moment} spawn count`).toBe(
+      expectation.vfx?.[moment] ?? 0,
+    );
+  }
+}
+
+/**
+ * Asserts the feedback of one **successful sortie** (spawn → collect → return
+ * → payout).
+ *
+ * Pass the expectation once the feel slices land; with no expectation it
+ * pins today's silent baseline (no cue, no VFX).
+ */
+export function expectUfoPayoutLifecycle(
+  feedback: UfoLifecycleFeedback,
+  expectation: UfoLifecycleExpectation = {},
+): void {
+  expectUfoFeedbackSequence(
+    'payout lifecycle',
+    feedback,
+    UFO_PAYOUT_CUE_SEQUENCE,
+    expectation,
+  );
+}
+
+/**
+ * Asserts the feedback of one **enemy-destroyed sortie** (spawn → destroyed).
+ *
+ * Pass the expectation once the feel slices land; with no expectation it
+ * pins today's silent baseline (no cue, no VFX).
+ */
+export function expectUfoDestructionLifecycle(
+  feedback: UfoLifecycleFeedback,
+  expectation: UfoLifecycleExpectation = {},
+): void {
+  expectUfoFeedbackSequence(
+    'destruction lifecycle',
+    feedback,
+    UFO_DESTRUCTION_CUE_SEQUENCE,
+    expectation,
+  );
 }
 
 // ── Boot harness for fixture smoke tests ────────────────────────────

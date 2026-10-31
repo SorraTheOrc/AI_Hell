@@ -9,21 +9,43 @@
  * header (see `collectorDroneFixtures.ts`).
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { PowerUpState } from '../powerups/PowerUp';
 import { collectOverlappingDrops } from '../scenes/core/dropLayer';
+import { cueAssetUrl } from '../audio/cueManifest';
+import {
+  getAudioContext,
+  playDiveSound,
+  playPowerUpCollectSound,
+  playPowerUpSpawnSound,
+  stopDiveSound,
+} from '../audio/effects';
 import {
   COLLECTOR_DRONE_MINERAL_CLEARANCE,
+  UFO_CUES,
+  UFO_DESTRUCTION_CUE_SEQUENCE,
+  UFO_PAYOUT_CUE_SEQUENCE,
   bootCollectorDroneScene,
+  captureUfoLifecycleFeedback,
   createMysteryUfoDrop,
   createSeededMineralField,
   createSteppedClock,
+  expectUfoDestructionLifecycle,
+  expectUfoPayoutLifecycle,
+  getDroneVfxCounts,
+  installUfoCueRecorder,
   isClearOf,
   makeDropCollectible,
+  recordDroneVfxSpawn,
+  resetDroneVfxCounts,
   resolveSeededMineralPositions,
+  type DroneVfxCounts,
   type SteppedClock,
+  type UfoCueRecorder,
+  type UfoFeedbackEventName,
+  type UfoLifecycleFeedback,
   DEFAULT_MINERAL_FIELD_BOUNDS,
 } from './collectorDroneFixtures';
 import { PLAYER_SPAWN, MINERAL_SIZE } from '../core/constants';
@@ -213,5 +235,209 @@ describe('collectorDroneFixtures — shared collector-drone test infrastructure'
       expect(drop.powerUp.canCollect()).toBe(false);
       expect(collected).toEqual([]);
     });
+  });
+});
+
+// ── UFO feel verification seams (AH-0MVSAJJ8F000ZD5Q) ───────────────
+
+describe('UFO feel cue recorder (AH-0MVSAJJ8F000ZD5Q)', () => {
+  let recorder: UfoCueRecorder;
+
+  beforeEach(() => {
+    recorder = installUfoCueRecorder();
+  });
+
+  afterEach(() => {
+    recorder.dispose();
+    resetDroneVfxCounts();
+  });
+
+  it('records a continuous cue start/stop pair in call order without an AudioContext', () => {
+    expect(getAudioContext()).toBeNull();
+
+    playDiveSound();
+    stopDiveSound();
+
+    expect(recorder.events.map(({ cue, kind }) => ({ cue, kind }))).toEqual([
+      { cue: 'playDiveSound', kind: 'play' },
+      { cue: 'stopDiveSound', kind: 'stop' },
+    ]);
+    // Recording never constructs an audio context.
+    expect(getAudioContext()).toBeNull();
+  });
+
+  it('records one-shot cue dispatches with their baked asset URL', () => {
+    playPowerUpCollectSound();
+    playPowerUpSpawnSound();
+
+    expect(recorder.events.map((event) => event.cue)).toEqual([
+      'playPowerUpCollectSound',
+      'playPowerUpSpawnSound',
+    ]);
+    expect(recorder.events[0].url).toBe(cueAssetUrl('playPowerUpCollectSound'));
+    expect(recorder.events.every((event) => event.kind === 'play')).toBe(true);
+  });
+
+  it('records no UFO cue today: the feel slices are not wired yet', () => {
+    playPowerUpCollectSound();
+
+    // The seam observes the real dispatch path, so it starts recording the
+    // UFO cues automatically once the ToneForge bake adds them.
+    expect(recorder.ufoEvents()).toEqual([]);
+    expect(recorder.ufoEventNames()).toEqual([]);
+  });
+
+  it('captures the recorder log plus a VFX snapshot', () => {
+    playPowerUpCollectSound();
+
+    expect(captureUfoLifecycleFeedback(recorder)).toEqual({
+      cues: [],
+      vfx: getDroneVfxCounts(),
+    });
+  });
+
+  it('names every UFO wrapper the feel slices will call', () => {
+    // The contract with the bake/warble/terminal slices: changing a wrapper
+    // name here forces the seam and those slices to change together.
+    expect(Object.values(UFO_CUES)).toEqual([
+      'playMysteryUfoWarbleSound',
+      'stopMysteryUfoWarbleSound',
+      'playMysteryUfoRewardSound',
+      'playMysteryUfoDestroySound',
+      'playMineralTinkleSound',
+    ]);
+  });
+});
+
+describe('collector-drone VFX counters (AH-0MVSAJJ8F000ZD5Q)', () => {
+  afterEach(() => {
+    resetDroneVfxCounts();
+  });
+
+  it('exposes per-moment counters that reset between tests', () => {
+    recordDroneVfxSpawn('launchPoof');
+    recordDroneVfxSpawn('collectSparkle', 2);
+    recordDroneVfxSpawn('returnTrail');
+    recordDroneVfxSpawn('destruction');
+
+    expect(getDroneVfxCounts()).toEqual({
+      launchPoof: 1,
+      collectSparkle: 2,
+      returnTrail: 1,
+      destruction: 1,
+    });
+
+    resetDroneVfxCounts();
+    expect(getDroneVfxCounts()).toEqual({
+      launchPoof: 0,
+      collectSparkle: 0,
+      returnTrail: 0,
+      destruction: 0,
+    });
+  });
+});
+
+describe('UFO lifecycle sequence helpers (AH-0MVSAJJ8F000ZD5Q)', () => {
+  /** Today's silent baseline: no cue, no VFX. */
+  const silent = (): UfoLifecycleFeedback => ({
+    cues: [],
+    vfx: getDroneVfxCounts(),
+  });
+
+  /** Synthetic feedback, so the helpers' discrimination is pinned without production cues. */
+  const withFeedback = (
+    cues: readonly UfoFeedbackEventName[],
+    vfx: Partial<DroneVfxCounts> = {},
+  ): UfoLifecycleFeedback => ({
+    cues,
+    vfx: { ...getDroneVfxCounts(), ...vfx },
+  });
+
+  beforeEach(() => {
+    resetDroneVfxCounts();
+  });
+
+  afterEach(() => {
+    resetDroneVfxCounts();
+  });
+
+  it('passes the payout baseline: silent, exactly as the drone behaves today', () => {
+    expect(() => expectUfoPayoutLifecycle(silent())).not.toThrow();
+  });
+
+  it('accepts the documented payout target sequence once the feel slices land', () => {
+    expect(() =>
+      expectUfoPayoutLifecycle(
+        withFeedback(UFO_PAYOUT_CUE_SEQUENCE, { returnTrail: 1 }),
+        { cues: UFO_PAYOUT_CUE_SEQUENCE, vfx: { returnTrail: 1 } },
+      ),
+    ).not.toThrow();
+  });
+
+  it('rejects a reward fired before the warble stops', () => {
+    expect(() =>
+      expectUfoPayoutLifecycle(
+        withFeedback(['warble-start', 'reward', 'warble-stop']),
+        { cues: UFO_PAYOUT_CUE_SEQUENCE },
+      ),
+    ).toThrow(/cue sequence/);
+  });
+
+  it('rejects destruction feedback in the payout sequence', () => {
+    expect(() => expectUfoPayoutLifecycle(withFeedback(['destroy']))).toThrow(
+      /unexpected 'destroy'/,
+    );
+  });
+
+  it('rejects a warble stop with no matching start', () => {
+    expect(() => expectUfoPayoutLifecycle(withFeedback(['warble-stop']))).toThrow(
+      /stopped before it started/,
+    );
+  });
+
+  it('rejects a double warble start', () => {
+    expect(() =>
+      expectUfoPayoutLifecycle(withFeedback(['warble-start', 'warble-start'])),
+    ).toThrow(/started more than once/);
+  });
+
+  it('rejects a repeated reward', () => {
+    expect(() =>
+      expectUfoPayoutLifecycle(withFeedback(['reward', 'reward'])),
+    ).toThrow(/reward' fired more than once/);
+  });
+
+  it('rejects VFX spawns the payout baseline does not expect', () => {
+    expect(() =>
+      expectUfoPayoutLifecycle(withFeedback([], { collectSparkle: 1 })),
+    ).toThrow(/collectSparkle spawn count/);
+  });
+
+  it('passes the destruction baseline: silent, exactly as the drone behaves today', () => {
+    expect(() => expectUfoDestructionLifecycle(silent())).not.toThrow();
+  });
+
+  it('accepts the documented destruction target sequence once the slices land', () => {
+    expect(() =>
+      expectUfoDestructionLifecycle(
+        withFeedback(UFO_DESTRUCTION_CUE_SEQUENCE, { destruction: 1 }),
+        {
+          cues: UFO_DESTRUCTION_CUE_SEQUENCE,
+          vfx: { destruction: 1 },
+        },
+      ),
+    ).not.toThrow();
+  });
+
+  it('rejects reward feedback in the destruction sequence', () => {
+    expect(() =>
+      expectUfoDestructionLifecycle(withFeedback(['reward'])),
+    ).toThrow(/unexpected 'reward'/);
+  });
+
+  it('rejects a tinkle that fires twice', () => {
+    expect(() =>
+      expectUfoDestructionLifecycle(withFeedback(['tinkle', 'tinkle'])),
+    ).toThrow(/tinkle' fired more than once/);
   });
 });

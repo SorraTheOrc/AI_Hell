@@ -14,7 +14,7 @@
  * re-implementation of production logic.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Phaser from 'phaser';
 
 import { MINERAL_REDROP_SCATTER_RADIUS } from '../../core/constants';
@@ -22,6 +22,14 @@ import { resolvePowerUpAtLevel } from '../../powerups/powerUpLevels';
 import { Mineral } from '../../entities/Mineral';
 import { MysteryUfoDrone } from '../../entities/MysteryUfoDrone';
 import { bootScene, BootedGame } from '../../test/gameHarness';
+import {
+  captureUfoLifecycleFeedback,
+  expectUfoDestructionLifecycle,
+  expectUfoPayoutLifecycle,
+  installUfoCueRecorder,
+  resetDroneVfxCounts,
+  type UfoCueRecorder,
+} from '../../test/collectorDroneFixtures';
 import {
   DRONE_DESTRUCTION_BONUS_PER_LEVEL,
   destroyedDroneDropCount,
@@ -341,5 +349,72 @@ describe('shared collector-drone pass', () => {
       player: { x: 100, y: 100 },
     });
     expect(kept).toEqual([drone]);
+  });
+
+  // ── UFO feel verification seams (AH-0MVSAJJ8F000ZD5Q) ────────────
+  //
+  // The feel slices extend these two cases with the target sequence via
+  // `expectUfoPayoutLifecycle(feedback, { cues: UFO_PAYOUT_CUE_SEQUENCE })` /
+  // `expectUfoDestructionLifecycle(feedback, { cues: UFO_DESTRUCTION_CUE_SEQUENCE })`.
+  // Until then the helpers pin the documented zero-feedback baseline: the
+  // drone is silent and spawns no saucer VFX.
+
+  describe('UFO feel seams: zero-feedback baseline', () => {
+    let recorder: UfoCueRecorder;
+
+    beforeEach(() => {
+      recorder = installUfoCueRecorder();
+      resetDroneVfxCounts();
+    });
+
+    afterEach(() => {
+      recorder.dispose();
+      resetDroneVfxCounts();
+    });
+
+    it('a successful sortie gives no cue and no saucer VFX today', async () => {
+      const scene = await boot();
+      let drones: MysteryUfoDrone[] = [];
+      const sink = makeSink();
+      makeDrone(scene, drones, sink, { capacity: 1 });
+      const mineral = makeMineral(scene, 110, 100);
+
+      drones = tickDrones(drones, {
+        dt: 0.01,
+        minerals: [mineral],
+        player: { x: 100, y: 100 },
+      });
+      drones = tickDrones(drones, {
+        dt: 0.01,
+        minerals: [],
+        player: { x: 100, y: 100 },
+      });
+
+      // The whole lifecycle ran (collect → return → payout)…
+      expect(sink.calls).toEqual([1]);
+      expect(drones).toHaveLength(0);
+
+      // …and produced no feedback: today's baseline.
+      expectUfoPayoutLifecycle(captureUfoLifecycleFeedback(recorder));
+    });
+
+    it('an enemy destruction gives no cue and no saucer VFX today', async () => {
+      const scene = await boot();
+      const drones: MysteryUfoDrone[] = [];
+      const drone = makeDrone(scene, drones, makeSink());
+      const mineral = makeMineral(scene, 110, 100);
+      tickDrones(drones, {
+        dt: 0.01,
+        minerals: [mineral],
+        player: { x: 100, y: 100 },
+      });
+      expect(drone.heldMinerals).toBe(1);
+
+      // The mineral spill already exists; only its feedback is missing today.
+      const drops = hitDrone(scene, drone, 'enemy-bullet', 1);
+      expect(drops).toHaveLength(1 + 2 * 1);
+
+      expectUfoDestructionLifecycle(captureUfoLifecycleFeedback(recorder));
+    });
   });
 });
