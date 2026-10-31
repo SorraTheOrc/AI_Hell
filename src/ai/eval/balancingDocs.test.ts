@@ -210,6 +210,17 @@ describe('Tuning loop is documented (AH-0MV8Q5EYE001R715)', () => {
     expect(doc).toMatch(/blocking\* synchronous sweep that never yields|cannot be interrupted/);
   });
 
+  it('names the tune-loop safety test files (AH-0MVSE1PG7006XBZ9)', () => {
+    for (const file of [
+      'scripts/evaluate-failfast.test.ts',
+      'scripts/csvEditJournal.test.ts',
+      'scripts/evaluate-tune-progress.test.ts',
+      'scripts/tune-verify.e2e.test.ts',
+    ]) {
+      expect(doc).toContain(file);
+    }
+  });
+
   it('is cross-linked from the README and EVALUATION.md flags', () => {
     const readme = fs.readFileSync(README_PATH, 'utf8');
     const evaluation = fs.readFileSync(EVALUATION_PATH, 'utf8');

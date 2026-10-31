@@ -91,6 +91,20 @@ Artifacts are written under `--out` (default `eval-output/`, git-ignored):
 | `--set <file> <assignment>` | The single declarative edit for `--tune`, e.g. `--set enemy-configs.csv boss.health=6`. | — |
 | `--threshold <pct>` | Relative significance threshold for `--tune`. | `10` |
 | `--keep-edit` | Keep the `--tune` CSV edit after the run (default: restore). | off |
+| `--watchdog <secs>` | Bounded-runtime guard for `--tune`: abort with exit `124` once the budget is spent, restoring the CSV first (see `docs/BALANCING.md`). | `0` (off) |
+
+### Exit codes and fail-fast validation
+
+`0` success, `1` unexpected runtime error, `2` usage error **or** the fail-fast input
+validation failed, `124` the `--tune` watchdog expired.
+
+`--out` and the `--tune` CSV target are validated **before** the SSR core boots or any
+sweep runs, so an invalid path fails in well under a second with
+`output directory not writable: <dir> (<ERRNO>)` or
+`tune CSV not readable: <path> (<ERRNO>)` instead of after a full sweep
+(AH-0MVSE18XX006ZG5I). The full contract — plus the crash-safe CSV journal that survives a
+`SIGKILL` and the per-run progress lines on stderr — is in
+[`docs/BALANCING.md`](./BALANCING.md) §Tuning loop.
 
 ## How it works
 

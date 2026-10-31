@@ -121,3 +121,25 @@ describe('Campaign batch default and its fidelity boundary are documented (AH-0M
     expect(readme).not.toMatch(/skirmish-only|only a single-level skirmish/i);
   });
 });
+
+describe('Tune-loop safety contract is documented in EVALUATION.md (AH-0MVSE1PG7006XBZ9)', () => {
+  const doc = fs.readFileSync(DOC_PATH, 'utf8');
+
+  it('documents the --watchdog flag and the full exit-code contract', () => {
+    expect(doc).toContain('--watchdog <secs>');
+    expect(doc).toMatch(/`0` \(off\)/);
+    expect(doc).toMatch(/### Exit codes and fail-fast validation/);
+    for (const code of ['`0` success', '`1` unexpected runtime error', '`2` usage error', '`124`']) {
+      expect(doc).toContain(code);
+    }
+  });
+
+  it('states the fail-fast guarantee and links the full contract', () => {
+    expect(doc).toContain('AH-0MVSE18XX006ZG5I');
+    expect(doc).toContain('output directory not writable');
+    expect(doc).toContain('tune CSV not readable');
+    expect(doc).toMatch(/before\*\* the SSR core boots|before the SSR core boots/);
+    expect(doc).toContain('docs/BALANCING.md');
+    expect(doc).toMatch(/SIGKILL/);
+  });
+});

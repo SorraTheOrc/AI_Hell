@@ -943,7 +943,21 @@ pixel-accurate, full-stack verification use the browser capture path
 - `src/utils/csvEdit.test.ts` and `scripts/csvEdit-shell.test.ts` — the
   declarative `--set` editor and guaranteed byte-identical restore on
   success/failure paths (`--keep-edit` opt-out).
+- `scripts/evaluate-failfast.test.ts` — the up-front `--out` / `--tune` CSV
+  probes, the CLI exit codes for each failure path, and the proof that the
+  validation runs **before** the SSR core boots (a mocked `vite` boot is never
+  attempted) (AH-0MVSE18XX006ZG5I).
+- `scripts/csvEditJournal.test.ts` — the crash-safe journal: atomic write,
+  restore-from-journal, `--keep-edit` clear, the unreadable-journal refusal, a
+  real `SIGKILL`ed editing child whose CSV is restored byte-identically, the
+  reconcile-before-validate behaviour of the next `--tune` run, and the
+  `.gitignore` guard (AH-0MVSE1A7O002PXAO).
+- `scripts/evaluate-tune-progress.test.ts` — the per-run progress lines on
+  stderr (stdout parity), the opt-in `--watchdog` exit `124` with a restored
+  CSV, and the rejected budgets (AH-0MVSE1OPF008G1SB).
 - `src/ai/eval/balancingDocs.test.ts` — this document's contract.
+- `scripts/tune-verify.e2e.test.ts` — the gated end-to-end tune loop
+  (`/skill:test --type e2e`).
 
 ## Acceptance-verification run (2026-10-14, AH-0MV81Z9EI005TQMB)
 
