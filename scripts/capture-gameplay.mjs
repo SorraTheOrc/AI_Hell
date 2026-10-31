@@ -592,10 +592,17 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
  * reads exactly this list, so `--list-scenarios` cannot drift from the values
  * `--scenario` accepts (AH-0MV6JGELV001FAX1, AC1).
  *
+ * The listing contract is exactly `{ name, effect }` per entry (pinned by
+ * AH-0MV6JGELV001FAX1), so the richer registry metadata — a promo entry's
+ * `kind`, `preset`, `promoLevel`, `seed` and `categories`
+ * (AH-0MVSDM4ED003C8ZC) — is projected away here rather than leaking into
+ * `--list-scenarios --json` by accident. Surfacing promo metadata in the
+ * listing is the capture-CLI promo slice's job (AH-0MVSDMAC0006DS25).
+ *
  * @returns {Array<{ name: string, effect: string }>}
  */
 export function listScenarios() {
-  return listCaptureScenarios();
+  return listCaptureScenarios().map(({ name, effect }) => ({ name, effect }));
 }
 
 /**

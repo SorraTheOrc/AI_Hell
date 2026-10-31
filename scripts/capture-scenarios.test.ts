@@ -15,10 +15,10 @@
  * The second half pins the **enriched promo scenario contract**
  * (AH-0MVSDM30G0092WYC, test-first slice of parent AH-0MVI5XI73000ZVYA's AC5):
  * the richer entry schema, the `kind: 'promo'` resolver union member, the
- * module-load fail-fast guard and the dev-only gating. Those assertions are
+ * module-load fail-fast guard and the dev-only gating. Those assertions were
  * authored RED under Vitest's `it.fails` (the repo's red-before/green-after
- * convention) and are green only after the scaffold item lands — see the
- * section banner below.
+ * convention) and are live now that the scaffold item
+ * AH-0MVSDM4ED003C8ZC landed — see the section banner below.
  *
  * @vitest-environment node
  */
@@ -30,6 +30,11 @@ import { cliSpawnEnv } from './cliChildEnv';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { EDITORIAL_CONFIG } from './compile-promo.mjs';
+import {
+  CAPTURE_SCENARIO_KINDS,
+  EDITORIAL_CATEGORIES as SCHEMA_EDITORIAL_CATEGORIES,
+} from './capture-scenario-schema.mjs';
 import {
   CAPTURE_SCENARIOS,
   isRegisteredScenario,
@@ -157,13 +162,14 @@ describe('registry ↔ resolver parity', () => {
 
 // ── Enriched promo scenario contract (AH-0MVSDM30G0092WYC, test-first) ─────
 //
-// **TEST-FIRST — RED until the scaffold lands.** Authored before the promo
-// schema exists (parent AH-0MVI5XI73000ZVYA, AC5). Every genuinely-red
-// assertion is wrapped in Vitest's `it.fails` (the repo's red-before/green-
-// after convention — see `src/core/csv.test.ts`), so the suite stays green on
-// pre-change HEAD; the scaffold item **AH-0MVM4ED003C8ZC** ("Enriched scenario
-// registry schema and resolver") flips each `it.fails` back to `it`. A leftover
-// `it.fails` fails the suite (an unexpected pass), so the flip is deliberate.
+// **GREEN — the scaffold landed (AH-0MVSDM4ED003C8ZC).** Authored RED before
+// the promo schema existed (parent AH-0MVI5XI73000ZVYA, AC5), each assertion
+// was wrapped in Vitest's `it.fails` (the repo's red-before/green-after
+// convention — see `src/core/csv.test.ts`) so the suite stayed green on
+// pre-change HEAD. The scaffold item **AH-0MVSDM4ED003C8ZC** ("Enriched
+// scenario registry schema and resolver") flipped every one back to `it`, so
+// the contract is now enforced for real. A leftover `it.fails` would fail the
+// suite as an unexpected pass, which is why the flip is deliberate.
 //
 // The contract pinned here — the scaffold must match it exactly:
 //
@@ -346,7 +352,7 @@ afterEach(() => {
 });
 
 describe('enriched registry entry contract (AH-0MVSDM30G0092WYC, AC1)', () => {
-  it.fails('declares a known kind on every registered entry', () => {
+  it('declares a known kind on every registered entry', () => {
     for (const scenario of CAPTURE_SCENARIOS) {
       expect(
         ENTRY_KINDS,
@@ -355,7 +361,7 @@ describe('enriched registry entry contract (AH-0MVSDM30G0092WYC, AC1)', () => {
     }
   });
 
-  it.fails('keeps the existing three scenarios with their names and kinds', () => {
+  it('keeps the existing three scenarios with their names and kinds', () => {
     expect(
       CAPTURE_SCENARIOS.map((scenario) => {
         const entry = fieldsOf(scenario);
@@ -387,14 +393,14 @@ describe('enriched registry entry contract (AH-0MVSDM30G0092WYC, AC1)', () => {
 });
 
 describe('promo resolution parity (AH-0MVSDM30G0092WYC, AC2)', () => {
-  it.fails('resolves a registered promo scenario to the promo union member', async () => {
+  it('resolves a registered promo scenario to the promo union member', async () => {
     const resolver = await loadResolverWithRegistry(PROMO_REGISTRY);
     expect(
       resolver.resolveDevScenario(`?scenario=${String(PROMO_WITH_SEED['name'])}`),
     ).toEqual(expectedPromo(PROMO_WITH_SEED));
   });
 
-  it.fails('omits the optional seed when the registry entry declares none', async () => {
+  it('omits the optional seed when the registry entry declares none', async () => {
     const resolver = await loadResolverWithRegistry(PROMO_REGISTRY);
     const resolved = resolver.resolveDevScenario(
       `?scenario=${String(PROMO_WITHOUT_SEED['name'])}`,
@@ -465,7 +471,7 @@ describe('promo resolution parity (AH-0MVSDM30G0092WYC, AC2)', () => {
   ];
 
   for (const { label, entry, pattern } of BROKEN_PROMO_ENTRIES) {
-    it.fails(
+    it(
       `fails fast at module load for a promo entry with ${label}`,
       async () => {
         await expect(
@@ -479,7 +485,7 @@ describe('promo resolution parity (AH-0MVSDM30G0092WYC, AC2)', () => {
 describe('promo dev gating (AH-0MVSDM30G0092WYC, AC3)', () => {
   const search = `?scenario=${String(PROMO_WITH_SEED['name'])}`;
 
-  it.fails('resolves a promo scenario only when import.meta.env.DEV is true', async () => {
+  it('resolves a promo scenario only when import.meta.env.DEV is true', async () => {
     vi.stubEnv('DEV', true);
     const resolver = await loadResolverWithRegistry(PROMO_REGISTRY);
     expect(resolver.isDevScenarioEnabled()).toBe(true);
@@ -488,10 +494,32 @@ describe('promo dev gating (AH-0MVSDM30G0092WYC, AC3)', () => {
     );
   });
 
-  it.fails('is inert for a promo scenario when import.meta.env.DEV is false', async () => {
+  it('is inert for a promo scenario when import.meta.env.DEV is false', async () => {
     vi.stubEnv('DEV', false);
     const resolver = await loadResolverWithRegistry(PROMO_REGISTRY);
     expect(resolver.isDevScenarioEnabled()).toBe(false);
     expect(resolver.resolveEnabledDevScenario(search)).toBeNull();
+  });
+});
+
+// ── Shared schema vocabulary (AH-0MVSDM4ED003C8ZC, AC2) ────────────────────
+//
+// The entry schema lives in `scripts/capture-scenario-schema.mjs` so the
+// registry (authored entries) and the resolver (a substituted registry) share
+// one contract. The editorial category vocabulary is restated there rather
+// than imported from `scripts/compile-promo.mjs` — that module imports
+// `node:fs`, which the browser bundle cannot reach — so these two tests pin
+// the restated list to the promo compiler's `EDITORIAL_CONFIG`, the promo
+// pipeline's single source of truth (AH-0MVDV4RJ300459ZF).
+
+describe('shared scenario schema vocabulary (AH-0MVSDM4ED003C8ZC, AC2)', () => {
+  it('keeps the editorial category vocabulary in step with EDITORIAL_CONFIG', () => {
+    expect([...SCHEMA_EDITORIAL_CATEGORIES]).toEqual([
+      ...EDITORIAL_CONFIG.categories,
+    ]);
+  });
+
+  it('declares exactly the entry kinds the contract pins', () => {
+    expect([...CAPTURE_SCENARIO_KINDS]).toEqual(ENTRY_KINDS);
   });
 });

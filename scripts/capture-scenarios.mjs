@@ -13,45 +13,85 @@
  * so bare Node (the capture script) and the Vite game build can both import
  * it untouched; `capture-scenarios.d.mts` supplies the types for TypeScript
  * consumers and tests.
+ *
+ * ## Enriched entry schema (AH-0MVSDM4ED003C8ZC, child of AH-0MVI5XI73000ZVYA)
+ *
+ * Each entry is more than a name and a one-line effect: it declares the
+ * `kind` of scenario it is, and a `kind: 'promo'` entry additionally carries
+ * the **promo metadata** the catalogue needs — the bot-tuning `preset` it
+ * flies, the `promoLevel` reference into the hand-authored promo wave module,
+ * the optional deterministic `seed`, and the editorial `categories` it
+ * evidences. The shape and its validation live in
+ * `scripts/capture-scenario-schema.mjs` (browser-free, like this module); the
+ * entries below are validated as this module is imported, so a malformed
+ * authored entry fails the capture CLI and the game build immediately rather
+ * than producing a scenario that cannot be flown.
+ *
+ * The existing three entries keep their names, effects and runtime behaviour
+ * exactly; the first real promo entries arrive with the catalogue item, so
+ * this module stays a three-entry registry for now.
  */
+
+import { freezeCaptureScenarioEntry } from './capture-scenario-schema.mjs';
 
 /**
  * One implemented dev capture scenario.
  *
  * `name` is the value of the `scenario` URL query parameter the resolver
  * accepts (and what `--scenario` passes through); `effect` is a single line
- * a maintainer can read to know what the scenario does.
+ * a maintainer can read to know what the scenario does; `kind` selects the
+ * resolver union member it produces. A `promo` entry also carries `preset`,
+ * `promoLevel`, optional `seed` and `categories` (see
+ * `scripts/capture-scenario-schema.mjs`).
  *
- * @typedef {object} CaptureScenario
- * @property {string} name
- * @property {string} effect
+ * @typedef {import('./capture-scenario-schema.mjs').CaptureScenario} CaptureScenario
  */
+
+/**
+ * The authored scenario entries, in the order the tooling lists and runs
+ * them.
+ *
+ * `boss` is the tunable jump (`&bossHits=N`); `boss-four-hits` is the recorded
+ * default (4 hits); `defeat` ends the run in defeat on release. This list is
+ * an implementation detail — {@link CAPTURE_SCENARIOS} is the validated,
+ * frozen registry every consumer reads.
+ *
+ * @type {readonly CaptureScenario[]}
+ */
+const AUTHORED_SCENARIOS = [
+  {
+    name: 'boss',
+    effect: 'Jump straight to the boss with a tunable hit count (&bossHits=N).',
+    kind: 'boss',
+  },
+  {
+    name: 'boss-four-hits',
+    effect: 'Jump straight to the boss with 4 hits remaining (the recorded demo).',
+    kind: 'boss',
+  },
+  {
+    name: 'defeat',
+    effect: 'Clear the wave and end the run in defeat on release (defeat-path demo).',
+    kind: 'defeat',
+  },
+];
 
 /**
  * The implemented dev capture scenarios, in the order the tooling lists and
  * runs them.
  *
- * Frozen top-level array and frozen entries, so no consumer (the game
- * resolver, the CLI formatter or a test) can mutate the single source of
- * truth. `boss` is the tunable jump (`&bossHits=N`); `boss-four-hits` is the
- * recorded default (4 hits); `defeat` ends the run in defeat on release.
+ * Frozen top-level array and frozen entries (a promo entry's `categories`
+ * array is frozen too), so no consumer (the game resolver, the CLI formatter
+ * or a test) can mutate the single source of truth. Every entry is validated
+ * by the shared schema as this module loads, so an authored entry that breaks
+ * the contract throws here instead of at some later, more confusing point.
  *
  * @type {readonly CaptureScenario[]}
  */
-export const CAPTURE_SCENARIOS = Object.freeze([
-  Object.freeze({
-    name: 'boss',
-    effect: 'Jump straight to the boss with a tunable hit count (&bossHits=N).',
-  }),
-  Object.freeze({
-    name: 'boss-four-hits',
-    effect: 'Jump straight to the boss with 4 hits remaining (the recorded demo).',
-  }),
-  Object.freeze({
-    name: 'defeat',
-    effect: 'Clear the wave and end the run in defeat on release (defeat-path demo).',
-  }),
-]);
+export const CAPTURE_SCENARIOS = Object.freeze(
+  AUTHORED_SCENARIOS.map((scenario, index) =>
+    freezeCaptureScenarioEntry(scenario, `CAPTURE_SCENARIOS[${index}]`)),
+);
 
 /**
  * Whether `value` is a registered scenario name.

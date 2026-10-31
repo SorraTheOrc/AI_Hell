@@ -4,15 +4,23 @@
  * JS so bare Node (the capture CLI) and the Vite game build can both import
  * it; these declarations let `src/core/devScenario.ts`, the capture tooling
  * and the tests consume the registry without `any` leaks.
+ *
+ * The entry shapes themselves are declared (and validated at runtime) by
+ * `scripts/capture-scenario-schema.mjs` (AH-0MVSDM4ED003C8ZC), so the richer
+ * `kind: 'promo'` metadata has exactly one definition; this module re-exports
+ * them for the consumers that only know about the registry.
  */
 
-/** One implemented dev capture scenario. */
-export interface CaptureScenario {
-  /** The `scenario` URL query value the resolver accepts. */
-  readonly name: string;
-  /** One line a maintainer can read to know what the scenario does. */
-  readonly effect: string;
-}
+import type { CaptureScenario } from './capture-scenario-schema.mjs';
+
+export type {
+  CaptureBossScenario,
+  CaptureDefeatScenario,
+  CapturePromoScenario,
+  CaptureScenario,
+  CaptureScenarioKind,
+  EditorialCategory,
+} from './capture-scenario-schema.mjs';
 
 /**
  * The implemented dev capture scenarios, in listing/running order. Frozen

@@ -29,6 +29,26 @@
  * Any other value resolves to `null` (no scenario), so a typo can never
  * silently change a normal run.
  *
+ * ## Promo scenarios (AH-0MVSDM4ED003C8ZC, child of AH-0MVI5XI73000ZVYA)
+ *
+ * A registry entry with `kind: 'promo'` resolves to a {@link DevPromoScenario}
+ * carrying the bot-tuning `preset`, the `promoLevel` reference, the editorial
+ * `categories` it evidences and, when the entry declares one, the
+ * deterministic `seed`. Promo entries are resolved **from the registry entry
+ * itself** rather than from a hardcoded name list, so registering a scenario
+ * in `scripts/capture-scenarios.mjs` is enough to make it resolvable and the
+ * two sides cannot drift.
+ *
+ * Every registry entry is validated against the shared schema
+ * (`scripts/capture-scenario-schema.mjs`) as this module loads, so a promo
+ * entry with a missing/blank preset or promo level, an empty or unknown
+ * category set, or a non-uint32 seed fails fast here — the same contract the
+ * registry enforces for the capture CLI.
+ *
+ * {@link resolveEnabledDevScenario} is the **single runtime gate**: it returns
+ * a resolved scenario only in a dev build, so a promo URL (like the boss and
+ * defeat URLs before it) is inert in production.
+ *
  * The supported names are derived from {@link CAPTURE_SCENARIOS}, the shared
  * browser-free registry (`scripts/capture-scenarios.mjs`) the capture CLI also
  * reads (AH-0MV6JGE9R005YOL1). That keeps the game resolver and the CLI list /
@@ -36,7 +56,23 @@
  * fails fast at module load rather than silently accepting a stale name.
  */
 
-import { CAPTURE_SCENARIOS } from '../../scripts/capture-scenarios.mjs';
+import {
+  CAPTURE_SCENARIOS,
+  type CaptureScenario,
+} from '../../scripts/capture-scenarios.mjs';
+import { assertCaptureScenarioEntry } from '../../scripts/capture-scenario-schema.mjs';
+
+// Validate the registry as this module loads (the shared schema is the runtime
+// source of truth for the enriched entry contract; see
+// `scripts/capture-scenario-schema.mjs`). The registry validates its own
+// entries when it is imported too, but this guard also holds a substituted
+// registry (tests replace the module) to the same contract.
+for (const [index, scenario] of CAPTURE_SCENARIOS.entries()) {
+  assertCaptureScenarioEntry(
+    scenario,
+    `devScenario: CAPTURE_SCENARIOS[${index}]`,
+  );
+}
 
 /** URL query parameter that selects a dev scenario. */
 export const DEV_SCENARIO_PARAM = 'scenario';
@@ -106,8 +142,28 @@ export interface DevDefeatScenario {
   readonly kind: 'defeat';
 }
 
+/**
+ * A resolved promo dev scenario (AH-0MVSDM4ED003C8ZC): a curated
+ * promo-video scenario resolved from its registry entry.
+ */
+export interface DevPromoScenario {
+  /** Discriminant so consumers can branch on the scenario family. */
+  readonly kind: 'promo';
+  /** Bot-tuning preset name the run should fly. */
+  readonly preset: string;
+  /** Level reference into the promo wave module. */
+  readonly promoLevel: string;
+  /** Editorial categories this scenario evidences (never empty). */
+  readonly categories: readonly string[];
+  /** Deterministic run seed, when the registry entry declares one. */
+  readonly seed?: number;
+}
+
 /** The resolved dev-scenario union. */
-export type DevScenario = DevBossScenario | DevDefeatScenario;
+export type DevScenario =
+  | DevBossScenario
+  | DevDefeatScenario
+  | DevPromoScenario;
 
 /** True when dev scenarios should be honoured (dev builds only). */
 export function isDevScenarioEnabled(): boolean {
@@ -167,9 +223,47 @@ function resolveBossHits(raw: string | null): number {
 }
 
 /**
+ * Resolves a registry entry into the scenario the game should apply.
+ *
+ * `entry` is a validated {@link CaptureScenario} (the module-load guard above
+ * guarantees its shape); `params` supplies the boss-only tuning so a boss
+ * entry can honour `&bossHits=N`.
+ */
+function resolveRegisteredScenario(
+  entry: CaptureScenario,
+  params: URLSearchParams,
+): DevScenario {
+  switch (entry.kind) {
+    case 'boss':
+      // The recorded four-hit demo deliberately ignores `bossHits`, exactly as
+      // before, so the recorded URL cannot be retuned by accident.
+      return {
+        kind: 'boss',
+        bossHitsRemaining: entry.name === DEV_SCENARIO_BOSS_FOUR_HITS
+          ? DEV_BOSS_DEFAULT_HITS
+          : resolveBossHits(params.get(DEV_BOSS_HITS_PARAM)),
+      };
+    case 'defeat':
+      return { kind: 'defeat' };
+    case 'promo':
+      return {
+        kind: 'promo',
+        preset: entry.preset,
+        promoLevel: entry.promoLevel,
+        categories: entry.categories,
+        ...(entry.seed === undefined ? {} : { seed: entry.seed }),
+      };
+  }
+}
+
+/**
  * Resolves the dev scenario encoded in a URL search string (with or without a
  * leading `?`). Pure and total: an absent/unknown scenario, or a malformed
  * query, returns `null`.
+ *
+ * The scenario is looked up in {@link CAPTURE_SCENARIOS} and resolved from the
+ * entry's `kind`, so the registry is the single source of truth for which
+ * scenarios exist and what each one carries.
  *
  * @param search — a `location.search` string or bare query string.
  * @returns the resolved scenario, or `null` when none is requested.
@@ -182,19 +276,29 @@ export function resolveDevScenario(search: string): DevScenario | null {
   if (name === null) return null;
 
   const normalised = name.trim().toLowerCase();
-  if (normalised === DEV_SCENARIO_BOSS_FOUR_HITS) {
-    return { kind: 'boss', bossHitsRemaining: DEV_BOSS_DEFAULT_HITS };
-  }
-  if (normalised === DEV_SCENARIO_BOSS) {
-    return {
-      kind: 'boss',
-      bossHitsRemaining: resolveBossHits(params.get(DEV_BOSS_HITS_PARAM)),
-    };
-  }
-  if (normalised === DEV_SCENARIO_DEFEAT) {
-    return { kind: 'defeat' };
-  }
-  return null;
+  const entry = CAPTURE_SCENARIOS.find(
+    (scenario) => scenario.name === normalised,
+  );
+  if (entry === undefined) return null;
+  return resolveRegisteredScenario(entry, params);
+}
+
+/**
+ * Resolves the dev scenario only when the build is a dev build — the single
+ * runtime gate for every scenario kind (boss, defeat and promo alike).
+ *
+ * Callers that apply a scenario at run start (the recorder handle, the
+ * PlayScene seam) use this instead of pairing {@link isDevScenarioEnabled}
+ * with {@link resolveDevScenario}, so a production build can never apply one
+ * even if a new scenario kind is added later.
+ *
+ * @param search — a `location.search` string or bare query string.
+ * @returns the resolved scenario in a dev build, otherwise `null`.
+ */
+export function resolveEnabledDevScenario(
+  search: string,
+): DevScenario | null {
+  return isDevScenarioEnabled() ? resolveDevScenario(search) : null;
 }
 
 /**
