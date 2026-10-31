@@ -11,7 +11,8 @@
  * Responsibilities owned here exactly once:
  *
  * - {@link spawnDrone} — the only way a drone enters a scene; it wires the
- *   drone's pay-in to the caller-supplied hold sink and starts the sortie-long
+ *   drone's pay-in to the caller-supplied hold sink (voicing the reward
+ *   fanfare exactly when the hold is credited) and starts the sortie-long
  *   Mystery UFO warble exactly once.
  * - {@link tickDrones} — the seek → collect → return → payout pass: pushes the
  *   live mineral field into each drone, tracks the live player as home, ticks
@@ -22,8 +23,9 @@
  * - {@link hitDrone} — the destruction contract: only **enemy** ordnance or an
  *   enemy body destroys a drone (the player's own fire passes through), a
  *   destroyed drone spills its held minerals **plus** a `2 × level` bonus at
- *   the crash site as collectable field deposits, and the warble stops as the
- *   drone dies.
+ *   the crash site as collectable field deposits, and the terminal feedback
+ *   lands exactly once — the warble stops, the explosion cue plays with a
+ *   crash-site particle burst, and a mineral tinkle voices the spill.
  *
  * The module is deliberately scene-agnostic: it operates on the structural
  * drone/mineral/sink shapes so unit tests never need a real combat scene, and
@@ -35,15 +37,21 @@
 import type Phaser from 'phaser';
 
 import {
+  playMineralTinkleSound,
+  playMysteryUfoDestroySound,
+  playMysteryUfoRewardSound,
   playMysteryUfoWarbleSound,
   stopMysteryUfoWarbleSound,
 } from '../../audio/effects';
 import { scatterMineralDrops } from '../../entities/Mineral';
 import type { Mineral } from '../../entities/Mineral';
 import {
+  MYSTERY_UFO_DRONE_COLOR,
   MysteryUfoDrone,
   type MysteryUfoDroneConfig,
 } from '../../entities/MysteryUfoDrone';
+import { spawnExplosionParticles } from '../../vfx/explosionParticles';
+import { recordDroneVfxSpawn } from '../../vfx/droneVfxCounts';
 
 /** Default sortie lifetime (s) when the resolved stats are unavailable. */
 export const DEFAULT_DRONE_LIFETIME_SECONDS = 5;
@@ -113,7 +121,14 @@ export function spawnDrone(
   const drone = new MysteryUfoDrone(scene, {
     ...config,
     onPayout: (minerals: number) => {
-      if (minerals > 0) sink.addMinerals(minerals);
+      if (minerals > 0) {
+        sink.addMinerals(minerals);
+        // Reward fanfare rides the pay-in itself, not the return-leg start,
+        // so the payout moment is the thing the player hears. An empty
+        // payout credits nothing and stays silent (documented assumption:
+        // there is no reward to celebrate).
+        playMysteryUfoRewardSound();
+      }
     },
   });
   drones.push(drone);
@@ -193,13 +208,20 @@ export function destroyedDroneDropCount(
 }
 
 /**
- * Applies a hit to a drone and, when it destroys the drone, scatters the spill
- * as collectable minerals at the crash site and releases the sortie warble.
+ * Applies a hit to a drone and, when it destroys the drone, delivers the
+ * terminal feedback — releases the sortie warble, plays the explosion cue,
+ * spawns the crash-site particle burst, then scatters the spill as
+ * collectable minerals with a mineral tinkle in sync — all exactly once.
  *
  * Only `'enemy-bullet'` and `'enemy-body'` can destroy a drone; a
  * `'player-bullet'` hit is a no-op (the player's own fire passes through) and
  * returns no drops. Repeated hits after destruction are no-ops, so a drone
- * can never spill twice.
+ * can never spill (or voice its destruction) twice.
+ *
+ * The tinkle is voiced only when the spill actually drops minerals: it reads
+ * the scattered resources, so an empty spill (level 0, empty hold) is silent
+ * beyond the explosion. The explosion cue itself always fires — the saucer's
+ * destruction is the event, the minerals are the consequence.
  *
  * @param scene — scene that owns the new mineral display objects.
  * @param drone — the drone that was hit.
@@ -223,14 +245,29 @@ export function hitDrone(
         ? drone.onEnemyBody()
         : drone.onPlayerBullet();
   if (!destroyed) return [];
-  // Destruction is a terminal: release the warble before the spill so the
-  // crash feedback (later slice) lands on a silent, non-leaking loop.
+  // Destruction is a terminal: release the warble before the crash feedback
+  // so it lands on a silent, non-leaking loop.
   stopMysteryUfoWarbleSound();
-  return scatterMineralDrops(
+  playMysteryUfoDestroySound();
+  // Crash-site burst: the shared explosion VFX at the drone's last position,
+  // scaled from the saucer's own size and coloured from its hull. Counted in
+  // the shared saucer VFX registry so the feel tests observe it.
+  spawnExplosionParticles(
+    scene,
+    drone.x,
+    drone.y,
+    MYSTERY_UFO_DRONE_COLOR,
+    drone.effectiveSize,
+  );
+  recordDroneVfxSpawn('destruction');
+  const drops = scatterMineralDrops(
     scene,
     drone.x,
     drone.y,
     destroyedDroneDropCount(drone.heldMinerals, level),
     rng,
   );
+  // Voice the spill with the drops themselves (never a tinkle for nothing).
+  if (drops.length > 0) playMineralTinkleSound();
+  return drops;
 }

@@ -27,8 +27,10 @@
  *   collector-drone pass (`src/scenes/core/combatDrone.ts`) and the shared VFX
  *   modules, so a gym can never drift from the game (AGENTS.md parity rule).
  *
- * Until the VFX slice lands the counters read zero — the documented silent
- * baseline the test seams pin (see `src/test/collectorDroneFixtures.ts`).
+ * The `destruction` counter is recorded by the terminal-feedback slice
+ * (AH-0MVSAJVHF007QO6V) from the shared `hitDrone` destructor; the other three
+ * moments still read zero until the saucer VFX slice lands — the documented
+ * silent baseline the test seams pin (see `src/test/collectorDroneFixtures.ts`).
  *
  * @module vfx/droneVfxCounts
  */

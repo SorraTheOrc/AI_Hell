@@ -26,8 +26,11 @@ import {
   captureUfoLifecycleFeedback,
   expectUfoDestructionLifecycle,
   expectUfoPayoutLifecycle,
+  getDroneVfxCounts,
   installUfoCueRecorder,
   resetDroneVfxCounts,
+  UFO_DESTRUCTION_CUE_SEQUENCE,
+  UFO_PAYOUT_CUE_SEQUENCE,
   UFO_WARBLE_ONLY_SEQUENCE,
   type UfoCueRecorder,
 } from '../../test/collectorDroneFixtures';
@@ -354,18 +357,19 @@ describe('shared collector-drone pass', () => {
 
   // ── UFO feel verification seams (AH-0MVSAJJ8F000ZD5Q) ────────────
   //
-  // The feel slices extend these cases with the target sequence via
-  // `expectUfoPayoutLifecycle(feedback, { cues: UFO_WARBLE_ONLY_SEQUENCE })` /
-  // `expectUfoDestructionLifecycle(feedback, { cues: UFO_WARBLE_ONLY_SEQUENCE })`.
-  // The warble slice lands that sequence; the terminal one-shot cues and the
-  // saucer VFX belong to the later slices.
+  // The feel slices assert their target sequence through the shared helpers:
+  // `expectUfoPayoutLifecycle(feedback, { cues: … })` and
+  // `expectUfoDestructionLifecycle(feedback, { cues: …, vfx: { … } })`. The
+  // warble slice lands the start/stop prefix; the terminal-feedback slice
+  // (below) adds the one-shot cues and the destruction burst.
 
   // ── UFO feel: sortie-long warble (AH-0MVSAJR6W001CE8M) ─────────
   //
   // The warble starts exactly once at the shared spawn and stops on every
   // terminal path: return-leg begin, payout, destruction and teardown. The
-  // terminal one-shot cues (reward/destroy/tinkle) belong to
-  // AH-0MVSAJVHF007QO6V, so this slice's sequences are the warble-only prefix.
+  // terminal one-shot cues (reward/destroy/tinkle) land in
+  // AH-0MVSAJVHF007QO6V below; these cases assert the warble's own
+  // start→stop contract.
 
   describe('UFO feel: sortie-long warble', () => {
     let recorder: UfoCueRecorder;
@@ -425,7 +429,8 @@ describe('shared collector-drone pass', () => {
         'warble-stop',
       ]);
 
-      // Next tick arrives and pays out; the warble is not restarted.
+      // Next tick arrives and pays out: the warble is not restarted, the
+      // reward fanfare voices the credit (terminal-feedback slice).
       drones = tickDrones(drones, {
         dt: 0.01,
         minerals: [],
@@ -445,6 +450,7 @@ describe('shared collector-drone pass', () => {
       expect(recorder.ufoEventNames()).toEqual([
         'warble-start',
         'warble-stop',
+        'reward',
       ]);
     });
 
@@ -466,6 +472,8 @@ describe('shared collector-drone pass', () => {
       expect(recorder.ufoEventNames()).toEqual([
         'warble-start',
         'warble-stop',
+        'destroy',
+        'tinkle',
       ]);
 
       // The removal tick must not start it again or double-stop it.
@@ -478,11 +486,13 @@ describe('shared collector-drone pass', () => {
       expect(recorder.ufoEventNames()).toEqual([
         'warble-start',
         'warble-stop',
+        'destroy',
+        'tinkle',
       ]);
     });
   });
 
-  describe('UFO feel: payout and destruction terminals', () => {
+  describe('UFO feel: payout and destruction terminals (AH-0MVSAJVHF007QO6V)', () => {
     let recorder: UfoCueRecorder;
 
     beforeEach(() => {
@@ -495,35 +505,88 @@ describe('shared collector-drone pass', () => {
       resetDroneVfxCounts();
     });
 
-    it('a successful sortie starts and stops the warble (payout terminal)', async () => {
+    /**
+     * The burst Graphics the shared explosion VFX spawns at `(x, y)` — it
+     * renders at depth 5, above the depth-2 saucer and mineral field.
+     */
+    function burstsAt(
+      scene: Phaser.Scene,
+      x: number,
+      y: number,
+    ): Phaser.GameObjects.Graphics[] {
+      return scene.children.list.filter(
+        (child): child is Phaser.GameObjects.Graphics =>
+          child instanceof Phaser.GameObjects.Graphics &&
+          child.depth === 5 &&
+          Math.abs(child.x - x) < 0.001 &&
+          Math.abs(child.y - y) < 0.001,
+      );
+    }
+
+    it('plays the reward fanfare exactly once, at the payout, not on return-leg begin', async () => {
       const scene = await boot();
       let drones: MysteryUfoDrone[] = [];
       const sink = makeSink();
       makeDrone(scene, drones, sink, { capacity: 1 });
       const mineral = makeMineral(scene, 110, 100);
 
+      // Collect → hold full → RETURN begins. The warble is released here and
+      // the fanfare must NOT play yet: the payout has not been credited.
       drones = tickDrones(drones, {
         dt: 0.01,
         minerals: [mineral],
         player: { x: 100, y: 100 },
       });
+      expect(drones[0].droneState).toBe('return');
+      expect(recorder.ufoEventNames()).toEqual(['warble-start', 'warble-stop']);
+
+      // Arrival credits the hold and voices exactly one fanfare.
+      drones = tickDrones(drones, {
+        dt: 0.01,
+        minerals: [],
+        player: { x: 100, y: 100 },
+      });
+      expect(sink.calls).toEqual([1]);
+      expect(drones).toHaveLength(0);
+
+      // Repeated ticks can never replay it: the drone is gone.
+      for (let i = 0; i < 5; i += 1) {
+        tickDrones(drones, { dt: 0.5, minerals: [], player: { x: 100, y: 100 } });
+      }
+
+      expectUfoPayoutLifecycle(captureUfoLifecycleFeedback(recorder), {
+        cues: UFO_PAYOUT_CUE_SEQUENCE,
+      });
+    });
+
+    it('stays silent when the sortie pays out an empty hold', async () => {
+      const scene = await boot();
+      let drones: MysteryUfoDrone[] = [];
+      const sink = makeSink();
+      // Lifetime expires on the first tick with nothing collected.
+      makeDrone(scene, drones, sink, { lifetime: 0.05 });
+
+      drones = tickDrones(drones, {
+        dt: 0.1,
+        minerals: [],
+        player: { x: 100, y: 100 },
+      });
+      expect(drones[0].droneState).toBe('return');
       drones = tickDrones(drones, {
         dt: 0.01,
         minerals: [],
         player: { x: 100, y: 100 },
       });
 
-      // The whole lifecycle ran (collect → return → payout)…
-      expect(sink.calls).toEqual([1]);
+      // Nothing was credited, so there is no reward to celebrate.
+      expect(sink.calls).toEqual([]);
       expect(drones).toHaveLength(0);
-
-      // …driven by the sortie-long warble, which stops at the return leg.
       expectUfoPayoutLifecycle(captureUfoLifecycleFeedback(recorder), {
         cues: UFO_WARBLE_ONLY_SEQUENCE,
       });
     });
 
-    it('an enemy destruction starts and stops the warble (destruction terminal)', async () => {
+    it('plays the explosion cue, spawns the burst at the crash site and tinkles the spill exactly once', async () => {
       const scene = await boot();
       const drones: MysteryUfoDrone[] = [];
       const drone = makeDrone(scene, drones, makeSink());
@@ -534,13 +597,67 @@ describe('shared collector-drone pass', () => {
         player: { x: 100, y: 100 },
       });
       expect(drone.heldMinerals).toBe(1);
+      const crashX = drone.x;
+      const crashY = drone.y;
 
-      // The mineral spill already exists; the warble stops as the drone dies.
       const drops = hitDrone(scene, drone, 'enemy-bullet', 1);
       expect(drops).toHaveLength(1 + 2 * 1);
+      // The shared explosion VFX bursts where the saucer died.
+      expect(burstsAt(scene, crashX, crashY)).toHaveLength(1);
+
+      // A second hit of either kind adds no cue, burst or tinkle.
+      expect(hitDrone(scene, drone, 'enemy-bullet', 1)).toEqual([]);
+      expect(hitDrone(scene, drone, 'enemy-body', 1)).toEqual([]);
+      expect(burstsAt(scene, crashX, crashY)).toHaveLength(1);
 
       expectUfoDestructionLifecycle(captureUfoLifecycleFeedback(recorder), {
-        cues: UFO_WARBLE_ONLY_SEQUENCE,
+        cues: UFO_DESTRUCTION_CUE_SEQUENCE,
+        vfx: { destruction: 1 },
+      });
+    });
+
+    it('plays the explosion but no mineral tinkle when the spill is empty', async () => {
+      const scene = await boot();
+      const drones: MysteryUfoDrone[] = [];
+      const drone = makeDrone(scene, drones, makeSink());
+
+      // Level 0 with an empty hold spills nothing: the explosion still fires,
+      // but there are no dropped minerals for the tinkle to voice.
+      const drops = hitDrone(scene, drone, 'enemy-body', 0);
+      expect(drops).toEqual([]);
+      expect(recorder.ufoEventNames()).toEqual([
+        'warble-start',
+        'warble-stop',
+        'destroy',
+      ]);
+      expect(getDroneVfxCounts().destruction).toBe(1);
+    });
+
+    it("produces no terminal feedback for the player's own fire", async () => {
+      const scene = await boot();
+      const drones: MysteryUfoDrone[] = [];
+      const drone = makeDrone(scene, drones, makeSink());
+      const mineral = makeMineral(scene, 110, 100);
+      tickDrones(drones, {
+        dt: 0.01,
+        minerals: [mineral],
+        player: { x: 100, y: 100 },
+      });
+      const crashX = drone.x;
+      const crashY = drone.y;
+
+      expect(hitDrone(scene, drone, 'player-bullet', 5)).toEqual([]);
+      // The drone survives, the warble keeps playing, nothing bursts.
+      expect(drone.alive).toBe(true);
+      expect(recorder.ufoEventNames()).toEqual(['warble-start']);
+      expect(getDroneVfxCounts().destruction).toBe(0);
+      expect(burstsAt(scene, crashX, crashY)).toHaveLength(0);
+
+      // The enemy hit that finally kills it still speaks exactly once.
+      expect(hitDrone(scene, drone, 'enemy-bullet', 1)).toHaveLength(3);
+      expectUfoDestructionLifecycle(captureUfoLifecycleFeedback(recorder), {
+        cues: UFO_DESTRUCTION_CUE_SEQUENCE,
+        vfx: { destruction: 1 },
       });
     });
   });
