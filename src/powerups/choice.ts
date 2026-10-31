@@ -254,7 +254,7 @@ export function toChoiceOption(id: DropId): ChoiceOption {
  *
  * This is the **one** code path that turns an owned permanent level into a
  * player-facing offer: the hold-full choice ({@link buildChoiceCandidates})
- * and the mini-boss reward (`buildUpgradeOptions` in `./unlocks`) both use
+ * and the mini-boss reward ({@link buildOwnedLevelUpOptions}) both use
  * it, so the offered level, item description and change summary can never
  * drift between the two surfaces (gym↔game parity — AH-0MVL9P2SF009QFON AC3).
  *

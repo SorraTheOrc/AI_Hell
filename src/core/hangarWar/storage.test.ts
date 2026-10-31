@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   CHECKPOINT_STORAGE_KEY,
+  CHECKPOINT_VERSION,
   clearCheckpoint,
   hasCheckpoint,
   loadCheckpoint,
@@ -26,7 +27,7 @@ import { createInMemoryHangarWarStorage } from './storage';
 
 /** A representative checkpoint used to drive the real store through the fake. */
 const CHECKPOINT: Checkpoint = {
-  version: 2,
+  version: CHECKPOINT_VERSION,
   level: 3,
   wave: 1,
   lives: 2,
@@ -35,7 +36,6 @@ const CHECKPOINT: Checkpoint = {
   mineralHoldCapacity: 10,
   weaponLevels: [{ id: 'spread', level: 2 }],
   powerUpLevels: [{ id: 'shield', level: 1 }],
-  unlockedWeapons: ['spread'],
   runSeed: 1234,
   savedAt: '2026-10-30T00:00:00.000Z',
 };

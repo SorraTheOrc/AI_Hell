@@ -372,13 +372,13 @@ export function eligibleForSlotPool(
  * those admissible on the shared pool.
  *
  * Offer surfaces that do **not** build their list through
- * `buildChoiceCandidates` must consult this: the mini-boss reward's **unlock**
- * half offers brand-new weapon kinds (`lockedWeaponIds()`), so without the gate
- * a single mini-boss unlock could grant a seventh kind and defeat the cap
- * (parent AH-0MVLIJT3M005HPHF AC4 — the reward must offer only items currently
- * in the slots). A level-up offer names a kind the player already holds
- * permanently, so it is always admissible and always survives; below the cap
- * the filter keeps every offer, so below-cap behaviour is unchanged.
+ * `buildChoiceCandidates` must consult this: the mini-boss reward builds its
+ * level-up offers directly, so without the gate a future reward variant could
+ * grant a kind outside the pool and defeat the cap (parent AH-0MVLIJT3M005HPHF
+ * AC4 — the reward must offer only items currently in the slots). A level-up
+ * offer names a kind the player already holds, so it is always admissible and
+ * always survives; below the cap the filter keeps every offer, so below-cap
+ * behaviour is unchanged.
  *
  * Never mutates the input list.
  */

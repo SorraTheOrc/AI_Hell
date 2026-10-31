@@ -35,11 +35,14 @@ export const CHECKPOINT_STORAGE_KEY = 'ai_hell_checkpoint';
  * - **v1** — original payload (AH-0MVCRBTNF000DK51).
  * - **v2** — adds {@link Checkpoint.mineralHoldCapacity} so Continue keeps the
  *   hold-capacity progression the run had earned (AH-0MVT1DYO5004UC4P).
- *   Legacy v1 payloads have no field and load with the first-hold default;
- *   migration is decided by field presence, so the version itself is
- *   informational (it is stamped with the current value on parse).
+ * - **v3** — **removes `unlockedWeapons`**: the mini-boss reward became the
+ *   upgrade wheel, so the run-scoped weapon-unlock feature no longer exists
+ *   (parent AH-0MVLISU03006WDOD AC5). A payload stamped with any other
+ *   version is rejected outright (see {@link parseCheckpoint}), so a stale
+ *   pre-wheel checkpoint can never resume a run whose reward surface has
+ *   changed underneath it.
  */
-export const CHECKPOINT_VERSION = 2;
+export const CHECKPOINT_VERSION = 3;
 
 /** One persisted weapon's permanent level. */
 export interface CheckpointWeaponLevel {
@@ -86,8 +89,6 @@ export interface Checkpoint {
   weaponLevels: CheckpointWeaponLevel[];
   /** Permanent power-up levels owned at the checkpoint. */
   powerUpLevels: CheckpointPowerUpLevel[];
-  /** Weapons unlocked through mini-boss rewards. */
-  unlockedWeapons: WeaponId[];
   /** The run's RNG seed, so a resumed run stays reproducible. */
   runSeed: number;
   /** ISO timestamp of when the checkpoint was written. */
@@ -142,6 +143,16 @@ export function parseCheckpoint(raw: unknown): Checkpoint | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const value = raw as Record<string, unknown>;
 
+  // Strict schema gate (parent AH-0MVLISU03006WDOD AC5). The mini-boss reward
+  // rework removed the `unlockedWeapons` field, so a payload from another
+  // schema version cannot be interpreted faithfully: it is rejected as "no
+  // checkpoint" (never migrated, never thrown), which is exactly the clean
+  // rejection the version bump promises.
+  const version = value.version;
+  if (!isFiniteNumber(version) || version !== CHECKPOINT_VERSION) {
+    return null;
+  }
+
   const level = value.level;
   if (!isFiniteNumber(level) || level < MIN_LEVEL || level > MAX_LEVEL) {
     return null;
@@ -178,11 +189,6 @@ export function parseCheckpoint(raw: unknown): Checkpoint | null {
     mineralHoldCapacity,
     weaponLevels: toLevelList<WeaponId>(value.weaponLevels, () => true),
     powerUpLevels: toLevelList<PowerUpId>(value.powerUpLevels, () => true),
-    unlockedWeapons: Array.isArray(value.unlockedWeapons)
-      ? value.unlockedWeapons.filter(
-          (id): id is WeaponId => typeof id === 'string',
-        )
-      : [],
     runSeed,
     savedAt:
       typeof value.savedAt === 'string' ? value.savedAt : new Date(0).toISOString(),

@@ -294,6 +294,10 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.isDemoMode()).toBe(true);
     play.getPlayer()!.equipWeapon('spread', true);
+    // Own more than one permanent kind so there is a genuine "last option" to
+    // land on (the reward is a level-up surface only — no unlock half).
+    play.getPlayer()!.collectPowerUp('shield', true);
+    play.getPlayer()!.collectPowerUp('magnet', true);
 
     // A high draw from the run-seeded stream must pick the last offered
     // option — proving the pick comes from `PlayScene`'s RNG, not
@@ -316,9 +320,16 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     const last = offered[offered.length - 1];
     expect(selected).toHaveBeenCalledWith(offered.length - 1);
     // The reward was applied through the shared reward resolver: the last
-    // option is a locked-weapon unlock, now recorded for the run.
-    expect(last.kind).toBe('weapon');
-    expect(play.getUnlockedWeapons()).toEqual([last.id]);
+    // option is a level-up of a kind the run owns permanently (the unlock
+    // feature is gone, so nothing on the wheel adds a new kind).
+    expect(last.kind === 'weapon-level' || last.kind === 'power-up-level').toBe(
+      true,
+    );
+    const levelled = [
+      ...play.getPlayer()!.getWeaponLevels(),
+      ...play.getPlayer()!.getPowerUpLevels(),
+    ].find((entry) => entry.id === last.id);
+    expect(levelled?.level).toBeGreaterThanOrEqual(1);
     // …and the run carries on: overlay closed, play resumed.
     expect(play.isMiniBossRewardOpen()).toBe(false);
     expect(play.isMineralChoiceOpen()).toBe(false);

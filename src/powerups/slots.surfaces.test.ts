@@ -17,7 +17,9 @@
  * 1. **field collection** — the real `CombatCoreScene._canCollectDrop` gate;
  * 2. **shared drop draw** — `drawNextDrop` over a weighted source;
  * 3. **hold-full choice** — `buildChoiceCandidates` with the live snapshot;
- * 4. **mini-boss unlock half** — the real `PlayScene.openMiniBossReward`;
+ * 4. **mini-boss reward** — the real `PlayScene.openMiniBossReward`: since the
+ *    unlock feature was removed it offers level-ups of held kinds only
+ *    (parent epic AH-0MVLISU03006WDOD AC5);
  * 5. **checkpoint resume** — the save seam (`saveCheckpoint`) bounds the
  *    persisted payload, so a resumed run cannot restore a seventh kind. The
  *    documented divergence (the replay itself does not re-gate a hand-written
@@ -52,7 +54,6 @@ import { MineralChoiceScene } from '../scenes/MineralChoiceScene';
 import { PlayScene } from '../scenes/PlayScene';
 import { resolveSceneSetupState } from '../scenes/core/sceneSetup';
 import { buildDefaultDropSpawner, drawNextDrop } from '../scenes/core/dropLayer';
-import { lockedWeaponIds, initialUnlockState } from './unlocks';
 import {
   CHOICE_POOL,
   buildChoiceCandidates,
@@ -274,13 +275,11 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
     }
   });
 
-  // ── 4. Mini-boss unlock half ──────────────────────────────────────
-  it('the mini-boss reward withholds an unlock of a seventh counted kind', () => {
+  // ── 4. Mini-boss reward ─────────────────────────────────────────
+  it('the mini-boss reward offers only kinds already in the pool (full pool)', () => {
     const live = player();
     fillMixedSix(live);
     const state = resolvePlayerSlotState(live);
-    const locked = lockedWeaponIds(initialUnlockState());
-    expect(locked.length).toBeGreaterThan(0);
 
     const options = (scene as unknown as MiniBossLauncher).openMiniBossReward(
       {},
@@ -288,31 +287,46 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
 
     // The overlay must never open empty (it pauses play).
     expect(options.length).toBeGreaterThan(0);
-    // No offered option names a kind outside the pool: the unlock half was
-    // filtered by the shared predicate, not by a scene-local copy.
+    // Every offer names a kind the player already holds: the unlock half was
+    // removed (parent AH-0MVLISU03006WDOD AC5), so the reward is a level-up
+    // only and can never acquire a seventh counted kind.
     for (const option of options) {
       expect(
         isWithinSlotPool(option.id as DropId, state),
         `${option.id} offered as a seventh slot`,
       ).toBe(true);
+      expect([...state.heldIds]).toContain(option.id);
     }
-    for (const weaponId of locked) {
-      expect(options.map((option) => option.id)).not.toContain(weaponId);
-    }
+    expect(options.map((option) => option.id)).not.toContain(
+      NEW_COUNTED_WEAPON,
+    );
+    expect(options.map((option) => option.id)).not.toContain(
+      NEW_COUNTED_POWER_UP,
+    );
   });
 
-  it('the mini-boss reward offers a new kind while the pool has room', () => {
+  it('the mini-boss reward never offers a brand-new weapon with room to spare', () => {
     const live = player();
-    const locked = lockedWeaponIds(initialUnlockState());
-    expect(locked.length).toBeGreaterThan(0);
+    // Own one permanent kind so the reward takes its level-up path (with
+    // nothing owned at all it deliberately falls back to the hold-full-style
+    // choice, which may offer base-pool kinds — parent AC4).
+    live.equipWeapon(MIXED_PERMANENT_WEAPON, true);
+    const held = new Set<string>([...resolvePlayerSlotState(live).heldIds]);
 
     const options = (scene as unknown as MiniBossLauncher).openMiniBossReward(
       {},
     );
-    const offeredIds = options.map((option) => option.id as DropId);
 
-    // Below the cap the gate is inert: a locked (brand-new) weapon is offered.
-    expect(offeredIds.some((id) => locked.includes(id as WeaponId))).toBe(true);
+    // Below the cap the old unlock half would have offered a locked weapon. The
+    // reward now offers level-ups of held kinds only, so a mini-boss is no
+    // longer an acquisition surface at all.
+    expect(options.length).toBeGreaterThan(0);
+    for (const option of options) {
+      expect(held.has(option.id)).toBe(true);
+    }
+    expect(options.map((option) => option.id)).not.toContain(
+      NEW_COUNTED_WEAPON,
+    );
     expect(resolvePlayerSlotState(live).used).toBeLessThanOrEqual(
       POWER_UP_SLOT_CAP,
     );
@@ -345,7 +359,6 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
       // Exempt entries never occupy a slot, so they survive the gate (Q7a).
       { id: 'extra_life', level: 1 },
     ],
-    unlockedWeapons: [],
     runSeed: 4242,
     savedAt: '2026-10-20T00:00:00.000Z',
   };

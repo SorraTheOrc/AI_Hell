@@ -101,7 +101,6 @@ const ARCADE_CHECKPOINT: Checkpoint = {
   mineralHoldCapacity: 5,
   weaponLevels: [],
   powerUpLevels: [],
-  unlockedWeapons: [],
   runSeed: 4242,
   savedAt: '2026-10-30T00:00:00.000Z',
 };

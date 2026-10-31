@@ -243,7 +243,6 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     mineralHoldCapacity: 5,
     weaponLevels: WEAPON_LEVELS,
     powerUpLevels: POWER_UP_LEVELS,
-    unlockedWeapons: [],
     runSeed: 4242,
     savedAt: '2026-10-20T00:00:00.000Z',
   };
@@ -445,14 +444,17 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     const FIRST_HOLD_CAPACITY = 5;
 
     /**
-     * A legacy (schema-v1) payload with an over-capacity saved count and no
+     * A current-schema payload with an over-capacity saved count and no
      * hold-capacity field, so it exercises the clamped-restore path with the
-     * first-hold default. Pinned to `version: 1` explicitly so the case stays
-     * legacy after the sibling item bumps `CHECKPOINT_VERSION` to 2
-     * (AH-0MVT1DYO5004UC4P).
+     * first-hold default (AH-0MVT1DYO5004UC4P).
+     *
+     * The schema version is the **shipped** constant: since the mini-boss wheel
+     * rework bumped it (parent AH-0MVLISU03006WDOD AC5) any other version is
+     * rejected outright, so the clamped-restore coverage must be driven by a
+     * current payload whose capacity field is simply absent.
      */
-    const LEGACY_OVER_CAPACITY: CheckpointPayload = {
-      version: 1,
+    const OVER_CAPACITY_FIRST_HOLD: CheckpointPayload = {
+      version: CHECKPOINT_VERSION,
       minerals: 20,
       // `JSON.stringify` drops `undefined` properties, so this override keeps
       // the serialised payload genuinely field-free while the shared fixture
@@ -472,9 +474,9 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     }
 
     it(
-      'AC1 — an over-capacity legacy checkpoint resumes with no hold-full choice pending',
+      'AC1 — an over-capacity checkpoint without a capacity field resumes into the first hold',
       async () => {
-        const scene = await bootResumed(LEGACY_OVER_CAPACITY);
+        const scene = await bootResumed(OVER_CAPACITY_FIRST_HOLD);
         const state = scene.getGameState();
 
         // The resume really happened (the saved score and seed survived), so
@@ -500,7 +502,7 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     it(
       'AC2 — resolving the first hold-full after Continue leaves the next hold not full',
       async () => {
-        const scene = await bootResumed(LEGACY_OVER_CAPACITY);
+        const scene = await bootResumed(OVER_CAPACITY_FIRST_HOLD);
         const state = scene.getGameState();
 
         // Resume clamps the saved surplus into the first hold.
@@ -538,7 +540,7 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     it(
       'AC3 — the resumed HUD hold bar never reports more than the hold can carry',
       async () => {
-        const scene = await bootResumed(LEGACY_OVER_CAPACITY);
+        const scene = await bootResumed(OVER_CAPACITY_FIRST_HOLD);
         const state = scene.getGameState();
         const hud = scene.getHUD()!;
 
@@ -557,10 +559,10 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     );
 
     it(
-      'AC4 — a version-2 checkpoint restores the earned hold capacity and clamps into it',
+      'AC4 — a current-version checkpoint restores the earned hold capacity and clamps into it',
       async () => {
         const scene = await bootResumed({
-          version: 2,
+          version: CHECKPOINT_VERSION,
           minerals: 25,
           mineralHoldCapacity: 20,
         });

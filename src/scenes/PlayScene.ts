@@ -137,6 +137,7 @@ import {
 import { EffectsRegistry } from '../powerups/effects';
 import {
   CHOICE_POOL,
+  buildOwnedLevelUpOptions,
   randomChoiceStrategy,
   toChoiceOption,
   type ChoiceOption,
@@ -148,13 +149,6 @@ import {
   resolvePlayerSlotState,
   type PowerUpSlotState,
 } from '../powerups/slots';
-import {
-  buildUpgradeOptions,
-  initialUnlockState,
-  lockedWeaponIds,
-  unlockWeapon,
-  type MiniBossUnlockState,
-} from '../powerups/unlocks';
 import {
   CHECKPOINT_VERSION,
   loadCheckpoint,
@@ -747,12 +741,6 @@ export class PlayScene extends CombatScene<
 
   /** Total mini-bosses defeated this run (AC3: exactly one hook per defeat). */
   private miniBossDefeats = 0;
-
-  /**
-   * Run-scoped mini-boss unlock state (AH-0MVCRBNO6003E1CH): which initially
-   * locked weapons this run has unlocked. The checkpoint feature persists it.
-   */
-  private miniBossUnlockState: MiniBossUnlockState = initialUnlockState();
 
   /** True while the mini-boss reward choice overlay is open. */
   private miniBossRewardOpen = false;
@@ -1460,7 +1448,6 @@ export class PlayScene extends CombatScene<
     this.miniBoss = null;
     this.miniBossDefeats = 0;
     this.miniBossSpawnedLevel = null;
-    this.miniBossUnlockState = initialUnlockState();
     this.miniBossRewardOpen = false;
     this.miniBossRewardOptions = [];
     this.miniBossSweepHandle = null;
@@ -3410,18 +3397,28 @@ export class PlayScene extends CombatScene<
 
   /**
    * Opens the mini-boss reward choice (AH-0MVCRBNO6003E1CH): one choice —
-   * upgrade an owned permanent weapon/power-up by one level, OR unlock a
-   * weapon from the initially-locked pool. Reuses the shared
+   * upgrade an owned permanent weapon/power-up by one level. Reuses the shared
    * `MineralChoiceScene` overlay (launcher-agnostic) and pauses play exactly
    * like the hold-full choice.
+   *
+   * The mini-boss reward no longer offers weapon **unlocks** (parent
+   * AH-0MVLISU03006WDOD AC5): the run-scoped unlock feature was removed when the
+   * reward became the upgrade wheel, so the menu offers level-ups of kinds the
+   * player already holds — never a brand-new weapon kind.
+   *
+   * **A mini-boss always pays out** (parent AH-0MVLISU03006WDOD AC4). When the
+   * run holds nothing to upgrade — possible at the level-1 mini-boss — the
+   * reward falls back to the same three-option hold-full-style choice, so the
+   * paused overlay can never open empty and soft-lock the run.
    *
    * @param _context - The defeated mini-boss's context (level/wave/name).
    * @returns The offered options.
    */
   openMiniBossReward(_context: MiniBossDefeatContext): ChoiceOption[] {
     if (this.miniBossRewardOpen) return [...this.miniBossRewardOptions];
-    // Option A — upgrade any one owned permanent weapon/power-up.
-    const owned: ChoiceOption[] = buildUpgradeOptions({
+    // One offer per owned permanent weapon/power-up — the same shared builder
+    // the hold-full choice uses, so the two surfaces can never drift.
+    const owned: ChoiceOption[] = buildOwnedLevelUpOptions({
       weaponLevels: this.player?.getWeaponLevels() ?? [],
       powerUpLevels: this.player?.getPowerUpLevels() ?? [],
       // The mini-boss reward reads the same six-slot view as the hold-full
@@ -3429,32 +3426,25 @@ export class PlayScene extends CombatScene<
       tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
       tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
     });
-    // Option B — unlock one weapon still in the initially-locked pool.
-    const unlocks: ChoiceOption[] = lockedWeaponIds(
-      this.miniBossUnlockState,
-    ).map((weaponId) => toChoiceOption(weaponId as DropId));
-    // Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4). The unlock half is a
-    // base-entry offer built outside `buildChoiceCandidates`, so it must consult
-    // the shared pool itself: at six held kinds a mini-boss unlock of a
-    // brand-new weapon kind would be a seventh slot — the path the producer
-    // reported. Only an unlock for a kind held *temporarily* survives (taking
-    // it makes it permanent without adding a kind); upgrade options name kinds
-    // already held permanently, so they always survive. Below the cap the gate
-    // is inert and the offer is unchanged.
+    // Six-slot gate (parent AH-0MVLIJT3M005HPHF AC4). Every offer here names a
+    // kind the player already holds (permanently or temporarily), so it is
+    // admissible by construction; the shared predicate is still applied so the
+    // reward surface keeps consulting the single source of truth rather than a
+    // scene-local copy of the rule.
     const slotState = resolvePlayerSlotState(this.player);
-    const candidates = [...owned, ...unlocks];
-    const admissible = filterOptionsWithinSlotPool(candidates, slotState);
+    const admissible = filterOptionsWithinSlotPool(owned, slotState);
     // The overlay pauses play, so it must never open with nothing to pick — an
     // empty offer would stall the run. At a full pool the held kinds themselves
     // are always admissible (taking one makes a temporarily-held kind
-    // permanent), so fall back to those rather than re-admitting a seventh
-    // kind. Below the cap the unfiltered list is already admissible.
+    // permanent), so fall back to those rather than opening with no options;
+    // with nothing held at all, fall back to the hold-full-style three-option
+    // choice so the mini-boss still pays out (parent AC4).
     const options =
       admissible.length > 0
         ? admissible
         : slotState.isFull
           ? this._heldKindRewardOptions(slotState)
-          : candidates;
+          : this._holdFullStyleRewardOptions();
     this.miniBossRewardOptions = options;
     this.miniBossRewardOpen = true;
     this.mineralChoiceOpen = true;
@@ -3503,6 +3493,25 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * The last-resort mini-boss reward when the run owns nothing to upgrade
+   * (parent AH-0MVLISU03006WDOD AC4): the same three-option hold-full-style
+   * choice the hold-full overlay offers.
+   *
+   * Reusing the shared choice strategy keeps one definition of "what a reward
+   * may offer" — the base pool, the owned level-ups and the six-slot gate are
+   * all applied by the strategy itself, so this fallback cannot drift from the
+   * hold-full choice.
+   */
+  private _holdFullStyleRewardOptions(): ChoiceOption[] {
+    return this.mineralChoiceStrategy.choose(3, this.rng, {
+      weaponLevels: this.player?.getWeaponLevels() ?? [],
+      powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+      tempPowerUpIds: this.player?.getTempPowerUpIds() ?? [],
+      tempWeaponIds: this.player?.getTempWeaponIds() ?? [],
+    });
+  }
+
+  /**
    * The demo bot's random mini-boss reward pick: a uniform index into the
    * currently offered reward options, drawn from the run-seeded RNG so a given
    * seed reproduces the same reward (AH-0MVJ8U79V0056I2F · AC2). The result is
@@ -3518,9 +3527,11 @@ export class PlayScene extends CombatScene<
 
   /**
    * Resolves the mini-boss reward: applies the chosen option through the
-   * shared reward seam (permanent upgrade or weapon unlock), records any
-   * unlock, resumes play and closes the overlay. Exactly one option is
-   * consumed per mini-boss (AC4).
+   * shared reward seam (a permanent upgrade), resumes play and closes the
+   * overlay. Exactly one option is consumed per mini-boss (AC4).
+   *
+   * Nothing is recorded against a run-scoped unlock state because the feature
+   * is gone (parent AH-0MVLISU03006WDOD AC5).
    *
    * @returns The chosen option, or null for an out-of-range index.
    */
@@ -3528,14 +3539,6 @@ export class PlayScene extends CombatScene<
     const option = this.miniBossRewardOptions[index];
     if (!option) return null;
     applyMineralChoiceReward(option, this.effectsRegistry, this.player);
-    // An unlock option names a locked weapon: record it so the run (and the
-    // checkpoint) knows the weapon is now available.
-    if (option.kind === 'weapon') {
-      this.miniBossUnlockState = unlockWeapon(
-        option.id as WeaponId,
-        this.miniBossUnlockState,
-      );
-    }
     this.miniBossRewardOpen = false;
     this.miniBossRewardOptions = [];
     this.mineralChoiceOpen = false;
@@ -3571,7 +3574,6 @@ export class PlayScene extends CombatScene<
         mineralHoldCapacity: this.gameState.mineralCapacity,
         weaponLevels: this.player?.getWeaponLevels() ?? [],
         powerUpLevels: this.player?.getPowerUpLevels() ?? [],
-        unlockedWeapons: this.getUnlockedWeapons(),
         runSeed: this.getRunSeed(),
         savedAt: new Date().toISOString(),
       };
@@ -3835,9 +3837,6 @@ export class PlayScene extends CombatScene<
     // value is applied last and pushed into the store the HUD reads.
     this.gameState.lives = checkpoint.lives;
     this.effectsRegistry.setLives(checkpoint.lives);
-    const unlocked = new Set<WeaponId>(this.miniBossUnlockState.unlockedWeapons);
-    for (const weaponId of checkpoint.unlockedWeapons) unlocked.add(weaponId);
-    this.miniBossUnlockState = { unlockedWeapons: unlocked };
     // A resumed run must not re-bank the salvage its checkpoint already
     // extracted before the previous death: align the run's watermark with the
     // restored snapshot so only salvage earned from here on is banked
@@ -3882,11 +3881,6 @@ export class PlayScene extends CombatScene<
    */
   getMiniBossSweepTargets(): readonly MiniBossSweepTarget[] {
     return [...this.miniBossSweepTargets];
-  }
-
-  /** The weapons this run has unlocked through mini-boss rewards. */
-  getUnlockedWeapons(): WeaponId[] {
-    return [...this.miniBossUnlockState.unlockedWeapons];
   }
 
   /**

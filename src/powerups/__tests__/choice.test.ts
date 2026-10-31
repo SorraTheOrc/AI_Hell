@@ -27,7 +27,7 @@ import {
   PowerUpLevelStore,
   summarisePowerUpLevelChange,
 } from '../powerUpLevels';
-import { buildUpgradeOptions } from '../unlocks';
+import { buildOwnedLevelUpOptions } from '../choice';
 import { getHelpDescription } from '../../utils/gymHelp';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import {
@@ -741,7 +741,9 @@ describe('power-up choice strategy', () => {
       const holdFull = buildChoiceCandidates(CHOICE_POOL, context).filter(
         (o) => o.kind === 'weapon-level' || o.kind === 'power-up-level',
       );
-      expect(buildUpgradeOptions(context)).toEqual(holdFull);
+      // The mini-boss reward builds its level-up offer through the same shared
+      // builder the hold-full choice uses (AH-0MVL9P2SF009QFON AC3).
+      expect(buildOwnedLevelUpOptions(context)).toEqual(holdFull);
     });
   });
 

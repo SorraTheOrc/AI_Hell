@@ -216,7 +216,6 @@ describe('MenuScene — Hangar War entry (AH-0MVUXC2DD003HN0I)', () => {
       mineralHoldCapacity: 5,
       weaponLevels: [],
       powerUpLevels: [],
-      unlockedWeapons: [],
       runSeed: 4242,
       savedAt: '2026-10-30T00:00:00.000Z',
     });
@@ -1073,7 +1072,6 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
         minerals: 3,
         weaponLevels: [{ id: 'spread', level: 2 }],
         powerUpLevels: [{ id: 'shield', level: 1 }],
-        unlockedWeapons: ['railgun'],
         runSeed: 4242,
         savedAt: '2026-10-20T00:00:00.000Z',
       }),
@@ -1136,7 +1134,6 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
     expect(play.getGameState().lives).toBe(2);
     expect(play.getGameState().score).toBe(9876);
     expect(play.getGameState().minerals).toBe(3);
-    expect(play.getUnlockedWeapons()).toContain('railgun');
     expect(play.getRunSeed()).toBe(4242);
     expect(
       play
@@ -1243,7 +1240,6 @@ describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
     expect(play.getGameState().lives).toBe(2);
     expect(play.getGameState().score).toBe(9876);
     expect(play.getGameState().minerals).toBe(3);
-    expect(play.getUnlockedWeapons()).toContain('railgun');
     expect(play.getRunSeed()).toBe(4242);
     expect(
       play

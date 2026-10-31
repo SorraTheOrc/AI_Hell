@@ -110,10 +110,6 @@ import {
 } from '../core/levelScaling';
 import { miniBossConfigForLevel, miniBossDesignForLevel } from '../waves/miniBossDesigns';
 import { scaledEncounterHp } from '../core/difficultyScaling';
-import {
-  MINI_BOSS_LOCKED_WEAPONS,
-  lockedWeaponIds,
-} from '../powerups/unlocks';
 import { CHECKPOINT_STORAGE_KEY, loadCheckpoint } from '../core/checkpointStore';
 import {
   HANGAR_WAR_STORAGE_KEY,
@@ -7339,7 +7335,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(miniBoss.getHpFraction()).toBeLessThan(1);
   });
 
-  it('AC1/AC4 — a defeat offers exactly one upgrade-or-unlock choice', async () => {
+  it('AC1/AC4 — a defeat offers exactly one upgrade choice (no unlock options)', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
     // Collect/own a weapon so the upgrade option set is non-empty.
@@ -7349,17 +7345,12 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
 
     const options = scene.getMiniBossRewardOptions();
     expect(options.length).toBeGreaterThan(0);
-    // Both option families are present: owned-item upgrades and locked
-    // weapon unlocks.
+    // The reward is a level-up surface only (parent AH-0MVLISU03006WDOD AC5):
+    // every offer upgrades an owned permanent item, and no option adds a
+    // brand-new weapon kind.
+    expect(options.every((option) => option.kind === 'weapon-level' || option.kind === 'power-up-level')).toBe(true);
     expect(options.some((option) => option.kind === 'weapon-level')).toBe(true);
-    expect(options.some((option) => option.kind === 'weapon')).toBe(true);
-    // The unlock candidates are exactly the still-locked weapons.
-    const unlockIds = options
-      .filter((option) => option.kind === 'weapon')
-      .map((option) => option.id);
-    expect(unlockIds.sort()).toEqual(
-      [...lockedWeaponIds({ unlockedWeapons: new Set() })].sort(),
-    );
+    expect(options.some((option) => option.kind === 'weapon')).toBe(false);
   });
 
   it('AC2/AC4 — choosing an upgrade raises an owned permanent item by one level', async () => {
@@ -7389,33 +7380,23 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     expect(scene.selectMiniBossReward(upgradeIndex)).toBeNull();
   });
 
-  it('AC3/AC4 — choosing an unlock makes that locked weapon available for the run', async () => {
+  it('AC5 — the removed unlock feature leaves no unlock option and no persisted unlock state', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
-    expect(scene.getUnlockedWeapons()).toEqual([]);
+    scene.getPlayer()!.equipWeapon('spread', true);
+    localStorage.removeItem(CHECKPOINT_STORAGE_KEY);
 
     killMiniBoss(scene, false);
     const options = scene.getMiniBossRewardOptions();
-    const unlockIndex = options.findIndex(
-      (option) => option.kind === 'weapon' && option.id === 'railgun',
-    );
-    expect(unlockIndex).toBeGreaterThanOrEqual(0);
+    // A previously locked weapon can never be picked up from the reward…
+    expect(options.some((option) => option.id === 'railgun')).toBe(false);
 
-    scene.selectMiniBossReward(unlockIndex);
-    expect(scene.getUnlockedWeapons()).toEqual(['railgun']);
-    // The unlocked weapon is genuinely equipped through the shared seam.
-    expect(
-      scene
-        .getPlayer()!
-        .getWeaponLevels()
-        .some((entry) => entry.id === 'railgun'),
-    ).toBe(true);
-    // And it is no longer offered as an unlock by the next encounter.
-    const stillLocked = lockedWeaponIds({
-      unlockedWeapons: new Set(scene.getUnlockedWeapons()),
-    });
-    expect(stillLocked).not.toContain('railgun');
-    expect(MINI_BOSS_LOCKED_WEAPONS).toContain('railgun');
+    scene.selectMiniBossReward(0);
+    // …and the checkpoint no longer carries a `unlockedWeapons` field, so the
+    // removed feature cannot leak back through Continue.
+    const persisted = loadCheckpoint()!;
+    expect(persisted).not.toBeNull();
+    expect(persisted).not.toHaveProperty('unlockedWeapons');
   });
 
   // ── Six-slot cap on the reward offer (parent AH-0MVLIJT3M005HPHF AC4) ──
@@ -7460,7 +7441,7 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     }
   });
 
-  it('AH-0MVLIJT3M005HPHF AC4 — a kind held only temporarily can still be made permanent at the cap', async () => {
+  it('AH-0MVLIJT3M005HPHF AC4 — a temporarily-held kind is no longer offered as an unlock', async () => {
     const scene = await bootMiniBossCampaign();
     advanceToMiniBoss(scene);
     const player = scene.getPlayer()!;
@@ -7470,17 +7451,17 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     for (const id of ['shield', 'bomb', 'speed_boost', 'phase_shift'] as const) {
       player.collectPowerUp(id, true);
     }
-    // The sixth slot is a field pickup of a still-locked weapon, so taking the
-    // unlock adds no new kind — it makes an already-slotted kind permanent.
+    // The sixth slot is a field pickup of a previously locked weapon.
     player.equipWeapon('railgun', false);
 
     killMiniBoss(scene, false);
 
-    const unlockIds = scene
-      .getMiniBossRewardOptions()
-      .filter((option) => option.kind === 'weapon')
-      .map((option) => option.id);
-    expect(unlockIds).toEqual(['railgun']);
+    const options = scene.getMiniBossRewardOptions();
+    // The unlock half is gone, so the temporarily-held weapon is not offered as
+    // an acquisition; the reward offers only the permanently-owned kinds.
+    expect(options.some((option) => option.kind === 'weapon')).toBe(false);
+    expect(options.map((option) => option.id)).not.toContain('railgun');
+    expect(options.map((option) => option.id)).toContain('spread');
   });
 
   it('AH-0MVLIJT3M005HPHF AC4 — a full pool never opens an empty reward (no soft-lock)', async () => {
@@ -7514,6 +7495,28 @@ describe('PlayScene — mini-boss encounter (AH-0MVCRBISU006NUN5)', () => {
     // And the reward still resolves, so play resumes.
     expect(scene.selectMiniBossReward(0)).not.toBeNull();
     expect(scene.isMiniBossRewardOpen()).toBe(false);
+  });
+
+  it('AH-0MVLISU03006WDOD AC4 — a mini-boss always pays out (empty loadout fallback)', async () => {
+    const scene = await bootMiniBossCampaign();
+    advanceToMiniBoss(scene);
+    const player = scene.getPlayer()!;
+    // Nothing owned, nothing held: the level-1 mini-boss case that used to be
+    // covered by the (now removed) unlock half.
+    player.resetWeaponLevels();
+    player.getPowerUpLevelStore().reset();
+
+    killMiniBoss(scene, false);
+
+    const options = scene.getMiniBossRewardOptions();
+    // The reward falls back to the hold-full-style three-option choice, so the
+    // paused overlay never opens empty…
+    expect(options.length).toBeGreaterThan(0);
+    expect(options.map((option) => option.id)).not.toContain('reset');
+    // …and it resolves, so play resumes (no soft-lock).
+    expect(scene.selectMiniBossReward(0)).not.toBeNull();
+    expect(scene.isMiniBossRewardOpen()).toBe(false);
+    expect(scene.isMineralChoiceOpen()).toBe(false);
   });
 
   it('AC2 — a mini-boss defeat auto-saves the run checkpoint', async () => {

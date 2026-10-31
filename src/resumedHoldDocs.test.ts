@@ -85,25 +85,33 @@ describe('the resumed-hold semantics are documented (AH-0MVT1E0SZ0030Q8Z)', () =
     expect(row).toMatch(/lives, score, minerals, the \*\*ship's hold capacity\*\*/i);
   });
 
-  it('§6.6 records the schema bump and the legacy v1 default', () => {
+  it('§6.6 records the schema bump and the stale-version rejection', () => {
     const row = checkpointRow(gdd);
-    expect(row).toMatch(/schema \*\*v2\*\*/i);
-    expect(row).toMatch(/legacy v1/i);
-    expect(row).toMatch(/no capacity field and resumes at the first-hold capacity/i);
+    expect(row).toMatch(/schema \*\*v3\*\*/i);
+    // The mini-boss wheel rework removed the unlock field, so a payload from any
+    // other schema version is rejected rather than migrated.
+    expect(row).toMatch(/rejected as "no checkpoint"/i);
     expect(row).toMatch(/clamps the saved mineral count into `\[0, capacity\]`/i);
   });
 
   it('the documented schema version is the shipped constant', () => {
-    expect(CHECKPOINT_VERSION).toBe(2);
+    expect(CHECKPOINT_VERSION).toBe(3);
     expect(checkpointRow(gdd)).toContain(`schema **v${CHECKPOINT_VERSION}**`);
   });
 
-  it('the documented legacy default is the shipped first-hold capacity', () => {
-    // A legacy payload without the capacity field resumes at the canonical
+  it('the documented first-hold default is the shipped capacity', () => {
+    // A current payload without the capacity field resumes at the canonical
     // first-hold capacity — pin the prose to the constant, not a literal.
     expect(DEFAULT_MINERAL_HOLD_CAPACITY).toBe(5);
-    const legacy = parseCheckpoint({ level: 2, wave: 1, lives: 3, score: 0, minerals: 20 });
-    expect(legacy?.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
+    const parsed = parseCheckpoint({
+      version: CHECKPOINT_VERSION,
+      level: 2,
+      wave: 1,
+      lives: 3,
+      score: 0,
+      minerals: 20,
+    });
+    expect(parsed?.mineralHoldCapacity).toBe(DEFAULT_MINERAL_HOLD_CAPACITY);
     expect(holdSection(gdd)).toContain('first-hold capacity');
   });
 
