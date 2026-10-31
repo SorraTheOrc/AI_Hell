@@ -18,11 +18,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin, ViteDevServer } from 'vite';
 
@@ -52,7 +53,20 @@ export const ALLOWED_CSV_FILES = [
 ] as const;
 
 export interface ConfigCsvPluginOptions {
-  /** Project root the CSV paths resolve against. Defaults to `process.cwd()`. */
+  /**
+   * Explicit project root override for tests/fixtures.
+   *
+   * When omitted the plugin uses the Vite server's resolved
+   * `server.config.root`, captured in `configureServer` — **never**
+   * `process.cwd()`. Vite resolves `config.root` from the config file's
+   * directory, so the plugin always targets the checkout Vite is actually
+   * serving (a suite running from a worktree can therefore never follow
+   * `process.cwd()` into the main checkout, AH-0MVKYQWSW0067F12).
+   *
+   * When neither an explicit root nor `server.config.root` is available the
+   * middleware is not registered at all: a plugin that cannot verify the
+   * checkout it serves must never fall back to guessing one.
+   */
   root?: string;
 }
 
@@ -115,6 +129,57 @@ export function atomicWrite(filePath: string, content: string): void {
   }
 }
 
+/** Resolve a path through `realpath` where possible, else the input path. */
+function realpathOrSelf(target: string): string {
+  try {
+    return realpathSync(target);
+  } catch {
+    // Missing paths (a fresh target cannot be realpath'd) keep their
+    // already-resolved form.
+    return target;
+  }
+}
+
+/**
+ * True when `filePath` stays inside `root`.
+ *
+ * Containment is checked with `path.relative` (not a naive `startsWith`
+ * prefix, which `/repo-evil` would satisfy for `/repo`): `..` traversal and
+ * absolute paths resolve outside the root and are rejected. Both sides run
+ * through `realpath` for the parts that exist, so a symlinked
+ * `node_modules` cannot make a legitimate in-root path look foreign.
+ */
+export function isWithinRoot(root: string, filePath: string): boolean {
+  const realRoot = realpathOrSelf(resolve(root));
+  const realTarget = realpathOrSelf(resolve(filePath));
+  const rel = relative(realRoot, realTarget);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/**
+ * Resolve a request target under `root`, refusing anything that escapes it.
+ *
+ * Applied to GET as well as PUT (parent AC: "any request"): reads outside
+ * the served checkout are equally unintended. The refusal happens before any
+ * filesystem access to the target, so an escaping request can never create or
+ * modify a file — it gets HTTP 403 and a logged reason (AH-0MVS9U6PP009JB0M).
+ */
+function resolveTarget(
+  root: string,
+  res: ServerResponse,
+  relPath: string,
+): string | null {
+  const filePath = resolve(root, relPath);
+  if (!isWithinRoot(root, filePath)) {
+    console.warn(
+      `[ai-hell:config-csv] refused request: target escapes project root: ${relPath}`,
+    );
+    sendJson(res, 403, { ok: false, error: 'target escapes project root' });
+    return null;
+  }
+  return filePath;
+}
+
 // ── Request handlers ────────────────────────────────────────────────
 
 interface ParsedUrl {
@@ -132,11 +197,12 @@ function handleGet(
   res: ServerResponse,
   relPath: string,
 ): void {
+  const filePath = resolveTarget(root, res, relPath);
+  if (filePath === null) return;
   if (!isAllowedPath(relPath)) {
     sendJson(res, 404, { ok: false, error: `Not found: ${relPath}` });
     return;
   }
-  const filePath = resolve(root, relPath);
   if (!existsSync(filePath)) {
     sendJson(res, 404, { ok: false, error: `Not found: ${relPath}` });
     return;
@@ -159,12 +225,13 @@ function handlePut(
   query: URLSearchParams,
   body: string,
 ): void {
+  const filePath = resolveTarget(root, res, relPath);
+  if (filePath === null) return;
   if (!isAllowedPath(relPath)) {
     sendJson(res, 404, { ok: false, error: `Not found: ${relPath}` });
     return;
   }
 
-  const filePath = resolve(root, relPath);
   if (!existsSync(filePath)) {
     sendJson(res, 404, { ok: false, error: `Not found: ${relPath}` });
     return;
@@ -268,17 +335,36 @@ function isDevServer(server: ViteDevServer): boolean {
 /**
  * Create the dev-only CSV config plugin.
  *
- * @param options.root — project root (defaults to `process.cwd()`).
+ * The read/write root is resolved inside `configureServer` from
+ * `options.root` (explicit override) or the Vite server's resolved
+ * `server.config.root` — never `process.cwd()`, so the plugin always targets
+ * the checkout Vite is serving (AH-0MVS9U6PP009JB0M, parent
+ * AH-0MVKYQWSW0067F12). Any request whose target resolves outside that root
+ * is refused with HTTP 403 before any file I/O.
+ *
+ * @param options.root — explicit project root override (tests/fixtures).
+ *   Defaults to the Vite-resolved `server.config.root`.
  */
 export function configCsvPlugin(options: ConfigCsvPluginOptions = {}): Plugin {
-  const root = options.root ?? process.cwd();
-
   return {
     name: 'ai-hell:config-csv',
     // Only applies to the dev server (`vite`), never `vite build`.
     apply: 'serve',
     configureServer(server) {
       if (!isDevServer(server)) return;
+
+      // Resolve the root here, from the Vite-resolved project root, instead
+      // of at plugin-construction time from `process.cwd()`.
+      const configuredRoot = options.root ?? server.config?.root;
+      if (!configuredRoot) {
+        const logger = server.config?.logger ?? console;
+        logger.warn(
+          '[ai-hell:config-csv] no project root resolved from the Vite server; CSV endpoints are disabled',
+        );
+        return;
+      }
+      const root = resolve(configuredRoot);
+
       server.middlewares.use((req, res, next) => {
         const rawUrl = req.url ?? '';
         if (!rawUrl.startsWith(CSV_API_PREFIX)) {

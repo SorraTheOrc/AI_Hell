@@ -12,7 +12,7 @@
  * @vitest-environment node
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   existsSync,
   mkdirSync,
@@ -23,14 +23,15 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createServer, type Server } from 'node:http';
+import { basename, join } from 'node:path';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import type { ViteDevServer } from 'vite';
 
 import {
   configCsvPlugin,
   CSV_API_PREFIX,
   atomicWrite,
+  type ConfigCsvPluginOptions,
 } from './configCsvPlugin';
 import { DEFAULT_ENEMY_CONFIGS } from '../../src/core/enemyConfig';
 
@@ -96,8 +97,12 @@ interface TestServer {
 function startServer(
   root: string,
   command: 'serve' | 'build' = 'serve',
+  /** Options passed to the plugin; defaults to an explicit `{ root }`. */
+  pluginOptions: ConfigCsvPluginOptions = { root },
+  /** The fake server's resolved `config.root` (null = no root at all). */
+  serverRoot: string | null = root,
 ): Promise<TestServer> {
-  const plugin = configCsvPlugin({ root });
+  const plugin = configCsvPlugin(pluginOptions);
   let middleware: ((req: unknown, res: unknown, next: () => void) => void) | null =
     null;
 
@@ -105,6 +110,7 @@ function startServer(
     config: {
       command,
       mode: command === 'serve' ? 'development' : 'production',
+      ...(serverRoot === null ? {} : { root: serverRoot }),
     },
     middlewares: {
       use: (fn: (req: unknown, res: unknown, next: () => void) => void) => {
@@ -479,6 +485,199 @@ describe('Atomic write (AC6)', () => {
 });
 
 // ── AC8: Registration in vite.config.ts ─────────────────────────────
+
+/**
+ * Send a request whose path is NOT normalised by the client.
+ *
+ * `fetch` normalises dot-segments (`/api/csv/../x` becomes `/api/x`), which
+ * would bypass the plugin entirely, so traversal tests must use the raw
+ * http client to prove the middleware itself refuses the escape.
+ */
+function rawRequest(
+  url: string,
+  rawPath: string,
+  method = 'GET',
+  body?: string,
+): Promise<{ status: number; body: string }> {
+  const { hostname, port } = new URL(url);
+  return new Promise((resolveRequest, rejectRequest) => {
+    const headers: Record<string, string | number> = body
+      ? { 'Content-Type': 'text/csv', 'Content-Length': Buffer.byteLength(body) }
+      : {};
+    const req = httpRequest(
+      { hostname, port: Number(port), path: rawPath, method, headers },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () =>
+          resolveRequest({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString('utf8'),
+          }),
+        );
+      },
+    );
+    req.on('error', rejectRequest);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+// ── AC2 (root isolation): default root ───────────────────────────────
+
+describe('Root isolation — default root (AC2)', () => {
+  it('uses server.config.root instead of process.cwd() when no root option is given', async () => {
+    const decoyRoot = mkdtempSync(join(tmpdir(), 'csv-plugin-cwd-'));
+    createFixtures(decoyRoot);
+    const decoyShipBefore = readFileSync(join(decoyRoot, SHIP_REL), 'utf8');
+    const originalCwd = process.cwd();
+    process.chdir(decoyRoot);
+    try {
+      // No `root` option: the plugin must take the Vite-resolved root.
+      const { url } = await startServer(tempRoot, 'serve', {}, tempRoot);
+
+      // Reads resolve against the served root.
+      const get = await fetch(`${url}${CSV_API_PREFIX}${SHIP_REL}`);
+      expect(get.status).toBe(200);
+      expect(await get.text()).toBe(readFileSync(join(tempRoot, SHIP_REL), 'utf8'));
+
+      // Writes land in the served root only; the cwd checkout is untouched.
+      const put = await fetch(`${url}${CSV_API_PREFIX}${SHIP_REL}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: shipCsv(999),
+      });
+      expect(put.status).toBe(200);
+      expect(readFileSync(join(tempRoot, SHIP_REL), 'utf8')).toContain('999');
+      expect(readFileSync(join(decoyRoot, SHIP_REL), 'utf8')).toBe(decoyShipBefore);
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(decoyRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('an explicit root option takes precedence over server.config.root', async () => {
+    const explicitRoot = mkdtempSync(join(tmpdir(), 'csv-plugin-explicit-'));
+    createFixtures(explicitRoot);
+    try {
+      const { url } = await startServer(tempRoot, 'serve', { root: explicitRoot }, tempRoot);
+      const res = await fetch(`${url}${CSV_API_PREFIX}${SHIP_REL}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/csv' },
+        body: shipCsv(888),
+      });
+      expect(res.status).toBe(200);
+      expect(readFileSync(join(explicitRoot, SHIP_REL), 'utf8')).toContain('888');
+      expect(readFileSync(join(tempRoot, SHIP_REL), 'utf8')).not.toContain('888');
+    } finally {
+      rmSync(explicitRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not register the middleware when neither a root option nor config.root exists', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { registered, url } = await startServer(tempRoot, 'serve', {}, null);
+      expect(registered).toBe(false);
+      expect(warnSpy.mock.calls.flat().join('\n')).toContain('no project root resolved');
+      // Endpoint is unreachable rather than falling back to process.cwd().
+      const res = await fetch(`${url}${CSV_API_PREFIX}${SHIP_REL}`);
+      expect(res.status).toBe(404);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+// ── AC2 (root isolation): escape refusal ────────────────────────────
+
+describe('Root isolation — escape refusal (AC2)', () => {
+  let outsideRoot: string;
+
+  beforeEach(() => {
+    outsideRoot = mkdtempSync(join(tmpdir(), 'csv-plugin-outside-'));
+    writeFileSync(join(outsideRoot, 'secret.csv'), 'secret-data\n');
+  });
+
+  afterEach(() => {
+    rmSync(outsideRoot, { recursive: true, force: true });
+  });
+
+  /** A path that leaves `tempRoot` and reaches a real file outside it. */
+  function escapePath(): string {
+    return `../${basename(outsideRoot)}/secret.csv`;
+  }
+
+  it('refuses GET ../ traversal with 403 and never reads the outside file', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { url } = await startServer(tempRoot);
+      const res = await rawRequest(url, `${CSV_API_PREFIX}${escapePath()}`);
+      expect(res.status).toBe(403);
+      expect(JSON.parse(res.body)).toMatchObject({
+        ok: false,
+        error: 'target escapes project root',
+      });
+      expect(res.body).not.toContain('secret-data');
+      expect(warnSpy.mock.calls.flat().join('\n')).toContain(
+        'target escapes project root',
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('refuses a URL-encoded traversal with 403', async () => {
+    const { url } = await startServer(tempRoot);
+    const encoded = `${CSV_API_PREFIX}%2e%2e%2f${basename(outsideRoot)}%2fsecret.csv`;
+    const res = await rawRequest(url, encoded);
+    expect(res.status).toBe(403);
+    expect(res.body).not.toContain('secret-data');
+  });
+
+  it('refuses an absolute target path with 403', async () => {
+    const { url } = await startServer(tempRoot);
+    const absolute = `${CSV_API_PREFIX}${encodeURIComponent(join(outsideRoot, 'secret.csv'))}`;
+    const res = await rawRequest(url, absolute);
+    expect(res.status).toBe(403);
+    expect(res.body).not.toContain('secret-data');
+  });
+
+  it('refuses an escaping PUT with 403 and creates no file (no I/O)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { url } = await startServer(tempRoot);
+      const target = `../${basename(outsideRoot)}/evil.csv`;
+      const res = await rawRequest(
+        url,
+        `${CSV_API_PREFIX}${target}`,
+        'PUT',
+        shipCsv(111),
+      );
+      expect(res.status).toBe(403);
+      expect(JSON.parse(res.body)).toMatchObject({
+        ok: false,
+        error: 'target escapes project root',
+      });
+      // The refusal happened before any file access: nothing was created.
+      expect(existsSync(join(outsideRoot, 'evil.csv'))).toBe(false);
+      expect(
+        readdirSync(outsideRoot).filter((f) => f.startsWith('.tmp_')),
+      ).toEqual([]);
+      expect(warnSpy.mock.calls.flat().join('\n')).toContain(
+        'target escapes project root',
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('still answers 404 (not 403) for an in-root but non-allowed path', async () => {
+    const { url } = await startServer(tempRoot);
+    const res = await rawRequest(url, `${CSV_API_PREFIX}src/data/other.csv`);
+    expect(res.status).toBe(404);
+  });
+});
 
 describe('Registration in vite.config.ts (AC8)', () => {
   it('registers the CSV plugin in the resolved Vite config', async () => {
