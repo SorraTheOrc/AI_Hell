@@ -44,6 +44,13 @@ const ORIGINAL_CSV = readFileSync(CSV, 'utf8');
 
 const TUNE_ARGS = [
   '--tune',
+  // `--skirmish` is required, not a preference: since the campaign became the
+  // batch default (AH-0MVD1RK2V009J5D2) a 400-tick run never reaches a boss,
+  // so `enemiesKilledByArchetype.boss` is 0 in both sweeps and the comparison
+  // has nothing to move (AH-0MVWN4CG1000ZNEG). The legacy seeded skirmish
+  // reservoir still spawns the boss archetype, which is what this reduced
+  // sweep needs to exercise the edited `boss.health` within seconds.
+  '--skirmish',
   '--set',
   'enemy-configs.csv',
   'boss.health=6',
