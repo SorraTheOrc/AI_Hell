@@ -55,7 +55,13 @@
  *
  * Output format is WebM/VP9. MP4 transcoding is intentionally **not** done
  * here: the SpikeBox Playwright build ships a minimal ffmpeg with no VP9
- * decoder — see the "Known limits" section of the doc.
+ * decoder/encoder — see the "Known limits" section of the doc. The one ffmpeg
+ * the capture path *does* use is the packet-preserving seek-index remux
+ * (`-c copy`, no encoder) that makes a delivered clip seekable so players can
+ * fast-forward it (`scripts/capture-seekable.mjs`, AH-0MVMIK8EM001JAYR). It
+ * prefers the Playwright-bundled binary and degrades to delivering the
+ * unseekable clip with a warning when none can remux, so a host with no
+ * ffmpeg at all still captures.
  *
  * Usage:
  *
@@ -98,6 +104,7 @@ import {
   writeDiagnosticsArtifact,
 } from './capture-diagnostics.mjs';
 import { createRecordingPipeline } from './capture-recording-pipeline.mjs';
+import { reportSeekableOutcome } from './capture-seekable.mjs';
 import {
   CaptureSalvageError,
   failureSalvageLine,
@@ -2073,9 +2080,14 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
     // Finalise the streamed recording (AH-0MVNT26AQ005LDNS): every chunk is
     // already on disk at the `.partial` path, so a successful clip is just the
     // rename into place. A failure path leaves the partial file untouched for
-    // the salvage item (AH-0MVNT29MC008BQPY).
+    // the salvage item (AH-0MVNT29MC008BQPY). The same seam then makes the
+    // delivered clip seekable (AH-0MVMIK8EM001JAYR): the pipeline runs the
+    // packet-preserving seek-index remux, and the outcome is reported (never
+    // fatal — a missing/unusable ffmpeg keeps the unseekable clip with a
+    // warning that names the fix).
     const written = recording.finalise({ success: true });
-    const videoBytes = written.bytesWritten;
+    reportSeekableOutcome(reporter, written.seekable);
+    const videoBytes = written.seekable.ok ? written.seekable.bytes : written.bytesWritten;
 
     // Diagnostics: page heap at clip end, the page-side retention state
     // (AH-0MVNT274M009XRJ1 AC4), then the additive artefact next to the clip
@@ -2709,9 +2721,12 @@ async function captureScenes({
 
     // Every scene's chunk is already on disk; success is the rename into the
     // clip path (AH-0MVNT26AQ005LDNS). A failure leaves the partial file for
-    // the salvage item (AH-0MVNT29MC008BQPY).
+    // the salvage item (AH-0MVNT29MC008BQPY). The same finalise seam makes the
+    // multi-scene WebM seekable (AH-0MVMIK8EM001JAYR AC3) — the remux is
+    // packet-preserving and its outcome is reported, never fatal.
     const written = recording.finalise({ success: true });
-    const videoBytes = written.bytesWritten;
+    reportSeekableOutcome(reporter, written.seekable);
+    const videoBytes = written.seekable.ok ? written.seekable.bytes : written.bytesWritten;
 
     // Diagnostics: page heap at clip end, the page-side retention state
     // (AH-0MVNT274M009XRJ1 AC4), then the additive artefact (AC2/AC6).

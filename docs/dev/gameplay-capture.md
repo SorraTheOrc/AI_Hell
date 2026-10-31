@@ -127,9 +127,12 @@ one actionable message (see
 9. Streams every encoded chunk to Node over an `exposeFunction` binding and
    writes it **straight to disk as it arrives** into `<stem>.partial.webm`
    (see [Streaming the recording to disk](#streaming-the-recording-to-disk-bounded-chunk-sink)).
-   A successful clip renames it to `<stem>.webm`; any pipe/browser/recorder
-   failure leaves the partial in place and prints one actionable salvage
-   message (see [Failure and salvage](#failure-and-salvage-of-streamed-bytes)).
+   A successful clip renames it to `<stem>.webm` and then makes it **seekable**
+   with a packet-preserving seek-index remux, so VLC can fast-forward and scrub
+   it (see [Seekable output](#seekable-output-fast-forward-and-scrubbing)); any
+   pipe/browser/recorder failure leaves the partial in place and prints one
+   actionable salvage message (see
+   [Failure and salvage](#failure-and-salvage-of-streamed-bytes)).
 10. Before the game boots, opts the page **into telemetry**
     (`VITE_TELEMETRY_ENABLED=true`, `VITE_TELEMETRY_SINK=jsonl` — the same
     flags `scripts/record-session.mjs` uses) so the run's per-tick
@@ -838,6 +841,83 @@ sidecars, and its last GOP may be incomplete, so it can lose a fraction of a
 second at the tail. Treat it as recoverable footage, not as a capture result.
 The salvage seam lives in `scripts/capture-salvage.mjs`
 (AH-0MVNT29MC008BQPY).
+
+### Seekable output (fast-forward and scrubbing)
+
+Chromium's `MediaRecorder` writes a WebM whose Segment Info has **no
+Duration**, and whose clusters have **no SeekHead and no Cues** (the seek
+index). Players tolerate it; VLC does not — fast-forward/seek do nothing,
+`ffprobe` reports `duration=N/A`, and the timeline is unusable
+(AH-0MVMIK8EM001JAYR).
+
+Every successful capture is therefore made seekable at the single finalise
+seam (`recording.finalise({ success: true })`, see
+`scripts/capture-recording-pipeline.mjs`) — the same seam every path uses, so
+single clips, `--count` batches, `--all-scenarios` clips and the
+`capture:scenes` multi-scene WebM all get it:
+
+```text
+ffmpeg -i <stem>.webm -c copy <stem>.seekable.webm   # packet-preserving
+```
+
+`-c copy` copies the VP9 and Opus packets **bit for bit** — there is no
+re-encode, no encoder in the command line at all, so quality, codecs, stream
+layout and timeline content are unchanged. Only the container's index metadata
+(Duration, SeekHead → Info/Tracks/Cues, Cues) is added.
+
+**ffmpeg resolution order (deterministic, and still no *system* dependency):**
+
+1. `FFMPEG_BIN`, when set and present on disk;
+2. the **Playwright-bundled** ffmpeg, resolved through the Playwright
+   registry (installed by the documented `npm run capture:install`) — so the
+   capture path still never *requires* a system ffmpeg;
+3. `ffmpeg` on `PATH`.
+
+Candidates are **attempted**, not merely found: Playwright ffmpeg revisions
+before `1013` lack the `vp9_superframe` bitstream filter, so `-c copy` fails
+with `Unknown bitstream filter 'vp9_superframe'` and the next candidate is
+tried. **Graceful degradation:** when no candidate produces a verified
+seekable file the capture still **succeeds** and delivers the current
+unseekable WebM, preceded by a warning that names the consequence, the fix and
+how to enable it:
+
+```text
+[capture] WARNING: clip is NOT seekable — Chromium writes no Duration/Cues/SeekHead,
+so VLC cannot fast-forward it. Fix: install a full ffmpeg with VP9 support
+(sudo apt-get install ffmpeg (Debian/Ubuntu); brew install ffmpeg (macOS); or point
+FFMPEG_BIN at a full ffmpeg build) and re-run the capture. Attempts: …
+```
+
+**Verification before delivery.** The remux is written to
+`<stem>.seekable.webm` and checked *before* it replaces the clip:
+`ffprobe -show_entries format=duration` must report a finite non-zero duration
+(when ffprobe is unavailable the container's own Info/Duration element is used
+instead), and the EBML structure must contain a Cues index plus a SeekHead
+referencing Info, Tracks and Cues. Only a verified file is renamed over the
+clip, so a failed or half-written remux can **never** destroy the raw capture —
+the same rename discipline as the `.partial.webm` sink.
+
+**Known limits.**
+
+- **A second pass over the clip.** The remux reads and re-writes the whole
+  file, so it needs temporary space for one extra clip
+  (`<stem>.seekable.webm`, removed on failure) and adds roughly one read+write
+  pass to the end of a capture. It streams through the ffmpeg child: node
+  memory stays O(one chunk), so a 1.8 GB long run is bounded exactly as before.
+- **The probe is unaffected.** Probing happens before finalising, from the
+  streamed `.partial` file or the retained in-page prefix; the remux does not
+  change the decoded frames, so the probe verdict describes the delivered clip.
+- **Salvaged `.partial.webm` files are not remuxed.** A failed capture is
+  recoverable footage, not a deliverable, so it keeps whatever index Chromium
+  wrote (none). Remux one by hand if you need to scrub it:
+  `ffmpeg -i clip.partial.webm -c copy clip.webm`.
+- **No backfill.** Clips captured before this change stay unseekable; the same
+  one-line `ffmpeg -c copy` remux fixes any of them.
+
+The remux itself lives in `scripts/capture-seekable.mjs`
+(AH-0MVMIK8EM001JAYR); its hermetic tests are
+`scripts/capture-seekable.test.ts` and the real-binary verification is
+`scripts/capture-seekable.e2e.test.ts` (`/skill:test --type e2e`).
 
 ### Run-end telemetry upload cap
 
@@ -1974,10 +2054,17 @@ separately.
 ### No MP4 output (ffmpeg)
 
 Capture writes **WebM only**. Playwright's bundled ffmpeg is a minimal build
-(VP8 only, no VP9/H.264 encoder), so it cannot transcode VP9 or extract
-frames, and the capture path never invokes a system ffmpeg. The **audio tap**
-deliberately needs no full `ffmpeg`: the game's Opus track is muxed in-browser
-by `MediaRecorder`.
+(no VP9/H.264 *encoder*), so it cannot transcode or extract frames, and the
+capture path never requires a system ffmpeg. The **audio tap** deliberately
+needs no full `ffmpeg`: the game's Opus track is muxed in-browser by
+`MediaRecorder`.
+
+The one place capture invokes an ffmpeg is the **packet-preserving
+seek-index remux** that makes the delivered WebM seekable — `-c copy` only, no
+encoder, no transcode (see
+[Seekable output](#seekable-output-fast-forward-and-scrubbing)). It prefers
+the Playwright-bundled binary and degrades to delivering the unseekable clip
+with a warning, so `npm run capture` still works with no ffmpeg at all.
 
 A full `ffmpeg` is required only by the **promo compiler**
 (`npm run compile:promo`, see
@@ -2022,6 +2109,11 @@ knowing before a soak:
   fraction of a second at the tail, so it is recovered footage rather than a
   capture result (see
   [Failure and salvage of streamed bytes](#failure-and-salvage-of-streamed-bytes)).
+- **The remux needs disk, not memory.** Making a delivered clip seekable is a
+  second `-c copy` pass through ffmpeg into `<stem>.seekable.webm` (renamed
+  over the clip once verified), so a long run needs temporary disk space for
+  one extra clip but never extra node memory (see
+  [Seekable output](#seekable-output-fast-forward-and-scrubbing)).
 - **The probe is bounded too.** Audio peak/RMS for a streamed clip is measured
   from a 32 MiB prefix and reported as such (`audioProbeBytes` /
   `audioProbeCapped`), so a long clip's audio verdict describes its opening, not
