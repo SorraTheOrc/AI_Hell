@@ -2292,11 +2292,13 @@ points or extra upgrade bays), **upgraded bots** with special skills that are mo
 effective against certain enemy or boss types, per-hex personalities, contracts
 and ring landmarks — each judged on whether it adds a choice rather than a chore.
 
-This section began as the **decision and the design intent** for Candidate D. The
-first phase — the **hangar slice**, Candidate B's MVP — is now **shipped** and
-specified in §8.1; the ring specification is added later by phase B (B8). The
-implementation and its verification are tracked by **AH-0MVU3VNJI00066YE**
-(hangar slice first, then the first hex ring).
+This section began as the **decision and the design intent** for Candidate D, and
+the producer decision record is kept in it unchanged. Both build phases are now
+**shipped**: the **hangar slice** (Candidate B's MVP) is specified in §8.1 and
+the **first hex ring** — with a playable ring 2 — in §8.2. The implementation
+and its verification are tracked by **AH-0MVU3VNJI00066YE** (hangar slice
+first, then the first hex ring); the documentation of record was published by
+**AH-0MVUXCC5J0028OGQ**.
 
 ### 8.1 Hangar slice (phase A — shipped)
 
@@ -2412,7 +2414,267 @@ at 12 hexes), the capture cycle and boss-granted discovery, the algorithmic
 defence resolver and frontier tick, the defence report, ring timing/playstyle
 validation, and the ring specification document. The ring's massed
 counter-attack on the hangar and the hangar-falls lose state are deferred
-further (AH-0MVUVL2O2006W4QK).
+further (AH-0MVUVL2O2006W4QK). **Phase B is now shipped** — the hex map, ring
+generation, capture cycle, defence resolver, frontier tick, defence report, ring
+timing validation and the ring specification are all live and specified in
+§8.2.
+
+### 8.2 Hangar War — the first ring (phase B — shipped)
+
+Phase B turns the hangar slice into the **war**: a ring of hexes around the
+hangar, taken one deployment at a time and held by bots the player leaves
+behind, while the frontier rises between sorties. It is a playable
+specification, not design intent — every rule below is exercised by the pure
+modules under `src/core/hangarWar/`, by the scene suites beside each screen, and
+by the two gym scenes named in § *Gym coverage and parity*. The build was
+tracked by **AH-0MVU3VNJI00066YE** (phase B items B1–B8) and documented by
+**AH-0MVUXCC5J0028OGQ**; the deferred ring-win rules are tracked by
+**AH-0MVUVL2O2006W4QK**.
+
+#### Entry surface and the ring screens
+
+The Hangar War keeps the **additive** entry surface fixed at intake (producer
+decision 2026-10-30, Q1 = a): **`▶ Play Game` still starts the shipped classic
+10-level campaign** and **`Continue — Level N` still resumes the arcade run
+checkpoint**; neither mode shares session, checkpoint or leaderboard state with
+the war. The war is reached from the menu's **`🛠 Hangar War`** entry and runs
+through three screens:
+
+- **`HangarScene`** (§8.1) — banked salvage, the unlock tree and the
+deployment/loadout selector. Its `▶ DEPLOY` row starts a run with the
+hangar-resolved loadout.
+- **`HexMapScene`** — the hangar at the centre and the current ring around it,
+with every hex's **known-ahead intel**: held/unheld, aggression, the boss that
+holds it, what that boss is **strong and weak against**, the weapon or upgrade
+the hex grants, the defending hull and any queued attack. Activating an
+**unheld** hex deploys at it; the `◀ HANGAR` row is one click from what the
+player owns (the design's "map and hangar one click apart"); ESC returns to the
+menu.
+- **`DefenceReportScene`** — the between-sortie report described below. Its one
+action, `▶ CONTINUE TO THE MAP`, returns to the map with the same war payload.
+
+A deployment is still the **shipped run** (`PlayScene` + `src/scenes/core/`):
+the map's deployment payload adds the hangar-resolved loadout, the target hex's
+aggression-selected campaign level, a war-derived seed and the hex itself, and
+nothing else. A hex deployment **writes no arcade checkpoint and clears none**
+(§8.1), and a malformed or absent payload degrades to the unchanged arcade run.
+
+#### The hangar and its economy
+
+The economy, unlock tree, salvage banking and `ai_hell_hangar_war` payload are
+specified in §8.1 and are unchanged by phase B. The ring adds the two things the
+slice deferred:
+
+- **Ring gating.** Every catalogue entry carries a `minRing`; a purchase is
+  refused as `owned` → `gated` → `unaffordable`, in that precedence order, so a
+  ring-2 hull can never be bought before ring 2 opens.
+- **Granted entries.** A hex's authored `grants` id is resolved into the hangar's
+  owned sets by one alias/catalogue mapping (`waveLaser` → `wave_laser`,
+  `extra-life` → `hardened_plating`, shipped weapon ids, `hull-…` ids, and any
+  other id as an upgrade). Ring 1 grants the Bulwark hull, the Wave Laser and
+  Ricochet starting weapons, the `rapid` strength entry, Extra Life and a
+  `core-bank` upgrade; ring 2 grants further hulls (`hull-2`, `hull-3`), weapons
+  (`arc`, `broadside`, `dual`, `nova`, `rapid`, `ricochet`), Extra Life and the
+  `armour-plating` / `firepower-up` / `systems-upgrade` strength entries.
+
+#### The hex ring and ring growth
+
+Ring *n* holds **6 × n** hexes around the hangar at axial `(0, 0)`, and a hex's
+ring membership is its cube distance from the hangar. The **shape** is
+computed (`ringCoordinates` walks the ring clockwise from the eastern corner);
+the **content** is authored data in `src/data/hexRingDefinitions.ts`, mirrored
+by the `src/data/hex-ring-1.csv` and `src/data/hex-ring-2.csv` seeds (a parity
+test fails if the two drift).
+
+- **Ring 1** is **6 hexes** at base aggression `1`–`6`.
+- **Ring 2** is **12 hexes** at base aggression `3`–`8`, generated from the same
+definitions — so ring 2 is playable in this build (producer decision 2026-10-30,
+Q3 = a), and later rings need only authored data.
+- **Exactly one hex per ring is the weapon hex**, it grants the ring's new
+weapon, and it is strictly the ring's **hardest** hex (ring 1: `hex-r1-6`,
+aggression `6`, `maw-of-ashes` granting the Wave Laser; ring 2: `hex-r2-12`,
+aggression `8`, `the-worldbreaker`). The other hexes grant upgrades or strength,
+which is what makes the rush/grind choice real.
+
+Authored data is validated loudly rather than repaired: a missing hex, a
+coordinate on the wrong ring, a duplicate coordinate or id, zero or two weapon
+hexes, or a weapon hex that is not the ring's hardest each fail
+`validateRingDefinitions` and throw `HexRingDefinitionError` when the ring is
+generated. A fresh war materialises its ring from the definitions; a stored
+**partial ring is never padded or discarded**.
+
+#### The capture cycle
+
+One captured hex is one deployment, resolved in four steps in a single payload
+write:
+
+1. **Bank the salvage.** The run's cumulative salvage at the boss moment is
+   banked through the shipped §8.1 rule (only the increase over this run's
+   watermark), so a replay never double-counts and spending in-run never lowers
+   the persistent balance.
+2. **Grant the hex's entry (Rule 2).** The authored grant is recorded on the hex
+   and added to the fleet's owned set **only after the boss is defeated**. The
+   boss **demonstrates** it first: the hex boss is the shipped `Boss` (four
+   phases) configured from the hex, its body wearing the granted weapon's own
+   bullet colour — a colour cue on the shipped boss path, not a forked entity.
+3. **Leave a defending bot.** The hex is marked held **only** with a defender
+   flying a hull the fleet owns; no defender means no hold
+   (`defender-required`). The defender's stored rating is the hangar economy's
+   single formula — `baseDefence + 3 × armour + 2 × firepower + 2 × systems`
+   (Scrap Hull `2`, Bulwark Hull `14`) — never a flown battle.
+4. **Secure the ring.** **Ring secured** means every hex of the current ring is
+   held; when that happens the ring is secured and the next ring opens (producer
+   decision 2026-10-30, Q2 = a). There is **no hangar assault pass** and no
+   hangar-falls lose state; the massed counter-attack and the campaign loss are
+   deferred to **AH-0MVUVL2O2006W4QK**.
+
+A lost deployment is the mirror image: it forfeits **only** the salvage earned
+since the last bank and leaves the hangar and the ring untouched. Difficulty is
+still the shipped curve data: a hex's aggression selects campaign level
+`1 + aggression` (clamped to the campaign maximum), and perturbs the hex boss's
+hit pool with the same bounded formula the campaign's mini-bosses use.
+
+#### The defence resolver and the frontier tick
+
+The defence is **arithmetic over stored numbers**, never a simulated battle:
+
+```
+aggressionMultiplier = 100 + 15 × aggression              (%)
+attackStrength       = round(force × multiplier × (100 + jitter) / 10000)
+held                 = defenderRating ≥ attackStrength
+margin               = defenderRating − attackStrength
+```
+
+- **Aggression is a multiplier and never weakens an attack** (`0` is neutral,
+  `100 %`): each point of the hex's aggression adds **15 %** to the attack. An
+  attack is launched with force **2** + the attacking neighbour's aggression, so
+  both ends of the border matter.
+- **Seeded jitter is bounded at ±10 %**, drawn from a per-`(seed, tick, hex id)`
+  stream, so a replay reproduces every hold and fall bit-for-bit.
+- **A tie holds the line**: `defenderRating === attackStrength` is a hold with
+  `margin: 0`; the player only loses a hex the AI *beats* on the numbers.
+
+One **between-sortie frontier tick** runs when a deployment ends:
+
+1. **Aggression rises 1–2 per tick on every hex**, clamped at a ceiling of **9**.
+2. **Queued attacks resolve first** against the risen aggression and are
+   consumed; an attack whose hex is no longer held, or that has no answerable
+   neighbour, is dropped rather than retried (the queue cannot deadlock).
+3. **The frontier may open a new front** only when nothing was queued and the
+   seeded draw passes the **70 % attack chance** — one held, attackable hex is
+   attacked.
+
+An attack is always launched from an **unheld neighbouring hex of the same
+ring**, and the record names it: that is the design's answerability rule, since
+the player can go and defeat that neighbour to stop the pressure. A **secured
+ring has no unheld neighbour, so it draws no attacks** — the win state is quiet
+by construction. The transition is pure (the caller's payload is never mutated),
+the clock is **injected** (`seed` + `tick`, persisted as the payload's additive
+`frontierTick`), and ties between equally aggressive neighbours are settled by
+sorted id, so a reordered payload replays identically.
+
+#### The defence report
+
+Every tick produces a structured record, and `DefenceReportScene` renders it
+without re-deriving a single figure:
+
+- **Which hexes were attacked**, whether each **held or fell**, and the numbers
+  that decided it — defender rating, attacking force, aggression multiplier,
+  jitter, attack strength and margin.
+- **What it would take to retake it**: the unheld neighbour the attack came from
+  (the hex to strike) and the defender rating needed to hold against the same
+  attack — the record's `attackStrength`, because a tie holds.
+- A **quiet tick** (a secured ring) publishes an explicit "no hex was attacked"
+  line rather than an empty screen, so the attract demo can never stall on it.
+
+The screen states it plainly: *"Resolved from stored numbers — no battle was
+simulated."* The map's attack preview is the same resolver run **jitter-free**,
+so the player plans against a legible baseline while the report publishes the
+tick's actual, jittered result.
+
+#### Measured ring timings
+
+Timing is measured, not guessed, with the headless eval arena
+(`src/ai/eval/arena.ts`) through the ring-timing harness
+(`src/ai/eval/ringTiming.ts`, `npm run ring-timing`). A deployment is modelled as
+the game plays it — the classic campaign slice from the hex's
+aggression-selected level, a ≈5-minute / 18 000-tick deployment window — plus
+explicitly documented allowances: **2 minutes between sorties** (hangar, salvage
+banking, map, defence report), a **loss charged one full deployment** (the
+player's replay), and, on the rush line only, the **70 % frontier attack chance
+× (deployment + visit)** for every hex left unheld.
+
+Measured baseline (seeds 1–3, competent bot; artifact
+`docs/dev/ring-timing-baseline.json`, regenerate with `npm run ring-timing --
+--json --out docs/dev/ring-timing-baseline.json`):
+
+| Ring | Line | Total mean (min–max) | Losses | Budget |
+|---|---|---|---|---|
+| 1 (6 hexes) | grind | **46.0 min** (43.7–50.3) | 3.7 | 40–60 · **in-window** |
+| 1 (6 hexes) | rush | **31.9 min** (31.8–32.0) | 1.0 | ring not secured |
+| 2 (12 hexes) | grind | **91.6 min** (90.3–93.4) | 12.0 | 70–100 · **in-window** |
+| 2 (12 hexes) | rush | **61.7 min** (61.5–62.0) | 1.0 | ring not secured |
+
+The budget assertion states a **10 % tolerance** of each window's width —
+**±2 min** for ring 1 and **±3 min** for ring 2 — and both grind lines pass
+`in-window`. The headless arena is the recorded evidence (intake assumption A1
+and Q4); a human playtest is desirable but not a gate.
+
+#### Supported playstyles
+
+Two lines are measured, and both are viable:
+
+- **Grind** — every hex weakest-aggression-first, the weapon hex last, ring
+  secured: **46.0 min** for ring 1 and **91.6 min** for ring 2, banking salvage
+  and ending with a held ring.
+- **Rush** — the weapon hex first, then straight into the next ring: **31.9 min**
+  and **61.7 min**, leaving 5 (ring 1) / 11 (ring 2) hexes exposed to ≈3.5 / 7.7
+expected retakes and forfeiting the salvage of any failed attempt.
+
+**Neither line dominates**: the rush is faster but riskier and ends with an
+unsecured, exposed ring, while the grind costs more minutes but secures the ring
+and banks the salvage. No tuning was required to land the budgets; the authored
+ring data and the shipped frontier tuning already produce both windows.
+
+#### Persistence: one key for hangar and ring
+
+The war persists in the **same** versioned `localStorage` key as the hangar
+slice — `ai_hell_hangar_war` (version `1`, §6.6) — holding the hangar, the ring
+(per-hex held/aggression/defender/boss-defeated/granted-weapon state), the
+queued attacks, the war seed, the best score and the additive `frontierTick`.
+One payload means a defence result can never be written without the hangar state
+it depends on, and a partial ring is never split or discarded. Migration is
+still decided by **field presence**: a pre-ring save loads as "hangar at its
+last valid state, empty ring" and is stamped with the current version; an
+explicitly unknown version loads as no save; the deployed hull is always one the
+fleet owns. A war that has never generated its ring renders the generated ring
+for its `ringIndex`, so an empty payload and a stored ring render through the
+same model.
+
+#### Gym coverage and parity
+
+Both new screens are exercised as **read-only gyms** that render the shipped
+model/renderer pairs, so no gameplay rule can live in (or drift between) a scene
+and its gym (AGENTS.md gym↔game parity):
+
+- **`GymHangar`** — renders the shipped hangar screen
+  (`buildHangarScreenModel` + `renderHangarScreen`) against an injected payload:
+  banked salvage, ring progress, the unlock tree and the deployment selector,
+  with no handlers, so it is read-only by construction.
+- **`GymHexWar`** — renders the shipped hex map (`buildHexMapModel` +
+  `renderHexMap`) and the shipped **defence report** (`buildDefenceReport` +
+  `renderDefenceReport`) from the **shipped** frontier tick's record
+  (`runFrontierTick`), and exposes the `take hex → leave bot → tick` control
+  surface through the documented deterministic harness double.
+
+Both are in the capture registry (watchable, `docs/dev/gameplay-capture.md`) and
+carry current rows in the parity matrix [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
+The attract bot traverses the whole surface — `menu → map → deployment →
+defenceReport → map → hangar` — from pure decisions in
+`src/ai/hangarWarTraversal.ts`: it picks the **weakest adjacent unheld hex** on
+the map, buys the **cheapest useful unlock** (seeded tie-break) in the hangar and
+auto-continues the report. Every decision is total — there is no `wait` action
+and no live defence battle to stall in.
 
 ---
 

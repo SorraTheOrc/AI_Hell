@@ -1707,6 +1707,36 @@ asserts that partition against the gym files on disk. The registry is the
 page-side director's `start(key)` guard, so adding or removing a gym scene
 without updating it fails the suite instead of silently drifting.
 
+#### Hangar-war gym scenes
+
+`GymHangar` and `GymHexWar` are the two watchable scenes of the Hangar War
+(GDD §8.1/§8.2). Both are **read-only** views of shipped code — they render the
+same model/renderer pair the game's screens render and own no rule of their own,
+so a capture shows exactly what a player sees:
+
+- **`GymHangar`** — the hangar screen. It calls the game's own
+  `buildHangarScreenModel` + `renderHangarScreen`
+  (`src/scenes/hangarWar/hangarScreen.ts`) against an injected hangar-war
+  payload: banked minerals and cores, ring progress, the unlock tree
+  (cost/owned/gated) and the hull / starting-weapon / modifier deployment
+  selector with its `▶ DEPLOY` row. No handlers are attached, so a purchase
+  cannot be triggered from the gym.
+- **`GymHexWar`** — the hex ring. It renders the shipped hex map
+  (`buildHexMapModel` + `renderHexMap`) — the hangar at the centre, the ring
+  around it and every hex's known-ahead intel — and, with `{ "view":
+  "report" }` (or the `showDefenceReport()` control surface), the shipped
+  **defence report** (`buildDefenceReport` + `renderDefenceReport`) built from
+the **shipped** frontier tick's record (`runFrontierTick`). Its control surface
+drives `take hex → leave bot → tick` through the documented deterministic
+harness double (`src/core/hangarWar/fakeFrontierClock.ts`), so a capture can
+show a hold, a fall and the report without simulating a battle.
+
+Both scenes consume the shared capture `setup` seam as a documented no-op (they
+have no player) and use `setup.seed` for their deterministic sample payload; a
+supplied `payload` wins. They are listed in `WATCHABLE_GYM_SCENE_KEYS`, carry
+current rows in [`docs/GYM_PARITY.md`](../GYM_PARITY.md#hangar-war-rows-ah-0mvuxcc5j0028ogq)
+and their parity is pinned by `src/scenes/core/gymParityDocs.test.ts`.
+
 ### Validation (before anything boots)
 
 The config is read and validated **before any Vite server or browser starts**.

@@ -16,6 +16,7 @@ Governing rule: [`AGENTS.md` § Game Architecture Conventions](../AGENTS.md#game
 | Fix item | AH-0MVRMHWNC002H4B5 (consumes the `divergence to fix` rows) |
 | Audited at commit | `1e335eb0` (2026-10-29) |
 | Divergences fixed by | AH-0MVRMHWNC002H4B5 (D1–D4, all rows now `parity`) |
+| Hangar War rows refreshed by | AH-0MVUXCC5J0028OGQ (the Hangar War ring specification, GDD §8.2): the `GymHangar` and `GymHexWar` rows were re-checked against the shipped hangar screen, hex map and defence report, so the enabled-objects and reason cells name the same model/renderer pairs the game runs |
 | Scope | every production scene under `src/scenes/gym/` (16) plus the generic base `src/scenes/gym/core/GymFormationScene.ts` |
 | Automated guard | [`src/scenes/core/gymParityDocs.test.ts`](../src/scenes/core/gymParityDocs.test.ts) fails if a gym scene has no row here, or if a row loses its verdict or evidence |
 
@@ -88,6 +89,19 @@ column). No other verdict is accepted by the guard.
 | `GymPowerUpsUtility` | `CombatCoreScene` (`src/scenes/gym/GymPowerUpsUtility.ts:116`) | `Player` + Speed Boost/Extra Life/Magnet/Mineral Scoop/Mystery UFO through the shared `EffectsRegistry`, shared drop layer, `MineralHold` and mineral scoop | no enemy spawn; round-robin drop source | partial — `CombatCoreScene` only (`_tickPlayer` `:247`, input/auto-fire/drop passes); no collision pass because the scene is threat-free | `parity` | Intentional: threat-free utility gallery (no enemy objects to collide with), auto-fire disabled (`src/scenes/gym/GymPowerUpsUtility.ts:232`), gym-only round-robin source and 40 seeded minerals (`:176`). Disabling a feature is a permitted difference; no enabled object runs divergent code |
 | `GymWeaponLeveling` | `CombatScene` (`src/scenes/gym/GymWeaponLeveling.ts:145`) | `Player` + every weapon through the shared `EffectsRegistry`/level resolver, shared AOE dispatch/VFX, shared drop layer, minerals and hold-full choice | no enemy spawn; round-robin drop source | yes — `_tickPlayer` `:250`, shared effect/drop/mineral passes | `parity` | Intentional: gym-only round-robin drop source and level readout; weapon behaviour lives once in the shared arsenal (`src/utils/weapons.ts`, `src/powerups/effects.ts`) |
 | `GymWeapons` | `CombatScene` (`src/scenes/gym/GymWeapons.ts:200`) | `Player` + cannon/Spread/Dual/Rapid/Nova/Mortar/Arc through the shared combat core, shared AOE dispatch/VFX, shared drop layer | no enemy spawn; `TrainingTarget` fixtures only (`:171`, `:504`) | yes — `_tickPlayer` `:303`, `_handleCollisions` inherited | `intentional divergence` | AOE practice targets are the documented gym-only divergence (F6 AC5, `GymWeapons.ts:120`, `:165`; §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`). The AOE resolution and VFX are shared, not copied |
+
+## Hangar War rows (AH-0MVUXCC5J0028OGQ)
+
+The Hangar War is specified in GDD §8.1 (the hangar slice) and §8.2 (the first
+hex ring). Neither gym scene runs a run of its own: `GymHangar` and `GymHexWar`
+are read-only views of the shipped hangar screen, hex map and defence report, and
+the ring's capture cycle, resolver and frontier tick are pure modules under
+`src/core/hangarWar/` that the game's scenes consume directly. The
+control-surface tick is the one documented divergence (a deterministic harness
+double, so the harness can drive `take hex → leave bot → tick` without owning
+resolver state); the report view deliberately renders the **shipped** resolver's
+record so the numbers cannot drift. The `GymHangar` and `GymHexWar` rows above
+were re-checked against that shipped code by this item.
 
 ## Scripted-scene setup adoption (AH-0MVRMHYJR000Y9H8)
 
