@@ -114,6 +114,25 @@ function isSsr(): boolean {
   return import.meta.env.SSR === true;
 }
 
+/**
+ * True when running under the vitest test harness (`MODE === 'test'`, which
+ * vitest sets by default).
+ *
+ * Belt-and-braces for the relative `/api/csv/...` save fetch: in the
+ * happy-dom integration project a relative fetch resolves against the
+ * browser origin (`http://localhost:3000`), so an un-mocked save can reach a
+ * stray dev server whose project root is another checkout — a suite running
+ * from a worktree could PUT into the **main checkout's** tracked CSVs
+ * (AH-0MVKYQWSW0067F12). In test mode the save functions therefore update
+ * the in-memory registry only: no fetch, no disk I/O (AH-0MVS9UAU8005SSQR).
+ * The plugin's root containment guard
+ * (`vite/plugins/configCsvPlugin.ts`) is the second layer of the same
+ * defence.
+ */
+function isTestMode(): boolean {
+  return import.meta.env.MODE === 'test';
+}
+
 // ── Default difficulty curve (AH-0MUITRZZE000OYQE) ──────────────────
 
 /** Round to two decimal places for stable, comparable curve values. */
@@ -616,6 +635,11 @@ async function reReadRegistry(): Promise<void> {
 /**
  * Persist an enemy config through the dev-server plugin and refresh the
  * registry. No-op (reporting unavailability) outside dev mode.
+ *
+ * In test mode (`MODE === 'test'`, see {@link isTestMode}) the save is
+ * registry-only: the in-memory registry is updated exactly as on the success
+ * path, but no fetch and no disk I/O happen, so tests can never write a
+ * tracked CSV.
  */
 export async function saveEnemyConfig(config: EnemyConfig): Promise<SaveResult> {
   if (!isDev()) return { ok: false, reason: WRITE_UNAVAILABLE };
@@ -624,6 +648,13 @@ export async function saveEnemyConfig(config: EnemyConfig): Promise<SaveResult> 
   const current = getRegistry();
   const enemies = new Map(current.enemies);
   enemies.set(config.key, { ...config });
+
+  // Test harness: registry-only, no fetch/Disk I/O (see isTestMode).
+  if (isTestMode()) {
+    registry = { ...current, enemies, loaded: true, source: 'csv' };
+    return { ok: true };
+  }
+
   const body = serializeEnemyConfigs([...enemies.values()]);
 
   const result = await putCsv(ENEMY_CSV_PATH, body);
@@ -638,9 +669,20 @@ export async function saveEnemyConfig(config: EnemyConfig): Promise<SaveResult> 
 /**
  * Persist the ship config through the dev-server plugin and refresh the
  * registry. No-op (reporting unavailability) outside dev mode.
+ *
+ * In test mode (`MODE === 'test'`, see {@link isTestMode}) the save is
+ * registry-only: the in-memory registry is updated exactly as on the success
+ * path, but no fetch and no disk I/O happen, so tests can never write a
+ * tracked CSV.
  */
 export async function saveShipConfig(config: ShipConfig): Promise<SaveResult> {
   if (!isDev()) return { ok: false, reason: WRITE_UNAVAILABLE };
+
+  // Test harness: registry-only, no fetch/Disk I/O (see isTestMode).
+  if (isTestMode()) {
+    registry = { ...getRegistry(), ship: { ...config }, loaded: true, source: 'csv' };
+    return { ok: true };
+  }
 
   const body = serializeShipConfigs([config]);
   const result = await putCsv(SHIP_CSV_PATH, body);
@@ -655,11 +697,27 @@ export async function saveShipConfig(config: ShipConfig): Promise<SaveResult> {
  * Persist the difficulty curve through the dev-server plugin. The plugin
  * replaces the file with the supplied rows (the curve has no key to upsert
  * by). No-op (reporting unavailability) outside dev mode.
+ *
+ * In test mode (`MODE === 'test'`, see {@link isTestMode}) the save is
+ * registry-only: the curve is stored with the same `generation`
+ * normalisation as the success path, but no fetch and no disk I/O happen, so
+ * tests can never write a tracked CSV.
  */
 export async function saveDifficultyCurves(
   rows: DifficultyCurveRow[],
 ): Promise<SaveResult> {
   if (!isDev()) return { ok: false, reason: WRITE_UNAVAILABLE };
+
+  // Test harness: registry-only, no fetch/Disk I/O (see isTestMode).
+  if (isTestMode()) {
+    // Same normalisation as the success path below, so a test-mode save and
+    // a real save + re-read yield identical registry content.
+    getRegistry().difficultyCurves = rows.map((row) => ({
+      ...row,
+      generation: row.generation ?? (row.source === 'scripted' ? 'fixed' : 'curve'),
+    }));
+    return { ok: true };
+  }
 
   const body = serializeDifficultyCurves(rows);
   const result = await putCsv(DIFFICULTY_CURVES_CSV_PATH, body);

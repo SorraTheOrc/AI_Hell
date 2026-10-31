@@ -11,6 +11,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   loadConfigs,
@@ -24,6 +27,7 @@ import {
   loadDifficultyCurves,
   saveDifficultyCurves,
   seedDifficultyCurves,
+  seedConfigStore,
   defaultDifficultyCurves,
   ENEMY_CSV_PATH,
   SHIP_CSV_PATH,
@@ -136,6 +140,11 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.stubEnv('DEV', true);
+  // Vitest sets MODE=test by default, under which the store's save functions
+  // are deliberately registry-only (AH-0MVS9UAU8005SSQR). These tests exercise
+  // the real dev write path, so pin MODE to a non-test value; the guard tests
+  // below opt back into MODE=test explicitly.
+  vi.stubEnv('MODE', 'development');
 });
 
 afterEach(() => {
@@ -939,5 +948,143 @@ describe('10-wave campaign verification harness — default curve (AH-0MVCRAHWO0
         rows[i - 1].targetDifficulty,
       );
     }
+  });
+});
+
+// ── Test-mode write guard (AH-0MVS9UAU8005SSQR) ─────────────────────
+
+describe('Test-mode write guard (AH-0MVS9UAU8005SSQR)', () => {
+  const TRACKED_CSVS = [
+    'ship-config.csv',
+    'enemy-configs.csv',
+    'difficulty-curves.csv',
+  ];
+
+  /** sha256 of a tracked CSV as committed in this checkout. */
+  function hashTrackedCsv(name: string): string {
+    return createHash('sha256')
+      .update(readFileSync(resolve(__dirname, '../data', name)))
+      .digest('hex');
+  }
+
+  function trackedHashes(): string[] {
+    return TRACKED_CSVS.map(hashTrackedCsv);
+  }
+
+  /** A fetch stub that fails the test if the store performs any I/O. */
+  function forbiddenFetch(): ReturnType<typeof vi.fn> {
+    return vi.fn(async () => {
+      throw new Error('a test-mode save must not perform network I/O');
+    });
+  }
+
+  it('saveShipConfig is registry-only under MODE=test: no fetch, no disk change', async () => {
+    seedConfigStore([], { ...DEFAULT_CONFIG, maxSpeed: 111 });
+    vi.stubEnv('MODE', 'test');
+    const fetchMock = forbiddenFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    const before = trackedHashes();
+
+    const result = await saveShipConfig({ ...DEFAULT_CONFIG, maxSpeed: 444 });
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Registry semantics preserved: the saved value is readable immediately.
+    expect(loadShipConfig().maxSpeed).toBe(444);
+    // The tracked CSVs are byte-identical.
+    expect(trackedHashes()).toEqual(before);
+  });
+
+  it('saveEnemyConfig is registry-only under MODE=test: no fetch, no disk change', async () => {
+    seedConfigStore([DEFAULT_ENEMY_CONFIGS.scout], DEFAULT_CONFIG);
+    vi.stubEnv('MODE', 'test');
+    const fetchMock = forbiddenFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    const before = trackedHashes();
+
+    const result = await saveEnemyConfig({
+      ...DEFAULT_ENEMY_CONFIGS.scout,
+      count: 42,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(loadEnemyConfig('scout').count).toBe(42);
+    expect(trackedHashes()).toEqual(before);
+  });
+
+  it('saveEnemyConfig keeps Save As discoverable under MODE=test', async () => {
+    seedConfigStore([DEFAULT_ENEMY_CONFIGS.scout], DEFAULT_CONFIG);
+    vi.stubEnv('MODE', 'test');
+    vi.stubGlobal('fetch', forbiddenFetch());
+
+    const newcomer: EnemyConfig = {
+      ...DEFAULT_ENEMY_CONFIGS.scout,
+      key: 'newcomer',
+      displayName: 'Newcomer',
+    };
+    const result = await saveEnemyConfig(newcomer);
+
+    expect(result).toEqual({ ok: true });
+    expect(listEnemyConfigKeys()).toContain('newcomer');
+    expect(loadEnemyConfig('newcomer').displayName).toBe('Newcomer');
+  });
+
+  it('saveDifficultyCurves is registry-only under MODE=test and keeps generation normalisation', async () => {
+    seedDifficultyCurves([]);
+    vi.stubEnv('MODE', 'test');
+    const fetchMock = forbiddenFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    const before = trackedHashes();
+
+    const result = await saveDifficultyCurves([
+      { level: 1, levelName: 'Entry', wave: 1, targetDifficulty: 55 },
+      {
+        level: 1,
+        levelName: 'Entry',
+        wave: 2,
+        targetDifficulty: 77,
+        generation: 'fixed',
+      },
+    ]);
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Same normalisation as the success path: absent generation derives from
+    // the row source, an explicit generation is preserved.
+    expect(loadDifficultyCurves().map((row) => row.generation)).toEqual([
+      'curve',
+      'fixed',
+    ]);
+    expect(trackedHashes()).toEqual(before);
+  });
+
+  it('a save under MODE=test reports unavailability outside dev mode', async () => {
+    vi.stubEnv('MODE', 'test');
+    vi.stubEnv('DEV', false);
+    const fetchMock = forbiddenFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await saveShipConfig({ ...DEFAULT_CONFIG, maxSpeed: 1 });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not short-circuit in non-test dev mode: the real PUT path runs', async () => {
+    vi.stubEnv('MODE', 'development');
+    const server = defaultServer();
+    vi.stubGlobal('fetch', server.fetchMock);
+    await loadConfigs();
+
+    const result = await saveShipConfig({ ...DEFAULT_CONFIG, maxSpeed: 321 });
+
+    expect(result.ok).toBe(true);
+    const put = server.calls.find((call) => call.method === 'PUT');
+    expect(put).toBeDefined();
+    expect(put!.url).toContain(SHIP_CSV_PATH);
+    // A re-read follows the PUT, so the registry reflects the written file.
+    expect(server.calls.some((call) => call.method === 'GET')).toBe(true);
   });
 });

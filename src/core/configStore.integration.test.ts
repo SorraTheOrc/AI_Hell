@@ -134,6 +134,12 @@ beforeEach(() => {
   resetConfigStore();
   vi.unstubAllEnvs();
   vi.stubEnv('DEV', true);
+  // Vitest defaults MODE to `test`, under which the store's saves are
+  // registry-only (AH-0MVS9UAU8005SSQR). This suite exercises the real
+  // plugin + file I/O pipeline, so it pins a dev mode and routes every
+  // relative `/api/csv/...` fetch through the explicit temp-root bridge
+  // installed by `installFetchBridge` — never a stray origin server.
+  vi.stubEnv('MODE', 'development');
 });
 
 afterEach(() => {
@@ -336,6 +342,11 @@ describe('Corrupt CSV handling (AC6)', () => {
   });
 
   it('falls back to defaults when the fetch fails entirely', async () => {
+    // This test is about the fetch-failure fallback, not the dev write path
+    // pinned in `beforeEach`: under MODE=test the store keeps the built-in
+    // defaults, whereas outside the vitest harness the SSR-bundled CSVs are
+    // read instead (AH-0MV81YPBG0028WNM).
+    vi.stubEnv('MODE', 'test');
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new Error('network down');
     }));
