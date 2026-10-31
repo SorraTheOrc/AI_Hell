@@ -18,6 +18,13 @@
  * 4. **PAYOUT** — on arrival, pay the exactly-held minerals into the sink;
  *    the drone then disappears.
  *
+ * Rendering is alive for the whole sortie: the saucer's warm running lights
+ * chase around the rim and its under-hull glow breathes in a continuous
+ * pulse (AH-0MVSAJZOI008TRBB). The pulse animates the **existing** code-drawn
+ * lights in {@link MysteryUfoDrone._drawBody} — it is not a separate emitter —
+ * and keeps running in SEEK, COLLECT and RETURN alike, so the drone never
+ * reads as a static sprite.
+ *
  * Termination is explicitly either-or (capacity reached *or* lifetime
  * expiry, whichever comes first); the pay-in is exactly the held minerals
  * (possibly 0 when the lifetime expires before anything was collected).
@@ -64,6 +71,30 @@ export const MYSTERY_UFO_DRONE_SIZE = 6;
 
 /** Number of running lights around the saucer rim. */
 export const MYSTERY_UFO_DRONE_LIGHT_COUNT = 6;
+
+/**
+ * Angular speed of the running-light pulse (rad/s). Slow enough to read as a
+ * chase of lights, fast enough that a 5 s sortie shows several sweeps.
+ */
+export const MYSTERY_UFO_DRONE_LIGHT_PULSE_SPEED = 6;
+
+/** Lowest alpha a running light pulses to (never fully dark — the rim stays lit). */
+export const MYSTERY_UFO_DRONE_LIGHT_PULSE_MIN_ALPHA = 0.3;
+
+/** Peak alpha of a running light. */
+export const MYSTERY_UFO_DRONE_LIGHT_PULSE_MAX_ALPHA = 1;
+
+/** Phase offset (rad) between neighbouring running lights — the chase effect. */
+export const MYSTERY_UFO_DRONE_LIGHT_PULSE_PHASE_STEP = 1.1;
+
+/** Lowest alpha of the under-hull drive glow. */
+export const MYSTERY_UFO_DRONE_GLOW_PULSE_MIN_ALPHA = 0.1;
+
+/** Peak alpha of the under-hull drive glow. */
+export const MYSTERY_UFO_DRONE_GLOW_PULSE_MAX_ALPHA = 0.3;
+
+/** Glow pulse speed relative to the running-light chase (a slower breath). */
+export const MYSTERY_UFO_DRONE_GLOW_PULSE_SPEED_FACTOR = 0.5;
 
 /** Geometry of the code-drawn saucer, derived from its half-size. */
 export interface MysteryUfoSaucerGeometry {
@@ -207,6 +238,17 @@ export class MysteryUfoDrone extends Phaser.GameObjects.Graphics {
   /** Simulated sortie time, accumulated in {@link MysteryUfoDrone.updatePosition}. */
   private _elapsed = 0;
 
+  /** Running-light / glow animation clock (s), advanced every live tick. */
+  private _pulseTime = 0;
+
+  /**
+   * Minerals vacuumed during the **current** tick, in collection order
+   * (`{ x, y }` at the position they were taken from). Cleared at the start
+   * of every live tick, so the shared pass can spawn one sparkle per mineral
+   * without the entity knowing anything about scene VFX.
+   */
+  private readonly _collectedThisTick: Array<{ x: number; y: number }> = [];
+
   private readonly _lifetime: number;
   private readonly _capacity: number;
   private readonly _collectorRadius: number;
@@ -304,6 +346,69 @@ export class MysteryUfoDrone extends Phaser.GameObjects.Graphics {
   }
 
   /**
+   * Minerals vacuumed during the current tick, in collection order. The list
+   * is reset at the start of every live tick and is valid until the next
+   * `updatePosition` call; the shared pass reads it immediately after the
+   * update to spawn the per-mineral collect sparkles.
+   */
+  get collectedThisTick(): ReadonlyArray<{ x: number; y: number }> {
+    return this._collectedThisTick;
+  }
+
+  /** Seconds the running-light / glow pulse has been animating. */
+  get lightPulseTime(): number {
+    return this._pulseTime;
+  }
+
+  /**
+   * The alpha the running light at `index` is currently drawn with.
+   *
+   * A sine wave whose phase is offset per light, so the ring reads as a
+   * chase of running lights rather than a ring that blinks as one. Pure and
+   * public so the animation can be asserted without pixel inspection; the
+   * saucer's draw calls this exact method.
+   *
+   * @param index — running-light index (0 … {@link MYSTERY_UFO_DRONE_LIGHT_COUNT}−1).
+   */
+  getRunningLightAlpha(index: number): number {
+    const wave =
+      Math.sin(
+        this._pulseTime * MYSTERY_UFO_DRONE_LIGHT_PULSE_SPEED +
+          index * MYSTERY_UFO_DRONE_LIGHT_PULSE_PHASE_STEP,
+      ) *
+        0.5 +
+      0.5;
+    return (
+      MYSTERY_UFO_DRONE_LIGHT_PULSE_MIN_ALPHA +
+      (MYSTERY_UFO_DRONE_LIGHT_PULSE_MAX_ALPHA -
+        MYSTERY_UFO_DRONE_LIGHT_PULSE_MIN_ALPHA) *
+        wave
+    );
+  }
+
+  /**
+   * The alpha the under-hull drive glow is currently drawn with — a slower
+   * breath than the running-light chase. Public for the same reason as
+   * {@link MysteryUfoDrone.getRunningLightAlpha}.
+   */
+  get glowPulseAlpha(): number {
+    const wave =
+      Math.sin(
+        this._pulseTime *
+          MYSTERY_UFO_DRONE_LIGHT_PULSE_SPEED *
+          MYSTERY_UFO_DRONE_GLOW_PULSE_SPEED_FACTOR,
+      ) *
+        0.5 +
+      0.5;
+    return (
+      MYSTERY_UFO_DRONE_GLOW_PULSE_MIN_ALPHA +
+      (MYSTERY_UFO_DRONE_GLOW_PULSE_MAX_ALPHA -
+        MYSTERY_UFO_DRONE_GLOW_PULSE_MIN_ALPHA) *
+        wave
+    );
+  }
+
+  /**
    * The drone's body hull is a scaled player ship; its collision radius
    * mirrors the shared enemy convention (`size / 2 + buffer`, matching
    * `BaseEnemy.getHitRadius`).
@@ -362,6 +467,12 @@ export class MysteryUfoDrone extends Phaser.GameObjects.Graphics {
   updatePosition(dt: number): void {
     if (!this._alive || this._destroyed) return;
     if (this._state === 'gone') return;
+
+    // Every live tick starts with a clean collection list (a RETURN tick
+    // therefore reports nothing to sparkle) and advances the pulse. The
+    // pulse reuses the drone's own Graphics: no extra emitter per frame.
+    this._collectedThisTick.length = 0;
+    this._advancePulse(dt);
 
     if (this._state === 'seek' || this._state === 'collect') {
       this._elapsed += dt;
@@ -424,14 +535,18 @@ export class MysteryUfoDrone extends Phaser.GameObjects.Graphics {
    * elliptical rim with glowing running lights, a domed upper hull and a
    * small under-hull glow. Pure code-drawn geometry (no external art) from
    * {@link saucerGeometry}, so the game and every gym render the same saucer.
+   *
+   * The running lights and the under-hull glow are drawn from the live pulse
+   * accessors, so a redraw on each tick animates them without any extra
+   * GameObject (AH-0MVSAJZOI008TRBB).
    */
   private _drawBody(): void {
     this.clear();
     const g = saucerGeometry(this._size);
 
     // Under-hull glow (a soft disc beneath the rim suggests the saucer's
-    // drive glow).
-    this.fillStyle(MYSTERY_UFO_DRONE_COLOR, 0.18);
+    // drive glow); its alpha breathes with the pulse.
+    this.fillStyle(MYSTERY_UFO_DRONE_COLOR, this.glowPulseAlpha);
     this.fillEllipse(0, g.rimHalfHeight * 0.55, g.rimHalfWidth * 1.05, g.rimHalfHeight * 0.9);
 
     // Wide elliptical rim — the saucer's defining disc.
@@ -450,9 +565,11 @@ export class MysteryUfoDrone extends Phaser.GameObjects.Graphics {
     this.closePath();
     this.strokePath();
 
-    // Running lights around the rim.
-    this.fillStyle(MYSTERY_UFO_DRONE_LIGHT_COLOR, 1);
-    for (const light of g.lights) {
+    // Running lights around the rim — each light's alpha comes from the
+    // per-index pulse so the ring reads as a chase of running lights.
+    for (let i = 0; i < g.lights.length; i += 1) {
+      const light = g.lights[i];
+      this.fillStyle(MYSTERY_UFO_DRONE_LIGHT_COLOR, this.getRunningLightAlpha(i));
       this.fillCircle(light.x, light.y, light.radius);
     }
 
@@ -507,12 +624,29 @@ export class MysteryUfoDrone extends Phaser.GameObjects.Graphics {
         // the shared pass reconciles the field and owns absorb VFX.
         mineral.alive = false;
         mineral.setVisible(false);
+        // Record where it was taken from: the shared pass spawns the collect
+        // sparkle at that spot this tick (AH-0MVSAJZOI008TRBB).
+        this._collectedThisTick.push({ x: mineral.x, y: mineral.y });
         // Credit at most the free space: a deposit's surplus is lost.
         this._heldMinerals += Math.min(mineral.value, remaining);
         collected += 1;
       }
     }
     return collected;
+  }
+
+  /**
+   * Advances the pulse clock and redraws the saucer's lights/glow.
+   *
+   * Called once per live tick (SEEK, COLLECT and RETURN alike), so the drone
+   * never freezes into a static picture. The redraw reuses the drone's own
+   * Graphics — the pulse adds no GameObject and no per-frame emitter.
+   *
+   * @param dt — elapsed time in seconds.
+   */
+  private _advancePulse(dt: number): void {
+    this._pulseTime += dt;
+    this._drawBody();
   }
 
   /** Steer toward `(tx, ty)` at the cruise speed, clamping to the target. */

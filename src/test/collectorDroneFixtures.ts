@@ -36,11 +36,13 @@
  *   pattern, so a test can reset them between cases.
  * - {@link expectUfoPayoutLifecycle} / {@link expectUfoDestructionLifecycle}
  *   assert one drone's lifecycle feedback (payout success, enemy destruction).
- *   Their default expectation is today's **zero-feedback baseline** — the
- *   drone is silent and spawns no VFX — and later slices extend the helper
- *   call with {@link UFO_PAYOUT_CUE_SEQUENCE} /
- *   {@link UFO_DESTRUCTION_CUE_SEQUENCE} plus VFX counts via
- *   {@link UfoLifecycleExpectation}.
+ *   Their default expectation is the **silent, VFX-free baseline** — no cue
+ *   and no VFX — while a test that pins shipped feedback passes
+ *   {@link UFO_PAYOUT_CUE_SEQUENCE} / {@link UFO_DESTRUCTION_CUE_SEQUENCE}
+ *   plus the per-moment VFX counts via {@link UfoLifecycleExpectation}. All
+ *   four cues and all four VFX moments are live now (AH-0MVSAJR6W001CE8M,
+ *   AH-0MVSAJVHF007QO6V, AH-0MVSAJZOI008TRBB), so the drone feel tests always
+ *   pass an explicit expectation.
  *
  * ## Test matrix (parent ACs of AH-0MV9G113S009B37I → verifying test)
  *
@@ -582,8 +584,8 @@ export function captureUfoLifecycleFeedback(
 /**
  * What a lifecycle sequence is expected to observe.
  *
- * Omitted fields mean **today's zero-feedback baseline**: no cue and no VFX.
- * A slice that adds feedback passes the observed expectation, e.g.
+ * Omitted fields mean the **silent baseline**: no cue and no VFX. Shipped
+ * feedback is pinned by passing the observed expectation, e.g.
  * `{ cues: UFO_PAYOUT_CUE_SEQUENCE, vfx: { returnTrail: 1 } }`.
  */
 export interface UfoLifecycleExpectation {

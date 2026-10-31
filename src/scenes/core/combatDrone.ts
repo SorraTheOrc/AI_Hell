@@ -12,20 +12,29 @@
  *
  * - {@link spawnDrone} — the only way a drone enters a scene; it wires the
  *   drone's pay-in to the caller-supplied hold sink (voicing the reward
- *   fanfare exactly when the hold is credited) and starts the sortie-long
- *   Mystery UFO warble exactly once.
+ *   fanfare exactly when the hold is credited), starts the sortie-long
+ *   Mystery UFO warble exactly once, and fires the launch poof VFX at the
+ *   spawn position.
  * - {@link tickDrones} — the seek → collect → return → payout pass: pushes the
  *   live mineral field into each drone, tracks the live player as home, ticks
- *   motion and removes drones that have paid out (or been destroyed). It also
- *   releases the warble as soon as a drone's return leg begins (the seek and
- *   collect phases are the only ones the warble scores), so the loop never
+ *   motion (which animates the saucer's running lights) and removes drones
+ *   that have paid out (or been destroyed). It spawns one capped collect
+ *   sparkle per mineral vacuumed and owns the RETURN-only trail — created the
+ *   moment the return leg begins and torn down the moment the drone leaves it
+ *   — and releases the warble as soon as a drone's return leg begins (the seek
+ *   and collect phases are the only ones the warble scores), so the loop never
  *   leaks past a terminal.
  * - {@link hitDrone} — the destruction contract: only **enemy** ordnance or an
  *   enemy body destroys a drone (the player's own fire passes through), a
  *   destroyed drone spills its held minerals **plus** a `2 × level` bonus at
  *   the crash site as collectable field deposits, and the terminal feedback
- *   lands exactly once — the warble stops, the explosion cue plays with a
- *   crash-site particle burst, and a mineral tinkle voices the spill.
+ *   lands exactly once — the warble stops, the return trail is torn down, the
+ *   explosion cue plays with a crash-site particle burst, and a mineral tinkle
+ *   voices the spill.
+ *
+ * All four lifecycle VFX moments (launch poof, collect sparkle, return trail,
+ * destruction burst) are spawned from this shared pass — never from a scene —
+ * so the game and every gym are visually identical (AH-0MVSAJZOI008TRBB).
  *
  * The module is deliberately scene-agnostic: it operates on the structural
  * drone/mineral/sink shapes so unit tests never need a real combat scene, and
@@ -47,10 +56,20 @@ import { scatterMineralDrops } from '../../entities/Mineral';
 import type { Mineral } from '../../entities/Mineral';
 import {
   MYSTERY_UFO_DRONE_COLOR,
+  MYSTERY_UFO_DRONE_LIGHT_COLOR,
   MysteryUfoDrone,
   type MysteryUfoDroneConfig,
 } from '../../entities/MysteryUfoDrone';
 import { spawnExplosionParticles } from '../../vfx/explosionParticles';
+import {
+  capDroneCollectSparkles,
+  spawnDroneCollectSparkle,
+} from '../../vfx/droneCollectSparkle';
+import { spawnDroneLaunchPoof } from '../../vfx/droneLaunchPoof';
+import {
+  createDroneReturnTrail,
+  type DroneReturnTrailHandle,
+} from '../../vfx/droneReturnTrail';
 import { recordDroneVfxSpawn } from '../../vfx/droneVfxCounts';
 
 /** Default sortie lifetime (s) when the resolved stats are unavailable. */
@@ -64,6 +83,16 @@ export const DEFAULT_DRONE_COLLECTOR_RADIUS = 20;
 
 /** Extra minerals a destroyed drone spills per power-up level (`2 × level`). */
 export const DRONE_DESTRUCTION_BONUS_PER_LEVEL = 2;
+
+/**
+ * Live return-leg trails, keyed by their drone. A `WeakMap` (not a registry)
+ * so a scene that ends mid-return cannot leak the drone or its Graphics: the
+ * entry disappears with the key, and the Graphics is destroyed with the scene.
+ */
+const DRONE_RETURN_TRAILS = new WeakMap<
+  MysteryUfoDrone,
+  DroneReturnTrailHandle
+>();
 
 /**
  * The scene's hold mutator the drone pays its collected minerals into — the
@@ -132,10 +161,64 @@ export function spawnDrone(
     },
   });
   drones.push(drone);
+  // Launch poof: the first lifecycle VFX moment, at the spawn position (also
+  // counted here so the fixtures observe one poof per launched drone).
+  spawnDroneLaunchPoof(scene, drone.x, drone.y, {
+    color: MYSTERY_UFO_DRONE_COLOR,
+    size: drone.effectiveSize,
+  });
   // Start the warble exactly once per sortie. The wrapper shares one looping
   // voice, so a re-entered spawn can never stack a second warble.
   playMysteryUfoWarbleSound();
   return drone;
+}
+
+/**
+ * Spawns this tick's collect sparkles — one per mineral the drone vacuumed,
+ * capped at `DRONE_COLLECT_SPARKLE_MAX_PER_TICK` so a dense field at the
+ * maximum collector radius can never turn into an unbounded emitter.
+ */
+function spawnCollectedMineralSparkles(drone: MysteryUfoDrone): void {
+  const sparkled = capDroneCollectSparkles(drone.collectedThisTick);
+  for (const position of sparkled) {
+    spawnDroneCollectSparkle(drone.scene, position.x, position.y, {
+      color: MYSTERY_UFO_DRONE_LIGHT_COLOR,
+      size: drone.effectiveSize,
+    });
+  }
+}
+
+/**
+ * Keeps the drone's RETURN-only trail in sync with its phase: create it when
+ * the return leg begins, advance it while returning, and tear it down the
+ * moment the drone leaves RETURN (payout) or stops being alive.
+ */
+function syncDroneReturnTrail(drone: MysteryUfoDrone): void {
+  const trail = DRONE_RETURN_TRAILS.get(drone);
+  if (drone.alive && drone.droneState === 'return') {
+    if (trail) {
+      trail.update(drone.x, drone.y);
+      return;
+    }
+    const created = createDroneReturnTrail(drone.scene, drone.x, drone.y, {
+      color: MYSTERY_UFO_DRONE_COLOR,
+      size: drone.effectiveSize,
+    });
+    if (created) DRONE_RETURN_TRAILS.set(drone, created);
+    return;
+  }
+  if (trail) {
+    trail.stop();
+    DRONE_RETURN_TRAILS.delete(drone);
+  }
+}
+
+/** Tears a drone's return trail down (payout, destruction or teardown). */
+function stopDroneReturnTrail(drone: MysteryUfoDrone): void {
+  const trail = DRONE_RETURN_TRAILS.get(drone);
+  if (!trail) return;
+  trail.stop();
+  DRONE_RETURN_TRAILS.delete(drone);
 }
 
 /**
@@ -158,6 +241,12 @@ export function spawnDrone(
  * {@link hitDrone}. Every path is therefore covered, and repeated ticks can
  * never double-start or mismatch the loop.
  *
+ * The saucer's lifecycle VFX ride the same tick: the drone itself animates its
+ * running lights, {@link spawnCollectedMineralSparkles} sparkles each vacuumed
+ * mineral (capped per tick), and {@link syncDroneReturnTrail} owns the
+ * RETURN-only trail — so a drone's visual feedback can never be skipped by a
+ * scene that runs the shared pass.
+ *
  * @param drones — the scene's current drones.
  * @param ctx — live mineral field, player position and frame delta.
  * @returns the drones still active after this tick.
@@ -169,8 +258,9 @@ export function tickDrones(
   const kept: MysteryUfoDrone[] = [];
   for (const drone of drones) {
     if (!drone.alive) {
-      // Paid out or destroyed on a previous step — remove the display object
-      // and make sure no warble outlives it.
+      // Paid out or destroyed on a previous step — remove the display object,
+      // tear down its trail and make sure no warble outlives it.
+      stopDroneReturnTrail(drone);
       stopMysteryUfoWarbleSound();
       drone.destroy();
       continue;
@@ -179,6 +269,10 @@ export function tickDrones(
     if (ctx.player) drone.setHomeTarget(ctx.player.x, ctx.player.y);
     const previousState = drone.droneState;
     drone.updatePosition(ctx.dt);
+    // Collect sparkles and the RETURN-only trail ride the same frame as the
+    // motion that produced them (the drone's update already ran).
+    spawnCollectedMineralSparkles(drone);
+    syncDroneReturnTrail(drone);
     // Return-leg begin is the first terminal: the warble only scores the
     // seek and collect phases, so release it on the phase transition.
     const beganReturn =
@@ -187,6 +281,7 @@ export function tickDrones(
     if (drone.alive) {
       kept.push(drone);
     } else {
+      stopDroneReturnTrail(drone);
       drone.destroy();
     }
   }
@@ -245,8 +340,9 @@ export function hitDrone(
         ? drone.onEnemyBody()
         : drone.onPlayerBullet();
   if (!destroyed) return [];
-  // Destruction is a terminal: release the warble before the crash feedback
-  // so it lands on a silent, non-leaking loop.
+  // Destruction is a terminal: release the warble and the return trail before
+  // the crash feedback so neither outlives the saucer.
+  stopDroneReturnTrail(drone);
   stopMysteryUfoWarbleSound();
   playMysteryUfoDestroySound();
   // Crash-site burst: the shared explosion VFX at the drone's last position,

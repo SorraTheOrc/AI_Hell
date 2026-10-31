@@ -27,10 +27,12 @@
  *   collector-drone pass (`src/scenes/core/combatDrone.ts`) and the shared VFX
  *   modules, so a gym can never drift from the game (AGENTS.md parity rule).
  *
- * The `destruction` counter is recorded by the terminal-feedback slice
- * (AH-0MVSAJVHF007QO6V) from the shared `hitDrone` destructor; the other three
- * moments still read zero until the saucer VFX slice lands — the documented
- * silent baseline the test seams pin (see `src/test/collectorDroneFixtures.ts`).
+ * All four moments are recorded by production code now: `destruction` by the
+ * terminal-feedback slice (AH-0MVSAJVHF007QO6V) from the shared `hitDrone`
+ * destructor, and `launchPoof` / `collectSparkle` / `returnTrail` by the
+ * saucer VFX slice (AH-0MVSAJZOI008TRBB) from its own VFX modules, which the
+ * shared pass calls. The fixtures still assert the pipeline works end to end
+ * (see `src/test/collectorDroneFixtures.ts`).
  *
  * @module vfx/droneVfxCounts
  */
@@ -45,6 +47,14 @@ export const DRONE_VFX_MOMENTS = [
 
 /** One saucer VFX moment (see {@link DRONE_VFX_MOMENTS}). */
 export type DroneVfxMoment = (typeof DRONE_VFX_MOMENTS)[number];
+
+/**
+ * Phaser data-manager key every spawned saucer VFX Graphics carries, holding
+ * its {@link DroneVfxMoment}. It lets a scene teardown (and the feel tests)
+ * identify a spawned effect by moment without pixel or private-object
+ * inspection; the moment strings double as the marker values.
+ */
+export const DRONE_VFX_DATA_PROPERTY = 'droneVfx';
 
 /** Cumulative spawn count per saucer VFX moment. */
 export type DroneVfxCounts = Readonly<Record<DroneVfxMoment, number>>;
