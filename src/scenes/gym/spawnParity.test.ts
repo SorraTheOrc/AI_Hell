@@ -1028,6 +1028,12 @@ describe('GymLevel × PlayScene — spawner-delivered content parity (D3)', () =
   ];
 
   for (const testCase of cases) {
+    // Each case boots two full Phaser scenes and steps 1600 deterministic
+    // frames, so its worst-case cost under host contention exceeds vitest's
+    // default 5 s timeout (measured ==5050 ms Robotron horde and ==5162 ms
+    // Pac-Man ghost group on a loaded host; AH-0MVWCFS7K000RIWI). Give every
+    // case the same explicit 30 s bound here — one shared place, no
+    // behavioural change.
     it(
       `an identical dt sequence releases the same ${testCase.label} in the gym and the game`,
       async () => {
@@ -1082,6 +1088,9 @@ describe('GymLevel × PlayScene — spawner-delivered content parity (D3)', () =
           ).toBe(testCase.count(play.scene));
         }
       },
+      // 30 s: comfortably above the measured worst-case cost under host
+      // contention (see the file header note at the case loop).
+      30_000,
     );
   }
 });
