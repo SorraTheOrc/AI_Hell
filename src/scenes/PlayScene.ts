@@ -222,7 +222,10 @@ import {
   toCompetentOverrides,
   toHumanOverrides,
 } from '../ai/tuningFields';
-import { getCurrentBotTuningConfig } from '../core/botTuningStore';
+import {
+  getBotTuningConfig,
+  getCurrentBotTuningConfig,
+} from '../core/botTuningStore';
 import { loadEnemyConfig } from '../core/enemyConfig';
 import { enemyForceFieldHits } from '../core/enemyForceField';
 import { emitRunEndedSignal } from '../core/runEndedSignal';
@@ -245,10 +248,12 @@ import {
   clearDevScenarioHandle,
   installDevScenarioHandle,
   isDevScenarioEnabled,
-  resolveDevScenario,
   resolveDevSeed,
+  resolveEnabledDevScenario,
+  type DevPromoScenario,
   type DevScenario,
 } from '../core/devScenario';
+import { getPromoLevel } from '../../scripts/promo-scenarios.mjs';
 import {
   DEFAULT_BINDINGS,
   keyFor,
@@ -685,6 +690,26 @@ export class PlayScene extends CombatScene<
    * sessions never consult the tuning store.
    */
   private appliedBotTuningName: string | null = null;
+
+  /**
+   * The dev-gated **promo scenario** this run was started from
+   * (AH-0MVSDM8SE0081WU7), or `null` for every other run — including every
+   * production run, because the resolution is dev-gated.
+   *
+   * Resolved in `init()` so the scenario's campaign, bot-tuning preset and
+   * run seed are all live before `create()` applies bot tuning and starts the
+   * campaign. Read by `_applyBotTuning()` (preset), `_initRunSeed()` (seed)
+   * and the campaign injection in `create()`.
+   */
+  private promoScenario: DevPromoScenario | null = null;
+
+  /**
+   * Whether this scene instance's `WaveManager` campaign was injected by a
+   * promo scenario on a previous run (AH-0MVSDM8SE0081WU7). The scene instance
+   * is reused across restarts, so a following **normal** run must clear the
+   * promo injection before it resolves the shipped campaign.
+   */
+  private promoCampaignApplied = false;
 
   /** Session state (lives, score, level). */
   private gameState: GameState;
@@ -1134,6 +1159,18 @@ export class PlayScene extends CombatScene<
     // previous demo so a normal (re)start never reports a stale config
     // (AH-0MV6MFDYG001E6PL).
     if (!this.demoMode) this.appliedBotTuningName = null;
+    // Promo scenario (AH-0MVSDM8SE0081WU7): a promo capture is **bot-flown**
+    // and carries an injected campaign, a named tuning preset and a
+    // deterministic seed — all of which must be live from the first frame. The
+    // scenario is therefore resolved here, before `create()` applies bot
+    // tuning (`_applyBotTuning`) and starts the campaign (`beginGame`), and a
+    // promo run forces demo-mode flight: the recorder starts an ordinary
+    // `Play Game` run, so nothing else would put the bot in control.
+    // `resolveEnabledDevScenario` is the single runtime gate, so the promo
+    // path is inert in a production build and — with no promo scenario
+    // requested — `promoScenario` stays `null` and a normal run is unchanged.
+    this.promoScenario = this._resolvePromoScenarioFromUrl();
+    if (this.promoScenario) this.demoMode = true;
     this.demoDwellMs = data?.demoDwellMs;
     // Dev-gated start level (AH-0MVE01EY0008QEVX AC3): a generated-level
     // capture starts a fresh run at a campaign level the same way checkpoint
@@ -1314,6 +1351,27 @@ export class PlayScene extends CombatScene<
     this.gameState.mineralHoldGrowthMultiplier =
       rules.mineralHoldGrowthMultiplier;
     this._syncMineralHud();
+    // A previous run in this (reused) scene instance may have injected the
+    // promo campaign; hand ownership back before the campaign block below so
+    // a following normal run resolves the shipped campaign again
+    // (AH-0MVSDM8SE0081WU7). The block below overwrites this placeholder.
+    if (!this.promoScenario && this.promoCampaignApplied) {
+      this.waveManager.setLevels(LEVELS, { injected: false });
+      this.promoCampaignApplied = false;
+    }
+    // Promo scenario campaign (AH-0MVSDM8SE0081WU7): a promo run plays the
+    // scenario's hand-authored promo level as the whole campaign, injected
+    // through the same `setLevels` seam callers use. Applied before the
+    // shipped campaign resolution and `beginGame` so the promo level is the
+    // campaign from the first frame; the injected-campaign guard below then
+    // leaves it untouched.
+    if (this.promoScenario) {
+      this.waveManager.setLevels(
+        [getPromoLevel(this.promoScenario.promoLevel)],
+        { injected: true },
+      );
+      this.promoCampaignApplied = true;
+    }
     // Campaign source (AH-0MVLJF30O000E3J3): always resolve through
     // `resolveCampaignLevels`, which applies the level enemy-count scaling
     // exactly once to the static `LEVELS` campaign and to the sequenced one.
@@ -3234,14 +3292,30 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Resolves the URL-selected **promo** dev scenario, or `null`
+   * (AH-0MVSDM8SE0081WU7).
+   *
+   * Uses `resolveEnabledDevScenario` — the single runtime gate — so a promo
+   * URL is ignored in a production build. Only a promo scenario is resolved
+   * this early: it changes the campaign, the bot tuning and the run seed, all
+   * of which `create()` must see from the first frame. The boss and defeat
+   * kinds are applied by {@link _applyDevScenarioFromUrl} at the end of
+   * `create()`, exactly as before.
+   */
+  private _resolvePromoScenarioFromUrl(): DevPromoScenario | null {
+    if (typeof window === 'undefined') return null;
+    const scenario = resolveEnabledDevScenario(window.location?.search ?? '');
+    return scenario?.kind === 'promo' ? scenario : null;
+  }
+
+  /**
    * Applies a URL-selected dev scenario at the end of {@link create} when the
    * dev flag is on. No-op in production and for an absent/unknown scenario, so
    * a normal run is byte-for-byte unchanged.
    */
   private _applyDevScenarioFromUrl(): void {
-    if (!isDevScenarioEnabled()) return;
     if (typeof window === 'undefined') return;
-    const scenario: DevScenario | null = resolveDevScenario(
+    const scenario: DevScenario | null = resolveEnabledDevScenario(
       window.location?.search ?? '',
     );
     if (!scenario) return;
@@ -3250,6 +3324,9 @@ export class PlayScene extends CombatScene<
     } else if (scenario.kind === 'defeat') {
       this.startDevDefeatScenario();
     }
+    // A promo scenario needs no end-of-create action: it was applied from
+    // `init()` (campaign injected, preset selected and RNG seeded before the
+    // first frame, AH-0MVSDM8SE0081WU7) and the run simply plays.
   }
 
   /** Spawns the minion wave for the given boss phase (GDD §4.3). */
@@ -4055,7 +4132,15 @@ export class PlayScene extends CombatScene<
    */
   private _applyBotTuning(): void {
     if (!this.demoMode) return;
-    const config = getCurrentBotTuningConfig();
+    // A promo run flies the scenario's preset **by name**
+    // (AH-0MVSDM8SE0081WU7); every other demo run flies the persisted current
+    // selection. A preset the local store does not have (e.g. a
+    // `localStorage` blob predating the curated presets) falls back to the
+    // current selection so a promo run always has a usable bot.
+    const config = this.promoScenario
+      ? getBotTuningConfig(this.promoScenario.preset)
+        ?? getCurrentBotTuningConfig()
+      : getCurrentBotTuningConfig();
     this.appliedBotTuningName = config.name;
     const values = coerceTuningValues(config.values);
     this.botBrain = createCompetentBotBrain({ tunables: toCompetentOverrides(values) });
@@ -5832,7 +5917,14 @@ export class PlayScene extends CombatScene<
    * 3. mirror the seed onto `GameState` for telemetry.
    */
   private _initRunSeed(): void {
-    const seed = this.injectedRunSeed ?? this._devRunSeed() ?? randomSeed();
+    // Precedence: an explicitly injected seed (launch data, checkpoint resume
+    // or a hangar deployment) wins, then a promo scenario's authored seed
+    // (AH-0MVSDM8SE0081WU7), then the dev `seed` URL parameter, then a fresh
+    // random seed.
+    const seed = this.injectedRunSeed
+      ?? this.promoScenario?.seed
+      ?? this._devRunSeed()
+      ?? randomSeed();
     this.runSeed = seed;
     if (!this.rngInjected) {
       this.rng = createSeededRng(seed);

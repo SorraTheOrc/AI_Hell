@@ -469,6 +469,40 @@ capture releases it through the page-side scenario handle
 (`window.__aiHellScenario.resume()`), so no keystroke is simulated and the
 release is deterministic.
 
+### Promo scenarios (`kind: 'promo'`)
+
+A registry entry whose `kind` is `'promo'` is a **curated promo-video run**
+(AH-0MVI5XI73000ZVYA): the recorder starts an ordinary `Play Game` run and
+`PlayScene` turns it into the scenario, all through existing seams — the run
+is bot-flown, plays the scenario's hand-authored promo level as its whole
+campaign, flies the scenario's bot-tuning preset **by name** and seeds its RNG
+from the scenario's seed. Nothing about the shipped campaign, the bot tuning
+or the RNG changes for any other run.
+
+| `scenario` | Effect |
+|---|---|
+| any registered promo entry (see `--list-scenarios`) | Fly the Watch Demo bot over the scenario's promo level, with its preset and seed. |
+
+A promo entry is resolved from the shared registry entry itself, so once the
+catalogue registers one it is selectable exactly like the boss scenarios:
+
+```bash
+npm run capture -- --list-scenarios           # discover the registered promos
+npm run capture -- --scenario <promo-name>    # record it bot-flown
+```
+
+The application order matters and is fixed: `PlayScene.init()` resolves the
+promo scenario (the single `resolveEnabledDevScenario` dev gate), forces
+demo-mode flight, selects the named preset and seeds the run **before**
+`create()` applies bot tuning and starts the campaign — so the preset, the
+promo level and the seed are live from the first frame. The campaign is
+injected with `WaveManager.setLevels(...)`, so the shipped
+`resolveCampaignLevels` path leaves it untouched; a later normal run in the
+same scene instance drops the promo injection and resolves the shipped
+campaign again. Promo scenarios never freeze the run (that is a boss/defeat
+behaviour) and, like every dev scenario, are **inert in a production build**
+and when no promo URL parameter is present.
+
 Everything is gated behind `import.meta.env.DEV`: a production build ignores
 the query parameter (`resolveDevScenario` is never consulted), so the shipped
 bundle and normal runs are unchanged.
