@@ -2105,11 +2105,30 @@ Supporting modules:
   `loadDifficultyCurves()`, `saveDifficultyCurves()`,
   `seedDifficultyCurves()`, `defaultDifficultyCurves()`) follows the same
   pipeline and never throws (§9.6).
+  **Save semantics** (`saveEnemyConfig` / `saveShipConfig` /
+  `saveDifficultyCurves`, each returning `{ ok, reason? }`): outside dev mode
+  they are a no-op reporting `WRITE_UNAVAILABLE`; under `npm run dev` they PUT
+  through the plugin and re-read the registry; **under vitest
+  (`MODE === 'test'`) they are registry-only** — the in-memory registry is
+  updated with the same normalisation as the success path, but no fetch and no
+  disk I/O happen (`isTestMode()`). That keeps a save in a test from ever
+  reaching a stray dev server rooted at another checkout; the test-time bridge
+  and suite guard are described in
+  [`docs/dev/test-suite-timing.md`](./dev/test-suite-timing.md#tracked-csv-write-safety-in-tests).
 - `vite/plugins/configCsvPlugin.ts` — dev-only Vite middleware. `GET
   /api/csv/src/data/<file>.csv` returns the file; `PUT` upserts the supplied
   row(s) after validation and writes atomically (temp file + rename).
   `?mode=append` rejects a duplicate key with **409**. Registered in
   `vite.config.ts`; `apply: 'serve'` keeps it out of production builds.
+  **Root isolation:** the read/write root is resolved inside `configureServer`
+  from the Vite-resolved `server.config.root`, with an explicit `root` option
+  as the test/fixture override — never `process.cwd()`. Any request (GET **or**
+  PUT) whose target resolves outside that root is refused with **403**
+  (`target escapes project root`) and a logged reason **before any file I/O**;
+  containment is checked with `path.relative` (+ `realpath` where the paths
+  exist), so `..`, URL-encoded traversal and absolute targets cannot escape
+  even through a symlinked `node_modules`. When no root can be resolved the
+  middleware refuses to register rather than guessing one.
 - `src/core/bundledConfig.ts` — the build-time `?raw` CSV imports used by the
   production read-only path.
 

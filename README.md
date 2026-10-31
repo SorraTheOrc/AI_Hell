@@ -468,6 +468,10 @@ project-membership guard (`src/test/projectMembership.test.ts`) fails loudly if
 a test file is selected by no project or by both, and asserts each project's
 `include` list matches the classifier exactly.
 
+Test-time CSV write safety (relative-fetch bridge, registry-only saves,
+tracked-CSV guard) is documented once in
+[`docs/dev/test-suite-timing.md`](docs/dev/test-suite-timing.md#tracked-csv-write-safety-in-tests).
+
 Run verification suites from the work item's worktree, never from the shared
 main checkout: another session's `implement.py finish` fast-forwards it
 mid-run and can produce a red result for a commit that never existed
@@ -876,7 +880,7 @@ Enemy and ship tuning is held in committed CSV files — the **single, human-edi
 - **Boot:** the entry point (`src/main.ts` → `src/core/boot.ts`) awaits the config store's `loadConfigs()` (`src/core/configStore.ts`) **before** constructing the Phaser game, so the first scene already reads the persisted values (a saved ship `controlScheme` survives a `npm run dev` restart). `loadConfigs()` reads both CSVs, parses/validates them with the CSV codec (`src/core/csv.ts`) and populates an in-memory registry, so `loadEnemyConfig` / `loadShipConfig` stay synchronous. A missing/malformed file — or a failed fetch — falls back to the built-in defaults without throwing.
 - **Editing by hand:** edit a cell in `src/data/enemy-configs.csv` or `src/data/ship-config.csv`, save the file, and restart/refresh `npm run dev` — boot hydration re-runs and the new values are live.
 - **Editing in the gym:** open **Gym Index → any Enemies entry** (or **Player**), change the sliders/colour pickers/selects, then **Save** (overwrite the active row) or **Save As…** (append a new enemy row; the name is slugified and duplicate keys are rejected). The dev-server CSV plugin (`vite/plugins/configCsvPlugin.ts`) validates and writes the file atomically, then the client re-reads it so the running scene reflects the change.
-- **Dev-only write path:** the write endpoint exists **only** under `npm run dev`. Production/static builds read the CSV bundled at build time read-only; **Save / Save As** are disabled there and the panel shows a clear status message.
+- **Dev-only write path:** the write endpoint exists **only** under `npm run dev`. Production/static builds read the CSV bundled at build time read-only; **Save / Save As** are disabled there and the panel shows a clear status message. The plugin resolves its read/write root from the Vite-resolved project root (never `process.cwd()`) and refuses (HTTP 403) any request whose target escapes it, and under vitest the store's save functions are registry-only — the suite can never write a tracked CSV in either checkout. Details: [`docs/dev/test-suite-timing.md`](docs/dev/test-suite-timing.md#tracked-csv-write-safety-in-tests) and the enemy guide §8.2.
 - **Breaking change:** `localStorage` is **no longer** the source of truth for config values (the old `ai-hell-enemy-config:<key>` / `ai-hell-ship-config` entries are ignored). Only leaderboard/settings still use `localStorage`.
 
 #### Sequenced Waves (default-on)

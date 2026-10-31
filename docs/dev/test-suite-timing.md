@@ -44,6 +44,47 @@ exercises — or whose run started and finished on different commits — as a
 **mixed-state** artefact, not a defect: re-run from a clean worktree before
 triaging or filing a `test-failure` item.
 
+## Tracked-CSV write safety in tests
+
+The suite must never write the tracked config CSVs (`src/data/ship-config.csv`,
+`enemy-configs.csv`, `difficulty-curves.csv`) in **any** checkout — not the
+active worktree, and above all not the shared main checkout (which a worktree
+suite could reach through a stray dev server: the store issues **relative**
+`/api/csv/...` fetches, and happy-dom resolves those against
+`http://localhost:3000`). A leaked write both trips the implement dirty-tree
+gate on later sessions and can silently clobber an operator's tuned config
+(AH-0MVKYQWSW0067F12). Four layers enforce it; keep all four when adding tests:
+
+1. **Plugin root isolation** (`vite/plugins/configCsvPlugin.ts`): the root comes
+   from the Vite-resolved `server.config.root` (explicit `root` option for
+   fixtures), never `process.cwd()`, and any target that escapes it is refused
+   with **403** before any I/O.
+2. **Store test-mode guard** (`configStore.isTestMode()`): under vitest
+   (`MODE === 'test'`) `saveShipConfig` / `saveEnemyConfig` /
+   `saveDifficultyCurves` are registry-only — no fetch, no disk I/O. A test that
+   wants the *real* write path (e.g. the plugin/temp-root pipeline) must pin
+   `vi.stubEnv('MODE', 'development')` and install the bridge (below).
+3. **Default CSV fetch guard** (`src/test/csvFetchBridge.ts`, installed by
+   `src/test/setup.ts` for the integration project): non-CSV requests pass
+   through, but an un-bridged `/api/csv/...` fetch **rejects without network
+   I/O**, naming the calling test file and the remedy. A test exercising real
+   CSV traffic opts in with `installCsvFetchBridge(baseUrl)` — a per-test
+   `vi.stubGlobal`, restored by `vi.unstubAllGlobals()`. Note the bridge crosses
+   origins (`localhost:3000` → `127.0.0.1:<port>`), so a bridged test server
+   must answer with permissive CORS headers; a real dev server is same-origin
+   and needs none. Tests that replace `fetch` themselves are unaffected (their
+   stub is the global, so the guard is never consulted).
+4. **Suite-run tracked-CSV guard** (`src/test/trackedCsvGuard.globalSetup.ts`,
+   registered for both projects in `vitest.config.ts`): sha256-hashes the three
+   tracked CSVs in the active checkout **and** the main checkout (located via
+   `git rev-parse --git-common-dir`) at suite start and fails the run on
+   teardown if any changed. It degrades safely outside git (active checkout
+   only) and never writes the watched files.
+
+When a run reports the guard, restore the file in the offending checkout and
+fix the writer — never stash or revert another session's work without
+permission.
+
 ## Current state (post-split, deterministic boot default)
 
 Since child AH-0MVF6XQIC005RY3P the harness boots **deterministically by
