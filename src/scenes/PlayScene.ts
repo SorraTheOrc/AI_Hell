@@ -154,12 +154,24 @@ import {
 import {
   bankSalvage,
   bankedSalvageFromHangar,
-  forfeitUnbankedSalvage,
   runSalvageFromRun,
   type BankedSalvage,
   type RunSalvage,
   type SalvageAmounts,
 } from '../core/hangarWar/salvageBanking';
+import {
+  resolveDeploymentDefeat,
+  resolveHexCapture,
+  type HexCaptureResult,
+} from '../core/hangarWar/captureCycle';
+import {
+  buildHexBossProfile,
+  type HexBossProfile,
+} from '../core/hangarWar/hexBoss';
+import {
+  HEX_RING_DEFINITIONS,
+  findHexRingDefinition,
+} from '../data/hexRingDefinitions';
 import {
   createDefaultPayload,
   loadHangarWarPayload,
@@ -737,6 +749,20 @@ export class PlayScene extends CombatScene<
    */
   private hangarWarDeployment: HangarWarDeployment | null = null;
 
+  /**
+   * The hex boss variant this deployment's final encounter runs with
+   * (AH-0MVUXCAW0001VUM6), or `null` for the shipped arcade run. A **variant**
+   * on the shared boss path (colour/demonstrated-weapon/hit pool), never a
+   * separate boss implementation.
+   */
+  private hexBossProfile: HexBossProfile | null = null;
+
+  /**
+   * The last capture-cycle resolution (win path or defensive refusal), kept as
+   * the scene's test/UI seam. `null` until a deployment's boss is defeated.
+   */
+  private lastCapture: HexCaptureResult | null = null;
+
   /** The checkpoint loaded in `init()`, applied once the run exists. */
   private pendingResumeCheckpoint: Checkpoint | null = null;
 
@@ -1057,6 +1083,15 @@ export class PlayScene extends CombatScene<
     // deterministic deployment seed. The two modes share run code, never
     // session/checkpoint state.
     this.hangarWarDeployment = readHangarWarDeployment(data?.hangarWar);
+    this.hexBossProfile = this.hangarWarDeployment?.hexId
+      ? buildHexBossProfile(
+          {
+            id: this.hangarWarDeployment.hexId,
+            aggression: this.hangarWarDeployment.aggression,
+          },
+          findHexRingDefinition(this.hangarWarDeployment.hexId),
+        )
+      : null;
     if (this.hangarWarDeployment) {
       this.resumeFromCheckpoint = false;
       this.pendingResumeCheckpoint = null;
@@ -1387,6 +1422,7 @@ export class PlayScene extends CombatScene<
     this.miniBossSweepHandle = null;
     this.miniBossSweepTargets = [];
     this.salvageBank = null;
+    this.lastCapture = null;
     this.forfeitedSalvage = { minerals: 0, cores: 0 };
     this.driftX = 0;
     this.driftDir = 1;
@@ -2880,6 +2916,12 @@ export class PlayScene extends CombatScene<
    * (AH-0MVTNTHE0008UT2C) is the `initialHp` default, so any spawn path — the
    * normal encounter or a scripted teaser beat — previews the boss close to
    * death without changing the entity's total hit pool.
+   *
+   * A hangar-war deployment spawns the **hex boss variant**
+   * (AH-0MVUXCAW0001VUM6): the same `Boss` entity and phase machinery, with the
+   * hex's identity colour (the demonstrated weapon's own colour), its
+   * aggression-perturbed hit pool and its authored boss identity. The arcade
+   * run passes no profile and is byte-for-byte unchanged.
    */
   protected spawnBoss(
     options: {
@@ -2888,6 +2930,7 @@ export class PlayScene extends CombatScene<
       spawnMinions?: boolean;
     } = {},
   ): void {
+    const hexBoss = this.hexBossProfile;
     this.boss = new Boss(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2 - 80,
@@ -2895,14 +2938,23 @@ export class PlayScene extends CombatScene<
       rng: this.rng,
       initialHp: options.initialHp ?? this.sceneSetup?.bossHitsRemaining,
       initialPhase: options.initialPhase,
+      // The hex boss wears the granted weapon's colour (Rule 2's visible
+      // demonstration); the shipped boss keeps its own defaults without one.
+      bodyColor: hexBoss?.bodyColor,
+      desperationColor: hexBoss?.desperationColor,
       // The final boss strengthens with the player's permanent upgrades
       // exactly like the mini-bosses (AH-0MVH87A3L004VOLD). Dev scenarios
       // that pin `initialHp` keep their explicit pool.
       hitPointsPerPhase:
         options.initialHp === undefined
-          ? scaledEncounterHp(
-              BOSS_HIT_POINTS_PER_PHASE,
-              this.getPlayerPowerScore(),
+          ? Math.max(
+              1,
+              Math.round(
+                scaledEncounterHp(
+                  BOSS_HIT_POINTS_PER_PHASE,
+                  this.getPlayerPowerScore(),
+                ) * (hexBoss?.hpMultiplier ?? 1),
+              ),
             )
           : undefined,
     });
@@ -3107,6 +3159,12 @@ export class PlayScene extends CombatScene<
       // flying (AC3); the beat clock keeps advancing (AC4); the celebration and
       // the delayed `GameOverScene` transition are untouched (AC7).
       this.runFinished = true;
+      // A hangar-war deployment resolves its **capture cycle** here
+      // (AH-0MVUXCAW0001VUM6): bank the run's salvage, mark the hex held +
+      // boss-defeated, grant its authored entry into the hangar (Rule 2) and
+      // leave the deployment hull as the defending bot. Securing the last hex
+      // opens the next ring. The arcade run resolves nothing here.
+      this._resolveHangarWarCapture();
       this._triggerVictoryCelebration(deathX, deathY);
       this._finishRunWithPurpose(true);
       return;
@@ -3524,19 +3582,51 @@ export class PlayScene extends CombatScene<
   }
 
   /**
+   * Resolves a hangar-war deployment's boss victory into a captured hex
+   * (AH-0MVUXCAW0001VUM6): banks the run's salvage, marks the hex held +
+   * boss-defeated, grants its authored entry into the hangar (Rule 2) and
+   * leaves the deployment's chosen hull as the defending bot. Securing the last
+   * hex opens the next ring.
+   *
+   * The pure capture cycle owns every rule; this method only supplies the run's
+   * inputs (the deployment hull + the run's salvage watermark) and persists the
+   * next payload through the versioned store. The arcade run is a no-op.
+   */
+  private _resolveHangarWarCapture(): void {
+    const deployment = this.hangarWarDeployment;
+    if (!deployment || !deployment.hexId) return;
+    const payload =
+      loadHangarWarPayload() ?? createDefaultPayload(this.getRunSeed());
+    const result = resolveHexCapture(payload, {
+      hexId: deployment.hexId,
+      defenderHullId: deployment.hullId,
+      salvage: this._salvageSnapshot('boss-victory'),
+      definitions: HEX_RING_DEFINITIONS,
+      banked: this.salvageBank ?? bankedSalvageFromHangar(payload.hangar),
+    });
+    this.lastCapture = result;
+    this.salvageBank = result.banked;
+    // A victorious deployment always extracts its salvage, so the payload is
+    // written even when the hex itself could not be held (defender refused).
+    saveHangarWarPayload(result.payload);
+  }
+
+  /**
    * Settles a lost run (AH-0MVUXC118004B4OX AC2): the run forfeits only the
    * salvage it earned after its last bank, and the persistent balance (and the
    * ring it lives beside) is left untouched. Recorded for the end-of-run
    * summary; nothing is written.
+   *
+   * Delegates to the capture cycle's loss path
+   * (AH-0MVUXCAW0001VUM6) so the win and loss rules live in one module.
    */
   private _forfeitUnbankedSalvage(): void {
     const payload =
       loadHangarWarPayload() ?? createDefaultPayload(this.getRunSeed());
-    const bank = this.salvageBank ?? bankedSalvageFromHangar(payload.hangar);
-    const outcome = forfeitUnbankedSalvage(
-      bank,
-      this._salvageSnapshot('run-end'),
-    );
+    const outcome = resolveDeploymentDefeat(payload, {
+      salvage: this._salvageSnapshot('run-end'),
+      banked: this.salvageBank ?? bankedSalvageFromHangar(payload.hangar),
+    });
     this.salvageBank = outcome.banked;
     this.forfeitedSalvage = outcome.forfeited;
   }
@@ -3572,6 +3662,28 @@ export class PlayScene extends CombatScene<
     return this.hangarWarDeployment === null
       ? null
       : { ...this.hangarWarDeployment };
+  }
+
+  /**
+   * The hex boss variant this deployment's final encounter ran with (or `null`
+   * for the arcade run) — the capture-cycle test/UI seam
+   * (AH-0MVUXCAW0001VUM6). A detached copy.
+   */
+  getHexBossProfile(): HexBossProfile | null {
+    return this.hexBossProfile === null
+      ? null
+      : (JSON.parse(JSON.stringify(this.hexBossProfile)) as HexBossProfile);
+  }
+
+  /**
+   * The last capture-cycle resolution for this deployment, or `null` before the
+   * boss is defeated. The payload itself is persisted through the store; this
+   * seam exposes the outcome (grant, defender, ring secured/advanced).
+   */
+  getLastCapture(): HexCaptureResult | null {
+    return this.lastCapture === null
+      ? null
+      : (JSON.parse(JSON.stringify(this.lastCapture)) as HexCaptureResult);
   }
 
   /**

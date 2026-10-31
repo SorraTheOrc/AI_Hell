@@ -33,7 +33,9 @@ import Phaser from 'phaser';
 import {
   createDefaultPayload,
   loadHangarWarPayload,
+  saveHangarWarPayload,
 } from '../core/hangarWar/hangarWarStore';
+import { materialiseRing } from '../core/hangarWar/captureCycle';
 import type {
   HangarWarPayload,
   HangarWarStorage,
@@ -98,7 +100,19 @@ export class HexMapScene extends Phaser.Scene {
   init(data?: HexMapSceneData | null): void {
     this.storage = data?.storage;
     this.definitions = data?.definitions ?? HEX_RING_DEFINITIONS;
-    this.payload = data?.payload ?? this.loadPayload();
+    const injected = data?.payload;
+    const loaded = injected ?? this.loadPayload();
+    // A fresh war (or a save written before the ring model landed) has an empty
+    // stored ring. Materialise it from the authored definitions so the map, the
+    // deployment and the capture cycle all target real hexes; an injected
+    // payload is never persisted.
+    this.payload = materialiseRing(loaded, this.definitions);
+    if (
+      injected === undefined
+      && this.payload.ring.hexes.length > loaded.ring.hexes.length
+    ) {
+      this.persist();
+    }
   }
 
   create(): void {
@@ -113,6 +127,16 @@ export class HexMapScene extends Phaser.Scene {
         ? loadHangarWarPayload()
         : loadHangarWarPayload(this.storage);
     return stored ?? createDefaultPayload(0);
+  }
+
+  /** Persists the materialised ring (a fresh war's first write). */
+  private persist(): void {
+    if (this.storage === null) return;
+    if (this.storage === undefined) {
+      saveHangarWarPayload(this.payload);
+    } else {
+      saveHangarWarPayload(this.payload, this.storage);
+    }
   }
 
   /** (Re)renders the map from the current payload. */
