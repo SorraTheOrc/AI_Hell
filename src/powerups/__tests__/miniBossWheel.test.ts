@@ -41,6 +41,7 @@ import {
   type MiniBossWheelOutcome,
 } from '../miniBossWheel';
 import { resolveSlotState } from '../slots';
+import type { MineralChoicePlayer } from '../choiceReward';
 import type { EffectsRegistry } from '../effects';
 import type { DropId } from '../types';
 
@@ -107,6 +108,21 @@ function gainIds(outcome: MiniBossWheelOutcome): DropId[] {
 const MODULE_SOURCE = readFileSync(
   fileURLToPath(new URL('../miniBossWheel.ts', import.meta.url)),
   'utf8',
+);
+
+/**
+ * The module's **executable** source: `MODULE_SOURCE` with block and
+ * whole-line comments stripped.
+ *
+ * The guard assertions below police what the code *does*, so they must not
+ * match prose. The module's own JSDoc states that it makes no
+ * `Math.random()` call and reads no wall clock, and a raw-source scan would
+ * match that documentation (the very guarantee being described) instead of a
+ * violation of it.
+ */
+const MODULE_CODE = MODULE_SOURCE.replace(/\/\*[\s\S]*?\*\//g, '').replace(
+  /^[ \t]*\/\/.*$/gm,
+  '',
 );
 
 // ── Distribution ────────────────────────────────────────────────────
@@ -287,19 +303,16 @@ describe('owned-kind pool coverage', () => {
   });
 
   it('never wheels the permanent cannon or the reset utility', () => {
-    const state = resolveSlotState(
-      [],
-      [
-        { id: 'cannon', level: 1 },
-        { id: 'reset', level: 1 },
-      ],
-    );
+    // The shared six-slot accounting excludes the permanent cannon by
+    // construction (it is not a drop kind)…
+    const state = resolveSlotState([], [{ id: 'cannon', level: 1 }]);
+    expect([...state.ownedIds]).not.toContain('cannon');
 
-    expect(state.ownedIds.has('cannon')).toBe(false);
-
-    const wedges = buildWheelWedges(state.ownedIds);
+    // …and the wheel filters the slot-exempt `reset` utility even if a caller
+    // hands it one.
+    const wedges = buildWheelWedges(['reset', 'spread']);
     const wedgeIds = wedges.map((wedge) => wedge.id);
-    expect(wedgeIds).not.toContain('cannon');
+    expect(wedgeIds).toEqual(['spread', MINI_BOSS_WHEEL_BONUS_ID]);
     expect(wedgeIds).not.toContain('reset');
   });
 
@@ -345,11 +358,11 @@ describe('run-seeded determinism', () => {
   });
 
   it('contains no Math.random() (run-seeded RNG only)', () => {
-    expect(MODULE_SOURCE).not.toMatch(/Math\s*\.\s*random\s*\(/);
+    expect(MODULE_CODE).not.toMatch(/Math\s*\.\s*random\s*\(/);
   });
 
   it('contains no wall-clock read', () => {
-    expect(MODULE_SOURCE).not.toMatch(
+    expect(MODULE_CODE).not.toMatch(
       /Date\s*\.\s*now\s*\(|performance\s*\.\s*now\s*\(|new\s+Date\s*\(/,
     );
   });
@@ -357,8 +370,8 @@ describe('run-seeded determinism', () => {
 
 describe('module purity', () => {
   it('imports neither Phaser nor any scene module', () => {
-    expect(MODULE_SOURCE).not.toMatch(/from\s+['"]phaser['"]/);
-    expect(MODULE_SOURCE).not.toMatch(/from\s+['"][^'"]*\/scenes\//);
+    expect(MODULE_CODE).not.toMatch(/from\s+['"]phaser['"]/);
+    expect(MODULE_CODE).not.toMatch(/from\s+['"][^'"]*\/scenes\//);
   });
 });
 
@@ -379,6 +392,11 @@ function makeApplyFakes(): ApplyFakes {
   };
 }
 
+/** Narrows the spy stand-in to the structural player contract. */
+function asPlayer(fakes: ApplyFakes): MineralChoicePlayer {
+  return fakes.player as unknown as MineralChoicePlayer;
+}
+
 describe('wheel outcome application', () => {
   it('applies every gained level exactly once through the shared reward seam', () => {
     const { registry, player } = makeApplyFakes();
@@ -393,7 +411,7 @@ describe('wheel outcome application', () => {
     applyWheelOutcome(
       outcome,
       registry as unknown as EffectsRegistry,
-      player,
+      asPlayer({ registry, player }),
     );
 
     expect(registry.applyWeapon).toHaveBeenCalledTimes(2);
@@ -413,7 +431,7 @@ describe('wheel outcome application', () => {
     applyWheelOutcome(
       outcome,
       registry as unknown as EffectsRegistry,
-      player,
+      asPlayer({ registry, player }),
     );
 
     const appliedIds = new Set([
