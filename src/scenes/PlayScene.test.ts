@@ -539,6 +539,34 @@ function findAsteroids(scene: PlayScene): Asteroid[] {
     .filter((e): e is Asteroid => e instanceof Asteroid && e.alive);
 }
 
+/**
+ * File-wide deterministic-boot rollout (AH-0MVXWEEJM00813GK; flake parent
+ * AH-0MVX2DKC8001RRM4).
+ *
+ * Every `boot*` helper in this file that boots a `PlayScene` obtains its
+ * scene through the shared `bootDeterministic` helper, so the run seed is
+ * explicit and the resumed live rAF loop stays stopped while a test asserts.
+ *
+ * - **Before (pre-rollout):** only `bootPlayWithAsteroid()` pinned the scene
+ *   RNG and stopped the live loop itself, and only `bootWithHordeWave()`
+ *   injected a run seed via `setRunSeed` (when its `seed` argument was
+ *   given). Every other helper booted with a fresh `randomSeed()` and left
+ *   the harness's resumed live loop running.
+ * - **After (this item):** helpers that own their raw boot route directly
+ *   through `bootDeterministic` (`bootPlay` in every copy, `bootWithForcedRoll`,
+ *   `bootToggleScene`, `bootAtLevel`, `bootDemo`, `bootWithGhostWave`,
+ *   `bootWithCentipedeWave`, `bootWithHordeWave`, `bootWithRaiderWave`,
+ *   `bootWithLaneTrafficWave`, `bootDropScene`, `bootGatedScene`), while
+ *   helpers that delegate to `bootSceneWithLevels()` are covered by it
+ *   routing through the shared helper (`bootPlayWithAsteroid` in all three
+ *   copies, `bootCustom`, `bootReanchorScene`, `bootPortalScene`,
+ *   `bootPlayAtBoss` in all three copies, `bootMarch`, `bootCarryDrift`,
+ *   `bootCarryMarch`, `bootStrikeScene`, `bootPhaserWave`,
+ *   `bootMiniBossCampaign`, `bootSweepScene`, `bootCampaign`). There is one
+ *   policy: the shared helper pins `DETERMINISTIC_RUN_SEED` (or the helper's
+ *   explicit override) before the restart and stops the resumed live loop.
+ */
+
 /** Boots the PlayScene with a custom campaign and restarts it so `create()`
  * re-runs against the injected levels. Asteroid-dependent integration tests
  * use this to keep their own campaign fixtures independent of the built-in
@@ -559,22 +587,26 @@ async function bootSceneWithLevels(
     RULES_STORAGE_KEY,
     JSON.stringify({ sequencedWavesEnabled: false }),
   );
-  const game = await bootScene([
-    PlayScene,
-    ...(options.extraScenes ?? []),
-    GameOverScene,
-    MenuScene,
-  ]);
-  const scene = game.scene as PlayScene;
-  scene.getWaveManager().setLevels(levels);
-  if (options.asteroidSpawner === false) {
-    // Disable before restarting so the restarted `create()` does not plan
-    // (or auto-update-release) any random asteroids.
-    scene.setAsteroidSpawnerEnabled(false);
-  }
-  scene.scene.restart();
-  await advanceGame(scene.game, 200);
-  return { booted: game, scene };
+  // Route through the shared deterministic boot (AH-0MVXWEE3L004SPTC): the
+  // run seed is pinned before the restart and the resumed live loop stays
+  // stopped, so every helper that boots through this function (and every
+  // wrapper that delegates to it) observes identical state on every run.
+  return bootDeterministic(async () => {
+    const game = await bootScene([
+      PlayScene,
+      ...(options.extraScenes ?? []),
+      GameOverScene,
+      MenuScene,
+    ]);
+    const scene = game.scene as PlayScene;
+    scene.getWaveManager().setLevels(levels);
+    if (options.asteroidSpawner === false) {
+      // Disable before restarting so the restarted `create()` does not plan
+      // (or auto-update-release) any random asteroids.
+      scene.setAsteroidSpawnerEnabled(false);
+    }
+    return { booted: game, scene };
+  });
 }
 
 /**
@@ -804,10 +836,12 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
    * the whole ten-level campaign.
    */
   async function bootPlayAtBoss(): Promise<PlayScene> {
-    // Deterministic boot through the shared helper (AH-0MVXWEE3L004SPTC):
-    // pinned seed before the restart, resumed live loop stopped.
-    const { booted: game, scene } = await bootDeterministic(() =>
-      bootSceneWithLevels(singleLevelCampaign(), { asteroidSpawner: false }),
+    // `bootSceneWithLevels` routes through the shared deterministic helper
+    // (AH-0MVXWEE3L004SPTC): pinned seed before the restart, resumed live
+    // loop stopped (file-wide rollout AH-0MVXWEEJM00813GK).
+    const { booted: game, scene } = await bootSceneWithLevels(
+      singleLevelCampaign(),
+      { asteroidSpawner: false },
     );
     booted = game;
     scene.setAsteroidSpawnerEnabled(false);
@@ -827,6 +861,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // restarts so these asteroid-behaviour tests are not perturbed by random
     // spawns, then place one deterministic large asteroid through the public
     // seam (it is not wave-accounted, AH-0MUJM746P000QAEO).
+    // `bootSceneWithLevels` routes through the shared deterministic helper
+    // (AH-0MVXWEE3L004SPTC): the run seed is pinned before the restart and
+    // the resumed live loop stays stopped for the whole test (file-wide
+    // rollout AH-0MVXWEEJM00813GK; the local `loop.stop()` that used to be
+    // here is now redundant).
     const result = await bootSceneWithLevels(
       plainCampaign(),
       { asteroidSpawner: false },
@@ -838,12 +877,6 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // full-suite parallel load, AH-0MVG23LT7000CG4R). A fixed seed keeps the
     // heading (and the wave-1..N spawn plans) identical on every run.
     result.scene.setRng(FIXED_RNG);
-    // These tests drive every step explicitly (the kill/clear/transition
-    // helpers all use `scene.tick`), so stop the live rAF loop the harness
-    // resumes at the end of `bootScene()`. Otherwise an unpredictable real
-    // frame can run between the test's `await` points (e.g. inside
-    // `bootSceneWithLevels`'s `advanceGame`) with a large real-time delta.
-    result.booted.game.loop.stop();
     result.scene.spawnAsteroidAt(GAME_WIDTH * 0.6, GAME_HEIGHT * 0.25, 'large');
     return result.scene;
   }
@@ -2093,11 +2126,13 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
    * the other nine levels. Same encounter, ~1/10 the simulated waves.
    */
   async function bootPlayAtBoss(): Promise<PlayScene> {
-    // Deterministic boot through the shared helper (AH-0MVXWEE3L004SPTC):
-    // the pinned seed keeps the boss walk's power-up drops reproducible and
-    // the resumed live loop stays stopped.
-    const { booted: game, scene } = await bootDeterministic(() =>
-      bootSceneWithLevels(singleLevelCampaign(), { asteroidSpawner: false }),
+    // `bootSceneWithLevels` routes through the shared deterministic helper
+    // (AH-0MVXWEE3L004SPTC): the pinned seed keeps the boss walk's power-up
+    // drops reproducible and the resumed live loop stays stopped (file-wide
+    // rollout AH-0MVXWEEJM00813GK).
+    const { booted: game, scene } = await bootSceneWithLevels(
+      singleLevelCampaign(),
+      { asteroidSpawner: false },
     );
     booted = game;
     // Isolate the deterministic boss walk from the random asteroid spawner:
@@ -2479,8 +2514,12 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   /** Boots with a deterministic large asteroid placed outside the wave
@@ -3477,10 +3516,14 @@ describe('PlayScene — asteroid Extra Life kill drop (AH-0MV6M2M9P0078N4S)', ()
         asteroidExtraLifeDropChance: 1,
       }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.setRng(() => 0.99);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      bootedScene.setRng(() => 0.99);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     return scene;
   }
 
@@ -3550,8 +3593,12 @@ describe('PlayScene — keyboard-only gameplay verification (AH-0MUBZU8IL0067GOU
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, PauseScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, PauseScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   /** A faked Phaser key exposing only `isDown`. */
@@ -3685,8 +3732,12 @@ describe('PlayScene — asteroid spawner integration (AH-0MUGCNZNE002D7QJ)', () 
   const SEED = 20260925;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   async function bootCustom(levels: LevelDefinition[]): Promise<PlayScene> {
@@ -3917,8 +3968,12 @@ describe('PlayScene — asteroid spawner integration tests (AH-0MUGCP15V0008339)
   const SEED = 424242;
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   async function bootCustom(levels: LevelDefinition[]): Promise<PlayScene> {
@@ -4314,8 +4369,12 @@ describe('PlayScene — sequenced-waves toggle wiring (AH-0MUITS1SM008GPR9)', ()
   });
 
   async function bootToggleScene(): Promise<PlayScene> {
-    toggleBooted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return toggleBooted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    toggleBooted = game;
+    return scene;
   }
 
   it('runs the static campaign when the toggle is explicitly disabled', async () => {
@@ -4431,11 +4490,13 @@ describe('PlayScene — campaign Harvester roaming spawns (F6)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     return scene;
   }
 
@@ -4541,9 +4602,14 @@ describe('PlayScene — wormhole spawn animation (AH-0MURBER4L00821RR)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
+    return scene;
   }
 
   it('AC1 — spawns a wormhole when the wave spawns', async () => {
@@ -5095,8 +5161,12 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    return booted.scene as PlayScene;
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      return { booted: result, scene: result.scene as PlayScene };
+    });
+    booted = game;
+    return scene;
   }
 
   /**
@@ -5485,8 +5555,15 @@ describe('PlayScene — end-of-run victory trigger (AH-0MUTYKKZ6001LT25)', () =>
   describe('Narrowed demo take-over (AH-0MUYP6M6W006Z1AY)', () => {
     /** Boots a live game and starts the demo, returning the PlayScene. */
     async function bootDemo(): Promise<PlayScene> {
-      booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-      const scene = booted.scene as PlayScene;
+      const { booted: game, scene } = await bootDeterministic(async () => {
+        const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+        return { booted: result, scene: result.scene as PlayScene };
+      });
+      booted = game;
+      // Re-start the scene in demo mode after the deterministic boot: the
+      // injected run seed is read again at the next `create()` and the live
+      // loop stays stopped, so the demo walk starts from the same seeded
+      // state (AH-0MVXWEEJM00813GK).
       scene.scene.start('PlayScene', { demo: true });
       await advanceGame(scene.game, 50);
       expect(scene.isDemoMode()).toBe(true);
@@ -6086,12 +6163,14 @@ describe('PlayScene — Pac-Man ghost personality pursuers (AH-0MV01EH2U008XT3Q)
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.setGhostSpawnerEnabled(true);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      bootedScene.setGhostSpawnerEnabled(true);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     return scene;
   }
 
@@ -6249,16 +6328,18 @@ describe('PlayScene — Centipede linked chain (AH-0MV01EJ92008ZZ86)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.setCentipedeSpawnerEnabled(true);
-    // Isolate the centipede accounting from the random asteroid spawner (the
-    // same isolation `bootSceneWithLevels` applies for the asteroid suite): a
-    // released asteroid can absorb a player bullet meant for a segment.
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      bootedScene.setCentipedeSpawnerEnabled(true);
+      // Isolate the centipede accounting from the random asteroid spawner (the
+      // same isolation `bootSceneWithLevels` applies for the asteroid suite): a
+      // released asteroid can absorb a player bullet meant for a segment.
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     return scene;
   }
 
@@ -6419,14 +6500,14 @@ describe('PlayScene — Robotron homing horde (AH-0MV01EKTL001NRE6)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.setHordeSpawnerEnabled(true);
-    // Inject before the restart: `_initRunSeed()` reads it during `create()`.
-    if (seed !== undefined) scene.setRunSeed(seed);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      bootedScene.setHordeSpawnerEnabled(true);
+      return { booted: result, scene: bootedScene };
+    }, { seed });
+    booted = game;
     return scene;
   }
 
@@ -6699,11 +6780,13 @@ describe('PlayScene — Defender raider (AH-0MV01EM7U0033W7L)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     // Complete the wormhole spawn so the raider is collision-active immediately
     // (the spawn animation protects spawning enemies).
     scene.finishSpawnAnimations();
@@ -6985,13 +7068,15 @@ describe('PlayScene — Frogger lane traffic (AH-0MV01EPM40008N8T)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = booted.scene as PlayScene;
-    scene.getWaveManager().setLevels(levels);
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.setLaneTrafficSpawnerEnabled(true);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.getWaveManager().setLevels(levels);
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      bootedScene.setLaneTrafficSpawnerEnabled(true);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
     scene.finishSpawnAnimations();
     return scene;
   }
@@ -8589,12 +8674,14 @@ describe('PlayScene — per-level kill-drop chance (AH-0MVLJF4DI000BKMQ)', () =>
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = bootedGame.scene as PlayScene;
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.getWaveManager().setLevels(levels);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      bootedScene.getWaveManager().setLevels(levels);
+      return { booted: result, scene: bootedScene };
+    });
+    bootedGame = game;
     return scene;
   }
 
@@ -9044,11 +9131,13 @@ describe('PlayScene — six-slot drop gating (AH-0MVNT2YGD003N8NR)', () => {
       RULES_STORAGE_KEY,
       JSON.stringify({ sequencedWavesEnabled: false }),
     );
-    bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    const scene = bootedGame.scene as PlayScene;
-    scene.setAsteroidSpawnerEnabled(false);
-    scene.scene.restart();
-    await advanceGame(scene.game, 200);
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      return { booted: result, scene: bootedScene };
+    });
+    bootedGame = game;
     return scene;
   }
 
@@ -9267,191 +9356,3 @@ describe('PlayScene — dev-gated startLevel seam (AH-0MVE01EY0008QEVX AC3)', ()
     expect(scene.getWaveManager().level).toBe(scene.getWaveManager().levelCount);
   });
 });
-
-// ───────────────────────────────────────────────────────────────────────────
-// TEMP REPRO HARNESS (AH-0MVXWEDOH002LO1M) — DELETE BEFORE COMMIT
-//
-// Evidence-first seed sweep for the two named flakes. Run through the
-// sanctioned channel with:
-//   REPRO_SWEEP=1 python3 <test skill>/scripts/run_tests.py --scope changed --no-cache --json
-// and read the `A seed=…` / `B seed=…` lines from the captured stdout. Seeds
-// that show `REPRODUCED` are the recorded reproduction inputs.
-// ───────────────────────────────────────────────────────────────────────────
-const REPRO_SWEEP = process.env.REPRO_SWEEP === '1';
-
-(REPRO_SWEEP ? describe : describe.skip)(
-  'REPRO SWEEP (AH-0MVXWEDOH002LO1M)',
-  () => {
-    beforeEach(() => {
-      localStorage.setItem(
-        RULES_STORAGE_KEY,
-        JSON.stringify({ sequencedWavesEnabled: false }),
-      );
-    });
-
-    afterEach(() => {
-      localStorage.clear();
-    });
-
-    function seedRange(): number[] {
-      const start = Number(process.env.REPRO_SEED_START ?? '1');
-      const count = Number(process.env.REPRO_SEED_COUNT ?? '40');
-      return Array.from({ length: count }, (_, i) => start + i);
-    }
-
-    it('A — sweeps run seeds for the boss phase-advance assertion (:2028)', async () => {
-      const lines: string[] = [];
-      const fs = await import('node:fs');
-      const out = process.env.REPRO_OUT;
-      const emit = (line: string): void => {
-        lines.push(line);
-        if (out) fs.appendFileSync(out, `${line}\n`);
-      };
-      let reproduced = 0;
-      for (const seed of seedRange()) {
-        const { booted: game, scene } = await bootDeterministic(
-          () => bootSceneWithLevels(singleLevelCampaign(), { asteroidSpawner: false }),
-          { seed },
-        );
-        try {
-          reachBoss(scene);
-          const boss = scene.getBoss()!;
-          const effects = scene
-            .getEffectsRegistry()
-            .activeEffects()
-            .map((e) => e.id)
-            .join(',');
-          const frenzy = scene.getEffectsRegistry().frenzyBonusHits();
-          const hpPerPhase = boss.getHitPointsPerPhase();
-          const power = scene.getPlayerPowerScore();
-          const bulletsBefore = scene.getPlayerBullets().length;
-          damageBossPhase(scene, boss);
-          const phase = boss.getPhaseNumber();
-          if (phase !== 2) {
-            reproduced += 1;
-            let message = '';
-            try {
-              expect(boss.getPhaseNumber()).toBe(2);
-            } catch (assertionErr) {
-              message = String((assertionErr as Error).message)
-                .split('\n')[0]
-                .trim();
-            }
-            emit(`A seed=${seed} ASSERTION ${message}`);
-          }
-          emit(
-            `A seed=${seed} ${phase === 2 ? 'ok' : 'REPRODUCED'} phase=${phase} ` +
-              `hpPerPhase=${hpPerPhase} frenzyBonusHits=${frenzy} power=${power} ` +
-              `bulletsBefore=${bulletsBefore} effects=[${effects}]`,
-          );
-        } catch (err) {
-          emit(
-            `A seed=${seed} walk-error ${String((err as Error).message).slice(0, 240)}`,
-          );
-        } finally {
-          game.game.destroy(true);
-        }
-      }
-      console.log(lines.join('\n'));
-      expect(lines).toHaveLength(seedRange().length);
-      expect(reproduced).toBeGreaterThanOrEqual(0);
-    }, 1_800_000);
-
-    it('B — sweeps run seeds for the level-advance alive-count assertion (:1107)', async () => {
-      const lines: string[] = [];
-      const fs = await import('node:fs');
-      const out = process.env.REPRO_OUT;
-      const emit = (line: string): void => {
-        lines.push(line);
-        if (out) fs.appendFileSync(out, `${line}\n`);
-      };
-      let reproduced = 0;
-      for (const seed of seedRange()) {
-        // Mirror `bootPlay()` exactly (shipped, level-scaled campaign) plus
-        // the seed injection: the AC5 test boots through `bootPlay`, so an
-        // unscaled `plainCampaign()` fixture would not reproduce it.
-        const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
-        const scene = result.scene as PlayScene;
-        scene.setAsteroidSpawnerEnabled(false);
-        scene.setRunSeed(seed);
-        scene.scene.restart();
-        await advanceGame(result.game, 200);
-        scene.setAsteroidSpawnerEnabled(false);
-        // Optional live-frame window: let the harness's resumed rAF loop run
-        // real wall-clock frames (the full-suite-load condition) before the
-        // synchronous level walk starts.
-        const liveFrameMs = Number(process.env.REPRO_LIVE_FRAME_MS ?? '0');
-        if (liveFrameMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, liveFrameMs));
-        }
-        try {
-          const wm = scene.getWaveManager();
-          let guard = 0;
-          while (wm.level === 1 && guard++ < 20) {
-            killAllEnemies(scene);
-            finishTransition(scene);
-          }
-          const planned = wm.waveEnemyCount();
-          const alive = scene.getAliveCount();
-          const dead = scene
-            .getEnemies()
-            .filter((e) => !e.alive)
-            .map((e) => e.constructor.name)
-            .join(',');
-          const liveNames = scene
-            .getEnemies()
-            .filter((e) => e.alive)
-            .map((e) => e.constructor.name)
-            .join(',');
-          const bullets = scene.getPlayerBullets().length;
-          const effects = scene
-            .getEffectsRegistry()
-            .activeEffects()
-            .map((e) => e.id)
-            .join(',');
-          const internal = scene as unknown as {
-            spawned: {
-              enemyKey: string;
-              entity: { alive: boolean; constructor: { name: string } };
-            }[];
-          };
-          const newest = internal.spawned
-            .slice(Math.max(0, internal.spawned.length - planned))
-            .map(
-              (s) =>
-                `${s.enemyKey}/${s.entity.constructor.name}:${s.entity.alive ? 'alive' : 'dead'}`,
-            )
-            .join(',');
-          const spawnedTotal = internal.spawned.length;
-          if (alive !== planned) {
-            reproduced += 1;
-            let message = '';
-            try {
-              expect(alive).toBe(planned);
-            } catch (assertionErr) {
-              message = String((assertionErr as Error).message)
-                .split('\n')[0]
-                .trim();
-            }
-            emit(`B seed=${seed} ASSERTION ${message}`);
-          }
-          emit(
-            `B seed=${seed} ${alive === planned ? 'ok' : 'REPRODUCED'} ` +
-              `alive=${alive} planned=${planned} level=${wm.level} wave=${wm.waveNumber} ` +
-              `spawnedTotal=${spawnedTotal} dead=[${dead}] live=[${liveNames}] ` +
-              `playerBullets=${bullets} effects=[${effects}] newest=[${newest}]`,
-          );
-        } catch (err) {
-          emit(
-            `B seed=${seed} walk-error ${String((err as Error).message).slice(0, 240)}`,
-          );
-        } finally {
-          result.game.destroy(true);
-        }
-      }
-      console.log(lines.join('\n'));
-      expect(lines).toHaveLength(seedRange().length);
-      expect(reproduced).toBeGreaterThanOrEqual(0);
-    }, 1_800_000);
-  },
-);
