@@ -1035,7 +1035,7 @@ instead.
   resume **replays the permanent grants through the same shared grant seam
   live play uses** (`src/powerups/choiceReward.ts`), so the HUD upgrade list
   and the permanent effects (shield armed with its absorption budget, permanent
-  Bomb/Smart Bomb/Strike pulses, permanently-open Frenzy/Chrono timed windows,
+  Bomb/Smart Bomb/Strike pulses, permanently-open Frenzy/Chrono windows (timed),
   regenerating consumable charge pools, permanent Magnet/Mineral Scoop stacks) match a live
   run and the saved lives are never inflated by the Extra Life replay
   (AH-0MVSHI07B003BZIP). The
