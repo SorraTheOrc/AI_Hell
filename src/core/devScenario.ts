@@ -49,6 +49,22 @@
  * a resolved scenario only in a dev build, so a promo URL (like the boss and
  * defeat URLs before it) is inert in production.
  *
+ * ## Why a promo run is bot-flown, with no freeze/release
+ *
+ * The boss and defeat scenarios are short, terminal jumps: they apply their
+ * effects at the end of `create()` and **freeze** the run so the recorder can
+ * start before the scripted end, then release it through
+ * `window.__aiHellScenario`. A promo scenario is the opposite shape — it is a
+ * continuous, full-length demo run whose whole value is sustained action — so
+ * it must be **bot-flown** end to end (a human pilot cannot reproduce a clip)
+ * and must **never freeze** (freezing would truncate the footage). The
+ * resolver therefore returns the run parameters only; `PlayScene` forces
+ * demo-mode flight and applies the preset, promo level and seed before the
+ * first frame, and the capture records until the ordinary run-ended signal
+ * (or `--max-duration`). Keeping that decision here — in the resolved shape,
+ * not in the page script — is what lets the capture CLI plan the right
+ * lifecycle from the registry `kind` alone.
+ *
  * The supported names are derived from {@link CAPTURE_SCENARIOS}, the shared
  * browser-free registry (`scripts/capture-scenarios.mjs`) the capture CLI also
  * reads (AH-0MV6JGE9R005YOL1). That keeps the game resolver and the CLI list /

@@ -493,16 +493,43 @@ campaign, flies the scenario's bot-tuning preset **by name** and seeds its RNG
 from the scenario's seed. Nothing about the shipped campaign, the bot tuning
 or the RNG changes for any other run.
 
-| `scenario` | Effect |
-|---|---|
-| any registered promo entry (see `--list-scenarios`) | Fly the Watch Demo bot over the scenario's promo level, with its preset and seed. |
+The catalogue is authored in `scripts/capture-scenarios.mjs` (the single
+source of truth) with its wave content in `scripts/promo-scenarios.mjs`, and
+this table mirrors it one-to-one: the `scenario` value, the one-line `effect`
+`--list-scenarios` prints, the bot-tuning `preset` the run flies and the
+editorial `categories` the scenario was authored to evidence.
+
+| `scenario` | Effect | `preset` | Categories |
+|---|---|---|---|
+| `promo-blitz-hook` | Open on a dense fleet and a wide swarm sweep: the high-intensity hook. | `relentless-hunter` | weapons, enemies |
+| `promo-swarm-saturation` | Saturate the screen with swarm walls for maximal shots and drops. | `cautious-collector` | weapons, pickups |
+| `promo-tank-wall` | Grind through heavy tank phalanxes and chase the drops they leave. | `glass-cannon` | weapons, pickups |
+| `promo-march-columns` | Hold the line against reversing Space-Invaders march columns. | `aggressive-hunter` | enemies, weapons |
+| `promo-centipede-tunnel` | Thread the centipede chain as it winds through a scout screen. | `evasive` | enemies |
+| `promo-ghost-hunt` | Outrun Pac-Man pursuers hunting between non-targeting escorts. | `evasive` | enemies |
+| `promo-horde-siege` | Survive the homing-horde rush pouring in from the arena edges. | `aggressive-hunter` | enemies, weapons |
+| `promo-lane-runner` | Weave lane traffic while farming the fleet for drops. | `cautious-collector` | enemies, pickups |
+| `promo-orbital-barrage` | Crossfire of orbital phasers and telegraphed strike arcs. | `barrage-dodger` | weapons, enemies |
+| `promo-capture-cordon` | Break a tractor-pull and attack-run cordon with a hard silhouette. | `cordon-breaker` | enemies |
+| `promo-boss-prelude` | Pressure waves into a mini-boss cordon: the boss-category footage. | `glass-cannon` | boss, enemies |
+| `promo-final-gauntlet` | Every showcase at once, closing on a double-raider mini-boss. | `gauntlet-runner` | weapons, pickups, enemies, boss |
+
+**Catalogue ordering is deliberate** (parent AC3): the list opens with
+`promo-blitz-hook`, the dense fleet-plus-swarm scene with the highest action
+intensity, because `--all-scenarios` records in registry order — so the first
+clip captured (and the first cut of a promo) has no dead air. The twelve
+promo entries then run through the editorial categories and close with
+`promo-final-gauntlet`, which evidences all four; the three original capture
+shortcuts (`boss`, `boss-four-hits`, `defeat`) stay **after** the promo
+catalogue so they never displace the hook.
 
 A promo entry is resolved from the shared registry entry itself, so once the
 catalogue registers one it is selectable exactly like the boss scenarios:
 
 ```bash
-npm run capture -- --list-scenarios           # discover the registered promos
-npm run capture -- --scenario <promo-name>    # record it bot-flown
+npm run capture -- --list-scenarios                  # discover the registered promos
+npm run capture -- --scenario promo-blitz-hook       # record the opening hook
+npm run capture -- --all-scenarios --output promo/   # one clip per scenario
 ```
 
 The application order matters and is fixed: `PlayScene.init()` resolves the
@@ -553,20 +580,25 @@ A hermetic test (`src/data/bot-tuning.test.ts`) asserts every preset a
 registered scenario names exists in the bundled state, so a typo fails the
 suite rather than silently flying `Default`.
 
-| `promoLevel` | Scene | Editorial categories |
-|---|---|---|
-| `promo-blitz-hook` | Dense opening hook (the catalogue opener) | weapons, enemies |
-| `promo-swarm-saturation` | Swarm wall, maximal shots and drops | weapons, pickups |
-| `promo-tank-wall` | Heavy rectangular phalanxes | weapons, pickups |
-| `promo-march-columns` | Space-Invaders `march` columns | enemies, weapons |
-| `promo-centipede-tunnel` | Centipede chain through a screen | enemies |
-| `promo-ghost-hunt` | Pac-Man pursuers between escorts | enemies |
-| `promo-horde-siege` | Robotron homing-horde rush | enemies, weapons |
-| `promo-lane-runner` | Frogger lane traffic over a fleet | enemies, pickups |
-| `promo-orbital-barrage` | Orbital Phasers plus strike arcs | weapons, enemies |
-| `promo-capture-cordon` | Tractor pull and attack runs | enemies |
-| `promo-boss-prelude` | Pressure waves then a mini-boss cordon | boss, enemies |
-| `promo-final-gauntlet` | Both spawner showcases then a double-raider mini-boss | weapons, pickups, enemies, boss |
+| `promoLevel` | Level content |
+|---|---|
+| `promo-blitz-hook` | Dense opening hook (the catalogue opener) |
+| `promo-swarm-saturation` | Swarm wall, maximal shots and drops |
+| `promo-tank-wall` | Heavy rectangular phalanxes |
+| `promo-march-columns` | Space-Invaders `march` columns |
+| `promo-centipede-tunnel` | Centipede chain through a screen |
+| `promo-ghost-hunt` | Pac-Man pursuers between escorts |
+| `promo-horde-siege` | Robotron homing-horde rush |
+| `promo-lane-runner` | Frogger lane traffic over a fleet |
+| `promo-orbital-barrage` | Orbital Phasers plus strike arcs |
+| `promo-capture-cordon` | Tractor pull and attack runs |
+| `promo-boss-prelude` | Pressure waves then a mini-boss cordon |
+| `promo-final-gauntlet` | Both spawner showcases then a double-raider mini-boss |
+
+The scenario → preset → editorial-category mapping for the same twelve slots
+is the catalogue table above; a level's `categories` here and the scenario's
+`categories` in the registry are the same authored vocabulary, checked by
+`scripts/promo-scenarios.test.ts` and `scripts/capture-scenarios.test.ts`.
 
 Promo waves are **content, not behaviour**: every group uses an archetype the
 shipped campaign already places as a wave group (`scout`, `diver`, `tank`,

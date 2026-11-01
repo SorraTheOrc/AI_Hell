@@ -700,6 +700,20 @@ added by AH-0MUWTNPYJ0031FQE):
   machine-readable array `[ { "name", "effect", "kind", "preset"?, … } ]`
   carrying the promo metadata (`preset`, `promoLevel`, `categories`, `seed`)
   alongside the original `name`/`effect` fields.
+- **Promo scenarios (`--scenario <promo-name>`):** the catalogue pairs each of
+  the **twelve curated promo scenarios** with a bot-tuning preset and a
+  hand-authored promo wave, so a promo clip covers a deliberate editorial
+  beat instead of whatever the current run contains. Discover them with
+  `npm run capture -- --list-scenarios`, record one with
+  `npm run capture -- --scenario promo-blitz-hook`, or record the whole
+  catalogue with `--all-scenarios` (the twelve promos come first, hook
+  first, followed by the `boss`/`defeat` shortcuts). A promo clip is
+  **bot-flown**: the Watch Demo bot plays the scenario's single promo level
+  with its named preset and fixed seed, and the recorder stops on the
+  run-ended signal — there is no freeze/release step. Scenarios are dev-only
+  (`import.meta.env.DEV`), so production builds ignore the URL parameter.
+  Every scenario, its effect, preset and editorial categories are listed in
+  [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#promo-scenarios-kind-promo).
 - **Batch clips (`--count n` / `-n`):** `npm run capture -- --count 3` records
   **3 clips in one process** — one Vite dev server and one browser, a fresh
   page per iteration, no state leaking between clips. With `--output
