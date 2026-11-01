@@ -24,6 +24,11 @@
  * Cosmetic only (parent AC4): the sweep awards no score, drops nothing and
  * emits no telemetry — swept entities are removed visually through the
  * caller's own teardown seam, never through the reward-bearing kill path.
+ * It is **not** silent, though: every planned burst schedules its matching
+ * explosion cue (producer audit: "explosions with no SFX") — the swept
+ * enemies / celebration bursts reuse the shared enemy-destruction cue and the
+ * finale pairs use the heavy boss-destruction boom, each at the burst's own
+ * delay and trimmed to its role's mix level.
  *
  * ## Sweep composition (parent AC2)
  *
@@ -57,6 +62,10 @@ import {
   type ExplosionHandle,
   type ExplosionScene,
 } from '../../vfx/explosionParticles';
+import {
+  playBossDestructionSound,
+  playDestructionSound,
+} from '../../audio/effects';
 import { isNonBlockingHazard } from './waveTimeout';
 
 // ── Tunable constants ─────────────────────────────────────────────
@@ -155,6 +164,21 @@ const MINI_BOSS_SWEEP_PALETTE: readonly number[] = [
   0xffd166, 0xff9f1c, 0xff6b35, 0xffe066,
 ];
 
+// ── Explosion SFX tunables ────────────────────────────────────────
+
+/**
+ * Per-role mix trims for the sweep's explosion cues. The display is dense (a
+ * scripted cascade of up to 60 bursts), so each cue is trimmed against the
+ * shared destruction/boss cues rather than playing them at full kill volume.
+ */
+export const MINI_BOSS_SWEEP_ENEMY_SOUND_VOLUME = 0.55;
+/** Mix trim for the scattered celebration bursts. */
+export const MINI_BOSS_SWEEP_SCATTER_SOUND_VOLUME = 0.3;
+/** Mix trim for the bursts anchored on the death point. */
+export const MINI_BOSS_SWEEP_ANCHORED_SOUND_VOLUME = 0.4;
+/** Mix trim for the finale pairs — the mini-boss's biggest beat. */
+export const MINI_BOSS_SWEEP_FINALE_SOUND_VOLUME = 0.65;
+
 // ── Types ─────────────────────────────────────────────────────────
 
 /** One swept target: a live wave-gating entity captured at defeat time. */
@@ -237,7 +261,29 @@ export interface MiniBossSweepPlan {
 export interface MiniBossDeathSweepOptions {
   /** Fires exactly once, after every burst has finished animating. */
   onComplete?: () => void;
+  /**
+   * Whether the sweep schedules its explosion SFX (default `true`). Every
+   * planned burst gets a cue, so no explosion in the display is silent.
+   */
+  soundEnabled?: boolean;
+  /**
+   * Per-burst sound scheduler (test seam / custom audio routing). Receives the
+   * burst role, its scheduled delay (ms) and its index. Defaults to
+   * {@link playMiniBossSweepBurstSound}, gated by `soundEnabled`.
+   */
+  playSound?: MiniBossSweepSoundPlayer;
 }
+
+/**
+ * Per-burst sound player seam: schedules the cue matching a burst's role at
+ * the burst's own delay, so the audio tracks the visual cascade. Injectable
+ * for tests and custom audio routing.
+ */
+export type MiniBossSweepSoundPlayer = (
+  role: MiniBossSweepBurst['role'],
+  delayMs: number,
+  index: number,
+) => void;
 
 /**
  * The minimal Phaser `time` surface the executor's completion watchdog needs
@@ -485,11 +531,59 @@ export function planMiniBossDeathSweep(
 // ── Thin Phaser executor ──────────────────────────────────────────
 
 /**
+ * Default per-burst SFX routing (producer audit: "explosions with no SFX").
+ *
+ * Swept-enemy, scatter and anchored bursts reuse the shared enemy
+ * destruction cue; the finale pairs use the heavy boss-destruction boom, so
+ * the mini-boss's own beat is the loudest part of the display. Every cue is
+ * scheduled at the burst's `delayMs` — an explicit delay is honoured verbatim
+ * by the audio layer (never snapped to the beat grid) — and trimmed to its
+ * role's mix level so a 60-burst cascade stays inside the mix. A safe no-op
+ * without an `AudioContext` (headless tests), like every cue.
+ */
+export function playMiniBossSweepBurstSound(
+  role: MiniBossSweepBurst['role'],
+  delayMs: number,
+): void {
+  const delay = Math.max(0, delayMs) / 1000;
+  switch (role) {
+    case 'finale':
+      playBossDestructionSound({
+        delay,
+        volume: MINI_BOSS_SWEEP_FINALE_SOUND_VOLUME,
+      });
+      return;
+    case 'anchored':
+      playDestructionSound({
+        delay,
+        volume: MINI_BOSS_SWEEP_ANCHORED_SOUND_VOLUME,
+      });
+      return;
+    case 'scatter':
+      playDestructionSound({
+        delay,
+        volume: MINI_BOSS_SWEEP_SCATTER_SOUND_VOLUME,
+      });
+      return;
+    default:
+      playDestructionSound({
+        delay,
+        volume: MINI_BOSS_SWEEP_ENEMY_SOUND_VOLUME,
+      });
+  }
+}
+
+/**
  * Plays a planned sweep on the given scene: every burst is dispatched through
  * `spawnExplosionParticles` (honouring `delayMs`/`lifespanMs`/`count`/`scale`)
  * and each burst's completion is counted; `options.onComplete` fires exactly
  * once — only after every burst has finished animating, never on the spawn
  * frame and never on an explicit `destroy()` teardown (parent AC3).
+ *
+ * Every burst also schedules its matching explosion cue (unless
+ * `soundEnabled` is `false`, or a custom `playSound` is supplied), so the
+ * cascade is never silent; the cue is fire-and-forget and never affects
+ * completion ordering.
  *
  * Each burst spawn uses a deterministic per-burst seed derived from the
  * planner's run seed, so the particles themselves are reproducible for a
@@ -513,6 +607,8 @@ export function spawnMiniBossDeathSweep(
 ): MiniBossDeathSweepHandle {
   const plan = planMiniBossDeathSweep(input);
   const explosions: ExplosionHandle[] = [];
+  const soundEnabled = options.soundEnabled ?? true;
+  const playSound = options.playSound ?? playMiniBossSweepBurstSound;
   let finished = 0;
   let destroyed = false;
   let done = false;
@@ -560,6 +656,11 @@ export function spawnMiniBossDeathSweep(
       // still reach completion deterministically.
       finished += 1;
     }
+
+    // Every burst also schedules its matching explosion cue, so the display
+    // is never silent (producer audit). Fire-and-forget: the cue is handed to
+    // the audio layer at the burst's own delay and never affects completion.
+    if (soundEnabled) playSound(burst.role, burst.delayMs, i);
   }
 
   // Completion watchdog: an explicit lifespan + stagger timer, never a frame

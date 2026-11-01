@@ -1638,6 +1638,14 @@ covers it):
   force-field bubble cleared, **no** explosion of its own — the sweep supplies
   the burst) and never route through the reward-bearing `_onEnemyKilled` path:
   no score, no drops, no kill telemetry.
+- **Sound.** Every planned burst schedules its matching explosion cue through
+  the shared audio layer: the swept-enemy, scatter and anchored bursts reuse
+  `playDestructionSound`, and the finale pairs use
+  `playBossDestructionSound`. Each cue carries the burst's explicit `delay`
+  (honoured verbatim by `playExplosionCue` instead of being snapped to the
+  beat grid) and a per-role mix trim, so no burst in the display is silent
+  (producer audit: "explosions with no SFX"). `spawnMiniBossDeathSweep`
+  exposes `soundEnabled` and `playSound` seams for custom routing/tests.
 - **Deferred finalisation.** `PlayScene._finaliseMiniBossDefeat` runs from the
   executor's `onComplete`: it opens the reward overlay
   (`openMiniBossReward`, `miniBossRewardOpen` latch ⇒ exactly one overlay per

@@ -275,8 +275,17 @@ function nextExplosionAccentDelaySeconds(): number | null {
  * Plays an explosion cue on the next accent tick, dropping it when the
  * per-tick cap is already reached. `options` carry the cue's own settings
  * (e.g. volume); the accent `delay` is always applied on top.
+ *
+ * An **explicit** `options.delay` marks a scripted, caller-scheduled display
+ * (the mini-boss death sweep): it is played at exactly that offset instead of
+ * being snapped to the beat grid, and it never spends the per-tick accent
+ * budget (that budget exists to cap a mass kill, not a pre-planned cascade).
  */
 function playExplosionCue(cue: string, options: SfxPlayOptions = {}): void {
+  if (options.delay !== undefined) {
+    playCue(cue, options);
+    return;
+  }
   const delay = nextExplosionAccentDelaySeconds();
   if (delay === null) return;
   playCue(cue, { ...options, delay });
@@ -370,9 +379,15 @@ export function playSpawnSound(): void {
   playCue('playSpawnSound');
 }
 
-/** Descending saw burst — enemy destruction cue (multi-seed jitter). */
-export function playDestructionSound(): void {
-  playExplosionCue('playDestructionSound');
+/**
+ * Descending saw burst — enemy destruction cue (multi-seed jitter).
+ *
+ * Accepts per-play {@link SfxPlayOptions}; an explicit `delay` (seconds) is
+ * honoured verbatim for caller-scheduled displays such as the mini-boss death
+ * sweep, otherwise the cue is quantised onto the shared beat grid.
+ */
+export function playDestructionSound(options: SfxPlayOptions = {}): void {
+  playExplosionCue('playDestructionSound', options);
 }
 
 /** Heavier layered "hull breach" boom — player destruction (volume-scaled). */
@@ -1144,9 +1159,13 @@ export function playBossPhaseTransitionSound(): void {
   playCue('playBossPhaseTransitionSound');
 }
 
-/** Heavy deep fall — Boss destruction. */
-export function playBossDestructionSound(): void {
-  playCue('playBossDestructionSound');
+/**
+ * Heavy deep fall — Boss destruction. Accepts per-play {@link SfxPlayOptions}
+ * so a scripted display (the mini-boss finale) can schedule its booms with an
+ * explicit `delay` and a mix-trimming `volume`.
+ */
+export function playBossDestructionSound(options: SfxPlayOptions = {}): void {
+  playCue('playBossDestructionSound', options);
 }
 
 /**

@@ -82,7 +82,7 @@ game-specific recipe/stack, `retired` = removed in the migration.
 | Cue (`src/audio/effects.ts`) | Original character | GDD §7.3 | Production consumer(s) | Disp. | Target recipe / preset |
 |------------------------------|--------------------|----------|------------------------|-------|------------------------|
 | `playSpawnSound` | Rising square blip 220→880 Hz, 0.18 s, vol 0.12 | Enemy spawn (subtle hum rise) | `PlayScene`, `GymFormationScene`, `GymPowerUpsCombat`, `GymLevel` | new | `aihell-enemy-spawn` |
-| `playDestructionSound` | Descending saw 440→60 Hz (× ±15 % pitch jitter), 0.28 s, vol 0.30 | Enemy destroyed (sharp pop/crack), scheduled on the next 16th-note beat accent | `PlayScene`, `CombatScene`, `GymFormationScene`, `enemyFactory`, `Asteroid`, `Scout`, `Phaser`, `Diver`, `playerDeathJuice` | new | `aihell-enemy-destruction` (multi-seed) |
+| `playDestructionSound` | Descending saw 440→60 Hz (× ±15 % pitch jitter), 0.28 s, vol 0.30 | Enemy destroyed (sharp pop/crack), scheduled on the next 16th-note beat accent; an explicit `delay` (mini-boss death sweep) is honoured verbatim instead | `PlayScene`, `CombatScene`, `GymFormationScene`, `enemyFactory`, `Asteroid`, `Scout`, `Phaser`, `Diver`, `playerDeathJuice`, `scenes/core/miniBossDeathSweep` | new | `aihell-enemy-destruction` (multi-seed) |
 | `playPlayerDestructionSound` | Layered hull breach: saw thump 120→32 Hz 0.4 s + triangle body 260→42 Hz 0.6 s + HP noise tail 0.28 s, ≤ 0.2 | Player hit / life lost, scheduled on the next 16th-note beat accent | `vfx/playerDeathJuice` | new | `aihell-player-hull-breach` (stack) |
 | `playMajorExplosionSound` | Layered major blast: saw thump 150→26 + triangle body 340→38 + LP noise tail, 4-voice limiter | Wave timeout — retained but unused | **none** | **retired** | — (see Retired cues) |
 | `playBulletDestructionSound` | Square tick 1400→900 Hz, 0.07 s, vol 0.12 | Player bullet destroys enemy bullet | `vfx/bulletImpact` | new | `aihell-bullet-destruction` |
@@ -372,6 +372,14 @@ avoid a partially migrated palette. Discovered during this audit.
 | `playBossPhaseTransitionSound` | Square 220→880 Hz, 0.35 s | `aihell-boss-phase-transition` | 32202 |
 | `playBossDestructionSound` | Saw 180→20 Hz, 0.6 s | `aihell-boss-destruction` | 32203 |
 | `playBossPhaseCue(phase)` | Per-phase square rise — scale-degree variants: phases rise A3/A4/E5/A5 → A5 (AC3) | `aihell-boss-phase-cue` | 32242, 32227, 32207, 32204 |
+
+The mini-boss death sweep (`src/scenes/core/miniBossDeathSweep.ts`,
+AH-0MVOFGB6K003YD0Z) reuses `playDestructionSound` for its swept-enemy/scatter/
+anchored bursts and `playBossDestructionSound` for its 20-burst finale, each
+scheduled with the burst's explicit `delay` and a per-role mix trim. No new
+recipe is needed: the cue layer honours an explicit delay verbatim (bypassing
+the beat grid and the mass-kill accent cap), so the scripted cascade keeps its
+own rhythm.
 
 ## Retired cues
 

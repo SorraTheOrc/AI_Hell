@@ -807,6 +807,13 @@ reward overlay (§4.4.4) appears.
   **no score, no mineral/power-up/Extra-Life drops and no kill telemetry** —
   they never route through the reward-bearing kill path. The mini-boss reward
   (§4.4.4) remains the encounter's single reward.
+- **Sound.** The display is never silent: every planned burst schedules its
+  matching explosion cue. Swept-enemy, scatter and anchored bursts reuse the
+  shared enemy-destruction cue, and the finale pairs use the heavy
+  boss-destruction boom, each at the burst's own delay and trimmed to its
+  role's mix level. An explicit delay is honoured verbatim (never snapped to
+  the beat grid) and does not spend the mass-kill accent budget, so a
+  scripted cascade keeps its own rhythm.
 - **Ordering.** The reward overlay opens only after the **last** burst has
   finished animating (its `setPaused(true)` would otherwise freeze the burst
   tweens mid-flight), and the wave/level accounting advances **exactly once,
@@ -1521,10 +1528,11 @@ Coverage: `src/powerups/unlocks.test.ts`
 
 **The overlay waits for the defeat sweep (AH-0MVOFGB6K003YD0Z).** The reward is
 offered when the encounter is *defeated*, and a defeat now plays the staggered
-explosion sweep of §3.3.1 first: the overlay opens only once the last burst has
-finished animating, because its `setPaused(true)` would freeze the burst tweens
-mid-display. The `miniBossRewardOpen` latch still opens exactly **one** overlay
-per defeat, and the level advances once **after** the sweep.
+explosion sweep of §3.3.1 first (including its matching explosion SFX): the
+overlay opens only once the last burst has finished animating, because its
+`setPaused(true)` would freeze the burst tweens mid-display. The
+`miniBossRewardOpen` latch still opens exactly **one** overlay per defeat, and
+the level advances once **after** the sweep.
 
 **Demo/attract auto-select (AH-0MVJ8U79V0056I2F).** In demo mode the reward is
 not left waiting for a human: the launcher passes the same overlay

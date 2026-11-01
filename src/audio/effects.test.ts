@@ -958,6 +958,39 @@ describe('beat-synchronised explosion accents', () => {
     expect(recording.plays[0].delay).toBe(0);
   });
 
+  it('honours an explicit delay instead of quantising a scheduled cascade', () => {
+    // A scripted display (the mini-boss death sweep) owns its own rhythm: an
+    // explicit `delay` must be played as given, not moved onto the beat grid.
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100); // the accent grid would move this to 87.5 ms
+
+    effects.playDestructionSound({ delay: 0.25, volume: 0.3 });
+    effects.playBossDestructionSound({ delay: 0.5, volume: 0.65 });
+
+    expect(recording.plays).toHaveLength(2);
+    expect(recording.plays[0].delay).toBe(0.25);
+    expect(recording.plays[0].volume).toBe(0.3);
+    expect(recording.plays[1].delay).toBe(0.5);
+    expect(recording.plays[1].volume).toBe(0.65);
+  });
+
+  it('does not spend the per-tick accent cap on explicitly scheduled bursts', () => {
+    // The cascade schedules its own cues; it must not exhaust the mass-kill
+    // accent budget that a real simultaneous kill still needs.
+    const clock = createBeatClock();
+    effects.setExplosionBeatClock(clock);
+    clock.advance(100);
+
+    for (let i = 0; i < effects.EXPLOSION_PER_TICK_CAP + 4; i += 1) {
+      effects.playDestructionSound({ delay: i * 0.01 });
+    }
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 4);
+
+    effects.playDestructionSound();
+    expect(recording.plays).toHaveLength(effects.EXPLOSION_PER_TICK_CAP + 5);
+  });
+
   it('stacks several kills in one window onto the same tick (one accent)', () => {
     const clock = createBeatClock();
     effects.setExplosionBeatClock(clock);

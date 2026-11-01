@@ -8308,6 +8308,35 @@ describe('PlayScene — mini-boss death sweep wiring (AH-0MVROELN600410GP)', () 
     expect(scene.isMineralChoiceOpen()).toBe(false);
     expect(scene.isPaused()).toBe(false);
   });
+
+  it('AC3 — every sweep burst schedules its explosion SFX (no silent explosions)', async () => {
+    const scene = await bootSweepScene();
+    advanceToMiniBoss(scene);
+    const destruction = vi.spyOn(effectsModule, 'playDestructionSound');
+    const bossDestruction = vi.spyOn(effectsModule, 'playBossDestructionSound');
+
+    hitMiniBossUntilDead(scene);
+
+    const targets = scene.getMiniBossSweepTargets();
+    // The swept enemies, the `max(0, 30 - n)` scatter bursts and the 10
+    // anchored bursts share the enemy-destruction cue, each scheduled at its
+    // own burst delay (producer audit: explosions were silent).
+    expect(destruction.mock.calls.length).toBeGreaterThanOrEqual(
+      targets.length + 10,
+    );
+    expect(
+      destruction.mock.calls.some(([options]) => (options?.delay ?? 0) > 0),
+    ).toBe(true);
+    // The 20-burst finale is the mini-boss's own heavy boss-destruction boom
+    // (the mini-boss's single death cue, when routed through its
+    // `playDestructionAudio` seam, is unscheduled and therefore not counted).
+    const scheduledBossBooms = bossDestruction.mock.calls.filter(
+      ([options]) => (options?.delay ?? 0) > 0,
+    );
+    expect(scheduledBossBooms).toHaveLength(20);
+
+    finishMiniBossSweep(scene);
+  });
 });
 
 /**
