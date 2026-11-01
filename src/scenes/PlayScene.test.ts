@@ -2257,6 +2257,10 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // clears calls without removing the spy. Restore here so no boss-hit cue
     // or hit-effect spy from one test leaks into the next — even when a test
     // throws before its own cleanup.
+    // Re-verified under host load (verification child AH-0MVXUAT9S003NZ3K):
+    // after the deterministic-boot/spy-isolation fix, repeated sanctioned
+    // changed-scope runs — one under deliberate concurrent host load — and
+    // the dev-push full-suite gate stayed green; assertions are unchanged.
     vi.restoreAllMocks();
   });
 
@@ -2707,6 +2711,10 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     // clears calls without removing the spy. Restore here so a destruction-
     // audio or pickup-cue spy from one test never leaks into the next — even
     // when a test throws before its own cleanup.
+    // Re-verified under host load (verification child AH-0MVXUAT9S003NZ3K):
+    // three consecutive sanctioned changed-scope runs (one under deliberate
+    // concurrent host load) and the dev-push full-suite gate stayed green;
+    // assertions are unchanged.
     vi.restoreAllMocks();
   });
 
