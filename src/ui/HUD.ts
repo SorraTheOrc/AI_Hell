@@ -16,17 +16,21 @@
  * - a fixed-length, hollow-outlined hold bar that fills proportionally as
  *   minerals are collected (replaces the former `Minerals: n/20` text).
  *
- * Consumable counts that the level alone does not convey (Shield shield
- * remaining absorptions, Phase Shift phase charges, Teleport teleport uses) are appended to
- * the label as ` ×N` so the value column stays strictly `∞`/countdown. A
- * recharging consumable (the Thorn Field, AH-0MVJ8YKR70096C6T) also appends
- * its `next in Ns` recharge countdown to the label.
+ * Consumable charge counts that the level alone does not convey (Shield
+ * absorptions, Thorn Field rams, Phase Shift charges, Teleport uses, Force
+ * Field reflects, Mystery UFO drones) are appended to the label as ` ×N` so
+ * the value column stays strictly `∞`/countdown. Every consumable row
+ * (`powerups/types.ts` `CONSUMABLE_POWER_UP_IDS`, the one catalogue source of
+ * truth) also appends a live `next in Ns` countdown to its next regenerating
+ * charge while one is owed — `undefined` while the pool is full — through the
+ * shared `buildHUDLabel` formatter (parent AH-0MVTQMREN009DSFW AC4).
  *
- * A charge-based power-up the player **owns** but whose pool is currently
- * **empty** stays visible as a greyed-out row (icon + label + value all in
- * the shared grey from `powerups/icons.ts`) instead of being hidden, so the
- * recharging pool is always legible (AH-0MV82I97Y007MB6M). A power-up the
- * player has never owned is still hidden.
+ * A consumable the player **owns** but whose pool is currently **empty** stays
+ * visible as a greyed-out row (icon + label + value all in the shared grey
+ * from `powerups/icons.ts`) instead of being hidden, so the recharging pool is
+ * always legible (AH-0MV82I97Y007MB6M, generalised to every consumable by
+ * AH-0MVTQMREN009DSFW AC4). A power-up the player has never owned is still
+ * hidden.
  *
  * ## Slot budget and non-slot rows (AH-0MVVJRRN10038VFR)
  *
@@ -58,7 +62,10 @@ import {
   WeaponEffect,
 } from '../powerups/effects';
 import { getPowerUpById, type PowerUpId } from '../powerups/types';
-import { POWER_UP_LEVEL_IDS } from '../powerups/powerUpLevels';
+import {
+  POWER_UP_LEVEL_IDS,
+  isConsumablePowerUpId,
+} from '../powerups/powerUpLevels';
 import {
   drawPowerUpIcon,
   drawWeaponIcon,
@@ -162,13 +169,14 @@ export interface HUDEntry {
   level: number;
   /** True while a temporary level-up window is active. */
   temporary: boolean;
-  /** Consumable count (Shield absorptions, Phase Shift charges, Teleport teleports), if any. */
+  /** Consumable charge count (Shield absorptions, Thorn Field rams, Phase Shift charges, Teleport teleports, Force Field reflects, Mystery UFO drones), if any. */
   stacks?: number;
   /**
-   * Seconds until the next automatic recharge for a recharging consumable
-   * (Thorn Field), or `undefined` when nothing is recharging. Rendered in the
-   * label as `next in Ns` so the row is never an inert bare label
-   * (AH-0MVJ8YKR70096C6T).
+   * Seconds until the next regenerating charge of a consumable, or
+   * `undefined` when nothing is owed (the pool is full, no timer is running,
+   * or the row is not a consumable). Rendered in the label as `next in Ns` so
+   * the row is never an inert bare label (AH-0MVJ8YKR70096C6T, generalised to
+   * every consumable by parent AH-0MVTQMREN009DSFW AC4).
    */
   recharge?: number;
   /**
@@ -642,6 +650,16 @@ export class HUD extends Phaser.GameObjects.Container {
   /** Whether a power-up currently warrants a row (pre-existing rules). */
   private _isPowerUpRowVisible(id: PowerUpId): boolean {
     const reg = this._registry!;
+    // Generalised consumable visibility (parent AH-0MVTQMREN009DSFW AC4): a
+    // consumable row appears whenever the player owns it — permanently or via
+    // a live pickup window — or holds a charge, so a greyed recharging pool
+    // never disappears. Every other kind keeps its pre-existing rule below.
+    if (
+      isConsumablePowerUpId(id) &&
+      (this._ownsChargePool(id) || reg.consumableCharges(id) > 0)
+    ) {
+      return true;
+    }
     switch (id) {
       case 'shield':
         return reg.isActive('shield');
@@ -650,17 +668,13 @@ export class HUD extends Phaser.GameObjects.Container {
       case 'speed_boost':
         return reg.isActive('speed_boost');
       case 'phase_shift':
-        return (
-          reg.isPhasePermanent() ||
-          reg.phaseCharges() > 0 ||
-          reg.isActive('phase_shift') ||
-          // Owned (permanent or field pickup) but spent: the recharging pool
-          // keeps the row visible (greyed) rather than hiding it
-          // (AH-0MV82I97Y007MB6M).
-          this._ownsChargePool(id)
-        );
+        // A live phase boundary keeps its row; ownership and the finite
+        // recharging pool are handled by the consumable rule above
+        // (AH-0MV82I97Y007MB6M).
+        return reg.isActive('phase_shift');
       case 'teleport':
-        return reg.teleportStacks() > 0 || this._ownsChargePool(id);
+        // Only the charge pool keeps a Teleport row alive — handled above.
+        return false;
       case 'magnet':
         return reg.isMagnetActive();
       case 'mineral_scoop':
@@ -676,18 +690,11 @@ export class HUD extends Phaser.GameObjects.Container {
         return reg.isForceFieldActive();
       case 'mystery_ufo':
         // The Mystery UFO is a visible collector drone with no timed effect of
-        // its own, but a field pickup still opens its per-upgrade 15 s
-        // temporary-level window (§4.4.3), so show its row for as long as the
-        // player owns it (any collection advanced its level); the row renders
-        // the effective level (drone lifetime/capacity/radius) and the window
-        // countdown or ∞ (AH-0MV9G113S009B37I). A hold-full reward owns the
-        // kind without levelling it (parent AH-0MVTQMREN009DSFW AC1), so
-        // ownership also keeps the row visible.
-        return (
-          reg.powerUpLevel('mystery_ufo') > 0 ||
-          reg.levelStore().consumableCharges('mystery_ufo') > 0 ||
-          reg.isMysteryUfoPermanent()
-        );
+        // its own; ownership (a hold-full charge grant or a field-pickup
+        // level) keeps its row visible through the consumable rule above, and
+        // the row renders the effective level and the window countdown or ∞
+        // (AH-0MV9G113S009B37I, parent AH-0MVTQMREN009DSFW AC1).
+        return false;
       case 'frenzy':
       case 'chrono':
       case 'salvage':
@@ -708,44 +715,58 @@ export class HUD extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Consumable count for a power-up (appended to the label), or `undefined`
-   * when the level alone conveys the state. A zero count is never surfaced.
+   * Consumable charge count for a power-up (appended to the label), or
+   * `undefined` when the level alone conveys the state. A zero count is never
+   * surfaced (` ×0` is never rendered — parent AC1).
+   *
+   * Every consumable reads the shared pool through its per-kind projection:
+   * the shipped budget accessors (`shieldAbsorptionsRemaining`,
+   * `thornsRemaining`, `forceFieldRemaining`) report a **field-pickup window's**
+   * timed budget while one is live and the pooled charges for an owned kind
+   * (PD5), so a field pickup is never misreported from an untouched pool.
+   * Phase Shift, Teleport and Mystery UFO have no separate window budget and
+   * read the pool directly.
+   *
+   * Non-consumable kinds surface no count (their level alone is the state).
    */
   private _powerUpStacks(id: PowerUpId): number | undefined {
+    if (!isConsumablePowerUpId(id)) return undefined;
+    return this._consumableCharges(id) || undefined;
+  }
+
+  /**
+   * Charges (or the live field-pickup budget) a consumable row surfaces — the
+   * one reading used by both the ` ×N` label and the empty-pool grey-out, so
+   * the two can never disagree.
+   */
+  private _consumableCharges(id: PowerUpId): number {
     const reg = this._registry!;
     switch (id) {
       case 'shield':
-        return reg.shieldAbsorptionsRemaining() || undefined;
-      case 'phase_shift':
-        // The finite recharging pool is surfaced even for the permanent
-        // reward, which is no longer an unlimited supply
-        // (AH-0MV82I97Y007MB6M).
-        return reg.phaseCharges() || undefined;
-      case 'teleport':
-        return reg.teleportStacks() || undefined;
-      case 'force_field':
-        return reg.forceFieldRemaining() || undefined;
+        return reg.shieldAbsorptionsRemaining();
       case 'thorns':
-        // Thorn Field carries its remaining ram absorbs so the HUD renders
-        // `Thorn Field xN` and updates as rams are absorbed.
-        return reg.thornsRemaining() || undefined;
+        return reg.thornsRemaining();
+      case 'force_field':
+        return reg.forceFieldRemaining();
       default:
-        return undefined;
+        // Phase Shift / Teleport / Mystery UFO: the pool is the whole budget.
+        return reg.consumableCharges(id);
     }
   }
 
   /**
-   * Seconds until the next automatic recharge for a recharging consumable, or
-   * `undefined` when nothing is recharging. Only the Thorn Field recharges
-   * today (AH-0MVJ8YKR70096C6T); an armed field with a spent budget — and, in
-   * particular, a permanent (hold-full) field sitting at zero charges — shows
-   * its countdown so the row never reads as an inert bare label.
+   * Seconds until the next regenerating charge for a recharging consumable, or
+   * `undefined` when nothing is owed (parent AH-0MVTQMREN009DSFW AC4). Every
+   * consumable reads its regeneration countdown from the shared registry
+   * accessors — no countdown while the pool is full, and only a live (`> 0`)
+   * timer is ever reported, so the label never shows a stalled `next in 0s`.
    *
-   * The permanent Orbital Strike row also carries a countdown to its next bolt
-   * (AH-0MVS2T40T006QL7H): a multi-second interval (6.75 s at the first grant,
-   * AH-0MVRE6N08001TE4V) otherwise reads as an inert power-up. The registry
-   * owns the clock; the HUD only projects it through the same `next in Ns`
-   * label formatter, so there is one formatting path.
+   * Thorn Field keeps its registry-local projection because a **field-pickup**
+   * window still counts down on the shipped ram clock rather than the pool
+   * (PD5; AH-0MVJ8YKR70096C6T). The permanent Orbital Strike row also carries a
+   * countdown to its next bolt (AH-0MVS2T40T006QL7H). The registry owns every
+   * clock; the HUD only projects it through the same `next in Ns` label
+   * formatter, so there is one formatting path.
    */
   private _powerUpRecharge(id: PowerUpId): number | undefined {
     const reg = this._registry!;
@@ -760,41 +781,43 @@ export class HUD extends Phaser.GameObjects.Container {
         // negative countdown.
         return reg.strikeNextBoltSeconds();
       default:
-        return undefined;
+        // Every consumable regenerates through the shared pool clock.
+        return isConsumablePowerUpId(id)
+          ? reg.consumableRechargeRemaining(id)
+          : undefined;
     }
   }
 
   /**
-   * Whether the player **owns** a charge-based pool (`phase_shift` /
-   * `teleport`) this run — permanent grants and field-pickup stacks both
-   * count (`powerUpLevel` is their sum, 0 when never picked up). Used to keep
-   * an owned-but-empty pool visible (greyed) instead of hiding it
-   * (AH-0MV82I97Y007MB6M).
+   * Whether the player **owns** a consumable's charge pool this run — the
+   * hold-full ownership flag and a field-pickup level both count, while a
+   * never-collected kind does not. Used to keep an owned-but-empty pool
+   * visible (greyed) instead of hiding it (AH-0MV82I97Y007MB6M), generalised
+   * from the Phase Shift / Teleport pair to the whole catalogue consumable set
+   * (parent AH-0MVTQMREN009DSFW AC4) — no per-kind special case.
    */
   private _ownsChargePool(id: PowerUpId): boolean {
+    if (!isConsumablePowerUpId(id)) return false;
     // A consumable hold-full reward never raises the level (parent
     // AH-0MVTQMREN009DSFW AC1): ownership is the per-kind flag, so an owned
     // kind stays visible (greyed) while its empty pool regenerates.
-    const store = this._registry!.levelStore?.();
-    if (store && store.isConsumableOwned(id)) return true;
-    return this._registry!.powerUpLevel(id) > 0;
+    return (
+      this._registry!.isConsumableOwned(id) ||
+      this._registry!.powerUpLevel(id) > 0
+    );
   }
 
   /**
    * Whether a row should render greyed-out/inactive: the player owns the
-   * charge-based pool but has zero available charges/stacks
-   * (AH-0MV82I97Y007MB6M). Non-charge rows are never greyed.
+   * consumable but has zero available charges (AH-0MV82I97Y007MB6M, generalised
+   * to every consumable by parent AH-0MVTQMREN009DSFW AC4). The check reads the
+   * same charge projection the label uses, so a live field-pickup budget can
+   * never grey a row that still has charges. Non-consumable rows are never
+   * greyed.
    */
   private _isPowerUpGreyed(id: PowerUpId): boolean {
-    const reg = this._registry!;
-    switch (id) {
-      case 'phase_shift':
-        return this._ownsChargePool(id) && reg.phaseCharges() === 0;
-      case 'teleport':
-        return this._ownsChargePool(id) && reg.teleportStacks() === 0;
-      default:
-        return false;
-    }
+    if (!this._ownsChargePool(id)) return false;
+    return this._consumableCharges(id) === 0;
   }
 
   // ── Test accessors (public model) ─────────────────────────────────

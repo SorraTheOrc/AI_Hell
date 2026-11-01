@@ -21,6 +21,7 @@ import {
   resolvePowerUpAtLevel,
 } from '../powerups/powerUpLevels';
 import { POWER_UP_SLOT_CAP } from '../core/constants';
+import { CONSUMABLE_POWER_UP_IDS, type PowerUpId } from '../powerups/types';
 import { resolvePlayerSlotState } from '../powerups/slots';
 import {
   SIX_SLOT_LOADOUT_IDS,
@@ -1459,5 +1460,154 @@ describe('HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49)', () => {
     // The pre-existing visibility rules are untouched: a temporary one-shot
     // still renders no row when the HUD is not slot-aware.
     expect(rows.map((row) => row.id)).not.toContain('strike');
+  });
+});
+
+// ── Consumable charges and regeneration countdown (parent AH-0MVTQMREN009DSFW
+//    AC4) ────────────────────────────────────────────────────────────────
+//
+// Every consumable row — Shield, Thorn Field, Phase Shift, Teleport, Force
+// Field, Mystery UFO — shows its available charge count (` ×N`, never ` ×0`),
+// a live `next in Ns` countdown while a charge is regenerating, no countdown
+// while the pool is full, and an owned-but-empty row that stays visible and
+// greyed. The set comes from the catalogue (`CONSUMABLE_POWER_UP_IDS`), so a
+// new consumable is covered without touching this suite.
+
+describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
+  /** The row for `id`, or `undefined` when the HUD renders none. */
+  function rowFor(hud: HUD, id: string): HUDEntry | undefined {
+    return hud.getRows().find((row) => row.id === id);
+  }
+
+  /** A registry whose store the test drives, plus one owned charge. */
+  function ownedConsumable(id: PowerUpId): {
+    store: PowerUpLevelStore;
+    reg: EffectsRegistry;
+  } {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    store.collect(id, true); // hold-full: owned, one charge, no level
+    return { store, reg };
+  }
+
+  it('covers the catalogue consumable set (six kinds)', () => {
+    expect([...CONSUMABLE_POWER_UP_IDS].sort()).toEqual(
+      [
+        'force_field',
+        'mystery_ufo',
+        'phase_shift',
+        'shield',
+        'teleport',
+        'thorns',
+      ].sort(),
+    );
+  });
+
+  for (const id of CONSUMABLE_POWER_UP_IDS) {
+    it(`${id}: shows the charge count, no countdown while full, then greyed + live countdown while recharging`, async () => {
+      const { store, reg } = ownedConsumable(id);
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      // Full/partial pool: the available count is surfaced, nothing is owed.
+      const owned = rowFor(hud, id)!;
+      expect(owned, 'owned consumable has a row').toBeDefined();
+      expect(owned.stacks).toBe(1);
+      expect(owned.label).toContain('×1');
+      expect(owned.recharge).toBeUndefined();
+      expect(owned.label).not.toContain('next in');
+      expect(owned.greyed).toBe(false);
+
+      // Fill the pool to its level-derived cap: a full pool owes no charge,
+      // so the countdown never appears even though charges were banked.
+      store.grantConsumableCharge(id, 99);
+      const cap = store.consumableChargeCap(id);
+      expect(reg.consumableCharges(id)).toBe(cap);
+      hud.refresh();
+      const full = rowFor(hud, id)!;
+      expect(full.stacks).toBe(cap);
+      expect(full.recharge).toBeUndefined();
+      expect(full.label).not.toContain('next in');
+
+      // Empty the pool through the shared spend seam: the row is still
+      // visible, greyed, and counts down to the next charge.
+      let spent = 0;
+      while (reg.tryConsumeConsumableCharge(id)) spent += 1;
+      expect(spent).toBe(cap);
+      hud.refresh();
+      const empty = rowFor(hud, id)!;
+      expect(empty, 'owned-but-empty pool keeps its row').toBeDefined();
+      expect(empty.stacks).toBeUndefined();
+      expect(empty.label).not.toContain('×0');
+      expect(empty.greyed).toBe(true);
+      const first = empty.recharge;
+      expect(first).toBeDefined();
+      expect(first!).toBeGreaterThan(0);
+      expect(empty.label).toContain('(next in');
+      expect(empty.label).toContain(`(next in ${Math.ceil(first!)}s)`);
+
+      // The countdown is live, advanced only by the shared registry tick.
+      reg.tick(1);
+      hud.refresh();
+      const ticking = rowFor(hud, id)!;
+      expect(ticking.greyed).toBe(true);
+      expect(ticking.recharge).toBeDefined();
+      expect(ticking.recharge!).toBeLessThan(first!);
+      expect(ticking.label).toContain(`(next in ${Math.ceil(ticking.recharge!)}s)`);
+
+      // A completed regeneration returns the charge, clears the countdown and
+      // un-greys the row.
+      reg.tick(ticking.recharge! + 0.01);
+      hud.refresh();
+      const refilled = rowFor(hud, id)!;
+      expect(reg.consumableCharges(id)).toBe(cap);
+      expect(refilled.stacks).toBe(cap);
+      expect(refilled.label).toContain(`×${cap}`);
+      expect(refilled.recharge).toBeUndefined();
+      expect(refilled.label).not.toContain('next in');
+      expect(refilled.greyed).toBe(false);
+      destroy(game);
+    });
+
+    it(`${id}: stays hidden while the player neither owns it nor holds a charge`, async () => {
+      const reg = new EffectsRegistry(new PowerUpLevelStore());
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+      expect(rowFor(hud, id)).toBeUndefined();
+      destroy(game);
+    });
+  }
+
+  it('renders a field-pickup Shield from its timed budget, not the charge pool', async () => {
+    // A field pickup keeps the shipped timed window (producer decision 2 / PD5),
+    // so its budget — not the empty shared pool — is what the row reports.
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('shield');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = rowFor(hud, 'shield')!;
+    expect(row).toBeDefined();
+    expect(row.stacks).toBe(reg.shieldAbsorptionsRemaining());
+    expect(row.stacks).toBeGreaterThan(0);
+    expect(row.greyed).toBe(false);
+    // No pool timer was opened by a field pickup, so nothing counts down.
+    expect(row.recharge).toBeUndefined();
+    destroy(game);
+  });
+
+  it('leaves non-consumable rows unchanged: no charge count, no countdown, never greyed', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('bomb', true); // permanent (hold-full) non-consumable
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = rowFor(hud, 'bomb')!;
+    expect(row).toBeDefined();
+    expect(row.label).toBe('Bomb Lvl 1');
+    expect(row.stacks).toBeUndefined();
+    expect(row.recharge).toBeUndefined();
+    expect(row.greyed).toBe(false);
+    destroy(game);
   });
 });
