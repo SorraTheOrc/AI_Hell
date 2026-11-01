@@ -287,12 +287,109 @@ describe('ring securing', () => {
     expect(result.ringAdvanced).toBe(true);
     expect(result.ringIndex).toBe(2);
 
-    // Ring 2 is playable at once: twelve generated, unheld hexes.
+    // Ring 2 is playable at once: twelve generated, unheld hexes, carried
+    // alongside the six held hexes of ring 1 (nothing is discarded).
     expect(result.payload.ring.ringIndex).toBe(2);
-    expect(result.payload.ring.hexes).toHaveLength(12);
-    expect(result.payload.ring.hexes.every((state) => !state.held)).toBe(true);
+    expect(result.payload.ring.hexes).toHaveLength(18);
+    const ringTwo = result.payload.ring.hexes.filter((state) =>
+      state.id.startsWith('hex-r2-'),
+    );
+    expect(ringTwo).toHaveLength(12);
+    expect(ringTwo.every((state) => !state.held)).toBe(true);
+    const ringOne = result.payload.ring.hexes.filter((state) =>
+      state.id.startsWith('hex-r1-'),
+    );
+    expect(ringOne).toHaveLength(6);
+    expect(ringOne.every((state) => state.held)).toBe(true);
     // No hangar assault pass is queued (Q2 = a).
     expect(result.payload.pendingAttacks).toEqual([]);
+  });
+
+  // ── The rush line (AH-0MVXSHAS100010S0 — AC8 gap) ──────────────
+
+  it('opens the next ring when only the capstone (weapon) hex is held', () => {
+    const payload = ringPayload();
+    // hex-r1-6 is ring 1's authored weaponHex (its hardest hex).
+    const capstone = 'hex-r1-6';
+
+    const result = resolveHexCapture(payload, {
+      hexId: capstone,
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(5, 1),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    // The rush is playable: the weapon hex alone opens ring 2 ...
+    expect(result.ok).toBe(true);
+    expect(result.ringAdvanced).toBe(true);
+    expect(result.ringIndex).toBe(2);
+    // ... while the ring is emphatically NOT secured (five hexes unheld) ...
+    expect(result.ringSecured).toBe(false);
+    // ... and the hexes the rush skipped are carried, not discarded.
+    const skipped = result.payload.ring.hexes.filter(
+      (state) => state.id.startsWith('hex-r1-') && state.id !== capstone,
+    );
+    expect(skipped).toHaveLength(5);
+    expect(skipped.every((state) => state.held === false)).toBe(true);
+    // The captured capstone keeps its held state and its defending bot.
+    const held = result.payload.ring.hexes.find((state) => state.id === capstone)!;
+    expect(held.held).toBe(true);
+    expect(held.defender?.hullId).toBe('hull-1');
+  });
+
+  it('does not open the next ring from a non-capstone hex', () => {
+    const payload = ringPayload();
+
+    const result = resolveHexCapture(payload, {
+      hexId: 'hex-r1-2',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(5, 1),
+      definitions: HEX_RING_DEFINITIONS,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ringSecured).toBe(false);
+    expect(result.ringAdvanced).toBe(false);
+    expect(result.payload.ring.ringIndex).toBe(1);
+  });
+
+  it('keeps isRingSecured ring-scoped after a rush (ring 2 secured, ring 1 not)', () => {
+    const rushed = resolveHexCapture(ringPayload(), {
+      hexId: 'hex-r1-6',
+      defenderHullId: 'hull-1',
+      salvage: victorySalvage(5, 1),
+      definitions: HEX_RING_DEFINITIONS,
+    }).payload;
+
+    // Ring 1 still has five unheld hexes, but the current ring is ring 2.
+    expect(isRingSecured(rushed.ring)).toBe(false);
+
+    const securedRingTwo = {
+      ...rushed.ring,
+      hexes: rushed.ring.hexes.map((state) =>
+        state.id.startsWith('hex-r2-') ? { ...state, held: true } : state,
+      ),
+    };
+    expect(isRingSecured(securedRingTwo)).toBe(true);
+  });
+
+  it('falls back to the all-held rule when the ring authors no capstone', () => {
+    const payload = ringPayload();
+    const withoutCapstone = HEX_RING_DEFINITIONS.map((definition) =>
+      definition.ringIndex === 1 ? { ...definition, weaponHex: false } : definition,
+    );
+    holdAllBut(payload, 'hex-r1-6');
+
+    // Five of six held with no authored capstone: not openable yet.
+    expect(
+      openNextRing(payload, withoutCapstone).opened,
+    ).toBe(false);
+
+    const allHeld = {
+      ...payload,
+      ring: { ...payload.ring, hexes: payload.ring.hexes.map((state) => ({ ...state, held: true })) },
+    };
+    expect(openNextRing(allHeld, withoutCapstone).opened).toBe(true);
   });
 
   it('does not advance to a ring that has no authored definitions', () => {

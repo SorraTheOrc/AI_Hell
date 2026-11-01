@@ -19,9 +19,15 @@
 import { describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { resolveHexCapture } from '../../core/hangarWar/captureCycle';
+import { createRingState } from '../../core/hangarWar/hexRing';
 import { hexDifficultyProfile } from '../../core/hangarWar/hexDifficulty';
+import { createDefaultPayload } from '../../core/hangarWar/hangarWarStore';
 import type { HexRingDefinition } from '../../core/hangarWar/hexRing';
-import { hexRingDefinitionsFor } from '../../data/hexRingDefinitions';
+import {
+  HEX_RING_DEFINITIONS as HEZ_RING_ONE_ALL,
+  hexRingDefinitionsFor,
+} from '../../data/hexRingDefinitions';
 import { loadBalanceConfig } from './balanceConfig';
 import {
   DEFAULT_BETWEEN_SORTIE_MINUTES,
@@ -81,6 +87,9 @@ function fakeRunner(riskyFrom = Number.POSITIVE_INFINITY): RingDeploymentRunner 
       : { seconds: 300, captured: true, minerals: 18, hits: 0 };
 }
 
+/** Ring 1's authored definitions (the shipped capture-cycle data). */
+const HEZ_RING_ONE = HEZ_RING_ONE_ALL.filter((entry) => entry.ringIndex === 1);
+
 describe('ring timing: authored ring and deployment plan', () => {
   it('measures the authored rings (ring 1 = 6 hexes, ring 2 = 12, ring 3 = none)', () => {
     expect(ringTimingHexes(1)).toHaveLength(6);
@@ -105,6 +114,37 @@ describe('ring timing: authored ring and deployment plan', () => {
       'hex-4',
       'hex-5',
     ]);
+  });
+
+  it('the modelled rush is a legal play sequence (AH-0MVXSHAS100010S0)', () => {
+    // The rush the harness measures must be reachable in the shipped capture
+    // cycle: taking only the weapon hex has to open the next ring, or the
+    // measured rush line would be a strategy no player can play.
+    const ring = createRingState(1, HEZ_RING_ONE);
+    const capstone = planRingDeployments(HEZ_RING_ONE, 'rush').played[0];
+    expect(capstone.weaponHex).toBe(true);
+
+    const captured = resolveHexCapture(
+      { ...createDefaultPayload(), ring },
+      {
+        hexId: capstone.id,
+        defenderHullId: 'hull-1',
+        salvage: {
+          runId: 'rush-proof',
+          checkpointId: 'run-end',
+          minerals: 0,
+          cores: 0,
+        },
+        // Both rings authored: ring 2 must be generatable for the push to open.
+        definitions: HEZ_RING_ONE_ALL,
+      },
+    );
+
+    expect(captured.ok).toBe(true);
+    expect(captured.ringAdvanced).toBe(true);
+    expect(captured.ringIndex).toBe(2);
+    // ... and the ring is not secured: the rush really did leave it exposed.
+    expect(captured.ringSecured).toBe(false);
   });
 });
 

@@ -52,7 +52,7 @@ import {
   ownsEntry,
   deriveDefenderRating,
 } from './hangarEconomy';
-import { createRingState, type HexRingDefinition } from './hexRing';
+import { createRingState, ringDepth, type HexRingDefinition } from './hexRing';
 import {
   bankSalvage,
   bankedSalvageFromHangar,
@@ -66,6 +66,7 @@ import type {
   HangarWarPayload,
   HexDefender,
   HexRingState,
+  HexState,
 } from './types';
 import {
   HANGAR_CATALOGUE,
@@ -272,16 +273,83 @@ export function leaveDefender(
 }
 
 /**
- * True when every hex of the ring is held — the ring's secured state.
+ * Every hex that belongs to the ring's **current** ring index.
  *
- * An empty ring is **not** secured: there is nothing to hold yet, so the next
- * ring must not open merely because the current ring has not been generated.
+ * A ring state accumulates hexes across rings (a rush carries the hexes it
+ * skipped, `AH-0MVXSHAS100010S0`), so ring membership is read from the axial
+ * coordinate through the shared {@link ringDepth} rule rather than from
+ * position in the list. A ring state whose index is unusable (a hand-made
+ * fixture) falls back to every stored hex, preserving the old behaviour.
+ *
+ * @param ring — the ring state to inspect.
+ * @returns the current ring's hexes.
+ */
+export function currentRingHexes(ring: HexRingState): HexState[] {
+  const index = Math.trunc(ring.ringIndex);
+  if (!Number.isFinite(index) || index < 1) return ring.hexes;
+  return ring.hexes.filter((hex) => ringDepth(hex.q, hex.r) === index);
+}
+
+/**
+ * True when every hex of the **current** ring is held — the secured state.
+ *
+ * An empty current ring is **not** secured: there is nothing to hold yet, so a
+ * ring must not count as secured merely because it has not been generated.
+ * Hexes carried from an earlier ring the player rushed past are ignored: they
+ * are the rush's cost, not a condition of this ring's security.
  *
  * @param ring — the ring to inspect.
- * @returns true when the ring has hexes and all of them are held.
+ * @returns true when the current ring has hexes and all of them are held.
  */
 export function isRingSecured(ring: HexRingState): boolean {
-  return ring.hexes.length > 0 && ring.hexes.every((hex) => hex.held === true);
+  const hexes = currentRingHexes(ring);
+  return hexes.length > 0 && hexes.every((hex) => hex.held === true);
+}
+
+/**
+ * The current ring's **capstone** hex: the authored `weaponHex` — the ring's
+ * hardest hex and the one that grants its new weapon.
+ *
+ * @param ring — the ring state to inspect.
+ * @param definitions — authored ring definitions.
+ * @returns the capstone's persisted state, or `null` when the ring authors no
+ *   capstone (or the capstone is not in the payload).
+ */
+export function ringCapstone(
+  ring: HexRingState,
+  definitions: readonly HexRingDefinition[],
+): HexState | null {
+  const index = Math.trunc(ring.ringIndex);
+  const definition = definitions.find(
+    (entry) => entry.ringIndex === index && entry.weaponHex === true,
+  );
+  if (definition === undefined) return null;
+  return ring.hexes.find((hex) => hex.id === definition.id) ?? null;
+}
+
+/**
+ * True when the next ring may open.
+ *
+ * The ring opens when its **capstone** (`weaponHex`) is held — the rush line
+ * the design advertises ("take the weapon hex, then push into the next ring,
+ * risking losses", `docs/OUTER_LOOP_CANDIDATES.md` adjustment 3). Securing
+ * every hex of the ring also opens it. A ring that authors no capstone falls
+ * back to the all-held rule.
+ *
+ * Producer decision Q2 = a is unchanged: **ring secured** still means every
+ * hex of the ring held (`AH-0MVUVL2O2006W4QK` keeps the deferred assault).
+ *
+ * @param ring — the ring state to inspect.
+ * @param definitions — authored ring definitions (may be empty).
+ * @returns true when the ring is secured or its capstone is held.
+ */
+export function isRingOpenable(
+  ring: HexRingState,
+  definitions: readonly HexRingDefinition[] = [],
+): boolean {
+  if (isRingSecured(ring)) return true;
+  const capstone = ringCapstone(ring, definitions);
+  return capstone !== null && capstone.held === true;
 }
 
 /**
@@ -347,7 +415,7 @@ export function openNextRing(
   const next = clonePayload(payload);
   const current = toCount(next.ring.ringIndex);
   const ringIndex = current >= 1 ? current : 1;
-  if (!isRingSecured(next.ring)) {
+  if (!isRingOpenable(next.ring, definitions)) {
     return { payload: next, opened: false, ringIndex };
   }
 
@@ -357,7 +425,14 @@ export function openNextRing(
     if (ring.hexes.length === 0) {
       return { payload: next, opened: false, ringIndex };
     }
-    next.ring = ring;
+    // Carry the hexes already in the payload: a rush leaves the ring it
+    // pushed past with unheld hexes, and those are never discarded (they keep
+    // their held state, defending bot and aggression, so the frontier tick can
+    // still resolve their defence). The new ring's own hexes are appended.
+    next.ring = {
+      ringIndex: nextIndex,
+      hexes: [...next.ring.hexes, ...ring.hexes],
+    };
     return { payload: next, opened: true, ringIndex: nextIndex };
   } catch {
     // No authored next ring: stay secured rather than opening an empty ring.
@@ -494,7 +569,9 @@ export function resolveHexCapture(
   hex.defender = defender;
 
   const ringSecured = isRingSecured(next.ring);
-  const advanced = ringSecured
+  // The ring opens on its capstone (the rush line) or on full security; a
+  // ring that is not openable keeps the payload's current ring unchanged.
+  const advanced = isRingOpenable(next.ring, definitions)
     ? openNextRing(next, definitions)
     : { payload: next, opened: false, ringIndex: toCount(next.ring.ringIndex) };
 

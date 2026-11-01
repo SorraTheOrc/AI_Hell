@@ -2731,9 +2731,16 @@ write:
    (`defender-required`). The defender's stored rating is the hangar economy's
    single formula — `baseDefence + 3 × armour + 2 × firepower + 2 × systems`
    (Scrap Hull `2`, Bulwark Hull `14`) — never a flown battle.
-4. **Secure the ring.** **Ring secured** means every hex of the current ring is
-   held; when that happens the ring is secured and the next ring opens (producer
-   decision 2026-10-30, Q2 = a). There is **no hangar assault pass** and no
+4. **Secure the ring — or rush past it.** **Ring secured** means every hex of
+   the current ring is held (producer decision 2026-10-30, Q2 = a). The next
+   ring opens on the ring's **capstone**: its one `weaponHex` — the hardest hex,
+   the one that grants the ring's new weapon. Holding the capstone opens the next
+   ring immediately, so the **rush** line is genuinely playable: take the weapon
+   hex, push on, and leave the rest of the ring unheld (and at risk). Securing
+   every hex still opens the ring too, so the **grind** line is unchanged, and
+   nothing is discarded either way — the hexes a rush skips stay in the war with
+   their held state, defending bots and rising aggression, so the frontier tick
+   keeps resolving their defence. There is **no hangar assault pass** and no
    hangar-falls lose state; the massed counter-attack and the campaign loss are
    deferred to **AH-0MVUVL2O2006W4QK**.
 
@@ -2842,8 +2849,12 @@ expected retakes and forfeiting the salvage of any failed attempt.
 
 **Neither line dominates**: the rush is faster but riskier and ends with an
 unsecured, exposed ring, while the grind costs more minutes but secures the ring
-and banks the salvage. No tuning was required to land the budgets; the authored
-ring data and the shipped frontier tuning already produce both windows.
+and banks the salvage. Both lines are playable in the shipped capture cycle —
+the captured weapon hex is the ring's capstone, so holding it opens the next
+ring (`isRingOpenable`) while the skipped hexes are carried with their own
+aggression and defenders for the frontier tick. No tuning was required to land
+the budgets; the authored ring data and the shipped frontier tuning already
+produce both windows.
 
 #### Persistence: one key for hangar and ring
 

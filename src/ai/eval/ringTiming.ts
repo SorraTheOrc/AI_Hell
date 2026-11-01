@@ -420,7 +420,11 @@ export function ringTimingHexes(
  *   single weapon hex — the ring's hardest — is taken last and nothing is left
  *   exposed.
  * - `rush` plays the **weapon hex first** and then pushes into the next ring,
- *   so every other hex of this ring is left exposed (unheld).
+ *   so every other hex of this ring is left exposed (unheld). This is a real
+ *   play sequence, not a model fiction: the captured weapon hex is ring 1's
+ *   capstone, and holding it opens the next ring through
+ *   `isRingOpenable`/`openNextRing` while the skipped hexes are carried
+ *   (`AH-0MVXSHAS100010S0`).
  */
 export function planRingDeployments(
   hexes: readonly HexRingDefinition[],
