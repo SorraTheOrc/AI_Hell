@@ -320,11 +320,15 @@ describe('Demo mode integration (AH-0MUX496TY005FF3P)', () => {
     const last = offered[offered.length - 1];
     expect(selected).toHaveBeenCalledWith(offered.length - 1);
     // The reward was applied through the shared reward resolver: the last
-    // option is a level-up of a kind the run owns permanently (the unlock
-    // feature is gone, so nothing on the wheel adds a new kind).
-    expect(last.kind === 'weapon-level' || last.kind === 'power-up-level').toBe(
-      true,
-    );
+    // option is an owned-offer of a kind the run owns permanently (the unlock
+    // feature is gone, so nothing on the wheel adds a new kind). An owned
+    // consumable is offered as a **charge**, never a level-up
+    // (AH-0MVUXH35J002WSAB AC1).
+    expect(
+      last.kind === 'weapon-level' ||
+        last.kind === 'power-up-level' ||
+        last.kind === 'power-up-charge',
+    ).toBe(true);
     const levelled = [
       ...play.getPlayer()!.getWeaponLevels(),
       ...play.getPlayer()!.getPowerUpLevels(),

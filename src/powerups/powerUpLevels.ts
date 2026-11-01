@@ -1647,6 +1647,51 @@ export function isConsumablePowerUpId(id: PowerUpId): boolean {
 }
 
 /**
+ * The **level-derived charge cap** of a consumable at a resolver level
+ * (`getUpgradeLevel`, i.e. effective level − 1) — the catalogue axis that
+ * bounds its pool (parent AH-0MVTQMREN009DSFW AC2/AC3). Returns 0 for a
+ * non-consumable or a kind that resolves no positive cap.
+ *
+ * Pure and store-free so the player-facing copy (the hold-full choice's
+ * charge-grant offer) resolves the identical cap the store enforces — one
+ * axis table, no second derivation (AH-0MVUXH35J002WSAB AC2).
+ *
+ * @param id - The power-up kind.
+ * @param level - The resolver level (0 for a first grant).
+ */
+export function resolveConsumableChargeCap(
+  id: PowerUpId,
+  level: number,
+): number {
+  if (!isConsumablePowerUpId(id)) return 0;
+  const stats = resolvePowerUpAtLevel(id, level);
+  const cap = CONSUMABLE_CHARGE_CAP_AXES[id](stats);
+  return Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+}
+
+/**
+ * The **level-derived regeneration interval** of a consumable at a resolver
+ * level, in seconds. Returns 0 for a non-consumable or a kind with no
+ * interval axis.
+ *
+ * Pure counterpart of {@link PowerUpLevelStore.consumableRechargeTime}, so
+ * the charge-grant offer's copy states the interval the store will actually
+ * use (AH-0MVUXH35J002WSAB AC2).
+ *
+ * @param id - The power-up kind.
+ * @param level - The resolver level (0 for a first grant).
+ */
+export function resolveConsumableRechargeTime(
+  id: PowerUpId,
+  level: number,
+): number {
+  if (!isConsumablePowerUpId(id)) return 0;
+  const stats = resolvePowerUpAtLevel(id, level);
+  const seconds = CONSUMABLE_RECHARGE_AXES[id](stats);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+}
+
+/**
  * The run-scoped power-up level model (AC2/AC3).
  *
  * Responsibilities:
@@ -2004,10 +2049,9 @@ export class PowerUpLevelStore {
    * `mysteryUfoChargeCap`. Returns 0 for a non-consumable.
    */
   consumableChargeCap(id: PowerUpId): number {
-    if (!isConsumablePowerUpId(id)) return 0;
-    const stats = this.stats(id);
-    const cap = CONSUMABLE_CHARGE_CAP_AXES[id](stats);
-    return Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+    // Delegates to the store-free resolver so the offer copy and the pool
+    // ceiling can never resolve a different cap (AH-0MVUXH35J002WSAB AC2).
+    return resolveConsumableChargeCap(id, this.getUpgradeLevel(id));
   }
 
   /**
@@ -2019,10 +2063,9 @@ export class PowerUpLevelStore {
    * no interval axis.
    */
   consumableRechargeTime(id: PowerUpId): number {
-    if (!isConsumablePowerUpId(id)) return 0;
-    const stats = this.stats(id);
-    const seconds = CONSUMABLE_RECHARGE_AXES[id](stats);
-    return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+    // Delegates to the store-free resolver (AH-0MVUXH35J002WSAB AC2): the
+    // hold-full charge offer publishes exactly the interval the store uses.
+    return resolveConsumableRechargeTime(id, this.getUpgradeLevel(id));
   }
 
   /**
