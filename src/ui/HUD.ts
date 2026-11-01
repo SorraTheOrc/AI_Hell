@@ -23,7 +23,11 @@
  * (`powerups/types.ts` `CONSUMABLE_POWER_UP_IDS`, the one catalogue source of
  * truth) also appends a live `next in Ns` countdown to its next regenerating
  * charge while one is owed — `undefined` while the pool is full — through the
- * shared `buildHUDLabel` formatter (parent AH-0MVTQMREN009DSFW AC4).
+ * shared `buildHUDLabel` formatter (parent AH-0MVTQMREN009DSFW AC4). The
+ * value column stays `∞` for the three absorbed-hit kinds (Shield, Thorn
+ * Field, Force Field): their field pickup opens only a temporary-*level*
+ * window, never a timed cover, so a `Ns` value would be a countdown the
+ * charge alone cannot honour (parent AH-0MVUVSW4J0009QUW AC3).
  *
  * A consumable the player **owns** but whose pool is currently **empty** stays
  * visible as a greyed-out row (icon + label + value all in the shared grey
@@ -167,7 +171,12 @@ export interface HUDEntry {
   value: string;
   /** Current effective level (`permanent + temporary`). */
   level: number;
-  /** True while a temporary level-up window is active. */
+  /**
+   * True while a temporary level-up window is active. Always `false` for the
+   * three absorbed-hit kinds (Shield / Force Field / Thorn Field), whose
+   * level window never drives a value countdown (parent
+   * AH-0MVUVSW4J0009QUW AC3).
+   */
   temporary: boolean;
   /** Consumable charge count (Shield absorptions, Thorn Field rams, Phase Shift charges, Teleport teleports, Force Field reflects, Mystery UFO drones), if any. */
   stacks?: number;
@@ -604,7 +613,7 @@ export class HUD extends Phaser.GameObjects.Container {
       // never a level — parent AH-0MVTQMREN009DSFW AC1); it is displayed at
       // its base level 1 so the row still reads as a levelled item.
       const level = Math.max(1, reg.powerUpLevel(id));
-      const remaining = reg.powerUpTemporaryRemaining(id);
+      const remaining = this._valueWindowRemaining(id);
       const temporary = remaining !== undefined;
       const stacks = this._powerUpStacks(id);
       const recharge = this._powerUpRecharge(id);
@@ -653,7 +662,12 @@ export class HUD extends Phaser.GameObjects.Container {
     // Generalised consumable visibility (parent AH-0MVTQMREN009DSFW AC4): a
     // consumable row appears whenever the player owns it — permanently or via
     // a live pickup window — or holds a charge, so a greyed recharging pool
-    // never disappears. Every other kind keeps its pre-existing rule below.
+    // never disappears. The three absorbed-hit kinds (Shield / Force Field /
+    // Thorn Field) rely on this rule for every visible state — their former
+    // live-effect-window reads were retired with the charge-pool pickup model
+    // (parent AH-0MVUVSW4J0009QUW AC3) — and every other kind keeps its
+    // pre-existing rule below, whose live-effect reads (e.g. `isActive`) still
+    // mean what they always meant for kinds with a real effect window.
     if (
       isConsumablePowerUpId(id) &&
       (this._ownsChargePool(id) || reg.consumableCharges(id) > 0)
@@ -662,7 +676,11 @@ export class HUD extends Phaser.GameObjects.Container {
     }
     switch (id) {
       case 'shield':
-        return reg.isActive('shield');
+        // Absorbed-hit kinds are fully covered by the generalised consumable
+        // rule above (ownership or charge); the former bubble-window live
+        // check (`isActive('shield')`) is retired with the charge-pool pickup
+        // model (parent AH-0MVUVSW4J0009QUW AC3).
+        return false;
       case 'bomb':
         return reg.isBombPermanent();
       case 'speed_boost':
@@ -684,10 +702,11 @@ export class HUD extends Phaser.GameObjects.Container {
         // field pickup is a one-shot and leaves no row (AH-0MV1BIWP9003EHRQ).
         return reg.isSmartBombPermanent();
       case 'force_field':
-        // Show the row while the reflect bubble is active (field pickup or
-        // permanent reward) so the remaining reflect budget is visible
-        // (AH-0MV1BIX1W006XF95).
-        return reg.isForceFieldActive();
+        // Absorbed-hit kinds are fully covered by the generalised consumable
+        // rule above (ownership or charge); the former reflect-bubble
+        // live-window check (`isForceFieldActive`) is retired with the
+        // charge-pool pickup model (parent AH-0MVUVSW4J0009QUW AC3).
+        return false;
       case 'mystery_ufo':
         // The Mystery UFO is a visible collector drone with no timed effect of
         // its own; ownership (a hold-full charge grant or a field-pickup
@@ -702,9 +721,11 @@ export class HUD extends Phaser.GameObjects.Container {
         // their window is active, so the player can read the countdown.
         return reg.isActive(id);
       case 'thorns':
-        // Thorn Field: visible while active OR a ram budget remains (the
-        // budget is the informative part, like the Force Field absorb row).
-        return reg.isActive('thorns') || reg.thornsRemaining() > 0;
+        // Absorbed-hit kinds are fully covered by the generalised consumable
+        // rule above (ownership or charge); the former ram-window live check
+        // (`isActive('thorns')`) is retired with the charge-pool pickup model
+        // (parent AH-0MVUVSW4J0009QUW AC3).
+        return false;
       case 'strike':
         // Orbital Strike: a permanent bolt is a run-scoped active effect; a
         // field pickup is a one-shot and leaves no row (mirrors Smart Bomb).
@@ -720,12 +741,13 @@ export class HUD extends Phaser.GameObjects.Container {
    * surfaced (` ×0` is never rendered — parent AC1).
    *
    * Every consumable reads the shared pool through its per-kind projection:
-   * the shipped budget accessors (`shieldAbsorptionsRemaining`,
-   * `thornsRemaining`, `forceFieldRemaining`) report a **field-pickup window's**
-   * timed budget while one is live and the pooled charges for an owned kind
-   * (PD5), so a field pickup is never misreported from an untouched pool.
-   * Phase Shift, Teleport and Mystery UFO have no separate window budget and
-   * read the pool directly.
+   * the budget accessors (`shieldAbsorptionsRemaining`, `thornsRemaining`,
+   * `forceFieldRemaining`) report the pooled charges for every acquisition
+   * path — a field pickup grants exactly one charge and opens no effect
+   * window under the absorbed-hit model (parent AH-0MVUVSW4J0009QUW), so the
+   * pool is never misread from a parallel window counter. Phase Shift,
+   * Teleport and Mystery UFO have no separate window budget and read the
+   * pool directly.
    *
    * Non-consumable kinds surface no count (their level alone is the state).
    */
@@ -755,33 +777,50 @@ export class HUD extends Phaser.GameObjects.Container {
   }
 
   /**
+   * Seconds for the value-column window countdown while a temporary level-up
+   * window is open, or `undefined` when the row renders the ∞ glyph.
+   *
+   * The three absorbed-hit kinds (the `regenRequiresOwnership` consumables —
+   * Shield, Thorn Field, Force Field) never render a window countdown: a
+   * field pickup opens only a temporary-**level** window while the effect is
+   * the granted charge pool, so a `Ns` value would promise a timed cover the
+   * pool alone cannot honour (parent AH-0MVUVSW4J0009QUW AC3). Every other
+   * kind keeps the parent's live countdown-while-open rule
+   * (AH-0MVTQMREN009DSFW AC4).
+   */
+  private _valueWindowRemaining(id: PowerUpId): number | undefined {
+    if (getPowerUpById(id).regenRequiresOwnership === true) return undefined;
+    return this._registry!.powerUpTemporaryRemaining(id);
+  }
+
+  /**
    * Seconds until the next regenerating charge for a recharging consumable, or
    * `undefined` when nothing is owed (parent AH-0MVTQMREN009DSFW AC4). Every
    * consumable reads its regeneration countdown from the shared registry
    * accessors — no countdown while the pool is full, and only a live (`> 0`)
    * timer is ever reported, so the label never shows a stalled `next in 0s`.
+   * A pickup-only charge of the absorbed-hit kinds opens no timer (the
+   * `regenRequiresOwnership` ceiling), so their row never renders a countdown
+   * it cannot honour (parent AH-0MVUVSW4J0009QUW AC3).
    *
-   * Thorn Field keeps its registry-local projection because a **field-pickup**
-   * window still counts down on the shipped ram clock rather than the pool
-   * (PD5; AH-0MVJ8YKR70096C6T). The permanent Orbital Strike row also carries a
-   * countdown to its next bolt (AH-0MVS2T40T006QL7H). The registry owns every
-   * clock; the HUD only projects it through the same `next in Ns` label
-   * formatter, so there is one formatting path.
+   * The permanent Orbital Strike row also carries a countdown to its next bolt
+   * (AH-0MVS2T40T006QL7H). The registry owns every clock; the HUD only
+   * projects it through the same `next in Ns` label formatter, so there is one
+   * formatting path.
    */
   private _powerUpRecharge(id: PowerUpId): number | undefined {
     const reg = this._registry!;
     switch (id) {
-      case 'thorns': {
-        const seconds = reg.thornsRechargeRemaining();
-        return seconds > 0 ? seconds : undefined;
-      }
       case 'strike':
         // `undefined` when no permanent strike is armed (field pickup: no row)
         // or a bolt is latched/landing, so the label never shows a stalled or
         // negative countdown.
         return reg.strikeNextBoltSeconds();
       default:
-        // Every consumable regenerates through the shared pool clock.
+        // Every consumable regenerates through the shared pool clock — the
+        // Thorn Field special case that predated the charge pool is retired
+        // (parent AH-0MVUVSW4J0009QUW AC3): `thornsRechargeRemaining()` is
+        // exactly this projection, and a pickup-only charge opens no timer.
         return isConsumablePowerUpId(id)
           ? reg.consumableRechargeRemaining(id)
           : undefined;

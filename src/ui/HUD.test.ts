@@ -19,7 +19,6 @@ import { EffectsRegistry } from '../powerups/effects';
 import {
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
-  resolveTemporaryWindow,
 } from '../powerups/powerUpLevels';
 import { POWER_UP_SLOT_CAP } from '../core/constants';
 import { CONSUMABLE_POWER_UP_IDS, type PowerUpId } from '../powerups/types';
@@ -365,12 +364,13 @@ describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
     expect(row.label).toBe(
       `Shield Lvl 2 ×${reg.shieldAbsorptionsRemaining()}`,
     );
-    // The row value is the temporary-level window countdown. Since
-    // AH-0MVVD8SXO004QLZW retired the shieldDuration axis, the window is the
-    // flat producer-approved TTL (15 s), not a level-scaled bubble.
-    expect(row.value).toBe(
-      `${Math.ceil(resolveTemporaryWindow('shield', 1))}s`,
-    );
+    // The absorbed-hit pickup model (parent AH-0MVUVSW4J0009QUW AC3): a field
+    // pickup opens only a temporary-**level** window, so the value column
+    // renders the ∞ glyph — never a `Ns` cover the one-event charge alone
+    // cannot honour, even though a level window is genuinely open.
+    expect(reg.powerUpTemporaryRemaining('shield')).toBeGreaterThan(0);
+    expect(row.temporary).toBe(false);
+    expect(row.value).toBe(PERMANENT_VALUE);
 
     reg.tryAbsorbShield();
     hud.refresh();
@@ -419,8 +419,9 @@ describe('HUD pickup-row states for the budget kinds (AH-0MVVD8S4J007L8KX)', () 
   }
 
   // Shield's equivalent pickup-row states are pinned in the P3 describe above
-  // (charge count in the first test, greyed-empty and hide-at-TTL in the
-  // "greys the P3 row" test); these two kinds complete the per-kind set.
+  // (charge count and no-window-countdown ∞ in the first test, greyed-empty
+  // and hide-at-TTL in the "greys the P3 row" test); these two kinds complete
+  // the per-kind set.
   for (const id of ['thorns', 'force_field'] as PowerUpId[]) {
     it(`${id}: shows the pickup charge, no phantom countdown, greyed empty and hides at the level TTL`, async () => {
       const reg = new EffectsRegistry();
@@ -436,6 +437,13 @@ describe('HUD pickup-row states for the budget kinds (AH-0MVVD8S4J007L8KX)', () 
       expect(armed.greyed).toBe(false);
       expect(armed.recharge).toBeUndefined();
       expect(armed.label).not.toContain('next in');
+      // The temporary level window is genuinely open, yet the row renders ∞:
+      // for the absorbed-hit kinds the pickup effect is the one granted
+      // charge, not a timed cover, so no window countdown may appear (parent
+      // AH-0MVUVSW4J0009QUW AC3).
+      expect(reg.powerUpTemporaryRemaining(id)).toBeGreaterThan(0);
+      expect(armed.temporary).toBe(false);
+      expect(armed.value).toBe(PERMANENT_VALUE);
 
       // The one spent charge empties the pool: the temporary level stack
       // keeps the row visible but greyed until its own TTL expires.
@@ -447,6 +455,7 @@ describe('HUD pickup-row states for the budget kinds (AH-0MVVD8S4J007L8KX)', () 
       expect(spent.stacks).toBeUndefined();
       expect(spent.label).not.toContain('×0');
       expect(spent.recharge).toBeUndefined(); // nothing is owed back
+      expect(spent.value).toBe(PERMANENT_VALUE); // greyed, still no countdown
 
       // The temporary-level TTL expiry releases the row (field-only rule).
       reg.tick((reg.powerUpTemporaryRemaining(id) ?? 0) + 0.1);
@@ -1583,6 +1592,11 @@ describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
       expect(owned.recharge).toBeUndefined();
       expect(owned.label).not.toContain('next in');
       expect(owned.greyed).toBe(false);
+      // A permanently granted item opens no effect window, so the value
+      // column reads ∞ — never a window countdown (parent
+      // AH-0MVUVSW4J0009QUW AC3); the label carries the charge and, once a
+      // charge is owed, the live `next in Ns` regeneration countdown below.
+      expect(owned.value).toBe(PERMANENT_VALUE);
 
       // Fill the pool to its level-derived cap: a full pool owes no charge,
       // so the countdown never appears even though charges were banked.
