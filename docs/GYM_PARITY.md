@@ -51,8 +51,12 @@ The next sweep is cheap because most of the matrix is guarded mechanically.
   the timed window measures the level-10 cadence only (AH-0MVWOERDM000YZN0),
   [`src/scenes/gym/backgroundParity.test.ts`](../src/scenes/gym/backgroundParity.test.ts)
   (shared layer adoption + identical depth/dim/non-interactive invariants, the
-  fixed level-1 backdrop and the absent level-change warp — divergence 11), and
-  the
+  fixed level-1 backdrop and the absent level-change warp — divergence 11),
+  [`src/scenes/core/consumableChargeParity.test.ts`](../src/scenes/core/consumableChargeParity.test.ts)
+  (permanent consumables spend → empty → regenerate → re-use identically in
+  `PlayScene` and `GymPowerUpsCombat`, driven through the shared
+  `_handleCollisions` pass and the shared charge pool — F6 of the
+  consumable-upgrades parent, see the consumable charge section below), and the
   `*.equivalence.test.ts` / `*.parity.test.ts` suites under `src/scenes/core/`
   (combat, drops, minerals, AOE, power-up and weapon leveling).
 - **Capture registry** — `src/core/captureDirector.test.ts` pins
@@ -378,6 +382,46 @@ the duplicate-body guard.
 | 9 | Hangar-war payload view is not a combat scene | `GymHangar` | The gym renders the shipped hangar screen (`src/scenes/hangarWar/hangarScreen.ts`) against an injected hangar-war payload, read-only; economy, banking, defence and frontier resolution are pure modules under `src/core/hangarWar/`, so there is no gameplay object to demonstrate and no divergent copy. Recorded in `src/scenes/gym/GymHangar.ts:1` and `scripts/capture-scenes.mjs` |
 | 10 | Ring-war harness is not a combat scene | `GymHexWar` | The gym renders the shipped hex-map model/renderer (`src/core/hangarWar/hexIntel.ts`, `src/scenes/hangarWar/hexMap.ts`) against an injected ring payload, read-only, and drives the deterministic frontier-tick harness; the defence resolver and frontier clock are pure modules (B3's `src/core/hangarWar/hexDefence.ts`) exercised through this scene via the documented harness double (`src/core/hangarWar/fakeFrontierClock.ts`), and its `report` view renders the shipped defence report (`src/core/hangarWar/defenceReport.ts`, `src/scenes/hangarWar/defenceReport.ts`) from the shipped resolver's own record, so there is no gameplay object to demonstrate and no divergent copy. Recorded in `src/scenes/gym/GymHexWar.ts:1` and `scripts/capture-scenes.mjs` |
 | 11 | Fixed level-1 backdrop and no level-change warp | all combat gyms (`GymFormationScene` + subclasses, `GymLevel`/`GymBotTuning`, `GymPlayer`, `GymWeapons`, `GymWeaponLeveling`, `GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymPowerUpLeveling`) | The backdrop itself is the shipped object rendered by the shared layer (`CombatCoreScene._createSceneBackground` → `createBackgroundLayer`), so depth/dim/non-interactivity are the game's. A gym pins `backgroundForLevel(1)` so silhouettes are compared against a constant and tuning screenshots are reproducible, and never calls `_setBackgroundLevel`, so the level-change warp never runs — a gym has no campaign level-change flow. `GymLevel` previews a level's enemies but keeps the constant backdrop. Recorded in `src/scenes/gym/core/gymBackground.ts`, §5.1 of `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` and pinned by `src/scenes/gym/backgroundParity.test.ts` |
+
+## Consumable charge parity (AH-0MVUXH3X60078QR3, F6 of AH-0MVTQMREN009DSFW)
+
+The consumable upgrade parent made a permanently-owned consumable (Shield,
+Thorn Field, Phase Shift, Teleport, Force Field, Mystery UFO) a **charge pool
+of one-event uses**: a hold-full reward adds one charge (never a level), one
+charge buys one event (one absorbed hit, one free ram, one reflected bullet,
+one warp, one phase, one drone spawn), and the pool regenerates on the
+level-derived interval through the shared `EffectsRegistry.tick(dt)` clock.
+No scene keeps a consumption counter or a regeneration timer of its own — the
+spends and recharges below are the **shared seams** the game and every gym
+run, so they cannot drift.
+
+| Consumable spend | Shared seam (game + every gym) | Armed/empty look |
+|---|---|---|
+| Shield — one absorbed hit spends one charge | `EffectsRegistry.tryAbsorbShield()` → shared `CombatScene.tryAbsorbPlayerHit` | Shield bubble (`drawShieldBubble` in `src/scenes/core/CombatEffectVisuals.ts`): drawn only while `isShielded` — the pool for an owned shield — holds a charge; an empty permanent pool clears it and it returns on recharge |
+| Thorn Field — one free ram spends one charge | `EffectsRegistry.tryConsumeThornsRam()` → shared `CombatScene._handleCollisions` ram branch | Thorn aura (`drawThornsAura`): drawn only while `hasThornsRam()` (pool for an owned field) holds a charge; empty clears it |
+| Force Field — one reflected bullet spends one charge | `EffectsRegistry.tryConsumeForceFieldReflect()` → shared `CombatScene` reflect branch | Force bubble (`drawForceFieldBubble`): always up for an owned field but **dimmed** while the pool is empty, bright again on recharge (Q1 = b) |
+| Mystery UFO — one drone spawn spends one charge | `EffectsRegistry.consumeMysteryUfoCharge()` → shared `CombatCoreScene._updateDroneSpawning` (registered in `EPIC_SHARED_METHODS` in `CombatScene.equivalence.test.ts`); a **field pickup** keeps its queued one-shot (`consumeMysteryUfoSpawns`) and spends no charge | the drone itself (spawned through `spawnDrone` in `src/scenes/core/combatDrone.ts`) |
+
+Gyms that exercise the consumables: `GymPowerUpsCombat` (Shield/Bomb/Phase
+Shift/Teleport/Force Field through the shared `EffectsRegistry`), `GymPowerUpLeveling`
+(every power-up through the shared registry) and `GymPowerUpsUtility` (Mystery
+UFO field pickup → one shared drone spawn). All three already route through the
+shared seams; the parity matrix rows above record their per-scene divergences
+(round-robin drop sources, gym-only HUDs, silenced/auto-fire-off scenarios —
+all **disabled features**, never divergent copies of the charge model).
+
+Retained divergence (recorded, not implemented here): **field-pickup windows
+keep the shipped timed-budget behaviour** in this slice (producer decision 2 /
+PD5). A live field-pickup window on top of a permanent base still spends its
+registry-local budget, not the pool — that conversion is the separate follow-up
+AH-0MVUVSW4J0009QUW. Every other consumption above is pool-backed and shared.
+
+Pinned by `src/scenes/core/consumableChargeParity.test.ts` (the same spend →
+empty → regenerate → re-use cycle in `PlayScene` and `GymPowerUpsCombat`,
+driven through the one shared `_handleCollisions` pass and asserted from the
+shared registry accessors), `src/scenes/core/CombatEffectVisuals.test.ts`
+(armed/empty rendering per kind) and `src/scenes/core/CombatCoreScene.test.ts`
+(charge-budgeted drone spawning, no scene-local timer).
 
 ## Maintenance contract
 

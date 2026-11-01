@@ -10,6 +10,7 @@ import Phaser from 'phaser';
 
 import { SHIP_SIZE } from '../../core/constants';
 import { EffectsRegistry } from '../../powerups/effects';
+import { resolvePowerUpAtLevel } from '../../powerups/powerUpLevels';
 import { bootScene, type BootedGame } from '../../test/gameHarness';
 import {
   applyPhaseGhost,
@@ -138,6 +139,11 @@ function shieldAt(remaining: number, shielded = true): EffectsRegistry {
   return {
     isShielded: shielded,
     remaining: (id: string) => (id === 'shield' ? remaining : undefined),
+    // A generic (non-owned) field window: the countdown is the remaining,
+    // never the undefined permanent-base case (parent AC, F6).
+    powerUpTemporaryRemaining: (id: string) =>
+      id === 'shield' ? Math.max(0, remaining) : undefined,
+    isConsumableOwned: () => false,
   } as unknown as EffectsRegistry;
 }
 
@@ -781,5 +787,111 @@ describe('CombatEffectVisuals — enemy force-field break flash (AH-0MVM8GW7W004
     (config.onComplete as () => void)();
     expect(registry).not.toContain(flash);
     expect(flash.active).toBe(false);
+  });
+});
+
+// ── Permanent consumable charge visuals (AH-0MVUXH3X60078QR3,  F6) ──
+//
+// A permanently-owned consumable (hold-full reward) is armed only while its
+// shared charge pool holds a charge (parent AH-0MVTQMREN009DSFW AC1/AC3).
+// These tests pin the armed/empty rendering for the three kinds with an
+// in-world look (Shield bubble, Thorn aura, Force Field bubble): an empty
+// permanent pool must never render an always-on armed visual, and the look
+// must return when the charge regenerates through the shared tick.
+
+describe('CombatEffectVisuals — permanent consumable charge visuals (AH-0MVUXH3X60078QR3)', () => {
+  it('draws the Shield bubble while a permanent Shield holds a charge, clears when spent, and returns on recharge', () => {
+    const registry = new EffectsRegistry();
+    const player = { x: 100, y: 50 };
+
+    // A hold-full reward adds exactly one charge and never levels (parent
+    // AC1): the shield is armed only while that pool is non-empty.
+    registry.applyCollect('shield', true);
+    expect(registry.consumableCharges('shield')).toBe(1);
+
+    const armed = new FakeGraphics();
+    expect(drawShieldBubble(graphics(armed), player, registry)).toBe(true);
+    expect(armed.strokeCircleCalls).toEqual([[100, 50, SHIP_SIZE * 1.6]]);
+
+    // One absorbed hit spends the charge: an empty permanent pool renders no
+    // always-on armed bubble (AC4).
+    expect(registry.tryAbsorbShield()).toBe(true);
+    expect(registry.consumableCharges('shield')).toBe(0);
+
+    const empty = new FakeGraphics();
+    expect(drawShieldBubble(graphics(empty), player, registry)).toBe(false);
+    expect(empty.lineStyleCalls).toEqual([]);
+    expect(empty.strokeCircleCalls).toEqual([]);
+
+    // The charge regenerates on the level-derived interval through the shared
+    // tick, and the armed visual returns with it (AC4).
+    registry.tick((resolvePowerUpAtLevel('shield', 0).shieldRecharge ?? 0) + 0.1);
+    expect(registry.consumableCharges('shield')).toBe(1);
+
+    const rearmed = new FakeGraphics();
+    expect(drawShieldBubble(graphics(rearmed), player, registry)).toBe(true);
+    expect(rearmed.strokeCircleCalls).toEqual([[100, 50, SHIP_SIZE * 1.6]]);
+  });
+
+  it('draws the Thorn aura only while a permanent field holds charges and returns on recharge', () => {
+    const registry = new EffectsRegistry();
+    // Two hold-full grants fill the level-0 pool (cap 2).
+    registry.applyCollect('thorns', true);
+    registry.applyCollect('thorns', true);
+    expect(registry.thornsRemaining()).toBe(2);
+
+    const armed = new FakeGraphics();
+    expect(drawThornsAura(graphics(armed), { x: 10, y: 20 }, registry)).toBe(true);
+    expect(armed.pathCommands).toBeGreaterThan(0);
+
+    // Two free rams spend the pool: the aura must clear (no always-on halo).
+    expect(registry.tryConsumeThornsRam()).toBe(true);
+    expect(registry.tryConsumeThornsRam()).toBe(true);
+    expect(registry.thornsRemaining()).toBe(0);
+
+    const empty = new FakeGraphics();
+    expect(drawThornsAura(graphics(empty), { x: 10, y: 20 }, registry)).toBe(false);
+    expect(empty.pathCommands).toBe(0);
+
+    registry.tick((resolvePowerUpAtLevel('thorns', 0).thornsRecharge ?? 0) + 0.1);
+    // Both spent charges owned a timer of the same interval, so both elapse
+    // together and the pool returns to the full cap in one cycle (per-charge
+    // regeneration, parent AC2): the aura re-arms with the full halo.
+    expect(registry.thornsRemaining()).toBe(2);
+    const rearmed = new FakeGraphics();
+    expect(drawThornsAura(graphics(rearmed), { x: 10, y: 20 }, registry)).toBe(true);
+    expect(rearmed.pathCommands).toBeGreaterThan(0);
+  });
+
+  it('dims the Force Field bubble while a permanent field is empty and re-arms when a charge returns', () => {
+    const registry = new EffectsRegistry();
+    registry.applyCollect('force_field', true);
+    expect(registry.isForceFieldActive()).toBe(true);
+    expect(registry.consumableCharges('force_field')).toBe(1);
+
+    const armed = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(armed), { x: 0, y: 0 }, registry)).toBe(true);
+    // Bright (armed) baseline.
+    expect(armed.lineStyleCalls[0][2]).toBe(FORCE_FIELD_STROKE_ALPHA);
+    expect(armed.fillStyleCalls[0][1]).toBe(FORCE_FIELD_FILL_ALPHA);
+
+    // One reflected bullet spends the charge: the bubble stays up but dims
+    // (Q1 = b — a spent permanent field reads as inert, never as gone).
+    expect(registry.tryConsumeForceFieldReflect()).toBe(true);
+    expect(registry.consumableCharges('force_field')).toBe(0);
+
+    const empty = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(empty), { x: 0, y: 0 }, registry)).toBe(true);
+    expect(empty.lineStyleCalls[0][2]).toBe(FORCE_FIELD_SPENT_STROKE_ALPHA);
+    expect(empty.fillStyleCalls[0][1]).toBe(FORCE_FIELD_SPENT_FILL_ALPHA);
+
+    // The charge regenerates on the level-derived interval: the bubble
+    // brightens back to its armed baseline (AC4 re-arm).
+    registry.tick((resolvePowerUpAtLevel('force_field', 0).forceFieldRecharge ?? 0) + 0.1);
+    expect(registry.consumableCharges('force_field')).toBe(1);
+    const rearmed = new FakeGraphics();
+    expect(drawForceFieldBubble(graphics(rearmed), { x: 0, y: 0 }, registry)).toBe(true);
+    expect(rearmed.lineStyleCalls[0][2]).toBe(FORCE_FIELD_STROKE_ALPHA);
+    expect(rearmed.fillStyleCalls[0][1]).toBe(FORCE_FIELD_FILL_ALPHA);
   });
 });

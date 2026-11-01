@@ -32,6 +32,14 @@
  *   explosion cue plays with a crash-site particle burst, and a mineral tinkle
  *   voices the spill.
  *
+ * The **spawn-side budget** lives in the shared scene core, next door: a
+ * permanently-owned Mystery UFO spawns one drone per shared-pool charge
+ * (`CombatCoreScene._updateDroneSpawning` → `EffectsRegistry.consumeMysteryUfoCharge`,
+ * parent AH-0MVTQMREN009DSFW / F6 AH-0MVUXH3X60078QR3), so a permanent reward
+ * fields at most `mysteryUfoChargeCap` drones per regeneration interval
+ * instead of a repeating scene timer. This module stays scene-agnostic: it
+ * turns a spawn *request* into the visible drone, never a cadence of its own.
+ *
  * All four lifecycle VFX moments (launch poof, collect sparkle, return trail,
  * destruction burst) are spawned from this shared pass — never from a scene —
  * so the game and every gym are visually identical (AH-0MVSAJZOI008TRBB).

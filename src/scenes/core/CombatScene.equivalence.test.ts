@@ -2684,6 +2684,12 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['_applyMineralScoop', 'src/scenes/core/CombatCoreScene.ts'],
   ['_updateDropLayer', 'src/scenes/core/CombatCoreScene.ts'],
   ['_playPickupCue', 'src/scenes/core/CombatCoreScene.ts'],
+  // F6 consumable charge scene wiring (AH-0MVUXH3X60078QR3 AC1): the
+  // Mystery UFO permanent-drone spawn step spends one shared-pool charge per
+  // drone (`consumeMysteryUfoCharge`) instead of running a scene-local
+  // repeating timer, so the game and every gym spawn drones identically. A
+  // scene that re-introduces the old timer fails this guard.
+  ['_updateDroneSpawning', 'src/scenes/core/CombatCoreScene.ts'],
   ['_handleCollisions', 'src/scenes/core/CombatScene.ts'],
   ['_hitPlayer', 'src/scenes/core/CombatScene.ts'],
   ['_updateAutoDefence', 'src/scenes/core/CombatScene.ts'],

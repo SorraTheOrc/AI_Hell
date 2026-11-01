@@ -401,13 +401,6 @@ export class CombatCoreScene<
   protected drones: MysteryUfoDrone[] = [];
 
   /**
-   * Countdown (seconds) to the next permanent collector-drone spawn, or
-   * `null` when the full-hull (permanent) reward is not owned. Armed from the
-   * level-resolved interval by {@link CombatCoreScene._updateDroneSpawning}.
-   */
-  private _droneSpawnTimer: number | null = null;
-
-  /**
    * Mineral field used by {@link CombatCoreScene.getDroneMineralField} for
    * scenes that do not own a field of their own (threat-free/non-mineral
    * scenes). Keeping a stable array means a drone can never write into a
@@ -727,22 +720,27 @@ export class CombatCoreScene<
   protected onWeaponCollected(_drop: TDrop): void {}
 
   /**
-   * Drains pending Mystery UFO collector-drone spawns and advances the
-   * permanent auto-spawn timer (AH-0MV9G113S009B37I).
+   * Drains pending Mystery UFO collector-drone spawns and spends one shared
+   * charge for each permanent (hold-full) drone (parent
+   * AH-0MVTQMREN009DSFW, F6 AC1).
    *
    * Defined once here so the game and every gym turn a `mystery_ufo` pickup
    * into the same visible drone: a field pickup queues exactly one spawn
-   * (drained here), while the full-hull permanent reward owns a drone that
-   * re-spawns on the level-resolved interval (30 s at level 0, descending to
-   * a 12 s floor). The instant mineral/score bounty is retired.
+   * (drained here, spending no charge and keeping its timed-pickup
+   * behaviour, PD5), while the full-hull permanent reward owns a **charge**
+   * that exactly one drone spawn spends — at most `mysteryUfoChargeCap`
+   * drones per regeneration interval instead of a permanent repeating
+   * timer. The spent charge returns on the level-resolved interval through
+   * the shared registry tick, so the game and every gym regenerate
+   * identically on the same clock.
    *
    * Called at the start of {@link CombatCoreScene._tickPlayer}. No player →
    * nothing spawns and pending requests stay queued for the next tick with a
    * ship on screen.
    *
-   * @param dt — frame delta (seconds).
+   * @param _dt — frame delta (seconds); unused: the pool owns the cadence.
    */
-  protected _updateDroneSpawning(dt: number): void {
+  protected _updateDroneSpawning(_dt: number): void {
     if (!this.getPlayer()) return;
     const registry = this.getEffectsRegistry();
 
@@ -752,20 +750,13 @@ export class CombatCoreScene<
       this._spawnMysteryUfoDrone();
     }
 
-    // Full-hull reward: one drone every resolved interval for the rest of
-    // the run. The first spawn lands one interval after the reward.
-    if (!registry.isMysteryUfoPermanent()) {
-      this._droneSpawnTimer = null;
-      return;
-    }
-    const interval = registry.mysteryUfoSpawnInterval();
-    if (this._droneSpawnTimer === null) {
-      this._droneSpawnTimer = interval;
-    } else {
-      this._droneSpawnTimer -= dt;
-    }
-    if (this._droneSpawnTimer <= 0) {
-      this._droneSpawnTimer = interval;
+    // Full-hull reward: one shared-pool charge buys one drone spawn. There is
+    // no scene-local repeating timer — the pool is the only budget and it
+    // regenerates through the shared registry tick — so a permanent UFO
+    // spawns at most `mysteryUfoChargeCap` drones per level-derived interval
+    // (parent AC4) and an empty pool always waits for the next charge.
+    if (!registry.isMysteryUfoPermanent()) return;
+    while (registry.consumeMysteryUfoCharge()) {
       this._spawnMysteryUfoDrone();
     }
   }

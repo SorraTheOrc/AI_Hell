@@ -1238,32 +1238,52 @@ describe('CombatCoreScene — collector-drone spawn wiring (AH-0MVBMQ04X0051002)
     expect(scene.getDrones()).toHaveLength(1);
   });
 
-  it('the permanent reward re-spawns a drone on the resolved interval (AC4)', async () => {
+  it('the permanent reward spawns one drone per regenerated charge, spending the shared pool (F6)', async () => {
     const scene = await bootDroneScene();
     scene.addPlayer({ x: 320, y: 240 });
 
     scene.effects.applyCollect('mystery_ufo', true);
     const interval = scene.effects.mysteryUfoSpawnInterval();
     expect(scene.effects.isMysteryUfoPermanent()).toBe(true);
-    // A consumable hold-full reward never levels the kind (parent AC1), so
-    // the permanent spawn interval resolves at the curve base: 30 s.
+    // A consumable hold-full reward never levels the kind (parent AC1) and
+    // grants exactly one charge (cap 1 at level 0).
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(1);
     expect(interval).toBe(
       resolvePowerUpAtLevel('mystery_ufo', 0).mysteryUfoSpawnInterval,
     );
 
-    // The first permanent spawn lands one interval after the reward. The
-    // arming step runs on the first call and does not consume `dt`.
+    // Holding a charge arms one drone immediately; the spawn spends it.
     scene.runUpdateDroneSpawning(1 / 60);
-    advance(scene, interval - 0.05);
-    expect(scene.getDrones()).toHaveLength(0);
-    advance(scene, 0.1);
+    expect(scene.getDrones()).toHaveLength(1);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(0);
+
+    // With no charge, no amount of scene time spawns a second drone — there
+    // is no scene-local repeating timer (F6 AC1): the pool is the only
+    // budget, and it regenerates only through the shared registry tick.
+    scene.runUpdateDroneSpawning(1 / 60);
+    scene.runUpdateDroneSpawning(120);
     expect(scene.getDrones()).toHaveLength(1);
 
-    // And again on the next interval.
-    advance(scene, interval - 0.1);
-    expect(scene.getDrones()).toHaveLength(1);
-    advance(scene, 0.2);
+    // One charge regenerates per level-derived interval through the shared
+    // tick; the next spawn can then happen and spends the charge again.
+    scene.effects.tick(interval + 0.1);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(1);
+    scene.runUpdateDroneSpawning(1 / 60);
     expect(scene.getDrones()).toHaveLength(2);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(0);
+  });
+
+  it('a permanent Mystery UFO never exceeds the level-derived charge cap (F6)', async () => {
+    const scene = await bootDroneScene();
+    scene.addPlayer({ x: 320, y: 240 });
+
+    scene.effects.applyCollect('mystery_ufo', true);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(1);
+    // A second hold-full grant while the pool is full is discarded by the
+    // shared pool (parent AC2: no banking while full), so a level-0 UFO can
+    // never field more than one drone per regeneration interval.
+    scene.effects.applyCollect('mystery_ufo', true);
+    expect(scene.effects.consumableCharges('mystery_ufo')).toBe(1);
   });
 
   it('does not spawn without a ship and leaves the request queued', async () => {
