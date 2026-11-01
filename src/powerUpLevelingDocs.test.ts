@@ -18,7 +18,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { POWER_UP_CATALOGUE, type PowerUpId } from './powerups/types';
-import { POWER_UP_LEVEL_SPECS } from './powerups/powerUpLevels';
+import {
+  POWER_UP_LEVEL_SPECS,
+  resolvePowerUpAtLevel,
+} from './powerups/powerUpLevels';
 
 const GDD_PATH = path.resolve(process.cwd(), 'docs/Game Design Document.md');
 const README_PATH = path.resolve(process.cwd(), 'README.md');
@@ -45,6 +48,31 @@ describe('power-up leveling is documented (AH-0MUU2QJE2007JNR6 AC8)', () => {
         expect(gdd).toContain(spec.label);
       }
     }
+  });
+
+  it('the GDD §4.4.3 table pins the consumable charge numbers to the catalogue (AH-0MVTQMREN009DSFW AC1)', () => {
+    // The per-consumable charge caps and regeneration intervals must read as
+    // the same numbers the resolver produces, so the player-facing docs
+    // cannot drift from the catalogue: level-0 values, the level cap/floor
+    // and the shipped Phase/Teleport/Thorn intervals all below.
+    const shield0 = resolvePowerUpAtLevel('shield', 0).shieldRecharge;
+    const shieldFloor = resolvePowerUpAtLevel('shield', 10).shieldRecharge;
+    const field0 = resolvePowerUpAtLevel('force_field', 0).forceFieldRecharge;
+    const fieldFloor = resolvePowerUpAtLevel('force_field', 10).forceFieldRecharge;
+    const ufo0 = resolvePowerUpAtLevel('mystery_ufo', 0).mysteryUfoChargeCap;
+    const ufoCap = resolvePowerUpAtLevel('mystery_ufo', 10).mysteryUfoChargeCap;
+    expect(shield0).toBe(45);
+    expect(shieldFloor).toBe(20);
+    expect(field0).toBe(45);
+    expect(fieldFloor).toBe(20);
+    expect(ufo0).toBe(1);
+    expect(ufoCap).toBe(3);
+    expect(gdd).toContain(`Shield recharge (${shield0} s → ${shieldFloor} s,`);
+    expect(gdd).toContain(`Field recharge (${field0} s → ${fieldFloor} s,`);
+    expect(gdd).toContain(`UFO charges (${ufo0} → ${ufoCap},`);
+    expect(gdd).toContain('Phase recharge (1/30 → 1/10');
+    expect(gdd).toContain('Teleport recharge (1/15 → 1/5');
+    expect(gdd).toContain('Thorn recharge (12 s → 5 s,');
   });
 
   it('the GDD records the stack-reconciliation and hybrid semantics', () => {

@@ -41,8 +41,11 @@
  *   (AH-0MV1BIXFO006Z1I7 → AH-0MV9G113S009B37I): a field pickup spawns one
  *   small, code-drawn copy of the player ship that seeks the nearest mineral,
  *   vacuums those inside its collector radius, flies home and pays them into
- *   the hold. A full-hull (permanent) reward keeps a drone spawning on a
- *   level-resolved interval. Enemy fire or an enemy body destroys a drone
+ *   the hold. A full-hull (permanent) reward makes it a **charge pool**: one
+ *   drone spawn spends one charge, the pool holds up to the level-derived
+ *   `mysteryUfoChargeCap` (1 at level 0 → 3) and each spent charge
+ *   regenerates on the level-resolved spawn interval (30 s → 12 s). Enemy
+ *   fire or an enemy body destroys a drone
  *   (spilling its hold plus a 2 × level bonus); the player's own fire passes
  *   through. Deliberately rare (weight 3, rarer than the standard 4).
  *
@@ -74,7 +77,9 @@
  *   (Thorn Field), one reflected bullet (Force Field), one auto-activation
  *   (Phase Shift), one warp (Teleport), one drone spawn (Mystery UFO);
  * - **charges regenerate** on a level-derived interval (the per-kind recharge
- *   axes in `./powerUpLevels`, 45 s at level 0 for Shield and Force Field);
+ *   axes in `./powerUpLevels`, 45 s at level 0 for Shield and Force Field),
+ *   and only from the single shared {@link EffectsRegistry.tick} clock — the
+ *   same call site the game and every gym share, so the pools cannot drift;
  * - **a hold-full reward adds a charge**, never a level, clamped at the pool's
  *   level-derived cap.
  *
