@@ -550,6 +550,8 @@ async function bootSceneWithLevels(
     asteroidSpawner?: boolean;
     /** Extra scenes registered after PlayScene (e.g. the choice overlay). */
     extraScenes?: (typeof Phaser.Scene)[];
+    /** TEMP REPRO (AH-0MVXWEDOH002LO1M): pin the run seed before restart. */
+    runSeed?: number;
   } = {},
 ): Promise<{ booted: BootedGame; scene: PlayScene }> {
   // The shipped default now sequences the campaign (AH-0MUJSUTLA006Q8E1),
@@ -572,6 +574,9 @@ async function bootSceneWithLevels(
     // (or auto-update-release) any random asteroids.
     scene.setAsteroidSpawnerEnabled(false);
   }
+  // TEMP REPRO (AH-0MVXWEDOH002LO1M): `setRunSeed` is read at the next
+  // `create()`, so it must be injected here — before the restart.
+  if (options.runSeed !== undefined) scene.setRunSeed(options.runSeed);
   scene.scene.restart();
   await advanceGame(scene.game, 200);
   return { booted: game, scene };
@@ -657,6 +662,14 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
     // wave/banner/transition behaviour; isolate it from random asteroid
     // spawns (the spawner is covered by its own integration suites).
     (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
+    // TEMP REPRO (AH-0MVXWEDOH002LO1M): pin the run seed when requested via
+    // the environment, then restart so `_initRunSeed()` adopts it.
+    const reproSeed = reproSeedFromEnv('REPRO_SEED_LEVEL');
+    if (reproSeed !== undefined) {
+      (booted.scene as PlayScene).setRunSeed(reproSeed);
+      (booted.scene as PlayScene).scene.restart();
+      await advanceGame(booted.game, 200);
+    }
     return booted.scene as PlayScene;
   }
 
@@ -667,7 +680,10 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
    * the whole ten-level campaign.
    */
   async function bootPlayAtBoss(): Promise<PlayScene> {
-    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign(), {
+      // TEMP REPRO (AH-0MVXWEDOH002LO1M): env-pinned run seed.
+      runSeed: reproSeedFromEnv('REPRO_SEED_BOSS'),
+    });
     booted = game;
     scene.setAsteroidSpawnerEnabled(false);
     return scene;
@@ -1952,7 +1968,10 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
    * the other nine levels. Same encounter, ~1/10 the simulated waves.
    */
   async function bootPlayAtBoss(): Promise<PlayScene> {
-    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign());
+    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign(), {
+      // TEMP REPRO (AH-0MVXWEDOH002LO1M): env-pinned run seed.
+      runSeed: reproSeedFromEnv('REPRO_SEED_BOSS'),
+    });
     booted = game;
     // Isolate the deterministic boss walk from the random asteroid spawner:
     // a timeout walk simulates a lot of game time, and freely spawning
@@ -9121,3 +9140,200 @@ describe('PlayScene — dev-gated startLevel seam (AH-0MVE01EY0008QEVX AC3)', ()
     expect(scene.getWaveManager().level).toBe(scene.getWaveManager().levelCount);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// TEMP REPRO HARNESS (AH-0MVXWEDOH002LO1M) — DELETE BEFORE COMMIT
+//
+// Evidence-first seed sweep for the two named flakes. Run through the
+// sanctioned channel with:
+//   REPRO_SWEEP=1 python3 <test skill>/scripts/run_tests.py --scope changed --no-cache --json
+// and read the `A seed=…` / `B seed=…` lines from the captured stdout. Seeds
+// that show `REPRODUCED` are the recorded reproduction inputs.
+// ───────────────────────────────────────────────────────────────────────────
+const REPRO_SWEEP = process.env.REPRO_SWEEP === '1';
+
+function reproSeedFromEnv(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) throw new Error(`Bad ${name}: ${raw}`);
+  return value;
+}
+
+(REPRO_SWEEP ? describe : describe.skip)(
+  'REPRO SWEEP (AH-0MVXWEDOH002LO1M)',
+  () => {
+    beforeEach(() => {
+      localStorage.setItem(
+        RULES_STORAGE_KEY,
+        JSON.stringify({ sequencedWavesEnabled: false }),
+      );
+    });
+
+    afterEach(() => {
+      localStorage.clear();
+    });
+
+    function seedRange(): number[] {
+      const start = Number(process.env.REPRO_SEED_START ?? '1');
+      const count = Number(process.env.REPRO_SEED_COUNT ?? '40');
+      return Array.from({ length: count }, (_, i) => start + i);
+    }
+
+    it('A — sweeps run seeds for the boss phase-advance assertion (:2028)', async () => {
+      const lines: string[] = [];
+      const fs = await import('node:fs');
+      const out = process.env.REPRO_OUT;
+      const emit = (line: string): void => {
+        lines.push(line);
+        if (out) fs.appendFileSync(out, `${line}\n`);
+      };
+      let reproduced = 0;
+      for (const seed of seedRange()) {
+        const { booted: game, scene } = await bootSceneWithLevels(
+          singleLevelCampaign(),
+          { runSeed: seed },
+        );
+        scene.setAsteroidSpawnerEnabled(false);
+        try {
+          reachBoss(scene);
+          const boss = scene.getBoss()!;
+          const effects = scene
+            .getEffectsRegistry()
+            .activeEffects()
+            .map((e) => e.id)
+            .join(',');
+          const frenzy = scene.getEffectsRegistry().frenzyBonusHits();
+          const hpPerPhase = boss.getHitPointsPerPhase();
+          const power = scene.getPlayerPowerScore();
+          const bulletsBefore = scene.getPlayerBullets().length;
+          damageBossPhase(scene, boss);
+          const phase = boss.getPhaseNumber();
+          if (phase !== 2) {
+            reproduced += 1;
+            let message = '';
+            try {
+              expect(boss.getPhaseNumber()).toBe(2);
+            } catch (assertionErr) {
+              message = String((assertionErr as Error).message)
+                .split('\n')[0]
+                .trim();
+            }
+            emit(`A seed=${seed} ASSERTION ${message}`);
+          }
+          emit(
+            `A seed=${seed} ${phase === 2 ? 'ok' : 'REPRODUCED'} phase=${phase} ` +
+              `hpPerPhase=${hpPerPhase} frenzyBonusHits=${frenzy} power=${power} ` +
+              `bulletsBefore=${bulletsBefore} effects=[${effects}]`,
+          );
+        } catch (err) {
+          emit(
+            `A seed=${seed} walk-error ${String((err as Error).message).slice(0, 240)}`,
+          );
+        } finally {
+          game.game.destroy(true);
+        }
+      }
+      console.log(lines.join('\n'));
+      expect(lines).toHaveLength(seedRange().length);
+      expect(reproduced).toBeGreaterThanOrEqual(0);
+    }, 1_800_000);
+
+    it('B — sweeps run seeds for the level-advance alive-count assertion (:1107)', async () => {
+      const lines: string[] = [];
+      const fs = await import('node:fs');
+      const out = process.env.REPRO_OUT;
+      const emit = (line: string): void => {
+        lines.push(line);
+        if (out) fs.appendFileSync(out, `${line}\n`);
+      };
+      let reproduced = 0;
+      for (const seed of seedRange()) {
+        // Mirror `bootPlay()` exactly (shipped, level-scaled campaign) plus
+        // the seed injection: the AC5 test boots through `bootPlay`, so an
+        // unscaled `plainCampaign()` fixture would not reproduce it.
+        const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+        const scene = result.scene as PlayScene;
+        scene.setAsteroidSpawnerEnabled(false);
+        scene.setRunSeed(seed);
+        scene.scene.restart();
+        await advanceGame(result.game, 200);
+        scene.setAsteroidSpawnerEnabled(false);
+        // Optional live-frame window: let the harness's resumed rAF loop run
+        // real wall-clock frames (the full-suite-load condition) before the
+        // synchronous level walk starts.
+        const liveFrameMs = Number(process.env.REPRO_LIVE_FRAME_MS ?? '0');
+        if (liveFrameMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, liveFrameMs));
+        }
+        try {
+          const wm = scene.getWaveManager();
+          let guard = 0;
+          while (wm.level === 1 && guard++ < 20) {
+            killAllEnemies(scene);
+            finishTransition(scene);
+          }
+          const planned = wm.waveEnemyCount();
+          const alive = scene.getAliveCount();
+          const dead = scene
+            .getEnemies()
+            .filter((e) => !e.alive)
+            .map((e) => e.constructor.name)
+            .join(',');
+          const liveNames = scene
+            .getEnemies()
+            .filter((e) => e.alive)
+            .map((e) => e.constructor.name)
+            .join(',');
+          const bullets = scene.getPlayerBullets().length;
+          const effects = scene
+            .getEffectsRegistry()
+            .activeEffects()
+            .map((e) => e.id)
+            .join(',');
+          const internal = scene as unknown as {
+            spawned: {
+              enemyKey: string;
+              entity: { alive: boolean; constructor: { name: string } };
+            }[];
+          };
+          const newest = internal.spawned
+            .slice(Math.max(0, internal.spawned.length - planned))
+            .map(
+              (s) =>
+                `${s.enemyKey}/${s.entity.constructor.name}:${s.entity.alive ? 'alive' : 'dead'}`,
+            )
+            .join(',');
+          const spawnedTotal = internal.spawned.length;
+          if (alive !== planned) {
+            reproduced += 1;
+            let message = '';
+            try {
+              expect(alive).toBe(planned);
+            } catch (assertionErr) {
+              message = String((assertionErr as Error).message)
+                .split('\n')[0]
+                .trim();
+            }
+            emit(`B seed=${seed} ASSERTION ${message}`);
+          }
+          emit(
+            `B seed=${seed} ${alive === planned ? 'ok' : 'REPRODUCED'} ` +
+              `alive=${alive} planned=${planned} level=${wm.level} wave=${wm.waveNumber} ` +
+              `spawnedTotal=${spawnedTotal} dead=[${dead}] live=[${liveNames}] ` +
+              `playerBullets=${bullets} effects=[${effects}] newest=[${newest}]`,
+          );
+        } catch (err) {
+          emit(
+            `B seed=${seed} walk-error ${String((err as Error).message).slice(0, 240)}`,
+          );
+        } finally {
+          result.game.destroy(true);
+        }
+      }
+      console.log(lines.join('\n'));
+      expect(lines).toHaveLength(seedRange().length);
+      expect(reproduced).toBeGreaterThanOrEqual(0);
+    }, 1_800_000);
+  },
+);
