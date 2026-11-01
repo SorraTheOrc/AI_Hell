@@ -118,6 +118,18 @@ to reproduce a failure with a suspect seed, see the helper's doc comment. This i
 the same contract as the harness's: deterministic boot is the default, and a
 suite that needs a wall-clock-free, reproducible starting state composes the
 shared helper rather than booting raw (AH-0MVXWEE3L004SPTC).
+
+**Seed-dependent effect state no longer drives the boss-encounter exact
+counts (AH-0MVXXKCOZ003E1UH).** The seed pins the power-up drop rolls, so
+whether the player holds Frenzy at the boss *is* seed-determined — seeds
+`8`/`16`/`33`/`36`/`86` reproduce the boss phase-advance failure via an
+active `frenzy` bonus hit (`frenzyBonusHits() === 1`) that made each player
+bullet remove `1 + bonus` phase hits. The exact-count assertions therefore no
+longer **depend** on the pinned seed happening to avoid Frenzy: the
+`damageBossPhase()` test helper drives the phase boundary from observed boss
+state (`getPhaseNumber()`) instead of assuming one HP per bullet, and a
+dedicated Frenzy regression test pins the multi-hit condition fail-first, so
+a future seed/effect change cannot quietly re-introduce the overshoot.
 The suite is split (AH-0MVF6XV87001NSEJ) into `unit` (node env, no DOM/Phaser
 inline; the fast TDD loop) and `integration` (happy-dom + `src/test/setup.ts` +
 `deps.inline: ['phaser']`); the typed run commands below are registered as

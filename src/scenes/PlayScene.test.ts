@@ -448,18 +448,36 @@ function reachBoss(scene: PlayScene): void {
 }
 
 /**
- * Fires `BOSS_HIT_POINTS_PER_PHASE` player bullets at the boss, one per tick,
- * depleting exactly one health phase (AH-0MUTV3J7T006MZ4K).
+ * Advances the boss by exactly **one** health phase, regardless of active
+ * multi-hit effects (AH-0MUTV3J7T006MZ4K; AH-0MVXXKCOZ003E1UH).
+ *
+ * The phase boundary is driven from **observed boss state**: player bullets
+ * are fired one per tick until `getPhaseNumber()` increments (or the boss
+ * dies on the final phase), bounded by a guard that fails loudly instead of
+ * looping forever. Firing a fixed pool-sized batch assumed one HP per
+ * bullet — but an active Frenzy bonus makes each bullet remove `1 +
+ * frenzyBonusHits()` phase hits, so a pool-sized batch would deplete **two**
+ * phases and land `getPhaseNumber()` one ahead (the `expected 3 to be 2`
+ * boss-encounter flake, seeds 8/16/33/36/86 with `frenzyBonusHits() === 1`;
+ * AH-0MVXWEDOH002LO1M).
  *
  * The batch is isolated from the boss's minions — which spawn on phase
  * depletion and would otherwise intercept test bullets and be killed for
- * score — and from the player's auto-fire, so the boss takes exactly one hit
- * per spawned bullet. Minions already alive are left untouched, so callers
- * can still assert the minion waves that accumulate after each phase (AC3).
+ * score — and from the player's auto-fire, so every spawned bullet lands on
+ * the boss (the helper's `getEnemyEntities()` / `autoFireEnabled()`
+ * isolation is preserved). Minions already alive are left untouched, so
+ * callers can still assert the minion waves that accumulate after each
+ * phase (AC3).
  */
 function damageBossPhase(
   scene: PlayScene,
-  boss: { x: number; y: number; getHitPointsPerPhase(): number },
+  boss: {
+    x: number;
+    y: number;
+    alive: boolean;
+    getHitPointsPerPhase(): number;
+    getPhaseNumber(): number;
+  },
 ): void {
   const isolated = scene as unknown as {
     getEnemyEntities(): readonly unknown[];
@@ -470,11 +488,23 @@ function damageBossPhase(
   isolated.getEnemyEntities = () => [];
   isolated.autoFireEnabled = () => false;
   try {
-    // The encounter's effective pool (power-scaled — AH-0MVH87A3L004VOLD).
-    for (let i = 0; i < boss.getHitPointsPerPhase(); i++) {
+    const startPhase = boss.getPhaseNumber();
+    // Fire until the observed phase advances (or the boss dies on the final
+    // phase). The guard is the no-multi-hit worst case (one bullet per phase
+    // hit) plus a one-bullet margin for the depleting hit to land; with an
+    // active bonus hit fewer bullets are needed, so a live boss that never
+    // advances past `startPhase` after the guard is a genuine stuck state
+    // and fails loudly instead of hiding an assertion failure behind a pass.
+    const guard = boss.getHitPointsPerPhase() + 1;
+    for (let hit = 0; hit < guard; hit++) {
       scene.spawnPlayerBullet(boss.x, boss.y, 0, 0);
       scene.tick(0.016);
+      if (!boss.alive || boss.getPhaseNumber() !== startPhase) return;
     }
+    throw new Error(
+      `damageBossPhase: boss phase did not advance from ${startPhase} ` +
+        `after ${guard} bullets (alive=${boss.alive})`,
+    );
   } finally {
     isolated.getEnemyEntities = originalGetEnemyEntities;
     isolated.autoFireEnabled = originalAutoFireEnabled;
@@ -664,6 +694,12 @@ async function bootSceneWithLevels(
  * recipe on that helper) rather than defining its own default. Changing this
  * value changes the initial state of every suite here, so re-verify the whole
  * file (the seeded boot is what makes the exact-count assertions exact).
+ *
+ * The boss-encounter exact-count assertions no longer **depend** on the seed
+ * avoiding Frenzy: `damageBossPhase()` advances the boss from observed phase
+ * state, and the Frenzy regression test (both in the boss-encounter describe)
+ * pins the multi-hit condition fail-first, so a future seed/effect change
+ * cannot re-introduce the phase-overshoot flake (AH-0MVXXKCOZ003E1UH AC1/AC2).
  */
 const DETERMINISTIC_RUN_SEED = 1;
 
@@ -2310,9 +2346,11 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     // recorded flake was **not** looseness in the phase math: seeds
     // 8/16/33/36/86 hold an active `frenzy` effect at the boss (a
     // seed-determined power-up drop state) which grants a bonus hit, so the
-    // batch advanced two phases (AH-0MVXWEDOH002LO1M). The deterministic
-    // boot pins seed 1, which holds no frenzy bonus hit, so the count stays
-    // exact rather than being relaxed to a monotonicity check.
+    // pool-sized batch advanced two phases (AH-0MVXWEDOH002LO1M).
+    // `damageBossPhase()` now drives the phase boundary from observed boss
+    // state (`getPhaseNumber()`), so the exact advance holds even
+    // with a multi-hit effect active — the same count the Frenzy regression
+    // test (below) pins fail-first (AH-0MVXXKCOZ003E1UH AC2).
     damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(scene.getBossPhase()).toBe(2);
@@ -2327,6 +2365,37 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
 
+    const divers = scene.getEnemies().filter(
+      (e) => e.alive && e.constructor.name === 'Diver',
+    );
+    expect(divers.length).toBeGreaterThan(0);
+  });
+
+  it('AC2 — a frenzy-boosted hit pool still advances exactly one phase (regression AH-0MVXXKCOZ003E1UH)', async () => {
+    const scene = await bootPlayAtBoss();
+    reachBoss(scene);
+    const boss = scene.getBoss()!;
+    const registry = scene.getEffectsRegistry();
+
+    // Force the recorded reproduction condition: an active frenzy effect at
+    // the boss grants `frenzyBonusHits() === 1`, so each player bullet
+    // applies **two** phase hits (every recorded reproduction seed
+    // 8/16/33/36/86 from AH-0MVXWEDOH002LO1M carried this exact state). A
+    // pool-sized batch would then deplete two phases — the
+    // `expected 3 to be 2` boss phase-advance flake this item pins. The
+    // deterministic boot seeds the power-up drops, but the helper's
+    // contract must hold regardless of which seed the drops resolve to.
+    registry.applyCollect('frenzy', true);
+    expect(registry.frenzyBonusHits()).toBe(1);
+
+    // One `damageBossPhase()` call must still advance exactly one phase —
+    // and summon that phase's minion wave — regardless of the bonus hits.
+    damageBossPhase(scene, boss);
+    expect(boss.getPhaseNumber()).toBe(2);
+    expect(scene.getBossPhase()).toBe(2);
+
+    // Phase 2's Firestorm divers arrive from the top as with the
+    // frenzy-free boot.
     const divers = scene.getEnemies().filter(
       (e) => e.alive && e.constructor.name === 'Diver',
     );
