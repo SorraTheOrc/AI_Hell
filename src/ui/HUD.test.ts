@@ -677,6 +677,10 @@ describe('HUD label builder (AH-0MUX802450085VZZ)', () => {
 describe('HUD Thorn Field recharge countdown (AH-0MVJ8YKR70096C6T)', () => {
   it('shows the remaining rams plus the next-recharge countdown while recharging', async () => {
     const reg = new EffectsRegistry();
+    // Two hold-full grants fill the level-0 pool (cap 2): one charge is spent
+    // below, so the row still shows a remaining ram alongside the countdown
+    // (parent AH-0MVTQMREN009DSFW AC1).
+    reg.applyCollect('thorns', true);
     reg.applyCollect('thorns', true);
     reg.tryConsumeThornsRam();
     const { game, hud } = await bootWithHUD(reg);

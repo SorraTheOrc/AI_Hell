@@ -2795,9 +2795,10 @@ describe('CombatScene — force-field ram absorption (AH-0MVM8GTG7002IRTL)', () 
     expect(scene.getPlayerHitCount()).toBe(0);
     expect(scene.hooks).not.toContain('onPlayerHit');
     expect(scene.getThornsAbsorbEffects().length).toBeGreaterThan(0);
-    // Precedence: one thorn ram budget spent, and the enemy shield is
-    // untouched by the same contact.
-    expect(scene.effects.thornsRemaining()).toBe(1);
+    // Precedence: the one level-0 thorn charge is spent (the pool is empty),
+    // and the enemy shield is untouched by the same contact
+    // (parent AH-0MVTQMREN009DSFW AC2).
+    expect(scene.effects.thornsRemaining()).toBe(0);
     expect(enemy.forceFieldHits).toBe(2);
   });
 });

@@ -573,6 +573,8 @@ describe('CombatEffectVisuals — Thorn Field aura (AH-0MVJ8YKR70096C6T)', () =>
 
   it('scales the spike count with the remaining ram budget', () => {
     const full = new EffectsRegistry();
+    // Two hold-full grants fill the level-0 pool (cap 2).
+    full.applyCollect('thorns', true);
     full.applyCollect('thorns', true);
     const gFull = new FakeGraphics();
     drawThornsAura(graphics(gFull), { x: 0, y: 0 }, full);
