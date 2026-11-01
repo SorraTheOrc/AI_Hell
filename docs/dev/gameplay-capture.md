@@ -461,7 +461,7 @@ human line additionally names its bot-tuning `preset` and the editorial
 `categories` it evidences, on the same single line, e.g.
 
 ```text
-  promo-blitz-hook — Dense opening hook. [promo: preset aggressive-hunter; categories weapons, enemies]
+  promo-blitz-hook — Dense opening hook. [promo: preset relentless-hunter; categories weapons, enemies]
 ```
 
 so `--list-scenarios` alone shows why each promo is in the catalogue; the
@@ -543,10 +543,11 @@ bytes, with types in `scripts/promo-scenarios.d.mts`.
 
 The bot's personality comes from the curated presets in
 `src/data/bot-tuning.json` (`aggressive-hunter`, `cautious-collector`,
-`evasive`, `glass-cannon`, plus the shipped `Default`), selected **by name**
-through the entry's `preset` field. Each preset is a sparse override map the
-store completes with `coerceTuningValues`, and the catalogue and its intents
-are documented in
+`evasive`, `glass-cannon`, the scenario-calibrated `relentless-hunter`,
+`barrage-dodger`, `cordon-breaker` and `gauntlet-runner`, plus the shipped
+`Default`), selected **by name** through the entry's `preset` field. Each
+preset is a sparse override map the store completes with
+`coerceTuningValues`, and the catalogue and its intents are documented in
 [BOT_FRAMEWORK](../BOT_FRAMEWORK.md#12-tuning-the-bot-live-the-bot-tuning-gym).
 A hermetic test (`src/data/bot-tuning.test.ts`) asserts every preset a
 registered scenario names exists in the bundled state, so a typo fails the
@@ -591,6 +592,37 @@ own wave-group validation and the real spawn planner over every authored
 wave. The tests also pin the archetype/formation/flag whitelists to the
 shipped campaign data and assert every editorial category is evidenced by at
 least one level.
+
+### Sustained footage: the ≥45 s survival check
+
+A promo clip is only usable if the bot **survives and keeps producing action**
+long enough to cut, so every scenario is measured headlessly
+(AH-0MVSDMDA1003ARV5): `src/waves/promoSurvival.ts` plays each registered
+promo level as the whole campaign through the shipped evaluation harness
+(`src/ai/eval/arena.ts`), flown by the competent bot configured with the
+scenario's preset and seeded with the scenario's seed — the same code path a
+promo capture runs, without a browser or Phaser. The measured **action
+duration** is `ticksSimulated × dt` before the run ends (death, campaign
+clear, or the bounded 100 s tick budget).
+
+The hermetic check lives in `src/waves/promoScenario.survival.test.ts`: it
+fails, naming the scenario and its measured duration, when any scenario
+sustains less than **45 s**. The suite is deterministic per scenario seed and
+bounded (≃100 s simulated per scenario, a few seconds of wall clock in the
+unit project), so it runs as part of the standard suite.
+
+Calibration (AC3) used only the two data knobs this section describes:
+
+- **wave composition** — `promo-tank-wall` grew to six phalanx waves and
+  `promo-boss-prelude` to three pressure waves before its mini-boss cordon,
+  both composed from the existing group vocabulary; and
+- **preset tuning** — `relentless-hunter`, `barrage-dodger`,
+  `cordon-breaker` and `gauntlet-runner` are survival-calibrated variants of
+the aggressive/evasive presets for the four scenarios that were dying below
+the target.
+
+No spawner, movement class or enemy config was added, so the gym↔game parity
+rule and the duplicate-body guard are untouched.
 
 ## Full-run capture (default)
 

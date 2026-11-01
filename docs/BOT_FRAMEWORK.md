@@ -864,6 +864,16 @@ stays the current selection, so the Watch Demo is unchanged.
 | `cautious-collector` | Collection-first: long mineral/life/power-up reach with a wide safety margin. | higher `mineralBase`/`powerUpBase`, longer `mineralSeekRange`/`powerUpSeekRange`/`lifeSeekRange`, wider `dangerMargin` |
 | `evasive` | Survival above all: a wide threat bubble and room to retreat. | higher `survivalBase`/`survivalUrgencyPort`, wider `dangerMargin`/`threatRadius`/`wallMargin`, longer `reverseRetreatRange` |
 | `glass-cannon` | All-out offence at point-blank range with thin defence. | higher `enemyBase`, much tighter `engagementRange`, lower `clearanceWeight`/`dangerMargin`/`survivalBase`, precise aim |
+| `relentless-hunter` | The promo opener: hunts across the screen with a wide threat bubble and retreat room. | higher `enemyBase`/`enemySeekRange`, wider `dangerMargin`/`threatRadius`/`reverseRetreatRange`, longer reaction time |
+| `barrage-dodger` | The promo crossfire: survival above all against an orbital threat bubble. | high `survivalUrgencyPort`, wide `dangerMargin`/`threatRadius`, long `hazardPredictionHorizon` |
+| `cordon-breaker` | The promo cordon: kites the player-targeting duo at long standoff range. | high `survivalBase`, wide `reverseRetreatRange`/`dangerMargin`, patient engagement |
+| `gauntlet-runner` | The promo finale: outlasts the every-showcase gauntlet between dense waves. | high `survivalBase`, wide `dangerMargin`, long `reverseRetreatRange` |
+
+The four `promo-*`-facing presets (`relentless-hunter`, `barrage-dodger`,
+`cordon-breaker`, `gauntlet-runner`) were calibrated with the hermetic
+survival check in `src/waves/promoScenario.survival.test.ts` so every promo
+scenario sustains ≥45 s of bot-flown action before the run ends
+(AH-0MVSDMDA1003ARV5).
 
 The catalogue is pinned by `src/data/bot-tuning.test.ts` (preset lookup, sparse
 authoring, deterministic coercion, slider bounds, distinctness from `Default`)

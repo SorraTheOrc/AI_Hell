@@ -64,6 +64,26 @@ const CURATED_PRESETS = [
     intent: 'All-out offence: tight engagement range and low clearance weight.',
     distinguishingKey: 'engagementRange',
   },
+  {
+    name: 'relentless-hunter',
+    intent: 'Promo hook: hunts across the screen with a wide threat bubble and retreat room.',
+    distinguishingKey: 'enemyBase',
+  },
+  {
+    name: 'barrage-dodger',
+    intent: 'Promo crossfire: survival above all against a wide orbital threat bubble.',
+    distinguishingKey: 'threatRadius',
+  },
+  {
+    name: 'cordon-breaker',
+    intent: 'Promo cordon: kites the player-targeting duo at long standoff range.',
+    distinguishingKey: 'reverseRetreatRange',
+  },
+  {
+    name: 'gauntlet-runner',
+    intent: 'Promo finale: outlasts the every-showcase gauntlet between dense waves.',
+    distinguishingKey: 'survivalBase',
+  },
 ] as const;
 
 function readBotTuningFile(): string {

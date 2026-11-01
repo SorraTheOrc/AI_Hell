@@ -53,6 +53,18 @@
  * curve (`scaleCampaignLevelCounts`), so the authored counts are played as
  * authored instead of being silently scaled by an arbitrary level number.
  *
+ * ## Sustained footage (AH-0MVSDMDA1003ARV5)
+ *
+ * A promo level must keep the competent bot alive and producing action for at
+ * least **45 s** before the run ends — a scenario the bot dies in instantly is
+ * a wasted clip. The hermetic check in
+ * `src/waves/promoScenario.survival.test.ts` (harness:
+ * `src/waves/promoSurvival.ts`) plays every level headlessly through the
+ * shipped evaluation arena and reports its simulated action duration. The two
+ * calibration knobs are this module's wave composition and the curated
+ * `promo-*` presets in `src/data/bot-tuning.json` — never new spawner or
+ * movement behaviour (the gym↔game parity rule stays untouched).
+ *
  * ## Portability
  *
  * Plain ESM with **no Node APIs and no DOM/types**, so bare Node (the capture
@@ -417,6 +429,10 @@ const AUTHORED_PROMO_LEVELS = [
     // Slow, heavy rectangular phalanxes: long sustained firing lanes
     // (weapons) and high-value kills whose drops (pickups) are worth chasing.
     categories: ['weapons', 'pickups'],
+    // Two extra phalanx waves (AH-0MVSDMDA1003ARV5): the first cut cleared
+    // the three-wave level in under 30 s, well short of the ≥45 s promo
+    // target, so the wall now grinds through five waves. Composition only —
+    // the same tank/scout/diver/swarm group vocabulary, no new spawner.
     waves: [
       firing([
         group('tank', 'rect', 8, { spacingX: 50, spacingY: 44, startXMin: 160, startXMax: 260 }),
@@ -429,6 +445,18 @@ const AUTHORED_PROMO_LEVELS = [
       firing([
         group('tank', 'rect', 12, { spacingX: 46, spacingY: 40, startXMin: 140, startXMax: 240 }),
         group('swarm', 'swarm', 12, { startX: ESCORT_X + 120, spacingX: 24 }),
+      ]),
+      firing([
+        group('tank', 'rect', 12, { spacingX: 46, spacingY: 40, startXMin: 140, startXMax: 240, startY: 330 }),
+        group('swarm', 'swarm', 12, { startX: ESCORT_X + 120, startY: 330, spacingX: 24 }),
+      ]),
+      firing([
+        group('tank', 'rect', 14, { spacingX: 44, spacingY: 38, startXMin: 130, startXMax: 230, startY: 330 }),
+        group('swarm', 'swarm', 14, { startX: ESCORT_X + 120, startY: 330, spacingX: 22 }),
+      ]),
+      firing([
+        group('tank', 'rect', 14, { spacingX: 42, spacingY: 36, startXMin: 130, startXMax: 220, startY: 330 }),
+        group('diver', 'diver', 10, { spacingY: 26, startYMin: 140, startYMax: 280 }),
       ]),
     ],
   },
@@ -610,6 +638,9 @@ const AUTHORED_PROMO_LEVELS = [
     // flag-driven, so it works on a short promo level exactly as it does on
     // the campaign's wave 10.
     categories: ['boss', 'enemies'],
+    // A third pressure wave (AH-0MVSDMDA1003ARV5): the original two-wave
+    // prelude reached the mini-boss cordon in 44 s — just under the ≥45 s
+    // target — so the cordon now opens after three pressure waves.
     waves: [
       firing([
         group('tank', 'rect', 8, { spacingX: 50, spacingY: 44, startXMin: 150, startXMax: 250 }),
@@ -620,9 +651,13 @@ const AUTHORED_PROMO_LEVELS = [
         group('swarm', 'swarm', 10, { startX: ESCORT_X + 140, spacingX: 24 }),
       ]),
       firing([
-        group('tank', 'rect', 10, { spacingX: 46, spacingY: 40, startXMin: 140, startXMax: 230 }),
+        group('tank', 'rect', 12, { spacingX: 46, spacingY: 40, startXMin: 140, startXMax: 240 }),
+        group('diver', 'diver', 8, { spacingY: 28, startYMin: 140, startYMax: 280 }),
+      ]),
+      firing([
+        group('tank', 'rect', 10, { spacingX: 46, spacingY: 40, startXMin: 140, startXMax: 230, startYMin: 140, startYMax: 280 }),
         group('swarm', 'swarm', 12, { startX: ESCORT_X + 160, spacingX: 24 }),
-        group('raider', 'single', 1, { startX: ESCORT_X + 220, startY: PROMO_ARENA_DEFAULTS.startY - 40 }),
+        group('raider', 'single', 1, { startX: ESCORT_X + 220 }),
       ], { miniBoss: true }),
     ],
   },
