@@ -614,8 +614,11 @@ export class EffectsRegistry {
    * then applies the registry-local timing state resolved from the new
    * level's stats (AC1/AC2/AC3):
    *
-   * - shield/speed_boost: starts the timed `shieldDuration`/`speedDuration`,
-   *   or refreshes it to the new full duration if already active.
+   * - shield/force_field/thorns: the level store grants one charge into the
+   *   shared consumable pool (absorbed-hit pickup model, no effect window);
+   *   the registry opens only the per-upgrade level window.
+   * - speed_boost: starts the timed `speedDuration`, or refreshes it to the
+   *   new full duration if already active.
    * - bomb: a field pickup queues a single ranged explosion (no persistent
    *   state); the hold-full reward sets the run-scoped permanent flag and
    *   pulses every resolved interval. The shared combat core performs the
@@ -631,12 +634,14 @@ export class EffectsRegistry {
    *
    * **Every field pickup also gets a temporary level window.** For the timed
    * kinds above the window *is* the effect window (its level-resolved
-   * duration); the seven instant kinds (`bomb`, `smart_bomb`, `strike`,
-   * `phase_shift`, `teleport`, `extra_life`, `mystery_ufo`) open a separate
-   * per-upgrade **level window** sized by `resolveTemporaryWindow`
-   * (AH-0MVUGI448000GNMJ; parent AH-0MVSTKGC3003OMAC). The declared instant
-   * TTLs are catalogue data — Bomb / Smart Bomb / Orbital Strike **10 s**,
-   * Phase Shift / Teleport / Mystery UFO **15 s**, Extra Life **10 s** — so no
+   * duration); the ten instant kinds (`bomb`, `smart_bomb`, `strike`,
+   * `shield`, `force_field`, `thorns`, `phase_shift`, `teleport`,
+   * `extra_life`, `mystery_ufo`) open a separate per-upgrade **level window**
+   * sized by `resolveTemporaryWindow` (AH-0MVUGI448000GNMJ; parent
+   * AH-0MVSTKGC3003OMAC). The declared instant TTLs are catalogue data —
+   * Bomb / Smart Bomb / Orbital Strike **10 s**, Phase Shift / Teleport /
+   * Mystery UFO **15 s**, Extra Life **10 s**, Shield **15 s**, Thorn Field /
+   * Force Field **8 s** (the absorbed-hit kinds, AH-0MVVD8SXO004QLZW) — so no
    * kind is exempt from expiry and retuning one is a data edit. The one-shot
    * or consumable grant lands immediately; the window only makes the temporary
    * level revert to the permanent level (or to unowned) at its TTL, through

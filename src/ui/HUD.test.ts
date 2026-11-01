@@ -19,6 +19,7 @@ import { EffectsRegistry } from '../powerups/effects';
 import {
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
+  resolveTemporaryWindow,
 } from '../powerups/powerUpLevels';
 import { POWER_UP_SLOT_CAP } from '../core/constants';
 import { CONSUMABLE_POWER_UP_IDS, type PowerUpId } from '../powerups/types';
@@ -364,9 +365,12 @@ describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
     expect(row.label).toBe(
       `Shield Lvl 2 ×${reg.shieldAbsorptionsRemaining()}`,
     );
+    // The row value is the temporary-level window countdown. Since
+    // AH-0MVVD8SXO004QLZW retired the shieldDuration axis, the window is the
+    // flat producer-approved TTL (15 s), not a level-scaled bubble.
     expect(row.value).toBe(
-      `${Math.ceil(resolvePowerUpAtLevel('shield', 1).shieldDuration!)}s`,
-    ); // active timed bubble
+      `${Math.ceil(resolveTemporaryWindow('shield', 1))}s`,
+    );
 
     reg.tryAbsorbShield();
     hud.refresh();

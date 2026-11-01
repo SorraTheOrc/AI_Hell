@@ -56,7 +56,8 @@
  * constant: the timed kinds keep their level-resolved effect duration, and
  * every instant kind declares its own TTL as `temporaryWindow` below (Bomb /
  * Smart Bomb / Orbital Strike 10 s, Phase Shift / Teleport 15 s, Extra Life
- * 10 s, Mystery UFO 15 s). At the TTL the temporary level reverts to the
+ * 10 s, Mystery UFO 15 s, Shield 15 s / Thorn Field 8 s / Force Field 8 s). At
+ * the TTL the temporary level reverts to the
  * permanent level (or the item becomes unowned); consumables already granted
  * (lives, charges, teleports) are never clawed back. The former
  * AH-0MUX802450085VZZ *"Resolved decision 4"* exception — instant kinds had no
@@ -191,8 +192,10 @@ export interface PowerUpEntry {
    * `resolveTemporaryWindow` resolver in `./powerUpLevels` composes both cases
    * (a stray `temporaryWindow` can therefore never flatten a level-scaled
    * window). The declared instant-kind TTLs are Bomb 10 s, Smart Bomb 10 s,
-   * Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s and
-   * Mystery UFO 15 s.
+   * Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s,
+   * Mystery UFO 15 s, and — since the absorbed-hit pickup model retired their
+   * window axes — Shield 15 s, Thorn Field 8 s, Force Field 8 s
+   * (AH-0MVVD8SXO004QLZW).
    *
    * **Balance tuning:** the values are data, deliberately short so a temporary
    * level can never compound across a wave (10 s mirrors the established
@@ -271,7 +274,6 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Shield',
     description:
       'One charge absorbs one hit. Charges regenerate on a level-derived timer, and a hold-full reward adds one charge rather than a level.',
-    duration: 15,
     // Charge model: one absorbed hit per charge, regenerating on the
     // level-derived `shieldRecharge` interval (45 s at level 0), capped by
     // `shieldAbsorptions` (AH-0MVTQMREN009DSFW). A field-pickup charge never
@@ -281,6 +283,11 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // Regen gate (Q-A1=b): only a permanently owned Shield re-arms on the
     // level-derived interval, so a pickup-granted charge never refills.
     regenRequiresOwnership: true,
+    // Flat temporary-level TTL: the former level-scaled bubble-window axis
+    // was retired with the absorbed-hit pickup model, so a field pickup's
+    // temporary level reverts at this producer-approved value (Q-A2=a,
+    // AH-0MVVD8SXO004QLZW).
+    temporaryWindow: 15,
   },
   bomb: {
     id: 'bomb',
@@ -368,8 +375,6 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Force Field',
     description:
       'One charge reflects one enemy bullet. Charges regenerate on a level-derived timer, and a hold-full reward adds one charge rather than a level.',
-    // Base bubble window (s); the level curve extends it (cap 18 s).
-    duration: 8,
     // Charge model: one reflected bullet per charge, regenerating on the
     // level-derived `forceFieldRecharge` interval (45 s at level 0), capped by
     // `forceFieldReflects` (AH-0MVTQMREN009DSFW). A field-pickup charge never
@@ -378,6 +383,11 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // Regen gate (Q-A1=b): only a permanently owned Force Field re-arms on
     // the level-derived interval.
     regenRequiresOwnership: true,
+    // Flat temporary-level TTL: the former level-scaled bubble-window axis
+    // was retired with the absorbed-hit pickup model, so a field pickup's
+    // temporary level reverts at this producer-approved value (Q-A2=a,
+    // AH-0MVVD8SXO004QLZW).
+    temporaryWindow: 8,
   },
   mystery_ufo: {
     id: 'mystery_ufo',
@@ -421,7 +431,6 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Thorn Field',
     description:
       'One charge rams one enemy for free. Charges regenerate on a level-derived timer, and a hold-full reward adds one charge rather than a level.',
-    duration: 8,
     // Charge model: one free ram per charge, regenerating on the level-derived
     // `thornsRecharge` interval (12 s → 5 s), capped by `thornsAbsorbs`
     // (AH-0MVTQMREN009DSFW). A field-pickup charge never regenerates
@@ -430,6 +439,11 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // Regen gate (Q-A1=b): only a permanently owned Thorn Field re-arms on
     // the level-derived interval.
     regenRequiresOwnership: true,
+    // Flat temporary-level TTL: the former level-scaled ram-window axis was
+    // retired with the absorbed-hit pickup model, so a field pickup's
+    // temporary level reverts at this producer-approved value (Q-A2=a,
+    // AH-0MVVD8SXO004QLZW).
+    temporaryWindow: 8,
   },
   salvage: {
     id: 'salvage',

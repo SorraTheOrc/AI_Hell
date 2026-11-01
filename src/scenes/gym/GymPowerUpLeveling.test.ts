@@ -319,7 +319,9 @@ describe('GymPowerUpLeveling', () => {
     scene.tick(0.1);
     scene.refreshReadout();
     expect(levelEl('shield')!.textContent).toContain('Lv 1');
-    expect(statsEl('shield')!.textContent).toContain('Shield time');
+    // The readout renders the shared specs — exactly the two retained axes
+    // (the retired bubble-window axis is gone, AH-0MVVD8SXO004QLZW).
+    expect(statsEl('shield')!.textContent).toContain('Shield recharge');
     expect(statsEl('shield')!.textContent).toContain('Shield hits');
   });
 

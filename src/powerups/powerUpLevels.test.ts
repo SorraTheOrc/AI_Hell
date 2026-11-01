@@ -31,6 +31,7 @@ import {
   POWER_UP_LEVEL_VARIABLES,
   POWER_UP_LIVES_START,
   PowerUpLevelStore,
+  type PowerUpLevelVariable,
   resolvePowerUpAtLevel,
   resolveTemporaryWindow,
   summarisePowerUpLevelChange,
@@ -118,7 +119,7 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     // AH-0MUV5CLW6005VF7K the catalogue — not a set of parallel effect
     // constants — is the source of truth, so these are hard-coded balance
     // anchors: changing one is a deliberate balance change.
-    expect(POWER_UP_LEVEL_SPECS.shield[0].base).toBe(15); // shield duration (s)
+    expect(POWER_UP_LEVEL_SPECS.shield[0].base).toBe(1); // shield hits
     expect(POWER_UP_LEVEL_SPECS.speed_boost[0].base).toBe(1.5); // speed multiplier
     expect(POWER_UP_LEVEL_SPECS.phase_shift[0].base).toBe(1.5); // phase duration (s)
     expect(POWER_UP_LEVEL_SPECS.extra_life[1].cap).toBe(5); // lives cap
@@ -133,10 +134,16 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     )!;
     expect(smartBombDamageSpec.base).toBe(1); // pulse damage
     expect(smartBombDamageSpec.cap).toBe(3); // pulse damage cap
-    expect(POWER_UP_LEVEL_SPECS.force_field[0].base).toBe(8); // field time (s)
-    expect(POWER_UP_LEVEL_SPECS.force_field[0].cap).toBe(18); // field time cap (s)
-    expect(POWER_UP_LEVEL_SPECS.force_field[1].base).toBe(3); // reflect budget
-    expect(POWER_UP_LEVEL_SPECS.force_field[1].cap).toBe(10); // reflect budget cap
+    // Force Field's reflect budget (3 → 10) and recharge interval (45 s → 20 s
+    // floor) are its two retained axes — the bubble-window axis was retired
+    // with the absorbed-hit pickup model (AH-0MVVD8SXO004QLZW).
+    expect(POWER_UP_LEVEL_SPECS.force_field[0].base).toBe(3); // reflect budget
+    expect(POWER_UP_LEVEL_SPECS.force_field[0].cap).toBe(10); // reflect budget cap
+    const forceFieldRechargeSpec = POWER_UP_LEVEL_SPECS.force_field.find(
+      (s) => s.variable === 'forceFieldRecharge',
+    )!;
+    expect(forceFieldRechargeSpec.base).toBe(45); // field recharge (s)
+    expect(forceFieldRechargeSpec.cap).toBe(20); // field recharge floor
     // The instant-bounty axes (score base 250 / cap 1500 and minerals 2 → 6)
     // are retired with the collector-drone epic (AH-0MV9G113S009B37I): the
     // reward becomes a visible drone, so those pins are removed here and the
@@ -325,23 +332,25 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
     expect(previousFrequency).toBeGreaterThan(1 / intervalSpec.base);
   });
 
-  it('Force Field duration/reflects resolve monotonically within their caps (AH-0MV1BIX1W006XF95)', () => {
-    const variables = ['forceFieldDuration', 'forceFieldReflects'] as const;
-    for (const variable of variables) {
-      const spec = POWER_UP_LEVEL_SPECS.force_field.find(
-        (s) => s.variable === variable,
-      )!;
-      let previous = -Infinity;
-      for (let level = 0; level <= 50; level++) {
-        const value = resolvePowerUpAtLevel('force_field', level)[variable]!;
-        expect(value).toBeGreaterThanOrEqual(previous);
-        expect(value).toBeLessThanOrEqual(spec.cap);
-        expect(value).toBeGreaterThanOrEqual(spec.base);
-        previous = value;
-      }
-      // The axis strictly grows past its base (a meaningful axis).
-      expect(previous).toBeGreaterThan(spec.base);
+  it('Force Field reflects/recharge resolve within their caps (AH-0MV1BIX1W006XF95)', () => {
+    // The former forceFieldDuration bubble axis was retired with the
+    // absorbed-hit pickup model (AH-0MVVD8SXO004QLZW): Force Field keeps
+    // exactly two spec axes — the reflect budget and the recharge interval.
+    // The ascending reflect budget is monotonic within its band…
+    const reflectsSpec = POWER_UP_LEVEL_SPECS.force_field.find(
+      (s) => s.variable === 'forceFieldReflects',
+    )!;
+    let previous = -Infinity;
+    for (let level = 0; level <= 50; level++) {
+      const value = resolvePowerUpAtLevel('force_field', level)
+        .forceFieldReflects!;
+      expect(value).toBeGreaterThanOrEqual(previous);
+      expect(value).toBeLessThanOrEqual(reflectsSpec.cap);
+      expect(value).toBeGreaterThanOrEqual(reflectsSpec.base);
+      previous = value;
     }
+    // …and strictly grows past its base (a meaningful axis).
+    expect(previous).toBeGreaterThan(reflectsSpec.base);
     // The reflect budget is a discrete whole number.
     for (let level = 0; level <= 12; level++) {
       expect(
@@ -349,6 +358,24 @@ describe('POWER_UP_LEVEL_SPECS (AC1 — data-driven catalogue)', () => {
           resolvePowerUpAtLevel('force_field', level).forceFieldReflects!,
         ),
       ).toBe(true);
+    }
+    // The recharge interval descends within its 45 s → 20 s band, and its
+    // derived rate is monotonic non-decreasing.
+    const rechargeSpec = POWER_UP_LEVEL_SPECS.force_field.find(
+      (s) => s.variable === 'forceFieldRecharge',
+    )!;
+    let previousInterval = Infinity;
+    let previousRate = 0;
+    for (let level = 0; level <= 50; level++) {
+      const stats = resolvePowerUpAtLevel('force_field', level);
+      const interval = stats.forceFieldRecharge!;
+      expect(interval).toBeLessThanOrEqual(previousInterval);
+      expect(interval).toBeLessThanOrEqual(rechargeSpec.base);
+      expect(interval).toBeGreaterThanOrEqual(rechargeSpec.cap);
+      previousInterval = interval;
+      const rate = stats.forceFieldRechargeRate!;
+      expect(rate).toBeGreaterThanOrEqual(previousRate);
+      previousRate = rate;
     }
   });
 
@@ -488,7 +515,7 @@ describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
   it('describes the variables that change between two levels', () => {
     const summary = summarisePowerUpLevelChange('shield', 0, 1);
     expect(summary.length).toBeGreaterThan(0);
-    expect(summary).toContain('Shield time');
+    expect(summary).toContain('Shield hits');
   });
 
   it('returns an empty string when the curve has flattened', () => {
@@ -504,10 +531,11 @@ describe('summarisePowerUpLevelChange (AC6 — choice contract)', () => {
     expect(p4).toContain('Bomb range');
     expect(p4).toContain('Bomb rate');
 
-    // Shield's multi-hit axis is included alongside its duration.
+    // Shield's hits and recharge axes contribute their promised deltas (the
+    // retired bubble-window axis no longer does — AH-0MVVD8SXO004QLZW).
     const p3 = summarisePowerUpLevelChange('shield', 0, 1);
-    expect(p3).toContain('Shield time');
     expect(p3).toContain('Shield hits');
+    expect(p3).toContain('Shield recharge');
   });
 
   it('shows the Smart Bomb pulse-interval delta in seconds (label/unit for the interval axis)', () => {
@@ -1301,7 +1329,7 @@ describe('Thorn Field recharge axis (AH-0MVJ8YKR70096C6T)', () => {
   it('keeps the existing thorns axes unchanged alongside the new one', () => {
     const stats = resolvePowerUpAtLevel('thorns', 0);
     expect(stats.thornsAbsorbs).toBe(2);
-    expect(stats.thornsDuration).toBe(8);
+    expect(stats.thornsRecharge).toBe(12);
   });
 
   it('surfaces the recharge delta in the hold-full change summary', () => {
@@ -1471,12 +1499,13 @@ describe('consumable charge axes (AH-0MVUXFDFN009QK84 AC3/AC4)', () => {
   });
 
   it('leaves every shipped consumable value unchanged (no rebalance by stealth)', () => {
+    // The retired window axes (shieldDuration/forceFieldDuration) are gone by
+    // design (AH-0MVVD8SXO004QLZW); every remaining axis stays at its shipped
+    // value.
     const shield = resolvePowerUpAtLevel('shield', 0);
-    expect(shield.shieldDuration).toBe(15);
     expect(shield.shieldAbsorptions).toBe(1);
 
     const forceField = resolvePowerUpAtLevel('force_field', 0);
-    expect(forceField.forceFieldDuration).toBe(8);
     expect(forceField.forceFieldReflects).toBe(3);
 
     const ufo = resolvePowerUpAtLevel('mystery_ufo', 0);
@@ -1709,11 +1738,82 @@ describe('budget-kind temporary-window TTLs (AH-0MVVD8S4J007L8KX)', () => {
   it('resolves the flat Shield 15 s / Thorn Field 8 s / Force Field 8 s windows', () => {
     // The absorbed-hit conversion retires the three level-scaled effect
     // windows (producer decision Q-A2=a, AH-0MVVD8SXO004QLZW) in favour of
-    // the flat TTLs below. At the base level the resolver already returns
-    // exactly the flat values, so these pins pass today and stay green once
-    // the window axes are removed.
+    // the flat TTLs below. The resolver returns exactly the flat values for
+    // these kinds (now instant kinds).
     expect(resolveTemporaryWindow('shield', 0)).toBe(15);
     expect(resolveTemporaryWindow('thorns', 0)).toBe(8);
     expect(resolveTemporaryWindow('force_field', 0)).toBe(8);
+  });
+});
+
+describe('retired effect-window axes (AH-0MVVD8SXO004QLZW AC4)', () => {
+  // The retired axis names are no longer valid `PowerUpLevelVariable` values
+  // (that is the point of the retirement), so they are typed as plain strings
+  // here and compared against the union-backed lists.
+  const RETIRED_VARIABLES = [
+    'shieldDuration',
+    'thornsDuration',
+    'forceFieldDuration',
+  ] as const;
+
+  it('retires the three duration axes from the level-variable union and list', () => {
+    for (const variable of RETIRED_VARIABLES) {
+      // The list is a readonly PowerUpLevelVariable[]; widen to string so the
+      // retired literal (no longer a valid union member) can be searched.
+      expect(
+        POWER_UP_LEVEL_VARIABLES as readonly string[],
+        `${variable} must be retired`,
+      ).not.toContain(variable);
+    }
+  });
+
+  it('retires the three duration axes from the specs and the stats snapshot', () => {
+    for (const [id, variable] of [
+      ['shield', 'shieldDuration'],
+      ['thorns', 'thornsDuration'],
+      ['force_field', 'forceFieldDuration'],
+    ] as const) {
+      expect(
+        POWER_UP_LEVEL_SPECS[id].some(
+          (s) => s.variable === (variable as PowerUpLevelVariable),
+        ),
+        `${id} still specs ${variable}`,
+      ).toBe(false);
+      const stats = resolvePowerUpAtLevel(id, 0) as unknown as Record<
+        string,
+        number | undefined
+      >;
+      expect(
+        stats[variable],
+        `${id} still resolves ${variable}`,
+      ).toBeUndefined();
+    }
+  });
+
+  it('keeps exactly two axes per absorbed-hit kind', () => {
+    for (const [id, axes] of [
+      ['shield', ['shieldAbsorptions', 'shieldRecharge']],
+      ['thorns', ['thornsAbsorbs', 'thornsRecharge']],
+      ['force_field', ['forceFieldReflects', 'forceFieldRecharge']],
+    ] as const) {
+      const specAxes = POWER_UP_LEVEL_SPECS[id].map(
+        (spec) => spec.variable,
+      );
+      expect(specAxes, `${id} must keep exactly two axes`).toEqual([...axes]);
+    }
+  });
+
+  it('leaves DEFERRED_POWER_UP_LEVEL_VARIABLES consistent with no orphaned axis', () => {
+    // The retired axes are removed outright, so the deferred seam (the
+    // fallback for an axis whose effect path cannot consume it yet) must not
+    // gain any orphaned entry for them. The cast is the point: these names are
+    // no longer registered `PowerUpLevelVariable` values.
+    for (const variable of RETIRED_VARIABLES) {
+      expect(
+        DEFERRED_POWER_UP_LEVEL_VARIABLES.has(
+          variable as PowerUpLevelVariable,
+        ),
+      ).toBe(false);
+    }
   });
 });

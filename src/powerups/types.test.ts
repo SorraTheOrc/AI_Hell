@@ -225,15 +225,21 @@ const INSTANT_WINDOWS: ReadonlyMap<PowerUpId, number> = new Map([
   ['teleport', 15],
   ['extra_life', 10],
   ['mystery_ufo', 15],
+  // The three absorbed-hit kinds were converted to instant kinds by
+  // AH-0MVVD8SXO004QLZW: their window axes were retired, so their field
+  // pickups declare the flat producer-approved TTLs below (Q-A2=a).
+  ['shield', 15],
+  ['thorns', 8],
+  ['force_field', 8],
 ]);
 
 /** Time-cost-free level-scaled sample levels for the timed kinds. */
 const SAMPLE_LEVELS = [0, 1, 7] as const;
 
 describe('per-upgrade temporary window (AH-0MVUGI3Q4009MW6A, F2)', () => {
-  it('declares the approved TTL on each of the seven instant catalogue entries', () => {
-    // Guard the guard: the table must cover exactly seven kinds.
-    expect(INSTANT_WINDOWS.size).toBe(7);
+  it('declares the approved TTL on each of the ten instant catalogue entries', () => {
+    // Guard the guard: the table must cover exactly ten kinds.
+    expect(INSTANT_WINDOWS.size).toBe(10);
 
     for (const [id, seconds] of INSTANT_WINDOWS) {
       expect(POWER_UP_CATALOGUE[id].temporaryWindow).toBe(seconds);
@@ -242,8 +248,8 @@ describe('per-upgrade temporary window (AH-0MVUGI3Q4009MW6A, F2)', () => {
 
   it('leaves the timed kinds to their level-resolved effect duration', () => {
     const timedIds = POWER_UP_LEVEL_IDS.filter((id) => !INSTANT_WINDOWS.has(id));
-    // 16 kinds total, 7 instant → 9 timed.
-    expect(timedIds).toHaveLength(9);
+    // 16 kinds total, 10 instant → 6 timed.
+    expect(timedIds).toHaveLength(6);
 
     for (const id of timedIds) {
       expect(POWER_UP_CATALOGUE[id].temporaryWindow).toBeUndefined();
@@ -260,16 +266,25 @@ describe('per-upgrade temporary window (AH-0MVUGI3Q4009MW6A, F2)', () => {
   });
 
   it('keeps a level-scaled timed kind level-scaled through the resolver', () => {
-    // Shield: 15 s base, saturating at a 30 s cap.
-    expect(resolveTemporaryWindow('shield', 0)).toBe(15);
-    expect(resolveTemporaryWindow('shield', 10)).toBe(
-      resolvePowerUpAtLevel('shield', 10).shieldDuration,
-    );
-    expect(resolveTemporaryWindow('shield', 10)).toBeGreaterThan(15);
-    expect(resolveTemporaryWindow('shield', 10)).toBeLessThanOrEqual(30);
-    // Speed Boost (10 s base) and the non-levelled Magnet/Mineral Scoop
-    // windows resolve from the same catalogue-backed seam.
+    // Speed Boost: 10 s base, saturating at a 20 s cap.
     expect(resolveTemporaryWindow('speed_boost', 0)).toBe(10);
+    expect(resolveTemporaryWindow('speed_boost', 10)).toBe(
+      resolvePowerUpAtLevel('speed_boost', 10).speedDuration,
+    );
+    expect(resolveTemporaryWindow('speed_boost', 10)).toBeGreaterThan(10);
+    expect(resolveTemporaryWindow('speed_boost', 10)).toBeLessThanOrEqual(20);
+    // The **absorbed-hit kinds were reclassified as instant** by
+    // AH-0MVVD8SXO004QLZW: their formerly level-scaled window axes were
+    // retired, so the resolver returns the flat producer-approved TTLs for
+    // them, never a level-scaled duration.
+    expect(resolveTemporaryWindow('shield', 0)).toBe(15);
+    expect(resolveTemporaryWindow('shield', 10)).toBe(15);
+    expect(resolveTemporaryWindow('force_field', 0)).toBe(8);
+    expect(resolveTemporaryWindow('force_field', 10)).toBe(8);
+    expect(resolveTemporaryWindow('thorns', 0)).toBe(8);
+    expect(resolveTemporaryWindow('thorns', 10)).toBe(8);
+    // And the non-levelled Magnet/Mineral Scoop windows resolve from the
+    // same catalogue-backed seam.
     expect(resolveTemporaryWindow('magnet', 0)).toBe(15);
     expect(resolveTemporaryWindow('mineral_scoop', 0)).toBe(15);
   });

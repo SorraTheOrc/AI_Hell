@@ -88,14 +88,17 @@
  * window length (the TTL) is a property of the *upgrade item*, never one
  * global constant, and {@link resolveTemporaryWindow} is the single resolver:
  *
- * - **Timed kinds** (Shield, Speed Boost, Magnet, Mineral Scoop, Force Field,
- *   Frenzy, Chrono Field, Thorn Field, Salvage) keep their **level-resolved
- *   effect duration** as the TTL (e.g. Shield 15 s → 30 s, Force Field 8 s →
- *   18 s), so the window is already per-upgrade and level-scaled.
- * - **Instant kinds** (Bomb 10 s, Smart Bomb 10 s, Orbital Strike 10 s, Phase
- *   Shift 15 s, Teleport 15 s, Extra Life 10 s, Mystery UFO 15 s) declare
- *   their own TTL as catalogue data (`PowerUpEntry.temporaryWindow` in
- *   `./types`), so retuning a window is a data edit with no code change.
+ * - **Timed kinds** (Speed Boost, Magnet, Mineral Scoop, Frenzy, Chrono Field,
+ *   Salvage) keep their **level-resolved effect duration** as the TTL
+ *   (Speed Boost 10 s → 20 s, Frenzy 8 s → 16 s), so the window is already
+ *   per-upgrade and level-scaled.
+ * - **Instant kinds** declare their own TTL as catalogue data
+ *   (`PowerUpEntry.temporaryWindow` in `./types`), so retuning a window is a
+ *   data edit with no code change: Bomb 10 s, Smart Bomb 10 s, Orbital Strike
+ *   10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s, Mystery UFO 15 s,
+ *   and Shield 15 s / Thorn Field 8 s / Force Field 8 s — the three absorbed-hit
+ *   kinds whose window axes were retired (AH-0MVVD8SXO004QLZW), so they are
+ *   level-free like the other instant kinds.
  * - **Weapons** use the same rule with their own TTL — the existing 10 s
  *   `WEAPON_TIMEOUT_MS` window, surfaced as
  *   {@link resolveWeaponTemporaryWindow}.
@@ -195,8 +198,6 @@ const STRIKE_BEAT_SECONDS = beatPeriodMs(DEFAULT_BPM) / 1000;
  * shared 80 BPM grid (9 → 3 beats, −1 beat per level).
  */
 export type PowerUpLevelVariable =
-  /** Shield — bubble duration in seconds. */
-  | 'shieldDuration'
   /** Shield — hits absorbed before the bubble pops. */
   | 'shieldAbsorptions'
   /**
@@ -238,8 +239,6 @@ export type PowerUpLevelVariable =
   | 'smartBombDamage'
   /** Smart Bomb — permanent pulse interval in seconds (descends; the pulses/s axis is its inverse). */
   | 'smartBombInterval'
-  /** Force Field — bubble duration in seconds. */
-  | 'forceFieldDuration'
   /** Force Field — bullets the field reflects before it stops. */
   | 'forceFieldReflects'
   /**
@@ -267,8 +266,6 @@ export type PowerUpLevelVariable =
   | 'chronoDuration'
   /** Thorn Field — rams absorbed before the counter ends. */
   | 'thornsAbsorbs'
-  /** Thorn Field — timed window during which rams are free. */
-  | 'thornsDuration'
   /**
    * Thorn Field — seconds between automatic ram recharges while active
    * (descends; the derived rams/second axis is its monotonic inverse).
@@ -284,7 +281,6 @@ export type PowerUpLevelVariable =
   | 'strikeDamage';
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
-  'shieldDuration',
   'shieldAbsorptions',
   'shieldRecharge',
   'bombRange',
@@ -304,7 +300,6 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'aoeRadius',
   'smartBombDamage',
   'smartBombInterval',
-  'forceFieldDuration',
   'forceFieldReflects',
   'forceFieldRecharge',
   'mysteryUfoLifetime',
@@ -317,7 +312,6 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'chronoSlowFactor',
   'chronoDuration',
   'thornsAbsorbs',
-  'thornsDuration',
   'thornsRecharge',
   'salvageMinerals',
   'salvageDuration',
@@ -376,24 +370,11 @@ export interface PowerUpLevelSpec extends CurveSpec {
  * damage (AC1, producer risk note).
  */
 export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
-  // Shield — absorbs its level-resolved hits (base 1, cap 3) in a 15 s bubble.
+  // Shield — a charge pool: one absorbed hit per charge (base 1, cap 3),
+  // regenerating on the level-derived shieldRecharge interval. The former
+  // level-scaled bubble-window axis was retired with the absorbed-hit pickup
+  // model (AH-0MVVD8SXO004QLZW).
   shield: [
-    {
-      variable: 'shieldDuration',
-      powerUpId: 'shield',
-      label: 'Shield time',
-      unit: 's',
-      description: 'How long the shield bubble lasts.',
-      curve: 'exponential-saturation',
-      base: 15,
-      cap: 30,
-      k: 0.12,
-      discrete: false,
-      rationale:
-        'A 30 s ceiling keeps a levelled shield a strong but finite safety ' +
-        'window; k=0.12 adds ~2 s at the first upgrade and then plateaus, so ' +
-        'early levels feel responsive without granting near-permanent cover.',
-    },
     {
       variable: 'shieldAbsorptions',
       powerUpId: 'shield',
@@ -869,26 +850,12 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Force Field — Gradius-inspired timed bullet reflector (AH-0MV1BIX1W006XF95).
+  // Force Field — Gradius-inspired bullet reflector (AH-0MV1BIX1W006XF95):
+  // a charge pool of reflected bullets (base 3, cap 10) regenerating on the
+  // level-derived forceFieldRecharge interval. The former level-scaled bubble-
+  // window axis was retired with the absorbed-hit pickup model
+  // (AH-0MVVD8SXO004QLZW).
   force_field: [
-    {
-      variable: 'forceFieldDuration',
-      powerUpId: 'force_field',
-      label: 'Field time',
-      unit: 's',
-      description: 'How long the reflect bubble lasts.',
-      curve: 'exponential-saturation',
-      base: 8,
-      cap: 18,
-      k: 0.15,
-      discrete: false,
-      rationale:
-        'An 18 s ceiling keeps the bubble a strong but finite defence rather ' +
-        'than perpetual cover; k=0.15 adds ~1.4 s at the first upgrade, so ' +
-        'early levels feel responsive before diminishing. The window is ' +
-        'cleared on expiry, at which point enemy bullets damage the ship ' +
-        'again.',
-    },
     {
       variable: 'forceFieldReflects',
       powerUpId: 'force_field',
@@ -1032,21 +999,6 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'modest 2 and the cap 6; k=0.35 front-loads the third absorb at the ' +
         'first upgrade while never letting the field become permanent ' +
         'immunity.',
-    },
-    {
-      variable: 'thornsDuration',
-      powerUpId: 'thorns',
-      label: 'Thorn time',
-      unit: 's',
-      description: 'How long the ram counter is active.',
-      curve: 'exponential-saturation',
-      base: 8,
-      cap: 16,
-      k: 0.12,
-      discrete: false,
-      rationale:
-        'An 8 → 16 s window bounds the free-ram window; k=0.12 spreads the ' +
-        'gain across the early levels (mirrors the other timed windows).',
     },
     {
       variable: 'thornsRecharge',
@@ -1202,8 +1154,6 @@ export interface PowerUpLevelStats {
   powerUpId: PowerUpId;
   /** The (clamped, whole-number) upgrade level the snapshot was resolved at. */
   level: number;
-  /** Shield — shield bubble duration in seconds. */
-  shieldDuration?: number;
   /** Shield — hits the shield absorbs. */
   shieldAbsorptions?: number;
   /**
@@ -1261,8 +1211,6 @@ export interface PowerUpLevelStats {
    * monotonic non-decreasing while the stored interval descends.
    */
   smartBombFrequency?: number;
-  /** Force Field — bubble duration in seconds. */
-  forceFieldDuration?: number;
   /** Force Field — bullets the field reflects before it stops. */
   forceFieldReflects?: number;
   /**
@@ -1302,8 +1250,6 @@ export interface PowerUpLevelStats {
   chronoDuration?: number;
   /** Thorn Field — rams absorbed before the counter ends. */
   thornsAbsorbs?: number;
-  /** Thorn Field — timed window duration in seconds. */
-  thornsDuration?: number;
   /**
    * Thorn Field — seconds between automatic ram recharges while the field
    * is active (descending: `max(5, 12 − level)`).
@@ -1408,17 +1354,17 @@ export function resolvePowerUpAtLevel(
  * duration — the window a field pickup opens today, exactly as
  * `EffectsRegistry._applyTimedEffect` reads it.
  *
- * Magnet and Mineral Scoop are deliberately absent: their attraction window
- * is not a levelled axis, so it resolves from the catalogue `duration` (see
+ * Shield, Thorn Field and Force Field are deliberately absent: the absorbed-hit
+ * pickup model retired their window axes, so these kinds resolve their flat
+ * temporary TTL from the catalogue `temporaryWindow` (AH-0MVVD8SXO004QLZW).
+ * Magnet and Mineral Scoop are also absent: their attraction window is not a
+ * levelled axis, so it resolves from the catalogue `duration` (see
  * {@link NON_LEVELLED_TIMED_WINDOW_IDS}).
  */
 const TIMED_WINDOW_VARIABLES: Partial<Record<PowerUpId, PowerUpLevelVariable>> = {
-  shield: 'shieldDuration',
   speed_boost: 'speedDuration',
-  force_field: 'forceFieldDuration',
   frenzy: 'frenzyDuration',
   chrono: 'chronoDuration',
-  thorns: 'thornsDuration',
   salvage: 'salvageDuration',
 };
 
@@ -1445,13 +1391,15 @@ function isPositiveFinite(value: number | undefined): value is number {
  * constant:
  *
  * - **Timed kinds** resolve their existing level-scaled effect duration
- *   (`shieldDuration`, `speedDuration`, `forceFieldDuration`, …; the Magnet /
- *   Mineral Scoop attraction uses its catalogue `duration`). Behaviour is
- *   unchanged and a levelled kind keeps its level-scaled window.
+ *   (`speedDuration`, `frenzyDuration`, `chronoDuration`, `salvageDuration`,
+ *   …; the Magnet / Mineral Scoop attraction uses its catalogue `duration`).
+ *   Behaviour is unchanged and a levelled kind keeps its level-scaled window.
  * - **Instant kinds** (no timed effect of their own) return the per-entry
  *   `temporaryWindow` TTL from {@link POWER_UP_CATALOGUE}: Bomb 10 s, Smart
  *   Bomb 10 s, Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra
- *   Life 10 s and Mystery UFO 15 s.
+ *   Life 10 s, Mystery UFO 15 s, and — since the absorbed-hit pickup model
+ *   retired their window axes — Shield 15 s, Thorn Field 8 s and Force Field
+ *   8 s (AH-0MVVD8SXO004QLZW).
  *
  * The catalogue is read at call time, so retuning a TTL is a pure data change.
  *
@@ -1554,7 +1502,7 @@ export function resolveWeaponTemporaryWindow(
  * @param powerUpId - The power-up to compare.
  * @param fromLevel - The current (pre-upgrade) level.
  * @param toLevel - The next (post-upgrade) level.
- * @returns A summary such as `"+2 Shield time, +1 Shield hits"`, or `""`.
+ * @returns A summary such as `"+1 Shield hits, -5 Shield recharge"`, or `""`.
  */
 export function summarisePowerUpLevelChange(
   powerUpId: PowerUpId,

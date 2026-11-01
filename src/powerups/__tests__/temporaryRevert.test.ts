@@ -82,13 +82,13 @@ const KIND_WINDOWS: Record<PowerUpId, KindWindow> = {
   // The three budget kinds were converted to absorbed-hit pickups (AH-0MVVD8SIT000CO9H):
   // a field pickup grants exactly one charge and opens no *effect* window —
   // only the per-upgrade level window below times the temporary stack's
-  // revert, so `isActive(id)` is never true after a pickup. Their TTL still
-  // resolves through `resolveTemporaryWindow` (duration axes until C3
-  // AH-0MVVD8SXO004QLZW flattens them to 15 s / 8 s / 8 s).
+  // revert, so `isActive(id)` is never true after a pickup. C3
+  // (AH-0MVVD8SXO004QLZW) also retired their window axes, so their TTLs are
+  // the flat producer-approved values (15 s / 8 s / 8 s, Q-A2=a) resolved
+  // through `resolveTemporaryWindow`.
   shield: {
     timed: false,
-    seconds: (level) =>
-      resolvePowerUpAtLevel('shield', level).shieldDuration!,
+    seconds: () => 15,
   },
   bomb: { timed: false, seconds: () => 10 },
   speed_boost: {
@@ -106,8 +106,7 @@ const KIND_WINDOWS: Record<PowerUpId, KindWindow> = {
   smart_bomb: { timed: false, seconds: () => 10 },
   force_field: {
     timed: false,
-    seconds: (level) =>
-      resolvePowerUpAtLevel('force_field', level).forceFieldDuration!,
+    seconds: () => 8,
   },
   mystery_ufo: { timed: false, seconds: () => 15 },
   frenzy: {
@@ -122,8 +121,7 @@ const KIND_WINDOWS: Record<PowerUpId, KindWindow> = {
   },
   thorns: {
     timed: false,
-    seconds: (level) =>
-      resolvePowerUpAtLevel('thorns', level).thornsDuration!,
+    seconds: () => 8,
   },
   salvage: {
     timed: true,
@@ -283,8 +281,10 @@ describe('consumables survive the temporary-level expiry (AH-0MVUGI4WG008HU3M AC
 //
 // The six-slot occupancy is derived from `getLevels()` + `getTempPowerUpIds()`,
 // so a temporary stack must stop occupying a slot when its own window expires
-// — for *every* kind, including the seven instant kinds that had no window
-// before AH-0MVUGI448000GNMJ. A permanently-owned kind keeps its slot.
+// — for *every* kind, including the ten instant kinds that declare a
+// catalogue TTL (the original seven plus Shield/Thorn Field/Force Field after
+// the window-axis retirement, AH-0MVVD8SXO004QLZW). A permanently-owned kind
+// keeps its slot.
 
 describe('slot accounting follows the temporary window (AH-0MVUGI4WG008HU3M AC4)', () => {
   /** The run's derived slot state straight from the shared store snapshots. */

@@ -367,8 +367,8 @@ single `resolveTemporaryWindow` helper in
 families share the rule:
 
 - **Timed kinds** keep their existing level-resolved effect duration as the
-  TTL, so the window levels up with the effect (Shield 15 s → 30 s, Force
-  Field 8 s → 18 s, Frenzy 8 s → 16 s, …). Nothing to tune separately.
+  TTL, so the window levels up with the effect (Speed Boost 10 s → 20 s,
+  Frenzy 8 s → 16 s, …). Nothing to tune separately.
 - **Instant kinds** declare a per-entry TTL in the catalogue
   ([`src/powerups/types.ts`](../src/powerups/types.ts),
   `PowerUpEntry.temporaryWindow`). Retuning one of these is a **data edit** —
@@ -383,6 +383,9 @@ families share the rule:
 | Teleport | 15 | Defensive kind: the shield-style 15 s window. |
 | Extra Life | 10 | Weapon-style 10 s window; the **life itself is kept** when the level reverts. |
 | Mystery UFO | 15 | Spans a full 5–8 s drone sortie, so the granted drone outlives its window. |
+| Shield | 15 | Absorbed-hit kind: the former level-scaled bubble window was retired, so the flat producer-approved TTL (Q-A2=a) applies instead (AH-0MVVD8SXO004QLZW). |
+| Thorn Field | 8 | Absorbed-hit kind: the former level-scaled ram window was retired, so the flat producer-approved TTL (Q-A2=a) applies instead (AH-0MVVD8SXO004QLZW). |
+| Force Field | 8 | Absorbed-hit kind: the former level-scaled bubble window was retired, so the flat producer-approved TTL (Q-A2=a) applies instead (AH-0MVVD8SXO004QLZW). |
 
 Weapons obey the same rule with their own 10 s TTL, surfaced as
 `resolveWeaponTemporaryWindow`. The values are deliberately short so a

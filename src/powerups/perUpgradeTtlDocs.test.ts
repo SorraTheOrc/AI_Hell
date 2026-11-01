@@ -35,10 +35,15 @@ const EFFECTS_PATH = 'src/powerups/effects.ts';
 const PLAYER_PATH = 'src/entities/Player.ts';
 
 /**
- * The seven instant kinds (no timed effect of their own) whose TTL is declared
+ * The ten instant kinds (no timed effect of their own) whose TTL is declared
  * catalogue data. The map is the *expected* documentation content; the code
  * side is read from `POWER_UP_CATALOGUE` so a retune cannot silently leave the
  * docs behind.
+ *
+ * Shield / Thorn Field / Force Field joined the set when the absorbed-hit
+ * pickup model retired their window axes (AH-0MVVD8SXO004QLZW) — they declare
+ * the producer-approved flat TTLs (Shield 15 s, Thorn Field 8 s, Force Field
+ * 8 s) like the other instant kinds.
  */
 const INSTANT_KINDS: readonly PowerUpId[] = [
   'bomb',
@@ -48,6 +53,9 @@ const INSTANT_KINDS: readonly PowerUpId[] = [
   'teleport',
   'extra_life',
   'mystery_ufo',
+  'shield',
+  'thorns',
+  'force_field',
 ];
 
 /** Phrases that must never describe a *live* rule for a field pickup. */
@@ -74,8 +82,11 @@ describe('per-upgrade temporary TTL rule is documented (AH-0MVUGI5P2001C1IL)', (
   it('AC2 — timed kinds keep their level-resolved effect duration as the TTL', () => {
     expect(gdd).toMatch(/keep their level-resolved effect duration as their TTL/i);
     // A level-scaled example proves the window is not one global constant.
-    expect(gdd).toMatch(/Shield 15 s → 30 s/);
-    expect(gdd).toMatch(/Force Field 8 s → 18 s/);
+    // Shield/Force Field/Thorn Field left this family with the absorbed-hit
+    // pickup model (AH-0MVVD8SXO004QLZW) — Speed Boost and Frenzy remain
+    // timed.
+    expect(gdd).toMatch(/Speed Boost 10 s → 20 s/);
+    expect(gdd).toMatch(/Frenzy 8 s → 16 s/);
   });
 
   it('AC2/AC4 — the documented instant-kind TTLs match the shipped catalogue', () => {

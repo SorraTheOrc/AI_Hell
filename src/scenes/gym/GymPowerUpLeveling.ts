@@ -162,7 +162,7 @@ export interface PowerUpLevelReadout {
 
 /**
  * Formats one resolved-stats snapshot into a human-readable line, e.g.
- * `"Shield time 15.0s, Shield hits 1"`. Reads only the shared catalogue
+ * `"Shield recharge 45s, Shield hits 1"`. Reads only the shared catalogue
  * (`POWER_UP_LEVEL_SPECS`) for each variable's label/unit/discreteness — the
  * gym renders the shared model, it never recomputes it.
  */

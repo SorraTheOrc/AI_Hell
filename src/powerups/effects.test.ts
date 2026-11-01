@@ -2023,7 +2023,7 @@ describe('Orbital Strike next-bolt countdown accessor (AH-0MVS2T40T006QL7H)', ()
 // ── Instant-kind temporary windows (AH-0MVUGI448000GNMJ) ─────────────
 
 describe('instant-kind temporary windows (AH-0MVUGI448000GNMJ)', () => {
-  /** The seven kinds with no timed effect of their own. */
+  /** The ten kinds with no timed effect of their own. */
   const INSTANT_KINDS: PowerUpId[] = [
     'bomb',
     'smart_bomb',
@@ -2032,6 +2032,12 @@ describe('instant-kind temporary windows (AH-0MVUGI448000GNMJ)', () => {
     'teleport',
     'extra_life',
     'mystery_ufo',
+    // The three absorbed-hit kinds were reclassified as instant kinds by
+    // AH-0MVVD8SXO004QLZW (their window axes retired): a field pickup opens
+    // the same per-upgrade level window, sized by the flat catalogue TTL.
+    'shield',
+    'force_field',
+    'thorns',
   ];
 
   it('opens a per-upgrade level window for every instant kind and reverts at it', () => {
