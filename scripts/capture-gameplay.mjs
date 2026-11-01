@@ -3236,6 +3236,13 @@ async function stopRecording(page) {
  * in-page Blob probe; above it the probe reads the written file back over the
  * capture dev server's HTTP URL (range-streamed `<video>`) with a bounded
  * audio prefix, so the renderer never materialises the whole recording.
+ * That streamed path needs the clip's file to resolve inside the served
+ * repository root. When it does not (e.g. `--output /tmp/…`), the probe keeps
+ * the documented **in-page prefix fallback** and records the outside-root
+ * reason in `probeSourceReason`; an already-recorded clip is never failed for
+ * an unservable output path. The fallback costs only ~+14 MiB during the probe
+ * window and ~+33 MiB after it (2026-11-01 A/B, AH-0MVOJ76MJ0039HNE) and is
+ * not the cause of the long-run memory peak.
  *
  * `sampleTimesMs` (optional) additionally probes explicit video offsets
  * (seconds) and returns per-sample `{ timeMs, nonBlackFraction, meanLuma }`

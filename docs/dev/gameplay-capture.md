@@ -53,7 +53,8 @@ npm run capture -- --all-scenarios --output clips          # clips/<scenario>.we
 npm run capture:scenes -- --config scenes.json             # capture-output/scenes-<timestamp>.webm
 
 # investigate a long-run crash (off by default; writes <stem>.diagnostics.json)
-npm run capture -- --diagnostics --duration 420000 --output /tmp/soak.webm
+# write inside the repo root so a >32 MiB clip uses the streamed probe
+npm run capture -- --diagnostics --duration 420000 --output capture-output/soak.webm
 
 # compile the captured pool into a promo + showreel + highlight clips
 # (needs a full ffmpeg — see Compiling a promo package below)
@@ -951,10 +952,24 @@ additionally reports its measurement bounds additively:
 is reported through those fields and/or `audioDecodeError` — never silently
 passed. Each clip result also carries an additive `probeSource`
 (`'stream' | 'in-page'`) and `probeSourceReason`, so a soak run can confirm
-which source produced the verdicts. A clip too large for the page but whose
-file cannot be served (e.g. `--output` outside the repo) falls back to the
-in-page prefix probe and reports why, instead of failing or widening into a
-new dependency.
+which source produced the verdicts.
+
+**The streamed probe needs the output inside the served repository root.**
+The capture dev server serves the repository root, so a clip above the
+threshold is streamed back over HTTP only when its file resolves under that
+root (e.g. `capture-output/…`). An output written outside the root (e.g.
+`--output /tmp/soak.webm`) cannot be served, so the probe **falls back to the
+in-page prefix probe** and records why in `probeSourceReason` instead of
+failing the clip or widening into a new dependency. That fallback is the
+documented residual path, never a silent one.
+
+The fallback is **not** the cause of the long-run memory peak. A controlled
+A/B on 2026-11-01 (same 420 s scripted workload, one clip per arm) measured
+the in-page fallback at only **~+14 MiB** during the probe window and
+**~+33 MiB** after it versus the streamed in-root arm; the dominant peak was
+path-independent process startup (see
+[Long-run memory budget](#long-run-memory-budget-and-failure-salvage)).
+Provenance for the A/B is the measurement comment on **AH-0MVOJ76MJ0039HNE**.
 
 ### Long-run memory budget and failure salvage
 
@@ -985,9 +1000,31 @@ the streaming sink, the 32 MiB prefix budget and the upload cap remove. The
 long-run (30-minute) confirmation is a separate manual soak, not a CI test
 (see [Estimated CI cost](#estimated-ci-cost)).
 
-To reproduce: `npm run capture -- --diagnostics --duration 420000 --output
-/tmp/soak.webm`, then read `transport.maxMessageBytes`, `node.peakRssBytes`,
-`page.heapUsedBytes` and `chunks.maxBytes` from `/tmp/soak.diagnostics.json`.
+**What the `< 512 MiB` target measures (and what it does not).** The node
+figure in the table is the heartbeat-sampled `process.memoryUsage().rss`
+reported as `node.peakRssBytes` **during recording** — the window the recorder
+and the streaming sink are active. It does not measure the whole process
+lifetime: a follow-up A/B on 2026-11-01 (same 420 s scripted workload, one clip
+per arm) found that the whole-process high-water mark (~**767–784 MiB**) is
+reached at **Vite server boot (~3.1–3.3 s)**, before recording starts, and is
+the same for an in-root streamed clip and an outside-root in-page fallback.
+That startup term is a tooling/host baseline, not recording growth and not the
+in-page fallback; it is recorded here so a soak operator does not mistake it
+for a regression. The budget is **not** raised. A fresh idle-host baseline is
+still required before publishing a whole-process number: the 2026-11-01 host
+was loaded (~0.7 fps under SwiftShader), so the figures are directional.
+Provenance: the A/B on **AH-0MVOJ76MJ0039HNE**.
+
+To reproduce the streamed-path figure, write **inside the repository root**
+(so a clip above 32 MiB uses the streamed probe) and read the diagnostics
+artefact next to it: `npm run capture -- --diagnostics --duration 420000
+--output capture-output/soak.webm`, then read `transport.maxMessageBytes`,
+`node.peakRssBytes`, `page.heapUsedBytes` and `chunks.maxBytes` from
+`capture-output/soak.diagnostics.json`.
+
+To exercise the residual fallback deliberately, use `--output /tmp/soak.webm`;
+that path is expected to report `probeSource: 'in-page'` with an outside-root
+reason.
 
 ### Failure and salvage of streamed bytes
 
@@ -1155,8 +1192,13 @@ crash where Playwright's CDP pipe transport (`pipeTransport._dispatch`) throws
 
 ```bash
 # a diagnostic soak: fixed 7-minute clip, diagnostics artefacts next to it
-npm run capture -- --diagnostics --duration 420000 --output /tmp/soak.webm
+# (write inside the repo root so a >32 MiB clip uses the streamed probe)
+npm run capture -- --diagnostics --duration 420000 --output capture-output/soak.webm
 ```
+
+Writing to `/tmp/soak.webm` instead is still supported, but that path takes the
+documented in-page fallback for a clip above 32 MiB (see
+[Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
 
 While enabled it records:
 
@@ -2316,7 +2358,9 @@ knowing before a soak:
   [Long-run memory budget and failure salvage](#long-run-memory-budget-and-failure-salvage)).
   The price is that the page can only reconstruct the **head** of a long clip;
   that is why a clip above the threshold is probed by reading the written file
-  back over HTTP ([Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
+  back over HTTP when the output is inside the served repository root — an
+  outside-root output falls back to the in-page prefix probe
+  ([Probing long clips from the streamed file](#probing-long-clips-from-the-streamed-file)).
 - **Caps are overflow defences, not tuning knobs.** `MAX_CAPTURE_CHUNK_BYTES`
   (16 MiB), the 32 MiB prefix budget and the 8 MiB telemetry-upload cap all sit
   far below V8's 512 MiB string limit so no single CDP message can approach it.

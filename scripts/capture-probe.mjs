@@ -27,6 +27,14 @@
  * the documented in-page threshold the clip fits entirely in the retained
  * page prefix and keeps the **byte-identical in-page Blob path**; above it,
  * the probe reads the streamed file over the capture dev server's HTTP URL.
+ * The streamed source is only available while the clip's file resolves inside
+ * the served repository root (`buildProbeFileUrl`); an output written outside
+ * it (e.g. `--output /tmp/…`) is not servable and falls back to the in-page
+ * prefix probe, with the reason recorded in `probeSourceReason`. That fallback
+ * is the documented residual path and is **not** the cause of the long-run
+ * memory peak (a 2026-11-01 A/B measured it at ~+14 MiB during the probe
+ * window and ~+33 MiB after it versus the streamed path; see
+ * AH-0MVOJ76MJ0039HNE).
  * The threshold and the audio-prefix cap both default to
  * `CAPTURE_PROBE_PREFIX_BUDGET_BYTES` (the same budget the page retention is
  * bounded by), so a clip the retention can fully hold is never streamed and a

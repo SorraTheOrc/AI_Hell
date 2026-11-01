@@ -688,7 +688,15 @@ added by AH-0MUWTNPYJ0031FQE):
   long run's memory stays bounded instead of growing with its length, and a
   **failed** run keeps the bytes already recorded: the CLI prints one
   actionable salvage line (what failed, bytes kept, the `.partial.webm` path,
-  the next action) and exits **non-zero** instead of losing the run. See
+  the next action) and exits **non-zero** instead of losing the run. A clip
+  above the **32 MiB** probe threshold is probed by streaming the written file
+  back over the capture dev server only when the output is **inside the
+  repository root**; an output outside the root (e.g. `--output /tmp/…`) falls
+  back to the in-page prefix probe and reports why in
+  `probeSource`/`probeSourceReason` rather than failing. The documented
+  `< 512 MiB` node budget is the heartbeat-sampled `node.peakRssBytes`
+  **during recording**, not whole-process RSS: the 2026-11-01 A/B found the
+  process high-water mark (~767–784 MiB) at Vite boot, path-independent. See
   [docs/dev/gameplay-capture.md](./docs/dev/gameplay-capture.md#long-run-memory-budget-and-failure-salvage).
 - **Discover dev scenarios (`--list-scenarios`):**
   `npm run capture -- --list-scenarios` prints every implemented
