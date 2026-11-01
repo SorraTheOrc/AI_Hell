@@ -588,6 +588,22 @@ promo, showreel and highlight clip count are measured from the outputs and
 compared with `EDITORIAL_CONFIG.targets` (promo 45–60 s, showreel > 2 min,
 five highlight clips), reported in the `targets` field of the compile report.
 
+#### Synthetic fixtures and the gated `e2e` run
+
+The gated end-to-end smoke test (`scripts/compile-promo.e2e.test.ts`, run with
+`/skill:test --type e2e` or `npm run test:e2e`) compiles a deliberately short
+synthetic package (~5 s: two `testsrc2` sources with one action peak each) with
+the **real** encoder. That fixture can prove encodability, per-deliverable
+validation and the pace band, but it can never satisfy the editorial **size**
+targets above — and it must not be lengthened: the ~140 s encode cost is why
+the suite is gated out of the default run (AH-0MVF6VQ7G005ALXZ,
+AH-0MVFSNO0G00035AP). The test therefore asserts the **expected** size
+rejection — `targets.ok === false` carrying the three target-specific issues,
+with a non-zero exit whose only error is that size verdict — instead of
+relaxing the exit code. Editorial sizing on real footage is covered by the
+`assessTargets` unit tests in `scripts/compile-promo.test.ts` and by
+`npm run compile:promo` against a real capture pool (AH-0MVWN4I95005HBJG).
+
 ## 8. Telemetry integration & gym↔game parity
 
 ### 8.1 Dependencies

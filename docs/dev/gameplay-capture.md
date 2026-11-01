@@ -389,6 +389,16 @@ Every output is validated before the run is reported as successful
   count meet the targets above, so a thin pool fails loudly instead of
   shipping a 5 s showreel.
 
+The gated end-to-end smoke test (`scripts/compile-promo.e2e.test.ts`, run with
+`/skill:test --type e2e`) compiles a deliberately short **synthetic** package
+with the real encoder, so it asserts the per-deliverable gates and the pace
+band strictly and asserts the size gate's **expected rejection** (its ~5 s
+fixture cannot meet the 45–60 s / > 2 min / 5-clip targets, and lengthening it
+is ruled out by the gated suite's cost budget). Editorial sizing on real
+footage is verified by `npm run compile:promo` against a real capture pool and
+by the `assessTargets` unit tests — see
+[docs/dev/action-intensity.md §7.6](./action-intensity.md#76-pace-reference-band-for-the-compiled-promo).
+
 The per-cut intensities and features are printed in the report, and the
 summary line names the measured duration, resolution, audio, cut count, mean
 intensity, pace verdict and target verdict — so a package can be reviewed
@@ -2463,7 +2473,7 @@ full`) or `npm run build`.
 | `scripts/compile-promo.mjs` | Promo compiler + ffmpeg driver: edit plan from the recorded series, cut cadence, deliverable sizing, manifests, output validation and pace verification |
 | `scripts/compile-promo.d.mts` | Types for the promo compiler |
 | `scripts/compile-promo.test.ts` | Hermetic tests for the plan/selection/cadence/validation logic (no ffmpeg, no browser) |
-| `scripts/compile-promo.e2e.test.ts` | Gated end-to-end smoke test that compiles synthetic footage with real `ffmpeg`/`ffprobe` (skipped when absent) |
+| `scripts/compile-promo.e2e.test.ts` | Gated end-to-end smoke test that compiles synthetic footage with real `ffmpeg`/`ffprobe` (skipped when absent); asserts per-deliverable validation, the pace band and the *expected* size-gate rejection for its deliberately short fixture |
 | `scripts/list-capture-pool.mjs` | Capture-pool inventory: retains WebM + series + anchor triples, reports excluded runs and per-run feature evidence |
 | `scripts/list-capture-pool.d.mts` | Types for the pool inventory lister |
 | `scripts/list-capture-pool.test.ts` | Hermetic tests for the inventory builder, collector and CLI |

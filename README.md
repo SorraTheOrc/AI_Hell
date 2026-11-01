@@ -460,7 +460,11 @@ transform: every Phaser/DOM-booting suite (`npm run test:integration`).
   `/skill:test --type e2e`. Nothing in it is unique proof of behaviour — the
   same command/probe/validation logic is covered by injected-subprocess tests in
   the `scripts/` unit suites; `e2e` only proves a real encoder accepts the
-  command line and produces probe-able output.
+  command line and produces probe-able output. The promo compile smoke also
+  asserts its per-deliverable validation, the documented pace band and the
+  **expected** editorial size-gate rejection for its deliberately short (~5 s)
+  synthetic fixture — sizing on real footage is verified by
+  `npm run compile:promo` and the `assessTargets` unit tests, not by `e2e`.
 
 `npm --silent test` (and `/skill:test --type full`) executes the **`unit` and
 `integration`** projects only, so it remains the audit-accepted full-suite
