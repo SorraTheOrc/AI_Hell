@@ -2252,6 +2252,12 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     booted?.game.destroy(true);
     booted = null;
     localStorage.clear();
+    // Per-test spy isolation (flake parent AH-0MVWZYGDS0015W1F): the repo's
+    // Vitest config restores no mocks between tests, and `vi.clearAllMocks()`
+    // clears calls without removing the spy. Restore here so no boss-hit cue
+    // or hit-effect spy from one test leaks into the next — even when a test
+    // throws before its own cleanup.
+    vi.restoreAllMocks();
   });
 
   /**
@@ -2696,6 +2702,12 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
     booted?.game.destroy(true);
     booted = null;
     localStorage.clear();
+    // Per-test spy isolation (flake parent AH-0MVWZYGDS0015W1F): the repo's
+    // Vitest config restores no mocks between tests, and `vi.clearAllMocks()`
+    // clears calls without removing the spy. Restore here so a destruction-
+    // audio or pickup-cue spy from one test never leaks into the next — even
+    // when a test throws before its own cleanup.
+    vi.restoreAllMocks();
   });
 
   async function bootPlay(): Promise<PlayScene> {
@@ -3539,7 +3551,6 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   }
 
   it('bullet kill of a Diver plays the diver destruction sound', async () => {
-    vi.restoreAllMocks(); // fresh spies (config does not restore between tests)
     const scene = await bootPlay();
 
     // Walk to a wave containing an entity with the destruction-audio seam
@@ -3572,7 +3583,6 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('a generic enemy (Scout) plays the generic destruction sound', async () => {
-    vi.restoreAllMocks();
     const scene = await bootPlay();
     finishSpawnSequence(scene);
     const enemy = scene.getEnemies().find((e) => !(e as { playDestructionAudio?: unknown }).playDestructionAudio)!;
@@ -3586,7 +3596,6 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   it('player-body-vs-enemy collision plays the entity destruction audio exactly once', async () => {
-    vi.restoreAllMocks();
     const scene = await bootPlay();
     const player = scene.getPlayer()!;
 
