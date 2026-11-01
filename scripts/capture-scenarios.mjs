@@ -27,9 +27,24 @@
  * authored entry fails the capture CLI and the game build immediately rather
  * than producing a scenario that cannot be flown.
  *
- * The existing three entries keep their names, effects and runtime behaviour
- * exactly; the first real promo entries arrive with the catalogue item, so
- * this module stays a three-entry registry for now.
+ * The registry now also carries the **promo catalogue**
+ * (AH-0MVSDMBU60018JOE, child of AH-0MVI5XI73000ZVYA): the authored
+ * `kind: 'promo'` entries that pair a curated bot-tuning preset with a
+ * hand-authored promo level from `scripts/promo-scenarios.mjs`. The three
+ * original capture shortcuts keep their names, effects and runtime behaviour
+ * exactly; they are listed **after** the promo catalogue so the first entry —
+ * and therefore the first `--all-scenarios` clip — is the designated
+ * high-intensity hook (`promo-blitz-hook`), which keeps the first compiled
+ * promo cut free of dead air (parent AC3).
+ *
+ *   `promo-blitz-hook` → promo catalogue (12 curated promo scenarios)
+ *   `boss`, `boss-four-hits`, `defeat` → the original jump/defeat shortcuts
+ *
+ * Every promo entry declares the editorial `categories` it evidences, so the
+ * catalogue as a whole covers all four `EDITORIAL_CONFIG.categories`
+ * (`weapons`, `pickups`, `enemies`, `boss`). The catalogue invariants (count,
+ * category coverage, hook-first ordering, registry ↔ resolver and registry ↔
+ * promo-level parity) are pinned by `scripts/capture-scenarios.test.ts`.
  */
 
 import { freezeCaptureScenarioEntry } from './capture-scenario-schema.mjs';
@@ -51,14 +66,130 @@ import { freezeCaptureScenarioEntry } from './capture-scenario-schema.mjs';
  * The authored scenario entries, in the order the tooling lists and runs
  * them.
  *
- * `boss` is the tunable jump (`&bossHits=N`); `boss-four-hits` is the recorded
- * default (4 hits); `defeat` ends the run in defeat on release. This list is
- * an implementation detail — {@link CAPTURE_SCENARIOS} is the validated,
- * frozen registry every consumer reads.
+ * The promo catalogue comes first, opening with the high-intensity hook
+ * (AH-0MVSDMBU60018JOE, parent AC3): each entry names the bot-tuning `preset`
+ * it flies, the `promoLevel` it plays (a level id in
+ * `scripts/promo-scenarios.mjs`) and the editorial `categories` the scene was
+ * authored to evidence. Every entry also declares a fixed `seed`, so a promo
+ * capture is reproducible (the same seed replays the same spawns).
+ *
+ * The three original shortcuts follow: `boss` is the tunable jump
+ * (`&bossHits=N`); `boss-four-hits` is the recorded default (4 hits);
+ * `defeat` ends the run in defeat on release. This list is an implementation
+ * detail — {@link CAPTURE_SCENARIOS} is the validated, frozen registry every
+ * consumer reads.
  *
  * @type {readonly CaptureScenario[]}
  */
 const AUTHORED_SCENARIOS = [
+  {
+    name: 'promo-blitz-hook',
+    effect: 'Open on a dense fleet and a wide swarm sweep: the high-intensity hook.',
+    kind: 'promo',
+    preset: 'aggressive-hunter',
+    promoLevel: 'promo-blitz-hook',
+    categories: ['weapons', 'enemies'],
+    seed: 1001,
+  },
+  {
+    name: 'promo-swarm-saturation',
+    effect: 'Saturate the screen with swarm walls for maximal shots and drops.',
+    kind: 'promo',
+    preset: 'cautious-collector',
+    promoLevel: 'promo-swarm-saturation',
+    categories: ['weapons', 'pickups'],
+    seed: 1002,
+  },
+  {
+    name: 'promo-tank-wall',
+    effect: 'Grind through heavy tank phalanxes and chase the drops they leave.',
+    kind: 'promo',
+    preset: 'glass-cannon',
+    promoLevel: 'promo-tank-wall',
+    categories: ['weapons', 'pickups'],
+    seed: 1003,
+  },
+  {
+    name: 'promo-march-columns',
+    effect: 'Hold the line against reversing Space-Invaders march columns.',
+    kind: 'promo',
+    preset: 'aggressive-hunter',
+    promoLevel: 'promo-march-columns',
+    categories: ['enemies', 'weapons'],
+    seed: 1004,
+  },
+  {
+    name: 'promo-centipede-tunnel',
+    effect: 'Thread the centipede chain as it winds through a scout screen.',
+    kind: 'promo',
+    preset: 'evasive',
+    promoLevel: 'promo-centipede-tunnel',
+    categories: ['enemies'],
+    seed: 1005,
+  },
+  {
+    name: 'promo-ghost-hunt',
+    effect: 'Outrun Pac-Man pursuers hunting between non-targeting escorts.',
+    kind: 'promo',
+    preset: 'evasive',
+    promoLevel: 'promo-ghost-hunt',
+    categories: ['enemies'],
+    seed: 1006,
+  },
+  {
+    name: 'promo-horde-siege',
+    effect: 'Survive the homing-horde rush pouring in from the arena edges.',
+    kind: 'promo',
+    preset: 'aggressive-hunter',
+    promoLevel: 'promo-horde-siege',
+    categories: ['enemies', 'weapons'],
+    seed: 1007,
+  },
+  {
+    name: 'promo-lane-runner',
+    effect: 'Weave lane traffic while farming the fleet for drops.',
+    kind: 'promo',
+    preset: 'cautious-collector',
+    promoLevel: 'promo-lane-runner',
+    categories: ['enemies', 'pickups'],
+    seed: 1008,
+  },
+  {
+    name: 'promo-orbital-barrage',
+    effect: 'Crossfire of orbital phasers and telegraphed strike arcs.',
+    kind: 'promo',
+    preset: 'evasive',
+    promoLevel: 'promo-orbital-barrage',
+    categories: ['weapons', 'enemies'],
+    seed: 1009,
+  },
+  {
+    name: 'promo-capture-cordon',
+    effect: 'Break a tractor-pull and attack-run cordon with a hard silhouette.',
+    kind: 'promo',
+    preset: 'evasive',
+    promoLevel: 'promo-capture-cordon',
+    categories: ['enemies'],
+    seed: 1010,
+  },
+  {
+    name: 'promo-boss-prelude',
+    effect: 'Pressure waves into a mini-boss cordon: the boss-category footage.',
+    kind: 'promo',
+    preset: 'glass-cannon',
+    promoLevel: 'promo-boss-prelude',
+    categories: ['boss', 'enemies'],
+    seed: 1011,
+  },
+  {
+    name: 'promo-final-gauntlet',
+    effect: 'Every showcase at once, closing on a double-raider mini-boss.',
+    kind: 'promo',
+    preset: 'aggressive-hunter',
+    promoLevel: 'promo-final-gauntlet',
+    categories: ['weapons', 'pickups', 'enemies', 'boss'],
+    seed: 1012,
+  },
   {
     name: 'boss',
     effect: 'Jump straight to the boss with a tunable hit count (&bossHits=N).',

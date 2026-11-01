@@ -19,11 +19,13 @@
  * - AC3 — bot input is honoured, `getBotTuningConfigName()` reports the
  *   scenario's preset and the run is deterministically seeded.
  *
- * The real registry has no promo entries yet (the catalogue item registers
- * them), so the shared registry module is substituted with fixtures — the
- * repo's `vi.mock`/`vi.resetModules` convention (`scripts/capture-scenarios.test.ts`,
- * `src/core/botTuningStore.test.ts`). One fixture pairs a **real** curated
- * preset (`src/data/bot-tuning.json`) with a **real** hand-authored promo level
+ * The seam is pinned against fixtures rather than the live catalogue: the
+ * shared registry module is substituted with a minimal fixture registry (the
+ * repo's `vi.mock`/`vi.resetModules` convention, see
+ * `scripts/capture-scenarios.test.ts`, `src/core/botTuningStore.test.ts`), so
+ * these assertions stay stable as the real promo catalogue grows
+ * (AH-0MVSDMBU60018JOE). One fixture pairs a **real** curated preset
+ * (`src/data/bot-tuning.json`) with a **real** hand-authored promo level
  * (`scripts/promo-scenarios.mjs`), so the assertions exercise shipped data.
  */
 

@@ -1917,19 +1917,48 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
 
     // Additive metadata (AH-0MVSDMAC0006DS25): the original `name`/`effect`
     // fields are still present, plus the registry kind every entry declares.
-    expect(parsed).toEqual(
-      CAPTURE_SCENARIOS.map(({ name, effect, kind }) => ({
-        name,
-        effect,
-        kind,
-      })),
-    );
+    expect(parsed).toHaveLength(CAPTURE_SCENARIOS.length);
+    for (const [index, scenario] of CAPTURE_SCENARIOS.entries()) {
+      expect(parsed[index]).toMatchObject({
+        name: scenario.name,
+        effect: scenario.effect,
+        kind: scenario.kind,
+      });
+    }
   });
 
   it('renderScenarioListing favours the human form without --json', () => {
     const rendered = renderScenarioListing({});
     for (const { name } of CAPTURE_SCENARIOS) {
       expect(rendered).toContain(name);
+    }
+  });
+
+  it('lists the full promo catalogue with its metadata (AH-0MVSDMBU60018JOE, AC4)', () => {
+    const parsed = JSON.parse(renderScenarioListing({ json: true })) as Array<
+      Record<string, unknown>
+    >;
+
+    // Registry order, every entry, no drift.
+    expect(parsed.map((entry) => entry.name)).toEqual(
+      CAPTURE_SCENARIOS.map((scenario) => scenario.name),
+    );
+
+    const promos = CAPTURE_SCENARIOS.filter(
+      (scenario) => scenario.kind === 'promo',
+    );
+    expect(promos.length).toBeGreaterThanOrEqual(10);
+    for (const scenario of promos) {
+      expect(
+        parsed.find((entry) => entry.name === scenario.name),
+        `${scenario.name} must be listed with its promo metadata`,
+      ).toMatchObject({
+        kind: 'promo',
+        preset: scenario.preset,
+        promoLevel: scenario.promoLevel,
+        categories: [...scenario.categories],
+        ...(scenario.seed === undefined ? {} : { seed: scenario.seed }),
+      });
     }
   });
 
@@ -2072,10 +2101,13 @@ describe('promo scenario CLI support (AH-0MVSDMAC0006DS25)', () => {
       seed: 42,
     });
     // Existing entries keep their additive shape (no promo-only fields).
+    const bossEntry = CAPTURE_SCENARIOS.find(
+      (scenario) => scenario.name === 'boss',
+    )!;
     const boss = listed.find((entry) => entry.name === 'boss');
     expect(boss).toEqual({
       name: 'boss',
-      effect: CAPTURE_SCENARIOS[0].effect,
+      effect: bossEntry.effect,
       kind: 'boss',
     });
     // The JSON projection is a fresh copy: mutating it cannot touch the
@@ -2085,8 +2117,11 @@ describe('promo scenario CLI support (AH-0MVSDMAC0006DS25)', () => {
   });
 
   it('describeScenario adds preset/categories to a promo line only', () => {
-    expect(describeScenario(CAPTURE_SCENARIOS[0])).toBe(
-      `${CAPTURE_SCENARIOS[0].name} — ${CAPTURE_SCENARIOS[0].effect}`,
+    const bossEntry = CAPTURE_SCENARIOS.find(
+      (scenario) => scenario.name === 'boss',
+    )!;
+    expect(describeScenario(bossEntry)).toBe(
+      `${bossEntry.name} — ${bossEntry.effect}`,
     );
     expect(describeScenario(promoEntry)).toBe(
       'promo-hook — Dense opening swarm to hook the promo. '
@@ -2211,11 +2246,12 @@ describe('promo scenario CLI support (AH-0MVSDMAC0006DS25)', () => {
       seed: 42,
     });
     // Non-promo items keep the shape they had before (plus the additive kind).
-    expect(items[0]).toMatchObject({
+    const bossItem = items.find((item) => item.scenario === 'boss')!;
+    expect(bossItem).toMatchObject({
       scenario: 'boss',
       kind: 'boss',
     });
-    expect(items[0]).not.toHaveProperty('preset');
+    expect(bossItem).not.toHaveProperty('preset');
   });
 });
 
@@ -2246,7 +2282,9 @@ describe('--all-scenarios batch capture (AH-0MV6JGQFK007MXGX)', () => {
       CAPTURE_SCENARIOS.map((scenario) => scenario.name),
     );
     expect(items).toHaveLength(CAPTURE_SCENARIOS.length);
-    expect(items.map((item) => item.index)).toEqual([1, 2, 3]);
+    expect(items.map((item) => item.index)).toEqual(
+      CAPTURE_SCENARIOS.map((_, index) => index + 1),
+    );
     // No default no-scenario demo item: every item names a registered scenario.
     for (const item of items) {
       expect(CAPTURE_SCENARIOS.map((scenario) => scenario.name)).toContain(
@@ -2305,9 +2343,15 @@ describe('--all-scenarios batch capture (AH-0MV6JGQFK007MXGX)', () => {
     expect(second.map((item) => item.outputPath)).not.toContain(
       items[1].outputPath,
     );
-    expect(basename(second[0].outputPath)).toBe('boss-2.webm');
-    expect(basename(second[1].outputPath)).toBe('boss-four-hits-2.webm');
-    expect(basename(second[2].outputPath)).toBe('defeat.webm');
+    expect(basename(second[0].outputPath)).toBe(
+      `${CAPTURE_SCENARIOS[0].name}-2.webm`,
+    );
+    expect(basename(second[1].outputPath)).toBe(
+      `${CAPTURE_SCENARIOS[1].name}-2.webm`,
+    );
+    expect(basename(second[2].outputPath)).toBe(
+      `${CAPTURE_SCENARIOS[2].name}.webm`,
+    );
     expect(new Set(second.map((item) => item.outputPath)).size).toBe(
       second.length,
     );
@@ -2615,8 +2659,11 @@ describe('--all-scenarios batch capture (AH-0MV6JGQFK007MXGX)', () => {
       ok: false,
       error: 'codec exploded',
     });
-    expect(batch.iterations[2]).toMatchObject({
-      scenario: CAPTURE_SCENARIOS[2].name,
+    // The capped item is the last registered scenario, wherever the catalogue
+    // ends (the catalogue grew to 10+ entries in AH-0MVSDMBU60018JOE).
+    const lastIndex = items.length - 1;
+    expect(batch.iterations[lastIndex]).toMatchObject({
+      scenario: CAPTURE_SCENARIOS[lastIndex].name,
       ok: false,
       capHit: true,
     });

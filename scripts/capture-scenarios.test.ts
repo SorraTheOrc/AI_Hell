@@ -35,16 +35,20 @@ import {
   CAPTURE_SCENARIO_KINDS,
   EDITORIAL_CATEGORIES as SCHEMA_EDITORIAL_CATEGORIES,
 } from './capture-scenario-schema.mjs';
+import type { CapturePromoScenario } from './capture-scenario-schema.mjs';
 import {
   CAPTURE_SCENARIOS,
   isRegisteredScenario,
 } from './capture-scenarios.mjs';
+import { PROMO_LEVEL_KEYS, PROMO_LEVELS } from './promo-scenarios.mjs';
+import botTuningData from '../src/data/bot-tuning.json';
 import {
   DEV_BOSS_DEFAULT_HITS,
   DEV_SCENARIO_BOSS,
   DEV_SCENARIO_BOSS_FOUR_HITS,
   DEV_SCENARIO_DEFEAT,
   resolveDevScenario,
+  resolveEnabledDevScenario,
 } from '../src/core/devScenario';
 
 /** The scenario names the resolver knows (its exported dev-gated values). */
@@ -55,13 +59,21 @@ const RESOLVER_NAMES = [
 ];
 
 describe('CAPTURE_SCENARIOS registry', () => {
-  it('is frozen and holds exactly the implemented scenario values', () => {
+  it('is frozen and opens on the promo hook, with the original shortcuts last', () => {
     expect(Object.isFrozen(CAPTURE_SCENARIOS)).toBe(true);
-    expect(CAPTURE_SCENARIOS.map((scenario) => scenario.name)).toEqual([
-      'boss',
-      'boss-four-hits',
-      'defeat',
-    ]);
+
+    // Parent AC3: the first scenario — and therefore the first
+    // `--all-scenarios` clip — is the designated high-intensity promo hook.
+    expect(CAPTURE_SCENARIOS[0].name).toBe('promo-blitz-hook');
+    expect(CAPTURE_SCENARIOS[0].kind).toBe('promo');
+
+    // The three original shortcuts keep their exact names and relative order,
+    // after the promo catalogue (AH-0MVSDMBU60018JOE).
+    expect(
+      CAPTURE_SCENARIOS
+        .filter((scenario) => scenario.kind !== 'promo')
+        .map((scenario) => scenario.name),
+    ).toEqual(['boss', 'boss-four-hits', 'defeat']);
   });
 
   it('registers every entry once', () => {
@@ -137,10 +149,14 @@ describe('registry ↔ resolver parity', () => {
     }
   });
 
-  it('covers exactly the same name set as the resolver (no drift either way)', () => {
-    expect(new Set(RESOLVER_NAMES)).toEqual(
-      new Set(CAPTURE_SCENARIOS.map((scenario) => scenario.name)),
-    );
+  it('covers exactly the legacy named scenarios with no drift either way', () => {
+    // The resolver's exported constants are the three original named
+    // shortcuts; the promo catalogue is resolved generically from its registry
+    // entries (AH-0MVSDMBU60018JOE), so parity is pinned on the non-promo set.
+    const legacyRegistered = CAPTURE_SCENARIOS
+      .filter((scenario) => scenario.kind !== 'promo')
+      .map((scenario) => scenario.name);
+    expect(new Set(RESOLVER_NAMES)).toEqual(new Set(legacyRegistered));
   });
 
   it('maps each registered name to its expected scenario', () => {
@@ -228,12 +244,14 @@ const PROMO_WITHOUT_SEED: FixtureEntry = {
   categories: ['pickups', 'boss'],
 };
 
-/** Today's three scenarios in the intended enriched shape. */
-const LEGACY_FIXTURES: FixtureEntry[] = CAPTURE_SCENARIOS.map((scenario) => ({
-  name: scenario.name,
-  effect: scenario.effect,
-  kind: scenario.name === 'defeat' ? 'defeat' : 'boss',
-}));
+/** The three original capture shortcuts in the intended enriched shape. */
+const LEGACY_FIXTURES: FixtureEntry[] = CAPTURE_SCENARIOS
+  .filter((scenario) => scenario.kind !== 'promo')
+  .map((scenario) => ({
+    name: scenario.name,
+    effect: scenario.effect,
+    kind: scenario.name === 'defeat' ? 'defeat' : 'boss',
+  }));
 
 /** The fixture registry the promo parity/gating tests inject. */
 const PROMO_REGISTRY: FixtureEntry[] = [
@@ -363,10 +381,9 @@ describe('enriched registry entry contract (AH-0MVSDM30G0092WYC, AC1)', () => {
 
   it('keeps the existing three scenarios with their names and kinds', () => {
     expect(
-      CAPTURE_SCENARIOS.map((scenario) => {
-        const entry = fieldsOf(scenario);
-        return { name: entry['name'], kind: entry['kind'] };
-      }),
+      CAPTURE_SCENARIOS
+        .filter((scenario) => scenario.kind !== 'promo')
+        .map((scenario) => ({ name: scenario.name, kind: scenario.kind })),
     ).toEqual([
       { name: 'boss', kind: 'boss' },
       { name: 'boss-four-hits', kind: 'boss' },
@@ -521,5 +538,139 @@ describe('shared scenario schema vocabulary (AH-0MVSDM4ED003C8ZC, AC2)', () => {
 
   it('declares exactly the entry kinds the contract pins', () => {
     expect([...CAPTURE_SCENARIO_KINDS]).toEqual(ENTRY_KINDS);
+  });
+});
+
+// ── Promo catalogue (AH-0MVSDMBU60018JOE, child of AH-0MVI5XI73000ZVYA) ────
+//
+// The catalogue slice fills the shared registry with the authored promo
+// scenarios and pins the parent's AC1/AC3 guarantees at the registry level:
+// at least ten registered promos (each resolvable and dev-gated exactly like
+// the original shortcuts), a curated preset + a hand-authored promo level per
+// entry, every editorial category evidenced, and a hook-first opening. What
+// each scenario *plays* is pinned elsewhere — by `scripts/promo-scenarios.test
+// .ts` (WaveManager validation + per-seed determinism) and
+// `src/scenes/PromoScenario.integration.test.ts` (PlayScene application) — so
+// these tests stay on the catalogue contract.
+
+/** The promo entries, in registry order (the catalogue). */
+const PROMO_SCENARIOS: CapturePromoScenario[] = CAPTURE_SCENARIOS.filter(
+  (scenario): scenario is CapturePromoScenario => scenario.kind === 'promo',
+);
+
+/** Names of every bot-tuning preset the bundled store ships. */
+const BOT_TUNING_PRESETS = new Set(
+  (botTuningData.configs as ReadonlyArray<{ name: string }>).map(
+    (config) => config.name,
+  ),
+);
+
+/** Total declared enemies in a promo level's opening wave (density metric). */
+function openingWaveSize(promoLevel: string): number {
+  return PROMO_LEVELS[promoLevel].waves[0].groups.reduce(
+    (total, group) => total + group.count,
+    0,
+  );
+}
+
+describe('promo catalogue (AH-0MVSDMBU60018JOE)', () => {
+  it('registers at least ten promo scenarios, hook first (AC1, AC3)', () => {
+    expect(PROMO_SCENARIOS.length).toBeGreaterThanOrEqual(10);
+
+    // The hook opens the catalogue, so the first `--all-scenarios` clip is
+    // action (no dead air in the first compiled promo cut).
+    expect(CAPTURE_SCENARIOS[0].name).toBe('promo-blitz-hook');
+    expect(PROMO_SCENARIOS[0].name).toBe('promo-blitz-hook');
+
+    const names = PROMO_SCENARIOS.map((scenario) => scenario.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('resolves every promo scenario through the dev-gated resolver (AC1)', () => {
+    for (const scenario of PROMO_SCENARIOS) {
+      expect(
+        resolveDevScenario(`?scenario=${scenario.name}`),
+        `${scenario.name} must resolve`,
+      ).toEqual({
+        kind: 'promo',
+        preset: scenario.preset,
+        promoLevel: scenario.promoLevel,
+        categories: [...scenario.categories],
+        ...(scenario.seed === undefined ? {} : { seed: scenario.seed }),
+      });
+    }
+  });
+
+  it('is inert for the whole promo catalogue in a production build (AC1)', () => {
+    vi.stubEnv('DEV', false);
+    for (const scenario of PROMO_SCENARIOS) {
+      expect(
+        resolveEnabledDevScenario(`?scenario=${scenario.name}`),
+        `${scenario.name} must be dev-gated`,
+      ).toBeNull();
+    }
+  });
+
+  it('pairs every scenario with a curated preset and a hand-authored promo level (AC2)', () => {
+    for (const scenario of PROMO_SCENARIOS) {
+      expect(
+        BOT_TUNING_PRESETS.has(scenario.preset),
+        `${scenario.name} names preset "${scenario.preset}"`,
+      ).toBe(true);
+      expect(
+        PROMO_LEVELS[scenario.promoLevel],
+        `${scenario.name} names promo level "${scenario.promoLevel}"`,
+      ).toBeDefined();
+      // The registry and the promo level agree on what the scene evidences.
+      expect(
+        [...scenario.categories],
+        `${scenario.name} categories must match its promo level`,
+      ).toEqual([...PROMO_LEVELS[scenario.promoLevel].categories]);
+      // A fixed uint32 seed makes every capture reproducible.
+      expect(Number.isInteger(scenario.seed)).toBe(true);
+      expect(scenario.seed as number).toBeGreaterThanOrEqual(0);
+      expect(scenario.seed as number).toBeLessThanOrEqual(0xffffffff);
+    }
+  });
+
+  it('maps every authored promo level to exactly one scenario, in order (AC2)', () => {
+    expect(PROMO_SCENARIOS.map((scenario) => scenario.promoLevel)).toEqual([
+      ...PROMO_LEVEL_KEYS,
+    ]);
+  });
+
+  it('evidences every editorial category with at least one scenario (AC3)', () => {
+    const evidenced = new Set<string>(
+      PROMO_SCENARIOS.flatMap((scenario) => [...scenario.categories]),
+    );
+    for (const category of EDITORIAL_CONFIG.categories) {
+      expect(
+        evidenced.has(category),
+        `editorial category "${category}" is not evidenced`,
+      ).toBe(true);
+    }
+    // No stray category outside the compiler's vocabulary.
+    expect([...evidenced].sort()).toEqual(
+      [...EDITORIAL_CONFIG.categories].sort(),
+    );
+  });
+
+  it('opens on the dense high-intensity hook (AC3)', () => {
+    const hook = PROMO_SCENARIOS[0];
+    expect(hook.promoLevel).toBe(PROMO_LEVEL_KEYS[0]);
+    // The hook is authored for sustained blaster fire and a broad enemy mix ...
+    expect([...hook.categories]).toContain('weapons');
+    expect([...hook.categories]).toContain('enemies');
+    // ... over a dense opening wave, so the first cut is never near-empty.
+    expect(openingWaveSize(hook.promoLevel)).toBeGreaterThanOrEqual(20);
+  });
+
+  it('keeps the full catalogue resolvable alongside the original shortcuts (AC4)', () => {
+    const names = CAPTURE_SCENARIOS.map((scenario) => scenario.name);
+    expect(new Set(names).size).toBe(names.length);
+    for (const scenario of CAPTURE_SCENARIOS) {
+      expect(isRegisteredScenario(scenario.name)).toBe(true);
+      expect(resolveDevScenario(`?scenario=${scenario.name}`)).not.toBeNull();
+    }
   });
 });
