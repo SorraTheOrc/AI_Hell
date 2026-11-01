@@ -323,6 +323,35 @@ function finishTransition(scene: PlayScene): void {
 }
 
 /**
+ * Asserts the active wave's spawn window is fully released and quiescent
+ * before an exact alive count is asserted (AH-0MVXWEF0V003F7CV).
+ *
+ * `getAliveCount()` counts spawned-and-alive entities, while
+ * `finishSpawnAnimations()` only completes the wormhole transit of entities
+ * the wave has **already released** — a group still pending on the wave timer
+ * is not counted yet. An exact `getAliveCount() === waveEnemyCount()`
+ * assertion is therefore only meaningful once every released enemy has
+ * finished its wormhole transit and nothing is still spawning (the
+ * 8-of-9 shortfall class recorded by AH-0MVXWEDOH002LO1M). Stating the
+ * precondition at the call site means the exact count can never silently
+ * start measuring an in-flight (legitimately short) state.
+ */
+function expectSpawnWindowReleased(scene: PlayScene): void {
+  const stillSpawning = scene
+    .getEnemies()
+    .filter(
+      (e) =>
+        e.alive && (e as unknown as { isSpawning?: boolean }).isSpawning === true,
+    );
+  expect(
+    stillSpawning.length,
+    `spawn window is not quiescent: ${stillSpawning.length} enemy/enemies are ` +
+      'still in the wormhole transit — drain it with finishSpawnAnimations() ' +
+      'before asserting an exact alive count (AH-0MVXWEF0V003F7CV)',
+  ).toBe(0);
+}
+
+/**
  * Deterministic regression guard (AH-0MUHA0MMP001DZ5C): asserts the
  * wave-clear path actually started a transition. It drives the scene with
  * bounded deterministic ticks and polls `isTransitioning()` instead of
@@ -1278,6 +1307,21 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
 
     expect(wm.level).toBe(2);
     expect(wm.waveNumber).toBe(1);
+    // Exact, not tolerant — by recorded decision (AH-0MVXWEF0V003F7CV).
+    // `getAliveCount()` counts spawned-and-alive entities, while
+    // `finishSpawnAnimations()` (via `finishTransition` above) only completes
+    // the wormhole transit of entities the wave has already released, so the
+    // full complement is the only correct count once the spawn window is
+    // quiescent. The recorded 8-of-9 flake was **not** a lost spawn or a
+    // seed effect: a 100-seed sweep with the loop stopped reproduced it zero
+    // times (every run asserted the exact full complement), and only the
+    // resumed live rAF loop — real wall-clock frames advancing the wave timer
+    // between `await` points — produced 8 of 9 (AH-0MVXWEDOH002LO1M). The
+    // deterministic boot now pins
+    // the seed and stops that loop (AH-0MVXWEE3L004SPTC), which makes this
+    // exact count reproducible — keep it exact: it is what catches a
+    // genuinely lost spawn.
+    expectSpawnWindowReleased(scene);
     expect(scene.getAliveCount()).toBe(wm.waveEnemyCount());
   });
 
@@ -2204,7 +2248,16 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
     const boss = scene.getBoss()!;
     expect(boss.getPhaseNumber()).toBe(1);
 
-    // One phase requires the encounter's effective per-phase hit pool.
+    // Exact, not tolerant — by recorded decision (AH-0MVXWEF0V003F7CV).
+    // One `damageBossPhase()` call delivers exactly one phase's hit pool, so
+    // the phase index must advance by exactly one; a phase that skips from 1
+    // to 3 is the double-advance regression this assertion exists for. The
+    // recorded flake was **not** looseness in the phase math: seeds
+    // 8/16/33/36/86 hold an active `frenzy` effect at the boss (a
+    // seed-determined power-up drop state) which grants a bonus hit, so the
+    // batch advanced two phases (AH-0MVXWEDOH002LO1M). The deterministic
+    // boot pins seed 1, which holds no frenzy bonus hit, so the count stays
+    // exact rather than being relaxed to a monotonicity check.
     damageBossPhase(scene, boss);
     expect(boss.getPhaseNumber()).toBe(2);
     expect(scene.getBossPhase()).toBe(2);
