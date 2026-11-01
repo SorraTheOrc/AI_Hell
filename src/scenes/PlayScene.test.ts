@@ -550,8 +550,6 @@ async function bootSceneWithLevels(
     asteroidSpawner?: boolean;
     /** Extra scenes registered after PlayScene (e.g. the choice overlay). */
     extraScenes?: (typeof Phaser.Scene)[];
-    /** TEMP REPRO (AH-0MVXWEDOH002LO1M): pin the run seed before restart. */
-    runSeed?: number;
   } = {},
 ): Promise<{ booted: BootedGame; scene: PlayScene }> {
   // The shipped default now sequences the campaign (AH-0MUJSUTLA006Q8E1),
@@ -574,12 +572,69 @@ async function bootSceneWithLevels(
     // (or auto-update-release) any random asteroids.
     scene.setAsteroidSpawnerEnabled(false);
   }
-  // TEMP REPRO (AH-0MVXWEDOH002LO1M): `setRunSeed` is read at the next
-  // `create()`, so it must be injected here — before the restart.
-  if (options.runSeed !== undefined) scene.setRunSeed(options.runSeed);
   scene.scene.restart();
   await advanceGame(scene.game, 200);
   return { booted: game, scene };
+}
+
+/**
+ * The run seed pinned for every deterministic `PlayScene` boot in this file
+ * (AH-0MVXWEE3L004SPTC; flake parent AH-0MVX2DKC8001RRM4). Seed `1` sits
+ * outside the reproduction set recorded by AH-0MVXWEDOH002LO1M (seeds
+ * `8`/`16`/`33`/`36`/`86` reproduce the boss phase-advance failure via an
+ * active frenzy bonus hit), so every suite boots identical state on every
+ * run and every host load.
+ */
+const DETERMINISTIC_RUN_SEED = 1;
+
+/**
+ * One shared deterministic boot for `PlayScene` (AH-0MVXWEE3L004SPTC; flake
+ * parent AH-0MVX2DKC8001RRM4).
+ *
+ * The harness boots deterministically (fixed deltas) but **resumes** the live
+ * `requestAnimationFrame` loop afterwards (`advanceGame` restarts it,
+ * `src/test/gameHarness.ts`), so a real frame with a wall-clock delta can run
+ * between a test's `await` points on a loaded host — the flake class this
+ * child exists to remove. The helper closes both halves of the
+ * deterministic-boot contract, combining the two precedents already in the
+ * file:
+ *
+ * - `bootWithHordeWave()`'s `setRunSeed` before the restart: `setRunSeed` is
+ *   only read at the next `create()` (`PlayScene._initRunSeed`), so the seed
+ *   is injected *before* `scene.scene.restart()`. The restarted `create()`
+ *   installs the seeded RNG stream `_initRunSeed()` would otherwise draw
+ *   from `Math.random()` — the stream behind wave/spawn planning and drop
+ *   rolls, which is exactly the variety that made the boss phase-advance
+ *   assertion flaky (seed `8` fails with an active frenzy bonus hit, see
+ *   AH-0MVXWEDOH002LO1M);
+ * - `bootPlayWithAsteroid()`'s `game.loop.stop()` (AH-0MVG23LT7000CG4R):
+ *   stopping the resumed loop means no live frame can advance the wave
+ *   timer between the test's `await` points — the mechanism behind the
+ *   level-advance alive-count shortfall (8 of 9 planned enemies released).
+ *
+ * `{ seed }` overrides the pinned `DETERMINISTIC_RUN_SEED`; the seed-sweep
+ * harness uses that to probe arbitrary seeds.
+ *
+ * @param boot — boots the scene and applies any pre-restart configuration
+ *   (injected levels, spawner isolation) before the deterministic restart;
+ *   the returned scene must be a `PlayScene`.
+ * @param options.seed — run seed to inject before the restart (defaults to
+ *   `DETERMINISTIC_RUN_SEED`).
+ */
+async function bootDeterministic(
+  boot: () => Promise<{ booted: BootedGame; scene: PlayScene }>,
+  options: { seed?: number } = {},
+): Promise<{ booted: BootedGame; scene: PlayScene }> {
+  const { booted, scene } = await boot();
+  // `setRunSeed` is only read at the next `create()`, so it must be injected
+  // before the restart, not after the boot settles.
+  scene.setRunSeed(options.seed ?? DETERMINISTIC_RUN_SEED);
+  scene.scene.restart();
+  await advanceGame(scene.game, 200);
+  // Stop the live rAF loop the harness resumed at the end of `bootScene()`;
+  // a real frame can no longer run between the test's `await` points.
+  scene.game.loop.stop();
+  return { booted, scene };
 }
 
 /**
@@ -621,6 +676,75 @@ function singleLevelCampaign(): LevelDefinition[] {
   ];
 }
 
+describe('PlayScene — deterministic boot helper (AH-0MVXWEE3L004SPTC)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    // Same static-campaign baseline as the rest of the file: the sequenced
+    // campaign would otherwise override the booted levels per run.
+    localStorage.setItem(
+      RULES_STORAGE_KEY,
+      JSON.stringify({ sequencedWavesEnabled: false }),
+    );
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    localStorage.clear();
+  });
+
+  it('AC3 — two boots through the shared helper observe the same seeded wave state, with no live loop', async () => {
+    // Boot twice through `bootDeterministic`; the two boots must be
+    // indistinguishable — the same run seed, the same enemy/wave composition
+    // after the same deterministic tick sequence — and the live rAF loop must
+    // not be running for the duration of the test.
+    async function bootOnce(): Promise<{ scene: PlayScene; game: Phaser.Game }> {
+      const result = await bootDeterministic(async () => {
+        const bootedGame = await bootScene([PlayScene, GameOverScene, MenuScene]);
+        const bootedScene = bootedGame.scene as PlayScene;
+        // Isolate from the random asteroid spawner (mirrors `bootPlay`) so
+        // the composition observed below is exactly the wave definition's.
+        bootedScene.setAsteroidSpawnerEnabled(false);
+        return { booted: bootedGame, scene: bootedScene };
+      });
+      booted = result.booted;
+      return { scene: result.scene, game: result.booted.game };
+    }
+
+    // The same deterministic tick sequence every boot goes through.
+    const fingerprint = (scene: PlayScene): string => {
+      scene.finishSpawnAnimations();
+      scene.tick(0.016);
+      const wm = scene.getWaveManager();
+      const composition = scene
+        .getEnemies()
+        .map((e) => `${e.constructor.name}@${e.x.toFixed(2)},${e.y.toFixed(2)}`)
+        .join('|');
+      return `${wm.level}.${wm.waveNumber}.${wm.enemiesAlive}:${composition}`;
+    };
+
+    const first = await bootOnce();
+    const firstSeed = first.scene.getRunSeed();
+    expect(firstSeed).toBe(DETERMINISTIC_RUN_SEED);
+    // The live loop is not running for the duration of the test (AC3).
+    expect(first.game.loop.running).toBe(false);
+    const firstFingerprint = fingerprint(first.scene);
+    expect(firstFingerprint).not.toBe('');
+
+    // Tear the first game down before booting the second — two Phaser games
+    // cannot share the harness's canvas container.
+    booted = null;
+    first.game.destroy(true);
+
+    const second = await bootOnce();
+    expect(second.scene.getRunSeed()).toBe(firstSeed);
+    // The live loop stays stopped for the whole test.
+    expect(second.game.loop.running).toBe(false);
+    expect(fingerprint(second.scene)).toBe(firstFingerprint);
+  });
+});
+
 describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   let booted: BootedGame | null = null;
 
@@ -657,20 +781,20 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
-    booted = await bootScene([PlayScene, GameOverScene, MenuScene]);
-    // This suite predates the dynamic spawner and asserts deterministic
-    // wave/banner/transition behaviour; isolate it from random asteroid
-    // spawns (the spawner is covered by its own integration suites).
-    (booted.scene as PlayScene).setAsteroidSpawnerEnabled(false);
-    // TEMP REPRO (AH-0MVXWEDOH002LO1M): pin the run seed when requested via
-    // the environment, then restart so `_initRunSeed()` adopts it.
-    const reproSeed = reproSeedFromEnv('REPRO_SEED_LEVEL');
-    if (reproSeed !== undefined) {
-      (booted.scene as PlayScene).setRunSeed(reproSeed);
-      (booted.scene as PlayScene).scene.restart();
-      await advanceGame(booted.game, 200);
-    }
-    return booted.scene as PlayScene;
+    // Deterministic boot through the shared helper (AH-0MVXWEE3L004SPTC):
+    // the run seed is pinned before the restart and the resumed live loop is
+    // stopped, so the suite can never see a random seed or a live frame.
+    const { booted: game, scene } = await bootDeterministic(async () => {
+      const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
+      const bootedScene = result.scene as PlayScene;
+      // This suite predates the dynamic spawner and asserts deterministic
+      // wave/banner/transition behaviour; isolate it from random asteroid
+      // spawns (the spawner is covered by its own integration suites).
+      bootedScene.setAsteroidSpawnerEnabled(false);
+      return { booted: result, scene: bootedScene };
+    });
+    booted = game;
+    return scene;
   }
 
   /**
@@ -680,10 +804,11 @@ describe('PlayScene — playable run (AH-0MU7305Z2003NII3)', () => {
    * the whole ten-level campaign.
    */
   async function bootPlayAtBoss(): Promise<PlayScene> {
-    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign(), {
-      // TEMP REPRO (AH-0MVXWEDOH002LO1M): env-pinned run seed.
-      runSeed: reproSeedFromEnv('REPRO_SEED_BOSS'),
-    });
+    // Deterministic boot through the shared helper (AH-0MVXWEE3L004SPTC):
+    // pinned seed before the restart, resumed live loop stopped.
+    const { booted: game, scene } = await bootDeterministic(() =>
+      bootSceneWithLevels(singleLevelCampaign(), { asteroidSpawner: false }),
+    );
     booted = game;
     scene.setAsteroidSpawnerEnabled(false);
     return scene;
@@ -1968,10 +2093,12 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
    * the other nine levels. Same encounter, ~1/10 the simulated waves.
    */
   async function bootPlayAtBoss(): Promise<PlayScene> {
-    const { booted: game, scene } = await bootSceneWithLevels(singleLevelCampaign(), {
-      // TEMP REPRO (AH-0MVXWEDOH002LO1M): env-pinned run seed.
-      runSeed: reproSeedFromEnv('REPRO_SEED_BOSS'),
-    });
+    // Deterministic boot through the shared helper (AH-0MVXWEE3L004SPTC):
+    // the pinned seed keeps the boss walk's power-up drops reproducible and
+    // the resumed live loop stays stopped.
+    const { booted: game, scene } = await bootDeterministic(() =>
+      bootSceneWithLevels(singleLevelCampaign(), { asteroidSpawner: false }),
+    );
     booted = game;
     // Isolate the deterministic boss walk from the random asteroid spawner:
     // a timeout walk simulates a lot of game time, and freely spawning
@@ -9152,14 +9279,6 @@ describe('PlayScene — dev-gated startLevel seam (AH-0MVE01EY0008QEVX AC3)', ()
 // ───────────────────────────────────────────────────────────────────────────
 const REPRO_SWEEP = process.env.REPRO_SWEEP === '1';
 
-function reproSeedFromEnv(name: string): number | undefined {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') return undefined;
-  const value = Number(raw);
-  if (!Number.isFinite(value)) throw new Error(`Bad ${name}: ${raw}`);
-  return value;
-}
-
 (REPRO_SWEEP ? describe : describe.skip)(
   'REPRO SWEEP (AH-0MVXWEDOH002LO1M)',
   () => {
@@ -9190,11 +9309,10 @@ function reproSeedFromEnv(name: string): number | undefined {
       };
       let reproduced = 0;
       for (const seed of seedRange()) {
-        const { booted: game, scene } = await bootSceneWithLevels(
-          singleLevelCampaign(),
-          { runSeed: seed },
+        const { booted: game, scene } = await bootDeterministic(
+          () => bootSceneWithLevels(singleLevelCampaign(), { asteroidSpawner: false }),
+          { seed },
         );
-        scene.setAsteroidSpawnerEnabled(false);
         try {
           reachBoss(scene);
           const boss = scene.getBoss()!;
