@@ -2261,10 +2261,13 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
    * the other nine levels. Same encounter, ~1/10 the simulated waves.
    */
   async function bootPlayAtBoss(): Promise<PlayScene> {
-    // `bootSceneWithLevels` routes through the shared deterministic helper
-    // (AH-0MVXWEE3L004SPTC): the pinned seed keeps the boss walk's power-up
-    // drops reproducible and the resumed live loop stays stopped (file-wide
-    // rollout AH-0MVXWEEJM00813GK).
+    // Deterministic boot (flake parent AH-0MVWZYGDS0015W1F): `bootSceneWithLevels`
+    // routes through the shared `bootDeterministic` helper, which pins
+    // `DETERMINISTIC_RUN_SEED` before the restart (same power-up drops and
+    // spawn plans every run) and stops the resumed live rAF loop (precedent:
+    // AH-0MVG23LT7000CG4R). Without the seed, the boss walk's drop rolls
+    // differed run to run; with a live frame, a wall-clock delta could advance
+    // the wave mid-test.
     const { booted: game, scene } = await bootSceneWithLevels(
       singleLevelCampaign(),
       { asteroidSpawner: false },
@@ -2281,6 +2284,11 @@ describe('PlayScene — boss encounter (AH-0MU730M3T008C7CQ)', () => {
   /** Boots with a deterministic large asteroid placed outside the wave
    * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    // Deterministic boot (flake parent AH-0MVWZYGDS0015W1F): `bootSceneWithLevels`
+    // routes through the shared `bootDeterministic` helper, so `DETERMINISTIC_RUN_SEED`
+    // is pinned before the restart and the resumed live loop stays stopped
+    // (precedent: AH-0MVG23LT7000CG4R) — the asteroid composition and the
+    // spawn plan are identical on every run.
     // Isolate the asteroid: disable the dynamic spawner from before the scene
     // restarts so these asteroid-behaviour tests are not perturbed by random
     // spawns, then place one deterministic large asteroid through the public
@@ -2691,6 +2699,10 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   });
 
   async function bootPlay(): Promise<PlayScene> {
+    // Deterministic boot (flake parent AH-0MVWZYGDS0015W1F): the shared
+    // `bootDeterministic` helper pins `DETERMINISTIC_RUN_SEED` before the
+    // restart (same wave/enemy composition and drop rolls every run) and
+    // stops the resumed live rAF loop (precedent: AH-0MVG23LT7000CG4R).
     const { booted: game, scene } = await bootDeterministic(async () => {
       const result = await bootScene([PlayScene, GameOverScene, MenuScene]);
       return { booted: result, scene: result.scene as PlayScene };
@@ -2702,6 +2714,11 @@ describe('PlayScene — asteroid integration (AH-0MU8BZ2ZM004J47F)', () => {
   /** Boots with a deterministic large asteroid placed outside the wave
    * definition (see `plainCampaign`). */
   async function bootPlayWithAsteroid(): Promise<PlayScene> {
+    // Deterministic boot (flake parent AH-0MVWZYGDS0015W1F): `bootSceneWithLevels`
+    // routes through the shared `bootDeterministic` helper, so `DETERMINISTIC_RUN_SEED`
+    // is pinned before the restart and the resumed live loop stays stopped
+    // (precedent: AH-0MVG23LT7000CG4R) — the asteroid composition and the
+    // spawn plan are identical on every run.
     // Isolate the asteroid: disable the dynamic spawner from before the scene
     // restarts so these asteroid-behaviour tests are not perturbed by random
     // spawns, then place one deterministic large asteroid through the public
