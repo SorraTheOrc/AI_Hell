@@ -73,6 +73,8 @@ import {
   captureStartKeys,
   captureStartPlan,
   captureUrl,
+  describeScenario,
+  findCapturedScenario,
   formatScenarioList,
   installRunEndedListener,
   listScenarios,
@@ -80,6 +82,7 @@ import {
   parseCaptureArgs,
   parseCaptureCount,
   planCaptureRun,
+  planScenarioLaunch,
   readRunEndedSignal,
   renderScenarioListing,
   readDevTelemetryBuffer,
@@ -144,6 +147,7 @@ import {
   salvageFailedCapture,
 } from './capture-salvage.mjs';
 import { CAPTURE_SCENARIOS } from './capture-scenarios.mjs';
+import type { CapturePromoScenario } from './capture-scenario-schema.mjs';
 import { SCENE_FADE_MS, buildScenePlan } from './capture-scenes.mjs';
 import {
   CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
@@ -1911,8 +1915,14 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
     const rendered = renderScenarioListing({ json: true });
     const parsed = JSON.parse(rendered);
 
+    // Additive metadata (AH-0MVSDMAC0006DS25): the original `name`/`effect`
+    // fields are still present, plus the registry kind every entry declares.
     expect(parsed).toEqual(
-      CAPTURE_SCENARIOS.map(({ name, effect }) => ({ name, effect })),
+      CAPTURE_SCENARIOS.map(({ name, effect, kind }) => ({
+        name,
+        effect,
+        kind,
+      })),
     );
   });
 
@@ -2021,6 +2031,191 @@ describe('--list-scenarios (AH-0MV6JGELV001FAX1)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+describe('promo scenario CLI support (AH-0MVSDMAC0006DS25)', () => {
+  // A valid promo registry entry (the catalogue item fills the real registry
+  // later): the CLI must plan/list it generically, from its `kind`, before
+  // any promo entry exists.
+  const promoEntry: CapturePromoScenario = Object.freeze({
+    name: 'promo-hook',
+    effect: 'Dense opening swarm to hook the promo.',
+    kind: 'promo',
+    preset: 'Aggro',
+    promoLevel: 'promo-hook',
+    categories: Object.freeze(['enemies', 'pickups']) as unknown as CapturePromoScenario['categories'],
+    seed: 42,
+  });
+  const withPromo = [...CAPTURE_SCENARIOS, promoEntry];
+
+  it('findCapturedScenario matches like the resolver (trim + lowercase)', () => {
+    expect(findCapturedScenario('boss', withPromo)?.name).toBe('boss');
+    expect(findCapturedScenario('  PROMO-Hook ', withPromo)?.name).toBe(
+      'promo-hook',
+    );
+    expect(findCapturedScenario('not-registered', withPromo)).toBeNull();
+    expect(findCapturedScenario('', withPromo)).toBeNull();
+    expect(findCapturedScenario(null, withPromo)).toBeNull();
+  });
+
+  it('listScenarios carries the registry kind and promo metadata', () => {
+    const listed = listScenarios(withPromo);
+    const promo = listed.find((entry) => entry.name === 'promo-hook');
+
+    expect(promo).toEqual({
+      name: 'promo-hook',
+      effect: 'Dense opening swarm to hook the promo.',
+      kind: 'promo',
+      preset: 'Aggro',
+      promoLevel: 'promo-hook',
+      categories: ['enemies', 'pickups'],
+      seed: 42,
+    });
+    // Existing entries keep their additive shape (no promo-only fields).
+    const boss = listed.find((entry) => entry.name === 'boss');
+    expect(boss).toEqual({
+      name: 'boss',
+      effect: CAPTURE_SCENARIOS[0].effect,
+      kind: 'boss',
+    });
+    // The JSON projection is a fresh copy: mutating it cannot touch the
+    // registry (or the shared frozen categories array).
+    promo!.categories!.push('weapons');
+    expect(promoEntry.categories).toEqual(['enemies', 'pickups']);
+  });
+
+  it('describeScenario adds preset/categories to a promo line only', () => {
+    expect(describeScenario(CAPTURE_SCENARIOS[0])).toBe(
+      `${CAPTURE_SCENARIOS[0].name} — ${CAPTURE_SCENARIOS[0].effect}`,
+    );
+    expect(describeScenario(promoEntry)).toBe(
+      'promo-hook — Dense opening swarm to hook the promo. '
+        + '[promo: preset Aggro; categories enemies, pickups]',
+    );
+  });
+
+  it('formatScenarioList shows every promo with its category/preset on one line', () => {
+    const text = formatScenarioList(listScenarios(withPromo));
+    const lines = text
+      .split('\n')
+      .filter((line) => line.startsWith('  '));
+
+    expect(lines).toHaveLength(withPromo.length);
+    const promoLine = lines.find((line) => line.includes('promo-hook'));
+    expect(promoLine).toContain('preset Aggro');
+    expect(promoLine).toContain('categories enemies, pickups');
+  });
+
+  it('renderScenarioListing --json keeps every registry entry, promo metadata included', () => {
+    const parsed = JSON.parse(
+      renderScenarioListing({ json: true }, listScenarios(withPromo)),
+    ) as Array<Record<string, unknown>>;
+
+    expect(parsed.map((entry) => entry.name)).toEqual(
+      withPromo.map((entry) => entry.name),
+    );
+    expect(parsed.find((entry) => entry.name === 'promo-hook')).toMatchObject({
+      kind: 'promo',
+      preset: 'Aggro',
+      promoLevel: 'promo-hook',
+      categories: ['enemies', 'pickups'],
+      seed: 42,
+    });
+  });
+
+  it('plans the demo lifecycle for a promo scenario (no release, waits for run-ended)', () => {
+    const plan = planScenarioLaunch({ scenario: 'promo-hook' }, withPromo);
+
+    expect(plan.mode).toBe('scenario');
+    expect(plan.kind).toBe('promo');
+    expect(plan.lifecycle).toBe('promo');
+    expect(plan.scenario).toBe('promo-hook');
+    // Ordinary Play Game activation (the game forces demo-mode flight).
+    expect(plan.startPlan).toEqual([{ key: 'Enter', delayAfterMs: 0 }]);
+    // Continuous bot run: record until run-ended/cap, never a release step.
+    expect(plan.waitsForRunEnd).toBe(true);
+    expect(plan.releaseScenarioHandle).toBe(false);
+    expect(plan.botFlown).toBe(true);
+  });
+
+  it('keeps the jump lifecycle and release step for boss/defeat (AC4)', () => {
+    for (const name of ['boss', 'boss-four-hits', 'defeat']) {
+      const plan = planScenarioLaunch({ scenario: name });
+      expect(plan.mode).toBe('scenario');
+      expect(plan.kind).toBe(name === 'defeat' ? 'defeat' : 'boss');
+      expect(plan.lifecycle).toBe('jump');
+      expect(plan.startPlan).toEqual([{ key: 'Enter', delayAfterMs: 0 }]);
+      expect(plan.waitsForRunEnd).toBe(true);
+      expect(plan.releaseScenarioHandle).toBe(true);
+      // A jump scenario is a frozen scripted display, not a bot-flown run.
+      expect(plan.botFlown).toBe(false);
+    }
+  });
+
+  it('leaves the demo/scripted plans unchanged', () => {
+    const demo = planScenarioLaunch({});
+    expect(demo.mode).toBe('demo');
+    expect(demo.kind).toBeNull();
+    expect(demo.lifecycle).toBe('demo');
+    expect(demo.startPlan).toEqual([
+      { key: 'Tab', delayAfterMs: START_KEY_GAP_MS },
+      { key: 'Enter', delayAfterMs: 0 },
+    ]);
+    expect(demo.waitsForRunEnd).toBe(true);
+    expect(demo.releaseScenarioHandle).toBe(false);
+
+    const scripted = planScenarioLaunch({ scripted: true });
+    expect(scripted.mode).toBe('scripted');
+    expect(scripted.lifecycle).toBe('scripted');
+    expect(scripted.waitsForRunEnd).toBe(false);
+    expect(scripted.startPlan).toEqual([{ key: 'Enter', delayAfterMs: 0 }]);
+  });
+
+  it('honours --duration and keeps the legacy path for an unknown name', () => {
+    // `--duration` keeps the legacy fixed-length behaviour for every kind.
+    expect(
+      planScenarioLaunch({ scenario: 'promo-hook', fixedDuration: true }, withPromo)
+        .waitsForRunEnd,
+    ).toBe(false);
+    expect(
+      planScenarioLaunch({ scenario: 'boss', fixedDuration: true })
+        .waitsForRunEnd,
+    ).toBe(false);
+
+    // An unregistered name keeps the previous jump/release path so the game
+    // ignores it and the recorder reports the actionable error.
+    const unknown = planScenarioLaunch({ scenario: 'nope' }, withPromo);
+    expect(unknown.kind).toBeNull();
+    expect(unknown.lifecycle).toBe('jump');
+    expect(unknown.scenario).toBe('nope');
+    expect(unknown.releaseScenarioHandle).toBe(true);
+  });
+
+  it('buildScenarioCapturePlan includes promo entries with their metadata (AC3)', () => {
+    const items = buildScenarioCapturePlan({
+      scenarios: listScenarios(withPromo),
+      output: 'clips',
+      timestamp: 'STAMP',
+      exists: () => false,
+    });
+
+    expect(items).toHaveLength(withPromo.length);
+    expect(items.map((item) => item.scenario)).toEqual(
+      withPromo.map((entry) => entry.name),
+    );
+    expect(items.find((item) => item.scenario === 'promo-hook')).toMatchObject({
+      kind: 'promo',
+      preset: 'Aggro',
+      promoLevel: 'promo-hook',
+      categories: ['enemies', 'pickups'],
+      seed: 42,
+    });
+    // Non-promo items keep the shape they had before (plus the additive kind).
+    expect(items[0]).toMatchObject({
+      scenario: 'boss',
+      kind: 'boss',
+    });
+    expect(items[0]).not.toHaveProperty('preset');
   });
 });
 

@@ -694,9 +694,12 @@ added by AH-0MUWTNPYJ0031FQE):
   `npm run capture -- --list-scenarios` prints every implemented
   `--scenario` value plus its one-line effect, straight from the shared
   registry (`scripts/capture-scenarios.mjs`) that the game resolver also
-  reads — so the list can never drift from what the game accepts. It boots
-  **no browser or server** and exits `0`; add `--json` for a machine-readable
-  array `[ { "name": …, "effect": … } ]`.
+  reads — so the list can never drift from what the game accepts. A promo
+  entry's line also names its bot-tuning preset and editorial categories.
+  It boots **no browser or server** and exits `0`; add `--json` for a
+  machine-readable array `[ { "name", "effect", "kind", "preset"?, … } ]`
+  carrying the promo metadata (`preset`, `promoLevel`, `categories`, `seed`)
+  alongside the original `name`/`effect` fields.
 - **Batch clips (`--count n` / `-n`):** `npm run capture -- --count 3` records
   **3 clips in one process** — one Vite dev server and one browser, a fresh
   page per iteration, no state leaking between clips. With `--output
@@ -711,11 +714,14 @@ added by AH-0MUWTNPYJ0031FQE):
   scenario failed or hit the `--max-duration` cap (AH-0MV6JGQFK007MXGX). The
   set is read from the shared registry, so it matches
   `npm run capture -- --list-scenarios`; the default no-scenario demo run is
-  **not** included. Combine with **`--count n`** for **`N x all`**: n clips of
-  every registered scenario in one process, scenario-major order, each named
-  with a per-scenario iteration suffix. `--output <dir>` is a directory
-  (`<dir>/<scenario>.webm`, or `<dir>/<scenario>-<n>.webm` with `--count > 1`);
-  without it files default to
+  **not** included. Boss/defeat clips still freeze-and-release through the
+  page-side handle, while a promo clip is a continuous bot-flown run recorded
+  until its run-ended signal (no release step), so each scenario takes the
+  lifecycle its registry `kind` requires. Combine with **`--count n`** for
+  **`N x all`**: n clips of every registered scenario in one process,
+  scenario-major order, each named with a per-scenario iteration suffix.
+  `--output <dir>` is a directory (`<dir>/<scenario>.webm`, or
+  `<dir>/<scenario>-<n>.webm` with `--count > 1`); without it files default to
   `capture-output/<scenario>-<timestamp>.webm` and an existing file is never
   silently overwritten (a `-<n>` suffix is used).
 - **Multi-scene capture (`capture:scenes`):** `npm run capture:scenes --

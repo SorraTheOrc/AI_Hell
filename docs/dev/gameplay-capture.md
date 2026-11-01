@@ -451,9 +451,23 @@ making it the cheap way to discover scenarios before a capture run
 # human-readable, one line per scenario (value — effect)
 npm run capture -- --list-scenarios
 
-# machine-readable array [ { "name": ..., "effect": ... } ]
+# machine-readable array: every entry has name/effect/kind; a promo entry
+# also carries preset/promoLevel/categories (and seed when declared)
 npm run capture -- --list-scenarios --json
 ```
+
+Every entry appears, including the `kind: 'promo'` catalogue. A promo entry's
+human line additionally names its bot-tuning `preset` and the editorial
+`categories` it evidences, on the same single line, e.g.
+
+```text
+  promo-blitz-hook — Dense opening hook. [promo: preset aggressive-hunter; categories weapons, enemies]
+```
+
+so `--list-scenarios` alone shows why each promo is in the catalogue; the
+`--json` form carries the same metadata as structured fields
+(`{ "name", "effect", "kind", "preset", "promoLevel", "categories", "seed"? }`)
+without dropping the original `name`/`effect` fields.
 
 When `--list-scenarios` is passed, every other flag is ignored: all other
 options describe a capture run, and the listing returns instead without
@@ -502,6 +516,16 @@ same scene instance drops the promo injection and resolves the shipped
 campaign again. Promo scenarios never freeze the run (that is a boss/defeat
 behaviour) and, like every dev scenario, are **inert in a production build**
 and when no promo URL parameter is present.
+
+Because a promo run is continuous, the capture plans its lifecycle from the
+scenario's registry `kind` (`planScenarioLaunch`): Play Game is activated
+with **Enter** and the clip records until the game's run-ended signal (or the
+`--max-duration` cap), exactly like the default demo path. There is **no
+page-side freeze/release step** — `window.__aiHellScenario` is only installed
+by the boss/defeat jump scenarios, so the recorder never waits for or calls
+`resume()` for a promo. `--all-scenarios` therefore records one clean clip
+per registered scenario, promo entries included, with each clip taking the
+lifecycle its kind requires.
 
 Everything is gated behind `import.meta.env.DEV`: a production build ignores
 the query parameter (`resolveDevScenario` is never consulted), so the shipped
@@ -1973,7 +1997,9 @@ records the game's own **attract/demo mode** — the survival-first bot in
 external input. The capture only starts the demo (Tab → Enter on **Watch
 Demo**) and records it. `resolveCaptureMode` / `captureStartKeys` in
 `scripts/capture-gameplay.mjs` select this path (default) versus the scripted
-fallback. This is the higher-quality clip and exercises the same code that
+fallback; `planScenarioLaunch` additionally selects the per-kind dev-scenario
+lifecycle (jump vs bot-flown promo) when `--scenario` is used. This is the
+higher-quality clip and exercises the same code that
 ships.
 
 **Fallback: the scripted sweep plan.** `scripts/capture-bot.mjs` owns the
