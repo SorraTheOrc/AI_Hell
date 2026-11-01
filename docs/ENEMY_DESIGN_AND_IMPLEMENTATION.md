@@ -562,6 +562,117 @@ sequencer's default tolerance. The measured vector is pinned in
   classification fixture resolves through `classifyArchetype` (with the
   documented defaults for unknown keys).
 
+#### 1.5.10 Campaign-wide variety invariant (AC1–AC3, AH-0MVSE6D2L0034SKG)
+
+The parent epic (AH-0MVI5XXOU00954EA) turns "waves need more variation in
+enemy types" into three campaign-wide invariants measured over the built
+campaign (`buildSequencedLevels()` — all ten levels, all 100 waves):
+
+- **AC1 — sequential distinctness.** No two adjacent waves *inside a level*
+  share an enemy composition. This is rule R4 (§1.5.4) applied to the whole
+  campaign, not just the generated waves. "Same enemies" means the same *set*
+  of archetypes: counts, spacing, group order and duplicate groups cannot
+  manufacture variety. Adjacency is within a level; a level's final wave is
+  never compared with the next level's first wave.
+- **AC2 — whole-campaign coverage.** Every level delivers **at least two**
+  distinct archetypes across its ten waves.
+- **AC3 — level identity preserved.** Each level keeps the dominant archetype
+  its GDD §3.2 identity documents and mixes secondary archetypes around it —
+  **dominance, not purity**. A level whose documented identity is a deliberate
+  mix (Level 4 Firestorm, Level 8 Gridlock, Level 10 The Gauntlet) has no
+  single dominant anchor and is asserted through its showcase archetypes
+  instead.
+
+##### Single source of truth — `LEVEL_IDENTITY`
+
+The identity of every level is defined once in `src/waves/campaignVariety.ts`
+and consumed by the tests, the GDD §3.2 identity column and this table. Do not
+restate it anywhere else: change the module and let the docs guard
+(`src/waves/campaignVarietyDocs.test.ts`) fail until the prose is updated.
+
+| Level | Identity (label) | Dominant | Showcase archetypes |
+|------:|------------------|----------|---------------------|
+| 1 | Entry — scout-led V-formation ramp | `scout` | `scout` |
+| 2 | Descent — dive-led single-enemy waves | `diver` | `diver` |
+| 3 | The Core — tank cores in mixed pairs | `tank` | `tank` |
+| 4 | Firestorm — firing debut with a mixed core | — (deliberate mix) | `diver`, `tank`, `swarm` |
+| 5 | Predictable Death — phaser crosshair grid | `phaser` | `phaser` |
+| 6 | Invasion — marching columns and the capturer | `march` | `march`, `capturer` |
+| 7 | Segmented Assault — tank line with centipede and ghosts | `tank` | `centipede`, `ghost-chase` |
+| 8 | Gridlock — lane traffic, horde and raider showcase | — (deliberate mix) | `lane-traffic`, `grunt`, `raider` |
+| 9 | Orbital Siege — phaser siege line with ghosts | `phaser` | `phaser`, `ghost-chase` |
+| 10 | The Gauntlet — dense player-targeter finale | — (deliberate mix) | `raider`, `capturer`, `grunt` |
+
+Dominance is measured by **spawned weight** across the level, not by declared
+group counts: a `single`-formation group spawns one entity whatever its
+`count`, and a spawner opt-in counts one per scheduled archetype. Ties break
+alphabetically so the measurement is stable across runs.
+
+##### Shared composition-signature definition
+
+"The same enemies" has exactly one definition, shared by the sequencer and the
+audit so the two cannot drift:
+
+- `compositionSignature()` in `src/core/waveBalance.ts` sorts and de-duplicates
+  a wave's archetype keys and joins them with `COMPOSITION_SIGNATURE_SEPARATOR`
+  (`scout+tank`). Counts, spacing, group order and duplicate groups are
+  deliberately excluded.
+- `groupsComposition()` is the generated path's view: the signature of a
+  wave's groups (generated waves are composed from groups only).
+- `waveComposition()` in `src/waves/campaignVariety.ts` is the audit path's
+  view: it folds a wave's **spawner opt-ins** into the key list before calling
+  `compositionSignature()`, so all four `ghost-*` personalities, the
+  `centipede` chain, the `grunt` horde and `lane-traffic` are part of the
+  composition even though they are not wave groups. A flag-only change therefore
+  counts as a different enemy set.
+
+##### Where R4 is enforced and measured
+
+- **Generated (`curve` / `dynamic`) waves — the sequencer.** The campaign
+  builder hands each generated wave the preceding built wave's composition
+  through `SequencerOptions.avoidCompositions` (`src/waves/sequencedLevels.ts`),
+  and the sequencer deterministically rebuilds the wave from the next-best
+  eligible candidate until the composition differs (§1.5.4). Balance rules
+  R1–R3 keep precedence (`RULE_PRECEDENCE`), so distinctness only chooses
+  between compliant compositions.
+- **Authored (`fixed`) waves — data plus audit.** A `fixed` wave is never
+  passed to the sequencer, so R4 does not constrain it as the *produced* wave;
+  it still acts as the predecessor a generated wave must avoid. Its own
+  adjacency is covered by the authored `LEVELS` data in
+  `src/waves/Formations.ts` and verified by the campaign variety audit.
+- **Audit — `auditCampaignVariety()`** (`src/waves/campaignVariety.ts`). A
+  pure, read-only module that returns every adjacent duplicate pair (AC1), the
+  per-level distinct archetypes and counts (AC2), and each level's dominant
+  archetype + showcase presence (AC3). It has no Phaser/runtime dependency, so it
+  runs in the fast unit project.
+
+##### Mixed `fixed` / `curve` / `dynamic` mechanism (producer Q3 = c')
+
+The default campaign is deliberately mixed: hand-authored `fixed` waves where a
+specific showcase, mini-boss or identity pin must be guaranteed, deterministic
+`curve` waves from `targetDifficulty`, and seeded `dynamic` filler/openers for
+per-run variety. The shipped mix is **5 `dynamic` + 10 `curve` + 85 `fixed`**
+waves; every wave's mode and the reason it holds it is published as the
+generated ledger in GDD §3.2 (`src/waves/modeLedger.ts`, pinned by
+`src/waves/modeLedger.test.ts`). The distinctness rule binds on **all three
+modes**: generated waves through R4, authored waves through their data.
+
+##### Verification evidence
+
+- `src/waves/campaignVariety.test.ts` — the audit module's unit tests plus the
+  per-level and campaign-wide AC1–AC3 assertions at the default seed.
+- `src/waves/campaignVerification.test.ts` — the C1 evidence item
+  (AH-0MVSE7ILL000Y27B): re-runs AC1–AC3 over the seed sweep 0/1/7/42, asserts
+  the byte-identical same-seed rebuild, keeps `curve`/`fixed` waves
+  seed-independent while `dynamic` waves diverge, and pins the recorded
+  per-level evidence snapshot.
+- `src/waves/campaignBalanceAudit.test.ts` — the R1–R4 enforcement cost and
+  the sequencer acceptance band on the shipped campaign.
+- `src/waves/modeLedger.test.ts` — the mode mix and the generated-wave R4
+  constraint across ten seeds.
+- Gym↔game parity — `PlayScene` and the gyms consume the same shared modules,
+  so the invariant holds by construction (see §5.1).
+
 ### 1.6 Enemy force fields (AH-0MVJ8W4GE007OMNT)
 
 Deeper campaign levels spawn shielded enemies behind a **force field** — a
@@ -2539,24 +2650,29 @@ per level by AH-0MVCC8XSS007P01Z / AH-0MVCYANT6003SG5C) interleaves the
 classic-arcade roster with the existing archetypes. Every level spans exactly
 ten waves, with wave 10 the level's mini-boss (`miniBoss: true`):
 
-| Level | Theme | Featured showcase |
-|-------|-------|-------------------|
-| 1 | Entry | V-formation drift (no fire) |
-| 2 | Descent | Diver/swarm drift (no fire) |
-| 3 | The Core | Rect + V pairs (no fire) |
-| 4 | Firestorm | First enemy fire (aimed/spread/radial) |
-| 5 | Predictable Death | Fixed orbital Phasers (memorisable radial) |
-| 6 | Invasion | Space-Invaders `march` + Galaga `capturer` tractor pull |
-| 7 | Segmented Assault | Centipede `centipede` chain + Pac-Man `ghosts` pursuit |
-| 8 | Gridlock | Frogger `laneTraffic` lanes + Robotron `horde` + Defender `raider` dive |
-| 9 | Orbital Siege | Missile-Command `orbital-strike` arcs + orbital Phasers + `ghosts` |
-| 10 | The Gauntlet | Dense mixed finale of the remaining roster |
+| Level | Theme | Dominant identity archetype | Featured showcase |
+|-------|-------|-----------------------------|-------------------|
+| 1 | Entry | `scout` | V-formation drift (no fire) |
+| 2 | Descent | `diver` | Diver/swarm drift (no fire) |
+| 3 | The Core | `tank` | Rect + V pairs (no fire) |
+| 4 | Firestorm | — (deliberate mix) | First enemy fire (aimed/spread/radial) |
+| 5 | Predictable Death | `phaser` | Fixed orbital Phasers (memorisable radial) |
+| 6 | Invasion | `march` | Space-Invaders `march` + Galaga `capturer` tractor pull |
+| 7 | Segmented Assault | `tank` | Centipede `centipede` chain + Pac-Man `ghosts` pursuit |
+| 8 | Gridlock | — (deliberate mix) | Frogger `laneTraffic` lanes + Robotron `horde` + Defender `raider` dive |
+| 9 | Orbital Siege | `phaser` | Missile-Command `orbital-strike` arcs + orbital Phasers + `ghosts` |
+| 10 | The Gauntlet | — (deliberate mix) | Dense mixed finale of the remaining roster |
+
+The dominant column is the same `LEVEL_IDENTITY` contract documented in
+§1.5.10; the GDD §3.2 identity column is its prose form. A deliberate mix
+(Levels 4, 8 and 10) has no single dominant anchor and is asserted through its
+showcase archetypes instead.
 
 Wave 10 of **every** level is its bespoke mini-boss (see §1.0): Pulse Warden,
 Coil Sentinel, Shard Matron, Void Herald, Ion Tyrant, Cinder Maw, Prism Wraith,
 Gravemind, Star Eater and The Hollow King for levels 1–10 respectively.
 
-Three design rules are enforced by tests:
+Four design rules are enforced by tests:
 
 1. **Roster coverage** — every classic-arcade archetype appears at least once
    across the merged campaign (`src/waves/campaignRoster.test.ts`). `march`,
@@ -2571,6 +2687,11 @@ Three design rules are enforced by tests:
 3. **Style variety** — adjacent levels differ in their dominant movement/attack
    style, and the configured target curve is non-decreasing
    (`src/waves/campaignInvariants.test.ts`).
+4. **Campaign-wide variety** — no two sequential waves in a level share the same
+   archetype composition, every level fields at least two archetypes across its
+   ten waves, and each level keeps its `LEVEL_IDENTITY` dominant archetype and
+   showcase (`src/waves/campaignVariety.test.ts`,
+   `src/waves/campaignVerification.test.ts`; definition and evidence in §1.5.10).
 
 Levels 1–3 stay `shootEnabled: false` (GDD §2.4); Levels 4–10 fire (GDD §2.5).
 Each featured archetype debuts on a hand-authored `fixed` wave so its showcase

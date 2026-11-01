@@ -35,6 +35,14 @@
  * movement/attack style. Spawner-delivered archetypes opt in per wave via
  * the `ghosts`, `centipede`, `horde` and `laneTraffic` flags rather than as
  * wave groups (AH-0MV396OK0001FX14).
+ *
+ * The level-identity contract (documented dominant archetype and showcase,
+ * plus the campaign-wide sequential-distinctness rule) is defined by
+ * `LEVEL_IDENTITY` in `./campaignVariety.ts` and documented in
+ * `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §1.5.10; the GDD §3.2 identity
+ * column is its prose form. Keep the authored data here consistent with it —
+ * `src/waves/campaignVariety.test.ts` asserts identity dominance and
+ * distinctness over this data.
  */
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';

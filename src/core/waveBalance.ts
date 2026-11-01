@@ -356,6 +356,9 @@ export const COMPOSITION_SIGNATURE_SEPARATOR = '+';
  * @returns the keys sorted, de-duplicated and joined by
  *   {@link COMPOSITION_SIGNATURE_SEPARATOR}; the empty string for a wave that
  *   delivers no archetype at all.
+ *
+ * @see docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md §1.5.4 (R4) and §1.5.10 (the
+ *   campaign-wide variety invariant)
  */
 export function compositionSignature(
   archetypeKeys: readonly string[],

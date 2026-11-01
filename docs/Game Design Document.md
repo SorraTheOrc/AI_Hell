@@ -463,19 +463,35 @@ the report shape, the scheduling recipe and the tolerance-tuning guidance are in
 
 ### 3.2 Level Progression Overview
 
-| Level | Theme | Enemy Count | Enemy-Fired Bullets | Description |
-|-------|-------|-------------|---------------------|-------------|
-| 1 | Entry | Moderate | No | Introduction to formation waves — the opening is a varied, non-firing mix of light archetypes (Scouts, Divers, Swarms) rebuilt per run from a seeded curve — plus randomly spawning, self-splitting Asteroids that drift in from a random offscreen edge every wave — simple movement patterns, no enemy bullets |
-| 2 | Descent | Moderate–Large | No | Tighter formations; more complex movement |
-| 3 | The Core | Large | No | Dense formations; maximum positional threat |
-| 4 | Firestorm | Moderate | Yes | Enemies begin firing; introduction to bullet patterns |
-| 5 | Predictable Death | Smaller | Yes (predictable) | Fewer enemies with highly structured, memorizable bullet patterns — the memorisation test before the classic-arcade finale |
-| 6 | Invasion | Large | Yes | The classic-arcade debut: stepping Space-Invaders `march` formations plus the Galaga `capturer` tractor pull |
-| 7 | Segmented Assault | Large | Yes | The winding Centipede `centipede` chain plus Pac-Man `ghosts` pursuing the live player |
-| 8 | Gridlock | Large | Yes | Frogger `laneTraffic` lanes, the Robotron `horde` rush and the Defender `raider` patrol-and-dive |
-| 9 | Orbital Siege | Large | Yes | Missile-Command telegraphed `orbital-strike` arcs among orbital Phasers with pursuing `ghosts` |
-| 10 | The Gauntlet | Large | Yes (full mix) | Dense mixed finale pairing every player-targeter with non-targeting archetypes before the boss |
-| Boss | AI Throne | N/A | Yes (complex) | Final boss encounter with multi-phase attack patterns |
+| Level | Theme | Enemy Count | Enemy-Fired Bullets | Description | Identity (dominant — secondary mix) |
+|-------|-------|-------------|---------------------|-------------|-----------------------------------|
+| 1 | Entry | Moderate | No | Introduction to formation waves — the opening is a varied, non-firing mix of light archetypes (Scouts and Divers) rebuilt per run from a seeded curve, with a single Tank escort on alternate waves from wave 4 — plus randomly spawning, self-splitting Asteroids that drift in from a random offscreen edge every wave — simple movement patterns, no enemy bullets | `scout` dominant — Divers in the seeded openers, single `tank` escorts from wave 4 |
+| 2 | Descent | Moderate–Large | No | Dive-led, single-archetype waves that alternate with a Swarm counter-rotation; tighter formations and more complex movement | `diver` dominant — Swarm counter-rotation and Scout support |
+| 3 | The Core | Large | No | Dense mixed pairs built around a Tank core; maximum positional threat | `tank` dominant — Scout, Swarm and Diver escorts |
+| 4 | Firestorm | Moderate | Yes | Enemies begin firing; a mixed Diver/Tank/Swarm Firestorm core introduces bullet patterns | Deliberate mix — `diver` + `tank` + `swarm` (no single dominant) |
+| 5 | Predictable Death | Smaller | Yes (predictable) | Fewer enemies with highly structured, memorisable bullet patterns — the memorisation test before the classic-arcade finale | `phaser` dominant — Tank and Diver escorts between crosshair waves |
+| 6 | Invasion | Large | Yes | The classic-arcade debut: stepping Space-Invaders `march` formations plus the Galaga `capturer` tractor pull | `march` dominant — `capturer`, Swarm, Diver, Phaser and Tank secondary mix |
+| 7 | Segmented Assault | Large | Yes | The winding Centipede `centipede` chain plus Pac-Man `ghosts` pursuing the live player, around a Tank core | `tank` dominant — all four `ghost-*` personalities, `centipede`, Phaser, Scout, Diver and Swarm support |
+| 8 | Gridlock | Large | Yes | Frogger `laneTraffic` lanes, the Robotron `horde` rush and the Defender `raider` patrol-and-dive | Deliberate mix — `lane-traffic`, `grunt` horde and `raider` showcase around Swarm and Tank weight |
+| 9 | Orbital Siege | Large | Yes | Missile-Command telegraphed `orbital-strike` arcs among orbital Phasers with pursuing `ghosts` | `phaser` dominant — all four `ghost-*` personalities, Diver/Swarm/Tank support and a `lane-traffic` cameo |
+| 10 | The Gauntlet | Large | Yes (full mix) | Dense mixed finale pairing every player-targeter with non-targeting archetypes before the boss | Deliberate mix — `raider`, `capturer`, `grunt`, all four `ghost-*`, `lane-traffic` and `phaser` around Swarm/Tank weight |
+| Boss | AI Throne | N/A | Yes (complex) | Final boss encounter with multi-phase attack patterns | — |
+
+> **Enemy-type variety invariant (parent AH-0MVI5XXOU00954EA).** Two rules make
+> the mix above a campaign-wide contract rather than per-level hand-tuning:
+> (1) **no two sequential waves inside a level share the same enemy composition**
+> — "same enemies" means the same *set* of archetypes, so changing counts,
+> spacing or group order does not make a wave distinct; and
+> (2) every level keeps the **dominant archetype** in the identity column
+> while mixing at least one secondary archetype around it (dominance, not
+> purity). The rule is defined once by `compositionSignature()` in
+> `src/core/waveBalance.ts` (sequencer rule R4), measured campaign-wide by
+> `auditCampaignVariety()` in `src/waves/campaignVariety.ts`, and the identity
+> column is the prose form of that module's `LEVEL_IDENTITY` table — the single
+> source of truth the tests assert against. The full invariant, the identity
+> table and the mixed `fixed`/`curve`/`dynamic` mechanism are documented in
+> [`docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md`](./ENEMY_DESIGN_AND_IMPLEMENTATION.md)
+> §1.5.10.
 
 > **Note**: "Moderate," "Large," and "Smaller" are relative. The exact enemy counts per level are design decisions that can be tuned during implementation, but the progression from no-bullets to bullets to fewer-but-patterned enemies must be preserved.
 
@@ -520,6 +536,22 @@ the report shape, the scheduling recipe and the tolerance-tuning guidance are in
 > the gyms are not constrained. The static skeleton
 > (levels 1–10) is always present; the static campaign is the fallback, and the
 > boss still triggers after the final level.
+
+> **Sequential-distinctness rule (parent AH-0MVI5XXOU00954EA).** Whichever mode
+> a wave holds, the campaign never fields the same enemy composition on two
+> sequential waves of a level: the composition signature (the sorted archetype
+> set, with spawner opt-ins folded in) must change wave to wave, so no
+> generated, curated or hand-authored wave can repeat its predecessor. The rule
+> binds generated waves through the sequencer (R4, `avoidCompositions`) and
+> authored `fixed` waves through their data; `auditCampaignVariety()` measures
+> all 100 waves, and `campaignVariety.test.ts` /
+> `campaignVerification.test.ts` assert it at the default seed and across a
+> seed sweep. Level identity is preserved alongside it — each level's dominant
+> archetype is listed in §3.2 and defined by `LEVEL_IDENTITY` in
+> `src/waves/campaignVariety.ts` (full invariant: enemy guide §1.5.10). The
+> `dynamic` waves are not a free-for-all either: the `MAX_ARCHETYPE_PER_LEVEL`
+> cap still limits a generated archetype to one wave per level, and the curated
+> openings stay R1-compliant.
 
 #### Default-campaign generation-mode ledger (AH-0MVSE7GWU0074H5I)
 

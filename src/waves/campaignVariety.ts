@@ -19,7 +19,10 @@
  * invariants: the campaign tests, the authored-data rework items and the
  * documentation all consume it instead of reimplementing composition logic.
  * It has no Phaser/runtime dependency — only pure type/data modules and the
- * spawner key constants — so it runs in the fast unit project.
+ * spawner key constants — so it runs in the fast unit project. The prose
+ * contract lives in `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §1.5.10 and the
+ * GDD §3.2 identity column; `src/waves/campaignVarietyDocs.test.ts` guards
+ * that pairing against drift.
  *
  * The audit is deliberately read-only: it never mutates the campaign it is
  * given and never caches, so a test can compare two runs directly.

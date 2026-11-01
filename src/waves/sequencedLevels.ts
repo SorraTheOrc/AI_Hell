@@ -37,6 +37,11 @@
  * covered by the authored data and the campaign variety audit. A level
  * boundary is not an adjacency, so the tracker resets per level.
  *
+ * The campaign-wide contract this enforces — plus the level-identity table and
+ * the shared composition-signature definition — is documented in
+ * `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §1.5.10 (GDD §3.2 for the prose
+ * identity column).
+ *
  * Fallback is per level: a level with an empty/malformed curve (or a
  * sequencer throw) keeps that level's static definition when one exists, and
  * is skipped otherwise. Whole-campaign fallback to static `LEVELS` only
