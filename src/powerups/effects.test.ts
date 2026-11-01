@@ -2622,6 +2622,48 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
     }
   });
 
+  it('AC4b — Phase Shift and Teleport field pickups keep their shipped regeneration (regression)', () => {
+    // The Q-A1=b no-regeneration gate is scoped to the three budget kinds: a
+    // Phase Shift / Teleport **field pickup** still grants a charge that
+    // spends once and then refills on the shared tick — the shipped
+    // regeneration (AH-0MV82I7TX0009JMT) is unchanged by the absorbed-hit
+    // conversion.
+    for (const id of ['phase_shift', 'teleport'] as PowerUpId[]) {
+      const { registry, store } = poolFixture();
+      registry.applyCollect(id); // field pickup — never owned
+      expect(store.isConsumableOwned(id), id).toBe(false);
+      expect(registry.consumableCharges(id), id).toBe(1);
+
+      // One pickup charge resolves exactly one event through the shipped seam
+      // and starts its own regeneration timer (no ownership gate here).
+      const spent =
+        id === 'phase_shift'
+          ? registry.updateDanger(true, 0.016) === 'phase_shift'
+          : registry.consumeTeleport();
+      expect(spent, id).toBe(true);
+      expect(registry.consumableCharges(id), id).toBe(0);
+      expect(registry.consumableRechargeRemaining(id), id).toBeCloseTo(
+        store.consumableRechargeTime(id),
+        6,
+      );
+
+      // No charge returns without a tick; the shared tick completes the timer
+      // and the pool refills for reuse — pickup regeneration is intact.
+      registry.tick(store.consumableRechargeTime(id) / 2);
+      expect(registry.consumableCharges(id), id).toBe(0);
+      registry.tick(store.consumableRechargeTime(id) / 2 + 0.01);
+      expect(registry.consumableCharges(id), id).toBe(1);
+
+      if (id === 'phase_shift') {
+        registry.updateDanger(false, PHASE_REARM_COOLDOWN + 0.01);
+        expect(registry.updateDanger(true, 0.016)).toBe('phase_shift');
+      } else {
+        expect(registry.consumeTeleport()).toBe(true);
+      }
+      expect(registry.consumableCharges(id), id).toBe(0);
+    }
+  });
+
   it('AC6 — temporary-level TTL expiry never reduces already-granted charges (no clawback)', () => {
     for (const id of ['shield', 'thorns', 'force_field'] as PowerUpId[]) {
       const { registry, store } = poolFixture();

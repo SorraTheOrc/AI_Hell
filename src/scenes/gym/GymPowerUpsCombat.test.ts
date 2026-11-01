@@ -445,25 +445,28 @@ describe('GymPowerUpsCombat — Force Field reflector (AH-0MV1BIX1W006XF95)', ()
     expect(registry.forceFieldRemaining()).toBe(0);
   });
 
-  it('only reflects while active: after the window the bullet damages the ship again', async () => {
+  it('only reflects while a charge is held: a spent pickup pool lets the bullet through', async () => {
     const scene = await bootCombat();
     const player = scene.getPlayer()!;
     player.setPosition(480, 270);
     const registry = scene.getEffectsRegistry();
     registry.applyCollect('force_field');
 
-    // While active, a hull-overlapping bullet is reflected, not a hit.
+    // A pickup grants exactly one charge and no effect window; while that
+    // charge is held a hull-overlapping bullet is reflected, not a hit.
+    expect(registry.forceFieldRemaining()).toBe(1);
     scene.spawnEnemyBullet(480, 270, -100, 0);
     resolveCollisions(scene);
     expect(scene.getPlayerHitCount()).toBe(0);
 
-    // Let the timed window expire; the bubble ends and reflection stops.
-    registry.tick((registry.remaining('force_field') ?? 0) + 0.1);
+    // The one reflection spends the sole charge: a pickup-only pool never
+    // regenerates (Q-A1=b), so the bubble pops and the ship is exposed.
+    expect(registry.forceFieldRemaining()).toBe(0);
     expect(registry.isForceFieldActive()).toBe(false);
 
     // Clear the reflected bullet from the earlier frame (in a real run it
-    // travels away) so it cannot intercept the post-expiry shot, then fire
-    // another enemy bullet into the unshielded ship.
+    // travels away) so it cannot intercept the next shot, then fire another
+    // enemy bullet into the unshielded ship.
     playerBullets(scene).length = 0;
     player.setPosition(480, 270);
     scene.spawnEnemyBullet(480, 270, 0, 0);

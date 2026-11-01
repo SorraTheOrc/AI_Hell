@@ -401,6 +401,58 @@ describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
   });
 });
 
+describe('HUD pickup-row states for the budget kinds (AH-0MVVD8S4J007L8KX)', () => {
+  /** Spends one granted field-pickup charge through the kind's seam. */
+  function spendFieldCharge(reg: EffectsRegistry, id: PowerUpId): boolean {
+    switch (id) {
+      case 'thorns':
+        return reg.tryConsumeThornsRam();
+      case 'force_field':
+        return reg.tryConsumeForceFieldReflect();
+      default:
+        throw new Error(`no one-event spend seam for ${id}`);
+    }
+  }
+
+  // Shield's equivalent pickup-row states are pinned in the P3 describe above
+  // (charge count in the first test, greyed-empty and hide-at-TTL in the
+  // "greys the P3 row" test); these two kinds complete the per-kind set.
+  for (const id of ['thorns', 'force_field'] as PowerUpId[]) {
+    it(`${id}: shows the pickup charge, no phantom countdown, greyed empty and hides at the level TTL`, async () => {
+      const reg = new EffectsRegistry();
+      reg.applyCollect(id); // one pickup charge, no effect window
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      // The row carries exactly the granted charge; a pickup-only charge is
+      // never owed back, so no phantom countdown appears (Q-A1=b).
+      const armed = hud.getRows().find((r) => r.id === id)!;
+      expect(armed).toBeDefined();
+      expect(armed.stacks).toBe(1);
+      expect(armed.greyed).toBe(false);
+      expect(armed.recharge).toBeUndefined();
+      expect(armed.label).not.toContain('next in');
+
+      // The one spent charge empties the pool: the temporary level stack
+      // keeps the row visible but greyed until its own TTL expires.
+      expect(spendFieldCharge(reg, id)).toBe(true);
+      hud.refresh();
+      const spent = hud.getRows().find((r) => r.id === id)!;
+      expect(spent).toBeDefined();
+      expect(spent.greyed).toBe(true);
+      expect(spent.stacks).toBeUndefined();
+      expect(spent.label).not.toContain('×0');
+      expect(spent.recharge).toBeUndefined(); // nothing is owed back
+
+      // The temporary-level TTL expiry releases the row (field-only rule).
+      reg.tick((reg.powerUpTemporaryRemaining(id) ?? 0) + 0.1);
+      hud.refresh();
+      expect(hud.getRows().some((r) => r.id === id)).toBe(false);
+      destroy(game);
+    });
+  }
+});
+
 describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', () => {
   it('shows a finite charge count in the label and a countdown while the pickup window is open', async () => {
     const reg = new EffectsRegistry();
@@ -1588,9 +1640,10 @@ describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
     });
   }
 
-  it('renders a field-pickup Shield from its timed budget, not the charge pool', async () => {
-    // A field pickup keeps the shipped timed window (producer decision 2 / PD5),
-    // so its budget — not the empty shared pool — is what the row reports.
+  it('renders a field-pickup Shield from the granted charge with no countdown', async () => {
+    // A field pickup grants exactly one charge into the shared pool (parent
+    // AH-0MVUVSW4J0009QUW): the row reports that charge and no pool timer,
+    // because a pickup-only charge is never owed back (Q-A1=b).
     const reg = new EffectsRegistry(new PowerUpLevelStore());
     reg.applyCollect('shield');
     const { game, hud } = await bootWithHUD(reg);
@@ -1598,8 +1651,7 @@ describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
 
     const row = rowFor(hud, 'shield')!;
     expect(row).toBeDefined();
-    expect(row.stacks).toBe(reg.shieldAbsorptionsRemaining());
-    expect(row.stacks).toBeGreaterThan(0);
+    expect(row.stacks).toBe(1);
     expect(row.greyed).toBe(false);
     // No pool timer was opened by a field pickup, so nothing counts down.
     expect(row.recharge).toBeUndefined();

@@ -32,6 +32,7 @@ import {
   POWER_UP_LIVES_START,
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
+  resolveTemporaryWindow,
   summarisePowerUpLevelChange,
 } from './powerUpLevels';
 import { curveValue } from '../utils/curve';
@@ -1701,5 +1702,18 @@ describe('PowerUpLevelStore — shared consumable charge pool (F2)', () => {
       store.consumableRechargeTime('teleport'),
       6,
     );
+  });
+});
+
+describe('budget-kind temporary-window TTLs (AH-0MVVD8S4J007L8KX)', () => {
+  it('resolves the flat Shield 15 s / Thorn Field 8 s / Force Field 8 s windows', () => {
+    // The absorbed-hit conversion retires the three level-scaled effect
+    // windows (producer decision Q-A2=a, AH-0MVVD8SXO004QLZW) in favour of
+    // the flat TTLs below. At the base level the resolver already returns
+    // exactly the flat values, so these pins pass today and stay green once
+    // the window axes are removed.
+    expect(resolveTemporaryWindow('shield', 0)).toBe(15);
+    expect(resolveTemporaryWindow('thorns', 0)).toBe(8);
+    expect(resolveTemporaryWindow('force_field', 0)).toBe(8);
   });
 });
