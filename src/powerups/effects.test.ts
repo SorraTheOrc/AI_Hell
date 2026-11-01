@@ -124,18 +124,21 @@ describe('resolved stats replace raw constants (AC2)', () => {
     expect(reg.fireRateMultiplier()).toBeCloseTo(p5Multiplier(0), 10);
   });
 
-  it('P3 duration is resolved from the catalogue and grows with level', () => {
+  it('P3 pickup grants exactly one charge, clamped at the level-resolved cap', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('shield');
-    const base = resolvePowerUpAtLevel('shield', 0).shieldDuration!;
-    expect(reg.remaining('shield')).toBeCloseTo(base, 10);
-    expect(base).toBe(15);
+    // A field pickup grants exactly one charge (clamped at the level cap),
+    // never a timed bubble (parent AH-0MVUVSW4J0009QUW AC1).
+    expect(reg.consumableCharges('shield')).toBe(1);
+    expect(reg.remaining('shield')).toBeUndefined();
+    expect(reg.isShielded).toBe(true);
 
-    // Level-up: the refreshed duration is the resolved level-1 value.
+    // The level-resolved cap grows with level — a second collection before
+    // the level window expires clamps the pool to the new cap.
     reg.applyCollect('shield');
-    const upgraded = resolvePowerUpAtLevel('shield', 1).shieldDuration!;
-    expect(reg.remaining('shield')).toBeCloseTo(upgraded, 10);
-    expect(upgraded).toBeGreaterThan(base);
+    expect(reg.consumableCharges('shield')).toBe(
+      resolvePowerUpAtLevel('shield', 1).shieldAbsorptions!,
+    );
   });
 
   it('P5 duration is resolved from the catalogue and grows with level', () => {
@@ -405,24 +408,31 @@ describe('P3 Shield: level-resolved bubble, absorbs one hit, refresh on re-colle
     expect(reg.tryAbsorbShield()).toBe(false); // no shield left
   });
 
-  it('expires after its resolved duration', () => {
+  it('holds the granted charge across the level-window TTL (no clawback)', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('shield');
-    const duration = resolvePowerUpAtLevel('shield', 0).shieldDuration!;
-    reg.tick(duration - 0.1);
-    expect(reg.isShielded).toBe(true);
-    reg.tick(0.2);
+    // The pickup opens no effect window; the level window only reverts the
+    // temporary stack at its TTL, and the granted charge is never clawed
+    // back (parent AH-0MVUVSW4J0009QUW AC6).
+    const ttl = reg.powerUpTemporaryRemaining('shield')!;
+    reg.tick(ttl + 0.1);
+    expect(reg.isShielded).toBe(true); // charge still held
+    expect(reg.consumableCharges('shield')).toBe(1);
+    expect(reg.powerUpTemporaryRemaining('shield')).toBeUndefined();
+    expect(reg.tryAbsorbShield()).toBe(true);
     expect(reg.isShielded).toBe(false);
   });
 
-  it('refreshes on re-collect to the new level duration (never additive)', () => {
+  it('re-collects a second charge (total clamped at the level-resolved cap)', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('shield'); // base window
-    // Re-collect before expiry is a level-up: resolved-live longer window,
-    // refreshed (never additive).
+    // Re-collect before expiry is a level-up: the pool gains one more charge,
+    // clamped at the new level's cap (never a bubble refresh).
     reg.applyCollect('shield');
-    const upgraded = resolvePowerUpAtLevel('shield', 1).shieldDuration!;
-    expect(reg.remaining('shield')).toBeCloseTo(upgraded, 10);
+    expect(reg.consumableCharges('shield')).toBe(
+      resolvePowerUpAtLevel('shield', 1).shieldAbsorptions!,
+    );
+    expect(reg.remaining('shield')).toBeUndefined();
   });
 });
 
@@ -479,16 +489,18 @@ describe('P3 Shield: multi-hit absorption (AH-0MUVM9RAO004Y3LB)', () => {
     expect(fixture.registry.shieldAbsorptionsRemaining()).not.toBe(1 + level1);
   });
 
-  it('clears remaining absorptions on expiry and reverts the temporary level', () => {
+  it('a level-window TTL expiry reverts the temporary level but keeps the charge', () => {
     const fixture = createEffectRegistry();
     activateEffectAtUpgradeLevel(fixture, 'shield', 1);
-    expect(fixture.registry.shieldAbsorptionsRemaining()).toBeGreaterThan(1);
+    expect(fixture.registry.shieldAbsorptionsRemaining()).toBeGreaterThan(0);
 
+    // A levelWindow TTL (not a bubble) expires: the temporary stack reverts,
+    // and the granted charges survive untouched (AC6 — no clawback).
     fixture.registry.tick(1000);
 
-    expect(fixture.registry.isShielded).toBe(false);
-    expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(0);
-    // The upgrade came from field pickups only, so it reverts on expiry.
+    expect(fixture.registry.isShielded).toBe(true);
+    expect(fixture.registry.shieldAbsorptionsRemaining()).toBeGreaterThan(0);
+    // The upgrade came from field pickups only, so the level reverts.
     expect(fixture.store.getEffectiveLevel('shield')).toBe(0);
     expect(fixture.store.getUpgradeLevel('shield')).toBe(0);
   });
@@ -505,20 +517,21 @@ describe('P3 Shield: multi-hit absorption (AH-0MUVM9RAO004Y3LB)', () => {
     expect(fixture.store.getUpgradeLevel('shield')).toBe(0);
   });
 
-  it('activeEffects() surfaces P3 with the remaining absorptions and updates on absorb', () => {
+  it('surfaces the remaining charges through the pool accessor and spends on absorb', () => {
     const fixture = createEffectRegistry();
     activateEffectAtUpgradeLevel(fixture, 'shield', 1);
 
-    const before = fixture.registry
-      .activeEffects()
-      .find((e) => e.id === 'shield')!;
-    expect(before.stacks).toBe(fixture.registry.shieldAbsorptionsRemaining());
+    // The registry's timed map never holds `shield` after a pickup (parent
+    // AC1): the armed state and the HUD stack read the pool accessor, not an
+    // activeEffects row. A level-window entry is skipped by activeEffects.
+    expect(
+      fixture.registry.activeEffects().some((e) => e.id === 'shield'),
+    ).toBe(false);
+    const before = fixture.registry.shieldAbsorptionsRemaining();
+    expect(before).toBeGreaterThan(0);
 
     fixture.registry.tryAbsorbShield();
-    const after = fixture.registry
-      .activeEffects()
-      .find((e) => e.id === 'shield')!;
-    expect(after.stacks).toBe(before.stacks! - 1);
+    expect(fixture.registry.shieldAbsorptionsRemaining()).toBe(before - 1);
   });
 });
 
@@ -696,36 +709,28 @@ describe('Smart Bomb: one-shot pickup / permanent periodic (AH-0MV1BIWP9003EHRQ)
 
 // ── Force Field reflector (AH-0MV1BIX1W006XF95) ────────────────────
 
-describe('Force Field: timed bullet reflector (AH-0MV1BIX1W006XF95)', () => {
-  it('a field pickup opens the reflect window with the level-resolved budget', () => {
+describe('Force Field: absorbed-hit bullet reflector (AH-0MV1BIX1W006XF95)', () => {
+  it('a field pickup grants exactly one charge and no effect window', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
     reg.applyCollect('force_field');
 
     expect(reg.isForceFieldActive()).toBe(true);
-    expect(reg.forceFieldRemaining()).toBe(
-      resolvePowerUpAtLevel('force_field', 0).forceFieldReflects,
-    );
-    expect(reg.remaining('force_field')).toBe(
-      resolvePowerUpAtLevel('force_field', 0).forceFieldDuration,
-    );
-    // The HUD row carries the remaining reflect budget.
-    const entry = reg.activeEffects().find((e) => e.id === 'force_field');
-    expect(entry?.stacks).toBe(reg.forceFieldRemaining());
+    expect(reg.forceFieldRemaining()).toBe(1);
+    expect(reg.remaining('force_field')).toBeUndefined();
+    // The HUD row carries the remaining pool count (parent AC3).
+    expect(reg.powerUpLevel('force_field')).toBe(1);
   });
 
-  it('returns at most its reflect budget and then stops reflecting', () => {
+  it('reflects exactly one bullet per granted charge, then stops', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('force_field');
-    const budget = reg.forceFieldRemaining();
-    expect(budget).toBeGreaterThan(0);
+    expect(reg.forceFieldRemaining()).toBe(1);
 
-    for (let i = 0; i < budget; i++) {
-      expect(reg.tryConsumeForceFieldReflect()).toBe(true);
-    }
-    // Budget spent: the bubble is still up but no longer reflects.
+    expect(reg.tryConsumeForceFieldReflect()).toBe(true);
+    // Charge spent: a pickup-only bubble pops (armed means holds a charge).
     expect(reg.forceFieldRemaining()).toBe(0);
-    expect(reg.isForceFieldActive()).toBe(true);
+    expect(reg.isForceFieldActive()).toBe(false);
     expect(reg.tryConsumeForceFieldReflect()).toBe(false);
   });
 
@@ -735,26 +740,27 @@ describe('Force Field: timed bullet reflector (AH-0MV1BIX1W006XF95)', () => {
     expect(reg.tryConsumeForceFieldReflect()).toBe(false);
   });
 
-  it('re-collecting refreshes the window and budget to the level-resolved values', () => {
+  it('re-collecting grants a second charge (clamped at the level cap)', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('force_field');
-    const baseBudget = reg.forceFieldRemaining();
-    // Spend one, then collect again — refreshes to the new level's budget.
+    // Spend one, then collect again — a second charge lands on the pool.
     expect(reg.tryConsumeForceFieldReflect()).toBe(true);
     reg.applyCollect('force_field');
-    expect(reg.forceFieldRemaining()).toBeGreaterThanOrEqual(baseBudget);
     expect(reg.isForceFieldActive()).toBe(true);
+    expect(reg.forceFieldRemaining()).toBeGreaterThanOrEqual(1);
   });
 
-  it('expiry ends reflection and clears the budget', () => {
+  it('a level-window TTL expiry keeps the granted charge (no clawback)', () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('force_field');
 
-    reg.tick((reg.remaining('force_field') ?? 0) + 0.1);
+    const ttl = reg.powerUpTemporaryRemaining('force_field')!;
+    reg.tick(ttl + 0.1);
 
-    expect(reg.isForceFieldActive()).toBe(false);
-    expect(reg.forceFieldRemaining()).toBe(0);
-    expect(reg.tryConsumeForceFieldReflect()).toBe(false);
+    // The level reverts, the granted charge survives and still reflects.
+    expect(reg.isForceFieldActive()).toBe(true);
+    expect(reg.forceFieldRemaining()).toBe(1);
+    expect(reg.tryConsumeForceFieldReflect()).toBe(true);
   });
 
   it('a permanent reward keeps the bubble up and re-arms as charges return', () => {
@@ -1464,7 +1470,9 @@ describe('weapon effects: timed weapons in the combat gym', () => {
     reg.applyCollect('shield');
     reg.applyCollect('magnet');
     expect(reg.activeWeapons()).toHaveLength(1);
-    expect(reg.activeEffects().map((e) => e.id).sort()).toEqual(['magnet', 'shield']);
+    // Magnet renders as a timed effect; the Shield pickup opens only a level
+    // window (no effect row — the HUD reads the pool accessor).
+    expect(reg.activeEffects().map((e) => e.id).sort()).toEqual(['magnet']);
     expect(reg.hasWeapon('spread')).toBe(true);
   });
 
@@ -1490,30 +1498,35 @@ describe('weapon effects: timed weapons in the combat gym', () => {
 // permanent level with no timeout.
 
 describe('temporary/permanent field-pickup contract (F1 worked examples)', () => {
-  it('example A — field pickups only: level reverts on expiry', () => {
+  it('example A — field pickups only: level reverts on expiry, charges stay', () => {
     const store = new PowerUpLevelStore();
     const reg = new EffectsRegistry(store);
 
-    // 1. Pick up Shield → lvl0 for 15 s.
+    // 1. Pick up Shield → one charge granted, no effect window.
     reg.applyCollect('shield');
     expect(store.getEffectiveLevel('shield')).toBe(1);
     expect(store.getUpgradeLevel('shield')).toBe(0);
     expect(store.getPermanentLevel('shield')).toBe(0);
     expect(reg.isShielded).toBe(true);
+    expect(reg.remaining('shield')).toBeUndefined();
 
-    // 2. Pick up Shield again before expiry → lvl1 for 15 s (window refreshed).
+    // 2. Pick up Shield again before expiry → a second charge, clamped at the
+    //    new level's cap (field-pickup levelling unchanged; no bubble to
+    //    refresh).
     reg.applyCollect('shield');
     expect(store.getEffectiveLevel('shield')).toBe(2);
     expect(store.getUpgradeLevel('shield')).toBe(1);
     expect(store.getTempStacks('shield')).toBe(2);
-    expect(reg.remaining('shield')).toBeCloseTo(
-      resolvePowerUpAtLevel('shield', 1).shieldDuration!,
-      5,
+    expect(reg.consumableCharges('shield')).toBe(
+      resolvePowerUpAtLevel('shield', 1).shieldAbsorptions!,
     );
 
-    // 3. Expiry → back to unowned (no permanent level retained).
+    // 3. Level-window expiry → the level reverts to unowned (no permanent
+    //    level retained) but the granted charges are never clawed back
+    //    (AC6); the shield stays armed while a charge is held.
     reg.tick(1000);
-    expect(reg.isShielded).toBe(false);
+    expect(reg.isShielded).toBe(true);
+    expect(reg.consumableCharges('shield')).toBeGreaterThan(0);
     expect(store.getEffectiveLevel('shield')).toBe(0);
     expect(store.getPermanentLevel('shield')).toBe(0);
   });
@@ -1683,20 +1696,24 @@ describe('Thorn Field: automatic ram recharge (AH-0MVJ8YKR70096C6T)', () => {
     expect(registry.thornsMaxAbsorbs()).toBe(2);
   });
 
-  it('refills one spent ram per level-resolved interval while a field window is open', () => {
+  it('permanently owned field refills one spent ram per level-resolved interval', () => {
     const { registry, store } = createEffectRegistry();
-    // A levelled **field pickup** keeps the shipped timed-window budget path
-    // (PD5): its 16 s window outlives the 5 s recharge, so a spent ram returns
-    // while the window is still open.
+    // A **permanently owned** field (scripted level counts as owned, Q-A1=b)
+    // regenerates one spent ram per level-resolved interval through the
+    // shared pool clock — the only regeneration path (parent
+    // AH-0MVTQMREN009DSFW AC2).
     store.setPermanentLevel('thorns', 7);
-    registry.applyCollect('thorns');
+    registry.applyCollect('thorns', true);
+    // Fill the level-resolved budget (a hold-full grant added one charge, and
+    // scripted top-ups are the game's grant seam).
     const budget = registry.thornsMaxAbsorbs();
+    store.grantConsumableCharge('thorns', budget);
     expect(registry.thornsRemaining()).toBe(budget);
 
     expect(registry.tryConsumeThornsRam()).toBe(true);
     expect(registry.thornsRemaining()).toBe(budget - 1);
     const interval = registry.thornsRechargeTime();
-    // The clock starts the moment a ram is spent.
+    // The shared pool clock starts the moment a ram is spent.
     expect(registry.thornsRechargeRemaining()).toBeCloseTo(interval, 6);
 
     registry.tick(interval - 0.1);
@@ -1741,18 +1758,19 @@ describe('Thorn Field: automatic ram recharge (AH-0MVJ8YKR70096C6T)', () => {
     expect(registry.thornsRemaining()).toBe(2);
   });
 
-  it('stops recharging when the timed window expires', () => {
+  it('a pickup-only charge never regenerates and the level window revert keeps it', () => {
     const { registry } = createEffectRegistry();
-    registry.applyCollect('thorns'); // 8 s window
-    registry.tryConsumeThornsRam();
+    // A pickup-only field grants exactly one charge that never refills
+    // (Q-A1=b): even after the level window expires the granted charge stays
+    // usable, and no clock starts for a spent pickup charge.
+    registry.applyCollect('thorns');
     expect(registry.thornsRemaining()).toBe(1);
 
-    registry.tick(8.1); // window expires
-    expect(registry.isActive('thorns')).toBe(false);
+    registry.tryConsumeThornsRam();
     expect(registry.thornsRemaining()).toBe(0);
     expect(registry.thornsRechargeRemaining()).toBe(0);
 
-    // Further ticking never resurrects the budget without a new collection.
+    // The level window expires; the air clears but no charge is owed.
     registry.tick(60);
     expect(registry.thornsRemaining()).toBe(0);
     expect(registry.tryConsumeThornsRam()).toBe(false);
@@ -1765,9 +1783,8 @@ describe('Thorn Field: automatic ram recharge (AH-0MVJ8YKR70096C6T)', () => {
     expect(registry.thornsRemaining()).toBe(0);
 
     registry.tick(12 * 3); // a permanent grant has nothing to count down
-    expect(registry.isActive('thorns')).toBe(true);
     // Only the one spent charge returns — the pool is not topped back up to
-    // the cap inside a permanent window (parent AC2).
+    // the cap (parent AC2).
     expect(registry.thornsRemaining()).toBe(1);
   });
 
@@ -2517,16 +2534,126 @@ describe('Shared consumable charge pool: one-event consumption (F3)', () => {
     }
   });
 
-  it('keeps the field-pickup (temporary) budget path unchanged (PD5)', () => {
+  it('AC1 — a field pickup of the three budget kinds grants exactly one charge and no effect window', () => {
+    for (const id of ['shield', 'thorns', 'force_field'] as PowerUpId[]) {
+      const { registry, store } = poolFixture();
+      registry.applyCollect(id);
+
+      // Exactly one charge into the shared pool, clamped at the cap.
+      expect(store.isConsumableOwned(id), id).toBe(false);
+      expect(registry.consumableCharges(id), id).toBe(1);
+      // No effect window: no timed map entry, no remaining countdown, no row.
+      expect(registry.isActive(id), id).toBe(false);
+      expect(registry.remaining(id), id).toBeUndefined();
+      expect(registry.powerUpTemporaryRemaining(id), id).toBeDefined(); // level window only
+      expect(
+        registry.activeEffects().some((e) => e.id === id),
+        `${id} active row`,
+      ).toBe(false);
+    }
+  });
+
+  it('AC1 — each budget-kind pickup grants one charge the level-resolved cap never exceeds', () => {
     const { registry, store } = poolFixture();
-    registry.applyCollect('shield'); // field pickup, not owned
-    expect(store.isConsumableOwned('shield')).toBe(false);
-    // The timed window keeps its own budget; the shared pool is untouched.
-    expect(registry.shieldAbsorptionsRemaining()).toBe(
-      resolvePowerUpAtLevel('shield', 0).shieldAbsorptions,
+    for (const id of ['shield', 'thorns', 'force_field'] as PowerUpId[]) {
+      registry.applyCollect(id);
+      expect(registry.consumableCharges(id)).toBe(1);
+      expect(registry.consumableCharges(id)).toBeLessThanOrEqual(
+        store.consumableChargeCap(id),
+      );
+    }
+  });
+
+  it('AC2 — one pickup charge resolves exactly one event and never regenerates', () => {
+    for (const id of ['shield', 'thorns', 'force_field'] as PowerUpId[]) {
+      const { registry, store } = poolFixture();
+      registry.applyCollect(id); // pickup-only: not owned
+
+      expect(spendOneEvent(registry, id), id).toBe(true);
+      expect(registry.consumableCharges(id), id).toBe(0);
+      expect(spendOneEvent(registry, id), id).toBe(false);
+
+      // A pickup-granted charge never regenerates (Q-A1=b): long ticks grant
+      // nothing and no regeneration clock starts.
+      expect(registry.consumableRechargeRemaining(id), id).toBeUndefined();
+      registry.tick(store.consumableRechargeTime(id) * 10);
+      expect(registry.consumableCharges(id), id).toBe(0);
+      expect(spendOneEvent(registry, id), id).toBe(false);
+    }
+  });
+
+  it('AC2 — a permanently granted budget kind keeps the spend/regenerate/re-use cycle', () => {
+    for (const id of ['shield', 'thorns', 'force_field'] as PowerUpId[]) {
+      const { registry, store } = poolFixture();
+      registry.applyCollect(id, true); // owned + one charge
+      expect(store.isConsumableOwned(id), id).toBe(true);
+
+      expect(spendOneEvent(registry, id), id).toBe(true);
+      expect(registry.consumableCharges(id), id).toBe(0);
+      registry.tick(store.consumableRechargeTime(id) + 0.01);
+      expect(registry.consumableCharges(id), id).toBe(1);
+      expect(spendOneEvent(registry, id), id).toBe(true); // re-use
+    }
+  });
+
+  it('AC4b — the no-regeneration gate is catalogue data, scoped to the three budget kinds', () => {
+    // Pickup-only budget kinds: regenerating ceiling 0 (Q-A1=b).
+    for (const id of ['shield', 'thorns', 'force_field'] as PowerUpId[]) {
+      const { store } = poolFixture();
+      store.collect(id); // field pickup only — never owned
+      expect(store.isConsumableOwned(id), id).toBe(false);
+      expect(store.consumableRegenCeiling(id), id).toBe(0);
+    }
+    // Phase Shift / Teleport keep their shipped pickup regeneration.
+    for (const id of ['phase_shift', 'teleport'] as PowerUpId[]) {
+      const { store } = poolFixture();
+      store.collect(id);
+      expect(store.consumableRegenCeiling(id), id).toBeGreaterThan(0);
+    }
+    // A permanent grant (ownership) raises the budget ceiling back to the
+    // level-derived cap.
+    for (const id of ['shield', 'thorns', 'force_field'] as PowerUpId[]) {
+      const { store } = poolFixture();
+      store.collect(id, true);
+      expect(store.isConsumableOwned(id), id).toBe(true);
+      expect(store.consumableRegenCeiling(id), id).toBe(
+        store.consumableChargeCap(id),
+      );
+    }
+  });
+
+  it('AC6 — temporary-level TTL expiry never reduces already-granted charges (no clawback)', () => {
+    for (const id of ['shield', 'thorns', 'force_field'] as PowerUpId[]) {
+      const { registry, store } = poolFixture();
+      registry.applyCollect(id);
+      const granted = registry.consumableCharges(id);
+      expect(granted).toBe(1);
+
+      // Let the per-upgrade level window fully expire.
+      const ttl = registry.powerUpTemporaryRemaining(id)!;
+      registry.tick(ttl + 0.1);
+
+      expect(store.getTempStacks(id), id).toBe(0);
+      expect(store.getEffectiveLevel(id), id).toBe(0);
+      // The granted charge is untouched by the level revert.
+      expect(registry.consumableCharges(id), id).toBe(granted);
+      expect(spendOneEvent(registry, id), id).toBe(true);
+    }
+  });
+
+  it('AC6 — a permanent grant replays into the same charged state (checkpoint resume seam)', () => {
+    const first = poolFixture();
+    const replayed = poolFixture();
+    for (const { registry } of [first, replayed]) {
+      // The checkpoint resumes by replaying permanent grants through
+      // `grantPermanentPowerUp` → `applyCollect(id, true)`; the pickup charge
+      // is never persisted (AC6).
+      registry.applyCollect('shield');
+      registry.applyCollect('shield', true);
+    }
+    expect(first.registry.consumableCharges('shield')).toBe(
+      replayed.registry.consumableCharges('shield'),
     );
-    expect(registry.tryAbsorbShield()).toBe(true);
-    expect(registry.consumableCharges('shield')).toBe(0);
-    expect(registry.isShielded).toBe(false); // level-0 budget spent → popped
+    expect(replayed.registry.isConsumableOwned('shield')).toBe(true);
   });
 });

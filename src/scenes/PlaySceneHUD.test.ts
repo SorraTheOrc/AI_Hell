@@ -371,7 +371,10 @@ describe('PlayScene — checkpoint resume restores HUD + effect state (AH-0MVSHI
     expect(registry.isBombPermanent()).toBe(true);
     expect(registry.isSmartBombPermanent()).toBe(true);
     expect(registry.isStrikePermanent()).toBe(true);
-    expect(registry.isActive('shield')).toBe(true);
+    // Shield/Frenzy/Chrono: the permanent base's armed state is the pool (or
+    // the timed effect) — Shield has no effect window in the charge model, so
+    // it is armed exactly while it holds a charge (parent AH-0MVUVSW4J0009QUW).
+    expect(registry.isShielded).toBe(true);
     expect(registry.shieldAbsorptionsRemaining()).toBeGreaterThan(0);
     expect(registry.thornsRemaining()).toBeGreaterThan(0);
     expect(registry.isActive('frenzy')).toBe(true);

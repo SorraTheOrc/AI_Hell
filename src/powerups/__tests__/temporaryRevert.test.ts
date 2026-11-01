@@ -79,8 +79,14 @@ interface KindWindow {
  * declare the catalogue TTL the parent's Resolved decision 1 introduces.
  */
 const KIND_WINDOWS: Record<PowerUpId, KindWindow> = {
+  // The three budget kinds were converted to absorbed-hit pickups (AH-0MVVD8SIT000CO9H):
+  // a field pickup grants exactly one charge and opens no *effect* window —
+  // only the per-upgrade level window below times the temporary stack's
+  // revert, so `isActive(id)` is never true after a pickup. Their TTL still
+  // resolves through `resolveTemporaryWindow` (duration axes until C3
+  // AH-0MVVD8SXO004QLZW flattens them to 15 s / 8 s / 8 s).
   shield: {
-    timed: true,
+    timed: false,
     seconds: (level) =>
       resolvePowerUpAtLevel('shield', level).shieldDuration!,
   },
@@ -99,7 +105,7 @@ const KIND_WINDOWS: Record<PowerUpId, KindWindow> = {
   mineral_scoop: { timed: true, seconds: () => P10_SCOOP_DURATION },
   smart_bomb: { timed: false, seconds: () => 10 },
   force_field: {
-    timed: true,
+    timed: false,
     seconds: (level) =>
       resolvePowerUpAtLevel('force_field', level).forceFieldDuration!,
   },
@@ -115,7 +121,7 @@ const KIND_WINDOWS: Record<PowerUpId, KindWindow> = {
       resolvePowerUpAtLevel('chrono', level).chronoDuration!,
   },
   thorns: {
-    timed: true,
+    timed: false,
     seconds: (level) =>
       resolvePowerUpAtLevel('thorns', level).thornsDuration!,
   },

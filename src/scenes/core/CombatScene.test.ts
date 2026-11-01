@@ -2860,6 +2860,9 @@ describe('CombatScene — Force Field reflect feedback (AH-0MVRDMMYO002SC5V)', (
   it('AC5/AC6 — two intercepted bullets produce two flashes and two cue calls', async () => {
     const scene = await boot();
     const player = armField(scene);
+    // A field pickup grants exactly one charge (parent AH-0MVUVSW4J0009QUW),
+    // so arm a second reflect for the two-bullet test.
+    scene.effects.applyCollect('force_field');
     const cue = vi.spyOn(effectsModule, 'playForceFieldReflectSound');
     const first = new StubBullet(scene, player.x + 20, player.y);
     const second = new StubBullet(scene, player.x, player.y + 24);

@@ -566,18 +566,17 @@ describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
     expect(registry.isHitImmune).toBe(false);
   });
 
-  it('shield refreshes on re-collect (timer back to POWER_UP_LIFETIME)', async () => {
+  it('shield re-collect grants a second charge into the pool', async () => {
     const scene = await bootCombat();
     collectCombatDrop(scene, 'shield');
     const registry = scene.getEffectsRegistry();
+    const store = scene.getEffectsRegistry().levelStore();
 
-    // 10 s after collect, shield has ~5 s remaining; re-collect refreshes.
-    registry.tick(10);
-    const before = registry.remaining('shield')!;
-    expect(before).toBeGreaterThan(0);
+    expect(registry.consumableCharges('shield')).toBe(1);
+    expect(registry.remaining('shield')).toBeUndefined(); // no effect window
     collectCombatDrop(scene, 'shield'); // re-collect
-    expect(registry.remaining('shield')).toBeGreaterThan(before); // refreshed
-    expect(registry.remaining('shield')).toBeGreaterThan(14.5); // ~15 s full
+    expect(registry.consumableCharges('shield')).toBe(2);
+    expect(store.getTempStacks('shield')).toBe(2);
   });
 });
 

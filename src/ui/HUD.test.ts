@@ -377,14 +377,24 @@ describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
     destroy(game);
   });
 
-  it('drops the P3 row once the last absorption pops the shield', async () => {
+  it('greys the P3 row once the last charge is spent and hides it at the level TTL', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('shield'); // level 1 → 1 absorption
+    reg.applyCollect('shield'); // level 1 → 1 charge
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
     expect(hud.getRows().some((r) => r.id === 'shield')).toBe(true);
 
+    // Spending the last charge disarms the shield but the temporary level
+    // stack keeps the row visible (greyed) until its own TTL expires (parent
+    // AH-0MVUVSW4J0009QUW AC3).
     reg.tryAbsorbShield();
+    hud.refresh();
+    const row = hud.getRows().find((r) => r.id === 'shield')!;
+    expect(row).toBeDefined();
+    expect(row.greyed).toBe(true);
+
+    // The temporary-level TTL expiry releases the row (field-only rule).
+    reg.tick((reg.powerUpTemporaryRemaining('shield') ?? 0) + 0.1);
     hud.refresh();
     expect(hud.getRows().some((r) => r.id === 'shield')).toBe(false);
     destroy(game);

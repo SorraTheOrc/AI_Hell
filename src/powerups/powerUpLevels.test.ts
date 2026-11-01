@@ -1604,6 +1604,10 @@ describe('PowerUpLevelStore — shared consumable charge pool (F2)', () => {
   it('spends one charge, fails on an empty pool and recharges to the cap (AC4)', () => {
     for (const { id, seconds } of CONSUMABLES) {
       const store = new PowerUpLevelStore();
+      // Regeneration is gated on permanent ownership for the three budget
+      // kinds (Q-A1=b, AH-0MVVD8SIT000CO9H): own them so a spent charge is
+      // owed. Phase Shift / Teleport / Mystery UFO have no such gate.
+      store.collect(id, true);
       store.grantConsumableCharge(id, store.consumableChargeCap(id));
       const cap = store.consumableChargeCap(id);
 

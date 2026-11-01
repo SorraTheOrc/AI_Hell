@@ -39,18 +39,13 @@
  *   when collected as a field drop (refresh-only, never stacking), or a
  *   permanent stacking effect when granted as a hold-full reward.
  *   Shares the Magnet attraction radius curve (base 1× ship size, +50%/stack).
- * - **Shield** — timed `shieldDuration` bubble; absorbs the level-resolved
- *   `shieldAbsorptions` hits (base 1, cap 3) before popping, refreshing the
- *   bubble and its remaining-hit count on re-collect before expiry. The
- *   remaining absorptions are run-scoped registry state, cleared by
- *   `reset()` and surfaced to the HUD via `activeEffects()` (`stacks`).
- *   Because a field pickup's level is **temporary** (AH-0MUX802450085VZZ),
- *   the bubble's expiry clears the temporary level (reverting to the
- *   permanent level, if any). A hold-full reward makes the Shield
- *   **permanently owned**: it adds one charge to the shared pool and the
- *   bubble is armed only while a charge is held, so one absorbed hit spends
- *   one charge and the pool regenerates on `shieldRecharge`
- *   (parent AH-0MVTQMREN009DSFW AC1).
+ * - **Shield** — one charge absorbs one hit (base cap 1, cap 3): a field
+ *   pickup grants exactly one charge into the shared pool and opens no effect
+ *   window; the bubble is drawn while a charge is held and pops on the last
+ *   absorb. A hold-full reward makes the Shield **permanently owned**: it adds
+ *   one charge (never a level) and the pool regenerates on `shieldRecharge`
+ *   (parent AH-0MVTQMREN009DSFW AC1). A pickup-only charge never regenerates
+ *   (Q-A1=b, AH-0MVUVSW4J0009QUW).
  * - **Bomb** — ranged periodic clear (AH-0MUVM9RAO004Y3LB): the model
  *   exposes `bombRange` (px) and `bombFrequency` (pulses/s); the effect path
  *   clears on-screen enemy bullets within the resolved range (a single pulse
@@ -85,12 +80,15 @@
  * reflected bullet, one phase, one warp, one drone spawn — and starts its own
  * level-derived regeneration timer. Regeneration advances only from
  * {@link EffectsRegistry.tick}, the single call site the game and every gym
- * share. For a permanently-owned kind the armed state and the budget
+ * share. The armed state and the budget
  * accessors ({@link EffectsRegistry.shieldAbsorptionsRemaining},
  * {@link EffectsRegistry.thornsRemaining},
- * {@link EffectsRegistry.forceFieldRemaining}) project that pool, while a live
- * **field-pickup** window keeps the shipped timed budget behaviour (producer
- * decision 2 / PD5). {@link EffectsRegistry.consumableCharges} and
+ * {@link EffectsRegistry.forceFieldRemaining}) project that pool for **all**
+ * acquisition paths — a field pickup also grants exactly one charge and opens
+ * no effect window, so the pool is the one model for both paths, differing
+ * only in whether a charge regenerates (a pickup-only budget charge never
+ * refills — the catalogue `regenRequiresOwnership` gate).
+ * {@link EffectsRegistry.consumableCharges} and
  * {@link EffectsRegistry.consumableRechargeRemaining} are the HUD read seams.
  *
  * The registry is pure (no Phaser imports). The scene layers
@@ -364,19 +362,6 @@ export class EffectsRegistry {
    */
   private _rng: () => number;
 
-  // ── Shield shield remaining-absorptions state (AH-0MUVM9RAO004Y3LB) ──
-  /**
-   * Hits the active Shield shield can still absorb before it pops, resolved from
-   * the level store on every collection (base 1, cap 3). Run-scoped: reset()
-   * and Shield expiry clear it. Zero means "no shield active".
-   *
-   * Serves a live **field-pickup** window only: a permanently-owned Shield's
-   * budget is its shared charge pool
-   * ({@link shieldAbsorptionsRemaining} projects it, parent
-   * AH-0MVTQMREN009DSFW AC1).
-   */
-  private _shieldRemaining = 0;
-
   // ── Phase Shift activation timer (AH-0MVUGI448000GNMJ) ────────────
   /**
    * Seconds remaining on an active Phase Shift phase (auto-activated or
@@ -438,19 +423,6 @@ export class EffectsRegistry {
    */
   private _smartBombPulseAoe: AoEDescriptor | null = null;
 
-  // ── Force Field reflect state (AH-0MV1BIX1W006XF95) ──────────────────
-  /**
-   * Enemy bullets the active Force Field can still reflect before it stops
-   * (resolved from the level store on every collection: base 3, cap 10).
-   * Run-scoped: reset() and bubble expiry clear it. Zero means "the bubble no
-   * longer reflects" (it may still be counting down).
-   *
-   * Serves a live **field-pickup** window only: a permanently-owned Force
-   * Field's budget is its shared charge pool
-   * ({@link forceFieldRemaining} projects it, parent AH-0MVTQMREN009DSFW AC3).
-   */
-  private _forceFieldRemaining = 0;
-
   // ── Mystery UFO collector drone (AH-0MV9G113S009B37I) ──────────────
   /**
    * Pending one-shot collector-drone spawns: incremented for every
@@ -460,26 +432,6 @@ export class EffectsRegistry {
    * and drives the periodic auto-spawn instead. Cleared by {@link reset}.
    */
   private _mysteryUfoPendingSpawns = 0;
-
-  // ── Thorn Field ram budget (AH-0MVCRC1Q0007JAV1) ──────────────────
-  /**
-   * Rams still absorbed by the active Thorn Field (resolved from the level
-   * store on every collection: base 2, cap 6). Run-scoped: reset() and window
-   * expiry clear it; zero means the field no longer counters rams.
-   *
-   * Serves a live **field-pickup** window only: a permanently-owned Thorn
-   * Field's budget is its shared charge pool
-   * ({@link thornsRemaining} projects it, parent AH-0MVTQMREN009DSFW AC2).
-   */
-  private _thornsRemaining = 0;
-  /**
-   * Seconds until the active Thorn Field regains one spent ram
-   * (AH-0MVJ8YKR70096C6T). Starts when a ram is absorbed and is advanced
-   * only on the shared {@link tick} path — so the game and every gym refill
-   * identically — one ram per level-resolved `thornsRecharge` interval.
-   * Zero while the budget is full or the field is inactive.
-   */
-  private _thornsRechargeTimer = 0;
 
   // ── Orbital Strike bolt state (AH-0MVCRC1Q0007JAV1) ───────────────
   /**
@@ -656,26 +608,6 @@ export class EffectsRegistry {
   }
 
   /**
-   * True while `id` has a live **field-pickup** window. Such a window keeps
-   * the shipped timed budget behaviour in this change (producer decision 2 /
-   * PD5): its budget is not the shared charge pool.
-   */
-  private _hasTemporaryWindow(id: PowerUpId): boolean {
-    return this._timed.get(id)?.tempWindow === true;
-  }
-
-  /**
-   * True when `id`'s armed state and budget are projected from the shared
-   * charge pool: the kind is permanently owned and no field-pickup window is
-   * live on top of it (PD5).
-   */
-  private _usesChargePool(id: PowerUpId): boolean {
-    return (
-      this._levelStore.isConsumableOwned(id) && !this._hasTemporaryWindow(id)
-    );
-  }
-
-  /**
    * Applies the effect of a collected power-up.
    *
    * Advances the single run-scoped level store by exactly one collection,
@@ -741,17 +673,22 @@ export class EffectsRegistry {
   ): void {
     switch (id) {
       case 'shield':
-        this._startOrRefreshTimed(
-          id,
-          id,
-          stats.shieldDuration ?? 15,
-          permanent,
-        );
-        // Refresh (never add) the remaining absorptions to the newly
-        // resolved count — a level-up mid-bubble strengthens the shield
-        // (AC1/AC3).
-        this._shieldRemaining = stats.shieldAbsorptions ?? 1;
+      case 'thorns':
+      case 'force_field': {
+        // Absorbed-hit kinds (parent AH-0MVUVSW4J0009QUW, Q-A1=b): the
+        // **level store owns the whole model** for these three kinds now. A
+        // field pickup grants exactly one charge into the shared pool
+        // (clamped at the level-resolved cap) and opens no **effect** window —
+        // the per-upgrade level window still opens so the temporary stack
+        // reverts at its own TTL (the charge is never clawed back). A
+        // hold-full reward is handled by the store (owned + one charge) and
+        // opens nothing here.
+        if (!permanent) {
+          this._levelStore.grantConsumableCharge(id, 1);
+          this._openInstantWindow(id);
+        }
         break;
+      }
       case 'speed_boost':
         this._startOrRefreshTimed(
           id,
@@ -804,22 +741,6 @@ export class EffectsRegistry {
           this._openInstantWindow(id);
         }
         break;
-      case 'force_field':
-        // force_field: a timed reflect bubble (Gradius homage,
-        // AH-0MV1BIX1W006XF95). Re-collecting refreshes the bubble to the
-        // newly resolved duration and reflect budget (never additive); the
-        // shared combat core consumes the budget as bullets meet the bubble.
-        this._startOrRefreshTimed(
-          id,
-          id,
-          stats.forceFieldDuration ?? 8,
-          permanent,
-        );
-        this._forceFieldRemaining = Math.max(
-          0,
-          Math.floor(stats.forceFieldReflects ?? 3),
-        );
-        break;
       case 'mystery_ufo':
         // mystery_ufo: a visible collector drone (Space Invaders homage,
         // AH-0MV1BIXFO006Z1I7 → AH-0MV9G113S009B37I). A field pickup queues
@@ -852,25 +773,6 @@ export class EffectsRegistry {
           stats.chronoDuration ?? 5,
           permanent,
         );
-        break;
-      case 'thorns':
-        // thorns: a timed ram counter. Refresh (never add) the absorb budget
-        // to the newly resolved count — a level-up mid-field strengthens it.
-        this._startOrRefreshTimed(
-          id,
-          id,
-          stats.thornsDuration ?? 8,
-          permanent,
-        );
-        this._thornsRemaining = Math.max(0, Math.round(stats.thornsAbsorbs ?? 2));
-        // A freshly resolved budget is full, so nothing is owed: clear the
-        // recharge clock (it restarts when a ram is spent). Kept conditional
-        // so a future refresh that lands below the maximum starts counting
-        // immediately instead of stalling (AH-0MVJ8YKR70096C6T).
-        this._thornsRechargeTimer =
-          this._thornsRemaining < this.thornsMaxAbsorbs()
-            ? this.thornsRechargeTime()
-            : 0;
         break;
       case 'salvage':
         // salvage: a timed mineral bounty. The shared kill-drop seam adds the
@@ -1010,10 +912,6 @@ export class EffectsRegistry {
     // a field pickup's 15 s level window, and its expiry starts the shared
     // re-arm cooldown (existing behaviour, unchanged).
     this._advancePhase(dt);
-    // Advance the Thorn Field recharge clock on the same shared tick path so
-    // a permanent (hold-full) field keeps re-arming for the whole run and a
-    // field-pickup window re-arms while it is open (AH-0MVJ8YKR70096C6T).
-    this._advanceThornsRecharge(dt);
     // Expire timed power-up effects (permanent effects are skipped unless a
     // temporary window is active on top of them).
     for (const [id, effect] of [...this._timed]) {
@@ -1050,22 +948,6 @@ export class EffectsRegistry {
     effect.remaining = 0;
     if (effect.permanent) return;
     this._timed.delete(id);
-    // The shield's remaining absorptions end with its bubble; the temporary
-    // level is cleared above and the permanent level persists (AC3).
-    if (id === 'shield') {
-      this._shieldRemaining = 0;
-    }
-    // The Force Field stops reflecting when its bubble expires, whether the
-    // window was temporary or permanent (AH-0MV1BIX1W006XF95).
-    if (id === 'force_field') {
-      this._forceFieldRemaining = 0;
-    }
-    // The Thorn Field's ram budget ends with its window (AH-0MVCRC1Q0007JAV1).
-    if (id === 'thorns') {
-      this._thornsRemaining = 0;
-      // A closed window recharges nothing (AH-0MVJ8YKR70096C6T).
-      this._thornsRechargeTimer = 0;
-    }
   }
 
   /**
@@ -1092,16 +974,13 @@ export class EffectsRegistry {
   /**
    * Whether the ship is shielded (Shield active).
    *
-   * A **permanently-owned** Shield is armed only while its shared charge pool
-   * holds a charge (parent AH-0MVTQMREN009DSFW AC1): permanence buys one
-   * charge that regenerates, never an endless timed window. A live
-   * field-pickup window keeps the shipped timed behaviour (PD5).
+   * Armed means the shared charge pool holds at least one charge (parent
+   * AH-0MVTQMREN009DSFW AC1 / AH-0MVUVSW4J0009QUW): a field pickup grants
+   * exactly one charge and no effect window, so the pool is the whole model —
+   * the bubble is drawn while a charge is held and pops on the last absorb.
    */
   get isShielded(): boolean {
-    if (this._usesChargePool('shield')) {
-      return this._levelStore.consumableCharges('shield') > 0;
-    }
-    return this._timed.has('shield');
+    return this._levelStore.consumableCharges('shield') > 0;
   }
 
   /** Whether the ship is in phase shift (Phase Shift active) — intangibility. */
@@ -1115,44 +994,26 @@ export class EffectsRegistry {
   }
 
   /**
-   * Absorbs a hit with the shield (Shield): while a shield is active, decrements
-   * its remaining-absorptions count and returns true (hit absorbed). The
-   * shield stays active until its last absorption (the count resolved from
-   * `store.stats('shield').shieldAbsorptions`: base 1, cap 3), when it pops.
-   * Returns false when no shield is active.
+   * Absorbs a hit with the shield (Shield): spends exactly one shared-pool
+   * charge and returns true (hit absorbed), false at zero. One charge = one
+   * absorbed hit; the bubble pops when the last charge is spent (parent
+   * AH-0MVTQMREN009DSFW AC1). A pickup-only charge is never regenerated
+   * (Q-A1=b), so an unowned Shield stays inert after its one event.
    *
    * Phase does NOT absorb — it prevents hits via pass-through before they
    * are tested (scene should skip collision checks when phased).
    */
   tryAbsorbShield(): boolean {
-    // A permanently-owned Shield spends one charge per absorbed hit and is
-    // armed only while a charge is held (parent AC1). A live field-pickup
-    // window keeps the shipped timed budget (PD5).
-    if (this._usesChargePool('shield')) {
-      return this.tryConsumeConsumableCharge('shield');
-    }
-    if (!this._timed.has('shield')) return false;
-    this._shieldRemaining -= 1;
-    if (this._shieldRemaining <= 0) {
-      this._timed.delete('shield');
-      this._shieldRemaining = 0;
-      // The shield popped, ending its temporary field window too.
-      this._levelStore.clearTemporary('shield');
-    }
-    return true;
+    return this.tryConsumeConsumableCharge('shield');
   }
 
   /**
-   * Hits the active Shield shield can still absorb before it pops (0 when no
-   * shield is active). Surfaced for the HUD's `Shield ×N` row. For a
-   * permanently-owned Shield this projects the shared charge pool, so the
-   * armed state and the HUD stack read one source (parent AC1).
+   * Hits the active Shield shield can still absorb (0 when disarmed). The
+   * pool is the whole model (parent AH-0MVTQMREN009DSFW AC1): the armed state
+   * and the HUD stack read one source, never a parallel window counter.
    */
   shieldAbsorptionsRemaining(): number {
-    if (this._usesChargePool('shield')) {
-      return this._levelStore.consumableCharges('shield');
-    }
-    return this._shieldRemaining;
+    return this._levelStore.consumableCharges('shield');
   }
 
   // ── Force Field reflector (AH-0MV1BIX1W006XF95) ──────────────────────
@@ -1163,25 +1024,26 @@ export class EffectsRegistry {
    * (until the reflect budget is spent).
    *
    * A permanently-owned bubble stays up for the run — dimmed while its shared
-   * charge pool is empty and bright again as a charge returns (parent AC3) —
-   * while a field-pickup window keeps its timed lifetime (PD5).
+   * charge pool is empty and bright again as a charge returns (parent AC3). A
+   * field pickup grants exactly one charge and no effect window, so a
+   * pickup-only bubble is armed while the pool holds a charge and pops when
+   * it is spent (parent AH-0MVUVSW4J0009QUW).
    */
   isForceFieldActive(): boolean {
-    if (this._levelStore.isConsumableOwned('force_field')) return true;
-    return this._timed.has('force_field');
+    return (
+      this._levelStore.isConsumableOwned('force_field') ||
+      this._levelStore.consumableCharges('force_field') > 0
+    );
   }
 
   /**
    * Enemy bullets the active Force Field can still reflect (0 when inactive
    * or exhausted). Surfaced for the HUD's `Force Field ×N` row and consumed
-   * by the shared combat core's reflect branch. For a permanently-owned field
-   * this projects the shared charge pool (parent AC3).
+   * by the shared combat core's reflect branch. The pool is the whole model
+   * (parent AC3): never a parallel window counter.
    */
   forceFieldRemaining(): number {
-    if (this._usesChargePool('force_field')) {
-      return this._levelStore.consumableCharges('force_field');
-    }
-    return this._forceFieldRemaining;
+    return this._levelStore.consumableCharges('force_field');
   }
 
   /**
@@ -1241,21 +1103,13 @@ export class EffectsRegistry {
 
   /**
    * Consumes one reflect from the active Force Field. Returns true when a
-   * reflection is available (bubble active and budget remaining) and
-   * decrements the budget; false when there is no bubble or it has spent its
-   * reflect budget. Once false, enemy bullets damage the ship normally again.
+   * reflection is available (pool holds a charge) and spends exactly one
+   * charge; false at zero. Once false, enemy bullets damage the ship normally
+   * again. An empty pool leaves an owned bubble up but inert until a charge
+   * returns (parent AC3); a pickup-only charge is never regenerated (Q-A1=b).
    */
   tryConsumeForceFieldReflect(): boolean {
-    // A permanently-owned field spends one charge per reflected bullet; an
-    // empty pool leaves the bubble up but inert until a charge returns
-    // (parent AC3). A live field-pickup window keeps the shipped budget (PD5).
-    if (this._usesChargePool('force_field')) {
-      return this.tryConsumeConsumableCharge('force_field');
-    }
-    if (!this._timed.has('force_field')) return false;
-    if (this._forceFieldRemaining <= 0) return false;
-    this._forceFieldRemaining -= 1;
-    return true;
+    return this.tryConsumeConsumableCharge('force_field');
   }
 
   // ── Bomb bomb pulse (AH-0MUVM9RAO004Y3LB) ────────────────────────────
@@ -1471,63 +1325,40 @@ export class EffectsRegistry {
   /**
    * Rams the active Thorn Field can still absorb (0 when inactive or
    * exhausted). Surfaced for the HUD and consumed by the shared collision
-   * ram branch. For a permanently-owned field this projects the shared charge
-   * pool (parent AC2).
+   * ram branch. The pool is the whole model (parent AC2): never a parallel
+   * window counter.
    */
   thornsRemaining(): number {
-    if (this._usesChargePool('thorns')) {
-      return this._levelStore.consumableCharges('thorns');
-    }
-    return this._thornsRemaining;
+    return this._levelStore.consumableCharges('thorns');
   }
 
   /**
-   * Whether the ramp counter can absorb another ram right now (window active
-   * and budget remaining). A permanently-owned field is armed while its
-   * shared charge pool holds a charge (parent AC2).
+   * Whether the ramp counter can absorb another ram right now (the pool
+   * holds at least one charge).
    */
   hasThornsRam(): boolean {
-    if (this._usesChargePool('thorns')) return this.thornsRemaining() > 0;
-    return this._timed.has('thorns') && this._thornsRemaining > 0;
+    return this.thornsRemaining() > 0;
   }
 
   /**
    * Consumes one ram absorb from the active Thorn Field. Returns true when
-   * a ram was absorbed (the player does not take the hit) and decrements the
-   * budget; false when there is no active field or its budget is spent. Once
-   * false, rams cost the player a hit normally again.
+   * a ram was absorbed (the player does not take the hit) and spends exactly
+   * one charge; false at zero. Once false, rams cost the player a hit
+   * normally again. A pickup-only charge is never regenerated (Q-A1=b); an
+   * owned field re-arms on the level-derived interval (parent AC2).
    */
   tryConsumeThornsRam(): boolean {
-    // A permanently-owned field spends one charge per free ram (parent AC2);
-    // a live field-pickup window keeps the shipped timed budget (PD5).
-    if (this._usesChargePool('thorns')) {
-      return this.tryConsumeConsumableCharge('thorns');
-    }
-    if (!this._timed.has('thorns')) return false;
-    if (this._thornsRemaining <= 0) return false;
-    this._thornsRemaining -= 1;
-    // A spent ram starts the recharge clock (unless one is already counting,
-    // in which case the running countdown is kept — the field never banks
-    // time). The shared tick path then returns one ram per level-resolved
-    // interval, capped at the level-resolved budget
-    // (AH-0MVJ8YKR70096C6T).
-    if (this._thornsRechargeTimer <= 0) {
-      this._thornsRechargeTimer = this.thornsRechargeTime();
-    }
-    return true;
+    return this.tryConsumeConsumableCharge('thorns');
   }
 
   /**
    * The level-resolved maximum ram budget of the Thorn Field (base 2 → cap
-   * 6). Bounds the recharge so a refill can never exceed what a fresh
-   * collection grants; clamped to at least 1 so the field always has a
-   * usable budget.
+   * 6) — the pool's charge cap. Bound so a regeneration can never exceed what
+   * a fresh collection grants; clamped to at least 1 so the field always has
+   * a usable budget. The HUD/aura show the same cap the pool enforces.
    */
   thornsMaxAbsorbs(): number {
-    return Math.max(
-      1,
-      Math.round(this._levelStore.stats('thorns').thornsAbsorbs ?? 2),
-    );
+    return Math.max(1, this._levelStore.consumableChargeCap('thorns'));
   }
 
   /**
@@ -1537,63 +1368,20 @@ export class EffectsRegistry {
    * recharge.
    */
   thornsRechargeTime(): number {
-    const interval = this._levelStore.stats('thorns').thornsRecharge;
-    return Number.isFinite(interval) && (interval ?? 0) > 0
-      ? (interval as number)
-      : 0;
+    return this._levelStore.consumableRechargeTime('thorns');
   }
 
   /**
    * Seconds until the active Thorn Field regains one spent ram, or 0 when
-   * it is not recharging (no active field, or the budget is already full).
-   * Surfaced for the HUD's `next ram in Ns` countdown and read by the shared
-   * aura helper, so both stay pure functions of registry state.
+   * it is not recharging. The shared pool's clock is the only regeneration
+   * source (parent AC2): an owned field's spent charge counts down on the
+   * level-derived interval, while a pickup-only charge never starts a clock
+   * (Q-A1=b), so an unowned field reads 0. Surfaced for the HUD's `next ram
+   * in Ns` countdown and read by the shared aura helper, so both stay pure
+   * functions of registry state.
    */
   thornsRechargeRemaining(): number {
-    // A permanently-owned field's countdown is the shared pool's clock, so the
-    // HUD and the aura read the same regeneration source (parent AC2).
-    if (this._usesChargePool('thorns')) {
-      return this.consumableRechargeRemaining('thorns') ?? 0;
-    }
-    if (!this._timed.has('thorns')) return 0;
-    if (this._thornsRemaining >= this.thornsMaxAbsorbs()) return 0;
-    return Math.max(0, this._thornsRechargeTimer);
-  }
-
-  /**
-   * Advances the Thorn Field recharge clock by `dt` seconds: one spent ram
-   * returns per elapsed level-resolved interval (remainder carried, so a long
-   * frame recharges exactly as many rams as the elapsed time warrants). The
-   * clock is cleared whenever the field is inactive or its budget is full.
-   * Never advanced per scene — {@link tick} is the single call site.
-   */
-  private _advanceThornsRecharge(dt: number): void {
-    // A permanently-owned field regenerates through the shared charge pool
-    // (advanced by the store's tickRecharge), so the registry-local ram clock
-    // serves only a live field-pickup window (PD5) and must never top an
-    // owned pool back up (parent AC2).
-    if (this._usesChargePool('thorns')) {
-      this._thornsRechargeTimer = 0;
-      return;
-    }
-    if (!this._timed.has('thorns')) {
-      this._thornsRechargeTimer = 0;
-      return;
-    }
-    const max = this.thornsMaxAbsorbs();
-    if (this._thornsRemaining >= max) {
-      this._thornsRechargeTimer = 0;
-      return;
-    }
-    const interval = this.thornsRechargeTime();
-    if (interval <= 0 || !Number.isFinite(dt) || dt <= 0) return;
-    if (this._thornsRechargeTimer <= 0) this._thornsRechargeTimer = interval;
-    this._thornsRechargeTimer -= dt;
-    while (this._thornsRechargeTimer <= 0 && this._thornsRemaining < max) {
-      this._thornsRemaining += 1;
-      this._thornsRechargeTimer += interval;
-    }
-    if (this._thornsRemaining >= max) this._thornsRechargeTimer = 0;
+    return this.consumableRechargeRemaining('thorns') ?? 0;
   }
 
   // ── Salvage mineral bounty (AH-0MVCRC1Q0007JAV1) ────────────────────
@@ -2206,7 +1994,6 @@ export class EffectsRegistry {
     this._weapons.clear();
     this._dangerCleared = true;
     this._rearmCooldown = 0;
-    this._shieldRemaining = 0;
     this._phaseRemaining = 0;
     this._phaseDuration = 0;
     this._bombPermanent = false;
@@ -2217,10 +2004,7 @@ export class EffectsRegistry {
     this._smartBombPulseTimer = 0;
     this._smartBombPulsePending = false;
     this._smartBombPulseAoe = null;
-    this._forceFieldRemaining = 0;
     this._mysteryUfoPendingSpawns = 0;
-    this._thornsRemaining = 0;
-    this._thornsRechargeTimer = 0;
     this._strikePermanent = false;
     this._strikePulseTimer = 0;
     this._strikePulsePending = false;

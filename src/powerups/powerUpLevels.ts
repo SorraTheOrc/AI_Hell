@@ -2055,6 +2055,27 @@ export class PowerUpLevelStore {
   }
 
   /**
+   * The **derived regenerating ceiling** of `id`'s pool (parent
+   * AH-0MVUVSW4J0009QUW, producer decision Q-A1=b): the level-resolved cap
+   * while the kind is allowed to regenerate, else 0.
+   *
+   * For a kind whose catalogue entry marks regeneration as requiring
+   * **permanent ownership** (`regenRequiresOwnership`): the ceiling is the
+   * cap while the kind is permanently owned (a hold-full reward, or a
+   * scripted permanent level) and 0 while it is only ever picked up — so a
+   * pickup-granted charge spends exactly once and never refills on its own.
+   * Every other kind's ceiling is always its cap, so Phase Shift / Teleport
+   * pickup regeneration is unchanged (AH-0MV82I7TX0009JMT).
+   */
+  consumableRegenCeiling(id: PowerUpId): number {
+    if (getPowerUpById(id).regenRequiresOwnership !== true) {
+      return this._poolCap(id);
+    }
+    const owned = this.isConsumableOwned(id) || this.permanentGrants(id) > 0;
+    return owned ? this._poolCap(id) : 0;
+  }
+
+  /**
    * The **level-derived regeneration interval** of `id` in seconds — the
    * catalogue axis that says how long one spent charge takes to come back
    * (parent AC2/AC3): `shieldRecharge`, `thornsRecharge`, the seconds inverse
@@ -2089,6 +2110,10 @@ export class PowerUpLevelStore {
    * empty. A spent charge starts its own recharge timer whose duration is the
    * level-derived {@link consumableRechargeTime} **at the moment of
    * consumption** (parent AC4); {@link tickRecharge} returns it to the pool.
+   *
+   * A charge of a kind whose regeneration requires permanent ownership
+   * (Q-A1=b) starts no timer while the kind is pickup-only (regenerating
+   * ceiling 0), so a pickup-granted charge never refills on its own.
    */
   consumeConsumableCharge(id: PowerUpId): boolean {
     if (!isConsumablePowerUpId(id)) return false;
@@ -2096,7 +2121,7 @@ export class PowerUpLevelStore {
     if (pool <= 0) return false;
     this._charges.set(id, pool - 1);
     const seconds = this.consumableRechargeTime(id);
-    if (seconds > 0) {
+    if (seconds > 0 && this.consumableRegenCeiling(id) > 0) {
       const timers = this._rechargeTimers.get(id) ?? [];
       timers.push(seconds);
       this._rechargeTimers.set(id, timers);
@@ -2129,9 +2154,10 @@ export class PowerUpLevelStore {
   /**
    * Advances the run-scoped recharge clock by `dt` seconds. Each recharging
    * Phase Shift / Teleport charge counts down independently; when a timer
-   * elapses the charge returns to its pool, clamped so the pool never
-   * exceeds {@link POWER_UP_CHARGE_CAP} (a recharge landing on a full pool is
-   * discarded). Negative or non-finite `dt` is a no-op.
+   * elapses the charge returns to its pool, clamped at the kind's regenerating
+   * ceiling (a recharge landing on a full pool — or on a pickup-only budget
+   * kind's Q-A1=b ceiling of 0 — is discarded). Negative or non-finite `dt` is
+   * a no-op.
    */
   tickRecharge(dt: number): void {
     const safeDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
@@ -2143,7 +2169,7 @@ export class PowerUpLevelStore {
         timers,
         this.consumableCharges(id),
         safeDt,
-        this._poolCap(id),
+        this.consumableRegenCeiling(id),
       );
       this._charges.set(id, pool);
     }

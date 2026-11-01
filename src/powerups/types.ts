@@ -81,7 +81,14 @@
  *   and only from the single shared {@link EffectsRegistry.tick} clock — the
  *   same call site the game and every gym share, so the pools cannot drift;
  * - **a hold-full reward adds a charge**, never a level, clamped at the pool's
- *   level-derived cap.
+ *   level-derived cap;
+ * - **a field-pickup charge of the budget kinds (Shield, Thorn Field, Force
+ *   Field) never regenerates** (producer decision Q-A1=b, parent
+ *   AH-0MVUVSW4J0009QUW): one drop buys exactly one event and the item is
+ *   then inert until a hold-full reward owns it. The gate is the per-entry
+ *   `regenRequiresOwnership` flag below, read by the store/registry — never a
+ *   per-kind id branch. Phase Shift and Teleport pickups keep their shipped
+ *   regeneration.
  *
  * ## Net-new power-ups
  *
@@ -218,6 +225,22 @@ export interface PowerUpEntry {
    */
   consumable?: boolean;
   /**
+   * Whether this consumable's charge **regeneration** requires the kind to be
+   * **permanently owned** (parent AH-0MVUVSW4J0009QUW, producer decision
+   * Q-A1=b).
+   *
+   * **Defaults to `false`** — an absent flag means a field-pickup charge
+   * regenerates exactly like a hold-full charge does. The three budget kinds
+   * (Shield, Thorn Field, Force Field) opt in: a **pickup-granted** charge
+   * buys exactly one event and never refills on its own, so the derived
+   * regenerating ceiling for these kinds is the level-resolved cap only while
+   * `permanentGrants(id) > 0`, else `0`. A permanently owned kind keeps the
+   * spend → empty → regenerate → reuse cycle. Phase Shift and Teleport leave
+   * this unset, so their shipped pickup regeneration (AH-0MV82I7TX0009JMT) is
+   * unchanged.
+   */
+  regenRequiresOwnership?: boolean;
+  /**
    * Whether this entry remains drawable/offerable once all
    * `POWER_UP_SLOT_CAP` permanent slots are occupied (parent
    * AH-0MVLIJT3M005HPHF, AC5).
@@ -251,8 +274,13 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     duration: 15,
     // Charge model: one absorbed hit per charge, regenerating on the
     // level-derived `shieldRecharge` interval (45 s at level 0), capped by
-    // `shieldAbsorptions` (AH-0MVTQMREN009DSFW).
+    // `shieldAbsorptions` (AH-0MVTQMREN009DSFW). A field-pickup charge never
+    // regenerates (Q-A1=b, AH-0MVUVSW4J0009QUW): one drop buys one event and
+    // the item is then inert until a hold-full reward owns it.
     consumable: true,
+    // Regen gate (Q-A1=b): only a permanently owned Shield re-arms on the
+    // level-derived interval, so a pickup-granted charge never refills.
+    regenRequiresOwnership: true,
   },
   bomb: {
     id: 'bomb',
@@ -344,8 +372,12 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     duration: 8,
     // Charge model: one reflected bullet per charge, regenerating on the
     // level-derived `forceFieldRecharge` interval (45 s at level 0), capped by
-    // `forceFieldReflects` (AH-0MVTQMREN009DSFW).
+    // `forceFieldReflects` (AH-0MVTQMREN009DSFW). A field-pickup charge never
+    // regenerates (Q-A1=b, AH-0MVUVSW4J0009QUW): one drop buys one event.
     consumable: true,
+    // Regen gate (Q-A1=b): only a permanently owned Force Field re-arms on
+    // the level-derived interval.
+    regenRequiresOwnership: true,
   },
   mystery_ufo: {
     id: 'mystery_ufo',
@@ -392,8 +424,12 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     duration: 8,
     // Charge model: one free ram per charge, regenerating on the level-derived
     // `thornsRecharge` interval (12 s → 5 s), capped by `thornsAbsorbs`
-    // (AH-0MVTQMREN009DSFW).
+    // (AH-0MVTQMREN009DSFW). A field-pickup charge never regenerates
+    // (Q-A1=b, AH-0MVUVSW4J0009QUW): one drop buys one event.
     consumable: true,
+    // Regen gate (Q-A1=b): only a permanently owned Thorn Field re-arms on
+    // the level-derived interval.
+    regenRequiresOwnership: true,
   },
   salvage: {
     id: 'salvage',

@@ -201,11 +201,12 @@ describe('GymPowerUpLeveling', () => {
       ).toBeUndefined();
     }
 
-    // The permanent shield effect window is unchanged in this slice (the
-    // charge-model rewiring of the effect path is AH-0MVUXH3X60078QR3), so the
-    // permanent base stays active; what changed here is the **store**: the
-    // kind is owned and holds one charge without being levelled.
-    expect(registry.isActive('shield')).toBe(true);
+    // The permanent shield effect window is gone in this conversion (parent
+    // AH-0MVUVSW4J0009QUW): the pool is the whole model, so the permanent
+    // base stays armed through its held charge rather than an effect window;
+    // what changed here is the **store**: the kind is owned and holds one
+    // charge without being levelled.
+    expect(registry.isShielded).toBe(true);
     expect(store.isConsumableOwned('shield')).toBe(true);
     expect(store.consumableCharges('shield')).toBe(1);
   });
