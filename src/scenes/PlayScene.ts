@@ -3135,6 +3135,20 @@ export class PlayScene extends CombatScene<
       // demonstration); the shipped boss keeps its own defaults without one.
       bodyColor: hexBoss?.bodyColor,
       desperationColor: hexBoss?.desperationColor,
+      // Rule 2 — the boss wields it first: a hex boss opens the encounter by
+      // firing the volley of the weapon it grants (fan pattern, bullet colour
+      // and shape from the shared weapon catalogue). A hex with no weapon
+      // grant, and the classic campaign boss, demonstrate nothing.
+      demonstratedWeapon:
+        hexBoss?.demonstration === null || hexBoss?.demonstration === undefined
+          ? undefined
+          : {
+              color: hexBoss.demonstration.color,
+              offsets: hexBoss.demonstration.offsets,
+              speed: hexBoss.demonstration.speed,
+              shape: hexBoss.demonstration.shape,
+              length: hexBoss.demonstration.length,
+            },
       // The final boss strengthens with the player's permanent upgrades
       // exactly like the mini-bosses (AH-0MVH87A3L004VOLD). Dev scenarios
       // that pin `initialHp` keep their explicit pool.

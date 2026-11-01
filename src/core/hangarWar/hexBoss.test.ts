@@ -13,7 +13,7 @@ import {
   findHexRingDefinition,
   HEX_RING_DEFINITIONS,
 } from '../../data/hexRingDefinitions';
-import { BULLET_COLORS } from '../../utils/weapons';
+import { BULLET_COLORS, BULLET_SPEED, getWeaponById } from '../../utils/weapons';
 import { hexBossHpMultiplier } from './hexDifficulty';
 import { buildHexBossProfile, HEX_BOSS_PHASE_COUNT } from './hexBoss';
 
@@ -98,6 +98,83 @@ describe('buildHexBossProfile', () => {
     expect(profile.hexId).toBe('hex-unknown');
     expect(profile.aggression).toBe(0);
     expect(profile.startLevel).toBe(1);
+  });
+
+  it('has no demonstration volley for an upgrade-only hex (Rule 2, non-weapon grant)', () => {
+    const upgradeOnly = HEX_RING_DEFINITIONS.find(
+      (entry) => entry.ringIndex === 1 && entry.grants === 'hull-2',
+    )!;
+    const profile = buildHexBossProfile(
+      { id: upgradeOnly.id, aggression: upgradeOnly.baseAggression },
+      upgradeOnly,
+    );
+
+    // The colour cue is still published, but nothing is fired.
+    expect(profile.demonstratedColor === null || typeof profile.demonstratedColor === 'number').toBe(true);
+    expect(profile.demonstration).toBeNull();
+  });
+
+  it('resolves the demonstration volley from the shared weapon catalogue', () => {
+    const definition = findHexRingDefinition('hex-r1-3')!;
+    const profile = buildHexBossProfile(
+      { id: 'hex-r1-3', aggression: definition.baseAggression },
+      definition,
+    );
+    const weapon = getWeaponById('rapid');
+
+    expect(profile.demonstration).not.toBeNull();
+    expect(profile.demonstration?.weaponId).toBe('rapid');
+    // Pattern, colour and bullet identity come from the one shared catalogue.
+    expect(profile.demonstration?.offsets).toEqual([...weapon.offsets]);
+    expect(profile.demonstration?.color).toBe(weapon.bulletColor);
+    expect(profile.demonstration?.shape).toBe(weapon.bulletShape);
+    expect(profile.demonstration?.length).toBe(weapon.bulletShapeLength);
+    expect(profile.demonstration?.size).toBe(weapon.bulletSize);
+    // A heavier (larger) shot flies slower: the speed is the catalogue share
+    // of the shared bullet speed, so a small rapid shot flies faster than a
+    // heavy beam.
+    expect(profile.demonstration?.speed).toBe(
+      Math.round(BULLET_SPEED / weapon.bulletSize),
+    );
+    expect(profile.demonstration?.speed).toBeGreaterThan(0);
+  });
+
+  it('derives a slower demonstration volley for a heavier weapon', () => {
+    const heavy = buildHexBossProfile(
+      { id: 'hex-r1-6', aggression: 6 },
+      findHexRingDefinition('hex-r1-6'),
+    );
+    const light = buildHexBossProfile(
+      { id: 'hex-r1-3', aggression: 3 },
+      findHexRingDefinition('hex-r1-3'),
+    );
+
+    // wave_laser is the heavy beam, rapid the light spark: the beam is slower.
+    expect(heavy.demonstration?.weaponId).toBe('wave_laser');
+    expect(light.demonstration?.weaponId).toBe('rapid');
+    expect(heavy.demonstration!.speed).toBeLessThan(light.demonstration!.speed);
+  });
+
+  it('demonstrates exactly the weapon each authored hex grants', () => {
+    for (const definition of HEX_RING_DEFINITIONS) {
+      const profile = buildHexBossProfile(
+        { id: definition.id, aggression: definition.baseAggression },
+        definition,
+      );
+      if (profile.grant?.weaponId != null) {
+        // A weapon grant (the ring's new weapon or a shipped weapon upgrade)
+        // is demonstrated with that weapon's own volley.
+        expect(profile.demonstration?.weaponId).toBe(profile.grant.weaponId);
+        expect(profile.demonstration!.offsets.length).toBeGreaterThan(0);
+        expect(profile.demonstration!.offsets).toEqual(
+          [...getWeaponById(profile.grant.weaponId).offsets],
+        );
+      } else {
+        // Hull, Extra Life and core-bank hexes grant no weapon: nothing to wield.
+        expect(profile.grant?.weaponId ?? null).toBeNull();
+        expect(profile.demonstration).toBeNull();
+      }
+    }
   });
 
   it('resolves every authored ring 1 hex without throwing or inventing a grant', () => {

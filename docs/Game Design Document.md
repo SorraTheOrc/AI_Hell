@@ -2719,8 +2719,13 @@ write:
 2. **Grant the hex's entry (Rule 2).** The authored grant is recorded on the hex
    and added to the fleet's owned set **only after the boss is defeated**. The
    boss **demonstrates** it first: the hex boss is the shipped `Boss` (four
-   phases) configured from the hex, its body wearing the granted weapon's own
-   bullet colour — a colour cue on the shipped boss path, not a forked entity.
+   phases) configured from the hex, and it **wields the granted weapon against
+   you** — the encounter opens with that weapon's own volley (its fan pattern,
+   bullet colour and bullet shape, resolved from the shared
+   `src/utils/weapons.ts` catalogue through `hexBossDemonstration`), with the
+   body colour as a secondary tell. Later phases keep the shipped patterns, so
+   a hex encounter still runs the shipped boss architecture and never forks the
+   entity.
 3. **Leave a defending bot.** The hex is marked held **only** with a defender
    flying a hull the fleet owns; no defender means no hold
    (`defender-required`). The defender's stored rating is the hangar economy's

@@ -11,13 +11,15 @@
  * The hex boss is the shipped `Boss` (the run's final encounter) configured
  * from the hex, not a second boss implementation: every value this module
  * produces maps onto an existing, default-preserving `BossConfig` hook
- * (`bodyColor`, `desperationColor`, `hitPointsPerPhase`, `phaseCount`). The
- * shipped path supports colour and hit-pool tuning but **not** arbitrary firing
- * patterns, so the demonstrated weapon is published as a colour cue
- * ({@link HexBossProfile.demonstratedColor}; the body wears the granted
- * weapon's own bullet colour) and the grant itself is resolved by the capture
- * cycle — "where the shipped boss path supports it" is deliberately respected
- * rather than forking the entity.
+ * (`bodyColor`, `desperationColor`, `hitPointsPerPhase`, `phaseCount`,
+ * `demonstratedWeapon`). Rule 2 — "the boss wields it first" — is honoured by
+ * {@link HexBossProfile.demonstration}: the boss **opens the encounter by
+ * firing the granted weapon's volley**, with that weapon's fan offsets, bullet
+ * colour and bullet shape resolved from the **shared** catalogue
+ * ({@link hexBossDemonstration} reads `src/utils/weapons.ts`), while the body
+ * keeps wearing the weapon's colour as a secondary tell. Later phases keep the
+ * shipped patterns, and the grant itself is still resolved by the capture cycle
+ * — the shipped configuration seam is used rather than forking the entity.
  *
  * ## What the hex contributes
  *
@@ -46,7 +48,13 @@ import {
 import { resolveHexGrant, type HexGrant } from './captureCycle';
 import type { HexRingDefinition } from './hexRing';
 import { MAX_LEVEL } from '../GameState';
-import { BULLET_COLORS } from '../../utils/weapons';
+import {
+  BULLET_COLORS,
+  BULLET_SPEED,
+  getWeaponById,
+  type BulletShape,
+  type WeaponId,
+} from '../../utils/weapons';
 
 /**
  * The number of attack/health phases a hex boss uses.
@@ -98,6 +106,11 @@ export interface HexBossProfile {
   readonly grant: HexGrant | null;
   /** The demonstrated weapon's bullet colour, or `null` for a non-weapon grant. */
   readonly demonstratedColor: number | null;
+  /**
+   * The weapon volley the boss wields against the player (Rule 2), from the
+   * shared weapon catalogue, or `null` when the hex grants no weapon.
+   */
+  readonly demonstration: HexBossDemonstration | null;
   /** Phase count for the shipped boss path (`HEX_BOSS_PHASE_COUNT`). */
   readonly phaseCount: number;
   /** The shipped difficulty profile behind the encounter (single source). */
@@ -134,6 +147,85 @@ function lighten(color: number, amount: number): number {
   const mix = (channel: number): number =>
     Math.round(channel + (0xff - channel) * ratio);
   return (mix(red) << 16) | (mix(green) << 8) | mix(blue);
+}
+
+/**
+ * The weapon volley a hex boss wields against the player (Rule 2).
+ *
+ * Derived from the **shared** weapon catalogue (`src/utils/weapons.ts`), so a
+ * granted weapon is demonstrated with its own fan pattern, bullet colour and
+ * bullet identity — there is no second weapon table. `size` and `speed` are
+ * published so the scene can hand the volley to the shipped boss bullet path.
+ */
+export interface HexBossDemonstration {
+  /** The shipped weapon id the boss wields. */
+  readonly weaponId: WeaponId;
+  /** The weapon's display name (telemetry / debug). */
+  readonly weaponName: string;
+  /** Bullet colour (the weapon's own). */
+  readonly color: number;
+  /** Per-bullet relative radian offsets around the boss's downward heading. */
+  readonly offsets: readonly number[];
+  /** Bullet speed (px/s) — heavier weapons fly slower. */
+  readonly speed: number;
+  /** Bullet shape primitive. */
+  readonly shape: BulletShape;
+  /** Elongation for elongated shapes (the weapon's own, when it has one). */
+  readonly length?: number;
+  /** Bullet size multiplier (the weapon's own). */
+  readonly size: number;
+}
+
+/** Bullet-size clamp used to derive the demonstration's speed (heavy = slow). */
+const DEMONSTRATION_SIZE_RANGE = Object.freeze({ min: 0.5, max: 2 });
+
+/**
+ * Resolves the volley a hex boss wields for the weapon it grants.
+ *
+ * @param grant — the hex's resolved grant (from {@link resolveHexGrant}).
+ * @returns the demonstration descriptor, or `null` when the hex grants a
+ *   non-weapon entry (an upgrade/strength hex) or no entry at all.
+ */
+export function hexBossDemonstration(
+  grant: HexGrant | null,
+): HexBossDemonstration | null {
+  const weaponId = grant?.weaponId ?? null;
+  if (weaponId === null) return null;
+
+  let weapon: ReturnType<typeof getWeaponById>;
+  try {
+    weapon = getWeaponById(weaponId);
+  } catch {
+    // An id outside the shipped catalogue demonstrates nothing rather than
+    // throwing inside a deployment.
+    return null;
+  }
+
+  const size = Math.min(
+    DEMONSTRATION_SIZE_RANGE.max,
+    Math.max(DEMONSTRATION_SIZE_RANGE.min, toPositive(weapon.bulletSize, 1)),
+  );
+  const demonstration: HexBossDemonstration = {
+    weaponId,
+    weaponName: weapon.name,
+    color: weapon.bulletColor,
+    offsets: [...weapon.offsets],
+    speed: Math.round(BULLET_SPEED / size),
+    shape: weapon.bulletShape,
+    ...(weapon.bulletShapeLength === undefined
+      ? {}
+      : { length: weapon.bulletShapeLength }),
+    size,
+  };
+  return demonstration;
+}
+
+/** `value` when it is a positive finite number, else `fallback`. */
+function toPositive(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return value;
 }
 
 /**
@@ -194,6 +286,7 @@ export function buildHexBossProfile(
     desperationColor: lighten(bodyColor, 0.45),
     grant,
     demonstratedColor,
+    demonstration: hexBossDemonstration(grant),
     phaseCount: HEX_BOSS_PHASE_COUNT,
     difficulty,
   };

@@ -36,6 +36,7 @@ import Phaser from 'phaser';
 import { createBullet } from './bulletUtils';
 import { resolveEnemyBulletVisual } from '../utils/bulletVisuals';
 import type { EnemyBulletVisual } from '../utils/bulletVisuals';
+import type { BulletShape } from '../utils/weapons';
 import { spawnEnemyMuzzleFlash } from '../vfx/enemyMuzzleFlash';
 import { FormationOffset } from '../utils/formations';
 import { HIT_RADIUS_BUFFER_PX } from '../core/constants';
@@ -250,6 +251,37 @@ export interface BossConfig {
    * {@link BOSS_DESPERATION_COLOR}).
    */
   desperationColor?: number;
+  /**
+   * Optional demonstrated weapon (Rule 2 — "the boss wields it first").
+   *
+   * When set, the boss **opens** the encounter by firing this weapon's volley
+   * (its fan offsets, bullet colour and shape) instead of its shipped phase-1
+   * spread; every later phase keeps the shipped pattern. Absent (the classic
+   * campaign boss and every existing call site) → byte-for-byte unchanged
+   * behaviour.
+   */
+  demonstratedWeapon?: BossDemonstratedWeapon;
+}
+
+/**
+ * A weapon volley a boss demonstrates by firing (see
+ * {@link BossConfig.demonstratedWeapon}).
+ *
+ * The pure hex-boss profile resolves it from the shared weapon catalogue
+ * (`src/core/hangarWar/hexBoss.ts`), so the game and every gym fire the same
+ * demonstration.
+ */
+export interface BossDemonstratedWeapon {
+  /** Bullet colour (the granted weapon's own). */
+  readonly color: number;
+  /** Per-bullet relative radian offsets around the boss's downward heading. */
+  readonly offsets: readonly number[];
+  /** Bullet speed in px/s. */
+  readonly speed: number;
+  /** Bullet shape primitive. */
+  readonly shape: BulletShape;
+  /** Elongation for elongated shapes. */
+  readonly length?: number;
 }
 
 // ── Bullet types ────────────────────────────────────────────────────
@@ -309,6 +341,11 @@ export class Boss extends Phaser.GameObjects.Container {
   protected readonly bodyColor: number;
   /** Final-phase body colour (defaults to {@link BOSS_DESPERATION_COLOR}). */
   protected readonly desperationColor: number;
+  /**
+   * The weapon volley this boss wields first, or `null` for the shipped
+   * patterns only (see {@link BossConfig.demonstratedWeapon}).
+   */
+  private readonly _demonstratedWeapon: BossDemonstratedWeapon | null;
 
   private _alive = true;
   private _shootEnabled = true; // Boss always "shoots" (pattern-driven)
@@ -360,6 +397,7 @@ export class Boss extends Phaser.GameObjects.Container {
     this.hitPointsPerPhase = resolveHitPointsPerPhase(config.hitPointsPerPhase);
     this.bodyColor = config.bodyColor ?? BOSS_COLOR;
     this.desperationColor = config.desperationColor ?? BOSS_DESPERATION_COLOR;
+    this._demonstratedWeapon = config.demonstratedWeapon ?? null;
 
     // The figure-of-eight anchor starts at the spawn point; `update()` traces
     // the lemniscate about it in the shared core, so `PlayScene` and every
@@ -570,6 +608,40 @@ export class Boss extends Phaser.GameObjects.Container {
   }
 
   // ── Attack pattern fire methods ─────────────────────────────────
+
+  /**
+   * Demonstration volley (Rule 2 — "the boss wields it first"): fires the
+   * configured weapon's fan — one boss bullet per catalogue offset around the
+   * boss's downward heading, wearing that weapon's colour and bullet shape.
+   *
+   * Shares the shipped telegraph/volley guards, so a demonstration is
+   * telegraphed exactly like any other boss volley and a scheduled tell still
+   * suppresses it.
+   */
+  tryFireDemonstratedBullets(now: number): BossBullet[] {
+    const weapon = this._demonstratedWeapon;
+    if (weapon === null) return [];
+    // Guard the telegraph first: the probability roll inside `_shouldFire`
+    // must only happen at the actual fire decision point, never after a
+    // tell has been scheduled (tell/RNG interaction constraint).
+    if (this._telegraphState === TelegraphState.Telegraphing) return [];
+    if (!this._shouldFire(now)) return [];
+
+    const visual: EnemyBulletVisual = {
+      shape: weapon.shape,
+      color: weapon.color,
+      ...(weapon.length === undefined ? {} : { length: weapon.length }),
+    };
+    const heading = Math.PI / 2; // straight down, the shipped boss's aim
+    const bullets: BossBullet[] = [];
+    for (const offset of weapon.offsets) {
+      bullets.push(this._createBullet(heading + offset, weapon.speed, visual));
+    }
+
+    playBossFireSound();
+    this._lastAttackTime = now; // mark volley as fired
+    return bullets;
+  }
 
   /**
    * Spread pattern (Phase 1): fires bullets in a wide arc.
@@ -1282,8 +1354,16 @@ export class Boss extends Phaser.GameObjects.Container {
    * dispatches the four built-in Boss patterns; subclasses may override to
    * drive a config-defined pattern set while reusing the telegraph, volley
    * timing, bullet collection and damage machinery.
+   *
+   * A configured {@link BossConfig.demonstratedWeapon} replaces the **opening**
+   * phase's volley only (Rule 2 — the hex boss wields the weapon it grants
+   * before the player can earn it); every later phase keeps the shipped
+   * pattern, so a hex encounter still runs the shipped architecture.
    */
   protected firePhase(now: number): BossBullet[] {
+    if (this._demonstratedWeapon !== null && this.getPhaseNumber() === 1) {
+      return this.tryFireDemonstratedBullets(now);
+    }
     switch (this._currentPhase) {
       case BossPhase.Spread:
         return this.tryFireSpreadBullets(now);
