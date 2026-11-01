@@ -2180,6 +2180,20 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     return [...this.drops];
   }
 
+  /**
+   * The level-resolved supply cadence the drop layer currently uses (seconds).
+   *
+   * Exposes the *resolved* value — `rules.powerUpSpawnInterval /
+   * dropChanceRatio(level, rules)` (see {@link _resolveSupplyInterval}) — so a
+   * parity test can pin the cadence the gym applies without waiting a whole
+   * level-10 interval (≈45 s) of simulated play, during which an autonomous
+   * scene may legitimately re-derive it (e.g. `GymBotTuning` starting a fresh
+   * random level on completion) (AH-0MVWOERDM000YZN0).
+   */
+  getDropSpawnInterval(): number {
+    return this.dropSpawnInterval;
+  }
+
   /** Cumulative minerals seeded since the level started. */
   getSeededMineralCount(): number {
     return this.mineralsSeeded;

@@ -35,6 +35,19 @@
  * `GameRules` updates these tests through the same modules the game and the
  * gym consume.
  *
+ * ## Failure attribution (AH-0MVWOERDM000YZN0)
+ *
+ * Every cadence expectation is derived from the shipped `DEFAULT_RULES`, while
+ * a scene resolves its interval from `loadRules()`. So that a miss is
+ * attributable instead of reading as a bare timing difference, each cadence
+ * probe (a) asserts the rules store still holds the shipped values, (b) pins
+ * the interval the scene **resolved** (`GymLevel.getDropSpawnInterval()`)
+ * before observing its timed effect, and (c) fails loudly if that interval is
+ * re-derived mid-window. `GymBotTuning` starts a fresh random level when the
+ * probe level is cleared, and that restart legitimately re-resolves the
+ * cadence from the fresh level's curve, so the probe suppresses the restart
+ * (`setLevelRestartEnabled(false)`) for the timed window.
+ *
  * ## Formation-gym divergence (documented)
  *
  * The formation gyms (`GymFormationScene` and its scenes) have no campaign
@@ -55,7 +68,7 @@ import {
   applyEnemyCountScaling,
   dropChanceRatio,
 } from '../../core/levelScaling';
-import { DEFAULT_RULES } from '../../core/rules';
+import { DEFAULT_RULES, loadRules } from '../../core/rules';
 import { resolveCampaignLevels } from '../PlayScene';
 import { Asteroid } from '../../entities/Asteroid';
 import type { EnemyEntity } from '../../entities/enemyFactory';
@@ -133,11 +146,21 @@ function expectedCadenceInterval(levelNumber: number): number {
 function secondsUntilSecondDrop(scene: GymLevel, maxSeconds = 100): number {
   const bootDrop = scene.getDrops()[0];
   expect(bootDrop, 'boot-time supply drop missing').toBeDefined();
+  // The probe must observe a *single* cadence: a mid-window re-derivation
+  // (e.g. an autonomous scene starting a fresh level on completion, which
+  // legitimately re-resolves the interval from the new level's curve) would
+  // otherwise silently measure a different cadence than the one under test
+  // (AH-0MVWOERDM000YZN0).
+  const intervalAtStart = scene.getDropSpawnInterval();
   let previous: CombatDrop | undefined = bootDrop;
   let elapsed = 0;
   while (elapsed < maxSeconds) {
     scene.tick(0.25);
     elapsed += 0.25;
+    expect(
+      scene.getDropSpawnInterval(),
+      `supply cadence re-derived mid-window (${intervalAtStart}s → ${scene.getDropSpawnInterval()}s) at ${elapsed}s`,
+    ).toBe(intervalAtStart);
     const live = scene.getDrops()[0];
     // A new graphics identity means a fresh spawn event.
     if (live && live !== previous) return elapsed;
@@ -146,11 +169,58 @@ function secondsUntilSecondDrop(scene: GymLevel, maxSeconds = 100): number {
   throw new Error(`second supply drop never appeared within ${maxSeconds}s`);
 }
 
+/**
+ * Asserts the cadence the scene **resolved** is the shared level-scaled one.
+ *
+ * This is the no-fork evidence that does not depend on simulated play: the
+ * interval the supply layer will use equals `interval(1) / dropChanceRatio
+ * (level)` computed from the same shared curve the game uses. It fails if the
+ * gym stops applying the shared level scaling (level 10 would resolve the flat
+ * 12.5 s interval instead of ≈45 s) (AH-0MVWOERDM000YZN0).
+ */
+function expectResolvedCadence(scene: GymLevel, expected: number): void {
+  expect(scene.getDropSpawnInterval()).toBeCloseTo(expected, 6);
+}
+
+/**
+ * Guards the cadence probes against a leaked rules store.
+ *
+ * Every cadence expectation below is derived from the **shipped**
+ * `DEFAULT_RULES`, while the scene resolves its interval from `loadRules()`.
+ * A persisted or tuned override would therefore surface as a bare cadence miss;
+ * this guard names the field that moved instead (AH-0MVWOERDM000YZN0).
+ */
+function expectShippedCadenceRules(): void {
+  const rules = loadRules();
+  for (const field of [
+    'powerUpSpawnInterval',
+    'powerUpDropChanceAtLevel1',
+    'powerUpDropChanceAtMaxLevel',
+    'levelScalingMaxLevel',
+  ] as const) {
+    expect(rules[field], `rules store leaked ${field}`).toBe(
+      DEFAULT_RULES[field],
+    );
+  }
+}
+
 /** Asserts the drop cadence matches `expected` within the 0.25 s sampling. */
 function expectCadenceAround(scene: GymLevel, expected: number): void {
   const measured = secondsUntilSecondDrop(scene);
-  expect(measured).toBeGreaterThanOrEqual(expected - 0.5);
-  expect(measured).toBeLessThanOrEqual(expected + 0.5);
+  // Failure diagnostics (AH-0MVWOERDM000YZN0): a cadence miss used to read as
+  // a bare timing difference, hiding *which* input moved. Report the cadence
+  // the scene itself resolved and the rules state it resolved it from, so a
+  // future failure is attributable at a glance.
+  const resolved = scene.getDropSpawnInterval();
+  const rules = loadRules();
+  const detail =
+    `measured ${measured}s against an expected ${expected}s; the scene resolved ` +
+    `${resolved}s from rules {powerUpSpawnInterval: ${rules.powerUpSpawnInterval}, ` +
+    `powerUpDropChanceAtLevel1: ${rules.powerUpDropChanceAtLevel1}, ` +
+    `powerUpDropChanceAtMaxLevel: ${rules.powerUpDropChanceAtMaxLevel}, ` +
+    `levelScalingMaxLevel: ${rules.levelScalingMaxLevel}}`;
+  expect(measured, detail).toBeGreaterThanOrEqual(expected - 0.5);
+  expect(measured, detail).toBeLessThanOrEqual(expected + 0.5);
 }
 
 // ── GymLevel — level-scaled enemy counts ────────────────────────────
@@ -275,6 +345,7 @@ describe('GymLevel — level-resolved supply cadence (AH-0MVLJF6ZD00164MG)', () 
   });
 
   async function bootCadenceProbe(levelNumber: number): Promise<GymLevel> {
+    expectShippedCadenceRules();
     booted = await bootScene([GymLevel]);
     booted.game.loop.stop();
     booted.game.scene.start('GymLevel', {
@@ -327,6 +398,7 @@ describe('GymLevel — single-wave launch cadence at level 1 semantics (AH-0MVLJ
   });
 
   it('AC2 — a level-0 (curve `_launchWave`) launch keeps the level-1 cadence', async () => {
+    expectShippedCadenceRules();
     booted = await bootScene([GymLevel]);
     booted.game.loop.stop();
     booted.game.scene.start('GymLevel', {
@@ -358,6 +430,7 @@ describe('GymBotTuning — inherits level-scaled counts and cadence (AH-0MVLJF6Z
   });
 
   async function bootTuning(data?: GymBotTuningData): Promise<GymBotTuning> {
+    expectShippedCadenceRules();
     booted = await bootScene([GymBotTuning]);
     booted.game.loop.stop();
     booted.game.scene.start(GYM_BOT_TUNING_SCENE_KEY, data);
@@ -396,7 +469,16 @@ describe('GymBotTuning — inherits level-scaled counts and cadence (AH-0MVLJF6Z
       expect(formationEnemies(scene)).toHaveLength(scaledWave1[0].count);
 
       // Inherited cadence: level 10 → 3.6 × the level-1 interval.
-      expectCadenceAround(scene, expectedCadenceInterval(10));
+      const expectedCadence = expectedCadenceInterval(10);
+      // 1) The cadence the scene *resolved* — the no-fork parity seam, immune
+      //    to how long the probe then runs (AH-0MVWOERDM000YZN0).
+      expectResolvedCadence(scene, expectedCadence);
+      // 2) Its timed effect. `GymBotTuning` starts a fresh random level when
+      //    the probe level is cleared, and that restart legitimately
+      //    re-resolves the cadence from the fresh level's (level 1) curve;
+      //    suppress it so this window measures the level-10 cadence only.
+      scene.setLevelRestartEnabled(false);
+      expectCadenceAround(scene, expectedCadence);
     },
   );
 });

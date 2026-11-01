@@ -42,8 +42,13 @@ The next sweep is cheap because most of the matrix is guarded mechanically.
   (level-launch orbital transit `:354`, fire cadence `:496`, march block `:557`,
   and `GymBotTuning` inheritance `:690`),
   [`src/scenes/gym/levelParity.test.ts`](../src/scenes/gym/levelParity.test.ts)
-  (level-scaled counts `:158`, level-resolved supply cadence `:262`, level-gym
-  inheritance `:344`, documented flat formation cadence `:406`),
+  (level-scaled counts `:215`, level-resolved supply cadence `:319`, level-gym
+  inheritance `:403`, documented flat formation cadence `:475`) — each cadence
+  probe pins the interval the scene **resolved**
+  (`GymLevel.getDropSpawnInterval()`) as well as its timed effect, and the
+  `GymBotTuning` probe suppresses that scene's completion-driven random-level
+  restart (which legitimately re-resolves the cadence for the fresh level) so
+  the timed window measures the level-10 cadence only (AH-0MVWOERDM000YZN0),
   [`src/scenes/gym/backgroundParity.test.ts`](../src/scenes/gym/backgroundParity.test.ts)
   (shared layer adoption + identical depth/dim/non-interactive invariants, the
   fixed level-1 backdrop and the absent level-change warp — divergence 11), and

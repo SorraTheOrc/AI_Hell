@@ -183,6 +183,8 @@ export class GymBotTuning extends GymLevel {
   private tuningPanel: HTMLElement | null = null;
   /** Seconds spent in the level-complete state (drives the auto-restart). */
   private completionDwell = 0;
+  /** Whether a completed level auto-restarts with a fresh random level. */
+  private levelRestartEnabled = true;
 
   constructor() {
     super(GYM_BOT_TUNING_SCENE_KEY);
@@ -323,6 +325,10 @@ export class GymBotTuning extends GymLevel {
     this._advanceBot(dt);
     super.tick(dt);
 
+    if (!this.levelRestartEnabled) {
+      this.completionDwell = 0;
+      return;
+    }
     if (this.isLevelComplete()) {
       this.completionDwell += dt;
       if (this.completionDwell >= BOT_TUNING_RESTART_DELAY_SECONDS) {
@@ -331,6 +337,20 @@ export class GymBotTuning extends GymLevel {
     } else {
       this.completionDwell = 0;
     }
+  }
+
+  /**
+   * Test/tuning seam: enable or disable the completion-driven fresh random
+   * level (default enabled).
+   *
+   * With the restart disabled the scene keeps the completed level on the
+   * field, so a test can observe that level's level-resolved supply cadence
+   * for a full window instead of the restart legitimately re-deriving it from
+   * the fresh level's (level 1) curve (AH-0MVWOERDM000YZN0).
+   */
+  setLevelRestartEnabled(enabled: boolean): void {
+    this.levelRestartEnabled = enabled;
+    if (!enabled) this.completionDwell = 0;
   }
 
   /** Generates a new random level and starts it on the existing field. */
