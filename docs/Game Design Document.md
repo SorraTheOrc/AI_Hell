@@ -362,6 +362,10 @@ default `curve`) and the three modes may be mixed freely within one level
   (`generated` | `scripted`) is still read when `generation` is absent, mapping
   `generated` → `curve` and `scripted` → `fixed`.
 
+> **Per-wave mode ledger (AH-0MVSE7GWU0074H5I).** The full 100-wave
+> fixed/curve/dynamic mix — every wave's mode and the reason it holds it — is
+> published as a generated ledger in §3.2 (the default-campaign note).
+
 The sequencer's default candidate pool (`defaultCandidatePool()`)
 deliberately excludes two archetypes delivered by their own spawners: the rare
 **Harvester** (§4.1 E7) and the non-wave-accounted **Asteroid** (random
@@ -516,6 +520,131 @@ the report shape, the scheduling recipe and the tolerance-tuning guidance are in
 > the gyms are not constrained. The static skeleton
 > (levels 1–10) is always present; the static campaign is the fallback, and the
 > boss still triggers after the final level.
+
+#### Default-campaign generation-mode ledger (AH-0MVSE7GWU0074H5I)
+
+The ledger below makes the default campaign's fixed/curve/dynamic mix an
+explicit, verified contract. It is **generated** from the shipped default
+curve (`defaultDifficultyCurves()`) by `npm run generate:mode-ledger` and
+pinned against the config, the shipped CSV and this document by
+`src/waves/modeLedger.test.ts`, so the published mix cannot drift silently.
+Every row states the wave's mode and the one-line reason it holds it.
+
+<!-- MODE_LEDGER_START -->
+
+The shipped default campaign is **5 `dynamic` + 10 `curve` + 85 `fixed`** waves across 100 waves.
+
+| Level | Wave | Mode | Reason |
+|------:|-----:|------|--------|
+| 1 | 1 | `dynamic` | Curated seeded opening — per-run variety on light, non-firing archetypes under R1. |
+| 1 | 2 | `dynamic` | Curated seeded opening — per-run variety on light, non-firing archetypes under R1. |
+| 1 | 3 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 1 | 4 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 1 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 1 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 1 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 1 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 1 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 1 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+| 2 | 1 | `dynamic` | Curated seeded opening — per-run variety on light, non-firing archetypes under R1. |
+| 2 | 2 | `dynamic` | Curated seeded opening — per-run variety on light, non-firing archetypes under R1. |
+| 2 | 3 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 2 | 4 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 2 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 2 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 2 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 2 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 2 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 2 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+| 3 | 1 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 3 | 2 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 3 | 3 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 3 | 4 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 3 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 3 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 3 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 3 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 3 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 3 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+| 4 | 1 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 4 | 2 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 4 | 3 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 4 | 4 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 4 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 4 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 4 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 4 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 4 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 4 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+| 5 | 1 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 5 | 2 | `dynamic` | Mixed-programme dynamic wave — seeded per-run variety outside the onboarding band. |
+| 5 | 3 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 5 | 4 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 5 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 5 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 5 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 5 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 5 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 5 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+| 6 | 1 | `fixed` | Space-Invaders `march` debut — hand-authored so the showcase is guaranteed per run seed. |
+| 6 | 2 | `fixed` | Galaga `capturer` tractor-pull debut — hand-authored so the showcase is guaranteed per run seed. |
+| 6 | 3 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 6 | 4 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 6 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 6 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 6 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 6 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 6 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 6 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+| 7 | 1 | `fixed` | Centipede chain debut — spawner showcase kept hand-authored so it gates the wave as designed. |
+| 7 | 2 | `fixed` | Pac-Man `ghosts` pursuit debut — spawner showcase kept hand-authored for a guaranteed pursuit wave. |
+| 7 | 3 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 7 | 4 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 7 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 7 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 7 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 7 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 7 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 7 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+| 8 | 1 | `fixed` | Frogger lane-traffic debut — non-blocking spawner showcase kept hand-authored. |
+| 8 | 2 | `fixed` | Robotron `grunt` horde debut — spawner showcase kept hand-authored. |
+| 8 | 3 | `fixed` | Defender `raider` debut — hand-authored patrol-and-dive showcase. |
+| 8 | 4 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 8 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 8 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 8 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 8 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 8 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 8 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+| 9 | 1 | `fixed` | Orbital Siege showcase — hand-authored mix under the telegraphed orbital-strike hazard. |
+| 9 | 2 | `fixed` | Orbital Siege pursuit showcase — hand-authored `ghosts` wave under the strike hazard. |
+| 9 | 3 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 9 | 4 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 9 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 9 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 9 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 9 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 9 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 9 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+| 10 | 1 | `fixed` | Gauntlet showcase — hand-authored raider/capturer/grunt mix that opens the finale. |
+| 10 | 2 | `curve` | Curve-generated from `targetDifficulty` — deterministic per run; R1–R4 repairs applied. |
+| 10 | 3 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 10 | 4 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 10 | 5 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 10 | 6 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 10 | 7 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 10 | 8 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 10 | 9 | `fixed` | Hand-authored filler — keeps the authored composition and its parent-AC1 adjacency. |
+| 10 | 10 | `fixed` | Hand-authored level mini-boss — must stay byte-identical so the encounter is guaranteed. |
+
+**Filler conversion decision (documented no-op).** No filler wave is
+converted to `dynamic` in this change. The authored data already expresses
+the intent for every filler wave (parent AC1 adjacency and the per-level
+identity), the 5 existing `dynamic` waves already provide the per-run
+variety the campaign needs, and converting a filler would add seed variance
+without a design need. The mix above is therefore final.
+
+<!-- MODE_LEDGER_END -->
 
 > **Level-name progress label (AH-0MUMMBRCC0093MGV).** The shared
 > level/wave progress label shown in both the persistent HUD readout and the
