@@ -93,6 +93,31 @@ fixed-delta `game.step` calls instead of a `setTimeout(150)` wall-clock sleep,
 and the legacy real-time path is deleted (guarded by
 `src/test/deterministicBootGuard.test.ts`). Since AH-0MVF6VZG9000AN6E heavy
 suites may share one `Phaser.Game` shell per file via `createReusableBoot()`.
+The deterministic boot is **fixed-delta only**: it stops the live
+`requestAnimationFrame` loop for the fixed-delta steps and then **resumes** it
+(`src/test/gameHarness.ts`), because integration suites drive the scene
+themselves afterwards — more below.
+
+### PlayScene boots must also pin the run seed
+
+The harness contract above makes the *boot* deterministic, but it leaves two
+sources of variety to the caller, both of which made `src/scenes/PlayScene.test.ts`
+intermittently red under full-suite parallel load (AH-0MVX2DKC8001RRM4): the
+run seed (unseeded, `PlayScene.create()` draws a fresh one from
+`Math.random()`) and the **resumed** live loop (a real frame can run between a
+test's `await` points and advance wave timers or spawn release).
+
+So every `boot*` helper that boots a `PlayScene` must obtain its scene through
+the file's single shared helper, `bootDeterministic()` in
+`src/scenes/PlayScene.test.ts`, which (1) injects an explicit run seed via
+`setRunSeed` **before** the restart that `bootSceneWithLevels()` performs, and
+(2) calls `game.loop.stop()` after boot so no live frame runs while the test
+drives `tick(dt)`. It pins `DETERMINISTIC_RUN_SEED` (1) for every suite. For
+the exact boot/seed policy, when to use `setRunSeed` versus `setRng`, and how
+to reproduce a failure with a suspect seed, see the helper's doc comment. This is
+the same contract as the harness's: deterministic boot is the default, and a
+suite that needs a wall-clock-free, reproducible starting state composes the
+shared helper rather than booting raw (AH-0MVXWEE3L004SPTC).
 The suite is split (AH-0MVF6XV87001NSEJ) into `unit` (node env, no DOM/Phaser
 inline; the fast TDD loop) and `integration` (happy-dom + `src/test/setup.ts` +
 `deps.inline: ['phaser']`); the typed run commands below are registered as

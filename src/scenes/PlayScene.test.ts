@@ -6,6 +6,18 @@
  * observable behaviour: wave spawning, formation placement, player
  * integration, collisions (bullet/enemy/player), power-up collection,
  * level transitions, and the game-over flow.
+ *
+ * **Deterministic-boot rule (file-wide, AH-0MVXWEEJM00813GK):** every `boot*`
+ * helper in this file that boots a `PlayScene` must obtain its scene through
+ * the shared `bootDeterministic()` helper (doc block above its definition),
+ * so the run seed is explicit and the harness's resumed live
+ * `requestAnimationFrame` loop is stopped while the test asserts. Do not boot
+ * a new helper straight from `bootScene()`/`bootSceneWithLevels()` — an
+ * unseeded boot or a live frame is exactly the load-dependent flake class
+ * this file was fixed to remove (AH-0MVX2DKC8001RRM4). Exceptions, if any,
+ * must be documented in the helper with the reason. How to reproduce a
+ * failure with a suspect seed, and when to use `setRunSeed` versus `setRng`,
+ * are documented on `bootDeterministic()`.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -645,6 +657,13 @@ async function bootSceneWithLevels(
  * `8`/`16`/`33`/`36`/`86` reproduce the boss phase-advance failure via an
  * active frenzy bonus hit), so every suite boots identical state on every
  * run and every host load.
+ *
+ * This is the one seed policy for the whole file: do not add a second pinned
+ * constant or a per-suite seed. A suite that needs a different seed passes it
+ * explicitly through `bootDeterministic(..., { seed })` (see the reproduction
+ * recipe on that helper) rather than defining its own default. Changing this
+ * value changes the initial state of every suite here, so re-verify the whole
+ * file (the seeded boot is what makes the exact-count assertions exact).
  */
 const DETERMINISTIC_RUN_SEED = 1;
 
@@ -656,7 +675,7 @@ const DETERMINISTIC_RUN_SEED = 1;
  * `requestAnimationFrame` loop afterwards (`advanceGame` restarts it,
  * `src/test/gameHarness.ts`), so a real frame with a wall-clock delta can run
  * between a test's `await` points on a loaded host — the flake class this
- * child exists to remove. The helper closes both halves of the
+ * helper exists to remove. The helper closes both halves of the
  * deterministic-boot contract, combining the two precedents already in the
  * file:
  *
@@ -673,8 +692,44 @@ const DETERMINISTIC_RUN_SEED = 1;
  *   timer between the test's `await` points — the mechanism behind the
  *   level-advance alive-count shortfall (8 of 9 planned enemies released).
  *
- * `{ seed }` overrides the pinned `DETERMINISTIC_RUN_SEED`; the seed-sweep
- * harness uses that to probe arbitrary seeds.
+ * `{ seed }` overrides the pinned `DETERMINISTIC_RUN_SEED`, so a suspected
+ * failure can be reproduced with the seed that produced it (see "Reproducing
+ * a failure" below) without editing this file.
+ *
+ * ## Seed versus RNG — which seam to use
+ *
+ * - `setRunSeed(seed)` (used here) pins the **run** seed for the whole scene.
+ *   It is only read at the next `create()`, so it must be injected *before*
+ *   the restart, and it governs every seed-derived gameplay draw: wave and
+ *   spawn planning, enemy behaviour, and drop rolls. Use it whenever a test
+ *   needs "this scene, booted reproducibly" — which is every `boot*` helper
+ *   in this file.
+ * - `setRng(rng)` injects a **specific scene-RNG function** for a suite that
+ *   asserts one particular draw (e.g. the asteroid drift-heading fixture
+ *   below). An injected RNG is not overwritten by `create()`'s seed-derived
+ *   stream, so it survives the restart. It is a targeted fixture, not a
+ *   substitute for the run seed: the rest of that scene still boots from the
+ *   `setRunSeed` value, so the helper must still pin it.
+ *
+ * ## Reproducing a failure with a different seed
+ *
+ * A failing exact-count assertion is only evidence once it reproduces with a
+ * recorded seed (the convention in this file: AH-0MVG23LT7000CG4R,
+ * AH-0MVMEI9V1005H0LU). Pass the suspect seed explicitly — no environment
+ * flag, no edit to the constant:
+ *
+ * ```ts
+ * const { scene } = await bootDeterministic(
+ *   () => bootSceneWithLevels(singleLevelCampaign(), { asteroidSpawner: false }),
+ *   { seed: 8 }, // 8/16/33/36/86 reproduced the boss phase-advance failure
+ * );
+ * ```
+ *
+ * Known-bad seeds from the original reproduction (AH-0MVXWEDOH002LO1M) are
+ * `8`, `16`, `33`, `36` and `86` (boss phase index advanced by an active
+ * frenzy bonus hit). A green re-run on the default seed is not evidence of a
+ * fix when the reported failure carried a seed: reproduce first, then reason
+ * about the cause.
  *
  * @param boot — boots the scene and applies any pre-restart configuration
  *   (injected levels, spawner isolation) before the deterministic restart;
