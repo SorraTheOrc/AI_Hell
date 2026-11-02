@@ -416,7 +416,11 @@ window divergence left here: a field pickup grants exactly **one pool charge**
 (no effect window) and every consumption above is pool-backed and shared. The
 bubble/aura arm signals read the shared pool — pickup and permanent alike —
 and the Shield wind-down and Force Field countdown-driven pulse are retired
-(AH-0MVVD8TCJ004RLXP). The three rows above (`GymPowerUpsCombat`,
+(AH-0MVVD8TCJ004RLXP). The one deliberate asymmetry (producer decision
+Q-A1=b): a **pickup-only charge never regenerates** — the pool's regenerating
+ceiling is 0 until a hold-full reward owns the kind, so a pickup and a
+permanent grant differ only in whether the pool refills. The three rows above
+(`GymPowerUpsCombat`,
 `GymPowerUpLeveling`, `GymFodderEnemies`) were re-checked by the pickup-parity
 pin (AH-0MVVD8U6F0011UOG): no retained divergence changed — the
 `GymFodderEnemies` editors expose the **enemy** force-field axis

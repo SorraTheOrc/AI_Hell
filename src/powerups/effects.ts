@@ -587,8 +587,10 @@ export class EffectsRegistry {
    * consumable. The spent charge starts its own level-derived regeneration
    * timer inside the store, which {@link tick} advances — so no scene keeps a
    * second timer (parent AC7). This is the pool-backed spend seam; the
-   * per-kind methods below preserve the shipped **field-pickup** timed budget
-   * path (PD5) and route a permanently-owned kind here.
+   * per-kind methods below (`tryAbsorbShield`, `tryConsumeThornsRam`,
+   * `tryConsumeForceFieldReflect`) are thin routes into it for **all**
+   * acquisition paths — pickup and permanent alike — because the absorbed-hit
+   * model (AH-0MVVD8SIT000CO9H) retired the field-pickup timed budget.
    */
   tryConsumeConsumableCharge(id: PowerUpId): boolean {
     return this._levelStore.consumeConsumableCharge(id);

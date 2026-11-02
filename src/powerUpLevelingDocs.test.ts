@@ -80,6 +80,20 @@ describe('power-up leveling is documented (AH-0MUU2QJE2007JNR6 AC8)', () => {
     expect(gdd).toMatch(/permanent stack/);
   });
 
+  it('the GDD states the absorbed-hit pickup model and the pickup-versus-permanent regeneration asymmetry (AH-0MVVD8UL6008JLNF AC7)', () => {
+    // The §4.4.3 unified charge-pool bullet must describe a field pickup of
+    // the three budget kinds (Shield/Thorn Field/Force Field) as buying
+    // exactly one event with no effect window, and must state the deliberate
+    // Q-A1=b asymmetry and its reason so a later refactor cannot normalise it.
+    expect(gdd).toContain('Absorbed-hit field pickups');
+    expect(gdd).toMatch(/grants exactly \*\*one charge\*\* and opens no effect window/i);
+    expect(gdd).toContain('pickup-versus-permanent asymmetry');
+    expect(gdd).toContain('Q-A1=b');
+    expect(gdd).toContain('regenRequiresOwnership');
+    // One drop buys one event, then the kind is inert until owned.
+    expect(gdd).toMatch(/one drop buys exactly one event/i);
+  });
+
   it('the GDD and README document the linear/clamped curve family (AH-0MV8GPGBL009M0D8)', () => {
     // The power-up side now mixes exponential-saturation with the
     // linear-clamped curve for additive-capped schedules (the Smart Bomb

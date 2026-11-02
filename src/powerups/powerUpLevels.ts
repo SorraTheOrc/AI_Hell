@@ -979,9 +979,9 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Thorn Field — timed ram counter (AH-0MVCRC1Q0007JAV1): while active,
-  // ramming an enemy destroys it without costing the player a hit, up to a
-  // level-resolved absorb count.
+  // Thorn Field — ram counter (AH-0MVCRC1Q0007JAV1): while armed, ramming an
+  // enemy destroys it without costing the player a hit, up to a level-resolved
+  // absorb count (the charge pool — AH-0MVTQMREN009DSFW).
   thorns: [
     {
       variable: 'thornsAbsorbs',
