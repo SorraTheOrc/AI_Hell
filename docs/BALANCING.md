@@ -1061,9 +1061,170 @@ all on the streaming path. Both are covered by tests in
 `src/ai/eval/cli.test.ts` (one sink chunk per run, in sweep order; streamed
 chunks byte-identical to the in-memory `runs.jsonl` artifact).
 
+## Weapon Euclidean upgrade ladder (AH-0MVYA291J000CK64)
+
+Every weapon's fire cadence is a deterministic **Euclidean rhythm**
+`E(k, n)` — `k` onsets distributed as evenly as possible over a tile of `n`
+steps — phase-shifted by a whole number of steps (`rotation`). The unit of a
+step is the shared **16th-note lattice** at the default 80 BPM
+(187.5 ms per step; the same lattice `src/utils/beat.ts` schedules against), so
+a `n = 16` tile spans one 4-beat bar. At another tempo the step scales with
+`beatPeriodMs(bpm)`; the `(k, n, rotation)` shape is tempo-independent. The
+pure resolver is `resolveWeaponPattern(weaponId, level)` in
+`src/utils/weaponLevels.ts`; the catalogue is `WEAPON_EUCLIDEAN_LADDERS`.
+
+**Density is the invariant.** Effective density is
+`k / (n × stepMs)` onsets per millisecond, reported by
+`euclideanOnsetsPerMinute(pattern)` (and per beat through
+`euclideanOnsetsPerBeat`). A fire-rate upgrade must never reduce density:
+onsets-per-minute are monotonic non-decreasing in level for every weapon, while
+the **shape** (`k`, `n`) and **phase** (`rotation`) may change. Two equal-density
+morphs are deliberate:
+
+- **bar-halving** — the tile `n` halves (e.g. `cannon` `E(16,16)` → `E(8,8)`) so
+  the same density repeats twice per bar instead of once: a shape change, not a
+  speed change;
+- **rotation** — a level moves the same `(k, n)` pattern's phase (e.g. `dual`
+  `E(4,16) rot 0` → `E(4,16) rot 2`, and `arc` `E(9,16) rot 4` → `rot 6`), so the
+  density is identical and only the groove's alignment moves.
+
+**Curve-derived rungs.** Each rung becomes active at the first level where the
+shipped `fireRate` exponential-saturation curve (base 1×, cap 3×, `k = 0.18`)
+desires at least that rung's density, and never earlier than one level after the
+previous rung. The desired density is
+`baseDensity × curveValue(WEAPON_UPGRADE_SPECS.fireRate, level)`
+(`weaponPatternDesiredOnsetsPerBeat`). Because the curve is monotonic, so is the
+ladder. Rungs at or above the 3× asymptote are omitted: the exponential curve
+approaches but never reaches it, and the 16th-note lattice itself caps a v1
+pattern at one onset per step (4 onsets/beat).
+
+**Legacy parity.** A degenerate straight pattern (`k === n`) is all-onsets, so
+its step interval is exactly the legacy on-grid interval. `straightEuclidean`
+builds that form for any `quantiseSubdivision` rate (e.g. subdivision 2 → an
+onset every 375 ms; subdivision 0.5 → every 1 500 ms), and `quantiseEuclidean`
+returns the same degenerate form whenever the desired rate is already an on-grid
+subdivision. Every shipped fire rate therefore remains available as the
+all-onsets subset of the ladder.
+
+**Canonical six-weapon superposition.** At level 0 the canonical fixture is
+`heavy_slug E(3,16)`, `railgun E(2,16)`, `cannon E(9,16)`, `arc E(9,16 rot 4)`,
+`rapid E(13,16)` and `shard_swarm E(10,16)`: **46 onsets per bar** in total
+(3 + 2 + 9 + 9 + 13 + 10), pinned by
+`src/utils/weaponLevels.test.ts`. `cannon` and `arc` share `k = 9` and differ
+only by rotation — the "two medium weapons at identical density" example.
+
+**Machine-verifiable ledger.** The table below is the complete resolved
+ladder — one row per rung, in level order. It is compared row-for-row against
+`WEAPON_EUCLIDEAN_LADDERS` by the test suite, so a code change that is not
+mirrored here fails the suite (and vice versa).
+
+<!-- euclidean-ladder:start -->
+| Weapon | Level | k | n | Rotation | Step (ms) | Onsets/beat | Onsets/min |
+|--------|-------|---|---|----------|-----------|-------------|------------|
+| `cannon` | 0 | 9 | 16 | 0 | 187.5 | 2.25 | 180 |
+| `cannon` | 1 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
+| `cannon` | 2 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
+| `cannon` | 3 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `cannon` | 4 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `spread` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `spread` | 1 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `spread` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `spread` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `spread` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `dual` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `dual` | 1 | 4 | 16 | 2 | 187.5 | 1 | 80 |
+| `dual` | 2 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `dual` | 3 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `dual` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `dual` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `rapid` | 0 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
+| `rapid` | 1 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
+| `rapid` | 2 | 15 | 16 | 0 | 187.5 | 3.75 | 300 |
+| `rapid` | 3 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `rapid` | 4 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `wave_laser` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `wave_laser` | 1 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `wave_laser` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `wave_laser` | 3 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
+| `wave_laser` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `wave_laser` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `ricochet` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `ricochet` | 1 | 4 | 16 | 1 | 187.5 | 1 | 80 |
+| `ricochet` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `ricochet` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `ricochet` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `cluster` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `cluster` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `cluster` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `cluster` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `options` | 0 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `options` | 1 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `options` | 2 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `options` | 3 | 7 | 16 | 0 | 187.5 | 1.75 | 140 |
+| `options` | 4 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `options` | 8 | 5 | 8 | 0 | 187.5 | 2.5 | 200 |
+| `nova` | 0 | 1 | 16 | 0 | 187.5 | 0.25 | 20 |
+| `nova` | 4 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `mortar` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `mortar` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `mortar` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `mortar` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `arc` | 0 | 9 | 16 | 4 | 187.5 | 2.25 | 180 |
+| `arc` | 1 | 9 | 16 | 6 | 187.5 | 2.25 | 180 |
+| `arc` | 2 | 10 | 16 | 6 | 187.5 | 2.5 | 200 |
+| `arc` | 3 | 13 | 16 | 6 | 187.5 | 3.25 | 260 |
+| `arc` | 4 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `arc` | 5 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `rear_guard` | 0 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+| `rear_guard` | 1 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
+| `rear_guard` | 2 | 12 | 16 | 0 | 187.5 | 3 | 240 |
+| `rear_guard` | 3 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
+| `rear_guard` | 4 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `rear_guard` | 5 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `broadside` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `broadside` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `broadside` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `broadside` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `railgun` | 0 | 2 | 16 | 0 | 187.5 | 0.5 | 40 |
+| `railgun` | 2 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `railgun` | 4 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `railgun` | 8 | 5 | 16 | 0 | 187.5 | 1.25 | 100 |
+| `shard_swarm` | 0 | 10 | 16 | 0 | 187.5 | 2.5 | 200 |
+| `shard_swarm` | 1 | 11 | 16 | 0 | 187.5 | 2.75 | 220 |
+| `shard_swarm` | 2 | 12 | 16 | 0 | 187.5 | 3 | 240 |
+| `shard_swarm` | 3 | 13 | 16 | 0 | 187.5 | 3.25 | 260 |
+| `shard_swarm` | 4 | 14 | 16 | 0 | 187.5 | 3.5 | 280 |
+| `shard_swarm` | 5 | 16 | 16 | 0 | 187.5 | 4 | 320 |
+| `shard_swarm` | 6 | 8 | 8 | 0 | 187.5 | 4 | 320 |
+| `heavy_slug` | 0 | 3 | 16 | 0 | 187.5 | 0.75 | 60 |
+| `heavy_slug` | 2 | 4 | 16 | 0 | 187.5 | 1 | 80 |
+| `heavy_slug` | 4 | 6 | 16 | 0 | 187.5 | 1.5 | 120 |
+| `heavy_slug` | 10 | 8 | 16 | 0 | 187.5 | 2 | 160 |
+<!-- euclidean-ladder:end -->
+
+Notes on individual ladders:
+
+- `cannon` walks the documented shape morph
+  `E(9,16) → E(10,16) → E(13,16) → E(16,16) → E(8,8)`. The work item's example
+  ledger starts at `E(8,16)`, but the canonical six-weapon fixture fixes the
+  level-0 cannon rung at `E(9,16)` (so the fixture totals 46 onsets per bar);
+  the ladder above follows the same `E(10,16) → E(13,16) → E(16,16) →
+  E(8,8)` shape from that one-onset-higher base.
+- `heavy_slug`, `railgun`, `cluster`, `mortar`, `broadside` and `nova` stay
+  **sparse**, moving through irregular tiles such as `E(3,16)`, `E(5,16)` and
+  `E(6,16)` as well as the straight low-density `E(2,16)`/`E(1,16)` tiles — they
+  are never limited to whole-beat multiples.
+- `rapid` starts near the lattice ceiling (`E(13,16)` = 3.25 onsets/beat) and
+  reaches `E(8,8)` at 4 onsets/beat; faster-than-16th patterns need a
+  sub-16th step size and are deferred to a follow-up tuning item.
+
 ## Related work
 
 - Epic: **Automated Balancing** (AH-0MV1DLUZ8009OCJW).
+- Weapon Euclidean upgrade ladder (AH-0MVYA291J000CK64): the per-weapon
+  `E(k, n, rotation)` ledger above, resolved by
+  `src/utils/weaponLevels.ts` (`WEAPON_EUCLIDEAN_LADDERS` /
+  `resolveWeaponPattern`).
 - Same-seed evaluation harness: [`docs/EVALUATION.md`](./EVALUATION.md).
 - Periodic human-experience validation
   (AH-0MV7WVHU0000U775): [`docs/EXPERIENCE_VALIDATION.md`](./EXPERIENCE_VALIDATION.md).
