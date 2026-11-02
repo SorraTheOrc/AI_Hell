@@ -316,7 +316,10 @@ cap shapes what a run can become.
   survives on remaining charges after its temporary window expired
   (`charges only`). To keep the cap legible the HUD renders an explicit
   **`Loadout n/6`** budget from the shared model
-  (`resolvePlayerSlotState(player)`), marks those non-slot rows, and gives every
+  (`resolvePlayerSlotState(player)`), marks those non-slot rows, and renders
+  them **dimmed** (`NON_SLOT_ROW_ALPHA`, half opacity) so the slot-counted
+  rows are the ones a player counts — a non-slot row cannot be mistaken for a
+  seventh upgrade (AH-0MVZ0GGW1004502H). It also gives every
   slot-held kind a row — including a temporary one-shot that previously showed
   none. The slot-counted rows therefore equal the model's `used` and never
   exceed `POWER_UP_SLOT_CAP`, and the same wiring (`combatHudOptions`) feeds
@@ -326,7 +329,12 @@ cap shapes what a run can become.
   (`charges only`, including a Phase Shift row opened by a Teleport arrival)
   hold **no** slot; Extra Life has **no** row (the lives counter carries it);
   a temporary one-shot (Orbital Strike, Smart Bomb) holds a slot while its
-  window is open and therefore renders a countdown row.
+  window is open and therefore renders a countdown row. A temporary **field
+  pickup** must have a slot to fill: below the cap it opens a new counted
+  slot, but at the cap a brand-new kind is refused by the shared collection
+  gate (`isWithinSlotPool`) and only a pickup of a kind already held is
+  admitted — it levels that kind's existing slot rather than opening a
+  seventh.
 - **Capture/scripted setups and the checkpoint save are handled explicitly
   (AH-0MVVJS34M00551ES).** Two surfaces are worth naming because they look like
   cap breaches. (1) The capture/gym `setup` payload

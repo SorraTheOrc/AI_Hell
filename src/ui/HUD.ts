@@ -124,6 +124,18 @@ export const SLOT_MARKER_ALWAYS_AVAILABLE = 'always available';
 export const SLOT_MARKER_CHARGES_ONLY = 'charges only';
 
 /**
+ * Opacity applied to a non-slot row (icon, label and value) so it visually
+ * recedes below the six slot-counted rows. A player counting the upgrade list
+ * must be able to see at a glance that only `used` rows are the loadout, so a
+ * residual charge-pool / always-available row is de-emphasised rather than
+ * rendered at the same weight as an equipped upgrade (AH-0MVZ0GGW1004502H).
+ *
+ * The grey marker text keeps full opacity so the reason it is not a slot
+ * ("always available" / "charges only") stays readable.
+ */
+export const NON_SLOT_ROW_ALPHA = 0.5;
+
+/**
  * Mineral hold bar geometry (px). The bar keeps a fixed length at all
  * times so the row never shifts; only the inner fill grows (AC4).
  */
@@ -563,6 +575,15 @@ export class HUD extends Phaser.GameObjects.Container {
     if (entry.greyed) {
       name.setColor(POWER_UP_GREY_COLOUR_CSS);
       value.setColor(POWER_UP_GREY_COLOUR_CSS);
+    }
+
+    // A non-slot row (exempt entry or residual charge pool) is not part of
+    // the six-slot loadout. De-emphasise it so the slot-counted rows are the
+    // ones a player counts; the marker below names why it holds no slot.
+    if (entry.slotCounted === false) {
+      icon.setAlpha(NON_SLOT_ROW_ALPHA);
+      name.setAlpha(NON_SLOT_ROW_ALPHA);
+      value.setAlpha(NON_SLOT_ROW_ALPHA);
     }
 
     this.add([icon, name, value]);

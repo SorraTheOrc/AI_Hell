@@ -1363,6 +1363,9 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   `charges only`. Every slot-held kind gets a row, including a temporary
   one-shot (Orbital Strike, Smart Bomb) that the pre-cap visibility rules hid,
   so the slot-counted rows equal `used` and never exceed `POWER_UP_SLOT_CAP`.
+  Non-slot rows are additionally rendered **dimmed** (`NON_SLOT_ROW_ALPHA`,
+  half opacity) so the slot-counted rows are the ones a player counts and a
+  non-slot row cannot read as a seventh upgrade (AH-0MVZ0GGW1004502H).
   The state is wired once, through `combatHudOptions`
   ([`src/scenes/core/hudWiring.ts`](../src/scenes/core/hudWiring.ts)), so
   `PlayScene` and every gym show the identical budget.
@@ -1377,6 +1380,11 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   - **temporary one-shots** (Orbital Strike, Smart Bomb) hold a slot while
     their field-pickup window is open, so they render a row with a live
     countdown and *are* part of the loadout — unlike the two classes above.
+  A temporary **field pickup** must have a slot to fill: below the cap it
+  opens a new counted slot, but at the cap a brand-new kind is refused by the
+  shared collection gate (`isWithinSlotPool`) and only a pickup of a kind
+  already held (permanently) is admitted — it levels that kind's existing slot
+  rather than opening a seventh.
 
 - **Triaging a "more than six equipped" report (AH-0MVVF0POV001JNKX).** The
   HUD can show more rows than slots by design (above), so a report is

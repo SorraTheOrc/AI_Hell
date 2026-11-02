@@ -1,20 +1,30 @@
 /**
- * Upgrade-count reporting: six permanent upgrades, then runtime upgrades.
+ * Upgrade-count reporting: permanent upgrades, temporary pickups and the
+ * six-slot gate.
  *
  * Reproduces the operator's playtest report (AH-0MVZ0GGW1004502H): mid-run the
  * HUD list showed six upgrade rows while the `Loadout n/6` label read `5/6`
- * and the hold-full `YOUR UPGRADES` panel listed five. This suite pins the
- * three surfaces that must agree — the HUD slot budget, the HUD row list and
- * the permanent-only upgrade panel (`buildOwnedLoadout`) — and then adds
- * **runtime** (temporary field-pickup) upgrades that are not in the permanent
- * set to see how many upgrades the model reports as active.
+ * and the hold-full `YOUR UPGRADES` panel listed five.
+ *
+ * The suite pins three things:
+ *
+ * 1. Six **permanent** upgrades agree across the HUD budget, the HUD row list
+ *    and the permanent-only upgrade panel (`buildOwnedLoadout`).
+ * 2. A **temporary** field pickup needs a free slot: below the cap a new kind
+ *    fills one, but at the cap a new kind is **blocked** by the shared gate
+ *    (`isWithinSlotPool`) — only a pickup of a kind already held permanently
+ *    is allowed, and it reuses that kind's existing slot rather than opening a
+ *    seventh.
+ * 3. The reported shape (six visible rows for five counted slots) is a
+ *    **non-slot** residual charge-pool row, which is now de-emphasised so it
+ *    cannot be mistaken for an upgrade.
  *
  * Everything is built through the real shipped seams (`EffectsRegistry`
- * `applyWeapon` / `applyCollect` and `Player.equipWeapon`) — the same calls
- * `CombatCoreScene._collectDrop` and `applyMineralChoiceReward` make — so the
- * test never re-implements the accounting it checks. Expected values are
- * derived from the shared model (`resolvePlayerSlotState`), never hard-coded
- * to the answer the HUD is supposed to produce.
+ * `applyWeapon` / `applyCollect`, `Player.equipWeapon` and `isWithinSlotPool`)
+ * — the same calls `CombatCoreScene._collectDrop` / `_canCollectDrop` make — so
+ * the test never re-implements the accounting it checks. Expected values are
+ * derived from the shared model, never hard-coded to a number the HUD is
+ * supposed to print.
  *
  * @module src/ui/HUD.upgradeCount.test
  */
@@ -23,14 +33,14 @@ import { describe, it, expect } from 'vitest';
 import Phaser from 'phaser';
 
 import { bootScene } from '../test/gameHarness';
-import { HUD } from './HUD';
+import { HUD, NON_SLOT_ROW_ALPHA } from './HUD';
 import { EffectsRegistry } from '../powerups/effects';
 import { Player } from '../entities/Player';
-import { resolvePlayerSlotState } from '../powerups/slots';
+import { isWithinSlotPool, resolvePlayerSlotState } from '../powerups/slots';
 import { buildOwnedLoadout } from '../powerups/ownedLoadout';
 import { resolveTemporaryWindow } from '../powerups/powerUpLevels';
 import { POWER_UP_SLOT_CAP } from '../core/constants';
-import type { PowerUpId } from '../powerups/types';
+import type { DropId, PowerUpId } from '../powerups/types';
 import type { WeaponId } from '../utils/weapons';
 
 /** A bare scene: the HUD attaches to any Phaser scene (no gym logic). */
@@ -53,21 +63,20 @@ const PERMANENT_WEAPONS: readonly WeaponId[] = [
 ];
 const PERMANENT_POWER_UPS: readonly PowerUpId[] = ['magnet', 'mineral_scoop'];
 
+/** Four permanent upgrades, leaving two free slots. */
+const BELOW_CAP_WEAPONS: readonly WeaponId[] = ['spread', 'rapid', 'mortar'];
+const BELOW_CAP_POWER_UPS: readonly PowerUpId[] = ['magnet'];
+
 /**
- * The five permanent upgrades of the reported shape: five slot-counted kinds
- * (three weapons + two power-ups). The sixth *visible* row is a residual
- * `phase_shift` charge pool, which holds no slot (producer Resolved decision
- * 1b).
+ * Five permanent slot-counted upgrades for the reported shape: three weapons
+ * + two power-ups. The sixth *visible* row is a residual `phase_shift`
+ * charge pool, which holds no slot (producer Resolved decision 1b).
  */
 const FIVE_PERMANENT_WEAPONS: readonly WeaponId[] = ['spread', 'rapid', 'mortar'];
 const FIVE_PERMANENT_POWER_UPS: readonly PowerUpId[] = ['magnet', 'mineral_scoop'];
 
 /** Extra time past a temporary window so the expiry path definitely runs. */
 const EXPIRY_MARGIN_SECONDS = 0.5;
-
-/** Runtime (temporary field-pickup) upgrades, none in the permanent set. */
-const RUNTIME_WEAPONS: readonly WeaponId[] = ['wave_laser', 'ricochet'];
-const RUNTIME_POWER_UPS: readonly PowerUpId[] = ['speed_boost'];
 
 /**
  * Builds a player plus the registry bound to its level store, exactly as the
@@ -98,31 +107,69 @@ function grantPermanentPowerUp(
   registry.applyCollect(powerUpId, true);
 }
 
-/** Collects a weapon as a field pickup (runtime, temporary). */
-function collectRuntimeWeapon(
+/**
+ * Collects a weapon **only if the shared gate allows it**, mirroring
+ * `CombatCoreScene._collectDrop` behind `_canCollectDrop`. Returns whether the
+ * pickup happened.
+ */
+function tryCollectWeapon(
   registry: EffectsRegistry,
   player: Player,
   weaponId: WeaponId,
-): void {
+): boolean {
+  if (!isWithinSlotPool(weaponId as DropId, resolvePlayerSlotState(player))) {
+    return false;
+  }
   registry.applyWeapon(weaponId);
   player.equipWeapon(weaponId);
+  return true;
 }
 
-/** Collects a power-up as a field pickup (runtime, temporary). */
-function collectRuntimePowerUp(
+/**
+ * Collects a power-up **only if the shared gate allows it**, mirroring the
+ * same collection gate. Returns whether the pickup happened.
+ */
+function tryCollectPowerUp(
   registry: EffectsRegistry,
+  player: Player,
   powerUpId: PowerUpId,
-): void {
+): boolean {
+  if (!isWithinSlotPool(powerUpId, resolvePlayerSlotState(player))) return false;
   registry.applyCollect(powerUpId);
+  return true;
 }
 
-/** Slot-counted rows the HUD currently renders. */
+/** Boots a HUD wired to `player`'s live slot state. */
+function makeHud(
+  scene: Phaser.Scene,
+  player: Player,
+  registry: EffectsRegistry,
+): HUD {
+  const hud = new HUD(scene, registry, {
+    getSlotState: () => resolvePlayerSlotState(player),
+    getWeaponLevel: (weaponId) => player.getWeaponLevel(weaponId as WeaponId),
+  });
+  hud.refresh();
+  return hud;
+}
+
+/** Slot-counted row ids the HUD currently renders, sorted. */
 function slotCountedRowIds(hud: HUD): string[] {
   return hud
     .getLoadoutRows()
     .filter((row) => row.slotCounted)
     .map((row) => row.id)
     .sort();
+}
+
+/** Text objects currently rendered by the HUD container. */
+function renderedTexts(hud: HUD): Phaser.GameObjects.Text[] {
+  return (
+    hud as unknown as { list: Phaser.GameObjects.GameObject[] }
+  ).list.filter(
+    (child): child is Phaser.GameObjects.Text =>
+      child instanceof Phaser.GameObjects.Text,
+  );
 }
 
 describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
@@ -137,15 +184,13 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
       grantPermanentPowerUp(registry, powerUpId);
     }
 
-    const hud = new HUD(scene, registry, {
-      getSlotState: () => resolvePlayerSlotState(player),
-      getWeaponLevel: (weaponId) => player.getWeaponLevel(weaponId as WeaponId),
-    });
-    hud.refresh();
-
+    const hud = makeHud(scene, player, registry);
     const state = resolvePlayerSlotState(player);
     const budget = hud.getSlotBudget();
     const countedRows = slotCountedRowIds(hud);
+    const nonSlotRows = hud
+      .getLoadoutRows()
+      .filter((row) => !row.slotCounted);
     // The hold-full overlay's `YOUR UPGRADES` panel reads this snapshot.
     const ownedPanel = buildOwnedLoadout(
       player.getPowerUpLevels(),
@@ -165,9 +210,7 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
 
     // Surface 2: the HUD row list — six slot-counted rows, nothing unmarked.
     expect(countedRows).toHaveLength(6);
-    expect(
-      hud.getLoadoutRows().filter((row) => !row.slotCounted),
-    ).toHaveLength(0);
+    expect(nonSlotRows).toHaveLength(0);
 
     // Surface 3: the upgrade screen's permanent-only panel.
     expect(ownedPanel).toHaveLength(6);
@@ -176,11 +219,40 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
     );
   });
 
-  it('counts runtime upgrades that are not in the permanent set as active', async () => {
+  it('below the cap, a new temporary upgrade fills a free slot', async () => {
     const { game, scene } = await bootScene([BareScene]);
     const { player, registry } = makePlayerAndRegistry(scene);
 
-    // Six permanent upgrades first — a full loadout.
+    for (const weaponId of BELOW_CAP_WEAPONS) {
+      grantPermanentWeapon(registry, player, weaponId);
+    }
+    for (const powerUpId of BELOW_CAP_POWER_UPS) {
+      grantPermanentPowerUp(registry, powerUpId);
+    }
+
+    const hud = makeHud(scene, player, registry);
+    const stateBefore = resolvePlayerSlotState(player);
+    const gateOpen = isWithinSlotPool('wave_laser', stateBefore);
+    const collected = tryCollectWeapon(registry, player, 'wave_laser');
+    hud.refresh();
+    const stateAfter = resolvePlayerSlotState(player);
+    const countedAfter = slotCountedRowIds(hud);
+    destroy(game);
+
+    // Four permanent kinds leave two free slots, so the gate admits a new
+    // temporary kind and it becomes a fifth counted slot.
+    expect(stateBefore.used).toBe(4);
+    expect(gateOpen).toBe(true);
+    expect(collected).toBe(true);
+    expect(stateAfter.used).toBe(5);
+    expect(countedAfter).toHaveLength(5);
+    expect(countedAfter).toContain('wave_laser');
+  });
+
+  it('at the cap, a new temporary kind is blocked; a same-kind pickup reuses its slot', async () => {
+    const { game, scene } = await bootScene([BareScene]);
+    const { player, registry } = makePlayerAndRegistry(scene);
+
     for (const weaponId of PERMANENT_WEAPONS) {
       grantPermanentWeapon(registry, player, weaponId);
     }
@@ -188,58 +260,53 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
       grantPermanentPowerUp(registry, powerUpId);
     }
 
-    const hud = new HUD(scene, registry, {
-      getSlotState: () => resolvePlayerSlotState(player),
-      getWeaponLevel: (weaponId) => player.getWeaponLevel(weaponId as WeaponId),
-    });
-    hud.refresh();
+    const hud = makeHud(scene, player, registry);
+    const stateFull = resolvePlayerSlotState(player);
 
-    const permanentOnly = buildOwnedLoadout(
-      player.getPowerUpLevels(),
-      player.getWeaponLevels(),
+    // A brand-new kind cannot be collected: there is no slot to fill.
+    const newKindAdmitted = isWithinSlotPool('wave_laser', stateFull);
+    const newKindCollected = tryCollectWeapon(
+      registry,
+      player,
+      'wave_laser',
     );
-    const budgetBefore = hud.getSlotBudget();
+    const newPowerUpAdmitted = isWithinSlotPool('speed_boost', stateFull);
+    const newPowerUpCollected = tryCollectPowerUp(
+      registry,
+      player,
+      'speed_boost',
+    );
 
-    // Runtime upgrades the run did not own permanently (field pickups).
-    for (const weaponId of RUNTIME_WEAPONS) {
-      collectRuntimeWeapon(registry, player, weaponId);
-    }
-    for (const powerUpId of RUNTIME_POWER_UPS) {
-      collectRuntimePowerUp(registry, powerUpId);
-    }
+    // A kind already held permanently **is** admissible: the pickup levels the
+    // existing slot rather than opening a seventh.
+    const heldKindAdmitted = isWithinSlotPool('spread', stateFull);
+    const levelBefore = player.getWeaponLevel('spread');
+    const heldKindCollected = tryCollectWeapon(registry, player, 'spread');
+    const levelAfter = player.getWeaponLevel('spread');
+
     hud.refresh();
-
-    const state = resolvePlayerSlotState(player);
+    const stateAfter = resolvePlayerSlotState(player);
     const budgetAfter = hud.getSlotBudget();
-    const countedRowsAfter = slotCountedRowIds(hud);
-    const permanentPanelAfter = buildOwnedLoadout(
-      player.getPowerUpLevels(),
-      player.getWeaponLevels(),
-    );
-
+    const countedAfter = slotCountedRowIds(hud);
     destroy(game);
 
-    const runtimeCount =
-      RUNTIME_WEAPONS.length + RUNTIME_POWER_UPS.length;
+    // New kinds are refused by the shared gate and never reach the registry.
+    expect(stateFull.isFull).toBe(true);
+    expect(newKindAdmitted).toBe(false);
+    expect(newKindCollected).toBe(false);
+    expect(newPowerUpAdmitted).toBe(false);
+    expect(newPowerUpCollected).toBe(false);
 
-    // The permanent upgrade screen is unchanged: runtime pickups never appear
-    // in the permanent-only `YOUR UPGRADES` panel.
-    expect(budgetBefore).toEqual({ used: 6, cap: POWER_UP_SLOT_CAP });
-    expect(permanentOnly).toHaveLength(6);
-    expect(permanentPanelAfter).toHaveLength(6);
-
-    // Runtime upgrades hold a slot while their window is open (producer Q4a),
-    // so every one of them is active and counted by the model.
-    expect(state.used).toBe(6 + runtimeCount);
-    expect(budgetAfter.used).toBe(6 + runtimeCount);
-    expect(countedRowsAfter).toHaveLength(6 + runtimeCount);
-
-    // The HUD rows and the budget tell the same story, and the runtime kinds
-    // are present as their own rows rather than folded into a permanent one.
-    expect(budgetAfter.used).toBe(countedRowsAfter.length);
-    for (const runtimeId of [...RUNTIME_WEAPONS, ...RUNTIME_POWER_UPS]) {
-      expect(countedRowsAfter).toContain(runtimeId);
-    }
+    // A same-kind pickup is allowed and levels the existing permanent weapon,
+    // leaving the slot count unchanged (a seventh slot is never opened).
+    expect(heldKindAdmitted).toBe(true);
+    expect(heldKindCollected).toBe(true);
+    expect(levelAfter).toBe(levelBefore + 1);
+    expect(stateAfter.used).toBe(6);
+    expect(budgetAfter).toEqual({ used: 6, cap: POWER_UP_SLOT_CAP });
+    expect(countedAfter).toHaveLength(6);
+    expect(countedAfter).not.toContain('wave_laser');
+    expect(countedAfter).not.toContain('speed_boost');
   });
 
   it('reproduces the reported shape: six visible rows for five counted slots', async () => {
@@ -263,12 +330,7 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
       resolveTemporaryWindow('phase_shift', 0) + EXPIRY_MARGIN_SECONDS,
     );
 
-    const hud = new HUD(scene, registry, {
-      getSlotState: () => resolvePlayerSlotState(player),
-      getWeaponLevel: (weaponId) => player.getWeaponLevel(weaponId as WeaponId),
-    });
-    hud.refresh();
-
+    const hud = makeHud(scene, player, registry);
     const state = resolvePlayerSlotState(player);
     const budget = hud.getSlotBudget();
     const allRows = hud.getLoadoutRows();
@@ -277,6 +339,16 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
       player.getPowerUpLevels(),
       player.getWeaponLevels(),
     );
+
+    // Capture the rendered opacity before teardown: the non-slot row must be
+    // de-emphasised so a player cannot read it as a loadout entry.
+    const texts = renderedTexts(hud);
+    const phaseRow = allRows.find((row) => row.id === 'phase_shift');
+    const slotRow = allRows.find((row) => row.id === 'spread');
+    const alphaOf = (label: string | undefined): number | undefined =>
+      texts.find((text) => text.text === label)?.alpha;
+    const phaseAlpha = alphaOf(phaseRow?.label);
+    const slotAlpha = alphaOf(slotRow?.label);
 
     destroy(game);
 
@@ -290,16 +362,16 @@ describe('upgrade count reporting (AH-0MVZ0GGW1004502H)', () => {
     expect(countedRows).toHaveLength(5);
     expect(ownedPanel).toHaveLength(5);
 
-    // The sixth row is explicitly classifiable as non-slot: it carries the
-    // `charges only` marker and is excluded from the slot count. The display
-    // therefore never claims a slot the model did not give it — the residual
-    // defect is legibility (a player can misread the marked row as an
-    // upgrade), which is exactly what the markers exist to prevent.
-    const phaseRow = allRows.find((row) => row.id === 'phase_shift');
+    // The sixth row is a non-slot row: it carries the `charges only` marker,
+    // is excluded from the slot count, and is rendered dimmed so it recedes
+    // below the five slot-counted rows. A slot-counted row stays at full
+    // opacity, so the loadout is visually distinct from the residue.
     expect(phaseRow).toBeDefined();
     expect(phaseRow!.slotCounted).toBe(false);
     expect(phaseRow!.marker).toBe('charges only');
     expect(state.heldIds.has('phase_shift')).toBe(false);
+    expect(phaseAlpha).toBeCloseTo(NON_SLOT_ROW_ALPHA);
+    expect(slotAlpha).toBe(1);
   });
 });
 
