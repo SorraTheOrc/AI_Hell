@@ -23,6 +23,7 @@ import {
 import { DEFAULT_CONFIG } from '../../core/config';
 import { seedConfigStore } from '../../core/configStore';
 import { isOnGrid } from '../../utils/beat';
+import { euclidPattern, isOnset } from '../../utils/euclid';
 import {
   WEAPON_BULLET_LIFETIME,
   WEAPON_CATALOGUE,
@@ -1642,9 +1643,10 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
    * The grid is reset to a deterministic t=0 anchor and shared with the
    * player, so the recorded ticks are independent of boot timing.
    */
-  async function collectSpawnTicks(
-    frameDeltasMs: number[],
-  ): Promise<Record<WeaponId, number[]>> {
+  async function collectSpawnTicks(frameDeltasMs: number[]): Promise<{
+    ticks: Record<WeaponId, number[]>;
+    patterns: Partial<Record<WeaponId, ReturnType<Player['getFirePattern']>>>;
+  }> {
     booted = await bootScene([StubCombatScene]);
     const scene = booted.scene as StubCombatScene;
     const player = scene.addPlayer({ x: 100, y: 100 });
@@ -1687,36 +1689,49 @@ describe('CombatScene — beat-grid bullet spawns (AH-0MUAYB8EH005RJ8B)', () => 
     }
 
     vi.restoreAllMocks();
+    const patterns: Partial<Record<WeaponId, ReturnType<Player['getFirePattern']>>> = {
+      cannon: player.getFirePattern('cannon'),
+      spread: player.getFirePattern('spread'),
+      rapid: player.getFirePattern('rapid'),
+    };
     booted.game.destroy(true);
     booted = null;
-    return ticks;
+    return { ticks, patterns };
   }
 
-  it('AC1/AC4 — every spawned bullet lands on its weapon grid tick; active weapons share the phase', async () => {
-    const ticks = await collectSpawnTicks(
+  it('AC1/AC4 — every spawned bullet lands on its pattern onset tick; active weapons share the lattice', async () => {
+    const { ticks, patterns } = await collectSpawnTicks(
       Array.from({ length: 300 }, () => 10),
     );
 
     for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
-      const interval = WEAPON_CATALOGUE[weapon].fireRateMs;
+      // The Euclidean pattern owns the cadence (AH-0MVYA1V8Z009SHMR): every
+      // bullet lands on an exact onset tick of that weapon's rhythm.
+      const pattern = patterns[weapon]!;
+      const tile = euclidPattern(pattern.k, pattern.n, pattern.rotation);
       expect(ticks[weapon].length).toBeGreaterThan(0);
       for (const tick of ticks[weapon]) {
-        expect(isOnGrid(tick, interval, 0)).toBe(true);
-        expect(tick % interval).toBe(0); // exact tick, anchored at 0
+        expect(isOnGrid(tick, pattern.stepMs, 0)).toBe(true);
+        expect(tick % pattern.stepMs).toBe(0); // exact tick, anchored at 0
+        expect(isOnset(tick, tile, pattern.stepMs, 0)).toBe(true);
       }
-      // All default intervals are multiples of the finest (125 ms) grid, so
-      // simultaneously active weapons stay phase-locked.
-      for (const tick of ticks[weapon]) expect(tick % 125).toBe(0);
+      // All patterns share the 187.5 ms 16th-note lattice, so simultaneously
+      // active weapons stay phase-locked.
+      for (const tick of ticks[weapon]) expect(tick % 187.5).toBe(0);
     }
   });
 
   it('AC3 — the spawned-bullet grid is framerate-independent', async () => {
-    const at10ms = await collectSpawnTicks(
-      Array.from({ length: 300 }, () => 10), // 3000 ms at 10 ms/frame
-    );
-    const at25ms = await collectSpawnTicks(
-      Array.from({ length: 120 }, () => 25), // 3000 ms at 25 ms/frame
-    );
+    const at10ms = (
+      await collectSpawnTicks(
+        Array.from({ length: 300 }, () => 10), // 3000 ms at 10 ms/frame
+      )
+    ).ticks;
+    const at25ms = (
+      await collectSpawnTicks(
+        Array.from({ length: 120 }, () => 25), // 3000 ms at 25 ms/frame
+      )
+    ).ticks;
 
     for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
       expect(at10ms[weapon].length).toBeGreaterThan(0);

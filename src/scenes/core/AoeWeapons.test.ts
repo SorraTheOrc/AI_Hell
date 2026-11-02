@@ -24,6 +24,7 @@ import { advanceAndCull } from '../../entities/PlayerBullet';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { isOnGrid } from '../../utils/beat';
+import { euclidPattern, isOnset } from '../../utils/euclid';
 import { WEAPON_CATALOGUE, type AoEDescriptor, type WeaponDefinition } from '../../utils/weapons';
 import {
   CombatScene,
@@ -435,12 +436,18 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
   // ── AC7 — beat-quantised triggering ───────────────────────────────
 
-  it('AC7 — Nova fires on the 3000 ms beat grid and reports an on-grid shot', async () => {
+  it('AC7 — Nova fires on its one-onset-per-bar pattern and reports an onset tick', async () => {
     const scene = await boot();
     const player = scene.addPlayer({ x: 100, y: 100 });
     player.equipWeapon('nova');
 
+    // The legacy nominal interval is one shot per bar (3000 ms at 80 BPM).
     expect(player.getFireInterval('nova')).toBe(3000);
+    // The shipped cadence is the ladder's E(1, 16): one onset per bar.
+    const pattern = player.getFirePattern('nova')!;
+    expect(pattern.k).toBe(1);
+    expect(pattern.n).toBe(16);
+    expect(pattern.stepMs).toBe(187.5);
 
     scene.getBeatClock().reset();
     player.setBeatClock(scene.getBeatClock());
@@ -448,8 +455,16 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
     const shot = player.getLastShotTime('nova');
     expect(shot).toBeDefined();
-    expect(isOnGrid(shot!, 3000, 0)).toBe(true);
-    expect(shot! % 3000).toBe(0);
+    expect(isOnGrid(shot!, pattern.stepMs, 0)).toBe(true);
+    expect(
+      isOnset(
+        shot!,
+        euclidPattern(pattern.k, pattern.n, pattern.rotation),
+        pattern.stepMs,
+        0,
+      ),
+    ).toBe(true);
+    expect(shot! % 3000).toBe(0); // exactly one onset per 3 s bar
   });
 
   it('AC7 — conventional weapons keep their own on-grid cadence alongside AOE', async () => {
@@ -459,10 +474,23 @@ describe('AOE weapons — shared dispatch and effect resolution (F1)', () => {
 
     scene.runAutoFire(3.0);
 
-    // The cannon (375 ms) and nova (3000 ms) both fired on their own grids.
+    // The cannon (E(9, 16)) and nova (E(1, 16)) each fired on their own
+    // pattern's first onset of the bar.
     expect(player.getLastShotTime('cannon')).toBeDefined();
-    expect(player.getLastShotTime('nova')).toBe(3000);
-    expect(player.getLastShotTime('cannon')! % 375).toBe(0);
+    expect(player.getLastShotTime('nova')).toBe(0);
+    const cannonPattern = player.getFirePattern('cannon')!;
+    expect(
+      isOnset(
+        player.getLastShotTime('cannon')!,
+        euclidPattern(
+          cannonPattern.k,
+          cannonPattern.n,
+          cannonPattern.rotation,
+        ),
+        cannonPattern.stepMs,
+        0,
+      ),
+    ).toBe(true);
   });
 
   // ── Regression: ordinary bullets still travel at the shared speed ──

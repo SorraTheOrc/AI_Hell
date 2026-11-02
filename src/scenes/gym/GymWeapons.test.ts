@@ -30,6 +30,7 @@ import { GymWeapons } from './GymWeapons';
 import { CombatCoreScene } from '../core/CombatCoreScene';
 import { CombatScene } from '../core/CombatScene';
 import { isOnGrid } from '../../utils/beat';
+import { euclidPattern, isOnset } from '../../utils/euclid';
 import {
   WEAPON_CATALOGUE,
   type WeaponId,
@@ -148,7 +149,20 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     expect(player.getBeatClock()).toBe(scene.getBeatClock());
     const shot = player.getLastShotTime('cannon');
     expect(shot).toBeDefined();
-    expect(isOnGrid(shot!, 375, scene.getBeatClock().anchorMs)).toBe(true);
+    // The shot is an exact onset of the cannon's Euclidean pattern
+    // (AH-0MVYA1V8Z009SHMR), on the shared 16th-note lattice.
+    const pattern = player.getFirePattern('cannon')!;
+    expect(isOnGrid(shot!, pattern.stepMs, scene.getBeatClock().anchorMs)).toBe(
+      true,
+    );
+    expect(
+      isOnset(
+        shot!,
+        euclidPattern(pattern.k, pattern.n, pattern.rotation),
+        pattern.stepMs,
+        scene.getBeatClock().anchorMs,
+      ),
+    ).toBe(true);
   });
 
   it('the shared beat clock pauses with the gym (AC4)', async () => {
@@ -210,13 +224,22 @@ describe('GymWeapons AC1/AC7: auto-fire produces bullets', () => {
     for (let i = 0; i < 120; i++) scene.tick(0.025); // 3000 ms at 25 ms
     vi.restoreAllMocks();
 
+    const patterns: Partial<Record<WeaponId, ReturnType<Player['getFirePattern']>>> = {
+      cannon: player.getFirePattern('cannon'),
+      spread: player.getFirePattern('spread'),
+      rapid: player.getFirePattern('rapid'),
+    };
+
     for (const weapon of ['cannon', 'spread', 'rapid'] as WeaponId[]) {
-      const interval = WEAPON_CATALOGUE[weapon].fireRateMs;
+      const pattern = patterns[weapon]!;
+      const tile = euclidPattern(pattern.k, pattern.n, pattern.rotation);
       expect(ticks[weapon].length).toBeGreaterThan(0);
       for (const tick of ticks[weapon]) {
-        expect(isOnGrid(tick, interval, 0)).toBe(true);
-        expect(tick % interval).toBe(0);
-        expect(tick % 125).toBe(0); // all active weapons share the phase
+        // Every bullet lands on an onset of that weapon's pattern.
+        expect(isOnGrid(tick, pattern.stepMs, 0)).toBe(true);
+        expect(tick % pattern.stepMs).toBe(0);
+        expect(isOnset(tick, tile, pattern.stepMs, 0)).toBe(true);
+        expect(tick % 187.5).toBe(0); // all active weapons share the lattice
       }
     }
   });

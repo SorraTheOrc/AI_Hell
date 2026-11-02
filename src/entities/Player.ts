@@ -58,14 +58,17 @@
  * clears timed activations and their temporary stacks while keeping
  * permanent levels, and `resetWeaponLevels()` clears both on run restart.
  *
- * Fire timing is **globally quantised to an 80 BPM beat**
- * (AH-0MUAYB8EH005RJ8B): every active weapon's shots land on a tick of one
- * shared beat grid, phase-locked to the clock anchor, so simultaneously
- * active weapons stay in phase and never drift relative to collection time
- * or frame rate. A weapon collected mid-beat fires its first shot on the
- * next grid tick (by design). The grid math is pure
- * (`utils/beat.ts`); the clock advances with game time and pauses with the
- * game.
+ * Fire timing is an **Euclidean onset cadence** on a shared lattice
+ * (AH-0MVYA1V8Z009SHMR, epic AH-0MVYA1JFK003RLAW): each active weapon plays
+ * the `(k, n, rotation)` rhythm its upgrade ladder resolves for its level
+ * (`utils/weaponLevels.ts`), and `tryFire` returns a weapon only on an onset
+ * tick of that pattern (`utils/euclid.ts`). Patterns are irregular by design
+ * — consecutive gaps differ — but every onset is an exact tick of one shared
+ * 16th-note lattice, so simultaneously active weapons stay phase-locked and
+ * never drift relative to collection time or frame rate. A weapon collected
+ * mid-bar fires on its pattern's next onset, and an upgrade morph changes the
+ * pattern only on a bar downbeat. The grid math is pure (`utils/beat.ts`);
+ * the clock advances with game time and pauses with the game.
  *
  * NOTE: instantiate with `scene.add.existing(player)` — like all Phaser
  * GameObjects, a Graphics built via `new` is not on the display list
@@ -105,8 +108,26 @@ import {
   weaponFireRateMs,
   type WeaponDefinition,
 } from '../utils/weapons';
-import { resolveWeaponAtLevel, resolveWeaponDefinition, quantiseFireRateMs } from '../utils/weaponLevels';
-import { BeatClock, createBeatClock } from '../utils/beat';
+import {
+  resolveWeaponAtLevel,
+  resolveWeaponDefinition,
+  resolveWeaponPattern,
+  quantiseFireRateMs,
+  SIXTEENTH_NOTE_STEP_MS,
+  type EuclideanPattern,
+} from '../utils/weaponLevels';
+import {
+  euclidPattern,
+  nextOnsetTick,
+  type EuclidPattern,
+} from '../utils/euclid';
+import {
+  BeatClock,
+  SIXTEENTH_NOTE_SUBDIVISIONS,
+  beatSubdivisionMs,
+  createBeatClock,
+  nextTick,
+} from '../utils/beat';
 import { loadRules, type GameRules } from '../core/rules';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
 import { type PowerUpId } from '../powerups/types';
@@ -114,6 +135,36 @@ import { PowerUpLevelStore } from '../powerups/powerUpLevels';
 
 /** Floating-point slack (ms) when comparing the beat clock against a grid tick. */
 const BEAT_EPSILON_MS = 1e-6;
+
+/**
+ * 16th-note lattice steps in one 4-beat bar (`4 beats x 4 steps`). Upgrade
+ * morphs land on a multiple of this many steps from the clock anchor — the
+ * bar downbeat — so a pattern never changes shape mid-bar
+ * (AH-0MVYA1V8Z009SHMR).
+ */
+const STEPS_PER_FIRE_BAR = SIXTEENTH_NOTE_SUBDIVISIONS * 4;
+
+/**
+ * An active fire pattern: the resolved `(k, n, rotation, stepMs)` data plus
+ * its precomputed onset set on the tile.
+ */
+interface ActiveFirePattern {
+  /** The effective pattern: authored shape on the live lattice. */
+  readonly pattern: EuclideanPattern;
+  /** The tile's onset steps, precomputed by the shared Euclidean module. */
+  readonly tile: EuclidPattern;
+}
+
+/**
+ * An upgrade morph queued for the next bar downbeat: the pattern that will
+ * replace the active one, and the exact lattice tick it becomes active on.
+ */
+interface PendingFirePattern {
+  /** The pattern to activate. */
+  readonly pattern: EuclideanPattern;
+  /** Bar-downbeat tick (ms, absolute beat time) the morph lands on. */
+  readonly effectiveAtMs: number;
+}
 
 export interface PlayerConfig {
   x: number;
@@ -253,9 +304,10 @@ export class Player extends Phaser.GameObjects.Graphics {
   // ── Weapon system (AC1–AC4) ─────────────────────────────────────
   // Cumulative model: the permanent cannon plus any collected timed
   // weapons (Spread/Dual/Rapid), each with its own independent 10 s
-  // countdown from collection. Fire timing is phase-locked to a shared
-  // beat clock (AH-0MUAYB8EH005RJ8B) rather than per-weapon free-running
-  // cooldowns, so every active weapon fires on the same 80 BPM grid.
+  // countdown from collection. Fire timing is each weapon's Euclidean
+  // pattern on one shared lattice (AH-0MVYA1V8Z009SHMR), phase-locked to a
+  // shared beat clock (AH-0MUAYB8EH005RJ8B) rather than per-weapon
+  // free-running cooldowns.
 
   /** Permanent weapons — always active, never expire (cannon + chosen permanents). */
   private readonly _permanentWeapons: Set<WeaponId> = new Set(['cannon']);
@@ -278,14 +330,34 @@ export class Player extends Phaser.GameObjects.Graphics {
   private _tempWeaponStacks: Map<WeaponId, number> = new Map();
   /** Run-scoped power-up level store — every collection levels the power-up (parent AH-0MUV5CLVO002ZHS9). */
   private _powerUpLevelStore: PowerUpLevelStore = new PowerUpLevelStore();
-  /** Absolute beat-clock time (ms, a grid tick) of each active weapon's next shot. */
+  /**
+   * Absolute beat-clock time (ms, an onset tick of the weapon's Euclidean
+   * pattern) of each active weapon's next shot
+   * (AH-0MVYA1V8Z009SHMR).
+   */
   private _weaponNextShot: Map<WeaponId, number> = new Map();
-  /** Beat-clock time (ms, a grid tick) of each active weapon's most recent shot. */
+  /** Beat-clock time (ms, an onset tick) of each active weapon's most recent shot. */
   private _weaponLastShot: Map<WeaponId, number> = new Map();
   /**
-   * Live game rules — BPM and per-weapon beat subdivisions (defaults to the
-   * persisted rules). Fire intervals are derived from these, so a config
-   * change changes the cadence (AH-0MUAYB8EH005RJ8B).
+   * The Euclidean fire pattern currently sounding for each active weapon,
+   * resolved from the ladder for its live level and scaled onto the live
+   * lattice (AH-0MVYA1V8Z009SHMR).
+   */
+  private _weaponPatterns: Map<WeaponId, ActiveFirePattern> = new Map();
+  /**
+   * Upgrade morphs waiting for the next bar downbeat. A pattern change never
+   * takes effect mid-bar: the new `(k, n, rotation)` is queued here and
+   * activated on the bar boundary (AH-0MVYA1V8Z009SHMR).
+   */
+  private _weaponPendingPatterns: Map<WeaponId, PendingFirePattern> =
+    new Map();
+  /**
+   * Live game rules — the tempo of the shared beat grid (defaults to the
+   * persisted rules) and the legacy per-weapon subdivisions. The Euclidean
+   * ladder owns the fire cadence, so `weaponSubdivisions` no longer gates
+   * firing; it survives as the nominal interval reported by
+   * {@link Player.getFireInterval} for the hold-full metronome
+   * (AH-0MVYA1V8Z009SHMR).
    */
   private _rules: GameRules = loadRules();
   /** Shared beat clock driving phase-locked auto-fire (anchored at player start). */
@@ -346,7 +418,8 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._flameLens = {};
     for (const port of this._engines()) this._flameLens[port.port] = 0;
 
-    // Anchor the permanent cannon's first shot on the beat grid at t=0.
+    // Anchor the permanent cannon's first shot on its Euclidean pattern's
+    // first onset at t=0.
     this._readyFire('cannon');
 
     this._redraw();
@@ -631,33 +704,39 @@ export class Player extends Phaser.GameObjects.Graphics {
 
   /**
    * Applies a live fire-rate multiplier (Speed Boost: +50% rate of fire).
-   * The effective fire interval is divided by `multiplier`, so the ship fires
-   * `multiplier`× as often — and every active weapon is re-scheduled on the
-   * new interval grid so shots stay phase-locked (no drift) after the
-   * change. 1 = normal fire rate.
+   * The live lattice step is divided by `multiplier`, so the ship's patterns
+   * play `multiplier`× as fast while keeping their authored shape — and every
+   * active weapon is re-anchored on the new lattice so shots stay phase-locked
+   * (no drift) after the change. 1 = normal fire rate.
+   *
+   * A fire-rate multiplier is a **tempo** change of the player's own rhythm,
+   * never an upgrade morph, so it takes effect immediately; upgrade morphs are
+   * the ones queued to a bar downbeat (AH-0MVYA1V8Z009SHMR).
    */
   setFireRateMultiplier(multiplier: number): void {
     if (this._fireRateMultiplier === multiplier) return;
     this._fireRateMultiplier = multiplier;
     const now = this._beatClock.now();
     for (const weaponId of this.getActiveWeapons()) {
-      const interval = this._effectiveInterval(weaponId);
-      let scheduled = this._beatClock.nextTick(interval);
-      if (scheduled <= now + BEAT_EPSILON_MS) scheduled += interval;
-      this._weaponNextShot.set(weaponId, scheduled);
+      this._refreshPattern(weaponId, now);
     }
   }
 
   /**
-   * Applies live game rules (BPM + per-weapon beat subdivisions) and
-   * re-schedules every active weapon on the new grid, so a config change
-   * immediately changes the firing cadence (AH-0MUAYB8EH005RJ8B). Mirrors
-   * the `setConfig` hot-reload pattern.
+   * Applies live game rules (the shared beat tempo) and re-anchors every
+   * active weapon's pattern on the new lattice, so a tempo change immediately
+   * changes the firing cadence (AH-0MUAYB8EH005RJ8B, AH-0MVYA1V8Z009SHMR).
+   * Mirrors the `setConfig` hot-reload pattern.
+   *
+   * The per-weapon `weaponSubdivisions` rule no longer gates firing: the
+   * Euclidean ladder owns the cadence. It survives as the legacy nominal
+   * interval reported by {@link Player.getFireInterval}.
    */
   setRules(rules: GameRules): void {
     this._rules = rules;
+    const now = this._beatClock.now();
     for (const weaponId of this.getActiveWeapons()) {
-      this._readyFire(weaponId);
+      this._refreshPattern(weaponId, now);
     }
   }
 
@@ -960,6 +1039,8 @@ export class Player extends Phaser.GameObjects.Graphics {
     this._weaponTimers.clear();
     this._weaponNextShot.clear();
     this._weaponLastShot.clear();
+    this._weaponPatterns.clear();
+    this._weaponPendingPatterns.clear();
     // A Reset ends every active timed window, so the temporary levels tied to
     // those windows go with them; the permanent levels are retained (AC6).
     this._tempWeaponStacks.clear();
@@ -1147,6 +1228,11 @@ export class Player extends Phaser.GameObjects.Graphics {
         this._weaponTimers.delete(id);
         this._weaponNextShot.delete(id);
         this._weaponLastShot.delete(id);
+        // The weapon stops sounding, so its pattern (and any morph queued for
+        // it) is retired with it; a re-collection resolves a fresh pattern
+        // from the level in force then (AH-0MVYA1V8Z009SHMR).
+        this._weaponPatterns.delete(id);
+        this._weaponPendingPatterns.delete(id);
         // The timed window has expired, so its temporary level is removed;
         // the permanent level (if any) reverts the effective level (AC1).
         this._tempWeaponStacks.delete(id);
@@ -1166,11 +1252,16 @@ export class Player extends Phaser.GameObjects.Graphics {
   // ── Auto-fire emission (AC1–AC3) ─────────────────────────────────
 
   /**
-   * Effective fire interval for a weapon in ms — its configured beat
+   * Legacy **nominal** fire interval for a weapon in ms — its configured beat
    * subdivision (`weaponSubdivisions` + `beatBpm` from the game rules),
    * scaled by the live fire-rate multiplier (Speed Boost: `/1.5` fires
-   * 50 % more often). At the default multiplier of 1 every interval is an
-   * exact subdivision of the beat period (AH-0MUAYB8EH005RJ8B).
+   * 50 % more often).
+   *
+   * The Euclidean ladder owns the real cadence (AH-0MVYA1V8Z009SHMR): a
+   * patterned weapon fires on the irregular onsets returned by
+   * {@link Player.getFirePattern}, not on this interval. The value survives as
+   * the nominal rate the hold-full overlay's ghost metronome paces against, so
+   * that shipped feature keeps a stable phase reference.
    */
   private _effectiveInterval(weaponId: WeaponId): number {
     const baseInterval = weaponFireRateMs(
@@ -1198,27 +1289,72 @@ export class Player extends Phaser.GameObjects.Graphics {
   }
 
   /**
-   * The current effective fire interval (ms) for `weaponId`, derived from
+   * The legacy **nominal** fire interval (ms) for `weaponId`, derived from
    * the configured BPM/subdivision and scaled by the live fire-rate
-   * multiplier. Exposed so tests and scenes can observe the configured
-   * cadence directly.
+   * multiplier (see {@link Player._effectiveInterval}). Exposed so the
+   * hold-full metronome and tests can read the nominal cadence directly; the
+   * authoritative cadence is the weapon's Euclidean pattern
+   * ({@link Player.getFirePattern}).
    */
   getFireInterval(weaponId: WeaponId): number {
     return this._effectiveInterval(weaponId);
   }
 
   /**
-   * Advances the shared beat clock by `dt` seconds and returns the ids of
-   * the weapons that fired this frame — i.e. whose next scheduled grid tick
-   * has been reached (AC1).
+   * The Euclidean fire pattern `patternFor(weaponId, level)` currently
+   * sounding for `weaponId`: `{ k, n, rotation, stepMs }` as a pure function
+   * of the weapon's ladder level (AH-0MVYA291J000CK64, consumed here by
+   * AH-0MVYA1V8Z009SHMR).
    *
-   * Every active weapon's next shot is the smallest multiple of its
-   * (multiplier-scaled) interval at/after the current clock time, relative
-   * to the shared anchor, so all simultaneously active weapons are
-   * **phase-locked** to one grid and never drift (AC2). A weapon collected
-   * mid-beat therefore waits for the next grid tick to fire (AC3). The shot
-   * is attributed to the latest elapsed tick and the following tick is
-   * scheduled, so phase cannot drift even across dropped frames.
+   * `k`, `n` and `rotation` are the authored ladder shape; `stepMs` is the
+   * live lattice step, scaled from the shared 16th-note grid by the configured
+   * tempo (`beatBpm`) and the live fire-rate multiplier. Every shot the weapon
+   * fires lands on one of this pattern's onset ticks, and the result is
+   * deterministic: the same weapon + level on the same grid always returns the
+   * same value.
+   *
+   * `undefined` before the weapon has been scheduled (e.g. an inactive
+   * weapon).
+   */
+  getFirePattern(weaponId: WeaponId): EuclideanPattern | undefined {
+    return this._weaponPatterns.get(weaponId)?.pattern;
+  }
+
+  /**
+   * The upgrade morph queued for `weaponId`, if any: the pattern that will
+   * replace the active one and the bar-downbeat tick it lands on.
+   * Observable so the bar-boundary morph rule is directly verifiable rather
+   * than inferred from shot timing.
+   */
+  getPendingFirePattern(
+    weaponId: WeaponId,
+  ): { pattern: EuclideanPattern; effectiveAtMs: number } | undefined {
+    const pending = this._weaponPendingPatterns.get(weaponId);
+    if (!pending) return undefined;
+    return {
+      pattern: { ...pending.pattern },
+      effectiveAtMs: pending.effectiveAtMs,
+    };
+  }
+
+  /**
+   * Advances the shared beat clock by `dt` seconds and returns the ids of
+   * the weapons that fired this frame — i.e. whose next scheduled **onset**
+   * has been reached (AC1, AH-0MVYA1V8Z009SHMR).
+   *
+   * Each active weapon is a Euclidean rhythm: its next shot is the next onset
+   * tick of its pattern at/after the current clock time, on the shared lattice
+   * (`utils/euclid.ts`). Shots are therefore irregular by design and always
+   * land on an exact lattice tick — never on an interval grid. All active
+   * weapons share one clock and one lattice, so their onsets stay phase-locked
+   * and never drift (AC2). A weapon collected mid-bar waits for its pattern's
+   * next onset to fire (AC3).
+   *
+   * An upgrade morph is applied on a **bar downbeat** before this frame's
+   * onset check, so a pattern never changes shape mid-bar; the shot is
+   * attributed to the onset tick it was due on and the following onset is
+   * scheduled, so phase cannot drift even across dropped frames (no catch-up
+   * burst is emitted for missed onsets).
    *
    * @param dt — Delta time in seconds since the last call.
    * @returns The ids of the weapons that fired this frame.
@@ -1227,27 +1363,239 @@ export class Player extends Phaser.GameObjects.Graphics {
     const now = this._beatClock.advance(dt * 1000);
     const fired: WeaponId[] = [];
     for (const weaponId of this.getActiveWeapons()) {
-      const interval = this._effectiveInterval(weaponId);
+      // Apply any morph whose bar downbeat has arrived, and adopt a changed
+      // tempo, before deciding whether an onset is due this frame.
+      this._refreshPattern(weaponId, now);
       let next = this._weaponNextShot.get(weaponId);
       if (next === undefined) {
-        next = this._beatClock.nextTick(interval);
+        next = this._nextOnsetAtOrAfter(weaponId, now);
         this._weaponNextShot.set(weaponId, next);
       }
       if (next <= now + BEAT_EPSILON_MS) {
         fired.push(weaponId);
-        const shotTick = this._beatClock.shotTimeFor(interval);
-        this._weaponLastShot.set(weaponId, shotTick);
-        this._weaponNextShot.set(weaponId, shotTick + interval);
+        // The shot fired on the onset it was due on — always an exact tick.
+        this._weaponLastShot.set(weaponId, next);
+        // Advance past the onset that just fired (`now` can be a hair *before*
+        // it when the epsilon snap attributed a crossing frame to that tick, so
+        // `max` guarantees strict progress and never a duplicate shot on the
+        // same onset). Starting from `now` also means a missed onset is dropped
+        // rather than emitted as a catch-up burst.
+        this._weaponNextShot.set(
+          weaponId,
+          this._nextOnsetStrictlyAfter(weaponId, Math.max(now, next)),
+        );
       }
     }
     return fired;
   }
 
-  /** Schedules one weapon's next shot on the shared beat grid (next tick at/after now). */
+  /**
+   * Anchors one weapon's first shot on its pattern (next onset at/after now)
+   * and queues any level morph for the next bar downbeat
+   * (AH-0MVYA1V8Z009SHMR).
+   */
   private _readyFire(weaponId: WeaponId): void {
+    const now = this._beatClock.now();
+    this._refreshPattern(weaponId, now);
+    if (!this._weaponNextShot.has(weaponId)) {
+      this._weaponNextShot.set(
+        weaponId,
+        this._nextOnsetAtOrAfter(weaponId, now),
+      );
+    }
+  }
+
+  // ── Euclidean fire-pattern scheduling (AH-0MVYA1V8Z009SHMR) ─────
+
+  /**
+   * Resolves the weapon's pattern for its live level onto the live lattice:
+   * the authored ladder `(k, n, rotation)` at its tempo-scaled step, divided by
+   * the live fire-rate multiplier.
+   */
+  private _resolveFirePattern(weaponId: WeaponId): EuclideanPattern {
+    const authored = resolveWeaponPattern(
+      weaponId,
+      this._weaponUpgradeIndex(weaponId),
+    );
+    // Ladder rungs are authored on the shared 16th-note lattice, so a tempo
+    // change scales every step by the same ratio (no second grid).
+    const tempoScale =
+      beatSubdivisionMs(SIXTEENTH_NOTE_SUBDIVISIONS, this._rules.beatBpm) /
+      SIXTEENTH_NOTE_STEP_MS;
+    const multiplier =
+      Number.isFinite(this._fireRateMultiplier) &&
+      this._fireRateMultiplier > 0
+        ? this._fireRateMultiplier
+        : 1;
+    return {
+      k: authored.k,
+      n: authored.n,
+      rotation: authored.rotation,
+      stepMs: (authored.stepMs * tempoScale) / multiplier,
+    };
+  }
+
+  /** Identity of a pattern's shape — the part an upgrade morph changes. */
+  private _shapeKey(pattern: EuclideanPattern): string {
+    return `${pattern.k}/${pattern.n}/${pattern.rotation}`;
+  }
+
+  /**
+   * Whether `timeMs` is at/after the next bar downbeat of the live lattice —
+   * the boundary an upgrade morph may land on.
+   */
+  private _nextBarDownbeat(timeMs: number, stepMs: number): number {
+    return nextTick(
+      timeMs,
+      STEPS_PER_FIRE_BAR * stepMs,
+      this._beatClock.anchorMs,
+    );
+  }
+
+  /**
+   * Makes `pattern` the weapon's active pattern and re-anchors its next shot
+   * on `fromMs` (usually now, or the bar downbeat a morph landed on).
+   */
+  private _setActivePattern(
+    weaponId: WeaponId,
+    pattern: EuclideanPattern,
+    fromMs: number,
+  ): void {
+    this._weaponPatterns.set(weaponId, {
+      pattern,
+      tile: euclidPattern(pattern.k, pattern.n, pattern.rotation),
+    });
     this._weaponNextShot.set(
       weaponId,
-      this._beatClock.nextTick(this._effectiveInterval(weaponId)),
+      this._nextOnsetAtOrAfter(weaponId, fromMs),
+    );
+  }
+
+  /**
+   * Reconciles a weapon's active pattern with its live level and lattice.
+   *
+   * - No active pattern (first schedule) → activate immediately: a new weapon
+   *   sounds its rhythm from its next onset.
+   * - A different `(k, n, rotation)` (level up/down) → queue the morph for the
+   *   next **bar downbeat** and keep sounding the old pattern until then, so a
+   *   pattern never changes shape mid-bar.
+   * - The same shape on a different lattice (tempo / Speed Boost) → adopt the
+   *   new step at once; a tempo change is not a morph.
+   *
+   * @returns True when the active pattern was (re)anchored this call.
+   */
+  private _refreshPattern(weaponId: WeaponId, now: number): boolean {
+    const desired = this._resolveFirePattern(weaponId);
+    const active = this._weaponPatterns.get(weaponId);
+
+    if (!active) {
+      this._setActivePattern(weaponId, desired, now);
+      return true;
+    }
+
+    const pending = this._weaponPendingPatterns.get(weaponId);
+    if (pending) {
+      const desiredShape = this._shapeKey(desired);
+      let queued = pending;
+      if (this._shapeKey(pending.pattern) !== desiredShape) {
+        // A second upgrade arrived before the boundary: the newest shape wins,
+        // still on a bar downbeat (the queued one if it is still ahead).
+        queued = {
+          pattern: desired,
+          effectiveAtMs:
+            pending.effectiveAtMs > now + BEAT_EPSILON_MS
+              ? pending.effectiveAtMs
+              : this._nextBarDownbeat(now, desired.stepMs),
+        };
+      } else if (pending.pattern.stepMs !== desired.stepMs) {
+        // The lattice changed before the boundary: re-anchor the queued morph
+        // on the new grid rather than firing it early.
+        queued = {
+          pattern: desired,
+          effectiveAtMs: this._nextBarDownbeat(now, desired.stepMs),
+        };
+      }
+      if (queued !== pending) {
+        this._weaponPendingPatterns.set(weaponId, queued);
+      }
+      // Keep the sounding pattern on the live lattice while it waits.
+      this._adoptLiveStep(weaponId, desired, now);
+      if (now + BEAT_EPSILON_MS >= queued.effectiveAtMs) {
+        this._weaponPendingPatterns.delete(weaponId);
+        this._setActivePattern(weaponId, queued.pattern, queued.effectiveAtMs);
+        return true;
+      }
+      return false;
+    }
+
+    if (this._shapeKey(active.pattern) !== this._shapeKey(desired)) {
+      this._weaponPendingPatterns.set(weaponId, {
+        pattern: desired,
+        effectiveAtMs: this._nextBarDownbeat(now, desired.stepMs),
+      });
+      return false;
+    }
+
+    if (active.pattern.stepMs !== desired.stepMs) {
+      this._setActivePattern(weaponId, desired, now);
+      return true;
+    }
+    return false;
+  }
+
+  /** Re-anchors the active pattern on a changed lattice (tempo / Speed Boost). */
+  private _adoptLiveStep(
+    weaponId: WeaponId,
+    desired: EuclideanPattern,
+    now: number,
+  ): void {
+    const active = this._weaponPatterns.get(weaponId);
+    if (!active || active.pattern.stepMs === desired.stepMs) return;
+    this._setActivePattern(
+      weaponId,
+      { ...active.pattern, stepMs: desired.stepMs },
+      now,
+    );
+  }
+
+  /**
+   * The weapon's next onset tick at/after `timeMs` — the scheduling primitive
+   * for a Euclidean cadence. `Infinity` when no pattern is active.
+   */
+  private _nextOnsetAtOrAfter(weaponId: WeaponId, timeMs: number): number {
+    const active = this._weaponPatterns.get(weaponId);
+    if (!active) return Number.POSITIVE_INFINITY;
+    return nextOnsetTick(
+      timeMs,
+      active.tile,
+      active.pattern.stepMs,
+      this._beatClock.anchorMs,
+    );
+  }
+
+  /**
+   * The weapon's next onset tick **strictly after** `timeMs` — used after a
+   * shot so the onset that just fired is never repeated. `nextOnsetTick` is
+   * "at or after", so an exact onset tick is advanced one lattice step first.
+   */
+  private _nextOnsetStrictlyAfter(
+    weaponId: WeaponId,
+    timeMs: number,
+  ): number {
+    const active = this._weaponPatterns.get(weaponId);
+    if (!active) return Number.POSITIVE_INFINITY;
+    const onset = nextOnsetTick(
+      timeMs,
+      active.tile,
+      active.pattern.stepMs,
+      this._beatClock.anchorMs,
+    );
+    if (onset > timeMs) return onset;
+    return nextOnsetTick(
+      timeMs + active.pattern.stepMs / 2,
+      active.tile,
+      active.pattern.stepMs,
+      this._beatClock.anchorMs,
     );
   }
 
@@ -1262,12 +1610,15 @@ export class Player extends Phaser.GameObjects.Graphics {
 
   /**
    * Replaces the beat clock — e.g. with a scene-owned shared instance — and
-   * re-schedules every active weapon on the new grid so phase-locking is
-   * preserved.
+   * re-anchors every active weapon's pattern on the new grid so phase-locking
+   * is preserved. Patterns are re-resolved immediately: a grid swap is not an
+   * upgrade morph and must not wait for a bar downbeat on a grid it is leaving.
    */
   setBeatClock(clock: BeatClock): void {
     this._beatClock = clock;
     this._weaponLastShot.clear();
+    this._weaponPatterns.clear();
+    this._weaponPendingPatterns.clear();
     for (const weaponId of this.getActiveWeapons()) {
       this._readyFire(weaponId);
     }
@@ -1275,8 +1626,9 @@ export class Player extends Phaser.GameObjects.Graphics {
 
   /**
    * Beat-clock time (ms) of `weaponId`'s most recent shot — always an exact
-   * grid tick. Observable so tests and scene harnesses can verify every
-   * emitted shot lands on the beat without inferring it from bullet timing.
+   * onset tick of its Euclidean pattern. Observable so tests and scene
+   * harnesses can verify every emitted shot lands on the pattern without
+   * inferring it from bullet timing.
    */
   getLastShotTime(weaponId: WeaponId): number | undefined {
     return this._weaponLastShot.get(weaponId);
@@ -1284,7 +1636,8 @@ export class Player extends Phaser.GameObjects.Graphics {
 
   /**
    * Beat-clock time (ms) of `weaponId`'s next scheduled shot — always an
-   * exact grid tick. Observable for phase-locking tests.
+   * exact onset tick of its Euclidean pattern. Observable for scheduling
+   * tests.
    */
   getNextShotTime(weaponId: WeaponId): number | undefined {
     return this._weaponNextShot.get(weaponId);
