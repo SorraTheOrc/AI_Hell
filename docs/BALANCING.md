@@ -299,16 +299,19 @@ cap shapes what a run can become.
   shared drop draw (`drawNextDrop`, `src/scenes/core/dropLayer.ts`), the shared
   collection gate (`CombatCoreScene`), the hold-full choice builder
   (`buildChoiceCandidates`, `src/powerups/choice.ts`) and every other offer
-  surface (`filterOptionsWithinSlotPool` — the mini-boss reward's unlock half),
+  surface (`filterOptionsWithinSlotPool` — e.g. the mini-boss reward's level-up
+  offers),
   so `PlayScene` and every gym behave identically (gym↔game parity) and a gym
   run is a valid place to observe the rule.
-- **No reward screen can breach the cap.** The mini-boss reward (§4.4.4) used to
-  offer an unlock of any still-locked weapon, a brand-new kind that bypassed the
-  pool; unlocks now pass through the same eligibility predicate as the drop draw
-  and the choice, so the six slots bound every acquisition path (drop, field
-  pickup, hold-full choice, mini-boss upgrade and mini-boss unlock). A gated
-  reward that would offer nothing falls back to base picks of the held kinds, so
-  the rule can never stall a paused overlay.
+- **No reward screen can breach the cap.** The mini-boss reward (§4.4.4) offers
+  level-ups of kinds the player already holds; it has **no unlock half** (the
+  run-scoped unlock feature was removed with the reward's wheel rework, parent
+  AH-0MVLISU03006WDOD AC5), so it can never grant a brand-new kind. Its offers
+  still pass through the same eligibility predicate as the drop draw and the
+  choice, so the six slots bound every acquisition path (drop, field pickup,
+  hold-full choice and mini-boss reward). A gated reward that would offer
+  nothing falls back to base picks of the held kinds, so the rule can never
+  stall a paused overlay.
 - **What the player sees: a slot budget and marked non-slot rows
   (AH-0MVVJRRN10038VFR).** The HUD upgrade list is a *display* list, not the
   loadout, so it can legitimately show rows that hold no slot: an exempt entry
@@ -319,7 +322,10 @@ cap shapes what a run can become.
   (`resolvePlayerSlotState(player)`), marks those non-slot rows, and renders
   them **dimmed** (`NON_SLOT_ROW_ALPHA`, half opacity) so the slot-counted
   rows are the ones a player counts — a non-slot row cannot be mistaken for a
-  seventh upgrade (AH-0MVZ0GGW1004502H). It also gives every
+  seventh upgrade (AH-0MVZ0GGW1004502H). Non-slot rows are also grouped below a
+  **`Not in loadout`** heading rather than interleaved with the loadout, so the
+  visible loadout list is contiguous and never longer than `used`
+  (AH-0MVVF0POV001JNKX). It also gives every
   slot-held kind a row — including a temporary one-shot that previously showed
   none. The slot-counted rows therefore equal the model's `used` and never
   exceed `POWER_UP_SLOT_CAP`, and the same wiring (`combatHudOptions`) feeds
@@ -346,8 +352,17 @@ cap shapes what a run can become.
   **save** (`capCheckpointLoadout` in
   [`src/core/checkpointStore.ts`](../src/core/checkpointStore.ts)) through the
   shared predicate, so `Continue` restores at most six counted kinds and exempt
-  entries still come back; the replay itself restores a hand-written payload
-  verbatim, by design (the resumed run must match the saved run exactly).
+  entries still come back; the replay (`PlayScene._restoreCheckpoint`) re-gates
+  the loaded payload through the same helper, so a legacy pre-cap save or a
+  hand-edited payload cannot restore a seventh counted kind either (valid
+  post-cap saves are unchanged).
+- **A Hangar War deployment is gated too (AH-0MVVF0POV001JNKX).** The hangar
+  lets a fleet own and equip more weapons than a run can hold, so
+  `applyHangarWarDeployment` trims the deployment's starting weapons through the
+  shared `capDropIdsToSlotPool` predicate
+  ([`src/powerups/slots.ts`](../src/powerups/slots.ts)) before equipping them: a
+  deployment starts within the same six-slot model as the arcade run and can
+  never begin a run above `POWER_UP_SLOT_CAP` counted kinds.
 - **How a "> six equipped" report is triaged (AH-0MVVF0POV001JNKX).** Because
   rows are not slots, a report is classified from a recording, not a row count:
   capture the run (a stock `npm run dev` auto-records to
@@ -357,8 +372,10 @@ cap shapes what a run can become.
   `resolveSlotState(...)` (permanent kinds from the tick vector, temporary
   holdings from the `pickup` events plus each kind's TTL) and classify every row
   as slot-counted or not. A counted kind above six is a real gate bug on a named
-  acquisition surface; a `always available` / `charges only` row is the
-  documented presentation, not a seventh slot.
+  acquisition surface (drop draw, field collection, the hold-full choice, the
+  mini-boss reward, checkpoint resume, a Hangar War deployment loadout or a
+  capture setup); a `always available` / `charges only` row is the documented
+  presentation, not a seventh slot.
 - **Evidence scope.** Existing bot/batch evidence was recorded before the cap,
   so a late-game campaign run now sees a different loadout. Re-running and
   re-recording the bot batches is **out of scope** for the cap work item; it

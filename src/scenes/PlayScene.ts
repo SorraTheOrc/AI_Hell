@@ -155,6 +155,7 @@ import {
 } from '../powerups/slots';
 import {
   CHECKPOINT_VERSION,
+  capCheckpointLoadout,
   loadCheckpoint,
   saveCheckpoint,
   type Checkpoint,
@@ -4032,14 +4033,21 @@ export class PlayScene extends CombatScene<
     });
     this.gameState.runSeed = checkpoint.runSeed;
     this.injectedRunSeed = checkpoint.runSeed;
+    // Re-gate the payload before replaying (AH-0MVVF0POV001JNKX, parent
+    // AH-0MVLIJT3M005HPHF): a checkpoint written by a pre-cap build (or a
+    // hand-edited `localStorage` payload) can name more counted kinds than the
+    // run may hold, and the six-slot promise must hold for a resumed run too.
+    // A valid post-cap save is already within the cap, so its replay is
+    // unchanged; only an over-cap payload is trimmed, exempt entries survive.
+    const bounded = capCheckpointLoadout(checkpoint);
     // Replay the permanent grants through the ordinary collection seam so the
     // restored registry state is identical to a run that earned them.
-    for (const entry of checkpoint.weaponLevels) {
+    for (const entry of bounded.weaponLevels) {
       for (let i = 0; i < entry.level; i += 1) {
         grantPermanentWeapon(entry.id, this.effectsRegistry, this.player);
       }
     }
-    for (const entry of checkpoint.powerUpLevels) {
+    for (const entry of bounded.powerUpLevels) {
       for (let i = 0; i < entry.level; i += 1) {
         grantPermanentPowerUp(entry.id, this.effectsRegistry);
       }

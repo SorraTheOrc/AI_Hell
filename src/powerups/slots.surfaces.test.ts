@@ -21,9 +21,9 @@
  *    unlock feature was removed it offers level-ups of held kinds only
  *    (parent epic AH-0MVLISU03006WDOD AC5);
  * 5. **checkpoint resume** — the save seam (`saveCheckpoint`) bounds the
- *    persisted payload, so a resumed run cannot restore a seventh kind. The
- *    documented divergence (the replay itself does not re-gate a hand-written
- *    payload) is recorded in GDD §4.4 / `docs/BALANCING.md`;
+ *    persisted payload **and** the replay re-gates what it loads
+ *    (`_restoreCheckpoint` → `capCheckpointLoadout`), so neither a fresh save
+ *    nor a legacy pre-cap save can restore a seventh kind;
  * 6. **capture/scripted setup** — the documented divergence: the applier may
  *    pre-grant more than six kinds, and `resolveSceneSetupState` keeps that
  *    state off the normal play path (dev gate folded off in a shipped build).
@@ -40,6 +40,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootScene, advanceGame, type BootedGame } from '../test/gameHarness';
 import { POWER_UP_SLOT_CAP } from '../core/constants';
 import {
+  CHECKPOINT_STORAGE_KEY,
   CHECKPOINT_VERSION,
   capCheckpointLoadout,
   loadCheckpoint,
@@ -427,6 +428,37 @@ describe('acquisition-surface gate audit (AH-0MVVJS34M00551ES)', () => {
       expect(state.heldIds.has('shield' as DropId)).toBe(true);
       expect(state.heldIds.has(MIXED_PERMANENT_WEAPON as DropId)).toBe(true);
       // The exempt entry is restored and still counts for nothing.
+      expect(state.heldIds.has('extra_life' as DropId)).toBe(true);
+    })();
+  });
+
+  it('re-gates a legacy over-cap payload on replay (pre-cap save)', () => {
+    // The save seam's gate only protects payloads written after it shipped. A
+    // checkpoint persisted by a pre-cap build (modelled here by writing the
+    // raw payload straight to storage) can name seven counted kinds, and
+    // resuming must still never restore a seventh (AH-0MVVF0POV001JNKX).
+    localStorage.setItem(
+      CHECKPOINT_STORAGE_KEY,
+      JSON.stringify(OVER_CAP_CHECKPOINT),
+    );
+    expect(loadCheckpoint()).not.toBeNull();
+
+    return (async () => {
+      booted!.game.scene.start('PlayScene', { resume: true });
+      await advanceGame(booted!.game, 150);
+      const resumed = booted!.game.scene.getScene('PlayScene') as PlayScene;
+      resumed.finishSpawnAnimations();
+      resumed.tick(0.001);
+
+      const live = resumed.getPlayer()!;
+      const state = resolvePlayerSlotState(live);
+      expect(state.used).toBe(POWER_UP_SLOT_CAP);
+      expect(state.used).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+      // The seventh counted kind is refused on replay…
+      expect(state.heldIds.has(NEW_COUNTED_POWER_UP as DropId)).toBe(false);
+      // …while the admitted kinds and the exempt entry still come back.
+      expect(state.heldIds.has('shield' as DropId)).toBe(true);
+      expect(state.heldIds.has(MIXED_PERMANENT_WEAPON as DropId)).toBe(true);
       expect(state.heldIds.has('extra_life' as DropId)).toBe(true);
     })();
   });

@@ -42,6 +42,7 @@ import {
 } from '../../core/hangarWar/hangarEconomy';
 import type { HangarWarPayload, HexState } from '../../core/hangarWar/types';
 import { hexAggressionLevel } from '../../core/hangarWar/hexDifficulty';
+import { capDropIdsToSlotPool } from '../../powerups/slots';
 import { normaliseSeed } from '../../core/rng';
 import {
   HANGAR_CATALOGUE,
@@ -384,6 +385,12 @@ export function applyHullSpeedToShipConfig(
  * ({@link applyHullSpeedToShipConfig}). Total: a scene without a player still
  * applies the lives.
  *
+ * **The six-slot cap holds here too (AH-0MVVF0POV001JNKX).** A hangar loadout
+ * may contain more owned weapons than the run can hold, so the list is trimmed
+ * through the shared `capDropIdsToSlotPool` predicate before equipping: a
+ * deployment can never start a run above `POWER_UP_SLOT_CAP` distinct counted
+ * kinds, however many weapons the fleet owns (parent AH-0MVLIJT3M005HPHF).
+ *
  * @param seams — the scene's player and lives seams.
  * @param deployment — the deployment to apply.
  */
@@ -394,7 +401,7 @@ export function applyHangarWarDeployment(
   seams.setStartingLives?.(deployment.startingLives);
   const player = seams.getPlayer();
   if (!player) return;
-  for (const weaponId of deployment.startingWeapons) {
+  for (const weaponId of capDropIdsToSlotPool(deployment.startingWeapons)) {
     player.equipWeapon(weaponId, true);
   }
 }

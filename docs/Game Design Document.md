@@ -1325,23 +1325,34 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   [`src/core/checkpointStore.ts`](../src/core/checkpointStore.ts)) bounds the
   persisted permanent grants with the same shared predicate, so `Continue` can
   never restore more counted kinds than the run could hold, while exempt
-  entries survive. The resume replay itself does **not** re-gate a payload: it
-  must reproduce the saved run exactly (HUD/effect parity,
-  AH-0MVSHI07B003BZIP), and a hand-written `localStorage` payload is not a play
-  surface.
-- **Every permanent-grant surface is gated, including the mini-boss unlock.**
-  The mini-boss reward (§4.4.4) offers two option families, and only the
-  **upgrade** half is built by `buildChoiceCandidates`. Its **unlock** half — a
-  brand-new weapon kind from the initially-locked pool — is an offer of its own,
-  so it is filtered through the same shared predicate
+  entries survive. The resume replay passes the loaded payload through the
+  same helper before restoring it (`PlayScene._restoreCheckpoint`), so a
+  checkpoint written by a **pre-cap build** (or a hand-edited `localStorage`
+  payload) can never restore a seventh counted kind either; a valid post-cap
+  save is already within the cap, so its replay is unchanged (HUD/effect
+  parity, AH-0MVSHI07B003BZIP).
+- **A Hangar War deployment loadout is gated at apply time.** The persistent
+  hangar lets a fleet own and equip more weapons than a run can hold, so
+  `applyHangarWarDeployment` passes the deployment's starting weapons through
+  the shared `capDropIdsToSlotPool` predicate
+  ([`src/powerups/slots.ts`](../src/powerups/slots.ts)) before equipping them:
+  only the first six distinct counted kinds are granted, exempt entries never
+  spend capacity, and a repeated kind does not open a second slot. A deployment
+  therefore starts a normal `PlayScene` run within the same six-slot model as
+  the arcade run — the pre-grant applier can never exceed the cap
+  (AH-0MVVF0POV001JNKX).
+- **Every permanent-grant surface is gated, including the mini-boss reward.**
+  The mini-boss reward (§4.4.4) offers **level-ups of kinds the player already
+  holds** — it has **no weapon-unlock half** (the run-scoped unlock feature was
+  removed with the reward's wheel rework, parent AH-0MVLISU03006WDOD AC5) — so it
+  can never grant a brand-new kind. The offer list is still filtered through the
+  same shared predicate
   (`filterOptionsWithinSlotPool` in [`src/powerups/slots.ts`](../src/powerups/slots.ts))
-  before the reward opens. At six held kinds an unlock survives only for a kind
-  already in the slots (a locked weapon currently held from a field pickup,
-  taking it makes it permanent); every other unlock is withheld. A full pool
-  therefore cannot be exceeded through a reward screen: the reward offers only
-  what is in the slots, and if that leaves nothing to pick it falls back to base
-  picks of the held kinds (which add no new kind) so the paused overlay can
-  never open empty.
+  before the reward opens, so the reward surface keeps consulting the single
+  source of truth rather than a scene-local copy of the rule. A reward that
+  would offer nothing falls back to base picks of the **held** kinds (which add
+  no new kind), so the paused overlay can never open empty and a full pool
+  cannot be exceeded through a reward screen.
 - **One implementation, observable in the gyms.** The rule lives once in
   [`src/powerups/slots.ts`](../src/powerups/slots.ts). The shared drop draw
   (`drawNextDrop` in [`src/scenes/core/dropLayer.ts`](../src/scenes/core/dropLayer.ts)),
@@ -1365,7 +1376,13 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   so the slot-counted rows equal `used` and never exceed `POWER_UP_SLOT_CAP`.
   Non-slot rows are additionally rendered **dimmed** (`NON_SLOT_ROW_ALPHA`,
   half opacity) so the slot-counted rows are the ones a player counts and a
-  non-slot row cannot read as a seventh upgrade (AH-0MVZ0GGW1004502H).
+  non-slot row cannot read as a seventh upgrade (AH-0MVZ0GGW1004502H). They are
+  also **not interleaved** with the loadout: every slot-counted row is rendered
+  first as a contiguous loadout list, and the non-slot rows follow below a
+  **`Not in loadout`** heading (rendered only when at least one non-slot row is
+  visible). A player counting the list therefore stops at the cap, and the
+  visible loadout list never contains more rows than `used`
+  (AH-0MVVF0POV001JNKX).
   The state is wired once, through `combatHudOptions`
   ([`src/scenes/core/hudWiring.ts`](../src/scenes/core/hudWiring.ts)), so
   `PlayScene` and every gym show the identical budget.
@@ -1408,8 +1425,8 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
      expected presentation, not a breach.
   4. **Only a counted kind above six is a bug**, and it names the acquisition
      surface to test: the drop draw, field collection, the hold-full choice, the
-     mini-boss reward, checkpoint resume, or a capture setup (a documented
-     divergence, above).
+     mini-boss reward, checkpoint resume, a Hangar War deployment loadout, or a
+     capture setup (a documented divergence, above).
 
 #### 4.4.1 Minerals, the Ship's Hold & the Power-Up Choice (AH-0MUBVGI62004ED9Q)
 

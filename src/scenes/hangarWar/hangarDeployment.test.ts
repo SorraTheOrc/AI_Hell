@@ -339,6 +339,43 @@ describe('applyHangarWarDeployment (AH-0MVUXC2DD003HN0I)', () => {
     expect(setStartingLives).toHaveBeenCalledWith(5);
   });
 
+  it('trims a starting-weapon list to the six-slot cap (AH-0MVVF0POV001JNKX)', () => {
+    // A fleet may own and equip more weapons than a run can hold; the
+    // deployment applies them through the shared pool so a run can never start
+    // above `POWER_UP_SLOT_CAP` counted kinds (parent AH-0MVLIJT3M005HPHF).
+    const deployment = {
+      ...buildHangarDeployment(fieldedPayload()),
+      startingWeapons: [
+        'spread',
+        'dual',
+        'rapid',
+        'wave_laser',
+        'ricochet',
+        'cluster',
+        'options',
+      ] as const,
+    };
+    const setStartingLives = vi.fn();
+    const equipWeapon = vi.fn();
+
+    applyHangarWarDeployment(
+      { getPlayer: () => ({ equipWeapon }), setStartingLives },
+      deployment,
+    );
+
+    expect(equipWeapon.mock.calls.map(([id]) => id)).toEqual([
+      'spread',
+      'dual',
+      'rapid',
+      'wave_laser',
+      'ricochet',
+      'cluster',
+    ]);
+    expect(equipWeapon.mock.calls.every(([, permanent]) => permanent === true)).toBe(
+      true,
+    );
+  });
+
   it('scales the ship config by the hull speed multiplier', () => {
     const base = loadShipConfig();
     const deployment = buildHangarDeployment(fieldedPayload());
