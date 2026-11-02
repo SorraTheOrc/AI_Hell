@@ -75,7 +75,7 @@ async function bootCombat(): Promise<GymPowerUpsCombat> {
  */
 function collectCombatDrop(
   scene: GymPowerUpsCombat,
-  id: 'shield' | 'bomb' | 'phase_shift' | 'teleport' | 'smart_bomb' | 'force_field',
+  id: 'shield' | 'bomb' | 'phase_shift' | 'teleport' | 'smart_bomb' | 'force_field' | 'thorns',
 ): void {
   const player = scene.getPlayer()!;
   player.setPosition(480, 270);
@@ -580,6 +580,61 @@ describe('GymPowerUpsCombat AC4: P3 Shield collection + bubble visual', () => {
     collectCombatDrop(scene, 'shield'); // re-collect
     expect(registry.consumableCharges('shield')).toBe(2);
     expect(store.getTempStacks('shield')).toBe(2);
+  });
+});
+
+// ── Field pickup → charge → event cycle (AH-0MVVD8U6F0011UOG AC5) ──
+//
+// The same pickup→charge→event cycle is asserted against `PlayScene` in
+// `src/scenes/core/consumableChargeParity.test.ts`; here the gym pins it on
+// its own drop seam. A field pickup of each absorbed-hit kind grants exactly
+// one charge, opens no effect window and adds one temporary level stack, and
+// that sole charge resolves exactly one event (one absorbed hit, one free
+// ram, one reflected bullet) before the pool stays inert.
+
+describe('GymPowerUpsCombat — absorbed-hit field pickup cycle (AH-0MVVD8U6F0011UOG AC5)', () => {
+  it('a field pickup of each absorbed-hit kind grants exactly one charge, no window and one temporary stack', async () => {
+    const scene = await bootCombat();
+    const registry = scene.getEffectsRegistry();
+    const store = registry.levelStore();
+
+    for (const id of ['shield', 'thorns', 'force_field'] as const) {
+      collectCombatDrop(scene, id);
+      expect(registry.consumableCharges(id), `${id} one charge`).toBe(1);
+      expect(registry.remaining(id), `${id} no effect window`).toBeUndefined();
+      expect(store.getTempStacks(id), `${id} temporary stack`).toBe(1);
+      expect(store.consumableRegenCeiling(id), `${id} pickup never regenerates`).toBe(0);
+    }
+  });
+
+  it('one charge resolves exactly one event and the pickup pool never refills', async () => {
+    const scene = await bootCombat();
+    const registry = scene.getEffectsRegistry();
+
+    // Shield: one absorbed hit spends the sole charge.
+    collectCombatDrop(scene, 'shield');
+    (scene as unknown as { invulnerable: number }).invulnerable = 0;
+    expect(registry.tryAbsorbShield()).toBe(true);
+    expect(registry.consumableCharges('shield')).toBe(0);
+    expect(registry.isShielded).toBe(false);
+
+    // Thorns: one free ram spends the sole charge.
+    collectCombatDrop(scene, 'thorns');
+    expect(registry.tryConsumeThornsRam()).toBe(true);
+    expect(registry.consumableCharges('thorns')).toBe(0);
+
+    // Force Field: one reflected bullet spends the sole charge.
+    collectCombatDrop(scene, 'force_field');
+    expect(registry.tryConsumeForceFieldReflect()).toBe(true);
+    expect(registry.consumableCharges('force_field')).toBe(0);
+    expect(registry.isForceFieldActive()).toBe(false);
+
+    // Inert: however long the shared recharge clock runs, pickup-only
+    // charges never regenerate (Q-A1=b).
+    registry.tick(10_000);
+    for (const id of ['shield', 'thorns', 'force_field'] as const) {
+      expect(registry.consumableCharges(id), `${id} stays inert`).toBe(0);
+    }
   });
 });
 
