@@ -87,6 +87,16 @@ const BROKE_PAYLOAD: HangarWarPayload = {
   pendingAttacks: [],
 };
 
+/** A payload owning no starting weapon and no salvage: nothing is actionable. */
+const UNARMED_PAYLOAD: HangarWarPayload = {
+  ...clonePayload(BROKE_PAYLOAD),
+  hangar: {
+    ...clonePayload(BROKE_PAYLOAD).hangar,
+    unlockedWeapons: [],
+    activeLoadout: { startingWeapons: [], modifiers: [] },
+  },
+};
+
 /** A payload owning two starting weapons (loadout toggle coverage). */
 const TWO_WEAPON_PAYLOAD: HangarWarPayload = {
   ...clonePayload(VALID_HANGAR_WAR_PAYLOAD),
@@ -202,10 +212,11 @@ describe('hangar screen model (pure)', () => {
     ]);
     expect(model.hullOptions[0].actionable).toBe(false);
     expect(model.hullOptions[1].actionable).toBe(true);
-    // One owned, equipped weapon: removing the last weapon is disabled.
+    // One owned, equipped weapon: every owned weapon row is toggleable, so the
+    // player can unequip the last one and deploy with only the cannon.
     expect(model.weaponOptions.map((option) => option.id)).toEqual(['spread']);
     expect(model.weaponOptions[0].equipped).toBe(true);
-    expect(model.weaponOptions[0].actionable).toBe(false);
+    expect(model.weaponOptions[0].actionable).toBe(true);
 
     expect(model.focusOrder).toEqual([
       'buy:wave_laser',
@@ -213,12 +224,13 @@ describe('hangar screen model (pure)', () => {
       'buy:cluster',
       'buy:hardened_plating',
       'hull:hull-2',
+      'weapon:spread',
       'deploy',
     ]);
   });
 
   it('has only the deployment in the focus order when nothing can be activated', () => {
-    const model = buildHangarScreenModel(BROKE_PAYLOAD);
+    const model = buildHangarScreenModel(UNARMED_PAYLOAD);
     // A fleet can always deploy, even with nothing affordable.
     expect(model.focusOrder).toEqual(['deploy']);
     expect(model.deployRow.actionable).toBe(true);
@@ -255,9 +267,14 @@ describe('hangar screen model (pure)', () => {
         actionable: true,
       },
     ]);
-    // Nothing else is affordable, so the modifier and the deployment are the
-    // focusable rows (a deployment is always possible).
-    expect(model.focusOrder).toEqual(['modifier:hardened_plating', 'deploy']);
+    // Nothing else is affordable, so the equipped weapon, the modifier and the
+    // deployment are the focusable rows (every owned weapon is toggleable and a
+    // deployment is always possible).
+    expect(model.focusOrder).toEqual([
+      'weapon:spread',
+      'modifier:hardened_plating',
+      'deploy',
+    ]);
     // An unknown modifier id in the owned set is not presented as an option.
     expect(
       buildHangarModifierOptions({
@@ -318,7 +335,7 @@ describe('pure hangar payload updaters', () => {
     expect(refused.payload.hangar.activeHull).toBe('hull-1');
   });
 
-  it('toggles owned weapons but never removes the last one', () => {
+  it('toggles owned weapons and removes the last one on request', () => {
     const added = toggleHangarWeapon(TWO_WEAPON_PAYLOAD, 'ricochet');
     expect(added.ok).toBe(true);
     expect(added.payload.hangar.activeLoadout.startingWeapons).toEqual([
@@ -332,9 +349,18 @@ describe('pure hangar payload updaters', () => {
       'ricochet',
     ]);
 
+    // The last equipped weapon is removable: the loadout becomes empty and the
+    // deployment carries no extra weapon (AH-0MVZJ6V1J001DA9D).
     const lastOne = toggleHangarWeapon(removed.payload, 'ricochet');
-    expect(lastOne.ok).toBe(false);
-    expect(lastOne.payload.hangar.activeLoadout.startingWeapons).toEqual([
+    expect(lastOne.ok).toBe(true);
+    expect(lastOne.payload.hangar.activeLoadout.startingWeapons).toEqual([]);
+    // The input payload is untouched, and equipping it back round-trips.
+    expect(removed.payload.hangar.activeLoadout.startingWeapons).toEqual([
+      'ricochet',
+    ]);
+    const readded = toggleHangarWeapon(lastOne.payload, 'ricochet');
+    expect(readded.ok).toBe(true);
+    expect(readded.payload.hangar.activeLoadout.startingWeapons).toEqual([
       'ricochet',
     ]);
   });
@@ -351,7 +377,7 @@ describe('pure hangar payload updaters', () => {
     const off = toggleHangarModifier(on.payload, 'hardened_plating');
     expect(off.ok).toBe(true);
     expect(off.payload.hangar.activeLoadout.modifiers).toEqual([]);
-    // Unlike starting weapons, an empty modifier list is a legal loadout.
+    // Like starting weapons, an empty modifier list is a legal loadout.
     expect(off.payload.hangar.activeLoadout.startingWeapons).toEqual([
       'spread',
     ]);
@@ -510,7 +536,7 @@ describe('HangarScene', () => {
     expect(rowFor(scene, 'hull:hull-1').actionable).toBe(true);
   });
 
-  it('toggles owned starting weapons and keeps the last one', async () => {
+  it('toggles owned weapons and lets the player unequip the last one', async () => {
     const scene = await bootHangar({ payload: TWO_WEAPON_PAYLOAD, storage: null });
     expect(scene.getPayload().hangar.activeLoadout.startingWeapons).toEqual([
       'spread',
@@ -530,9 +556,15 @@ describe('HangarScene', () => {
       'ricochet',
     ]);
 
-    // The last equipped weapon cannot be removed by either input path.
-    expect(scene.focusRow('weapon:ricochet')).toBe(false);
-    expect(rowFor(scene, 'weapon:ricochet').text.input).toBeNull();
+    // The last equipped weapon is removable: the loadout empties and the run
+    // starts with only the ship's permanent cannon (AH-0MVZJ6V1J001DA9D).
+    expect(scene.focusRow('weapon:ricochet')).toBe(true);
+    pressKey(scene, { key: 'Enter' });
+    expect(scene.getPayload().hangar.activeLoadout.startingWeapons).toEqual([]);
+
+    // The emptied row stays interactive, so the player can put a weapon back.
+    expect(rowFor(scene, 'weapon:ricochet').actionable).toBe(true);
+    expect(rowFor(scene, 'weapon:ricochet').text.input).not.toBeNull();
     rowFor(scene, 'weapon:ricochet').text.emit('pointerdown');
     expect(scene.getPayload().hangar.activeLoadout.startingWeapons).toEqual([
       'ricochet',
@@ -564,7 +596,7 @@ describe('HangarScene', () => {
   });
 
   it('does nothing when no row is actionable (unaffordable tree)', async () => {
-    const storage = memoryStorage(BROKE_PAYLOAD);
+    const storage = memoryStorage(UNARMED_PAYLOAD);
     const scene = await bootHangar({ storage });
 
     // Only the deployment is focusable; no purchase/equip row can be reached.
@@ -580,12 +612,12 @@ describe('HangarScene', () => {
     expect(scene.focusRow('buy:ricochet')).toBe(false);
     ricochet.text.emit('pointerdown');
 
-    expect(scene.getPayload()).toEqual(BROKE_PAYLOAD);
+    expect(scene.getPayload()).toEqual(UNARMED_PAYLOAD);
     expect(scene.getPayload().hangar.bankedMinerals).toBe(0);
     // A refused/unavailable row never writes to storage (the deploy row writes
     // nothing either, because it was never activated).
     expect(storage.entries.get(HANGAR_WAR_STORAGE_KEY)).toBe(
-      JSON.stringify(BROKE_PAYLOAD),
+      JSON.stringify(UNARMED_PAYLOAD),
     );
   });
 

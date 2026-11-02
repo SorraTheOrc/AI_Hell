@@ -27,7 +27,10 @@
  *   most fundamental reason first.
  * - **Loadout.** The active hull and loadout resolve only from entries the
  *   fleet owns *and* the catalogue knows; an unknown id can never be equipped.
- *   The fleet always deploys with at least the basic starting weapon.
+ *   An **empty** starting-weapon selection is a legal loadout: owning a starter
+ *   weapon never equips it, so a deployment with no selection carries no extra
+ *   weapon and the run starts with only the ship's permanent cannon
+ *   (AH-0MVZJ6V1J001DA9D).
  * - **Cheapest useful unlock.** The attract-bot answer: the lowest
  *   `purchaseWeight` among entries that are not owned, are ungated and are
  *   affordable, with catalogue order as the deterministic tie-break. `null`
@@ -42,7 +45,6 @@
 import {
   HANGAR_CATALOGUE,
   STARTER_HULL_ID,
-  STARTER_WEAPON_ID,
   type HangarEntry,
   type HangarPrice,
   type HullUpgrades,
@@ -288,17 +290,18 @@ function ownedEntriesOf(
 /**
  * The loadout the fleet deploys with, resolved from what it owns.
  *
- * Only unlocked, catalogue-known entries survive; the fleet always carries at
- * least the basic starting weapon, so a deployment can never start unarmed.
+ * Only unlocked, catalogue-known entries survive. An empty starting-weapon
+ * selection stays empty — owning a starter weapon never equips it, so a
+ * deployment without a selection starts with only the ship's permanent cannon
+ * (AH-0MVZJ6V1J001DA9D).
  */
 export function resolveActiveLoadout(hangar: HangarState): HangarLoadout {
-  const weapons = ownedEntriesOf(
-    hangar,
-    hangar.activeLoadout.startingWeapons,
-    'weapon',
-  );
   return {
-    startingWeapons: weapons.length > 0 ? weapons : [STARTER_WEAPON_ID],
+    startingWeapons: ownedEntriesOf(
+      hangar,
+      hangar.activeLoadout.startingWeapons,
+      'weapon',
+    ),
     modifiers: ownedEntriesOf(hangar, hangar.activeLoadout.modifiers, 'modifier'),
   };
 }
@@ -321,7 +324,8 @@ export function equipHull(hangar: HangarState, hullId: string): HangarState {
  * Equips a loadout, filtering it to entries the fleet owns.
  *
  * Locked or unknown ids are dropped rather than refusing the whole selection,
- * and an empty weapon selection keeps the basic starting weapon.
+ * and an empty weapon selection stays empty: the player may deploy with no
+ * extra weapon at all (AH-0MVZJ6V1J001DA9D).
  *
  * @returns a fresh hangar; the input is never mutated.
  */
@@ -330,9 +334,8 @@ export function equipLoadout(
   loadout: HangarLoadout,
 ): HangarState {
   const next = cloneHangar(hangar);
-  const weapons = ownedEntriesOf(hangar, loadout.startingWeapons, 'weapon');
   next.activeLoadout = {
-    startingWeapons: weapons.length > 0 ? weapons : [STARTER_WEAPON_ID],
+    startingWeapons: ownedEntriesOf(hangar, loadout.startingWeapons, 'weapon'),
     modifiers: ownedEntriesOf(hangar, loadout.modifiers, 'modifier'),
   };
   return next;

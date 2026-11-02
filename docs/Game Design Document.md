@@ -2531,10 +2531,11 @@ it early and push into the next ring, risking losses and an exposed rear, or
 **grind** the weaker hexes to secure the ring first. Strategists, grinders,
 completers and rushers each have a line, and no line is strictly dominant.
 - **The shipped run loadout is untouched.** The *fleet* starts minimal (one basic
-hull, one starting weapon, no hangar modifiers), but a run keeps the shipped
-middle loop in full — the **six** shared loadout slots plus the two slot-free
-kinds, **Extra Life** and **Mystery UFO**. The outer loop's scarcity lives in
-what the hangar owns between deployments, never in stripping the run.
+hull, its starting weapon **owned but not equipped**, no hangar modifiers), but a
+run keeps the shipped middle loop in full — the **six** shared loadout slots plus
+the two slot-free kinds, **Extra Life** and **Mystery UFO**. The outer loop's
+scarcity lives in what the hangar owns between deployments, never in stripping
+the run.
 - **Post-MVP mitigation backlog (design intent only).** Beyond known-ahead intel:
 **special missions** paying special rewards (e.g. a new hull type with extra hit
 points or extra upgrade bays), **upgraded bots** with special skills that are more
@@ -2595,11 +2596,20 @@ back to the unchanged arcade path). The checkpoint *moment* still banks salvage
 
 #### Hangar economy and unlock tree
 
-The **fleet** starts minimal — one basic hull (`hull-1`, 3 lives), one starting
-weapon (`spread`) and no modifiers — while a **run** keeps the shipped middle
-loop in full (the six shared loadout slots plus the slot-free **Extra Life**
-and **Mystery UFO**). Scarcity lives in what the hangar owns between
-deployments, never in stripping the run.
+The **fleet** starts minimal — one basic hull (`hull-1`, 3 lives), its starting
+weapon (`spread`) **owned but not equipped**, and no modifiers — while a **run**
+keeps the shipped middle loop in full (the six shared loadout slots plus the
+slot-free **Extra Life** and **Mystery UFO**). Scarcity lives in what the hangar
+owns between deployments, never in stripping the run.
+
+> **The default deployment loadout is empty** (AH-0MVZJ6V1J001DA9D, producer
+decision): a fresh hangar-war payload carries `activeLoadout.startingWeapons: []`,
+so a run starts with **only the ship's permanent cannon**. The `spread` starter
+is **owned** from the first deployment and stays selectable in the deployment
+selector; owning or buying a starting weapon never auto-equips it — equipping is
+always a deliberate choice. This supersedes the earlier "one starting weapon"
+reading of Rule 1: the fleet still owns the starter, but the deployed loadout
+starts empty.
 
 The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 (`src/core/hangarWar/hangarEconomy.ts`):
@@ -2608,7 +2618,7 @@ The unlock tree is data (`src/data/hangarCatalogue.ts`) and the rules are pure
 |---|---|---|---|
 | `hull-1` Scrap Hull | hull | 0 / 0 (starter) | 3 lives, speed ×1.0, defence 2 |
 | `hull-2` Bulwark Hull | hull | 220 / 3 | 4 lives, speed ×0.85, defence 14 |
-| `spread` Spread Cannon | weapon | 0 / 0 (starter) | `spread` starting weapon |
+| `spread` Spread Cannon | weapon | 0 / 0 (starter) | `spread` starting weapon (owned by default, **not equipped**) |
 | `wave_laser` Wave Laser | weapon | 120 / 1 | `wave_laser` starting weapon |
 | `ricochet` Ricochet | weapon | 90 / 2 | `ricochet` starting weapon |
 | `cluster` Cluster Missile | weapon | 160 / 1 | `cluster` starting weapon |
@@ -2619,9 +2629,13 @@ field phase B's ring content uses. A purchase needs **both** currencies at
 once, ownership is tracked per kind (hulls / starting weapons / modifiers), and
 precedence for a refused purchase is `owned` → `gated` → `unaffordable`. The
 hangar screen's deployment selector equips an owned hull and toggles owned
-starting weapons (never below one) and modifiers; resolution drops unknown or
-unowned ids, so a corrupt save can never deploy an unowned ship or an unarmed
-loadout. The attract bot's "cheapest useful unlock" rule (`purchaseWeight`,
+starting weapons — **every** owned weapon row is actionable, including the last
+equipped one — and modifiers; resolution drops unknown or unowned ids, so a
+corrupt save can never deploy an unowned ship or an unowned weapon. An empty
+starting-weapon selection is a legal loadout that round-trips as empty (never
+silently replaced by `spread`), and the deployment then equips nothing, so the
+run begins with only the permanent cannon. The attract bot's "cheapest useful
+unlock" rule (`purchaseWeight`,
 catalogue order as the deterministic tie-break) also lives here, and the
 defender-rating formula (`baseDefence + 3×armour + 2×firepower + 2×systems`)
 is defined once so phase B's defence resolver has no second source of truth.

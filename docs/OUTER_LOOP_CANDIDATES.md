@@ -90,8 +90,9 @@ shared loadout slots** (§4.4, any mix of power-up and weapon kinds) plus the tw
 a **variety of six upgrades plus Extra Life and Mystery UFO** inside a
 deployment. Stripping that variety to create the outer loop's scarcity would
 gut the middle loop, which is the opposite of the intent. *Cost:* the first ten
-minutes are sparser in *fleet* terms (one hull, one starting weapon), so the
-opening hex must still be fun flown with the shipped run kit.
+minutes are sparser in *fleet* terms (one hull and its starter weapon, owned
+but not equipped by default), so the opening hex must still be fun flown with
+the shipped run kit.
 
 **Rule 2 — the boss wields it before you own it.** Mini-bosses can **introduce
 new upgrades and weapon types** by using them against the player. An upgrade or
@@ -107,9 +108,9 @@ before it reads as a reward.
 | Candidate | Rule 1 — reduced starting kit | Rule 2 — boss demonstrates, then grants |
 |-----------|-------------------------------|-----------------------------------------|
 | **Candidate A — Contested Regions / Home World** | Every new ship leaves home with **no upgrades** (A already rotates unupgraded ships onto the line) | A region's mini-boss demonstrates the region's signature weapon; the stationed-ship upgrade is earned by beating it |
-| **Candidate B — Salvage Fleet** | The hangar starts with **one basic hull and one starting weapon**; everything else is bought | A mini-boss's weapon appears in the hangar tree only after that mini-boss has been defeated wielding it |
+| **Candidate B — Salvage Fleet** | The hangar starts with **one basic hull and one starting weapon** (owned; the default loadout is empty); everything else is bought | A mini-boss's weapon appears in the hangar tree only after that mini-boss has been defeated wielding it |
 | **Candidate C — Signal Decode** | The codex starts **empty**, so the campaign starts plain and mutates as it is decoded | The boss's phases *are* the demonstration; each decoded rule unlocks the behaviour/weapon the player has just survived |
-| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, one starting weapon, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | A hex boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
+| **Candidate D — Hangar War** | The **fleet** starts minimal — one basic hull, its starting weapon owned but **not equipped**, no hangar modifiers — while the **run** keeps the shipped kit in full: six shared loadout slots plus the slot-free Extra Life and Mystery UFO | A hex boss demonstrates the hex's new weapon; defeating it adds that weapon to the hangar for purchase |
 
 ---
 
@@ -512,8 +513,12 @@ fix it.
 
 - **Rule 1 — reduced starting kit.** The hangar starts with **one basic hull and
   one starting weapon** and no modifiers; every other hull, weapon and modifier
-  is earned. The shipped 10-level campaign therefore opens with a deliberately
-  thin loadout, and the run's own mineral/power-up economy does the rest.
+  is earned. The starting weapon is **owned**, not equipped: the default
+  deployment loadout is empty, so a run starts with only the ship's permanent
+  cannon and equipping the starter is the player's choice (producer decision,
+  AH-0MVZJ6V1J001DA9D). The shipped 10-level campaign therefore opens with a
+  deliberately thin loadout, and the run's own mineral/power-up economy does the
+  rest.
 - **Rule 2 — the boss wields it first.** A new weapon or upgrade is **not** in
   the hangar tree until its mini-boss has been defeated: the boss demonstrates
   it as an attack (or carries it visibly), and its defeat both **drops the core**
@@ -1039,12 +1044,12 @@ wasted).
 ### Progression rules
 
 - **Rule 1 — reduced starting kit.** The **fleet** starts as B's does — one basic
-  hull, one starting weapon, no hangar modifiers — and the *first* hex is taken
-  with that bare fleet, so the fleet's range is earned outward from nothing. The
-  **run is not reduced**: it keeps the shipped **six shared loadout slots** plus
-  the two slot-free kinds, **Extra Life** and **Mystery UFO**, so the opening
-  deployment is the game players already know and the scarcity lives in what the
-  hangar owns between deployments.
+  hull, its starting weapon owned but **not equipped**, no hangar modifiers — and
+  the *first* hex is taken with that bare fleet, so the fleet's range is earned
+  outward from nothing. The **run is not reduced**: it keeps the shipped **six
+  shared loadout slots** plus the two slot-free kinds, **Extra Life** and **Mystery
+  UFO**, so the opening deployment is the game players already know and the
+  scarcity lives in what the hangar owns between deployments.
 - **Rule 2 — the boss wields it first.** A hex boss demonstrates the hex's new
   weapon or power-up against the player; defeating it both **captures the hex**
   and **adds the entry to the hangar**, where it is then bought with salvage.

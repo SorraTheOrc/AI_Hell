@@ -334,10 +334,11 @@ export function buildHangarWeaponOptions(
       name: entry.name,
       equipped,
       label: `LOADOUT ${entry.name}${equipped ? ' — EQUIPPED' : ''}`,
-      // The last equipped weapon can never be removed: a deployment always
-      // starts armed (economy rule), so the row is disabled instead of
-      // silently doing nothing.
-      actionable: !equipped || equippedIds.size > 1,
+      // Every owned weapon is toggleable, including the last equipped one:
+      // the player may deploy with no extra weapon at all, in which case the
+      // run starts with only the ship's permanent cannon
+      // (AH-0MVZJ6V1J001DA9D).
+      actionable: true,
     });
   }
   return options;
@@ -524,8 +525,10 @@ export function equipHangarHull(
 /**
  * Toggles one owned starting weapon in the active loadout (pure).
  *
- * Removing the last equipped weapon is refused (the fleet always deploys
- * armed), so the result reports `ok: false` and the payload is unchanged.
+ * Every toggle is allowed, including removing the last equipped weapon: an
+ * empty starting-weapon selection is a legal loadout, so the player can deploy
+ * with only the ship's permanent cannon (AH-0MVZJ6V1J001DA9D). The result
+ * reports whether the requested change actually landed.
  */
 export function toggleHangarWeapon(
   payload: HangarWarPayload,
@@ -533,9 +536,6 @@ export function toggleHangarWeapon(
 ): HangarUpdateResult {
   const current = resolveActiveLoadout(payload.hangar).startingWeapons;
   const equipped = current.includes(weaponId);
-  if (equipped && current.length <= 1) {
-    return { ok: false, reason: null, payload: clonePayload(payload) };
-  }
   const requested = equipped
     ? current.filter((id) => id !== weaponId)
     : [...current, weaponId];
@@ -881,7 +881,13 @@ export function renderHangarScreen(
   };
 }
 
-/** The starting weapon a hangar always keeps when a loadout is emptied. */
+/**
+ * The starter weapon a fresh fleet owns (never auto-equipped).
+ *
+ * Kept as a named export for callers that need to point at the fleet's starter
+ * in the loadout selector; emptying a loadout no longer falls back to it
+ * (AH-0MVZJ6V1J001DA9D).
+ */
 export const HANGAR_FALLBACK_WEAPON_ID = STARTER_WEAPON_ID;
 
 /** Whether the fleet owns a catalogue entry (exposed for the scene/tests). */

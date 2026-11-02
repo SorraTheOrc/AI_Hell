@@ -229,8 +229,10 @@ function resolveStartingWeapons(
  *
  * Resolution order follows the economy: the active hull/loadout come from
  * `resolveActiveHull`/`resolveActiveLoadout`, so corrupt saves can never
- * deploy an unowned ship or an empty loadout, and the aggression comes from
- * the target hex (see {@link selectDeploymentHex}).
+ * deploy an unowned ship or an unowned weapon, and the aggression comes from
+ * the target hex (see {@link selectDeploymentHex}). An empty loadout resolves
+ * to `startingWeapons: []`: the run then starts with only the ship's permanent
+ * cannon (AH-0MVZJ6V1J001DA9D).
  *
  * @param payload — the persistent war payload (never mutated).
  * @param options — target hex, catalogue and seed overrides.

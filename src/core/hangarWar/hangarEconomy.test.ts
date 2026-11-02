@@ -296,9 +296,22 @@ describe('active loadout resolution — owned entries only', () => {
     });
 
     expect(resolveActiveHull(hangar)).toBe(DEFAULT_HULL_ID);
-    // The minimal fleet always deploys with its basic starting weapon.
+    // Owning the starter weapon never equips it: dropping an unowned id from
+    // the selection leaves a legal empty loadout, not a forced replacement.
     expect(resolveActiveLoadout(hangar)).toEqual({
-      startingWeapons: [STARTER_WEAPON_ID],
+      startingWeapons: [],
+      modifiers: [],
+    });
+  });
+
+  it('starts a fresh payload with an empty loadout', () => {
+    // AH-0MVZJ6V1J001DA9D: the default deployment carries no extra weapon; the
+    // starter stays owned (unlockedWeapons) and is the player's choice.
+    const hangar = createDefaultPayload(7).hangar;
+
+    expect(hangar.unlockedWeapons).toEqual([DEFAULT_STARTING_WEAPON_ID]);
+    expect(resolveActiveLoadout(hangar)).toEqual({
+      startingWeapons: [],
       modifiers: [],
     });
   });
@@ -325,14 +338,25 @@ describe('active loadout resolution — owned entries only', () => {
     expect(equipped).not.toBe(withWeapon);
   });
 
-  it('keeps the basic starting weapon when the selection is empty', () => {
-    const equipped = equipLoadout(hangarWith(), {
+  it('keeps an empty weapon selection empty (nothing is auto-equipped)', () => {
+    const hangar = hangarWith({
+      unlockedWeapons: [DEFAULT_STARTING_WEAPON_ID, 'wave_laser'],
+      activeLoadout: { startingWeapons: ['wave_laser'], modifiers: [] },
+    });
+
+    const equipped = equipLoadout(hangar, {
       startingWeapons: [],
       modifiers: [],
     });
 
+    // Removing the last equipped starting weapon is legal: the run then starts
+    // with only the ship's permanent cannon (AH-0MVZJ6V1J001DA9D).
     expect(equipped.activeLoadout).toEqual({
-      startingWeapons: [STARTER_WEAPON_ID],
+      startingWeapons: [],
+      modifiers: [],
+    });
+    expect(resolveActiveLoadout(equipped)).toEqual({
+      startingWeapons: [],
       modifiers: [],
     });
   });
