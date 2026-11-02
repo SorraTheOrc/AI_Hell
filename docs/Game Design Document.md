@@ -1325,12 +1325,12 @@ semantics are recorded in [`docs/BALANCING.md`](./BALANCING.md).
   [`src/core/checkpointStore.ts`](../src/core/checkpointStore.ts)) bounds the
   persisted permanent grants with the same shared predicate, so `Continue` can
   never restore more counted kinds than the run could hold, while exempt
-  entries survive. The resume replay passes the loaded payload through the
-  same helper before restoring it (`PlayScene._restoreCheckpoint`), so a
-  checkpoint written by a **pre-cap build** (or a hand-edited `localStorage`
-  payload) can never restore a seventh counted kind either; a valid post-cap
-  save is already within the cap, so its replay is unchanged (HUD/effect
-  parity, AH-0MVSHI07B003BZIP).
+  entries survive. The resume replay itself does **not** re-gate a payload: it
+  must reproduce the saved run exactly (HUD/effect parity,
+  AH-0MVSHI07B003BZIP), so a checkpoint written by a **pre-cap build** resumes
+  its stored grants verbatim — the one documented exception. Every payload this
+  build writes is already capped on save, and the replay is not an organic-play
+  acquisition surface.
 - **A Hangar War deployment loadout is gated at apply time.** The persistent
   hangar lets a fleet own and equip more weapons than a run can hold, so
   `applyHangarWarDeployment` passes the deployment's starting weapons through

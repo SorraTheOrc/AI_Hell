@@ -352,10 +352,10 @@ cap shapes what a run can become.
   **save** (`capCheckpointLoadout` in
   [`src/core/checkpointStore.ts`](../src/core/checkpointStore.ts)) through the
   shared predicate, so `Continue` restores at most six counted kinds and exempt
-  entries still come back; the replay (`PlayScene._restoreCheckpoint`) re-gates
-  the loaded payload through the same helper, so a legacy pre-cap save or a
-  hand-edited payload cannot restore a seventh counted kind either (valid
-  post-cap saves are unchanged).
+  entries still come back; the replay itself restores the saved payload
+  verbatim, by design (`Continue` must match the saved run exactly,
+  AH-0MVSHI07B003BZIP). A legacy pre-cap save is therefore the one documented
+  exception; every payload this build writes is capped on save.
 - **A Hangar War deployment is gated too (AH-0MVVF0POV001JNKX).** The hangar
   lets a fleet own and equip more weapons than a run can hold, so
   `applyHangarWarDeployment` trims the deployment's starting weapons through the
