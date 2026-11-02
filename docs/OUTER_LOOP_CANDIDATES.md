@@ -1047,9 +1047,9 @@ wasted).
   hull, its starting weapon owned but **not equipped**, no hangar modifiers — and
   the *first* hex is taken with that bare fleet, so the fleet's range is earned
   outward from nothing. The **run is not reduced**: it keeps the shipped **six
-  shared loadout slots** plus the two slot-free kinds, **Extra Life** and **Mystery
-  UFO**, so the opening deployment is the game players already know and the
-  scarcity lives in what the hangar owns between deployments.
+  shared loadout slots** plus the two slot-free kinds, **Extra Life** and
+  **Mystery UFO**, so the opening deployment is the game players already know
+  and the scarcity lives in what the hangar owns between deployments.
 - **Rule 2 — the boss wields it first.** A hex boss demonstrates the hex's new
   weapon or power-up against the player; defeating it both **captures the hex**
   and **adds the entry to the hangar**, where it is then bought with salvage.
