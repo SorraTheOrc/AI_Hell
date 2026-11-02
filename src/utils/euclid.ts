@@ -198,10 +198,11 @@ export function euclidStepMs(bpm: number = DEFAULT_BPM): number {
  * - `k = 0` is the empty rhythm (no onsets).
  * - `k = n` is every step; `k > n` clamps to `n`.
  * - `n = 1` is a single-step tile (`k = 1` → one onset at step 0).
- * - Fractional inputs truncate to whole steps; invalid `k`/`n`
- *   (non-finite, negative, `n < 1`) degrade to an empty single-step rhythm.
- * - `rotation` is truncated and normalised into `[0, n)`, so `-1` is the last
- *   step (`n - 1`) and `n` is `0`.
+ * - Fractional inputs truncate to whole steps.
+ * - An invalid `k` (non-finite or negative) is the empty rhythm; an invalid
+ *   `n` (non-finite, zero or negative) has no lattice at all and degrades to
+ *   an empty single-step rhythm. `rotation` is truncated and normalised into
+ *   `[0, n)`, so `-1` is the last step (`n - 1`) and `n` is `0`.
  *
  * Pure and deterministic: the same arguments always produce the same onsets,
  * with no RNG and no wall-clock read.
