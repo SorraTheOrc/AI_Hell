@@ -488,8 +488,10 @@ export function quantiseFireRateMs(
  *
  * This is the data half of the epic's `patternFor(weaponId, level)`
  * (parent AH-0MVYA1JFK003RLAW). The pure Bjorklund generator that turns
- * `(k, n, rotation)` into onset ticks lives in the sibling pattern module;
- * this module owns the per-weapon **ladder** that selects the node.
+ * `(k, n, rotation)` into onset ticks is `euclidPattern` in
+ * `src/utils/euclid.ts` (with the `stepIndexAt` / `isOnset` /
+ * `nextOnsetTick` / `nextOnsetDelayMs` lattice helpers); this module owns the
+ * per-weapon **ladder** that selects the node.
  *
  * A **degenerate straight** pattern (`k === n`) is all-onsets — one shot per
  * step — so its interval is exactly `stepMs`. That is how a legacy

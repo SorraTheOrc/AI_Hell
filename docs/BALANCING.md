@@ -1073,6 +1073,15 @@ a `n = 16` tile spans one 4-beat bar. At another tempo the step scales with
 pure resolver is `resolveWeaponPattern(weaponId, level)` in
 `src/utils/weaponLevels.ts`; the catalogue is `WEAPON_EUCLIDEAN_LADDERS`.
 
+The generator that turns a tile into onset steps, and the helpers that turn
+those steps into exact tick times, live in `src/utils/euclid.ts`
+(`euclidPattern`, `stepIndexAt`, `isOnset`, `nextOnsetTick`,
+`nextOnsetDelayMs`, on the shared `euclidStepMs()` 16th-note step derived from
+`beatSubdivisionMs` in `src/utils/beat.ts`; AH-0MVYA1VHT004L2O0). Canonical
+fixtures and the rotation convention (rotation 0 roots at step 0, so the
+published `E(5,8) = x.xx.x.x` is the shipped `x.xx.xx.` rotated by five steps)
+are pinned by `src/utils/euclid.test.ts`.
+
 **Density is the invariant.** Effective density is
 `k / (n × stepMs)` onsets per millisecond, reported by
 `euclideanOnsetsPerMinute(pattern)` (and per beat through
