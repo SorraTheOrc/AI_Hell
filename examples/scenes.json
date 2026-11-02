@@ -344,6 +344,27 @@
       }
     },
     {
+      "target": "GymRhythm",
+      "playMs": 1500,
+      "captureMs": 5000,
+      "label": "Gym family \u2014 Euclidean rhythm audition (six-voice superposition)",
+      "setup": {
+        "player": {
+          "weapons": [
+            "heavy_slug",
+            "railgun",
+            "cannon",
+            "arc",
+            "rapid",
+            "shard_swarm"
+          ],
+          "timedWeapons": []
+        },
+        "powerUps": {},
+        "seed": 8091
+      }
+    },
+    {
       "target": "GymWeaponLeveling",
       "playMs": 1500,
       "captureMs": 5000,

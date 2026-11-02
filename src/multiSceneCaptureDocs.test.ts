@@ -188,6 +188,7 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
       'GymPowerUpLeveling',
       'GymPowerUpsCombat',
       'GymPowerUpsUtility',
+      'GymRhythm',
       'GymWeaponLeveling',
       'GymWeapons',
     ]) {

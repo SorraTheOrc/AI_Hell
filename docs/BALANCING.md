@@ -1139,6 +1139,12 @@ all-onsets subset of the ladder.
 `src/utils/weaponLevels.test.ts`. `cannon` and `arc` share `k = 9` and differ
 only by rotation — the "two medium weapons at identical density" example.
 
+The **Rhythm gym** (`src/scenes/gym/GymRhythm.ts`) auditions this exact fixture
+through the shipped scheduler, drawing the sixteen-step onset stack from the
+live `Player.getFirePattern` data; its playhead reads the shared beat clock and
+every recorded fire is the scheduler's own onset tick, so the gym and the game
+cannot drift (`src/scenes/gym/GymRhythm.test.ts`).
+
 **Machine-verifiable ledger.** The table below is the complete resolved
 ladder — one row per rung, in level order. It is compared row-for-row against
 `WEAPON_EUCLIDEAN_LADDERS` by the test suite, so a code change that is not

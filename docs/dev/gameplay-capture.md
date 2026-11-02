@@ -1485,7 +1485,9 @@ shared `applySceneSetup` applier and re-seeds its content RNG from
 `player`, `powerUps` and `seed` fields are live **before the first captured
 frame** in every gym — including the six combat gyms (`GymPlayer`, `GymWeapons`,
 `GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymWeaponLeveling`,
-`GymPowerUpLeveling`) that previously ignored an incoming setup. An absent setup
+`GymPowerUpLeveling`) that previously ignored an incoming setup, and the
+`GymRhythm` audition, whose fixed six-voice cast is completed on top of any
+setup-granted voices. An absent setup
 remains a no-op. `GymCurveSequencer` has no player and no intrinsic random
 content (its waves are derived deterministically from the curve), so it applies
 the shared seam as a documented no-op and **forwards** the setup (loadout,
@@ -1524,7 +1526,7 @@ capture framing), recorded with their reason in
 [`docs/GYM_PARITY.md`](../GYM_PARITY.md#scripted-scene-setup-adoption-ah-0mvrmhyjr000y9h8).
 
 **Every gym is representable in `examples/scenes.json`.** The shipped example
-carries one scripted entry for every gym scene — all 16, including the
+carries one scripted entry for every gym scene — all 17, including the
 parameterised `GymLevel`/`GymFodderEnemies`, the boss gyms (`GymBoss`,
 `GymMiniBoss`), the curve editor, the read-only `GymHangar` payload view and
 the read-only `GymHexWar` ring harness. The seven-beat excitement-curve teaser
@@ -1746,7 +1748,7 @@ Two config files ship with the repo, each with one purpose:
   pinned `seed` and a `playMs`/`captureMs` window, so its loadout and its
   on-camera pay-off are deterministic (AH-0MVTNTHTI0041QIF).
 - **`examples/scenes.json`** — the **gym showcase**: one scripted entry for
-  every gym scene under `src/scenes/gym/` (all 16, including the parameterised
+  every gym scene under `src/scenes/gym/` (all 17, including the parameterised
   `GymLevel`/`GymFodderEnemies`, the boss gyms, the curve editor, the
   read-only `GymHangar` payload view and the read-only `GymHexWar` ring
   harness), each carrying a copy-paste `setup`.
@@ -1867,7 +1869,8 @@ without a caller-supplied parameter:
 
 `GymBoss`, `GymBotTuning`, `GymCentipede`, `GymCurveSequencer`, `GymHangar`,
 `GymHexWar`, `GymMinerals`, `GymMiniBoss`, `GymPlayer`, `GymPowerUpLeveling`,
-`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymWeaponLeveling`, `GymWeapons`.
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymRhythm`, `GymWeaponLeveling`,
+`GymWeapons`.
 
 `GymFodderEnemies` (needs an `enemy` setup) and `GymLevel` (needs a `level`
 setup) are **rejected** with `unsupported-target` when no setup is supplied;
