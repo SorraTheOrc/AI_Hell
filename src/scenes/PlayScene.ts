@@ -734,6 +734,18 @@ export class PlayScene extends CombatScene<
   private mineralChoiceOpen = false;
   /** The options currently offered by the hold-full choice. */
   private mineralChoiceOptions: ChoiceOption[] = [];
+  /**
+   * True when the hold filled during a mini-boss death sweep (or its reward
+   * overlay) and the choice is waiting for the encounter to finalise.
+   *
+   * The sweep animates on this scene's own clock and its completion is what
+   * finalises the encounter (reward overlay plus the single wave/level
+   * advance), so a choice overlay's scene pause would freeze it mid-animation
+   * and hold the level clear indefinitely. The request is therefore deferred
+   * and opened on the first free tick after the encounter resolves
+   * ({@link PlayScene._requestHoldFullChoice}).
+   */
+  private holdFullChoicePending = false;
   /** Pluggable policy that selects the offered options. */
   private mineralChoiceStrategy: ChoiceStrategy = randomChoiceStrategy;
 
@@ -1516,6 +1528,7 @@ export class PlayScene extends CombatScene<
     this.minerals = [];
     this.mineralChoiceOpen = false;
     this.mineralChoiceOptions = [];
+    this.holdFullChoicePending = false;
     this.boss = null;
     this.runFinished = false;
     this.miniBoss = null;
@@ -1654,6 +1667,11 @@ export class PlayScene extends CombatScene<
     // freeze, and the player is frozen and cannot be hit. Resuming
     // continues from this exact state with no time counted.
     if (this.paused) return;
+
+    // A hold-full choice deferred by the mini-boss encounter opens here, on
+    // the first free tick after the sweep/reward resolves (by then the
+    // overlay that requested it has closed, so opening a fresh one is safe).
+    this._flushPendingHoldFullChoice();
 
     this.effectsRegistry.tick(dt);
     this.hud?.refresh();
@@ -5168,7 +5186,7 @@ export class PlayScene extends CombatScene<
       addMinerals: (amount: number) => {
         this.gameState.addMinerals(amount);
         this._syncMineralHud();
-        if (this.gameState.isHoldFull()) this.openMineralChoice();
+        this._requestHoldFullChoice();
       },
     };
   }
@@ -5687,7 +5705,52 @@ export class PlayScene extends CombatScene<
     this.gameState.addMinerals(mineral.value);
     this.runTelemetry.mineralCollected(this.gameState.minerals);
     this._syncMineralHud();
-    if (this.gameState.isHoldFull()) this.openMineralChoice();
+    this._requestHoldFullChoice();
+  }
+
+  /**
+   * Requests the hold-full choice when the hold just filled, deferring it
+   * while the active mini-boss encounter is finalising.
+   *
+   * The mini-boss death sweep animates on this scene's own clock and its
+   * completion (`onComplete`) is the **only** route that finalises the
+   * encounter — the reward overlay plus the single wave/level advance. A
+   * hold-full choice pauses this scene (`openMineralChoice` →
+   * `setPaused(true)` + `scene.pause()`), which freezes that clock, the burst
+   * tweens and the sweep's completion watchdog with it. A mineral collected in
+   * the same window a mini-boss dies therefore used to wedge the level clear
+   * mid-cascade: no reward, no advance, nothing on screen to shoot — exactly
+   * the "clearing level 2 does nothing" report this fix closes
+   * (AH-0MVZJ76BP000051B).
+   *
+   * Deferring keeps the established pause semantics for the choice while the
+   * encounter's own presentation finishes; {@link
+   * PlayScene._flushPendingHoldFullChoice} opens it on the first free tick.
+   */
+  private _requestHoldFullChoice(): void {
+    if (!this.gameState.isHoldFull()) return;
+    if (this.mineralChoiceOpen) return;
+    // The encounter owns the scene until its sweep completes and its reward
+    // overlay is resolved; opening a pausing overlay now would freeze it.
+    if (this.isMiniBossSweepActive() || this.miniBossRewardOpen) {
+      this.holdFullChoicePending = true;
+      return;
+    }
+    this.openMineralChoice();
+  }
+
+  /**
+   * Opens a hold-full choice that was deferred by the mini-boss encounter, on
+   * the first tick where no overlay owns the scene and the hold is still full.
+   * Idempotent and a no-op when nothing is pending.
+   */
+  private _flushPendingHoldFullChoice(): void {
+    if (!this.holdFullChoicePending) return;
+    if (this.isMiniBossSweepActive() || this.miniBossRewardOpen) return;
+    if (this.mineralChoiceOpen || this.paused) return;
+    this.holdFullChoicePending = false;
+    if (!this.gameState.isHoldFull()) return;
+    this.openMineralChoice();
   }
 
   /** Mirrors the GameState hold onto the HUD mineral hold bar. */
