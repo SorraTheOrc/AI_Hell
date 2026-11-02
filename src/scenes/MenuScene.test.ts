@@ -10,7 +10,7 @@
  *   autoplay policy compliance, GDD §6.7) via `resumeAudioContext`.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Phaser from 'phaser';
 
 import packageJson from '../../package.json';
@@ -25,7 +25,7 @@ import {
   hasCheckpoint,
   saveCheckpoint,
 } from '../core/checkpointStore';
-import { GITHUB_REPO_URL, GITHUB_LOGO_TEXTURE_KEY, MenuScene, resumeAudioContext } from './MenuScene';
+import { GITHUB_REPO_URL, GITHUB_LOGO_TEXTURE_KEY, HANGAR_WAR_LABEL, MenuScene, hangarWarFlagLabel, resumeAudioContext } from './MenuScene';
 import { PlayScene } from './PlayScene';
 import { PauseScene } from './PauseScene';
 import { SettingsScene } from './SettingsScene';
@@ -33,6 +33,13 @@ import { GameOverScene } from './GameOverScene';
 import { LeaderboardScene } from './LeaderboardScene';
 import { GymIndex } from './GymIndex';
 import { HANGAR_SCENE_KEY, HangarScene } from './HangarScene';
+import { HEX_MAP_SCENE_KEY, HexMapScene } from './HexMapScene';
+import { DefenceReportScene } from './DefenceReportScene';
+import {
+  loadFeatureFlags,
+  resetFeatureFlags,
+  setHangarWarEnabled,
+} from '../core/featureFlags';
 
 /** Finds an on-screen text by label. */
 function findText(scene: Phaser.Scene, label: string): Phaser.GameObjects.Text {
@@ -156,6 +163,12 @@ describe('MenuScene — main menu (AH-0MU72YVFR005VB2N)', () => {
 describe('MenuScene — Hangar War entry (AH-0MVUXC2DD003HN0I)', () => {
   let booted: BootedGame | null = null;
 
+  // These tests describe the shipped entry when the feature flag is ON
+  // (AH-0MVZ0VGGQ0032KDP). The flag defaults OFF, so it is enabled here.
+  beforeEach(() => {
+    setHangarWarEnabled(true);
+  });
+
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
@@ -239,6 +252,162 @@ describe('MenuScene — Hangar War entry (AH-0MVUXC2DD003HN0I)', () => {
     const play = booted!.game.scene.getScene('PlayScene') as PlayScene;
     expect(play.getWaveManager().level).toBe(1);
     expect(play.isHangarWarRun()).toBe(false);
+  });
+});
+
+describe('MenuScene — Hangar War feature flag (AH-0MVZ0VGGQ0032KDP)', () => {
+  let booted: BootedGame | null = null;
+
+  beforeEach(() => {
+    // The flag defaults OFF; start every test from a clean persisted record.
+    resetFeatureFlags();
+  });
+
+  afterEach(() => {
+    booted?.game.destroy(true);
+    booted = null;
+    window.localStorage.clear();
+  });
+
+  async function bootMenu(): Promise<MenuScene> {
+    booted = await bootScene([
+      MenuScene,
+      PlayScene,
+      HangarScene,
+      HexMapScene,
+      DefenceReportScene,
+      GameOverScene,
+      GymIndex,
+    ]);
+    return booted!.scene as MenuScene;
+  }
+
+  function pressKey(scene: MenuScene, event: Partial<KeyboardEvent>): void {
+    scene.input.keyboard!.emit('keydown', {
+      repeat: false,
+      preventDefault: () => {},
+      ...event,
+    } as KeyboardEvent);
+  }
+
+  it('AC2 — with the flag OFF (default) the Hangar War control is not rendered', async () => {
+    const scene = await bootMenu();
+    expect(scene.isHangarWarEnabled()).toBe(false);
+    const hangarWar = scene.children.list.find(
+      (child): child is Phaser.GameObjects.Text =>
+        child instanceof Phaser.GameObjects.Text && child.text === HANGAR_WAR_LABEL,
+    );
+    expect(hangarWar).toBeUndefined();
+  });
+
+  it('AC2 — with the flag OFF the focus cycle skips Hangar War and keeps the remaining order', async () => {
+    const scene = await bootMenu();
+    expect(scene.getFocusedLabel()).toBe('▶  Play Game');
+
+    for (const expected of [
+      '👁  Watch Demo',
+      '⚙  Settings',
+      '🏆  Leaderboard',
+      'GitHub',
+      '⚙  Gym Scene Index (dev)',
+      '▶  Play Game',
+    ]) {
+      pressKey(scene, { key: 'Tab' });
+      expect(scene.getFocusedLabel()).toBe(expected);
+    }
+  });
+
+  it('AC2 — Play Game, Continue and Watch Demo behave exactly as before with the flag OFF', async () => {
+    saveCheckpoint({
+      version: CHECKPOINT_VERSION,
+      level: 3,
+      wave: 1,
+      lives: 2,
+      score: 1234,
+      minerals: 1,
+      mineralHoldCapacity: 5,
+      weaponLevels: [],
+      powerUpLevels: [],
+      runSeed: 77,
+      savedAt: '2026-11-02T00:00:00.000Z',
+    });
+    const scene = await bootMenu();
+
+    // Continue is still the default focus and Play Game / Watch Demo remain.
+    expect(scene.getFocusedLabel()).toBe('⏵  Continue — Level 3');
+    expect(findText(scene, '▶  Play Game')).toBeDefined();
+    expect(findText(scene, '👁  Watch Demo')).toBeDefined();
+
+    findText(scene, '▶  Play Game').emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    // Play Game keeps its shipped New Game semantics.
+    expect(hasCheckpoint()).toBe(false);
+  });
+
+  it('AC3 — with the flag OFF the idle attract only ever starts the arcade demo', async () => {
+    const scene = await bootMenu();
+
+    // Two attract cycles: even with the flag OFF, neither may reach the hex map.
+    scene.scheduleAttractTimer(60);
+    await advanceGame(booted!.game, 250);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(false);
+    expect((booted!.game.scene.getScene('PlayScene') as PlayScene).isDemoMode()).toBe(true);
+
+    booted!.game.scene.getScene('PlayScene').scene.start('MenuScene', { demo: false });
+    await advanceGame(booted!.game, 100);
+    const menu = booted!.game.scene.getScene('MenuScene') as MenuScene;
+    menu.scheduleAttractTimer(60);
+    await advanceGame(booted!.game, 250);
+
+    expect(booted!.game.scene.isActive('HexMapScene')).toBe(false);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+    expect((booted!.game.scene.getScene('PlayScene') as PlayScene).isDemoMode()).toBe(true);
+  });
+
+  it('AC1/AC4 — with the flag ON the entry is rendered and opens the hangar screen', async () => {
+    setHangarWarEnabled(true);
+    const scene = await bootMenu();
+    expect(scene.isHangarWarEnabled()).toBe(true);
+
+    findText(scene, HANGAR_WAR_LABEL).emit('pointerdown');
+    await advanceGame(booted!.game, 350);
+    expect(booted!.game.scene.isActive(HANGAR_SCENE_KEY)).toBe(true);
+  });
+
+  it('AC3 — with the flag ON the attract alternation reaches the Hangar War traversal', async () => {
+    setHangarWarEnabled(true);
+    const scene = await bootMenu();
+
+    // First idle cycle: arcade demo (odd index).
+    scene.scheduleAttractTimer(60);
+    await advanceGame(booted!.game, 250);
+    expect(booted!.game.scene.isActive('PlayScene')).toBe(true);
+
+    // Second idle cycle: the Hangar War traversal (even index).
+    booted!.game.scene.getScene('PlayScene').scene.start('MenuScene', { demo: false });
+    await advanceGame(booted!.game, 100);
+    const menu = booted!.game.scene.getScene('MenuScene') as MenuScene;
+    menu.scheduleAttractTimer(60);
+    await advanceGame(booted!.game, 250);
+
+    expect(booted!.game.scene.isActive(HEX_MAP_SCENE_KEY)).toBe(true);
+  });
+
+  it('AC4 — the dev enable surface is present in a dev build and flips the flag', async () => {
+    const scene = await bootMenu();
+    const toggle = findText(scene, hangarWarFlagLabel(false));
+    expect(toggle.input?.enabled).toBe(true);
+
+    toggle.emit('pointerdown');
+    await advanceGame(booted!.game, 200);
+
+    // The menu restarts with the flag ON, so the entry is now rendered.
+    const menu = booted!.game.scene.getScene('MenuScene') as MenuScene;
+    expect(menu.isHangarWarEnabled()).toBe(true);
+    expect(loadFeatureFlags().hangarWar).toBe(true);
+    expect(findText(menu, HANGAR_WAR_LABEL)).toBeDefined();
   });
 });
 
@@ -342,6 +511,12 @@ describe('MenuScene — Settings button (AH-0MUA8BLMA003U18N)', () => {
 
 describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () => {
   let booted: BootedGame | null = null;
+
+  // The focus cycle includes the Hangar War control, so the feature flag is
+  // enabled for these shipped-menu assertions (AH-0MVZ0VGGQ0032KDP).
+  beforeEach(() => {
+    setHangarWarEnabled(true);
+  });
 
   afterEach(() => {
     booted?.game.destroy(true);
@@ -512,6 +687,12 @@ describe('MenuScene — keyboard-only navigation (AH-0MU9LKQEP008LCX9-C2)', () =
 describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
   let booted: BootedGame | null = null;
 
+  // The Tab route to Leaderboard passes the Hangar War control, so the
+  // feature flag is enabled for these assertions (AH-0MVZ0VGGQ0032KDP).
+  beforeEach(() => {
+    setHangarWarEnabled(true);
+  });
+
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
@@ -611,6 +792,12 @@ describe('MenuScene — leaderboard access (AH-0MUD9ZNZJ001P7RF)', () => {
 
 describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
   let booted: BootedGame | null = null;
+
+  // Focus-order and attract assertions here assume the shipped full menu, so
+  // the Hangar War feature flag is enabled (AH-0MVZ0VGGQ0032KDP).
+  beforeEach(() => {
+    setHangarWarEnabled(true);
+  });
 
   afterEach(() => {
     booted?.game.destroy(true);
@@ -779,6 +966,12 @@ describe('MenuScene — attract/demo entry (AH-0MUX4966Z0009P9Q)', () => {
 
 describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
   let booted: BootedGame | null = null;
+
+  // The Tab order assertions include the Hangar War control, so the feature
+  // flag is enabled for these shipped-menu tests (AH-0MVZ0VGGQ0032KDP).
+  beforeEach(() => {
+    setHangarWarEnabled(true);
+  });
 
   afterEach(() => {
     booted?.game.destroy(true);
@@ -962,6 +1155,13 @@ describe('MenuScene — GitHub link (AH-0MUZI83EO003WVTG)', () => {
 describe('MenuScene — version label (AH-0MUZM9053008YXOZ)', () => {
   let booted: BootedGame | null = null;
 
+  // The "Tab cycle unchanged" assertion counts the shipped menu controls,
+  // including Hangar War, so the feature flag is enabled here
+  // (AH-0MVZ0VGGQ0032KDP).
+  beforeEach(() => {
+    setHangarWarEnabled(true);
+  });
+
   afterEach(() => {
     booted?.game.destroy(true);
     booted = null;
@@ -1052,6 +1252,12 @@ describe('MenuScene — version label (AH-0MUZM9053008YXOZ)', () => {
 
 describe('MenuScene — checkpoint Continue (AH-0MVCRBTNF000DK51)', () => {
   let booted: BootedGame | null = null;
+
+  // The focus-cycle assertions include the Hangar War control, so the feature
+  // flag is enabled for these shipped-menu tests (AH-0MVZ0VGGQ0032KDP).
+  beforeEach(() => {
+    setHangarWarEnabled(true);
+  });
 
   afterEach(() => {
     booted?.game.destroy(true);

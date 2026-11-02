@@ -104,11 +104,18 @@ the game-over screen (the in-game pause menu follows the same model).
   **Enter** starts a run. When a resumable checkpoint exists, a **Continue**
   control is added above it, becomes the focused default instead, and
   pressing **Enter** resumes the saved run. **Tab**/arrows cycle in visual
-  order through *Continue* (when present) → *Play Game* → *Hangar War* →
-  *Watch Demo* → *Settings* → *Leaderboard* → *GitHub* →
-  *Gym Scene Index (dev)*, wrapping at both ends. *Hangar War* opens the
-  hangar screen (a deployment launched there is a separate session from the
-  arcade run and its checkpoint).
+  order through *Continue* (when present) → *Play Game* → *Hangar War*
+  (feature-flagged, see below) → *Watch Demo* → *Settings* → *Leaderboard* →
+  *GitHub* → *Gym Scene Index (dev)*, wrapping at both ends. *Hangar War*
+  opens the hangar screen (a deployment launched there is a separate session
+  from the arcade run and its checkpoint). *Hangar War* is **gated behind a
+  default-OFF feature flag** while it does not work
+  (AH-0MVZ0VGGQ0032KDP): when the flag is off the control is not rendered and
+  is absent from the cycle, which then runs *Continue* → *Play Game* →
+  *Watch Demo* → *Settings* → *Leaderboard* → *GitHub* → *Gym Scene Index
+  (dev)*. Only a dev build can turn the flag on (a pointer-only
+  `Hangar War (dev): ON/OFF` toggle in the menu footer); a production build
+  always resolves it off.
 - **Game over (`GameOverScene`):** the initials field is focused by default
   and **A–Z** / **Backspace** edit it; **Tab**/arrows move focus to
   *Return to Menu*. **Enter** auto-submits when the initials are complete;
@@ -2558,6 +2565,19 @@ level) and a deterministic seed derived from the war seed. The two modes share
 the run code (`PlayScene` + `src/scenes/core/`) and differ **only** in that
 launch data.
 
+**Feature flag (AH-0MVZ0VGGQ0032KDP).** Because the Hangar War does not work
+yet, its player-visible entry surfaces — this menu control and the idle-attract
+Hangar War traversal — are gated behind the persisted feature flag
+`ai_hell_feature_flags.hangarWar`, which is **OFF by default**. The resolver
+(`src/core/featureFlags.ts`) ANDs the stored value with the Vite dev build, so
+a **production build is inert**: no stored value can enable the feature there.
+Scenes stay registered (`HangarScene`, `HexMapScene`, `DefenceReportScene`),
+so the dev gyms and the capture pipeline keep reaching them; only the entry
+surfaces are gated. A dev build renders a pointer-only
+`🛠 Hangar War (dev): ON/OFF` toggle in the menu footer to flip the flag for
+dev/capture work; the toggle does not exist in a production build and is not
+part of the keyboard focus cycle.
+
 Mode separation is enforced at the persistence boundary: a deployment **writes
 no arcade checkpoint and clears none**, so `Continue` can only ever belong to
 the arcade run; an arcade run is never a hangar deployment (only a payload
@@ -2671,7 +2691,9 @@ The Hangar War keeps the **additive** entry surface fixed at intake (producer
 decision 2026-10-30, Q1 = a): **`▶ Play Game` still starts the shipped classic
 10-level campaign** and **`Continue — Level N` still resumes the arcade run
 checkpoint**; neither mode shares session, checkpoint or leaderboard state with
-the war. The war is reached from the menu's **`🛠 Hangar War`** entry and runs
+the war. The war is reached from the menu's **`🛠 Hangar War`** entry (gated
+behind the default-OFF feature flag described in §8.1; when the flag is off the
+entry is absent and the idle attract runs the arcade demo only) and runs
 through three screens:
 
 - **`HangarScene`** (§8.1) — banked salvage, the unlock tree and the

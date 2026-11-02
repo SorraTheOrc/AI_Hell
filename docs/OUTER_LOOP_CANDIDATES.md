@@ -1172,3 +1172,17 @@ the shipped hangar slice and **§8.2** specifies the shipped first hex ring
 (ring 2 playable, the resolver and frontier-tick numbers, the defence report and
 the measured ring timings). The documentation of record was published by
 **AH-0MVUXCC5J0028OGQ**.
+
+### Build status — entry surfaces gated (AH-0MVZ0VGGQ0032KDP)
+
+The build is shipped but the Hangar War **currently does not work**, so its
+player-visible entry surfaces are temporarily **gated behind a default-OFF
+feature flag** (`ai_hell_feature_flags.hangarWar`, resolved through
+`src/core/featureFlags.ts`): the menu entry and the idle-attract Hangar War
+traversal are hidden, while the Hangar War scenes stay registered for the dev
+gyms and the capture pipeline. The flag resolves OFF in every production build
+regardless of any stored value; only a dev build can turn it on (the
+pointer-only `🛠 Hangar War (dev): ON/OFF` footer toggle). Nothing in the design
+of record above changes — the gate is an interim containment measure until the
+defects are fixed, at which point the flag is turned on (or removed) by a
+follow-on work item.
