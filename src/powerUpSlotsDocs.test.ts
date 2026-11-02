@@ -213,3 +213,160 @@ describe('the six-slot cap and exemption flag are documented (AH-0MVLIJT3M005HPH
     expect(section).toMatch(/\(c\)|answer \(c\)/);
   });
 });
+
+// ── HUD presentation of the cap (AH-0MVVJRRN10038VFR) ─────────────────
+//
+// The cap is only legible if the player can tell a *slot* from a *row*: the
+// HUD list can legitimately show an exempt entry (always available) or a
+// charge pool that outlives its window (charges only). The docs must state how
+// the budget and the non-slot rows are presented, and where the state comes
+// from, so this presentation cannot silently drift from the code.
+
+describe('the HUD slot budget and non-slot rows are documented (AH-0MVVJRRN10038VFR)', () => {
+  const gdd = read(GDD_PATH);
+  const balancing = read(BALANCING_PATH);
+
+  it('the GDD states that the HUD row list is not the loadout', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/row(s)? (is|are)\s+\*{0,2}not\*{0,2}\s+(the )?loadout|HUD[^.]*not\*{0,2} the loadout/i);
+    expect(section).toContain('Loadout n/6');
+  });
+
+  it('the GDD names the non-slot row classes and their markers', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/always available/i);
+    expect(section).toMatch(/charges only/i);
+    expect(section).toMatch(/Mystery UFO/);
+    expect(section).toMatch(/Phase Shift/);
+  });
+
+  it('the GDD records the shared HUD wiring and the row/slot agreement', () => {
+    const section = slotsSection(gdd);
+    expect(section).toContain('resolvePlayerSlotState');
+    expect(section).toContain('combatHudOptions');
+    expect(section).toMatch(/src\/ui\/HUD\.ts/);
+    expect(section).toMatch(/POWER_UP_SLOT_CAP/);
+  });
+
+  it('docs/BALANCING.md records the presented budget and the marked non-slot rows', () => {
+    const section = balancingSection(balancing);
+    expect(section).toContain('Loadout n/6');
+    expect(section).toMatch(/always available/i);
+    expect(section).toMatch(/charges only/i);
+    expect(section).toContain('resolvePlayerSlotState');
+    expect(section).toContain('combatHudOptions');
+  });
+});
+
+// ── Audited surfaces and their documented divergence (AH-0MVVJS34M00551ES) ──
+//
+// Every acquisition surface consults the shared pool. Two surfaces behave
+// differently *by decision*, and the reason must stay discoverable so a future
+// reader does not "fix" the divergence or, worse, assume the cap is broken:
+//
+// - capture/scripted setups may pre-grant more than six kinds (dev-gated off
+//   the normal play path), and
+// - a checkpoint is bounded on save (the replay restores a hand-written
+//   payload verbatim, for resumed-run parity).
+
+describe('the audited acquisition surfaces are documented (AH-0MVVJS34M00551ES)', () => {
+  const gdd = read(GDD_PATH);
+  const balancing = read(BALANCING_PATH);
+
+  it('the GDD records the capture-setup divergence and its dev-gate guard', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/capture|scripted/i);
+    expect(section).toMatch(/divergen/i);
+    expect(section).toContain('resolveSceneSetupState');
+    expect(section).toMatch(/dev gate|import\.meta\.env\.DEV/i);
+    expect(section).toMatch(/sceneSetup\.ts/);
+  });
+
+  it('the GDD records that a checkpoint never persists a seventh kind', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/checkpoint/i);
+    expect(section).toContain('saveCheckpoint');
+    expect(section).toContain('capCheckpointLoadout');
+    expect(section).toMatch(/exempt\s+entries?\s+(still\s+)?(survive|come back|restore)/i);
+  });
+
+  it('docs/BALANCING.md records both named surfaces and their reasons', () => {
+    const section = balancingSection(balancing);
+    expect(section).toMatch(/capture|scripted/i);
+    expect(section).toContain('resolveSceneSetupState');
+    expect(section).toContain('capCheckpointLoadout');
+    expect(section).toMatch(/checkpoint/i);
+    expect(section).toMatch(/deliberate|by design|intended/i);
+  });
+});
+
+// ── HUD presentation, divergence and the triage procedure (AH-0MVVJSE9800339S6) ──
+//
+// The cap is only legible if the docs explain (a) which row classes are not
+// slots, (b) which surfaces intentionally diverge, and (c) how to classify a
+// "more than six equipped" report from a recording instead of a row count. The
+// statements below are the player/maintainer-facing contract; they must not
+// silently drift from the shipped HUD or the triage workflow.
+
+describe('the HUD presentation and the disruption triage are documented (AH-0MVVJSE9800339S6)', () => {
+  const gdd = read(GDD_PATH);
+  const balancing = read(BALANCING_PATH);
+
+  it('the GDD names every row/slot discrepancy class', () => {
+    const section = slotsSection(gdd);
+    // Exempt entries and the no-row case.
+    expect(section).toMatch(/always available/i);
+    expect(section).toMatch(/Extra Life/);
+    expect(section).toMatch(/lives counter/i);
+    // Charge pools, including the Teleport-arrival Phase Shift row.
+    expect(section).toMatch(/charges only/i);
+    expect(section).toMatch(/Teleport arrival/i);
+    // Temporary one-shots hold a slot and render a row.
+    expect(section).toMatch(/temporary one-shots?/i);
+    expect(section).toMatch(/Orbital Strike/);
+  });
+
+  it('the GDD records the slot-budget read-out as shipped', () => {
+    const section = slotsSection(gdd);
+    expect(section).toContain('Loadout n/6');
+    expect(section).toContain('resolvePlayerSlotState');
+    expect(section).toContain('combatHudOptions');
+  });
+
+  it('the GDD documents the recording-based triage procedure', () => {
+    const section = slotsSection(gdd);
+    expect(section).toMatch(/triag/i);
+    // Capture step: the dev auto-recording and the recorder, with the stop
+    // requirement and the known recorder defect as a cross-reference.
+    expect(section).toContain('npm run dev');
+    expect(section).toContain('npm run record');
+    expect(section).toContain('--auto');
+    expect(section).toContain('Ctrl+C');
+    expect(section).toContain('AH-0MVVH57LL00038WQ');
+    // Replay step: the shared model, from the recording's tick/pickup data.
+    expect(section).toContain('resolveSlotState');
+    expect(section).toContain('pickup');
+    expect(section).toContain('resolveTemporaryWindow');
+    // Classification step: only a counted kind above six is a bug.
+    expect(section).toMatch(/only a counted kind above six is a bug/i);
+  });
+
+  it('docs/BALANCING.md records the row classes and the triage procedure', () => {
+    const section = balancingSection(balancing);
+    expect(section).toMatch(/always available/i);
+    expect(section).toMatch(/charges only/i);
+    expect(section).toMatch(/Extra Life/);
+    expect(section).toMatch(/temporary one-shot/i);
+    expect(section).toContain('npm run record');
+    expect(section).toContain('AH-0MVVH57LL00038WQ');
+    expect(section).toContain('resolveSlotState');
+  });
+
+  it('README documents the slot budget and the non-slot row markers', () => {
+    const readme = read(path.resolve(process.cwd(), 'README.md'));
+    expect(readme).toContain('Loadout n/6');
+    expect(readme).toContain('always available');
+    expect(readme).toContain('charges only');
+    expect(readme).toContain('combatHudOptions');
+  });
+});

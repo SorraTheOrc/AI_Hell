@@ -8,8 +8,11 @@
  * - a weapon option permanently equips the weapon, and a `weapon-level`
  *   option permanently **levels up** an owned weapon (the same
  *   `equipWeapon` path increments the run-scoped level);
- * - a power-up option (`powerup` or `power-up-level`) permanently applies
- *   the collect effect (GDD §4.5).
+ * - a power-up option (`powerup`, `power-up-level` or `power-up-charge`)
+ *   permanently applies the collect effect (GDD §4.5). A `power-up-charge`
+ *   option is a **consumable** charge grant: it routes through the same
+ *   {@link grantPermanentPowerUp} helper, which for a consumable adds exactly
+ *   one clamped charge and never a level (AH-0MVUXH35J002WSAB AC3/AC5).
  *
  * The two grants are exposed as {@link grantPermanentWeapon} and
  * {@link grantPermanentPowerUp} so the checkpoint-resume replay
@@ -85,6 +88,13 @@ export function grantPermanentWeapon(
  * effect state (shields, permanent Bomb/Strike pulses, timed-but-permanent
  * windows) without re-opening temporary pickups.
  *
+ * For a **consumable** (Shield, Thorn Field, Phase Shift, Teleport, Force
+ * Field, Mystery UFO) the store path grants exactly one clamped charge and
+ * marks the kind owned, never a level (parent AH-0MVTQMREN009DSFW AC1). This
+ * is therefore also the hold-full `power-up-charge` grant path — the same
+ * helper the checkpoint resume replays, so the charge state is single-sourced
+ * (AH-0MVUXH35J002WSAB AC3/AC5).
+ *
  * @param powerUpId — the power-up to apply permanently.
  * @param effectsRegistry — the scene's effect registry.
  */
@@ -114,8 +124,12 @@ export function applyMineralChoiceReward(
     // helper with the checkpoint-resume replay (AC3).
     grantPermanentWeapon(option.id as WeaponId, effectsRegistry, player);
   } else {
-    // Power-up options (both `powerup` and `power-up-level`) share the one
-    // permanent-grant helper with the checkpoint-resume replay (AC3).
+    // Power-up options (`powerup`, `power-up-level` and `power-up-charge`)
+    // share the one permanent-grant helper with the checkpoint-resume replay
+    // (AC3). For a consumable the helper's store path adds exactly one
+    // clamped charge and leaves the permanent level untouched, so the
+    // checkpoint replay (`grantPermanentPowerUp`) reproduces the charge state
+    // without double-counting (AH-0MVUXH35J002WSAB AC3/AC5).
     grantPermanentPowerUp(option.id as PowerUpId, effectsRegistry);
   }
 }

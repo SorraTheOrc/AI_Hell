@@ -13,7 +13,10 @@
  * The helpers are **pure**: no Phaser import, no scene dependency and no
  * hidden state. The world is passed in, and it is the same {@link WrapWorld}
  * the seam-aware aim maths consumes, so there is one wrap model in the
- * codebase.
+ * codebase. That model is defined **once** in the neutral
+ * `src/utils/wrapGeometry.ts` (AH-0MVT2VT4W006QP9N) and re-exported from
+ * here, so the bot decision layer and this post-motion seam share the same
+ * implementation.
  *
  * The step is **position-only**: velocity, heading, rotation and every other
  * state field are preserved (no reflection). That keeps a steering state
@@ -28,7 +31,13 @@
  */
 
 import { GAME_WIDTH, GAME_HEIGHT } from '../../core/constants';
-import type { WrapWorld } from './enemyTargeting';
+import { wrapPosition, type WrapWorld } from '../../utils/wrapGeometry';
+
+// The four-edge wrap maths is defined once in the neutral
+// `src/utils/wrapGeometry.ts` (AH-0MVT2VT4W006QP9N) so the bot decision layer
+// and this post-motion seam share one implementation. Re-exported here so the
+// existing consumers and the duplicate-body guard keep their import path.
+export { wrapPosition, type WrapWorld };
 
 /**
  * The playfield wrap model every scene uses: the period the player ship,
@@ -56,43 +65,6 @@ export interface WrapAwareBody {
   y: number;
   readonly wrapAware?: boolean;
   setPosition(x: number, y: number): void;
-}
-
-/**
- * Wraps one coordinate into `[0, size)`, matching the four-edge model used by
- * the player ship, enemy bullets and asteroids.
- *
- * - An exact multiple of the period maps to `0`.
- * - Any overshoot — including more than one period — wraps by modulo.
- * - A non-positive or non-finite `size` means "no wrap model" for that axis,
- *   so the coordinate is returned unchanged (defensive; mirrors
- *   `wrappedAxisDelta` in `./enemyTargeting`). A non-finite coordinate is
- *   likewise passed through rather than turned into `NaN` by the modulo.
- */
-function wrapAxis(value: number, size: number): number {
-  if (!Number.isFinite(value)) return value;
-  if (!Number.isFinite(size) || size <= 0) return value;
-  const wrapped = value % size;
-  if (wrapped === 0) return 0; // normalise -0 to the wrap origin
-  return wrapped < 0 ? wrapped + size : wrapped;
-}
-
-/**
- * Four-edge wrap of a point into `[0, world.width) × [0, world.height)`.
- *
- * Pure and deterministic — the `test-first` contract
- * (`src/scenes/core/enemyWrap.test.ts`) pins the exact-boundary,
- * multi-period and no-wrap-model cases.
- */
-export function wrapPosition(
-  x: number,
-  y: number,
-  world: WrapWorld,
-): { x: number; y: number } {
-  return {
-    x: wrapAxis(x, world.width),
-    y: wrapAxis(y, world.height),
-  };
 }
 
 /**

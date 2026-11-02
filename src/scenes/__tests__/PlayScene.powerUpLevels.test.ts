@@ -145,9 +145,14 @@ describe('PlayScene power-up level-up choice (AH-0MUV5CLVO002ZHS9)', () => {
     scene.openMineralChoice();
     scene.selectMineralChoice(0);
 
-    // Ownership is recorded (level 1) and the effect applied.
-    expect(player.getPowerUpLevel('shield')).toBe(1);
-    expect(effects.isActive('shield')).toBe(true);
+    // Ownership is recorded and one charge is banked; a consumable hold-full
+    // reward never levels the kind and opens no endless window (parent
+    // AH-0MVTQMREN009DSFW AC1/AC3).
+    const store = player.getPowerUpLevelStore();
+    expect(player.getPowerUpLevel('shield')).toBe(0);
+    expect(store.isConsumableOwned('shield')).toBe(true);
+    expect(store.consumableCharges('shield')).toBe(1);
+    expect(effects.isMysteryUfoPermanent?.()).toBeDefined;
   });
 
   it('a default-strategy hold-full draw never offers a base and a level-up power-up (AC2/AC4)', async () => {

@@ -851,6 +851,78 @@ describe('ricochet wall-bounce budget (AH-0MV1BIV5L005NJAI)', () => {
     expect(resolveWeaponDefinition('ricochet', 100).bounce).toBe(cap);
   });
 
+  test('the railgun visual/feel metadata carries through level resolution unchanged (AH-0MVMIGVCE004VSNA)', () => {
+    const base = WEAPON_CATALOGUE.railgun;
+    const leveled = resolveWeaponDefinition('railgun', 50);
+    // The impact feedback is visual metadata, not an upgrade value — it must
+    // survive level resolution byte-for-byte so a levelled Railgun still
+    // lands its baked hit cue and its sky-blue flash.
+    expect(leveled.bulletShape).toBe(base.bulletShape);
+    expect(leveled.bulletRim).toBe(base.bulletRim);
+    expect(leveled.bulletTrail).toBe(base.bulletTrail);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+  });
+
+  test('the shard swarm visual/feel metadata carries through every level path unchanged (AH-0MVV0WMTE0007NGS)', () => {
+    const base = WEAPON_CATALOGUE.shard_swarm;
+    // `muzzleFlash` / `impactFx` are visual metadata, never upgrade values, so
+    // every level path must resolve them byte-for-byte: a levelled Shard Swarm
+    // still spawns its lime launch flash and lands its baked lime connect cue.
+    for (const level of [0, 1, 5, 10, 50, 100]) {
+      const leveled = resolveWeaponDefinition('shard_swarm', level);
+      expect(leveled.muzzleFlash, `level ${level}`).toEqual(base.muzzleFlash);
+      expect(leveled.impactFx, `level ${level}`).toEqual(base.impactFx);
+    }
+  });
+
+  test('the rear guard visual/feel metadata carries through every level path unchanged (AH-0MVV0WN96007TU9J)', () => {
+    const base = WEAPON_CATALOGUE.rear_guard;
+    // `muzzleFlash` / `impactFx` are visual metadata, never upgrade values, so
+    // every level path must resolve them byte-for-byte: a levelled Rear Guard
+    // still launches its compact rose flash and lands its baked rose pop.
+    for (const level of [0, 1, 5, 10, 50, 100]) {
+      const leveled = resolveWeaponDefinition('rear_guard', level);
+      expect(leveled.muzzleFlash, `level ${level}`).toEqual(base.muzzleFlash);
+      expect(leveled.impactFx, `level ${level}`).toEqual(base.impactFx);
+    }
+  });
+
+  test('the broadside visual/feel metadata survives level resolution while the pair grows (AH-0MVV0WNOX0078G9G)', () => {
+    const base = WEAPON_CATALOGUE.broadside;
+    // `muzzleFlash` / `impactFx` are visual metadata, never upgrade values, so
+    // every level path must resolve them byte-for-byte.
+    for (const level of [0, 1, 5, 10, 50, 100]) {
+      const leveled = resolveWeaponDefinition('broadside', level);
+      expect(leveled.muzzleFlash, `level ${level}`).toEqual(base.muzzleFlash);
+      expect(leveled.impactFx, `level ${level}`).toEqual(base.impactFx);
+    }
+    // The `projectileCount` upgrade widens the perpendicular pair into a wider
+    // fan (4/6 shots), but the launch and impact metadata are still one spec:
+    // the shared core spawns one flash per **shot input**, never one per
+    // projectile (pinned behaviourally in `CombatCoreScene.test.ts`).
+    const leveled = resolveWeaponDefinition('broadside', 50);
+    expect(leveled.offsets.length).toBeGreaterThan(base.offsets.length);
+    expect(leveled.offsets.length).toBeGreaterThanOrEqual(4);
+    expect(leveled.muzzleFlash).toEqual(base.muzzleFlash);
+    expect(leveled.impactFx).toEqual(base.impactFx);
+  });
+
+  test('the heavy_slug visual/feel metadata survives level resolution unchanged (AH-0MVV0WO4M001KEDG)', () => {
+    const base = WEAPON_CATALOGUE.heavy_slug;
+    // `muzzleFlash` / `impactFx` are visual metadata, never upgrade values, so
+    // every level path must resolve them byte-for-byte. (The level path may
+    // widen the single forward shot into a small fan via `projectileCount`, but
+    // the launch/impact metadata must stay one spec — the shared core spawns one
+    // flash per shot input, pinned behaviourally in `CombatCoreScene.test.ts`.)
+    for (const level of [0, 1, 5, 10, 50, 100]) {
+      const leveled = resolveWeaponDefinition('heavy_slug', level);
+      expect(leveled.muzzleFlash, `level ${level}`).toEqual(base.muzzleFlash);
+      expect(leveled.impactFx, `level ${level}`).toEqual(base.impactFx);
+      expect(leveled.offsets.length, `level ${level}`).toBeGreaterThanOrEqual(1);
+    }
+  });
+
   test('weapons without a base bounce budget never gain one (they keep wrapping)', () => {
     for (const id of WEAPON_IDS) {
       if (id === 'ricochet') continue;

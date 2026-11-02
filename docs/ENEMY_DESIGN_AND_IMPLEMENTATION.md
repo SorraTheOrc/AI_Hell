@@ -16,7 +16,7 @@ E4 Phaser, E5 Swarm and Boss gym scene work items, and any future enemy.
 | ID | Name | Movement | Attack | GDD | Behaviour | Appearance | Fires (L1–3 → L4+) |
 |----|------|----------|--------|-----|-----------|------------|---------------------|
 | E1 | Scout | `formation` | `projectile` | §4.1 | V-formation flight, subtle wiggle | Small angular chevron, neon green | none → aimed shot |
-| E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium dart shape, neon yellow | none → short-burst spread (3–5) |
+| E2 | Diver | `diver` | `projectile` | §4.1 | Diagonal parabolic dive toward the player's position snapshotted at dive start (both x and y follow the quadratic bezier arc — no x-lock; AH-0MTGBOKLC006N8UX), then the Diver group re-forms around the attack end: when the pause ends the Diver-group origin re-bases so the Diver's slot coincides with its attack end; only the Diver group moves (the Divers glide to their new slots) while every non-Diver enemy stays put (no return glide, no formation hold; AH-0MUAYB957002EMYV, AH-0MUL15N63003PUDB) | Medium razor shard (`shard` primitive: high-contrast two-pass spine + sweeping glint), neon yellow | none → short-burst spread (3–5) |
 | E3 | Tank | `formation` | `projectile` | §4.1 | Slow deliberate formation, long hold positions | Large hexagonal/blocky, neon | none → radial burst (10 shots) |
 | E4 | Phaser | `formation` | `projectile` | §4.1 (L5) | Fixed orbital path, predictable firing cycles; group members take distinct, evenly spaced phases (`phase_i = i × 2π / N`) on one ring, and spawn from the wormhole straight onto the live orbital slot (AH-0MVEXVME1004SIIS) | Circular ring with central core | yes — patterned, telegraphed (≥ 500 ms lead) |
 | E5 | Swarm | `formation` | `projectile` | §4.1 | Tight fast clusters, sudden direction changes | Small diamonds, groups | none → coordinated burst |
@@ -407,11 +407,12 @@ The agreed mapping for all 18 CSV archetypes:
 The `centipede` linked chain (AH-0MV01EJ92008ZZ86) is a dedicated entity, not
 a CSV row, so it carries no classification pair; it is a contact-only chaser.
 
-### 1.5 Wave balance rules R1–R3 (AH-0MV29XQ0H009P9WP)
+### 1.5 Wave balance rules R1–R4 (AH-0MV29XQ0H009P9WP, AH-0MVSE6XIO007BXYM)
 
 The classification in §1.4 is consumed by the **wave balance rules**, a pure,
 Phaser-free module (`src/core/waveBalance.ts`) that is the single source of
-truth for three hard design constraints. The runtime auto-sequencer (F3,
+truth for four hard design constraints (R1–R3 balance, R4 sequential
+distinctness). The runtime auto-sequencer (F3,
 `src/core/difficultySequencer.ts`) enforces the rules when composing generated
 (`curve` / `dynamic`) waves; the same rule functions are reused by a pure audit
 validator (F5) and by the classification-driven opening curation (F4,
@@ -433,6 +434,9 @@ sequenced and are exempt from the rules by design.
   ranged attackers (`attackClass` in `RANGED_ATTACK_CLASSES`); the share of
   ranged groups must stay strictly below `RANGED_SHARE_CAP`, so every firing
   wave includes at least one effective-*contact* group.
+- **R4 — sequential distinctness.** No two sequential waves inside a level may
+  share the same composition signature (`compositionSignature()`); see §1.5.4.
+  R1–R3 take precedence over R4 (`RULE_PRECEDENCE`).
 
 #### 1.5.2 Effective-attack semantics (R3)
 
@@ -458,8 +462,45 @@ restating their values.
 | `RANGED_SHARE_CAP` | The maximum ranged share of a firing wave (strict `<`), R3. | Lower it to force more contact groups (a tighter mix); raising it relaxes the rule. |
 | `DEFAULT_MOVEMENT_CLASS` | Fallback `movementClass` for unknown archetype keys. | Change to alter the classification fixture's fallback, not the rules. |
 | `deriveAttackClassFromShotPattern()` | Derives the fallback `attackClass` from a shot pattern (no-fire ⇒ contact). | Change to alter the fixture's attack-class fallback. |
+| `COMPOSITION_SIGNATURE_SEPARATOR` | Separator joining the sorted archetype keys of a composition signature (R4). | Change only if an external consumer parses the signature string. |
+| `compositionSignature()` / `groupsComposition()` | The single "same enemies" definition shared by the sequencer and the campaign audit (R4). | Change to redefine what counts as a composition repeat. |
+| `RULE_PRECEDENCE` | Documented rule precedence: the balance rules R1–R3 win over distinctness R4. | Change only with a producer decision; the sequencer's fallback follows it. |
 
-#### 1.5.4 Generator enforcement (F3)
+#### 1.5.4 R4 — sequential distinctness (AH-0MVSE6XIO007BXYM)
+
+R4 is the fourth rule: **no two sequential waves inside a level share the same
+enemy composition**. "Same enemies" is defined once, by
+`compositionSignature()` in `src/core/waveBalance.ts` — the sorted,
+de-duplicated archetype set (the spawner opt-in flags are folded in by
+`waveComposition()` for the campaign audit). Counts, spacing, group order and
+duplicate groups cannot make a repeat look distinct.
+
+- **Sequencer enforcement.** The campaign builder hands each generated
+  (`curve`/`dynamic`) wave the preceding built wave's composition through
+  `SequencerOptions.avoidCompositions`. When the error-minimising composition
+  is avoided, the sequencer deterministically rebuilds the wave from the
+  next-best eligible start candidate (ascending evaluated error, then
+  candidate-pool order) and accepts the first distinct composition.
+- **Fixed waves stay exempt.** A `fixed` wave is never passed to the
+  sequencer, so R4 never constrains it as the *produced* wave; it still acts
+  as the predecessor a generated wave must avoid. Fixed-wave adjacency is
+  covered by the authored data and the campaign variety audit.
+- **Precedence — the balance rules win.** Every R4 alternative is fully
+  R1–R3-enforced, so distinctness only ever chooses *between* balance-compliant
+  compositions (`RULE_PRECEDENCE` is `R1, R2, R3, R4`). If no distinct
+  compliant composition exists (a one-candidate pool, or no alternative), the
+  best eligible composition is emitted rather than an empty or rule-breaking
+  wave — the degenerate-input fallback is deliberate.
+- **Determinism.** The rule adds no randomness: the same (curve, candidate
+  pool, seed, predecessor composition) always yields the same wave, so the
+  seeded campaign stays reproducible. The constraint is measured like R1–R3 —
+  the campaign balance audit records per-wave enforcement cost, reports an R4
+  verdict per generated wave, and asserts every wave stays inside the sequencer
+  acceptance band. A wave that cannot satisfy R4 inside that band therefore
+  fails the audit visibly and is recorded as follow-up authoring work (an
+  authored `fixed` wave or a re-tuned target), never tolerated silently.
+
+#### 1.5.5 Generator enforcement (F3)
 
 The sequencer evaluates R2 and R3 **after** greedy composition, because its
 scorer has no intrinsic notion of the classification constraints. On a
@@ -478,7 +519,7 @@ classes through `SequencerOptions` / `SequencerRuleConstraints`; the sequencer
 consults the shared `OPENING_MOVEMENT_CLASSES` rather than re-implementing the
 rule.
 
-#### 1.5.5 Opening curation (F4)
+#### 1.5.6 Opening curation (F4)
 
 `src/waves/sequencedLevels.ts` derives the opening-wave candidate pool from R1
 (via `OPENING_MOVEMENT_CLASSES` and `classifyArchetype`) and then narrows it to
@@ -486,7 +527,7 @@ a curated sub-selection kept as data, because the opening target band is narrow
 and a full R1 pool would make openers degenerate. The curated band may narrow
 the R1 pool but never widen it.
 
-#### 1.5.6 Audit validator (F5)
+#### 1.5.7 Audit validator (F5)
 
 `auditWaves()` / `auditWave()` reuse the exact same rule functions to audit a
 list of waves, returning a per-wave, per-rule verdict plus a human-readable
@@ -496,7 +537,7 @@ built from `defaultDifficultyCurves()` through the validator and pins the
 per-wave target-difficulty error, so any rule, curve or pool change that moves
 the enforcement cost fails the test and forces a documentation update.
 
-#### 1.5.7 Enforcement cost on the shipped campaign
+#### 1.5.8 Enforcement cost on the shipped campaign
 
 Enforcement is free on most waves: for 13 of the 15 generated waves of the
 shipped campaign the rule-constrained composition matches the raw greedy
@@ -507,7 +548,7 @@ than growing it. The largest remaining per-wave error stays within the
 sequencer's default tolerance. The measured vector is pinned in
 `campaignBalanceAudit.test.ts`.
 
-#### 1.5.8 Design principles
+#### 1.5.9 Design principles
 
 - **Single source of truth.** Generator enforcement, opening curation and the
   audit validator all consume `src/core/waveBalance.ts`; no rule logic is
@@ -520,6 +561,117 @@ sequencer's default tolerance. The measured vector is pinned in
 - **No Phaser dependency.** The module runs under Vitest as pure functions; the
   classification fixture resolves through `classifyArchetype` (with the
   documented defaults for unknown keys).
+
+#### 1.5.10 Campaign-wide variety invariant (AC1–AC3, AH-0MVSE6D2L0034SKG)
+
+The parent epic (AH-0MVI5XXOU00954EA) turns "waves need more variation in
+enemy types" into three campaign-wide invariants measured over the built
+campaign (`buildSequencedLevels()` — all ten levels, all 100 waves):
+
+- **AC1 — sequential distinctness.** No two adjacent waves *inside a level*
+  share an enemy composition. This is rule R4 (§1.5.4) applied to the whole
+  campaign, not just the generated waves. "Same enemies" means the same *set*
+  of archetypes: counts, spacing, group order and duplicate groups cannot
+  manufacture variety. Adjacency is within a level; a level's final wave is
+  never compared with the next level's first wave.
+- **AC2 — whole-campaign coverage.** Every level delivers **at least two**
+  distinct archetypes across its ten waves.
+- **AC3 — level identity preserved.** Each level keeps the dominant archetype
+  its GDD §3.2 identity documents and mixes secondary archetypes around it —
+  **dominance, not purity**. A level whose documented identity is a deliberate
+  mix (Level 4 Firestorm, Level 8 Gridlock, Level 10 The Gauntlet) has no
+  single dominant anchor and is asserted through its showcase archetypes
+  instead.
+
+##### Single source of truth — `LEVEL_IDENTITY`
+
+The identity of every level is defined once in `src/waves/campaignVariety.ts`
+and consumed by the tests, the GDD §3.2 identity column and this table. Do not
+restate it anywhere else: change the module and let the docs guard
+(`src/waves/campaignVarietyDocs.test.ts`) fail until the prose is updated.
+
+| Level | Identity (label) | Dominant | Showcase archetypes |
+|------:|------------------|----------|---------------------|
+| 1 | Entry — scout-led V-formation ramp | `scout` | `scout` |
+| 2 | Descent — dive-led single-enemy waves | `diver` | `diver` |
+| 3 | The Core — tank cores in mixed pairs | `tank` | `tank` |
+| 4 | Firestorm — firing debut with a mixed core | — (deliberate mix) | `diver`, `tank`, `swarm` |
+| 5 | Predictable Death — phaser crosshair grid | `phaser` | `phaser` |
+| 6 | Invasion — marching columns and the capturer | `march` | `march`, `capturer` |
+| 7 | Segmented Assault — tank line with centipede and ghosts | `tank` | `centipede`, `ghost-chase` |
+| 8 | Gridlock — lane traffic, horde and raider showcase | — (deliberate mix) | `lane-traffic`, `grunt`, `raider` |
+| 9 | Orbital Siege — phaser siege line with ghosts | `phaser` | `phaser`, `ghost-chase` |
+| 10 | The Gauntlet — dense player-targeter finale | — (deliberate mix) | `raider`, `capturer`, `grunt` |
+
+Dominance is measured by **spawned weight** across the level, not by declared
+group counts: a `single`-formation group spawns one entity whatever its
+`count`, and a spawner opt-in counts one per scheduled archetype. Ties break
+alphabetically so the measurement is stable across runs.
+
+##### Shared composition-signature definition
+
+"The same enemies" has exactly one definition, shared by the sequencer and the
+audit so the two cannot drift:
+
+- `compositionSignature()` in `src/core/waveBalance.ts` sorts and de-duplicates
+  a wave's archetype keys and joins them with `COMPOSITION_SIGNATURE_SEPARATOR`
+  (`scout+tank`). Counts, spacing, group order and duplicate groups are
+  deliberately excluded.
+- `groupsComposition()` is the generated path's view: the signature of a
+  wave's groups (generated waves are composed from groups only).
+- `waveComposition()` in `src/waves/campaignVariety.ts` is the audit path's
+  view: it folds a wave's **spawner opt-ins** into the key list before calling
+  `compositionSignature()`, so all four `ghost-*` personalities, the
+  `centipede` chain, the `grunt` horde and `lane-traffic` are part of the
+  composition even though they are not wave groups. A flag-only change therefore
+  counts as a different enemy set.
+
+##### Where R4 is enforced and measured
+
+- **Generated (`curve` / `dynamic`) waves — the sequencer.** The campaign
+  builder hands each generated wave the preceding built wave's composition
+  through `SequencerOptions.avoidCompositions` (`src/waves/sequencedLevels.ts`),
+  and the sequencer deterministically rebuilds the wave from the next-best
+  eligible candidate until the composition differs (§1.5.4). Balance rules
+  R1–R3 keep precedence (`RULE_PRECEDENCE`), so distinctness only chooses
+  between compliant compositions.
+- **Authored (`fixed`) waves — data plus audit.** A `fixed` wave is never
+  passed to the sequencer, so R4 does not constrain it as the *produced* wave;
+  it still acts as the predecessor a generated wave must avoid. Its own
+  adjacency is covered by the authored `LEVELS` data in
+  `src/waves/Formations.ts` and verified by the campaign variety audit.
+- **Audit — `auditCampaignVariety()`** (`src/waves/campaignVariety.ts`). A
+  pure, read-only module that returns every adjacent duplicate pair (AC1), the
+  per-level distinct archetypes and counts (AC2), and each level's dominant
+  archetype + showcase presence (AC3). It has no Phaser/runtime dependency, so it
+  runs in the fast unit project.
+
+##### Mixed `fixed` / `curve` / `dynamic` mechanism (producer Q3 = c')
+
+The default campaign is deliberately mixed: hand-authored `fixed` waves where a
+specific showcase, mini-boss or identity pin must be guaranteed, deterministic
+`curve` waves from `targetDifficulty`, and seeded `dynamic` filler/openers for
+per-run variety. The shipped mix is **5 `dynamic` + 10 `curve` + 85 `fixed`**
+waves; every wave's mode and the reason it holds it is published as the
+generated ledger in GDD §3.2 (`src/waves/modeLedger.ts`, pinned by
+`src/waves/modeLedger.test.ts`). The distinctness rule binds on **all three
+modes**: generated waves through R4, authored waves through their data.
+
+##### Verification evidence
+
+- `src/waves/campaignVariety.test.ts` — the audit module's unit tests plus the
+  per-level and campaign-wide AC1–AC3 assertions at the default seed.
+- `src/waves/campaignVerification.test.ts` — the C1 evidence item
+  (AH-0MVSE7ILL000Y27B): re-runs AC1–AC3 over the seed sweep 0/1/7/42, asserts
+  the byte-identical same-seed rebuild, keeps `curve`/`fixed` waves
+  seed-independent while `dynamic` waves diverge, and pins the recorded
+  per-level evidence snapshot.
+- `src/waves/campaignBalanceAudit.test.ts` — the R1–R4 enforcement cost and
+  the sequencer acceptance band on the shipped campaign.
+- `src/waves/modeLedger.test.ts` — the mode mix and the generated-wave R4
+  constraint across ten seeds.
+- Gym↔game parity — `PlayScene` and the gyms consume the same shared modules,
+  so the invariant holds by construction (see §5.1).
 
 ### 1.6 Enemy force fields (AH-0MVJ8W4GE007OMNT)
 
@@ -668,6 +820,11 @@ pure helper `aimVectorToTarget` in `src/scenes/core/enemyTargeting.ts`:
 - A delta of exactly half the axis is a tie; the direct delta is kept, so the
   heading never flips arbitrarily at dead centre.
 
+The wrapped-axis maths itself lives **once** in the neutral
+`src/utils/wrapGeometry.ts`; `enemyTargeting` re-exports it, so the bot
+decision layer consumes the same implementation instead of a second seam copy
+(AH-0MVT2VT4W006QP9N).
+
 The bullet wrap model is **unchanged**: enemy bullets already wrap all four
 edges and expire by lifetime (AH-0MU960UTE001PTV0). Only the launch direction
 is computed here — radial and spread patterns stay direction-symmetric and are
@@ -686,7 +843,9 @@ that carries an enemy across a playfield edge:
 - The world is `PLAYFIELD_WORLD` (`GAME_WIDTH` × `GAME_HEIGHT`) — the same
   period the player ship, player bullets, asteroids and enemy bullets already
   wrap on — and the same `WrapWorld` the aim maths consumes, so there is one
-  wrap model in the codebase.
+  wrap model in the codebase. `wrapPosition`/`wrapAxis` are defined once in the
+  neutral `src/utils/wrapGeometry.ts` and re-exported here
+  (AH-0MVT2VT4W006QP9N).
 - The step is **position-only**: velocity, heading, rotation and every other
   state field are preserved (nothing is reflected), so a steering state
   machine (dive arcs, ghost pursuit, grunt homing, formation drift) stays
@@ -1460,10 +1619,14 @@ covers it):
 - **Planner ⇒ executor.** The planner is pure and Phaser-free
   (`collectSweepTargets`, `planMiniBossDeathSweep`, `miniBossSweepExtras`) and
   emits `n` staggered enemy bursts, `max(0, 30 − n)` scattered bursts sampled
-  inside the inset playfield, and exactly 10 bursts anchored on the captured
-  death point (`n + max(0, 30 − n) + 10 ≤ 40` bursts); all randomness comes
-  from the run seed. The thin executor (`spawnMiniBossDeathSweep`) plays them
-  through the shared `spawnExplosionParticles` VFX.
+  inside the inset playfield, exactly 10 bursts anchored on the captured
+  death point, and a **20-burst finale** clustered in and around the death
+  point fired in pairs (two every 0.25 s, the producer-reviewed "make the
+  mini-boss more explosive" tweak) — `n + max(0, 30 − n) + 10 + 20 ≤ 60`
+  bursts; all randomness comes from the run seed. The thin executor
+  (`spawnMiniBossDeathSweep`) plays them through the shared
+  `spawnExplosionParticles` VFX and holds `onComplete` until the last finale
+  pair has finished animating.
 - **Completion is real animation time.** `spawnExplosionParticles` gained an
   optional `onComplete` seam; the executor completes when the last burst tween
   reports, with a `scene.time.delayedCall` watchdog at
@@ -1475,6 +1638,14 @@ covers it):
   force-field bubble cleared, **no** explosion of its own — the sweep supplies
   the burst) and never route through the reward-bearing `_onEnemyKilled` path:
   no score, no drops, no kill telemetry.
+- **Sound.** Every planned burst schedules its matching explosion cue through
+  the shared audio layer: the swept-enemy, scatter and anchored bursts reuse
+  `playDestructionSound`, and the finale pairs use
+  `playBossDestructionSound`. Each cue carries the burst's explicit `delay`
+  (honoured verbatim by `playExplosionCue` instead of being snapped to the
+  beat grid) and a per-role mix trim, so no burst in the display is silent
+  (producer audit: "explosions with no SFX"). `spawnMiniBossDeathSweep`
+  exposes `soundEnabled` and `playSound` seams for custom routing/tests.
 - **Deferred finalisation.** `PlayScene._finaliseMiniBossDefeat` runs from the
   executor's `onComplete`: it opens the reward overlay
   (`openMiniBossReward`, `miniBossRewardOpen` latch ⇒ exactly one overlay per
@@ -1688,6 +1859,28 @@ scene's `wormholeEffects` registry. A scene gets the effect or none of it —
 there is no per-scene layer copy to drift — and the cross-scene equivalence
 suite boots the game and each gym to prove identical outcomes while the ship is
 phased or an enemy is emerging.
+
+**Shared background layer, adopted by every combat gym
+(AH-0MVSEC0J0004YNJC).** The backdrop is a shipped gameplay object, so the
+gyms run the *same* code as `PlayScene`: `CombatCoreScene._createSceneBackground`
+→ `createBackgroundLayer` (`src/scenes/core/backgroundLayer.ts`) — full-canvas
+photo at `BACKGROUND_DEPTH`, readability dim overlay at `BACKGROUND_DIM_DEPTH`,
+both non-interactive and camera-fixed. `GymFormationScene` (inherited by every
+formation gym) and the direct `CombatScene`/`CombatCoreScene` gyms
+(`GymLevel`/`GymBotTuning`, `GymPlayer`, `GymWeapons`, `GymWeaponLeveling`,
+`GymPowerUpsCombat`, `GymPowerUpsUtility`, `GymPowerUpLeveling`) all override
+the one core hook `backgroundLevel()` with the gym family's single decision in
+[`src/scenes/gym/core/gymBackground.ts`](../src/scenes/gym/core/gymBackground.ts),
+so no gym owns background draw/swap code and the duplicate-body guard stays
+green. The family's single opt-in/opt-out is `GYM_BACKGROUNDS_ENABLED` in that
+module, so the backdrop is removed or restored in every gym at once — never
+per scene. **Documented divergence:** a gym pins the representative level-1
+backdrop (`backgroundForLevel(1)`, so silhouettes are compared against a
+constant) and never swaps or warps it, because a gym has no campaign
+level-change flow — `GymLevel` previews a level's enemies but keeps the same
+constant backdrop. Pinned by
+[`src/scenes/gym/backgroundParity.test.ts`](../src/scenes/gym/backgroundParity.test.ts)
+and recorded in [`docs/GYM_PARITY.md`](./GYM_PARITY.md).
 
 **Documented divergence — the Player gym's obstacle course.** `GymPlayer`
 spawns a deterministic set of indestructible obstacles
@@ -2101,11 +2294,30 @@ Supporting modules:
   `loadDifficultyCurves()`, `saveDifficultyCurves()`,
   `seedDifficultyCurves()`, `defaultDifficultyCurves()`) follows the same
   pipeline and never throws (§9.6).
+  **Save semantics** (`saveEnemyConfig` / `saveShipConfig` /
+  `saveDifficultyCurves`, each returning `{ ok, reason? }`): outside dev mode
+  they are a no-op reporting `WRITE_UNAVAILABLE`; under `npm run dev` they PUT
+  through the plugin and re-read the registry; **under vitest
+  (`MODE === 'test'`) they are registry-only** — the in-memory registry is
+  updated with the same normalisation as the success path, but no fetch and no
+  disk I/O happen (`isTestMode()`). That keeps a save in a test from ever
+  reaching a stray dev server rooted at another checkout; the test-time bridge
+  and suite guard are described in
+  [`docs/dev/test-suite-timing.md`](./dev/test-suite-timing.md#tracked-csv-write-safety-in-tests).
 - `vite/plugins/configCsvPlugin.ts` — dev-only Vite middleware. `GET
   /api/csv/src/data/<file>.csv` returns the file; `PUT` upserts the supplied
   row(s) after validation and writes atomically (temp file + rename).
   `?mode=append` rejects a duplicate key with **409**. Registered in
   `vite.config.ts`; `apply: 'serve'` keeps it out of production builds.
+  **Root isolation:** the read/write root is resolved inside `configureServer`
+  from the Vite-resolved `server.config.root`, with an explicit `root` option
+  as the test/fixture override — never `process.cwd()`. Any request (GET **or**
+  PUT) whose target resolves outside that root is refused with **403**
+  (`target escapes project root`) and a logged reason **before any file I/O**;
+  containment is checked with `path.relative` (+ `realpath` where the paths
+  exist), so `..`, URL-encoded traversal and absolute targets cannot escape
+  even through a symlinked `node_modules`. When no root can be resolved the
+  middleware refuses to register rather than guessing one.
 - `src/core/bundledConfig.ts` — the build-time `?raw` CSV imports used by the
   production read-only path.
 
@@ -2446,24 +2658,29 @@ per level by AH-0MVCC8XSS007P01Z / AH-0MVCYANT6003SG5C) interleaves the
 classic-arcade roster with the existing archetypes. Every level spans exactly
 ten waves, with wave 10 the level's mini-boss (`miniBoss: true`):
 
-| Level | Theme | Featured showcase |
-|-------|-------|-------------------|
-| 1 | Entry | V-formation drift (no fire) |
-| 2 | Descent | Diver/swarm drift (no fire) |
-| 3 | The Core | Rect + V pairs (no fire) |
-| 4 | Firestorm | First enemy fire (aimed/spread/radial) |
-| 5 | Predictable Death | Fixed orbital Phasers (memorisable radial) |
-| 6 | Invasion | Space-Invaders `march` + Galaga `capturer` tractor pull |
-| 7 | Segmented Assault | Centipede `centipede` chain + Pac-Man `ghosts` pursuit |
-| 8 | Gridlock | Frogger `laneTraffic` lanes + Robotron `horde` + Defender `raider` dive |
-| 9 | Orbital Siege | Missile-Command `orbital-strike` arcs + orbital Phasers + `ghosts` |
-| 10 | The Gauntlet | Dense mixed finale of the remaining roster |
+| Level | Theme | Dominant identity archetype | Featured showcase |
+|-------|-------|-----------------------------|-------------------|
+| 1 | Entry | `scout` | V-formation drift (no fire) |
+| 2 | Descent | `diver` | Diver/swarm drift (no fire) |
+| 3 | The Core | `tank` | Rect + V pairs (no fire) |
+| 4 | Firestorm | — (deliberate mix) | First enemy fire (aimed/spread/radial) |
+| 5 | Predictable Death | `phaser` | Fixed orbital Phasers (memorisable radial) |
+| 6 | Invasion | `march` | Space-Invaders `march` + Galaga `capturer` tractor pull |
+| 7 | Segmented Assault | `tank` | Centipede `centipede` chain + Pac-Man `ghosts` pursuit |
+| 8 | Gridlock | — (deliberate mix) | Frogger `laneTraffic` lanes + Robotron `horde` + Defender `raider` dive |
+| 9 | Orbital Siege | `phaser` | Missile-Command `orbital-strike` arcs + orbital Phasers + `ghosts` |
+| 10 | The Gauntlet | — (deliberate mix) | Dense mixed finale of the remaining roster |
+
+The dominant column is the same `LEVEL_IDENTITY` contract documented in
+§1.5.10; the GDD §3.2 identity column is its prose form. A deliberate mix
+(Levels 4, 8 and 10) has no single dominant anchor and is asserted through its
+showcase archetypes instead.
 
 Wave 10 of **every** level is its bespoke mini-boss (see §1.0): Pulse Warden,
 Coil Sentinel, Shard Matron, Void Herald, Ion Tyrant, Cinder Maw, Prism Wraith,
 Gravemind, Star Eater and The Hollow King for levels 1–10 respectively.
 
-Three design rules are enforced by tests:
+Four design rules are enforced by tests:
 
 1. **Roster coverage** — every classic-arcade archetype appears at least once
    across the merged campaign (`src/waves/campaignRoster.test.ts`). `march`,
@@ -2478,6 +2695,11 @@ Three design rules are enforced by tests:
 3. **Style variety** — adjacent levels differ in their dominant movement/attack
    style, and the configured target curve is non-decreasing
    (`src/waves/campaignInvariants.test.ts`).
+4. **Campaign-wide variety** — no two sequential waves in a level share the same
+   archetype composition, every level fields at least two archetypes across its
+   ten waves, and each level keeps its `LEVEL_IDENTITY` dominant archetype and
+   showcase (`src/waves/campaignVariety.test.ts`,
+   `src/waves/campaignVerification.test.ts`; definition and evidence in §1.5.10).
 
 Levels 1–3 stay `shootEnabled: false` (GDD §2.4); Levels 4–10 fire (GDD §2.5).
 Each featured archetype debuts on a hand-authored `fixed` wave so its showcase
@@ -2715,7 +2937,7 @@ through the shared seam, so the game and every gym draw them identically
 | Identity | Family/pattern | Shape primitive | Fire VFX (launch pop) | Impact feel |
 |---|---|---|---|---|
 | Alien pellet | Scout / Space-Invaders March | `pellet` (pulsing rim) | green pop at scout | green flash + shared destruction cue |
-| Sharp shard | Diver spread burst | `shard` (spine glint) | one pale-yellow pop per burst | pale-yellow flash + shared destruction cue |
+| Sharp shard | Diver spread burst | `shard` (two-pass spine + sweeping glint) | one pale-yellow pop per burst | pale-yellow flash + shared destruction cue |
 | Heavy shell | Tank radial | `heavy-shell` (breathing glow) | one amber pop per burst | amber flash + shared destruction cue |
 | Crisp phaser bolt | Phaser radial | `phaser-bolt` (core streak) | one magenta pop per volley | red flash + shared destruction cue |
 | Cometary fleck | Swarm burst | `fleck` (comet tear) | cyan pop per member shot | cyan flash + shared destruction cue |
@@ -2755,20 +2977,29 @@ colour so the shared impact pass tints the flash when a shell connects or is
 intercepted. Visuals/feel only: firing logic, speed, interval, burst count
 and the direction-agnostic radial pattern are unchanged.
 
-**E2 Diver (diver family, AH-0MV822D2U000LRFV):** each spread-burst shot
-renders as a **sharp shard/splinter** — a dedicated `shard` seam primitive
-(razor arrowhead outline with a **white-hot spine**, a neon rim in the
-Diver's own body yellow and a short fading trail) whose bright **glint**
-sweeps up and down the spine with the shot's age (~1.4 Hz, redrawn each
-frame through the shared bullet lifecycle) — the shard echoes the Diver's
-dart body and dive arc, deliberately the opposite of the Tank's fat ember
-shell and the Scout's pulsing pod. The volley spawns **one pale-yellow
-launch pop** at the diver's body per burst (the burst is one fire event,
-matching its single fire cue — not N stacked pops), each shard flies
-nose-first along its own spread heading, and each shard carries its
-pale-yellow colour so the shared impact pass tints the flash when a shard
-connects or is intercepted. Visuals/feel only: firing logic, speed,
-interval, burst count and the spread pattern are unchanged.
+**E2 Diver (diver family, AH-0MV822D2U000LRFV; strengthened for every
+consumer in AH-0MVV0WOKU001W2TU):** each spread-burst shot renders as a
+**sharp shard/splinter** — a dedicated `shard` seam primitive (razor
+arrowhead outline carrying a **two-pass spine**: a colour-tinted outer blade
+under a **white-hot inner core**, a 2 px neon rim in the Diver's own body
+yellow and a short fading trail) whose bright **glint** — enlarged, and never
+dimmer than 0.55 alpha — sweeps up and down the spine with the shot's age
+(~1.4 Hz, redrawn each frame through the shared bullet lifecycle) — the
+shard echoes the Diver's dart body and dive arc, deliberately the opposite
+of the Tank's fat ember shell and the Scout's pulsing pod. The strengthened
+spine/rim/glint **read harder against the neon field** at base radius while
+keeping the shard's pale-yellow (`DIVER_BULLET_COLOR`, rim `0xffff00`)
+palette, and the restyle is **shared with the player's Shard Swarm bullets**
+by design (producer decision Q1 = C): both consumers draw this one unchanged
+primitive, so the primitive is strengthened once rather than copied per
+scene — the roster *signature* (shape, colour, length, rim, thickness, tail)
+of both is unchanged, and the Diver's firing behaviour is untouched. The
+volley spawns **one pale-yellow launch pop** at the diver's body per burst
+(the burst is one fire event, matching its single fire cue — not N stacked
+pops), each shard flies nose-first along its own spread heading, and each
+shard carries its pale-yellow colour so the shared impact pass tints the
+flash when a shard connects or is intercepted. Visuals/feel only: firing
+logic, speed, interval, burst count and the spread pattern are unchanged.
 
 **E4 Phaser (phaser family, AH-0MV822DRX009RYUB):** each radial shot renders
 as a **crisp-edged phaser bolt** — a dedicated `phaser-bolt` seam primitive

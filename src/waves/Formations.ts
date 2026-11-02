@@ -7,10 +7,13 @@
  * spawning are driven by `WaveManager` (`./WaveManager.ts`).
  *
  * GDD mapping (GDD §3.2):
- * - Level 1 — **Entry**: single enemy type, simple V-formation waves.
- * - Level 2 — **Descent**: mixed single-enemy waves, tighter formations.
- * - Level 3 — **The Core**: dense mixed *pairs* of enemy types.
- * - Level 4 — **Firestorm**: enemies begin firing projectiles.
+ * - Level 1 — **Entry**: Scout-led V-formation waves with occasional
+ *   secondary escorts (AH-0MVI5XXOU00954EA, Q2 = a).
+ * - Level 2 — **Descent**: dive-led single-enemy waves that alternate with a
+ *   Swarm counter-rotation (AH-0MVI5XXOU00954EA, Q2 = a).
+ * - Level 3 — **The Core**: dense mixed *pairs* built around a Tank core.
+ * - Level 4 — **Firestorm**: enemies begin firing projectiles; a mixed
+ *   Diver/Tank/Swarm core.
  * - Level 5 — **Predictable Death**: fewer enemies, predictable patterns.
  * - Level 6 — **Invasion**: the classic-arcade roster debuts — a stepping
  *   Space-Invaders `march` plus the Galaga `capturer` tractor pull.
@@ -32,6 +35,14 @@
  * movement/attack style. Spawner-delivered archetypes opt in per wave via
  * the `ghosts`, `centipede`, `horde` and `laneTraffic` flags rather than as
  * wave groups (AH-0MV396OK0001FX14).
+ *
+ * The level-identity contract (documented dominant archetype and showcase,
+ * plus the campaign-wide sequential-distinctness rule) is defined by
+ * `LEVEL_IDENTITY` in `./campaignVariety.ts` and documented in
+ * `docs/ENEMY_DESIGN_AND_IMPLEMENTATION.md` §1.5.10; the GDD §3.2 identity
+ * column is its prose form. Keep the authored data here consistent with it —
+ * `src/waves/campaignVariety.test.ts` asserts identity dominance and
+ * distinctness over this data.
  */
 
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
@@ -200,31 +211,53 @@ export const LEVELS: LevelDefinition[] = [
   {
     level: 1,
     name: 'Entry',
-    // Single enemy type (Scouts), simple movement — no enemy fire.
+    // Scout-led Entry (GDD §3.2), still the no-fire onboarding level.
     // Asteroids now come from the random spawner (GDD §4.1 — E6 Asteroid):
     // a non-firing rock that drifts in from a random offscreen edge,
     // wraps, and splits into two smaller rocks when shot.
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the dominant archetype, vary around
+    // it): Level 1 stays Scout-dominant, but the campaign must never field the
+    // same enemy composition on two adjacent waves, so a small Tank escort
+    // joins every other Scout wave from wave 4 on. The escorts are heavily
+    // outnumbered by the Scouts (and the Tank is the slowest archetype), so the
+    // level still reads as "Entry"; each wave's total enemy count is unchanged,
+    // so the gentle density ramp (AH-0MVCYANT6003SG5C) is preserved and the
+    // opening waves the onboarding pins depend on are untouched.
     waves: [
       noFire(
         group('scout', 'v', 6, { spacingX: 28, spacingY: 22 }),
       ),
       noFire(group('scout', 'v', 8, { spacingX: 34, spacingY: 24 })),
       // Expanded campaign (AH-0MVCYANT6003SG5C): gentle scout escalation
-      // fills the 10-wave grid before the wave-10 mini-boss.
+      // fills the 10-wave grid before the wave-10 mini-boss. From wave 4 on
+      // the authored waves alternate Scout-only and Scout-plus-Tank so no two
+      // adjacent waves share a composition (parent AC1).
       noFire(group('scout', 'v', 8, { spacingX: 30, spacingY: 20 })),
-      noFire(group('scout', 'v', 10, { spacingX: 30, spacingY: 20 })),
+      noFire(
+        group('scout', 'v', 9, { spacingX: 30, spacingY: 20 }),
+        group('tank', 'rect', 1, { startX: START_X + 140, spacingX: 52 }),
+      ),
       noFire(group('scout', 'v', 10, { spacingX: 28, spacingY: 18 })),
-      noFire(group('scout', 'v', 12, { spacingX: 28, spacingY: 18 })),
+      noFire(
+        group('scout', 'v', 11, { spacingX: 28, spacingY: 18 }),
+        group('tank', 'rect', 1, { startX: START_X + 140, spacingX: 52 }),
+      ),
       noFire(group('scout', 'v', 12, { spacingX: 26, spacingY: 16 })),
-      noFire(group('scout', 'v', 14, { spacingX: 26, spacingY: 16 })),
-      noFire(group('scout', 'v', 16, { spacingX: 26, spacingY: 14 })),
+      noFire(
+        group('scout', 'v', 13, { spacingX: 26, spacingY: 16 }),
+        group('tank', 'rect', 1, { startX: START_X + 140, spacingX: 52 }),
+      ),
+      noFire(group('scout', 'v', 14, { spacingX: 26, spacingY: 14 })),
       {
         ...noFire(
-          group('scout', 'v', 24, { spacingX: 26, spacingY: 12 }),
+          group('scout', 'v', 22, { spacingX: 26, spacingY: 12 }),
+          group('tank', 'rect', 2, { startX: START_X + 140, spacingX: 52 }),
         ),
         // The wave-10 mini-boss of the expanded campaign. Level 1 keeps its
-        // scout-only identity (the onboarding test pins Scout V-formations):
-        // the "mini-boss" is a dense scout phalanx that closes the level.
+        // Scout-led identity (the onboarding test pins Scout V-formations):
+        // the "mini-boss" is a dense scout phalanx with a Tank escort that
+        // closes the level.
         miniBoss: true,
       },
     ],
@@ -232,7 +265,16 @@ export const LEVELS: LevelDefinition[] = [
   {
     level: 2,
     name: 'Descent',
-    // Mixed single-enemy waves (Scouts, then Divers, then Swarms).
+    // Dive-led Descent (GDD §3.2), still the no-fire onboarding level.
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the dominant archetype, vary around
+    // it): Level 2 keeps its one-group-per-wave structure and its Diver
+    // identity, but the authored waves from wave 3 on alternate Dive and
+    // Swarm so no two adjacent waves share a composition (parent AC1). The
+    // Diver still outnumbers every other archetype across the level, so the
+    // level reads as the dive-led Descent; each wave's enemy count is
+    // unchanged, so the gentle density ramp (AH-0MVCYANT6003SG5C) is
+    // preserved and the two `dynamic` opening waves stay untouched.
     waves: [
       noFire(group('scout', 'v', 8)),
       noFire(group('diver', 'diver', 8, { spacingY: 28 })),
@@ -244,11 +286,11 @@ export const LEVELS: LevelDefinition[] = [
       // campaign invariant pins a distinct dominant movement style per
       // adjacent pair — L2's scout/dive character differs from L3's cores).
       noFire(group('diver', 'diver', 10, { spacingY: 28 })),
-      noFire(group('diver', 'diver', 12, { spacingY: 28 })),
       noFire(group('swarm', 'swarm', 12, { spacingX: 26, spacingY: 20 })),
-      noFire(group('diver', 'diver', 14, { spacingY: 28 })),
+      noFire(group('diver', 'diver', 12, { spacingY: 28 })),
       noFire(group('swarm', 'swarm', 14, { spacingX: 26, spacingY: 18 })),
-      noFire(group('diver', 'diver', 16, { spacingY: 28 })),
+      noFire(group('diver', 'diver', 14, { spacingY: 28 })),
+      noFire(group('swarm', 'swarm', 16, { spacingX: 26, spacingY: 16 })),
       {
         ...noFire(
           group('diver', 'diver', 20, { spacingY: 28 }),
@@ -263,6 +305,13 @@ export const LEVELS: LevelDefinition[] = [
     level: 3,
     name: 'The Core',
     // Dense mixed pairs — two archetypes spawn together per wave.
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the dominant archetype, vary around
+    // it): the Tank core stays the level's identity and the heaviest archetype
+    // in every wave, while the escort rotates through Scout, Swarm and Diver
+    // from wave to wave so no two adjacent waves share a composition (parent
+    // AC1). Every wave still spawns at least two alternate groups, so the
+    // "dense mixed pairs" structure (and the onboarding pin) is unchanged.
     waves: [
       noFire(
         group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
@@ -301,7 +350,7 @@ export const LEVELS: LevelDefinition[] = [
       ),
       noFire(
         group('tank', 'rect', 12, { spacingX: 46, spacingY: 40 }),
-        group('swarm', 'swarm', 12, { startX: START_X + 140, spacingX: 24 }),
+        group('scout', 'v', 6, { startX: START_X + 120, spacingX: 26 }),
       ),
       {
         ...noFire(
@@ -317,6 +366,15 @@ export const LEVELS: LevelDefinition[] = [
     level: 4,
     name: 'Firestorm',
     // Enemies begin firing projectiles (GDD §2.5).
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the documented identity, vary around
+    // it): Level 4's GDD identity is a deliberate mixed Firestorm core, so it
+    // keeps exactly its three showcase archetypes (Diver, Tank, Swarm) and no
+    // fourth archetype appears. The authored waves from wave 7 on rotate the
+    // pairings (Diver+Swarm, Tank+Diver) and close with a combined-arms wave
+    // that fields all three at once, so no two adjacent waves share a
+    // composition (parent AC1) while the firing escalation and the Tank+Swarm
+    // wave-10 mini-boss are unchanged.
     waves: [
       openFire(group('diver', 'diver', 6, { spacingY: 30 })),
       openFire(group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 })),
@@ -335,8 +393,9 @@ export const LEVELS: LevelDefinition[] = [
         group('diver', 'diver', 8, { spacingY: 30 }),
       ),
       openFire(
-        group('swarm', 'swarm', 14, { spacingX: 26, spacingY: 18 }),
-        group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
+        group('diver', 'diver', 6, { spacingY: 30 }),
+        group('tank', 'rect', 6, { spacingX: 50, spacingY: 44 }),
+        group('swarm', 'swarm', 8, { startX: START_X + 140, spacingX: 24 }),
       ),
       {
         ...openFire(
@@ -351,23 +410,41 @@ export const LEVELS: LevelDefinition[] = [
   {
     level: 5,
     name: 'Predictable Death',
-    // Fewer enemies, structured memorisable patterns: Phasers only.
+    // Fewer enemies, structured memorisable patterns: the orbital Phaser
+    // crosshair grid still leads the level (GDD §3.2).
+    //
+    // AH-0MVI5XXOU00954EA (Q2 = a — keep the dominant archetype, vary around
+    // it): Level 5 stays Phaser-dominant, but every other authored wave adds a
+    // small Tank or Diver escort so no two adjacent waves share a composition
+    // (parent AC1) while the memorisable crosshair-grid feel is preserved. The
+    // escorts stay far lighter than the Phaser grid, so the level remains the
+    // sparse pattern-testing encounter.
     waves: [
       openFire(group('phaser', 'orbital', 4, { spacingX: 84, spacingY: 84 })),
       openFire(group('phaser', 'orbital', 5, { spacingX: 80, spacingY: 80 })),
       // Expanded campaign (AH-0MVCYANT6003SG5C): the crosshair grid deepens
-      // to fill out the 10-wave encounter.
+      // to fill out the 10-wave encounter. From wave 3 on the authored waves
+      // alternate Phaser-only and Phaser-plus-escort.
       openFire(group('phaser', 'orbital', 5, { spacingX: 78, spacingY: 78 })),
-      openFire(group('phaser', 'orbital', 6, { spacingX: 78, spacingY: 78 })),
+      openFire(
+        group('phaser', 'orbital', 6, { spacingX: 78, spacingY: 78 }),
+        group('tank', 'rect', 3, { startX: START_X + 160, spacingX: 52 }),
+      ),
       openFire(group('phaser', 'orbital', 6, { spacingX: 76, spacingY: 76 })),
-      openFire(group('phaser', 'orbital', 7, { spacingX: 76, spacingY: 76 })),
+      openFire(
+        group('phaser', 'orbital', 7, { spacingX: 76, spacingY: 76 }),
+        group('diver', 'diver', 3, { spacingY: 28 }),
+      ),
       openFire(group('phaser', 'orbital', 7, { spacingX: 74, spacingY: 74 })),
-      openFire(group('phaser', 'orbital', 8, { spacingX: 74, spacingY: 74 })),
+      openFire(
+        group('phaser', 'orbital', 8, { spacingX: 74, spacingY: 74 }),
+        group('tank', 'rect', 4, { startX: START_X + 160, spacingX: 52 }),
+      ),
       openFire(group('phaser', 'orbital', 8, { spacingX: 72, spacingY: 72 })),
       {
         ...openFire(
           group('phaser', 'orbital', 10, { spacingX: 72, spacingY: 72 }),
-          group('tank', 'rect', 6, { startX: START_X + 160, spacingX: 52 }),
+          group('tank', 'rect', 5, { startX: START_X + 160, spacingX: 52 }),
         ),
         // Wave-10 mini-boss: a phalanx of phasers anchored by tanks.
         miniBoss: true,
@@ -382,6 +459,12 @@ export const LEVELS: LevelDefinition[] = [
     // pairs the Galaga `capturer` tractor pull (a player-targeter) with
     // non-targeting tanks and swarms. Both showcase waves are hand-authored
     // (`fixed`) so the debut is guaranteed for a given run seed.
+    //
+    // Identity (AH-0MVSEFST20086D87, Levels 6–10 rework): `march` is the
+    // **dominant** archetype (the shipped campaign measures it well ahead of
+    // every other archetype); the secondary mix rotates through Capturer,
+    // Swarm, Diver, Phaser and Tank so no two adjacent waves share a
+    // composition (parent AC1) and the capturer debut stays in kind.
     waves: [
       openFire(
         group('march', 'march', 11, { spacingX: 26, spacingY: 24 }),
@@ -438,10 +521,22 @@ export const LEVELS: LevelDefinition[] = [
   {
     level: 7,
     name: 'Segmented Assault',
-    // Wave 1 launches the Centipede `centipede` chain (a winding segmented
-    // column that gates the wave); wave 2 lets the Pac-Man `ghosts` loose to
-    // pursue the live player, paired with non-targeting divers and Phasers.
-    // The chain and pursuers are spawner-delivered, opted in per wave.
+    // The segmented/pursuit showcase around a Tank line (GDD §3.2), kept
+    // Tank-dominant while the secondary mix rotates (AH-0MVI5XXOU00954EA,
+    // Q2 = a). Wave 1 launches the Centipede `centipede` chain (a winding
+    // segmented column that gates the wave); wave 2 lets the Pac-Man `ghosts`
+    // loose to pursue the live player. The chain and pursuers are
+    // spawner-delivered, opted in per wave, so the showcase survives while the
+    // Tank anchor carries most of the level's spawned weight (the shipped
+    // campaign measures Tank well ahead of Diver/Swarm/Phaser).
+    //
+    // AH-0MVSEFST20086D87 (authored variety rework, Levels 6–10): the secondary
+    // escorts rotate through Scout, Swarm and Phaser wave to wave (no two
+    // adjacent waves share a composition, parent AC1) and the escorts stay
+    // deliberately lighter than the Tank line, so the level's dominant
+    // archetype matches `LEVEL_IDENTITY[7]` (parent AC3). Every wave's enemy
+    // count is unchanged, so the density ramp (AH-0MVCYANT6003SG5C) and the
+    // wave accounting are preserved.
     waves: [
       {
         ...openFire(
@@ -452,8 +547,7 @@ export const LEVELS: LevelDefinition[] = [
       },
       {
         ...openFire(
-          group('diver', 'diver', 6, { spacingY: 30 }),
-          group('tank', 'rect', 6, { spacingX: 52, spacingY: 46 }),
+          group('tank', 'rect', 12, { spacingX: 50, spacingY: 44 }),
         ),
         ghosts: true,
       },
@@ -471,7 +565,7 @@ export const LEVELS: LevelDefinition[] = [
       // plain (non-spawner) group mixes so the campaign walker and wave
       // accounting stay bounded like the original campaign.
       openFire(
-        group('diver', 'diver', 8, { spacingY: 28 }),
+        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
         group('swarm', 'swarm', 8, { spacingX: 26 }),
       ),
       openFire(
@@ -483,8 +577,8 @@ export const LEVELS: LevelDefinition[] = [
         group('phaser', 'orbital', 5, { spacingX: 80, spacingY: 80 }),
       ),
       openFire(
-        group('diver', 'diver', 10, { spacingY: 28 }),
-        group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
+        group('tank', 'rect', 12, { spacingX: 50, spacingY: 44 }),
+        group('scout', 'v', 6, { startX: START_X + 140, spacingX: 26 }),
       ),
       openFire(
         group('phaser', 'orbital', 6, { spacingX: 78, spacingY: 78 }),
@@ -509,6 +603,13 @@ export const LEVELS: LevelDefinition[] = [
     // scouts), wave 3 the Defender `raider` dive (a player-targeter, paired
     // with orbital Phasers and a Swarm). All three are hand-authored
     // (`fixed`) so the showcase is guaranteed.
+    //
+    // Identity (AH-0MVSEFST20086D87, Levels 6–10 rework): Gridlock is a
+    // deliberate **showcase mix** with no single dominant formation archetype
+    // (`LEVEL_IDENTITY[8].dominant` is `null`); the lane-traffic, horde and
+    // raider debuts carry the identity while the secondary mix rotates through
+    // Tank, Scout, Diver, Swarm and Phaser so no two adjacent waves share a
+    // composition (parent AC1).
     waves: [
       {
         ...openFire(
@@ -581,6 +682,12 @@ export const LEVELS: LevelDefinition[] = [
     // wave completion). Wave 1 pairs orbital Phasers with tanks and divers;
     // wave 2 adds pursuing `ghosts` (a player-targeter, paired with
     // non-targeting tanks and divers); wave 3 is the generated orbital tail.
+    //
+    // Identity (AH-0MVSEFST20086D87, Levels 6–10 rework): orbital `phaser` is
+    // the **dominant** archetype (the shipped campaign measures it ahead of
+    // Tank/Diver/Swarm); the secondary mix rotates through Tank, Diver, Swarm
+    // and the pursuing `ghosts` so no two adjacent waves share a composition
+    // (parent AC1). `orbital-strike` is never a wave group here (parent AC6).
     waves: [
       openFire(
         group('tank', 'rect', 8, { spacingX: 50, spacingY: 44 }),
@@ -651,6 +758,14 @@ export const LEVELS: LevelDefinition[] = [
     // and re-runs the `ghosts` and `horde` spawners for maximum pressure.
     // Wave 2 is the generated tail — a dense mix that still pairs its
     // `raider` with non-targeting Phasers, tanks and a Swarm.
+    //
+    // Identity (AH-0MVSEFST20086D87, Levels 6–10 rework): The Gauntlet is a
+    // deliberate **gauntlet mix** with no single dominant archetype
+    // (`LEVEL_IDENTITY[10].dominant` is `null`); the raider/capturer/grunt
+    // showcase carries the identity while the secondary mix rotates through
+    // Tank, Phaser, Diver, Swarm and the horde/ghost spawners so no two
+    // adjacent waves share a composition (parent AC1) and the spawner flags
+    // stay sparse (parent AC5).
     waves: [
       {
         ...openFire(

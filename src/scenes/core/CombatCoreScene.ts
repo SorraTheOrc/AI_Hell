@@ -103,6 +103,7 @@ import {
 import type { WasdKeysLike } from '../../utils/input';
 import { createSeededRng } from '../../core/rng';
 import { EffectsRegistry } from '../../powerups/effects';
+import { stopMysteryUfoWarbleSound } from '../../audio/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import {
   spawnCollectAnimation,
@@ -142,6 +143,10 @@ import {
   resolveSetupSeed,
   type SceneSetupState,
 } from './sceneSetup';
+import {
+  createBackgroundLayer,
+  type BackgroundLayer,
+} from './backgroundLayer';
 import {
   applyMineralScoop,
   type MovableMineral,
@@ -394,13 +399,6 @@ export class CombatCoreScene<
    * behaviour (AH-0MV9G113S009B37I).
    */
   protected drones: MysteryUfoDrone[] = [];
-
-  /**
-   * Countdown (seconds) to the next permanent collector-drone spawn, or
-   * `null` when the full-hull (permanent) reward is not owned. Armed from the
-   * level-resolved interval by {@link CombatCoreScene._updateDroneSpawning}.
-   */
-  private _droneSpawnTimer: number | null = null;
 
   /**
    * Mineral field used by {@link CombatCoreScene.getDroneMineralField} for
@@ -722,22 +720,27 @@ export class CombatCoreScene<
   protected onWeaponCollected(_drop: TDrop): void {}
 
   /**
-   * Drains pending Mystery UFO collector-drone spawns and advances the
-   * permanent auto-spawn timer (AH-0MV9G113S009B37I).
+   * Drains pending Mystery UFO collector-drone spawns and spends one shared
+   * charge for each permanent (hold-full) drone (parent
+   * AH-0MVTQMREN009DSFW, F6 AC1).
    *
    * Defined once here so the game and every gym turn a `mystery_ufo` pickup
    * into the same visible drone: a field pickup queues exactly one spawn
-   * (drained here), while the full-hull permanent reward owns a drone that
-   * re-spawns on the level-resolved interval (30 s at level 0, descending to
-   * a 12 s floor). The instant mineral/score bounty is retired.
+   * (drained here, spending no charge and keeping its timed-pickup
+   * behaviour, PD5), while the full-hull permanent reward owns a **charge**
+   * that exactly one drone spawn spends — at most `mysteryUfoChargeCap`
+   * drones per regeneration interval instead of a permanent repeating
+   * timer. The spent charge returns on the level-resolved interval through
+   * the shared registry tick, so the game and every gym regenerate
+   * identically on the same clock.
    *
    * Called at the start of {@link CombatCoreScene._tickPlayer}. No player →
    * nothing spawns and pending requests stay queued for the next tick with a
    * ship on screen.
    *
-   * @param dt — frame delta (seconds).
+   * @param _dt — frame delta (seconds); unused: the pool owns the cadence.
    */
-  protected _updateDroneSpawning(dt: number): void {
+  protected _updateDroneSpawning(_dt: number): void {
     if (!this.getPlayer()) return;
     const registry = this.getEffectsRegistry();
 
@@ -747,20 +750,13 @@ export class CombatCoreScene<
       this._spawnMysteryUfoDrone();
     }
 
-    // Full-hull reward: one drone every resolved interval for the rest of
-    // the run. The first spawn lands one interval after the reward.
-    if (!registry.isMysteryUfoPermanent()) {
-      this._droneSpawnTimer = null;
-      return;
-    }
-    const interval = registry.mysteryUfoSpawnInterval();
-    if (this._droneSpawnTimer === null) {
-      this._droneSpawnTimer = interval;
-    } else {
-      this._droneSpawnTimer -= dt;
-    }
-    if (this._droneSpawnTimer <= 0) {
-      this._droneSpawnTimer = interval;
+    // Full-hull reward: one shared-pool charge buys one drone spawn. There is
+    // no scene-local repeating timer — the pool is the only budget and it
+    // regenerates through the shared registry tick — so a permanent UFO
+    // spawns at most `mysteryUfoChargeCap` drones per level-derived interval
+    // (parent AC4) and an empty pool always waits for the next charge.
+    if (!registry.isMysteryUfoPermanent()) return;
+    while (registry.consumeMysteryUfoCharge()) {
       this._spawnMysteryUfoDrone();
     }
   }
@@ -1708,7 +1704,7 @@ export class CombatCoreScene<
     if (!registry.updateBomb(dt)) return;
     const player = this.getPlayer();
     if (!player) return;
-    const range = registry.bombRange();
+    const range = registry.bombPulseRange();
     this._clearEnemyBulletsInRange(player.x, player.y, range);
     this._spawnBombPulse(player.x, player.y, range);
   }
@@ -1742,7 +1738,7 @@ export class CombatCoreScene<
     if (!registry.updateSmartBomb(dt)) return;
     const player = this.getPlayer();
     if (!player) return;
-    this.onSmartBombPulse(registry.smartBombAoe(), player.x, player.y);
+    this.onSmartBombPulse(registry.smartBombPulseAoe(), player.x, player.y);
   }
 
   /**
@@ -1800,6 +1796,87 @@ export class CombatCoreScene<
   ): void {}
 
   // ── Run lifecycle (restart / teardown parity, gap 10) ─────────────
+
+  /**
+   * The shared background layer for the current run, or `null` before
+   * {@link CombatCoreScene._createBackground} runs and after teardown
+   * (parent AH-0MVIB7PD50029ZY1, slice AH-0MVSEB7SA004B26C).
+   */
+  protected backgroundLayer: BackgroundLayer | null = null;
+
+  /**
+   * The campaign level whose shared backdrop this scene renders, or `null`
+   * when the scene renders no backdrop at all.
+   *
+   * A scene states *which* backdrop it shows in exactly one place, and its
+   * `create()` calls {@link CombatCoreScene._createSceneBackground} to act on
+   * it. `PlayScene` returns its starting campaign level and then follows the
+   * live run level through {@link CombatCoreScene._setBackgroundLevel}; the
+   * gyms inherit the gym family's single decision from
+   * `src/scenes/gym/core/gymBackground.ts` (fixed representative level, no
+   * warp) — so a gym cannot fork the backdrop without overriding this hook.
+   *
+   * Default: no backdrop (`null`).
+   */
+  protected backgroundLevel(): number | null {
+    return null;
+  }
+
+  /**
+   * Creates the shared background layer at {@link
+   * CombatCoreScene.backgroundLevel}, when the scene has one.
+   *
+   * The one creation seam every backdrop-rendering scene calls from
+   * `create()`: it delegates to {@link CombatCoreScene._createBackground}, so
+   * the game and every gym render through the *same* `createBackgroundLayer`
+   * implementation (AGENTS.md gym↔game parity rule). A no-op when
+   * {@link CombatCoreScene.backgroundLevel} returns `null`.
+   */
+  protected _createSceneBackground(): void {
+    const level = this.backgroundLevel();
+    if (level === null) return;
+    this._createBackground(level);
+  }
+
+  /**
+   * Creates the shared background layer for this scene.
+   *
+   * The whole lifecycle (full-canvas photo, readability dim overlay, solid
+   * fallback when the texture is absent) lives in
+   * {@link createBackgroundLayer}; scenes call this from `create()` and must
+   * not draw their own backdrop (AGENTS.md gym↔game parity rule). Teardown is
+   * automatic through {@link CombatCoreScene.teardownRunState}, and a
+   * re-create destroys any layer left by a previous run.
+   *
+   * A missing texture is not an error: the layer shows
+   * `GAME_BACKGROUND_COLOR`, asks the shared `loadBackgroundTextures` loader
+   * for the level's bundled JPEG (non-blocking, so `create()` never waits on
+   * the decode), and upgrades to the photo once it arrives. Every scene that
+   * calls this hook — `PlayScene` and the gyms — therefore uses the same load
+   * path.
+   *
+   * @param level - 1-based campaign level to show (defaults to level 1).
+   */
+  protected _createBackground(level = 1): void {
+    this.backgroundLayer?.destroy();
+    this.backgroundLayer = createBackgroundLayer(this, level);
+  }
+
+  /**
+   * Shows `level`'s background through the shared layer.
+   *
+   * Idempotent for an unchanged level (no display-object churn), so a
+   * level-change or per-frame refresh can call it freely. A level whose
+   * texture has not decoded yet shows the solid fallback and requests the
+   * photo through the shared loader (see
+   * {@link CombatCoreScene._createBackground}). A no-op when no layer exists
+   * or after teardown.
+   *
+   * @param level - 1-based campaign level (`1..LEVELS.length`).
+   */
+  protected _setBackgroundLevel(level: number): void {
+    this.backgroundLayer?.setLevel(level);
+  }
 
   /**
    * Resets the shared per-run state so a stop/restart of the *same*
@@ -1882,8 +1959,16 @@ export class CombatCoreScene<
    * camera-filter driver: a plain `phaseShiftEffects` sweep cannot reach the
    * WebGL filter controllers, so without this a stop/restart would keep the
    * phase distortion (AH-0MVNTY0700053T9E).
+   *
+   * Collector drones are torn down here too, so a scene shutdown while one is
+   * mid-sortie releases its looping warble and leaves no drone behind
+   * (AH-0MVSAJR6W001CE8M). Every game and gym inherits this through the shared
+   * core, so the teardown terminal cannot drift.
    */
   protected teardownRunState(): void {
+    for (const drone of this.drones) drone.destroy();
+    this.drones = [];
+    stopMysteryUfoWarbleSound();
     for (const bullet of this.playerBullets) bullet.destroy();
     this.playerBullets = [];
     for (const effect of this.playerExplosions) effect.destroy();
@@ -1906,6 +1991,11 @@ export class CombatCoreScene<
     this._pendingSplitWarheads.length = 0;
     this.optionsPodGraphics?.destroy();
     this.optionsPodGraphics = null;
+    // Destroy the shared background layer so no display object survives into
+    // the next run (parent AH-0MVIB7PD50029ZY1, slice AH-0MVSEB7SA004B26C).
+    // Doing it here means every subclass gets the teardown for free.
+    this.backgroundLayer?.destroy();
+    this.backgroundLayer = null;
     // Release every collected effect so a restarted scene starts clean
     // even when teardown (not a fresh `create()`) is the observed path.
     this.getEffectsRegistry().reset();

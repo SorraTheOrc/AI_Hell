@@ -537,6 +537,7 @@ describe('CombatScene — cross-scene behavioural equivalence (AC1)', () => {
 
 describe('CombatScene — shared mineral kill-drop rule is defined once', () => {
   const KILL_DROP_HELPER = 'resolveMineralKillDrops';
+  const PAYOUT_HELPER = 'resolveMineralKillPayout';
   const SCATTER_HELPER = 'scatterMineralDrops';
   const SALVAGE_HELPER = 'scatterSalvageMineralDrops';
   const KILL_DROP_HELPER_FILE = 'src/scenes/core/mineralKillDrops.ts';
@@ -558,6 +559,20 @@ describe('CombatScene — shared mineral kill-drop rule is defined once', () => 
     expect(definers).toEqual([KILL_DROP_HELPER_FILE]);
   });
 
+  // The red-deposit payout seam (AH-0MVJ79739008396I): the threshold decision
+  // and the Salvage folding live in the same shared module, so a wreck pays
+  // out identically in the game and every formation gym.
+  it('defines the kill-payout seam exactly once, in the shared helper', () => {
+    const definers = productionSourceFiles()
+      .filter((file) =>
+        definesFunction(fs.readFileSync(file, 'utf8'), PAYOUT_HELPER),
+      )
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+
+    expect(definers).toEqual([KILL_DROP_HELPER_FILE]);
+  });
+
   it('defines the scatter maths exactly once, in the Mineral entity module', () => {
     const definers = productionSourceFiles()
       .filter((file) =>
@@ -569,14 +584,14 @@ describe('CombatScene — shared mineral kill-drop rule is defined once', () => 
     expect(definers).toEqual([SCATTER_HELPER_FILE]);
   });
 
-  it('both the game and the gym consume the shared kill-drop rule', () => {
+  it('both the game and the gym consume the shared kill-payout seam', () => {
     for (const file of [
       'src/scenes/PlayScene.ts',
       'src/scenes/gym/core/GymFormationScene.ts',
     ]) {
       const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
-      expect(source, `${file} must call the shared rule`).toContain(
-        `${KILL_DROP_HELPER}(`,
+      expect(source, `${file} must call the shared payout seam`).toContain(
+        `${PAYOUT_HELPER}(`,
       );
     }
   });
@@ -595,16 +610,22 @@ describe('CombatScene — shared mineral kill-drop rule is defined once', () => 
     expect(definers).toEqual([KILL_DROP_HELPER_FILE]);
   });
 
-  it('both the game and the gym consume the shared salvage-drop seam', () => {
-    for (const file of [
-      'src/scenes/PlayScene.ts',
-      'src/scenes/gym/core/GymFormationScene.ts',
-    ]) {
-      const source = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
-      expect(source, `${file} must call the shared salvage seam`).toContain(
-        `${SALVAGE_HELPER}(`,
-      );
-    }
+  it('the shared payout seam is the only consumer of the salvage-drop seam', () => {
+    // Folding Salvage into the deposit threshold (AH-0MVJ79739008396I) means
+    // no scene scatters the bounty itself: the shared seam decides whether the
+    // wreck pays orange dots or one red deposit.
+    const consumers = productionSourceFiles()
+      .filter((file) => {
+        const source = fs.readFileSync(file, 'utf8');
+        return (
+          path.relative(process.cwd(), file) !== KILL_DROP_HELPER_FILE &&
+          source.includes(`${SALVAGE_HELPER}(`)
+        );
+      })
+      .map((file) => path.relative(process.cwd(), file))
+      .sort();
+
+    expect(consumers).toEqual([]);
   });
 });
 
@@ -2221,8 +2242,10 @@ describe('boss encounter — game↔gym parity (AH-0MUZMTU3Y001Y8XZ)', () => {
  * AH-0MV9G3DZ9003P7P8, test item AH-0MVKXBXQX003S7K5 AC2/AC3).
  *
  * The seam maths (`aimVectorToTarget`, `wrappedAxisDelta`) and the shared
- * post-motion seam (`applyPostMotionWrapAll`) live once in the shared core and
- * are consumed by `PlayScene` and every gym. These tests drive the *scene*
+ * post-motion seam (`applyPostMotionWrapAll`) are each defined once
+ * (`wrappedAxisDelta` in the neutral `src/utils/wrapGeometry.ts`, the rest in
+ * the shared core) and are consumed by `PlayScene` and every gym. These tests
+ * drive the *scene*
  * paths — the game and a real gym fire the same aimed shot, and both scene
  * loops run the same post-motion wrap — so the equivalence claims are proven
  * end-to-end rather than inferred from the shared source.
@@ -2597,9 +2620,19 @@ const EPIC_SHARED_HELPERS: ReadonlyArray<readonly [string, string]> = [
   // wrapped-aim maths and the post-motion seam are each defined once and
   // consumed by `PlayScene` and every gym, so a scene that re-introduces a
   // copy fails the repo-wide duplicate-body guard.
-  ['wrappedAxisDelta', 'src/scenes/core/enemyTargeting.ts'],
+  //
+  // The wrap model itself was promoted to the neutral
+  // `src/utils/wrapGeometry.ts` (AH-0MVT2VT4W006QP9N) so the bot decision layer
+  // consumes the same implementation; `enemyTargeting`/`enemyWrap` only
+  // re-export it, so the canonical definer is now the neutral module.
+  ['wrappedAxisDelta', 'src/utils/wrapGeometry.ts'],
   ['aimVectorToTarget', 'src/scenes/core/enemyTargeting.ts'],
-  ['wrapPosition', 'src/scenes/core/enemyWrap.ts'],
+  ['wrapAxis', 'src/utils/wrapGeometry.ts'],
+  ['wrapPosition', 'src/utils/wrapGeometry.ts'],
+  ['wrappedDelta', 'src/utils/wrapGeometry.ts'],
+  ['wrappedDistance', 'src/utils/wrapGeometry.ts'],
+  ['wrappedBearing', 'src/utils/wrapGeometry.ts'],
+  ['chooseWrappedRoute', 'src/utils/wrapGeometry.ts'],
   ['applyPostMotionWrap', 'src/scenes/core/enemyWrap.ts'],
   ['applyPostMotionWrapAll', 'src/scenes/core/enemyWrap.ts'],
   // Enemy force-field resolver (epic AH-0MVJ8W4GE007OMNT AC4,
@@ -2651,6 +2684,12 @@ const EPIC_SHARED_METHODS: ReadonlyArray<readonly [string, string]> = [
   ['_applyMineralScoop', 'src/scenes/core/CombatCoreScene.ts'],
   ['_updateDropLayer', 'src/scenes/core/CombatCoreScene.ts'],
   ['_playPickupCue', 'src/scenes/core/CombatCoreScene.ts'],
+  // F6 consumable charge scene wiring (AH-0MVUXH3X60078QR3 AC1): the
+  // Mystery UFO permanent-drone spawn step spends one shared-pool charge per
+  // drone (`consumeMysteryUfoCharge`) instead of running a scene-local
+  // repeating timer, so the game and every gym spawn drones identically. A
+  // scene that re-introduces the old timer fails this guard.
+  ['_updateDroneSpawning', 'src/scenes/core/CombatCoreScene.ts'],
   ['_handleCollisions', 'src/scenes/core/CombatScene.ts'],
   ['_hitPlayer', 'src/scenes/core/CombatScene.ts'],
   ['_updateAutoDefence', 'src/scenes/core/CombatScene.ts'],
@@ -4105,6 +4144,7 @@ const HOLDFULL_LAUNCHERS = [
   'src/scenes/PlayScene.ts',
   'src/scenes/gym/core/GymFormationScene.ts',
   'src/scenes/gym/GymWeaponLeveling.ts',
+  'src/scenes/gym/GymPowerUpLeveling.ts',
 ] as const;
 
 /** The shared hold-full pure helpers, each defined once in its module. */
@@ -4139,6 +4179,28 @@ describe('hold-full overlay metronome + countdown — gym↔game parity (AC5)', 
       expect(
         source.includes('onSelect: (index: number) => this.selectMineralChoice(index)'),
         `${file} passes the single selection contract`,
+      ).toBe(true);
+    }
+  });
+
+  it('every launcher supplies the top-left owned-permanents panel from the shared builder', () => {
+    // The panel's rows are built once, by the pure `buildOwnedLoadout`
+    // helper, and handed to the single shared overlay — never re-derived in a
+    // launcher or the scene (AH-0MVCRKAPL000L68Y · AC3/AC6).
+    for (const file of HOLDFULL_LAUNCHERS) {
+      const source = fs.readFileSync(
+        path.resolve(process.cwd(), file),
+        'utf8',
+      );
+      expect(
+        source.includes("import { buildOwnedLoadout } from"),
+        `${file} imports the shared owned-loadout builder`,
+      ).toBe(true);
+      expect(
+        source.includes(
+          'ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels)',
+        ),
+        `${file} passes the owned-permanents rows to the overlay`,
       ).toBe(true);
     }
   });

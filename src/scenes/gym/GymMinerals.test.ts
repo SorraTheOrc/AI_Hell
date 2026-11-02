@@ -353,6 +353,26 @@ describe('GymMinerals — hold-full rewards are functional', () => {
     ]);
   });
 
+  it('the hold-full overlay lists the gym permanent loadout (AH-0MVCRKAPL000L68Y)', async () => {
+    const scene = await bootMinerals();
+    const player = scene.getPlayer()!;
+    player.equipWeapon('spread', true);
+    player.collectPowerUp('shield', true);
+    // A temporary field pickup must not reach the panel.
+    player.collectPowerUp('bomb');
+
+    scene.openMineralChoice();
+    await advanceGame(booted!.game, 80);
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+
+    expect(overlay.getOwnedUpgradeLines()).toEqual([
+      'Spread Shot Lv.1',
+      'Shield Lv.1',
+    ]);
+  });
+
   it('AC2 — P7 granted by the choice auto-teleports on danger and grants P6', async () => {
     const scene = await bootMinerals();
     const player = scene.getPlayer()!;

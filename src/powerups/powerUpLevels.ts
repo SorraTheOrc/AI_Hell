@@ -25,6 +25,31 @@
  *   **derived from this model** rather than tracked by a second, independent
  *   counter (AC3).
  *
+ * ## Consumable charge axes (parent AH-0MVTQMREN009DSFW)
+ *
+ * The six **consumables** (flagged in `./types`; producer decision 1) model a
+ * permanent grant as a **charge pool**: one charge buys one event, charges
+ * regenerate on a level-derived interval, and a hold-full reward adds a charge
+ * rather than a level. Every cap and interval is catalogue data here, so no
+ * store, HUD or scene needs a magic number or an `id === …` special case:
+ *
+ * - **Shield** — cap `shieldAbsorptions` (1 → 3) and **new** recharge
+ *   `shieldRecharge` (`max(20, 45 − 5×level)` s, i.e. 45 s at level 0);
+ * - **Thorn Field** — cap `thornsAbsorbs` (2 → 6) and the shipped recharge
+ *   `thornsRecharge` (12 s → 5 s);
+ * - **Phase Shift** — cap 3 (`POWER_UP_CHARGE_CAP`) and the shipped
+ *   `phaseRechargeRate` (30 s → 10 s);
+ * - **Teleport** — cap 3 and the shipped `teleportRechargeRate` (15 s → 5 s);
+ * - **Force Field** — cap `forceFieldReflects` (3 → 10) and **new** recharge
+ *   `forceFieldRecharge` (`max(20, 45 − 5×level)` s, i.e. 45 s at level 0);
+ * - **Mystery UFO** — **new** cap `mysteryUfoChargeCap` (1 at level 0, 3 at the
+ *   cap) and the shipped `mysteryUfoSpawnInterval` (30 s → 12 s).
+ *
+ * Each descending interval axis carries a derived `*RechargeRate` companion
+ * (`1 / interval`, charges per second) so the model's monotonic
+ * non-decreasing rate contract holds while the stored intervals shorten. These
+ * axes are published here only — this slice adds no effect-path behaviour.
+ *
  * Phase Shift and Teleport are **recharging pools** (AH-0MV82I7TX0009JMT):
  * each consumed charge starts its own recharge timer whose duration is the
  * level-derived recharge time at the moment of consumption (see
@@ -47,23 +72,51 @@
  * (effective) and {@link PowerUpLevelStore.getPermanentUpgradeLevel}
  * (hold-full only) for the resolver.
  *
- * ## Temporary vs permanent (AH-0MUX802450085VZZ)
+ * ## Temporary vs permanent (AH-0MUX802450085VZZ) and the per-upgrade TTL
+ * rule (parent AH-0MVSTKGC3003OMAC)
  *
  * A **field pickup** (`collect(id)`) adds one *temporary* stack
  * (`tempStacks`); a **hold-full reward** (`collect(id, true)`) adds one
- * *permanent* grant (`permanentGrants`). The temporary stacks are tied to
- * the item's timed window and cleared by
- * {@link PowerUpLevelStore.clearTemporary} when that window expires; the
- * permanent grants never expire. An item is owned/active while
+ * *permanent* grant (`permanentGrants`). The temporary stacks are cleared by
+ * {@link PowerUpLevelStore.clearTemporary} when the pickup's temporary window
+ * expires; the permanent grants never expire. An item is owned/active while
  * `permanentGrants + tempStacks >= 1`. This split lives **only here** (and
  * in the `Player` weapon-level state) so the game and every gym share one
  * implementation (AC7).
  *
+ * **Every field pickup has a temporary window — no kind is exempt.** The
+ * window length (the TTL) is a property of the *upgrade item*, never one
+ * global constant, and {@link resolveTemporaryWindow} is the single resolver:
+ *
+ * - **Timed kinds** (Speed Boost, Magnet, Mineral Scoop, Frenzy, Chrono Field,
+ *   Salvage) keep their **level-resolved effect duration** as the TTL
+ *   (Speed Boost 10 s → 20 s, Frenzy 8 s → 16 s), so the window is already
+ *   per-upgrade and level-scaled.
+ * - **Instant kinds** declare their own TTL as catalogue data
+ *   (`PowerUpEntry.temporaryWindow` in `./types`), so retuning a window is a
+ *   data edit with no code change: Bomb 10 s, Smart Bomb 10 s, Orbital Strike
+ *   10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s, Mystery UFO 15 s,
+ *   and Shield 15 s / Thorn Field 8 s / Force Field 8 s — the three absorbed-hit
+ *   kinds whose window axes were retired (AH-0MVVD8SXO004QLZW), so they are
+ *   level-free like the other instant kinds.
+ * - **Weapons** use the same rule with their own TTL — the existing 10 s
+ *   `WEAPON_TIMEOUT_MS` window, surfaced as
+ *   {@link resolveWeaponTemporaryWindow}.
+ *
+ * The values are deliberately short so a temporary level can never compound
+ * across a wave: 10 s mirrors the established weapon window, the defensive
+ * kinds (Phase Shift/Teleport 15 s) mirror the shield-style window, and the
+ * Mystery UFO's 15 s spans a full 5–8 s drone sortie.
+ *
  * Unconsumed consumable grants (Phase Shift charges, Teleport teleports) persist across a
  * temporary-window expiry: clearing the temporary level never claws back an
  * already-granted charge/teleport (producer Resolved decision 1b).
- * Power-ups with no timed effect (Bomb/Phase Shift/Teleport/Extra Life) have no temporary window, so
- * their temporary stacks persist until run reset (Resolved decision 4).
+ *
+ * > **Superseded.** The AH-0MUX802450085VZZ *"Resolved decision 4"* exception
+ * > (instant kinds had no temporary window, so their temporary stacks
+ * > persisted until run reset) was **superseded** by AH-0MVSTKGC3003OMAC:
+ * > the exception above describes history only — no field pickup of any kind
+ * > now survives its TTL.
  *
  * ## Magnet/Mineral Scoop hybrid reconciliation
  *
@@ -100,7 +153,12 @@
  * Pure and deterministic: no scene, DOM, Phaser or storage coupling.
  */
 
-import { PowerUpId, getPowerUpById } from './types';
+import {
+  CONSUMABLE_POWER_UP_IDS,
+  POWER_UP_CATALOGUE,
+  PowerUpId,
+  getPowerUpById,
+} from './types';
 import {
   curveValue,
   formatDelta,
@@ -117,6 +175,7 @@ import {
   STRIKE_INTERVAL_BEATS_BASE,
   STRIKE_INTERVAL_BEATS_FLOOR,
   STRIKE_INTERVAL_BEATS_PER_LEVEL,
+  WEAPON_TIMEOUT_MS,
 } from '../core/constants';
 import { DEFAULT_BPM, beatPeriodMs } from '../utils/beat';
 
@@ -139,10 +198,13 @@ const STRIKE_BEAT_SECONDS = beatPeriodMs(DEFAULT_BPM) / 1000;
  * shared 80 BPM grid (9 → 3 beats, −1 beat per level).
  */
 export type PowerUpLevelVariable =
-  /** Shield — bubble duration in seconds. */
-  | 'shieldDuration'
   /** Shield — hits absorbed before the bubble pops. */
   | 'shieldAbsorptions'
+  /**
+   * Shield — seconds to regenerate one spent charge (descends; the derived
+   * charges/second axis is its monotonic inverse).
+   */
+  | 'shieldRecharge'
   /** Bomb — clear radius in pixels. */
   | 'bombRange'
   /** Bomb — permanent pulse rate in pulses per second. */
@@ -177,10 +239,13 @@ export type PowerUpLevelVariable =
   | 'smartBombDamage'
   /** Smart Bomb — permanent pulse interval in seconds (descends; the pulses/s axis is its inverse). */
   | 'smartBombInterval'
-  /** Force Field — bubble duration in seconds. */
-  | 'forceFieldDuration'
   /** Force Field — bullets the field reflects before it stops. */
   | 'forceFieldReflects'
+  /**
+   * Force Field — seconds to regenerate one spent reflect charge (descends;
+   * the derived charges/second axis is its monotonic inverse).
+   */
+  | 'forceFieldRecharge'
   /** Mystery UFO — collector-drone lifetime in seconds. */
   | 'mysteryUfoLifetime'
   /** Mystery UFO — minerals one collector drone can carry before returning. */
@@ -189,6 +254,8 @@ export type PowerUpLevelVariable =
   | 'mysteryUfoRadius'
   /** Mystery UFO — seconds between permanent collector-drone spawns (descends). */
   | 'mysteryUfoSpawnInterval'
+  /** Mystery UFO — drone charges one pool holds (ascends). */
+  | 'mysteryUfoChargeCap'
   /** Frenzy — bonus damage hits each player bullet applies. */
   | 'frenzyBonusHits'
   /** Frenzy — timed window during which bullets deal bonus hits. */
@@ -199,8 +266,6 @@ export type PowerUpLevelVariable =
   | 'chronoDuration'
   /** Thorn Field — rams absorbed before the counter ends. */
   | 'thornsAbsorbs'
-  /** Thorn Field — timed window during which rams are free. */
-  | 'thornsDuration'
   /**
    * Thorn Field — seconds between automatic ram recharges while active
    * (descends; the derived rams/second axis is its monotonic inverse).
@@ -216,8 +281,8 @@ export type PowerUpLevelVariable =
   | 'strikeDamage';
 /** Every level variable, in catalogue order (iterate this, not `Object.keys`). */
 export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
-  'shieldDuration',
   'shieldAbsorptions',
+  'shieldRecharge',
   'bombRange',
   'bombFrequency',
   'speedMultiplier',
@@ -235,18 +300,18 @@ export const POWER_UP_LEVEL_VARIABLES: readonly PowerUpLevelVariable[] = [
   'aoeRadius',
   'smartBombDamage',
   'smartBombInterval',
-  'forceFieldDuration',
   'forceFieldReflects',
+  'forceFieldRecharge',
   'mysteryUfoLifetime',
   'mysteryUfoCapacity',
   'mysteryUfoRadius',
   'mysteryUfoSpawnInterval',
+  'mysteryUfoChargeCap',
   'frenzyBonusHits',
   'frenzyDuration',
   'chronoSlowFactor',
   'chronoDuration',
   'thornsAbsorbs',
-  'thornsDuration',
   'thornsRecharge',
   'salvageMinerals',
   'salvageDuration',
@@ -305,24 +370,11 @@ export interface PowerUpLevelSpec extends CurveSpec {
  * damage (AC1, producer risk note).
  */
 export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
-  // Shield — absorbs its level-resolved hits (base 1, cap 3) in a 15 s bubble.
+  // Shield — a charge pool: one absorbed hit per charge (base 1, cap 3),
+  // regenerating on the level-derived shieldRecharge interval. The former
+  // level-scaled bubble-window axis was retired with the absorbed-hit pickup
+  // model (AH-0MVVD8SXO004QLZW).
   shield: [
-    {
-      variable: 'shieldDuration',
-      powerUpId: 'shield',
-      label: 'Shield time',
-      unit: 's',
-      description: 'How long the shield bubble lasts.',
-      curve: 'exponential-saturation',
-      base: 15,
-      cap: 30,
-      k: 0.12,
-      discrete: false,
-      rationale:
-        'A 30 s ceiling keeps a levelled shield a strong but finite safety ' +
-        'window; k=0.12 adds ~2 s at the first upgrade and then plateaus, so ' +
-        'early levels feel responsive without granting near-permanent cover.',
-    },
     {
       variable: 'shieldAbsorptions',
       powerUpId: 'shield',
@@ -338,6 +390,31 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'Absorbing more than one hit is very strong, so the cap is small ' +
         '(3) and k=0.5 grants the second hit promptly at the first upgrade, ' +
         'then flattens — a clear early payoff with no runaway durability.',
+    },
+    {
+      variable: 'shieldRecharge',
+      powerUpId: 'shield',
+      label: 'Shield recharge',
+      unit: 's',
+      description: 'Seconds to regenerate one spent Shield charge.',
+      curve: 'linear-clamped',
+      // Descending interval: max(20, 45 − 5×level) s — 45 s on the first
+      // grant, five seconds sooner per further level, floored at 20 s (the
+      // original report's 45 s recharge, producer decision 3). The derived
+      // charges/second inverse stays monotonic non-decreasing.
+      base: 45,
+      cap: 20,
+      k: -5,
+      discrete: true,
+      rationale:
+        'A permanent Shield is a charge pool, not an endless bubble: one ' +
+        'charge absorbs one hit and comes back on this timer (parent ' +
+        'AH-0MVTQMREN009DSFW). Forty-five seconds at level 0 keeps a free ' +
+        'absorbed hit genuinely scarce — the producer\'s headline figure — ' +
+        'while the 20 s floor caps how fast a levelled pool refills, so a ' +
+        'fully levelled Shield never becomes near-permanent cover. Stored as ' +
+        'a descending interval in whole seconds (mirroring `thornsRecharge`) ' +
+        'so the derived rate `1 / interval` stays monotonic non-decreasing.',
     },
   ],
 
@@ -747,28 +824,38 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'model\'s rate-axis contract. Discrete so the timer uses whole ' +
         'seconds.',
     },
+    {
+      variable: 'mysteryUfoChargeCap',
+      powerUpId: 'mystery_ufo',
+      label: 'UFO charges',
+      unit: '',
+      description: 'Drone charges one Mystery UFO pool can hold.',
+      curve: 'exponential-saturation',
+      // Ascending discrete cap: 1 at level 0, gaining the second charge at
+      // the first upgrade. Mirrors `shieldAbsorptions` / `phaseCharges`
+      // (k=0.5, cap 3) so every charge pool behaves the same way.
+      base: 1,
+      cap: 3,
+      k: 0.5,
+      discrete: true,
+      rationale:
+        'A permanent Mystery UFO becomes a charge pool: one charge spawns ' +
+        'one collector drone and a consumed charge comes back on the ' +
+        'level-derived `mysteryUfoSpawnInterval` (parent ' +
+        'AH-0MVTQMREN009DSFW). The level-0 pool holds exactly one charge — ' +
+        'the producer\'s headline figure — so the drone is a periodic treat ' +
+        'rather than a swarm; k=0.5 grants a second charge at the first ' +
+        'upgrade and the cap of 3 mirrors the other charge pools, keeping a ' +
+        'levelled drone bounded.',
+    },
   ],
 
-  // Force Field — Gradius-inspired timed bullet reflector (AH-0MV1BIX1W006XF95).
+  // Force Field — Gradius-inspired bullet reflector (AH-0MV1BIX1W006XF95):
+  // a charge pool of reflected bullets (base 3, cap 10) regenerating on the
+  // level-derived forceFieldRecharge interval. The former level-scaled bubble-
+  // window axis was retired with the absorbed-hit pickup model
+  // (AH-0MVVD8SXO004QLZW).
   force_field: [
-    {
-      variable: 'forceFieldDuration',
-      powerUpId: 'force_field',
-      label: 'Field time',
-      unit: 's',
-      description: 'How long the reflect bubble lasts.',
-      curve: 'exponential-saturation',
-      base: 8,
-      cap: 18,
-      k: 0.15,
-      discrete: false,
-      rationale:
-        'An 18 s ceiling keeps the bubble a strong but finite defence rather ' +
-        'than perpetual cover; k=0.15 adds ~1.4 s at the first upgrade, so ' +
-        'early levels feel responsive before diminishing. The window is ' +
-        'cleared on expiry, at which point enemy bullets damage the ship ' +
-        'again.',
-    },
     {
       variable: 'forceFieldReflects',
       powerUpId: 'force_field',
@@ -786,6 +873,31 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'reflection at the first upgrade. Once the budget is spent the bubble ' +
         'keeps counting down but no longer reflects, so it can never become ' +
         'infinite offence.',
+    },
+    {
+      variable: 'forceFieldRecharge',
+      powerUpId: 'force_field',
+      label: 'Field recharge',
+      unit: 's',
+      description: 'Seconds to regenerate one spent Force Field reflect.',
+      curve: 'linear-clamped',
+      // Descending interval: max(20, 45 − 5×level) s — mirrors
+      // `shieldRecharge`: 45 s on the first grant, five seconds sooner per
+      // further level, floored at 20 s. The derived charges/second inverse
+      // stays monotonic non-decreasing.
+      base: 45,
+      cap: 20,
+      k: -5,
+      discrete: true,
+      rationale:
+        'A permanent Force Field becomes a charge pool: one charge reflects ' +
+        'one enemy bullet and the reflect budget (`forceFieldReflects`) is ' +
+        'the pool cap (parent AH-0MVTQMREN009DSFW). A 45 s recharge keeps ' +
+        'free reflection an occasional windfall rather than a steady ' +
+        'offence stream, and it shortens by level to a 20 s floor so a ' +
+        'levelled pool still rewards investment. Stored as a descending ' +
+        'interval in whole seconds (mirroring `thornsRecharge`) so the ' +
+        'derived rate `1 / interval` stays monotonic non-decreasing.',
     },
   ],
 
@@ -867,9 +979,9 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
     },
   ],
 
-  // Thorn Field — timed ram counter (AH-0MVCRC1Q0007JAV1): while active,
-  // ramming an enemy destroys it without costing the player a hit, up to a
-  // level-resolved absorb count.
+  // Thorn Field — ram counter (AH-0MVCRC1Q0007JAV1): while armed, ramming an
+  // enemy destroys it without costing the player a hit, up to a level-resolved
+  // absorb count (the charge pool — AH-0MVTQMREN009DSFW).
   thorns: [
     {
       variable: 'thornsAbsorbs',
@@ -887,21 +999,6 @@ export const POWER_UP_LEVEL_SPECS: Record<PowerUpId, PowerUpLevelSpec[]> = {
         'modest 2 and the cap 6; k=0.35 front-loads the third absorb at the ' +
         'first upgrade while never letting the field become permanent ' +
         'immunity.',
-    },
-    {
-      variable: 'thornsDuration',
-      powerUpId: 'thorns',
-      label: 'Thorn time',
-      unit: 's',
-      description: 'How long the ram counter is active.',
-      curve: 'exponential-saturation',
-      base: 8,
-      cap: 16,
-      k: 0.12,
-      discrete: false,
-      rationale:
-        'An 8 → 16 s window bounds the free-ram window; k=0.12 spreads the ' +
-        'gain across the early levels (mirrors the other timed windows).',
     },
     {
       variable: 'thornsRecharge',
@@ -1057,10 +1154,20 @@ export interface PowerUpLevelStats {
   powerUpId: PowerUpId;
   /** The (clamped, whole-number) upgrade level the snapshot was resolved at. */
   level: number;
-  /** Shield — shield bubble duration in seconds. */
-  shieldDuration?: number;
   /** Shield — hits the shield absorbs. */
   shieldAbsorptions?: number;
+  /**
+   * Shield — seconds to regenerate one spent charge (descending:
+   * `max(20, 45 − 5×level)`).
+   */
+  shieldRecharge?: number;
+  /**
+   * Shield — charge regeneration rate in charges per second. **Derived** from
+   * {@link shieldRecharge} (`1 / interval`) so the rate axis stays monotonic
+   * non-decreasing while the stored interval descends (mirrors
+   * {@link thornsRechargeRate}).
+   */
+  shieldRechargeRate?: number;
   /** Bomb — clear radius in pixels. */
   bombRange?: number;
   /** Bomb — permanent pulse rate in pulses per second. */
@@ -1104,10 +1211,19 @@ export interface PowerUpLevelStats {
    * monotonic non-decreasing while the stored interval descends.
    */
   smartBombFrequency?: number;
-  /** Force Field — bubble duration in seconds. */
-  forceFieldDuration?: number;
   /** Force Field — bullets the field reflects before it stops. */
   forceFieldReflects?: number;
+  /**
+   * Force Field — seconds to regenerate one spent reflect charge
+   * (descending: `max(20, 45 − 5×level)`).
+   */
+  forceFieldRecharge?: number;
+  /**
+   * Force Field — reflect regeneration rate in charges per second. **Derived**
+   * from {@link forceFieldRecharge} (`1 / interval`) so the rate axis stays
+   * monotonic non-decreasing while the stored interval descends.
+   */
+  forceFieldRechargeRate?: number;
   /** Mystery UFO — collector-drone lifetime in seconds. */
   mysteryUfoLifetime?: number;
   /** Mystery UFO — minerals one collector drone can carry before returning. */
@@ -1119,6 +1235,11 @@ export interface PowerUpLevelStats {
    * (descending: `max(12, 30 − 2×level)`).
    */
   mysteryUfoSpawnInterval?: number;
+  /**
+   * Mystery UFO — drone charges one pool holds (1 at level 0, ascending and
+   * capped at 3).
+   */
+  mysteryUfoChargeCap?: number;
   /** Frenzy — bonus damage hits each player bullet applies while active. */
   frenzyBonusHits?: number;
   /** Frenzy — timed window duration in seconds. */
@@ -1129,8 +1250,6 @@ export interface PowerUpLevelStats {
   chronoDuration?: number;
   /** Thorn Field — rams absorbed before the counter ends. */
   thornsAbsorbs?: number;
-  /** Thorn Field — timed window duration in seconds. */
-  thornsDuration?: number;
   /**
    * Thorn Field — seconds between automatic ram recharges while the field
    * is active (descending: `max(5, 12 − level)`).
@@ -1213,7 +1332,156 @@ export function resolvePowerUpAtLevel(
   if (Number.isFinite(thornsRecharge) && thornsRecharge > 0) {
     bucket.thornsRechargeRate = 1 / thornsRecharge;
   }
+  // The two consumable recharge intervals (Shield, Force Field) carry the
+  // same derived rate companion as the Thorn Field (parent
+  // AH-0MVTQMREN009DSFW): stored descending, rate monotonic non-decreasing.
+  for (const [intervalVariable, rateVariable] of [
+    ['shieldRecharge', 'shieldRechargeRate'],
+    ['forceFieldRecharge', 'forceFieldRechargeRate'],
+  ] as const) {
+    const rechargeInterval = bucket[intervalVariable];
+    if (Number.isFinite(rechargeInterval) && rechargeInterval > 0) {
+      bucket[rateVariable] = 1 / rechargeInterval;
+    }
+  }
   return stats;
+}
+
+// ── Temporary-window (field-pickup TTL) resolver ─────────────────────
+
+/**
+ * The level-resolved variable that carries each timed kind's effect
+ * duration — the window a field pickup opens today, exactly as
+ * `EffectsRegistry._applyTimedEffect` reads it.
+ *
+ * Shield, Thorn Field and Force Field are deliberately absent: the absorbed-hit
+ * pickup model retired their window axes, so these kinds resolve their flat
+ * temporary TTL from the catalogue `temporaryWindow` (AH-0MVVD8SXO004QLZW).
+ * Magnet and Mineral Scoop are also absent: their attraction window is not a
+ * levelled axis, so it resolves from the catalogue `duration` (see
+ * {@link NON_LEVELLED_TIMED_WINDOW_IDS}).
+ */
+const TIMED_WINDOW_VARIABLES: Partial<Record<PowerUpId, PowerUpLevelVariable>> = {
+  speed_boost: 'speedDuration',
+  frenzy: 'frenzyDuration',
+  chrono: 'chronoDuration',
+  salvage: 'salvageDuration',
+};
+
+/**
+ * Timed kinds whose window is a fixed catalogue `duration` rather than a
+ * levelled variable (the Magnet / Mineral Scoop attraction window).
+ */
+const NON_LEVELLED_TIMED_WINDOW_IDS: readonly PowerUpId[] = [
+  'magnet',
+  'mineral_scoop',
+];
+
+/** True when `value` is a usable window length (finite and strictly positive). */
+function isPositiveFinite(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * Resolves the **temporary window (TTL, seconds)** a field pickup of
+ * `powerUpId` opens on top of the permanent level (parent AH-0MVSTKGC3003OMAC,
+ * Resolved decision 1; AH-0MVUGI3Q4009MW6A).
+ *
+ * The window is a property of the **upgrade**, never a single global
+ * constant:
+ *
+ * - **Timed kinds** resolve their existing level-scaled effect duration
+ *   (`speedDuration`, `frenzyDuration`, `chronoDuration`, `salvageDuration`,
+ *   …; the Magnet / Mineral Scoop attraction uses its catalogue `duration`).
+ *   Behaviour is unchanged and a levelled kind keeps its level-scaled window.
+ * - **Instant kinds** (no timed effect of their own) return the per-entry
+ *   `temporaryWindow` TTL from {@link POWER_UP_CATALOGUE}: Bomb 10 s, Smart
+ *   Bomb 10 s, Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra
+ *   Life 10 s, Mystery UFO 15 s, and — since the absorbed-hit pickup model
+ *   retired their window axes — Shield 15 s, Thorn Field 8 s and Force Field
+ *   8 s (AH-0MVVD8SXO004QLZW).
+ *
+ * The catalogue is read at call time, so retuning a TTL is a pure data change.
+ *
+ * @param powerUpId - The power-up whose field-pickup window is required.
+ * @param upgradeLevel - The upgrade level the window opens at (`0` = first
+ *   collection). Only the timed kinds use it; instant TTLs are level-free.
+ * @returns The window length in seconds (always finite and positive).
+ * @throws Error when the kind declares no usable window at all, so a new
+ *   instant kind that forgets its TTL fails loudly instead of silently
+ *   reverting immediately.
+ */
+export function resolveTemporaryWindow(
+  powerUpId: PowerUpId,
+  upgradeLevel = 0,
+): number {
+  getPowerUpById(powerUpId); // validate the id (throws for unknown power-ups)
+  const entry = POWER_UP_CATALOGUE[powerUpId];
+
+  // Timed kinds keep their level-resolved effect duration — checked first so
+  // a stray `temporaryWindow` can never flatten a level-scaled window.
+  const timedVariable = TIMED_WINDOW_VARIABLES[powerUpId];
+  if (timedVariable) {
+    const stats = resolvePowerUpAtLevel(
+      powerUpId,
+      upgradeLevel,
+    ) as unknown as Record<string, number | undefined>;
+    const levelWindow = stats[timedVariable];
+    if (isPositiveFinite(levelWindow)) return levelWindow;
+  }
+
+  // Instant kinds declare their own TTL in the catalogue (balance data).
+  const declared = entry.temporaryWindow;
+  if (isPositiveFinite(declared)) return declared;
+  if (declared !== undefined) {
+    throw new Error(
+      `Power-up "${powerUpId}" declares an invalid temporary TTL ` +
+        `(${String(declared)}); expected a finite positive number of seconds.`,
+    );
+  }
+
+  // Non-levelled timed kinds (Magnet / Mineral Scoop attraction window).
+  if (NON_LEVELLED_TIMED_WINDOW_IDS.includes(powerUpId)) {
+    if (isPositiveFinite(entry.duration)) return entry.duration;
+  }
+
+  throw new Error(
+    `Power-up "${powerUpId}" declares no temporary TTL: add a ` +
+      '`temporaryWindow` to its catalogue entry (or a timed window ' +
+      'variable) so a field pickup can revert.',
+  );
+}
+
+/**
+ * Default temporary window (seconds) of a field-pickup weapon — the existing
+ * {@link WEAPON_TIMEOUT_MS} 10 s countdown, surfaced through the same
+ * resolver shape as the power-up TTL so a future weapon definition can
+ * declare its own window (AH-0MVUGI3Q4009MW6A). No behaviour change: the
+ * `Player` weapon timers still use {@link WEAPON_TIMEOUT_MS}.
+ */
+export const DEFAULT_WEAPON_TEMPORARY_WINDOW = WEAPON_TIMEOUT_MS / 1000;
+
+/**
+ * Resolves the temporary window (seconds) a field-pickup weapon opens.
+ *
+ * @param definition - Optional weapon definition; when it declares a
+ *   `temporaryWindow` that value wins over the {@link WEAPON_TIMEOUT_MS}
+ *   default.
+ * @returns The window length in seconds (always finite and positive).
+ * @throws Error when a declared window is not a finite positive number.
+ */
+export function resolveWeaponTemporaryWindow(
+  definition?: { temporaryWindow?: number },
+): number {
+  const declared = definition?.temporaryWindow;
+  if (declared === undefined) return DEFAULT_WEAPON_TEMPORARY_WINDOW;
+  if (!isPositiveFinite(declared)) {
+    throw new Error(
+      `Weapon temporary TTL must be a finite positive number of seconds, ` +
+        `got ${String(declared)}.`,
+    );
+  }
+  return declared;
 }
 
 // ── Upgrade-change summariser ───────────────────────────────────────
@@ -1234,7 +1502,7 @@ export function resolvePowerUpAtLevel(
  * @param powerUpId - The power-up to compare.
  * @param fromLevel - The current (pre-upgrade) level.
  * @param toLevel - The next (post-upgrade) level.
- * @returns A summary such as `"+2 Shield time, +1 Shield hits"`, or `""`.
+ * @returns A summary such as `"+1 Shield hits, -5 Shield recharge"`, or `""`.
  */
 export function summarisePowerUpLevelChange(
   powerUpId: PowerUpId,
@@ -1280,6 +1548,98 @@ export const POWER_UP_LIVES_START = 3;
 export const POWER_UP_CHARGE_CAP = 3;
 
 /**
+ * The catalogue axis that bounds each consumable's charge pool (parent
+ * AH-0MVTQMREN009DSFW, AC2/AC3). Where a kind already had a spendable budget
+ * axis, that axis **is** its charge cap; only Mystery UFO gained a new one.
+ */
+const CONSUMABLE_CHARGE_CAP_AXES: Record<
+  PowerUpId,
+  (stats: PowerUpLevelStats) => number
+> = {
+  shield: (stats) => stats.shieldAbsorptions ?? 0,
+  thorns: (stats) => stats.thornsAbsorbs ?? 0,
+  phase_shift: (stats) => stats.phaseCharges ?? 0,
+  teleport: (stats) => stats.teleportStacks ?? 0,
+  force_field: (stats) => stats.forceFieldReflects ?? 0,
+  mystery_ufo: (stats) => stats.mysteryUfoChargeCap ?? 0,
+} as Record<PowerUpId, (stats: PowerUpLevelStats) => number>;
+
+/**
+ * The catalogue axis that gives each consumable's **regeneration interval** in
+ * seconds (parent AH-0MVTQMREN009DSFW, AC2/AC3): the two new recharge curves
+ * for Shield and Force Field, the shipped per-kind recharge/interval axes for
+ * the rest, and the seconds inverse of the two shipped charges-per-second
+ * rates.
+ */
+const CONSUMABLE_RECHARGE_AXES: Record<
+  PowerUpId,
+  (stats: PowerUpLevelStats) => number
+> = {
+  shield: (stats) => stats.shieldRecharge ?? 0,
+  thorns: (stats) => stats.thornsRecharge ?? 0,
+  phase_shift: (stats) =>
+    stats.phaseRechargeRate ? 1 / stats.phaseRechargeRate : 0,
+  teleport: (stats) =>
+    stats.teleportRechargeRate ? 1 / stats.teleportRechargeRate : 0,
+  force_field: (stats) => stats.forceFieldRecharge ?? 0,
+  mystery_ufo: (stats) => stats.mysteryUfoSpawnInterval ?? 0,
+} as Record<PowerUpId, (stats: PowerUpLevelStats) => number>;
+
+/**
+ * Whether `id` is one of the catalogue's consumables (parent
+ * AH-0MVTQMREN009DSFW, producer decision 1). Reads the derived catalogue list,
+ * so the six-kind set is never spelled out a second time.
+ */
+export function isConsumablePowerUpId(id: PowerUpId): boolean {
+  return CONSUMABLE_POWER_UP_IDS.includes(id);
+}
+
+/**
+ * The **level-derived charge cap** of a consumable at a resolver level
+ * (`getUpgradeLevel`, i.e. effective level − 1) — the catalogue axis that
+ * bounds its pool (parent AH-0MVTQMREN009DSFW AC2/AC3). Returns 0 for a
+ * non-consumable or a kind that resolves no positive cap.
+ *
+ * Pure and store-free so the player-facing copy (the hold-full choice's
+ * charge-grant offer) resolves the identical cap the store enforces — one
+ * axis table, no second derivation (AH-0MVUXH35J002WSAB AC2).
+ *
+ * @param id - The power-up kind.
+ * @param level - The resolver level (0 for a first grant).
+ */
+export function resolveConsumableChargeCap(
+  id: PowerUpId,
+  level: number,
+): number {
+  if (!isConsumablePowerUpId(id)) return 0;
+  const stats = resolvePowerUpAtLevel(id, level);
+  const cap = CONSUMABLE_CHARGE_CAP_AXES[id](stats);
+  return Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+}
+
+/**
+ * The **level-derived regeneration interval** of a consumable at a resolver
+ * level, in seconds. Returns 0 for a non-consumable or a kind with no
+ * interval axis.
+ *
+ * Pure counterpart of {@link PowerUpLevelStore.consumableRechargeTime}, so
+ * the charge-grant offer's copy states the interval the store will actually
+ * use (AH-0MVUXH35J002WSAB AC2).
+ *
+ * @param id - The power-up kind.
+ * @param level - The resolver level (0 for a first grant).
+ */
+export function resolveConsumableRechargeTime(
+  id: PowerUpId,
+  level: number,
+): number {
+  if (!isConsumablePowerUpId(id)) return 0;
+  const stats = resolvePowerUpAtLevel(id, level);
+  const seconds = CONSUMABLE_RECHARGE_AXES[id](stats);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+}
+
+/**
  * The run-scoped power-up level model (AC2/AC3).
  *
  * Responsibilities:
@@ -1311,13 +1671,26 @@ export const POWER_UP_CHARGE_CAP = 3;
 export class PowerUpLevelStore {
   private _permanentGrants = new Map<PowerUpId, number>();
   private _tempStacks = new Map<PowerUpId, number>();
-  private _teleportStacks = 0;
-  private _phaseCharges = 0;
-  private _phasePermanent = false;
-  /** Remaining seconds of each Phase Shift charge currently recharging. */
-  private _phaseRechargeTimers: number[] = [];
-  /** Remaining seconds of each Teleport charge currently recharging. */
-  private _teleportRechargeTimers: number[] = [];
+  /**
+   * Available **charges** per consumable kind (parent AH-0MVTQMREN009DSFW).
+   *
+   * One pool serves all six consumables — the shipped Phase Shift / Teleport
+   * engine generalised, never a second counter — so the game and every gym
+   * share one model (§4.4.3). A kind absent from the map simply holds no
+   * charges.
+   */
+  private _charges = new Map<PowerUpId, number>();
+  /**
+   * Remaining seconds of each **in-flight recharge** per consumable kind: one
+   * entry per spent charge, advanced only by {@link tickRecharge}.
+   */
+  private _rechargeTimers = new Map<PowerUpId, number[]>();
+  /**
+   * Kinds a hold-full reward has made **owned** for the run. Ownership is a
+   * flag, never an endless supply: an owned consumable with an empty pool is
+   * still visible (greyed out) and still regenerating.
+   */
+  private _owned = new Set<PowerUpId>();
   private _lives: number;
   private readonly _livesStart: number;
 
@@ -1331,48 +1704,58 @@ export class PowerUpLevelStore {
    * `permanent` (hold-full) rewards, the permanent-grant count. Extra Life also adds
    * the level-derived lives (clamped to the level-derived cap).
    *
+   * **Temporary-stack contract (AC3/AC5, AH-0MVUGI4IC006PUS5).** A field
+   * pickup (`permanent: false`) adds a temporary stack that is only valid
+   * together with the **field-pickup window** the `EffectsRegistry` opens for
+   * it; that window's expiry is the only thing that removes the stack
+   * ({@link clearTemporary}). A `permanent: true` grant therefore **never
+   * touches `_tempStacks`** and never cancels or re-opens an open window: an
+   * active window keeps its own schedule and expires, so a permanent grant
+   * landing mid-window settles on the permanent level instead of stranding
+   * the temporary component. No second counter, map or timer is involved.
+   *
    * @param id - The collected power-up.
    * @param permanent - True for a hold-full permanent reward.
    * @returns The new collection level.
    */
   collect(id: PowerUpId, permanent = false): number {
     getPowerUpById(id); // validate id (throws for unknown power-ups)
-    if (permanent) {
+    // **Consumables never level up from a hold-full reward** (parent AC1):
+    // the grant adds a charge instead, so the permanent-grant count (what
+    // `getPermanentLevel`, the hold-full pricing and every level consumer
+    // read) is left untouched and ownership is carried by the per-kind flag.
+    const consumable = isConsumablePowerUpId(id);
+    if (permanent && !consumable) {
       this._permanentGrants.set(id, this.permanentGrants(id) + 1);
-    } else {
+    } else if (!permanent) {
       this._tempStacks.set(id, this.getTempStacks(id) + 1);
     }
     const next = this.getEffectiveLevel(id);
 
     const stats = this.stats(id);
+    if (isConsumablePowerUpId(id)) {
+      if (permanent) {
+        // **Hold-full reward = one charge, never a level**
+        // (parent AC1). The permanent-grant count deliberately stays
+        // untouched, so `getPermanentLevel` / `getEffectiveLevel` do not
+        // move; the kind becomes *owned* through the flag and the grant is
+        // clamped at the level-derived cap (parent AC2).
+        this._owned.add(id);
+        this.grantConsumableCharge(id, 1);
+      } else if (id === 'phase_shift') {
+        // Field-pickup behaviour is unchanged in this slice (producer
+        // decision 2 / PD5): the level-derived count, clamped at the kind's
+        // level-derived charge cap (parent AC2/AC3).
+        this._addCharges(id, stats.phaseCharges ?? 0, this._poolCap(id));
+      } else if (id === 'teleport') {
+        this._addCharges(id, stats.teleportStacks ?? 0, this._poolCap(id));
+      }
+    }
     switch (id) {
       case 'phase_shift':
-        if (permanent) {
-          // The hold-full reward is a recharging pool: it marks ownership and
-          // adds exactly one charge (clamped at the cap), not an unlimited
-          // supply (AH-0MV82I7TX0009JMT AC4).
-          this._phasePermanent = true;
-          this._phaseCharges = Math.min(
-            this._phaseCharges + 1,
-            POWER_UP_CHARGE_CAP,
-          );
-        } else {
-          // A field pickup grants the level-derived count, clamped so the
-          // pool never exceeds the cap (AC2).
-          this._phaseCharges = Math.min(
-            this._phaseCharges + (stats.phaseCharges ?? 0),
-            POWER_UP_CHARGE_CAP,
-          );
-        }
-        break;
       case 'teleport':
-        // A hold-full reward grants exactly one teleport (mirroring Phase
-        // Shift); a field pickup grants the level-derived count. Both are
-        // clamped at the cap (AC2/AC5).
-        this._teleportStacks = Math.min(
-          this._teleportStacks + (permanent ? 1 : stats.teleportStacks ?? 0),
-          POWER_UP_CHARGE_CAP,
-        );
+        // Charges are granted above through the shared pool; the level bookkeeping
+        // is handled by the common paths.
         break;
       case 'extra_life':
         this._lives = Math.min(
@@ -1444,9 +1827,17 @@ export class PowerUpLevelStore {
    * a field-only item is omitted, so it is still offered as `★ New`.
    */
   getLevels(): Array<{ id: PowerUpId; level: number }> {
-    return [...this._permanentGrants.entries()]
-      .filter(([, level]) => level > 0)
-      .map(([id, level]) => ({ id, level }));
+    const rows = new Map<PowerUpId, number>();
+    for (const [id, level] of this._permanentGrants.entries()) {
+      if (level > 0) rows.set(id, level);
+    }
+    // A **consumable owned through a hold-full reward** holds level 0 (the
+    // grant never levels it, parent AC1) but is still permanently owned: it
+    // occupies a slot and must stay visible to the choice/loadout snapshots.
+    for (const id of this._owned) {
+      if (!rows.has(id)) rows.set(id, 1);
+    }
+    return [...rows.entries()].map(([id, level]) => ({ id, level }));
   }
 
   /**
@@ -1477,6 +1868,26 @@ export class PowerUpLevelStore {
     return this._permanentGrants.get(id) ?? 0;
   }
 
+  /**
+   * Sets `id`'s permanent level directly (scripted scene/gym setups,
+   * `GameSetup.powerUps`).
+   *
+   * Scripted setups configure a run's starting loadout — they are not a
+   * hold-full reward, so they must be able to raise a consumable's level (and
+   * hence its cap/interval curves) without going through
+   * {@link collect}`(id, true)`, which by design only adds a charge for a
+   * consumable (parent AH-0MVTQMREN009DSFW AC1).
+   */
+  setPermanentLevel(id: PowerUpId, level: number): void {
+    getPowerUpById(id);
+    const next = Math.max(0, Math.floor(level));
+    if (next <= 0) {
+      this._permanentGrants.delete(id);
+      return;
+    }
+    this._permanentGrants.set(id, next);
+  }
+
   /** Resolved stats for `id` at its current upgrade level. */
   stats(id: PowerUpId): PowerUpLevelStats {
     return resolvePowerUpAtLevel(id, this.getUpgradeLevel(id));
@@ -1505,7 +1916,7 @@ export class PowerUpLevelStore {
 
   /** Stored Teleport teleport uses (level-derived grants, minus consumes). */
   teleportStacks(): number {
-    return this._teleportStacks;
+    return this.consumableCharges('teleport');
   }
 
   /**
@@ -1516,10 +1927,7 @@ export class PowerUpLevelStore {
    * elapses (per-charge recharge model, AC1).
    */
   consumeTeleport(): boolean {
-    if (this._teleportStacks <= 0) return false;
-    this._teleportStacks -= 1;
-    this._teleportRechargeTimers.push(this.teleportRechargeTime());
-    return true;
+    return this.consumeConsumableCharge('teleport');
   }
 
   /**
@@ -1530,13 +1938,12 @@ export class PowerUpLevelStore {
    * recharge engine consumes when a teleport charge is spent.
    */
   teleportRechargeTime(): number {
-    const rate = this.stats('teleport').teleportRechargeRate ?? 0;
-    return rate > 0 ? 1 / rate : 0;
+    return this.consumableRechargeTime('teleport');
   }
 
   /** Stored Phase Shift auto-activation charges (level-derived grants, minus consumes). */
   phaseCharges(): number {
-    return this._phaseCharges;
+    return this.consumableCharges('phase_shift');
   }
 
   /**
@@ -1545,7 +1952,7 @@ export class PowerUpLevelStore {
    * charge (AH-0MV82I7TX0009JMT AC4).
    */
   isPhasePermanent(): boolean {
-    return this._phasePermanent;
+    return this.isConsumableOwned('phase_shift');
   }
 
   /**
@@ -1557,32 +1964,163 @@ export class PowerUpLevelStore {
    * an unlimited supply: an empty pool blocks activation.
    */
   consumePhaseCharge(): boolean {
-    if (this._phaseCharges <= 0) return false;
-    this._phaseCharges -= 1;
-    this._phaseRechargeTimers.push(this.phaseRechargeTime());
+    return this.consumeConsumableCharge('phase_shift');
+  }
+
+  // ── Shared consumable charge pool (parent AH-0MVTQMREN009DSFW) ──────
+  //
+  // One pool serves every consumable: Shield, Thorn Field, Phase Shift,
+  // Teleport, Force Field and Mystery UFO. A charge buys one event, charges
+  // regenerate on the level-derived interval, and the cap/interval are
+  // catalogue data — no scene, HUD or registry keeps a second counter.
+
+  /** Available charges of the consumable `id` (0 for a non-consumable). */
+  consumableCharges(id: PowerUpId): number {
+    return this._charges.get(id) ?? 0;
+  }
+
+  /**
+   * The ceiling used when charging a pool: the level-derived cap for the newly
+   * pooled consumables, and the shipped fixed ceiling of 3 for Phase Shift /
+   * Teleport whose cap-3 pool predates the per-kind axes (their behaviour is
+   * otherwise unchanged — AC6). Exposed so grants and recharges agree.
+   */
+  private _poolCap(id: PowerUpId): number {
+    if (id === 'phase_shift' || id === 'teleport') return POWER_UP_CHARGE_CAP;
+    return this.consumableChargeCap(id);
+  }
+
+  /**
+   * The **level-derived charge cap** of `id` — the catalogue axis that bounds
+   * its pool (parent AC2/AC3): `shieldAbsorptions`, `thornsAbsorbs`,
+   * `phaseCharges`, `teleportStacks`, `forceFieldReflects` or
+   * `mysteryUfoChargeCap`. Returns 0 for a non-consumable.
+   */
+  consumableChargeCap(id: PowerUpId): number {
+    // Delegates to the store-free resolver so the offer copy and the pool
+    // ceiling can never resolve a different cap (AH-0MVUXH35J002WSAB AC2).
+    return resolveConsumableChargeCap(id, this.getUpgradeLevel(id));
+  }
+
+  /**
+   * The **derived regenerating ceiling** of `id`'s pool (parent
+   * AH-0MVUVSW4J0009QUW, producer decision Q-A1=b): the level-resolved cap
+   * while the kind is allowed to regenerate, else 0.
+   *
+   * For a kind whose catalogue entry marks regeneration as requiring
+   * **permanent ownership** (`regenRequiresOwnership`): the ceiling is the
+   * cap while the kind is permanently owned (a hold-full reward, or a
+   * scripted permanent level) and 0 while it is only ever picked up — so a
+   * pickup-granted charge spends exactly once and never refills on its own.
+   * Every other kind's ceiling is always its cap, so Phase Shift / Teleport
+   * pickup regeneration is unchanged (AH-0MV82I7TX0009JMT).
+   */
+  consumableRegenCeiling(id: PowerUpId): number {
+    if (getPowerUpById(id).regenRequiresOwnership !== true) {
+      return this._poolCap(id);
+    }
+    const owned = this.isConsumableOwned(id) || this.permanentGrants(id) > 0;
+    return owned ? this._poolCap(id) : 0;
+  }
+
+  /**
+   * The **level-derived regeneration interval** of `id` in seconds — the
+   * catalogue axis that says how long one spent charge takes to come back
+   * (parent AC2/AC3): `shieldRecharge`, `thornsRecharge`, the seconds inverse
+   * of `phaseRechargeRate` / `teleportRechargeRate`, `forceFieldRecharge` or
+   * `mysteryUfoSpawnInterval`. Returns 0 for a non-consumable or a kind with
+   * no interval axis.
+   */
+  consumableRechargeTime(id: PowerUpId): number {
+    // Delegates to the store-free resolver (AH-0MVUXH35J002WSAB AC2): the
+    // hold-full charge offer publishes exactly the interval the store uses.
+    return resolveConsumableRechargeTime(id, this.getUpgradeLevel(id));
+  }
+
+  /**
+   * Seconds until the next spent charge of `id` returns — the shortest
+   * in-flight recharge timer (0 when nothing is recharging). Drives the HUD
+   * regeneration countdown (parent AC4).
+   */
+  consumableRechargeRemaining(id: PowerUpId): number {
+    const timers = this._rechargeTimers.get(id);
+    if (!timers || timers.length === 0) return 0;
+    return Math.max(0, Math.min(...timers));
+  }
+
+  /** Whether a hold-full reward has made `id` permanently owned this run. */
+  isConsumableOwned(id: PowerUpId): boolean {
+    return this._owned.has(id);
+  }
+
+  /**
+   * Spends **exactly one** charge of `id`, returning `false` when its pool is
+   * empty. A spent charge starts its own recharge timer whose duration is the
+   * level-derived {@link consumableRechargeTime} **at the moment of
+   * consumption** (parent AC4); {@link tickRecharge} returns it to the pool.
+   *
+   * A charge of a kind whose regeneration requires permanent ownership
+   * (Q-A1=b) starts no timer while the kind is pickup-only (regenerating
+   * ceiling 0), so a pickup-granted charge never refills on its own.
+   */
+  consumeConsumableCharge(id: PowerUpId): boolean {
+    if (!isConsumablePowerUpId(id)) return false;
+    const pool = this.consumableCharges(id);
+    if (pool <= 0) return false;
+    this._charges.set(id, pool - 1);
+    const seconds = this.consumableRechargeTime(id);
+    if (seconds > 0 && this.consumableRegenCeiling(id) > 0) {
+      const timers = this._rechargeTimers.get(id) ?? [];
+      timers.push(seconds);
+      this._rechargeTimers.set(id, timers);
+    }
     return true;
+  }
+
+  /**
+   * Grants up to `count` charges of `id`, clamped at the level-derived cap
+   * (parent AC2). A grant landing on a full pool is discarded, so no charge is
+   * banked while the pool is full.
+   */
+  grantConsumableCharge(id: PowerUpId, count = 1): number {
+    if (!isConsumablePowerUpId(id)) return 0;
+    const cap = this.consumableChargeCap(id);
+    const pool = this.consumableCharges(id);
+    const next = Math.min(cap, pool + Math.max(0, Math.floor(count)));
+    this._charges.set(id, next);
+    return next;
+  }
+
+  /** Adds `count` charges of `id` clamped at `cap` (internal grant path). */
+  private _addCharges(id: PowerUpId, count: number, cap: number): number {
+    const pool = this.consumableCharges(id);
+    const next = Math.min(cap, pool + Math.max(0, count));
+    this._charges.set(id, next);
+    return next;
   }
 
   /**
    * Advances the run-scoped recharge clock by `dt` seconds. Each recharging
    * Phase Shift / Teleport charge counts down independently; when a timer
-   * elapses the charge returns to its pool, clamped so the pool never
-   * exceeds {@link POWER_UP_CHARGE_CAP} (a recharge landing on a full pool is
-   * discarded). Negative or non-finite `dt` is a no-op.
+   * elapses the charge returns to its pool, clamped at the kind's regenerating
+   * ceiling (a recharge landing on a full pool — or on a pickup-only budget
+   * kind's Q-A1=b ceiling of 0 — is discarded). Negative or non-finite `dt` is
+   * a no-op.
    */
   tickRecharge(dt: number): void {
     const safeDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
     if (safeDt <= 0) return;
-    this._phaseCharges = this._advanceRechargeTimers(
-      this._phaseRechargeTimers,
-      this._phaseCharges,
-      safeDt,
-    );
-    this._teleportStacks = this._advanceRechargeTimers(
-      this._teleportRechargeTimers,
-      this._teleportStacks,
-      safeDt,
-    );
+    for (const id of CONSUMABLE_POWER_UP_IDS) {
+      const timers = this._rechargeTimers.get(id);
+      if (!timers || timers.length === 0) continue;
+      const pool = this._advanceRechargeTimers(
+        timers,
+        this.consumableCharges(id),
+        safeDt,
+        this.consumableRegenCeiling(id),
+      );
+      this._charges.set(id, pool);
+    }
   }
 
   /**
@@ -1594,12 +2132,17 @@ export class PowerUpLevelStore {
     timers: number[],
     pool: number,
     dt: number,
+    cap: number = POWER_UP_CHARGE_CAP,
   ): number {
+    // A tolerance absorbs floating-point drift: 150 × 0.1 s of small ticks
+    // sums to slightly less than 15 s, and a spent charge must still return
+    // (frame-rate independence, parent AC5).
+    const EPSILON = 1e-9;
     for (let i = timers.length - 1; i >= 0; i--) {
       timers[i] -= dt;
-      if (timers[i] > 0) continue;
+      if (timers[i] > EPSILON) continue;
       timers.splice(i, 1);
-      pool = Math.min(pool + 1, POWER_UP_CHARGE_CAP);
+      pool = Math.min(pool + 1, cap);
     }
     return pool;
   }
@@ -1612,8 +2155,7 @@ export class PowerUpLevelStore {
    * recharge engine consumes when a Phase Shift charge is spent.
    */
   phaseRechargeTime(): number {
-    const rate = this.stats('phase_shift').phaseRechargeRate ?? 0;
-    return rate > 0 ? 1 / rate : 0;
+    return this.consumableRechargeTime('phase_shift');
   }
 
   /** Current lives (Extra Life model); starts at the configured start, capped. */
@@ -1641,11 +2183,9 @@ export class PowerUpLevelStore {
   reset(): void {
     this._permanentGrants.clear();
     this._tempStacks.clear();
-    this._teleportStacks = 0;
-    this._phaseCharges = 0;
-    this._phasePermanent = false;
-    this._phaseRechargeTimers = [];
-    this._teleportRechargeTimers = [];
+    this._charges.clear();
+    this._rechargeTimers.clear();
+    this._owned.clear();
     this._lives = this._livesStart;
   }
 }

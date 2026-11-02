@@ -48,14 +48,15 @@
 import Phaser from 'phaser';
 
 import { CombatCoreScene, type CombatEnemyBullet, type CombatEnemyEntity } from '../core/CombatCoreScene';
+import { gymBackgroundLevel } from './core/gymBackground';
 import type { SceneSetupState } from '../core/sceneSetup';
 import { Player } from '../../entities/Player';
 import { Mineral } from '../../entities/Mineral';
 import { collectMinerals } from '../core/mineralLayer';
 import type { DroneMineralSink } from '../core/combatDrone';
 import { MineralHold } from '../../core/mineralHold';
-import { loadRules } from '../../core/rules';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { EffectsRegistry } from '../../powerups/effects';
 import { PowerUp } from '../../powerups/PowerUp';
 import { RoundRobinSpawner } from '../../powerups/spawner';
@@ -153,10 +154,18 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     super({ key: 'GymPowerUpsUtility' });
   }
 
+  /** Gym family background decision: fixed representative level, no warp. */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(data?: SceneSetupState): void {
     // Reset shared + scene-owned per-run state so a stop/restart of the
     // same instance starts clean (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
+    // Shared background layer at the gym family's pinned level (see
+    // `core/gymBackground.ts`, AH-0MVSEC0J0004YNJC).
+    this._createSceneBackground();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,
@@ -180,8 +189,14 @@ export class GymPowerUpsUtility extends CombatCoreScene<
     // ESC key — return to main menu (AH-0MU9LRTK3004KR04).
     addBackToMenuOnEsc(this);
 
-    // Standalone HUD — attaches to this scene, renders above gameplay.
-    this.hud = new HUD(this, this.effectsRegistry);
+    // Standalone HUD — attaches to this scene, renders above gameplay. One
+    // shared wiring supplies the weapon levels and the six-slot budget
+    // (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player),
+    );
     // Show the shared mineral hold bar so the Mystery UFO collector drone and
     // mineral pickups are observable here (AH-0MV9G113S009B37I).
     this._syncMineralHud();
@@ -289,7 +304,7 @@ export class GymPowerUpsUtility extends CombatCoreScene<
         this.minerals,
         this.player,
         [],
-        () => this._collectGymMineral(),
+        (mineral) => this._collectGymMineral(mineral),
         { playerPhased: this.isPlayerPhased() },
       );
     }
@@ -344,8 +359,13 @@ export class GymPowerUpsUtility extends CombatCoreScene<
    * {@link MineralHold} so the hold progression matches the game. The gym does
    * not open the hold-full choice; the bar demonstrates the shared hold.
    */
-  private _collectGymMineral(): void {
-    this.mineralHold.collect(loadRules().mineralCollectAmount);
+  /**
+   * Collects a mineral into the shared hold, crediting its **worth** (1 for an
+   * ordinary dot, `MINERAL_DEPOSIT_VALUE` = 10 for a red deposit —
+   * AH-0MVJ79739008396I).
+   */
+  private _collectGymMineral(mineral: Mineral): void {
+    this.mineralHold.collect(mineral.value);
     this._syncMineralHud();
   }
 

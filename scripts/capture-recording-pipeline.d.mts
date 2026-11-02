@@ -7,6 +7,7 @@
  */
 
 import type { ChunkSink, ChunkSinkFinaliseResult, ChunkSinkStats, ChunkSinkOptions } from './capture-chunk-sink.d.mts';
+import type { SeekableOutcome } from './capture-seekable.d.mts';
 
 /** The page-side binding both capture paths feed recorder chunks through. */
 export declare const RECORDING_CHUNK_BINDING: '__aiHellCaptureChunk';
@@ -38,6 +39,20 @@ export interface RecordingPipelineOptions {
   maxPayloadBytes?: number;
   /** Injected filesystem seams forwarded to the sink (hermetic tests only). */
   sinkOptions?: ChunkSinkOptions;
+  /**
+   * Run the seek-index remux on a successful finalise (default `true`): the
+   * delivered clip then carries a Duration, SeekHead and Cues index so players
+   * can fast-forward it (AH-0MVMIK8EM001JAYR AC1/AC3).
+   */
+  seekable?: boolean;
+  /** Injected remux seams (hermetic tests only). */
+  seekableOptions?: {
+    env?: NodeJS.ProcessEnv;
+    exists?: (path: string) => boolean;
+    loadRegistry?: () => unknown;
+    run?: import('./capture-seekable.d.mts').RemuxRun;
+    tempPath?: string;
+  };
 }
 
 /** The shared recording pipeline handle consumed by both capture paths. */
@@ -53,8 +68,13 @@ export interface RecordingPipeline {
   /** The probe context for the clip: streamed size, final path, partial path. */
   probeSource(context?: { baseUrl?: string }): RecordingPipelineProbeSource;
   stats(): ChunkSinkStats;
-  finalise(options?: { success?: boolean }): ChunkSinkFinaliseResult;
+  finalise(options?: { success?: boolean }): RecordingPipelineFinaliseResult;
   close(): void;
+}
+
+/** The sink's finalise outcome plus the seek-index remux outcome (additive). */
+export interface RecordingPipelineFinaliseResult extends ChunkSinkFinaliseResult {
+  seekable: SeekableOutcome;
 }
 
 /**

@@ -18,6 +18,10 @@ import { HOLD_FULL_COUNTDOWN_DURATION_MS } from '../core/holdFullCountdown';
 import { GameOverScene } from '../GameOverScene';
 import { MenuScene } from '../MenuScene';
 import { Asteroid } from '../../entities/Asteroid';
+import {
+  MINERAL_DEPOSIT_COLOR,
+  MINERAL_DEPOSIT_VALUE,
+} from '../../core/constants';
 import * as mineralLayer from '../core/mineralLayer';
 import * as mineralScoop from '../../powerups/mineralScoop';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
@@ -63,6 +67,45 @@ describe('PlayScene mineral wiring', () => {
 
     expect(scene.getMinerals()).toHaveLength(0);
     expect(scene.getGameState().minerals).toBe(before + 1);
+  });
+
+  it('collects a red deposit for exactly 10 minerals in a single pickup (AH-0MVJ79739008396I)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    const gs = scene.getGameState();
+    // Keep the hold from filling, so the pickup does not pause the run.
+    gs.mineralCapacity = 100;
+    const before = gs.minerals;
+
+    const addSpy = vi.spyOn(gs, 'addMinerals');
+    const hud = scene.getHUD()!;
+    const hudSpy = vi.spyOn(hud, 'setMineralStore');
+
+    scene.spawnMineralDepositAt(player.x, player.y);
+    scene.tick(0.016);
+
+    // One pickup, worth `MINERAL_DEPOSIT_VALUE` — not one per dot.
+    expect(scene.getMinerals()).toHaveLength(0);
+    expect(gs.minerals).toBe(before + MINERAL_DEPOSIT_VALUE);
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(addSpy).toHaveBeenCalledWith(MINERAL_DEPOSIT_VALUE);
+    // …and exactly one HUD refresh for that pickup.
+    expect(hudSpy).toHaveBeenCalledTimes(1);
+    expect(hud.getMineralStoreValue().minerals).toBe(gs.minerals);
+  });
+
+  it('a live deposit is red and worth 10 (AH-0MVJ79739008396I)', async () => {
+    const scene = await bootPlay();
+    const deposit = scene.spawnMineralDepositAt(20, 20);
+
+    expect(deposit.color).toBe(MINERAL_DEPOSIT_COLOR);
+    expect(deposit.value).toBe(MINERAL_DEPOSIT_VALUE);
+    // It is an ordinary mineral for every other rule: stationary, on the
+    // field, and not destroyed by a bullet.
+    expect(deposit.alive).toBe(true);
+    scene.spawnPlayerBullet(deposit.x, deposit.y, 0, 0);
+    scene.tick(0.016);
+    expect(deposit.alive).toBe(true);
   });
 
   it('a Mystery UFO pickup spawns one visible collector drone and no instant bounty (AH-0MV9G113S009B37I)', async () => {
@@ -153,6 +196,33 @@ describe('PlayScene mineral wiring', () => {
     overlay.select(0);
     overlay.update(0, HOLD_FULL_COUNTDOWN_DURATION_MS);
     expect(scene.getPlayer()!.hasWeapon('dual')).toBe(true);
+  });
+
+  it('the overlay lists the permanent loadout and ignores field pickups (AH-0MVCRKAPL000L68Y)', async () => {
+    const scene = await bootPlay();
+    const player = scene.getPlayer()!;
+    // Permanent grants only: these are the run's real loadout.
+    player.equipWeapon('spread', true);
+    player.equipWeapon('spread', true); // permanent Lv.2
+    player.collectPowerUp('shield', true); // permanent Lv.1
+    // Field pickups are temporary: they must neither appear in the panel nor
+    // inflate a displayed permanent level.
+    player.equipWeapon('rapid'); // temporary only
+    player.collectPowerUp('bomb'); // temporary only
+    player.equipWeapon('spread'); // temporary stack on an owned weapon
+
+    scene.openMineralChoice();
+    await advanceGame(booted!.game, 80);
+    const overlay = booted!.game.scene.getScene(
+      'MineralChoiceScene',
+    ) as MineralChoiceScene;
+
+    // Weapons first, then power-ups; the temporary `rapid`/`bomb` are absent
+    // and `spread` shows its permanent level 2, not 3.
+    expect(overlay.getOwnedUpgradeLines()).toEqual([
+      'Spread Shot Lv.2',
+      'Shield Lv.1',
+    ]);
   });
 
   it('a chosen power-up is applied permanently for the run', async () => {

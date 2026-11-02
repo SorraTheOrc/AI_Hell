@@ -22,7 +22,8 @@
 // Phaser/DOM), so the store gains one dependency and the default cannot drift
 // from the gameplay value (AH-0MVT1DYO5004UC4P).
 import { DEFAULT_MINERAL_HOLD_CAPACITY } from './rules';
-import type { PowerUpId } from '../powerups/types';
+import { isWithinSlotPool, resolveSlotState } from '../powerups/slots';
+import type { DropId, PowerUpId } from '../powerups/types';
 import type { WeaponId } from '../utils/weapons';
 
 /** localStorage key for the run checkpoint. */
@@ -34,11 +35,14 @@ export const CHECKPOINT_STORAGE_KEY = 'ai_hell_checkpoint';
  * - **v1** — original payload (AH-0MVCRBTNF000DK51).
  * - **v2** — adds {@link Checkpoint.mineralHoldCapacity} so Continue keeps the
  *   hold-capacity progression the run had earned (AH-0MVT1DYO5004UC4P).
- *   Legacy v1 payloads have no field and load with the first-hold default;
- *   migration is decided by field presence, so the version itself is
- *   informational (it is stamped with the current value on parse).
+ * - **v3** — **removes `unlockedWeapons`**: the mini-boss reward became the
+ *   upgrade wheel, so the run-scoped weapon-unlock feature no longer exists
+ *   (parent AH-0MVLISU03006WDOD AC5). A payload stamped with any other
+ *   version is rejected outright (see {@link parseCheckpoint}), so a stale
+ *   pre-wheel checkpoint can never resume a run whose reward surface has
+ *   changed underneath it.
  */
-export const CHECKPOINT_VERSION = 2;
+export const CHECKPOINT_VERSION = 3;
 
 /** One persisted weapon's permanent level. */
 export interface CheckpointWeaponLevel {
@@ -85,8 +89,6 @@ export interface Checkpoint {
   weaponLevels: CheckpointWeaponLevel[];
   /** Permanent power-up levels owned at the checkpoint. */
   powerUpLevels: CheckpointPowerUpLevel[];
-  /** Weapons unlocked through mini-boss rewards. */
-  unlockedWeapons: WeaponId[];
   /** The run's RNG seed, so a resumed run stays reproducible. */
   runSeed: number;
   /** ISO timestamp of when the checkpoint was written. */
@@ -141,6 +143,16 @@ export function parseCheckpoint(raw: unknown): Checkpoint | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const value = raw as Record<string, unknown>;
 
+  // Strict schema gate (parent AH-0MVLISU03006WDOD AC5). The mini-boss reward
+  // rework removed the `unlockedWeapons` field, so a payload from another
+  // schema version cannot be interpreted faithfully: it is rejected as "no
+  // checkpoint" (never migrated, never thrown), which is exactly the clean
+  // rejection the version bump promises.
+  const version = value.version;
+  if (!isFiniteNumber(version) || version !== CHECKPOINT_VERSION) {
+    return null;
+  }
+
   const level = value.level;
   if (!isFiniteNumber(level) || level < MIN_LEVEL || level > MAX_LEVEL) {
     return null;
@@ -177,11 +189,6 @@ export function parseCheckpoint(raw: unknown): Checkpoint | null {
     mineralHoldCapacity,
     weaponLevels: toLevelList<WeaponId>(value.weaponLevels, () => true),
     powerUpLevels: toLevelList<PowerUpId>(value.powerUpLevels, () => true),
-    unlockedWeapons: Array.isArray(value.unlockedWeapons)
-      ? value.unlockedWeapons.filter(
-          (id): id is WeaponId => typeof id === 'string',
-        )
-      : [],
     runSeed,
     savedAt:
       typeof value.savedAt === 'string' ? value.savedAt : new Date(0).toISOString(),
@@ -215,6 +222,49 @@ export function loadCheckpoint(
 }
 
 /**
+ * Bounds a checkpoint's permanent grants to the shared six-slot pool
+ * (AH-0MVVJS34M00551ES AC1, parent AH-0MVVF0POV001JNKX AC2).
+ *
+ * A checkpoint is written from a capped run, so in normal play every entry
+ * already fits and this is a no-op. It is the **save-side gate** that makes the
+ * resume surface safe: whatever a caller hands in — a legacy in-memory state, a
+ * bug-induced over-cap loadout, a migrated payload — the persisted payload
+ * never names more counted kinds than a run can hold, so `Continue` can never
+ * restore a seventh.
+ *
+ * Entries are admitted in payload order through the shared predicate
+ * ({@link isWithinSlotPool}), the same one the drop draw, collection gate and
+ * choice use:
+ *
+ * - a kind already admitted (or exempt / slot-exempt) is kept with **all** its
+ *   levels — levelling a held kind never opens a slot;
+ * - a kind that would take the pool past {@link POWER_UP_SLOT_CAP} is dropped
+ *   entirely (its levels would change the run's effects, so a partial keep is
+ *   not an option).
+ *
+ * The gate deliberately does **not** run on load: the replay must reproduce the
+ * saved run exactly for HUD/effect parity (AH-0MVSHI07B003BZIP), and a
+ * hand-written `localStorage` payload is not a play surface. The documented
+ * divergence is recorded in GDD §4.4 and `docs/BALANCING.md`.
+ *
+ * @param checkpoint - The checkpoint a caller wants to persist.
+ * @returns A copy whose permanent grants fit the six-slot pool.
+ */
+export function capCheckpointLoadout(checkpoint: Checkpoint): Checkpoint {
+  const weaponLevels: CheckpointWeaponLevel[] = [];
+  const powerUpLevels: CheckpointPowerUpLevel[] = [];
+  for (const entry of checkpoint.weaponLevels) {
+    const state = resolveSlotState(powerUpLevels, weaponLevels);
+    if (isWithinSlotPool(entry.id as DropId, state)) weaponLevels.push(entry);
+  }
+  for (const entry of checkpoint.powerUpLevels) {
+    const state = resolveSlotState(powerUpLevels, weaponLevels);
+    if (isWithinSlotPool(entry.id as DropId, state)) powerUpLevels.push(entry);
+  }
+  return { ...checkpoint, weaponLevels, powerUpLevels };
+}
+
+/**
  * Persists a checkpoint (overwriting any previous one).
  *
  * @param checkpoint - The checkpoint to store.
@@ -227,9 +277,12 @@ export function saveCheckpoint(
 ): boolean {
   if (!storage) return false;
   try {
+    // Save-side six-slot gate: the persisted payload can never name more
+    // counted kinds than a run may hold (AH-0MVVJS34M00551ES AC1).
+    const bounded = capCheckpointLoadout(checkpoint);
     storage.setItem(
       CHECKPOINT_STORAGE_KEY,
-      JSON.stringify({ ...checkpoint, version: CHECKPOINT_VERSION }),
+      JSON.stringify({ ...bounded, version: CHECKPOINT_VERSION }),
     );
     return true;
   } catch {

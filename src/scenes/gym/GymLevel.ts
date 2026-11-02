@@ -96,6 +96,7 @@
 import Phaser from 'phaser';
 
 import { CombatScene, type CombatDrop } from '../core/CombatScene';
+import { gymBackgroundLevel } from './core/gymBackground';
 import { pushAimTargets, pushSeekTargets } from '../core/enemyTargeting';
 import { advancePlayerBullets, advanceWrappingBullets } from '../core/bulletLifecycle';
 import {
@@ -151,9 +152,9 @@ import { LEVELS } from '../../waves/Formations';
 import { playSpawnSound } from '../../audio/effects';
 import { addBackToIndexButton, addBackToMenuOnEsc } from '../../utils/gymNavigation';
 import type { WasdKeysLike } from '../../utils/input';
-import type { WeaponId } from '../../utils/weapons';
 import { EffectsRegistry } from '../../powerups/effects';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { Mineral } from '../../entities/Mineral';
 import { Asteroid } from '../../entities/Asteroid';
 import { Centipede } from '../../entities/Centipede';
@@ -863,8 +864,16 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
 
   // ── Scene creation ───────────────────────────────────────────────
 
+  /** Gym family background decision: fixed representative level, no warp. */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(): void {
     this.resetRunState();
+    // Shared background layer at the gym family's pinned level (see
+    // `core/gymBackground.ts`, AH-0MVSEC0J0004YNJC).
+    this._createSceneBackground();
     // `resetRunState()` zeroes the wave cursor; restore a setup's start wave
     // before the first wave is spawned so the captured window opens on it.
     if (this.pendingStartWaveIndex > 0 && this.wavesToPlay.length > 0) {
@@ -1525,11 +1534,13 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this.dropSpawnTimer = this.dropSpawnInterval;
     this.asteroidExtraLifeDropChance = rules.asteroidExtraLifeDropChance;
 
-    this.hud = new HUD(this, this.getEffectsRegistry(), {
-      showLives: true,
-      getWeaponLevel: (id) =>
-        this.getPlayer()?.getWeaponLevel(id as WeaponId) ?? 0,
-    });
+    // Weapon levels and the six-slot state come from the one shared HUD
+    // wiring (AH-0MVVJRRN10038VFR AC4).
+    this.hud = new HUD(
+      this,
+      this.getEffectsRegistry(),
+      combatHudOptions(() => this.getPlayer(), { showLives: true }),
+    );
 
     this.seedMinerals(GYM_LEVEL_MINERAL_SEED_COUNT);
     this._syncMineralHud();
@@ -1643,7 +1654,7 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
         this.minerals,
         this.getPlayer(),
         absorbers,
-        () => this._collectMineral(),
+        (mineral) => this._collectMineral(mineral),
         { playerPhased: this.isPlayerPhased() },
       );
     }
@@ -1660,9 +1671,13 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
     this._syncMineralHud();
   }
 
-  /** Collects a mineral into the shared hold, resolving it when full. */
-  private _collectMineral(): void {
-    this.mineralHold.collect();
+  /**
+   * Collects a mineral into the shared hold, crediting its **worth** (1 for an
+   * ordinary dot, `MINERAL_DEPOSIT_VALUE` = 10 for a red deposit —
+   * AH-0MVJ79739008396I), and resolves it when full.
+   */
+  private _collectMineral(mineral: Mineral): void {
+    this.mineralHold.collect(mineral.value);
     if (this.mineralHold.isFull) this._resolveMineralHold();
   }
 
@@ -2163,6 +2178,20 @@ export class GymLevel extends CombatScene<EnemyEntity, GymLevelBullet> {
   /** Live power-up/weapon drops on the field (copy). */
   getDrops(): CombatDrop[] {
     return [...this.drops];
+  }
+
+  /**
+   * The level-resolved supply cadence the drop layer currently uses (seconds).
+   *
+   * Exposes the *resolved* value — `rules.powerUpSpawnInterval /
+   * dropChanceRatio(level, rules)` (see {@link _resolveSupplyInterval}) — so a
+   * parity test can pin the cadence the gym applies without waiting a whole
+   * level-10 interval (≈45 s) of simulated play, during which an autonomous
+   * scene may legitimately re-derive it (e.g. `GymBotTuning` starting a fresh
+   * random level on completion) (AH-0MVWOERDM000YZN0).
+   */
+  getDropSpawnInterval(): number {
+    return this.dropSpawnInterval;
   }
 
   /** Cumulative minerals seeded since the level started. */

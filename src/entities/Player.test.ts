@@ -18,7 +18,7 @@ import { seedConfigStore } from '../core/configStore';
 import { WEAPON_TIMEOUT_MS } from '../core/constants';
 import { DEFAULT_RULES, RULES_STORAGE_KEY, saveRules } from '../core/rules';
 import { createBeatClock, isOnGrid } from '../utils/beat';
-import { isOnBeatGrid, WEAPON_CATALOGUE } from '../utils/weapons';
+import { isOnBeatGrid, WEAPON_CATALOGUE, type WeaponId } from '../utils/weapons';
 import { resolveWeaponAtLevel } from '../utils/weaponLevels';
 import { Player } from './Player';
 import { GymPlayer } from '../scenes/gym/GymPlayer';
@@ -958,6 +958,68 @@ describe('Player ship entity', () => {
       expect(player.hasWeapon('dual')).toBe(true); // permanent, never expires
     });
 
+    // The reverse order (AH-0MVUGI4IC006PUS5, AC2/AC3/AC4): a hold-full reward
+    // landing while a field-pickup window is open must not strand the
+    // temporary stack. The weapon strategy is **immediate clear at grant
+    // time** (the weapon's window is carried by its timer, and a permanent
+    // weapon has no window at all), so the level settles on the permanent
+    // grant immediately and stays there.
+    for (const weaponId of ['spread', 'dual', 'rapid'] as const) {
+      it(
+        `permanent grant mid-window clears the temporary stack at grant time (${weaponId})`,
+        async () => {
+          const player = await freshPlayer();
+
+          // A field pickup opens the 10 s window and adds a temporary stack.
+          player.equipWeapon(weaponId);
+          expect(player.getTempWeaponStacks(weaponId)).toBe(1);
+          expect(player.getWeaponLevel(weaponId)).toBe(1);
+
+          // A hold-full reward lands while the window is still open.
+          player.equipWeapon(weaponId, true);
+          const permanentLevel = player.getPermanentWeaponLevel(weaponId);
+          expect(permanentLevel).toBe(1);
+
+          // AC4 — the chosen strategy: the temporary stack is cleared **at
+          // grant time** rather than left to a window the weapon timer no
+          // longer tracks. The effective level is unchanged by the clear.
+          expect(player.getTempWeaponStacks(weaponId)).toBe(0);
+          expect(player.getWeaponLevel(weaponId)).toBe(permanentLevel);
+
+          // AC3 — the permanent weapon is still active, primary and armed.
+          expect(player.hasWeapon(weaponId)).toBe(true);
+          expect(player.getEquippedWeapon()).toBe(weaponId);
+          expect(player.getNextShotTime(weaponId)).toBeDefined();
+
+          // AC2 — ticking the weapon timers far beyond the window cannot
+          // resurrect or strand a temporary component.
+          player.tickWeaponTimers(WEAPON_TIMEOUT_MS * 10);
+          expect(player.getWeaponLevel(weaponId)).toBe(permanentLevel);
+          expect(player.getTempWeaponStacks(weaponId)).toBe(0);
+          expect(player.hasWeapon(weaponId)).toBe(true);
+          expect(player.getNextShotTime(weaponId)).toBeDefined();
+        },
+      );
+    }
+
+    it('drops a temporary stack that has no window left to expire it (defensive guard)', async () => {
+      const player = await freshPlayer();
+      player.equipWeapon('dual');
+      expect(player.getTempWeaponStacks('dual')).toBe(1);
+
+      // Simulate a future third write path that adds a temporary stack but
+      // forgets the window that expires it (only `equipWeapon` may add both).
+      (player as unknown as { _weaponTimers: Map<WeaponId, number> })
+        ._weaponTimers.delete('dual');
+
+      // The next timer tick reconciles the orphan instead of letting it
+      // become a permanent level for the rest of the run.
+      player.tickWeaponTimers(1);
+
+      expect(player.getTempWeaponStacks('dual')).toBe(0);
+      expect(player.getWeaponLevel('dual')).toBe(0);
+    });
+
     it('getWeaponDef returns a level-resolved definition and never mutates the base (AC4)', async () => {
       const player = await freshPlayer();
       const base = WEAPON_CATALOGUE.rapid;
@@ -1169,8 +1231,15 @@ describe('Player ship entity', () => {
       player.collectPowerUp('shield', true);
       player.collectPowerUp('speed_boost', true);
 
-      expect(player.getPowerUpLevels()).toEqual([
-        { id: 'shield', level: 2 },
+      // Shield is a **consumable**: a hold-full reward banks a charge and owns
+      // the kind but never levels it (parent AH-0MVTQMREN009DSFW AC1), so it
+      // appears once at its base level while speed_boost levels normally.
+      // Order follows the store's snapshot (permanent levels first, then
+      // owned consumables), so compare as a set.
+      expect(
+        [...player.getPowerUpLevels()].sort((a, b) => a.id.localeCompare(b.id)),
+      ).toEqual([
+        { id: 'shield', level: 1 },
         { id: 'speed_boost', level: 1 },
       ]);
 
@@ -1193,11 +1262,15 @@ describe('Player ship entity', () => {
     it('resetPowerUpLevels clears both permanent and temporary levels (run restart)', async () => {
       const player = await freshPlayer();
       const store = player.getPowerUpLevelStore();
-      player.collectPowerUp('shield', true); // permanent grant
+      player.collectPowerUp('shield', true); // hold-full: owned + one charge
       player.collectPowerUp('shield'); // temporary stack
       player.collectPowerUp('phase_shift'); // temporary only
-      expect(store.getEffectiveLevel('shield')).toBe(2);
-      expect(store.getPermanentLevel('shield')).toBe(1);
+      // A consumable's hold-full reward never raises the level (parent
+      // AH-0MVTQMREN009DSFW AC1): the field pickup is the only level here.
+      expect(store.getEffectiveLevel('shield')).toBe(1);
+      expect(store.getPermanentLevel('shield')).toBe(0);
+      expect(store.isConsumableOwned('shield')).toBe(true);
+      expect(store.consumableCharges('shield')).toBe(1);
       expect(store.getTempStacks('shield')).toBe(1);
 
       player.resetPowerUpLevels();

@@ -53,8 +53,14 @@ export interface MineralAbsorbingEnemy {
   readonly alive: boolean;
   /** Circle radius used for mineral overlap. */
   getHitRadius(): number;
-  /** Tallies an absorbed mineral on the enemy. */
-  collectMineral(): void;
+  /**
+   * Tallies an absorbed mineral on the enemy. `value` is the mineral's worth
+   * (1 for an ordinary dot, {@link MINERAL_DEPOSIT_VALUE} for a red deposit —
+   * AH-0MVJ79739008396I), so absorbing a deposit counts as ten minerals and
+   * the enemy's own later re-drop can itself resolve at the deposit
+   * threshold.
+   */
+  collectMineral(value?: number): void;
 }
 
 /** Scene host whose player can collect minerals (structural minimum). */
@@ -101,6 +107,12 @@ export interface MineralCollectionOptions {
  *
  * `enemies` must contain only mineral-absorbing archetypes: the caller
  * excludes asteroids (inert) and any entity without `collectMineral`.
+ *
+ * Absorption credits the mineral's **worth** (`mineral.value`): 1 for an
+ * ordinary dot, {@link MINERAL_DEPOSIT_VALUE} for a red deposit, so a deposit
+ * is absorbed as ten minerals in one overlap (AH-0MVJ79739008396I). The player
+ * pickup callback receives the same mineral, so the collecting scene credits
+ * its value too.
  *
  * When `options.playerPhased` is true the player collects nothing this pass
  * (Phase Shift pass-through gates mineral pickup — Q7); the minerals survive unless
@@ -161,7 +173,7 @@ export function collectMinerals<TEnemy extends MineralAbsorbingEnemy>(
           enemy.getHitRadius(),
         )
       ) {
-        enemy.collectMineral();
+        enemy.collectMineral(mineral.value);
         mineral.handleOverlap('enemy');
         absorbed = true;
         break;

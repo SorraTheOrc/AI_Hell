@@ -14,6 +14,77 @@ concurrently, and each run spawns fork workers over the shared
 meaningless** — the epic's AC3/AC5 comparisons are only valid when taken
 under the same (ideally idle) load and recorded alongside the numbers.
 
+## Run verification suites in an isolated worktree, never in the shared main checkout
+
+A full-suite result is only trustworthy if the checkout did **not** move while
+the suite ran. The shared main checkout *does* move: another session's
+`implement.py finish` fast-forwards its local `dev` ref (and working tree)
+straight after that session pushes. A run that spans such a fast-forward loads
+the post-change test file against the pre-change source module (or the reverse)
+and can report failures against a commit that never existed.
+
+Observed (AH-0MVVE2QFP002HSUD, 2026-10-30): a `--scope full` run started in the
+main checkout at `147f4991` (19:47:49Z) and was fast-forwarded to `40314aeb`
+mid-run. It reported 4 failures in `src/utils/bulletVisuals.test.ts` — the
+strengthened-shard assertions added by `40314aeb` run against the pre-change
+`bulletVisuals.ts` — and minted the critical `test-failure` item
+AH-0MVVE2QFP002HSUD. Re-running the same suite in a clean worktree at
+`40314aeb` was green (355 files / 8,191 tests).
+
+Framework-side detection of this mixed state (`state_changed_during_run`,
+never cached, never triaged) is tracked in `SA-0MVL2NH1G0094FA2` (from
+AH-0MVSRO0MM004T450). Until that ships in the installed skill tree, the
+operational rule is:
+
+- Run verification suites (any run whose result you will trust or cache) from
+the work item's worktree under `.worklog/worktrees/`, not from the shared main
+checkout.
+- Treat a red result whose failing test file is newer than the source it
+exercises — or whose run started and finished on different commits — as a
+**mixed-state** artefact, not a defect: re-run from a clean worktree before
+triaging or filing a `test-failure` item.
+
+## Tracked-CSV write safety in tests
+
+The suite must never write the tracked config CSVs (`src/data/ship-config.csv`,
+`enemy-configs.csv`, `difficulty-curves.csv`) in **any** checkout — not the
+active worktree, and above all not the shared main checkout (which a worktree
+suite could reach through a stray dev server: the store issues **relative**
+`/api/csv/...` fetches, and happy-dom resolves those against
+`http://localhost:3000`). A leaked write both trips the implement dirty-tree
+gate on later sessions and can silently clobber an operator's tuned config
+(AH-0MVKYQWSW0067F12). Four layers enforce it; keep all four when adding tests:
+
+1. **Plugin root isolation** (`vite/plugins/configCsvPlugin.ts`): the root comes
+   from the Vite-resolved `server.config.root` (explicit `root` option for
+   fixtures), never `process.cwd()`, and any target that escapes it is refused
+   with **403** before any I/O.
+2. **Store test-mode guard** (`configStore.isTestMode()`): under vitest
+   (`MODE === 'test'`) `saveShipConfig` / `saveEnemyConfig` /
+   `saveDifficultyCurves` are registry-only — no fetch, no disk I/O. A test that
+   wants the *real* write path (e.g. the plugin/temp-root pipeline) must pin
+   `vi.stubEnv('MODE', 'development')` and install the bridge (below).
+3. **Default CSV fetch guard** (`src/test/csvFetchBridge.ts`, installed by
+   `src/test/setup.ts` for the integration project): non-CSV requests pass
+   through, but an un-bridged `/api/csv/...` fetch **rejects without network
+   I/O**, naming the calling test file and the remedy. A test exercising real
+   CSV traffic opts in with `installCsvFetchBridge(baseUrl)` — a per-test
+   `vi.stubGlobal`, restored by `vi.unstubAllGlobals()`. Note the bridge crosses
+   origins (`localhost:3000` → `127.0.0.1:<port>`), so a bridged test server
+   must answer with permissive CORS headers; a real dev server is same-origin
+   and needs none. Tests that replace `fetch` themselves are unaffected (their
+   stub is the global, so the guard is never consulted).
+4. **Suite-run tracked-CSV guard** (`src/test/trackedCsvGuard.globalSetup.ts`,
+   registered for both projects in `vitest.config.ts`): sha256-hashes the three
+   tracked CSVs in the active checkout **and** the main checkout (located via
+   `git rev-parse --git-common-dir`) at suite start and fails the run on
+   teardown if any changed. It degrades safely outside git (active checkout
+   only) and never writes the watched files.
+
+When a run reports the guard, restore the file in the offending checkout and
+fix the writer — never stash or revert another session's work without
+permission.
+
 ## Current state (post-split, deterministic boot default)
 
 Since child AH-0MVF6XQIC005RY3P the harness boots **deterministically by
@@ -22,6 +93,43 @@ fixed-delta `game.step` calls instead of a `setTimeout(150)` wall-clock sleep,
 and the legacy real-time path is deleted (guarded by
 `src/test/deterministicBootGuard.test.ts`). Since AH-0MVF6VZG9000AN6E heavy
 suites may share one `Phaser.Game` shell per file via `createReusableBoot()`.
+The deterministic boot is **fixed-delta only**: it stops the live
+`requestAnimationFrame` loop for the fixed-delta steps and then **resumes** it
+(`src/test/gameHarness.ts`), because integration suites drive the scene
+themselves afterwards — more below.
+
+### PlayScene boots must also pin the run seed
+
+The harness contract above makes the *boot* deterministic, but it leaves two
+sources of variety to the caller, both of which made `src/scenes/PlayScene.test.ts`
+intermittently red under full-suite parallel load (AH-0MVX2DKC8001RRM4): the
+run seed (unseeded, `PlayScene.create()` draws a fresh one from
+`Math.random()`) and the **resumed** live loop (a real frame can run between a
+test's `await` points and advance wave timers or spawn release).
+
+So every `boot*` helper that boots a `PlayScene` must obtain its scene through
+the file's single shared helper, `bootDeterministic()` in
+`src/scenes/PlayScene.test.ts`, which (1) injects an explicit run seed via
+`setRunSeed` **before** the restart that `bootSceneWithLevels()` performs, and
+(2) calls `game.loop.stop()` after boot so no live frame runs while the test
+drives `tick(dt)`. It pins `DETERMINISTIC_RUN_SEED` (1) for every suite. For
+the exact boot/seed policy, when to use `setRunSeed` versus `setRng`, and how
+to reproduce a failure with a suspect seed, see the helper's doc comment. This is
+the same contract as the harness's: deterministic boot is the default, and a
+suite that needs a wall-clock-free, reproducible starting state composes the
+shared helper rather than booting raw (AH-0MVXWEE3L004SPTC).
+
+**Seed-dependent effect state no longer drives the boss-encounter exact
+counts (AH-0MVXXKCOZ003E1UH).** The seed pins the power-up drop rolls, so
+whether the player holds Frenzy at the boss *is* seed-determined — seeds
+`8`/`16`/`33`/`36`/`86` reproduce the boss phase-advance failure via an
+active `frenzy` bonus hit (`frenzyBonusHits() === 1`) that made each player
+bullet remove `1 + bonus` phase hits. The exact-count assertions therefore no
+longer **depend** on the pinned seed happening to avoid Frenzy: the
+`damageBossPhase()` test helper drives the phase boundary from observed boss
+state (`getPhaseNumber()`) instead of assuming one HP per bullet, and a
+dedicated Frenzy regression test pins the multi-hit condition fail-first, so
+a future seed/effect change cannot quietly re-introduce the overshoot.
 The suite is split (AH-0MVF6XV87001NSEJ) into `unit` (node env, no DOM/Phaser
 inline; the fast TDD loop) and `integration` (happy-dom + `src/test/setup.ts` +
 `deps.inline: ['phaser']`); the typed run commands below are registered as

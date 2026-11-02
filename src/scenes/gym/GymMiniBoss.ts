@@ -260,7 +260,8 @@ export class GymMiniBoss extends GymFormationScene<
    * `spawnMiniBossDeathSweep` helper: the mini-boss's live minions are
    * captured *before* the teardown (the entity clears them on destruction),
    * every captured target is removed cosmetically, and the staggered cascade
-   * plus the scattered/anchored celebration bursts play out. The gym has no
+   * plus the scattered/anchored celebration bursts — and the mini-boss's
+   * 20-burst finale, fired in pairs two every 0.25 s — play out. The gym has no
    * reward overlay or wave accounting, so completion only reports itself on
    * the status line — the same display the game shows, minus the reward.
    */

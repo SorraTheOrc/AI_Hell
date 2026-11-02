@@ -47,6 +47,7 @@
 import Phaser from 'phaser';
 
 import { CombatScene } from '../core/CombatScene';
+import { gymBackgroundLevel } from './core/gymBackground';
 import type { SceneSetupState } from '../core/sceneSetup';
 import type { CombatEnemyBullet } from '../core/CombatCoreScene';
 import { advancePlayerBullets } from '../core/bulletLifecycle';
@@ -169,10 +170,18 @@ export class GymPlayer extends CombatScene<Obstacle, CombatEnemyBullet> {
     super({ key: 'GymPlayer' });
   }
 
+  /** Gym family background decision: fixed representative level, no warp. */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(data?: SceneSetupState): void {
     // A stop/restart of the same instance must start clean — no stale ship,
     // obstacles, bullets or input bindings (AH-0MUII3FYN0072QRT, gap 10).
     this.resetRunState();
+    // Shared background layer at the gym family's pinned level (see
+    // `core/gymBackground.ts`, AH-0MVSEC0J0004YNJC).
+    this._createSceneBackground();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT / 2,

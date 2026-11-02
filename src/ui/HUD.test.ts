@@ -7,6 +7,9 @@ import {
   HUD_DEPTH,
   HUD_ROW_HEIGHT,
   PERMANENT_VALUE,
+  SLOT_BUDGET_NAME,
+  SLOT_MARKER_ALWAYS_AVAILABLE,
+  SLOT_MARKER_CHARGES_ONLY,
   buildHUDLabel,
   formatHUDValue,
   type HUDEntry,
@@ -17,6 +20,16 @@ import {
   PowerUpLevelStore,
   resolvePowerUpAtLevel,
 } from '../powerups/powerUpLevels';
+import { POWER_UP_SLOT_CAP } from '../core/constants';
+import { CONSUMABLE_POWER_UP_IDS, type PowerUpId } from '../powerups/types';
+import { resolvePlayerSlotState } from '../powerups/slots';
+import {
+  SIX_SLOT_LOADOUT_IDS,
+  buildSixSlotLoadout,
+  isSlotCountedKind,
+  slotCountedKinds,
+  type SixSlotLoadoutId,
+} from '../test/sixSlotLoadoutFixtures';
 
 
 /**
@@ -351,9 +364,13 @@ describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
     expect(row.label).toBe(
       `Shield Lvl 2 ×${reg.shieldAbsorptionsRemaining()}`,
     );
-    expect(row.value).toBe(
-      `${Math.ceil(resolvePowerUpAtLevel('shield', 1).shieldDuration!)}s`,
-    ); // active timed bubble
+    // The absorbed-hit pickup model (parent AH-0MVUVSW4J0009QUW AC3): a field
+    // pickup opens only a temporary-**level** window, so the value column
+    // renders the ∞ glyph — never a `Ns` cover the one-event charge alone
+    // cannot honour, even though a level window is genuinely open.
+    expect(reg.powerUpTemporaryRemaining('shield')).toBeGreaterThan(0);
+    expect(row.temporary).toBe(false);
+    expect(row.value).toBe(PERMANENT_VALUE);
 
     reg.tryAbsorbShield();
     hud.refresh();
@@ -364,22 +381,93 @@ describe('HUD P3 shield remaining absorptions (AH-0MUVM9RAO004Y3LB)', () => {
     destroy(game);
   });
 
-  it('drops the P3 row once the last absorption pops the shield', async () => {
+  it('greys the P3 row once the last charge is spent and hides it at the level TTL', async () => {
     const reg = new EffectsRegistry();
-    reg.applyCollect('shield'); // level 1 → 1 absorption
+    reg.applyCollect('shield'); // level 1 → 1 charge
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
     expect(hud.getRows().some((r) => r.id === 'shield')).toBe(true);
 
+    // Spending the last charge disarms the shield but the temporary level
+    // stack keeps the row visible (greyed) until its own TTL expires (parent
+    // AH-0MVUVSW4J0009QUW AC3).
     reg.tryAbsorbShield();
+    hud.refresh();
+    const row = hud.getRows().find((r) => r.id === 'shield')!;
+    expect(row).toBeDefined();
+    expect(row.greyed).toBe(true);
+
+    // The temporary-level TTL expiry releases the row (field-only rule).
+    reg.tick((reg.powerUpTemporaryRemaining('shield') ?? 0) + 0.1);
     hud.refresh();
     expect(hud.getRows().some((r) => r.id === 'shield')).toBe(false);
     destroy(game);
   });
 });
 
+describe('HUD pickup-row states for the budget kinds (AH-0MVVD8S4J007L8KX)', () => {
+  /** Spends one granted field-pickup charge through the kind's seam. */
+  function spendFieldCharge(reg: EffectsRegistry, id: PowerUpId): boolean {
+    switch (id) {
+      case 'thorns':
+        return reg.tryConsumeThornsRam();
+      case 'force_field':
+        return reg.tryConsumeForceFieldReflect();
+      default:
+        throw new Error(`no one-event spend seam for ${id}`);
+    }
+  }
+
+  // Shield's equivalent pickup-row states are pinned in the P3 describe above
+  // (charge count and no-window-countdown ∞ in the first test, greyed-empty
+  // and hide-at-TTL in the "greys the P3 row" test); these two kinds complete
+  // the per-kind set.
+  for (const id of ['thorns', 'force_field'] as PowerUpId[]) {
+    it(`${id}: shows the pickup charge, no phantom countdown, greyed empty and hides at the level TTL`, async () => {
+      const reg = new EffectsRegistry();
+      reg.applyCollect(id); // one pickup charge, no effect window
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      // The row carries exactly the granted charge; a pickup-only charge is
+      // never owed back, so no phantom countdown appears (Q-A1=b).
+      const armed = hud.getRows().find((r) => r.id === id)!;
+      expect(armed).toBeDefined();
+      expect(armed.stacks).toBe(1);
+      expect(armed.greyed).toBe(false);
+      expect(armed.recharge).toBeUndefined();
+      expect(armed.label).not.toContain('next in');
+      // The temporary level window is genuinely open, yet the row renders ∞:
+      // for the absorbed-hit kinds the pickup effect is the one granted
+      // charge, not a timed cover, so no window countdown may appear (parent
+      // AH-0MVUVSW4J0009QUW AC3).
+      expect(reg.powerUpTemporaryRemaining(id)).toBeGreaterThan(0);
+      expect(armed.temporary).toBe(false);
+      expect(armed.value).toBe(PERMANENT_VALUE);
+
+      // The one spent charge empties the pool: the temporary level stack
+      // keeps the row visible but greyed until its own TTL expires.
+      expect(spendFieldCharge(reg, id)).toBe(true);
+      hud.refresh();
+      const spent = hud.getRows().find((r) => r.id === id)!;
+      expect(spent).toBeDefined();
+      expect(spent.greyed).toBe(true);
+      expect(spent.stacks).toBeUndefined();
+      expect(spent.label).not.toContain('×0');
+      expect(spent.recharge).toBeUndefined(); // nothing is owed back
+      expect(spent.value).toBe(PERMANENT_VALUE); // greyed, still no countdown
+
+      // The temporary-level TTL expiry releases the row (field-only rule).
+      reg.tick((reg.powerUpTemporaryRemaining(id) ?? 0) + 0.1);
+      hud.refresh();
+      expect(hud.getRows().some((r) => r.id === id)).toBe(false);
+      destroy(game);
+    });
+  }
+});
+
 describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', () => {
-  it('shows a finite charge count in the label and ∞ when no phase is active', async () => {
+  it('shows a finite charge count in the label and a countdown while the pickup window is open', async () => {
     const reg = new EffectsRegistry();
     reg.applyCollect('phase_shift'); // level 1 → +1 charge
     reg.applyCollect('phase_shift'); // level 2 → +2 (level-derived grant)
@@ -388,7 +476,18 @@ describe('HUD P6 auto-activation charge display (parent AH-0MUIYX1EE008FVS8)', (
 
     const row = hud.getRows().find((r) => r.id === 'phase_shift')!;
     expect(row.label).toBe(`Phase Shift Lvl 2 ×${reg.phaseCharges()}`);
-    expect(row.value).toBe(PERMANENT_VALUE);
+    // A field pickup now opens a temporary level window, so the value is a
+    // countdown — not the infinity glyph (AH-0MVUGI448000GNMJ).
+    expect(row.temporary).toBe(true);
+    expect(row.value).toMatch(/s$/);
+
+    // Once the window expires the level is settled for the run and the value
+    // reverts to ∞, with the charge count still shown.
+    reg.tick(reg.powerUpTemporaryRemaining('phase_shift')! + 0.1);
+    hud.refresh();
+    const settled = hud.getRows().find((r) => r.id === 'phase_shift')!;
+    expect(settled.temporary).toBe(false);
+    expect(settled.value).toBe(PERMANENT_VALUE);
     destroy(game);
   });
 
@@ -654,6 +753,10 @@ describe('HUD label builder (AH-0MUX802450085VZZ)', () => {
 describe('HUD Thorn Field recharge countdown (AH-0MVJ8YKR70096C6T)', () => {
   it('shows the remaining rams plus the next-recharge countdown while recharging', async () => {
     const reg = new EffectsRegistry();
+    // Two hold-full grants fill the level-0 pool (cap 2): one charge is spent
+    // below, so the row still shows a remaining ram alongside the countdown
+    // (parent AH-0MVTQMREN009DSFW AC1).
+    reg.applyCollect('thorns', true);
     reg.applyCollect('thorns', true);
     reg.tryConsumeThornsRam();
     const { game, hud } = await bootWithHUD(reg);
@@ -859,21 +962,126 @@ describe('HUD AC5: reacts to registry changes', () => {
   });
 });
 describe('HUD Mystery UFO row (AH-0MV1BIXFO006Z1I7)', () => {
-  it('renders the catalogue row with the effective level once owned, independent of timed state', async () => {
+  it('renders a countdown while a field-pickup window is open and ∞ once settled', async () => {
     const reg = new EffectsRegistry();
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
-    expect(hud.getRows().some((r) => r.id === 'mystery_ufo')).toBe(false);
+    expect(hud.getRows().some((r) => r.id === 'mystery_ufo'), 'no row before pickup').toBe(false);
 
     reg.applyCollect('mystery_ufo');
     hud.refresh();
     const row = hud.getRows().find((r) => r.id === 'mystery_ufo')!;
-    expect(row).toBeDefined();
-    expect(row.name).toBe('Mystery UFO');
-    expect(row.label).toBe('Mystery UFO Lvl 1');
-    // No timed window → the row shows the infinity glyph, not a countdown.
-    expect(row.value).toBe(PERMANENT_VALUE);
-    expect(row.temporary).toBe(false);
+    expect(row, 'row defined after pickup').toBeDefined();
+    expect(row.name, 'row name').toBe('Mystery UFO');
+    expect(row.label, 'row label').toBe('Mystery UFO Lvl 1');
+    // A field pickup now opens a temporary level window → countdown, not the
+    // infinity glyph (AH-0MVUGI448000GNMJ).
+    expect(row.temporary).toBe(true);
+    expect(row.value).toMatch(/s$/);
+
+    // Expiry clears the temporary level, so a field-only row disappears.
+    reg.tick(reg.powerUpTemporaryRemaining('mystery_ufo')! + 0.1);
+    hud.refresh();
+    expect(hud.getRows().some((r) => r.id === 'mystery_ufo'), 'row gone after expiry').toBe(false);
+
+    // A hold-full reward is permanent and opens no window → ∞.
+    reg.applyCollect('mystery_ufo', true);
+    hud.refresh();
+    const permanent = hud.getRows().find((r) => r.id === 'mystery_ufo')!;
+    expect(permanent, 'permanent row defined').toBeDefined();
+    expect(permanent.temporary, 'permanent row not temporary').toBe(false);
+    expect(permanent.value, 'permanent row value').toBe(PERMANENT_VALUE);
+    destroy(game);
+  });
+});
+
+describe('HUD temporary window on the newly windowed kinds (AH-0MVUGI4WG008HU3M AC3)', () => {
+  /**
+   * The one-shot kinds that show a row only while permanently owned. A field
+   * pickup on top of the permanent base opens a temporary level window, so the
+   * row must read a live countdown and then settle back to `∞`; a field-only
+   * pickup must still leave no row (the parent's row-visibility rule).
+   */
+  const PERMANENT_ROW_KINDS = ['bomb', 'smart_bomb', 'strike'] as const;
+
+  /** Parses the whole-second countdown out of a `Ns` value column. */
+  function countdownSeconds(value: string): number {
+    expect(value).toMatch(/^\d+s$/);
+    return Number.parseInt(value, 10);
+  }
+
+  for (const id of PERMANENT_ROW_KINDS) {
+    it(`${id}: a permanent row counts down during a field window, then reads ∞`, async () => {
+      const reg = new EffectsRegistry();
+      reg.applyCollect(id, true); // permanent base → row, ∞
+      reg.applyCollect(id, false); // field pickup → temporary level window
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      const during = hud.getRows().find((r) => r.id === id)!;
+      expect(during).toBeDefined();
+      expect(during.temporary).toBe(true);
+      const opened = countdownSeconds(during.value);
+      expect(opened).toBeGreaterThan(0);
+
+      // The countdown is live, not a frozen snapshot.
+      reg.tick(1);
+      hud.refresh();
+      const ticked = hud.getRows().find((r) => r.id === id)!;
+      expect(countdownSeconds(ticked.value)).toBe(opened - 1);
+
+      // Expiry reverts the temporary level: the permanent base keeps the row
+      // and the value settles on ∞.
+      reg.tick(reg.powerUpTemporaryRemaining(id)! + 0.1);
+      hud.refresh();
+      const settled = hud.getRows().find((r) => r.id === id)!;
+      expect(settled.temporary).toBe(false);
+      expect(settled.value).toBe(PERMANENT_VALUE);
+      destroy(game);
+    });
+
+    it(`${id}: a field-only pickup opens a window but leaves no row`, async () => {
+      const reg = new EffectsRegistry();
+      reg.applyCollect(id, false);
+      expect(reg.powerUpTemporaryRemaining(id)).toBeGreaterThan(0);
+
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      expect(hud.getRows().some((r) => r.id === id)).toBe(false);
+      destroy(game);
+    });
+  }
+
+  // Teleport's row is kept visible by the stored-use pool, so a field-only
+  // pickup counts down and then settles on `∞` even though the level reverted
+  // to zero — the consumable itself persists (AC1 + AC3 together).
+  it('teleport: the row counts down during the field window, then reads ∞', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyCollect('teleport', false); // field pickup: temp level + 1 stored use
+    expect(reg.teleportStacks()).toBeGreaterThan(0);
+
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const during = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(during.temporary).toBe(true);
+    const opened = countdownSeconds(during.value);
+
+    reg.tick(1);
+    hud.refresh();
+    const teleportValue = () =>
+      hud.getRows().find((r) => r.id === 'teleport')!.value;
+    expect(countdownSeconds(teleportValue())).toBe(opened - 1);
+
+    reg.tick(reg.powerUpTemporaryRemaining('teleport')! + 0.1);
+    hud.refresh();
+    const settled = hud.getRows().find((r) => r.id === 'teleport')!;
+    expect(settled.temporary).toBe(false);
+    expect(settled.value).toBe(PERMANENT_VALUE);
+    // The level reverted but the stored use survived, so the row remains.
+    expect(reg.powerUpLevel('teleport')).toBe(0);
+    expect(reg.teleportStacks()).toBeGreaterThan(0);
     destroy(game);
   });
 });
@@ -1020,6 +1228,32 @@ describe('HUD weapon rows (AH-0MU3VOQKH005YOBH)', () => {
     expect(hudTexts(hud)).toContain(PERMANENT_VALUE);
     destroy(game);
   });
+
+  it('a permanent grant mid-window reads ∞ immediately (AC3)', async () => {
+    const reg = new EffectsRegistry();
+    reg.applyWeapon('spread'); // field pickup: countdown
+    let level = 1;
+    const { game, hud } = await bootWithHUD(reg, {
+      getWeaponLevel: () => level,
+    });
+    hud.refresh();
+    expect(hudTexts(hud)).toContain('10s');
+
+    // The hold-full reward lands while the 10 s window is still open. The
+    // weapon strategy clears the temporary component at grant time, so the
+    // level settles on the permanent grant and the row shows ∞ with no
+    // countdown left behind (AH-0MVUGI4IC006PUS5).
+    reg.applyWeapon('spread', true);
+    hud.refresh();
+    expect(hudTexts(hud)).toContain('Weapon: spread Lvl 1');
+    expect(hudTexts(hud)).toContain(PERMANENT_VALUE);
+    expect(hudTexts(hud).filter((t) => t === '10s')).toHaveLength(0);
+
+    reg.tick(10.1);
+    hud.refresh();
+    expect(hudTexts(hud)).toContain(PERMANENT_VALUE);
+    destroy(game);
+  });
 });
 
 describe('HUD weapon level readout (parent AH-0MUPMPCB2009J54J)', () => {
@@ -1066,6 +1300,394 @@ describe('HUD weapon level readout (parent AH-0MUPMPCB2009J54J)', () => {
     const { game, hud } = await bootWithHUD(reg);
     hud.refresh();
     expect(hudTexts(hud)).toContain('Weapon: rapid Lvl 0');
+    destroy(game);
+  });
+});
+
+// ── HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49) ──────────────────
+//
+// **TEST-FIRST contract for child F2 (AH-0MVVJRRN10038VFR).** The RCA
+// (parent AH-0MVVF0POV001JNKX) established that the cap is enforced but the
+// HUD renders rows per `EffectsRegistry` visibility, never per slot: a held
+// temporary Strike shows no row (tick 4540 → 5 rows for 6 slots) and a
+// slot-exempt Mystery UFO plus a residual Phase Shift charge pool add rows
+// that hold no slot (tick 5899 → 7 rows for 5 slots).
+//
+// The fixtures in `src/test/sixSlotLoadoutFixtures.ts` replay those two
+// recorded states plus an ordinary below-cap loadout through the real shared
+// seams. This block pins the seam F2 implements — read by name until it
+// exists, per the repository's test-first convention (see the grey-out and
+// Orbital Strike suites above):
+//
+// - `HUDOptions.getSlotState?: () => PowerUpSlotState | null` — the one seam
+//   the shared scene layer supplies (game and every gym alike);
+// - `HUD.getSlotBudget(): { used, cap }` — the slot read-out;
+// - `HUD.getLoadoutRows(): { id, label, slotCounted }[]` — every rendered row
+//   (power-up **and** weapon) with its slot classification, so a non-slot row
+//   can be marked rather than silently counted as equipped.
+//
+// F2 (AH-0MVVJRRN10038VFR) landed the seam, so every case below is a plain
+// `it(...)` — the `it.fails` pins that drove the test-first implementation have
+// been flipped (the established convention — see `HUD grey-out …
+// AH-0MV82I8VA008LX0R` above).
+
+/** Boots a HUD over one committed loadout with the live slot-state seam. */
+async function bootHudForLoadout(id: SixSlotLoadoutId) {
+  const { game, scene } = await bootScene([BareScene]);
+  const loadout = buildSixSlotLoadout(scene, id);
+  const options: HUDOptions = {
+    // The scene-supplied seam: the HUD never counts slots itself.
+    getSlotState: () => resolvePlayerSlotState(loadout.player),
+  };
+  const hud = new HUD(scene, loadout.registry, options);
+  hud.refresh();
+  return { game, hud, loadout };
+}
+
+/** Asserts every active weapon really has a rendered row (not just a model entry). */
+function expectWeaponRowsRendered(hud: HUD, registry: EffectsRegistry): void {
+  const texts = hudTexts(hud);
+  for (const weapon of registry.activeWeapons()) {
+    expect(
+      texts.some((text) => text.startsWith(`Weapon: ${weapon.weaponId} `)),
+    ).toBe(true);
+  }
+}
+
+/**
+ * Ids of every row the HUD renders today: power-up rows (`getRows()`) plus the
+ * active weapon rows it draws after them. An independent projection of the
+ * rendered loadout, so the counting assertion cannot agree with the HUD by
+ * construction.
+ */
+function renderedRowIds(hud: HUD, registry: EffectsRegistry): string[] {
+  expectWeaponRowsRendered(hud, registry);
+  return [
+    ...hud.getRows().map((row) => row.id),
+    ...registry.activeWeapons().map((weapon) => weapon.weaponId),
+  ];
+}
+
+describe('HUD ↔ six-slot agreement (AH-0MVVJRFDV007OI49)', () => {
+  it('below-cap mixed loadout: slot-counted rows equal the model and stay under the cap', async () => {
+    const { game, hud, loadout } = await bootHudForLoadout('below-cap-mixed');
+    const state = resolvePlayerSlotState(loadout.player);
+    const rowIds = renderedRowIds(hud, loadout.registry);
+    destroy(game);
+
+    const counted = rowIds.filter((rowId) =>
+      isSlotCountedKind(rowId, state),
+    );
+    expect(state.used).toBe(4);
+    expect(counted).toHaveLength(state.used);
+    expect(counted.length).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+    // The exempt Mystery UFO row is rendered, but it never counts (Q7a).
+    expect(rowIds).toContain('mystery_ufo');
+    expect(counted).not.toContain('mystery_ufo');
+  });
+
+  it('tick 4540 fixture: the slot-counted rows match the six held slots', async () => {
+    const { game, hud, loadout } = await bootHudForLoadout(
+      'six-slots-five-rows',
+    );
+    const state = resolvePlayerSlotState(loadout.player);
+    const rowIds = renderedRowIds(hud, loadout.registry);
+    const counted = rowIds.filter((rowId) => isSlotCountedKind(rowId, state));
+    destroy(game);
+
+    // Six slot-counted kinds are held (mineral_scoop, strike, heavy_slug,
+    // mortar, rapid, shard_swarm). The temporary Strike used to render no row
+    // (5 rows for 6 slots); every slot-held kind now gets a row, so the list
+    // agrees with the model instead of under-reporting it.
+    expect(state.used).toBe(POWER_UP_SLOT_CAP);
+    expect(rowIds).toContain('strike');
+    expect(counted).toHaveLength(state.used);
+    expect(counted.length).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+  });
+
+  it('tick 5899 fixture: seven rendered rows classify as five slot rows and two non-slot rows', async () => {
+    {
+      const { game, hud, loadout } = await bootHudForLoadout(
+        'seven-rows-five-slots',
+      );
+      const state = resolvePlayerSlotState(loadout.player);
+      const rows = hud.getLoadoutRows();
+      destroy(game);
+
+      // The seven rows the recording showed at tick 5899 (the slot budget
+      // read-out is not a loadout row).
+      expect(rows.map((row) => row.id).sort()).toEqual(
+        [
+          'heavy_slug',
+          'mortar',
+          'mystery_ufo',
+          'phase_shift',
+          'rear_guard',
+          'salvage',
+          'spread',
+        ].sort(),
+      );
+      const counted = rows
+        .filter((row) => row.slotCounted)
+        .map((row) => row.id)
+        .sort();
+      expect(counted).toEqual(slotCountedKinds(state));
+      expect(counted).toHaveLength(state.used);
+      expect(counted.length).toBeLessThanOrEqual(POWER_UP_SLOT_CAP);
+
+      // Non-slot rows are excluded whatever their reason: the exempt Mystery
+      // UFO, the residual Phase Shift charge pool, and the exempt Extra Life,
+      // which is held but has no row at all.
+      expect(rows.filter((row) => !row.slotCounted).map((row) => row.id).sort()).toEqual([
+        'mystery_ufo',
+        'phase_shift',
+      ]);
+      expect(state.heldIds.has('extra_life')).toBe(true);
+      expect(rows.map((row) => row.id)).not.toContain('extra_life');
+    }
+  });
+
+  it('exposes the shared slot budget (used/cap) for every fixture loadout', async () => {
+    for (const id of SIX_SLOT_LOADOUT_IDS) {
+      const { game, hud, loadout } = await bootHudForLoadout(id);
+      const state = resolvePlayerSlotState(loadout.player);
+      const budget = hud.getSlotBudget();
+      destroy(game);
+
+      expect(budget.used).toBe(state.used);
+      expect(budget.cap).toBe(POWER_UP_SLOT_CAP);
+      expect(budget.used).toBeLessThanOrEqual(budget.cap);
+    }
+  });
+
+  it('renders the slot budget read-out with the rows', async () => {
+    const { game, hud, loadout } = await bootHudForLoadout(
+      'seven-rows-five-slots',
+    );
+    const state = resolvePlayerSlotState(loadout.player);
+    const label = hud.getSlotBudgetLabel();
+    const texts = hudTexts(hud);
+    destroy(game);
+
+    expect(label).toBe(`Loadout ${state.used}/${POWER_UP_SLOT_CAP}`);
+    expect(texts).toContain(`Loadout ${state.used}/${POWER_UP_SLOT_CAP}`);
+  });
+
+  it('renders the budget as its own visible read-out object', async () => {
+    const { game, hud } = await bootHudForLoadout('seven-rows-five-slots');
+    const budgetText = hudChildren(hud).find(
+      (child) =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.name === SLOT_BUDGET_NAME,
+    ) as Phaser.GameObjects.Text | undefined;
+    destroy(game);
+
+    expect(budgetText).toBeDefined();
+    expect(budgetText!.visible).toBe(true);
+    expect(budgetText!.text).toBe(hud.getSlotBudgetLabel());
+  });
+
+  it('marks every non-slot row and leaves slot-counted rows unmarked', async () => {
+    const { game, hud } = await bootHudForLoadout('seven-rows-five-slots');
+    const rows = hud.getLoadoutRows();
+    const texts = hudTexts(hud);
+    destroy(game);
+
+    const markerOf = (id: string) =>
+      rows.find((row) => row.id === id)?.marker;
+
+    // The exempt Mystery UFO is always available, never a slot holder (Q7a).
+    expect(markerOf('mystery_ufo')).toBe(SLOT_MARKER_ALWAYS_AVAILABLE);
+    // The Phase Shift row survives its expired window on charges alone.
+    expect(markerOf('phase_shift')).toBe(SLOT_MARKER_CHARGES_ONLY);
+    // Slot-counted kinds carry no marker: they are the loadout.
+    for (const row of rows.filter((candidate) => candidate.slotCounted)) {
+      expect(row.marker).toBeUndefined();
+    }
+    // The markers are actually rendered, not only present in the model.
+    expect(texts).toContain(SLOT_MARKER_ALWAYS_AVAILABLE);
+    expect(texts).toContain(SLOT_MARKER_CHARGES_ONLY);
+  });
+
+  it('is inert without a slot-state provider (standalone HUD unchanged)', async () => {
+    const { game, scene } = await bootScene([BareScene]);
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    reg.applyCollect('strike');
+    const hud = new HUD(scene, reg);
+    hud.refresh();
+    const budget = hud.getSlotBudget();
+    const label = hud.getSlotBudgetLabel();
+    const texts = hudTexts(hud);
+    const rows = hud.getRows();
+    destroy(game);
+
+    expect(budget).toEqual({ used: 0, cap: POWER_UP_SLOT_CAP });
+    expect(label).toBe('');
+    expect(texts.some((text) => text.startsWith('Loadout '))).toBe(false);
+    // The reserved read-out object stays inert (invisible, empty).
+    const budgetText = hudChildren(hud).find(
+      (child) =>
+        child instanceof Phaser.GameObjects.Text &&
+        child.name === SLOT_BUDGET_NAME,
+    ) as Phaser.GameObjects.Text | undefined;
+    expect(budgetText?.visible ?? false).toBe(false);
+    // The pre-existing visibility rules are untouched: a temporary one-shot
+    // still renders no row when the HUD is not slot-aware.
+    expect(rows.map((row) => row.id)).not.toContain('strike');
+  });
+});
+
+// ── Consumable charges and regeneration countdown (parent AH-0MVTQMREN009DSFW
+//    AC4) ────────────────────────────────────────────────────────────────
+//
+// Every consumable row — Shield, Thorn Field, Phase Shift, Teleport, Force
+// Field, Mystery UFO — shows its available charge count (` ×N`, never ` ×0`),
+// a live `next in Ns` countdown while a charge is regenerating, no countdown
+// while the pool is full, and an owned-but-empty row that stays visible and
+// greyed. The set comes from the catalogue (`CONSUMABLE_POWER_UP_IDS`), so a
+// new consumable is covered without touching this suite.
+
+describe('HUD consumable charges (parent AH-0MVTQMREN009DSFW AC4)', () => {
+  /** The row for `id`, or `undefined` when the HUD renders none. */
+  function rowFor(hud: HUD, id: string): HUDEntry | undefined {
+    return hud.getRows().find((row) => row.id === id);
+  }
+
+  /** A registry whose store the test drives, plus one owned charge. */
+  function ownedConsumable(id: PowerUpId): {
+    store: PowerUpLevelStore;
+    reg: EffectsRegistry;
+  } {
+    const store = new PowerUpLevelStore();
+    const reg = new EffectsRegistry(store);
+    store.collect(id, true); // hold-full: owned, one charge, no level
+    return { store, reg };
+  }
+
+  it('covers the catalogue consumable set (six kinds)', () => {
+    expect([...CONSUMABLE_POWER_UP_IDS].sort()).toEqual(
+      [
+        'force_field',
+        'mystery_ufo',
+        'phase_shift',
+        'shield',
+        'teleport',
+        'thorns',
+      ].sort(),
+    );
+  });
+
+  for (const id of CONSUMABLE_POWER_UP_IDS) {
+    it(`${id}: shows the charge count, no countdown while full, then greyed + live countdown while recharging`, async () => {
+      const { store, reg } = ownedConsumable(id);
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+
+      // Full/partial pool: the available count is surfaced, nothing is owed.
+      const owned = rowFor(hud, id)!;
+      expect(owned, 'owned consumable has a row').toBeDefined();
+      expect(owned.stacks).toBe(1);
+      expect(owned.label).toContain('×1');
+      expect(owned.recharge).toBeUndefined();
+      expect(owned.label).not.toContain('next in');
+      expect(owned.greyed).toBe(false);
+      // A permanently granted item opens no effect window, so the value
+      // column reads ∞ — never a window countdown (parent
+      // AH-0MVUVSW4J0009QUW AC3); the label carries the charge and, once a
+      // charge is owed, the live `next in Ns` regeneration countdown below.
+      expect(owned.value).toBe(PERMANENT_VALUE);
+
+      // Fill the pool to its level-derived cap: a full pool owes no charge,
+      // so the countdown never appears even though charges were banked.
+      store.grantConsumableCharge(id, 99);
+      const cap = store.consumableChargeCap(id);
+      expect(reg.consumableCharges(id)).toBe(cap);
+      hud.refresh();
+      const full = rowFor(hud, id)!;
+      expect(full.stacks).toBe(cap);
+      expect(full.recharge).toBeUndefined();
+      expect(full.label).not.toContain('next in');
+
+      // Empty the pool through the shared spend seam: the row is still
+      // visible, greyed, and counts down to the next charge.
+      let spent = 0;
+      while (reg.tryConsumeConsumableCharge(id)) spent += 1;
+      expect(spent).toBe(cap);
+      hud.refresh();
+      const empty = rowFor(hud, id)!;
+      expect(empty, 'owned-but-empty pool keeps its row').toBeDefined();
+      expect(empty.stacks).toBeUndefined();
+      expect(empty.label).not.toContain('×0');
+      expect(empty.greyed).toBe(true);
+      const first = empty.recharge;
+      expect(first).toBeDefined();
+      expect(first!).toBeGreaterThan(0);
+      expect(empty.label).toContain('(next in');
+      expect(empty.label).toContain(`(next in ${Math.ceil(first!)}s)`);
+
+      // The countdown is live, advanced only by the shared registry tick.
+      reg.tick(1);
+      hud.refresh();
+      const ticking = rowFor(hud, id)!;
+      expect(ticking.greyed).toBe(true);
+      expect(ticking.recharge).toBeDefined();
+      expect(ticking.recharge!).toBeLessThan(first!);
+      expect(ticking.label).toContain(`(next in ${Math.ceil(ticking.recharge!)}s)`);
+
+      // A completed regeneration returns the charge, clears the countdown and
+      // un-greys the row.
+      reg.tick(ticking.recharge! + 0.01);
+      hud.refresh();
+      const refilled = rowFor(hud, id)!;
+      expect(reg.consumableCharges(id)).toBe(cap);
+      expect(refilled.stacks).toBe(cap);
+      expect(refilled.label).toContain(`×${cap}`);
+      expect(refilled.recharge).toBeUndefined();
+      expect(refilled.label).not.toContain('next in');
+      expect(refilled.greyed).toBe(false);
+      destroy(game);
+    });
+
+    it(`${id}: stays hidden while the player neither owns it nor holds a charge`, async () => {
+      const reg = new EffectsRegistry(new PowerUpLevelStore());
+      const { game, hud } = await bootWithHUD(reg);
+      hud.refresh();
+      expect(rowFor(hud, id)).toBeUndefined();
+      destroy(game);
+    });
+  }
+
+  it('renders a field-pickup Shield from the granted charge with no countdown', async () => {
+    // A field pickup grants exactly one charge into the shared pool (parent
+    // AH-0MVUVSW4J0009QUW): the row reports that charge and no pool timer,
+    // because a pickup-only charge is never owed back (Q-A1=b).
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('shield');
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = rowFor(hud, 'shield')!;
+    expect(row).toBeDefined();
+    expect(row.stacks).toBe(1);
+    expect(row.greyed).toBe(false);
+    // No pool timer was opened by a field pickup, so nothing counts down.
+    expect(row.recharge).toBeUndefined();
+    destroy(game);
+  });
+
+  it('leaves non-consumable rows unchanged: no charge count, no countdown, never greyed', async () => {
+    const reg = new EffectsRegistry(new PowerUpLevelStore());
+    reg.applyCollect('bomb', true); // permanent (hold-full) non-consumable
+    const { game, hud } = await bootWithHUD(reg);
+    hud.refresh();
+
+    const row = rowFor(hud, 'bomb')!;
+    expect(row).toBeDefined();
+    expect(row.label).toBe('Bomb Lvl 1');
+    expect(row.stacks).toBeUndefined();
+    expect(row.recharge).toBeUndefined();
+    expect(row.greyed).toBe(false);
     destroy(game);
   });
 });

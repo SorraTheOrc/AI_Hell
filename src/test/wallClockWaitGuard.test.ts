@@ -23,7 +23,25 @@
  * exactly-once accounting should reuse `isolateEnemyForKill` plus a pinned
  * seed.
  *
- * A third, non-wall-clock flake family was tracked by the load-remediation
+ * PlayScene boot determinism is its own family (bug parent
+ * AH-0MVWZYGDS0015W1F): the `src/scenes/PlayScene.test.ts` integration boots
+ * left the run seed unset and the harness's **resumed** live
+ * `requestAnimationFrame` loop running, so under full-suite parallel load a
+ * real wall-clock frame (and an unseeded roll) could land between a test's
+ * `await` points and trip exact-count assertions — boss-hit VFX
+ * `toHaveLength(1)`, collision-audio `toHaveBeenCalledTimes(1)` and
+ * phase-score `toBe(BOSS_PHASE_SCORES[1])`. The fix is the file's single
+ * shared `bootDeterministic()` helper — every `boot*` in the affected
+ * describes routes through it — which pins `DETERMINISTIC_RUN_SEED` via
+ * `setRunSeed` **before** the restart and calls `game.loop.stop()` on the
+ * resumed loop (precedent: AH-0MVG23LT7000CG4R), plus per-test
+ * `vi.restoreAllMocks()` so effect/audio spies never leak across tests.
+ * The assertions are unchanged and were re-verified under deliberate host
+ * load by the verification child AH-0MVXUAT9S003NZ3K. New PlayScene
+ * integration boots should compose `bootDeterministic` rather than booting
+ * raw.
+ *
+ * A fourth, non-wall-clock flake family was tracked by the load-remediation
  * epic AH-0MVSBEIVK003XAFB: **environmental saturation flakes** in the
  * `scripts/` capture suites. They never had a wall-clock wait — each one was
  * a correct test with an undeclared resource assumption, so the remediation

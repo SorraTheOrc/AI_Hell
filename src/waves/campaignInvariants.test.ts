@@ -32,6 +32,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildSequencedLevels } from './sequencedLevels';
 import { LEVELS, type LevelDefinition, type WaveDefinition } from './Formations';
+import { SHOWCASE_WAVES } from './modeLedger';
 import { defaultDifficultyCurves } from '../core/configStore';
 import { formationSpawnCount } from '../utils/formations';
 import { GHOST_ENEMY_KEYS } from './GhostSpawner';
@@ -228,13 +229,7 @@ describe('Campaign design invariants for the ten-level campaign (AH-0MV398ZWL009
       expect(modes.has('dynamic')).toBe(true);
 
       // Each new archetype debuts on a hand-authored fixed showcase wave.
-      const showcase = new Set([
-        '6:1', '6:2',
-        '7:1', '7:2',
-        '8:1', '8:2', '8:3',
-        '9:1', '9:2',
-        '10:1',
-      ]);
+      const showcase = new Set(Object.keys(SHOWCASE_WAVES));
       for (const row of rows) {
         if (showcase.has(`${row.level}:${row.wave}`)) {
           expect(row.generation, `L${row.level}W${row.wave}`).toBe('fixed');

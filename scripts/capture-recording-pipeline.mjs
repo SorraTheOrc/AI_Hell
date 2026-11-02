@@ -19,6 +19,15 @@
  *      (AH-0MVNT28SJ008ZHDB) and a failure leaves salvageable bytes behind
  *      (AH-0MVNT29MC008BQPY).
  *
+ * `finalise({ success: true })` is also the single seam where a delivered clip
+ * is made **seekable** (AH-0MVMIK8EM001JAYR): Chromium's `MediaRecorder`
+ * writes no Duration/SeekHead/Cues, so VLC cannot fast-forward a raw capture.
+ * The sink renames the `.partial` file into place and this pipeline then runs
+ * the shared packet-preserving seek-index remux
+ * (`scripts/capture-seekable.mjs`). Every capture path — single clip,
+ * `--count` batch, `--all-scenarios` and `capture:scenes` — finalises through
+ * here, so no path can deliver an unseekable clip.
+ *
  * Two copies of that plumbing is exactly how a fix drifts: the sink, the cap
  * and the probe source must stay identical for both paths, because they are
  * what the parent bug's fix (bounded memory, capped payloads, salvage) depends
@@ -44,6 +53,7 @@ import {
   CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
   MAX_CAPTURE_CHUNK_BYTES,
 } from './capture-run-lifecycle.mjs';
+import { makeCaptureSeekable } from './capture-seekable.mjs';
 
 /**
  * The page-side binding both capture paths feed their recorder chunks through.
@@ -79,6 +89,10 @@ export const RECORDING_CHUNK_BINDING = '__aiHellCaptureChunk';
  *   page slices an oversized recorder flush at or below it.
  * @param {object} [options.sinkOptions] — injected filesystem seams forwarded
  *   to `createChunkSink` (hermetic tests only).
+ * @param {boolean} [options.seekable] — run the seek-index remux on a
+ *   successful finalise (default `true`; AC3 — every capture path benefits).
+ * @param {object} [options.seekableOptions] — injected seams forwarded to
+ *   `makeCaptureSeekable` (hermetic tests only).
  * @returns {object} the pipeline handle (see `capture-recording-pipeline.d.mts`).
  */
 export function createRecordingPipeline({
@@ -88,6 +102,8 @@ export function createRecordingPipeline({
   budgetBytes = CAPTURE_PROBE_PREFIX_BUDGET_BYTES,
   maxPayloadBytes = MAX_CAPTURE_CHUNK_BYTES,
   sinkOptions = {},
+  seekable = true,
+  seekableOptions = {},
 } = {}) {
   if (!page || typeof page.addInitScript !== 'function') {
     throw new TypeError(
@@ -102,6 +118,9 @@ export function createRecordingPipeline({
 
   const sink = createChunkSink({ outputPath, ...sinkOptions });
   let installed = false;
+  // The remux outcome is memoised so the sink's "first finalise wins" contract
+  // also holds for the (expensive) seek-index remux.
+  let seekableOutcome = null;
 
   const handle = {
     sink,
@@ -170,11 +189,50 @@ export function createRecordingPipeline({
      * Renames the streamed `.partial` file into place on success; on a failure
      * path the caller leaves it alone so the salvage seam can report it.
      *
+     * On success the delivered clip is then remuxed (packet-preserving
+     * `-c copy`) so it carries a Duration, a SeekHead and a Cues seek index
+     * (AH-0MVMIK8EM001JAYR AC1/AC3). The remux result is additive: it never
+     * changes the sink's outcome and never fails the capture (AC4).
+     *
      * @param {{ success?: boolean }} [options]
-     * @returns {object} the sink's finalise result.
+     * @returns {object} the sink's finalise result plus the `seekable` outcome.
      */
     finalise(options = {}) {
-      return sink.finalise(options);
+      const result = sink.finalise(options);
+      const succeeded = result?.finalised === true;
+      if (seekableOutcome === null) {
+        seekableOutcome = {
+          attempted: false,
+          ok: false,
+          source: null,
+          ffmpegPath: null,
+          tempPath: '',
+          bytes: 0,
+          durationSeconds: null,
+          durationSource: 'none',
+          hasCues: false,
+          hasSeekHead: false,
+          seekHeadTargets: [],
+          attempts: [],
+          warning: null,
+        };
+        if (seekable && succeeded) {
+          try {
+            seekableOutcome = makeCaptureSeekable({
+              outputPath: sink.outputPath,
+              ...seekableOptions,
+            });
+          } catch (error) {
+            // A remux bug must never fail an otherwise successful capture (AC4).
+            seekableOutcome = {
+              ...seekableOutcome,
+              attempted: true,
+              warning: `seek-index remux failed: ${error?.message ?? error}`,
+            };
+          }
+        }
+      }
+      return { ...result, seekable: seekableOutcome };
     },
 
     /** Releases the sink's file handle without renaming (abort path). */

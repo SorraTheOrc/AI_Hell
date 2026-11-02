@@ -28,6 +28,7 @@ import {
   wavePlannedSpawnCount,
   type WaveEvent,
 } from './WaveManager';
+import { auditCampaignVariety, waveArchetypes } from './campaignVariety';
 
 /** Kills every enemy in the active wave; returns the final event. */
 function clearWave(wm: WaveManager): WaveEvent {
@@ -91,21 +92,43 @@ describe('Level definitions — GDD §3.2 structure (AH-0MU72ZK3P006CH9G)', () =
     expect(getLevelDefinition(11)).toBeNull();
   });
 
-  it('AC1 — Level 1 uses Scout V-formations with no enemy fire', () => {
+  it('AC1 — Level 1 keeps its Scout identity: scouts in every wave, scout-dominant, no enemy fire', () => {
     const l1 = getLevelDefinition(1)!;
-    const keys = new Set(
-      l1.waves.flatMap((w) => w.groups.map((g) => g.enemyKey)),
+
+    // Q2 = a on the parent item (AH-0MVI5XXOU00954EA): the producer chose
+    // "preserve the dominant archetype, add variety around it". Level 1 keeps
+    // its documented scout-led identity (GDD §3.2 "Entry — single enemy type,
+    // simple V-formation waves") but may gain secondary archetypes. Purity
+    // (`Set(['scout'])`) would delete that intent, so this pin asserts
+    // identity instead: scouts must appear in every wave and remain the
+    // level's dominant archetype by spawned weight.
+    for (const [index, wave] of l1.waves.entries()) {
+      expect(
+        waveArchetypes(wave),
+        `Level 1 wave ${index + 1} loses the scout identity`,
+      ).toContain('scout');
+    }
+    const [audit] = auditCampaignVariety([l1]).levels;
+    expect(audit.dominantArchetype, 'Level 1 dominant archetype').toBe(
+      'scout',
     );
-    // Wave 1 is Scouts only (asteroids now come from the random spawner,
-    // GDD §4.1 — E6 Asteroid); Wave 2 is Scouts only.
-    expect(keys).toEqual(new Set(['scout']));
+
     expect(l1.waves.every((w) => w.shootEnabled === false)).toBe(true);
+    // Wave 1's hand-authored Scout V-formation is the onboarding anchor and is
+    // retained exactly.
     const wave1 = l1.waves[0];
-    expect(wave1.groups.map((g) => g.enemyKey)).toContain('scout');
+    const wave1Scout = wave1.groups.find((g) => g.enemyKey === 'scout');
+    expect(wave1Scout, 'Level 1 wave 1 Scout V-formation').toMatchObject({
+      enemyKey: 'scout',
+      formation: 'v',
+    });
   });
 
   it('AC1 — Level 2 has mixed single-enemy waves (one group, >1 archetype), no fire', () => {
     const l2 = getLevelDefinition(2)!;
+    // Q2 = a on AH-0MVI5XXOU00954EA: the structural identity is one group per
+    // wave (one enemyKey per group), not archetype purity across the level.
+    // The level must still show more than one archetype overall.
     // "Single-enemy waves": each wave spawns one archetype.
     expect(l2.waves.every((w) => w.groups.length === 1)).toBe(true);
     const keys = new Set(
@@ -117,6 +140,9 @@ describe('Level definitions — GDD §3.2 structure (AH-0MU72ZK3P006CH9G)', () =
 
   it('AC1 — Level 3 uses mixed pairs (≥2 archetypes per wave), no fire', () => {
     const l3 = getLevelDefinition(3)!;
+    // Q2 = a on AH-0MVI5XXOU00954EA: keep the mixed-pair structure (≥2
+    // archetypes per wave); the pin does not require any specific archetype
+    // to dominate or exclude others.
     expect(l3.waves.length).toBeGreaterThan(0);
     for (const w of l3.waves) {
       expect(w.groups.length).toBeGreaterThanOrEqual(2);

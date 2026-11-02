@@ -49,6 +49,7 @@ import {
   type CombatEnemyEntity,
 } from '../core/CombatCoreScene';
 import { CombatScene } from '../core/CombatScene';
+import { gymBackgroundLevel } from './core/gymBackground';
 import type { SceneSetupState } from '../core/sceneSetup';
 import { Player } from '../../entities/Player';
 import { advancePlayerBullets } from '../core/bulletLifecycle';
@@ -71,6 +72,7 @@ import {
 } from '../../powerups/powerUpLevels';
 import { Mineral } from '../../entities/Mineral';
 import { HUD } from '../../ui/HUD';
+import { combatHudOptions } from '../core/hudWiring';
 import { MineralHold } from '../../core/mineralHold';
 import { buildHoldFullFireSchedule } from '../core/holdFullFire';
 import type { MineralChoiceScene } from '../MineralChoiceScene';
@@ -90,6 +92,7 @@ import type { CollectAnimationHandle } from '../../powerups/collectAnimation';
 import type { ChoiceOption, ChoiceStrategy } from '../../powerups/choice';
 import { buildChoiceCandidates, CHOICE_POOL } from '../../powerups/choice';
 import { applyMineralChoiceReward } from '../core/mineralLayer';
+import { buildOwnedLoadout } from '../../powerups/ownedLoadout';
 import type { DroneMineralSink } from '../core/combatDrone';
 
 /** Id of the level/stats readout panel (plain-DOM `.gym-panel`). */
@@ -159,7 +162,7 @@ export interface PowerUpLevelReadout {
 
 /**
  * Formats one resolved-stats snapshot into a human-readable line, e.g.
- * `"Shield time 15.0s, Shield hits 1"`. Reads only the shared catalogue
+ * `"Shield recharge 45s, Shield hits 1"`. Reads only the shared catalogue
  * (`POWER_UP_LEVEL_SPECS`) for each variable's label/unit/discreteness — the
  * gym renders the shared model, it never recomputes it.
  */
@@ -230,8 +233,16 @@ export class GymPowerUpLeveling extends CombatScene<
     super({ key: 'GymPowerUpLeveling' });
   }
 
+  /** Gym family background decision: fixed representative level, no warp. */
+  protected override backgroundLevel(): number | null {
+    return gymBackgroundLevel();
+  }
+
   create(data?: SceneSetupState): void {
     this.resetRunState();
+    // Shared background layer at the gym family's pinned level (see
+    // `core/gymBackground.ts`, AH-0MVSEC0J0004YNJC).
+    this._createSceneBackground();
     this.player = new Player(this, {
       x: GAME_WIDTH / 2,
       y: GAME_HEIGHT - 80,
@@ -254,7 +265,11 @@ export class GymPowerUpLeveling extends CombatScene<
 
     // Shared HUD: one merged row per owned/active power-up showing its
     // effective level (permanent + temporary) from the shared registry.
-    this.hud = new HUD(this, this.effectsRegistry, { showLives: false });
+    this.hud = new HUD(
+      this,
+      this.effectsRegistry,
+      combatHudOptions(() => this.player, { showLives: false }),
+    );
     this.hud.setMineralStore(this.hold.store, this.hold.capacity);
 
     this.add.text(
@@ -448,13 +463,20 @@ export class GymPowerUpLeveling extends CombatScene<
   /** Opens the hold-full choice overlay. Public test seam. */
   openMineralChoice(): ChoiceOption[] {
     if (this.mineralChoiceOpen) return [...this.mineralChoiceOptions];
+    // This gym's offer pool stays power-ups-only, but the top-left owned
+    // loadout panel always states the run's true permanent loadout, so the
+    // weapon snapshot is read as well — a read of the same permanent state,
+    // not new state (AH-0MVCRKAPL000L68Y, recorded plan default; producer did
+    // not overrule it).
+    const powerUpLevels = this.player?.getPowerUpLevels() ?? [];
+    const weaponLevels = this.player?.getWeaponLevels() ?? [];
     this.mineralChoiceOptions = this.mineralChoiceStrategy.choose(
       3,
       undefined,
       {
         // Offer level-ups for power-ups the player permanently owns this run
         // (AH-0MUV5CLVO002ZHS9); a field-only item stays ★ New.
-        powerUpLevels: this.player?.getPowerUpLevels() ?? [],
+        powerUpLevels,
         // Temporary (field-pickup) stacks hold a slot while they last, so the
         // shared six-slot gate sees the same state as the game (parent
         // AH-0MVLIJT3M005HPHF, gym↔game parity).
@@ -468,6 +490,10 @@ export class GymPowerUpLeveling extends CombatScene<
     this.fadeThrusterHumForHoldFull();
     this.scene.launch('MineralChoiceScene', {
       options: [...this.mineralChoiceOptions],
+      // Top-left permanent loadout panel: the run's true permanent weapons and
+      // power-ups, so it reads identically to the game and the other gyms
+      // (AH-0MVCRKAPL000L68Y · gym↔game parity).
+      ownedUpgrades: buildOwnedLoadout(powerUpLevels, weaponLevels),
       // Reduced-volume ghost fire on the frozen beat grid, matching PlayScene
       // and the weapon-leveling gym (gym↔game parity).
       fireSchedule: buildHoldFullFireSchedule(this.player),

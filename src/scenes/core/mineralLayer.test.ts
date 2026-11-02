@@ -17,11 +17,12 @@ import type { ChoiceOption } from '../../powerups/choice';
 import { applyMineralChoiceReward, collectMinerals } from './mineralLayer';
 
 /** Structural fake of a `Mineral` — the routine only calls these members. */
-function fakeMineral(x: number, y: number, alive = true) {
+function fakeMineral(x: number, y: number, alive = true, value = 1) {
   return {
     x,
     y,
     alive,
+    value,
     handleOverlap: vi.fn(),
     destroy: vi.fn(),
   };
@@ -152,6 +153,52 @@ describe('collectMinerals', () => {
     expect(mineral.handleOverlap).toHaveBeenCalledWith('player');
   });
 
+  // ── Valued collection: red deposits (AH-0MVJ79739008396I) ───────
+
+  it('credits a deposit\'s full worth to the absorbing enemy (10, not 1)', () => {
+    const deposit = fakeMineral(50, 50, true, 10);
+    const enemy = fakeEnemy(50, 50);
+
+    const kept = collectMinerals(
+      asMinerals([deposit]),
+      { x: 900, y: 900 },
+      [enemy],
+      vi.fn(),
+    );
+
+    expect(kept).toHaveLength(0);
+    // Absorbing one deposit is worth ten single-mineral absorptions, so the
+    // enemy's own later re-drop resolves at the deposit threshold.
+    expect(enemy.collectMineral).toHaveBeenCalledWith(10);
+    expect(deposit.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('credits an ordinary mineral as worth 1', () => {
+    const mineral = fakeMineral(50, 50);
+    const enemy = fakeEnemy(50, 50);
+
+    collectMinerals(asMinerals([mineral]), { x: 900, y: 900 }, [enemy], vi.fn());
+
+    expect(enemy.collectMineral).toHaveBeenCalledWith(1);
+  });
+
+  it('hands the collected mineral (and so its worth) to the player pickup callback', () => {
+    const deposit = fakeMineral(100, 100, true, 10);
+    const onPlayerCollected = vi.fn();
+
+    const kept = collectMinerals(
+      asMinerals([deposit]),
+      { x: 100, y: 100 },
+      [],
+      onPlayerCollected,
+    );
+
+    expect(kept).toHaveLength(0);
+    expect(onPlayerCollected).toHaveBeenCalledOnce();
+    // The scene credits `mineral.value`, so a deposit pays 10 in one pickup.
+    expect(onPlayerCollected.mock.calls[0][0].value).toBe(10);
+  });
+
   it('still lets enemies absorb minerals while the player is phased', () => {
     const mineral = fakeMineral(100, 100);
     const enemy = fakeEnemy(100, 100);
@@ -245,7 +292,10 @@ describe('applyMineralChoiceReward', () => {
 
     expect(applyCollect).toHaveBeenCalledWith('shield', true);
     expect(applyCollect).toHaveBeenCalledTimes(1);
-    expect(store.getLevel('shield')).toBe(1); // advanced exactly once
+    // A consumable's level reward is a **charge grant**, never a level
+    // (parent AH-0MVTQMREN009DSFW AC1).
+    expect(store.getLevel('shield')).toBe(0);
+    expect(store.consumableCharges('shield')).toBe(1);
     expect(player.equipWeapon).not.toHaveBeenCalled();
   });
 
@@ -291,6 +341,7 @@ describe('applyMineralChoiceReward', () => {
         strike: (r: EffectsRegistry) => r.isStrikePermanent(),
       } as const;
 
+      const CONSERVATIVE_CONSUMABLES = new Set(['thorns']);
       for (const id of NEW_POWER_UP_IDS) {
         const store = new PowerUpLevelStore();
         const registry = new EffectsRegistry(store);
@@ -302,8 +353,11 @@ describe('applyMineralChoiceReward', () => {
           player,
         );
 
-        // The run-scoped level advanced exactly once …
-        expect(store.getLevel(id), id).toBe(1);
+        // The run-scoped level advanced exactly once (a consumable gains a
+        // charge instead of a level, parent AH-0MVTQMREN009DSFW AC1) …
+        expect(store.getLevel(id), id).toBe(
+          CONSERVATIVE_CONSUMABLES.has(id) ? 0 : 1,
+        );
         // … and the permanent effect is live in the shared registry.
         expect(observable[id](registry), id).toBe(true);
         // Power-ups never touch the weapon path.

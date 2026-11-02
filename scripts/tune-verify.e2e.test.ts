@@ -44,6 +44,13 @@ const ORIGINAL_CSV = readFileSync(CSV, 'utf8');
 
 const TUNE_ARGS = [
   '--tune',
+  // `--skirmish` is required, not a preference: since the campaign became the
+  // batch default (AH-0MVD1RK2V009J5D2) a 400-tick run never reaches a boss,
+  // so `enemiesKilledByArchetype.boss` is 0 in both sweeps and the comparison
+  // has nothing to move (AH-0MVWN4CG1000ZNEG). The legacy seeded skirmish
+  // reservoir still spawns the boss archetype, which is what this reduced
+  // sweep needs to exercise the edited `boss.health` within seconds.
+  '--skirmish',
   '--set',
   'enemy-configs.csv',
   'boss.health=6',
@@ -172,11 +179,15 @@ describe('tune loop end-to-end (AH-0MVBNLM2V008XC8T)', () => {
     }
   }, CLI_TIMEOUT_MS * 2);
 
-  it('restores the CSV byte-for-byte after a forced mid-run failure (AC4)', () => {
-    // The artifact write after the candidate batch fails (ENOTDIR); the
-    // shell's restore `finally` must still run. NOT `/proc` — see header.
-      const run = runTune([], '/dev/null/tune-artifacts');
-    expect(run.status, run.stderr).not.toBe(0);
+  it('rejects an unwritable --out before the sweeps and leaves the CSV untouched (AC1/AC4)', () => {
+    // ENOTDIR fails inside Node (never `/proc` — see header). Since the
+    // fail-fast gate (AH-0MVSE18XX006ZG5I) the run is rejected *before* the
+    // baseline sweep, so the CSV is never edited at all; the post-edit restore
+    // path is covered by the journal/SIGKILL cases in
+    // `scripts/evaluate-failfast.test.ts` (slice 3, AH-0MVSE1A7O002PXAO).
+    const run = runTune([], '/dev/null/tune-artifacts');
+    expect(run.status, run.stderr).toBe(2);
+    expect(run.stderr).toContain('output directory not writable');
     expect(run.stderr).toContain('ENOTDIR');
     expect(readFileSync(CSV, 'utf8')).toBe(ORIGINAL_CSV);
   }, CLI_TIMEOUT_MS);

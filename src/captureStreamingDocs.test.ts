@@ -79,4 +79,26 @@ describe('Streamed capture behaviour is documented (AH-0MVNT2BBV008C4HT)', () =>
     expect(readme).toMatch(/exits\s+\*\*non-zero\*\*/);
     expect(readme).toContain('--diagnostics');
   });
+
+  it('documents the served-root path dependency, the residual fallback and the budget window (re-scope AC1/AC2/AC4)', () => {
+    // The streamed probe needs the output inside the served repo root; an
+    // outside-root output takes the documented in-page fallback, reports why,
+    // and is not blamed for the long-run memory peak.
+    expect(captureDoc).toMatch(
+      /streamed probe needs the output inside the served repository root/i,
+    );
+    expect(captureDoc).toMatch(/falls back to the\s+in-page prefix probe/i);
+    expect(captureDoc).toMatch(/probeSourceReason/);
+    expect(captureDoc).toMatch(/cause of the long-run memory peak/i);
+    // The budget is a recording-window figure, distinct from the process-start peak.
+    expect(captureDoc).toMatch(/during recording/i);
+    expect(captureDoc).toMatch(/whole-process/i);
+    expect(captureDoc).toMatch(/Vite/i);
+    // The README reflects the user-visible behaviour and the measurement window.
+    expect(readme).toMatch(/inside the\s+\*{0,2}repository root/i);
+    expect(readme).toMatch(/falls\s+back\s+to\s+the\s+in-page prefix probe/i);
+    expect(readme).toMatch(/probeSourceReason/);
+    expect(readme).toMatch(/during\s+\*{0,2}recording/i);
+    expect(readme).toMatch(/whole-process RSS/i);
+  });
 });

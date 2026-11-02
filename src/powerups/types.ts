@@ -41,10 +41,57 @@
  *   (AH-0MV1BIXFO006Z1I7 → AH-0MV9G113S009B37I): a field pickup spawns one
  *   small, code-drawn copy of the player ship that seeks the nearest mineral,
  *   vacuums those inside its collector radius, flies home and pays them into
- *   the hold. A full-hull (permanent) reward keeps a drone spawning on a
- *   level-resolved interval. Enemy fire or an enemy body destroys a drone
+ *   the hold. A full-hull (permanent) reward makes it a **charge pool**: one
+ *   drone spawn spends one charge, the pool holds up to the level-derived
+ *   `mysteryUfoChargeCap` (1 at level 0 → 3) and each spent charge
+ *   regenerates on the level-resolved spawn interval (30 s → 12 s). Enemy
+ *   fire or an enemy body destroys a drone
  *   (spilling its hold plus a 2 × level bonus); the player's own fire passes
  *   through. Deliberately rare (weight 3, rarer than the standard 4).
+ *
+ * All of the above are additionally **levelled** and split into a permanent
+ * component (hold-full rewards only) and a temporary component (field
+ * pickups). **Every field pickup is temporary (parent AH-0MVSTKGC3003OMAC).**
+ * The temporary window (TTL) is a property of the item, never one global
+ * constant: the timed kinds keep their level-resolved effect duration, and
+ * every instant kind declares its own TTL as `temporaryWindow` below (Bomb /
+ * Smart Bomb / Orbital Strike 10 s, Phase Shift / Teleport 15 s, Extra Life
+ * 10 s, Mystery UFO 15 s, Shield 15 s / Thorn Field 8 s / Force Field 8 s). At
+ * the TTL the temporary level reverts to the
+ * permanent level (or the item becomes unowned); consumables already granted
+ * (lives, charges, teleports) are never clawed back. The former
+ * AH-0MUX802450085VZZ *"Resolved decision 4"* exception — instant kinds had no
+ * window at all — is **superseded** by AH-0MVSTKGC3003OMAC.
+ *
+ * ## Consumables (parent AH-0MVTQMREN009DSFW)
+ *
+ * Six kinds are **consumables** — a charge pool of one-event uses rather than
+ * an endless aura: Shield, Thorn Field, Phase Shift, Teleport, Force Field and
+ * Mystery UFO (producer decision 1). The set is catalogue data: the
+ * `consumable` flag on the entry is the single source of truth and
+ * {@link CONSUMABLE_POWER_UP_IDS} is derived from it, so downstream code never
+ * needs an `id === …` special case.
+ *
+ * A consumable's charge model is:
+ *
+ * - **one charge buys one event** — one absorbed hit (Shield), one free ram
+ *   (Thorn Field), one reflected bullet (Force Field), one auto-activation
+ *   (Phase Shift), one warp (Teleport), one drone spawn (Mystery UFO);
+ * - **charges regenerate** on a level-derived interval (the per-kind recharge
+ *   axes in `./powerUpLevels`, 45 s at level 0 for Shield and Force Field),
+ *   and only from the single shared {@link EffectsRegistry.tick} clock — the
+ *   same call site the game and every gym share, so the pools cannot drift;
+ * - **a hold-full reward adds a charge**, never a level, clamped at the pool's
+ *   level-derived cap;
+ * - **a field-pickup charge of the budget kinds (Shield, Thorn Field, Force
+ *   Field) never regenerates** (producer decision Q-A1=b, parent
+ *   AH-0MVUVSW4J0009QUW): one drop buys exactly one event and the item is
+ *   then inert until a hold-full reward owns it. The gate is the per-entry
+ *   `regenRequiresOwnership` flag below, read by the store/registry — never a
+ *   per-kind id branch. Phase Shift and Teleport pickups keep their shipped
+ *   regeneration.
+ *
+ * ## Net-new power-ups
  *
  * The five net-new power-ups (epic AH-0MVCC8XSS007P01Z, AH-0MVCRC1Q0007JAV1)
  * extend the catalogue beyond the original 11:
@@ -134,12 +181,68 @@ export interface PowerUpEntry {
   description: string;
   /** Duration in seconds for timed effects (undefined for permanent). */
   duration?: number;
+  /**
+   * Field-pickup temporary-window TTL in **seconds** for a kind with no timed
+   * effect of its own (parent AH-0MVSTKGC3003OMAC, Resolved decision 1;
+   * AH-0MVUGI3Q4009MW6A).
+   *
+   * **Every** field pickup opens a temporary level component that reverts when
+   * its window expires; no kind is exempt. Timed kinds leave this `undefined`:
+   * their window is the level-resolved effect duration instead, and the single
+   * `resolveTemporaryWindow` resolver in `./powerUpLevels` composes both cases
+   * (a stray `temporaryWindow` can therefore never flatten a level-scaled
+   * window). The declared instant-kind TTLs are Bomb 10 s, Smart Bomb 10 s,
+   * Orbital Strike 10 s, Phase Shift 15 s, Teleport 15 s, Extra Life 10 s,
+   * Mystery UFO 15 s, and — since the absorbed-hit pickup model retired their
+   * window axes — Shield 15 s, Thorn Field 8 s, Force Field 8 s
+   * (AH-0MVVD8SXO004QLZW).
+   *
+   * **Balance tuning:** the values are data, deliberately short so a temporary
+   * level can never compound across a wave (10 s mirrors the established
+   * weapon window; the defensive kinds mirror the shield-style 15 s window).
+   * Retune them here — no code change is needed for a new window length.
+   *
+   * > The AH-0MUX802450085VZZ *"Resolved decision 4"* exception (instant kinds
+   * > had no window at all) is **superseded** by AH-0MVSTKGC3003OMAC.
+   */
+  temporaryWindow?: number;
   /** Maximum stack count for stackable effects (undefined for non-stackable). */
   maxStacks?: number;
   /** Initial life count when the life counter starts. */
   livesStart?: number;
   /** Maximum life count. */
   livesMax?: number;
+  /**
+   * Whether this entry is a **consumable** (parent AH-0MVTQMREN009DSFW,
+   * producer decision 1).
+   *
+   * **Defaults to `false`** — an absent flag means the entry is not a
+   * consumable, so a newly added catalogue entry is not one unless it opts in.
+   * The six consumables are Shield, Thorn Field, Phase Shift, Teleport, Force
+   * Field and Mystery UFO; {@link CONSUMABLE_POWER_UP_IDS} is derived from this
+   * flag, so nothing downstream spells the set out again.
+   *
+   * A consumable holds a **charge pool**: one charge buys one event, charges
+   * regenerate on a level-derived interval, and a hold-full reward adds a
+   * charge rather than a level.
+   */
+  consumable?: boolean;
+  /**
+   * Whether this consumable's charge **regeneration** requires the kind to be
+   * **permanently owned** (parent AH-0MVUVSW4J0009QUW, producer decision
+   * Q-A1=b).
+   *
+   * **Defaults to `false`** — an absent flag means a field-pickup charge
+   * regenerates exactly like a hold-full charge does. The three budget kinds
+   * (Shield, Thorn Field, Force Field) opt in: a **pickup-granted** charge
+   * buys exactly one event and never refills on its own, so the derived
+   * regenerating ceiling for these kinds is the level-resolved cap only while
+   * `permanentGrants(id) > 0`, else `0`. A permanently owned kind keeps the
+   * spend → empty → regenerate → reuse cycle. Phase Shift and Teleport leave
+   * this unset, so their shipped pickup regeneration (AH-0MV82I7TX0009JMT) is
+   * unchanged.
+   */
+  regenRequiresOwnership?: boolean;
   /**
    * Whether this entry remains drawable/offerable once all
    * `POWER_UP_SLOT_CAP` permanent slots are occupied (parent
@@ -169,14 +272,32 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
   shield: {
     id: 'shield',
     name: 'Shield',
-    description: 'Absorbs one hit behind a protective bubble around the ship.',
-    duration: 15,
+    description:
+      'One charge absorbs one hit. Charges regenerate on a level-derived timer, and a hold-full reward adds one charge rather than a level.',
+    // Charge model: one absorbed hit per charge, regenerating on the
+    // level-derived `shieldRecharge` interval (45 s at level 0), capped by
+    // `shieldAbsorptions` (AH-0MVTQMREN009DSFW). A field-pickup charge never
+    // regenerates (Q-A1=b, AH-0MVUVSW4J0009QUW): one drop buys one event and
+    // the item is then inert until a hold-full reward owns it.
+    consumable: true,
+    // Regen gate (Q-A1=b): only a permanently owned Shield re-arms on the
+    // level-derived interval, so a pickup-granted charge never refills.
+    regenRequiresOwnership: true,
+    // Flat temporary-level TTL: the former level-scaled bubble-window axis
+    // was retired with the absorbed-hit pickup model, so a field pickup's
+    // temporary level reverts at this producer-approved value (Q-A2=a,
+    // AH-0MVVD8SXO004QLZW).
+    temporaryWindow: 15,
   },
   bomb: {
     id: 'bomb',
     name: 'Bomb',
     description:
       'Clears enemy bullets in a radius around the ship; a field pickup fires once, a hold-full reward pulses.',
+    // Balance tuning: mirrors the established 10 s weapon window. The field
+    // pickup's temporary level reverts after this window
+    // (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 10,
   },
   speed_boost: {
     id: 'speed_boost',
@@ -188,15 +309,28 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'phase_shift',
     name: 'Phase Shift',
     description:
-      'Stores auto-activation charges (up to 3, recharging); triggers a 1.5 s pass-through when 3+ threats close within 40 px. The hold-full reward adds one charge to the pool.',
+      'Stores up to 3 auto-activation charges that regenerate on a level-derived timer; one charge phases you past danger. A hold-full reward adds a charge, not a level.',
     // Auto-activation length; mirrors PHASE_DURATION in src/core/constants.ts.
     duration: 1.5,
+    // Balance tuning: the defensive kinds use the shield-style 15 s window
+    // for the temporary level a field pickup grants (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 15,
+    // Charge model: one charge per auto-activation, regenerating on the
+    // level-derived `phaseRechargeRate` interval (30 s → 10 s)
+    // (AH-0MVTQMREN009DSFW).
+    consumable: true,
   },
   teleport: {
     id: 'teleport',
     name: 'Teleport',
     description:
-      'Stores up to 3 uses; when the ship is in danger, one is spent automatically to warp to the nearest safe spot and grant a short Phase Shift on arrival. Teleporting can be disorienting — keep your wits about you.',
+      'Stores up to 3 warps that regenerate on a level-derived timer; in danger one is spent automatically to warp you to safety. Teleporting can be disorienting. A hold-full reward adds a charge, not a level.',
+    // Balance tuning: defensive kind, so the temporary level uses the same
+    // 15 s window as Phase Shift / Shield (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 15,
+    // Charge model: one warp per charge, regenerating on the level-derived
+    // `teleportRechargeRate` interval (15 s → 5 s) (AH-0MVTQMREN009DSFW).
+    consumable: true,
   },
   extra_life: {
     id: 'extra_life',
@@ -204,6 +338,9 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     description: '+1 life immediately (starts at 3, capped at 5).',
     livesStart: 3,
     livesMax: 5,
+    // Balance tuning: the temporary level a field pickup grants reverts
+    // after the 10 s weapon-style window (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 10,
     // Exempt: an extra life never opens a seventh permanent effect kind, so
     // it stays available once the six slots are full (Q3 answer (a)).
     availableWhenSlotsFull: true,
@@ -229,22 +366,34 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Smart Bomb',
     description:
       'Fires a screen-wide pulse that damages every enemy once and clears every enemy bullet; a field pickup fires once, a hold-full reward pulses.',
+    // Balance tuning: 10 s weapon-style window for the temporary level a
+    // field pickup grants (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 10,
   },
   force_field: {
     id: 'force_field',
     name: 'Force Field',
     description:
-      'Reflects enemy bullets back at their source; the field returns a limited number of shots before it stops reflecting.',
-    // Base bubble window (s); the level curve extends it (cap 18 s).
-    duration: 8,
+      'One charge reflects one enemy bullet. Charges regenerate on a level-derived timer, and a hold-full reward adds one charge rather than a level.',
+    // Charge model: one reflected bullet per charge, regenerating on the
+    // level-derived `forceFieldRecharge` interval (45 s at level 0), capped by
+    // `forceFieldReflects` (AH-0MVTQMREN009DSFW). A field-pickup charge never
+    // regenerates (Q-A1=b, AH-0MVUVSW4J0009QUW): one drop buys one event.
+    consumable: true,
+    // Regen gate (Q-A1=b): only a permanently owned Force Field re-arms on
+    // the level-derived interval.
+    regenRequiresOwnership: true,
+    // Flat temporary-level TTL: the former level-scaled bubble-window axis
+    // was retired with the absorbed-hit pickup model, so a field pickup's
+    // temporary level reverts at this producer-approved value (Q-A2=a,
+    // AH-0MVVD8SXO004QLZW).
+    temporaryWindow: 8,
   },
   mystery_ufo: {
     id: 'mystery_ufo',
     name: 'Mystery UFO',
     description:
-      'A rare Space Invaders-inspired collector drone: a small copy of your ' +
-      'ship seeks out minerals, hoovers them up and brings them home. Each ' +
-      'pickup levels it up, so the next drone flies longer and carries more.',
+      'A rare collector drone hoovers up minerals and carries them home. One charge spawns one drone; charges regenerate on a level-derived timer, and a hold-full reward adds a charge, not a level.',
     // Not timed and no stored consumable state: a field pickup spawns exactly
     // one drone through the shared core pass, and a full-hull reward keeps a
     // drone respawning on the level-resolved interval (AH-0MV9G113S009B37I).
@@ -253,6 +402,15 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     // Exempt: the producer explicitly included Mystery UFO in the
     // available-when-full set (Q3 answer (a)).
     availableWhenSlotsFull: true,
+    // Balance tuning: 15 s spans a full 5–8 s drone sortie, so a field
+    // pickup's temporary level survives the drone it grants before reverting
+    // (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 15,
+    // Charge model: one drone spawn per charge, regenerating on the
+    // level-derived `mysteryUfoSpawnInterval` (30 s → 12 s), with the pool
+    // capped by `mysteryUfoChargeCap` (1 at level 0)
+    // (AH-0MVTQMREN009DSFW).
+    consumable: true,
   },
   frenzy: {
     id: 'frenzy',
@@ -272,8 +430,20 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     id: 'thorns',
     name: 'Thorn Field',
     description:
-      'Ramming an enemy destroys it without costing a life, for a limited number of rams.',
-    duration: 8,
+      'One charge rams one enemy for free. Charges regenerate on a level-derived timer, and a hold-full reward adds one charge rather than a level.',
+    // Charge model: one free ram per charge, regenerating on the level-derived
+    // `thornsRecharge` interval (12 s → 5 s), capped by `thornsAbsorbs`
+    // (AH-0MVTQMREN009DSFW). A field-pickup charge never regenerates
+    // (Q-A1=b, AH-0MVUVSW4J0009QUW): one drop buys one event.
+    consumable: true,
+    // Regen gate (Q-A1=b): only a permanently owned Thorn Field re-arms on
+    // the level-derived interval.
+    regenRequiresOwnership: true,
+    // Flat temporary-level TTL: the former level-scaled ram-window axis was
+    // retired with the absorbed-hit pickup model, so a field pickup's
+    // temporary level reverts at this producer-approved value (Q-A2=a,
+    // AH-0MVVD8SXO004QLZW).
+    temporaryWindow: 8,
   },
   salvage: {
     id: 'salvage',
@@ -287,11 +457,16 @@ export const POWER_UP_CATALOGUE: Record<PowerUpId, PowerUpEntry> = {
     name: 'Orbital Strike',
     description:
       'A lightning bolt strikes the nearest enemy. A pickup fires one; the permanent reward strikes on a level-resolved interval.',
-    // A field pickup fires exactly one bolt — there is no timed window in
-    // play, so this catalogue `duration` is only the generic drop guardrail
+    // A field pickup fires exactly one bolt — the bolt itself has no timed
+    // effect, so this catalogue `duration` is only the generic drop guardrail
     // (the permanent cadence lives in `POWER_UP_LEVEL_SPECS.strike`, which is
-    // a whole-beat cadence on the shared 80 BPM grid: 6.75 s → 2.25 s).
+    // a whole-beat cadence on the shared 80 BPM grid: 6.75 s → 2.25 s). The
+    // field pickup's temporary *level* window is `temporaryWindow` below.
     duration: 30,
+    // Balance tuning: 10 s weapon-style window for the temporary level a
+    // field pickup grants — the `duration` above is *not* that window
+    // (AH-0MVUGI3Q4009MW6A).
+    temporaryWindow: 10,
   },
 };
 
@@ -313,6 +488,25 @@ export const COMBAT_POWER_UP_IDS: readonly PowerUpId[] = [
   'thorns',
   'strike',
 ] as const;
+
+/**
+ * The **consumable** power-up set, derived from the catalogue's `consumable`
+ * flag in catalogue order (parent AH-0MVTQMREN009DSFW).
+ *
+ * Shield, Thorn Field, Phase Shift, Teleport, Force Field and Mystery UFO
+ * hold a charge pool of one-event uses: one charge buys one event, charges
+ * regenerate on a level-derived interval, and a hold-full reward adds a charge
+ * rather than a level.
+ *
+ * Derived at module load from {@link POWER_UP_CATALOGUE}, so this export can
+ * never drift from the entries and is the only place the set is spelled out.
+ * Downstream code reads this array (or the flag) — never an `id === …` list.
+ */
+export const CONSUMABLE_POWER_UP_IDS: readonly PowerUpId[] = (
+  Object.values(POWER_UP_CATALOGUE) as PowerUpEntry[]
+)
+  .filter((entry) => entry.consumable === true)
+  .map((entry) => entry.id);
 
 /**
  * The Extra Life drop id (GDD §4.5). Single source shared by the hold-full

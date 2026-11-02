@@ -1,0 +1,107 @@
+# AI Hell cue: aihell-mystery-ufo-reward — Mystery UFO reward fanfare — rising A-minor arpeggio A4 → E5 → A5 with a sine sparkle, ~0.9 s.
+# Plays on arrival at the player, synchronised with the hold pay-in, so the
+# payout reads as an earned arcade reward.
+version: "0.1"
+meta:
+  name: aihell-mystery-ufo-reward
+  description: Mystery UFO reward fanfare — rising A-minor arpeggio A4 → E5 → A5 with a sine sparkle, ~0.9 s.
+  category: AIHell
+  tags:
+    - mystery-ufo
+    - ufo
+    - reward
+    - fanfare
+    - player
+  duration: 0.9
+nodes:
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 440
+  e0:
+    kind: envelope
+    params:
+      attack: 0.004
+      decay: 0.3
+      sustain: 0
+      release: 0.1
+  g0:
+    kind: gain
+    params:
+      gain: 0.14
+  v1:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 659.26
+  g1:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.16
+          value: 0
+        - kind: linearRamp
+          time: 0.164
+          value: 0.14
+        - kind: exponentialRamp
+          time: 0.82
+          value: 0.0001
+  v2:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 880
+  g2:
+    kind: gain
+    params:
+      gain: 0
+    automation:
+      gain:
+        - kind: set
+          time: 0
+          value: 0
+        - kind: set
+          time: 0.32
+          value: 0
+        - kind: linearRamp
+          time: 0.324
+          value: 0.15
+        - kind: exponentialRamp
+          time: 0.9
+          value: 0.0001
+  v3:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 1760
+  e3:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.18
+      sustain: 0
+      release: 0.05
+  g3:
+    kind: gain
+    params:
+      gain: 0.05
+  mix:
+    kind: gain
+    params:
+      gain: 1
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, g1, mix]
+  - chain: [v2, g2, mix]
+  - chain: [v3, e3, g3, mix]
+  - from: mix
+    to: out

@@ -12,11 +12,19 @@
  *
  * Each option renders as a three-part block: the option name, a description
  * area of up to two wrapped lines (from `ChoiceOption.description`, resolved
- * from the shared catalogues) and then the existing change summary / `★ New`
- * line, so an unfamiliar offer is self-explanatory (AH-0MV2N2591007UGPD,
+ * from the shared catalogues) and then the existing change-summary line, so
+ * an unfamiliar offer is self-explanatory (AH-0MV2N2591007UGPD,
  * AH-0MVBLBSG3002WHBI). The two-line description area keeps the longest
  * catalogue copy inside the 960 px playfield; copy that needs more than two
  * lines is ellipsised.
+ *
+ * An option the player does not yet own additionally carries a bold, glowing
+ * `★ New` marker that **leads its title line** (reading order `★ New` →
+ * `1.` → name) and pulses continuously, so a brand-new offer is unmistakable
+ * at a glance next to upgrades and the 3-2-1 countdown
+ * (AH-0MVCFH6I4000AWRI). The marker is a separate text object, so the
+ * option's label string and its centring are untouched, and the detail line
+ * carries the change summary only.
  *
  * The overlay deliberately knows nothing about its launcher (`PlayScene`,
  * `GymFormationScene`, …): the only selection contract is the `onSelect`
@@ -34,6 +42,7 @@ import Phaser from 'phaser';
 import { GAME_HEIGHT, GAME_WIDTH } from '../core/constants';
 import { HOLD_FULL_FIRE_VOLUME_SCALE, loadRules } from '../core/rules';
 import { randomChoiceStrategy, type ChoiceOption, type ChoiceStrategy } from '../powerups/choice';
+import type { OwnedLoadoutRow } from '../powerups/ownedLoadout';
 import {
   CHOICE_DESCRIPTION_MAX_LINES,
   wrapChoiceDescription,
@@ -59,6 +68,31 @@ const CHOICE_DETAIL_COLOR = '#aaaaaa';
 const CHOICE_DESCRIPTION_COLOR = '#cccccc';
 /** Accent colour for the "New" badge. */
 const CHOICE_NEW_COLOR = '#ff8800';
+/** Marker text of the `New` badge (assumption A1: wording unchanged). */
+const CHOICE_NEW_BADGE_TEXT = '★ New';
+/** Font size (px) of the `New` marker — strictly larger than the 14 px detail text. */
+const CHOICE_NEW_FONT_SIZE = '18px';
+/** Light-amber outline colour of the `New` marker, for contrast on black. */
+const CHOICE_NEW_STROKE_COLOR = '#ffe9c4';
+/** Outline width (px) of the `New` marker glyphs. */
+const CHOICE_NEW_STROKE_THICKNESS = 3;
+/** Warm glow colour of the `New` marker (text shadow, assumption A2). */
+const CHOICE_NEW_GLOW_COLOR = '#ffcc66';
+/** Glow blur radius (px) of the `New` marker's text shadow. */
+const CHOICE_NEW_GLOW_BLUR = 12;
+/** Horizontal gap (px) between the `New` marker and the title it leads. */
+const CHOICE_NEW_GAP = 12;
+/** Fallback marker line height (px) when canvas metrics are unavailable. */
+const CHOICE_NEW_LINE_HEIGHT = 24;
+/** Peak scale of the marker pulse (amplitude stays well inside a row). */
+const CHOICE_NEW_PULSE_SCALE = 1.08;
+/** Trough alpha of the marker pulse — the marker stays legible throughout. */
+const CHOICE_NEW_PULSE_ALPHA = 0.75;
+/**
+ * Duration (ms) of one leg of the marker's yoyo pulse. A full cycle is twice
+ * this (~700 ms), inside the agreed 600–1200 ms period (AC3).
+ */
+const CHOICE_NEW_PULSE_DURATION_MS = 350;
 /** Fully opaque backdrop, blanking the screen behind the choice dialog. */
 const CHOICE_BACKDROP_ALPHA = 1.0;
 /** Top (px) of the first option row's name text. */
@@ -82,6 +116,24 @@ const CHOICE_DETAIL_LINE_HEIGHT = 17;
 const CHOICE_BLOCK_GAP = 6;
 /** Vertical gap (px) between consecutive option blocks. */
 const CHOICE_ROW_GAP = 18;
+/** Heading copy of the top-left owned-permanents panel. */
+const OWNED_PANEL_HEADING = 'YOUR UPGRADES';
+/** Top-left anchor (px) of the owned-permanents panel. */
+const OWNED_PANEL_X = 32;
+const OWNED_PANEL_TOP = 24;
+/** Neon-cyan colour of the owned-permanents rows. */
+const OWNED_PANEL_ROW_COLOR = '#00ffff';
+/**
+ * Fallback line heights (px) for the owned-panel layout when a headless
+ * harness cannot measure canvas font metrics (measured height is used in a
+ * real browser), matching the choice-row fallbacks above.
+ */
+const OWNED_PANEL_HEADING_LINE_HEIGHT = 24;
+const OWNED_PANEL_ROW_LINE_HEIGHT = 18;
+/** Vertical gap (px) between the panel heading and its first row. */
+const OWNED_PANEL_HEADING_GAP = 4;
+/** Vertical gap (px) between consecutive owned rows. */
+const OWNED_PANEL_ROW_GAP = 2;
 /** Neon-cyan colour of the large countdown numeral. */
 const COUNTDOWN_COLOR = '#00ffff';
 /** Vertical centre (px) of the large 3-2-1 countdown numeral. */
@@ -98,6 +150,20 @@ export interface ChoiceRowElementBounds {
 }
 
 /**
+ * The `★ New` marker of one option the player does not yet own: the marker
+ * text that leads the option's title line plus the continuous pulse tween
+ * that drives it (AH-0MVCFH6I4000AWRI · AC1/AC3/AC6).
+ */
+export interface ChoiceNewBadge {
+  /** Zero-based index of the option whose title line the marker leads. */
+  readonly index: number;
+  /** The bold, glowing `★ New` marker text. */
+  readonly label: Phaser.GameObjects.Text;
+  /** The looping yoyo pulse (scale + alpha) that also pulses the glow. */
+  readonly pulse: Phaser.Tweens.Tween;
+}
+
+/**
  * Rendered geometry of one option row: the documented non-overlapping
  * `name → description area → detail` block (AH-0MVBLBSG3002WHBI · AC2).
  * `description` carries the number of wrapped lines actually drawn; its
@@ -107,11 +173,31 @@ export interface ChoiceRowElementBounds {
 export interface ChoiceRowLayout {
   readonly index: number;
   readonly name: ChoiceRowElementBounds;
+  /**
+   * Bounds of the `★ New` marker leading the title line, or null when the
+   * option is not new. Its vertical centre matches the title line's, so the
+   * marker reads as part of the heading (AH-0MVCFH6I4000AWRI · AC1).
+   */
+  readonly marker: ChoiceRowElementBounds | null;
   readonly description:
     | (ChoiceRowElementBounds & { readonly lines: number })
     | null;
   readonly detail: ChoiceRowElementBounds | null;
   /** Vertical extent of the whole row block (name top → last line bottom). */
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/**
+ * Rendered geometry and copy of the top-left owned-permanents panel: the
+ * `YOUR UPGRADES` heading (or its `none yet` empty state), one `Lv.N` row per
+ * permanently owned item, and the panel's vertical extent so tests can assert
+ * it clears the centred option column (AH-0MVCRKAPL000L68Y · AC5).
+ */
+export interface OwnedUpgradePanelLayout {
+  readonly heading: string;
+  readonly rows: readonly string[];
+  readonly left: number;
   readonly top: number;
   readonly bottom: number;
 }
@@ -123,6 +209,8 @@ export class MineralChoiceScene extends Phaser.Scene {
   private details: Phaser.GameObjects.Text[] = [];
   /** Description text objects (one per option that carries a description). */
   private descriptions: Phaser.GameObjects.Text[] = [];
+  /** `★ New` markers and their pulse tweens (one per new option). */
+  private newBadges: ChoiceNewBadge[] = [];
   /** Catalogue copy for each description (unwrapped, see {@link getDescriptionLines}). */
   private descriptionCopy: string[] = [];
   /** Wrapped lines drawn for each description (see {@link getDescriptionRenderedLines}). */
@@ -133,6 +221,17 @@ export class MineralChoiceScene extends Phaser.Scene {
   private backdrop: Phaser.GameObjects.Rectangle | null = null;
   /** The "HOLD FULL — CHOOSE A POWER-UP" heading (destroyed with the choice UI). */
   private heading: Phaser.GameObjects.Text | null = null;
+  /**
+   * The permanent loadout rows supplied by the launcher, or null when it
+   * supplied none (isolated scene tests) — then no panel is drawn.
+   */
+  private ownedUpgrades: readonly OwnedLoadoutRow[] | null = null;
+  /** The `YOUR UPGRADES` panel heading (destroyed with the choice UI). */
+  private ownedUpgradeHeading: Phaser.GameObjects.Text | null = null;
+  /** One row text object per owned permanent item (destroyed with the UI). */
+  private ownedUpgradeTexts: Phaser.GameObjects.Text[] = [];
+  /** Rendered panel geometry + copy, or null when no panel is on screen. */
+  private ownedUpgradeLayout: OwnedUpgradePanelLayout | null = null;
   /** The bound keydown listener (removed when the countdown starts). */
   private keydownHandler: ((event: KeyboardEvent) => void) | null = null;
   /** Optional generic selection handler supplied by the launcher. */
@@ -195,6 +294,11 @@ export class MineralChoiceScene extends Phaser.Scene {
    *   launch; when present the overlay plays each active weapon's fire cue
    *   on the beat grid at {@link HOLD_FULL_FIRE_VOLUME_SCALE} until a
    *   selection closes it (AH-0MV55O9R5005W6J0 · AC1/AC2).
+   * @param data.ownedUpgrades — the run's **permanent** weapons and power-ups
+   *   (see `powerups/ownedLoadout`), rendered top-left as the `YOUR UPGRADES`
+   *   panel. It must be built from the same permanent snapshots the offers are
+   *   priced from. Omitted by isolated tests → no panel; an empty array → the
+   *   `YOUR UPGRADES — none yet` empty state (AH-0MVCRKAPL000L68Y).
    */
   init(
     data: {
@@ -204,6 +308,7 @@ export class MineralChoiceScene extends Phaser.Scene {
       autoSelectMs?: number;
       autoSelectIndex?: number;
       fireSchedule?: HoldFullFireSchedule;
+      ownedUpgrades?: readonly OwnedLoadoutRow[];
     } = {},
   ): void {
     const strategy = data.strategy ?? randomChoiceStrategy;
@@ -219,6 +324,10 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.backdrop = null;
     this.heading = null;
     this.keydownHandler = null;
+    this.ownedUpgrades = data.ownedUpgrades ? [...data.ownedUpgrades] : null;
+    this.ownedUpgradeHeading = null;
+    this.ownedUpgradeTexts = [];
+    this.ownedUpgradeLayout = null;
   }
 
   create(): void {
@@ -243,9 +352,14 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.backdrop = backdrop;
     this.heading = heading;
 
+    // Top-left panel: the permanent loadout the player already owns, so a
+    // levelled offer can be judged against the build (AH-0MVCRKAPL000L68Y).
+    this._renderOwnedUpgradePanel();
+
     this.controls = [];
     this.details = [];
     this.descriptions = [];
+    this.newBadges = [];
     this.descriptionCopy = [];
     this.renderedDescriptionLines = [];
     this.rows = [];
@@ -273,6 +387,12 @@ export class MineralChoiceScene extends Phaser.Scene {
         top: cursorTop,
         bottom: cursorTop + nameHeight,
       };
+      // A brand-new offer leads its own title line with the emphasised
+      // `★ New` marker, so it cannot be mistaken for an upgrade
+      // (AH-0MVCFH6I4000AWRI · AC1).
+      const markerBounds = option.isNew
+        ? this._createNewBadge(index, nameBounds, nameHeight)
+        : null;
       cursorTop = nameBounds.bottom;
 
       // Description area: what the item actually does, resolved from the
@@ -320,21 +440,19 @@ export class MineralChoiceScene extends Phaser.Scene {
         cursorTop = descriptionBounds.bottom;
       }
 
-      // Detail line: change summary or "New" badge, beneath the description.
+      // Detail line: the change summary only. The `★ New` marker moved to the
+      // title line above, so repeating it here would duplicate the marker and
+      // fight the countdown for attention (AH-0MVCFH6I4000AWRI · AC5,
+      // producer Q2 = A; supersedes AH-0MUU1GOAU007RFVR · AC4).
       let detailBounds: ChoiceRowElementBounds | null = null;
-      let detailText = '';
-      if (option.isNew) {
-        detailText = '★ New';
-      } else if (option.changeSummary) {
-        detailText = option.changeSummary;
-      }
+      const detailText = option.changeSummary ?? '';
       if (detailText) {
         const detailTop = cursorTop + CHOICE_BLOCK_GAP;
         const detail = this.add
           .text(GAME_WIDTH / 2, detailTop, detailText, {
             fontFamily: 'monospace',
             fontSize: '14px',
-            color: option.isNew ? CHOICE_NEW_COLOR : CHOICE_DETAIL_COLOR,
+            color: CHOICE_DETAIL_COLOR,
           })
           .setOrigin(0.5, 0);
         const detailHeight = Math.max(
@@ -354,6 +472,7 @@ export class MineralChoiceScene extends Phaser.Scene {
       this.rows.push({
         index,
         name: nameBounds,
+        marker: markerBounds,
         description: descriptionBounds,
         detail: detailBounds,
         top: nameBounds.top,
@@ -363,6 +482,13 @@ export class MineralChoiceScene extends Phaser.Scene {
       // never collide with the following option (AC2).
       cursorTop += CHOICE_ROW_GAP;
     });
+
+    // Belt and braces for AC6: the tween manager also clears its tweens on
+    // shutdown, but stopping them here guarantees no pulse outlives the
+    // scene however it is closed.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () =>
+      this._teardownNewBadges(),
+    );
 
     // Number keys 1..n select the matching option. The handler is stored so
     // it can be removed when the countdown starts.
@@ -464,6 +590,27 @@ export class MineralChoiceScene extends Phaser.Scene {
     return [...this.options];
   }
 
+  /**
+   * The rendered `YOUR UPGRADES` panel rows (e.g.
+   * `["Spread Shot Lv.2", "Shield Lv.1"]`). Empty when the launcher supplied
+   * no loadout or the panel has been torn down (AH-0MVCRKAPL000L68Y · AC4).
+   */
+  getOwnedUpgradeLines(): string[] {
+    return this.ownedUpgradeLayout ? [...this.ownedUpgradeLayout.rows] : [];
+  }
+
+  /**
+   * Rendered copy and geometry of the owned-permanents panel, or null when no
+   * panel is on screen (no loadout supplied, or the choice UI has been torn
+   * down). Exposed so tests can assert the empty state and that the panel never
+   * collides with the centred option column (AH-0MVCRKAPL000L68Y · AC5/AC7).
+   */
+  getOwnedUpgradePanelLayout(): OwnedUpgradePanelLayout | null {
+    const layout = this.ownedUpgradeLayout;
+    if (layout === null) return null;
+    return { ...layout, rows: [...layout.rows] };
+  }
+
   /** The rendered option labels (e.g. `["1.  Shield", ...]`). */
   getOptionLabels(): string[] {
     return this.controls.map((control) => control.text);
@@ -471,13 +618,23 @@ export class MineralChoiceScene extends Phaser.Scene {
 
   /**
    * The rendered detail lines beneath each option (e.g.
-   * `["+1 Projectiles", "★ New", ...]`).  Returns an empty array when no
-   * detail lines are present. The change-summary / `★ New` contract is
-   * unchanged; the description is a separate line (see
-   * {@link getDescriptionLines}).
+   * `["+1 Projectiles", ...]`). Returns an empty array when no detail lines
+   * are present. The detail line carries the change summary only — the
+   * `★ New` marker leads the title line instead (see
+   * {@link getNewBadges}; AH-0MVCFH6I4000AWRI · AC5).
    */
   getDetailLines(): string[] {
     return this.details.map((d) => d.text);
+  }
+
+  /**
+   * The emphasised `★ New` markers currently on screen, one per option the
+   * player does not yet own, each with its continuous pulse tween
+   * (AH-0MVCFH6I4000AWRI · AC1/AC3/AC6). Empty once the choice screen is torn
+   * down.
+   */
+  getNewBadges(): ChoiceNewBadge[] {
+    return this.newBadges.map((badge) => ({ ...badge }));
   }
 
   /**
@@ -513,9 +670,63 @@ export class MineralChoiceScene extends Phaser.Scene {
     return this.rows.map((row) => ({
       ...row,
       name: { ...row.name },
+      marker: row.marker ? { ...row.marker } : null,
       description: row.description ? { ...row.description } : null,
       detail: row.detail ? { ...row.detail } : null,
     }));
+  }
+
+  /**
+   * Renders the top-left `YOUR UPGRADES` panel from the permanent loadout the
+   * launcher supplied: one `Lv.N` row per owned weapon/power-up, in the
+   * deterministic order {@link buildOwnedLoadout} produces, or the
+   * `YOUR UPGRADES — none yet` empty state when the player owns nothing
+   * permanently. When the launcher supplies no loadout at all (isolated scene
+   * tests) no panel is drawn, so the overlay's existing layout is unchanged
+   * (AH-0MVCRKAPL000L68Y · AC5/backward compatibility).
+   */
+  private _renderOwnedUpgradePanel(): void {
+    const rows = this.ownedUpgrades;
+    if (rows === null) return;
+    const headingText =
+      rows.length === 0
+        ? `${OWNED_PANEL_HEADING} — none yet`
+        : OWNED_PANEL_HEADING;
+    const heading = this.add
+      .text(OWNED_PANEL_X, OWNED_PANEL_TOP, headingText, {
+        fontFamily: 'monospace',
+        fontSize: '18px',
+        color: CHOICE_HEADING_COLOR,
+      })
+      .setOrigin(0, 0);
+    this.ownedUpgradeHeading = heading;
+    this.ownedUpgradeTexts = [];
+    let bottom =
+      OWNED_PANEL_TOP +
+      Math.max(heading.height, OWNED_PANEL_HEADING_LINE_HEIGHT);
+    for (const row of rows) {
+      const rowTop =
+        bottom +
+        (this.ownedUpgradeTexts.length === 0
+          ? OWNED_PANEL_HEADING_GAP
+          : OWNED_PANEL_ROW_GAP);
+      const text = this.add
+        .text(OWNED_PANEL_X, rowTop, row.label, {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: OWNED_PANEL_ROW_COLOR,
+        })
+        .setOrigin(0, 0);
+      this.ownedUpgradeTexts.push(text);
+      bottom = rowTop + Math.max(text.height, OWNED_PANEL_ROW_LINE_HEIGHT);
+    }
+    this.ownedUpgradeLayout = {
+      heading: headingText,
+      rows: rows.map((row) => row.label),
+      left: OWNED_PANEL_X,
+      top: OWNED_PANEL_TOP,
+      bottom,
+    };
   }
 
   /**
@@ -549,8 +760,91 @@ export class MineralChoiceScene extends Phaser.Scene {
     return option;
   }
 
+  /**
+   * Creates the emphasised `★ New` marker that leads the title line of a
+   * brand-new offer and starts its continuous pulse
+   * (AH-0MVCFH6I4000AWRI · AC1–AC4).
+   *
+   * The marker is right-anchored at `nameBounds.left - gap` and vertically
+   * centred on the title line, so the reading order is `★ New` → `1.` → name
+   * and the pulse grows leftwards, away from the title. The static text
+   * shadow (blur + warm colour) is the glow; because Phaser paints the shadow
+   * with the glyphs' own alpha, the alpha leg of the pulse animates the glow's
+   * intensity in step (AC4) without a per-frame canvas re-render.
+   *
+   * @returns the marker's rendered bounds, for {@link getRowLayout}.
+   */
+  private _createNewBadge(
+    index: number,
+    nameBounds: ChoiceRowElementBounds,
+    nameHeight: number,
+  ): ChoiceRowElementBounds {
+    const label = this.add
+      .text(
+        nameBounds.left - CHOICE_NEW_GAP,
+        nameBounds.top + nameHeight / 2,
+        CHOICE_NEW_BADGE_TEXT,
+        {
+          fontFamily: 'monospace',
+          fontSize: CHOICE_NEW_FONT_SIZE,
+          fontStyle: 'bold',
+          color: CHOICE_NEW_COLOR,
+          stroke: CHOICE_NEW_STROKE_COLOR,
+          strokeThickness: CHOICE_NEW_STROKE_THICKNESS,
+          shadow: {
+            offsetX: 0,
+            offsetY: 0,
+            color: CHOICE_NEW_GLOW_COLOR,
+            blur: CHOICE_NEW_GLOW_BLUR,
+            stroke: true,
+            fill: true,
+          },
+        },
+      )
+      .setOrigin(1, 0.5);
+
+    // One looping yoyo per marker: bounded scale + alpha, so the pulse stays
+    // inside the option row and never blocks selection or the countdown.
+    // Both legs state their `from` value explicitly, so every cycle starts at
+    // exactly 1.0 and the animation never inherits a stale transform.
+    const pulse = this.tweens.add({
+      targets: label,
+      scale: { from: 1, to: CHOICE_NEW_PULSE_SCALE },
+      alpha: { from: 1, to: CHOICE_NEW_PULSE_ALPHA },
+      duration: CHOICE_NEW_PULSE_DURATION_MS,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1,
+    });
+
+    this.newBadges.push({ index, label, pulse });
+
+    const width = Math.max(label.width, 1);
+    const height = Math.max(label.height, CHOICE_NEW_LINE_HEIGHT);
+    return {
+      left: label.x - width,
+      right: label.x,
+      top: label.y - height / 2,
+      bottom: label.y + height / 2,
+    };
+  }
+
+  /**
+   * Stops the marker motions and destroys the markers, so no tween outlives
+   * the choice screen or targets a destroyed text (AC6). Safe to call twice
+   * (the countdown teardown and the scene-shutdown hook both do).
+   */
+  private _teardownNewBadges(): void {
+    for (const badge of this.newBadges) {
+      badge.pulse.remove();
+      badge.label.destroy();
+    }
+    this.newBadges = [];
+  }
+
   /** Destroys the choice screen objects and unregisters the keydown listener. */
   private _teardownChoiceUi(): void {
+    this._teardownNewBadges();
     this.backdrop?.destroy();
     this.backdrop = null;
     this.heading?.destroy();
@@ -564,6 +858,13 @@ export class MineralChoiceScene extends Phaser.Scene {
     this.descriptionCopy = [];
     this.renderedDescriptionLines = [];
     this.rows = [];
+    // The owned-permanents panel is part of the choice screen, so it goes with
+    // it; the next hold-full rebuilds it from current state (AC7).
+    this.ownedUpgradeHeading?.destroy();
+    this.ownedUpgradeHeading = null;
+    for (const item of this.ownedUpgradeTexts) item.destroy();
+    this.ownedUpgradeTexts = [];
+    this.ownedUpgradeLayout = null;
     if (this.keydownHandler !== null) {
       this.input.keyboard?.off('keydown', this.keydownHandler);
       this.keydownHandler = null;

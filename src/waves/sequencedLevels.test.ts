@@ -13,6 +13,11 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 
 import { buildSequencedLevels, dynamicTarget } from './sequencedLevels';
 import { LEVELS, LEVEL_COUNT } from './Formations';
+import {
+  auditCampaignVariety,
+  waveArchetypes,
+  waveComposition,
+} from './campaignVariety';
 import type { WaveDefinition } from './Formations';
 import { WaveManager } from './WaveManager';
 import { defaultCandidatePool, sequencer } from '../core/difficultySequencer';
@@ -423,11 +428,16 @@ describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
   });
 
   it('preserves an authored fixed wave containing the orbital Phaser verbatim', () => {
-    // Static level 5 is ten orbital Phaser waves (the expanded campaign
-    // AH-0MVCYANT6003SG5C fills the level out while keeping its phaser-only
-    // identity). A `fixed` selection must return the static wave byte-for-byte
-    // — the per-level archetype cap only constrains generated (curve/dynamic)
-    // waves, so the orbital Phaser stays authorable (AH-0MV2SGIX5005PFJT).
+    // Static Level 5 keeps its documented Phaser-dominant "Predictable Death"
+    // identity (GDD §3.2), but Q2 = a on the parent item
+    // (AH-0MVI5XXOU00954EA) relaxes its composition from phaser-only to
+    // phaser-dominant, so the variety rework may add secondary archetypes
+    // around it. This pin therefore asserts dominance (Phaser in the majority
+    // of waves and heaviest by spawned weight) instead of purity, while still
+    // proving that a `fixed` selection returns the authored static wave
+    // byte-for-byte — the per-level archetype cap only constrains generated
+    // (curve/dynamic) waves, so the orbital Phaser stays authorable
+    // (AH-0MV2SGIX5005PFJT).
     const spy = vi.fn(sequencer);
     const rows = modeRows(5, 'Predictable Death', Array.from({ length: 10 }, (_, i) =>
       ({ target: 43.5 + i, generation: 'fixed' as const }),
@@ -436,9 +446,28 @@ describe('Per-wave generation modes (AH-0MUJSUQD8003FSUT)', () => {
     const level5 = levelOf(levels, 5);
 
     expect(level5).toBe(LEVELS[4]);
+
+    // Phaser dominance: present in the majority of waves and the level's
+    // heaviest archetype. Secondary archetypes may appear around it.
+    const phaserWaves = level5.waves.filter((wave) =>
+      waveArchetypes(wave).includes('phaser'),
+    );
     expect(
-      level5.waves.every((wave) =>
-        wave.groups.some((group) => group.formation === 'orbital'),
+      phaserWaves.length,
+      'Level 5 waves containing the Phaser',
+    ).toBeGreaterThan(level5.waves.length / 2);
+    const [audit] = auditCampaignVariety([level5]).levels;
+    expect(audit.dominantArchetype, 'Level 5 dominant archetype').toBe(
+      'phaser',
+    );
+
+    // At least one authored wave still contains the orbital Phaser verbatim.
+    expect(
+      level5.waves.some((wave) =>
+        wave.groups.some(
+          (group) =>
+            group.enemyKey === 'phaser' && group.formation === 'orbital',
+        ),
       ),
     ).toBe(true);
     // Fixed waves are never passed to the sequencer.
@@ -1308,5 +1337,83 @@ describe('Shipped campaign archetype variety (AH-0MV2SGIX5005PFJT)', () => {
 
   it('is deterministic: the same campaign for every build', () => {
     expect(campaign()).toEqual(campaign());
+  });
+});
+
+// ── Sequential distinctness wiring (R4, AH-0MVSE6XIO007BXYM) ──────────
+
+describe('Sequential distinctness wiring (R4)', () => {
+  /** One level's rows with explicit per-wave generation modes. */
+  function rowsFor(
+    level: number,
+    levelName: string,
+    specs: Array<{ target: number; generation: DifficultyGeneration }>,
+  ): DifficultyCurveRow[] {
+    return specs.map((spec, i) => ({
+      level,
+      levelName,
+      wave: i + 1,
+      targetDifficulty: spec.target,
+      generation: spec.generation,
+    }));
+  }
+
+  it('hands each generated wave the composition of the immediately preceding built wave', () => {
+    const rows = rowsFor(3, 'The Core', [
+      { target: 13, generation: 'fixed' },
+      { target: 20, generation: 'curve' },
+      { target: 24, generation: 'curve' },
+    ]);
+    const spy = vi.fn(sequencer);
+    const levels = buildSequencedLevels(rows, undefined, { sequencer: spy });
+    const level = levels.find((entry) => entry.level === 3)!;
+
+    // Two generated waves: one per curve row.
+    expect(spy).toHaveBeenCalledTimes(2);
+    // The first avoids the authored fixed wave it follows…
+    expect(spy.mock.calls[0][2]).toMatchObject({
+      avoidCompositions: [waveComposition(LEVELS[2].waves[0])],
+    });
+    // …the second avoids the wave the builder just produced for wave 2.
+    expect(spy.mock.calls[1][2]).toMatchObject({
+      avoidCompositions: [waveComposition(level.waves[1])],
+    });
+    expect(level.waves[0]).toBe(LEVELS[2].waves[0]);
+  });
+
+  it('does not constrain a level-first wave (no predecessor in the level)', () => {
+    const rows = rowsFor(4, 'Firestorm', [{ target: 25, generation: 'curve' }]);
+    const spy = vi.fn(sequencer);
+    buildSequencedLevels(rows, undefined, { sequencer: spy });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const options = spy.mock.calls[0][2] as Record<string, unknown> | undefined;
+    expect(options?.avoidCompositions).toBeUndefined();
+  });
+
+  it('resets the predecessor per level: a level-first wave never avoids the previous level', () => {
+    const rows = [
+      ...rowsFor(3, 'The Core', [{ target: 20, generation: 'curve' }]),
+      ...rowsFor(4, 'Firestorm', [{ target: 22, generation: 'curve' }]),
+    ];
+    const spy = vi.fn(sequencer);
+    buildSequencedLevels(rows, undefined, { sequencer: spy });
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[0][2]).toMatchObject({});
+    const secondOptions = spy.mock.calls[1][2] as Record<string, unknown> | undefined;
+    expect(secondOptions?.avoidCompositions).toBeUndefined();
+  });
+
+  it('keeps consecutive generated waves compositionally distinct at their own targets', () => {
+    const rows = rowsFor(6, 'Invasion', [
+      { target: 77, generation: 'curve' },
+      { target: 77, generation: 'curve' },
+    ]);
+    const levels = buildSequencedLevels(rows, undefined, { seed: 0 });
+    const waves = levels.find((entry) => entry.level === 6)!.waves;
+
+    expect(waves).toHaveLength(2);
+    expect(waveComposition(waves[0])).not.toBe(waveComposition(waves[1]));
   });
 });

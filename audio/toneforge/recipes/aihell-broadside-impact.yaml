@@ -1,0 +1,110 @@
+# AI Hell cue: aihell-broadside-impact — Player Broadside connect — a short
+# teal dart tick, ≤ 0.12 s.
+#
+# (AH-0MVV0WNOX0078G9G) A Broadside dart is a small, fast sideways lance, so
+# its connect should be a crisp tick rather than a heavy crack: a glassy
+# triangle 2400 → 1600 Hz carries the short body, a quiet 3600 Hz sine adds the
+# teal overtone, and a 3000 Hz high-passed noise tick supplies the contact.
+# There is deliberately **no square oscillator**, so the tick never aliases the
+# Cannon's bright square crack. Total 0.10 s stays well under the 0.12 s
+# ceiling, keeping a left/right pair connecting in the same frame readable as
+# one teal tick (the shipped 4-voice/150 ms limiter bounds any overlap with no
+# new throttle).
+#
+# Deliberately a different asset from `aihell-cannon-impact` (different recipe,
+# different asset, shorter and glassier with no square click); the distinctness
+# is pinned by `src/audio/broadsideFeel.docs.test.ts`.
+#
+# Seed 32284 is drawn from the game-specific reservation block (the Broadside
+# pair 32283/32284; docs/AUDIO_TONEFORGE_CUE_MAPPING.md) and baked via
+# scripts/build-audio.sh.
+version: "0.1"
+meta:
+  name: aihell-broadside-impact
+  description: Player Broadside connect — a short teal dart tick. A glassy triangle 2400 to 1600 Hz carries the body, a quiet 3600 Hz sine adds the teal overtone and a 3000 Hz high-passed noise tick supplies the contact, 0.10 s. Shorter and glassier than the Cannon's 520 to 90 Hz crack with its square click.
+  category: AIHell
+  tags:
+    - weapon
+    - hit
+    - teal
+    - dart
+    - short
+  duration: 0.1
+nodes:
+  # ── Glassy teal body: triangle 2400 → 1600 Hz ─────────────────────
+  v0:
+    kind: oscillator
+    params:
+      type: triangle
+      frequency: 2400
+    automation:
+      frequency:
+        - kind: set
+          time: 0
+          value: 2400
+        - kind: exponentialRamp
+          time: 0.09
+          value: 1600
+  e0:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.09
+      sustain: 0
+      release: 0
+  g0:
+    kind: gain
+    params:
+      gain: 0.12
+  # ── Teal overtone ─────────────────────────────────────────────────
+  v1:
+    kind: oscillator
+    params:
+      type: sine
+      frequency: 3600
+  e1:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.04
+      sustain: 0
+      release: 0
+  g1:
+    kind: gain
+    params:
+      gain: 0.035
+  # ── Crisp contact tick: high-passed noise (no square click) ───────
+  n0:
+    kind: noise
+    params:
+      color: white
+      level: 1
+  f0:
+    kind: biquadFilter
+    params:
+      type: highpass
+      frequency: 3000
+      Q: 1
+  e2:
+    kind: envelope
+    params:
+      attack: 0.001
+      decay: 0.03
+      sustain: 0
+      release: 0
+  g2:
+    kind: gain
+    params:
+      gain: 0.05
+  mix:
+    kind: gain
+    params:
+      gain: 0.9
+  out:
+    kind: destination
+routing:
+  - chain: [v0, e0, g0, mix]
+  - chain: [v1, e1, g1, mix]
+  - chain: [n0, f0, e2, g2, mix]
+  - from: mix
+    to: out

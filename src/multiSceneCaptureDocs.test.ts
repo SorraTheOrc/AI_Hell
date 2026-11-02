@@ -179,6 +179,8 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
       'GymCentipede',
       'GymCurveSequencer',
       'GymFodderEnemies',
+      'GymHangar',
+      'GymHexWar',
       'GymLevel',
       'GymMinerals',
       'GymMiniBoss',
@@ -208,6 +210,28 @@ describe('Multi-scene capture is documented (AH-0MVFC748B00472MB)', () => {
       expect(scene.startWave ?? 1).toBeGreaterThanOrEqual(1);
     }
     expect(parsed[parsed.length - 1].startBoss).toBe(true);
+  });
+
+  it('documents the two Hangar War gym scenes (AH-0MVUXCC5J0028OGQ)', () => {
+    // The Hangar War adds two watchable scenes; the developer doc must say what
+    // each one shows and that both are read-only views of shipped code.
+    const heading = /^####\s+Hangar-war gym scenes[^\n]*$/im.exec(captureDoc);
+    expect(heading).not.toBeNull();
+    const start = heading?.index ?? 0;
+    const rest = captureDoc.slice(start + (heading?.[0].length ?? 0));
+    const nextHeading = /\n###\s/.exec(rest);
+    const section = nextHeading ? rest.slice(0, nextHeading.index) : rest;
+    for (const term of [
+      'GymHangar',
+      'GymHexWar',
+      'buildHangarScreenModel',
+      'buildHexMapModel',
+      'runFrontierTick',
+      'buildDefenceReport',
+      'read-only',
+    ]) {
+      expect(section).toContain(term);
+    }
   });
 
   it('documents the generated-level PlayScene target and its fields', () => {

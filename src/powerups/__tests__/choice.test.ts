@@ -23,14 +23,25 @@ import {
 } from '../choice';
 import { SLOTS_FULL_EXEMPT_IDS } from '../slots';
 import { summariseWeaponLevelChange } from '../../utils/weaponLevels';
-import { summarisePowerUpLevelChange } from '../powerUpLevels';
-import { buildUpgradeOptions } from '../unlocks';
+import {
+  PowerUpLevelStore,
+  resolveConsumableRechargeTime,
+  summarisePowerUpLevelChange,
+} from '../powerUpLevels';
+import { EffectsRegistry } from '../effects';
+import {
+  applyMineralChoiceReward,
+  grantPermanentPowerUp,
+} from '../choiceReward';
+import { buildOwnedLevelUpOptions } from '../choice';
 import { getHelpDescription } from '../../utils/gymHelp';
 import { WEAPON_CATALOGUE } from '../../utils/weapons';
 import {
+  CONSUMABLE_POWER_UP_IDS,
   POWER_UP_CATALOGUE,
   WEAPON_DROP_IDS,
   type DropId,
+  type PowerUpId,
 } from '../types';
 
 describe('power-up choice strategy', () => {
@@ -132,12 +143,19 @@ describe('power-up choice strategy', () => {
         });
         const offers = candidates.filter((o) => o.id === id);
         expect(offers, id).toHaveLength(1);
-        expect(offers[0].kind, id).toBe('power-up-level');
-        expect(offers[0].level, id).toBe(2);
-        expect(offers[0].changeSummary, id).toBe(
-          summarisePowerUpLevelChange(id, 1, 2),
-        );
         expect(offers[0].changeSummary!.length, id).toBeGreaterThan(0);
+        if (CONSUMABLE_POWER_UP_IDS.includes(id)) {
+          // A consumable is offered as one **charge** — it never levels up
+          // (AH-0MVUXH35J002WSAB AC1), so the offer advertises no level.
+          expect(offers[0].kind, id).toBe('power-up-charge');
+          expect(offers[0].level, id).toBeUndefined();
+        } else {
+          expect(offers[0].kind, id).toBe('power-up-level');
+          expect(offers[0].level, id).toBe(2);
+          expect(offers[0].changeSummary, id).toBe(
+            summarisePowerUpLevelChange(id, 1, 2),
+          );
+        }
       }
     });
 
@@ -328,31 +346,38 @@ describe('power-up choice strategy', () => {
   });
 
   describe('power-up level-up offers (AH-0MUU2QJE2007JNR6 AC6)', () => {
+    // Non-consumable kinds only: a consumable is offered as a charge, not a
+    // level-up (AH-0MVUXH35J002WSAB AC1 — covered by its own suite below).
     const context = {
       powerUpLevels: [
-        { id: 'shield' as const, level: 2 },
-        { id: 'magnet' as const, level: 1 },
+        { id: 'magnet' as const, level: 2 },
+        { id: 'speed_boost' as const, level: 1 },
       ],
     };
 
     it('adds a level-up offer for each owned power-up, reflecting its level', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, context);
       const levelUps = candidates.filter((o) => o.kind === 'power-up-level');
-      expect(levelUps.map((o) => o.id).sort()).toEqual(['magnet', 'shield']);
+      expect(levelUps.map((o) => o.id).sort()).toEqual([
+        'magnet',
+        'speed_boost',
+      ]);
 
-      const p3 = levelUps.find((o) => o.id === 'shield')!;
+      const p3 = levelUps.find((o) => o.id === 'magnet')!;
       expect(p3.level).toBe(3);
       expect(p3.name).toContain('Lv.3');
-      const p9 = levelUps.find((o) => o.id === 'magnet')!;
+      const p9 = levelUps.find((o) => o.id === 'speed_boost')!;
       expect(p9.level).toBe(2);
     });
 
     it('derives the change summary from the shared power-up resolver', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, context);
       const p3 = candidates.find(
-        (o) => o.kind === 'power-up-level' && o.id === 'shield',
+        (o) => o.kind === 'power-up-level' && o.id === 'magnet',
       )!;
-      expect(p3.changeSummary).toBe(summarisePowerUpLevelChange('shield', 2, 3));
+      expect(p3.changeSummary).toBe(
+        summarisePowerUpLevelChange('magnet', 2, 3),
+      );
       expect(p3.changeSummary!.length).toBeGreaterThan(0);
     });
 
@@ -414,12 +439,66 @@ describe('power-up choice strategy', () => {
     it('offers a level-up only for an item present at permanent level ≥ 1', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, {
         weaponLevels: [],
-        powerUpLevels: [{ id: 'shield', level: 1 }],
+        // A non-consumable kind: a consumable is owned through a charge and
+        // is offered as a charge, never as a level-up (AC1 below).
+        powerUpLevels: [{ id: 'magnet', level: 1 }],
       });
-      const p3 = candidates.find((o) => o.id === 'shield')!;
+      const p3 = candidates.find((o) => o.id === 'magnet')!;
       expect(p3.kind).toBe('power-up-level');
       expect(p3.level).toBe(2);
       expect(p3.isNew).toBeUndefined();
+    });
+
+    // AH-0MVUGI4WG008HU3M AC2: a temporary (field-pickup) level on top of a
+    // permanent one must never inflate the offer, flip it back to `★ New`, or
+    // change its delta — before, during and after the window.
+    it('prices the permanent level only across a temporary window on the same kind', () => {
+      const store = new PowerUpLevelStore();
+      // A non-consumable kind: a consumable's hold-full reward is a charge,
+      // never a level (parent AC1), so its level would not move here.
+      store.collect('magnet', true); // permanent level 1
+
+      const context = (): ChoiceContext => ({
+        weaponLevels: [],
+        powerUpLevels: store.getLevels(),
+        tempPowerUpIds: store.getTempPowerUpIds(),
+      });
+
+      const magnetOffer = () => {
+        const candidates = buildChoiceCandidates(CHOICE_POOL, context());
+        const offers = candidates.filter((o) => o.id === 'magnet');
+        // Exactly one offer for the kind — never a base entry beside it.
+        expect(offers).toHaveLength(1);
+        return offers[0];
+      };
+
+      const before = magnetOffer();
+      expect(before.kind).toBe('power-up-level');
+      expect(before.level).toBe(2);
+      expect(before.isNew).toBeUndefined();
+
+      // A field pickup raises the *effective* level to 2; the offer must stay
+      // priced on the permanent level 1 → 2 (no temporary inflation).
+      store.collect('magnet');
+      expect(store.getEffectiveLevel('magnet')).toBe(2);
+      const during = magnetOffer();
+      expect(during.kind).toBe('power-up-level');
+      expect(during.level).toBe(2);
+      expect(during.isNew).toBeUndefined();
+      expect(during.changeSummary).toBe(before.changeSummary);
+      expect(during.changeSummary).toBe(
+        summarisePowerUpLevelChange('magnet', 1, 2),
+      );
+
+      // After expiry the offer is identical again — no `★ New` regression for
+      // an item the player still permanently owns.
+      store.clearTemporary('magnet');
+      expect(store.getEffectiveLevel('magnet')).toBe(1);
+      const after = magnetOffer();
+      expect(after.kind).toBe('power-up-level');
+      expect(after.level).toBe(2);
+      expect(after.isNew).toBeUndefined();
+      expect(after.changeSummary).toBe(before.changeSummary);
     });
   });
 
@@ -606,19 +685,29 @@ describe('power-up choice strategy', () => {
   });
 
   describe('option descriptions (AH-0MV2N2591007UGPD)', () => {
-    // A context that yields all four option kinds in one candidate list:
-    // an owned weapon → `weapon-level`, an owned power-up → `power-up-level`,
-    // and every unowned entry → `weapon` / `powerup`.
+    // A context that yields all five option kinds in one candidate list:
+    // an owned weapon → `weapon-level`, an owned non-consumable power-up →
+    // `power-up-level`, an owned consumable → `power-up-charge`
+    // (AH-0MVUXH35J002WSAB), and every unowned entry → `weapon` / `powerup`.
     const context = {
       weaponLevels: [{ id: 'spread' as const, level: 2 }],
-      powerUpLevels: [{ id: 'shield' as const, level: 1 }],
+      powerUpLevels: [
+        { id: 'magnet' as const, level: 1 },
+        { id: 'shield' as const, level: 1 },
+      ],
     };
 
-    it('AC1 — populates a non-empty description for all four option kinds', () => {
+    it('AC1 — populates a non-empty description for all five option kinds', () => {
       const candidates = buildChoiceCandidates(CHOICE_POOL, context);
       const kinds = new Set(candidates.map((o) => o.kind));
       expect(kinds).toEqual(
-        new Set(['weapon', 'powerup', 'weapon-level', 'power-up-level']),
+        new Set([
+          'weapon',
+          'powerup',
+          'weapon-level',
+          'power-up-level',
+          'power-up-charge',
+        ]),
       );
       for (const option of candidates) {
         expect(option.description, `${option.kind}:${option.id}`).toBeTruthy();
@@ -645,11 +734,19 @@ describe('power-up choice strategy', () => {
       expect(weaponLevel.description).toBe(WEAPON_CATALOGUE.spread.description);
 
       const powerUpLevel = candidates.find(
-        (o) => o.kind === 'power-up-level' && o.id === 'shield',
+        (o) => o.kind === 'power-up-level' && o.id === 'magnet',
       )!;
       expect(powerUpLevel.description).toBe(
-        POWER_UP_CATALOGUE.shield.description,
+        POWER_UP_CATALOGUE.magnet.description,
       );
+
+      // The consumable charge offer also carries the shared catalogue copy,
+      // so the overlay and the gym help can never diverge (AC2 below pins the
+      // interval half of its copy).
+      const charge = candidates.find(
+        (o) => o.kind === 'power-up-charge' && o.id === 'shield',
+      )!;
+      expect(charge.description).toBe(POWER_UP_CATALOGUE.shield.description);
 
       const newWeapon = candidates.find(
         (o) => o.kind === 'weapon' && o.id === 'dual',
@@ -683,10 +780,17 @@ describe('power-up choice strategy', () => {
         ],
         powerUpLevels: [{ id: 'shield' as const, level: 1 }],
       };
+      // Every *owned* offer the pool builds — level-ups and the consumable
+      // charge grant — must be the same list the mini-boss reward builds.
       const holdFull = buildChoiceCandidates(CHOICE_POOL, context).filter(
-        (o) => o.kind === 'weapon-level' || o.kind === 'power-up-level',
+        (o) =>
+          o.kind === 'weapon-level' ||
+          o.kind === 'power-up-level' ||
+          o.kind === 'power-up-charge',
       );
-      expect(buildUpgradeOptions(context)).toEqual(holdFull);
+      // The mini-boss reward builds its level-up offer through the same shared
+      // builder the hold-full choice uses (AH-0MVL9P2SF009QFON AC3).
+      expect(buildOwnedLevelUpOptions(context)).toEqual(holdFull);
     });
   });
 
@@ -818,7 +922,12 @@ describe('power-up choice strategy', () => {
       const context = FULL_SLOT_CONTEXT;
       const candidates = buildChoiceCandidates(CHOICE_POOL, context);
       const levelUpIds = candidates
-        .filter((o) => o.kind === 'weapon-level' || o.kind === 'power-up-level')
+        .filter(
+          (o) =>
+            o.kind === 'weapon-level' ||
+            o.kind === 'power-up-level' ||
+            o.kind === 'power-up-charge',
+        )
         .map((o) => o.id)
         .sort();
       expect(levelUpIds).toEqual([...ownedIdsOf(context)].sort());
@@ -854,9 +963,15 @@ describe('power-up choice strategy', () => {
       // The temp-held weapon is offered as a base (permanent) pick alongside
       // the exempt entries — and nothing else.
       expect(baseIds).toEqual(['rapid', ...SLOTS_FULL_EXEMPT_IDS].sort());
-      // Level-ups of the five permanently owned kinds survive.
+      // The owned offers of the five permanently owned kinds survive (a
+      // consumable contributes a charge grant, the rest a level-up).
       const levelUps = candidates
-        .filter((o) => o.kind === 'weapon-level' || o.kind === 'power-up-level')
+        .filter(
+          (o) =>
+            o.kind === 'weapon-level' ||
+            o.kind === 'power-up-level' ||
+            o.kind === 'power-up-charge',
+        )
         .map((o) => o.id)
         .sort();
       expect(levelUps).toEqual(
@@ -913,6 +1028,258 @@ describe('power-up choice strategy', () => {
       for (const id of CHOICE_POOL) {
         expect(offeredIds).toContain(id);
       }
+    });
+  });
+
+  describe('consumable charge grant (AH-0MVUXH35J002WSAB, parent AC5)', () => {
+    /**
+     * The six catalogue consumables, read from the shared `consumable` flag —
+     * never a hand-written id list, so this suite can never drift from the
+     * catalogue the store, HUD and gyms read.
+     */
+    const CONSUMABLES: readonly PowerUpId[] = CONSUMABLE_POWER_UP_IDS;
+
+    /**
+     * The level-derived regeneration interval of each kind at the base level
+     * (resolver level 0, i.e. a first hold-full ownership). Pinned as literal
+     * seconds so the copy is asserted against real game numbers rather than
+     * against the resolver it is derived from.
+     */
+    const BASE_INTERVALS: Readonly<Record<string, number>> = {
+      shield: 45,
+      thorns: 12,
+      phase_shift: 30,
+      teleport: 15,
+      force_field: 45,
+      mystery_ufo: 30,
+    };
+
+    /** A choice context owning exactly `id` at the reported level. */
+    const ownedContext = (id: PowerUpId, level = 1): ChoiceContext => ({
+      powerUpLevels: [{ id, level }],
+    });
+
+    it('AC1 — a permanently-owned consumable is offered as a charge, never a level-up', () => {
+      for (const id of CONSUMABLES) {
+        const candidates = buildChoiceCandidates(CHOICE_POOL, ownedContext(id));
+        // Exactly one offer for the kind, and it is the charge grant: the
+        // base-pool entry is suppressed (owned) and no `power-up-level` offer
+        // is emitted for a consumable.
+        expect(
+          candidates.filter((o) => o.id === id).map((o) => o.kind),
+          id,
+        ).toEqual(['power-up-charge']);
+        expect(
+          candidates.some(
+            (o) => o.id === id && o.kind === 'power-up-level',
+          ),
+          id,
+        ).toBe(false);
+      }
+    });
+
+    it('AC1 — the shared owned-offer builder offers the charge too (no surface drift)', () => {
+      // `buildOwnedLevelUpOptions` is the one builder the mini-boss reward
+      // reuses, so the charge offer cannot exist on one surface only.
+      for (const id of CONSUMABLES) {
+        const options = buildOwnedLevelUpOptions(ownedContext(id));
+        expect(options.map((o) => o.kind), id).toEqual(['power-up-charge']);
+        // A charge grants no level, so the offer must not advertise one.
+        expect(options[0].level, id).toBeUndefined();
+        expect(options[0].name, id).toBe(
+          `${POWER_UP_CATALOGUE[id].name} Charge`,
+        );
+      }
+    });
+
+    it('AC2 — copy names the one-event effect and the level-derived interval, per kind', () => {
+      for (const id of CONSUMABLES) {
+        const option = buildChoiceCandidates(
+          CHOICE_POOL,
+          ownedContext(id),
+        ).find((o) => o.kind === 'power-up-charge')!;
+
+        // The one-event effect is the shared catalogue copy (single source
+        // with the gym help), so it states what one charge buys.
+        expect(option.description, id).toBe(POWER_UP_CATALOGUE[id].description);
+        expect(option.description, id).toMatch(/charge/i);
+
+        // The detail line states one charge and its regeneration interval.
+        const interval = BASE_INTERVALS[id];
+        expect(option.changeSummary, id).toContain('+1 charge');
+        expect(option.changeSummary, id).toContain(`every ${interval} s`);
+        // The published interval is the store's own level-derived interval —
+        // copy and mechanics cannot drift apart.
+        expect(interval, id).toBe(resolveConsumableRechargeTime(id, 0));
+      }
+    });
+
+    it('AC2 — the stated interval is level-derived (a higher level regenerates sooner)', () => {
+      // Shield: 45 s at level 0, 5 s sooner per further level (the resolver
+      // level is the reported level − 1, mirroring `PowerUpLevelStore.stats`).
+      const base = buildChoiceCandidates(CHOICE_POOL, ownedContext('shield', 1)).find(
+        (o) => o.kind === 'power-up-charge',
+      )!;
+      const levelled = buildChoiceCandidates(CHOICE_POOL, ownedContext('shield', 3)).find(
+        (o) => o.kind === 'power-up-charge',
+      )!;
+
+      expect(base.changeSummary).toContain('every 45 s');
+      expect(levelled.changeSummary).toContain('every 35 s');
+      expect(levelled.changeSummary).not.toBe(base.changeSummary);
+    });
+
+    it('AC3 — choosing a charge option grants exactly one charge and no level', () => {
+      const registry = new EffectsRegistry();
+      const store = registry.levelStore();
+      const option = buildChoiceCandidates(
+        CHOICE_POOL,
+        ownedContext('thorns'),
+      ).find((o) => o.kind === 'power-up-charge')!;
+
+      expect(store.consumableCharges('thorns')).toBe(0);
+      applyMineralChoiceReward(option, registry, null);
+
+      expect(store.consumableCharges('thorns')).toBe(1);
+      expect(store.isConsumableOwned('thorns')).toBe(true);
+      // The permanent level is untouched: a charge is not a level-up.
+      expect(store.getPermanentLevel('thorns')).toBe(0);
+      expect(store.getLevel('thorns')).toBe(0);
+
+      // Re-choosing keeps granting charges (clamped at the level-derived
+      // cap), never levels.
+      applyMineralChoiceReward(option, registry, null);
+      expect(store.consumableCharges('thorns')).toBe(2);
+      expect(store.getPermanentLevel('thorns')).toBe(0);
+      expect(store.getLevel('thorns')).toBe(0);
+    });
+
+    it('AC3 — a grant onto a full pool is clamped, not banked', () => {
+      const registry = new EffectsRegistry();
+      const store = registry.levelStore();
+      const option = buildChoiceCandidates(
+        CHOICE_POOL,
+        ownedContext('shield'),
+      ).find((o) => o.kind === 'power-up-charge')!;
+
+      // Shield's level-derived cap is 1 at the first grant, so a second
+      // choice must not bank a charge.
+      applyMineralChoiceReward(option, registry, null);
+      applyMineralChoiceReward(option, registry, null);
+      expect(store.consumableCharges('shield')).toBe(1);
+      expect(store.getPermanentLevel('shield')).toBe(0);
+    });
+
+    it('AC5 — a checkpoint replay through the shared grant helper reproduces the charge state', () => {
+      const option = buildChoiceCandidates(
+        CHOICE_POOL,
+        ownedContext('phase_shift'),
+      ).find((o) => o.kind === 'power-up-charge')!;
+
+      // Live play: the choice is applied through the reward seam.
+      const live = new EffectsRegistry();
+      applyMineralChoiceReward(option, live, null);
+
+      // Resume: `PlayScene._restoreCheckpoint` replays the persisted entry
+      // through the same helper, once per persisted level.
+      const resumed = new EffectsRegistry();
+      grantPermanentPowerUp('phase_shift', resumed);
+
+      expect(resumed.levelStore().consumableCharges('phase_shift')).toBe(
+        live.levelStore().consumableCharges('phase_shift'),
+      );
+      // Exactly one charge — the replay never double-counts a level + charge.
+      expect(resumed.levelStore().consumableCharges('phase_shift')).toBe(1);
+      expect(resumed.levelStore().getPermanentLevel('phase_shift')).toBe(
+        live.levelStore().getPermanentLevel('phase_shift'),
+      );
+      expect(resumed.levelStore().getPermanentLevel('phase_shift')).toBe(0);
+      expect(resumed.levelStore().isConsumableOwned('phase_shift')).toBe(true);
+    });
+
+    it('AC4 — non-consumable offers are unchanged (kinds, copy, weights)', () => {
+      // A build with one owned weapon and two owned non-consumable power-ups.
+      const context: ChoiceContext = {
+        weaponLevels: [{ id: 'spread', level: 1 }],
+        powerUpLevels: [
+          { id: 'magnet', level: 2 },
+          { id: 'extra_life', level: 1 },
+        ],
+      };
+      const candidates = buildChoiceCandidates(CHOICE_POOL, context);
+
+      // No charge option is invented for a non-consumable kind.
+      expect(candidates.some((o) => o.kind === 'power-up-charge')).toBe(false);
+
+      // The owned non-consumable offers are byte-identical to the pre-change
+      // builder output: the same kind, level, name, summary and description.
+      const owned = candidates
+        .filter((o) => o.kind === 'weapon-level' || o.kind === 'power-up-level')
+        .map((o) => ({
+          id: o.id,
+          kind: o.kind,
+          level: o.level,
+          name: o.name,
+          changeSummary: o.changeSummary,
+          description: o.description,
+        }));
+      expect(owned).toEqual([
+        {
+          id: 'spread',
+          kind: 'weapon-level',
+          level: 2,
+          name: 'Spread Shot Lv.2',
+          changeSummary: summariseWeaponLevelChange('spread', 1, 2),
+          description: WEAPON_CATALOGUE.spread.description,
+        },
+        {
+          id: 'magnet',
+          kind: 'power-up-level',
+          level: 3,
+          name: 'Magnet Lv.3',
+          changeSummary: summarisePowerUpLevelChange('magnet', 2, 3),
+          description: POWER_UP_CATALOGUE.magnet.description,
+        },
+        {
+          id: 'extra_life',
+          kind: 'power-up-level',
+          level: 2,
+          name: 'Extra Life Lv.2',
+          changeSummary: summarisePowerUpLevelChange('extra_life', 1, 2),
+          description: POWER_UP_CATALOGUE.extra_life.description,
+        },
+      ]);
+
+      // The 1.35× owned-upgrade weight rule is untouched for both non-consumable
+      // level-up kinds, and base entries still weigh 1.0×.
+      expect(
+        choiceCandidateWeight({
+          id: 'spread',
+          name: 'Spread Shot Lv.2',
+          kind: 'weapon-level',
+          level: 2,
+        }),
+      ).toBe(OWNED_UPGRADE_BONUS_WEIGHT);
+      expect(
+        choiceCandidateWeight({
+          id: 'magnet',
+          name: 'Magnet Lv.3',
+          kind: 'power-up-level',
+          level: 3,
+        }),
+      ).toBe(OWNED_UPGRADE_BONUS_WEIGHT);
+      expect(
+        choiceCandidateWeight({ id: 'bomb', name: 'Bomb', kind: 'powerup' }),
+      ).toBe(1);
+      // The charge grant replaces the owned level-up offer, so it carries the
+      // same owned-upgrade bias rather than silently dropping to 1.0×.
+      expect(
+        choiceCandidateWeight({
+          id: 'shield',
+          name: 'Shield Charge',
+          kind: 'power-up-charge',
+        }),
+      ).toBe(OWNED_UPGRADE_BONUS_WEIGHT);
     });
   });
 });

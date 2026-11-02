@@ -1298,6 +1298,30 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 1.6,
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.rear_guard,
+    // Launch cue (AH-0MVV0WN96007TU9J): a compact rose flash at the hull. The
+    // Rear Guard is a single rearward pellet, so its launch pop stays smaller
+    // and shorter than the Cannon's 7 px / 0.12 s forward flash — it reads as
+    // a muted push behind the ship rather than a second forward shot. Spawned
+    // by the shared combat-core muzzle-flash path from this metadata, so the
+    // game and every gym show the same launch cue with no per-scene code.
+    // Visual metadata only.
+    muzzleFlash: {
+      color: BULLET_COLORS.rear_guard,
+      radius: 6,
+      duration: 0.11,
+    },
+    // Connect feedback (AH-0MVV0WN96007TU9J): a rose impact flash plus the
+    // baked soft rose pop, routed through the shared impact seam so a Rear
+    // Guard connect no longer falls back to the generic warm-white flash with
+    // no hit sound. Shorter and softer than the Cannon's 9 px / 0.16 s crack,
+    // matching the single compact pellet. Visual/feel metadata only — the
+    // rearward offset, cadence, lifetime and bullet identity are unchanged.
+    impactFx: {
+      color: BULLET_COLORS.rear_guard,
+      radius: 8,
+      duration: 0.13,
+      cue: 'playRearGuardImpactSound',
+    },
   },
   broadside: {
     id: 'broadside',
@@ -1315,6 +1339,33 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 1.4,
     bulletSize: 0.9,
     bulletLifetime: WEAPON_BULLET_LIFETIME.broadside,
+    // Launch cue (AH-0MVV0WNOX0078G9G): a teal flash at the hull sized for the
+    // perpendicular pair — 9 px, wider than the Cannon's 7 px forward pop (and
+    // inside the shipped 5–12 px ceiling), so the launch reads as a wide
+    // two-sided gesture. The two-sided read comes from the baked fire cue's
+    // opposing sweeps plus this wide radius, not from a second spawn hook: the
+    // shared combat-core muzzle-flash path spawns exactly one flash per shot
+    // input from this metadata, so the game and every gym show the same launch
+    // cue with no per-scene code. Visual metadata only.
+    muzzleFlash: {
+      color: BULLET_COLORS.broadside,
+      radius: 9,
+      duration: 0.12,
+    },
+    // Connect feedback (AH-0MVV0WNOX0078G9G): a teal impact flash plus the
+    // baked short teal dart tick, routed through the shared impact seam so a
+    // Broadside connect no longer falls back to the generic warm-white flash
+    // with no hit sound. The short 0.12 s fade keeps a left/right pair
+    // connecting in the same frame readable as one hit without adding a new
+    // throttle (the shipped per-cue voice limiter covers the audio side).
+    // Visual/feel metadata only — the perpendicular offsets, cadence, lifetime
+    // and bullet identity are unchanged.
+    impactFx: {
+      color: BULLET_COLORS.broadside,
+      radius: 8,
+      duration: 0.12,
+      cue: 'playBroadsideImpactSound',
+    },
   },
   railgun: {
     id: 'railgun',
@@ -1337,6 +1388,24 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     // Base damage budget greater than the wave laser's (2) — the rail's
     // identity is the deeper line-piercing shot.
     maxHitPoints: 5,
+    // Launch cue (AH-0MVQ6C1YL003HU9K): a heavy sky-blue flash at the hull when
+    // the shot leaves the rail — larger than the cannon's pop and smaller than
+    // the wave laser's wide flare. The shared combat-core muzzle-flash path
+    // spans it from this metadata, so the game and every gym show the same
+    // launch cue with no per-scene code. Visual metadata only.
+    muzzleFlash: { color: BULLET_COLORS.railgun, radius: 10, duration: 0.14 },
+    // Connect feedback (AH-0MVMIGVCE004VSNA): a sky-blue impact flash sized to
+    // the heavy tracer plus the newly baked railgun hit cue, routed through the
+    // shared impact seam so the game and every gym connect identically instead
+    // of falling back to the generic warm-white flash. Visual/feel metadata
+    // only — cadence, offsets, lifetime, speed and the pass-through budget are
+    // unchanged.
+    impactFx: {
+      color: BULLET_COLORS.railgun,
+      radius: 10,
+      duration: 0.16,
+      cue: 'playRailgunImpactSound',
+    },
   },
   shard_swarm: {
     id: 'shard_swarm',
@@ -1359,6 +1428,30 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 1.2,
     bulletSize: 0.72,
     bulletLifetime: WEAPON_BULLET_LIFETIME.shard_swarm,
+    // Launch cue (AH-0MVV0WMTE0007NGS): a lime flash at the hull sized for a
+    // five-shard burst — a touch larger than the cannon's single-shot pop so
+    // the fan reads as a burst, and well inside the shipped 5–12 px /
+    // 0.07–0.16 s band. The shared combat-core muzzle-flash path spawns it
+    // from this metadata, so the game and every gym show the same launch cue
+    // with no per-scene code. Visual metadata only.
+    muzzleFlash: {
+      color: BULLET_COLORS.shard_swarm,
+      radius: 8,
+      duration: 0.12,
+    },
+    // Connect feedback (AH-0MVV0WMTE0007NGS): a lime impact flash plus the
+    // baked glassy shard hit cue, routed through the shared impact seam so a
+    // Shard Swarm connect no longer falls back to the generic warm-white flash
+    // with no hit sound. The short 0.12 s fade keeps a five-shard volley
+    // readable as one hit without adding a new throttle (the shipped per-cue
+    // voice limiter covers the audio side). Visual/feel metadata only —
+    // cadence, offsets, lifetime and bullet identity are unchanged.
+    impactFx: {
+      color: BULLET_COLORS.shard_swarm,
+      radius: 8,
+      duration: 0.12,
+      cue: 'playShardSwarmImpactSound',
+    },
   },
   heavy_slug: {
     id: 'heavy_slug',
@@ -1374,6 +1467,30 @@ export const WEAPON_CATALOGUE: Record<WeaponId, WeaponDefinition> = {
     bulletTrail: 2.4,
     bulletSize: 1.7,
     bulletLifetime: WEAPON_BULLET_LIFETIME.heavy_slug,
+    // Launch cue (AH-0MVV0WO4M001KEDG): the heaviest flash of the set — deep
+    // red at the 12 px shipped ceiling (a documented tie with the Wave Laser's
+    // 12 px flare; every other weapon is strictly smaller), 0.16 s fade. One
+    // flash per shot input via the shared combat-core muzzle-flash path, so
+    // the game and every gym show the same launch cue with no per-scene code.
+    // Visual metadata only — cadence, offsets, lifetime and bullet identity
+    // are unchanged.
+    muzzleFlash: {
+      color: BULLET_COLORS.heavy_slug,
+      radius: 12,
+      duration: 0.16,
+    },
+    // Connect feedback (AH-0MVV0WO4M001KEDG): a deep-red impact flash plus
+    // the baked dull thud cue, routed through the shared impact seam so a
+    // Heavy Slug connect no longer falls back to the generic warm-white flash
+    // with no hit sound. The largest impact radius of the set, at the 12 px
+    // ceiling with a 0.16 s fade (epic AC8 — at, never above, the budget).
+    // Visual/feel metadata only — the shell's behaviour is unchanged.
+    impactFx: {
+      color: BULLET_COLORS.heavy_slug,
+      radius: 12,
+      duration: 0.16,
+      cue: 'playHeavySlugImpactSound',
+    },
   },
 };
 

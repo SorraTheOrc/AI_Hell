@@ -141,6 +141,38 @@ function countsTowardsSlotCap(dropId: DropId): boolean {
 }
 
 /**
+ * Whether a rendered display row's kind is one of the slot-counted kinds the
+ * player currently holds.
+ *
+ * A row can be rendered **without** holding a slot — an exempt entry
+ * (`availableWhenSlotsFull` → Extra Life, Mystery UFO) or the residue of a
+ * spent charge pool that outlives its temporary window (producer Resolved
+ * decision 1b) — so "rendered" is not "counted". The HUD classifies every row
+ * through this predicate, so the display can never claim a slot the model did
+ * not give it (AH-0MVVJRRN10038VFR).
+ *
+ * @param dropId — The row's kind id (power-up or weapon drop).
+ * @param state — The live slot state from {@link resolvePlayerSlotState}.
+ */
+export function isSlotCountedHeldKind(
+  dropId: string,
+  state: PowerUpSlotState,
+): boolean {
+  const id = dropId as DropId;
+  return state.heldIds.has(id) && countsTowardsSlotCap(id);
+}
+
+/**
+ * The slot-counted held kinds of `state`, sorted for deterministic display
+ * and test assertions.
+ */
+export function slotCountedHeldIds(state: PowerUpSlotState): DropId[] {
+  return [...state.heldIds]
+    .filter((id) => countsTowardsSlotCap(id))
+    .sort();
+}
+
+/**
  * The catalogue entries exempt from the cap, in catalogue order.
  *
  * Derived from the {@link PowerUpEntry.availableWhenSlotsFull} flag only — there
@@ -340,13 +372,13 @@ export function eligibleForSlotPool(
  * those admissible on the shared pool.
  *
  * Offer surfaces that do **not** build their list through
- * `buildChoiceCandidates` must consult this: the mini-boss reward's **unlock**
- * half offers brand-new weapon kinds (`lockedWeaponIds()`), so without the gate
- * a single mini-boss unlock could grant a seventh kind and defeat the cap
- * (parent AH-0MVLIJT3M005HPHF AC4 — the reward must offer only items currently
- * in the slots). A level-up offer names a kind the player already holds
- * permanently, so it is always admissible and always survives; below the cap
- * the filter keeps every offer, so below-cap behaviour is unchanged.
+ * `buildChoiceCandidates` must consult this: the mini-boss reward builds its
+ * level-up offers directly, so without the gate a future reward variant could
+ * grant a kind outside the pool and defeat the cap (parent AH-0MVLIJT3M005HPHF
+ * AC4 — the reward must offer only items currently in the slots). A level-up
+ * offer names a kind the player already holds, so it is always admissible and
+ * always survives; below the cap the filter keeps every offer, so below-cap
+ * behaviour is unchanged.
  *
  * Never mutates the input list.
  */

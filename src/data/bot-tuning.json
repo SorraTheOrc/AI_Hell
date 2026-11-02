@@ -69,6 +69,179 @@
           "allowDown": false
         }
       }
+    },
+    {
+      "name": "aggressive-hunter",
+      "values": {
+        "competent": {
+          "enemyBase": 17,
+          "enemySeekRange": 1500,
+          "enemyWavePressurePort": 5,
+          "engagementRange": 70,
+          "mineralBase": 3,
+          "asteroidBase": 0.5
+        },
+        "human": {
+          "reactionTimeMs": 200
+        }
+      }
+    },
+    {
+      "name": "cautious-collector",
+      "values": {
+        "competent": {
+          "mineralBase": 8,
+          "powerUpBase": 8,
+          "mineralSeekRange": 600,
+          "powerUpSeekRange": 1300,
+          "lifeSeekRange": 1500,
+          "dangerMargin": 140,
+          "threatRadius": 110,
+          "enemyBase": 10,
+          "enemySeekRange": 1000,
+          "survivalUrgencyHorizon": 1.3
+        },
+        "human": {}
+      }
+    },
+    {
+      "name": "evasive",
+      "values": {
+        "competent": {
+          "survivalBase": 20,
+          "survivalUrgencyPort": 14,
+          "dangerMargin": 170,
+          "threatRadius": 130,
+          "wallMargin": 60,
+          "reverseRetreatRange": 200,
+          "hazardPredictionHorizon": 2.8,
+          "enemyBase": 10,
+          "enemyWavePressurePort": 2
+        },
+        "human": {}
+      }
+    },
+    {
+      "name": "glass-cannon",
+      "values": {
+        "competent": {
+          "enemyBase": 19,
+          "enemyWavePressurePort": 5,
+          "engagementRange": 55,
+          "clearanceWeight": 0.4,
+          "dangerMargin": 50,
+          "survivalBase": 8,
+          "survivalUrgencyPort": 5,
+          "aimLeadIterations": 8,
+          "aimLeadAlignSeconds": 0.2
+        },
+        "human": {
+          "maxAimErrorRad": 0.02,
+          "reactionTimeMs": 170
+        }
+      }
+    },
+    {
+      "name": "relentless-hunter",
+      "values": {
+        "competent": {
+          "survivalBase": 19.27,
+          "survivalUrgencyPort": 9.9,
+          "mineralBase": 3,
+          "enemyBase": 18.6,
+          "asteroidBase": 0.5,
+          "enemyWavePressurePort": 5,
+          "enemySeekRange": 1500,
+          "engagementRange": 59,
+          "dangerMargin": 145,
+          "wallMargin": 17.61,
+          "threatRadius": 144.11,
+          "hazardPredictionHorizon": 1.822,
+          "survivalUrgencyHorizon": 1.428,
+          "reverseRetreatRange": 266.29,
+          "progressWeight": 1.213,
+          "clearanceWeight": 0.623
+        },
+        "human": {
+          "reactionTimeMs": 282,
+          "maxAimErrorRad": 0.042
+        }
+      }
+    },
+    {
+      "name": "barrage-dodger",
+      "values": {
+        "competent": {
+          "survivalBase": 15.39,
+          "survivalUrgencyPort": 16.3,
+          "enemyBase": 16.31,
+          "enemyWavePressurePort": 2,
+          "engagementRange": 61.82,
+          "dangerMargin": 187.12,
+          "wallMargin": 7.17,
+          "threatRadius": 156.9,
+          "hazardPredictionHorizon": 2.737,
+          "survivalUrgencyHorizon": 0.721,
+          "reverseRetreatRange": 181.3,
+          "progressWeight": 1.04,
+          "clearanceWeight": 0.493
+        },
+        "human": {
+          "reactionTimeMs": 207,
+          "maxAimErrorRad": 0.0653
+        }
+      }
+    },
+    {
+      "name": "cordon-breaker",
+      "values": {
+        "competent": {
+          "survivalBase": 24.71,
+          "survivalUrgencyPort": 14.11,
+          "enemyBase": 15.87,
+          "enemyWavePressurePort": 2,
+          "engagementRange": 60.91,
+          "dangerMargin": 144.44,
+          "wallMargin": 60.31,
+          "threatRadius": 114.11,
+          "hazardPredictionHorizon": 2.147,
+          "survivalUrgencyHorizon": 0.859,
+          "reverseRetreatRange": 281.76,
+          "progressWeight": 0.517,
+          "clearanceWeight": 0.736
+        },
+        "human": {
+          "reactionTimeMs": 240,
+          "maxAimErrorRad": 0.0579
+        }
+      }
+    },
+    {
+      "name": "gauntlet-runner",
+      "values": {
+        "competent": {
+          "survivalBase": 22.9,
+          "survivalUrgencyPort": 8.82,
+          "mineralBase": 3,
+          "enemyBase": 11.6,
+          "asteroidBase": 0.5,
+          "enemyWavePressurePort": 5,
+          "enemySeekRange": 1500,
+          "engagementRange": 91.01,
+          "dangerMargin": 120.35,
+          "wallMargin": 31.43,
+          "threatRadius": 85.34,
+          "hazardPredictionHorizon": 1.906,
+          "survivalUrgencyHorizon": 1.832,
+          "reverseRetreatRange": 124.62,
+          "progressWeight": 0.593,
+          "clearanceWeight": 0.964
+        },
+        "human": {
+          "reactionTimeMs": 121,
+          "maxAimErrorRad": 0.0694
+        }
+      }
     }
   ]
 }

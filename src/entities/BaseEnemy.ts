@@ -533,11 +533,17 @@ export abstract class BaseEnemy extends Phaser.GameObjects.Container {
   }
 
   /**
-   * Absorb one mineral, incrementing the tracked count. Asteroids override
-   * this as a no-op — they are excluded from mineral collection.
+   * Absorb one mineral, adding its worth to the tracked count. `value` is the
+   * mineral's value — 1 for an ordinary dot, `MINERAL_DEPOSIT_VALUE` (10) for
+   * a red deposit (AH-0MVJ79739008396I) — so absorbing a deposit is
+   * equivalent to absorbing ten single minerals and the enemy's own later
+   * re-drop resolves at the deposit threshold. Asteroids override this as a
+   * no-op — they are excluded from mineral collection.
+   *
+   * @param value — minerals the absorbed collectable is worth (defaults 1).
    */
-  collectMineral(): void {
-    this._mineralCount += 1;
+  collectMineral(value = 1): void {
+    this._mineralCount += value;
   }
 
   /**

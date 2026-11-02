@@ -275,8 +275,17 @@ function nextExplosionAccentDelaySeconds(): number | null {
  * Plays an explosion cue on the next accent tick, dropping it when the
  * per-tick cap is already reached. `options` carry the cue's own settings
  * (e.g. volume); the accent `delay` is always applied on top.
+ *
+ * An **explicit** `options.delay` marks a scripted, caller-scheduled display
+ * (the mini-boss death sweep): it is played at exactly that offset instead of
+ * being snapped to the beat grid, and it never spends the per-tick accent
+ * budget (that budget exists to cap a mass kill, not a pre-planned cascade).
  */
 function playExplosionCue(cue: string, options: SfxPlayOptions = {}): void {
+  if (options.delay !== undefined) {
+    playCue(cue, options);
+    return;
+  }
   const delay = nextExplosionAccentDelaySeconds();
   if (delay === null) return;
   playCue(cue, { ...options, delay });
@@ -370,9 +379,15 @@ export function playSpawnSound(): void {
   playCue('playSpawnSound');
 }
 
-/** Descending saw burst — enemy destruction cue (multi-seed jitter). */
-export function playDestructionSound(): void {
-  playExplosionCue('playDestructionSound');
+/**
+ * Descending saw burst — enemy destruction cue (multi-seed jitter).
+ *
+ * Accepts per-play {@link SfxPlayOptions}; an explicit `delay` (seconds) is
+ * honoured verbatim for caller-scheduled displays such as the mini-boss death
+ * sweep, otherwise the cue is quantised onto the shared beat grid.
+ */
+export function playDestructionSound(options: SfxPlayOptions = {}): void {
+  playExplosionCue('playDestructionSound', options);
 }
 
 /** Heavier layered "hull breach" boom — player destruction (volume-scaled). */
@@ -427,6 +442,76 @@ export function playDiverFireSound(): void {
 /** Deep resonant fall — Diver destruction cue (multi-seed jitter). */
 export function playDiverDestructionSound(): void {
   playExplosionCue('playDiverDestructionSound');
+}
+
+// ── Mystery UFO feel cues (AH-0MVSAJMLL00835T8) ────────────────────
+//
+// The Mystery UFO collector drone's juice runs through the same baked-asset
+// pipeline as every other cue. Only the wrappers ship here; the feel slices
+// (warble lifecycle, terminal reward/destruction feedback) call them from the
+// shared core. The warble is a **looping** continuous cue with a stop
+// companion, mirroring `playDiveSound`/`stopDiveSound`.
+
+/** Shared looping UFO warble voice. Concurrent calls reuse one playback. */
+let mysteryUfoWarbleSound: SfxSoundHandle | null = null;
+
+/**
+ * Starts (or shares) the looping "woo-woo-woo" Mystery UFO warble.
+ *
+ * The baked asset is looped for the whole sortie (seek + collect), so the
+ * caller starts it once at spawn and releases it with
+ * {@link stopMysteryUfoWarbleSound} on every terminal path (return, payout,
+ * destruction, teardown). Repeated calls are a safe no-op that keeps the one
+ * voice, so a re-entered tick cannot stack warbles.
+ */
+export function playMysteryUfoWarbleSound(): void {
+  if (mysteryUfoWarbleSound !== null) return;
+  mysteryUfoWarbleSound = playCue('playMysteryUfoWarbleSound', { loop: true });
+}
+
+/**
+ * Releases the looping Mystery UFO warble. Safe no-op when none is active.
+ * Control companion to {@link playMysteryUfoWarbleSound}; listed in the
+ * manifest's `controlCues` so it owns no asset of its own.
+ */
+export function stopMysteryUfoWarbleSound(): void {
+  if (mysteryUfoWarbleSound === null) return;
+  mysteryUfoWarbleSound.stop();
+  mysteryUfoWarbleSound = null;
+}
+
+/** For tests: the active warble state, or null when not playing. */
+export function _getMysteryUfoWarbleSoundStateForTests(): {
+  active: boolean;
+} | null {
+  return mysteryUfoWarbleSound === null ? null : { active: true };
+}
+
+/**
+ * Reward fanfare — plays on arrival at the player, synchronised with the hold
+ * pay-in. Immediate (not beat-quantised): it is payout feedback, not a combat
+ * accent.
+ */
+export function playMysteryUfoRewardSound(): void {
+  playCue('playMysteryUfoRewardSound');
+}
+
+/**
+ * Explosion cue for the drone's destruction, fired with the crash-site
+ * particle VFX. Immediate so it stays in sync with the mineral tinkle and the
+ * spill it accompanies.
+ */
+export function playMysteryUfoDestroySound(): void {
+  playCue('playMysteryUfoDestroySound');
+}
+
+/**
+ * Mineral "tinkle" — fired in sync with the spilled resource drops when the
+ * drone is destroyed. Immediate so it lands with the spill and the
+ * destruction cue.
+ */
+export function playMineralTinkleSound(): void {
+  playCue('playMineralTinkleSound');
 }
 
 /** Deep resonant boom — Boss fire cue. */
@@ -532,13 +617,88 @@ export function playRapidImpactSound(): void {
 }
 
 /**
+ * Short metallic crack with a brief ring — a Railgun tracer connects
+ * (AH-0MVMIGVCE004VSNA). Plays through the shared impact seam
+ * (`CombatScene.resolveWeaponImpactFx`) alongside the sky-blue impact flash,
+ * so the game and every gym connect identically. Kept short (~0.14 s) so a
+ * five-target pierce chain reads as one crisp salvo rather than a
+ * machine-gun stutter. Baked via the ToneForge pipeline
+ * (`aihell-railgun-impact`, seed 32278).
+ */
+export function playRailgunImpactSound(): void {
+  playCue('playRailgunImpactSound');
+}
+
+/**
+ * Bright glassy lime tink — a Shard Swarm shard connects
+ * (AH-0MVV0WMTE0007NGS). Plays through the shared impact seam
+ * (`CombatScene.resolveWeaponImpactFx`) alongside the lime impact flash, so
+ * the game and every gym connect identically instead of falling back to the
+ * generic warm-white flash with no hit cue. Kept to ~0.10 s so a five-shard
+ * volley connecting in one frame reads as a single shimmering lime hit — the
+ * shipped per-cue voice limiter (4 voices / 150 ms) bounds the overlap with no
+ * added throttle. Baked via the ToneForge pipeline
+ * (`aihell-shard-swarm-impact`, seed 32280).
+ */
+export function playShardSwarmImpactSound(): void {
+  playCue('playShardSwarmImpactSound');
+}
+
+/**
+ * Soft rose pop — a Rear Guard pellet connects (AH-0MVV0WN96007TU9J). Plays
+ * through the shared impact seam (`CombatScene.resolveWeaponImpactFx`)
+ * alongside the rose impact flash, so the game and every gym connect
+ * identically instead of falling back to the generic warm-white flash with no
+ * hit cue. Kept to ~0.12 s and deliberately softer than the Cannon's crack,
+ * because the Rear Guard is a single compact rearward shot. Baked via the
+ * ToneForge pipeline (`aihell-rear-guard-impact`, seed 32282).
+ */
+export function playRearGuardImpactSound(): void {
+  playCue('playRearGuardImpactSound');
+}
+
+/**
+ * Short teal dart tick — a Broadside dart connects (AH-0MVV0WNOX0078G9G). Plays
+ * through the shared impact seam (`CombatScene.resolveWeaponImpactFx`)
+ * alongside the teal impact flash, so the game and every gym connect
+ * identically instead of falling back to the generic warm-white flash with no
+ * hit cue. Kept to ~0.10 s so a left/right pair connecting in the same frame
+ * reads as one crisp teal tick — the shipped per-cue voice limiter (4 voices /
+ * 150 ms) bounds the overlap with no added throttle. Baked via the ToneForge
+ * pipeline (`aihell-broadside-impact`, seed 32284).
+ */
+export function playBroadsideImpactSound(): void {
+  playCue('playBroadsideImpactSound');
+}
+
+/**
+ * Dull red thud with debris — a Heavy Slug connects (AH-0MVV0WO4M001KEDG).
+ * Plays through the shared impact seam (`CombatScene.resolveWeaponImpactFx`)
+ * alongside the deep-red impact flash, so the game and every gym connect
+ * identically instead of falling back to the generic warm-white flash with no
+ * hit cue. Kept to ~0.15 s (inside the 0.16 s ceiling) so the slow single
+ * round reads as one heavy impact. Deliberately duller and lower than the
+ * Mortar's bright dry shell crack, so the two heaviest weapons never alias
+ * (`aihell-heavy-slug-impact`, seed 32286) — see the recipe comment.
+ */
+export function playHeavySlugImpactSound(): void {
+  playCue('playHeavySlugImpactSound');
+}
+
+/**
  * Per-weapon impact cues, keyed by the cue export name stored in a weapon's
  * `impactFx` metadata (AH-0MV8228YW0050IXS). Grows as weapon children add
  * their own baked hit cues; dispatched by {@link playWeaponImpactCue} from
  * the shared impact seam. The registry lives here (not in a scene) so the
  * audio knowledge stays in the audio layer.
+ *
+ * Exported so the catalogue-wide feel guard
+ * (`src/utils/weaponFeelRoster.test.ts`, AH-0MVV0WMD8007LOVT AC5) can assert
+ * membership without duplicating the list. The AOE family (`nova`, `mortar`)
+ * is deliberately absent: it has no per-shot `impactFx` and its connect cues
+ * are played by the shared AOE seam instead.
  */
-const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
+export const PLAYER_WEAPON_IMPACT_CUES: Readonly<Record<string, () => void>> = {
   playCannonImpactSound,
   playRicochetImpactSound,
   playSpreadImpactSound,
@@ -548,7 +708,22 @@ const PLAYER_WEAPON_IMPACT_CUES: Record<string, () => void> = {
   playClusterImpactSound,
   playOptionsImpactSound,
   playArcImpactSound,
+  playRailgunImpactSound,
+  playShardSwarmImpactSound,
+  playRearGuardImpactSound,
+  playBroadsideImpactSound,
+  playHeavySlugImpactSound,
 };
+
+/**
+ * Whether `cue` is a registered per-weapon impact cue — the predicate the
+ * catalogue-wide feel guard uses to verify a weapon's `impactFx` resolves
+ * without duplicating {@link PLAYER_WEAPON_IMPACT_CUES}
+ * (AH-0MVV0WMD8007LOVT AC5).
+ */
+export function isPlayerWeaponImpactCue(cue: string): boolean {
+  return Object.prototype.hasOwnProperty.call(PLAYER_WEAPON_IMPACT_CUES, cue);
+}
 
 /**
  * Plays the baked impact cue named by a weapon's `impactFx` metadata.
@@ -572,6 +747,79 @@ export function playDualFireSound(): void {
 /** Tight staccato blip — Rapid fire. */
 export function playRapidFireSound(): void {
   playCue('playRapidFireSound');
+}
+
+/**
+ * Heavy electromagnetic discharge — Railgun fire (AH-0MVMIGVCE004VSNA). A deep
+ * sawtooth slam with a metallic snap and a high-pass noise crack, routed
+ * through the one shared player-fire dispatcher ({@link playWeaponFireSound})
+ * so live fire, the reduced-volume hold-full metronome and every gym fire
+ * sound identical. Baked via the ToneForge pipeline (`aihell-railgun-fire`,
+ * seed 32277).
+ */
+export function playRailgunFireSound(): void {
+  playCue('playRailgunFireSound');
+}
+
+/**
+ * Tight multi-shard *chk* burst — Shard Swarm fire (AH-0MVV0WMTE0007NGS).
+ * Three short high-passed noise ticks over a bright glassy triangle and a
+ * brittle square edge, so the five-shard fan leaving the hull reads as a
+ * percussive lime burst rather than a blunt cannon thump. Routed through the
+ * one shared player-fire dispatcher ({@link playWeaponFireSound}) so live
+ * fire, the reduced-volume hold-full metronome and every gym fire sound
+ * identical. Baked via the ToneForge pipeline (`aihell-shard-swarm-fire`,
+ * seed 32279).
+ */
+export function playShardSwarmFireSound(): void {
+  playCue('playShardSwarmFireSound');
+}
+
+/**
+ * Muted rearward *thup* — Rear Guard fire (AH-0MVV0WN96007TU9J). A low-passed
+ * sawtooth body with no square click, darker and more muffled than the
+ * Cannon's forward thump so the backward shot is identifiable by ear. Routed
+ * through the one shared player-fire dispatcher ({@link playWeaponFireSound})
+ * so live fire, the reduced-volume hold-full metronome and every gym fire
+ * sound identical. Baked via the ToneForge pipeline
+ * (`aihell-rear-guard-fire`, seed 32281).
+ */
+export function playRearGuardFireSound(): void {
+  playCue('playRearGuardFireSound');
+}
+
+/**
+ * Wide two-sided swish — Broadside fire (AH-0MVV0WNOX0078G9G). The Broadside
+ * fires a perpendicular teal dart pair (one shot to each side, no forward
+ * shot), so one baked cue carries **two** short band-passed noise sweeps 40 ms
+ * apart — the first rising (left dart leaving) and the second falling (right
+ * dart leaving) — over a short glassy teal-toned tail. The opposing sweeps and
+ * the documented 35–50 ms inter-onset window make the pair audible on a mono
+ * speaker, so it reads as a wide two-sided launch rather than a second Cannon.
+ * Routed through the one shared player-fire dispatcher
+ * ({@link playWeaponFireSound}) so live fire, the reduced-volume hold-full
+ * metronome and every gym fire sound identical. Baked via the ToneForge
+ * pipeline (`aihell-broadside-fire`, seed 32283).
+ */
+export function playBroadsideFireSound(): void {
+  playCue('playBroadsideFireSound');
+}
+
+/**
+ * The heaviest single shot in the game — Heavy Slug fire
+ * (AH-0MVV0WO4M001KEDG). One low 110 → 55 Hz saw boom with a metallic square
+ * clank transient and the longest decay of the packaged weapons (~0.26 s),
+ * so firing the huge slow deep-red shell reads as an event on its own.
+ * Routed through the one shared player-fire dispatcher
+ * ({@link playWeaponFireSound}) so live fire, the reduced-volume hold-full
+ * metronome and every gym fire sound identical. Must **never alias the Mortar
+ * detonation**: this cue differentiates with the metallic clank transient, a
+ * shorter sustain than the 0.32 s detonation boom and a different thump
+ * contour — documented in the recipe comment (`aihell-heavy-slug-fire`, seed
+ * 32285).
+ */
+export function playHeavySlugFireSound(): void {
+  playCue('playHeavySlugFireSound');
 }
 
 /** Deep expanding thump + rising ring — Nova fire. */
@@ -717,6 +965,21 @@ export function playWeaponFireSound(
       break;
     case 'options':
       playCue('playOptionsFireSound', options);
+      break;
+    case 'railgun':
+      playCue('playRailgunFireSound', options);
+      break;
+    case 'shard_swarm':
+      playCue('playShardSwarmFireSound', options);
+      break;
+    case 'rear_guard':
+      playCue('playRearGuardFireSound', options);
+      break;
+    case 'broadside':
+      playCue('playBroadsideFireSound', options);
+      break;
+    case 'heavy_slug':
+      playCue('playHeavySlugFireSound', options);
       break;
     default:
       // Catalogue-only weapon ids with no baked fire cue — no-op (matches
@@ -896,9 +1159,13 @@ export function playBossPhaseTransitionSound(): void {
   playCue('playBossPhaseTransitionSound');
 }
 
-/** Heavy deep fall — Boss destruction. */
-export function playBossDestructionSound(): void {
-  playCue('playBossDestructionSound');
+/**
+ * Heavy deep fall — Boss destruction. Accepts per-play {@link SfxPlayOptions}
+ * so a scripted display (the mini-boss finale) can schedule its booms with an
+ * explicit `delay` and a mix-trimming `volume`.
+ */
+export function playBossDestructionSound(options: SfxPlayOptions = {}): void {
+  playCue('playBossDestructionSound', options);
 }
 
 /**
@@ -964,6 +1231,7 @@ export function _resetAudioContextForTests(): void {
   webAudioSfxProvider.reset();
   resetThrusterHumForTests();
   diveSound = null;
+  mysteryUfoWarbleSound = null;
   accentClock = null;
   accentTickMs = null;
   accentCount = 0;

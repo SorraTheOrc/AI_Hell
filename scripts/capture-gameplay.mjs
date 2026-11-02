@@ -55,7 +55,13 @@
  *
  * Output format is WebM/VP9. MP4 transcoding is intentionally **not** done
  * here: the SpikeBox Playwright build ships a minimal ffmpeg with no VP9
- * decoder — see the "Known limits" section of the doc.
+ * decoder/encoder — see the "Known limits" section of the doc. The one ffmpeg
+ * the capture path *does* use is the packet-preserving seek-index remux
+ * (`-c copy`, no encoder) that makes a delivered clip seekable so players can
+ * fast-forward it (`scripts/capture-seekable.mjs`, AH-0MVMIK8EM001JAYR). It
+ * prefers the Playwright-bundled binary and degrades to delivering the
+ * unseekable clip with a warning when none can remux, so a host with no
+ * ffmpeg at all still captures.
  *
  * Usage:
  *
@@ -98,6 +104,7 @@ import {
   writeDiagnosticsArtifact,
 } from './capture-diagnostics.mjs';
 import { createRecordingPipeline } from './capture-recording-pipeline.mjs';
+import { reportSeekableOutcome } from './capture-seekable.mjs';
 import {
   CaptureSalvageError,
   failureSalvageLine,
@@ -577,7 +584,7 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
 }
 
 /**
- * Lists the implemented dev capture scenarios from the shared registry.
+ * The metadata-rich listing of the implemented dev capture scenarios.
  *
  * Thin consumer of {@link listCaptureScenarios} (`./capture-scenarios.mjs`,
  * the single source of truth shared with the game resolver), returning fresh
@@ -585,10 +592,52 @@ export function parseCaptureArgs(argv = process.argv.slice(2)) {
  * reads exactly this list, so `--list-scenarios` cannot drift from the values
  * `--scenario` accepts (AH-0MV6JGELV001FAX1, AC1).
  *
- * @returns {Array<{ name: string, effect: string }>}
+ * Every entry carries its `name`, one-line `effect` and registry `kind`. A
+ * `kind: 'promo'` entry additionally carries the metadata the promo pipeline
+ * needs — its bot-tuning `preset`, its `promoLevel`, the editorial
+ * `categories` it evidences and, when declared, its deterministic `seed`
+ * (AH-0MVSDMAC0006DS25, AC2) — so the JSON listing is metadata-rich without
+ * dropping the two fields existing consumers already read. Non-promo entries
+ * keep exactly `{ name, effect, kind }`.
+ *
+ * @param {readonly object[]} [scenarios] — registry entries to project.
+ * @returns {Array<{ name: string, effect: string, kind: string, preset?: string, promoLevel?: string, categories?: string[], seed?: number }>}
  */
-export function listScenarios() {
-  return listCaptureScenarios();
+export function listScenarios(scenarios = listCaptureScenarios()) {
+  return scenarios.map((scenario) => {
+    const listed = {
+      name: scenario.name,
+      effect: scenario.effect,
+      kind: scenario.kind,
+    };
+    if (scenario.kind !== 'promo') return listed;
+    return {
+      ...listed,
+      preset: scenario.preset,
+      promoLevel: scenario.promoLevel,
+      categories: [...scenario.categories],
+      ...(scenario.seed === undefined ? {} : { seed: scenario.seed }),
+    };
+  });
+}
+
+/**
+ * Renders one scenario as the single maintainer-facing line the listing and
+ * batch progress use.
+ *
+ * The line is always `<name> — <effect>`. A promo entry additionally appends
+ * its structured metadata (`preset`, editorial `categories`) in brackets, so
+ * `--list-scenarios` shows *why* a promo is in the catalogue — which
+ * category it evidences and which bot-tuning preset it flies
+ * (AH-0MVSDMAC0006DS25, AC2) — without turning it into more than one line.
+ *
+ * @param {{ name: string, effect: string, kind?: string, preset?: string, categories?: readonly string[] }} scenario
+ * @returns {string}
+ */
+export function describeScenario(scenario) {
+  const line = `${scenario.name} — ${scenario.effect}`;
+  if (scenario.kind !== 'promo') return line;
+  return `${line} [promo: preset ${scenario.preset}; categories ${scenario.categories.join(', ')}]`;
 }
 
 /**
@@ -599,13 +648,17 @@ export function listScenarios() {
  *
  *   boss — Jump straight to the boss with a tunable hit count (&bossHits=N).
  *
- * @param {Array<{ name: string, effect: string }>} [scenarios]
+ * A promo entry's line additionally names its preset and editorial
+ * categories (see {@link describeScenario}), so the promo set is legible
+ * without `--json` (AH-0MVSDMAC0006DS25, AC2).
+ *
+ * @param {Array<{ name: string, effect: string, kind?: string }>} [scenarios]
  * @returns {string}
  */
 export function formatScenarioList(scenarios = listScenarios()) {
   const lines = ['Implemented dev capture scenarios:', ''];
   for (const scenario of scenarios) {
-    lines.push(`  ${scenario.name} — ${scenario.effect}`);
+    lines.push(`  ${describeScenario(scenario)}`);
   }
   return `${lines.join('\n')}\n`;
 }
@@ -616,7 +669,7 @@ export function formatScenarioList(scenarios = listScenarios()) {
  * server — so the listing path shares the registry without boot cost.
  *
  * @param {{ json?: boolean }} [options]
- * @param {Array<{ name: string, effect: string }>} [scenarios]
+ * @param {Array<{ name: string, effect: string, kind?: string }>} [scenarios]
  * @returns {string}
  */
 export function renderScenarioListing(
@@ -635,8 +688,13 @@ export function renderScenarioListing(
  * Passing `--scripted` selects the legacy deterministic plan replay instead,
  * which remains the fallback when the demo cannot run. Passing `--scenario`
  * selects a **dev scenario** (AH-0MUWZ5HCV0034H44): the game URL carries the
- * scenario query, the capture starts a normal Play Game run and lets the
- * scenario drive the run (e.g. straight to a low-HP boss).
+ * scenario query and the capture starts a normal Play Game run.
+ *
+ * The *lifecycle* inside that mode depends on the scenario's registry `kind`:
+ * the boss/defeat jump scenarios freeze the run and are released through the
+ * page-side handle, while a promo scenario is a continuous bot-flown run with
+ * no freeze/release step (AH-0MVSDMAC0006DS25). Use
+ * {@link planScenarioLaunch} when the launch/wait/release decision matters.
  *
  * @param {{ scripted?: boolean, scenario?: string | null }} [options]
  * @returns {'demo' | 'scripted' | 'scenario'}
@@ -677,6 +735,10 @@ export function captureUrl(baseUrl, options = {}) {
  * are the same normal menu input a player would use (no `src/` internals are
  * reached).
  *
+ * A promo scenario uses the same single **Enter** as the jump scenarios —
+ * `PlayScene` forces demo-mode flight for it, so the bot flies it from an
+ * ordinary Play Game run (AH-0MVSDMAC0006DS25).
+ *
  * @param {'demo' | 'scripted' | 'scenario'} mode
  * @returns {string[]}
  */
@@ -694,7 +756,7 @@ export function captureStartKeys(mode) {
  * `FocusManager` has processed the focus change before it is activated. The
  * final key carries no trailing delay.
  *
- * @param {'demo' | 'scripted'} mode
+ * @param {'demo' | 'scripted' | 'scenario'} mode
  * @param {number} [gapMs] — delay (ms) after each key except the last.
  * @returns {{ key: string, delayAfterMs: number }[]}
  */
@@ -704,6 +766,99 @@ export function captureStartPlan(mode, gapMs = START_KEY_GAP_MS) {
     key,
     delayAfterMs: index < keys.length - 1 ? gapMs : 0,
   }));
+}
+
+/**
+ * Finds the registry entry a `--scenario` value selects, or `null`.
+ *
+ * Matching mirrors the game resolver and the registry gate (trim +
+ * lowercase), so the CLI plans the same scenario the page will apply. A
+ * non-string or blank value resolves to `null`.
+ *
+ * @param {unknown} name — the raw `--scenario` value.
+ * @param {readonly object[]} [scenarios] — registry entries to search.
+ * @returns {object | null}
+ */
+export function findCapturedScenario(
+  name,
+  scenarios = listCaptureScenarios(),
+) {
+  if (typeof name !== 'string' || name.trim() === '') return null;
+  const normalised = name.trim().toLowerCase();
+  return scenarios.find((scenario) => scenario.name === normalised) ?? null;
+}
+
+/**
+ * Plans how a capture starts, waits and ends from the selected scenario's
+ * registry `kind` (AH-0MVSDMAC0006DS25, AC1/AC4).
+ *
+ * The three dev-scenario kinds do **not** share a lifecycle:
+ *
+ * - `boss` / `defeat` are **jump** scenarios: Play Game is activated with
+ *   Enter, the run is frozen so recording starts before the short fight, and
+ *   the recorder releases it through the page-side handle
+ *   (`window.__aiHellScenario.resume()`) once recording is live.
+ * - `promo` is a **continuous bot-flown run**: Play Game is activated with
+ *   Enter and the game itself forces demo-mode flight, so there is no freeze
+ *   and **no release step**; recording runs until the game's run-ended signal
+ *   (bounded by `--max-duration`), exactly like the demo path.
+ * - an unregistered name keeps the legacy jump lifecycle so the game ignores
+ *   it and the release step reports the existing actionable error instead of
+ *   silently recording a normal run.
+ *
+ * Without a scenario the plan is the demo/scripted decision unchanged. The
+ * legacy `--duration` override suppresses the run-ended wait for every mode.
+ *
+ * @param {{ scripted?: boolean, scenario?: string | null, fixedDuration?: boolean }} [options]
+ * @param {readonly object[]} [scenarios] — registry entries to plan against.
+ * @returns {{
+ *   mode: 'demo' | 'scripted' | 'scenario',
+ *   scenario: string | null,
+ *   kind: 'boss' | 'defeat' | 'promo' | null,
+ *   lifecycle: 'demo' | 'scripted' | 'jump' | 'promo',
+ *   startPlan: { key: string, delayAfterMs: number }[],
+ *   waitsForRunEnd: boolean,
+ *   releaseScenarioHandle: boolean,
+ *   botFlown: boolean,
+ * }}
+ */
+export function planScenarioLaunch(
+  options = {},
+  scenarios = listCaptureScenarios(),
+) {
+  const requested = typeof options.scenario === 'string'
+      && options.scenario.trim() !== ''
+    ? options.scenario.trim()
+    : null;
+  const fixedDuration = options.fixedDuration === true;
+
+  if (requested === null) {
+    const mode = resolveCaptureMode(options);
+    return {
+      mode,
+      scenario: null,
+      kind: null,
+      lifecycle: mode,
+      startPlan: captureStartPlan(mode),
+      waitsForRunEnd: mode !== 'scripted' && !fixedDuration,
+      releaseScenarioHandle: false,
+      botFlown: mode === 'demo',
+    };
+  }
+
+  const entry = findCapturedScenario(requested, scenarios);
+  const kind = entry === null ? null : entry.kind;
+  const lifecycle = kind === 'promo' ? 'promo' : 'jump';
+  return {
+    mode: 'scenario',
+    scenario: entry === null ? requested : entry.name,
+    kind,
+    lifecycle,
+    startPlan: captureStartPlan('scenario'),
+    waitsForRunEnd: !fixedDuration,
+    releaseScenarioHandle: lifecycle === 'jump',
+    botFlown: lifecycle === 'promo',
+  };
 }
 
 /**
@@ -1495,8 +1650,8 @@ export function installCaptureComposite(scope = globalThis) {
  * default no-scenario demo run is deliberately **not** an item (producer
  * decision Q1).
  *
- * @param {{ scenarios?: Array<{ name: string, effect: string }>, output?: string | null, count?: number, timestamp?: string, exists?: (path: string) => boolean }} [params]
- * @returns {Array<{ index: number, scenario: string, effect: string, outputPath: string }>}
+ * @param {{ scenarios?: Array<{ name: string, effect: string, kind?: string }>, output?: string | null, count?: number, timestamp?: string, exists?: (path: string) => boolean }} [params]
+ * @returns {Array<{ index: number, scenario: string, effect: string, kind?: string, preset?: string, promoLevel?: string, categories?: string[], seed?: number, outputPath: string }>}
  */
 export function buildScenarioCapturePlan({
   scenarios = listScenarios(),
@@ -1541,6 +1696,19 @@ export function buildScenarioCapturePlan({
         index: planIndex,
         scenario: scenario.name,
         effect: scenario.effect,
+        kind: scenario.kind,
+        // A promo entry's batch item carries the same metadata the listing
+        // shows, so a future batch report can name the preset/level/categories
+        // of the clip it recorded without re-reading the registry
+        // (AH-0MVSDMAC0006DS25, AC3). Non-promo items stay {name, effect, kind}.
+        ...(scenario.kind === 'promo'
+          ? {
+              preset: scenario.preset,
+              promoLevel: scenario.promoLevel,
+              categories: [...scenario.categories],
+              ...(scenario.seed === undefined ? {} : { seed: scenario.seed }),
+            }
+          : {}),
         outputPath,
       });
     }
@@ -1814,7 +1982,14 @@ export function writeCaptureSeriesArtifacts({
  * @returns {Promise<object>}
  */
 async function captureClip({ page, url, baseUrl, outputPath, options, reporter }) {
-  const mode = resolveCaptureMode(options);
+  // Launch/lifecycle planning is scenario-kind aware (AH-0MVSDMAC0006DS25):
+  // the jump scenarios (boss/defeat) are frozen and released through the
+  // page-side handle, while a promo scenario is a continuous bot-flown run
+  // with no release step — its lifecycle matches the demo path. The wait for
+  // the run-ended signal is derived from the same plan so neither path can
+  // forget it.
+  const launch = planScenarioLaunch(options);
+  const mode = launch.mode;
   // Diagnostics are opt-in (AC4): a disabled tracker records nothing, so the
   // rest of this function behaves exactly as before with zero extra output.
   const diagnostics = createDiagnosticsTracker({
@@ -1838,8 +2013,10 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
   // run-end signal and stops one `--tail` later (bounded by
   // `--max-duration`). `--duration` and `--scripted` keep the legacy
   // fixed-length behaviour (AH-0MUXZ4CNS009RV40, AC4). A dev scenario
-  // (`--scenario`) is a complete run too: its short fight ends in victory.
-  const fullRun = mode !== 'scripted' && options.fixedDuration !== true;
+  // (`--scenario`) is a complete run too: a jump scenario's short fight ends
+  // in victory/defeat and a promo scenario is a full bot-flown run, so both
+  // wait for the run-ended signal (AH-0MVSDMAC0006DS25, AC1).
+  const fullRun = launch.waitsForRunEnd;
   const plan = mode === 'scripted' ? buildScriptedPlan(options.durationMs) : [];
   // The scripted plan spans the plan plus one inter-step gap after each step;
   // the fixed-length demo simply records for the requested duration while the
@@ -1917,7 +2094,9 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
       mode === 'demo'
         ? 'Starting in-game demo (Watch Demo)…'
         : mode === 'scenario'
-          ? `Starting dev scenario "${options.scenario}" (Enter)…`
+          ? launch.kind === 'promo'
+            ? `Starting promo scenario "${launch.scenario}" (bot-flown, Enter)…`
+            : `Starting dev scenario "${options.scenario}" (Enter)…`
           : 'Starting PlayScene (Enter)…',
     );
     for (const step of captureStartPlan(mode)) {
@@ -1955,11 +2134,18 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
     // consumer map the series' `t` (ms since run start) to the WebM timeline.
     const captureStarted = buildCaptureStartedMarker(captureStartedAtEpochMs);
 
-    // A dev scenario freezes the run at setup so recording can start before
-    // the (deliberately short) fight destroys the boss. Release it through the
-    // page-side scenario handle once the recorder is live, so the whole
-    // display is captured. No keystroke is simulated.
-    if (mode === 'scenario') {
+    // A **jump** dev scenario (boss/defeat) freezes the run at setup so
+    // recording can start before the (deliberately short) fight destroys the
+    // boss. Release it through the page-side scenario handle once the recorder
+    // is live, so the whole display is captured. No keystroke is simulated.
+    //
+    // A **promo** scenario is a continuous bot-flown run: `PlayScene` forces
+    // demo-mode flight and never installs the handle, so there is nothing to
+    // release and the capture simply records until run-ended/max-duration
+    // (AH-0MVSDMAC0006DS25, AC1). `planScenarioLaunch` decides this per
+    // registry kind, so an unregistered name still takes the legacy path and
+    // reports the actionable error below.
+    if (launch.releaseScenarioHandle) {
       reporter.step('Releasing dev scenario…');
       const released = await page.evaluate(() => {
         const handle = window.__aiHellScenario;
@@ -2073,9 +2259,14 @@ async function captureClip({ page, url, baseUrl, outputPath, options, reporter }
     // Finalise the streamed recording (AH-0MVNT26AQ005LDNS): every chunk is
     // already on disk at the `.partial` path, so a successful clip is just the
     // rename into place. A failure path leaves the partial file untouched for
-    // the salvage item (AH-0MVNT29MC008BQPY).
+    // the salvage item (AH-0MVNT29MC008BQPY). The same seam then makes the
+    // delivered clip seekable (AH-0MVMIK8EM001JAYR): the pipeline runs the
+    // packet-preserving seek-index remux, and the outcome is reported (never
+    // fatal — a missing/unusable ffmpeg keeps the unseekable clip with a
+    // warning that names the fix).
     const written = recording.finalise({ success: true });
-    const videoBytes = written.bytesWritten;
+    reportSeekableOutcome(reporter, written.seekable);
+    const videoBytes = written.seekable.ok ? written.seekable.bytes : written.bytesWritten;
 
     // Diagnostics: page heap at clip end, the page-side retention state
     // (AH-0MVNT274M009XRJ1 AC4), then the additive artefact next to the clip
@@ -2709,9 +2900,12 @@ async function captureScenes({
 
     // Every scene's chunk is already on disk; success is the rename into the
     // clip path (AH-0MVNT26AQ005LDNS). A failure leaves the partial file for
-    // the salvage item (AH-0MVNT29MC008BQPY).
+    // the salvage item (AH-0MVNT29MC008BQPY). The same finalise seam makes the
+    // multi-scene WebM seekable (AH-0MVMIK8EM001JAYR AC3) — the remux is
+    // packet-preserving and its outcome is reported, never fatal.
     const written = recording.finalise({ success: true });
-    const videoBytes = written.bytesWritten;
+    reportSeekableOutcome(reporter, written.seekable);
+    const videoBytes = written.seekable.ok ? written.seekable.bytes : written.bytesWritten;
 
     // Diagnostics: page heap at clip end, the page-side retention state
     // (AH-0MVNT274M009XRJ1 AC4), then the additive artefact (AC2/AC6).
@@ -3042,6 +3236,13 @@ async function stopRecording(page) {
  * in-page Blob probe; above it the probe reads the written file back over the
  * capture dev server's HTTP URL (range-streamed `<video>`) with a bounded
  * audio prefix, so the renderer never materialises the whole recording.
+ * That streamed path needs the clip's file to resolve inside the served
+ * repository root. When it does not (e.g. `--output /tmp/…`), the probe keeps
+ * the documented **in-page prefix fallback** and records the outside-root
+ * reason in `probeSourceReason`; an already-recorded clip is never failed for
+ * an unservable output path. The fallback costs only ~+14 MiB during the probe
+ * window and ~+33 MiB after it (2026-11-01 A/B, AH-0MVOJ76MJ0039HNE) and is
+ * not the cause of the long-run memory peak.
  *
  * `sampleTimesMs` (optional) additionally probes explicit video offsets
  * (seconds) and returns per-sample `{ timeMs, nonBlackFraction, meanLuma }`
@@ -3324,13 +3525,13 @@ async function main() {
       'Bot tuning: --bot-config file loads an exported bot-tuning JSON (the Bot Tuning gym Export button) into the recording browser before the game boots, so the demo flies the saved configuration. Without it the demo uses the built-in defaults.',
     );
     console.log(
-      'Scenarios: --scenario boss-four-hits loads the game with a dev scenario URL that jumps straight to the boss with 4 hits remaining (dev builds only); --scenario defeat clears the wave and ends the run in defeat on release (dev builds only).',
+      'Scenarios: --scenario boss-four-hits loads the game with a dev scenario URL that jumps straight to the boss with 4 hits remaining (dev builds only); --scenario defeat clears the wave and ends the run in defeat on release (dev builds only). A registered promo scenario is bot-flown: it starts an ordinary Play Game run, plays its hand-authored promo level with its preset and seed, and records until the run-ended signal (bounded by --max-duration) with no freeze/release step — e.g. --scenario promo-blitz-hook records the catalogue\'s opening hook. See --list-scenarios for the registered promos and docs/dev/gameplay-capture.md §Promo scenarios for the full catalogue (effect, preset, editorial categories).',
     );
     console.log(
       'Count: --count n (alias -n) records n clips in one process, reusing a single dev server and browser session. Each clip gets a 1-based index; `--output demo.webm` with --count 3 writes demo-1.webm, demo-2.webm, demo-3.webm.',
     );
     console.log(
-      'Listing: --list-scenarios prints every implemented dev scenario (value + one-line effect) from the shared registry and exits 0 booting no browser or server; add --json for a machine-readable array.',
+      'Listing: --list-scenarios prints every implemented dev scenario (value + one-line effect) from the shared registry and exits 0 booting no browser or server; a promo entry also shows its bot-tuning preset and editorial categories. Add --json for a machine-readable array carrying name, effect, kind and (for promo entries) preset, promoLevel, categories and seed.',
     );
     console.log(
       'Batch scenarios: --all-scenarios records one clip per registered dev scenario in a single process (one dev server + one browser, a fresh page per scenario); the default no-scenario demo run is NOT included. `--output <dir>` is treated as a directory (`<dir>/<scenario>.webm`); without it names default to capture-output/<scenario>-<timestamp>.webm. It prints an aggregate summary and exits non-zero if any scenario failed or hit the --max-duration cap.',
