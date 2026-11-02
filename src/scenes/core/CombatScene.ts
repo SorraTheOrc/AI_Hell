@@ -1281,8 +1281,13 @@ export abstract class CombatScene<
     //    while the bubble is active and a bullet meets it, the bullet is
     //    consumed and re-spawned as a player-owned bullet travelling back
     //    along its incoming direction (Gradius homage, AH-0MV1BIX1W006XF95).
-    //    A bullet the field cannot reflect (inactive or budget spent) falls
-    //    through to the normal player-hit check below.
+    //    Armed reads the shared consumable pool (`isForceFieldActive`:
+    //    permanently-owned, or holding a charge — parent AH-0MVTQMREN009DSFW
+    //    AC3 / AH-0MVUVSW4J0009QUW), never a live timed window;
+    //    `tryConsumeForceFieldReflect` then spends one charge, so an unowned
+    //    pickup field pops on the last reflection. A bullet the field cannot
+    //    reflect (inactive or budget spent) falls through to the normal
+    //    player-hit check below.
     const keptEnemy2: TBullet[] = [];
     const effects = this.getEffectsRegistry();
     for (const eb of this.getEnemyBullets()) {

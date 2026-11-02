@@ -397,9 +397,9 @@ run, so they cannot drift.
 
 | Consumable spend | Shared seam (game + every gym) | Armed/empty look |
 |---|---|---|
-| Shield — one absorbed hit spends one charge | `EffectsRegistry.tryAbsorbShield()` → shared `CombatScene.tryAbsorbPlayerHit` | Shield bubble (`drawShieldBubble` in `src/scenes/core/CombatEffectVisuals.ts`): drawn only while `isShielded` — the pool for an owned shield — holds a charge; an empty permanent pool clears it and it returns on recharge |
-| Thorn Field — one free ram spends one charge | `EffectsRegistry.tryConsumeThornsRam()` → shared `CombatScene._handleCollisions` ram branch | Thorn aura (`drawThornsAura`): drawn only while `hasThornsRam()` (pool for an owned field) holds a charge; empty clears it |
-| Force Field — one reflected bullet spends one charge | `EffectsRegistry.tryConsumeForceFieldReflect()` → shared `CombatScene` reflect branch | Force bubble (`drawForceFieldBubble`): always up for an owned field but **dimmed** while the pool is empty, bright again on recharge (Q1 = b) |
+| Shield — one absorbed hit spends one charge | `EffectsRegistry.tryAbsorbShield()` → shared `CombatScene.tryAbsorbPlayerHit` | Shield bubble (`drawShieldBubble` in `src/scenes/core/CombatEffectVisuals.ts`): armed while the pool holds at least one charge — pickup and permanent alike — and pops on the last absorb; an empty permanent pool clears it and it returns on recharge |
+| Thorn Field — one free ram spends one charge | `EffectsRegistry.tryConsumeThornsRam()` → shared `CombatScene._handleCollisions` ram branch | Thorn aura (`drawThornsAura`): armed while `hasThornsRam()` — the pool, pickup and permanent alike — holds a charge, and pops on the last free ram; empty clears it |
+| Force Field — one reflected bullet spends one charge | `EffectsRegistry.tryConsumeForceFieldReflect()` → shared `CombatScene` reflect branch | Force bubble (`drawForceFieldBubble`): a **pickup** bubble pops on its last spend (an unowned field reads inactive at zero); an **owned** field stays up but **dimmed** while the pool is empty, bright again on recharge (Q1 = b) |
 | Mystery UFO — one drone spawn spends one charge | `EffectsRegistry.consumeMysteryUfoCharge()` → shared `CombatCoreScene._updateDroneSpawning` (registered in `EPIC_SHARED_METHODS` in `CombatScene.equivalence.test.ts`); a **field pickup** keeps its queued one-shot (`consumeMysteryUfoSpawns`) and spends no charge | the drone itself (spawned through `spawnDrone` in `src/scenes/core/combatDrone.ts`) |
 
 Gyms that exercise the consumables: `GymPowerUpsCombat` (Shield/Bomb/Phase
@@ -410,11 +410,13 @@ shared seams; the parity matrix rows above record their per-scene divergences
 (round-robin drop sources, gym-only HUDs, silenced/auto-fire-off scenarios —
 all **disabled features**, never divergent copies of the charge model).
 
-Retained divergence (recorded, not implemented here): **field-pickup windows
-keep the shipped timed-budget behaviour** in this slice (producer decision 2 /
-PD5). A live field-pickup window on top of a permanent base still spends its
-registry-local budget, not the pool — that conversion is the separate follow-up
-AH-0MVUVSW4J0009QUW. Every other consumption above is pool-backed and shared.
+The pickup conversion (AH-0MVVD8SIT000CO9H / AH-0MVVD8SXO004QLZW) retired the
+three kinds' timed-budget windows, so there is no retained field-pickup
+window divergence left here: a field pickup grants exactly **one pool charge**
+(no effect window) and every consumption above is pool-backed and shared. The
+bubble/aura arm signals read the shared pool — pickup and permanent alike —
+and the Shield wind-down and Force Field countdown-driven pulse are retired
+(AH-0MVVD8TCJ004RLXP).
 
 Pinned by `src/scenes/core/consumableChargeParity.test.ts` (the same spend →
 empty → regenerate → re-use cycle in `PlayScene` and `GymPowerUpsCombat`,

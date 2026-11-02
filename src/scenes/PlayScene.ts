@@ -4646,14 +4646,14 @@ export class PlayScene extends CombatScene<
 
   /**
    * Updates effect visuals each tick: the Shield shield bubble is drawn around
-   * the ship while shielded (shared helper — continuously pulsing rim +
-   * low-alpha fill, radius SHIP_SIZE × 1.6, with the shared ending fade in
-   * the final second, mirrors GymPowerUpsCombat) and cleared otherwise, and
-   * the Phase Shift phase ghost alpha is applied when phased.
+   * the ship while the pool holds a charge (shared helper — steady bright rim
+   * + low-alpha fill, radius SHIP_SIZE × 1.6; the timed-window ending fade is
+   * retired, AH-0MVVD8TCJ004RLXP) and cleared otherwise, and the Phase Shift
+   * phase ghost alpha is applied when phased.
    */
   private _updateVisuals(): void {
-    // Shield bubble: drawn around the ship while Shield is active (shared helper,
-    // including the continuous rim pulse and ending fade).
+    // Shield bubble: drawn around the ship while Shield is active (shared
+    // helper; the steady-bright-rim look is drawn for every armed state).
     if (this.shieldBubble) {
       this.shieldBubbleDrawn = drawShieldBubble(
         this.shieldBubble,

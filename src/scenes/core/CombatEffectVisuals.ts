@@ -12,15 +12,15 @@
  * (AH-0MU8QV3O9008JVNQ shield bubble, AH-0MU8QVC9Y008R8I5 phase ghost) and
  * the gym parity item AH-0MUICQC34005QOYF.
  *
- * The Shield shield bubble also winds down as it expires (AH-0MUAYB5HR001HDYC):
- * the rim pulses continuously for the whole active lifetime, the fill ramps
- * up to a documented "opaque" alpha in the final second, and the fill then
- * shrinks inside the hull radius in the final half second before the bubble
- * clears at expiry. The animation is a pure function of the shield's
- * temporary-window countdown (`powerUpTemporaryRemaining`), so it is
- * frame-rate independent and identical in the game and every gym; a
- * permanently-owned shield armoured by its shared charge pool holds a steady
- * phase because the pool has no countdown (parent AH-0MVTQMREN009DSFW).
+ * The Shield shield bubble's timed-window ending animation (the final-second
+ * fill ramp, the final half-second fill shrink and the countdown-driven rim
+ * pulse, AH-0MUAYB5HR001HDYC) is **retired, not silently dropped**: its only
+ * trigger was the effect-window countdown, and a charge-bounded shield has no
+ * window to count down — the bubble is armed while the shared charge pool
+ * holds a charge and pops on the last absorb (parent AH-0MVTQMREN009DSFW
+ * AC1 / AH-0MVUVSW4J0009QUW). Every armed state draws the same steady bright
+ * rim + translucent fill, identical in the game and every gym. Dead-code
+ * decision recorded on AH-0MVVD8TCJ004RLXP.
  *
  * @module scenes/core/CombatEffectVisuals
  */
@@ -41,38 +41,21 @@ export const SHIELD_BUBBLE_RADIUS_FACTOR = 1.6;
 export const SHIELD_BUBBLE_FILL_ALPHA = 0.12;
 /** Shield-bubble stroke alpha. */
 export const SHIELD_BUBBLE_STROKE_ALPHA = 0.9;
+
 /**
- * Seconds before expiry at which the shield-bubble ending fade begins: the
- * fill starts ramping up toward {@link SHIELD_BUBBLE_ENDING_FILL_ALPHA}
- * (AH-0MUAYB5HR001HDYC). The rim pulses for the whole active lifetime.
+ * Retired shield-bubble ending animation (AH-0MUAYB5HR001HDYC). The
+ * final-second fill ramp (`SHIELD_BUBBLE_ENDING_FILL_ALPHA`), the final
+ * half-second fill shrink (`SHIELD_BUBBLE_SHRINK_SECONDS` /
+ * `SHIELD_BUBBLE_SHRINK_MIN_FACTOR`) and the countdown-driven rim pulse
+ * (`SHIELD_BUBBLE_PULSE_RATE` / `SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER`) are
+ * **retired, not silently dropped**: their only trigger was the
+ * effect-window countdown, which the absorbed-hit model removes (parent
+ * AH-0MVTQMREN009DSFW / AH-0MVUVSW4J0009QUW). "Armed means the pool holds a
+ * charge" (AH-0MVVD8TCJ004RLXP) pops the bubble on the last spend and has no
+ * window to count down, so every armed state draws the same steady bright
+ * rim (`SHIELD_BUBBLE_STROKE_ALPHA`) + translucent fill — mirroring the
+ * permanently-owned Force Field bubble.
  */
-export const SHIELD_BUBBLE_ENDING_SECONDS = 1.0;
-/**
- * Seconds before expiry at which the shield-bubble fill starts shrinking
- * from the full bubble radius toward {@link SHIELD_BUBBLE_SHRINK_MIN_FACTOR}.
- */
-export const SHIELD_BUBBLE_SHRINK_SECONDS = 0.5;
-/**
- * Shield-bubble fill alpha at the end of the ending window — deliberately
- * above {@link SHIELD_BUBBLE_FILL_ALPHA} so the bubble reads as "opaque"
- * (but still below 1 so the ship stays visible).
- */
-export const SHIELD_BUBBLE_ENDING_FILL_ALPHA = 0.6;
-/**
- * Minimum shield-bubble fill radius factor (× `SHIP_SIZE`) reached at expiry.
- * Kept below `0.5` so the fill ends up inside the ship hull radius.
- */
-export const SHIELD_BUBBLE_SHRINK_MIN_FACTOR = 0.3;
-/**
- * Shield-bubble rim pulse angular rate (radians per second of remaining
- * time). The rim pulses continuously for the whole active lifetime.
- */
-export const SHIELD_BUBBLE_PULSE_RATE = 12;
-/**
- * Lowest stroke-alpha multiplier at the bottom of a rim pulse. Keeps the
- * pulsing rim visible (never fully transparent) at its dimmest.
- */
-export const SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER = 0.35;
 /** Phase-ghost ship alpha while Phase Shift is active (and not blinking). */
 export const PHASE_GHOST_ALPHA = 0.45;
 
@@ -126,11 +109,12 @@ export const THORNS_AURA_STROKE_ALPHA = 0.95;
  * halo (gym↔game parity, AH-0MUGZDTFX004RBD1).
  *
  * Cleared (never drawn) when there is no graphics, no player, the field is
- * inactive, or its budget is spent — so an exhausted or expired field always
- * removes the aura. A permanently-owned field is armed only while its shared
- * charge pool holds a charge (`hasThornsRam` reads the pool for an owned
- * field), so an empty permanent pool also clears the aura and it returns
- * when a charge regenerates (parent AH-0MVTQMREN009DSFW AC2 / F6 AC4).
+ * inactive, or its budget is spent — so an exhausted or spent field always
+ * removes the aura. "Armed" reads the shared charge pool for owned and
+ * pickup charges alike (`hasThornsRam`), so a field pickup's aura is drawn
+ * while its one charge is held and pops on the last free ram; an empty
+ * permanent pool clears the aura and it returns when a charge regenerates
+ * (parent AH-0MVTQMREN009DSFW AC2 / F6 AC4).
  *
  * @param graphics — the scene-owned thorns-aura graphics (may be null).
  * @param player — the ship position (may be null).
@@ -146,11 +130,12 @@ export function drawThornsAura(
   graphics.clear();
   if (!player) return false;
 
-  // A permanently-owned (hold-full) Thorn Field is armed only while its
-  // shared charge pool holds a charge: `hasThornsRam` reads the pool for an
-  // owned field, so an empty permanent pool clears the aura (no always-on
-  // halo) and it returns when a charge regenerates (parent AC2 + F6 AC4).
-  // A live field-pickup window keeps its timed budget (PD5).
+  // Armed means the shared charge pool holds at least one charge (parent
+  // AH-0MVTQMREN009DSFW AC2): `hasThornsRam` reads the pool for owned and
+  // pickup charges alike, so a field pickup's aura is drawn while its one
+  // charge is held and pops on the last free ram, and an empty permanent
+  // pool clears the halo (no always-on aura) with it returning when a charge
+  // regenerates (parent AC2 + F6 AC4).
   const charges = registry.thornsRemaining();
   if (!registry.hasThornsRam() || charges <= 0) return false;
 
@@ -210,30 +195,28 @@ export interface GhostVisualTarget {
 
 /**
  * Clears *graphics* and draws the shared Shield shield bubble around *player*
- * when the registry says the player is shielded.
+ * while the registry says the player is shielded.
  *
- * The bubble has a continuously pulsing rim (stroke alpha oscillates for the
- * whole active lifetime, from collection until it disappears) and a
- * time-based ending fade in the final second (AH-0MUAYB5HR001HDYC): the fill
- * ramps up to {@link SHIELD_BUBBLE_ENDING_FILL_ALPHA}, then in the final
- * {@link SHIELD_BUBBLE_SHRINK_SECONDS} the fill shrinks toward
- * {@link SHIELD_BUBBLE_SHRINK_MIN_FACTOR} (inside the hull) before the
- * bubble clears at expiry. The animation is a pure function of the shield's
- * temporary-window countdown — frame-rate independent and deterministic.
+ * **Armed means the shared charge pool holds at least one charge** (parent
+ * AH-0MVTQMREN009DSFW AC1 / AH-0MVUVSW4J0009QUW): `isShielded` reads the pool
+ * for owned and pickup charges alike, so a field pickup's bubble is drawn
+ * while its one charge is held and pops on the last absorb, and an empty
+ * permanent pool clears the bubble (no always-on armed visual) with the look
+ * returning when the charge regenerates through the shared tick.
  *
- * **Permanent charge pools have no countdown** (parent
- * AH-0MVTQMREN009DSFW AC1). A permanently-owned shield is armed only while
- * its shared charge pool holds a charge: `isShielded` reads the pool for
- * an owned shield, so an empty permanent pool clears the bubble (no
- * always-on armed visual) and the look returns when the charge regenerates.
- * While armed, a permanent-only pool pulses at a constant phase (steady
- * bright rim, no wind-down) — mirroring the permanent Force Field bubble
- * below. A live field-pickup window on top of the permanent base keeps its
- * timed countdown (PD5).
+ * The timed-window ending animation — the final-second fill ramp, the
+ * final half-second fill shrink and the countdown-driven rim pulse
+ * (AH-0MUAYB5HR001HDYC) — is **retired, not silently dropped** (dead-code
+ * decision recorded on AH-0MVVD8TCJ004RLXP): its only trigger was the
+ * effect-window countdown, which no longer exists, and a bubble armed by a
+ * held charge has no window to count down. Every armed state therefore draws
+ * the same **steady bright rim** (`SHIELD_BUBBLE_STROKE_ALPHA`) and
+ * translucent fill — mirroring the permanently-owned Force Field bubble —
+ * and the ending cue is the pop on the last spend.
  *
- * Cleared (never drawn) when there is no graphics, no player, the shield is
- * inactive, or its window has counted down to zero, so a popped shield
- * always removes the bubble.
+ * Cleared (never drawn) when there is no graphics, no player, or the shield
+ * is disarmed (the pool holds no charge), so a popped shield always removes
+ * the bubble.
  *
  * @param graphics — the scene-owned shield-bubble graphics (may be null).
  * @param player — the ship position (may be null).
@@ -249,59 +232,18 @@ export function drawShieldBubble(
   graphics.clear();
   if (!player || !registry.isShielded) return false;
 
-  // `powerUpTemporaryRemaining` is `undefined` for a permanent base with no
-  // active window (the steady, no-wind-down case) and the window's remaining
-  // seconds otherwise (0 = just expired → clear).
-  const tempRemaining = registry.powerUpTemporaryRemaining('shield');
-  if (tempRemaining !== undefined && tempRemaining <= 0) return false;
-
+  // `isShielded` reads the shared charge pool (owned and pickup charges
+  // alike), so a field pickup's temporary-level TTL can never pop a bubble
+  // while its charge is held — the bubble follows the pool, not the level.
   const fullRadius = SHIP_SIZE * SHIELD_BUBBLE_RADIUS_FACTOR;
-  let fillAlpha = SHIELD_BUBBLE_FILL_ALPHA;
-  let fillRadius = fullRadius;
-
-  // Rim pulse: runs continuously for the whole armed lifetime (operator
-  // clarification, AH-0MUAYB5HR001HDYC) — the shield is never a steady ring.
-  // A temporary window drives the phase from its countdown; a permanent-only
-  // pool has no countdown, so it holds a constant phase (steady bright pulse)
-  // with no wind-down to read — mirroring the permanent Force Field bubble.
-  // The phase for a window is locked so the pulse passes through the base
-  // alpha at T-1 s, keeping the transition into the ending window seamless.
-  const pulse =
-    0.5 +
-    0.5 *
-      Math.cos(
-        ((tempRemaining ?? SHIELD_BUBBLE_ENDING_SECONDS) -
-          SHIELD_BUBBLE_ENDING_SECONDS) *
-          SHIELD_BUBBLE_PULSE_RATE,
-      );
-  const strokeAlpha =
-    SHIELD_BUBBLE_STROKE_ALPHA *
-    (SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER +
-      (1 - SHIELD_BUBBLE_PULSE_MIN_MULTIPLIER) * pulse);
-
-  if (
-    tempRemaining !== undefined &&
-    tempRemaining <= SHIELD_BUBBLE_ENDING_SECONDS
-  ) {
-    // Fill ramps from the steady alpha up to the documented "opaque" alpha.
-    const progress = 1 - tempRemaining / SHIELD_BUBBLE_ENDING_SECONDS; // 0..1
-    fillAlpha =
-      SHIELD_BUBBLE_FILL_ALPHA +
-      (SHIELD_BUBBLE_ENDING_FILL_ALPHA - SHIELD_BUBBLE_FILL_ALPHA) * progress;
-
-    // Final half second: shrink the fill from the bubble radius toward a
-    // radius inside the hull, so the shield reads as ineffective.
-    if (tempRemaining < SHIELD_BUBBLE_SHRINK_SECONDS) {
-      const shrink = tempRemaining / SHIELD_BUBBLE_SHRINK_SECONDS; // 1..0
-      const minRadius = SHIP_SIZE * SHIELD_BUBBLE_SHRINK_MIN_FACTOR;
-      fillRadius = minRadius + (fullRadius - minRadius) * shrink;
-    }
-  }
-
-  graphics.lineStyle(SHIELD_BUBBLE_LINE_WIDTH, SHIELD_BUBBLE_COLOR, strokeAlpha);
+  graphics.lineStyle(
+    SHIELD_BUBBLE_LINE_WIDTH,
+    SHIELD_BUBBLE_COLOR,
+    SHIELD_BUBBLE_STROKE_ALPHA,
+  );
   graphics.strokeCircle(player.x, player.y, fullRadius);
-  graphics.fillStyle(SHIELD_BUBBLE_COLOR, fillAlpha);
-  graphics.fillCircle(player.x, player.y, fillRadius);
+  graphics.fillStyle(SHIELD_BUBBLE_COLOR, SHIELD_BUBBLE_FILL_ALPHA);
+  graphics.fillCircle(player.x, player.y, fullRadius);
   return true;
 }
 
@@ -333,33 +275,34 @@ export const FORCE_FIELD_SPENT_STROKE_ALPHA = 0.35;
  * Clears *graphics* and draws the shared Force Field reflect bubble around
  * *player* while the registry says the field is active.
  *
- * The bubble is a pulsing hexagonal boundary (the same radius the shared
- * combat core uses for reflection) with inward chevron "reflect" motifs, so
- * the player can read exactly which incoming shots will bounce. Its rim
- * pulses continuously and the fill brightens in the final second before a
- * temporary window expires, mirroring the shared Shield bubble treatment.
+ * The bubble is a hexagonal boundary (the same radius the shared combat core
+ * uses for reflection) with inward chevron "reflect" motifs, so the player
+ * can read exactly which incoming shots will bounce. It is drawn steady — no
+ * countdown-driven rim pulse and no final-second brighten, the timed-window
+ * cues retired together with the Shield wind-down (AH-0MVVD8TCJ004RLXP) —
+ * bright while a charge is held and dimmed while an owned pool is empty.
  *
- * **Permanence comes from the temporary-window accessor, never from the
- * countdown.** A permanent (hold-full) field is stored with `remaining: 0`
- * and `isForceFieldActive()` stays true for the whole run, so gating on
- * `registry.remaining('force_field')` made the bubble vanish after the
- * temporary window (AH-0MVRDMG0N000Y03Z AC1). `powerUpTemporaryRemaining`
- * returns `undefined` for a permanent base with no active window and the
- * window countdown otherwise; because it also returns `undefined` when the
- * effect is absent, the `isForceFieldActive()` guard stays ahead of it.
+ * **Reconciliation with "armed means holds a charge"** (AH-0MVVD8TCJ004RLXP):
+ * `isForceFieldActive` reads **permanence or pool** — `isConsumableOwned`
+ * or a held charge — so arming follows the pool while permanence keeps an
+ * owned, empty field visibly "up but inert". A field pickup grants exactly
+ * one charge and opens no effect window, so its bubble is drawn while the
+ * charge is held and **pops on the last spend**; a permanent (hold-full)
+ * field stays active for the whole run and its bubble **dims while the pool
+ * is empty** (AH-0MVRDMG0N000Y03Z) and brightens again as a charge
+ * regenerates through the shared tick.
  *
  * **Spent dim (AH-0MVBKT2WO001AR14 Q1 = b).** While the field is active but
  * `forceFieldRemaining() <= 0` the bubble is drawn with the reduced
  * {@link FORCE_FIELD_SPENT_STROKE_ALPHA}/{@link FORCE_FIELD_SPENT_FILL_ALPHA}
  * baseline instead of vanishing. The rim, fill and three chevrons all stay,
- * so a spent field still reads as up; it just reads as inert. A temporary
- * window's final-second ending brighten is preserved on top of whichever
- * baseline applies; a permanent-only field has no countdown, so it holds a
- * steady (constant-phase) pulse with no ending brighten.
+ * so a spent owned field still reads as up; it just reads as inert. A
+ * permanent-only field has no countdown, so the armed/spent baselines are
+ * the only two states the bubble draws.
  *
- * Cleared (never drawn) when there is no graphics, no player, the field is
- * inactive, or a temporary window has counted down to zero, so an expired
- * field always removes the bubble.
+ * Cleared (never drawn) when there is no graphics, no player, or the field
+ * is inactive — a pickup-only field reads `active=false` at zero charges, so
+ * its spent bubble pops — so a disarmed field always removes the bubble.
  *
  * @param graphics — the scene-owned force-field graphics (may be null).
  * @param player — the ship position (may be null).
@@ -375,39 +318,23 @@ export function drawForceFieldBubble(
   graphics.clear();
   if (!player || !registry.isForceFieldActive()) return false;
 
-  // `undefined` = permanent base (nothing to count down); a number = the
-  // temporary window's countdown (0 = just expired).
-  const tempRemaining = registry.powerUpTemporaryRemaining('force_field');
-  if (tempRemaining !== undefined && tempRemaining <= 0) return false;
-
-  // Spent (cannot reflect any more) dims rather than vanishes, for permanent
-  // and temporary fields alike (Q1 = b).
+  // Spent (cannot reflect any more) dims rather than vanishes (Q1 = b). For
+  // a permanently-owned field `isForceFieldActive` stays true for the run, so
+  // an empty pool shows the dim baseline (AH-0MVRDMG0N000Y03Z) and brightens
+  // as a charge returns; a pickup-only field reads inactive at zero charges,
+  // so its bubble pops on the last spend — the spent-dim rule reconciled
+  // with "armed means holds a charge" (AH-0MVVD8TCJ004RLXP).
   const spent = registry.forceFieldRemaining() <= 0;
-  const strokeBase = spent
+  const strokeAlpha = spent
     ? FORCE_FIELD_SPENT_STROKE_ALPHA
     : FORCE_FIELD_STROKE_ALPHA;
-  const fillBase = spent
+  const fillAlpha = spent
     ? FORCE_FIELD_SPENT_FILL_ALPHA
     : FORCE_FIELD_FILL_ALPHA;
 
   const radius = registry.forceFieldRadius();
   const centerX = player.x;
   const centerY = player.y;
-
-  // Continuous rim pulse (never a steady ring), scaled from the current
-  // baseline so a spent field still pulses — faintly. A temporary window
-  // drives the phase from its countdown; a permanent-only field has no
-  // countdown, so it uses a constant phase (steady pulse) with no wind-down
-  // to read.
-  const phase = tempRemaining ?? 0;
-  const pulse = 0.5 + 0.5 * Math.cos(phase * 12);
-  const strokeAlpha = strokeBase * (0.4 + 0.6 * pulse);
-  // Final-second brighten applies only to a temporary window, and relative
-  // to its current baseline (dimmed when the field is spent).
-  const fillAlpha =
-    tempRemaining !== undefined && tempRemaining <= 1
-      ? fillBase + (0.5 - fillBase) * (1 - tempRemaining)
-      : fillBase;
 
   graphics.lineStyle(FORCE_FIELD_LINE_WIDTH, FORCE_FIELD_COLOR, strokeAlpha);
   // Hexagonal boundary (flat-top) — echoes the code-drawn drop icon.
